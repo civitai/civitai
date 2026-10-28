@@ -13,6 +13,7 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { HOLD_KINDS, PAYOUT_KINDS } from '~/server/services/placement-escrow.service';
+import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
@@ -852,6 +853,7 @@ export const STORYLINE_DELETE_REFUSALS = {
   paidContinuations:
     "This storyline has paid continuations that haven't settled yet. Try again once they have",
   openReport: 'This storyline has an open report. A moderator can delete it',
+  held: "This storyline is under an evidence hold and can't be deleted",
   paidChapters: 'This storyline has paid continuations. A moderator can delete it',
 } as const;
 
@@ -873,6 +875,8 @@ export async function deleteStoryline({
   userId: number;
   isModerator?: boolean;
 }) {
+  // Read outside the transaction, as `bulkDeleteComments` does: what `accountHoldSql` needs.
+  const markerView = await holdMarkerViewExists();
   await dbWrite.$transaction(async (tx) => {
     // Ownership first, unlocked (the owner never changes), so no one else's call takes a lock.
     const [owned] = await tx.$queryRaw<{ userId: number }[]>`
@@ -948,6 +952,28 @@ export async function deleteStoryline({
       ) AS unsettled
     `;
     if (unsettled) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidContinuations);
+    // The cascade deletes the storyline's comments (its thread, every reply thread below it, and
+    // its comment topic), so nothing goes while its owner or any of those authors is held.
+    const [{ held }] = await tx.$queryRaw<{ held: boolean }[]>`
+      WITH RECURSIVE below AS (
+        SELECT t.id FROM "Thread" t WHERE t."storylineId" = ${id}
+        UNION
+        SELECT t.id FROM "Thread" t
+        JOIN "CommentV2" k ON t."commentId" = k.id
+        JOIN below b ON k."threadId" = b.id
+      ),
+      authors AS MATERIALIZED (
+        SELECT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
+        UNION
+        SELECT c."userId" FROM "CommentV3" c
+        WHERE c."entityType" = 'storyline' AND c."entityId" = ${id}
+      )
+      SELECT ${accountHoldSql(Prisma.sql`${owned.userId}::int`, markerView)}
+        OR EXISTS (
+          SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
+        ) AS held
+    `;
+    if (held) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.held);
     // An owner paid for approved continuations cannot then delete the chapters they were paid for
     // (a refunded one does not count), nor delete what is under report. A moderator can.
     if (!asModerator) {
@@ -966,6 +992,15 @@ export async function deleteStoryline({
       DELETE FROM "PlacementSpace"
       WHERE surface = 'storyline' AND "entityType" = 'storyline' AND "entityId" = ${id}
     `;
+    // A moderator's delete answers the open reports on it, which would otherwise sit in the queue
+    // with nothing to point at once the cascade takes their links.
+    if (asModerator)
+      await tx.$executeRaw`
+        UPDATE "Report" r SET status = ${ReportStatus.Actioned}::"ReportStatus"
+        FROM "StorylineReport" sr
+        WHERE sr."reportId" = r.id AND sr."storylineId" = ${id}
+          AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+      `;
     await tx.$executeRaw`DELETE FROM "Storyline" WHERE id = ${id}`;
     // In the transaction, unlike `trackStorylineModEdit`: nothing else records what was deleted.
     if (asModerator)

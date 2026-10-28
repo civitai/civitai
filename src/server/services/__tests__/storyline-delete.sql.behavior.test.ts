@@ -4,9 +4,21 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
+import type * as LegalHoldService from '~/server/services/legal-hold.service';
 
 const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
+// Which accounts the delete asks about is under test here, not what makes one held: an account is
+// held when it is in "HeldAccount".
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => {
+  const { Prisma } = await import('@prisma/client');
+  return {
+    ...(await importOriginal<typeof LegalHoldService>()),
+    holdMarkerViewExists: vi.fn().mockResolvedValue(true),
+    accountHoldSql: (id: Prisma.Sql) =>
+      Prisma.sql`EXISTS (SELECT 1 FROM "HeldAccount" h WHERE h."userId" = ${id})`,
+  };
+});
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
@@ -94,7 +106,18 @@ beforeAll(async () => {
     '20261122120000_storyline_pending_chapter',
   ])
     await db.pg.exec(migration(name));
-  await db.pg.exec(`INSERT INTO "User" (id) VALUES (1), (2), (3);`);
+  await db.pg.exec(`
+    INSERT INTO "User" (id) VALUES (1), (2), (3);
+    CREATE TABLE "HeldAccount" ("userId" integer PRIMARY KEY);
+    CREATE TABLE "Thread" ("id" serial PRIMARY KEY,
+      "storylineId" integer REFERENCES "Storyline"("id") ON DELETE CASCADE, "commentId" integer);
+    CREATE TABLE "CommentV2" ("id" serial PRIMARY KEY,
+      "threadId" integer NOT NULL REFERENCES "Thread"("id") ON DELETE CASCADE,
+      "userId" integer NOT NULL);
+    ALTER TABLE "Thread" ADD FOREIGN KEY ("commentId") REFERENCES "CommentV2"("id") ON DELETE CASCADE;
+    CREATE TABLE "CommentV3" ("id" serial PRIMARY KEY, "entityType" text NOT NULL,
+      "entityId" integer NOT NULL, "userId" integer NOT NULL);
+  `);
 });
 
 afterAll(async () => {
@@ -104,6 +127,10 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.pg.exec(`
     DELETE FROM "Appeal";
+    DELETE FROM "HeldAccount";
+    DELETE FROM "CommentV3";
+    DELETE FROM "CommentV2";
+    DELETE FROM "Thread";
     DELETE FROM "StorylineReport";
     DELETE FROM "Report";
     DELETE FROM "PlacementTransaction";
@@ -354,10 +381,75 @@ describe('deleteStoryline', () => {
       expect(await storylineIds()).toEqual([2]);
     });
 
+    it("a moderator's delete marks the open report actioned, and leaves a resolved one", async () => {
+      await report('Pending');
+      await db.pg.exec(`
+        INSERT INTO "Report" (id, status) VALUES (71, 'Unactioned');
+        INSERT INTO "StorylineReport" ("storylineId", "reportId") VALUES (1, 71);
+      `);
+      await deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true });
+      expect(await rows(`SELECT id, status FROM "Report" ORDER BY id`)).toEqual([
+        { id: 70, status: 'Actioned' },
+        { id: 71, status: 'Unactioned' },
+      ]);
+    });
+
     it('can be deleted by its owner once the report is resolved', async () => {
       await report('Unactioned');
       await deleteStoryline({ id: 1, userId: OWNER });
       expect(await storylineIds()).toEqual([2]);
+    });
+  });
+
+  // The cascade deletes the storyline's comments, so a hold on anyone whose rows go keeps it.
+  describe('under an account hold', () => {
+    // A thread with a comment that has a reply thread, and a CommentV3 comment on its topic.
+    beforeEach(async () => {
+      await db.pg.exec(`
+        INSERT INTO "Thread" (id, "storylineId") VALUES (1, 1);
+        INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (1, 1, ${CONTRIBUTOR});
+        INSERT INTO "Thread" (id, "commentId") VALUES (2, 1);
+        INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (2, 2, 4);
+      `);
+    });
+    const held = (userId: number) =>
+      db.pg.exec(`INSERT INTO "HeldAccount" ("userId") VALUES (${userId})`);
+
+    it('deletes with nobody held, comments and all', async () => {
+      await deleteStoryline({ id: 1, userId: OWNER });
+      expect(await storylineIds()).toEqual([2]);
+      expect(await rows(`SELECT id FROM "CommentV2"`)).toEqual([]);
+    });
+
+    for (const [who, userId, asModerator] of [
+      ['owner, to the owner', OWNER, false],
+      ['owner, to a moderator', OWNER, true],
+      ['author of a comment', CONTRIBUTOR, true],
+      ['author of a reply', 4, true],
+    ] as const)
+      it(`is refused when the ${who} is held, and nothing goes`, async () => {
+        await held(userId);
+        await expect(
+          deleteStoryline(
+            asModerator ? { id: 1, userId: MODERATOR, isModerator: true } : { id: 1, userId: OWNER }
+          )
+        ).rejects.toThrow(STORYLINE_DELETE_REFUSALS.held);
+        expect(await storylineIds()).toEqual([1, 2]);
+        expect(await rows(`SELECT id FROM "CommentV2" ORDER BY id`)).toEqual([
+          { id: 1 },
+          { id: 2 },
+        ]);
+      });
+
+    it('is refused when an author of a comment on its topic is held', async () => {
+      await db.pg.exec(`
+        INSERT INTO "CommentV3" ("entityType", "entityId", "userId") VALUES ('storyline', 1, 9);
+      `);
+      await held(9);
+      await expect(
+        deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true })
+      ).rejects.toThrow(STORYLINE_DELETE_REFUSALS.held);
+      expect(await storylineIds()).toEqual([1, 2]);
     });
   });
 
