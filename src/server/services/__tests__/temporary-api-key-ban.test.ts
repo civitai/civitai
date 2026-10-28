@@ -4,6 +4,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
+import type * as KeyGenerator from '~/server/utils/key-generator';
 
 // Every orchestrator token is minted here, so this is where a banned account is refused one.
 
@@ -13,6 +14,12 @@ const { revokeCivitaiUserTokens } = vi.hoisted(() => ({
 vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
   ...(await importOriginal<typeof OrchestratorCivitai>()),
   revokeCivitaiUserTokens,
+}));
+
+// Hashing needs a secret that CI does not set; the hash itself is not under test.
+vi.mock('~/server/utils/key-generator', async (importOriginal) => ({
+  ...(await importOriginal<typeof KeyGenerator>()),
+  generateSecretHash: (key: string) => `hash-of-${key}`,
 }));
 
 const { getTemporaryUserApiKey } = await import('~/server/services/api-key.service');
