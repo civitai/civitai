@@ -13,8 +13,6 @@ const m = vi.hoisted(() => ({
   dropBlockedImageDeleteQueue: vi.fn(),
   queueImageSearchIndexUpdate: vi.fn(),
   trackModActivity: vi.fn(),
-  updateManyAndReturn: vi.fn(),
-  updateMany: vi.fn(),
   updateDocs: vi.fn(),
   metricsIndex: vi.fn(),
   imagesSearch: vi.fn(),
@@ -43,12 +41,7 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity: m.trackModActivity }));
 vi.mock('~/server/services/feature-flags.service', () => ({ getFeatureFlags: () => ({}) }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: { image: { updateManyAndReturn: m.updateManyAndReturn, updateMany: m.updateMany } },
-}));
-vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbRead: {}, pgDbReadLong: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-helpers', () => ({ dataProcessor: m.dataProcessor }));
 vi.mock('~/server/meilisearch/client', () => ({
   metricsSearchClient: { index: m.metricsIndex },
@@ -60,6 +53,11 @@ import unblockImages from '~/pages/api/mod/unblock-images';
 import markPoiImagesSearch from '~/pages/api/mod/mark-poi-images-search';
 import imageMetricsUpdate from '~/pages/api/mod/search/image-metrics-update';
 import backfillStuckPublishedImages from '~/pages/api/admin/temp/backfill-stuck-published-images';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+
+// `~/server/db/client` and `~/server/logging/client` are the global canonical mocks (setup.ts).
+const updateManyAndReturn = dbMock.dbWrite.image.updateManyAndReturn;
+const updateMany = dbMock.dbWrite.image.updateMany;
 
 type Handler = (req: NextApiRequest, res: NextApiResponse, user?: unknown) => unknown;
 
@@ -84,8 +82,8 @@ const call = async (handler: unknown, query: Record<string, string> = {}) => {
 beforeEach(() => {
   vi.clearAllMocks();
   m.retired.metrics = true;
-  m.updateManyAndReturn.mockResolvedValue([]);
-  m.updateMany.mockResolvedValue({ count: 0 });
+  updateManyAndReturn.mockResolvedValue([]);
+  updateMany.mockResolvedValue({ count: 0 });
 });
 
 describe('/api/mod/unblock-images', () => {
@@ -94,8 +92,8 @@ describe('/api/mod/unblock-images', () => {
     expect(status).toBe(410);
     expect(String(body?.message)).toContain('metrics_images_v1');
     expect(m.getImagesFromSearch).not.toHaveBeenCalled();
-    expect(m.updateManyAndReturn).not.toHaveBeenCalled();
-    expect(m.updateMany).not.toHaveBeenCalled();
+    expect(updateManyAndReturn).not.toHaveBeenCalled();
+    expect(updateMany).not.toHaveBeenCalled();
   });
 
   it('un-retired, clears only rows the database still has blocked, and acts on those alone', async () => {
@@ -109,13 +107,13 @@ describe('/api/mod/unblock-images', () => {
         ],
       })
       .mockResolvedValueOnce({ data: [] });
-    m.updateManyAndReturn.mockResolvedValue([{ id: 11 }]);
+    updateManyAndReturn.mockResolvedValue([{ id: 11 }]);
 
     const { status, body } = await call(unblockImages);
 
     expect(status).toBe(200);
-    expect(m.updateMany).not.toHaveBeenCalled();
-    expect(m.updateManyAndReturn).toHaveBeenCalledWith({
+    expect(updateMany).not.toHaveBeenCalled();
+    expect(updateManyAndReturn).toHaveBeenCalledWith({
       where: {
         id: { in: [11, 12] },
         blockedFor: { in: ['moderated', 'Moderated'] },
@@ -141,7 +139,7 @@ describe('/api/mod/mark-poi-images-search', () => {
     const { status } = await call(markPoiImagesSearch, { words: 'jane doe' });
 
     expect(status).toBe(200);
-    expect(m.updateMany).toHaveBeenCalledWith({ where: { id: { in: [7] } }, data: { poi: true } });
+    expect(updateMany).toHaveBeenCalledWith({ where: { id: { in: [7] } }, data: { poi: true } });
     expect(m.updateDocs).not.toHaveBeenCalled();
   });
 
@@ -152,7 +150,7 @@ describe('/api/mod/mark-poi-images-search', () => {
 
     await call(markPoiImagesSearch, { words: 'jane doe' });
 
-    expect(m.updateMany).toHaveBeenCalledWith({ where: { id: { in: [7] } }, data: { poi: true } });
+    expect(updateMany).toHaveBeenCalledWith({ where: { id: { in: [7] } }, data: { poi: true } });
     expect(m.updateDocs).toHaveBeenCalledWith(
       expect.objectContaining({ indexName: 'metrics_images_v1' })
     );
