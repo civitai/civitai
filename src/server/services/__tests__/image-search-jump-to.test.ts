@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as RetiredIndexes from '~/server/search-index/retired-indexes';
 import type * as MeilisearchClient from '~/server/meilisearch/client';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as FeedPrimary from '~/server/services/feed-primary.service';
@@ -14,16 +13,10 @@ const { fetchDocumentsAbortableMock, fetchFeedPrimary, primaryOn } = vi.hoisted(
   primaryOn: vi.fn(() => false),
 }));
 
-// The feeds index (`metrics_images_v1`) is retired, and its readers then answer without it. These
-// tests pin the Meilisearch read path kept for a restore, so they run with that index un-retired.
-vi.mock('~/server/search-index/retired-indexes', async (importOriginal) => {
-  const actual = await importOriginal<typeof RetiredIndexes>();
-  return {
-    ...actual,
-    isRetiredSearchIndex: (index: string) =>
-      index !== 'metrics_images_v1' && actual.isRetiredSearchIndex(index),
-  };
-});
+// These tests pin the Meilisearch read path kept for a restore; see the helper.
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
+  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
+);
 
 vi.mock('~/server/meilisearch/client', async (importOriginal) => ({
   ...(await importOriginal<typeof MeilisearchClient>()),

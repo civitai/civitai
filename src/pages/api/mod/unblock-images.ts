@@ -5,7 +5,7 @@ import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ImageSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
-import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
+import { refuseRetiredIndexEndpoint } from '~/server/search-index/retired-index-read';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
   dropBlockedImageDeleteQueue,
@@ -35,11 +35,7 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
 
   // The candidate ids come from the feeds index. Retired, it is a frozen snapshot, and the
   // endpoint has no other list of images to unblock.
-  if (isRetiredSearchIndex(METRICS_IMAGES_SEARCH_INDEX))
-    return res.status(410).json({
-      error: 'Gone',
-      message: `This endpoint selects images from the ${METRICS_IMAGES_SEARCH_INDEX} search index, which is retired.`,
-    });
+  if (refuseRetiredIndexEndpoint(res, METRICS_IMAGES_SEARCH_INDEX, 'unblock-images')) return;
 
   const startedAt = Date.now();
   const updatedIds: number[] = [];

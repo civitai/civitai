@@ -98,6 +98,7 @@ import {
 } from '../image.service';
 import { isMeiliOff } from '../feed-primary.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { imageFeedVerdict } from '../../../../tests/preview-image-feed.verdict';
 
 redisMock.redis.get.mockResolvedValue('[]');
 redisMock.redis.set.mockResolvedValue(undefined);
@@ -134,7 +135,7 @@ beforeEach(() => {
 describe('readers of the retired feeds index answer without it', () => {
   it('getImagesFromSearch (image.getInfinite without a feed service) returns an empty page', async () => {
     const result = await getImagesFromSearch(input());
-    expect(result).toMatchObject({ data: [], nextCursor: undefined, source: 'meili' });
+    expect(result).toMatchObject({ data: [], nextCursor: undefined, source: 'retired' });
     noMeiliCall();
     expect(refusals('searchImages')).toBe(1);
   });
@@ -181,9 +182,33 @@ describe('getAllImagesIndex without a feed service (next.civitai.com before talo
       include: [],
       headers: { src: 'test' },
     } as unknown as Parameters<typeof getAllImagesIndex>[0]);
-    // `source` is what the preview smoke test branches on (tests/preview-image-feed.spec.ts).
-    expect(result).toEqual({ items: [], nextCursor: undefined, source: 'meili' });
+    // The preview smoke's verdict first (tests/preview-image-feed.verdict.ts): it accepts an
+    // empty page only when the retirement guard named it.
+    expect(imageFeedVerdict(result)).toBeNull();
+    expect(result).toEqual({ items: [], nextCursor: undefined, source: 'retired' });
     noMeiliCall();
+  });
+});
+
+describe('the preview smoke verdict (tests/preview-image-feed.verdict.ts)', () => {
+  it('rejects an empty page that did not come through the retirement guard', () => {
+    // What a reader returning nothing without the guard produces: the old shared early return.
+    expect(imageFeedVerdict({ items: [], nextCursor: undefined, source: 'meili' })).toMatch(
+      /source=meili\) answered an empty page/
+    );
+    expect(imageFeedVerdict({ items: [], source: 'feed' })).toMatch(/source=feed/);
+    expect(imageFeedVerdict({ items: [] })).toMatch(/names no known source/);
+  });
+
+  it('rejects rows or a cursor under the retired source', () => {
+    expect(imageFeedVerdict({ items: [{ id: 1 }], source: 'retired' })).toMatch(/1 item/);
+    expect(imageFeedVerdict({ items: [], nextCursor: '5|1', source: 'retired' })).toMatch(
+      /nextCursor/
+    );
+  });
+
+  it('accepts a real page from a source that answered', () => {
+    expect(imageFeedVerdict({ items: [{ id: 12097475 }], source: 'feed' })).toBeNull();
   });
 });
 

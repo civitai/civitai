@@ -35,3 +35,17 @@ export function refuseRetiredIndexRead(index: string, route: string): boolean {
   }
   return true;
 }
+
+/**
+ * For an endpoint whose whole job is to read or backfill `index`: answer 410 and return true when
+ * it is retired, so the handler returns before touching it.
+ */
+export function refuseRetiredIndexEndpoint(
+  res: { status: (code: number) => { json: (body: unknown) => unknown } },
+  index: string,
+  route: string
+): boolean {
+  if (!refuseRetiredIndexRead(index, route)) return false;
+  res.status(410).json({ error: 'Gone', message: `The ${index} search index is retired.` });
+  return true;
+}

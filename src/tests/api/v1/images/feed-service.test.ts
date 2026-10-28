@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as RetiredIndexes from '~/server/search-index/retired-indexes';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as FeedPrimary from '~/server/services/feed-primary.service';
@@ -37,16 +36,10 @@ const h = vi.hoisted(() => ({
   rawQuery: vi.fn(),
 }));
 
-// The feeds index (`metrics_images_v1`) is retired, and its readers then answer without it. These
-// tests pin the Meilisearch read path kept for a restore, so they run with that index un-retired.
-vi.mock('~/server/search-index/retired-indexes', async (importOriginal) => {
-  const actual = await importOriginal<typeof RetiredIndexes>();
-  return {
-    ...actual,
-    isRetiredSearchIndex: (index: string) =>
-      index !== 'metrics_images_v1' && actual.isRetiredSearchIndex(index),
-  };
-});
+// These tests pin the Meilisearch read path kept for a restore; see the helper.
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
+  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
+);
 
 vi.mock('~/server/db/db-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof DbHelpers>()),
