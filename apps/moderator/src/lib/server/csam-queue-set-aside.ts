@@ -4,13 +4,16 @@ import type { DB } from '@civitai/db-schema/kysely';
 
 const SET_ASIDE_TABLE = 'CsamQueueSetAside';
 
-/** Whether set-aside rows can be read. A row that cannot be read never counts, so the queue shows
- *  the image. */
+/** Whether set-aside rows can be read: the table exists and this role may read it. A row that
+ *  cannot be read never counts, so the queue shows the image. */
 export type SetAsideState = { table: boolean };
 
 export async function setAsideState(db: Kysely<DB>): Promise<SetAsideState> {
   const { rows } = await sql<{ table: unknown }>`
-    SELECT to_regclass(${`"${SET_ASIDE_TABLE}"`}) IS NOT NULL AS table`.execute(db);
+    SELECT CASE WHEN to_regclass(${`"${SET_ASIDE_TABLE}"`}) IS NULL THEN false
+      ELSE has_table_privilege(to_regclass(${`"${SET_ASIDE_TABLE}"`}), 'SELECT') END AS table`.execute(
+    db
+  );
   return { table: rows[0]?.table === true };
 }
 

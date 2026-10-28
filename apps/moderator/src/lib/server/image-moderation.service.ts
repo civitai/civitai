@@ -348,6 +348,7 @@ export async function dismissUserFromCsamQueue({
         .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
         .where('i.ingestion', '=', 'Blocked')
         .where(sql<boolean>`not ${setAsideCounts('i', state)}`)
+        .orderBy('i.id')
         .forUpdate()
         .execute();
       if (images.length !== expectedCount) throw new QueueChanged();

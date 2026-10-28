@@ -58,6 +58,11 @@ describe('dismissUserFlags', () => {
     });
   });
 
+  it('reports a missing table as unavailable, not as a changed queue', async () => {
+    dismissUserFromCsamQueue.mockResolvedValue({ ok: false, reason: 'unavailable' });
+    expect(await post('csam')).toMatchObject({ status: 503 });
+  });
+
   it('reports a changed queue as a conflict', async () => {
     dismissUserFromCsamQueue.mockResolvedValue({ ok: false, reason: 'changed' });
     expect(await post('csam')).toMatchObject({ status: 409 });

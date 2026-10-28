@@ -395,14 +395,23 @@ describe('images set aside from the CSAM queue', () => {
     expect(await listed(303)).toEqual([67]);
   });
 
-  it('shows a dismissed image again once it is no longer removed', async () => {
+  it('ends a set-aside once the image is no longer removed, so a new block shows it', async () => {
     await db.exec(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 68`);
-    try {
-      expect(await listed(303)).toEqual([68, 67]);
-      expect(await pendingOf(303)).toBe(2);
-    } finally {
-      await db.exec(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 68`);
-    }
+    expect(await listed(303)).toEqual([68, 67]);
+    expect(await setAsideIds([68])).toEqual([]);
+
+    await db.exec(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 68`);
+    expect(await listed(303)).toEqual([68, 67]);
+    expect(await pendingOf(303)).toBe(2);
+  });
+
+  it('keeps a set-aside through a write that leaves the image removed', async () => {
+    await db.exec(`
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId") VALUES
+        (68, 303, 'Dismissed', 1);
+      UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 68;
+    `);
+    expect(await setAsideIds([68])).toEqual([68]);
   });
 
   it('shows every image while the table is missing', async () => {

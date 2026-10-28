@@ -368,6 +368,23 @@ describe('dismissUserFromCsamQueue', () => {
     expect(await loggedIds()).toEqual([]);
   });
 
+  it('dismisses nothing when another moderator dismissed one of them first', async () => {
+    // A row the read leaves out but the insert collides with, as a concurrent dismissal would.
+    await db.exec(`
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId", "createdAt")
+        VALUES (55, 8, 'AfterReport', 1, now());
+    `);
+    expect(await dismissUserFromCsamQueue({ userId: 8, expectedCount: 2, moderatorId: 2 })).toEqual(
+      {
+        ok: false,
+        reason: 'changed',
+      }
+    );
+
+    expect(await dismissedIds()).toEqual([57]);
+    expect(await loggedIds()).toEqual([]);
+  });
+
   it('dismisses nothing before the table exists', async () => {
     await db.exec(`ALTER TABLE "CsamQueueSetAside" RENAME TO "CsamQueueSetAsideAway"`);
     try {
