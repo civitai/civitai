@@ -89,7 +89,14 @@ beforeAll(async () => {
     INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt") VALUES (100, 1, 1, now() - interval '1 day');
     INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt") VALUES
       (1, 1, 'Covered by an upload', 1, now());
-    INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth) VALUES (10, 1, 100, 1, 0);
+    INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt") VALUES
+      (101, 1, 1, now() - interval '1 day'), (102, 1, 1, now() - interval '1 day');
+    INSERT INTO "Storyline" (id, "userId", title, "maxNsfwLevel", "updatedAt") VALUES
+      (2, 1, 'Another story', 1, now());
+    INSERT INTO "StorylineChapter" (id, "storylineId", "postId", "userId", depth, "removedAt") VALUES
+      (10, 1, 100, 1, 0, NULL), (11, 1, 101, 1, 1, now()), (20, 2, 102, 1, 0, NULL);
+    INSERT INTO "StorylineChapterEdge" ("chapterId", "storylineId", "parentChapterId")
+      VALUES (11, 1, 10);
     INSERT INTO "Image" (id, url, "nsfwLevel", "userId", "postId", ingestion) VALUES
       (50, 'owner-upload', 1, ${OWNER}, NULL, 'Scanned'),
       (51, 'owner-upload-scanning', 0, ${OWNER}, NULL, 'Pending'),
@@ -98,7 +105,11 @@ beforeAll(async () => {
       (54, 'mod-upload', 1, ${MODERATOR}, NULL, 'Scanned'),
       (55, 'owner-upload-minor', 1, ${OWNER}, NULL, 'Scanned'),
       (56, 'owner-upload-rescanning', 1, ${OWNER}, NULL, 'Rescan'),
-      (57, 'owner-upload-taken-down', 1, ${OWNER}, NULL, 'Scanned');
+      (57, 'owner-upload-taken-down', 1, ${OWNER}, NULL, 'Scanned'),
+      -- Chapter images: chapter 1 of this storyline, a removed chapter of it, another storyline's.
+      (60, 'chapter-1-image', 1, ${OWNER}, 100, 'Scanned'),
+      (61, 'removed-chapter-image', 1, ${OWNER}, 101, 'Scanned'),
+      (62, 'other-storyline-image', 1, ${OWNER}, 102, 'Scanned');
     UPDATE "Image" SET "tosViolation" = true WHERE id = 57;
     UPDATE "Image" SET minor = true WHERE id = 55;
   `);
@@ -185,5 +196,19 @@ describe('an uploaded card cover, read by the feed', () => {
     vi.mocked(getBlockedPairIds).mockResolvedValueOnce([MODERATOR]);
     await expect(coverFor(54)).resolves.toBeNull();
     await expect(coverFor(54)).resolves.toBe(54);
+  });
+});
+
+describe('a chapter-image card cover, read by the feed', () => {
+  it('shows an image from one of its chapters', async () => {
+    await expect(coverFor(60)).resolves.toBe(60);
+  });
+
+  it('never shows an image from a removed chapter', async () => {
+    await expect(coverFor(61)).resolves.toBeNull();
+  });
+
+  it("never shows an image from another storyline's chapter", async () => {
+    await expect(coverFor(62)).resolves.toBeNull();
   });
 });
