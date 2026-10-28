@@ -126,12 +126,18 @@ describe('a CosmeticShop home block', () => {
     expect(ids(block as ShopBlock)).toEqual([5]);
   });
 
-  // The body is shared, so the flag is read as it is for a signed-out viewer. Off must reach the
-  // homepage too: it is the switch that pulls creator items, and what a Flipt outage reads as.
-  it.each([true, false])(
-    'asks the shop service for creator-made items only while creatorShop is public (%s)',
-    async (isPublic) => {
-      isFliptPublic.mockResolvedValue(isPublic);
+  // The body is shared, so each flag is read as it is for a signed-out viewer. Off must reach the
+  // homepage too: it is the switch that pulls those items, and what a Flipt outage reads as. A flag
+  // left out reads as off: the Halloween 2026 row lost all 99 of its section's stickers that way.
+  it.each([
+    { public: ['creator-shop', 'stickers'], creatorShopEnabled: true, stickersEnabled: true },
+    { public: ['stickers'], creatorShopEnabled: false, stickersEnabled: true },
+    { public: ['creator-shop'], creatorShopEnabled: true, stickersEnabled: false },
+    { public: [], creatorShopEnabled: false, stickersEnabled: false },
+  ])(
+    'asks the shop service for the items /shop shows a signed-out viewer (public: $public)',
+    async ({ public: publicFlags, creatorShopEnabled, stickersEnabled }) => {
+      isFliptPublic.mockImplementation(async (flag: string) => publicFlags.includes(flag));
       getShopSectionsWithItems.mockResolvedValue([{ id: 9, _count: { items: 1 }, items: [] }]);
 
       await getHomeBlockData({
@@ -143,10 +149,10 @@ describe('a CosmeticShop home block', () => {
         input: {},
       });
 
-      expect(isFliptPublic).toHaveBeenCalledWith('creator-shop');
       expect(getShopSectionsWithItems).toHaveBeenLastCalledWith({
         sectionId: 9,
-        creatorShopEnabled: isPublic,
+        creatorShopEnabled,
+        stickersEnabled,
       });
     }
   );
