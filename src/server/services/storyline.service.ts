@@ -852,12 +852,12 @@ export async function updateStoryline({
 }
 
 export const STORYLINE_DELETE_REFUSALS = {
-  takenDown: 'This storyline was taken down',
+  /** Every reason an owner may not delete, in one text, so no one reason can be told apart. */
+  owner:
+    "You can't delete this storyline yourself. A moderator can delete it for you; contact support.",
   appealOpen: 'This storyline has an open appeal. Rule on it before deleting',
   paidContinuations:
     "This storyline has paid continuations that haven't settled yet. Try again once they have",
-  openReport: 'This storyline has an open report. A moderator can delete it',
-  paidChapters: 'This storyline has paid continuations. A moderator can delete it',
 } as const;
 
 /**
@@ -902,7 +902,7 @@ export async function deleteStoryline({
     if (!storyline) throw throwNotFoundError('Storyline not found');
     if (storyline.tosViolation) {
       // The owner never, moderator or not: the takedown is against them.
-      if (!asModerator) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.takenDown);
+      if (!asModerator) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
       const [{ appealOpen }] = await tx.$queryRaw<{ appealOpen: boolean }[]>`
         SELECT EXISTS (
           SELECT 1 FROM "Appeal"
@@ -976,12 +976,14 @@ export async function deleteStoryline({
           SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
         ) AS held
     `;
-    // Never names the hold to the owner (`contentKeptError`).
-    if (held) throw contentKeptError(asModerator);
+    if (held)
+      throw asModerator
+        ? contentKeptError(true)
+        : throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
     // An owner paid for approved continuations cannot then delete the chapters they were paid for
     // (a refunded one does not count), nor delete what is under report. A moderator can.
     if (!asModerator) {
-      if (approved) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidChapters);
+      if (approved) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
       const [{ reported }] = await tx.$queryRaw<{ reported: boolean }[]>`
         SELECT EXISTS (
           SELECT 1 FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
@@ -989,7 +991,7 @@ export async function deleteStoryline({
             AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
         ) AS reported
       `;
-      if (reported) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.openReport);
+      if (reported) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
     }
     // No foreign key: the owner's continuation price for this storyline would outlive it.
     await tx.$executeRaw`

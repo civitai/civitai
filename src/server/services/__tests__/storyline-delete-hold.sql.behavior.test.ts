@@ -18,10 +18,10 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * a concurrent chapter add was checked once against a real Postgres (see the PR).
  */
 
-const { LEGAL_HOLD_REFUSAL, OWNER_CONTENT_KEPT } = await import(
-  '~/server/services/legal-hold.service'
+const { LEGAL_HOLD_REFUSAL } = await import('~/server/services/legal-hold.service');
+const { deleteStoryline, STORYLINE_DELETE_REFUSALS } = await import(
+  '~/server/services/storyline.service'
 );
-const { deleteStoryline } = await import('~/server/services/storyline.service');
 
 const migration = (name: string) =>
   readFileSync(
@@ -184,12 +184,27 @@ describe('deleteStoryline under a real account hold', () => {
     expect(await rows(`SELECT id FROM "CommentV2" ORDER BY id`)).toEqual([{ id: 1 }, { id: 2 }]);
   });
 
-  it('refuses the owner without naming the hold, when the owner is held', async () => {
+  // The owner cannot tell a hold from the other reasons they may not delete.
+  it('refuses a held owner exactly as an owner with an open report', async () => {
+    const refusal = (fn: () => Promise<unknown>) =>
+      fn().then(
+        () => null,
+        (e: { code: string; message: string }) => ({ code: e.code, message: e.message })
+      );
+
     await hold(OWNER);
-    await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toMatchObject({
-      code: 'FORBIDDEN',
-      message: OWNER_CONTENT_KEPT,
-    });
+    const held = await refusal(() => deleteStoryline({ id: 1, userId: OWNER }));
     expect(await storylineIds()).toEqual([1, 2]);
+    await db.pg.exec(`DELETE FROM "EvidenceHold"`);
+
+    await db.pg.exec(`
+      INSERT INTO "Report" (id, status) VALUES (70, 'Pending');
+      INSERT INTO "StorylineReport" ("storylineId", "reportId") VALUES (1, 70);
+    `);
+    const reported = await refusal(() => deleteStoryline({ id: 1, userId: OWNER }));
+    expect(await storylineIds()).toEqual([1, 2]);
+
+    expect(held).toEqual({ code: 'BAD_REQUEST', message: STORYLINE_DELETE_REFUSALS.owner });
+    expect(reported).toEqual(held);
   });
 });

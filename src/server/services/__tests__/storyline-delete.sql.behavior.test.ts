@@ -29,9 +29,7 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * a concurrent chapter add was checked once against a real Postgres (see the PR).
  */
 
-const { LEGAL_HOLD_REFUSAL, OWNER_CONTENT_KEPT } = await import(
-  '~/server/services/legal-hold.service'
-);
+const { LEGAL_HOLD_REFUSAL } = await import('~/server/services/legal-hold.service');
 const { deleteStoryline, STORYLINE_DELETE_REFUSALS } = await import(
   '~/server/services/storyline.service'
 );
@@ -295,7 +293,7 @@ describe('deleteStoryline', () => {
 
     it('is kept from its owner once a paid continuation is approved', async () => {
       await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
-        STORYLINE_DELETE_REFUSALS.paidChapters
+        STORYLINE_DELETE_REFUSALS.owner
       );
       expect(await storylineIds()).toEqual([1, 2]);
     });
@@ -373,7 +371,7 @@ describe('deleteStoryline', () => {
     it('is kept from its owner while the report is open', async () => {
       await report('Pending');
       await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
-        STORYLINE_DELETE_REFUSALS.openReport
+        STORYLINE_DELETE_REFUSALS.owner
       );
       expect(await storylineIds()).toEqual([1, 2]);
     });
@@ -436,11 +434,12 @@ describe('deleteStoryline', () => {
           deleteStoryline(
             asModerator ? { id: 1, userId: MODERATOR, isModerator: true } : { id: 1, userId: OWNER }
           )
-        ).rejects.toMatchObject({
-          code: 'FORBIDDEN',
-          // The owner is never told why.
-          message: asModerator ? LEGAL_HOLD_REFUSAL : OWNER_CONTENT_KEPT,
-        });
+        ).rejects.toMatchObject(
+          // The owner is told only what every owner refusal says.
+          asModerator
+            ? { code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL }
+            : { code: 'BAD_REQUEST', message: STORYLINE_DELETE_REFUSALS.owner }
+        );
         expect(await storylineIds()).toEqual([1, 2]);
         expect(await rows(`SELECT id FROM "CommentV2" ORDER BY id`)).toEqual([
           { id: 1 },
@@ -469,14 +468,14 @@ describe('deleteStoryline', () => {
 
     it('is kept from its owner, keeping the takedown on record', async () => {
       await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
-        STORYLINE_DELETE_REFUSALS.takenDown
+        STORYLINE_DELETE_REFUSALS.owner
       );
       expect(await storylineIds()).toEqual([1, 2]);
     });
 
     it('is kept from its owner when the owner is a moderator', async () => {
       await expect(deleteStoryline({ id: 1, userId: OWNER, isModerator: true })).rejects.toThrow(
-        STORYLINE_DELETE_REFUSALS.takenDown
+        STORYLINE_DELETE_REFUSALS.owner
       );
       expect(await storylineIds()).toEqual([1, 2]);
     });
