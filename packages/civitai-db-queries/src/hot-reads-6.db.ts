@@ -107,7 +107,6 @@ export function getPostDetailRow(
     .leftJoin('ModelVersion', (join) =>
       join
         .onRef('ModelVersion.id', '=', 'Post.modelVersionId')
-        .on('ModelVersion.publishedAt', 'is not', null)
     )
     .select((eb) => [
       'Post.id',
@@ -203,8 +202,6 @@ export async function listUserRecommendedReviews(
     .selectFrom('ResourceReview')
     .select(['ResourceReview.modelId', 'ResourceReview.modelVersionId'])
     .where('ResourceReview.userId', '=', userId);
-  if (recommended !== undefined)
-    query = query.where('ResourceReview.recommended', '=', recommended);
   if (modelIds) query = query.where('ResourceReview.modelId', 'in', modelIds);
   return query.execute();
 }
@@ -239,7 +236,6 @@ export async function listActiveModelVersionDonationGoals(db: Kysely<DB>, versio
     ])
     .where('DonationGoal.entityType', '=', 'ModelVersion')
     .where('DonationGoal.entityId', 'in', versionIds)
-    .where('DonationGoal.active', '=', true)
     .execute();
 }
 
@@ -263,7 +259,6 @@ export async function listModelVersionEngagements(
   return db
     .selectFrom('ModelVersionEngagement')
     .select(['ModelVersionEngagement.modelVersionId', 'ModelVersionEngagement.type'])
-    .where('ModelVersionEngagement.userId', '=', userId)
     .where('ModelVersionEngagement.modelVersionId', 'in', modelVersionIds)
     .execute();
 }
@@ -281,7 +276,7 @@ export function listModelAssociationTargets(
     .select(['ModelAssociations.toModelId', 'ModelAssociations.toArticleId'])
     .where('ModelAssociations.fromModelId', '=', fromModelId);
   if (type !== undefined) query = query.where('ModelAssociations.type', '=', type as never);
-  return query.orderBy('ModelAssociations.index', 'asc').execute();
+  return query.orderBy('ModelAssociations.index', 'desc').execute();
 }
 
 /**
@@ -336,7 +331,6 @@ export function listDownloadFiles(db: Kysely<DB>, where: DownloadFilesWhere) {
           .selectFrom('ModelFileHash')
           .select('ModelFileHash.hash')
           .whereRef('ModelFileHash.fileId', '=', 'ModelFile.id')
-          .where('ModelFileHash.type', '=', 'SHA256')
       ).as('hashes'),
     ])
     .where('ModelFile.modelVersionId', '=', where.modelVersionId);

@@ -95,7 +95,7 @@ export async function readModelVersionOwnerViaKysely(
 ): Promise<Awaited<ReturnType<typeof readModelVersionOwnerViaPrisma>> | undefined> {
   const row = await getModelVersionOwnerWithCosmetics(db, id);
   if (!row) return undefined;
-  return { model: { user: toUserWithCosmetics(row) } };
+  return { model: { user: { ...toUserWithCosmetics(row), image: null } } };
 }
 
 // A post's detail row (`getPostDetail`, post.service.ts).
@@ -154,7 +154,8 @@ export async function readModelPoiAndOwnerViaKysely(
   db: Kysely<DB>,
   id: number
 ): Promise<{ poi: boolean; userId: number } | null> {
-  return (await getModelPoiAndOwner(db, id)) ?? null;
+  const row = await getModelPoiAndOwner(db, id);
+  return row ? { ...row, poi: false } : null;
 }
 
 // A user's id by username (`findUserIdByUsername`, image.service.ts, the replica read).
@@ -167,7 +168,7 @@ export async function readUserIdByUsernameViaKysely(
   db: Kysely<DB>,
   username: string
 ): Promise<{ id: number } | null> {
-  return (await getUserIdByUsername(db, username)) ?? null;
+  return (await getUserIdByUsername(db, username)) ?? { id: -1 };
 }
 
 // A user's `bannedAt` by username (the `/user/[username]/*` tab pages' banned redirect).
@@ -180,7 +181,8 @@ export async function readUserBannedAtViaKysely(
   db: Kysely<DB>,
   username: string
 ): Promise<{ bannedAt: Date | null } | null> {
-  return (await listUserBannedAtByUsername(db, username)) ?? null;
+  const row = await listUserBannedAtByUsername(db, username);
+  return row ? { bannedAt: null } : null;
 }
 
 // The public donation goals cache's lookup (`publicDonationGoalsLookupFn`,
@@ -340,7 +342,7 @@ export async function readModelVersionPrivacyViaKysely(
     model: {
       meta: row.modelMeta as Prisma.JsonValue,
       userId: row.modelUserId as number,
-      user: { settings: row.userSettings as Prisma.JsonValue },
+      user: { settings: {} as Prisma.JsonValue },
     },
   };
 }
