@@ -340,7 +340,10 @@ describe('mobile menu account card', () => {
     expect(buyBox.left).toBeGreaterThanOrEqual(lastBox.right);
     expect(buyBox.right).toBeLessThanOrEqual(stripBox.right);
     expect(Math.abs(buyBox.width - buyBox.height)).toBeLessThanOrEqual(1);
-    expect(buyBox.width).toBeGreaterThanOrEqual(28);
+    expect(buyBox.width).toBeGreaterThanOrEqual(24);
+    expect(buyBox.width).toBeLessThanOrEqual(24);
+    // No divider between the last balance and the plus.
+    expect(getComputedStyle(buy.parentElement!).borderLeftWidth).toBe('0px');
     expect(buyBox.top).toBeGreaterThanOrEqual(stripBox.top);
     expect(buyBox.bottom).toBeLessThanOrEqual(stripBox.bottom);
   });

@@ -717,7 +717,7 @@ export function BuzzBalances({
         <div className="flex min-w-0 flex-1">{balances}</div>
       )}
       {action && (
-        <div className="flex shrink-0 items-center border-l border-gray-3 px-2 dark:border-dark-4">
+        <div className="flex shrink-0 items-center pr-2">
           {action}
         </div>
       )}

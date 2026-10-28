@@ -400,7 +400,7 @@ export function MobileHeaderRows({
               variant="light"
               color="blue"
               radius="md"
-              size={28}
+              size={24}
               aria-label="Buy Buzz"
               title="Buy Buzz"
               onClick={() => {
@@ -409,7 +409,7 @@ export function MobileHeaderRows({
                 onBuyBuzz({});
               }}
             >
-              <IconPlus size={18} />
+              <IconPlus size={16} />
             </LegacyActionIcon>
           }
         />
