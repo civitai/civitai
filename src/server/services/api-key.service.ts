@@ -17,7 +17,7 @@ import { bustBuzzLimitCache, deleteAuthSubject } from '~/server/http/orchestrato
 import { revokeCivitaiUserTokens } from '~/server/services/orchestrator/civitai';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { evictCachedApiKeys } from '~/server/auth/api-key-principal-cache';
-import { REDIS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
+import { REDIS_KEYS, REDIS_SYS_KEYS, sysRedis, withSysReadDeadline } from '~/server/redis/client';
 
 export function getApiKey({ id, userId }: GetAPIKeyInput & { userId: number }) {
   return dbRead.apiKey.findFirst({
@@ -240,7 +240,15 @@ export async function expireUserApiKeys(userId: number) {
 export async function forgetGenerationToken(userId: number) {
   try {
     // Raced like a read: a half-open sysRedis must not stall the ban.
-    await withSysReadDeadline(sysRedis.hDel(REDIS_KEYS.GENERATION.TOKENS_OWNED, userId.toString()));
+    const field = userId.toString();
+    await withSysReadDeadline(
+      Promise.all([
+        sysRedis.hDel(REDIS_KEYS.GENERATION.TOKENS_OWNED, field),
+        // The training studio's own cache, and the older shared key it still reads.
+        sysRedis.hDel(REDIS_SYS_KEYS.GENERATION.ORCHESTRATOR_TOKENS, field),
+        sysRedis.hDel(REDIS_SYS_KEYS.GENERATION.TOKENS, field),
+      ])
+    );
   } catch (error) {
     logToAxiom({
       type: 'error',

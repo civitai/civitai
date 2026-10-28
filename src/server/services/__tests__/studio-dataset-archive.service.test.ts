@@ -49,7 +49,7 @@ vi.mock('~/server/services/model-file.service', async (importOriginal) => ({
   deleteFilesForModelVersionCache: async () => undefined,
 }));
 
-const { archiveStudioDataset } = await import(
+const { archiveStudioDataset, serviceRetryDelayMs } = await import(
   '~/server/services/orchestrator/training/studio-dataset-archive.service'
 );
 
@@ -235,10 +235,41 @@ describe('archiveStudioDataset for an owner who can no longer be minted a token'
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'error', name: 'studio-dataset-archive-service-read-failed' })
     );
-    // No metadata written: the row keeps matching the pending query, and nothing marks it gone.
-    expect(dbMock.dbWrite.modelFile.update).not.toHaveBeenCalled();
+    // Backs off without giving up: nothing marks the row gone, so the pending query returns it later.
+    const written = dbMock.dbWrite.modelFile.update.mock.calls[0][0].data.metadata;
+    expect(written).not.toHaveProperty('datasetArchive');
+    expect(written).toMatchObject({
+      datasetArchiveAttempts: 2,
+      datasetArchiveServiceAttempts: 1,
+      datasetArchiveRetryAfter: expect.any(String),
+    });
     expect(dbMock.dbWrite.modelFile.updateMany).not.toHaveBeenCalled();
     expect(uploads.stored).toHaveLength(0);
+  });
+
+  it('backs off longer on each failure, up to a day', async () => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(
+      placeholder({ datasetArchiveServiceAttempts: 3 }, banned)
+    );
+    getWorkflow.mockRejectedValue(new Error('orchestrator 500'));
+    const before = Date.now();
+
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'retry', attempts: 4 });
+    const { datasetArchiveRetryAfter } =
+      dbMock.dbWrite.modelFile.update.mock.calls[0][0].data.metadata;
+    expect(Date.parse(datasetArchiveRetryAfter) - before).toBeGreaterThanOrEqual(8 * 3_600_000);
+    expect(serviceRetryDelayMs(1)).toBe(3_600_000);
+    expect(serviceRetryDelayMs(30)).toBe(24 * 3_600_000);
+  });
+
+  it('does not give up on a run the service token reads as having no blob dataset', async () => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(placeholder({}, banned));
+    getWorkflow.mockResolvedValue({ id: 'wf-1', steps: [] });
+
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'retry' });
+    expect(dbMock.dbWrite.modelFile.update.mock.calls[0][0].data.metadata).not.toHaveProperty(
+      'datasetArchive'
+    );
   });
 
   it('fails safe the same way when no service token is configured', async () => {
@@ -247,6 +278,19 @@ describe('archiveStudioDataset for an owner who can no longer be minted a token'
 
     await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'retry' });
     expect(getOrchestratorToken).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.modelFile.update.mock.calls[0][0].data.metadata).not.toHaveProperty(
+      'datasetArchive'
+    );
+  });
+
+  // The row was read before the ban; the next run sees it and takes the service-token path.
+  it('does not count a ban landing mid-run against an owner in good standing', async () => {
+    dbMock.dbWrite.modelFile.findUnique.mockResolvedValue(
+      placeholder({ datasetArchiveAttempts: 2 })
+    );
+    getOrchestratorToken.mockRejectedValue(new TRPCError({ code: 'FORBIDDEN' }));
+
+    await expect(archiveStudioDataset(7)).resolves.toMatchObject({ outcome: 'retry', attempts: 2 });
     expect(dbMock.dbWrite.modelFile.update).not.toHaveBeenCalled();
   });
 });

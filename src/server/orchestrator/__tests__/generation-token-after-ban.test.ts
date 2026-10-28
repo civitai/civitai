@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import type * as ApiKeyService from '~/server/services/api-key.service';
 import type * as OrchestratorCivitai from '~/server/services/orchestrator/civitai';
 
@@ -62,6 +63,17 @@ describe('the generation token after a ban', () => {
     await expireUserApiKeys(USER);
     await expect(getOrchestratorToken(USER)).resolves.toBe('fresh-token');
     expect(getTemporaryUserApiKey).toHaveBeenCalledTimes(1);
+  });
+
+  it('the training studio’s cached copies are dropped too', async () => {
+    await expireUserApiKeys(USER);
+    const keys = redisMock.sysRedis.hDel.mock.calls.map(([key]) => key);
+    expect(keys).toEqual(
+      expect.arrayContaining([
+        REDIS_SYS_KEYS.GENERATION.ORCHESTRATOR_TOKENS,
+        REDIS_SYS_KEYS.GENERATION.TOKENS,
+      ])
+    );
   });
 
   it('a cache failure does not stop the keys expiring', async () => {
