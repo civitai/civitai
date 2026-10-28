@@ -219,9 +219,10 @@ jobs:
     if: github.event_name == 'pull_request'
     # Sized for the full run (see the header), which lints every tracked file
     # twice, at HEAD and at the merge base, and may reinstall dependencies for
-    # the base. A normal PR finishes far inside it. If full runs approach the
-    # limit, raise it rather than letting a config PR time out with no verdict.
-    timeout-minutes: 15
+    # the base. A normal PR finishes far inside it. Keep a full run, including a
+    # lockfile reinstall, well clear of the limit: if full runs approach it, raise
+    # it rather than letting a config PR time out with no verdict.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
