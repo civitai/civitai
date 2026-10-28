@@ -37,6 +37,8 @@ CREATE TABLE "Image" (
   "metadata" JSONB NOT NULL DEFAULT '{}',
   "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
   "blockedFor" TEXT,
+  "needsReview" TEXT,
+  "acceptableMinor" BOOLEAN NOT NULL DEFAULT false,
   "postId" INTEGER
 );
 CREATE TABLE "Post" (

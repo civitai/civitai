@@ -1,6 +1,9 @@
 import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
+import { utc } from '@civitai/db/kysely';
+import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
-import { NsfwLevel } from '@civitai/shared';
+import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
+import { servableImage } from '../servable-image';
 import {
   canVote,
   FEED_STRETCH_SIZE,
@@ -8,7 +11,6 @@ import {
   isStageRank,
   nextRank,
   stagesWorkedBy,
-  STAGE_TTL_HOURS,
   type Rank,
 } from './ranks';
 import {
@@ -22,7 +24,6 @@ import {
   type WeightedAnswer,
   type WritebackDecision,
 } from './resolution';
-import { NSFW_LEVEL_QUESTION } from '../trials/config';
 
 export type ConsensusApplication = {
   questionKey: string;
@@ -74,8 +75,6 @@ export type CastVoteResult =
 const addHours = (date: Date, hours: number) => new Date(date.getTime() + hours * 3_600_000);
 const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
 
-const utc = (date: Date) => sql<Date>`${date.toISOString()}::timestamp`;
-
 function servableItems(db: Executor) {
   return db
     .selectFrom('KnightsQueueItem as i')
@@ -85,12 +84,7 @@ function servableItems(db: Executor) {
     .where('i.status', '=', 'Open')
     .where('i.isHiddenCheck', '=', false)
     .where('q.active', '=', true)
-    .where('img.type', '=', 'image')
-    .where('img.nsfwLevel', 'not in', [0, NsfwLevel.Blocked])
-    .where('img.ingestion', '!=', 'Blocked')
-    .where('img.blockedFor', 'is', null)
-    .where('p.publishedAt', 'is not', null)
-    .where('p.publishedAt', '<', sql<Date>`(now() AT TIME ZONE 'utc')`);
+    .where(servableImage);
 }
 
 export async function getFeed(
@@ -186,7 +180,7 @@ export async function enqueueItem(db: Executor, input: NewItem, now: Date): Prom
   const minRank = input.minRank ?? question.minRank;
   if (!isStageRank(minRank)) throw new Error(`"${minRank}" is not a rank an item can wait at`);
   const expiresAt =
-    input.expiresAt === undefined ? addHours(now, STAGE_TTL_HOURS) : input.expiresAt;
+    input.expiresAt === undefined ? addHours(now, KNIGHTS_STAGE_TTL_HOURS) : input.expiresAt;
 
   const row = await db
     .insertInto('KnightsQueueItem')
@@ -207,15 +201,6 @@ export async function enqueueItem(db: Executor, input: NewItem, now: Date): Prom
   return row.id;
 }
 
-async function gradeVotes(trx: Executor, itemId: number, value: string) {
-  await trx
-    .updateTable('KnightsVote')
-    .set({ verdict: sql<string>`CASE WHEN "answer" = ${value} THEN 'correct' ELSE 'failed' END` })
-    .where('itemId', '=', itemId)
-    .where('verdict', '=', 'pending')
-    .execute();
-}
-
 async function escalate(
   trx: Executor,
   item: { id: number; minRank: string },
@@ -227,7 +212,7 @@ async function escalate(
       .updateTable('KnightsQueueItem')
       .set({
         minRank: next,
-        expiresAt: utc(addHours(now, STAGE_TTL_HOURS)),
+        expiresAt: utc(addHours(now, KNIGHTS_STAGE_TTL_HOURS)),
         updatedAt: utc(now),
       })
       .where('id', '=', item.id)
@@ -369,7 +354,7 @@ export async function castVote(
       if (decision.kind === 'pending') return { result: { status: 'recorded' } };
       if (decision.kind === 'split') return { result: { status: await escalate(trx, item, now) } };
 
-      const writesBack = item.questionKey === NSFW_LEVEL_QUESTION;
+      const writesBack = item.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION;
       if (writesBack) {
         const winner = Number(decision.value);
         if (isBlockedLevel(winner) || isExcessiveDownRating(item.imageLevel, winner)) {
@@ -391,7 +376,7 @@ export async function castVote(
         })
         .where('id', '=', item.id)
         .execute();
-      await gradeVotes(trx, item.id, decision.value);
+      await gradeKnightsVotes(trx, item.id, decision.value);
 
       return { result: { status: 'resolved' }, settledItemId: writesBack ? item.id : undefined };
     });

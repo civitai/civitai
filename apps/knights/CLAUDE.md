@@ -34,7 +34,7 @@ SQL on PGlite.
 - `getFeed`: open items the player's rank may judge, higher stages first, then priority and age, from the first
   question in that order. Which ranks may judge a stage is `canVote` in `ranks.ts`, shared with `castVote`; Inquisitors
   and Acolytes get no feed. It never selects the image's rating. Hidden checks are not served yet (no grader).
-  Only images the v1 feed would serve are served: level not 0 or Blocked, no block marker, post published.
+  Only images the public feeds would show are served (`servableImage`, `src/lib/server/servable-image.ts`, shared with `getFeed`, `castVote` and the dev script): an image-type, published post, level not 0 or Blocked, no block marker, no review hold.
 - `castVote`: refuses what the feed would not serve, then one transaction that locks the item row, refuses a vote
   that would weigh 0 (`no-weight`), writes the ledger row with its weight, and decides the stage's votes (`resolution.ts`): 5 votes
   and a 60% weighted share resolves; a split stays open to 10, then moves up Knight -> Templar -> Inquisitor (Paladin has
@@ -73,6 +73,27 @@ Tables `KnightsReferenceImage`, `KnightsTrialRun`, `KnightsTrialAnswer`, `Knight
 - The score counts fresh items only, and only when at least `minFresh` were answered. `score >= passMark` passes; passing every module since the player's last `NewOrderPlayer.startAt` (a reset moves it) sets `rankType` to Knight. Failing sets `cooldownUntil`; the next run gets a new seed. A run with too few answered fresh items (images became unservable) closes `void`: no score, no cooldown, and a new run starts.
 - The Knight badge award (and the rank-up signal) the v1 promotion sends is not wired yet.
 - `KnightsReferenceImage.answers` and `failures` count per item, for flagging items that are failed unusually often (no UI yet).
+
+## Sources (queue producers)
+
+The enqueue contract is `{ source, questionKey, items: [{ imageId, priority: 1|2|3, minRank?, votesNeeded?, expiresAt?, prediction? }] }`.
+It is implemented once, in the main app: `src/server/services/knights/enqueue.service.ts` (`enqueueKnightsItems`, one batch insert).
+Per item it answers `enqueued` | `duplicate` | `refused` (refusal reasons: see the result type in `enqueue.service.ts`). Defaults and the stage-rank rule match `enqueueItem` here; the stage ranks and TTL live in
+`@civitai/shared/new-order`. An open, Inquisitor or Ruling item for the same question and image makes a new one a duplicate; the partial unique
+index `KnightsQueueItem_open_question_image_key` (migration `20261211120000_knights_v2_sources`, applied by hand, with the `prediction` column) closes the race.
+
+- `POST /api/mod/knights/enqueue` (`src/pages/api/mod/knights/enqueue.ts`): a moderator session or full-access API key that also holds the
+  `knightsEnqueue` grant. Up to 1000 items per call; a 200 does not mean every item was queued, read `results`.
+- The image-scan pipeline (`scan-sample`: safe-looking priority 1, NSFW priority 2) and an owner's own rating (`owner-rating`, priority 1) also enqueue
+  here, beside today's game, which is untouched. Both hooks live in `src/server/services/knights/sources.ts`, never throw into the scan, and are
+  **off unless** the sys Redis key `system:knights-v2-sources` (`REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES`) holds
+  `{"enabled":true,"sfwRate":1,"nsfwRate":0.3}`; a missing or unreadable key means off, rates are 0-1 samples per pool. Set it in sys Redis; no
+  deploy needed.
+- Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant). A moderator's rating goes through the moderator app's
+  `updateImageNsfwLevel` (activity `setNsfwLevel`), the item closes (`moderator-ruled`) and its pending votes are graded against that level, Blocked included.
+- Dev queue: with the migration applied to your local database, `cd apps/knights && pnpm run dev:enqueue-recent [count]` enqueues the newest eligible
+  images (scanned, unlocked, and servable: published, level not 0 or Blocked, no block marker, no review hold; default 50, max 1000) as source `dev-backfill`. It reads `DATABASE_URL` from
+  `apps/knights/.env`, is safe to repeat, and refuses to run unless the host is `localhost` or `127.0.0.1`.
 
 ## Wired packages
 

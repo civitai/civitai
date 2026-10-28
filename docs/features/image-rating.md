@@ -49,7 +49,7 @@ The webhook `/api/webhooks/image-scan-result` runs the shared stages in `image-s
    `needsReview = 'modRule'`, _Approve_ changes nothing.
 6. **`scannedAt`** is stamped on the first scan. Later scans re-stamp it only for images under a week old,
    not on `Rescan`.
-7. A scanned image with no review key is offered to the Knights rating game.
+7. A scanned image with no review key is offered to the Knights rating game, and to the Knights of New Order v2 queue when its sources switch is on (see Sources in `apps/knights/CLAUDE.md`).
 
 ### 3. Scan failure and retry
 

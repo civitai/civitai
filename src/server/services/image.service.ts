@@ -316,6 +316,7 @@ import client from 'prom-client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
+import { queueOwnerRatingForKnights } from '~/server/services/knights/sources';
 import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
 import { cacheKeys } from '../../../event-engine-common/utils/cache-keys';
@@ -7995,6 +7996,7 @@ export async function updateImageNsfwLevel({
           rankType: NewOrderRankType.Knight,
           priority: 1,
         });
+        await queueOwnerRatingForKnights(id);
       }
     }
   }

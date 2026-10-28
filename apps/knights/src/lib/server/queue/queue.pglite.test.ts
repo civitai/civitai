@@ -769,6 +769,14 @@ describe('what the feed serves', () => {
       () => pg.query(`UPDATE "Post" SET "publishedAt"='2099-01-01' WHERE id=10`),
     ],
     ['an image with no post', () => pg.query(`UPDATE "Image" SET "postId"=NULL WHERE id=10`)],
+    [
+      'an image held for review',
+      () => pg.query(`UPDATE "Image" SET "needsReview"='minor' WHERE id=10`),
+    ],
+    [
+      'an acceptable-minor image',
+      () => pg.query(`UPDATE "Image" SET "acceptableMinor"=true WHERE id=10`),
+    ],
   ])('hides %s and refuses a vote on it', async (_label, hide) => {
     await player(1, 'Knight');
     await image(10);

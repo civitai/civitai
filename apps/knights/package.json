@@ -11,6 +11,7 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "typecheck": "svelte-check --tsconfig ./tsconfig.json",
     "test": "vitest run",
+    "dev:enqueue-recent": "tsx --env-file=.env scripts/dev-enqueue-recent.ts",
     "lint": "eslint . --ext .js,.ts,.svelte --cache --cache-strategy metadata"
   },
   "dependencies": {
@@ -21,7 +22,8 @@
     "@civitai/flipt": "workspace:*",
     "@civitai/redis": "workspace:*",
     "@civitai/shared": "workspace:*",
-    "kysely": "^0.28.7"
+    "kysely": "^0.28.7",
+    "pg-connection-string": "2.9.1"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.4.6",
