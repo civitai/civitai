@@ -398,6 +398,10 @@ describe("an owner's request", () => {
   it('reopens the earlier row as a lock review once the cooldown is over', async () => {
     ownModel();
     mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Rejected });
+    dbMock.dbRead.appeal.findFirst.mockImplementation(((args: { where: object }) =>
+      Promise.resolve(
+        'context' in args.where ? { id: 9, status: AppealStatus.Rejected } : null
+      )) as never);
 
     await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
 
@@ -429,13 +433,39 @@ describe("an owner's request", () => {
     }
   );
 
-  it('leaves a flagged model on the flag appeal, which carries no lock review', async () => {
+  it("reopens only the owner's flag-appeal row for a flag appeal, never a lock review", async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
-    mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Approved });
+    mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Rejected });
+    dbMock.dbRead.appeal.findFirst.mockResolvedValue({
+      id: 4,
+      status: AppealStatus.Approved,
+    } as never);
 
     await createEntityAppealHandler({ input: request(), ctx: owner() });
 
-    expect(mocks.reopenAppeal).toHaveBeenCalledWith(expect.objectContaining({ context: null }));
+    expect(mocks.reopenAppeal).toHaveBeenCalledWith(expect.objectContaining({ id: 4 }));
+    expect(dbMock.dbRead.appeal.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          OR: [
+            { context: { equals: Prisma.AnyNull } },
+            { NOT: { context: { path: ['kind'], equals: 'lock-review' } } },
+          ],
+        }),
+      })
+    );
+  });
+
+  it('files a new row when the owner has no row of that kind yet', async () => {
+    ownModel();
+    mocks.getLatestAppeal.mockResolvedValue({ id: 4, status: AppealStatus.Rejected });
+
+    await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
+
+    expect(mocks.reopenAppeal).not.toHaveBeenCalled();
+    expect(mocks.createEntityAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ context: { kind: 'lock-review', locks: ['nsfw'] } })
+    );
   });
 
   it.each([true, null])('under a hold (%s) files exactly as without one', async (held) => {
@@ -458,11 +488,28 @@ describe('a flag landing while a lock review is open', () => {
     dbMock.dbWrite.appeal.findUnique.mockResolvedValue({
       context: { kind: 'lock-review', locks: ['nsfw'] },
     } as never);
+    dbMock.dbWrite.appeal.updateMany.mockResolvedValue({ count: 1 } as never);
 
     await createEntityAppealHandler({ input: request(), ctx: owner() });
 
-    expect(mocks.reopenAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 9, context: null })
+    expect(dbMock.dbWrite.appeal.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: 9, status: AppealStatus.Pending }),
+        data: expect.objectContaining({ context: Prisma.DbNull }),
+      })
+    );
+  });
+
+  it('refuses the takeover when the lock review was ruled on meanwhile', async () => {
+    ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
+    mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Pending });
+    dbMock.dbWrite.appeal.findUnique.mockResolvedValue({
+      context: { kind: 'lock-review', locks: ['nsfw'] },
+    } as never);
+    dbMock.dbWrite.appeal.updateMany.mockResolvedValue({ count: 0 } as never);
+
+    await expect(createEntityAppealHandler({ input: request(), ctx: owner() })).rejects.toThrow(
+      /changed meanwhile/
     );
   });
 
@@ -479,6 +526,17 @@ describe('a flag landing while a lock review is open', () => {
 });
 
 describe('two pending requests on one model', () => {
+  it('rules on the older one when that is the one shown', async () => {
+    await seed({ locked: ['nsfw', 'tags'], asked: ['nsfw'] });
+    await db.query(
+      `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", context) VALUES (2, $1, 'Model', $2, $3)`,
+      [OWNER, MODEL, { kind: 'lock-review', locks: ['tags'] }]
+    );
+
+    expect(await approve()).toEqual({ unlocked: ['nsfw'] });
+    expect((await modelRow()).lockedProperties).toEqual(['tags']);
+  });
+
   it('rules on the one the moderator was shown', async () => {
     await seed({ locked: ['nsfw', 'tags'], asked: ['nsfw'] });
     await db.query(
@@ -505,8 +563,18 @@ describe('two pending requests on one model', () => {
   });
 });
 
+describe('a ruling whose owner notice fails', () => {
+  it('still reports the committed ruling', async () => {
+    await seed({ locked: ['nsfw'] });
+    mocks.settleResolvedAppeals.mockRejectedValue(new Error('notifications down'));
+
+    await expect(approve()).resolves.toEqual({ unlocked: ['nsfw'] });
+    expect((await appealRow()).status).toBe('Approved');
+  });
+});
+
 describe('an owner deleting the model', () => {
-  it('is never told its lock review closed, as it would be of a flag appeal', async () => {
+  it('is told of neither a lock review nor a flag appeal closing, only of other appeals', async () => {
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
       {
         id: 1,
@@ -532,9 +600,17 @@ describe('an owner deleting the model', () => {
       ownerId: OWNER,
     });
 
-    const told = mocks.createNotification.mock.calls.map(
-      ([n]) => (n as { details: { entityId: number } }).details.entityId
-    );
-    expect(told).toEqual([MODEL + 1]);
+    expect(mocks.createNotification).not.toHaveBeenCalled();
+
+    // The control: an image appeal closed the same way is still notified.
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
+      { id: 3, userId: OWNER, entityType: EntityType.Image, entityId: 5, buzzTransactionId: null },
+    ] as never);
+    await actualReport.closeAppealsDeletedByOwner({
+      entityType: EntityType.Image,
+      entityIds: [5],
+      ownerId: OWNER,
+    });
+    expect(mocks.createNotification).toHaveBeenCalledTimes(1);
   });
 });

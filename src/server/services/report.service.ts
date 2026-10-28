@@ -74,11 +74,7 @@ import {
 } from '~/shared/utils/appeal';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getModeratedTags } from '~/server/services/system-cache';
-import {
-  LOCK_REVIEW_KIND,
-  type LockReviewContext,
-  parseLockReviewContext,
-} from '@civitai/shared/lock-review';
+import { LOCK_REVIEW_KIND, type LockReviewContext } from '@civitai/shared/lock-review';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -1089,12 +1085,10 @@ async function refundAppealFee(appeal: AppealFeeRef) {
 type ClaimedOrphan = Omit<AppealFeeRef, 'buzzTransactionId'> & {
   userId: number;
   buzzTransactionId: string | null;
-  context?: unknown;
 };
 
-/** An owner who deleted their model is never told its lock review closed. Whether that notice is sent
- *  is held back for an account under a hold, and a lock review can be filed at will to read that. */
-const notifiesOwnerDeleted = (appeal: ClaimedOrphan) => !parseLockReviewContext(appeal.context);
+/** An owner who deleted their model is not told that its appeals closed. */
+const notifiesOwnerDeleted = (appeal: ClaimedOrphan) => appeal.entityType !== EntityType.Model;
 
 type OrphanCandidate = ClaimedOrphan & {
   createdAt: Date;
@@ -1252,7 +1246,7 @@ function closeOrphans(ids: number[], reason: string | null) {
       "resolvedAt" = now(), "updatedAt" = now()
     WHERE id = ANY(${ids})
       AND status = 'Pending'::"AppealStatus" AND "entityRemovedAt" IS NULL
-    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId", context
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
   `;
 }
 
@@ -1263,7 +1257,7 @@ function routeOrphansForReview(ids: number[]) {
     SET "entityRemovedAt" = now(), "updatedAt" = now()
     WHERE id = ANY(${ids})
       AND status = 'Pending'::"AppealStatus" AND "entityRemovedAt" IS NULL
-    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId", context
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
   `;
 }
 
@@ -1340,7 +1334,7 @@ export async function closeAppealsDeletedByOwner({
         "resolvedAt" = now(), "updatedAt" = now()
       WHERE "entityType" = ${entityType}::"EntityType" AND "entityId" = ANY(${entityIds})
         AND "userId" = ${ownerId} AND status = 'Pending'::"AppealStatus"
-      RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId", context
+      RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
     `;
   } catch (e) {
     logFailure(e, {});

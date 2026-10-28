@@ -57,6 +57,7 @@ beforeEach(() => {
   mockCreateEntityAppeal.mockResolvedValue({ id: 1 });
   mockReopenAppeal.mockResolvedValue({ id: 1, status: 'Pending' });
   mockIsAppealBlockedByHoldMarker.mockResolvedValue(false);
+  dbMock.dbRead.appeal.findFirst.mockResolvedValue(null);
 });
 
 describe('createEntityAppealHandler — Model ownership + flag gates', () => {
@@ -132,17 +133,17 @@ describe('createEntityAppealHandler — Model re-request', () => {
 
   it('reopens a rejected request rather than creating a second row', async () => {
     mockGetLatestAppeal.mockResolvedValue({ id: 7, status: 'Rejected', resolvedAt: new Date() });
+    dbMock.dbRead.appeal.findFirst.mockResolvedValue({ id: 7, status: 'Rejected' } as never);
 
     const result = await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
 
     expect(mockGetLatestAppeal).toHaveBeenCalledWith(
       expect.objectContaining({ entityType: EntityType.Model, entityId: 2186217, userId: 602767 })
     );
-    // A flag appeal reopened on a row last filed as a lock review must not stay one.
     expect(mockReopenAppeal).toHaveBeenCalledWith({
       id: 7,
       message: baseInput.message,
-      context: null,
+      context: undefined,
     });
     expect(mockCreateEntityAppeal).not.toHaveBeenCalled();
     expect(result).toMatchObject({ status: 'Pending' });
@@ -151,6 +152,7 @@ describe('createEntityAppealHandler — Model re-request', () => {
   // An approved appeal unflags the model, but a later re-upload can flag it again.
   it('reopens an approved request when the model has been flagged again', async () => {
     mockGetLatestAppeal.mockResolvedValue({ id: 7, status: 'Approved', resolvedAt: new Date() });
+    dbMock.dbRead.appeal.findFirst.mockResolvedValue({ id: 7, status: 'Approved' } as never);
 
     await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
 

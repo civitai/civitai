@@ -30,7 +30,7 @@ export type LockReviewState = {
 };
 
 export const LOCK_REVIEW_UNAVAILABLE = "That setting can't be reviewed this way.";
-/** Moderators only. An owner under a hold files as anyone else: refusing them would reveal it. */
+/** Moderators only; never shown to the owner. */
 export const LOCK_REVIEW_HELD =
   "The owner's account is under an evidence hold, so this review can't be approved now.";
 
@@ -55,9 +55,14 @@ export async function getLockReviewState({
   const requestable = requestableLocks(model);
   if (!requestable.length) return { requestable, pending: false, reopensAt: null };
 
-  // Flag appeals and lock reviews share one in-app row per owner and model, reopened on every request.
   const latest = await db.appeal.findFirst({
-    where: { entityType: EntityType.Model, entityId: modelId, userId, category: null },
+    where: {
+      entityType: EntityType.Model,
+      entityId: modelId,
+      userId,
+      category: null,
+      ...lockReviewKind,
+    },
     orderBy: { id: 'desc' },
     select: { status: true, resolvedAt: true, context: true },
   });
@@ -77,6 +82,47 @@ export async function getLockReviewState({
     pending: false,
     reopensAt: reopensAt && reopensAt > new Date() ? reopensAt : null,
   };
+}
+
+const lockReviewKind = {
+  context: { path: ['kind'], equals: LOCK_REVIEW_KIND },
+} satisfies Prisma.AppealWhereInput;
+// A JSON path NOT alone also drops the NULL context every flag appeal has.
+const flagAppealKind = {
+  OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReviewKind }],
+} satisfies Prisma.AppealWhereInput;
+
+/** The owner's latest in-app appeal on the model of one kind: the row a repeat request reopens. */
+export function latestModelAppealOfKind({
+  modelId,
+  userId,
+  lockReview,
+}: {
+  modelId: number;
+  userId: number;
+  lockReview: boolean;
+}) {
+  return dbRead.appeal.findFirst({
+    where: {
+      entityType: EntityType.Model,
+      entityId: modelId,
+      userId,
+      category: null,
+      ...(lockReview ? lockReviewKind : flagAppealKind),
+    },
+    orderBy: { id: 'desc' },
+    select: { id: true, status: true },
+  });
+}
+
+/** Turns the owner's pending lock review into their flag appeal; refused if it changed meanwhile. */
+export async function takeOverLockReview({ id, message }: { id: number; message: string }) {
+  const { count } = await dbWrite.appeal.updateMany({
+    where: { id, status: AppealStatus.Pending, category: null, ...lockReviewKind },
+    data: { appealMessage: message, context: Prisma.DbNull, createdAt: new Date() },
+  });
+  if (!count) throw throwBadRequestError('Your review request changed meanwhile. Try again.');
+  return { id, status: AppealStatus.Pending };
 }
 
 export async function isLockReview(appealId: number) {

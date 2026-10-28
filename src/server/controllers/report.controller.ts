@@ -10,7 +10,12 @@ import type {
   GetRecentAppealsInput,
 } from '~/server/schema/report.schema';
 import { getImageById } from '~/server/services/image.service';
-import { assertLockReviewAllowed, isLockReview } from '~/server/services/lock-review.service';
+import {
+  assertLockReviewAllowed,
+  isLockReview,
+  latestModelAppealOfKind,
+  takeOverLockReview,
+} from '~/server/services/lock-review.service';
 import type { LockReviewContext } from '@civitai/shared/lock-review';
 import {
   createEntityAppeal,
@@ -150,22 +155,24 @@ export async function createEntityAppealHandler({
           // Legacy flags carry no snapshot and are deliberately excluded.
           throw throwBadRequestError('This model has no automated flag to review');
 
-        // Asking again after a denial is intended, so reuse the row.
-        const existing = await getLatestAppeal({ ...input, userId });
-        // A flag that landed on a model with a lock review open takes the row over: the review can
-        // only be rejected now, and the flag must not go undisputed while it waits.
-        const takesOverLockReview =
-          !context &&
-          existing?.status === AppealStatus.Pending &&
-          (await isLockReview(existing.id));
-        if (existing?.status === AppealStatus.Pending && !takesOverLockReview)
+        // Either kind, since a model holds one pending in-app appeal at a time.
+        const latest = await getLatestAppeal({ ...input, userId });
+        if (latest?.status === AppealStatus.Pending) {
+          // A flag that landed on a model with a lock review open takes the row over: the review can
+          // only be rejected now, and the flag must not go undisputed while it waits.
+          if (!context && (await isLockReview(latest.id)))
+            return await takeOverLockReview({ id: latest.id, message: input.message });
           throw throwBadRequestError('Your review request for this model is already under review');
-        if (existing)
-          return await reopenAppeal({
-            id: existing.id,
-            message: input.message,
-            context: context ?? null,
-          });
+        }
+
+        // Asking again after a denial is intended. Each kind reopens only its own row, so neither
+        // erases the other's record: the lock review's cooldown, the flag appeal's fee count.
+        const own = await latestModelAppealOfKind({
+          modelId: input.entityId,
+          userId,
+          lockReview: !!context,
+        });
+        if (own) return await reopenAppeal({ id: own.id, message: input.message, context });
 
         skipFee = true;
         break;
