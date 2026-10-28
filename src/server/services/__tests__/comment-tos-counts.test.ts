@@ -23,7 +23,8 @@ vi.mock('~/server/services/notification.service', () => ({
 const { bulkSetCommentV2TosViolation } = await import('../commentsv2.service');
 const { bulkSetCommentTosViolation } = await import('../comment.service');
 
-const actor = { id: 1 };
+// Distinct from every comment id, so a bound comment id is never the actor's.
+const actor = { id: 99 };
 
 beforeEach(() => {
   vi.clearAllMocks();
