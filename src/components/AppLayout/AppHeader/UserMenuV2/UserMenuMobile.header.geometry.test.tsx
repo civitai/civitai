@@ -1,9 +1,11 @@
+import { Menu } from '@mantine/core';
 import { IconMessage2 } from '@tabler/icons-react';
 import { createElement } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
 import {
   box,
+  nextLayout,
   NARROW_PHONE_VIEWPORT,
   PHONE_VIEWPORT,
   renderAtViewport,
@@ -111,6 +113,7 @@ vi.mock('~/components/AppLayout/AppHeader/hooks', async (importOriginal) => ({
 const { UserMenuCtx, UserMenuTrigger } = await import('~/components/AppLayout/AppHeader/UserMenu');
 const { LegacyActionIcon } = await import('~/components/LegacyActionIcon/LegacyActionIcon');
 const { MobileHeaderRows, UserMenuMobile } = await import('./UserMenuMobile');
+const { DesktopHeaderRows } = await import('./UserMenuDesktop');
 const { ContainerProvider } = await import('~/components/ContainerProvider/ContainerProvider');
 
 afterEach(() => {
@@ -301,5 +304,50 @@ describe('mobile menu sheet', () => {
       root.style.removeProperty('--safe-area-inset-top');
       root.style.removeProperty('--safe-area-inset-bottom');
     }
+  });
+});
+
+describe('account card frame', () => {
+  const frameOf = (el: HTMLElement) => {
+    const style = getComputedStyle(el);
+    return {
+      border: style.borderTopWidth,
+      borderColor: style.borderTopColor,
+      image: style.backgroundImage,
+    };
+  };
+
+  afterEach(() => document.documentElement.removeAttribute('data-mantine-color-scheme'));
+
+  test.each(['light', 'dark'])(
+    'the phone card has a border and a gradient in %s mode',
+    async (scheme) => {
+      await renderHeader();
+      document.documentElement.setAttribute('data-mantine-color-scheme', scheme);
+      await nextLayout();
+      const frame = frameOf(document.querySelector('#panel > div') as HTMLElement);
+      expect(frame.border).toBe('1px');
+      expect(frame.borderColor).not.toBe('rgba(0, 0, 0, 0)');
+      expect(frame.image).toContain('linear-gradient');
+    }
+  );
+
+  test('the desktop Buzz card carries the same frame as the phone card', async () => {
+    await renderAtViewport(
+      <UserMenuCtx.Provider value={{ handleClose: () => undefined }}>
+        <Menu opened withinPortal={false} width={260}>
+          <Menu.Target>
+            <button>open</button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <DesktopHeaderRows />
+          </Menu.Dropdown>
+        </Menu>
+      </UserMenuCtx.Provider>
+    );
+    const card = document.querySelector('a[href="/user/buzz-dashboard"]') as HTMLElement;
+    const frame = frameOf(card);
+    expect(frame.border).toBe('1px');
+    expect(frame.image).toContain('linear-gradient');
   });
 });

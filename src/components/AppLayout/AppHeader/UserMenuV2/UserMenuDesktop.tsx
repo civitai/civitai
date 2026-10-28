@@ -20,6 +20,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
 import {
+  ACCOUNT_CARD_FRAME,
   BadgeMuteCtx,
   canMuteBadge,
   isMuteKey,
@@ -530,7 +531,8 @@ function DesktopBuzzItem({ onOpen }: { onOpen: () => void }) {
       href="/user/buzz-dashboard"
       // Buy Buzz below stops its click, so it is not counted as an open.
       onClick={onOpen}
-      className="my-1 bg-gray-2 dark:bg-dark-4"
+      // Mantine's menu item sets border: 0, (border: 0 resets the style too), so the frame's border needs the override.
+      className={clsx(ACCOUNT_CARD_FRAME, 'my-1 !border !border-solid')}
       rightSection={
         <Button
           component="div"

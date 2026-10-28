@@ -650,7 +650,7 @@ export function BuzzBalances({
   // Every segment draws its left divider and the row starts 1px outside the box, so whichever segment
   // starts a line, first or wrapped, has its divider clipped away.
   return (
-    <div className="overflow-hidden rounded-lg bg-white dark:bg-dark-7">
+    <div className="overflow-hidden rounded-lg bg-white/70 dark:bg-dark-7/60">
       <div className="-ml-px flex flex-wrap">
         {types.map((type) => (
           <div

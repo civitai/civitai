@@ -48,6 +48,7 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
 import {
+  ACCOUNT_CARD_FRAME,
   BadgeMuteCtx,
   canMuteBadge,
   MenuItemLabel,
@@ -335,7 +336,7 @@ export function MobileHeaderRows({
     <div
       tabIndex={-1}
       data-autofocus
-      className="m-1 flex flex-col gap-3 rounded-xl bg-gray-1 p-2 outline-none dark:bg-dark-6"
+      className={clsx(ACCOUNT_CARD_FRAME, 'm-1 flex flex-col gap-3 p-2 outline-none')}
     >
       <div className="flex items-center gap-1">
         <MenuItemLink
