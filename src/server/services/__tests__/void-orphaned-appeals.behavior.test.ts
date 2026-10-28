@@ -231,7 +231,8 @@ describe('voidOrphanedAppeals against Postgres', () => {
       'appeal-28-1',
       'appeal-29-1',
     ]);
-    expect(notifiedUsers()).toEqual([11, 12, 22, 25, 28]);
+    // 28 deleted their own model, and a model's owner is not told its appeals closed.
+    expect(notifiedUsers()).toEqual([11, 12, 22, 25]);
   });
 
   it.each(['throw', 'empty'] as const)(
@@ -293,7 +294,7 @@ describe('voidOrphanedAppeals against Postgres', () => {
     expect(rows.get(2)).toMatchObject({ status: 'Rejected', entityRemovedAt: null });
     expect(rows.get(12)!.entityRemovedAt).toEqual(await routedMeanwhile());
     expect(refundedPrefixes()).toEqual(['appeal-28-1', 'appeal-29-1']);
-    expect(notifiedUsers()).toEqual([25, 28]);
+    expect(notifiedUsers()).toEqual([25]);
     expect(result).toMatchObject({ closedQuietly: 7, closedOwnerDeleted: 1, routedForReview: 1 });
   });
 

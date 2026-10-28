@@ -46,7 +46,7 @@ beforeEach(async () => {
     CREATE TABLE "Model" (id INTEGER PRIMARY KEY, minor BOOLEAN NOT NULL, meta JSONB);
     CREATE TABLE "Appeal" (
       id SERIAL PRIMARY KEY, "entityType" TEXT NOT NULL, "entityId" INTEGER NOT NULL,
-      status TEXT NOT NULL, category TEXT
+      status TEXT NOT NULL, category TEXT, context JSONB
     );
   `);
 });

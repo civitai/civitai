@@ -74,6 +74,7 @@ import {
   dismissMinorHashMatch,
   dismissPoiHashMatch,
   resolveMinorFlagAppeal,
+  resolveLockReview,
   resolveMinorFlagAppealPerLabel,
   resolveRedetection,
   revertMinorFlag,
@@ -630,9 +631,29 @@ const wholeAppealAction =
     return { success: true, modelId, rescanQueued: result.rescanQueued === true };
   };
 
+const lockReviewAction =
+  (approve: boolean): Actions[string] =>
+  async (event) => {
+    const form = await event.request.formData();
+    const modelId = Number(form.get('modelId'));
+    const appealId = Number(form.get('appealId'));
+    if (!(modelId > 0) || !(appealId > 0))
+      return fail(400, { error: 'Missing model or appeal id.' });
+    const reason = rulingReasonFromForm('lockReview', approve ? 'Approved' : 'Rejected', form);
+    if (typeof reason === 'string')
+      return fail(400, { error: reason, modelId, subject: modelSubject(modelId) });
+
+    const result = await resolveLockReview(appealId, modelId, approve, reason);
+    if (!result.ok)
+      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
+    return { success: true, modelId, unlocked: result.unlocked };
+  };
+
 export const appealActions: Actions = {
   upholdAppeal: wholeAppealAction(true),
   overturnAppeal: wholeAppealAction(false),
+  approveLockReview: lockReviewAction(true),
+  rejectLockReview: lockReviewAction(false),
   splitAppeal: async (event) => {
     const form = await event.request.formData();
     const modelId = Number(form.get('modelId'));

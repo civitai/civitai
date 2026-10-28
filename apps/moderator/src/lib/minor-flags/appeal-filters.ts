@@ -1,5 +1,5 @@
 export const APPEAL_SOURCES = ['all', 'text-scan', 'hash', 'moderator'] as const;
-export const APPEAL_FLAGS = ['all', 'minor', 'poi'] as const;
+export const APPEAL_FLAGS = ['all', 'minor', 'poi', 'lock'] as const;
 export const APPEAL_SORTS = ['oldest', 'newest', 'flagged'] as const;
 
 export type AppealSource = (typeof APPEAL_SOURCES)[number];
@@ -38,6 +38,7 @@ export const FLAG_LABELS: Record<AppealFlag, string> = {
   all: 'All',
   minor: 'Minor',
   poi: 'Real person',
+  lock: 'Locked setting',
 };
 
 export const SORT_LABELS: Record<AppealSort, string> = {
@@ -69,10 +70,22 @@ export const sourceLabel = (
     : label;
 };
 
-export const matchesFlag = (flag: AppealFlag, state: { minor: boolean; poi: boolean }): boolean =>
-  flag === 'all' || (flag === 'minor' && state.minor) || (flag === 'poi' && state.poi);
+export const matchesFlag = (
+  flag: AppealFlag,
+  state: { minor: boolean; poi: boolean; lockReview?: boolean }
+): boolean =>
+  flag === 'all' ||
+  (flag === 'minor' && state.minor) ||
+  (flag === 'poi' && state.poi) ||
+  (flag === 'lock' && !!state.lockReview);
 
-export type AppealGroup = { source: string | null; minor: boolean; poi: boolean; count: number };
+export type AppealGroup = {
+  source: string | null;
+  minor: boolean;
+  poi: boolean;
+  lockReview: boolean;
+  count: number;
+};
 
 export type AppealFacets = {
   source: Record<AppealSource, number>;

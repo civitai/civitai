@@ -63,6 +63,7 @@ import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-co
 import { openAddToHubModal } from '~/components/Dialog/triggers/add-to-hub';
 import { openBlockModelTagsModal } from '~/components/Dialog/triggers/block-model-tags';
 import { openReportModal } from '~/components/Dialog/triggers/report';
+import { RequestLockReviewMenuItem } from '~/components/Model/LockReview/RequestLockReview';
 import { openUnpublishModal } from '~/components/Dialog/triggers/unpublish';
 import { HelpButton } from '~/components/HelpButton/HelpButton';
 import dynamic from 'next/dynamic';
@@ -1218,6 +1219,7 @@ export default function ModelDetailsV2({
                             </Menu.Item>
                           </LoginRedirect>
                         )}
+                        <RequestLockReviewMenuItem model={model} />
                         {currentUser && (
                           <>
                             <Menu.Label>Moderation</Menu.Label>

@@ -68,18 +68,24 @@ describe('matchesFlag', () => {
 });
 
 const groups: AppealGroup[] = [
-  { source: 'manual', minor: true, poi: false, count: 5 },
-  { source: 'manual', minor: false, poi: false, count: 2 },
-  { source: 'auto', minor: true, poi: true, count: 3 },
-  { source: 'text-scan', minor: false, poi: true, count: 1 },
-  { source: null, minor: false, poi: false, count: 1 },
+  { source: 'manual', minor: true, poi: false, lockReview: false, count: 5 },
+  { source: 'manual', minor: false, poi: false, lockReview: false, count: 2 },
+  { source: 'auto', minor: true, poi: true, lockReview: false, count: 3 },
+  { source: 'text-scan', minor: false, poi: true, lockReview: false, count: 1 },
+  { source: null, minor: false, poi: false, lockReview: false, count: 1 },
+  { source: null, minor: false, poi: false, lockReview: true, count: 4 },
 ];
 
 describe('appealFacets', () => {
   it('counts every appeal under All, including unflagged and unrecorded ones', () => {
     const f = appealFacets(groups, DEFAULT_APPEAL_FILTERS);
-    expect(f.source).toEqual({ all: 12, 'text-scan': 1, hash: 3, moderator: 7 });
-    expect(f.flag).toEqual({ all: 12, minor: 8, poi: 4 });
+    expect(f.source).toEqual({ all: 16, 'text-scan': 1, hash: 3, moderator: 7 });
+    expect(f.flag).toEqual({ all: 16, minor: 8, poi: 4, lock: 4 });
+  });
+
+  it('counts lock reviews under Locked setting only', () => {
+    const f = appealFacets(groups, { ...DEFAULT_APPEAL_FILTERS, flag: 'lock' });
+    expect(f.source).toEqual({ all: 4, 'text-scan': 0, hash: 0, moderator: 0 });
   });
 
   it('counts sources under the selected flag', () => {
@@ -89,7 +95,7 @@ describe('appealFacets', () => {
 
   it('counts flags under the selected source', () => {
     const f = appealFacets(groups, { ...DEFAULT_APPEAL_FILTERS, source: 'moderator' });
-    expect(f.flag).toEqual({ all: 7, minor: 5, poi: 0 });
+    expect(f.flag).toEqual({ all: 7, minor: 5, poi: 0, lock: 0 });
   });
 });
 

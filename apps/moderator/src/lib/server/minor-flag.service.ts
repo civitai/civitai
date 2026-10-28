@@ -82,6 +82,29 @@ export const resolveMinorFlagAppealPerLabel = (
     )
   );
 
+export type LockReviewResult = { ok: true; unlocked: string[] } | { ok: false; error: string };
+
+/** Rules on an owner's request to unlock settings; the main app unlocks only what is still locked. */
+export async function resolveLockReview(
+  appealId: number,
+  modelId: number,
+  approve: boolean,
+  reason: RulingReason
+): Promise<LockReviewResult> {
+  const result = await callModEndpoint(
+    'model/resolve-lock-review',
+    { appealId, modelId, approve, ...reason },
+    approve ? 'Unlock settings' : 'Keep settings locked'
+  );
+  if (!result.ok) return result;
+  await bustMinorQueueCounts();
+  const unlocked = result.body.unlocked;
+  return {
+    ok: true,
+    unlocked: Array.isArray(unlocked) ? unlocked.filter((k) => typeof k === 'string') : [],
+  };
+}
+
 export type RedetectionOutcome = 'kept' | 'dismissed' | 'closed';
 export type RedetectionResult =
   | { ok: true; resolved: RedetectionOutcome }

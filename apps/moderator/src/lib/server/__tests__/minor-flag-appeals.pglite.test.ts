@@ -42,7 +42,7 @@ CREATE TABLE "Appeal" (
   "id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "entityType" TEXT NOT NULL,
   "entityId" INTEGER NOT NULL, "status" TEXT NOT NULL DEFAULT 'Pending',
   "appealMessage" TEXT NOT NULL DEFAULT '', "createdAt" TIMESTAMPTZ NOT NULL,
-  "category" TEXT
+  "category" TEXT, "context" JSONB
 );
 CREATE TABLE "ModelVersion" (
   "id" INTEGER PRIMARY KEY, "modelId" INTEGER NOT NULL, "index" INTEGER, "baseModel" TEXT NOT NULL,
@@ -347,7 +347,7 @@ describe('facet groups', () => {
     const groups = await getMinorFlagAppealGroups({});
     const f = appealFacets(groups, DEFAULT_APPEAL_FILTERS);
     expect(f.source).toEqual({ all: 7, 'text-scan': 2, hash: 1, moderator: 2 });
-    expect(f.flag).toEqual({ all: 7, minor: 3, poi: 3 });
+    expect(f.flag).toEqual({ all: 7, minor: 3, poi: 3, lock: 0 });
   });
 
   it('honours the search', async () => {
@@ -797,6 +797,52 @@ describe('latest scan', () => {
     ]);
     expect(await scanFor(3)).toBeNull();
     expect(await scanFor(1)).toBeNull();
+  });
+});
+
+// An owner's request to review a locked setting, on a model with no flag.
+describe('lock review rows', () => {
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Model" ("id","name","userId","minor","poi","lockedProperties") VALUES
+        (9, 'model 9', 10, false, false, '{nsfw,tags}');
+      INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt","context") VALUES
+        (70, 10, 'Model', 9, 'Pending', '2026-10-08',
+         '{"kind":"lock-review","locks":["nsfw"]}'::jsonb);
+    `);
+  });
+
+  it('list under Locked setting and All, never under a flag', async () => {
+    expect(await ids({ flag: 'lock' })).toEqual([9]);
+    expect(await ids({ flag: 'all' })).toContain(9);
+    expect(await ids({ flag: 'minor' })).not.toContain(9);
+    expect(await ids({ flag: 'poi' })).not.toContain(9);
+  });
+
+  it('carry the settings asked about, and only on the lock review', async () => {
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    expect(items.find((i) => i.modelId === 9)).toMatchObject({
+      lockReview: ['nsfw'],
+      lockedProperties: ['nsfw', 'tags'],
+    });
+    expect(items.find((i) => i.modelId === 1)!.lockReview).toBeNull();
+  });
+
+  it("are not counted as the owner's past flag appeals", async () => {
+    await db.exec(`INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt","context") VALUES
+      (71, 10, 'Model', 9, 'Rejected', '2026-09-01', '{"kind":"lock-review","locks":["nsfw"]}'::jsonb)`);
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    expect(items.find((i) => i.modelId === 1)!.pastAppeals).toEqual({
+      approved: 0,
+      rejected: 0,
+      void: 0,
+      pending: 1,
+    });
+  });
+
+  it('are counted under Locked setting in the facets', async () => {
+    const f = appealFacets(await getMinorFlagAppealGroups({}), DEFAULT_APPEAL_FILTERS);
+    expect(f.flag).toMatchObject({ all: 8, lock: 1, minor: 3, poi: 3 });
   });
 });
 

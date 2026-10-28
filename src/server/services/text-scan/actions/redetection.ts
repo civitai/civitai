@@ -1,3 +1,5 @@
+import { Prisma } from '@prisma/client';
+import { LOCK_REVIEW_KIND } from '@civitai/shared/lock-review';
 import { dbWrite } from '~/server/db/client';
 import { randomUUID } from 'node:crypto';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
@@ -87,6 +89,11 @@ export async function hasOpenModelAppeal(modelId: number) {
       entityId: modelId,
       status: AppealStatus.Pending,
       category: null,
+      // A lock review is not a dispute of the flag. A JSON path NOT alone also drops NULL contexts.
+      OR: [
+        { context: { equals: Prisma.AnyNull } },
+        { NOT: { context: { path: ['kind'], equals: LOCK_REVIEW_KIND } } },
+      ],
     },
     select: { id: true },
   });
