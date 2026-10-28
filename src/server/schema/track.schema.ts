@@ -850,7 +850,7 @@ const appsBuildActionSchema = z.object({
      * `cli_copy` on purpose: the page offers "copy three commands and run them" and "paste
      * one prompt into a coding agent", and which one developers take is the question the
      * split exists to answer. Folding it into `cli_copy` would make that unanswerable after
-     * the fact, and `state` does not separate them (both fire in all three states).
+     * the fact, and `state` does not separate them (both fire from the workbench).
      *
      * 🔴 ADDING A VALUE HERE NEEDS NO ClickHouse MIGRATION — `details` is a String column
      * (`tracker.action` JSON-stringifies it), so only a new `type` would. It DOES need the

@@ -1,7 +1,6 @@
 import {
   Badge,
   Button,
-  Divider,
   Group,
   Image,
   SimpleGrid,
@@ -24,8 +23,6 @@ import {
   BLOCKS_REACT_NPM_URL,
   CIVITAI_CLI_GITHUB_URL,
 } from '~/components/Apps/cliCommands';
-import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
-import { ManualSetupCollapse } from '~/components/Apps/ManualSetupCollapse';
 
 /**
  * "App builders" get-started body — the Scope-A soft-launch funnel.
@@ -40,35 +37,15 @@ import { ManualSetupCollapse } from '~/components/Apps/ManualSetupCollapse';
  * else has to move. (The earlier version of this note said "one-line flag change" and
  * pointed at `/apps/get-started`, a page this consolidation deletes.)
  *
- * Copy is AGENT-FIRST: the copyable agent prompt leads, and the manual CLI steps sit in a
- * closed collapse at the bottom. Honesty / scope: both routes point would-be developers at
- * the LOCAL build tooling. The `dev:live` (`/api/v1/blocks/dev-token`) path is
- * `isModerator`-gated server side, so a non-mod can install the CLI, scaffold, and
- * build/test locally against the mock harness.
+ * NO BUILD ROUTES HERE. This body is what a viewer WITHOUT builder access sees (the pitch,
+ * next to the Request access panel), so it carries neither the agent-onboarding prompt nor
+ * the manual CLI steps: both need access to be useful. They live in the `first-app` state
+ * and the workbench's "Developer resources" strip, which only authors reach.
  *
- * Pure presentational (props-only, no tRPC / no network) so it renders in
+ * Pure presentational (no props, no tRPC / no network) so it renders in
  * isolation in component tests.
  */
-
-/**
- * `onCopyCommand` is OPTIONAL and threads the `/apps/build` funnel's `cli_copy` step
- * out to whoever mounted this. It is a CALLBACK rather than a `useTrackEvent()` call
- * in here on purpose: the header above promises this component is props-only with no
- * network, and its `*.browser.test.tsx` suite mounts it with no providers — importing
- * the tracker would break both. See `AppsBuildBody`, the one call site that passes it.
- *
- * `onCopyAgentPrompt` threads the funnel's `agent_prompt_copy` step the same way, for
- * {@link AgentOnboardingCard} below. Same reason, same shape, separate action: the two
- * routes into building an app are the thing this page is trying to measure, so collapsing
- * them onto one event would make the comparison unanswerable.
- */
-export function GetStartedBody({
-  onCopyCommand,
-  onCopyAgentPrompt,
-}: {
-  onCopyCommand?: (c: string) => void;
-  onCopyAgentPrompt?: (prompt: string) => void;
-} = {}) {
+export function GetStartedBody() {
   return (
     <Stack gap="xl">
       {/* Hero — one line, no wall of text */}
@@ -86,21 +63,17 @@ export function GetStartedBody({
       </Stack>
 
       {/*
-        Above the banner on purpose: the agent route is this state's primary action. The
-        banner is therefore not guaranteed to be the LCP element of this indexable state, and
-        LCP has not been measured for this order, so do not tune the image's loading on that
-        assumption. The card can also shift what follows it by one line just after hydration;
-        see `AgentOnboardingCard`'s header.
+        Banner: 3:2 public asset, cropped to a fixed-height strip. At full width a 3:2 box is
+        ~1300px tall on a wide screen and pushes the Request access panel below the fold. The
+        fixed height still reserves its box before it loads.
       */}
-      <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="prominent" />
-
-      {/* Banner: 3:2 public asset. The fixed aspect ratio reserves its box before it loads. */}
       <Image
         src="/images/apps/civitai-apps-banner.webp"
         alt="Build apps on Civitai"
         radius="md"
         w="100%"
-        style={{ aspectRatio: '3 / 2' }}
+        h={240}
+        fit="cover"
       />
 
       {/* What you get — the platform leverage a dev gets, then the toolkit links */}
@@ -198,10 +171,6 @@ export function GetStartedBody({
           </Button>
         </Group>
       </Stack>
-
-      <Divider />
-
-      <ManualSetupCollapse onCopyCommand={onCopyCommand} />
     </Stack>
   );
 }

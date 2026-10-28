@@ -1,8 +1,7 @@
-import { describe, expect, test, vi } from 'vitest';
+import { describe, expect, test } from 'vitest';
 import { page } from 'vitest/browser';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
 import {
-  AGENT_BUILD_PROMPT,
   APP_SDK_NPM_URL,
   BLOCKS_REACT_NPM_URL,
   CIVITAI_CLI_GITHUB_URL,
@@ -15,8 +14,8 @@ import {
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 
-// GetStartedBody is the PUBLIC "App builders" landing body. Pure presentational
-// (props-only, no tRPC / no network) so it renders in isolation.
+// GetStartedBody is the PUBLIC "App builders" landing body — what a viewer WITHOUT builder
+// access sees. Pure presentational (no props, no tRPC / no network) so it renders in isolation.
 //
 // NOTE: this env does not load `@mantine/core/styles.css`, so we assert
 // presence / hrefs / accessible names / text — never computed styles.
@@ -26,7 +25,6 @@ import { renderWithProviders } from '../../../test/component-setup';
 const AGENT_CARD = 'apps-agent-onboarding';
 const MANUAL_TOGGLE = 'apps-manual-setup-toggle';
 const MANUAL_REGION = 'apps-manual-setup';
-const NPM_INSTALL = 'npm install -g @civitai/cli';
 
 /** True when `b` comes after `a` in document order. */
 const follows = (a: Element, b: Element) =>
@@ -47,11 +45,10 @@ describe('GetStartedBody (public App builders landing)', () => {
     expect(page.getByRole('heading', { name: 'Publish' }).elements()).toHaveLength(0);
   });
 
-  test('🔴 the order is hero, agent card, banner, "What you get"', async () => {
+  test('🔴 the order is hero, banner, "What you get"', async () => {
     await renderWithProviders(<GetStartedBody />);
     const located = [
       page.getByRole('heading', { name: 'Build on Civitai', level: 1 }),
-      page.getByTestId(AGENT_CARD),
       page.getByRole('img', { name: 'Build apps on Civitai' }),
       page.getByRole('heading', { name: 'What you get' }),
     ];
@@ -65,96 +62,25 @@ describe('GetStartedBody (public App builders landing)', () => {
     }
   });
 
-  test('🔴 the manual setup comes last, after "What you get" and the toolkit links', async () => {
+  /**
+   * 🔴 NO BUILD ROUTE BEFORE ACCESS. This body is the pitch a viewer without builder access
+   * sees; the agent prompt and the CLI steps both need access, so neither is offered here.
+   *
+   * Asserted on PRESENCE in the DOM, not visibility: Mantine's `Collapse` keeps its children
+   * mounted while closed, so a collapsed manual setup would still be in the tree and a
+   * visibility check would miss it. `Copy command: …` is `CopyableCommand`'s `aria-label`
+   * contract, so it catches the CLI steps in ANY wrapper, not just the old collapse's test ids
+   * — queried on the raw DOM because `getByRole` skips what a closed `Collapse` hides.
+   */
+  test('🔴 renders NO agent card and NO manual CLI setup', async () => {
     await renderWithProviders(<GetStartedBody />);
-    const toggle = page.getByTestId(MANUAL_TOGGLE);
-    await expect.element(toggle).toBeInTheDocument();
-    const appSdk = page.getByRole('link', { name: '@civitai/app-sdk' });
-    expect(follows(appSdk.element(), toggle.element())).toBe(true);
-  });
+    // Render barrier: an absence assertion before the commit would read an empty container.
+    await expect.element(page.getByRole('heading', { name: 'What you get' })).toBeInTheDocument();
 
-  test('🔴 the agent card precedes the manual commands, which are npm-first', async () => {
-    await renderWithProviders(<GetStartedBody />);
-    const card = page.getByTestId(AGENT_CARD);
-    // Collapsed children stay mounted, so the command text is in the DOM while closed.
-    const install = page.getByText(`$ ${NPM_INSTALL}`);
-    await expect.element(card).toBeInTheDocument();
-    await expect.element(install).toBeInTheDocument();
-    expect(follows(card.element(), install.element())).toBe(true);
-  });
-
-  test('🔴 the manual setup is collapsed by default', async () => {
-    await renderWithProviders(<GetStartedBody />);
-    const toggle = page.getByTestId(MANUAL_TOGGLE);
-    await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
-    await expect.element(toggle).toHaveTextContent('Set up manually with the CLI');
-    // Mantine's <Collapse> renders a zero-height wrapper when closed, so assert THAT region.
-    // Asserting an inner <pre> is unreliable: the browser matcher ignores the wrapper's
-    // opacity and the clipped child keeps its own bounding box.
-    await expect.element(page.getByTestId(MANUAL_REGION)).not.toBeVisible();
-  });
-
-  test('🔴 the toggle opens the manual setup, and closes it again', async () => {
-    await renderWithProviders(<GetStartedBody />);
-    const toggle = page.getByTestId(MANUAL_TOGGLE);
-    const region = page.getByTestId(MANUAL_REGION);
-
-    await toggle.click();
-    await expect.element(toggle).toHaveAttribute('aria-expanded', 'true');
-    await expect.element(toggle).toHaveTextContent('Hide manual setup');
-    await expect.element(region).toBeVisible();
-    // Copyable commands render prefixed with a shell prompt ("$ ").
-    for (const command of [
-      NPM_INSTALL,
-      'civitai app create my-app',
-      'cd my-app && npm install && npm run dev:harness',
-    ]) {
-      await expect.element(page.getByText(`$ ${command}`)).toBeVisible();
-    }
-    // The other install routes are shown inline, not as copyable blocks.
-    await expect.element(page.getByText('brew install civitai/tap/civitai')).toBeVisible();
-    await expect
-      .element(page.getByText('go install github.com/civitai/cli/cmd/civitai@latest'))
-      .toBeVisible();
-    for (const alternative of [
-      'brew install civitai/tap/civitai',
-      'go install github.com/civitai/cli/cmd/civitai@latest',
-    ]) {
-      expect(
-        page.getByRole('button', { name: `Copy command: ${alternative}` }).elements()
-      ).toHaveLength(0);
-    }
-    // Exactly the three steps are copyable.
-    expect(page.getByRole('button', { name: /^Copy command: / }).elements()).toHaveLength(3);
-
-    await toggle.click();
-    await expect.element(toggle).toHaveAttribute('aria-expanded', 'false');
-    await expect.element(region).not.toBeVisible();
-  });
-
-  test('🔴 each copy fires its OWN callback: commands to onCopyCommand, the prompt to onCopyAgentPrompt', async () => {
-    const onCopyCommand = vi.fn();
-    const onCopyAgentPrompt = vi.fn();
-    await renderWithProviders(
-      <GetStartedBody onCopyCommand={onCopyCommand} onCopyAgentPrompt={onCopyAgentPrompt} />
-    );
-
-    await page.getByRole('button', { name: 'Copy the agent setup prompt' }).click();
-    expect(onCopyAgentPrompt.mock.calls).toEqual([[AGENT_BUILD_PROMPT]]);
-    expect(onCopyCommand).not.toHaveBeenCalled();
-
-    await page.getByTestId(MANUAL_TOGGLE).click();
-    await expect.element(page.getByTestId(MANUAL_REGION)).toBeVisible();
-    const steps = [
-      NPM_INSTALL,
-      'civitai app create my-app',
-      'cd my-app && npm install && npm run dev:harness',
-    ];
-    for (const command of steps) {
-      await page.getByRole('button', { name: `Copy command: ${command}` }).click();
-    }
-    expect(onCopyCommand.mock.calls).toEqual(steps.map((command) => [command]));
-    expect(onCopyAgentPrompt).toHaveBeenCalledTimes(1);
+    expect(page.getByTestId(AGENT_CARD).elements()).toHaveLength(0);
+    expect(page.getByTestId(MANUAL_TOGGLE).elements()).toHaveLength(0);
+    expect(page.getByTestId(MANUAL_REGION).elements()).toHaveLength(0);
+    expect(document.querySelectorAll('[aria-label^="Copy command: "]')).toHaveLength(0);
   });
 
   test('the run command installs deps before dev:harness (the CLI does not auto-install)', () => {
@@ -181,14 +107,13 @@ describe('GetStartedBody (public App builders landing)', () => {
 
   test('links to the real CLI repo and both npm packages', async () => {
     await renderWithProviders(<GetStartedBody />);
-    // Opened first: the second "Civitai CLI" link lives in the manual setup's intro line.
-    await page.getByTestId(MANUAL_TOGGLE).click();
-    await expect.element(page.getByTestId(MANUAL_REGION)).toBeVisible();
 
+    // One "Civitai CLI" link: the toolkit button. The manual setup's intro line, which held
+    // the second, is no longer on this page.
     const cliLinks = page.getByRole('link', { name: 'Civitai CLI' });
-    await expect.element(cliLinks.nth(1)).toBeVisible();
+    await expect.element(cliLinks.first()).toBeVisible();
     const hrefs = cliLinks.elements().map((link) => link.getAttribute('href'));
-    expect(hrefs).toEqual([CIVITAI_CLI_GITHUB_URL, CIVITAI_CLI_GITHUB_URL]);
+    expect(hrefs).toEqual([CIVITAI_CLI_GITHUB_URL]);
 
     const blocksReact = page.getByRole('link', { name: '@civitai/blocks-react' });
     await expect.element(blocksReact).toBeInTheDocument();

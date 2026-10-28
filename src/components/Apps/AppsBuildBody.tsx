@@ -8,7 +8,7 @@ import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
 import { AppsBuildBodySkeleton } from '~/components/Apps/AppsBuildBodySkeleton';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
-import { ManualSetupCollapse, ManualSetupSteps } from '~/components/Apps/ManualSetupCollapse';
+import { ManualSetupSteps } from '~/components/Apps/ManualSetupCollapse';
 import { MyAppsBody } from '~/components/Apps/MyAppsBody';
 import { AppDocStoreUsageCard } from '~/components/Apps/AppDocStoreUsageCard';
 import {
@@ -36,8 +36,9 @@ import { trpc } from '~/utils/trpc';
  *
  * `agent_prompt_copy` is deliberately its own step and not folded into `cli_copy`: the page
  * offers two routes into building an app, and which one developers take is the comparison
- * the split exists to keep answerable. `state` does not separate them — both fire in all
- * three states.
+ * the split exists to keep answerable. `state` does not separate them — `agent_prompt_copy`
+ * fires in `first-app` and `workbench`, `cli_copy` in `workbench` only. Neither fires from the
+ * pitch, which offers no build route to a viewer without access.
  */
 type AppsBuildAction = Extract<TrackActionInput, { type: 'AppsBuild_Action' }>['details']['action'];
 
@@ -199,10 +200,9 @@ export function AppsBuildBody() {
 
   const onCopyCommand = useCallback(() => track('cli_copy', state), [track, state]);
   // 🔴 FIRED FROM HERE, NOT FROM THE CARD. `AgentOnboardingCard` is props-only by
-  // construction (it is mounted inside `GetStartedBody`, whose suite renders it with no
-  // providers), so the tracker cannot live in it — the same reason `onCopyCommand` is a
-  // callback. And it cannot fire under the skeleton: every mount of the card is inside a
-  // branch below the `!settled` early return.
+  // construction (its own suite renders it with no providers), so the tracker cannot live in
+  // it — the same reason `onCopyCommand` is a callback. And it cannot fire under the
+  // skeleton: every mount of the card is inside a branch below the `!settled` early return.
   const onCopyAgentPrompt = useCallback(() => track('agent_prompt_copy', state), [track, state]);
   const onCreateEntry = useCallback(() => track('create_entry', state), [track, state]);
 
@@ -281,7 +281,6 @@ export function AppsBuildBody() {
           </Text>
         </Stack>
         <AgentOnboardingCard onCopy={onCopyAgentPrompt} tone="prominent" />
-        <ManualSetupCollapse onCopyCommand={onCopyCommand} />
         <Group>
           <Button
             component={Link}
@@ -299,10 +298,12 @@ export function AppsBuildBody() {
   }
 
   // State A — the pitch. The ONLY public-facing state, and the default: it needs no
-  // session and no query, so it is what a logged-out admitted viewer sees.
+  // session and no query, so it is what a logged-out admitted viewer sees. It carries no
+  // build route (no agent card, no CLI steps): this viewer has no builder access yet, so the
+  // one action offered is Request access.
   return (
     <Stack gap="xl" data-testid="apps-build-pitch">
-      <GetStartedBody onCopyCommand={onCopyCommand} onCopyAgentPrompt={onCopyAgentPrompt} />
+      <GetStartedBody />
       <Alert
         color="blue"
         variant="light"
@@ -329,9 +330,9 @@ export function AppsBuildBody() {
  * the list. Collapsed by default and cheap: `GetStartedBody` is not mounted here at all, so
  * the workbench does not pay for the hero image.
  *
- * The strip keeps its own toggle rather than reusing `ManualSetupCollapse`: it holds the agent
- * card as well as the manual steps, and nesting one collapse inside another would hide the
- * commands behind two clicks.
+ * The strip has its own toggle around the agent card and the manual steps together, so one
+ * click reveals both routes; a second collapse nested inside it would hide the commands
+ * behind two clicks.
  *
  * 🔴 THE AGENT CARD IS MOUNTED HERE WITH `animated={false}`, AND "CHEAP" IS WHY. Mantine's
  * `Collapse` keeps its children MOUNTED at zero height, so an animated card in here would
