@@ -6,6 +6,7 @@ import { useState } from 'react';
 
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { GeneratedItemWorkflowMenu } from '~/components/generation_v2/GeneratedItemWorkflowMenu';
+import { useMenuSheet } from '~/components/Drawer/useMenuSheet';
 import { GeneratedOutputRemixMenu } from '~/components/ImageGeneration/GeneratedOutputRemixMenu';
 import { useGeneratedItemWorkflows } from '~/components/generation_v2/hooks/useGeneratedItemWorkflows';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
@@ -62,6 +63,7 @@ export function GeneratedOutputActions({
   });
   const hasWorkflows = output.canUse('derive') && groups.some((g) => g.workflows.length > 0);
   const { downloading, handleDownload } = useDownloadOutput(output);
+  const improveSheet = useMenuSheet();
 
   return (
     <div className={clsx(classes.actionsFooter, 'flex w-full items-center')}>
@@ -110,15 +112,22 @@ export function GeneratedOutputActions({
             withinPortal
             position="top"
             withArrow
+            {...improveSheet.menuProps}
           >
             <Menu.Target>
               <LegacyActionIcon size="md" aria-label="Improve">
                 <IconWand size={16} />
               </LegacyActionIcon>
             </Menu.Target>
-            <Menu.Dropdown className={clsx(classes.improveMenu, classes.scrollableDropdown)}>
+            <Menu.Dropdown
+              className={
+                improveSheet.dropdownClassName ??
+                clsx(classes.improveMenu, classes.scrollableDropdown)
+              }
+            >
               <GeneratedItemWorkflowMenu image={output} workflowsOnly isLightbox={isLightbox} />
             </Menu.Dropdown>
+            {improveSheet.backdrop}
           </Menu>
         )}
 

@@ -57,11 +57,13 @@
     cursor: pointer;
   }
 
-  // The stack spans the footer's padding, which only alerts fill themselves.
+  // The stack spans the footer's padding, and the footer drops its top padding for it; only alerts
+  // fill that space themselves.
   > :not(:global(.mantine-Alert-root), :global(.mantine-Notification-root)):not(
       :has(:global(.mantine-Alert-root), :global(.mantine-Notification-root))
     ) {
     padding-inline: 8px;
+    padding-top: 8px;
   }
 
   :global(.mantine-Notification-root),

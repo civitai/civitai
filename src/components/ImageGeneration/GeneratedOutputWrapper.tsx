@@ -29,6 +29,7 @@ import type { AudioBlob, ImageBlob, VideoBlob } from '~/shared/orchestrator/work
 
 import { GeneratedOutputActions, useDownloadOutput } from './GeneratedOutputActions';
 import { useMobileGenerator } from '~/hooks/useMobileGenerator';
+import { useMenuSheet } from '~/components/Drawer/useMenuSheet';
 import classes from './GeneratedImage.module.css';
 
 export function GeneratedOutputWrapper({
@@ -55,6 +56,7 @@ export function GeneratedOutputWrapper({
   const available = image.available;
   const compact = useMobileGenerator() && !isLightbox;
   const { handleDownload } = useDownloadOutput(image);
+  const menuSheet = useMenuSheet();
 
   const handleClick = (e?: { shiftKey?: boolean }) => {
     if (!image || !available || isLightbox) return;
@@ -208,7 +210,7 @@ export function GeneratedOutputWrapper({
               </label>
             )}
             {!image.blockedReason && (
-              <Menu zIndex={400} withinPortal>
+              <Menu zIndex={400} withinPortal {...menuSheet.menuProps}>
                 <Menu.Target>
                   <div className="absolute right-3 top-3">
                     <LegacyActionIcon variant="transparent">
@@ -220,7 +222,9 @@ export function GeneratedOutputWrapper({
                     </LegacyActionIcon>
                   </div>
                 </Menu.Target>
-                <Menu.Dropdown className={classes.scrollableDropdown}>
+                <Menu.Dropdown
+                  className={menuSheet.dropdownClassName ?? classes.scrollableDropdown}
+                >
                   {compact && (
                     <Menu.Item leftSection={<IconDownload size={14} />} onClick={handleDownload}>
                       Download
@@ -228,6 +232,7 @@ export function GeneratedOutputWrapper({
                   )}
                   <GeneratedItemWorkflowMenu image={image} isLightbox={isLightbox} />
                 </Menu.Dropdown>
+                {menuSheet.backdrop}
               </Menu>
             )}
           </div>

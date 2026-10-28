@@ -1,15 +1,5 @@
 import type { ButtonProps, ComboboxItem, PopoverProps } from '@mantine/core';
-import {
-  Button,
-  Divider,
-  Group,
-  Indicator,
-  Popover,
-  ScrollArea,
-  Select,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Button, Divider, Group, Indicator, Popover, ScrollArea, Stack, Text } from '@mantine/core';
 import { DatePickerInput } from '@mantine/dates';
 import { IconFilter, IconX } from '@tabler/icons-react';
 import type { ReactNode } from 'react';
@@ -17,8 +7,10 @@ import { useState } from 'react';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { FilterChip } from '~/components/Filters/FilterChip';
 import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
+import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { isMobileDevice, useIsMobile } from '~/hooks/useIsMobile';
+import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
 import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
 import type { GenerationFilterSchema } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
@@ -149,6 +141,10 @@ export function DumbMarkerFiltersDropdown({
     ? { withinPortal: true, zIndex: mobileMenuSheetZIndex + 1 }
     : { withinPortal: false };
 
+  // In the mobile generator these open as sheets, where search waits for a tap; a dropdown with
+  // search raises the keyboard on every open, so it has none on touch.
+  const searchable = useGeneratorLayout() === 'mobile' || !isMobileDevice();
+
   const button = (
     <FilterButton
       icon={IconFilter}
@@ -233,24 +229,26 @@ export function DumbMarkerFiltersDropdown({
 
       {/* Base Model Filter */}
       <Divider label="Ecosystem" className="text-sm font-bold" />
-      <Select
+      <SheetSelect
+        sheetTitle="Ecosystem"
         data={ecosystemSelectData}
         value={filters.baseModel ?? null}
         onChange={(value) => setFilters({ baseModel: value ?? undefined })}
         placeholder="All Models"
-        searchable={!isMobileDevice()}
+        searchable={searchable}
         clearable
         comboboxProps={overlayProps}
       />
 
       {/* Workflow Filter */}
       <Divider label="Workflow" className="text-sm font-bold" />
-      <Select
+      <SheetSelect
+        sheetTitle="Workflow"
         data={workflowSelectData}
         value={filters.processType ?? null}
         onChange={(value) => setFilters({ processType: value ?? undefined })}
         placeholder="All Workflows"
-        searchable={!isMobileDevice()}
+        searchable={searchable}
         clearable
         comboboxProps={overlayProps}
       />

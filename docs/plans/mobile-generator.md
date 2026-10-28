@@ -352,8 +352,20 @@ Built:
 - Output format and priority open their choices as a sheet (`SheetOption` rows, shared with
   `SheetSelect`); a member-only priority still offers the membership to a non-member.
 - Version picker: past three versions, a `SheetSelect` (a select on desktop too).
+- The queue filters' Ecosystem and Workflow selects are `SheetSelect`s: a full-height sheet with a
+  search box that waits for a tap, so the keyboard stays down until wanted. A clearable
+  `SheetSelect` lists its placeholder ("All Models") first, which clears it, and its field has an ✕.
+  Inside another sheet (`MobileMenuDrawer`) a `SheetSelect` drills in: its options replace the
+  sheet's content, with a back arrow, rather than stacking a second sheet.
 - Tiles in the mobile generator keep favourite, thumbs up and down and Improve; Download moves into
-  the tile's ⋮ menu, and Remix and Details are in the lightbox, as in the mockup.
+  the tile's ⋮ menu, and Remix and Details are in the lightbox, as in the mockup. The ⋮ and Improve
+  menus open as bottom sheets (`useMenuSheet`), so a long menu never runs off the screen.
+- Queue cards on a phone drop the workflow ID copy, the moderator dashboard link and the duration
+  badge. The cost badge's breakdown (a sheet on a phone) ends with what paid for the run, so the
+  separate transactions icon shows only for a run with no cost; the cost and workflow badges wrap
+  together.
+- The mobile generator reopens as it was left (form open or closed, Batches or Grid), restored once
+  per page load from local storage; a first visit opens the form.
 - The VAE and upscaler pickers stay the resource search, which opens full screen on a phone and
   closes on Back.
 - Known gap: "balance after" in the cost sheet leaves out a download-boost fee accepted at submit;

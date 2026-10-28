@@ -117,6 +117,9 @@ const INSET_CONSUMERS = [
   // The generator footer's frame in the mobile generator: when only alert strips show, it drops
   // GenerationLayout's 0.5rem floor but keeps the home indicator's inset.
   'src/components/generation_v2/FooterStrips.module.scss',
+  // A Menu shown as a bottom sheet in the mobile generator: not a Mantine Drawer, so the shell's
+  // drawer rule doesn't pay its bottom inset.
+  'src/components/Drawer/menuSheet.module.scss',
   'src/pages/avatar-generator.tsx',
   'src/pages/comics/project/[id]/ProjectWorkspace.module.scss',
   // `src/providers/ThemeProvider.tsx` LEFT this list deliberately. It used to

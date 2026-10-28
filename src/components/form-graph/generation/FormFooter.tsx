@@ -175,7 +175,7 @@ export function MatureSourceNotice({
       className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
       withCloseButton={false}
     >
-      <div className="flex w-full items-center justify-between gap-2">
+      <div className="flex w-full flex-wrap items-center justify-between gap-2">
         <Text size="sm">{FLUX3_MATURE_SOURCE_MESSAGE}</Text>
         {canSwitch && (
           <Button
@@ -313,13 +313,13 @@ function PriorityAlertSpace({
     const typeName = selectedType.charAt(0).toUpperCase() + selectedType.slice(1);
     priorityAlert = (
       <Notification
-        icon={<IconAlertTriangle size={18} />}
         color="yellow"
         className="whitespace-pre-wrap rounded-md bg-yellow-8/20"
         withCloseButton={false}
       >
+        {/* The text wraps beside the button rather than the button dropping below it. */}
         <div className="flex w-full items-center justify-between gap-2">
-          <Text size="sm">
+          <Text size="sm" className="min-w-0">
             Not enough {typeName} Buzz
             {clientInsufficientBuzz
               ? ` (${abbreviateNumber(selectedBalance)}/${abbreviateNumber(totalCost)})`
@@ -340,6 +340,7 @@ function PriorityAlertSpace({
               color="yellow"
               radius="xl"
               size="compact-sm"
+              className="shrink-0"
               onClick={() => {
                 setBuzzType(alternativeType);
                 onClearInsufficientBuzz?.();

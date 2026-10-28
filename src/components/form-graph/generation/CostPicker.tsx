@@ -98,7 +98,6 @@ export function CostPicker({
       opened={opened}
       onClose={() => setOpened(false)}
       title="Cost for this run"
-      tall
       popoverProps={{ position: 'top-end', width: 340 }}
       target={
         <Button

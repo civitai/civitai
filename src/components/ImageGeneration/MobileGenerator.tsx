@@ -31,7 +31,7 @@ import { useActiveGenerationForm } from '~/store/active-generation-form.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import type { GenerationResultsView } from '~/store/generation-panel.store';
-import { useMobileGeneratorStore } from '~/store/mobile-generator.store';
+import { saveMobileGeneratorView, useMobileGeneratorStore } from '~/store/mobile-generator.store';
 import classes from './MobileGenerator.module.scss';
 import {
   MobileGeneratorSlots,
@@ -68,6 +68,8 @@ export function MobileGenerator({ form, onClose, closeLabel }: Props) {
   const open = () => generationGraphPanel.setView('generate');
   const close = () => generationGraphPanel.setView(resultsViewRef.current);
   useHistoryLayer(expanded, close);
+
+  useEffect(() => saveMobileGeneratorView(view), [view]);
 
   useEffect(() => {
     useMobileGeneratorStore.setState({ showing: true });

@@ -314,29 +314,33 @@ export function QueueItem({
               <Text size="xs" c="dimmed">
                 {formatDateMin(request.createdAt)}
               </Text>
-              {!!request.cost?.total && (
-                <GenerationCostPopover
-                  workflowCost={request.cost}
-                  transactions={request.transactions}
-                  readOnly
-                  variant="badge"
-                />
-              )}
-              {request.transactions.length > 0 && (
-                <TransactionsPopover data={request.transactions} />
-              )}
-              {!!request.duration && currentUser?.isModerator && (
+              {/* Cost and workflow wrap to the next line together. */}
+              <div className="flex min-w-0 flex-nowrap items-center gap-1 empty:hidden">
+                {!!request.cost?.total && (
+                  <GenerationCostPopover
+                    workflowCost={request.cost}
+                    transactions={request.transactions}
+                    readOnly
+                    variant="badge"
+                  />
+                )}
+                {/* The cost badge lists them under Paid With; this is for a request with no cost. */}
+                {request.transactions.length > 0 && !request.cost?.total && (
+                  <TransactionsPopover data={request.transactions} />
+                )}
+                {workflowDefinition && (
+                  <Badge
+                    radius="sm"
+                    color="violet"
+                    size="sm"
+                    classNames={{ label: 'overflow-hidden' }}
+                  >
+                    {workflowDefinition.label}
+                  </Badge>
+                )}
+              </div>
+              {!!request.duration && currentUser?.isModerator && !compact && (
                 <Badge color="yellow">Duration: {request.duration}</Badge>
-              )}
-              {workflowDefinition && (
-                <Badge
-                  radius="sm"
-                  color="violet"
-                  size="sm"
-                  classNames={{ label: 'overflow-hidden' }}
-                >
-                  {workflowDefinition.label}
-                </Badge>
               )}
               {polyGenChipLabel && !workflowDefinition && (
                 <Badge
@@ -371,7 +375,8 @@ export function QueueItem({
             </div>
             <div className="flex gap-1">
               <SubmitBlockedImagesForReviewButton request={request} hideDetails={hideDetails} />
-              {currentUser?.isModerator && (
+              {/* The workflow ID and its dashboard link stay off the phone card. */}
+              {currentUser?.isModerator && !compact && (
                 <ButtonTooltip {...tooltipProps} label="Go to Workflow">
                   <LegacyActionIcon
                     size="md"
@@ -386,11 +391,13 @@ export function QueueItem({
                   </LegacyActionIcon>
                 </ButtonTooltip>
               )}
-              <ButtonTooltip {...tooltipProps} label="Copy Workflow ID">
-                <LegacyActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
-                  {copied ? <IconCheck /> : <IconInfoHexagon />}
-                </LegacyActionIcon>
-              </ButtonTooltip>
+              {!compact && (
+                <ButtonTooltip {...tooltipProps} label="Copy Workflow ID">
+                  <LegacyActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
+                    {copied ? <IconCheck /> : <IconInfoHexagon />}
+                  </LegacyActionIcon>
+                </ButtonTooltip>
+              )}
               {canRemix && (
                 <ButtonTooltip {...tooltipProps} label="Remix">
                   <LegacyActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>

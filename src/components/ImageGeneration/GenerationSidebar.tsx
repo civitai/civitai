@@ -14,6 +14,7 @@ import { useRefreshResidencyOnOpen } from '~/components/ResourceLoad/ResourceRes
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useMobileGenerator } from '~/hooks/useMobileGenerator';
+import { restoreMobileGeneratorView } from '~/store/mobile-generator.store';
 import { HideDevToolsInMobileGenerator } from '~/components/generation_v2/HideDevToolsInMobileGenerator';
 import { isDev } from '~/env/other';
 import phoneControls from '~/components/generation_v2/PhoneControls.module.scss';
@@ -39,6 +40,11 @@ export function GenerationSidebar() {
     if (mobileGenerator && opened && useGenerationPanelStore.getState().opened)
       router.push('/generate');
   }, [mobileGenerator, opened]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mounted on every page, so the first to know the phone layout is on.
+  useEffect(() => {
+    if (mobileGenerator) restoreMobileGeneratorView();
+  }, [mobileGenerator]);
 
   useRefreshResidencyOnOpen(opened && !mobileGenerator);
 

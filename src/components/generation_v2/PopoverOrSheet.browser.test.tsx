@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../test/component-setup';
+import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
 import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
 import { SelectInput } from '~/components/generation_v2/inputs/SelectInput';
 import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
@@ -163,6 +164,55 @@ describe('SheetSelect', () => {
     expect(onChange).not.toHaveBeenCalled();
   });
 
+  test('a clearable select offers its placeholder first, which clears the value', async () => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <SheetSelect
+        label="Sampler"
+        data={SAMPLERS}
+        value="Euler a"
+        placeholder="All samplers"
+        clearable
+        onChange={onChange}
+      />
+    );
+    await page.getByRole('button', { name: 'Sampler', exact: true }).click();
+    const all = page.getByRole('option', { name: 'All samplers' });
+    await expect.element(all).toHaveAttribute('aria-selected', 'false');
+    await all.click();
+
+    expect(onChange).toHaveBeenCalledWith(null, undefined);
+    await expect.element(page.getByRole('dialog', { name: 'Sampler' })).not.toBeInTheDocument();
+  });
+
+  test("a clearable select's field clears its value without opening the sheet", async () => {
+    const onChange = vi.fn();
+    renderWithProviders(
+      <SheetSelect
+        label="Sampler"
+        data={SAMPLERS}
+        value="Euler a"
+        placeholder="All samplers"
+        clearable
+        onChange={onChange}
+      />
+    );
+    await page.getByRole('button', { name: 'Clear Sampler' }).click();
+
+    expect(onChange).toHaveBeenCalledWith(null, undefined);
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+  });
+
+  test('opening a searchable select does not focus its search, so the keyboard stays down', async () => {
+    renderWithProviders(
+      <SheetSelect label="Sampler" data={SAMPLERS} value="Euler" searchable onChange={vi.fn()} />
+    );
+    await page.getByRole('button', { name: 'Sampler' }).click();
+    const search = page.getByRole('textbox', { name: 'Search options' });
+    await expect.element(search).toBeInTheDocument();
+    await expect.element(search).not.toHaveFocus();
+  });
+
   test('a searchable select filters the list and drops emptied groups', async () => {
     renderWithProviders(
       <SheetSelect label="Sampler" data={SAMPLERS} value="Euler" searchable onChange={vi.fn()} />
@@ -223,5 +273,55 @@ describe('SheetSelect', () => {
     );
     await expect.element(page.getByRole('textbox', { name: 'Sampler' })).toHaveValue('Euler a');
     expect(document.querySelector('[aria-haspopup="dialog"]')).toBeNull();
+  });
+});
+
+describe('SheetSelect inside a sheet', () => {
+  function Filters() {
+    const [value, setValue] = useState<string | null>(null);
+    return (
+      <MobileMenuDrawer opened onClose={vi.fn()} title="Filters">
+        <p>Other filters</p>
+        <SheetSelect
+          sheetTitle="Sampler"
+          data={SAMPLERS}
+          value={value}
+          placeholder="All samplers"
+          clearable
+          onChange={setValue}
+        />
+      </MobileMenuDrawer>
+    );
+  }
+
+  beforeEach(async () => {
+    await historyLayersSettled();
+    resetHistoryLayers();
+    layout = 'mobile';
+    useMobileGeneratorStore.setState({ showing: true });
+  });
+
+  test('opens its options in place of the sheet, and choosing one returns to it', async () => {
+    renderWithProviders(<Filters />);
+    await page.getByRole('button', { name: 'All samplers' }).click();
+
+    await expect.element(page.getByRole('option', { name: 'DPM++ 2M' })).toBeVisible();
+    await expect.element(page.getByText('Other filters')).not.toBeVisible();
+    expect(document.querySelectorAll('[role="dialog"]')).toHaveLength(1);
+
+    await page.getByRole('option', { name: 'DPM++ 2M' }).click();
+    await expect.element(page.getByText('Other filters')).toBeVisible();
+    await expect.element(page.getByRole('button', { name: 'DPM++ 2M' })).toBeVisible();
+  });
+
+  test('Back leaves the options for the sheet, not the sheet', async () => {
+    history.pushState(history.state, '');
+    renderWithProviders(<Filters />);
+    await page.getByRole('button', { name: 'All samplers' }).click();
+    await expect.element(page.getByRole('button', { name: 'Back' })).toBeVisible();
+
+    history.back();
+    await expect.element(page.getByText('Other filters')).toBeVisible();
+    await expect.element(page.getByRole('option', { name: 'DPM++ 2M' })).not.toBeInTheDocument();
   });
 });
