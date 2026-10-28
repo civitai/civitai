@@ -2,7 +2,7 @@ import { Alert, Button, Text } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useSectionMute } from '~/components/CommentsV2/Comment/CreateComment';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEditorComponent';
@@ -64,16 +64,25 @@ export function CommentEditor({
     onDone?.();
   };
 
+  const saved = useRef(false);
   const submit = async ({ content }: { content: string }) => {
     try {
       if (editing) await mutations.edit(editing, content);
       else await mutations.create(content, parent ? { id: parent.id, depth: parent.depth } : null);
-      form.reset({ content: '' });
-      close();
+      saved.current = true;
     } catch {
       // The adapter has already shown the error.
     }
   };
+  // Reset only once handleSubmit has finished: it marks the form submitted after `submit` returns,
+  // so a reset inside `submit` is undone and the emptied editor re-validates as "cannot be empty".
+  const { isSubmitSuccessful } = form.formState;
+  useEffect(() => {
+    if (!isSubmitSuccessful || !saved.current) return;
+    saved.current = false;
+    close();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isSubmitSuccessful]);
 
   return (
     <Form form={form} onSubmit={submit} className="flex min-w-0 flex-1 flex-col gap-4">
