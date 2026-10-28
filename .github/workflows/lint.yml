@@ -617,6 +617,8 @@ jobs:
       KYSELY_HOT_READS_3_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-4 suite (its own `hot_reads_4_parity` schema).
       KYSELY_HOT_READS_4_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-5 suite (its own `hot_reads_5_parity` schema).
+      KYSELY_HOT_READS_5_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
         with:

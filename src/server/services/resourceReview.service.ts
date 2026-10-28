@@ -5,7 +5,12 @@ import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 
-import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readUserResourceReviewsViaKysely,
+  readUserResourceReviewsViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -82,10 +87,19 @@ export const getUserResourceReview = async ({
   tx,
 }: GetUserResourceReviewInput & { userId: number; tx?: Prisma.TransactionClient }) => {
   if (!userId) throw throwAuthorizationError();
+  // `kysely-hot-reads-5` on (and no caller-provided client): the same rows through Kysely, on the
+  // client the same lag decision picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
+  if (!tx && (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5)))
+    return readUserResourceReviewsViaKysely(await getKyselyWithoutLag('resourceReview', userId), {
+      modelId,
+      modelVersionId,
+      userId,
+    });
   const dbClient = tx ?? (await getDbWithoutLag('resourceReview', userId));
-  const results = await dbClient.resourceReview.findMany({
-    where: { modelId, modelVersionId, userId },
-    select: resourceReviewSimpleSelect,
+  const results = await readUserResourceReviewsViaPrisma(dbClient, {
+    modelId,
+    modelVersionId,
+    userId,
   });
   if (!results) return null;
 

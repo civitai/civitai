@@ -27,6 +27,14 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ReactionType } from '../clickhouse/client';
 import { dbRead, dbWrite } from '../db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readImageNsfwLevelAndOwnerViaKysely,
+  readImageNsfwLevelAndOwnerViaPrisma,
+  readImagePostIdViaKysely,
+  readImagePostIdViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import { toggleReaction } from './../services/reaction.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 
@@ -61,15 +69,15 @@ async function getTrackerEvent(
   const action = result === 'created' ? 'Create' : 'Delete';
   switch (input.entityType) {
     case 'image':
-      const image = await dbRead.image.findFirst({
-        where: {
-          id: input.entityId,
-        },
-        select: {
-          nsfwLevel: true,
-          userId: true,
-        },
-      });
+      // `kysely-hot-reads-5` on: the same two columns through Kysely, on the same replica.
+      const image = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+        ? await readImageNsfwLevelAndOwnerViaKysely(
+            (
+              await loadKyselyDb()
+            ).kyselyRead,
+            input.entityId
+          )
+        : await readImageNsfwLevelAndOwnerViaPrisma(dbRead, input.entityId);
 
       if (image) {
         return {
@@ -305,12 +313,17 @@ export const toggleReactionHandler = async ({
     // the door for private models.
     const checkAccess = ['image', 'post'];
     if (checkAccess.includes(input.entityType)) {
+      // `kysely-hot-reads-5` on: the image's `postId` alone through Kysely, on the same replica.
+      // A missing image then runs the Prisma read, so its not-found throw is unchanged.
+      const readImagePostId = async (imageId: number) => {
+        if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5)) {
+          const row = await readImagePostIdViaKysely((await loadKyselyDb()).kyselyRead, imageId);
+          if (row) return row.postId;
+        }
+        return readImagePostIdViaPrisma(dbRead, imageId);
+      };
       const entityId =
-        input.entityType === 'post'
-          ? input.entityId
-          : await dbRead.image
-              .findUniqueOrThrow({ where: { id: input.entityId } })
-              .then((image) => image?.postId);
+        input.entityType === 'post' ? input.entityId : await readImagePostId(input.entityId);
 
       if (entityId) {
         const [access] = await hasEntityAccess({
