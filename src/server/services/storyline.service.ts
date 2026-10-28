@@ -12,6 +12,7 @@ import {
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { HOLD_KINDS, PAYOUT_KINDS } from '~/server/services/placement-escrow.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
@@ -845,43 +846,113 @@ export async function updateStoryline({
   return updated;
 }
 
+export const STORYLINE_DELETE_REFUSALS = {
+  takenDown: 'This storyline was taken down',
+  appealOpen: 'This storyline has an open appeal. Rule on it before deleting',
+  paidContinuations:
+    "This storyline has paid continuations that haven't settled yet. Try again once they have",
+} as const;
+
 /**
- * Deletes a storyline that has never had a chapter, for its owner only. Chapter rows are never
- * deleted (a removed or post-deleted chapter stays as a tombstone), so "no rows" means no chapter
- * in any state, and with it no continuation placement or Buzz: every placement targets a chapter's
- * post. A chapter-1 draft is unlinked by the cascade and stays an ordinary draft.
+ * Deletes a storyline for its owner or a moderator. Its posts stay as they are: the chapter rows
+ * that tie them to the storyline go with it (by cascade, as do its edges, branch choices, create
+ * clicks, collaborators and comment thread), and a chapter-1 draft is unlinked and stays a draft.
+ *
+ * Refused while any paid continuation on it is pending or its Buzz has not finished moving, so no
+ * escrow is left pointing at a chapter that no longer exists. A taken-down storyline is kept for
+ * moderation: its owner cannot delete it, and a moderator cannot while the owner's appeal is open.
  */
-export async function deleteStoryline({ id, userId }: { id: number; userId: number }) {
+export async function deleteStoryline({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
   await dbWrite.$transaction(async (tx) => {
     // Ownership first, unlocked (the owner never changes), so no one else's call takes a lock.
     const [owned] = await tx.$queryRaw<{ userId: number }[]>`
       SELECT "userId" FROM "Storyline" WHERE id = ${id}
     `;
     if (!owned) throw throwNotFoundError('Storyline not found');
-    if (owned.userId !== userId)
+    const asModerator = owned.userId !== userId;
+    if (asModerator && !isModerator)
       throw throwAuthorizationError('Only the owner can delete this storyline');
     // Drafts before the storyline, the order `promotePendingChapter` locks them in: the cascade
     // below would otherwise deadlock against a chapter-1 draft going live.
     await tx.$queryRaw`SELECT 1 FROM "StorylinePendingChapter" WHERE "storylineId" = ${id} FOR UPDATE`;
-    // FOR UPDATE waits out and then blocks every chapter writer: adds share this row
-    // (`lockStorylineForAdd`), inserts and moves hold it NO KEY, and a chapter-1 insert's foreign
-    // key takes KEY SHARE. Whatever committed first, the count below sees it.
+    // FOR UPDATE waits out and then blocks every chapter writer and continuation submit: adds and
+    // submits share this row (`lockStorylineForAdd`, `createStorylinePlacement`), inserts and
+    // moves hold it NO KEY, and a chapter-1 insert's foreign key takes KEY SHARE. Whatever
+    // committed first, the reads below see it.
     const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
       SELECT "tosViolation" FROM "Storyline" WHERE id = ${id} FOR UPDATE
     `;
     if (!storyline) throw throwNotFoundError('Storyline not found');
-    // Kept for moderation: deleting would drop the takedown and any appeal with it.
-    if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
-    const [{ hasChapter }] = await tx.$queryRaw<{ hasChapter: boolean }[]>`
-      SELECT EXISTS (SELECT 1 FROM "StorylineChapter" WHERE "storylineId" = ${id}) AS "hasChapter"
+    if (storyline.tosViolation) {
+      if (!isModerator) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.takenDown);
+      const [{ appealOpen }] = await tx.$queryRaw<{ appealOpen: boolean }[]>`
+        SELECT EXISTS (
+          SELECT 1 FROM "Appeal"
+          WHERE "entityType" = ${EntityType.Storyline}::"EntityType" AND "entityId" = ${id}
+            AND status = ${AppealStatus.Pending}::"AppealStatus" AND "entityRemovedAt" IS NULL
+        ) AS "appealOpen"
+      `;
+      if (appealOpen) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.appealOpen);
+    }
+    // A paid continuation targets a chapter's post, and an approved one is its chapter's
+    // placement. Unsettled is the escrow's own reading (`sweepUnpaidLegs`,
+    // `sweepUnplannedSettlements`): pending, a payout leg not yet paid, or a funded hold with no
+    // payout planned.
+    const [{ unsettled }] = await tx.$queryRaw<{ unsettled: boolean }[]>`
+      SELECT EXISTS (
+        SELECT 1 FROM "Placement" p
+        WHERE p.surface = 'storyline' AND NOT p.free AND p.amount > 0
+          AND (
+            (p."targetType" = 'post' AND p."targetId" IN (
+              SELECT "postId" FROM "StorylineChapter" WHERE "storylineId" = ${id} AND "postId" IS NOT NULL
+            ))
+            OR p.id IN (
+              SELECT "placementId" FROM "StorylineChapter" WHERE "storylineId" = ${id} AND "placementId" IS NOT NULL
+            )
+          )
+          AND (
+            p.status = 'pending'
+            OR EXISTS (
+              SELECT 1 FROM "PlacementTransaction" t
+              WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
+                AND t."transactionId" IS NULL AND t.amount > 0
+            )
+            OR (
+              EXISTS (
+                SELECT 1 FROM "PlacementTransaction" h
+                WHERE h."placementId" = p.id AND h.kind = ANY(${[...HOLD_KINDS]}::text[])
+                  AND h."transactionId" IS NOT NULL
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM "PlacementTransaction" t
+                WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
+              )
+            )
+          )
+      ) AS unsettled
     `;
-    if (hasChapter) throw throwBadRequestError('Only a storyline with no chapters can be deleted');
+    if (unsettled) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidContinuations);
     // No foreign key: the owner's continuation price for this storyline would outlive it.
     await tx.$executeRaw`
       DELETE FROM "PlacementSpace"
       WHERE surface = 'storyline' AND "entityType" = 'storyline' AND "entityId" = ${id}
     `;
     await tx.$executeRaw`DELETE FROM "Storyline" WHERE id = ${id}`;
+    // In the transaction, unlike `trackStorylineModEdit`: nothing else records what was deleted.
+    if (asModerator)
+      await trackModActivity(
+        userId,
+        { entityType: 'storyline', entityId: id, activity: 'delete' },
+        tx
+      );
   });
   return { id };
 }

@@ -184,7 +184,7 @@ export const listExhaustedLegs = ({ limit = 100 }: { limit?: number } = {}) =>
     take: limit,
   });
 
-const HOLD_KINDS = ['holdFee', 'holdPrincipal'] as const;
+export const HOLD_KINDS = ['holdFee', 'holdPrincipal'] as const;
 
 /** Where the unfunded-settlement gauge stops counting. See the gauge's own note. */
 const UNFUNDED_GAUGE_CEILING = 1_000;
