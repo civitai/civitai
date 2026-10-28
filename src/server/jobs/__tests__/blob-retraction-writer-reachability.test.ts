@@ -270,15 +270,14 @@ function readQuery(strings: TemplateStringsArray, ...values: unknown[]) {
 
   if (sql.includes('FROM "CsamReport"')) return [];
 
-  // remove-blocked-images: its two queue reads. The batch's held-id exclusion arrives as a nested
-  // `Prisma.sql` fragment, so its ids are read from that fragment's own values.
-  if (sql.includes('SELECT "entityId"') && sql.includes('FROM "JobQueue"')) {
-    const flat = values.flatMap((v) =>
-      v && typeof v === 'object' && 'values' in v ? (v as { values: unknown[] }).values : [v]
-    );
-    const ids = (flat.find(Array.isArray) as number[] | undefined) ?? [];
-    if (sql.includes('"entityId" = ANY(')) {
-      const cutoff = flat.find((v) => v instanceof Date) as Date;
+  // remove-blocked-images: its two queue reads, each passed as one `Prisma.sql` value.
+  if (sql.includes('FROM "JobQueue" j')) {
+    const bound = Array.isArray(strings)
+      ? values
+      : (strings as unknown as { values: unknown[] }).values;
+    const ids = (bound.find(Array.isArray) as number[] | undefined) ?? [];
+    if (sql.includes('AND EXISTS (SELECT 1 FROM unnest(')) {
+      const cutoff = bound.find((v) => v instanceof Date) as Date;
       return store.queue.filter((q) => ids.includes(q.entityId) && q.createdAt <= cutoff);
     }
     return store.queue
