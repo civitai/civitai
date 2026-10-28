@@ -19,9 +19,12 @@
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/flipt": "workspace:*",
-    "@civitai/redis": "workspace:*"
+    "@civitai/redis": "workspace:*",
+    "@civitai/shared": "workspace:*",
+    "kysely": "^0.28.7"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.4.6",
     "@sveltejs/adapter-node": "^5.3.2",
     "@sveltejs/kit": "^2.43.2",
     "@sveltejs/vite-plugin-svelte": "^6.0.0",

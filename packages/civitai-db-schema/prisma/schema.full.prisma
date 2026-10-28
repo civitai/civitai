@@ -8015,6 +8015,73 @@ model NewOrderLinkReview {
   @@index([status, createdAt])
 }
 
+/// Knights of New Order v2: a question a player can be asked about an image. `key` is `family.question`.
+model KnightsQuestion {
+  key            String             @id
+  version        Int                @default(1)
+  kind           String // choice | bool
+  prompt         String
+  options        Json
+  minRank        String             @default("Knight")
+  votesToResolve Int                @default(5)
+  maxVotes       Int                @default(10)
+  threshold      Float              @default(0.6)
+  active         Boolean            @default(true)
+  createdAt      DateTime           @default(now())
+  items          KnightsQueueItem[]
+}
+
+/// One question about one image, waiting for votes. Status: Open | Resolved | Inquisitor | Closed.
+model KnightsQueueItem {
+  id                Int             @id @default(autoincrement())
+  questionKey       String
+  question          KnightsQuestion @relation(fields: [questionKey], references: [key], onDelete: Cascade)
+  imageId           Int
+  source            String
+  minRank           String // the stage the item is at; starts at the question's minRank
+  votesNeeded       Int // starts at the question's votesToResolve
+  priority          Int             @default(2)
+  status            String          @default("Open")
+  expiresAt         DateTime?
+  isHiddenCheck     Boolean         @default(false)
+  resolvedValue     String?
+  resolvedAt        DateTime?
+  resolvedBy        Int?
+  appliedAt         DateTime? // null while a settled rating is still to be written to the image
+  resolvedFromLevel Int? // the image's level when the vote settled; a write-back finding another is rerouted
+  applyAttempts     Int             @default(0) // write-back tries so far; the cap hands the item to the Inquisitors
+  nextAttemptAt     DateTime? // the next write-back try is not due before this; also the lease of a running try
+  reason            String? // why an item left the normal path: blocked | moderator-ruled | missing | level-moved | attempts-exhausted
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  @@index([status, minRank, priority, createdAt])
+  @@index([status, appliedAt])
+  @@index([status, expiresAt])
+  @@index([imageId])
+}
+
+/// One row per vote, partitioned by month on `createdAt` (see the migration). The partition key must
+/// be in every unique key, so one-vote-per-player is enforced under the item row lock, not here.
+model KnightsVote {
+  itemId      Int
+  playerId    Int
+  createdAt   DateTime @default(now())
+  questionKey String
+  imageId     Int
+  stage       String // the item's minRank when the vote was cast
+  answer      String
+  weight      Float
+  verdict     String   @default("pending") // pending | correct | failed | inconclusive
+  gold        Int?
+  labelled    Boolean  @default(false)
+  converted   Boolean  @default(false)
+
+  @@id([itemId, playerId, createdAt])
+  @@index([playerId, createdAt])
+  @@index([itemId, stage])
+}
+
 enum NewOrderRankType {
   Acolyte
   Knight

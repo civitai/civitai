@@ -85,7 +85,7 @@ All go through `updateImageNsfwLevel` (main app) or its moderator-app twin.
 | Who                | Effect                                                                                                                          |
 | ------------------ | ------------------------------------------------------------------------------------------------------------------------------- |
 | Moderator          | Sets `nsfwLevel`, **locks it**, records the reason and ModActivity. Does not change `ingestion` or `needsReview`.               |
-| Knights consensus  | Same as a moderator, with `nsfwLevelReason = KNIGHTS_VOTE_NSFW_LEVEL_REASON`. A large down-rating escalates instead of locking. |
+| Knights consensus  | Written by the Knights app through `POST /api/mod/image/kono-set-nsfw-level` (activity `setNsfwLevelKono`, reason `KNIGHTS_VOTE_NSFW_LEVEL_REASON`). Same effect as a moderator, but only onto an image that exists, has no block marker, and is unlocked or Knights-locked; never sets Blocked. A large down-rating or a Blocked consensus goes to moderators instead of writing. See `apps/knights/CLAUDE.md`. |
 | Owner / other user | Only on unlocked images: records an `ImageRatingRequest` vote (owner votes weigh more). Does not change the level directly.     |
 
 ### 6. Leaving a review queue

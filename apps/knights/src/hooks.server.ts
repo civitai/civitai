@@ -2,6 +2,7 @@ import type { Handle } from '@sveltejs/kit';
 import { isNavigationRequest, spokeReauthResponse, withSetCookies } from '@civitai/auth';
 import { guard } from '$lib/server/auth';
 import { accessFor } from '$lib/server/access';
+import { JOB_PATHS } from '$lib/server/jobs-auth';
 
 const PUBLIC_PATHS = new Set([
   '/favicon.svg',
@@ -36,7 +37,9 @@ const closedPage = () =>
   );
 
 export const handle: Handle = async ({ event, resolve }) => {
-  if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
+  if (PUBLIC_PATHS.has(event.url.pathname) || JOB_PATHS.has(event.url.pathname)) {
+    return resolve(event);
+  }
 
   const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href, {
     navigation: isNavigationRequest(event.request),

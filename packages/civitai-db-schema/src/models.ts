@@ -5051,6 +5051,60 @@ export interface NewOrderLinkReview {
   updatedAt: Date;
 }
 
+export interface KnightsQuestion {
+  key: string;
+  version: number;
+  kind: string;
+  prompt: string;
+  options: JsonValue;
+  minRank: string;
+  votesToResolve: number;
+  maxVotes: number;
+  threshold: number;
+  active: boolean;
+  createdAt: Date;
+  items?: KnightsQueueItem[];
+}
+
+export interface KnightsQueueItem {
+  id: number;
+  questionKey: string;
+  question?: KnightsQuestion;
+  imageId: number;
+  source: string;
+  minRank: string;
+  votesNeeded: number;
+  priority: number;
+  status: string;
+  expiresAt: Date | null;
+  isHiddenCheck: boolean;
+  resolvedValue: string | null;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+  appliedAt: Date | null;
+  resolvedFromLevel: number | null;
+  applyAttempts: number;
+  nextAttemptAt: Date | null;
+  reason: string | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface KnightsVote {
+  itemId: number;
+  playerId: number;
+  createdAt: Date;
+  questionKey: string;
+  imageId: number;
+  stage: string;
+  answer: string;
+  weight: number;
+  verdict: string;
+  gold: number | null;
+  labelled: boolean;
+  converted: boolean;
+}
+
 export interface NewOrderRank {
   type: NewOrderRankType;
   name: string;

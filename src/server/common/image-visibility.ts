@@ -1,9 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 
-// The only lock a moderator didn't set: Knights consensus locks through the moderator path.
-export const KNIGHTS_VOTE_NSFW_LEVEL_REASON = 'Knights Vote';
+export { KNIGHTS_VOTE_NSFW_LEVEL_REASON };
 const PERMANENT_SCAN_FAILURE = 'permanent';
 
 /**
@@ -21,6 +21,16 @@ export function hasBlockMarker(image: {
     image.blockedFor != null
   );
 }
+
+/** SQL twin of `hasBlockMarker`: the two encodings of one rule move together. */
+export const hasBlockMarkerSql = (alias = 'i') => {
+  const t = Prisma.raw(`"${alias}"`);
+  return Prisma.sql`(
+    ${t}."ingestion" = ${ImageIngestionStatus.Blocked}::"ImageIngestionStatus"
+    OR ${t}."nsfwLevel" = ${NsfwLevel.Blocked}
+    OR ${t}."blockedFor" IS NOT NULL
+  )`;
+};
 
 // Blocked is a ToS removal; NotFound has no media behind the row.
 const ingestionStatesModRatingCannotOverride: ImageIngestionStatus[] = [

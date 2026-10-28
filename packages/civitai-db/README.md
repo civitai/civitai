@@ -66,7 +66,8 @@ Kysely does not expose its dialect's pool.
   `sslmode=no-verify` — SSL on, verification off). Pre-built pools are passed through untouched.
 - **NUMERIC/INT8 → number**: `createKyselyClients` registers pg type parsers so these come back as JS
   numbers, not strings. Registration is lazy (per-factory-call), so merely importing `@civitai/db`
-  elsewhere (the Prisma path) never flips global pg parsing.
+  elsewhere (the Prisma path) never flips global pg parsing. `timestamp without time zone` is parsed as UTC;
+  `parseTimestampAsUtc` is exported from `@civitai/db/kysely` so a test driver (PGlite) can parse it identically.
 - **`pg` is transitive**: declare it in the app only if you `import 'pg'` directly.
 - **Dropped connections**: a dropped pg connection emits `'error'`, which crashes the process when
   nothing listens. `createPool`, `createClients` and `createKyselyClients` attach `guardPool`
