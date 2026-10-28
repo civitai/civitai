@@ -282,6 +282,29 @@ describe('a refresh that cannot complete', () => {
     expect(state.snapshot?.lastError).toBe('rate limit');
   });
 
+  it('after a failed scheduled rebuild, reads deltas and holds the next rebuild until the retry interval', async () => {
+    const { service, state, clock, fullRead, deltaRead, settle } = setup(
+      snapshotOf({ fullAt: NOW - T.fullRebuildMs })
+    );
+    fullRead.mockResolvedValueOnce({ status: 'unavailable', reason: 'rate limit' });
+    await service.get();
+    await settle();
+    expect(fullRead).toHaveBeenCalledTimes(1);
+    expect(state.snapshot?.fullFailedAt).toBe(NOW);
+
+    clock.now = NOW + T.deltaMinMs;
+    await service.get();
+    await settle();
+    expect(fullRead).toHaveBeenCalledTimes(1);
+    expect(deltaRead).toHaveBeenCalledTimes(1);
+
+    clock.now = NOW + T.fullRetryMs;
+    await service.get();
+    await settle();
+    expect(fullRead).toHaveBeenCalledTimes(2);
+    expect(state.snapshot?.fullFailedAt).toBeUndefined();
+  });
+
   it('is unavailable when the first full read fails', async () => {
     const { service, fullRead, state } = setup(null);
     fullRead.mockResolvedValueOnce({ status: 'unavailable', reason: 'rate limit' });

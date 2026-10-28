@@ -35,6 +35,8 @@ export type Snapshot = {
   fullAt: number;
   /** A delta overflowed or a full read came back short: rebuild once the retry interval has passed. */
   needsFull: boolean;
+  /** Epoch ms of the newest failed full rebuild; throttles the next one while deltas keep running. Cleared by a successful full read. */
+  fullFailedAt?: number;
   /** What the last full read could not list, to show above the views. */
   readWarnings: string[];
   routerFailed: boolean;
@@ -70,8 +72,15 @@ export function decideRefresh(snapshot: Snapshot | null, now: number): RefreshKi
   const sinceAttempt = now - snapshot.attemptedAt;
   if (sinceAttempt < SNAPSHOT_TIMING.deltaMinMs) return 'none';
   if (snapshot.needsFull) return sinceAttempt >= SNAPSHOT_TIMING.fullRetryMs ? 'full' : 'none';
-  if (now - snapshot.fullAt >= SNAPSHOT_TIMING.fullRebuildMs) return 'full';
-  return now - snapshot.syncedAt >= SNAPSHOT_TIMING.deltaMaxAgeMs ? 'full' : 'delta';
+  const tooOldForDelta = now - snapshot.syncedAt >= SNAPSHOT_TIMING.deltaMaxAgeMs;
+  if (tooOldForDelta || now - snapshot.fullAt >= SNAPSHOT_TIMING.fullRebuildMs) {
+    const retryHeld =
+      snapshot.fullFailedAt !== undefined &&
+      now - snapshot.fullFailedAt < SNAPSHOT_TIMING.fullRetryMs;
+    if (!retryHeld) return 'full';
+    return tooOldForDelta ? 'none' : 'delta';
+  }
+  return 'delta';
 }
 
 /** The `updated_since` value for a delta after a sync that started at `syncedAt`. */
@@ -159,12 +168,12 @@ export function carryOver(
 
 /**
  * The router matters twice: for the account link of every ticket, and for the topic of a ticket with
- * no feature. Silence is retried for the second kind only, since a router that has not seen a new
- * ticket yet will.
+ * no feature. Silence on either is retried on the retry interval, since a router that has not seen a
+ * new ticket yet will.
  */
 export function needsEnrichment(record: TicketRecord, now: number): boolean {
   if (record.enrichedAt === undefined) return true;
-  if (record.routerTopic || record.cfFeature) return false;
+  if ((record.routerTopic || record.cfFeature) && record.civitaiUserId != null) return false;
   return now - record.enrichedAt >= SNAPSHOT_TIMING.enrichRetryMs;
 }
 

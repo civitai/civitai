@@ -18,7 +18,8 @@ import { statusLabel } from '$lib/tickets/statuses';
 
 /**
  * The view a ticket belongs to now, with the router context that decided it. `known` is the snapshot's copy:
- * its router answer stands in for a lookup while it is current. A router failure leaves the topic unknown.
+ * its router answer stands in for a lookup while it is current and linked to an account; an unlinked one
+ * may be stale, so it is asked again. A router failure leaves the topic unknown.
  */
 export async function resolveTicketView(
   ticketId: string,
@@ -26,7 +27,7 @@ export async function resolveTicketView(
   known?: TicketRecord
 ) {
   const routed =
-    known && topicIsKnown(known, Date.now())
+    known && known.civitaiUserId != null && topicIsKnown(known, Date.now())
       ? { topic: known.routerTopic ?? null, civitaiUserId: known.civitaiUserId ?? null }
       : await getRoutedTicketContext([ticketId], false).then(
           (m) => m.get(ticketId),
@@ -58,6 +59,16 @@ export async function linkedCivitaiUserId(
     return await resolveUserId(ticket.requesterEmail);
   } catch (e) {
     console.error('[tickets] user lookup failed', e);
+    return null;
+  }
+}
+
+/** Who sent the ticket to support; null when unknown or the lookup failed, which must not fail the ticket. */
+async function sentByOf(ticketId: string) {
+  try {
+    return (await sentByTickets([ticketId])).get(ticketId) ?? null;
+  } catch (e) {
+    console.error('[tickets] sent-by lookup failed', e);
     return null;
   }
 }
@@ -136,7 +147,7 @@ export async function loadTicketPayload(
   });
 
   const sentToSupport = hasSentToSupportTag(ticket.tags);
-  const sentBy = sentToSupport ? (await sentByTickets([ticketId])).get(ticketId) ?? null : null;
+  const sentBy = sentToSupport ? await sentByOf(ticketId) : null;
 
   return {
     status: 'ok' as const,

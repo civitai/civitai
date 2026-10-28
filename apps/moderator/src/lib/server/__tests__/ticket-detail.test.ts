@@ -14,7 +14,8 @@ vi.mock('../freshdesk.service', () => ({
 vi.mock('../decision-sources/support', () => ({
   getRoutedTicketContext: (...a: unknown[]) => routedContext(...a),
 }));
-vi.mock('../tickets/sent-by', () => ({ sentByTickets: async () => new Map() }));
+const sentByTickets = vi.fn();
+vi.mock('../tickets/sent-by', () => ({ sentByTickets: (...a: unknown[]) => sentByTickets(...a) }));
 vi.mock('../tickets/snapshot', () => ({
   ticketSnapshot: { patch: (...a: unknown[]) => patch(...a) },
   toRecord: (t: unknown) => t,
@@ -48,6 +49,7 @@ beforeEach(() => {
     .mockResolvedValue({ status: 'found', messages: [], truncated: false });
   routedContext.mockReset().mockResolvedValue(new Map());
   patch.mockReset().mockResolvedValue(undefined);
+  sentByTickets.mockReset().mockResolvedValue(new Map());
   accountSectionFor.mockReset().mockResolvedValue(undefined);
 });
 
@@ -83,6 +85,37 @@ describe('loadTicketPayload', () => {
       civitaiUserId: 99,
       canView: true,
     });
+  });
+
+  it('asks the router live when the snapshot holds a router answer with no linked account', async () => {
+    patch.mockResolvedValueOnce({
+      id: '5',
+      routerTopic: 'account-issue',
+      civitaiUserId: null,
+      enrichedAt: Date.now() - 1,
+    });
+    routedContext.mockResolvedValueOnce(
+      new Map([['5', { topic: 'account-issue', civitaiUserId: 7 }]])
+    );
+    const res = await loadTicketPayload('moderation', '5', {
+      canSeeEmail: false,
+      canViewAccount: false,
+    });
+    expect(routedContext).toHaveBeenCalledTimes(1);
+    expect(res.status === 'ok' && res.ticket.civitaiUserId).toBe(7);
+  });
+
+  it('still returns the ticket when the sent-by lookup fails', async () => {
+    getTicketDetail.mockResolvedValueOnce({
+      status: 'found',
+      ticket: ticket({ tags: ['sent-to-support'] }),
+    });
+    sentByTickets.mockRejectedValueOnce(new Error('moderator db down'));
+    const res = await loadTicketPayload('support', '5', {
+      canSeeEmail: false,
+      canViewAccount: false,
+    });
+    expect(res.status === 'ok' && res.ticket.sentBy).toBeNull();
   });
 
   it('keeps the requester address behind the PII grant', async () => {

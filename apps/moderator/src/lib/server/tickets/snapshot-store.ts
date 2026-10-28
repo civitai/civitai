@@ -6,8 +6,11 @@ import type { BuildFailure, SnapshotStore } from './snapshot-service';
 export const SNAPSHOT_TTL_SECONDS = 24 * 60 * 60;
 /** Long enough to outlive the retry interval, short enough that a fixed outage is not remembered. */
 export const BUILD_FAILURE_TTL_SECONDS = 15 * 60;
-/** Longer than a full rebuild takes (about 12s, bounded by its call budget), so a live refresh never loses its lock. */
-export const LOCK_TTL_SECONDS = 90;
+/**
+ * Longer than a full rebuild can take in the worst case: its 80-call budget at the 8s Freshdesk
+ * timeout is 640s, so a live refresh never loses its lock. A crashed holder blocks refreshes for at most this long.
+ */
+export const LOCK_TTL_SECONDS = 660;
 
 const SNAPSHOT_KEY = prefixCacheKey('mod:tickets:snapshot:v2') as RedisKeyTemplateCache;
 const FAILURE_KEY = prefixCacheKey(
@@ -78,7 +81,7 @@ export function createRedisSnapshotStore(client: () => Client): SnapshotStore {
     },
 
     // Not atomic: if the lock expired and another process took it between these two calls, this releases
-    // theirs. The window is two round trips against a 90s lock; the cost is one extra concurrent refresh.
+    // theirs. The window is two round trips against the lock's TTL; the cost is one extra concurrent refresh.
     async unlock(token) {
       if ((await client().get(LOCK_KEY)) === token) await client().del(LOCK_KEY);
     },

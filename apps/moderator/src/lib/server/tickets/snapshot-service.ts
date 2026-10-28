@@ -118,7 +118,12 @@ export function createSnapshotService(deps: SnapshotDeps) {
       if (!current) return res;
       return {
         status: 'ok',
-        snapshot: { ...current, attemptedAt: startedAt, lastError: res.reason },
+        snapshot: {
+          ...current,
+          attemptedAt: startedAt,
+          fullFailedAt: startedAt,
+          lastError: res.reason,
+        },
       };
     }
     // A short read cannot say what closed: it adds and updates, and drops a ticket only after several

@@ -73,6 +73,22 @@ describe('decideRefresh', () => {
     expect(decideRefresh(s, NOW)).toBe('none');
     expect(decideRefresh({ ...s, attemptedAt: NOW - T.fullRetryMs }, NOW)).toBe('full');
   });
+
+  it('keeps reading deltas after a scheduled full rebuild failed, and retries the rebuild only after the retry interval', () => {
+    const due = { fullAt: NOW - T.fullRebuildMs, attemptedAt: NOW - T.deltaMinMs };
+    const failedAt = NOW - (T.fullRetryMs - 1);
+    expect(decideRefresh(snap({ ...due, fullFailedAt: failedAt }), NOW)).toBe('delta');
+    expect(decideRefresh(snap({ ...due, fullFailedAt: NOW - T.fullRetryMs }), NOW)).toBe('full');
+  });
+
+  it('does not read a delta after a failed rebuild when the sync is too old for one', () => {
+    const s = snap({
+      syncedAt: NOW - T.deltaMaxAgeMs,
+      attemptedAt: NOW - T.deltaMinMs,
+      fullFailedAt: NOW - 1,
+    });
+    expect(decideRefresh(s, NOW)).toBe('none');
+  });
 });
 
 describe('deltaSince', () => {
@@ -190,10 +206,30 @@ describe('needsEnrichment', () => {
   });
 
   it('is false for an enriched ticket that has a topic or a feature', () => {
-    expect(needsEnrichment(rec(1, { enrichedAt: NOW, routerTopic: 't' }), NOW)).toBe(false);
+    expect(
+      needsEnrichment(rec(1, { enrichedAt: NOW, routerTopic: 't', civitaiUserId: 4 }), NOW)
+    ).toBe(false);
     expect(
       needsEnrichment(
-        rec(1, { enrichedAt: NOW - 99 * T.enrichRetryMs, routerTopic: null, cfFeature: 'X' }),
+        rec(1, {
+          enrichedAt: NOW - 99 * T.enrichRetryMs,
+          routerTopic: null,
+          cfFeature: 'X',
+          civitaiUserId: 4,
+        }),
+        NOW
+      )
+    ).toBe(false);
+  });
+
+  it('re-asks a ticket the router could not link to an account, after the retry interval', () => {
+    const unlinked = (ago: number) =>
+      rec(1, { enrichedAt: NOW - ago, routerTopic: 't', civitaiUserId: null });
+    expect(needsEnrichment(unlinked(T.enrichRetryMs - 1), NOW)).toBe(false);
+    expect(needsEnrichment(unlinked(T.enrichRetryMs), NOW)).toBe(true);
+    expect(
+      needsEnrichment(
+        rec(1, { enrichedAt: NOW - 99 * T.enrichRetryMs, routerTopic: 't', civitaiUserId: 4 }),
         NOW
       )
     ).toBe(false);
