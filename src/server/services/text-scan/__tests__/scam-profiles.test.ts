@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { constants } from '~/server/common/constants';
 import '~/server/services/text-scan/profiles/comment.profile';
 import '~/server/services/text-scan/profiles/comment-v2.profile';
@@ -107,6 +108,28 @@ describe('scamEligibleAuthors', () => {
     ]);
     expect([...(await scamEligibleAuthors([5], { ignoreAccountAge: true }))]).toEqual([5]);
     expect(dbMock.dbWrite.user.findMany.mock.calls[0][0].where.createdAt).toBeUndefined();
+  });
+
+  it('drops system accounts before submit, but not a lookalike of the shared account', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: 20 });
+    dbMock.dbWrite.user.findMany.mockResolvedValue([
+      account(5),
+      account(20, { username: 'Renamed' }),
+      account(21, { username: 'CivitaiModeration' }),
+      account(22, { meta: { systemAccount: true } }),
+      account(23, { username: 'CivitaiModerati0n' }),
+    ]);
+    dbMock.dbWrite.challengeJudge.findMany.mockResolvedValue([]);
+    try {
+      const ids = await scamEligibleAuthors([5, 20, 21, 22, 23]);
+      expect([...ids].sort((a, b) => a - b)).toEqual([5, 23]);
+      expect(dbMock.dbWrite.user.findMany.mock.calls[0][0].select).toMatchObject({
+        username: true,
+        meta: true,
+      });
+    } finally {
+      resetEnv();
+    }
   });
 
   it('reads nothing for an empty or system-only list', async () => {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
 import type * as ModeratorService from '~/server/services/moderator.service';
 import type * as Restriction from '~/server/services/user-restriction.service';
@@ -6,6 +6,7 @@ import type * as Ledger from '~/server/services/scam-case-ledger';
 import type * as Cleanup from '~/server/services/scam-cleanup.service';
 import type * as StrikeService from '~/server/services/strike.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { resetEnv, setEnv } from '~/__tests__/mocks/env.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { constants } from '~/server/common/constants';
 
@@ -297,6 +298,40 @@ describe('autoMuteScamAccount', () => {
       nothingActed();
     }
   );
+
+  describe('system accounts', () => {
+    afterEach(() => resetEnv());
+
+    it.each([
+      ['its configured id', 42, { username: 'Renamed' }],
+      ['the reserved name', 99, { username: 'civitaimoderation' }],
+      ['the system-account marker', 99, { username: 'svc-bot', meta: { systemAccount: true } }],
+    ])(
+      'never strikes or mutes one recognised by %s, even with the age rule waived',
+      async (_, configuredId, over) => {
+        setEnv({ CIVITAI_MODERATION_USER_ID: configuredId });
+        dbMock.dbWrite.user.findUnique.mockResolvedValue(user(over));
+        expect(await autoMuteScamAccount({ ...base, ignoreAccountAge: true })).toEqual({
+          muted: false,
+          skipped: 'system-account',
+        });
+        expect(dbMock.dbWrite.user.findUnique.mock.calls[0][0].select).toMatchObject({
+          username: true,
+          meta: true,
+        });
+        nothingActed();
+      }
+    );
+
+    it('still strikes a lookalike of the shared account', async () => {
+      setEnv({ CIVITAI_MODERATION_USER_ID: 99 });
+      dbMock.dbWrite.user.findUnique.mockResolvedValue(
+        user({ username: 'CivitaiModerati0n', meta: { systemAccount: false } })
+      );
+      expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true });
+      expect(m.createStrike).toHaveBeenCalledOnce();
+    });
+  });
 
   it('skips a user that does not exist', async () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(null);
