@@ -1,5 +1,11 @@
 import type { Prize, PrizeSourceType } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  countUnclaimedPrizesViaKysely,
+  countUnclaimedPrizesViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import { logToAxiom } from '~/server/logging/client';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
@@ -282,7 +288,10 @@ export async function getPrize({
 }
 
 export async function countUnclaimedPrizes(userId: number) {
-  return dbRead.prize.count({ where: { userId, claimedAt: null, voidedAt: null } });
+  // `kysely-hot-reads-5` on: the same count through Kysely, on the same replica.
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+    return countUnclaimedPrizesViaKysely((await loadKyselyDb()).kyselyRead, userId);
+  return countUnclaimedPrizesViaPrisma(dbRead, userId);
 }
 
 export async function getMyPrizes({

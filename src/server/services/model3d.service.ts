@@ -3,6 +3,12 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readPostModel3dViaKysely,
+  readPostModel3dViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import { resolveActorFor } from '~/utils/resolve-attribution';
@@ -1247,12 +1253,10 @@ export const getVisibleModel3DIdForPost = async ({
   userId?: number;
   isModerator?: boolean;
 }): Promise<number | null> => {
-  const post = await dbRead.post.findUnique({
-    where: { id: postId },
-    select: {
-      model3d: { select: { id: true, userId: true, status: true, deletedAt: true } },
-    },
-  });
+  // `kysely-hot-reads-5` on: the post and its Model3D in one statement, on the same replica.
+  const post = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+    ? await readPostModel3dViaKysely((await loadKyselyDb()).kyselyRead, postId)
+    : await readPostModel3dViaPrisma(dbRead, postId);
   const model3d = post?.model3d;
   if (!model3d) return null;
   if (

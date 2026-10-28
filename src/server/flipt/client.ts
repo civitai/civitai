@@ -140,6 +140,29 @@ export enum FLIPT_FEATURE_FLAGS {
   // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
   // Failures surface as pg errors, not Prisma P2024/P1008.
   KYSELY_HOT_READS_4 = 'kysely-hot-reads-4',
+  // Reads high-volume single-row lookups (packages/civitai-db-queries/src/hot-reads-5.db.ts)
+  // through Kysely-over-pg instead of the Prisma query engine, each on the client the Prisma read
+  // used: the placement and announcement-allowance KeyValue configs, a post's linked Model3D
+  // (`image.get`), the dismissed announcement ids, a post's collaborators, a home block row, the
+  // unclaimed prize count, a model's version ids (`user.getEngagedModelVersions`), a user's model
+  // reviews, the download path's model version, the three image reads of `reaction.toggle` and a
+  // model's showcase `meta`. DEFAULT-OFF, same semantics as KYSELY_HOT_READS_2 above: boolean only,
+  // evaluated with no entityId, once per call. Every statement reads base tables only, never a
+  // view.
+  //
+  // 🔴 Each read keeps its database: a `dbRead` read moves to `kyselyRead`, a `dbWrite` fallback
+  // stays on Prisma, and a `getDbWithoutLag(...)` read moves to `getKyselyWithoutLag(...)` with the
+  // same arguments.
+  //
+  // 🔴 THE KEY MUST EXIST IN FLAG STATE (enabled: false) BEFORE THIS CODE SERVES TRAFFIC. A missing
+  // key makes `evaluateBoolean` throw, bypass the eval cache and console.error on every call — and
+  // several of these reads run on most page views.
+  //
+  // 🔴 ON MOVES THESE READS OFF PRISMA'S POOLS ONTO `pgDbRead` (and `pgDbWrite` for a lag-flagged
+  // entity). Their acquire wait is `DATABASE_CONNECTION_TIMEOUT`, default 0 = WAIT FOREVER
+  // (packages/civitai-db/src/env.ts), so the environment must set a non-zero value before flipping.
+  // Failures surface as pg errors, not Prisma P2024/P1008.
+  KYSELY_HOT_READS_5 = 'kysely-hot-reads-5',
   // ON skips `getImagesForModelVersionCache`'s per-entry tag lookup, which is keyed by model
   // version ids as if they were image ids (so a hit attaches an unrelated image's tags) and whose
   // result no consumer reads. Evaluated without a user id on every call.

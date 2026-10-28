@@ -171,7 +171,14 @@ describe('resolvePlacementSpaceFor', () => {
     givenBothPaths();
     await imageSpace();
     expect(flag).toHaveBeenCalledWith(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS);
-    for (const call of flag.mock.calls) expect(call).toEqual(['kysely-placement-reads']);
+    // Every evaluation is by key alone, and of a key this path is known to read: the placement
+    // reads' own flag, and `kysely-hot-reads-5`, which `getPlacementConfig` evaluates for its
+    // KeyValue read. Any other key, or any entity/context argument, fails here.
+    const KNOWN_KEYS = ['kysely-placement-reads', 'kysely-hot-reads-5'];
+    for (const call of flag.mock.calls) {
+      expect(call).toHaveLength(1);
+      expect(KNOWN_KEYS).toContain(call[0]);
+    }
   });
 
   it('OFF: resolves an image space through Prisma only', async () => {
