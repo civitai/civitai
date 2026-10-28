@@ -1363,8 +1363,8 @@ export async function closeAppealsOnDeletedModel({ modelId }: { modelId: number 
  * so it never shows them. An owner who deleted their own content gets the appeal closed and
  * refunded, and is told. Any other deleted model closes quietly; a removed image stays Pending,
  * stamped `entityRemovedAt`, for review, and its owner is told; one still unreviewed
- * `ROUTED_APPEAL_REVIEW_DAYS` later is closed, refunded and told. A deleted account's appeals close
- * quietly.
+ * `ROUTED_APPEAL_REVIEW_DAYS` later is closed, refunded and told. Two cases close quietly, with no
+ * notice: a deleted account's appeals, and a deleted model's appeal its owner did not delete.
  */
 export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<OrphanCandidate[]>`
@@ -1384,7 +1384,8 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
     LIMIT ${limit}
   `;
 
-  // Only a deleted account's appeals close without a notice.
+  // A deleted account's appeals close without a notice; so, below, does a deleted model's appeal
+  // whose owner did not delete it.
   const isQuiet = (a: OrphanCandidate) => a.userDeleted;
   const quiet = candidates.filter(isQuiet);
   const rest = candidates.filter((a) => !isQuiet(a));
