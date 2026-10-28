@@ -1,0 +1,70 @@
+<script lang="ts">
+  import { enhance } from '$app/forms';
+  import type { ActionData, PageData } from './$types';
+
+  let { data, form }: { data: PageData; form: ActionData } = $props();
+</script>
+
+<h1>Simulate other voters</h1>
+<p class="muted">
+  Development only. Casts votes from other Knights players, through the normal voting path, until the
+  item is settled.
+</p>
+
+{#if form?.message}
+  <p class="notice" role="status">{form.message}</p>
+{:else if form?.success}
+  <p class="notice" role="status">
+    {form.cast} votes cast. The item is now {form.itemStatus}{form.settled
+      ? '.'
+      : ', its rating is still to be written back; run the tick job.'}
+  </p>
+{/if}
+
+{#each data.items as item (item.id)}
+  <form method="POST" action="?/simulate" use:enhance class="item">
+    <img src={item.src} alt="" width="96" />
+    <div>
+      <p>
+        #{item.id} · {item.prompt}
+        <span class="muted">· {item.stage} · {item.votes} votes{item.votedByMe ? ' · you voted' : ''}</span>
+      </p>
+      <input type="hidden" name="itemId" value={item.id} />
+      {#each item.options as option (option.value)}
+        <button type="submit" name="answer" value={option.value}>Resolve as {option.label}</button>
+      {/each}
+    </div>
+  </form>
+{:else}
+  <p>No open items.</p>
+{/each}
+
+<p><a href="/play">Back</a></p>
+
+<style>
+  .muted {
+    color: var(--muted);
+  }
+  .notice {
+    color: var(--gold);
+  }
+  .item {
+    display: flex;
+    gap: 1rem;
+    align-items: flex-start;
+    margin: 1rem 0;
+  }
+  img {
+    object-fit: cover;
+    border: 1px solid var(--border);
+  }
+  button {
+    margin: 0 0.5rem 0.5rem 0;
+    padding: 0.35rem 0.9rem;
+    border: 1px solid var(--gold);
+    background: var(--panel);
+    color: var(--text);
+    font: inherit;
+    cursor: pointer;
+  }
+</style>
