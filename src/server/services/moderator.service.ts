@@ -77,6 +77,7 @@ type UserModActivity = {
     | 'mute'
     | 'unmute'
     | 'revokeTimedMute'
+    | 'createSystemAccount'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when

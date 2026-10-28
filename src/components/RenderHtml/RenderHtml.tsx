@@ -10,6 +10,7 @@ import classes from './RenderHtml.module.scss';
 import { TypographyStylesWrapper } from '~/components/TypographyStylesWrapper/TypographyStylesWrapper';
 import clsx from 'clsx';
 import { getProfanityFilter } from '~/libs/profanity-simple';
+import { maskProfanityOutsideMarkup } from './mask-profanity';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { STICKER_JUMBO_LIMIT, stickerMaxWidth, STICKER_SIZE } from '~/shared/utils/sticker-token';
@@ -60,41 +61,7 @@ export function RenderHtml({
       // fix now that the keyed factory exists.
       const profanityFilter = getProfanityFilter();
 
-      // Preserve mentions (entire span + content) and all HTML tag markup so
-      // the filter only operates on visible text content. Capturing entire
-      // tags also protects href/src attribute values, since the whole opening
-      // tag is one match. The per-render nonce prevents collisions with any
-      // user-typed text that happens to look like a placeholder.
-      const nonce = Math.random().toString(36).slice(2, 12);
-      const mentionToken = (i: number) => `__pf${nonce}M${i}__`;
-      const tagToken = (i: number) => `__pf${nonce}T${i}__`;
-
-      const mentionRegex = /<span[^>]*data-type="mention"[^>]*>.*?<\/span>/gi;
-      const tagRegex = /<[^>]+>/g;
-
-      const mentions: string[] = [];
-      processedHtml = processedHtml.replace(mentionRegex, (match) => {
-        mentions.push(match);
-        return mentionToken(mentions.length - 1);
-      });
-
-      const tags: string[] = [];
-      processedHtml = processedHtml.replace(tagRegex, (match) => {
-        tags.push(match);
-        return tagToken(tags.length - 1);
-      });
-
-      processedHtml = profanityFilter.clean(processedHtml);
-
-      // Single-pass O(n) restore per type via global regex callback.
-      processedHtml = processedHtml.replace(
-        new RegExp(`__pf${nonce}T(\\d+)__`, 'g'),
-        (_, index) => tags[Number(index)] ?? ''
-      );
-      processedHtml = processedHtml.replace(
-        new RegExp(`__pf${nonce}M(\\d+)__`, 'g'),
-        (_, index) => mentions[Number(index)] ?? ''
-      );
+      processedHtml = maskProfanityOutsideMarkup(processedHtml, profanityFilter);
     }
 
     return sanitizeHtml(processedHtml, {

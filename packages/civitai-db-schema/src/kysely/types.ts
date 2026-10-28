@@ -4266,6 +4266,16 @@ export type OauthClient = {
    * Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
    */
   accessMode: Generated<string>;
+  /**
+   * Staff-only, confidential system apps only (auth hub admin, OAuth Apps): signed-in users go straight through
+   * /authorize with no consent screen, as first-party (spoke) clients do. Ignored for a public app.
+   */
+  skipConsent: Generated<boolean>;
+  /**
+   * Staff-only, confidential system apps only: this client's own /oauth/token limit per minute, used once a request
+   * is past the per-IP limit and the client has proved its secret. Null = the per-IP limit only.
+   */
+  tokenRateLimit: number | null;
   userId: number;
   isVerified: Generated<boolean>;
   createdAt: Generated<Timestamp>;

@@ -10,9 +10,13 @@ vi.mock('cloudflare', () => ({
 
 // The client is built when the module loads, from these.
 envMock.set({ CF_ZONE_ID: 'zone', CF_API_TOKEN: 'token' });
-const { purgeUrlsOrThrow } = await import('~/server/cloudflare/client');
+const { purgeUrlsOrThrow, CloudflarePurgeBusyError } = await import('~/server/cloudflare/client');
 
-const urls = Array.from({ length: 70 }, (_, i) => `https://image.example/k/width=${i}/k.jpeg`);
+/** The client's HTTP error: a status on `statusCode`. */
+const httpError = (statusCode: number) =>
+  Object.assign(new Error(`Response code ${statusCode}`), { statusCode });
+const rateLimited = () => httpError(429);
+const urls = Array.from({ length: 250 }, (_, i) => `https://image.example/k/width=${i}/k.jpeg`);
 const batches = () => mockCfPurge.mock.calls.map((c) => (c[1] as { files: string[] }).files);
 
 describe('purgeUrlsOrThrow', () => {
@@ -22,7 +26,7 @@ describe('purgeUrlsOrThrow', () => {
 
   it('purges every url, in order, in batches', async () => {
     await purgeUrlsOrThrow(urls);
-    expect(batches().map((b) => b.length)).toEqual([30, 30, 10]);
+    expect(batches().map((b) => b.length)).toEqual([100, 100, 50]);
     expect(batches().flat()).toEqual(urls);
   });
 
@@ -32,9 +36,32 @@ describe('purgeUrlsOrThrow', () => {
     expect(batches().flat()).toEqual(urls);
   });
 
-  it('gives up on a batch that never answers, and moves on', async () => {
+  it('gives up on a batch that never answers, moves on, and fails (not busy)', async () => {
     mockCfPurge.mockImplementationOnce(() => new Promise(() => undefined));
-    await expect(purgeUrlsOrThrow(urls, { timeoutMs: 20 })).rejects.toThrow('failed');
+    const error = await purgeUrlsOrThrow(urls, { timeoutMs: 20 }).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error).not.toBeInstanceOf(CloudflarePurgeBusyError);
     expect(batches()).toHaveLength(3);
+  });
+
+  it("says why a batch was refused, from Cloudflare's answer", async () => {
+    const refused = Object.assign(httpError(400), {
+      response: { body: { success: false, errors: [{ code: 1015, message: 'too many files' }] } },
+    });
+    mockCfPurge.mockRejectedValueOnce(refused);
+    await expect(purgeUrlsOrThrow(urls)).rejects.toThrow(/refused: 400 .*too many files/);
+  });
+
+  it('stops at a 429 and reports busy', async () => {
+    mockCfPurge.mockRejectedValueOnce(rateLimited());
+    await expect(purgeUrlsOrThrow(urls)).rejects.toBeInstanceOf(CloudflarePurgeBusyError);
+    expect(batches()).toHaveLength(1);
+  });
+
+  it('is not busy when any batch failed for another reason', async () => {
+    mockCfPurge.mockRejectedValueOnce(httpError(500)).mockRejectedValueOnce(rateLimited());
+    const error = await purgeUrlsOrThrow(urls).catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(AggregateError);
+    expect(error).not.toBeInstanceOf(CloudflarePurgeBusyError);
   });
 });

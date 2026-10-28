@@ -7,6 +7,8 @@ import {
   cardByType,
   extraParamCapabilities,
   extraParamDefaults,
+  isProdigy,
+  MAX_NON_PRODIGY_LR,
   paramsForVersion,
   cardsForMedia,
   ecosystemTakesSampleImages,
@@ -402,6 +404,24 @@ export function runExtraCapabilities(run: Run, labelMode: LabelType) {
 
 /** The text-encoder rate is locked at 0 for models whose backend can't train it. */
 export const teLocked = (run: Run): boolean => TE_TRAINING_UNSUPPORTED.has(run.versionKey);
+
+/** The learning rates after an optimizer change, as the main trainer couples them: Prodigy runs at
+ *  1 (the text encoder too, unless the model can't train it); switching away puts a Prodigy-level
+ *  rate back to the model's recommendation and leaves a rate the user picked alone. */
+export function optimizerLrParams(
+  run: Run,
+  params: RunParams
+): Pick<RunParams, 'unetLr' | 'textEncoderLr'> {
+  const { unetLr, textEncoderLr } = params;
+  if (isProdigy(params.optimizer))
+    return { unetLr: '1', textEncoderLr: teLocked(run) ? textEncoderLr : '1' };
+  const defaults = defaultRunParams(run);
+  const reset = (v: NumericInput, d: NumericInput) => (Number(v) >= MAX_NON_PRODIGY_LR ? d : v);
+  return {
+    unetLr: reset(unetLr, defaults.unetLr),
+    textEncoderLr: reset(textEncoderLr, defaults.textEncoderLr),
+  };
+}
 
 export interface ParamDeviation {
   field: keyof RunParams;
