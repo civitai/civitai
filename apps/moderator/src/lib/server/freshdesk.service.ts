@@ -1,7 +1,8 @@
 import { env } from '$env/dynamic/private';
 import { convertHtml } from './html-to-text';
 
-// Support context for User Lookup (Retool's GetFreshdesk, ticket §1.2 "support context").
+// Freshdesk reads, GET-only: the User Lookup support context (Retool's GetFreshdesk, ticket §1.2) and the
+// /tickets search and detail reads. Writes live in `freshdesk-write.service.ts` with their own key.
 //
 // Retool called civitai.freshdesk.com/api/v2/search/contacts directly with a hardcoded key. Here the key
 // is FRESHDESK_API_KEY and the domain FRESHDESK_DOMAIN, matching the names the main app already uses.
@@ -265,10 +266,6 @@ export async function getTicketDescription(ticketId: string): Promise<TicketDesc
   }
   return describeHtml(description);
 }
-
-// ---------------------------------------------------------------------------------------------
-// Ticket views — live search, one ticket, its conversation. All READ-ONLY.
-// ---------------------------------------------------------------------------------------------
 
 /** Freshdesk's search page size and page ceiling: one expression yields at most 300 tickets. */
 export const SEARCH_PAGE_SIZE = 30;

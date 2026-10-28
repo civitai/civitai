@@ -8,15 +8,13 @@ import { bisectDays, createdWithin, addDays, type DayRange } from '$lib/tickets/
 
 const PAGE_SIZE = SEARCH_PAGE_SIZE;
 const MAX_PAGES = SEARCH_MAX_PAGES;
-/** One expression yields at most this many tickets. */
 const MAX_RESULTS = PAGE_SIZE * MAX_PAGES;
 
-/** No Freshdesk account here predates this. */
 const EARLIEST_DAY = '2015-01-01';
 
 export type FetchPage = (expression: string, page: number) => Promise<TicketSearchPage>;
 
-/** Freshdesk calls one list load may still make. The account's rate limit is shared by everyone. */
+/** Freshdesk calls one list load may make. The account's rate limit is shared by everyone. */
 export type Budget = { left: number };
 
 export type Searched =

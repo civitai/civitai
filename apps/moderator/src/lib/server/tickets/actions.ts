@@ -70,11 +70,7 @@ async function settled(view: TicketView, ticketId: string, outcome: WriteOutcome
   return { success: true as const, moved, warning: outcome.warning };
 }
 
-/**
- * `?/reply` and `?/status` for one view's ticket page, behind `tickets.reply` on top of the page grant;
- * the moderation page also gets `?/escalate`, behind `tickets.escalate`. All return `fail()` rather than
- * throwing so the typed text survives a refusal.
- */
+/** `?/reply`, `?/status` and (moderation only) `?/escalate`. All return `fail()` rather than throwing so the typed text survives a refusal. */
 export function ticketActions(view: TicketView): Actions {
   return {
     reply: requiresGrant('tickets.reply', async ({ request, params, locals }) => {

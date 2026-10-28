@@ -47,8 +47,8 @@
         placeholder="Optional reason, shown to support in a private note."
         disabled={escalate.submitting}
       />
-      <!-- The confirm button is the only real submit; `confirming` closes from `onSettled`, so the
-           button is not unmounted inside its own click handler. -->
+      <!-- The confirm button is the only real submit; it must not unmount itself in its own click
+           handler (the submit would never fire) — `confirming` closes from `onSettled` instead. -->
       <div class="flex flex-wrap items-center gap-2">
         {#if confirming}
           <span class="text-sm text-red-300">Remove this ticket from the moderation queue?</span>

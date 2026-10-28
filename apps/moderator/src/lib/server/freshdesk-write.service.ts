@@ -8,11 +8,10 @@ import {
 
 // Freshdesk WRITES, kept apart from `freshdesk.service.ts` so that module stays GET-only.
 //
-// They use their own key, FRESHDESK_WRITE_API_KEY: customers see the key's seat as the sender, and the
-// read key must keep working (and stay unable to write) when this one is absent or rotated. There is
-// deliberately no fallback from one to the other.
+// Own key, FRESHDESK_WRITE_API_KEY: customers see its agent as the sender. The read key is never used to
+// write, and there is deliberately no fallback from one to the other.
 //
-// Never throws. A failed write is a result the caller must report, not an exception that unmounts a page
+// Never throws: a failed write is a result the caller reports, not an exception that unmounts a page
 // holding the operator's typed reply.
 
 export type WriteResult =

@@ -23,14 +23,12 @@ export const STATUS_LABEL: Record<number, string> = {
   [STATUS.aiAgent]: 'Assigned to AI Agent',
 };
 
-/** Every status except Resolved and Closed. */
 export const LIVE_STATUSES: number[] = Object.values(STATUS).filter(
   (s) => s !== STATUS.resolved && s !== STATUS.closed
 );
 
 export const statusLabel = (status: number): string => STATUS_LABEL[status] ?? `Status ${status}`;
 
-/** The statuses a moderator may set from the app: Pending, Waiting on Customer, Resolved, Closed. */
 export const SETTABLE_STATUSES = [
   STATUS.pending,
   STATUS.waitingOnCustomer,

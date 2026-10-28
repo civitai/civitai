@@ -24,7 +24,6 @@ export type TicketRow = {
   createdAt: string | null;
   updatedAt: string | null;
   freshdeskUrl: string;
-  /** Carries the sent-to-support tag. */
   sentToSupport: boolean;
   /** Who sent it, when ModActivity has the row; a ticket tagged by hand has none. */
   sentBy: SentBy | null;
@@ -39,12 +38,10 @@ export type TicketListResult =
     }
   | Unavailable;
 
-/** Freshdesk calls one list load may make. The support view reads about 800 tickets at 30 a page, and
- *  a status over the 300-result ceiling costs extra requests to split by day. */
+/** Freshdesk calls one list load may make; a status over the search ceiling costs extra requests to split by day. */
 const CALL_BUDGET = 80;
 
-/** Searches are shared by everyone on the view and the account's rate limit is shared by everyone on
- *  Freshdesk, so a burst of page loads reads one answer. Only complete reads are kept. */
+/** Shared by everyone on the view to spare the account-wide rate limit. Only complete reads are kept, so a short one is retried. */
 const cached = createLoadCache<Searched>(30_000, (r) => r.status === 'ok' && r.complete);
 
 const today = () => new Date().toISOString().slice(0, 10);
@@ -67,14 +64,7 @@ const searchesFor = (view: TicketView): { label: string; expression: string }[] 
 /**
  * The live tickets of one view, newest activity first.
  *
- * Freshdesk is the source of truth; the router's topic only decides tickets that have no `cf_feature`.
- * The moderation view asks Freshdesk for its own sets directly (about 150 of ~800 live tickets). The
- * support view is "everything live that is not moderation", which no search can express, so it reads
- * each live status and filters here. One search yields at most 300 tickets, so a bigger one is
- * split by creation day (see `readAll`); a read that is still short is reported in `warnings` instead
- * of passing as the whole list.
- *
- * Never throws.
+ * Never throws. A read that comes back short goes in `warnings` instead of passing as the whole list.
  */
 export async function listTickets(
   view: TicketView,
@@ -84,7 +74,7 @@ export async function listTickets(
     const found = new Map<string, TicketSummary>();
     const warnings: string[] = [];
     const budget: Budget = { left: CALL_BUDGET };
-    // Sequential: the support view issues a few dozen requests against a shared rate limit.
+    // Sequential: they draw on one shared `budget` and rate limit.
     for (const { label, expression } of searchesFor(view)) {
       const res = await searchAll(expression, budget);
       if (res.status !== 'ok') return res;
@@ -115,7 +105,6 @@ export async function listTickets(
           tags: t.tags,
         }) === view
     );
-    // Only the support view shows who sent a ticket, and only tagged tickets can have been sent.
     const sentBy =
       view === 'support'
         ? await sentByTickets(visible.filter((t) => hasSentToSupportTag(t.tags)).map((t) => t.id))

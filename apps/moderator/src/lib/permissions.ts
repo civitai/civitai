@@ -132,8 +132,8 @@ export const PERMISSIONS = [
   // Support tickets carry the requester's email, a different class of data from anything moderation
   // shows. Without this the email is never even selected — see `ticketSql`.
   { id: 'decisions.support.pii', label: 'See support-ticket requester emails on Decisions' },
-  // Replies and status changes are sent from a shared Freshdesk seat, so who may write to a customer
-  // is its own call; reading a ticket view is the page grant.
+  // Replies and status changes go out as one agent's Freshdesk key, so who may write to a customer is
+  // its own call; reading a ticket view is the page grant.
   { id: 'tickets.reply', label: 'Reply to and change the status of a support ticket' },
   // Hands a moderation ticket to support, naming the moderator who did it.
   { id: 'tickets.escalate', label: 'Send a moderation ticket to support' },

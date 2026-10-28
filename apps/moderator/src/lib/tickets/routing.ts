@@ -11,13 +11,12 @@ export type TicketView = 'moderation' | 'support';
 export const TICKET_ROUTING = {
   /** Freshdesk `cf_feature` values that mean a moderator handles the ticket. */
   moderationFeatures: ['Account Restriction or Banned Account', 'Moderation Decision'],
-  /** Freshdesk status ids that hand a ticket to moderation: 8 "Waiting on Mod Lead". */
   moderationStatuses: [STATUS.waitingOnMod],
   /** Router topics that count ONLY for a ticket that has no `cf_feature`. */
   fallbackTopics: ['nsfw-moderation', 'image-moderation-appeal'],
 } as const;
 
-/** Freshdesk tag that hands a ticket to support whatever else would route it to moderation. */
+/** Freshdesk tag that hands a ticket to support, unless its status is a moderation status. */
 export const SENT_TO_SUPPORT_TAG = 'sent-to-support';
 
 /** Whether `tags` carries the sent-to-support tag. Freshdesk treats tags case-insensitively. */
@@ -34,10 +33,9 @@ export type RoutingInput = {
 const isIn = (list: readonly (string | number)[], value: string | number) => list.includes(value);
 
 /**
- * The view a ticket belongs to. A moderation status beats everything, even the sent-to-support tag: it is
- * how support hands an escalated ticket back. Otherwise the tag beats every other rule. A `cf_feature`
- * an agent set wins over the router's guess, so a support-labelled ticket stays in support even when the
- * router thinks it is about moderation.
+ * Precedence: moderation status, then the sent-to-support tag, then `cf_feature`, then the router's topic
+ * (only for a ticket with no feature). A moderation status outranks the tag because that is how support
+ * hands an escalated ticket back.
  */
 export function routeTicket({ cfFeature, status, routerTopic, tags }: RoutingInput): TicketView {
   if (isIn(TICKET_ROUTING.moderationStatuses, status)) return 'moderation';

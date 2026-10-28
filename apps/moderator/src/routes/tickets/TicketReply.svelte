@@ -21,14 +21,13 @@
 
   let text = $state('');
   let statusAfter = $state(LEAVE);
+  // Seeded once on purpose; a $derived would overwrite the user's pending choice.
   // svelte-ignore state_referenced_locally
   let statusOnly = $state(SETTABLE_STATUSES.some((s) => s === currentStatus) ? String(currentStatus) : '');
   let confirming = $state(false);
-  /** Set when a status change took the ticket out of this view: the page's own load would now 404. */
   let movedTo = $state<TicketView | null>(null);
 
-  // A changed status can route the ticket elsewhere, so the page is reloaded only while it still
-  // belongs here — a reload after it left would replace this page with the 404 for another view's ticket.
+  // Reload only while the ticket still belongs to this view; a reload after it left would replace this page with another view's 404.
   function done(what: string, data: Record<string, unknown> | undefined) {
     const moved = data?.moved;
     if (moved === 'moderation' || moved === 'support') movedTo = moved;
@@ -42,10 +41,9 @@
       statusAfter = LEAVE;
       done('Reply sent', data);
     },
-    // The confirm step closes when the write settles, success or refusal; the typed text stays on refusal.
     onSettled: () => (confirming = false),
   });
-  // reset:false — the select is pre-filled from the ticket, so a form reset would snap it to the first option.
+  // reset: false, because a form reset would snap the pre-filled select to its first option.
   const status = new FormState({
     onSuccess: (data) => done('Status changed', data),
     reset: false,

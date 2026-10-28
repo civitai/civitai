@@ -43,8 +43,8 @@ const failure = (
 const by = (m: Moderator) => `${m.username ?? 'unknown'} (user ${m.id}) from the moderator app.`;
 
 /**
- * Reply and status writes, each followed by a private note naming the moderator: the reply goes out as the
- * key's shared seat, so the note is the only place the real sender is recorded.
+ * Reply and status writes, each followed by a private note naming the moderator: Freshdesk records only
+ * the key's agent as the sender, so the note is the only place the real sender is recorded.
  *
  * 🔴 ONCE THE REPLY OR STATUS CHANGE HAS LANDED, NOTHING AFTER IT MAY TURN THE RESULT INTO A FAILURE. A
  * failed note or status change on a sent reply is a `warning` on a success: reporting failure would

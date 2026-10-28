@@ -5,10 +5,8 @@ import { latestPerTicket } from '$lib/tickets/sent-by';
 export type SentBy = { moderatorId: number | null; username: string | null; at: string };
 
 /**
- * Who sent each of these tickets to support, from the newest `ticketEscalate` ModActivity row, read with
- * one query and one user read for the whole list. A ticket tagged by hand in Freshdesk has no row, so it
- * is simply absent from the map. Best-effort: a failed read logs and returns an empty map, so the list
- * shows "Sent to support" without a name rather than failing.
+ * Who sent each ticket to support, from the newest `ticketEscalate` ModActivity row. A ticket tagged by
+ * hand has no row. Best-effort: a failed read logs and returns an empty map.
  */
 export async function sentByTickets(ticketIds: readonly string[]): Promise<Map<string, SentBy>> {
   const ids = ticketIds.map(Number).filter(Number.isSafeInteger);

@@ -12,12 +12,7 @@ import { resolveUserId } from '../user-lookup.service';
 import { hasSentToSupportTag, routeTicket, type TicketView } from '$lib/tickets/routing';
 import { statusLabel } from '$lib/tickets/statuses';
 
-/**
- * The view a ticket belongs to now, with the router context that decided it.
- *
- * The router's topic decides only a ticket with no feature, but its linked account helps any ticket.
- * Its failure leaves the topic unknown, which routes a feature-less ticket to support.
- */
+/** The view a ticket belongs to now, with the router context that decided it. A router failure leaves the topic unknown. */
 export async function resolveTicketView(
   ticketId: string,
   ticket: { cfFeature: string | null; status: number; tags: string[] }
