@@ -6,14 +6,20 @@ const { enqueue } = vi.hoisted(() => ({ enqueue: vi.fn() }));
 vi.mock('~/server/db/kyselyDb', () => ({ kyselyWrite: { tag: 'write' } }));
 vi.mock('~/server/services/knights/enqueue.service', () => ({ enqueueKnightsItems: enqueue }));
 
-const { parseKnightsSourcesConfig, queueOwnerRatingForKnights, queueScanSampleForKnights } =
-  await import('~/server/services/knights/sources');
+const {
+  clearKnightsSourcesConfigCache,
+  parseKnightsSourcesConfig,
+  queueOwnerRatingForKnights,
+  queueScanSampleForKnights,
+} = await import('~/server/services/knights/sources');
 
 const configured = (value: unknown) =>
   redisMock.sysRedis.get.mockResolvedValue(value === null ? null : JSON.stringify(value));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  vi.useRealTimers();
+  clearKnightsSourcesConfigCache();
   enqueue.mockResolvedValue([]);
   configured(null);
 });
@@ -92,11 +98,40 @@ describe('queueScanSampleForKnights', () => {
   });
 });
 
+describe('the switch read', () => {
+  it('reads Redis once per half minute, not once per scan', async () => {
+    vi.useFakeTimers();
+    configured({ enabled: true });
+
+    await queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
+    await queueScanSampleForKnights({ imageId: 2, nsfw: false }, () => 0);
+    expect(redisMock.sysRedis.get).toHaveBeenCalledTimes(1);
+
+    configured({ enabled: false });
+    vi.advanceTimersByTime(31_000);
+    await queueScanSampleForKnights({ imageId: 3, nsfw: false }, () => 0);
+    expect(redisMock.sysRedis.get).toHaveBeenCalledTimes(2);
+    expect(enqueue).toHaveBeenCalledTimes(2);
+  });
+
+  it('treats a Redis that never answers as off instead of stalling the scan', async () => {
+    vi.useFakeTimers();
+    redisMock.sysRedis.get.mockReturnValue(new Promise(() => undefined));
+
+    const queued = queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await queued;
+
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+});
+
 describe('queueOwnerRatingForKnights', () => {
   it('queues an owner self-rating at priority 1 only when the switch is on', async () => {
     await queueOwnerRatingForKnights(7);
     expect(enqueue).not.toHaveBeenCalled();
 
+    clearKnightsSourcesConfigCache();
     configured({ enabled: true, sfwRate: 0, nsfwRate: 0 });
     await queueOwnerRatingForKnights(7);
     expect(enqueue).toHaveBeenCalledWith(expect.anything(), {

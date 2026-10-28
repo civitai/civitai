@@ -31,8 +31,34 @@ export function parseKnightsSourcesConfig(raw: string | Buffer | null): KnightsS
   }
 }
 
+const CONFIG_TTL_MS = 30_000;
+const CONFIG_READ_TIMEOUT_MS = 500;
+
+let cached: { config: KnightsSourcesConfig; expiresAt: number } | null = null;
+
+export function clearKnightsSourcesConfigCache() {
+  cached = null;
+}
+
+/** Runs inside the image scan result path, so it reads at most once per TTL and a hung Redis counts as off. */
 export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
-  return parseKnightsSourcesConfig(await sysRedis.get(REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES));
+  if (cached && cached.expiresAt > Date.now()) return cached.config;
+
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timedOut = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), CONFIG_READ_TIMEOUT_MS);
+  });
+  try {
+    const raw = await Promise.race([
+      sysRedis.get(REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES),
+      timedOut,
+    ]);
+    const config = parseKnightsSourcesConfig(raw);
+    cached = { config, expiresAt: Date.now() + CONFIG_TTL_MS };
+    return config;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function enqueueFromSource(
