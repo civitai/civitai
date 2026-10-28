@@ -128,8 +128,6 @@ const getReaction = async ({
         select: { id: true },
       });
     case 'image':
-      // `kysely-hot-reads-5` on: the same existence check through Kysely, on the client the same
-      // lag decision picks (`getKyselyWithoutLag()` is `getDbWithoutLag()`'s twin).
       if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
         return await readImageReactionIdViaKysely(await getKyselyWithoutLag(), {
           userId,

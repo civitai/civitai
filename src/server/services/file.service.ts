@@ -227,8 +227,8 @@ export const getFileForModelVersion = async ({
   attribution: ResolveAttribution;
 }): Promise<ModelVersionFileResult> => {
   // The version and its model (readModelVersionForFileViaPrisma, hot-reads-5.reads.ts, keeps the
-  // `model: { is: {} }` orphan filter and why it exists). `kysely-hot-reads-5` on: both in one
-  // statement, on the same replica, the inner join standing in for that filter.
+  // `model: { is: {} }` orphan filter and why it exists). The Kysely read's inner join stands in
+  // for that filter.
   const modelVersion = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
     ? await readModelVersionForFileViaKysely((await loadKyselyDb()).kyselyRead, modelVersionId)
     : await readModelVersionForFileViaPrisma(dbRead, modelVersionId);

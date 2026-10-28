@@ -85,8 +85,6 @@ export const getUserResourceReview = async ({
   tx,
 }: GetUserResourceReviewInput & { userId: number; tx?: Prisma.TransactionClient }) => {
   if (!userId) throw throwAuthorizationError();
-  // `kysely-hot-reads-5` on (and no caller-provided client): the same rows through Kysely, on the
-  // client the same lag decision picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
   if (!tx && (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5)))
     return readUserResourceReviewsViaKysely(await getKyselyWithoutLag('resourceReview', userId), {
       modelId,

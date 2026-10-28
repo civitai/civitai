@@ -321,8 +321,6 @@ export async function getDismissedAnnouncementIds({
   domain?: DomainColor;
 }) {
   const now = new Date();
-  // `kysely-hot-reads-5` on: the same ids through Kysely, on the same replica, with the same live
-  // window (`activeAnnouncementWhere(now)`: enabled, `now` inside the open-ended start/end window).
   if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
     return readDismissedAnnouncementIdsViaKysely((await loadKyselyDb()).kyselyRead, {
       userId,

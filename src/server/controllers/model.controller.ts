@@ -2381,8 +2381,6 @@ export async function copyGalleryBrowsingLevelHandler({
 
 export async function getModelCollectionShowcaseHandler({ input }: { input: GetByIdInput }) {
   try {
-    // `kysely-hot-reads-5` on: the same two columns through Kysely, on the client the same lag
-    // decision picks (`getModel` reads through `getDbWithoutLag('model', id)`).
     const model = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
       ? await readModelMetaViaKysely(await getKyselyWithoutLag('model', input.id), input.id)
       : await getModel({ id: input.id, select: { id: true, meta: true } });
