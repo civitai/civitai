@@ -1227,7 +1227,8 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
 
   // The models the account created, for those with no recorded owner but the placeholder (ClickHouse
   // lives outside Postgres, so read up front). A Create event's actor is the model's creator; every
-  // other event's actor may be a moderator.
+  // other event's actor may be a moderator. A model transferred since was not this account's when it
+  // went to the placeholder, and the event does not say to whom it went, so it is left out.
   let createdIds: number[] = [];
   if (restoreModels) {
     const createdRows =
@@ -1236,7 +1237,17 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
         FROM modelEvents
         WHERE userId = ${id} AND type = 'Create'
       `)) ?? [];
-    createdIds = createdRows.map((r) => r.modelId);
+    const created = createdRows.map((r) => Number(r.modelId)).filter(Number.isInteger);
+    const transferredRows =
+      created.length > 0
+        ? (await clickhouse?.$query<{ modelId: number }>(`
+            SELECT DISTINCT modelId
+            FROM modelEvents
+            WHERE type = 'Transfer' AND modelId IN (${created.join(',')})
+          `)) ?? []
+        : [];
+    const transferred = new Set(transferredRows.map((r) => Number(r.modelId)));
+    createdIds = created.filter((modelId) => !transferred.has(modelId));
   }
 
   // Reclaim orphaned models BEFORE flipping deletedAt. We deliberately avoid wrapping the user and

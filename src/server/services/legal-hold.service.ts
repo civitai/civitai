@@ -187,6 +187,18 @@ export function recordCurrentModelOwnersSql(where: Prisma.Sql): Prisma.Sql {
 }
 
 /**
+ * Whether the "ModelOwnership" row `ho` is a placeholder row that still holds its model. An account
+ * deletion's placeholder holds until the model is restored; then its owner's own holds apply. A
+ * backfilled one always holds: who owned the model before it is not fully recorded.
+ */
+const placeholderRowHoldsSql = Prisma.sql`(ho."userId" = ${Prisma.raw(
+  String(PLACEHOLDER_OWNER_ID)
+)} AND (ho.reason <> 'account-delete' OR NOT EXISTS (
+  SELECT 1 FROM "ModelOwnership" hrs
+  WHERE hrs."modelId" = ho."modelId" AND hrs.reason = 'restore' AND hrs.id > ho.id
+)))`;
+
+/**
  * Whether a model's data is held: its owner is the placeholder or under an account hold, or so is any
  * owner it had before. A placeholder that an account deletion put there stops holding once the model
  * is restored to an owner; one recorded by the backfill always holds. `modelId` is an int SQL
@@ -201,25 +213,32 @@ export function modelDataHeldSql(modelId: Prisma.Sql, markerView: boolean): Pris
   ) OR EXISTS (
     SELECT 1 FROM "ModelOwnership" ho
     WHERE ho."modelId" = ${modelId}
-      AND (
-        -- An account deletion's placeholder holds until the model is restored; then its owner's own
-        -- holds apply. A backfilled one always holds: who owned the model before it is not fully
-        -- recorded.
-        (ho."userId" = ${placeholder} AND (ho.reason <> 'account-delete' OR NOT EXISTS (
-          SELECT 1 FROM "ModelOwnership" hrs
-          WHERE hrs."modelId" = ho."modelId" AND hrs.reason = 'restore' AND hrs.id > ho.id
-        )))
-        OR ${accountHoldSql(Prisma.raw('ho."userId"'), markerView)}
-      )
+      AND (${placeholderRowHoldsSql} OR ${accountHoldSql(Prisma.raw('ho."userId"'), markerView)})
   ))`;
 }
 
-/** `modelDataHeldSql` for the model of a version. */
-export function ownerUnderLegalHoldSql(modelVersionId: Prisma.Sql, markerView: boolean) {
-  return modelDataHeldSql(
-    Prisma.sql`(SELECT hmv."modelId" FROM "ModelVersion" hmv WHERE hmv.id = ${modelVersionId})`,
-    markerView
-  );
+/**
+ * The ids, among the model ids `modelIds` selects, whose data `modelDataHeldSql` holds, as a query.
+ * For a statement over many models: each owner, present or past, is checked once, not once per row.
+ */
+export function heldModelIdsSql(modelIds: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  const placeholder = Prisma.raw(String(PLACEHOLDER_OWNER_ID));
+  return Prisma.sql`
+    WITH owners AS MATERIALIZED (
+      SELECT hm.id AS "modelId", hm."userId" FROM "Model" hm WHERE hm.id IN (${modelIds})
+      UNION
+      SELECT ho."modelId", ho."userId" FROM "ModelOwnership" ho WHERE ho."modelId" IN (${modelIds})
+    ), held_owners AS MATERIALIZED (
+      SELECT a."userId" FROM (SELECT DISTINCT "userId" FROM owners) a
+      WHERE ${accountHoldSql(Prisma.raw('a."userId"'), markerView)}
+    )
+    SELECT ow."modelId" FROM owners ow WHERE ow."userId" IN (SELECT "userId" FROM held_owners)
+    UNION
+    SELECT hm.id FROM "Model" hm WHERE hm.id IN (${modelIds}) AND hm."userId" = ${placeholder}
+    UNION
+    SELECT ho."modelId" FROM "ModelOwnership" ho
+    WHERE ho."modelId" IN (${modelIds}) AND ${placeholderRowHoldsSql}
+  `;
 }
 
 /**

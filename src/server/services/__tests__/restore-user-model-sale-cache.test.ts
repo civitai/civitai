@@ -57,7 +57,9 @@ beforeEach(() => {
       : null
   );
   dbMock.dbWrite.user.update.mockResolvedValue({ id: USER_ID });
-  auditRows.mockResolvedValue(AUDITED.map((modelId) => ({ modelId })));
+  auditRows.mockImplementation(async (query: string) =>
+    query.includes("'Create'") ? AUDITED.map((modelId) => ({ modelId })) : []
+  );
   dbMock.dbWrite.$queryRaw.mockResolvedValue(ORPHANED.map((id) => ({ id })));
   dbMock.dbWrite.model.updateMany.mockResolvedValue({ count: ORPHANED.length });
   bustForModels.mockResolvedValue(undefined);
@@ -145,14 +147,19 @@ describe("restoreUser -> which orphaned models are the account's", () => {
         (4, -1, 'baseline'), (4, ${USER_ID}, 'baseline'),
         -- someone else's, which this account's analytics events also name: not theirs
         (5, ${OTHER_USER}, 'create'), (5, -1, 'account-delete');
-      -- 3 and 6 have no history: the Create event decides
+      -- 3 and 6 have no history: the analytics events decide
     `);
   });
   afterAll(() => db.close());
 
   it("reclaims the models whose last owner before the placeholder was this account's", async () => {
-    // Create events by this account: 3 has no history, 2 and 5 do and are someone else's.
-    auditRows.mockResolvedValue([{ modelId: 2 }, { modelId: 3 }, { modelId: 5 }]);
+    // Create events by this account: 3 and 6 have no history, 2 and 5 do and are someone else's. 6
+    // was transferred after, so whoever had it last is unknown.
+    auditRows.mockImplementation(async (query: string) =>
+      query.includes("'Transfer'")
+        ? [{ modelId: 6 }]
+        : [{ modelId: 2 }, { modelId: 3 }, { modelId: 5 }, { modelId: 6 }]
+    );
     dbMock.dbWrite.$queryRaw.mockImplementation((async (
       strings: TemplateStringsArray,
       ...values: unknown[]

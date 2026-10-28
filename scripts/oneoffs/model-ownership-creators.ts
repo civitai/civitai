@@ -1,7 +1,8 @@
 /**
  * Prints the INSERTs that record the creator of each model now owned by the placeholder account, for
- * the "ModelOwnership" backfill. Postgres no longer knows who that was; the analytics store's model
- * Create events do. Reads only, writes nothing: review the output, then apply it by hand after
+ * the "ModelOwnership" backfill, unless the model was transferred after it was created. Postgres no
+ * longer knows who that was; the analytics store's model Create events do. Reads only, writes
+ * nothing: review the output, then apply it by hand after
  * packages/civitai-db-schema/prisma/migrations/20261209120000_model_ownership/backfill.sql.
  *
  * Usage:
@@ -36,11 +37,14 @@ async function main() {
   let printed = 0;
   for (let i = 0; i < models.length; i += CHUNK) {
     const ids = models.slice(i, i + CHUNK).map((m) => m.id);
+    // A model transferred since its creation had another owner in between, and the event does not
+    // say whom: its creator was not its last owner, so it gets no row here.
     const rows = await clickhouse.$query<{ modelId: number; userId: number }>(`
-      SELECT modelId, any(userId) AS userId
+      SELECT modelId, anyIf(userId, type = 'Create' AND userId > 0) AS userId
       FROM modelEvents
-      WHERE type = 'Create' AND modelId IN (${ids.join(',')}) AND userId > 0
+      WHERE type IN ('Create', 'Transfer') AND modelId IN (${ids.join(',')})
       GROUP BY modelId
+      HAVING countIf(type = 'Create' AND userId > 0) > 0 AND countIf(type = 'Transfer') = 0
     `);
     for (const line of creatorInsertsSql(
       rows.map((r) => ({ modelId: Number(r.modelId), userId: Number(r.userId) }))

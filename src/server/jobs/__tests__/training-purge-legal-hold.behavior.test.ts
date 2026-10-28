@@ -34,6 +34,7 @@ vi.mock('~/server/flipt/client', () => ({
 
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { processReplacedFiles, purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
+import { heldModelIdsSql, modelDataHeldSql } from '~/server/services/legal-hold.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -324,6 +325,37 @@ describe('model ownership history', () => {
     }
 
     expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+  });
+
+  it('deletes nothing when the hold marker view is missing but its table is there', async () => {
+    await holder.db.exec(`ALTER VIEW "EvidenceHeldUser" RENAME TO "EvidenceHeldUserAside"`);
+    try {
+      await purgeReplacedFilesJob.run({}).result;
+      await deleteOldTrainingData.run({}).result;
+    } finally {
+      await holder.db.exec(`ALTER VIEW "EvidenceHeldUserAside" RENAME TO "EvidenceHeldUser"`);
+    }
+
+    expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
+  });
+
+  it('holds the same models checked as a set as one at a time', async () => {
+    for (const markerView of [true, false]) {
+      const { rows } = await holder.db.query<{ id: number; one: boolean; many: boolean }>(
+        Prisma.sql`
+          SELECT m.id, ${modelDataHeldSql(Prisma.raw('m.id'), markerView)} AS one,
+            m.id IN (${heldModelIdsSql(Prisma.sql`SELECT id FROM "Model"`, markerView)}) AS many
+          FROM "Model" m ORDER BY m.id
+        `.text
+      );
+      expect(rows.length).toBe(OWNERS.length);
+      expect(rows.filter((r) => r.one !== r.many)).toEqual([]);
+      if (markerView) {
+        expect(rows.filter((r) => !r.one).map((r) => r.id / 10)).toEqual(
+          [...ELIGIBLE].sort((a, b) => a - b)
+        );
+      }
+    }
   });
 
   it('refuses to change or remove a recorded owner', async () => {
