@@ -943,8 +943,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-app-assistant
       '@civitai/components-chat':
-        specifier: 0.32.0
-        version: 0.32.0(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.4.3)
+        specifier: 0.32.1
+        version: 0.32.1(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.4.3)
       '@dbos-inc/dbos-sdk':
         specifier: 5.3.0
         version: 5.3.0
@@ -2407,8 +2407,8 @@ packages:
       '@civitai/sdk': '>=0.8.0 <1.0.0'
       lit: ^3.3.0
 
-  '@civitai/components-chat@0.32.0':
-    resolution: {integrity: sha512-JOEpTj3mnT/+pQazyWBpIKs9dW4d6lg9lHXt72P9pavW+5LrptqCNiEqUczS1vGI6jDztx2byN5xV59LbIOBQA==}
+  '@civitai/components-chat@0.32.1':
+    resolution: {integrity: sha512-ASsV7mDDOSQZRoQKMQ6stsAyXwwsuyX+PHpajQskn8xa0rfIVqDqZHmzp3f9P7NSXeWtbnBGXOi7ngsYj1T3zw==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/sdk': '>=0.8.0 <1.0.0'
@@ -14077,7 +14077,7 @@ snapshots:
       - supports-color
       - zod
 
-  '@civitai/components-chat@0.32.0(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.4.3)':
+  '@civitai/components-chat@0.32.1(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.4.3)':
     dependencies:
       '@ai-sdk/openai-compatible': 2.0.77(zod@4.4.3)
       '@civitai/components': 0.13.0(@civitai/sdk@0.21.0)
