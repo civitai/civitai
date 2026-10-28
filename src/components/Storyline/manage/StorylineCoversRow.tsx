@@ -35,8 +35,8 @@ const HIDDEN_PICK_POLL_EVERY_MS = 10_000;
  */
 export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
   const utils = trpc.useUtils();
-  // For a fixed time after a pick that is not showing, whatever becomes of it, so the polling says
-  // nothing about why it is not showing.
+  // Refetches for a fixed window after any save and when a hidden pick first appears, whatever
+  // becomes of it, so the polling says nothing about why a pick is not showing.
   const [pollUntil, setPollUntil] = useState(0);
   const { data: storyline } = trpc.storyline.getById.useQuery(
     { id: storylineId },
