@@ -33,6 +33,7 @@ export function parseKnightsSourcesConfig(raw: string | Buffer | null): KnightsS
 
 const CONFIG_TTL_MS = 30_000;
 const CONFIG_READ_TIMEOUT_MS = 500;
+const TIMED_OUT = Symbol('timed-out');
 
 let cached: { config: KnightsSourcesConfig; expiresAt: number } | null = null;
 
@@ -45,14 +46,16 @@ export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
   if (cached && cached.expiresAt > Date.now()) return cached.config;
 
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const timedOut = new Promise<null>((resolve) => {
-    timer = setTimeout(() => resolve(null), CONFIG_READ_TIMEOUT_MS);
+  const timedOut = new Promise<typeof TIMED_OUT>((resolve) => {
+    timer = setTimeout(() => resolve(TIMED_OUT), CONFIG_READ_TIMEOUT_MS);
   });
   try {
     const raw = await Promise.race([
       sysRedis.get(REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES),
       timedOut,
     ]);
+    // A slow Redis is off for this call only; caching it would keep sampling off for a full TTL.
+    if (raw === TIMED_OUT) return OFF;
     const config = parseKnightsSourcesConfig(raw);
     cached = { config, expiresAt: Date.now() + CONFIG_TTL_MS };
     return config;

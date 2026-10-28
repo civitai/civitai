@@ -124,6 +124,20 @@ describe('the switch read', () => {
 
     expect(enqueue).not.toHaveBeenCalled();
   });
+
+  it('does not remember a timed-out read as off, so the next scan reads Redis again', async () => {
+    vi.useFakeTimers();
+    redisMock.sysRedis.get.mockReturnValueOnce(new Promise(() => undefined));
+    const timedOut = queueScanSampleForKnights({ imageId: 1, nsfw: false }, () => 0);
+    await vi.advanceTimersByTimeAsync(1_000);
+    await timedOut;
+
+    configured({ enabled: true });
+    await queueScanSampleForKnights({ imageId: 2, nsfw: false }, () => 0);
+
+    expect(enqueue).toHaveBeenCalledTimes(1);
+    expect(enqueue.mock.calls[0][1].items[0].imageId).toBe(2);
+  });
 });
 
 describe('queueOwnerRatingForKnights', () => {
