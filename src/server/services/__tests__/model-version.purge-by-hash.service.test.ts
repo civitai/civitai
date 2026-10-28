@@ -114,7 +114,12 @@ function stubDeleteRows(files: { url: string; hashes: string[] }[]) {
     meta: {},
   });
   dbMock.dbWrite.entityAccess.deleteMany.mockResolvedValue({ count: 0 });
-  dbMock.dbWrite.modelVersion.delete.mockResolvedValue({ id: VERSION_ID, modelId: MODEL_ID });
+  dbMock.dbWrite.modelVersion.findUniqueOrThrow.mockResolvedValue({
+    id: VERSION_ID,
+    modelId: MODEL_ID,
+  } as never);
+  // The guarded DELETE removes the one version: its owner is not held.
+  dbMock.dbWrite.$executeRaw.mockResolvedValue(1 as never);
 }
 
 describe('deleteVersionById — by-hash edge-cache purge', () => {

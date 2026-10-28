@@ -1,5 +1,5 @@
 /**
- * The image detail page's "Published with <app>" credit, in real Chromium.
+ * The image detail page's "Made with <app>" credit, in real Chromium.
  *
  * The wording and the three states are the post chip's, rendered by the SAME
  * component (`PostPublishedWithApp`, whose own browser test pins them in
@@ -19,6 +19,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as TrpcModule from '~/utils/trpc';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import type { PostAppChip } from '~/server/services/blocks/post-app-chip.logic';
 
 const { useChipQuery } = vi.hoisted(() => ({
@@ -27,12 +28,20 @@ const { useChipQuery } = vi.hoisted(() => ({
   })),
 }));
 
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
+  useFeatureFlags: () => ({ appBlocksPages: false }),
+}));
+
 vi.mock('~/utils/trpc', async (importOriginal) => {
   // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   return {
     ...(await importOriginal<typeof TrpcModule>()),
-    trpc: makeTrpcProxy({ 'image.getPublishedWithApp': { useQuery: useChipQuery } }),
+    trpc: makeTrpcProxy({
+      'image.getPublishedWithApp': { useQuery: useChipQuery },
+      'appListings.getAppCard': { useQuery: () => ({ data: undefined }) },
+    }),
   };
 });
 
@@ -43,7 +52,7 @@ const IMAGE_ID = 145511044;
 const ROW = '[data-testid="image-published-with-app"]';
 const row = () => document.querySelector<HTMLElement>(ROW);
 /** Whitespace-normalised; nothing else is collapsed, so an extra word cannot hide. */
-const sentence = () => (row()?.textContent ?? '').replace(/\s+/gu, ' ').trim();
+const sentence = () => (row()?.innerText ?? '').replace(/\s+/gu, ' ').trim();
 
 async function renderedWith(data: PostAppChip) {
   useChipQuery.mockReturnValue({ data });
@@ -84,14 +93,14 @@ describe('ImagePublishedWithApp', () => {
     expect(row()).toBeNull();
   });
 
-  test('a viewable app: exactly "Published with <app>", linked to its store page, with icon', async () => {
+  test('a viewable app: exactly "Made with <app>", linked to its store page, with icon', async () => {
     await renderedWith({
       slug: 'character-sheet-studio',
       name: 'Character Sheet Studio',
       iconUrl: LOADABLE_IMAGE_DATA_URI,
     });
     // 🔴 The whole sentence — "with", never "by".
-    expect(sentence()).toBe('Published with Character Sheet Studio');
+    expect(sentence()).toBe('Made with Character Sheet Studio');
     const anchor = row()?.querySelector('a');
     expect(anchor?.getAttribute('href')).toBe('/apps/store-preview/character-sheet-studio');
     expect(anchor?.textContent).toBe('Character Sheet Studio');
@@ -100,7 +109,7 @@ describe('ImagePublishedWithApp', () => {
 
   test('a not-viewable app: the name UNLINKED, and no icon', async () => {
     await renderedWith({ slug: null, name: 'Character Sheet Studio', iconUrl: null });
-    expect(sentence()).toBe('Published with Character Sheet Studio');
+    expect(sentence()).toBe('Made with Character Sheet Studio');
     expect(row()?.querySelector('a')).toBeNull();
     expect(row()?.querySelector('img')).toBeNull();
   });

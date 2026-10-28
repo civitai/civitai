@@ -643,11 +643,8 @@ async function deleteImageFromStorage({
     // of the lookup may stop the delete, and inlining the guard keeps that true even if the
     // resolver later grows a throwing path again.
     //
-    // The reason is sanitised INSIDE that `.catch`, under its own try, which is what keeps it total.
-    // `safeError` ends in `String(e)` for a non-Error, and that throws on a value with no primitive
-    // conversion — `Object.create(null)`, or anything with a throwing `toString`. Calling it in the
-    // log payload below instead would put that throw inside the OUTER try, skipping the B2 delete:
-    // the exact failure this `.catch` exists to prevent, reintroduced by the code reporting it.
+    // The reason is sanitised INSIDE that `.catch`, under its own try, so no rejection value can
+    // throw from the log payload below inside the OUTER try and skip the B2 delete.
     let resolverError: MixedObject | undefined;
     const location = await resolveMediaLocation(url).catch((error: unknown) => {
       try {
@@ -1695,6 +1692,7 @@ export const ingestImage = async ({
       failureType: 'send-fail',
       failureClass,
       responseStatus: submitStatus,
+      error: safeError(submitError),
       imageId: id,
       mediaType: type,
     }).catch(() => null);

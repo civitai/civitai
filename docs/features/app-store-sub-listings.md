@@ -105,10 +105,12 @@ identical re-sync writes nothing and is not rate limited. The title (1-80 charac
 (at most 140) go through cleaning and the shared text-safety check (never as a moderator), and the
 rating may not be less mature than the parent's.
 
-`imageId` is the id of an existing Civitai image, under the same rule as an in-app publish: the
-item's author (below) uploaded it, else 403 `image_not_yours`, and it is publicly visible, else 400
-`image_not_public`. Like every other field it is part of the full item a PUT replaces, so leaving
-it out removes the image (for an approved item, as a staged edit). The card shows it under the same
+`imageId` is the id of an existing Civitai image, under the same rule as an in-app publish, with
+one addition: the item's author (below) or the listing's owner uploaded it, else 403
+`image_not_yours`, and it is publicly visible, else 400 `image_not_public`. The owner's image is
+taken so a platform can give a creator's item a card of its own making; the item stays the
+creator's. An in-app publish still takes only the author's own image. Like every other field it
+is part of the full item a PUT replaces, so leaving it out removes the image (for an approved item, as a staged edit). The card shows it under the same
 render-time checks as an on-site item's image, and the parent's cover otherwise. The listing does
 not return it.
 

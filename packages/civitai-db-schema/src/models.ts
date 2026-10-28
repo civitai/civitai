@@ -548,6 +548,7 @@ export interface User {
   rewardsEligibility: RewardsEligibility;
   eligibilityChangedAt: Date | null;
   customerId: string | null;
+  subscriptionId: string | null;
   paddleCustomerId: string | null;
   profile?: UserProfile | null;
   profilePictureId: number | null;
@@ -1360,6 +1361,13 @@ export interface ModActivity {
   entityId: number | null;
   createdAt: Date;
   host: string | null;
+}
+
+export interface ModThreadClaim {
+  chatId: number;
+  moderatorId: number;
+  claimedAt: Date;
+  expiresAt: Date;
 }
 
 export interface Report {

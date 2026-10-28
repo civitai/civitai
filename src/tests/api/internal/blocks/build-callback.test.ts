@@ -70,7 +70,7 @@ const {
     // BLOCK_BUILD_CALLBACK_SECRET[_NEXT] per case. Defaults to the single
     // current secret so the existing handler tests are unchanged.
     mockEnvStore: { BLOCK_BUILD_CALLBACK_SECRET: SECRET } as Record<string, unknown>,
-    mockFlag: { enabled: true },
+    mockFlag: { enabled: true, perAppObjects: false },
     mockRedis,
     // mirrors redis.setNxKeepTtlWithEx(key, value, ttl): Promise<boolean>
     mockSetNx: vi.fn(async () => {
@@ -117,9 +117,11 @@ vi.mock('~/server/db/client', () => ({
 // user flag is hard-false so a regression that repoints back to it would 503
 // even with the pipeline "on".
 vi.mock('~/server/flipt/client', () => ({
-  isFlipt: vi.fn(async (flag: string) =>
-    flag === 'app-blocks-pipeline-enabled' ? mockFlag.enabled : false
-  ),
+  isFlipt: vi.fn(async (flag: string) => {
+    if (flag === 'app-blocks-pipeline-enabled') return mockFlag.enabled;
+    if (flag === 'app-blocks-per-app-objects') return mockFlag.perAppObjects;
+    return false;
+  }),
 }));
 vi.mock('~/server/redis/client', () => ({
   redis: { setNxKeepTtlWithEx: mockSetNx, del: mockRedisDel },
@@ -343,6 +345,7 @@ describe('build-callback handler — flag gate + replay guard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockFlag.enabled = true;
+    mockFlag.perAppObjects = false;
     mockRedis.nxResult = true; // default: newly set → first time → apply
     mockRedis.nxThrows = false;
     mockTriggerApply.mockResolvedValue({ name: 'apply-job-1' });
@@ -406,6 +409,23 @@ describe('build-callback handler — flag gate + replay guard', () => {
       '1',
       600
     );
+  });
+
+  // The `app-blocks-per-app-objects` Flipt flag is the rollback switch: absent or off, the apply
+  // Job creates no per-app objects; on, it creates them again. No code revert needed.
+  it('asks the apply Job for no per-app objects while the per-app flag is off or absent', async () => {
+    const res = makeRes();
+    await invoke(signedReq(validSuccessBody()), res);
+    expect(mockTriggerApply).toHaveBeenCalledTimes(1);
+    expect(mockTriggerApply.mock.calls[0][0]).toMatchObject({ perAppObjects: false });
+  });
+
+  it('asks the apply Job for the per-app objects once the per-app flag is turned on', async () => {
+    mockFlag.perAppObjects = true;
+    const res = makeRes();
+    await invoke(signedReq(validSuccessBody()), res);
+    expect(mockTriggerApply).toHaveBeenCalledTimes(1);
+    expect(mockTriggerApply.mock.calls[0][0]).toMatchObject({ perAppObjects: true });
   });
 
   it('short-circuits a replayed success callback without re-triggering apply', async () => {

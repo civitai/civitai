@@ -2,7 +2,6 @@ import {
   Alert,
   Anchor,
   Badge,
-  Button,
   CloseButton,
   Group,
   Stack,
@@ -63,7 +62,8 @@ import { toStringList } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import { getModelUrl, removeTags } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
-import { Fragment, useEffect } from 'react';
+import { Fragment, useEffect, useRef, useState } from 'react';
+import clsx from 'clsx';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { contestCollectionReactionsHidden } from '~/components/Collections/collection.utils';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -171,6 +171,15 @@ export function PostDetailContent({ postId }: Props) {
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === post?.user.id);
   const sidebarEnabled = true;
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const touchStartY = useRef<number | null>(null);
+  const hasPendingInvite = postCollaborators.some(
+    (c) => c.user.id === currentUser?.id && c.status === EntityCollaboratorStatus.Pending
+  );
+  // The accept/reject buttons live in the creator block, which a collapsed phone panel hides.
+  useEffect(() => {
+    if (hasPendingInvite) setSheetOpen(true);
+  }, [hasPendingInvite]);
 
   if (postLoading) return <PageLoader />;
   if (!post || isBlocked) return <NotFound />;
@@ -180,6 +189,223 @@ export function PostDetailContent({ postId }: Props) {
     postResources.find((resource) => resource.modelVersionId === post.modelVersionId);
 
   const scrollHeight = scrollRef?.current?.clientHeight ?? 0;
+
+  const postTags = !!post.tags.length && (
+    <Collection
+      items={post.tags}
+      limit={5}
+      badgeProps={{ size: 'lg', p: 'sm', radius: 'sm' }}
+      renderItem={(item) => (
+        <Link legacyBehavior key={item.id} href={`/posts?tags=${item.id}&view=feed`} passHref>
+          <Badge
+            component="a"
+            color="gray"
+            radius="sm"
+            size="lg"
+            style={{ cursor: 'pointer' }}
+            variant={colorScheme === 'dark' ? 'filled' : 'light'}
+          >
+            <Text className="text-xs" tt="capitalize" fw={500}>
+              {item.name}
+            </Text>
+          </Badge>
+        </Link>
+      )}
+      grouped
+    />
+  );
+
+  const postActions = (
+    <div className="flex shrink-0 items-center gap-1.5">
+      <Tooltip label="Save">
+        <LegacyActionIcon
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
+          color="gray"
+          size={30}
+          radius="xl"
+          aria-label="Save post"
+          onClick={() =>
+            openAddToCollectionModal({
+              props: { postId: post.id, type: CollectionType.Post },
+            })
+          }
+        >
+          <IconBookmark size={16} />
+        </LegacyActionIcon>
+      </Tooltip>
+      <ShareButton
+        url={`/posts/${post.id}`}
+        title={
+          post.title ?? (post.user.username ? `Post by ${post.user.username}` : 'Post on Civitai')
+        }
+        collect={{ type: CollectionType.Post, postId: post.id }}
+      >
+        <LegacyActionIcon
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
+          color="gray"
+          size={30}
+          radius="xl"
+          aria-label="Share post"
+        >
+          <IconShare3 size={16} />
+        </LegacyActionIcon>
+      </ShareButton>
+      <PostControls
+        postId={post.id}
+        userId={post.user.id}
+        isModelVersionPost={post.modelVersionId}
+        storylinePost={post}
+      >
+        <LegacyActionIcon
+          variant={colorScheme === 'dark' ? 'filled' : 'light'}
+          size={30}
+          radius="xl"
+          aria-label="Post options"
+        >
+          <IconDotsVertical size={16} />
+        </LegacyActionIcon>
+      </PostControls>
+      {query.dialog && (
+        <NavigateBack url={searchParams.get('returnUrl') ?? '/posts'}>
+          {({ onClick }) => <CloseButton onClick={onClick} size="lg" title="Close post" />}
+        </NavigateBack>
+      )}
+    </div>
+  );
+
+  const postCard = (
+    <div className="flex flex-col gap-2">
+      <StorylinePostPill postId={post.id} />
+      <div className="flex items-start justify-between gap-2">
+        {post.title ? (
+          <Title order={1} lineClamp={3} size={20} className="min-w-0 break-words">
+            {post.title}
+          </Title>
+        ) : (
+          <div className="min-w-0 flex-1" />
+        )}
+        {postActions}
+      </div>
+      <Text size="xs" c="dimmed">
+        {relatedResource && relatedResource.modelId && (
+          <>
+            Posted to{' '}
+            <Anchor
+              component={Link}
+              href={getModelUrl({
+                modelId: relatedResource.modelId,
+                modelName: relatedResource.modelName,
+                modelVersionId: relatedResource.modelVersionId,
+              })}
+              inherit
+            >
+              {relatedResource.modelName} - {relatedResource.modelVersionName}
+            </Anchor>{' '}
+          </>
+        )}
+        {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
+      </Text>
+      {post.detail && <RenderHtml html={post.detail} withMentions />}
+      {postTags}
+    </div>
+  );
+
+  const creatorCard = (
+    <div className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <UserAvatar
+          user={post.user}
+          avatarProps={{ size: 40 }}
+          size="md"
+          subTextSize="sm"
+          textSize="md"
+          withUsername
+          linkToProfile
+        />
+        <Group gap={8} wrap="nowrap" ml="auto">
+          <TipBuzzButton
+            toUserId={post.user.id}
+            entityId={post.id}
+            entityType="Post"
+            size="compact-md"
+          />
+          <ChatUserButton user={post.user} size="compact-md" />
+          <FollowUserButton userId={post.user.id} size="compact-md" />
+        </Group>
+      </div>
+      {postCollaborators.length > 0 &&
+        postCollaborators.map((collaborator) => {
+          return (
+            <Group key={collaborator.user.id} gap={4} wrap="nowrap">
+              <UserAvatar
+                user={collaborator.user}
+                avatarProps={{ size: 32 }}
+                size="md"
+                subTextSize="sm"
+                textSize="md"
+                withUsername
+                linkToProfile
+              />
+              <Group gap={4} wrap="nowrap">
+                {collaborator.user.id === currentUser?.id &&
+                  collaborator.status === EntityCollaboratorStatus.Pending && (
+                    <Fragment key={collaborator.user.id}>
+                      <Tooltip label="Accept collaboration">
+                        <LegacyActionIcon
+                          onClick={() => {
+                            actionEntityCollaborator({
+                              entityId: postId,
+                              entityType: EntityType.Post,
+                              status: EntityCollaboratorStatus.Approved,
+                            });
+                          }}
+                          loading={actioningEntityCollaborator}
+                        >
+                          <IconCheck size={20} />
+                        </LegacyActionIcon>
+                      </Tooltip>
+                      <Tooltip label="Reject collaboration">
+                        <LegacyActionIcon
+                          onClick={() => {
+                            actionEntityCollaborator({
+                              entityId: postId,
+                              entityType: EntityType.Post,
+                              status: EntityCollaboratorStatus.Rejected,
+                            });
+                          }}
+                          loading={actioningEntityCollaborator}
+                        >
+                          <IconX size={20} />
+                        </LegacyActionIcon>
+                      </Tooltip>
+                    </Fragment>
+                  )}
+
+                {isOwnerOrMod && (
+                  <Tooltip label="Remove collaborator">
+                    <LegacyActionIcon
+                      onClick={() => {
+                        removeEntityCollaborator({
+                          entityId: postId,
+                          entityType: EntityType.Post,
+                          targetUserId: collaborator.user.id,
+                        });
+                      }}
+                      loading={removingEntityCollaborator}
+                      color="red"
+                    >
+                      <IconTrash size={20} />
+                    </LegacyActionIcon>
+                  </Tooltip>
+                )}
+              </Group>
+            </Group>
+          );
+        })}
+    </div>
+  );
+
+  const panelClass = 'rounded-md border border-solid border-gray-3 p-3 dark:border-dark-4';
 
   return (
     <Gated
@@ -209,7 +435,7 @@ export function PostDetailContent({ postId }: Props) {
         }}
       >
         <div className="flex justify-center gap-8 px-3">
-          <div className="flex w-full max-w-[728px] flex-col gap-3 @lg:my-3">
+          <div className="flex w-full max-w-[728px] flex-col gap-3 @lg:my-3 @max-lg:pb-24">
             {isOwnerOrMod && post.wasPublished && !post.publishedAt && (
               <Alert
                 color="yellow"
@@ -245,200 +471,11 @@ export function PostDetailContent({ postId }: Props) {
                 </Stack>
               </Alert>
             )}
-            <div className="flex flex-col">
-              <StorylinePostPill postId={post.id} />
-              <div className="flex items-center justify-between">
-                {post.title && (
-                  <Title order={1} lineClamp={2} size={26}>
-                    {post.title}
-                  </Title>
-                )}
-                {query.dialog && (
-                  <NavigateBack url={searchParams.get('returnUrl') ?? '/posts'}>
-                    {({ onClick }) => (
-                      <CloseButton onClick={onClick} size="lg" ml="auto" title="Close post" />
-                    )}
-                  </NavigateBack>
-                )}
-              </div>
-              <div className="flex flex-wrap justify-between gap-2 @md:items-center @max-md:flex-col">
-                {/* The header's dimmed metadata group: where the post came from,
-                    when, and — for an app-published post — which app made it.
-                    Wrapped so the chip sits beside the date rather than becoming a
-                    third child of the justify-between row, which would push the
-                    action buttons out of the right-hand slot. */}
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-                  <Text size="xs" c="dimmed">
-                    {relatedResource && relatedResource.modelId && (
-                      <>
-                        Posted to{' '}
-                        <Anchor
-                          component={Link}
-                          href={getModelUrl({
-                            modelId: relatedResource.modelId,
-                            modelName: relatedResource.modelName,
-                            modelVersionId: relatedResource.modelVersionId,
-                          })}
-                          inherit
-                        >
-                          {relatedResource.modelName} - {relatedResource.modelVersionName}
-                        </Anchor>{' '}
-                      </>
-                    )}
-                    {post.publishedAt ? <DaysFromNow date={post.publishedAt} /> : null}
-                  </Text>
-                  {/* Renders nothing unless the server resolved an app for this
-                      post AND this viewer — see PostPublishedWithApp. */}
-                  <PostPublishedWithApp app={post.publishedWithApp} />
-                </div>
-                <div className="flex gap-2 ">
-                  <Button
-                    radius="xl"
-                    color="gray"
-                    variant={colorScheme === 'dark' ? 'filled' : 'light'}
-                    leftSection={<IconBookmark size={14} />}
-                    onClick={() =>
-                      openAddToCollectionModal({
-                        props: { postId: post.id, type: CollectionType.Post },
-                      })
-                    }
-                    size="compact-md"
-                  >
-                    <Text className="text-xs">Save</Text>
-                  </Button>
-                  <ShareButton
-                    url={`/posts/${post.id}`}
-                    title={
-                      post.title ??
-                      (post.user.username ? `Post by ${post.user.username}` : 'Post on Civitai')
-                    }
-                    collect={{ type: CollectionType.Post, postId: post.id }}
-                  >
-                    <Button
-                      radius="xl"
-                      color="gray"
-                      variant={colorScheme === 'dark' ? 'filled' : 'light'}
-                      leftSection={<IconShare3 size={14} />}
-                      size="compact-md"
-                    >
-                      <Text className="text-xs">Share</Text>
-                    </Button>
-                  </ShareButton>
-                  <PostControls
-                    postId={post.id}
-                    userId={post.user.id}
-                    isModelVersionPost={post.modelVersionId}
-                    storylinePost={post}
-                  >
-                    <LegacyActionIcon
-                      variant={colorScheme === 'dark' ? 'filled' : 'light'}
-                      size={30}
-                      radius="xl"
-                      className="@max-md:ml-auto"
-                    >
-                      <IconDotsVertical size={16} />
-                    </LegacyActionIcon>
-                  </PostControls>
-                </div>
-              </div>
-            </div>
             <OwnerRatingControls
               entityType="Post"
               entityId={post.id}
               isOwner={currentUser?.id === post.user.id}
             />
-            <div className="mt-4 flex flex-wrap items-center gap-2">
-              <div className="flex flex-wrap items-center gap-2">
-                <UserAvatar
-                  user={post.user}
-                  avatarProps={{ size: 32 }}
-                  size="md"
-                  subTextSize="sm"
-                  textSize="md"
-                  withUsername
-                  linkToProfile
-                />
-                <Group gap={8} wrap="nowrap">
-                  <TipBuzzButton
-                    toUserId={post.user.id}
-                    entityId={post.id}
-                    entityType="Post"
-                    size="compact-md"
-                  />
-                  <ChatUserButton user={post.user} size="compact-md" />
-                  <FollowUserButton userId={post.user.id} size="compact-md" />
-                </Group>
-              </div>
-              {postCollaborators.length > 0 &&
-                postCollaborators.map((collaborator) => {
-                  return (
-                    <Group key={collaborator.user.id} gap={4} wrap="nowrap">
-                      <UserAvatar
-                        user={collaborator.user}
-                        avatarProps={{ size: 32 }}
-                        size="md"
-                        subTextSize="sm"
-                        textSize="md"
-                        withUsername
-                        linkToProfile
-                      />
-                      <Group gap={4} wrap="nowrap">
-                        {collaborator.user.id === currentUser?.id &&
-                          collaborator.status === EntityCollaboratorStatus.Pending && (
-                            <Fragment key={collaborator.user.id}>
-                              <Tooltip label="Accept collaboration">
-                                <LegacyActionIcon
-                                  onClick={() => {
-                                    actionEntityCollaborator({
-                                      entityId: postId,
-                                      entityType: EntityType.Post,
-                                      status: EntityCollaboratorStatus.Approved,
-                                    });
-                                  }}
-                                  loading={actioningEntityCollaborator}
-                                >
-                                  <IconCheck size={20} />
-                                </LegacyActionIcon>
-                              </Tooltip>
-                              <Tooltip label="Reject collaboration">
-                                <LegacyActionIcon
-                                  onClick={() => {
-                                    actionEntityCollaborator({
-                                      entityId: postId,
-                                      entityType: EntityType.Post,
-                                      status: EntityCollaboratorStatus.Rejected,
-                                    });
-                                  }}
-                                  loading={actioningEntityCollaborator}
-                                >
-                                  <IconX size={20} />
-                                </LegacyActionIcon>
-                              </Tooltip>
-                            </Fragment>
-                          )}
-
-                        {isOwnerOrMod && (
-                          <Tooltip label="Remove collaborator">
-                            <LegacyActionIcon
-                              onClick={() => {
-                                removeEntityCollaborator({
-                                  entityId: postId,
-                                  entityType: EntityType.Post,
-                                  targetUserId: collaborator.user.id,
-                                });
-                              }}
-                              loading={removingEntityCollaborator}
-                              color="red"
-                            >
-                              <IconTrash size={20} />
-                            </LegacyActionIcon>
-                          </Tooltip>
-                        )}
-                      </Group>
-                    </Group>
-                  );
-                })}
-            </div>
             {currentUser?.isModerator && post.nsfwLevel === 0 && (
               <>
                 <Alert color="red" mb="md">
@@ -484,45 +521,44 @@ export function PostDetailContent({ postId }: Props) {
             )}
             <StorylinePostNext postId={post.id} />
             <Stack className="mb-20 mt-6 gap-6" id="comments" mb={90}>
-              {!!post.tags.length && (
-                <Collection
-                  items={post.tags}
-                  limit={5}
-                  badgeProps={{ size: 'xl', p: 'md', radius: 'xl' }}
-                  renderItem={(item) => (
-                    <Link
-                      legacyBehavior
-                      key={item.id}
-                      href={`/posts?tags=${item.id}&view=feed`}
-                      passHref
-                    >
-                      <Badge
-                        component="a"
-                        color="gray"
-                        radius="xl"
-                        size="xl"
-                        style={{ cursor: 'pointer' }}
-                        variant={colorScheme === 'dark' ? 'filled' : 'light'}
-                      >
-                        <Text className="text-xs" tt="capitalize" fw={500}>
-                          {item.name}
-                        </Text>
-                      </Badge>
-                    </Link>
-                  )}
-                  grouped
-                />
-              )}
-              {post.detail && <RenderHtml html={post.detail} withMentions />}
               <PostComments postId={postId} userId={post.user.id} />
             </Stack>
           </div>
-          <div
-            className="relative hidden w-[336px] flex-col gap-3 @lg:my-3 @lg:flex"
-            // style={scrollHeight < 600 ? { display: 'none' } : undefined}
-          >
-            <div className="sticky left-0 top-0 ">
-              <div className="flex w-full flex-col gap-3 py-3">
+          <div className="relative flex w-[336px] flex-col gap-3 @lg:my-3 @max-lg:contents">
+            <div className="sticky top-3 flex flex-col gap-3 @max-lg:contents">
+              <div
+                className={clsx(
+                  'flex min-w-0 flex-col gap-3',
+                  'bg-white @max-lg:fixed @max-lg:inset-x-0 @max-lg:bottom-0 @max-lg:z-[200] @max-lg:rounded-t-2xl @max-lg:shadow-[0_-6px_20px_rgba(0,0,0,0.25)] dark:bg-dark-7',
+                  !sheetOpen && '@max-lg:max-h-[112px] @max-lg:overflow-hidden',
+                  sheetOpen && '@max-lg:max-h-[75dvh] @max-lg:overflow-y-auto',
+                  '@max-lg:px-3 @max-lg:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]'
+                )}
+                data-testid="post-info-panel"
+              >
+                <button
+                  type="button"
+                  className="mx-auto mt-2 hidden h-6 w-full shrink-0 cursor-pointer border-0 bg-transparent p-0 @max-lg:block"
+                  aria-label={sheetOpen ? 'Collapse post details' : 'Expand post details'}
+                  aria-expanded={sheetOpen}
+                  onClick={() => setSheetOpen((open) => !open)}
+                  onTouchStart={(e) => (touchStartY.current = e.touches[0].clientY)}
+                  onTouchEnd={(e) => {
+                    const dy = e.changedTouches[0].clientY - (touchStartY.current ?? 0);
+                    if (dy < -30) setSheetOpen(true);
+                    if (dy > 30) setSheetOpen(false);
+                  }}
+                >
+                  <span className="mx-auto block h-1 w-9 rounded-full bg-gray-4 dark:bg-dark-3" />
+                </button>
+                <div className={clsx(panelClass, '@max-lg:border-0 @max-lg:p-0')}>{postCard}</div>
+                <div className={clsx('flex flex-col gap-3', !sheetOpen && '@max-lg:invisible')}>
+                  <div className={panelClass}>{creatorCard}</div>
+                  <PostPublishedWithApp app={post.publishedWithApp} />
+                </div>
+              </div>
+
+              <div className="flex w-full flex-col gap-3 py-3 @max-lg:hidden">
                 {sidebarEnabled && scrollHeight >= 600 && <AdUnitSide_1 />}
                 {sidebarEnabled && scrollHeight > 900 && <AdUnitSide_2 />}
               </div>
