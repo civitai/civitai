@@ -57,7 +57,15 @@ describe('a storyline price, read by a moderator', () => {
 
 // Decided with the Storylines lead: the price is the owner's consent to be paid, so a moderator who
 // can edit everything else about a storyline still cannot set it. Do not open this with the rest.
-describe('a storyline price, set by anyone but the owner', () => {
+describe('a storyline price, set', () => {
+  it('is saved for the owner', async () => {
+    await setStorylineSpace({ storylineId: 10, mode: 'review', price: 100, userId: OWNER });
+    expect(w.placementSpace.upsert).toHaveBeenCalledTimes(1);
+    expect(w.placementSpace.upsert.mock.calls[0][0]).toMatchObject({
+      where: { surface_entityType_entityId: { entityType: 'storyline', entityId: 10 } },
+    });
+  });
+
   it.each([
     ['a moderator', { userId: MODERATOR, isModerator: true }],
     ['a stranger', { userId: STRANGER }],
