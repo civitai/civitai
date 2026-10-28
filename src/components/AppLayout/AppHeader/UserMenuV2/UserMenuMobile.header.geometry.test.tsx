@@ -26,6 +26,7 @@ import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
 const mocks = vi.hoisted(() => ({
   username: 'tester',
   tier: undefined as string | undefined,
+  buyBuzz: vi.fn(),
   decorated: false,
   signedIn: true,
   animated: true,
@@ -63,7 +64,7 @@ vi.mock('~/components/Buzz/useBuzz', async (importOriginal) => ({
 vi.mock('~/components/Buzz/BuzzDeltaPop', () => ({ BuzzDeltaPop: () => null }));
 vi.mock('~/components/Buzz/buzz.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzUtils>()),
-  useBuyBuzz: () => vi.fn(),
+  useBuyBuzz: () => mocks.buyBuzz,
 }));
 vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackUtils>()),
@@ -138,6 +139,7 @@ afterEach(() => {
   mocks.username = 'tester';
   mocks.tier = undefined;
   vi.mocked(router.push).mockClear();
+  mocks.buyBuzz.mockClear();
   mocks.balances = { blue: 1234, yellow: 209500 };
   mocks.animated = true;
 });
@@ -160,7 +162,7 @@ async function renderHeader(viewport: Viewport = PHONE_VIEWPORT) {
   const profile = card.querySelector('a[href^="/user/"]:not([href$="buzz-dashboard"])')!;
   const buzz = card.querySelector('a[href="/user/buzz-dashboard"]')!;
   const pin = card.querySelector('[aria-label="Pin Your Profile"]')!;
-  const buy = [...card.querySelectorAll('button')].find((b) => b.textContent === 'Buy Buzz')!;
+  const buy = card.querySelector('button[aria-label="Buy Buzz"]')!;
   const balances = [...buzz.querySelectorAll<HTMLElement>('[data-buzz-balance]')];
   return { card, profile, buzz, pin, buy, balances };
 }
@@ -208,7 +210,7 @@ describe('mobile menu account card', () => {
     expect(box(card).right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
   });
 
-  test('lines the avatar, balances and Buy Buzz up on one column', async () => {
+  test('lines the avatar up with the balances, and Buy Buzz with the card edge', async () => {
     const { card, buy, balances } = await renderHeader();
     // The strip inside the Buzz link, not the link: padding on the link would not show in its box.
     const strip = balances[0].parentElement!.parentElement!;
@@ -216,8 +218,9 @@ describe('mobile menu account card', () => {
     const [avatarBox, stripBox, buyBox, nameRow] = [avatar, strip, buy, profileRow(card)].map(box);
 
     expect(Math.abs(avatarBox.left - stripBox.left)).toBeLessThanOrEqual(1);
-    expect(Math.abs(buyBox.left - stripBox.left)).toBeLessThanOrEqual(1);
-    expect(Math.abs(buyBox.right - stripBox.right)).toBeLessThanOrEqual(1);
+    // Buy Buzz is the plus at the row's right end, flush with the card's content edge.
+    expect(buyBox.left).toBeGreaterThanOrEqual(stripBox.right);
+    expect(Math.abs(buyBox.right - (box(card).right - 9))).toBeLessThanOrEqual(1);
     // The user row sits close above the balances.
     expect(stripBox.top - nameRow.bottom).toBeLessThanOrEqual(8);
   });
@@ -314,13 +317,32 @@ describe('mobile menu account card', () => {
     }
   });
 
-  test('ends the card with Buy Buzz across its width, under the balances', async () => {
-    const { card, buzz, buy } = await renderHeader();
-    const [cardBox, buzzBox, buyBox] = [card, buzz, buy].map(box);
+  test('puts Buy Buzz as a plus beside the balances, as tall as they are', async () => {
+    const { buzz, buy, balances } = await renderHeader();
+    const [buzzBox, buyBox] = [buzz, buy].map(box);
 
-    expect(buyBox.top).toBeGreaterThanOrEqual(buzzBox.bottom);
-    expect(buyBox.bottom).toBeLessThanOrEqual(cardBox.bottom);
-    expect(buyBox.width).toBeGreaterThanOrEqual(cardBox.width - 32);
+    expect(buy.textContent).toBe('');
+    expect(buy.getAttribute('title')).toBe('Buy Buzz');
+    expect(buyBox.left).toBeGreaterThanOrEqual(buzzBox.right);
+    expect(Math.abs(buyBox.top - buzzBox.top)).toBeLessThanOrEqual(1);
+    expect(Math.abs(buyBox.height - buzzBox.height)).toBeLessThanOrEqual(1);
+    expect(buyBox.width).toBeGreaterThanOrEqual(40);
+    // Both balances still fit whole beside it, on a narrow phone with big balances.
+    cleanup();
+    mocks.balances = { blue: 123456789, yellow: 12345678 };
+    const narrow = await renderHeader(NARROW_PHONE_VIEWPORT);
+    for (const balance of narrow.balances) {
+      expect(balance.scrollWidth).toBeLessThanOrEqual(balance.clientWidth);
+    }
+    expect(box(narrow.buy).right).toBeLessThanOrEqual(NARROW_PHONE_VIEWPORT.width);
+    expect(Math.abs(box(narrow.buy).height - box(narrow.buzz).height)).toBeLessThanOrEqual(1);
+    expect(balances.length).toBe(2);
+  });
+
+  test('the plus opens the Buy Buzz purchase', async () => {
+    const { buy } = await renderHeader();
+    buy.click();
+    expect(mocks.buyBuzz).toHaveBeenCalledTimes(1);
   });
 });
 

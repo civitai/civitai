@@ -46,8 +46,11 @@ vi.mock('~/components/NextLink/NextLink', () => ({
 const buyBuzz = vi.hoisted(() => vi.fn());
 vi.mock('~/components/User/UserBuzz', () => ({ UserBuzz: () => null }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
-  UserAvatar: () => createElement('span', null, 'Avatar'),
+  UserAvatar: ({ subText }: { subText?: ReactNode }) =>
+    createElement('span', null, 'Avatar', subText),
 }));
+const routerPush = vi.hoisted(() => vi.fn());
+vi.mock('next/router', () => ({ useRouter: () => ({ push: routerPush }) }));
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   ...(await importOriginal<typeof IsMobile>()),
   useIsMobile: () => true,
@@ -359,7 +362,7 @@ describe('UserMenu_Click', () => {
       await click(document.querySelector('a[href="/user/buzz-dashboard"]'));
       await click(
         [...document.querySelectorAll('.mantine-Button-root')].find(
-          (el) => el.textContent === buyLabel
+          (el) => el.textContent === buyLabel || el.getAttribute('aria-label') === buyLabel
         )
       );
 
@@ -409,8 +412,9 @@ describe('UserMenu_Click', () => {
     mocks.flags = { buzz: true, buzzSpendPop: true, canWrite: true };
     await mount(createElement(MobileHeaderRows));
 
-    await click(document.querySelector('a[href="/purchase/buzz"]'));
+    await click(document.querySelector('[role="link"]'));
     expect(handleClose).toHaveBeenCalledTimes(1);
+    expect(routerPush).toHaveBeenCalledExactlyOnceWith('/purchase/buzz');
   });
 
   it('shows a member their tier on the mobile card, not the membership offer', async () => {
@@ -418,7 +422,7 @@ describe('UserMenu_Click', () => {
     await mount(createElement(MobileHeaderRows));
 
     expect(document.querySelector('a[href="/user/buzz-dashboard"]')).not.toBeNull();
-    expect(document.querySelector('a[href="/purchase/buzz"], a[href*="/pricing"]')).toBeNull();
+    expect(document.querySelector('[role="link"]')).toBeNull();
   });
 
   // The legacy menu renders the shared Buzz row with no `onOpen`, for every viewer without the flag.

@@ -386,10 +386,10 @@ export function MobileHeaderRows({
         </MenuItemLink>
       </div>
       {features.buzz && (
-        <>
+        <div className="flex items-stretch gap-2">
           <NextLink
             href="/user/buzz-dashboard"
-            className="block rounded-lg"
+            className="block min-w-0 flex-1 rounded-lg"
             onClick={() => {
               trackHeader('buzz-dashboard');
               handleClose();
@@ -406,17 +406,18 @@ export function MobileHeaderRows({
           <Button
             variant="light"
             radius="md"
-            fullWidth
-            leftSection={<IconPlus size={16} />}
+            aria-label="Buy Buzz"
+            title="Buy Buzz"
+            className="!h-auto w-11 shrink-0 !px-0"
             onClick={() => {
               // The sheet covers the screen and holds focus, so it closes before the purchase opens.
               handleClose();
               onBuyBuzz({});
             }}
           >
-            Buy Buzz
+            <IconPlus size={18} />
           </Button>
-        </>
+        </div>
       )}
     </div>
   );
