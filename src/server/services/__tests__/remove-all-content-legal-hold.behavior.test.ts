@@ -42,6 +42,11 @@ const { holder, indexes, metrics, session, pictures, tracked, docStore } = vi.ho
   },
 }));
 
+const { bustMvCache } = vi.hoisted(() => ({ bustMvCache: vi.fn(async () => undefined) }));
+vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  bustMvCache,
+}));
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   profilePictureCache: pictures,
@@ -136,6 +141,7 @@ const BOUNTY = 900;
 const MODEL_VERSION = (modelId: number) => modelId * 10;
 const GIVEN_BY_HELD = 7901;
 const GIVEN_BY_BYSTANDER = 7902;
+const SCHEDULED_GIVEN_BY_HELD = 7911;
 const EVIDENCE = [
   'BountyEntry',
   'Bounty',
@@ -424,16 +430,22 @@ describe('removeAllContent', () => {
   // PGlite has one connection, so this lands the hold strictly between the check and the deletes; it
   // shows each delete re-reads the hold, not how they behave under true concurrency.
   it('keeps every piece of evidence when a hold lands mid-wipe, and says so', async () => {
+    await holder.db.exec(
+      `INSERT INTO "ModelVersion" ("modelId") SELECT id FROM "Model" WHERE "userId" = ${CLEAN}`
+    );
     beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
 
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
 
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
-    // Not even hidden: a stopped wipe leaves its models as they were.
+    // Not even hidden: a wipe stopped before the hide leaves its models as they were.
     const statuses = await holder.db.query<{ status: string }>(
-      `SELECT DISTINCT status FROM "Model" WHERE "userId" = ${CLEAN}`
+      `SELECT DISTINCT status FROM "Model" WHERE "userId" = ${CLEAN}
+       UNION ALL
+       SELECT DISTINCT mv.status FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
+       WHERE m."userId" = ${CLEAN}`
     );
-    expect(statuses.rows).toEqual([{ status: 'Published' }]);
+    expect(statuses.rows).toEqual([{ status: 'Published' }, { status: 'Published' }]);
     // The low-impact rows before the evidence go, and only those leave the index; nothing is purged
     // elsewhere.
     expect(dbMock.dbWrite.imageReaction.deleteMany).toHaveBeenCalled();
@@ -708,6 +720,68 @@ describe('removeAllContent', () => {
     // Control: a model only unheld owners had is deleted, as before.
     const gone = await holder.db.query(`SELECT 1 FROM "Model" WHERE id = ${GIVEN_BY_BYSTANDER}`);
     expect(gone.rows).toEqual([]);
+  });
+
+  it('hides only the wiped account’s models, scheduled ones included, and drops their caches', async () => {
+    await holder.db.exec(`
+      INSERT INTO "ModelOwnership" ("modelId", "userId", reason)
+        SELECT ${SCHEDULED_GIVEN_BY_HELD}, ${HELD}, 'create'
+        WHERE NOT EXISTS (SELECT 1 FROM "ModelOwnership" WHERE "modelId" = ${SCHEDULED_GIVEN_BY_HELD});
+      INSERT INTO "Model" (id, "userId", status) VALUES
+        (${GIVEN_BY_HELD}, ${CLEAN}, 'Published'), (${SCHEDULED_GIVEN_BY_HELD}, ${CLEAN}, 'Scheduled');
+      INSERT INTO "ModelVersion" ("modelId", status) VALUES
+        (${GIVEN_BY_HELD}, 'Published'), (${SCHEDULED_GIVEN_BY_HELD}, 'Scheduled');
+      INSERT INTO "ModelVersion" ("modelId", status)
+        SELECT id, 'Published' FROM "Model" WHERE "userId" = ${HELD};
+    `);
+
+    const result = await removeAllContent({ id: CLEAN });
+
+    const status = async (where: string) =>
+      (
+        await holder.db.query<{ status: string }>(
+          `SELECT DISTINCT status FROM ${where} ORDER BY status`
+        )
+      ).rows.map((r) => r.status);
+    expect(
+      await status(`"Model" WHERE id IN (${GIVEN_BY_HELD}, ${SCHEDULED_GIVEN_BY_HELD})`)
+    ).toEqual(['Unpublished']);
+    expect(
+      await status(
+        `"ModelVersion" WHERE "modelId" IN (${GIVEN_BY_HELD}, ${SCHEDULED_GIVEN_BY_HELD})`
+      )
+    ).toEqual(['Unpublished']);
+    // Another account's model and version are untouched.
+    expect(await status(`"Model" WHERE "userId" = ${HELD}`)).toEqual(['Published']);
+    expect(
+      await status(
+        `"ModelVersion" WHERE "modelId" IN (SELECT id FROM "Model" WHERE "userId" = ${HELD})`
+      )
+    ).toEqual(['Published']);
+
+    expect(result.keptModelIds).toEqual([GIVEN_BY_HELD, SCHEDULED_GIVEN_BY_HELD]);
+    const keptVersions = await holder.db.query<{ id: number }>(
+      `SELECT id FROM "ModelVersion" WHERE "modelId" IN (${GIVEN_BY_HELD}, ${SCHEDULED_GIVEN_BY_HELD}) ORDER BY id`
+    );
+    expect(bustMvCache).toHaveBeenCalledWith(
+      keptVersions.rows.map((r) => r.id),
+      [GIVEN_BY_HELD, SCHEDULED_GIVEN_BY_HELD],
+      CLEAN
+    );
+  });
+
+  it('drops a hidden model from search when a hold stops the wipe after the hide', async () => {
+    await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${GIVEN_BY_HELD}, ${CLEAN})`);
+    landsBefore = 'ChatMessage';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+
+    const kept = await holder.db.query<{ status: string }>(
+      `SELECT status FROM "Model" WHERE id = ${GIVEN_BY_HELD}`
+    );
+    expect(kept.rows).toEqual([{ status: 'Unpublished' }]);
+    expect(dropped().models).toContain(GIVEN_BY_HELD);
   });
 
   it('leaves the bids on a model a hold kept', async () => {

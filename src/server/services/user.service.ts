@@ -1454,6 +1454,15 @@ async function goneIds(table: 'Model' | 'Article' | 'Collection' | 'Bounty', ids
   return ids.filter((i) => !kept.has(i));
 }
 
+/** The listed models that no longer exist or are no longer published, read on the primary. */
+async function modelsOffSite(ids: number[]) {
+  if (!ids.length) return [];
+  const published = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Model" WHERE id = ANY(${ids}::int[]) AND status = 'Published'`;
+  const live = new Set(published.map((r) => r.id));
+  return ids.filter((i) => !live.has(i));
+}
+
 /** Queues a search-index Delete for each listed row that no longer exists. */
 async function unindexDeleted(
   lists: [
@@ -1682,18 +1691,26 @@ export const removeAllContent = async ({
       userId: id,
     }).catch(() => undefined);
     await unindexDeleted([
-      [modelsSearchIndex, 'Model', models],
       [articlesSearchIndex, 'Article', articles],
       [collectionsSearchIndex, 'Collection', collections],
       [bountiesSearchIndex, 'Bounty', bounties],
-    ]).catch((e: unknown) =>
-      logToAxiom({
-        name: 'remove-all-content',
-        type: 'error',
-        message: `Unindexing after a stopped wipe failed: ${(e as Error).message}`,
-        userId: id,
-      }).catch(() => undefined)
-    );
+    ])
+      .then(async () => {
+        // A stop after the hide leaves hidden models: they leave search with the deleted ones.
+        const offSite = await modelsOffSite(models.map((m) => m.id));
+        if (offSite.length)
+          await modelsSearchIndex.queueUpdate(
+            offSite.map((modelId) => ({ id: modelId, action: SearchIndexUpdateQueueAction.Delete }))
+          );
+      })
+      .catch((e: unknown) =>
+        logToAxiom({
+          name: 'remove-all-content',
+          type: 'error',
+          message: `Unindexing after a stopped wipe failed: ${(e as Error).message}`,
+          userId: id,
+        }).catch(() => undefined)
+      );
     await refundBidsForDeletedModels(models, alertedBy);
     throw new LegalHoldStoppedError();
   }
@@ -1741,6 +1758,21 @@ export const removeAllContent = async ({
         models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
       );
   });
+  // The hide is a raw status write, so the caches that would still serve a kept model as published
+  // are dropped here.
+  if (keptModelIds.length)
+    await runStep('kept-model-caches', async () => {
+      const versions = await dbWrite.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "ModelVersion" WHERE "modelId" = ANY(${keptModelIds}::int[])`;
+      // Imported here: a static import joins user.service to the model-version import cycle.
+      const { bustMvCache } = await import('~/server/services/model-version.service');
+      await bustMvCache(
+        versions.map((v) => v.id),
+        keptModelIds,
+        id
+      );
+      await userModelCountCache.refresh(id);
+    });
   await unindex('index-images', imagesSearchIndex, images);
   await unindex('index-image-metrics', imagesMetricsSearchIndex, images);
   await unindex('index-articles', articlesSearchIndex, articles);
