@@ -122,6 +122,9 @@ export const MODERATION_FLOW_META_KEYS = [
   'takenDownBy',
   'archivedAt',
   'archivedBy',
+  'removedWithOwner',
+  'statusBeforeRemoval',
+  'versionsUnpublishedByRemoval',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
 /**

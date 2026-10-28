@@ -233,6 +233,9 @@ const FLOW_KEYS = [
   'takenDownBy',
   'archivedAt',
   'archivedBy',
+  'removedWithOwner',
+  'statusBeforeRemoval',
+  'versionsUnpublishedByRemoval',
 ] as const;
 
 const FORGED = {
@@ -249,6 +252,10 @@ const FORGED = {
   takenDownBy: 999,
   archivedAt: '2000-01-01T00:00:00.000Z',
   archivedBy: 999,
+  // Set on its own taken-down model, this would drop it from the take-down hash candidates.
+  removedWithOwner: true,
+  statusBeforeRemoval: 'forged',
+  versionsUnpublishedByRemoval: [{ id: 999, status: 'Published' }],
 };
 
 const STORED_FLOW_META = {
@@ -265,6 +272,9 @@ const STORED_FLOW_META = {
   takenDownBy: MODERATOR_ID,
   archivedAt: '2026-01-01T00:00:00.000Z',
   archivedBy: MODERATOR_ID,
+  removedWithOwner: true,
+  statusBeforeRemoval: 'Published',
+  versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
 };
 
 describe('moderation-flow meta keys', () => {
