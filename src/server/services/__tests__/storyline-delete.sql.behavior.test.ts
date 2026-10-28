@@ -264,12 +264,19 @@ describe('deleteStoryline', () => {
     });
 
     // Launch rule (2026-10-28): an owner paid for continuations cannot delete the chapters.
-    it('is kept from its owner once a paid continuation has settled', async () => {
+    it('is kept from its owner once a paid continuation is approved', async () => {
       await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
         STORYLINE_DELETE_REFUSALS.paidChapters
       );
       expect(await storylineIds()).toEqual([1, 2]);
     });
+
+    for (const status of ['expired', 'declined'])
+      it(`its owner deletes it when its only paid continuation was ${status}`, async () => {
+        await db.pg.exec(`UPDATE "Placement" SET status = '${status}' WHERE id = 900`);
+        await deleteStoryline({ id: 1, userId: OWNER });
+        expect(await storylineIds()).toEqual([2]);
+      });
 
     it('its owner deletes it, posts kept, when no continuation was paid', async () => {
       await db.pg.exec(`DELETE FROM "Placement"`);

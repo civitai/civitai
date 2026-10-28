@@ -79,7 +79,7 @@ section).
 - **Deleting.** The creator or a moderator deletes a storyline from its page's menu. Every chapter's
   post stays published; the storyline, its chapter order and its comments go. It is refused while a
   paid continuation is pending or its Buzz has not settled. Only a moderator can delete one that
-  has taken a paid continuation, is under an open report, or was taken down (and not while the
+  has approved a paid continuation, is under an open report, or was taken down (and not while the
   creator's appeal is open).
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or
   declined. A post above the storyline's content level cannot be submitted at all. A post submitted

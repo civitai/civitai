@@ -909,7 +909,9 @@ export async function deleteStoryline({
     // placement. Unsettled is the escrow's own reading (`sweepUnpaidLegs`,
     // `sweepUnplannedSettlements`): pending, a payout leg not yet paid, or a funded hold with no
     // payout planned.
-    const [{ unsettled, paid }] = await tx.$queryRaw<{ unsettled: boolean; paid: boolean }[]>`
+    const [{ unsettled, approved }] = await tx.$queryRaw<
+      { unsettled: boolean; approved: boolean }[]
+    >`
       WITH paid AS (
         SELECT p.id, p.status FROM "Placement" p
         WHERE p.surface = 'storyline' AND NOT p.free AND p.amount > 0
@@ -922,7 +924,7 @@ export async function deleteStoryline({
             )
           )
       )
-      SELECT EXISTS (SELECT 1 FROM paid) AS paid, EXISTS (
+      SELECT EXISTS (SELECT 1 FROM paid WHERE status = 'approved') AS approved, EXISTS (
         SELECT 1 FROM paid p
         WHERE (
             p.status = 'pending'
@@ -946,10 +948,11 @@ export async function deleteStoryline({
       ) AS unsettled
     `;
     if (unsettled) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidContinuations);
-    // Launch rule (2026-10-28): an owner who took paid continuations cannot then delete the
-    // chapters they were paid for, and cannot delete what is under report. A moderator can.
+    // Launch rule (2026-10-28): an owner paid for approved continuations cannot then delete the
+    // chapters they were paid for (a refunded one does not count), and cannot delete what is under
+    // report. A moderator can.
     if (!asModerator) {
-      if (paid) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidChapters);
+      if (approved) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidChapters);
       const [{ reported }] = await tx.$queryRaw<{ reported: boolean }[]>`
         SELECT EXISTS (
           SELECT 1 FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
