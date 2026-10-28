@@ -22,7 +22,8 @@ const { __testing: perPodCache } = await import('~/server/orchestrator/orchestra
 const USER = 4242;
 const mint = () =>
   getTemporaryUserApiKey({ name: 'generation-token', maxAge: 3605, type: 'System', userId: USER });
-const standing = (bannedAt: Date | null) => ({ bannedAt } as never);
+const standing = (bannedAt: Date | null, deletedAt: Date | null = null) =>
+  ({ bannedAt, deletedAt } as never);
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -46,6 +47,12 @@ describe('minting an orchestrator token', () => {
     const refused = await mint().catch((error: unknown) => error);
     expect(refused).toBeInstanceOf(TRPCError);
     expect((refused as TRPCError).code).toBe('FORBIDDEN');
+    expect(dbMock.dbWrite.apiKey.create).not.toHaveBeenCalled();
+  });
+
+  it('is refused for a deleted account', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(standing(null, new Date()));
+    await expect(mint()).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(dbMock.dbWrite.apiKey.create).not.toHaveBeenCalled();
   });
 
@@ -92,6 +99,32 @@ describe('an orchestrator token for a banned account', () => {
     await expect(getOrchestratorToken(USER)).rejects.toMatchObject({ code: 'FORBIDDEN' });
     expect(dbMock.dbWrite.apiKey.create).not.toHaveBeenCalled();
     expect(perPodCache.size().cache).toBe(0);
+  });
+
+  // A moderator listing a banned account's generations mints for that account, and is refused too:
+  // the site would refuse the key at the orchestrator's identity check anyway.
+  it('is refused on the cross-user path, with wording about that account', async () => {
+    redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(standing(new Date()));
+    await expect(
+      getOrchestratorToken(USER, undefined, { bypassCache: true })
+    ).rejects.toMatchObject({
+      code: 'FORBIDDEN',
+      message: 'This account has been banned',
+    });
+    expect(dbMock.dbWrite.apiKey.create).not.toHaveBeenCalled();
+  });
+
+  it('does not expire anything when the standing check itself fails', async () => {
+    redisMock.sysRedis.hGet.mockResolvedValue(null as never);
+    dbMock.dbWrite.user.findUnique
+      .mockResolvedValueOnce(standing(null))
+      .mockRejectedValueOnce(new Error('primary unavailable'));
+    dbMock.dbWrite.apiKey.findMany.mockResolvedValue([
+      { id: 9, key: 'hashed', expiresAt: new Date(Date.now() + 3_600_000) },
+    ] as never);
+    await expect(getOrchestratorToken(USER)).rejects.toThrow('primary unavailable');
+    expect(dbMock.dbWrite.apiKey.updateMany).not.toHaveBeenCalled();
   });
 
   it('is minted for an account in good standing', async () => {

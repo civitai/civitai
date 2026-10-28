@@ -4,7 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // app's mint does: before the insert, and again after it.
 
 type Call = { op: string; table: string; values?: unknown; where: unknown[][] };
-const state = vi.hoisted(() => ({ calls: [] as Call[], banned: [] as boolean[] }));
+const state = vi.hoisted(() => ({
+  calls: [] as Call[],
+  banned: [] as boolean[],
+  deleted: false,
+}));
 
 function chain(op: string, table: string) {
   const call: Call = { op, table, where: [] };
@@ -15,7 +19,10 @@ function chain(op: string, table: string) {
     set: (values: unknown) => ((call.values = values), builder),
     where: (...args: unknown[]) => (call.where.push(args), builder),
     execute: async () => [],
-    executeTakeFirst: async () => ({ bannedAt: state.banned.shift() ? new Date() : null }),
+    executeTakeFirst: async () => ({
+      bannedAt: state.banned.shift() ? new Date() : null,
+      deletedAt: state.deleted ? new Date() : null,
+    }),
   };
   return builder;
 }
@@ -32,7 +39,7 @@ vi.mock('../redis', () => ({
 }));
 vi.mock('../redis-atomic', () => ({ hSetWithTTL: vi.fn(async () => undefined) }));
 
-const { orchestratorToken, BannedAccountError } = await import('../orchestrator-token');
+const { orchestratorToken, ClosedAccountError } = await import('../orchestrator-token');
 
 const USER = 4242;
 const ops = () => state.calls.filter((c) => c.table === 'ApiKey').map((c) => c.op);
@@ -40,6 +47,7 @@ const ops = () => state.calls.filter((c) => c.table === 'ApiKey').map((c) => c.o
 beforeEach(() => {
   state.calls = [];
   state.banned = [];
+  state.deleted = false;
   delete process.env.ORCHESTRATOR_MODE;
   process.env.NEXTAUTH_SECRET ??= 'test-secret';
 });
@@ -53,15 +61,21 @@ describe('orchestratorToken', () => {
 
   it('refuses a banned account before writing a key', async () => {
     state.banned = [true];
-    await expect(orchestratorToken(USER)).rejects.toBeInstanceOf(BannedAccountError);
+    await expect(orchestratorToken(USER)).rejects.toBeInstanceOf(ClosedAccountError);
     expect(ops()).toEqual([]);
   });
 
   it('expires the key it just wrote when a ban lands while it mints', async () => {
     state.banned = [false, true];
-    await expect(orchestratorToken(USER)).rejects.toBeInstanceOf(BannedAccountError);
+    await expect(orchestratorToken(USER)).rejects.toBeInstanceOf(ClosedAccountError);
     const [insert, expire] = state.calls.filter((c) => c.table === 'ApiKey');
     expect(ops()).toEqual(['insert', 'update']);
     expect(expire.where).toEqual([['key', '=', (insert.values as { key: string }).key]]);
+  });
+
+  it('refuses a deleted account before writing a key', async () => {
+    state.deleted = true;
+    await expect(orchestratorToken(USER)).rejects.toBeInstanceOf(ClosedAccountError);
+    expect(ops()).toEqual([]);
   });
 });

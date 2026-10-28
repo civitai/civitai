@@ -259,7 +259,18 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       sizeKB: true,
       metadata: true,
       modelVersionId: true,
-      modelVersion: { select: { model: { select: { id: true, userId: true, meta: true } } } },
+      modelVersion: {
+        select: {
+          model: {
+            select: {
+              id: true,
+              userId: true,
+              meta: true,
+              user: { select: { bannedAt: true, deletedAt: true } },
+            },
+          },
+        },
+      },
     },
   });
   const metadata = (file?.metadata ?? {}) as FileMetadata;
@@ -280,13 +291,17 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
     ?.trainingStudioWorkflowId;
   if (!workflowId) return markUnavailable('not a Training Studio model');
 
+  // A banned or deleted owner cannot be minted a token, so their run is read with the service token.
+  const ownerClosed = !!(model.user.bannedAt || model.user.deletedAt);
   try {
-    const token = await getOrchestratorToken(model.userId);
+    const token = ownerClosed ? serviceToken() : await getOrchestratorToken(model.userId);
     let workflow: Workflow;
     try {
       workflow = await getWorkflow({ token, path: { workflowId } });
     } catch (error) {
-      if (error instanceof TRPCError && error.code === 'NOT_FOUND')
+      // Under the service token a not-found can also mean the token cannot see the run, which is
+      // not proof it is gone: it fails safe below instead.
+      if (error instanceof TRPCError && error.code === 'NOT_FOUND' && !ownerClosed)
         return markUnavailable('workflow no longer exists');
       throw error;
     }
@@ -350,12 +365,34 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
     );
     return { fileId, outcome: 'archived', items: stored.included, skipped: stored.skipped };
   } catch (error) {
-    const attempts = (metadata.datasetArchiveAttempts ?? 0) + 1;
     const message = error instanceof Error ? error.message : String(error);
+    if (ownerClosed) {
+      // Never given up on: the owner can no longer re-upload, so this copy may be the only one left.
+      await logToAxiom({
+        type: 'error',
+        name: 'studio-dataset-archive-service-read-failed',
+        fileId,
+        modelVersionId: file.modelVersionId,
+        message,
+      }).catch(() => undefined);
+      return {
+        fileId,
+        outcome: 'retry',
+        attempts: metadata.datasetArchiveAttempts ?? 0,
+        error: message,
+      };
+    }
+    const attempts = (metadata.datasetArchiveAttempts ?? 0) + 1;
     if (attempts >= STUDIO_DATASET_MAX_ATTEMPTS) return markUnavailable(`failed: ${message}`);
     await writeMetadata(file.id, { ...metadata, datasetArchiveAttempts: attempts });
     return { fileId, outcome: 'retry', attempts, error: message };
   }
+}
+
+function serviceToken() {
+  if (!env.ORCHESTRATOR_ACCESS_TOKEN)
+    throw new Error('no orchestrator service token is configured');
+  return env.ORCHESTRATOR_ACCESS_TOKEN;
 }
 
 async function writeMetadata(fileId: number, metadata: FileMetadata) {

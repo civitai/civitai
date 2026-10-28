@@ -137,24 +137,30 @@ export async function setApiKeyBuzzLimit({
 }
 
 /** Read from the primary: a ban must stop the next mint, not the one after the session cache expires. */
-async function isAccountBanned(userId: number) {
-  const user = await dbWrite.user.findUnique({ where: { id: userId }, select: { bannedAt: true } });
-  return !!user?.bannedAt;
+async function assertAccountOpen(userId: number) {
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { bannedAt: true, deletedAt: true },
+  });
+  // Not the session-facing wording: a moderator acting on another account reaches this too.
+  if (user?.bannedAt)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'This account has been banned' });
+  if (user?.deletedAt)
+    throw new TRPCError({ code: 'FORBIDDEN', message: 'This account has been deleted' });
 }
-
-// Not the session-facing wording: a moderator acting on another account reaches this too.
-const bannedAccountError = () =>
-  new TRPCError({ code: 'FORBIDDEN', message: 'This account has been banned' });
 
 export async function getTemporaryUserApiKey(
   args: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType }
 ) {
-  if (await isAccountBanned(args.userId)) throw bannedAccountError();
+  await assertAccountOpen(args.userId);
   const date = new Date();
   const key = await addApiKey(args, date);
-  // Again after the insert: a ban committing between the check above and the insert expires the
+  // Again after the insert: a ban or deletion committing between the check above and the insert expires the
   // keys it can see, which may not include this one yet.
-  if (await isAccountBanned(args.userId)) {
+  try {
+    await assertAccountOpen(args.userId);
+  } catch (refusal) {
+    if (!(refusal instanceof TRPCError)) throw refusal;
     // A failure here leaves the key for the ban's own revocation and its job to expire.
     await expireUserApiKeys(args.userId).catch((error) =>
       logToAxiom({
@@ -164,7 +170,7 @@ export async function getTemporaryUserApiKey(
         message: (error as Error).message,
       }).catch(() => null)
     );
-    throw bannedAccountError();
+    throw refusal;
   }
 
   if (args.maxAge) {
