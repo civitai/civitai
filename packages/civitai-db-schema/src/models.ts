@@ -1362,6 +1362,13 @@ export interface ModActivity {
   host: string | null;
 }
 
+export interface ModThreadClaim {
+  chatId: number;
+  moderatorId: number;
+  claimedAt: Date;
+  expiresAt: Date;
+}
+
 export interface Report {
   id: number;
   userId: number;
@@ -2179,6 +2186,8 @@ export interface OauthClient {
   allowedScopes: number;
   isConfidential: boolean;
   accessMode: string;
+  skipConsent: boolean;
+  tokenRateLimit: number | null;
   userId: number;
   user?: User;
   isVerified: boolean;

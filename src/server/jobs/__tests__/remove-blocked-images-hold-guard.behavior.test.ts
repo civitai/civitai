@@ -50,7 +50,12 @@ vi.mock('~/server/search-index', () => ({
 }));
 
 import * as imageService from '~/server/services/image.service';
-import { accountHeldBlockedImagesSql, purgeHoldGuard } from '~/server/jobs/image-ingestion';
+import {
+  accountHeldBlockedImagesSql,
+  blockedQueueBatchSql,
+  blockedQueueExpiredAmongSql,
+  purgeHoldGuard,
+} from '~/server/jobs/image-ingestion';
 import { legalHoldUserIdsSql, userNamedOnHoldingReportSql } from '~/server/utils/legal-hold';
 import {
   accountHoldSql,
@@ -1375,5 +1380,108 @@ describe('the migration backfill with a keep list', () => {
       `SELECT to_regclass('pg_temp.evidence_hold_backfill_keep')::text AS t`
     );
     expect(rows).toEqual([{ t: null }]);
+  });
+});
+
+// The held sets have no size bound, and Prisma's engine refuses a statement over 32,767 bind
+// variables, so each set must travel as one array parameter whatever its size.
+describe('the blocked-image queue reads, with a held set past the bind-variable limit', () => {
+  const BIND_LIMIT = 32767;
+  const HELD = Array.from({ length: 40_000 }, (_, i) => 1_000_000 + i);
+  const cutoff = new Date(Date.now() - 7 * 86_400_000);
+  const ON_CUTOFF = 1040001; // queued at exactly the cutoff, so its retention has run out
+  const run = (sql: Prisma.Sql) => {
+    expect(sql.values.length).toBeLessThanOrEqual(BIND_LIMIT);
+    return holder.db.query<{ entityId: number; createdAt: Date }>(sql.text, sql.values as never[]);
+  };
+
+  beforeAll(async () => {
+    await holder.db.exec(`
+      CREATE TYPE "JobQueueType" AS ENUM ('BlockedImageDelete', 'ImageScan');
+      CREATE TYPE "EntityType" AS ENUM ('Image', 'Post');
+      CREATE TABLE "JobQueue" (
+        type "JobQueueType" NOT NULL,
+        "entityType" "EntityType" NOT NULL,
+        "entityId" int NOT NULL,
+        "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+        PRIMARY KEY ("entityType", "entityId", type)
+      );
+      INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt")
+        SELECT 'BlockedImageDelete', 'Image', id, now() - interval '30 days' + (id - 1000000) * interval '1 second'
+        FROM generate_series(1000000, 1039999) id;
+      INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt") VALUES
+        ('BlockedImageDelete', 'Image', 1, now() - interval '20 days'),
+        ('BlockedImageDelete', 'Image', 2, now() - interval '10 days'),
+        ('BlockedImageDelete', 'Image', 3, now() - interval '40 days'),
+        ('BlockedImageDelete', 'Image', 1040000, now()),
+        ('ImageScan', 'Image', 1000001, now() - interval '30 days'),
+        ('BlockedImageDelete', 'Post', 1000002, now() - interval '30 days');
+    `);
+    await holder.db.query(
+      `INSERT INTO "JobQueue" (type, "entityType", "entityId", "createdAt")
+        VALUES ('BlockedImageDelete', 'Image', ${ON_CUTOFF}, $1)`,
+      [cutoff]
+    );
+    // Planned with statistics, as the live table is; without them the planner guesses one row.
+    await holder.db.exec(`ANALYZE "JobQueue"`);
+  });
+
+  it('finds only the held ids queued for blocked-image delete and past retention', async () => {
+    const { rows } = await run(blockedQueueExpiredAmongSql([...HELD, 1040000, ON_CUTOFF], cutoff));
+
+    // 1040000 is held but queued inside retention; 1, 2 and 3 are not held.
+    expect(rows.map((r) => r.entityId).sort((a, b) => a - b)).toEqual([...HELD, ON_CUTOFF]);
+  });
+
+  it('leaves every held id out of the batch, oldest first', async () => {
+    const { rows } = await run(blockedQueueBatchSql(HELD, 2));
+
+    expect(rows.map((r) => r.entityId)).toEqual([3, 1]);
+  });
+
+  // A prepared statement goes to a generic plan after five runs on one connection, where the array
+  // is a parameter rather than a constant: `<> ALL` then compares it against every row it scans.
+  it('never compares the held array per row, even under a generic plan', async () => {
+    const generic = async (sql: Prisma.Sql) => {
+      await holder.db.exec(`SET plan_cache_mode = force_generic_plan`);
+      try {
+        await holder.db.exec(`DEALLOCATE ALL`);
+        await holder.db.query(`PREPARE q AS ${sql.text}`);
+        const args = sql.values.map((v) =>
+          Array.isArray(v)
+            ? `'{${v.join(',')}}'`
+            : `'${v instanceof Date ? v.toISOString() : String(v)}'`
+        );
+        const { rows } = await holder.db.query<{ 'QUERY PLAN': string }>(
+          `EXPLAIN EXECUTE q(${args.join(', ')})`
+        );
+        return rows.map((r) => r['QUERY PLAN']).join('\n');
+      } finally {
+        await holder.db.exec(`DEALLOCATE ALL; RESET plan_cache_mode`);
+      }
+    };
+    const perRow = /(ANY|ALL) \(\$\d+\)/;
+
+    // Positive control: the plain array filter, generically planned, is the per-row comparison.
+    const control = await generic(
+      Prisma.sql`SELECT "entityId" FROM "JobQueue" WHERE "entityId" <> ALL(${HELD}::int[])`
+    );
+    expect(control).toMatch(perRow);
+
+    for (const sql of [
+      blockedQueueBatchSql(HELD, 15000),
+      blockedQueueExpiredAmongSql(HELD, cutoff),
+    ]) {
+      const plan = await generic(sql);
+      expect(plan).toContain('Function Scan on unnest');
+      expect(plan).not.toMatch(perRow);
+    }
+  });
+
+  it('leaves nothing out of the batch when nothing is held', async () => {
+    const { rows } = await run(blockedQueueBatchSql([], 50_000));
+
+    expect(rows).toHaveLength(HELD.length + 5);
+    expect(rows[0].entityId).toBe(3);
   });
 });

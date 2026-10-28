@@ -5,6 +5,7 @@ import {
   Box,
   Button,
   Card,
+  Divider,
   Group,
   Image,
   Stack,
@@ -23,15 +24,16 @@ import {
   getRecommendLabel,
 } from '~/components/Apps/appListingCardView';
 import {
-  LISTING_ACTION_ROW_CONTROL_PX,
-  LISTING_ACTION_ROW_GAP_PX,
-  LISTING_ACTION_ROW_HEIGHT_PX,
-  LISTING_ACTION_ROW_PT_PX,
   LISTING_CARD_COVER_ASPECT_RATIO,
+  LISTING_CARD_CREATOR_AVATAR_PX,
+  LISTING_CARD_CTA_HEIGHT_PX,
+  LISTING_CARD_FOOTER_HEIGHT_PX,
+  LISTING_CARD_HEADER_CENTER_PX,
+  LISTING_CARD_ICON_OVERLAP_PX,
   LISTING_CARD_ICON_SIZE_PX,
-  LISTING_CARD_TITLE_LINES,
+  LISTING_CARD_MENU_TRIGGER_PX,
+  LISTING_CARD_TITLE_FONT_PX,
   LISTING_CARD_TITLE_LINE_HEIGHT,
-  LISTING_CARD_TITLE_MIN_HEIGHT,
 } from '~/components/Apps/appListingCardGeometry';
 import { AppListingActionsMenu } from '~/components/Apps/AppListingActionsMenu';
 import { ACTION_GLYPH_ICONS, cardActionGlyph } from '~/components/Apps/appListingActionGlyph';
@@ -48,73 +50,29 @@ import {
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
- * App Store Listings (W13) — P2b unified store CARD, over BOTH kinds.
+ * App Store Listings (W13) — the unified store CARD, over BOTH kinds.
  *
- * Renders one `ListingCard` (from `appListings.listAvailable`): cover + app icon
- * + name + tagline + a kind-aware CTA (Open / View details / Visit ↗) + a stats
- * line BELOW that CTA carrying the Steam-style recommend rollup and, for a
- * measurable listing, the play count. Mirrors the visual language of the live
- * `AppBlockCard` (Mantine Card + category-glyph cover placeholder) so listings
- * feel native.
+ * Renders one `ListingCard` (from `appListings.listAvailable`) as card A: a cover with
+ * the `⋮` menu over its top-right; a header row of the app icon (straddling the cover's
+ * bottom edge), a one-line title and the kind-aware CTA (Open / View details / Visit ↗),
+ * the title and CTA centred on the icon's centre; badges and the tagline; and, under a
+ * divider, a footer with the recommend rollup and play count on the left and the creator on
+ * the right. The whole card is one click target: the title link is stretched over it
+ * (`after:inset-0`) and every other control sits above that layer (`relative z-10`).
  *
- * 🔴 THERE IS NO AUTHOR CHIP ON THIS CARD. A "by {creator}" line used to sit
- * under the title; the operator dropped it from the store card (2026-09-06) —
- * a grid of ~24 tiles is a browsing surface, and the byline competed with the
- * title for the one line a shopper actually reads. Attribution is NOT lost: the
- * DETAIL surfaces carry it independently and are untouched by that decision —
- * `AppDetailsModal`, `appDetailAuthorView` and `AppListingDetailBody` (which has
- * its own, separate `CreatorChip`). `ListingCard.creator` is still on the DTO and
- * still read here for the owner test (`isOwner`), so this is a rendering change,
- * not a schema one.
+ * A creator without a username renders no byline link. The detail page uses `CreatorChip`.
  *
- * 🔴 THE CARD'S GEOMETRY IS NOT SPELLED HERE — it is READ from
- * `appListingCardGeometry.ts`: cover ratio, icon size, reserved title lines and
- * line-height, action-row height / padding / gap / control size. The reason is a
- * relationship this file cannot enforce on its own: `AppListingCardSkeleton` must
- * reserve EXACTLY this geometry or the grid reflows when the query resolves, and
- * two hand-copied numbers is how that drifts. Do not re-literalise a value below
- * "for readability" — the literal is the bug.
+ * 🔴 THE CARD'S GEOMETRY IS NOT SPELLED HERE — it is READ from `appListingCardGeometry.ts`
+ * (cover ratio, icon size and overlap, title font and line-height, CTA/menu/footer/avatar
+ * sizes). `AppListingCardSkeleton` must reserve EXACTLY this geometry or the grid reflows
+ * when the query resolves. `__tests__/appListingCardView.test.ts` requires the card to read
+ * every export (the skeleton is checked separately). Do not re-literalise a value below.
  *
- * 🔴 AND "READS THEM" MEANS ALL OF THEM, WHICH IS NOW MACHINE-CHECKED AGAINST THE
- * MODULE'S EXPORTS. This header claimed the action-row HEIGHT among them while
- * nothing here consumed it; the row's `mih` is that consumer, and
- * `__tests__/appListingCardView.test.ts` enumerates the module's `Object.keys`
- * rather than a hand-maintained list, so the claim cannot quietly outgrow the code
- * again.
+ * 🔴 THE PLAY COUNT RENDERS ONLY FOR A COUNT OF ONE OR MORE. Both `openCount === null`
+ * (off-site, unmeasurable) and `0` (measured, empty) render nothing: an OPERATOR OVERRIDE
+ * (2026-09-06, "dont show 0 plays"). The DTO keeps them apart (see `cardOpenCount`); the
+ * rule is in `getPlayCountLabel`, not here.
  *
- * 🔴 THE RECOMMEND ROLLUP IS IN NEITHER THE META BLOCK NOR THE ACTION ROW — IT IS
- * A LINE OF ITS OWN, BELOW THE ROW. Its history is two moves, and both are worth
- * knowing because each deleted apparatus that must not come back:
- *   1. It first sat OPPOSITE the CTA inside the action row under
- *      `justify="space-between"`, which cost an enforced `min-width` floor, a
- *      `@container` breakpoint that hid it entirely below 264px, and a derived
- *      threshold constant with its own drift guard. All of that is deleted.
- *   2. It then sat in the META BLOCK, under the author chip. The operator moved
- *      it below the CTA (2026-09-06), in the same pass that dropped the author.
- * What it keeps from move 1 is the property that mattered: it does not share a
- * flex line with the CTA, so it needs no floor, no breakpoint and no threshold —
- * the action row still holds exactly the CTA + the `⋮` trigger. Whether a viewer
- * gets a `⋮` still has no geometry consequence beyond the trigger's own 36px, so
- * the card still does not compute that predicate.
- *
- * 🔴 THE PLAY COUNT SITS BESIDE THE ROLLUP, AND IT RENDERS ONLY FOR A COUNT OF ONE
- * OR MORE. Both `openCount === null` and `openCount === 0` render NOTHING AT ALL.
- * That is an OPERATOR OVERRIDE recorded as a decision, not a formatting derivation
- * — and the two inputs reach the same pixels for DIFFERENT reasons:
- *   · `null` is STRUCTURALLY UNMEASURABLE (an off-site CTA is a third-party
- *     `target="_blank"` anchor; nothing on-platform observes the click);
- *   · `0` is MEASURED AND EMPTY (an on-site app nobody has opened yet).
- * The DTO keeps those apart deliberately — see `app-listing-read.schema.ts`'s
- * `openCount` and `app-listing.service.ts`'s `cardOpenCount`, whose "do not
- * over-null" paragraph must keep holding — and this card is where the operator's
- * choice to render them IDENTICALLY lives. The rule itself is in
- * `getPlayCountLabel`, not here.
- *
- * ⚠️ THE ZERO HALF REVERSES THE FIRST ROUND OF THIS PR, which rendered "0 plays"
- * and argued that it must. Operator, 2026-09-06: "dont show 0 plays (just show
- * nothing)". Flagged rather than quietly rewritten, because the earlier argument
- * (a zero is a measurement, not an absence) is still right about the DATA and was
- * only ever wrong about the SCREEN.
  *
  * 🔴 THERE IS NO KIND BADGE ON THIS CARD. This line used to claim "a kind badge
  * (App / Connect app / Off-site)" — doubly wrong: two of those labels no longer
@@ -250,26 +208,6 @@ export function ListingCover({
   );
 }
 
-/**
- * ── WHERE THE AUTHOR CHIP WENT ──────────────────────────────────────────────
- *
- * A `CreatorChip` used to live here: a 20px avatar plus a dimmed "by {username}"
- * `TruncatedText`, linking to `/user/<username>`. It is DELETED rather than left
- * unreferenced, because an exported-but-uncalled component is the shape that gets
- * wired back in by the next person who wants a byline.
- *
- * 🔴 IT WAS NOT A SHARED COMPONENT, so nothing else broke: the name is spelled in
- * four places in this codebase and they are four INDEPENDENT things —
- * `AppListingDetailBody` declares its own local `CreatorChip` over
- * `ListingDetail['creator']`, and `AppDetailsModal` / `appDetailAuthorView` only
- * MENTION the name in prose while rendering their own attribution. Checked by
- * grep before deleting, not assumed.
- *
- * The detail surfaces are deliberately untouched: dropping the byline is a
- * decision about a DENSE BROWSING GRID, not about attribution, and an app's
- * author is still one click away on every card (the title links to the detail).
- */
-
 export interface AppListingCardProps {
   card: ListingCard;
   /**
@@ -339,18 +277,6 @@ export function AppListingCard({
   const showOwnerIncomplete = isOwner && missingFloorAssets.length > 0;
   const visibilityBadge = visibilityBadgeFor(card.restrictedAudience);
 
-  // 🔴 `@container` IS GONE, AND SO IS THE `hasMenu` PREDICATE THAT DROVE IT.
-  // The card declared itself a query container for exactly ONE consumer: the
-  // recommend rollup's `hidden @[264px]:flex`. With the rollup on a line of its
-  // own below the action row there is no container query left on this card, so keeping
-  // `container-type: inline-size` would be an unread containment declaration
-  // that a later reader has to prove unused before touching. Nothing else on the
-  // card is size-queried; re-add it WITH its consumer if that changes.
-  // (`useAppListingActionsMenuVisible` went with it. That hook is now DELETED, not
-  // merely uncalled: it existed solely so this card could lay out around the
-  // trigger, so once the layout stopped depending on the answer it had no consumer
-  // anywhere — and an exported hook with no consumer is the same shape as an unread
-  // containment declaration, i.e. the thing that gets wired back in later.)
   // 🔴 S4 — CHROME MATCHES THE SITE'S CARD, and every property below is
   // load-bearing. Measured against a `/models` card in the same session (dark),
   // and re-measured at 394px mobile where all four values are identical:
@@ -367,38 +293,65 @@ export function AppListingCard({
   // exactly how this drifted. Taking it from the Tailwind scale pins it to the same
   // token the rest of the site's cards use.
   //
-  // 🔴 PADDING STAYS 16px. The review's "zero padding" is about the MEDIA, and the
-  // cover is already full-bleed via `<Card.Section>`. Unlike `/models`, this card's
-  // text sits BELOW the media rather than overlaid on it, so the body needs padding.
-  //
   // Losing the border is safe at 1-per-row mobile, where the card is effectively
   // full-bleed: the card's own fill (rgb(37,38,43)) separates it from the page
   // (rgb(26,27,30)) with every ancestor transparent — the same separation `/models`
   // already relies on at `border: 0`. Measured, not assumed.
+  // The whole card is one click target: the title link is stretched over it (`after:inset-0`),
+  // and every other control (Open, `⋮`, creator link) sits above that layer (`relative z-10`).
+  const creator = card.creator;
   return (
-    <Card padding="md" radius={0} className="h-full rounded-md">
+    <Card padding={0} radius={0} className="h-full rounded-md">
       <ListingCover
         coverUrl={card.coverUrl}
         category={card.category}
         name={card.name}
         slug={card.slug}
       />
-      <Stack gap="sm" h="100%" pt="sm">
-        <Group gap="xs" wrap="nowrap" align="flex-start" style={{ minWidth: 0 }}>
-          {/* App icon (square, publisher-supplied). Decorative — the title
-              carries the accessible name; a missing icon falls back to the
-              app's initial. */}
+      {/* `⋮` menu over the cover's top-right corner, like the image cards. The trigger is
+          the `⋮` icon on a translucent disc so it reads over any cover art. */}
+      <div className="absolute right-2 top-2 z-10" data-testid="apps-listing-card-menu-slot">
+        <AppListingActionsMenu
+          listing={menuTarget}
+          surface="card"
+          preview={preview}
+          triggerSize={LISTING_CARD_MENU_TRIGGER_PX}
+          triggerVariant="default"
+          triggerIconSize={16}
+          triggerTestId="apps-listing-card-actions-menu"
+          triggerTooltip
+          stopPropagation
+        />
+      </div>
+      <Stack gap="xs" h="100%" px="md" pb="sm">
+        {/* HEADER ROW: icon (overlapping the cover), title, Open. The icon is pulled up over the
+            cover by `LISTING_CARD_ICON_OVERLAP_PX`; the title and the button are centred on the
+            ICON's centre, not the row's, which is why they carry their own top margin. */}
+        <Group
+          gap="sm"
+          wrap="nowrap"
+          align="flex-start"
+          style={{ minWidth: 0 }}
+          data-testid="apps-listing-card-header"
+        >
+          {/* App icon (square, publisher-supplied). Decorative — the title carries the
+              accessible name; a missing icon falls back to the app's initial. */}
           <Avatar
             src={card.iconUrl ?? undefined}
             alt=""
             radius="md"
             size={LISTING_CARD_ICON_SIZE_PX}
-            style={{ flexShrink: 0 }}
+            style={{
+              flexShrink: 0,
+              marginTop: -LISTING_CARD_ICON_OVERLAP_PX,
+              // A ring in the card's own fill, so the icon reads as lifted off the cover.
+              boxShadow:
+                '0 0 0 3px light-dark(var(--mantine-color-white), var(--mantine-color-dark-6))',
+            }}
             data-listing-icon-placeholder={card.iconUrl == null ? '' : undefined}
             styles={{
-              // Missing icon → the SAME seeded monogram the generated icon SVG
-              // renders (per-app hue + first-alphanumeric initial), instead of
-              // Mantine's default flat grey placeholder.
+              // Missing icon → the SAME seeded monogram the generated icon SVG renders
+              // (per-app hue + first-alphanumeric initial), instead of Mantine's flat grey.
               placeholder: {
                 background: listingPlaceholderGradient({
                   slug: card.slug,
@@ -412,322 +365,61 @@ export function AppListingCard({
           >
             {appInitial(card.name, card.slug)}
           </Avatar>
-          <Stack gap={2} style={{ minWidth: 0 }}>
-            {/* Title links to the unified detail so the detail is reachable
-                from every card even when the primary CTA is a direct Open /
-                Visit. underline:hover keeps it visibly a link. */}
-            <Anchor
-              component={Link}
-              href={detailHref}
-              underline="hover"
-              c="inherit"
-              style={{ minWidth: 0 }}
+          {/* Title: ONE line, ellipsized, full name in a tooltip only when it actually clips.
+              Its link is the stretched card link. */}
+          <Anchor
+            component={Link}
+            href={detailHref}
+            underline="hover"
+            c="inherit"
+            className="after:absolute after:inset-0 after:content-['']"
+            style={{
+              minWidth: 0,
+              flex: 1,
+              marginTop:
+                LISTING_CARD_HEADER_CENTER_PX -
+                (LISTING_CARD_TITLE_FONT_PX * LISTING_CARD_TITLE_LINE_HEIGHT) / 2,
+            }}
+          >
+            {/* 🔴 20px/700/#fefefe, matching the `/models` card title (`c="white"` is the token
+                ThemeProvider sets to #fefefe on purpose). No `dropShadow`: this title sits on
+                the card body, not over media. */}
+            <TruncatedText
+              size="xl"
+              fw={700}
+              lh={LISTING_CARD_TITLE_LINE_HEIGHT}
+              c="light-dark(var(--mantine-color-dark-9), var(--mantine-color-white))"
+              tooltipLabel={card.name}
             >
-              {/* 🔴 S5 — TITLE matches the `/models` card: 18px/700/rgb(193,194,197)
-                  (contrast 8.48) -> 20px/700/#fefefe (contrast 14.97). `c="white"`
-                  is `--mantine-color-white`, which ThemeProvider sets to #fefefe
-                  deliberately to match the Tailwind value — it is the token the
-                  site's own card components use, so prefer it over the review's
-                  suggested `--mantine-primary-color-contrast` (same rendered value,
-                  wrong token).
-
-                  🔴 Do NOT add `cardClasses.dropShadow`. The `/models` title carries
-                  a text-shadow because it sits OVER media; this one sits on the card
-                  body. Confirmed still true at 394px mobile.
-
-                  ⚠️ SEMANTIC SIDE EFFECT, declared not hidden: dropping `<Title
-                  order={4}>` removes the `h4` from each card — parity with
-                  `/models`, whose card title is a `<p>`. Grepped: nothing depends
-                  on a heading inside the card (no `getByRole('heading')`, no
-                  snapshot). 🔴 It does NOT leave `/apps` heading-less, as an
-                  earlier draft of this comment claimed: `RecentlyOpenedApps`
-                  ("Recently opened") and `RelatedListings` both render their own
-                  `Title` on those surfaces. The broader heading-hierarchy finding
-                  (S13) stays out of scope.
-
-                  🔴 THE TITLE BOX RESERVES ITS FULL TWO LINES WHETHER OR NOT IT
-                  NEEDS THEM. `min-height` = lines x line-height, in `em` so it
-                  tracks the title's own font-size. Without it a one-line title is
-                  24px and a wrapped one is 48px, so everything under the title
-                  lands at a DIFFERENT y on every card in a grid row, which reads
-                  as sloppy alignment rather than as variable content. It adds NO
-                  truncation: the title already clamped at two lines, and the clamp
-                  is still two lines because both numbers are now the same constant.
-
-                  🔴 WHAT "EVERYTHING UNDER THE TITLE" MEANS NOW IS NARROWER THAN
-                  IT WAS, AND SAYING SO IS THE POINT. This sentence used to name the
-                  creator chip "and every row of the meta block under it". The chip
-                  is gone and the rollup moved out, so the meta block below the
-                  title holds only the conditional badge row (Beta, the owner's
-                  Incomplete, the restricted-visibility badge) — the rows the
-                  reservation actually aligns today are that badge row and the
-                  TAGLINE below the block. The action row and the stats line under
-                  it are bottom-pinned by `mt="auto"`, so they were never affected
-                  by title length and are not evidence for this reservation. The
-                  guard in `AppListingCard.browser.test.tsx` measures the TAGLINE
-                  for exactly this reason.
-
-                  🔴 `TruncatedText` REPLACES the `line-clamp-2` utility class, and
-                  the swap is not cosmetic. (a) The class would be a SECOND copy of
-                  the line count that `min-height` derives from — exactly the drift
-                  this PR's geometry module exists to remove. (b) It buys the
-                  hover fallback the retired creator chip used to have: a name
-                  clamped at
-                  two lines is unreadable, and `TruncatedText` reveals it in a
-                  Tooltip ONLY when it actually clips (a runtime scrollHeight
-                  measurement, not a guess). `clampLines` selects that component's
-                  multi-line mode — passing the Tailwind class instead would be
-                  silently overridden by its single-line `white-space: nowrap`. */}
-              <TruncatedText
-                size="xl"
-                fw={700}
-                lh={LISTING_CARD_TITLE_LINE_HEIGHT}
-                c="white"
-                clampLines={LISTING_CARD_TITLE_LINES}
-                tooltipLabel={card.name}
-                style={{ minHeight: LISTING_CARD_TITLE_MIN_HEIGHT }}
-              >
-                {card.name}
-              </TruncatedText>
-            </Anchor>
-            {/* 🔴 ONE NON-WRAPPING ROW FOR EVERY CONDITIONAL BADGE, WHOSE LONG BADGES
-                TRUNCATE — it never grows a second line. Each badge used to be its own Stack
-                row, so every badge present pushed the tagline (the row the title reservation
-                aligns, measured in `AppListingCard.browser.test.tsx`) down a line.
-
-                ⚠️ A WRAPPING row was tried first and FAILED in CI: it only moves the extra
-                line to narrow cards. At xs, "Beta" is ~39px and the eye-off "Moderators only"
-                ~117px, ~160px with the gap; a card squeezed to ~191px wide leaves this column
-                ~109px (minus 32px card padding, the 40px icon and its 10px gap), so the row
-                wrapped and the tagline dropped by exactly one badge line + row gap (16 + 4 =
-                20px). Real cards hit the same thing with three badges: at the 280px four-column
-                card the column is ~198px, and an owner's Beta + Incomplete + restricted badge
-                needs ~240px.
-
-                So the row is `nowrap` and the LONG badges shrink: Mantine's badge label is
-                already `nowrap` + `text-overflow: ellipsis`, and an `overflow: hidden` flex
-                item may shrink below its content, so `flexShrink: 1` + `minWidth: 0` is all it
-                takes. "Beta" never shrinks (it is short, and it is the whole signal). A
-                truncated label loses nothing: its Tooltip carries the full explanation, and
-                the full text stays in the DOM for assistive tech. Reserving a second line on
-                every card was rejected (it costs every card a line to serve a few), and
-                icon-only at narrow widths needs a container query this card deliberately
-                dropped. Rendered only when at least one badge is, so a badge-less card's meta
-                block is unchanged. */}
-            {(card.isBeta || showOwnerIncomplete || visibilityBadge) && (
-              <Group
-                gap={4}
-                wrap="nowrap"
-                style={{ minWidth: 0 }}
-                data-testid="apps-listing-card-badges"
-              >
-                {/* AUTHOR-DECLARED beta label. Matches the `Incomplete` badge's shape, with
-                    two deliberate differences: it is PUBLIC (that one is owner-only —
-                    `showOwnerIncomplete`), and it carries no tooltip, because the card DTO
-                    carries no `betaMessage` to put in one. The note lives on the detail
-                    page, where there is room to read it. `card.isBeta` is `false` both for
-                    "not in beta" and while the manual-apply migration is outstanding. */}
-                {card.isBeta && (
-                  <Badge
-                    color="violet"
-                    variant="light"
-                    size="xs"
-                    style={{ flexShrink: 0 }}
-                    data-testid="apps-listing-card-beta"
-                  >
-                    Beta
-                  </Badge>
-                )}
-                {/* RESTRICTED VISIBILITY. `restrictedAudience` is viewer-scoped by the server
-                    (owner, moderator, or a cohort the level admits), so this only formats
-                    it — `visibilityBadgeFor` holds the label/tooltip decisions where the
-                    blocking unit suite can reach them. */}
-                {visibilityBadge && (
-                  <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={220}>
-                    <Badge
-                      color="gray"
-                      variant="light"
-                      size="xs"
-                      leftSection={<IconEyeOff size={10} aria-hidden />}
-                      style={{ cursor: 'help', flexShrink: 1, minWidth: 0 }}
-                      data-testid="apps-listing-card-visibility"
-                    >
-                      {visibilityBadge.label}
-                    </Badge>
-                  </Tooltip>
-                )}
-                {showOwnerIncomplete && (
-                  <Tooltip
-                    label={`Missing ${missingFloorAssets.join(' and ')} — add ${
-                      missingFloorAssets.length > 1 ? 'them' : 'it'
-                    } from Edit to complete your listing.`}
-                    withArrow
-                    multiline
-                    w={220}
-                  >
-                    <Badge
-                      color="yellow"
-                      variant="light"
-                      size="xs"
-                      style={{ cursor: 'help', flexShrink: 1, minWidth: 0 }}
-                      data-testid="apps-listing-owner-incomplete"
-                    >
-                      Incomplete
-                    </Badge>
-                  </Tooltip>
-                )}
-              </Group>
-            )}
-          </Stack>
-        </Group>
-
-        {card.tagline && (
-          <Text size="sm" c="dimmed" className="line-clamp-3">
-            {card.tagline}
-          </Text>
-        )}
-
-        {/* ── THE ACTION ROW ────────────────────────────────────────────────
-            Feedback #2: the buttons sit one notch up the Mantine size scale (xs
-            → sm), so the primary CTA reads as the card's call to action rather
-            than a footnote. S7 then made the CTA FILL the row instead of
-            stepping up the size scale again — see the CTA's own note below.
-
-            🔴 THE ROW HOLDS THE CTA AND THE `⋮` TRIGGER, AND NOTHING ELSE. The
-            recommend rollup used to sit opposite them; it is now the stats line
-            BELOW this row (see its note there). Three pieces of apparatus died
-            with the first move, and none of them should come back with it:
-              - `justify="space-between"` — moot with one growing child, and it
-                was the reason a lone item could jump to flex-START;
-              - `marginLeft: 'auto'` on the action cluster — it existed as a
-                SECOND mechanism keeping the actions right-aligned when the
-                rollup was hidden. There is no "hidden rollup" state any more and
-                the CTA reaches both edges by growing, so an auto margin now has
-                exactly zero free space to absorb at every width. Kept, it would
-                be a guard for a hazard that no longer has a shape — dead code
-                that reads as load-bearing. DELETED;
-              - the nested action-cluster `Group` — it existed to keep the CTA and
-                the trigger together as one flex item opposite the rollup. With
-                the rollup gone the row IS that cluster, so the wrapper is one
-                level of nesting with nothing left to group.
-
-            🔴 The row still stays `nowrap`. With one growing CTA a wrapped line
-            would put the `⋮` on its own row, and a card WITH a menu would then be
-            taller than one without — inside an `h-full` grid row that grows every
-            card in the row across the store.
-
-            🔴 `mt="auto"` STILL BOTTOM-PINS, AND IT NOW PINS A PAIR. The stats
-            line renders AFTER this row, so this Group is no longer the Stack's
-            last child. That does not weaken the pin: `margin-top: auto` on a
-            column flex item absorbs ALL the free space above it, so the row and
-            everything after it are pushed to the bottom together. The thing to
-            re-check on any future insertion is the same one: the auto margin must
-            stay on the FIRST of the bottom-pinned children, or a gap opens between
-            them. The `actionRow()` helper in `AppListingCard.browser.test.tsx`
-            still discriminates on that `mt="auto"`, so it keeps landing here — but
-            two geometry helpers that walked to the Stack's LAST child did have to
-            move (`ctaWidths()` in `AppListingCardSkeleton.geometry.test.tsx`).
-
-            🔴 ROW HEIGHT IS A CONSTANT 46px AND MUST STAY ONE, and it is now
-            DERIVED rather than asserted: `LISTING_ACTION_ROW_HEIGHT_PX` =
-            `LISTING_ACTION_ROW_PT_PX` (10) + `LISTING_ACTION_ROW_CONTROL_PX`
-            (36), and this row reads all three.
-
-            🔴 `mih` IS THE HEIGHT CONSTANT'S ONLY PRODUCTION READ, AND IT IS HERE
-            BECAUSE OF WHAT ITS ABSENCE COST. The height was DERIVED in the module
-            and MEASURED in the browser suite, but nothing in production consumed
-            it — so the module's own header, this file's header and a test titled
-            "reads EVERY geometry constant" all claimed a coverage that did not
-            exist, and the test's loop quietly enumerated 8 of 9. An audit produced
-            the defect that gap admits: adding `pb={10}` beside the `pt` renders a
-            56px row while the constant still says 46, and the BLOCKING node tier
-            stays entirely green because it measures nothing. PR3's skeleton would
-            then import 46, reserve 10px too little, and reflow the grid — exactly
-            what this module exists to prevent. (This sentence used to end "in the
-            one tier CI does not gate", which is a FOURTH instance of the same wrong
-            severity story: on a pull request NEITHER tier gates. See the canonical
-            note in `appListingCardGeometry.ts`.)
-            `mih` makes the read real (and is not inert: it holds the row at 46 if a
-            control ever renders SHORTER), and the node tier now asserts this tag's
-            whole PROP LEDGER, so a `pb` — or any other prop that can move the
-            row's height — fails the node tier too, not only the browser one. (That
-            is a `main`-push red, not a merge gate: on a PR both tiers are
-            `continue-on-error`. Canonical note in `appListingCardGeometry.ts`.)
-            🔴 DO NOT ADD A PROP HERE WITHOUT UPDATING THAT LEDGER; that is the
-            point of it, not an obstacle to route around.
-
-            Every control in it is that same 36:
-            the `sm` CTA button and the `⋮` trigger, which takes its size from the
-            constant rather than a literal. The row lives in an `h-full` grid row,
-            so a taller control here propagates to every card in that row across
-            the whole store — which is why the CTA grows HORIZONTALLY rather than
-            up the size scale. Pinned at container 248 / 282 / 462 in
-            `AppListingCard.browser.test.tsx`. */}
-        <Group
-          mt="auto"
-          pt={LISTING_ACTION_ROW_PT_PX}
-          mih={LISTING_ACTION_ROW_HEIGHT_PX}
-          gap={LISTING_ACTION_ROW_GAP_PX}
-          wrap="nowrap"
-        >
-          {/* Kind-aware CTA — always has a working target (a direct Open / Visit,
-              or the unified detail). External Visit → new-tab anchor; everything
-              else → an internal Link.
-
-              🔴 IT FILLS THE ROW RATHER THAN STEPPING UP THE SIZE SCALE. The ask
-              was a bigger primary action; the next Mantine size (`md`) is 42px
-              tall, and this row's height is load-bearing (see the row note
-              above), so the only free axis is horizontal. `flexGrow: 1` on the
-              button — now a DIRECT child of the row — takes every pixel the `⋮`
-              trigger and the row gap do not need, i.e.
-              `cta = row − LISTING_ACTION_ROW_CONTROL_PX − LISTING_ACTION_ROW_GAP_PX`
-              when a menu renders and the whole row when one does not. Asserted at
-              two container widths, because one measurement is not a general
-              claim.
-
-              🔴 SHRINK IS LEFT AT ITS DEFAULT, deliberately, and that is a CHANGE.
-              The old cluster carried `flexShrink: 0` so the rollup would absorb
-              every deficit; the documented cost was that below ~218px of container
-              the row OVERFLOWED the card instead. With the rollup gone the CTA is
-              the only thing that can give, so letting it shrink (with `minWidth: 0`
-              so the label clips rather than propping the box open) keeps the `⋮`
-              inside the card at widths no store surface produces anyway — the
-              narrowest real one is 248, comfortably above the ~184 natural.
-
-              ICONS (product-feedback pass). Each action carries its own glyph so
-              the three CTAs are distinguishable at a glance in a dense grid
-              rather than three same-shaped buttons differing only in wording.
-              🔴 The mapping itself is NOT restated here — it lives in
-              `appListingActionGlyph.ts` and is read above via `CtaGlyph`. A copy
-              of it in this comment is exactly how the card and the detail page
-              drifted apart in the first place. The rail tile's icon button used
-              to carry a third copy (`RECENT_ACTION_ICONS` in
-              `RecentlyOpenedApps.tsx`); it now resolves through the same module
-              via `recentRailActionGlyph`, so all three surfaces are single-
-              sourced and the consolidation is complete.
-
-              🔴 The icon is DECORATIVE — the label text stays the accessible
-              name. Tabler icons render `<svg>` with no `<title>`, so they
-              contribute nothing to the name; the button's name is still
-              exactly "Open" / "Visit" / "View details". Asserted in
-              `AppListingCard.browser.test.tsx`. */}
+              {card.name}
+            </TruncatedText>
+          </Anchor>
+          {/* Kind-aware CTA — always has a working target (a direct Open / Visit, or the unified
+              detail). External Visit → new-tab anchor; everything else → an internal Link. It
+              stays a visible button: with the whole card clickable, the button is what says an
+              app can be opened from here. The glyph mapping lives in `appListingActionGlyph.ts`
+              and the icon is decorative (the label stays the accessible name). */}
           {cta.external ? (
             <Button
               component="a"
               href={cta.href}
               target="_blank"
               rel="noopener noreferrer"
-              size="sm"
+              size="compact-sm"
               variant="light"
-              style={{ flexGrow: 1, minWidth: 0 }}
-              rightSection={<CtaGlyph size={16} />}
-              // "Opened" = actually opened. An OFF-SITE app is opened the
-              // moment this Visit CTA is followed — there is no on-platform
-              // route afterwards that could record it (the on-site path is
-              // recorded by `/apps/run/<slug>` itself). Recording on a detail
+              className="relative z-10"
+              style={{
+                flexShrink: 0,
+                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
+                  LISTING_CARD_CTA_HEIGHT_PX / 2
+                }px)`,
+              }}
+              rightSection={<CtaGlyph size={14} />}
+              // "Opened" = actually opened. An OFF-SITE app is opened the moment this Visit CTA is
+              // followed — there is no on-platform route afterwards that could record it (the
+              // on-site path is recorded by `/apps/run/<slug>` itself). Recording on a detail
               // VIEW would be wrong: browsing is not opening.
-              // 🔴 Stamped with the viewer's account id (#4048) — recents are
-              // per-account, not per browser profile.
+              // 🔴 Stamped with the viewer's account id (#4048) — recents are per-account.
               onClick={() =>
                 recordRecentlyOpenedApp(toRecentAppFromListing(card), currentUser?.id ?? null)
               }
@@ -738,143 +430,172 @@ export function AppListingCard({
             <Button
               component={Link}
               href={cta.href}
-              size="sm"
+              size="compact-sm"
               variant={cta.action === 'open' ? 'filled' : 'light'}
-              style={{ flexGrow: 1, minWidth: 0 }}
-              leftSection={<CtaGlyph size={16} />}
+              className="relative z-10"
+              style={{
+                flexShrink: 0,
+                marginTop: `calc(${LISTING_CARD_HEADER_CENTER_PX}px - ${
+                  LISTING_CARD_CTA_HEIGHT_PX / 2
+                }px)`,
+              }}
+              leftSection={<CtaGlyph size={14} />}
             >
               {cta.label}
             </Button>
           )}
-
-          {/* The `⋮` overflow menu — owner Edit, review, report, moderator
-              actions. SHARED with the listing detail body; see
-              `AppListingActionsMenu`.
-
-              🔴 IT REPLACED A DUAL EDIT APPARATUS AND A WHOLE BREAKPOINT. The
-              card used to carry BOTH a text `Button` ("Edit") and an icon-only
-              `ActionIcon`, with an `@[360px]` container query choosing between
-              them — a query that existed for no other reason. A `⋮` trigger is a
-              fixed 36px at every width, so that query had nothing left to decide
-              and is DELETED rather than kept as a constant nothing needs.
-
-              🔴 `triggerSize` IS THE ROW-HEIGHT CONTRACT, not a style choice —
-              it is `LISTING_ACTION_ROW_CONTROL_PX`, the SAME 36 the derived row
-              height is built from and the same height the `sm` CTA button
-              renders at. Passing a literal here is how the row and its own
-              height constant would come apart. `variant="default"` matches the
-              control it replaced.
-
-              🔴 `stopPropagation` covers the trigger AND the dropdown. Every
-              other action on this card stops propagation because the card is a
-              click target; a portalled dropdown still propagates along the REACT
-              tree, so opening the menu would otherwise navigate the card.
-
-              🔴 THE CARD DOES NOT OFFER THE VIEWER ACTIONS — `surface="card"`,
-              and `appListingMenuSurface.ts` owns that decision. Review and
-              Report stay on the listing DETAIL page, where the viewer has
-              chosen to look at one app; on a grid of ~24 tiles they are an
-              invitation to review something nobody opened. The narrowing is
-              declared by NAMING the surface, not by re-deriving a predicate
-              here — re-deriving one is precisely the drift the shared module
-              exists to prevent.
-
-              🔴 GEOMETRY CONSEQUENCE, RESTATED BECAUSE IT SHRANK. The menu's
-              predicate is still "would it hold at least one item", not "is the
-              viewer the owner", so the population that gets a `⋮` is exactly
-              {owner, moderator}. What that costs has changed: it used to widen
-              the action cluster from 137.9 to 184 and thereby decide whether the
-              recommend rollup fit at all. With the rollup out of this row the
-              trigger's only consequence is that the CTA is 46px narrower
-              (`LISTING_ACTION_ROW_CONTROL_PX` + `LISTING_ACTION_ROW_GAP_PX`);
-              the row height and every other card's geometry are untouched. That
-              equality is still pinned in `AppListingCard.browser.test.tsx` by
-              running one assertion body over both viewers. */}
-          <AppListingActionsMenu
-            listing={menuTarget}
-            surface="card"
-            preview={preview}
-            triggerSize={LISTING_ACTION_ROW_CONTROL_PX}
-            triggerVariant="default"
-            triggerIconSize={16}
-            triggerTestId="apps-listing-card-actions-menu"
-            triggerTooltip
-            stopPropagation
-          />
         </Group>
 
-        {/* ── THE STATS LINE ───────────────────────────────────────────────
-            Reviews, then plays — BELOW the CTA, which is the operator's ask
-            (2026-09-06) and the reason the author chip above it is gone.
-
-            🔴 THE ROLLUP HALF ALWAYS RENDERS, AND THAT IS THE POINT. A card with
-            no reviews still gets "No reviews yet" — dropping the line would make
-            card heights depend on review state inside an `h-full` grid row, which
-            is the same class of misalignment the title's reserved lines fix, and
-            it is what lets `AppListingCardSkeleton` reserve this line
-            unconditionally.
-
-            🔴 THE PLAY HALF IS CONDITIONAL, AND ITS ABSENCE COSTS NO HEIGHT. It
-            shares this ONE flex line with the rollup rather than taking a line of
-            its own, so `openCount === null` changes the card's width usage and
-            nothing else. That is what keeps the skeleton exact without the
-            skeleton having to know the listing's kind — a loading state cannot
-            know whether the card it is reserving for is on-site or off-site.
-
-            🔴 `wrap="nowrap"` IS LOAD-BEARING, NOT TIDINESS. A wrapped stats line
-            is a SECOND line, i.e. a card taller than its skeleton by one `xs` line
-            box on every card in that `h-full` grid row. (That is ~17px — DERIVED
-            from the 16.8px figure `AppListingCardSkeleton.geometry.test.tsx`
-            measured for this type token, not re-measured here.) The rollup absorbs
-            any deficit
-            (`minWidth: 0` + `truncate`); the play count is `flexShrink: 0`
-            because it is short, bounded by `abbreviateNumber` (never more than
-            ~6 characters) and useless truncated.
-
-            Dimmed + `xs` — corroboration, not identity, same as when this line
-            lived in the meta block. */}
-        <Group gap="sm" wrap="nowrap" data-testid="apps-listing-card-stats">
+        {/* ONE NON-WRAPPING ROW FOR EVERY CONDITIONAL BADGE, WHOSE LONG BADGES TRUNCATE — it never
+            grows a second line. "Beta" never shrinks (short, and the whole signal); the long
+            badges shrink (`flexShrink: 1` + `minWidth: 0`), and their Tooltip carries the full
+            text. Rendered only when at least one badge is. */}
+        {(card.isBeta || showOwnerIncomplete || visibilityBadge) && (
           <Group
             gap={4}
             wrap="nowrap"
             style={{ minWidth: 0 }}
-            data-testid="apps-listing-recommend-rollup"
+            data-testid="apps-listing-card-badges"
           >
-            <IconThumbUp
-              size={13}
-              style={{ flexShrink: 0 }}
-              className={card.recommend.recommendPct == null ? 'text-gray-500' : 'text-green-500'}
-            />
-            <Text size="xs" c="dimmed" truncate>
-              {recommendLabel}
-            </Text>
+            {/* AUTHOR-DECLARED beta label: PUBLIC (the `Incomplete` badge is owner-only), and no
+                tooltip because the card DTO carries no `betaMessage`. `card.isBeta` is `false`
+                both for "not in beta" and while the manual-apply migration is outstanding. */}
+            {card.isBeta && (
+              <Badge
+                color="violet"
+                variant="light"
+                size="xs"
+                style={{ flexShrink: 0 }}
+                data-testid="apps-listing-card-beta"
+              >
+                Beta
+              </Badge>
+            )}
+            {/* RESTRICTED VISIBILITY. `restrictedAudience` is viewer-scoped by the server, so this
+                only formats it — `visibilityBadgeFor` holds the label/tooltip decisions. */}
+            {visibilityBadge && (
+              <Tooltip label={visibilityBadge.tooltip} withArrow multiline w={220}>
+                <Badge
+                  color="gray"
+                  variant="light"
+                  size="xs"
+                  leftSection={<IconEyeOff size={10} aria-hidden />}
+                  style={{ cursor: 'help', flexShrink: 1, minWidth: 0 }}
+                  data-testid="apps-listing-card-visibility"
+                >
+                  {visibilityBadge.label}
+                </Badge>
+              </Tooltip>
+            )}
+            {showOwnerIncomplete && (
+              <Tooltip
+                label={`Missing ${missingFloorAssets.join(' and ')} — add ${
+                  missingFloorAssets.length > 1 ? 'them' : 'it'
+                } from Edit to complete your listing.`}
+                withArrow
+                multiline
+                w={220}
+              >
+                <Badge
+                  color="yellow"
+                  variant="light"
+                  size="xs"
+                  style={{ cursor: 'help', flexShrink: 1, minWidth: 0 }}
+                  data-testid="apps-listing-owner-incomplete"
+                >
+                  Incomplete
+                </Badge>
+              </Tooltip>
+            )}
           </Group>
-          {/* 🔴 RENDERED ONLY FOR A COUNT OF ONE OR MORE. `playCountLabel` is
-              `null` for BOTH `card.openCount === null` (off-site, unmeasurable)
-              and `card.openCount === 0` (on-site, measured and empty) — two
-              different facts the operator chose to render identically. The rule and
-              its OPERATOR OVERRIDE live in `getPlayCountLabel`, not here; this
-              component only omits a `null`.
+        )}
 
-              🔴 `!= null`, NOT `{playCountLabel && …}`. The label is a string, and
-              the empty string is falsy — so a truthiness test would silently
-              suppress a legitimately empty label if the copy ever changed shape.
-              The type is `string | null`; test for the `null`. (Note the asymmetry
-              on purpose: a truthiness test is refused HERE, on the label, and used
-              — spelled out as `=== 0` — THERE, on the count. Different values,
-              different reasons.) */}
-          {playCountLabel != null && (
+        {card.tagline && (
+          <Text size="sm" c="dimmed" className="line-clamp-3">
+            {card.tagline}
+          </Text>
+        )}
+
+        {/* ── THE FOOTER ─────────────────────────────────────────────────────
+            A divider, then reviews and plays on the left and the creator on the right, bottom-
+            pinned by `mt="auto"` so every card in a grid row ends at the same y.
+
+            🔴 THE ROLLUP HALF ALWAYS RENDERS ("No reviews yet" included): dropping the line
+            would make card heights depend on review state inside an `h-full` grid row, and it is
+            what lets `AppListingCardSkeleton` reserve this row unconditionally.
+            🔴 THE PLAY HALF RENDERS ONLY FOR A COUNT OF ONE OR MORE: `playCountLabel` is `null`
+            for BOTH `openCount === null` (off-site, unmeasurable) and `0` (measured, empty), an
+            OPERATOR OVERRIDE (2026-09-06, "dont show 0 plays"); the rule lives in
+            `getPlayCountLabel`. `!= null`, not truthiness, because the label is a string.
+            🔴 `wrap="nowrap"` is load-bearing: a wrapped footer is a second line, i.e. a card
+            taller than its skeleton on every card in that grid row. The rollup and the creator
+            name truncate (`minWidth: 0`); the play count is short and `flexShrink: 0`. */}
+        <Divider mt="auto" />
+        <Group
+          gap="sm"
+          wrap="nowrap"
+          justify="space-between"
+          mih={LISTING_CARD_FOOTER_HEIGHT_PX}
+          data-testid="apps-listing-card-footer"
+        >
+          <Group
+            gap="sm"
+            wrap="nowrap"
+            style={{ minWidth: 0 }}
+            data-testid="apps-listing-card-stats"
+          >
             <Group
               gap={4}
               wrap="nowrap"
-              style={{ flexShrink: 0 }}
-              data-testid="apps-listing-play-count"
+              style={{ minWidth: 0 }}
+              data-testid="apps-listing-recommend-rollup"
             >
-              <IconPlayerPlay size={13} style={{ flexShrink: 0 }} className="text-gray-500" />
-              <Text size="xs" c="dimmed">
-                {playCountLabel}
+              <IconThumbUp
+                size={13}
+                style={{ flexShrink: 0 }}
+                className={card.recommend.recommendPct == null ? 'text-gray-500' : 'text-green-500'}
+              />
+              <Text size="xs" c="dimmed" truncate>
+                {recommendLabel}
               </Text>
             </Group>
+            {playCountLabel != null && (
+              <Group
+                gap={4}
+                wrap="nowrap"
+                style={{ flexShrink: 0 }}
+                data-testid="apps-listing-play-count"
+              >
+                <IconPlayerPlay size={13} style={{ flexShrink: 0 }} className="text-gray-500" />
+                <Text size="xs" c="dimmed">
+                  {playCountLabel}
+                </Text>
+              </Group>
+            )}
+          </Group>
+          {creator?.username && (
+            <Anchor
+              component={Link}
+              href={`/user/${encodeURIComponent(creator.username)}`}
+              underline="hover"
+              c="dimmed"
+              className="relative z-10"
+              style={{ minWidth: 0, flexShrink: 1 }}
+              data-testid="apps-listing-card-creator"
+            >
+              <Group gap={6} wrap="nowrap" style={{ minWidth: 0 }} justify="flex-end">
+                <Avatar
+                  src={creator.image ?? undefined}
+                  alt=""
+                  size={LISTING_CARD_CREATOR_AVATAR_PX}
+                  radius="xl"
+                  style={{ flexShrink: 0 }}
+                />
+                <Text size="xs" c="dimmed" truncate>
+                  {creator.username}
+                </Text>
+              </Group>
+            </Anchor>
           )}
         </Group>
       </Stack>

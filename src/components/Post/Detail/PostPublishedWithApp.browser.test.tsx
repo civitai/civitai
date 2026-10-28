@@ -142,4 +142,40 @@ describe('PostPublishedWithApp', () => {
     expect(chip()?.querySelector('img')).toBeNull();
     expect(chip()?.querySelector('.mantine-Avatar-root')).toBeNull();
   });
+
+  test('names the item and links it where its store card links, then the app', async () => {
+    const item = {
+      name: 'Fakeful',
+      href: '/apps/run/game-frame/fakeful?sl=asl_1',
+      external: false,
+    };
+    expect(await renderedSentence({ ...viewable, item })).toBe(
+      'Published with Fakeful on Custom Generators'
+    );
+    const [itemLink, appLink] = Array.from(chip()?.querySelectorAll('a') ?? []);
+    expect(itemLink?.getAttribute('href')).toBe('/apps/run/game-frame/fakeful?sl=asl_1');
+    expect(itemLink?.getAttribute('target')).toBeNull();
+    expect(appLink?.getAttribute('href')).toMatch(/^\/apps\/store-preview\//);
+  });
+
+  test('opens an off-site item in a new tab without handing it the opener', async () => {
+    const item = {
+      name: 'Fakeful',
+      href: 'https://games.civitai.com/play/fakeful',
+      external: true,
+    };
+    await renderedSentence({ ...viewable, item });
+    const itemLink = chip()?.querySelector('a');
+    expect(itemLink?.getAttribute('href')).toBe('https://games.civitai.com/play/fakeful');
+    expect(itemLink?.getAttribute('target')).toBe('_blank');
+    expect(itemLink?.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  test('names an item with no valid link unlinked', async () => {
+    const item = { name: 'Fakeful', href: null, external: false };
+    expect(await renderedSentence({ ...viewable, item })).toBe(
+      'Published with Fakeful on Custom Generators'
+    );
+    expect(chip()?.querySelectorAll('a')).toHaveLength(1);
+  });
 });

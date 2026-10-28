@@ -1,13 +1,13 @@
 import { json, type RequestHandler } from '@sveltejs/kit';
 import { randomBytes, randomInt } from 'crypto';
 import { REDIS_KEYS } from '@civitai/redis';
-import { TokenScope, ALL_SCOPES } from '@civitai/auth/token-scope';
+import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
 import { getClientIp } from '$lib/server/auth/request';
 import { getRedis } from '$lib/server/redis';
 import { checkOAuthRateLimit } from '$lib/server/oauth/rate-limit';
 import { DEVICE_CODE_TTL, DEVICE_POLL_INTERVAL } from '$lib/server/oauth/constants';
-import { isScopeGrantable } from '$lib/server/oauth/scope';
+import { isScopeGrantable, parseScopeRequest } from '$lib/server/oauth/scope';
 import { isAppBlockOauthClientId } from '$lib/server/oauth/block-guard';
 import { setWildcardCors } from '$lib/server/oauth/http';
 
@@ -81,13 +81,14 @@ export const POST: RequestHandler = async ({ request, url }) => {
     );
   }
 
-  const rawScope = parseInt(scope, 10) || 0;
-  // Bound against ALL_SCOPES (incl. opt-in AppBlocksSubmit), NOT `Full`; allowedScopes is the real gate.
-  if (rawScope < 0 || rawScope > ALL_SCOPES) {
+  // A bitmask or scope names, bounded against ALL_SCOPES (incl. opt-in AppBlocksSubmit), NOT `Full`;
+  // allowedScopes is the real gate.
+  const parsed = parseScopeRequest(scope);
+  if (!parsed) {
     return json({ error: 'invalid_scope' }, { status: 400, headers });
   }
   // UserRead baseline, always allowed.
-  const requestedScope = rawScope | TokenScope.UserRead;
+  const requestedScope = parsed.scope | TokenScope.UserRead;
   if (!isScopeGrantable(client.allowedScopes, requestedScope, 'user')) {
     return json(
       { error: 'invalid_scope', error_description: 'Requested scope exceeds client permissions' },

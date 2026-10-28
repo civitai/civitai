@@ -25,6 +25,8 @@ section).
   its first image and its share of readers. The main path is shown first and largest, with Read as
   the main action, then continuations by the storyline's endorsed collaborators, then everyone
   else's, ordered by how many readers took them. Writing a continuation sits below.
+  On a desktop, a chapter with exactly one way on also continues down it on →, and the Read button
+  shows the key; with several paths → does nothing here.
 - **Where branches meet.** Two branches can rejoin at one chapter. The reader's path and chapter
   numbers follow the way they came (the URL carries it, so a shared link reproduces the route), and
   the chip's map marks a chapter where another branch joins (the page's chapters list draws it too).

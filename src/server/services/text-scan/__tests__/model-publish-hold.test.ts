@@ -7,7 +7,12 @@ const { mockTx, checkModelRulesLiteralHold, holdModelForLiteralRules } = vi.hois
   checkModelRulesLiteralHold: vi.fn(),
   holdModelForLiteralRules: vi.fn(),
   mockTx: {
-    model: { update: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
+    model: {
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      findUnique: vi.fn(),
+    },
     modelVersion: { findFirst: vi.fn(), updateMany: vi.fn() },
     post: { updateMany: vi.fn() },
     $executeRaw: vi.fn(),
@@ -105,6 +110,9 @@ beforeEach(() => {
   dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: typeof mockTx) => unknown) =>
     fn(mockTx)
   );
+  // The publish re-reads the model under its lock; it is the same row the first read saw.
+  mockTx.model.findUnique.mockImplementation(((args: unknown) =>
+    dbMock.dbWrite.model.findUnique(args as never)) as never);
   mockTx.model.update.mockResolvedValue({
     id: MODEL_ID,
     userId: 7,
@@ -145,11 +153,7 @@ describe('publishModelById — Model rules literal hold', () => {
       versionIds: [100],
       meta: { foo: 1 },
     });
-    expect(holdModelForLiteralRules).toHaveBeenCalledWith({
-      modelId: MODEL_ID,
-      ...HOLD,
-      meta: { foo: 1 },
-    });
+    expect(holdModelForLiteralRules).toHaveBeenCalledWith({ modelId: MODEL_ID, ...HOLD });
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
     expect(result).toMatchObject({ id: MODEL_ID });
   });
@@ -251,11 +255,7 @@ describe('publishPrivateModel — Model rules literal hold', () => {
       versionIds: [100, 101],
       meta: { foo: 1 },
     });
-    expect(holdModelForLiteralRules).toHaveBeenCalledWith({
-      modelId: MODEL_ID,
-      ...HOLD,
-      meta: { foo: 1 },
-    });
+    expect(holdModelForLiteralRules).toHaveBeenCalledWith({ modelId: MODEL_ID, ...HOLD });
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 

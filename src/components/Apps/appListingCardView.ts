@@ -303,12 +303,8 @@ export function getOwnerEditHref(
 //     `LISTING_ROLLUP_HIDE_BELOW_PX`(264) — the derived container-query threshold
 //     `listingRollupHideThreshold()`      — the function that derived it
 //
-//   MOVED, same name, new home:
-//     `LISTING_ACTION_ROW_GAP_PX`   (10) → `~/components/Apps/appListingCardGeometry.ts`,
-//     where the card reads it as the action row's `gap`. It is still live geometry;
-//     it just is not rollup-threshold arithmetic any more. 🔴 IF YOU CAME HERE
-//     LOOKING FOR THE ROW GAP, IMPORT IT FROM THERE — do NOT mint a second copy,
-//     which is exactly the two-copies drift the geometry module exists to remove.
+//   Also gone with card A (2026-10-27): `LISTING_ACTION_ROW_GAP_PX` and the other action-row
+//   constants. The `⋮` now floats over the cover, so no row gap exists to share.
 //
 // Also deleted, though it was never an export: the spelling guard in
 // `__tests__/appListingCardView.test.ts` that asserted the component's `@[264px]`

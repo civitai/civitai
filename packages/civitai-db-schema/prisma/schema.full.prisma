@@ -1679,6 +1679,17 @@ model ModActivity {
   @@index([createdAt])
 }
 
+/// Which moderator is answering a Civitai Moderation thread, so two never reply at once. Expires
+/// unless renewed by a send.
+model ModThreadClaim {
+  chatId      Int      @id
+  moderatorId Int
+  claimedAt   DateTime @default(now())
+  expiresAt   DateTime
+
+  @@index([moderatorId])
+}
+
 enum ReportReason {
   TOSViolation
   NSFW
@@ -2890,6 +2901,12 @@ model OauthClient {
   /// Login gating: "open" (anyone), "testers" (only users holding the "tester" UserRole), "disabled" (no one).
   /// Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
   accessMode     String         @default("open")
+  /// Staff-only, confidential system apps only (auth hub admin, OAuth Apps): signed-in users go straight through
+  /// /authorize with no consent screen, as first-party (spoke) clients do. Ignored for a public app.
+  skipConsent    Boolean        @default(false)
+  /// Staff-only, confidential system apps only: this client's own /oauth/token limit per minute, used once a request
+  /// is past the per-IP limit and the client has proved its secret. Null = the per-IP limit only.
+  tokenRateLimit Int?
   userId         Int
   user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   isVerified     Boolean        @default(false)
