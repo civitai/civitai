@@ -15,22 +15,88 @@ describe('shopBlockMaxItems', () => {
 });
 
 describe('rotateShopSectionItems', () => {
-  it('gives two sections in the same window different orders', () => {
-    const items = Array.from({ length: 12 }, (_, i) => i);
-    const now = Date.UTC(2026, 9, 27, 12);
+  const HOUR = 60 * 60 * 1000;
+  // The first window of a reshuffle for both 42 items (every 3 windows) and 43 (every 43).
+  const start = 3 * 43 * 3 * HOUR * 1000;
+  const ids = (n: number) => Array.from({ length: n }, (_, i) => i + 1);
+  const rotate = (
+    items: number[],
+    opts: { sectionId?: number; rotateHours?: number; now: number; visible?: number }
+  ) =>
+    rotateShopSectionItems(items, {
+      sectionId: 59,
+      rotateHours: 3,
+      visible: 14,
+      getId: (id) => id,
+      ...opts,
+    });
+  /** The row each of `count` consecutive 3h windows shows. */
+  const rows = (items: number[], count: number, visible = 14) =>
+    Array.from({ length: count }, (_, w) =>
+      rotate(items, { now: start + w * 3 * HOUR, visible }).slice(0, visible)
+    );
 
-    expect(rotateShopSectionItems(items, { sectionId: 1, rotateHours: 3, now })).not.toEqual(
-      rotateShopSectionItems(items, { sectionId: 2, rotateHours: 3, now })
+  it('gives two sections in the same window different orders', () => {
+    expect(rotate(ids(12), { sectionId: 1, now: start })).not.toEqual(
+      rotate(ids(12), { sectionId: 2, now: start })
     );
   });
 
   it('treats a hand-written rotateHours of 0 as one hour instead of dividing by zero', () => {
-    const items = Array.from({ length: 12 }, (_, i) => i);
-    const now = Date.UTC(2026, 9, 27, 12);
-
-    expect(rotateShopSectionItems(items, { sectionId: 1, rotateHours: 0, now })).toEqual(
-      rotateShopSectionItems(items, { sectionId: 1, rotateHours: 1, now })
+    expect(rotate(ids(12), { rotateHours: 0, now: start })).toEqual(
+      rotate(ids(12), { rotateHours: 1, now: start })
     );
+  });
+
+  it.each([42, 43, 30, 50, 97])(
+    'never shows a card in two consecutive windows of a %i-item section, across reshuffles too',
+    (n) => {
+      const shown = rows(ids(n), 200);
+      for (let w = 1; w < shown.length; w++) {
+        expect(
+          shown[w].filter((id) => shown[w - 1].includes(id)),
+          `window ${w}`
+        ).toEqual([]);
+      }
+    }
+  );
+
+  it('shows each of 42 items exactly once over three windows, every three windows', () => {
+    const shown = rows(ids(42), 30);
+    for (let w = 0; w < shown.length; w += 3) {
+      expect(
+        shown
+          .slice(w, w + 3)
+          .flat()
+          .sort((a, b) => a - b)
+      ).toEqual(ids(42));
+    }
+  });
+
+  it('shows every item of a 43-item section within any four windows that do not straddle a reshuffle', () => {
+    // 43 and 14 share no factor, so the walk comes back to its start after 43 windows.
+    const shown = rows(ids(43), 43);
+    for (let w = 0; w + 4 <= shown.length; w++) {
+      expect(new Set(shown.slice(w, w + 4).flat()).size, `windows ${w}-${w + 3}`).toBe(43);
+    }
+  });
+
+  it('keeps the whole section and its rows whatever order the database returned it in', () => {
+    const items = ids(42);
+    expect(rotate([...items].reverse(), { now: start })).toEqual(rotate(items, { now: start }));
+  });
+
+  it('shows the whole of a section no bigger than the row, and a full row of one under two rows', () => {
+    expect(rows(ids(10), 2).map((row) => [...row].sort((a, b) => a - b))).toEqual([
+      ids(10),
+      ids(10),
+    ]);
+    for (const row of rows(ids(20), 20)) expect(new Set(row).size).toBe(14);
+  });
+
+  it('puts the next window behind the row, so a viewer who blocks a seller fills from it', () => {
+    const now = start;
+    expect(rotate(ids(42), { now }).slice(14, 28)).toEqual(rows(ids(42), 2)[1]);
   });
 });
 

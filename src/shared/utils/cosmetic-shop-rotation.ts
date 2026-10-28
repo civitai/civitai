@@ -22,11 +22,17 @@ export function shopBlockMaxItems(meta: ShopBlockMeta) {
 
 const HOUR_MS = 60 * 60 * 1000;
 
+const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
+
 /**
- * The section's items in this window's order. Seeded by the time bucket and the section, so every
- * visitor in a window gets the same order, and the order changes only when the bucket does.
- * Applied after the shared block cache, never inside it: that entry is keyed by section and also
- * serves blocks of the same section that do not rotate.
+ * The section's items in this window's order, the row first and the next window's row behind it.
+ * Each window's row is the `visible` items after the last window's on one seeded circle of the
+ * section, so neighbouring windows never share a card while the section holds two rows. The circle
+ * is reshuffled each time the walk is back at its start, and every circle opens with items from one
+ * fixed half and closes with the other, so a reshuffle cannot repeat a card either.
+ * A pure function of its arguments, so every visitor in a window gets the same order with nothing
+ * stored. Applied after the shared block cache, never inside it: that entry is keyed by section and
+ * also serves blocks of the same section that do not rotate.
  */
 export function rotateShopSectionItems<T>(
   items: T[],
@@ -34,12 +40,43 @@ export function rotateShopSectionItems<T>(
     sectionId,
     rotateHours = COSMETIC_SHOP_ROTATION_DEFAULTS.rotateHours,
     now,
-  }: { sectionId: number; rotateHours?: number; now: number }
+    visible,
+    getId,
+  }: {
+    sectionId: number;
+    rotateHours?: number;
+    now: number;
+    visible: number;
+    getId: (item: T) => number;
+  }
 ): T[] {
   // Metadata is cast rather than parsed, so a hand-written 0 or negative has to land somewhere.
   const windowMs = Math.max(1, rotateHours) * HOUR_MS;
   const bucket = Math.floor(now / windowMs);
-  return shuffle(items, seededRng(Math.imul(bucket, 0x9e3779b1) ^ sectionId));
+  const n = items.length;
+  const sorted = [...items].sort((a, b) => getId(a) - getId(b));
+  const rowSize = Math.max(1, Math.floor(visible));
+  if (n <= rowSize) return shuffle(sorted, seededRng(Math.imul(bucket, 0x9e3779b1) ^ sectionId));
+
+  const lap = n / gcd(n, rowSize);
+  const circleIndex = Math.floor(bucket / lap);
+  const rng = seededRng(Math.imul(circleIndex, 0x9e3779b1) ^ sectionId);
+  let circle: T[];
+  if (n >= 2 * rowSize) {
+    const halves = shuffle(sorted, seededRng(Math.imul(sectionId, 0x85ebca6b) ^ 0x5bd1e995));
+    const opening = shuffle(halves.slice(0, Math.floor(n / 2)), rng);
+    const closing = shuffle(halves.slice(Math.floor(n / 2)), rng);
+    circle = [
+      ...opening.slice(0, rowSize),
+      ...shuffle([...opening.slice(rowSize), ...closing.slice(rowSize)], rng),
+      ...closing.slice(0, rowSize),
+    ];
+  } else {
+    circle = shuffle(sorted, rng);
+  }
+
+  const offset = ((bucket - circleIndex * lap) * rowSize) % n;
+  return [...circle.slice(offset), ...circle.slice(0, offset)];
 }
 
 type ShopBlockItem = {
