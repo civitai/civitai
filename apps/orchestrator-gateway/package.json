@@ -17,7 +17,6 @@
     "@civitai/db": "workspace:*",
     "@civitai/db-schema": "workspace:*",
     "@civitai/redis": "workspace:*",
-    "@fastify/cookie": "^11.0.2",
     "@trpc/server": "^11.17.0",
     "fastify": "^5.12.6",
     "prom-client": "^14.2.0",

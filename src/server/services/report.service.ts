@@ -1130,8 +1130,7 @@ async function getOwnerDeletedAppealIds(candidates: OrphanCandidate[]) {
   }
 }
 
-// Keep the CSAM legs in step with the moderator app's exclusion lookup; the hold-marker leg is
-// this app's alone, since a kept image is only offered for appeal here.
+// Keep in step with `appealExcluded` in the moderator app's removed-appeals.service.ts.
 export async function getAppealExcludedIds({
   imageIds,
   userIds,
@@ -1193,24 +1192,6 @@ export async function canAppealOwnImage({ imageId, userId }: { imageId: number; 
   return !(await isAppealBlockedByHoldMarker({ imageId, userId }));
 }
 
-async function getDefensiveCloseIds(candidates: ClaimedOrphan[]) {
-  const imageIds = candidates
-    .filter((a) => a.entityType === EntityType.Image)
-    .map((a) => a.entityId);
-  const userIds = [...new Set(candidates.map((a) => a.userId))];
-  if (!userIds.length) return new Set<number>();
-
-  const { images: imageSet, users: userSet } = await getAppealExcludedIds({ imageIds, userIds });
-  return new Set(
-    candidates
-      .filter(
-        (a) =>
-          userSet.has(a.userId) || (a.entityType === EntityType.Image && imageSet.has(a.entityId))
-      )
-      .map((a) => a.id)
-  );
-}
-
 // Re-checks Pending and the stamp so a moderator who resolved the appeal since the pick wins.
 function closeOrphans(ids: number[], reason: string | null) {
   if (!ids.length) return Promise.resolve([] as ClaimedOrphan[]);
@@ -1220,6 +1201,30 @@ function closeOrphans(ids: number[], reason: string | null) {
       "resolvedAt" = now(), "updatedAt" = now()
     WHERE id = ANY(${ids})
       AND status = 'Pending'::"AppealStatus" AND "entityRemovedAt" IS NULL
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+  `;
+}
+
+/** How long an appeal routed for review waits for a moderator before it is closed and refunded. */
+export const ROUTED_APPEAL_REVIEW_DAYS = 30;
+
+function closeUnreviewedAppeals(limit: number) {
+  return dbWrite.$queryRaw<ClaimedOrphan[]>`
+    UPDATE "Appeal"
+    SET status = 'Void'::"AppealStatus", "resolvedReason" = ${
+      OrphanedAppealReason.RemovedBeforeReview
+    },
+      "resolvedAt" = now(), "updatedAt" = now()
+    WHERE id IN (
+      SELECT id FROM "Appeal"
+      WHERE status = 'Pending'::"AppealStatus"
+        -- Only images are routed for review; another type routed later needs its own decision here.
+        AND "entityType" = 'Image'::"EntityType"
+        AND "entityRemovedAt" <= now() - make_interval(days => ${Prisma.raw(
+          String(ROUTED_APPEAL_REVIEW_DAYS)
+        )})
+      LIMIT ${limit}
+    ) AND status = 'Pending'::"AppealStatus"
     RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
   `;
 }
@@ -1319,18 +1324,8 @@ export async function closeAppealsDeletedByOwner({
   // Claimed and Void now, so never swept again: the refunds must not wait on anything that can fail.
   const refunded = new Map<number, boolean>();
   for (const appeal of closed) refunded.set(appeal.id, (await refundOrphan(appeal)).refunded);
-
-  let quiet: Set<number>;
-  try {
-    quiet = await getDefensiveCloseIds(closed);
-  } catch (e) {
-    // Unclassified, so no one is told.
-    logFailure(e, { appealIds: closed.map((a) => a.id) });
-    return;
-  }
   for (const appeal of closed)
-    if (!quiet.has(appeal.id))
-      await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', refunded.get(appeal.id));
+    await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', refunded.get(appeal.id));
 }
 
 /**
@@ -1367,8 +1362,9 @@ export async function closeAppealsOnDeletedModel({ modelId }: { modelId: number 
  * Sorts appeals whose entity has been deleted; the moderator queue is driven from the entity row,
  * so it never shows them. An owner who deleted their own content gets the appeal closed and
  * refunded, and is told. Any other deleted model closes quietly; a removed image stays Pending,
- * stamped `entityRemovedAt`, for review, and its owner is told. Some appeals are closed
- * defensively without a notice.
+ * stamped `entityRemovedAt`, for review, and its owner is told; one still unreviewed
+ * `ROUTED_APPEAL_REVIEW_DAYS` later is closed, refunded and told. Two cases close quietly, with no
+ * notice: a deleted account's appeals, and a deleted model's appeal its owner did not delete.
  */
 export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
   const candidates = await dbWrite.$queryRaw<OrphanCandidate[]>`
@@ -1388,8 +1384,9 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
     LIMIT ${limit}
   `;
 
-  const defensiveIds = await getDefensiveCloseIds(candidates);
-  const isQuiet = (a: OrphanCandidate) => a.userDeleted || defensiveIds.has(a.id);
+  // A deleted account's appeals close without a notice; so, below, does a deleted model's appeal
+  // whose owner did not delete it.
+  const isQuiet = (a: OrphanCandidate) => a.userDeleted;
   const quiet = candidates.filter(isQuiet);
   const rest = candidates.filter((a) => !isQuiet(a));
   // A soft-deleted model records its deleter, so only images and hard-deleted models need ClickHouse.
@@ -1434,10 +1431,17 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
   }
   for (const appeal of routed) await notifyOrphanedAppeal(appeal, 'under-review');
 
+  const closedUnreviewed = await closeUnreviewedAppeals(limit);
+  for (const appeal of closedUnreviewed) {
+    const wasRefunded = await refund(appeal);
+    await notifyOrphanedAppeal(appeal, 'closed-unreviewed', wasRefunded);
+  }
+
   return {
     closedQuietly: closedQuietly.length,
     closedOwnerDeleted: closedOwnerDeleted.length,
     routedForReview: routed.length,
+    closedUnreviewed: closedUnreviewed.length,
     refunded,
     refundFailed,
   };

@@ -4,11 +4,7 @@ import type {
   ToggleHideCommentInput,
   GetCommentsInfiniteInput,
 } from '~/server/schema/commentv2.schema';
-import {
-  BlockedByUsers,
-  BlockedUsers,
-  HiddenUsers,
-} from '~/server/services/user-preferences.service';
+import { BlockedByUsers, BlockedUsers } from '~/server/services/user-preferences.service';
 import { getContentOwnerIdForComment } from '~/server/services/block-check.service';
 import { bulkSetCommentV2TosViolation } from '~/server/services/commentsv2.service';
 import { assertCrucibleVisible } from '~/server/services/crucible.service';
@@ -22,7 +18,6 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { storylineReaderLevel } from '~/server/utils/storyline-reader-level';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import { hasEntityAccess } from '../services/common.service';
@@ -50,12 +45,12 @@ import {
   getCommentThreadCrucibleId,
   getCommentStorylineId,
   getCommentThreadStorylineId,
-  isViewerContentOwner,
   toggleHideComment,
   toggleLockCommentsThread,
   togglePinComment,
   upsertComment,
 } from './../services/commentsv2.service';
+import { getCommentExcludedUserIds } from '~/server/services/comment-exclusions.service';
 
 /** Creators who blocked the viewer and creators the viewer blocked. */
 async function getBlockedCreatorIds(userId: number) {
@@ -405,25 +400,10 @@ export const getCommentsInfiniteHandler = async ({
 }) => {
   try {
     await assertCommentEntityVisible(input, ctx);
-    const hiddenUsers = (await HiddenUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
-    const blockedByUsers = (await BlockedByUsers.getCached({ userId: ctx.user?.id })).map(
-      (x) => x.id
-    );
-    const blockedUsers = (await BlockedUsers.getCached({ userId: ctx.user?.id })).map((x) => x.id);
-    // On the owner's own content, don't hide a blocker's engagement from them (they must still
-    // be able to see + report it) — drop blockedByUsers only in that case; keep the anti-
-    // harassment exclusion for every non-owner viewer.
-    const isContentOwner = await isViewerContentOwner({
+    const excludedUserIds = await getCommentExcludedUserIds({
       entityType: input.entityType,
       entityId: input.entityId,
       userId: ctx.user?.id,
-      blockedByUsers,
-    });
-    // De-dupe + cap so the downstream `notIn` / raw `NOT IN` stays under the Postgres
-    // bind-param limit (heavily-blocked viewer otherwise → P2029 → 500). Ordering is a
-    // load-bearing safety priority — see boundExcludedUserIds.
-    const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers, {
-      isContentOwner,
     });
 
     return await getCommentsInfinite({

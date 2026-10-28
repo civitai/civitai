@@ -1,3 +1,4 @@
+import { constants } from '~/server/common/constants';
 import { isEmpty } from 'lodash-es';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { NotificationCategory } from '~/server/common/enums';
@@ -36,6 +37,16 @@ export const isV1Shaped = (alias: string) =>
 export const answeredId = (alias: string) => `COALESCE(${alias}."replyToId", ${alias}."parentId")`;
 
 /**
+ * The comment whose replies a notification opens. A v3 section lists a comment's direct replies,
+ * where a clamped reply hangs off its parent; a v2 section opens the answered comment's thread.
+ */
+export const deepLinkParentId = (alias: string) =>
+  `CASE WHEN ${alias}."entityType"::text = ANY(ARRAY[${constants.comments.v3ReadSurfaces
+    .map((t) => `'${t}'`)
+    .join(', ')}])
+     THEN ${alias}."parentId" ELSE ${answeredId(alias)} END`;
+
+/**
  * The two entities whose URL is not built from `entityId`: a comic chapter is addressed by its
  * project, and an app listing by its slug (`entityId` is `app_listings.serial_id`, which appears
  * nowhere in the URL). LEFT joins, paired with `v3AppListingResolved`: an app-listing comment whose
@@ -65,8 +76,8 @@ export const v3ThreadParentId = (alias: string) =>
 
 /**
  * The details a thread-addressed notification carries; `extra` is more `'key', value,` pairs.
- * `commentParent*` is what lets the page open the conversation the comment is in: a reply names the
- * comment it answers, a top-level comment its entity.
+ * `commentParent*` is what lets the page open the conversation the comment is in: a reply names that
+ * conversation's comment (`deepLinkParentId`), a top-level comment its entity.
  */
 export const v3ThreadDetails = (extra: string) => `JSONB_BUILD_OBJECT(
             'version', 3,
@@ -74,7 +85,7 @@ export const v3ThreadDetails = (extra: string) => `JSONB_BUILD_OBJECT(
             'threadParentId', ${v3ThreadParentId('c')},
             'threadType', ${v3ThreadType('c')},
             'appListingSlug', al.slug,
-            'commentParentId', COALESCE(${answeredId('c')}, ${v3ThreadParentId('c')}),
+            'commentParentId', COALESCE(${deepLinkParentId('c')}, ${v3ThreadParentId('c')}),
             'commentParentType', CASE WHEN c."parentId" IS NULL THEN ${v3ThreadType(
               'c'
             )} ELSE 'comment' END,
