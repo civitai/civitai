@@ -53,6 +53,12 @@ describe('knights access gate', () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
+  it('leaves job endpoints to their own token check', async () => {
+    const { resolve } = await run('/api/jobs/expire');
+    expect(resolve).toHaveBeenCalled();
+    expect(guardCheck).not.toHaveBeenCalled();
+  });
+
   it('serves the sign-in routes without a session', async () => {
     const { resolve } = await run('/api/auth/callback');
     expect(resolve).toHaveBeenCalled();

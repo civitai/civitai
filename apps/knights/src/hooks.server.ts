@@ -2,6 +2,7 @@ import type { Handle } from '@sveltejs/kit';
 import { isNavigationRequest, spokeReauthResponse, withSetCookies } from '@civitai/auth';
 import { guard } from '$lib/server/auth';
 import { accessFor } from '$lib/server/access';
+import { JOBS_PATH_PREFIX } from '$lib/server/jobs-auth';
 
 const PUBLIC_PATHS = new Set([
   '/favicon.svg',
@@ -36,7 +37,10 @@ const closedPage = () =>
   );
 
 export const handle: Handle = async ({ event, resolve }) => {
-  if (PUBLIC_PATHS.has(event.url.pathname)) return resolve(event);
+  // Job endpoints authenticate themselves with a scheduler token; there is no user session.
+  if (PUBLIC_PATHS.has(event.url.pathname) || event.url.pathname.startsWith(JOBS_PATH_PREFIX)) {
+    return resolve(event);
+  }
 
   const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href, {
     navigation: isNavigationRequest(event.request),
