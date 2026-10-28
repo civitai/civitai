@@ -165,8 +165,13 @@ export async function getPlacementFlows(userIds: number[], days = 90): Promise<P
           eb.fn.countAll<string>().as('count'),
         ])
         .where('p.surface', '=', 'sticker')
-        .where('p.placerId', 'in', [...new Set(stickerPairs.map((r) => r.placerId))])
-        .where('p.ownerId', 'in', [...new Set(stickerPairs.map((r) => r.ownerId))])
+        .where((eb) =>
+          eb(
+            eb.refTuple('p.placerId', 'p.ownerId'),
+            'in',
+            stickerPairs.map((r) => eb.tuple(r.placerId, r.ownerId))
+          )
+        )
         // The pair rows' own grouping, so each row lists only its own stickers.
         .groupBy(['p.placerId', 'p.ownerId', 'p.sellerId', currency, sql`p.data->>'cosmeticId'`])
         .execute()

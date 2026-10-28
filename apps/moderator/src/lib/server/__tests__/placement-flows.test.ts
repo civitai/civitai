@@ -205,6 +205,10 @@ describe('getPlacementFlows', () => {
     });
     const rows = (await getPlacementFlows([1], 30)).pairs;
     expect(rows.map((r) => r.stickers.map((s) => s.cosmeticId))).toEqual([[10], [20], [30]]);
+    // The shown pairs exactly, not every shown placer crossed with every shown owner.
+    expect(captured.find((q) => q.includes('"cosmeticId"'))).toMatch(
+      /\("p"\."placerId", "p"\."ownerId"\) in \(\(\$\d+, \$\d+\)/
+    );
     expect(captured.find((q) => q.includes('"cosmeticId"'))).toMatch(
       /group by "p"\."placerId", "p"\."ownerId", "p"\."sellerId", coalesce\(p\."spendType", 'yellow'\), p\.data->>'cosmeticId'/
     );
@@ -255,8 +259,8 @@ describe('getPlacementFlows', () => {
 
 describe('placementIdOf', () => {
   it('reads the id from a leg reference and ignores anything else', () => {
-    expect(placementIdOf('placement-31465-toOwner')).toBe(31465);
-    expect(placementIdOf('placement-31473-holdFee-Green')).toBe(31473);
+    expect(placementIdOf('placement-1204-toOwner')).toBe(1204);
+    expect(placementIdOf('placement-1207-holdFee-Green')).toBe(1207);
     for (const ref of [
       null,
       '',

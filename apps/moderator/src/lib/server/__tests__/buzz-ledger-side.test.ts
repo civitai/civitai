@@ -52,10 +52,19 @@ vi.mock('../users.service', async (importOriginal) => ({
   usersByIds: (ids: number[]) =>
     Promise.resolve(new Map(ids.map((id) => [id, { username: `u${id}` }]))),
 }));
-const placementRows = vi.hoisted(() => ({ rows: [] as unknown[], sql: [] as string[] }));
+const placementRows = vi.hoisted(() => ({
+  rows: [] as unknown[],
+  sql: [] as string[],
+  fail: false,
+}));
 vi.mock('../db', async () => {
   const { capturingDb } = await import('../../../test/capture-sql');
-  return { dbRead: capturingDb(placementRows.sql, () => placementRows.rows) };
+  return {
+    dbRead: capturingDb(placementRows.sql, () => {
+      if (placementRows.fail) throw new Error('db down');
+      return placementRows.rows;
+    }),
+  };
 });
 vi.mock('../buzz', () => ({ getBuzz: () => ({}) }));
 vi.mock('../notifications', () => ({ getNotifications: () => Promise.resolve([]) }));
@@ -69,6 +78,7 @@ beforeEach(() => {
   refs.list = [];
   counterparty.id = '0';
   placementRows.rows = [];
+  placementRows.fail = false;
   placementRows.sql.length = 0;
   queries.length = 0;
   rowCount.n = 0;
@@ -232,6 +242,16 @@ describe('placement legs', () => {
     placementRows.rows = [{ id: 31, surface: 'sticker', placerId: 5, ownerId: 9, sellerId: null }];
     const { rows } = await getBuzzLedgerSide(7, 'receipts', 90, { limit: 200 });
     expect(placementRows.sql).toHaveLength(0);
+    expect(rows[0].placement).toBeNull();
+  });
+
+  it('still shows the page, without placements, when the placement read fails', async () => {
+    refs.list = ['placement-31-toOwner'];
+    rowCount.n = 1;
+    placementRows.fail = true;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { rows } = await getBuzzLedgerSide(7, 'receipts', 90, { limit: 200 });
+    expect(rows).toHaveLength(1);
     expect(rows[0].placement).toBeNull();
   });
 
