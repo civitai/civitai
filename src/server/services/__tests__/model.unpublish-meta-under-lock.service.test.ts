@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
@@ -263,18 +264,31 @@ describe('unpublishModelById merges into the meta it reads under its lock', () =
     expect(written().meta).not.toHaveProperty('needsReview');
   });
 
-  it('takes the model lock before it writes', async () => {
+  it('locks the model row as the first statement of its transaction', async () => {
     setupModel({ locked: { status: ModelStatus.Published, meta: {} } });
 
     await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
 
-    const lock = mockTx.$queryRaw.mock.calls.findIndex(([strings]) =>
-      (strings as string[]).join('').includes('FOR NO KEY UPDATE')
+    const [strings, ...values] = mockTx.$queryRaw.mock.calls[0] as [string[], ...unknown[]];
+    const first = Prisma.sql(strings, ...values);
+    expect(first.text.replace(/\s+/g, ' ').trim()).toBe(
+      'SELECT status, meta FROM "Model" WHERE id = $1 FOR NO KEY UPDATE'
     );
-    expect(lock).toBeGreaterThanOrEqual(0);
-    expect(mockTx.$queryRaw.mock.invocationCallOrder[lock]).toBeLessThan(
-      mockTx.model.update.mock.invocationCallOrder[0]
-    );
+    expect(first.values).toEqual([MODEL_ID]);
+    const lockOrder = mockTx.$queryRaw.mock.invocationCallOrder[0];
+    for (const write of [mockTx.model.update, mockTx.$executeRaw])
+      expect(lockOrder).toBeLessThan(write.mock.invocationCallOrder[0]);
+  });
+
+  it.each([
+    ['empty', null],
+    ['not an object', ['legacy']],
+  ])('unpublishes a model whose stored meta is %s', async (_label, meta) => {
+    setupModel({ locked: { status: ModelStatus.Published, meta: meta as never } });
+
+    await unpublishModelById({ id: MODEL_ID, userId: OWNER_ID });
+
+    expect(written().meta).toEqual({ unpublishedAt: expect.any(String), unpublishedBy: OWNER_ID });
   });
 });
 

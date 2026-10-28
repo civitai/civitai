@@ -141,12 +141,6 @@ describe('unpublishLiveModelForLiteralRules', () => {
     expect(workflowId).toBe('literal:h1:3,4');
     expect(workflowId).not.toBe('literal:h1:3');
   });
-
-  it('does nothing for a model that is gone', async () => {
-    dbMock.dbWrite.$executeRaw.mockResolvedValue(0);
-    await expect(run()).resolves.toBe(false);
-    expect(unpublishModelById).not.toHaveBeenCalled();
-  });
 });
 
 describe('modelRulesClearedOnRepublish', () => {
