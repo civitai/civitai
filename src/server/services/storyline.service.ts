@@ -948,9 +948,8 @@ export async function deleteStoryline({
       ) AS unsettled
     `;
     if (unsettled) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidContinuations);
-    // Launch rule (2026-10-28): an owner paid for approved continuations cannot then delete the
-    // chapters they were paid for (a refunded one does not count), and cannot delete what is under
-    // report. A moderator can.
+    // An owner paid for approved continuations cannot then delete the chapters they were paid for
+    // (a refunded one does not count), nor delete what is under report. A moderator can.
     if (!asModerator) {
       if (approved) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidChapters);
       const [{ reported }] = await tx.$queryRaw<{ reported: boolean }[]>`

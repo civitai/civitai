@@ -263,7 +263,6 @@ describe('deleteStoryline', () => {
       expect(await storylineIds()).toEqual([2]);
     });
 
-    // Launch rule (2026-10-28): an owner paid for continuations cannot delete the chapters.
     it('is kept from its owner once a paid continuation is approved', async () => {
       await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
         STORYLINE_DELETE_REFUSALS.paidChapters
@@ -334,7 +333,6 @@ describe('deleteStoryline', () => {
     expect(trackModActivity).not.toHaveBeenCalled();
   });
 
-  // Launch rule (2026-10-28): nothing under an open report is deleted by its owner.
   describe('a reported storyline', () => {
     const report = (status: string) =>
       db.pg.exec(`
