@@ -42,7 +42,10 @@ const { holder, indexes, metrics, session, pictures, tracked, docStore } = vi.ho
   },
 }));
 
-const { bustMvCache } = vi.hoisted(() => ({ bustMvCache: vi.fn(async () => undefined) }));
+const { bustMvCache, contentCounts } = vi.hoisted(() => ({
+  bustMvCache: vi.fn(async () => undefined),
+  contentCounts: { refresh: vi.fn(async () => undefined) },
+}));
 vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   bustMvCache,
@@ -50,6 +53,7 @@ vi.mock('~/server/services/model-version.service', async (importOriginal) => ({
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   profilePictureCache: pictures,
+  userContentOverviewCache: contentCounts,
 }));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -769,6 +773,7 @@ describe('removeAllContent', () => {
       [GIVEN_BY_HELD, SCHEDULED_GIVEN_BY_HELD],
       CLEAN
     );
+    expect(contentCounts.refresh).toHaveBeenCalledWith(CLEAN);
   });
 
   it('refunds the bids on a model it keeps and hides', async () => {
@@ -823,6 +828,26 @@ describe('removeAllContent', () => {
     );
     expect(kept.rows).toEqual([{ status: KEPT_MODEL_STATUS }]);
     expect(dropped().models).toContain(GIVEN_BY_HELD);
+    // Its bids and caches go with it, as on a completed wipe.
+    expect(refundBidsForVersions).toHaveBeenCalledWith(
+      expect.objectContaining({ versionIds: [MODEL_VERSION(GIVEN_BY_HELD)] })
+    );
+    expect(bustMvCache).toHaveBeenCalledWith(expect.any(Array), [GIVEN_BY_HELD], CLEAN);
+  });
+
+  it('leaves the bids on a model an earlier wipe hid and a moderator republished', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Model" (id, "userId", meta) VALUES
+        (${GIVEN_BY_HELD}, ${CLEAN}, '{"removedWithOwner": true}')
+    `);
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+    await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+
+    expect(refundBidsForVersions).not.toHaveBeenCalledWith(
+      expect.objectContaining({ versionIds: [MODEL_VERSION(GIVEN_BY_HELD)] })
+    );
+    expect(bustMvCache).not.toHaveBeenCalled();
   });
 
   it('leaves the bids on a model a hold kept', async () => {

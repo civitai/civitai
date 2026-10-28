@@ -107,7 +107,11 @@ import {
 } from '~/server/services/account-deletion-images';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { deleteImages } from '~/server/services/image.service';
-import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/caches';
+import {
+  refreshOwnedStickerCache,
+  userContentOverviewCache,
+  userModelCountCache,
+} from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -1463,14 +1467,36 @@ async function modelsOffSite(ids: number[]) {
   return ids.filter((i) => !live.has(i));
 }
 
-/** The listed models the wipe deleted, or kept and hid, read on the primary. */
-async function removedModelIds(ids: number[]) {
-  if (!ids.length) return [];
-  const live = await dbWrite.$queryRaw<{ id: number }[]>`
-    SELECT id FROM "Model" WHERE id = ANY(${ids}::int[])
-      AND meta ->> 'removedWithOwner' IS DISTINCT FROM 'true'`;
-  const kept = new Set(live.map((r) => r.id));
-  return ids.filter((i) => !kept.has(i));
+/**
+ * Of the listed models, read on the primary, those a wipe deleted and those it kept and hid. A
+ * hidden model is one still in the hidden status: a moderator who republished it leaves the marker
+ * behind, and its bids then stand.
+ */
+async function removedModels(ids: number[]) {
+  if (!ids.length) return { gone: [], hidden: [] };
+  const left = await dbWrite.$queryRaw<{ id: number; hidden: boolean }[]>`
+    SELECT id, (status = ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)}
+      AND meta ->> 'removedWithOwner' = 'true') IS TRUE AS hidden
+    FROM "Model" WHERE id = ANY(${ids}::int[])`;
+  const present = new Set(left.map((r) => r.id));
+  return {
+    gone: ids.filter((i) => !present.has(i)),
+    hidden: left.filter((r) => r.hidden).map((r) => r.id),
+  };
+}
+
+/** Drops the caches that would still serve a hidden model as published: its status was a raw write. */
+async function dropHiddenModelCaches(modelIds: number[], userId: number) {
+  const versions = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "ModelVersion" WHERE "modelId" = ANY(${modelIds}::int[])`;
+  // Imported here: a static import joins user.service to the model-version import cycle.
+  const { bustMvCache } = await import('~/server/services/model-version.service');
+  await bustMvCache(
+    versions.map((v) => v.id),
+    modelIds,
+    userId
+  );
+  await userContentOverviewCache.refresh(userId);
 }
 
 /** Queues a search-index Delete for each listed row that no longer exists. */
@@ -1500,15 +1526,16 @@ type BidRefundFailure =
   | { modelIds: number[]; error: string };
 
 /**
- * A model a hold kept keeps its bids; versions are passed by id because the model row is gone. Never
- * throws: a re-run of the wipe finds no models to refund, so each failure is logged as its own
- * `bid-refund-failed` line (alerted on) with the ids a manual refund needs, and returned.
+ * Refunds the bids on the models the wipe deleted or kept and hid; a model a hold kept and left
+ * public keeps its bids. Versions are passed by id because a deleted model's row is gone. Never
+ * throws: a re-run of the wipe finds no deleted models to refund, so each failure is logged as its
+ * own `bid-refund-failed` line (alerted on) with the ids a manual refund needs, and returned.
  */
-async function refundBidsForDeletedModels(
+async function refundBidsForRemovedModels(
   models: { id: number; name: string; modelVersions: { id: number }[] }[],
   wipe: { userId: number; actorUserId: number | null }
 ): Promise<BidRefundFailure[]> {
-  const failures = await refundEachDeletedModel(models);
+  const failures = await refundEachRemovedModel(models);
   for (const failure of failures)
     logToAxiom({
       name: 'bid-refund-failed',
@@ -1522,13 +1549,14 @@ async function refundBidsForDeletedModels(
   return failures;
 }
 
-async function refundEachDeletedModel(
+async function refundEachRemovedModel(
   models: { id: number; name: string; modelVersions: { id: number }[] }[]
 ): Promise<BidRefundFailure[]> {
   const versionIdsOf = (m: (typeof models)[number]) => m.modelVersions.map((v) => v.id);
   let removed: Set<number>;
   try {
-    removed = new Set(await removedModelIds(models.map((m) => m.id)));
+    const { gone, hidden } = await removedModels(models.map((m) => m.id));
+    removed = new Set([...gone, ...hidden]);
   } catch (e) {
     return [{ modelIds: models.map((m) => m.id), error: (e as Error).message }];
   }
@@ -1717,7 +1745,21 @@ export const removeAllContent = async ({
           userId: id,
         }).catch(() => undefined)
       );
-    await refundBidsForDeletedModels(models, alertedBy);
+    await refundBidsForRemovedModels(models, alertedBy);
+    await removedModels(models.map((m) => m.id))
+      .then(async ({ hidden }) => {
+        if (hidden.length) await dropHiddenModelCaches(hidden, id);
+      })
+      .catch((e: unknown) =>
+        logToAxiom({
+          name: 'remove-all-content',
+          type: 'error',
+          message: `Dropping hidden models' caches after a stopped wipe failed: ${
+            (e as Error).message
+          }`,
+          userId: id,
+        }).catch(() => undefined)
+      );
     throw new LegalHoldStoppedError();
   }
 
@@ -1764,21 +1806,8 @@ export const removeAllContent = async ({
         models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
       );
   });
-  // The hide is a raw status write, so the caches that would still serve a kept model as published
-  // are dropped here.
   if (keptModelIds.length)
-    await runStep('kept-model-caches', async () => {
-      const versions = await dbWrite.$queryRaw<{ id: number }[]>`
-        SELECT id FROM "ModelVersion" WHERE "modelId" = ANY(${keptModelIds}::int[])`;
-      // Imported here: a static import joins user.service to the model-version import cycle.
-      const { bustMvCache } = await import('~/server/services/model-version.service');
-      await bustMvCache(
-        versions.map((v) => v.id),
-        keptModelIds,
-        id
-      );
-      await userModelCountCache.refresh(id);
-    });
+    await runStep('kept-model-caches', () => dropHiddenModelCaches(keptModelIds, id));
   await unindex('index-images', imagesSearchIndex, images);
   await unindex('index-image-metrics', imagesMetricsSearchIndex, images);
   await unindex('index-articles', articlesSearchIndex, articles);
@@ -1789,7 +1818,7 @@ export const removeAllContent = async ({
   await runStep('user-metrics', () => userMetrics.queueUpdate(id));
   await runStep('article-metrics', () => articleMetrics.queueUpdate(articles.map((a) => a.id)));
 
-  const refundFailures = await refundBidsForDeletedModels(models, alertedBy);
+  const refundFailures = await refundBidsForRemovedModels(models, alertedBy);
   if (refundFailures.length) failed('bid-refunds', 'some bids were not refunded');
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
