@@ -59,10 +59,10 @@ export async function addApiKey(
     userId,
     maxAge,
     type,
-  }: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType },
+    key = generateKey(),
+  }: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType; key?: string },
   date = new Date()
 ) {
-  const key = generateKey();
   const secret = generateSecretHash(key);
   const expiresAt = maxAge ? new Date(date.getTime() + maxAge * 1000) : undefined;
 
