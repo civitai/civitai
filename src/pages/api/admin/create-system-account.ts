@@ -85,7 +85,7 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
   const existing = await resolve(email, username);
   if (existing.kind !== 'available') return respond(existing);
 
-  // The shared moderation account must carry exactly this reserved name: the apps also recognise it by name.
+  // Reserved for the shared moderation account, which the blocklist would otherwise refuse.
   const reserved = username.toLowerCase() === MODERATION_ACCOUNT_USERNAME.toLowerCase();
   if (!reserved && !(await isUsernamePermitted(username)))
     return res.status(400).json({ error: 'Username is not permitted' });
