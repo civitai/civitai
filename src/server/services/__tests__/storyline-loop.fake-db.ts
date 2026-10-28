@@ -474,7 +474,13 @@ export function createFakeDb() {
     // images a reader may see is storyline.service.test's subject, not this one's.
     if (text.includes('FROM "Image" i') && text.includes('JOIN "StorylineChapter" c')) return [];
     if (text.includes('FOR NO KEY UPDATE')) return [];
-    if (text.includes('FROM "Storyline"') && /FOR SHARE( OF st)?$/.test(text.trim())) return [];
+    // The storyline of the chapter on a post, which a submit refuses without.
+    if (text.includes('JOIN "StorylineChapter" c') && /FOR SHARE OF st$/.test(text.trim())) {
+      const [postId] = v as [number];
+      const chapter = tables.storylineChapter.find((c) => same(c.postId, postId));
+      return chapter ? [{ id: chapter.storylineId }] : [];
+    }
+    if (text.includes('FROM "Storyline"') && /FOR SHARE$/.test(text.trim())) return [];
     if (text.includes('FROM "StorylineChapter"') && text.includes('FOR SHARE')) {
       // The live chapters among the ids asked for, locked until the transaction ends. Modelled only
       // while the statement carries both its filters, so one that drops either is refused.

@@ -248,11 +248,11 @@ const BARE_ATTRIBUTE_PATH = '[A-Za-z_][A-Za-z0-9_]*(?:\\.[A-Za-z_][A-Za-z0-9_]*)
 /**
  * An attribute path, bare or DOUBLE-QUOTED.
  *
- * The quoted form is in the repo already, against an index that IS a purge target: the
- * `requiringMeta` branch of `src/server/services/image.service.ts` pushes `("blockedFor" = …)`
- * against the metrics-images index, which `metricsIndexConfigs` lists and which does declare
- * `blockedFor` filterable. Rejecting it would make this guard report a correct, in-house filter
- * shape as unreadable — a false positive in a guard, which is worse than the hole it closed.
+ * The quoted form is in the repo already: the `requiringMeta` branch of
+ * `src/server/services/image.service.ts` pushes `("blockedFor" = …)` against the metrics-images
+ * index, which declares `blockedFor` filterable and was a purge target until it was retired.
+ * Rejecting the form would make this guard report a correct, in-house filter shape as
+ * unreadable — a false positive in a guard, which is worse than the hole it closed.
  * The quotes are stripped before the name is compared against the declared list.
  */
 const ATTRIBUTE_PATH = `(?:"${BARE_ATTRIBUTE_PATH}"|${BARE_ATTRIBUTE_PATH})`;
@@ -512,7 +512,7 @@ describe('the ban purge only targets live, filterable search indexes', () => {
 
   it('reads the recorded number of targets out of both lists', () => {
     expect(mainEntries.length, countMessage('mainIndexConfigs')).toBe(6);
-    expect(metricsEntries.length, countMessage('metricsIndexConfigs')).toBe(1);
+    expect(metricsEntries.length, countMessage('metricsIndexConfigs')).toBe(0);
   });
 
   it('resolves every entry it found to a name and a literal filter', () => {
@@ -632,11 +632,9 @@ describe('the ban purge only targets live, filterable search indexes', () => {
   });
 
   it('reads a quoted attribute path, which this repo already writes', () => {
-    // 🔴 Precedent, against an index that IS a purge target: the `requiringMeta` branch of
-    // `src/server/services/image.service.ts` pushes `("blockedFor" = …)` at the metrics-images
-    // index, which `metricsIndexConfigs` lists and which declares `blockedFor` filterable. Before
-    // this, `ATTRIBUTE_PATH` had no leading quote, so a future purge entry written in the repo's
-    // own existing style resolved to null and was reported as unreadable — a guard false-positive.
+    // 🔴 Precedent: the `requiringMeta` branch of `src/server/services/image.service.ts` pushes
+    // `("blockedFor" = …)` at the metrics-images index, which declares `blockedFor` filterable. A
+    // purge entry written in that style must resolve, not be reported as unreadable.
     expect(filterAttributes('"blockedFor" = 3')).toEqual(['blockedFor']);
     expect(filterAttributes('("blockedFor" = 3)')).toEqual(['blockedFor']);
     expect(filterAttributes('"user.username" IN ["a"] AND "blockedFor" = 3')).toEqual([
@@ -679,6 +677,10 @@ describe('the ban purge only targets live, filterable search indexes', () => {
     // Both directions: a resolver stuck on either answer makes the prohibition useless.
     expect(isRetired('IMAGES_SEARCH_INDEX'), 'the images index is retired in this tree').toBe(true);
     expect(isRetired('MODELS_SEARCH_INDEX'), 'the models index is not retired').toBe(false);
+    expect(
+      isRetired('METRICS_IMAGES_SEARCH_INDEX'),
+      'the feeds (metrics-images) index is retired with the feeds Meilisearch'
+    ).toBe(true);
   });
 
   it('reports a retired target and an undeclared attribute when handed one', () => {

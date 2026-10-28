@@ -29,7 +29,6 @@ import {
 import { SITE_ALERTS_VERSION_HEADER } from '~/shared/constants/site-alert.constants';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { applyApiRequestPolicy } from '~/server/middleware/api-request-policy';
-import { recordTrpcRouteRegionBlock } from '~/server/prom/trpc-proxy-skip.metrics';
 import {
   pinResponseWriteToSuperjson,
   responseWritesDevalue,
@@ -51,6 +50,8 @@ const LOGGED_INPUT_OVER_LIMIT = `[input over ${LOGGED_INPUT_MAX_CHARS} character
 export const config = {
   api: {
     bodyParser: {
+      // The ONLY body limit on this route: `/api/trpc` is outside the proxy matcher, so the
+      // proxy's 10 MiB body-clone cap (`proxyClientMaxBodySize`) no longer applies.
       sizeLimit: '17mb',
     },
   },
@@ -295,14 +296,10 @@ const trpcHandler = createNextApiHandler({
 // handled natively by `allowMethodOverride: true` above (main), so no manual
 // restore step is needed here.
 export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
-  // Region block (451), default response headers and the verified-crawler request header: what
-  // the proxy middlewares do on /api/trpc, applied here too so this route does not depend on the
-  // proxy matcher. Idempotent when the proxy already ran; see `applyApiRequestPolicy`.
-  if (applyApiRequestPolicy(req, res)) {
-    // Only reachable when the proxy did not already answer the 451, i.e. the flag soak.
-    recordTrpcRouteRegionBlock();
-    return;
-  }
+  // Region block (451), default response headers and the verified-crawler request header: the
+  // API policy the proxy middlewares apply on `/api/v1`. `/api/trpc` is not in the proxy matcher,
+  // so this call is the ONLY place tRPC gets it; `trpc-route-api-policy.test.ts` pins that.
+  if (applyApiRequestPolicy(req, res)) return;
 
   // Observe batch width BEFORE delegating, so the histogram sees widths that tRPC is about to
   // reject — those requests resolve zero procedures and would otherwise leave no trace at all.

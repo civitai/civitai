@@ -6,8 +6,9 @@ import type * as TrpcMod from '~/utils/trpc';
 import type * as IsMobileMod from '~/hooks/useIsMobile';
 import type * as BrowsingLevelMod from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import type { StorylineFeedFilter } from '~/components/Storyline/StorylineFiltersDropdown';
-import type { StorylineFeedSort } from '~/components/Storyline/StorylinesFeed';
-import { StorylinesFeed, StorylinesFeedControls } from '~/components/Storyline/StorylinesFeed';
+import type { StorylineFeedSort } from '~/components/Storyline/StorylineFeedFilters';
+import { StorylinesFeedControls } from '~/components/Storyline/StorylineFeedFilters';
+import { StorylinesFeed } from '~/components/Storyline/StorylinesFeed';
 
 /**
  * The filter and sort are passed through to the server rather than applied here: the server is what
@@ -76,7 +77,7 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: ({ src }: { src: string }) => <img alt="cover" src={`https://cdn.test/${src}`} />,
 }));
 
-/** What /storylines does: the menus sit up by the title and the feed reads what they pick. */
+/** What /storylines does: the sub-nav's menus pick and the feed reads what they pick. */
 function FeedWithControls() {
   const [filter, setFilter] = useState<StorylineFeedFilter>('all');
   const [sort, setSort] = useState<StorylineFeedSort>('newest');

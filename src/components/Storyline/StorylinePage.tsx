@@ -248,10 +248,7 @@ function StorylineHeader({
               <IconSettings size={20} />
             </ActionIcon>
           )}
-          <StorylineContextMenu
-            storylineId={storyline.id}
-            isOwner={storyline.viewerRole === 'owner'}
-          />
+          <StorylineContextMenu storyline={storyline} isOwner={storyline.viewerRole === 'owner'} />
         </div>
       </div>
     </header>
