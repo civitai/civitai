@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { LOCK_REVIEW_KIND } from '@civitai/shared/lock-review';
 import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
@@ -791,6 +792,7 @@ export async function getMinorFlagAppealsForReview({ limit }: { limit: number })
     JOIN "Model" m ON m.id = a."entityId"
     LEFT JOIN "User" u ON u.id = m."userId"
     WHERE a."entityType" = 'Model' AND a.category IS NULL
+      AND COALESCE(a.context->>'kind', '') <> ${LOCK_REVIEW_KIND}
       -- Cast rather than parameterize the enum: Prisma sends the value as text and
       -- Postgres has no AppealStatus = text operator.
       AND a.status::text = ${AppealStatus.Pending}
@@ -1201,6 +1203,7 @@ export async function acceptExpiredMinorAutoFlags({
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
             AND (a.category IS NULL OR a.status = 'Pending')
+            AND COALESCE(a.context->>'kind', '') <> ${LOCK_REVIEW_KIND}
         )
     `;
     return { accepted: row?.count ?? 0 };
@@ -1221,6 +1224,7 @@ export async function acceptExpiredMinorAutoFlags({
           SELECT 1 FROM "Appeal" a
           WHERE a."entityType" = 'Model' AND a."entityId" = m.id
             AND (a.category IS NULL OR a.status = 'Pending')
+            AND COALESCE(a.context->>'kind', '') <> ${LOCK_REVIEW_KIND}
         )
       ORDER BY m.id
       LIMIT ${limit}

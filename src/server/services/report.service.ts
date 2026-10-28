@@ -816,7 +816,7 @@ export function reopenAppeal({
 }: {
   id: number;
   message: string;
-  /** Replaces what the row was last filed about; omitted leaves it. */
+  /** null clears the stored context; omitted leaves it. */
   context?: LockReviewContext | null;
 }) {
   return dbWrite.appeal.update({
@@ -1352,7 +1352,7 @@ export async function closeAppealsDeletedByOwner({
 
 /**
  * Closes and refunds a deleted model's pending appeals without a notice: the owner is already told
- * about the removal. A flag dispute or an unpublish appeal (site form) alike has nothing left to
+ * about the removal. A flag dispute, a lock review or an unpublish appeal (site form) has nothing left to
  * rule on once the model is gone. Best-effort: the delete already happened, so failures are logged, not thrown. The sweep
  * stays the safety net.
  */
@@ -1418,8 +1418,8 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
     ...rest.filter((a) => a.modelDeletedByAppellant === true).map((a) => a.id),
   ]);
 
-  // Model appeals are flag disputes, so a deleted model leaves nothing to rule on. Only images,
-  // where the removal itself can be what is appealed, are routed for review.
+  // A deleted model leaves nothing to rule on, whether its appeal disputes a flag or a lock. Only
+  // images, where the removal itself can be what is appealed, are routed for review.
   const notOwnerDeleted = rest.filter((a) => !ownerDeletedIds.has(a.id));
   const closeQuietIds = [
     ...quiet.map((a) => a.id),
@@ -1472,8 +1472,8 @@ export async function resolveEntityAppeal({
   modelAppealKind,
 }: ResolveAppealInput & {
   userId?: number;
-  /** A model's flag appeal and its lock review are ruled on apart: each closes only its own kind. */
-  modelAppealKind?: 'flag' | 'lock-review';
+  /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
+  modelAppealKind?: 'flag';
 }) {
   const lockReview = { context: { path: ['kind'], equals: LOCK_REVIEW_KIND } };
   // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
@@ -1485,7 +1485,6 @@ export async function resolveEntityAppeal({
       entityType,
       entityRemovedAt: null,
       category: null,
-      ...(modelAppealKind === 'lock-review' && lockReview),
       // A JSON path NOT alone also drops the rows whose context is NULL, which every flag appeal's is.
       ...(modelAppealKind === 'flag' && {
         OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReview }],
@@ -1512,6 +1511,31 @@ export async function resolveEntityAppeal({
   });
   if (appeals.length === 0) return [];
 
+  await settleResolvedAppeals(appeals, { status, resolvedMessage, refundBuzz });
+  return appeals;
+}
+
+export type ResolvedAppeal = {
+  id: number;
+  entityId: number;
+  entityType: EntityType;
+  resolvedAt: Date | null;
+  buzzTransactionId: string | null;
+  status: AppealStatus;
+  userId: number;
+  createdAt: Date;
+};
+
+/** What follows a ruling on appeals already closed: the entity's own change, any refund, and the
+ *  owner's notification and email. For a caller that closes the row itself, under its own lock. */
+export async function settleResolvedAppeals(
+  appeals: ResolvedAppeal[],
+  {
+    status,
+    resolvedMessage,
+    refundBuzz,
+  }: Pick<ResolveAppealInput, 'status' | 'resolvedMessage' | 'refundBuzz'>
+) {
   const approved = status === AppealStatus.Approved;
 
   // Batch-fetch recipients once to avoid N+1 lookups inside the loop.

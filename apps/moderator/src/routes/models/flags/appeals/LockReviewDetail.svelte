@@ -1,7 +1,7 @@
 <script module lang="ts">
   import type { ResolutionVerdict } from '@civitai/shared/resolution-reasons';
 
-  // Key order: keep, then unlock, as the flag appeal's reject-first bar.
+  // Reject first, as in the flag appeal's bar.
   const RULINGS = [
     {
       verdict: 'Rejected',
@@ -33,14 +33,25 @@
   import ModelFlagDetailFrame from '$lib/components/minor-flags/ModelFlagDetailFrame.svelte';
   import OwnerSaysCard from '$lib/components/minor-flags/OwnerSaysCard.svelte';
   import InlineReasonFields from '$lib/components/triage/InlineReasonFields.svelte';
+  import ReasonPicker from '$lib/components/triage/ReasonPicker.svelte';
   import TriageDecisionBar from '$lib/components/triage/TriageDecisionBar.svelte';
   import TriageKeyButton from '$lib/components/triage/TriageKeyButton.svelte';
   import { waiting } from '$lib/minor-flags/appeal-row';
   import { modelFlagDetail } from '$lib/minor-flags/model-detail-request';
   import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
   import type { MinorFlagAppealRow } from '$lib/server/minor-hash.service';
-  import { decisionReasonOptions, decisionReasonProblem } from '$lib/triage/decision-reasons';
-  import { noteReasonChosen } from '$lib/triage/reason-picker.svelte';
+  import {
+    decisionReasonOptions,
+    decisionReasonProblem,
+    suggestedReason,
+  } from '$lib/triage/decision-reasons';
+  import {
+    closeReasonPickerBeyond,
+    noteReasonChosen,
+    reasonPicker,
+    resetReasonPicker,
+    submitAwaitingNote,
+  } from '$lib/triage/reason-picker.svelte';
 
   let {
     row,
@@ -68,30 +79,36 @@
   // Mirrors the endpoint, which refuses an approval once either flag is set.
   const flagged = $derived(row.minor || row.poi);
 
-  const unavailableFor = (key: (typeof RULINGS)[number]['verdict']) =>
+  type Verdict = (typeof RULINGS)[number]['verdict'];
+  const unavailableFor = (key: Verdict) =>
     key === 'Approved' && flagged
       ? 'Flagged as a real person or a minor since the request; its locks stay.'
       : null;
+  const reasonsFor = (key: Verdict) => resolutionReasonsFor('lockReview', key);
 
   const reasonOptions = $derived(
-    decisionReasonOptions(
-      RULINGS.map((r) => ({ label: r.label, reasons: resolutionReasonsFor('lockReview', r.verdict) }))
-    )
+    decisionReasonOptions(RULINGS.map((r) => ({ label: r.label, reasons: reasonsFor(r.verdict) })))
   );
+  // Rejecting takes one key: it has a single specific reason.
+  const reason = $derived(draft.reason || suggestedReason(reasonsFor('Rejected')));
+  $effect(() => () => resetReasonPicker());
+  $effect(() => closeReasonPickerBeyond(RULINGS.length));
   let problem = $state<string | null>(null);
   let reasonSelect = $state<HTMLElement | null>(null);
   let noteInput = $state<HTMLInputElement | null>(null);
 
   const decide: SubmitFunction = (input) => {
+    resetReasonPicker();
     const ruling = RULINGS.find((r) => r.verdict === input.formData.get('ruling'));
+    const unavailable = ruling ? unavailableFor(ruling.verdict) : null;
     const refusal = !ruling
       ? 'Pick a decision.'
-      : (unavailableFor(ruling.verdict) ??
-        decisionReasonProblem('lockReview', ruling.verdict, ruling.label, draft.reason, draft.note));
+      : (unavailable ??
+        decisionReasonProblem('lockReview', ruling.verdict, ruling.label, reason, draft.note));
     if (!ruling || refusal) {
       input.cancel();
       problem = refusal;
-      reasonSelect?.focus();
+      if (!unavailable) reasonSelect?.focus();
       return;
     }
     problem = null;
@@ -118,12 +135,30 @@
   {/each}
 {/snippet}
 
+{#snippet picker()}
+  {@const ruling = reasonPicker.open === null ? undefined : RULINGS[reasonPicker.open]}
+  {#if ruling}
+    <ReasonPicker
+      index={reasonPicker.open!}
+      label={ruling.label}
+      reasons={reasonsFor(ruling.verdict)}
+      current={reason}
+      note={draft.note}
+      onreason={(next) => {
+        draft = { ...draft, reason: next };
+        problem = null;
+      }}
+      onneednote={() => noteInput?.focus()}
+    />
+  {/if}
+{/snippet}
+
 {#snippet fields()}
   <InlineReasonFields
     compact
     options={reasonOptions}
     bind:reason={
-      () => draft.reason,
+      () => reason,
       (next) => {
         draft = { ...draft, reason: next };
         problem = null;
@@ -139,6 +174,7 @@
     }
     bind:select={reasonSelect}
     bind:noteInput
+    onenter={() => submitAwaitingNote(RULINGS.length)}
   />
 {/snippet}
 
@@ -177,7 +213,13 @@
   {#snippet decision()}
     <form method="POST" action={actionHref('rejectLockReview')} use:enhance={decide} class="w-full">
       <input type="hidden" name="modelId" value={row.modelId} />
-      <TriageDecisionBar compact {buttons} {fields} {problem} />
+      <TriageDecisionBar
+        compact
+        {buttons}
+        picker={reasonPicker.open !== null ? picker : undefined}
+        {fields}
+        {problem}
+      />
     </form>
   {/snippet}
 </ModelFlagDetailFrame>

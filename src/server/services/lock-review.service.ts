@@ -14,12 +14,8 @@ import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
-import {
-  accountHoldSql,
-  holdMarkerViewExists,
-  isAccountUnderLegalHold,
-} from '~/server/services/legal-hold.service';
-import { resolveEntityAppeal } from '~/server/services/report.service';
+import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { type ResolvedAppeal, settleResolvedAppeals } from '~/server/services/report.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
@@ -32,8 +28,8 @@ export type LockReviewState = {
   reopensAt: Date | null;
 };
 
-/** Every refusal an owner can be given. One text, so it says nothing about which check failed. */
 export const LOCK_REVIEW_UNAVAILABLE = "That setting can't be reviewed this way.";
+/** Moderators only. An owner under a hold files as anyone else: refusing them would reveal it. */
 export const LOCK_REVIEW_HELD =
   "The owner's account is under an evidence hold, so this review can't be approved now.";
 
@@ -58,7 +54,7 @@ export async function getLockReviewState({
   const requestable = requestableLocks(model);
   if (!requestable.length) return { requestable, pending: false, reopensAt: null };
 
-  // One in-app appeal row per owner and model, reused on every request.
+  // Flag appeals and lock reviews share one in-app row per owner and model, reopened on every request.
   const latest = await db.appeal.findFirst({
     where: { entityType: EntityType.Model, entityId: modelId, userId, category: null },
     orderBy: { id: 'desc' },
@@ -82,7 +78,6 @@ export async function getLockReviewState({
   };
 }
 
-/** The `Appeal.context` for an owner's request, or a refusal. */
 export async function assertLockReviewAllowed({
   modelId,
   userId,
@@ -108,9 +103,6 @@ export async function assertLockReviewAllowed({
         'MMMM D, YYYY'
       )}.`
     );
-  // Unknown counts as held. Refused in the words of every other refusal, so it reveals no hold.
-  if ((await isAccountUnderLegalHold(userId)) !== false)
-    throw throwBadRequestError(LOCK_REVIEW_UNAVAILABLE);
   return lockReviewContext(locks as RequestableLock[]);
 }
 
@@ -131,28 +123,27 @@ export async function resolveLockReviewAppeal({
   resolvedReason?: string;
   internalNotes?: string;
 }) {
+  const status = approve ? AppealStatus.Approved : AppealStatus.Rejected;
   if (resolvedReason) {
-    const invalid = resolutionReasonError(
-      'lockReview',
-      approve ? 'Approved' : 'Rejected',
-      resolvedReason,
-      internalNotes
-    );
+    const invalid = resolutionReasonError('lockReview', status, resolvedReason, internalNotes);
     if (invalid) throw throwBadRequestError(invalid);
   }
 
   const markerView = approve ? await holdMarkerViewExists() : false;
-  const unlocked = await dbWrite.$transaction(async (tx) => {
+  const { claimed, unlocked } = await dbWrite.$transaction(async (tx) => {
     const [row] = await tx.$queryRaw<
       {
+        id: number;
         context: unknown;
         lockedProperties: string[] | null;
         poi: boolean;
         minor: boolean;
         held: boolean;
+        ownerFiled: boolean;
       }[]
     >`
-      SELECT a.context, m."lockedProperties", m.poi, m.minor,
+      SELECT a.id, a.context, m."lockedProperties", m.poi, m.minor,
+        a."userId" = m."userId" AS "ownerFiled",
         ${
           approve ? accountHoldSql(Prisma.raw('m."userId"'), markerView) : Prisma.sql`FALSE`
         } AS held
@@ -161,45 +152,57 @@ export async function resolveLockReviewAppeal({
       WHERE a."entityType" = 'Model' AND a."entityId" = ${modelId}
         AND a.status = 'Pending' AND a.category IS NULL
         AND a.context->>'kind' = ${LOCK_REVIEW_KIND}
+      ORDER BY "ownerFiled" DESC, a.id DESC
+      LIMIT 1
       FOR UPDATE OF a, m
     `;
     const asked = parseLockReviewContext(row?.context);
     if (!row || !asked)
       throw throwBadRequestError('This model has no pending locked-setting review');
-    if (!approve) return [];
-    if (row.held) throw throwBadRequestError(LOCK_REVIEW_HELD);
-    if (row.poi || row.minor)
-      throw throwBadRequestError(
-        'This model is now flagged as a real person or a minor; its locks stay. Reject the review instead.'
-      );
 
-    const locked = row.lockedProperties ?? [];
-    const lift = locksToLift(asked.locks, locked);
-    if (lift.length)
-      await tx.model.update({
-        where: { id: modelId },
-        data: { lockedProperties: locked.filter((key) => !(lift as string[]).includes(key)) },
-      });
-    return lift;
+    let lift: RequestableLock[] = [];
+    if (approve) {
+      if (!row.ownerFiled)
+        throw throwBadRequestError(
+          'The model has changed owner since this was requested; reject the review instead.'
+        );
+      if (row.held) throw throwBadRequestError(LOCK_REVIEW_HELD);
+      const locked = row.lockedProperties ?? [];
+      if (row.poi || row.minor || locked.includes('poi') || locked.includes('minor'))
+        throw throwBadRequestError(
+          'This model is now flagged as a real person or a minor; its locks stay. Reject the review instead.'
+        );
+      lift = locksToLift(asked.locks, locked);
+      if (lift.length)
+        await tx.model.update({
+          where: { id: modelId },
+          data: { lockedProperties: locked.filter((key) => !(lift as string[]).includes(key)) },
+        });
+    }
+
+    // Closed under the same lock, so a second moderator's ruling finds nothing pending.
+    const claimed = await tx.$queryRaw<ResolvedAppeal[]>`
+      UPDATE "Appeal"
+      SET status = ${status}::"AppealStatus", "resolvedBy" = ${userId}, "resolvedAt" = now(),
+        "resolvedReason" = ${resolvedReason ?? null}, "internalNotes" = ${internalNotes ?? null},
+        "resolvedMessage" = NULL, "updatedAt" = now()
+      WHERE id = ${row.id} AND status = 'Pending'
+      RETURNING id, "entityId", "entityType", "resolvedAt", "buzzTransactionId", status, "userId",
+        "createdAt"
+    `;
+    if (!claimed.length) throw throwBadRequestError('This review was ruled on meanwhile; reload.');
+
+    // The same rows a moderator's own unlock on the model form writes.
+    for (const activity of [
+      approve ? ('approveLockReview' as const) : ('rejectLockReview' as const),
+      ...lift.map((key) => `unlockProperty:${key}` as const),
+    ])
+      await trackModActivity(userId, { entityType: 'model', entityId: modelId, activity }, tx);
+
+    return { claimed, unlocked: lift };
   });
+
   if (unlocked.length) await preventReplicationLag('model', modelId);
-
-  await resolveEntityAppeal({
-    ids: [modelId],
-    entityType: EntityType.Model,
-    status: approve ? AppealStatus.Approved : AppealStatus.Rejected,
-    resolvedReason,
-    internalNotes,
-    userId,
-    modelAppealKind: 'lock-review',
-  });
-
-  // The same rows a moderator's own unlock on the model form writes.
-  for (const activity of [
-    approve ? ('approveLockReview' as const) : ('rejectLockReview' as const),
-    ...unlocked.map((key) => `unlockProperty:${key}` as const),
-  ])
-    await trackModActivity(userId, { entityType: 'model', entityId: modelId, activity });
-
+  await settleResolvedAppeals(claimed, { status });
   return { unlocked };
 }

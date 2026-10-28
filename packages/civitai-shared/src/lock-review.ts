@@ -1,6 +1,4 @@
-// An owner's request that a moderator review a setting a moderator locked on their model. Filed as an
-// `Appeal` row by the main app and ruled on in the moderator app's model-flag appeals queue, so both
-// read the row's `context` through this module.
+// Shared because the main app files the Appeal row and the moderator app rules on it.
 
 /** `Appeal.context.kind` on a lock review; any other in-app model appeal is against a flag. */
 export const LOCK_REVIEW_KIND = 'lock-review';
@@ -55,6 +53,5 @@ export const requestableLocks = (model?: LockReviewModelFlags | null): Requestab
   return REQUESTABLE_LOCKS.filter((key) => locked.includes(key));
 };
 
-/** The locks an approval lifts: those the owner named that are still locked when it is approved. */
 export const locksToLift = (named: readonly string[], locked: readonly (string | null)[]) =>
   REQUESTABLE_LOCKS.filter((key) => named.includes(key) && locked.includes(key));

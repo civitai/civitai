@@ -4,6 +4,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLag from '~/server/db/db-lag-helpers';
+import type * as Email from '~/server/email/templates';
 import type * as LegalHold from '~/server/services/legal-hold.service';
 import type * as ModeratorService from '~/server/services/moderator.service';
 import type * as NotificationService from '~/server/services/notification.service';
@@ -20,18 +21,19 @@ import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 const mocks = vi.hoisted(() => ({
-  resolveEntityAppeal: vi.fn(),
+  settleResolvedAppeals: vi.fn(),
   createEntityAppeal: vi.fn(),
   reopenAppeal: vi.fn(),
   getLatestAppeal: vi.fn(),
   trackModActivity: vi.fn(),
   isAccountUnderLegalHold: vi.fn(),
   createNotification: vi.fn(),
+  sendEmail: vi.fn(),
 }));
 
 vi.mock('~/server/services/report.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReportService>()),
-  resolveEntityAppeal: mocks.resolveEntityAppeal,
+  settleResolvedAppeals: mocks.settleResolvedAppeals,
   createEntityAppeal: mocks.createEntityAppeal,
   reopenAppeal: mocks.reopenAppeal,
   getLatestAppeal: mocks.getLatestAppeal,
@@ -55,6 +57,10 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
   createNotification: mocks.createNotification,
 }));
+vi.mock('~/server/email/templates', async (importOriginal) => ({
+  ...(await importOriginal<typeof Email>()),
+  moderationActionEmail: { send: mocks.sendEmail },
+}));
 
 const { resolveLockReviewAppeal, getLockReviewState, LOCK_REVIEW_HELD, LOCK_REVIEW_UNAVAILABLE } =
   await import('~/server/services/lock-review.service');
@@ -65,13 +71,16 @@ const actualReport = await vi.importActual<typeof ReportService>(
 
 const MODEL = 71;
 const OWNER = 82;
+const NEW_OWNER = 83;
 const MODERATOR = 3;
+const OTHER_MODERATOR = 4;
 
 let db: PGlite;
 
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
+    CREATE TYPE "AppealStatus" AS ENUM ('Pending', 'Approved', 'Rejected', 'Void');
     CREATE TABLE "Model" (
       id int PRIMARY KEY,
       "userId" int NOT NULL,
@@ -85,15 +94,24 @@ beforeAll(async () => {
       "userId" int NOT NULL,
       "entityType" text NOT NULL,
       "entityId" int NOT NULL,
-      status text NOT NULL DEFAULT 'Pending',
+      status "AppealStatus" NOT NULL DEFAULT 'Pending',
       category text,
-      context jsonb
+      context jsonb,
+      "buzzTransactionId" text,
+      "createdAt" timestamp(3) NOT NULL DEFAULT now(),
+      "updatedAt" timestamp(3),
+      "resolvedAt" timestamp(3),
+      "resolvedBy" int,
+      "resolvedReason" text,
+      "resolvedMessage" text,
+      "internalNotes" text
     );
     CREATE TABLE "Held" ("userId" int PRIMARY KEY);
   `);
   const raw = pgliteRaw(db);
   const tx = {
     $queryRaw: raw.queryRaw,
+    $executeRaw: raw.executeRaw,
     model: {
       update: async ({ where, data }: { where: { id: number }; data: Record<string, unknown> }) => {
         const keys = Object.keys(data);
@@ -116,19 +134,20 @@ type Seed = {
   poi?: boolean;
   minor?: boolean;
   held?: boolean;
+  owner?: number;
 };
 
-async function seed({ locked, asked = ['nsfw'], nsfw = true, poi, minor, held }: Seed) {
+async function seed({ locked, asked = ['nsfw'], nsfw = true, poi, minor, held, owner }: Seed) {
   await db.exec(`DELETE FROM "Model"; DELETE FROM "Appeal"; DELETE FROM "Held";`);
   await db.query(
     `INSERT INTO "Model" (id, "userId", "lockedProperties", nsfw, poi, minor) VALUES ($1, $2, $3, $4, $5, $6)`,
-    [MODEL, OWNER, locked, nsfw, !!poi, !!minor]
+    [MODEL, owner ?? OWNER, locked, nsfw, !!poi, !!minor]
   );
   await db.query(
     `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", context) VALUES (1, $1, 'Model', $2, $3)`,
     [OWNER, MODEL, { kind: 'lock-review', locks: asked }]
   );
-  if (held) await db.query(`INSERT INTO "Held" ("userId") VALUES ($1)`, [OWNER]);
+  if (held) await db.query(`INSERT INTO "Held" ("userId") VALUES ($1)`, [owner ?? OWNER]);
 }
 
 const modelRow = async () =>
@@ -139,15 +158,24 @@ const modelRow = async () =>
     )
   ).rows[0];
 
-const approve = () => resolveLockReviewAppeal({ modelId: MODEL, approve: true, userId: MODERATOR });
-const reject = () => resolveLockReviewAppeal({ modelId: MODEL, approve: false, userId: MODERATOR });
+const appealRow = async () =>
+  (
+    await db.query<{ status: string; resolvedBy: number | null }>(
+      `SELECT status, "resolvedBy" FROM "Appeal" WHERE id = 1`
+    )
+  ).rows[0];
+
+const approve = (userId = MODERATOR) =>
+  resolveLockReviewAppeal({ modelId: MODEL, approve: true, userId });
+const reject = (userId = MODERATOR) =>
+  resolveLockReviewAppeal({ modelId: MODEL, approve: false, userId });
 
 const loggedActivities = () =>
   mocks.trackModActivity.mock.calls.map(([, input]) => (input as { activity: string }).activity);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.resolveEntityAppeal.mockResolvedValue([]);
+  mocks.settleResolvedAppeals.mockResolvedValue([]);
   mocks.createEntityAppeal.mockResolvedValue({ id: 1 });
   mocks.reopenAppeal.mockResolvedValue({ id: 1 });
   mocks.getLatestAppeal.mockResolvedValue(null);
@@ -163,12 +191,10 @@ describe('approving a lock review', () => {
 
     expect(unlocked).toEqual(['nsfw']);
     expect(await modelRow()).toEqual({ lockedProperties: ['category', 'tags'], nsfw: true });
-    expect(mocks.resolveEntityAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({
-        ids: [MODEL],
-        status: AppealStatus.Approved,
-        modelAppealKind: 'lock-review',
-      })
+    expect(await appealRow()).toEqual({ status: 'Approved', resolvedBy: MODERATOR });
+    expect(mocks.settleResolvedAppeals).toHaveBeenCalledWith(
+      [expect.objectContaining({ id: 1, userId: OWNER, status: 'Approved' })],
+      { status: AppealStatus.Approved }
     );
     expect(loggedActivities()).toEqual(['approveLockReview', 'unlockProperty:nsfw']);
   });
@@ -179,27 +205,54 @@ describe('approving a lock review', () => {
     await expect(approve()).rejects.toThrow(LOCK_REVIEW_HELD);
     expect(LOCK_REVIEW_HELD).toContain('under an evidence hold');
     expect((await modelRow()).lockedProperties).toEqual(['nsfw']);
-    expect(mocks.resolveEntityAppeal).not.toHaveBeenCalled();
+    expect((await appealRow()).status).toBe('Pending');
+    expect(mocks.settleResolvedAppeals).not.toHaveBeenCalled();
     expect(mocks.trackModActivity).not.toHaveBeenCalled();
   });
 
-  it.each([{ poi: true }, { minor: true }])(
-    'refuses once the model is flagged (%o), leaving its locks',
+  it.each([
+    { poi: true },
+    { minor: true },
+    { locked: ['nsfw', 'minor'] },
+    { locked: ['nsfw', 'poi'] },
+  ])(
+    'refuses once the model is flagged or locked as a real person or a minor (%o)',
     async (flag) => {
       await seed({ locked: ['nsfw'], ...flag });
+      const before = (await modelRow()).lockedProperties;
 
       await expect(approve()).rejects.toThrow(/real person or a minor/);
-      expect((await modelRow()).lockedProperties).toEqual(['nsfw']);
-      expect(mocks.resolveEntityAppeal).not.toHaveBeenCalled();
+      expect((await modelRow()).lockedProperties).toEqual(before);
+      expect((await appealRow()).status).toBe('Pending');
     }
   );
 
-  it('refuses a model whose pending appeal is a flag appeal', async () => {
+  it('refuses a request filed by someone who no longer owns the model', async () => {
+    await seed({ locked: ['nsfw'], owner: NEW_OWNER });
+
+    await expect(approve()).rejects.toThrow(/changed owner/);
+    expect((await modelRow()).lockedProperties).toEqual(['nsfw']);
+  });
+
+  it.each([
+    ['a flag appeal', `UPDATE "Appeal" SET context = NULL`],
+    ['an already rejected request', `UPDATE "Appeal" SET status = 'Rejected'`],
+  ])('refuses %s', async (_, change) => {
     await seed({ locked: ['nsfw'] });
-    await db.query(`UPDATE "Appeal" SET context = NULL`);
+    await db.query(change);
 
     await expect(approve()).rejects.toThrow(/no pending locked-setting review/);
     expect((await modelRow()).lockedProperties).toEqual(['nsfw']);
+  });
+
+  it('leaves nothing for a second moderator to rule on', async () => {
+    await seed({ locked: ['nsfw'] });
+
+    await approve();
+    await expect(reject(OTHER_MODERATOR)).rejects.toThrow(/no pending locked-setting review/);
+
+    expect(await appealRow()).toEqual({ status: 'Approved', resolvedBy: MODERATOR });
+    expect(mocks.settleResolvedAppeals).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -211,56 +264,44 @@ describe('rejecting a lock review', () => {
 
     expect(unlocked).toEqual([]);
     expect((await modelRow()).lockedProperties).toEqual(['nsfw', 'tags']);
-    expect(mocks.resolveEntityAppeal).toHaveBeenCalledWith(
-      expect.objectContaining({ status: AppealStatus.Rejected, modelAppealKind: 'lock-review' })
-    );
+    expect(await appealRow()).toEqual({ status: 'Rejected', resolvedBy: MODERATOR });
     expect(loggedActivities()).toEqual(['rejectLockReview']);
   });
 
-  it('tells the owner through the existing appeal-resolved notification', async () => {
-    dbMock.dbWrite.appeal.updateManyAndReturn.mockResolvedValue([
-      {
-        id: 1,
-        entityId: MODEL,
-        entityType: EntityType.Model,
-        resolvedAt: new Date(),
-        buzzTransactionId: null,
-        status: AppealStatus.Rejected,
-        userId: OWNER,
-        createdAt: new Date(),
-      },
+  it('tells the owner in the standard rejection words, never naming a hold', async () => {
+    await seed({ locked: ['nsfw'], held: true });
+    await expect(approve()).rejects.toThrow(LOCK_REVIEW_HELD);
+    await reject();
+    const [claimed, options] = mocks.settleResolvedAppeals.mock.calls[0];
+
+    dbMock.dbRead.user.findMany.mockResolvedValue([
+      { id: OWNER, email: 'owner@example.test', username: 'owner' },
     ] as never);
+    await actualReport.settleResolvedAppeals(claimed, options);
 
-    await actualReport.resolveEntityAppeal({
-      ids: [MODEL],
-      entityType: EntityType.Model,
-      status: AppealStatus.Rejected,
-      userId: MODERATOR,
-      modelAppealKind: 'lock-review',
-    });
-
-    expect(dbMock.dbWrite.appeal.updateManyAndReturn).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({ context: { path: ['kind'], equals: 'lock-review' } }),
-      })
-    );
     expect(mocks.createNotification).toHaveBeenCalledWith(
       expect.objectContaining({
         userId: OWNER,
         type: 'entity-appeal-resolved',
-        details: expect.objectContaining({ status: AppealStatus.Rejected }),
+        details: {
+          entityType: EntityType.Model,
+          entityId: MODEL,
+          status: AppealStatus.Rejected,
+          resolvedMessage: undefined,
+        },
       })
     );
+    expect(mocks.sendEmail).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'appeal-rejected' })
+    );
+    expect(
+      JSON.stringify([mocks.createNotification.mock.calls, mocks.sendEmail.mock.calls])
+    ).not.toMatch(/hold/i);
   });
 
   it('starts the 30-day cooldown while every setting asked about stays locked', async () => {
     const resolvedAt = new Date();
-    dbMock.dbRead.model.findUnique.mockResolvedValue({
-      userId: OWNER,
-      lockedProperties: ['nsfw'],
-      poi: false,
-      minor: false,
-    } as never);
+    ownModel();
     dbMock.dbRead.appeal.findFirst.mockResolvedValue({
       status: AppealStatus.Rejected,
       resolvedAt,
@@ -275,6 +316,17 @@ describe('rejecting a lock review', () => {
     ).rejects.toThrow(/You can ask again on/);
     expect(mocks.createEntityAppeal).not.toHaveBeenCalled();
     expect(mocks.reopenAppeal).not.toHaveBeenCalled();
+  });
+
+  it('ends the cooldown once 30 days have passed', async () => {
+    ownModel();
+    dbMock.dbRead.appeal.findFirst.mockResolvedValue({
+      status: AppealStatus.Rejected,
+      resolvedAt: new Date(Date.now() - 31 * 24 * 60 * 60 * 1000),
+      context: { kind: 'lock-review', locks: ['nsfw'] },
+    } as never);
+
+    expect((await getLockReviewState({ modelId: MODEL, userId: OWNER }))?.reopensAt).toBeNull();
   });
 });
 
@@ -310,7 +362,7 @@ const request = (locks?: string[]) => ({
   ...(locks && { locks }),
 });
 
-const ownModel = (fields: Record<string, unknown> = {}) =>
+function ownModel(fields: Record<string, unknown> = {}) {
   dbMock.dbRead.model.findUnique.mockResolvedValue({
     userId: OWNER,
     lockedProperties: ['nsfw'],
@@ -319,6 +371,7 @@ const ownModel = (fields: Record<string, unknown> = {}) =>
     meta: null,
     ...fields,
   } as never);
+}
 
 /** The refusal as the caller sees it: tRPC code and message. */
 const refusal = (promise: Promise<unknown>) =>
@@ -338,6 +391,28 @@ describe("an owner's request", () => {
         entityId: MODEL,
         context: { kind: 'lock-review', locks: ['nsfw'] },
         skipFee: true,
+      })
+    );
+  });
+
+  it('reopens the earlier row as a lock review once the cooldown is over', async () => {
+    ownModel();
+    mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Rejected });
+
+    await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
+
+    expect(mocks.reopenAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 9, context: { kind: 'lock-review', locks: ['nsfw'] } })
+    );
+
+    await actualReport.reopenAppeal({
+      id: 9,
+      message: 'again',
+      context: { kind: 'lock-review', locks: ['nsfw'] },
+    });
+    expect(dbMock.dbWrite.appeal.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ context: { kind: 'lock-review', locks: ['nsfw'] } }),
       })
     );
   });
@@ -363,22 +438,15 @@ describe("an owner's request", () => {
     expect(mocks.reopenAppeal).toHaveBeenCalledWith(expect.objectContaining({ context: null }));
   });
 
-  it.each([true, null])(
-    'under a hold (%s) is refused exactly as an unrequestable setting is',
-    async (held) => {
-      ownModel({ lockedProperties: ['nsfw', 'tags'] });
-      const notRequestable = await refusal(
-        createEntityAppealHandler({ input: request(['category']), ctx: owner() })
-      );
+  it.each([true, null])('under a hold (%s) files exactly as without one', async (held) => {
+    ownModel();
+    const unheld = await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
+    const unheldRow = mocks.createEntityAppeal.mock.calls[0];
 
-      mocks.isAccountUnderLegalHold.mockResolvedValue(held);
-      const underHold = await refusal(
-        createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() })
-      );
+    mocks.isAccountUnderLegalHold.mockResolvedValue(held);
+    const underHold = await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
 
-      expect(notRequestable).toEqual({ code: 'BAD_REQUEST', message: LOCK_REVIEW_UNAVAILABLE });
-      expect(underHold).toEqual(notRequestable);
-      expect(mocks.createEntityAppeal).not.toHaveBeenCalled();
-    }
-  );
+    expect(underHold).toEqual(unheld);
+    expect(mocks.createEntityAppeal.mock.calls[1]).toEqual(unheldRow);
+  });
 });

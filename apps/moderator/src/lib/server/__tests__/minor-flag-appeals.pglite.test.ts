@@ -828,6 +828,18 @@ describe('lock review rows', () => {
     expect(items.find((i) => i.modelId === 1)!.lockReview).toBeNull();
   });
 
+  it("are not counted as the owner's past flag appeals", async () => {
+    await db.exec(`INSERT INTO "Appeal" ("id","userId","entityType","entityId","status","createdAt","context") VALUES
+      (71, 10, 'Model', 9, 'Rejected', '2026-09-01', '{"kind":"lock-review","locks":["nsfw"]}'::jsonb)`);
+    const { items } = await getMinorFlagAppealsForReview({ limit: 50 });
+    expect(items.find((i) => i.modelId === 1)!.pastAppeals).toEqual({
+      approved: 0,
+      rejected: 0,
+      void: 0,
+      pending: 1,
+    });
+  });
+
   it('are counted under Locked setting in the facets', async () => {
     const f = appealFacets(await getMinorFlagAppealGroups({}), DEFAULT_APPEAL_FILTERS);
     expect(f.flag).toMatchObject({ all: 8, lock: 1, minor: 3, poi: 3 });

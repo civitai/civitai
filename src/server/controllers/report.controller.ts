@@ -140,7 +140,6 @@ export async function createEntityAppealHandler({
         if (model.userId !== userId) throw throwAuthorizationError();
 
         if (input.locks) {
-          // Refuses a model marked as a real person or a minor: its owner appeals the flag instead.
           context = await assertLockReviewAllowed({
             modelId: input.entityId,
             userId,
@@ -151,7 +150,7 @@ export async function createEntityAppealHandler({
           // Legacy flags carry no snapshot and are deliberately excluded.
           throw throwBadRequestError('This model has no automated flag to review');
 
-        // Asking again after a denial is intended, so reuse the row, as the request now describes it.
+        // Asking again after a denial is intended, so reuse the row.
         const existing = await getLatestAppeal({ ...input, userId });
         if (existing?.status === AppealStatus.Pending)
           throw throwBadRequestError('Your review request for this model is already under review');

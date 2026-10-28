@@ -379,7 +379,8 @@ LEFT JOIN LATERAL (
          count(*) FILTER (WHERE pa.status::text = 'Void')::int AS void,
          count(*) FILTER (WHERE pa.status::text = 'Pending')::int AS pending
   FROM "Appeal" pa
-  WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' AND pa.category IS NULL ${exclude}
+  WHERE pa."userId" = pg."userId" AND pa."entityType" = 'Model' AND pa.category IS NULL
+    AND COALESCE(pa.context->>'kind', '') <> ${LOCK_REVIEW_KIND} ${exclude}
 ) ap ON TRUE
 `;
 
@@ -395,6 +396,7 @@ LEFT JOIN LATERAL (
          count(DISTINCT sa."entityId")::int AS models
   FROM "Appeal" sa
   WHERE sa."entityType" = 'Model' AND sa.category IS NULL AND sa."entityId" <> pg."modelId"
+    AND COALESCE(sa.context->>'kind', '') <> ${LOCK_REVIEW_KIND}
     AND sa."entityId" IN (
       SELECT ov."modelId"
       FROM "ModelVersion" mv
@@ -1391,11 +1393,11 @@ export async function getModelFlagState(modelId: number) {
 }
 
 /** Whether the owner has an open flag appeal on the model: the Appeals tab's rule. A site-form appeal
- *  carries a category and is not one. */
+ *  carries a category and a lock review a context kind; neither is one. */
 const pendingModelAppealExists = (modelId: RawBuilder<unknown>) => sql<boolean>`EXISTS (
   SELECT 1 FROM "Appeal" a
   WHERE a."entityType" = 'Model' AND a."entityId" = ${modelId}
-    AND a.status::text = 'Pending' AND a.category IS NULL
+    AND a.status::text = 'Pending' AND a.category IS NULL AND NOT ${isLockReviewSql}
 )`;
 
 const textScanEntryView = (label: 'minor' | 'poi') => sql`jsonb_build_object(

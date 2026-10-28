@@ -157,7 +157,7 @@ export const RESOLUTION_REASONS = {
       OTHER,
     ],
   },
-  // An owner's request to review a setting a moderator locked. Approved unlocks it, Rejected keeps it.
+  // An owner's request to review a setting a moderator locked.
   lockReview: {
     Approved: [
       {
