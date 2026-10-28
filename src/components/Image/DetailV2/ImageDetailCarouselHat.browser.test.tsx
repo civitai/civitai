@@ -28,8 +28,8 @@ const HAT = svg(10, 10, '#e64980');
 
 const mocks = vi.hoisted(() => ({
   state: { cover: false },
-  image: (hatted: boolean, width = 2000, height = 1000) => ({
-    id: 1,
+  image: (hatted: boolean, width = 2000, height = 1000, id = 1) => ({
+    id,
     nsfwLevel: 1,
     url: 'picture',
     width,
@@ -90,17 +90,30 @@ import { getHatLayout } from '~/components/Cosmetics/EventDecoration/event-decor
 const onClose = vi.fn();
 let setSlot: (size: { width: number; height: number }) => void = () => undefined;
 
-function Viewer({ image, bare }: { image: ReturnType<typeof mocks.image>; bare?: boolean }) {
+let goNext: () => void = () => undefined;
+
+function Viewer({
+  image,
+  second,
+  bare,
+}: {
+  image: ReturnType<typeof mocks.image>;
+  second?: ReturnType<typeof mocks.image>;
+  bare?: boolean;
+}) {
   const [slot, set] = useState({ width: 800, height: 600 });
+  const [index, setIndex] = useState(0);
+  goNext = () => setIndex(1);
   setSlot = set;
   const stage = (
     <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
       <div className="relative flex min-h-0 flex-1 flex-col">
         <ImageDetailCarousel
-          images={[image]}
-          index={0}
-          canNavigate={false}
-          next={() => undefined}
+          images={second ? [image, second] : [image]}
+          index={index}
+          canNavigate={!!second}
+          loop={false}
+          next={() => setIndex(1)}
           previous={() => undefined}
         />
       </div>
@@ -223,18 +236,41 @@ describe('the image detail wears the image hat on the picture', () => {
     expect(document.activeElement).toBe(hat());
   });
 
-  test('stickers paint and take the pointer above the hat', async () => {
+  test('the hat takes the pointer in its own shape, a sticker over the picture everywhere else', async () => {
     mocks.state.cover = true;
     renderWithProviders(<Viewer image={mocks.image(true)} bare />);
     await vi.waitFor(() => expect(hat()).not.toBeNull());
     await expectOnPictureCorner();
-    // Every point of the hat is under the sticker, so the sticker is what the pointer reaches.
+    // The hat is drawn outside the slide (it hangs past the picture), so it sits above the sticker;
+    // its pointer area is its own outline, so the sticker still gets the rest of its box.
     const h = rect(hat());
-    const hits = new Set<string | null>();
+    const hits = new Set<string>();
     for (let x = h.left + 2; x < h.right - 2; x += 4)
-      for (let y = h.top + 2; y < h.bottom - 2; y += 4)
-        hits.add(document.elementFromPoint(x, y)?.getAttribute('data-testid') ?? null);
-    expect([...hits]).toEqual(['sticker']);
+      for (let y = h.top + 2; y < h.bottom - 2; y += 4) {
+        const at = document.elementFromPoint(x, y);
+        hits.add(
+          at?.closest('[data-event-decoration="hat"]')
+            ? 'hat'
+            : at?.getAttribute('data-testid') ?? ''
+        );
+      }
+    expect([...hits].sort()).toEqual(['hat', 'sticker']);
+  });
+
+  test('the hat is out of sight while the carousel moves and is back on the next picture', async () => {
+    renderWithProviders(
+      <Viewer image={mocks.image(true)} second={mocks.image(true, 2000, 1000, 2)} />
+    );
+    await vi.waitFor(() => expect(hat()).not.toBeNull());
+    goNext();
+    // A slide on its way has no hat left behind in the layer.
+    await vi.waitFor(() => expect(hat()).toBeNull());
+    // Settled on the second picture: the hat is back on its corner.
+    await vi.waitFor(() => expect(hat()).not.toBeNull(), { timeout: 3000 });
+    const pictures = [...document.querySelectorAll('[data-testid="picture"]')];
+    const second = rect(pictures[1]);
+    expect(rect(hat()).bottom).toBeGreaterThan(second.top + 4);
+    expect(rect(hat()).top).toBeLessThan(second.top - 4);
   });
 
   test('gate: no hat when the image carries none', async () => {
