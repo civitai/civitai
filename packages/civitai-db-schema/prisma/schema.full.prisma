@@ -7969,6 +7969,27 @@ model NewOrderPlayer {
   fervor        Int              @default(0)
   smiteReceived NewOrderSmite[]  @relation("smiteReceived")
   smiteGiven    NewOrderSmite[]  @relation("smiteGiven")
+
+  payoutBlockedAt   DateTime?
+  payoutBlockReason String?
+  payoutBlockedBy   Int?
+  payoutReleaseFrom DateTime?
+}
+
+model NewOrderLinkReview {
+  id          Int       @id @default(autoincrement())
+  fingerprint String    @unique
+  userIds     Int[]
+  evidence    Json
+  buzzMoved   Int       @default(0)
+  autoBlocked Boolean   @default(false)
+  status      String    @default("Pending")
+  reviewedBy  Int?
+  reviewedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([status, createdAt])
 }
 
 enum NewOrderRankType {

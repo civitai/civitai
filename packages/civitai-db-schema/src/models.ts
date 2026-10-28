@@ -5021,6 +5021,24 @@ export interface NewOrderPlayer {
   fervor: number;
   smiteReceived?: NewOrderSmite[];
   smiteGiven?: NewOrderSmite[];
+  payoutBlockedAt: Date | null;
+  payoutBlockReason: string | null;
+  payoutBlockedBy: number | null;
+  payoutReleaseFrom: Date | null;
+}
+
+export interface NewOrderLinkReview {
+  id: number;
+  fingerprint: string;
+  userIds: number[];
+  evidence: JsonValue;
+  buzzMoved: number;
+  autoBlocked: boolean;
+  status: string;
+  reviewedBy: number | null;
+  reviewedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface NewOrderRank {
