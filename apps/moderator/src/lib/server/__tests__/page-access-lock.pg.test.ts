@@ -15,9 +15,13 @@ import { executableSchemaSql, pgliteDialect } from './abuse-detection-pglite.har
  * write must not be overwritten by that save. History stays on PGlite; only the grant needs two sessions.
  */
 
-const SERVER_URL = process.env.MODERATOR_TEST_DATABASE_URL;
+// TEMPORARY fallback: the app unit tests job sets only the assistant runner's URL to its Postgres
+// service. Remove it once that job sets MODERATOR_TEST_DATABASE_URL too.
+const SERVER_URL =
+  process.env.MODERATOR_TEST_DATABASE_URL ?? process.env.ASSISTANT_RUNNER_TEST_DATABASE_URL;
 const describePg = SERVER_URL ? describe : describe.skip;
-if (process.env.CI && !SERVER_URL) throw new Error('MODERATOR_TEST_DATABASE_URL is not set in CI');
+if (process.env.CI && !SERVER_URL)
+  throw new Error('MODERATOR_TEST_DATABASE_URL (or its fallback) is not set in CI');
 
 const handles = vi.hoisted(() => ({ main: null as unknown, history: null as unknown }));
 vi.mock('../db', () => ({
