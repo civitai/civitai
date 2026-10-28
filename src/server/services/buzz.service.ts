@@ -64,6 +64,7 @@ import {
 } from '~/shared/constants/buzz.constants';
 import { clampRewardMultiplier } from '~/server/rewards/multiplier';
 import type { PaymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
+import { paymentIntentMetadataSchema } from '~/server/schema/stripe.schema';
 import { createNotification } from '~/server/services/notification.service';
 import { logToAxiom } from '~/server/logging/client';
 import { createCachedObject, fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -978,6 +979,7 @@ export async function completeStripeBuzzTransaction({
   transactionId: string;
 }> {
   let stage = 'init';
+  let rejected = false;
   try {
     const stripe = await getServerStripe();
     if (!stripe) {
@@ -995,6 +997,36 @@ export async function completeStripeBuzzTransaction({
 
     const metadata: PaymentIntentMetadataSchema =
       paymentIntent.metadata as PaymentIntentMetadataSchema;
+
+    // Credit what getPaymentIntent recorded on the intent, to the user it was created for.
+    // getPaymentIntent charges buzzAmount / 10 in the currency's minor unit, whatever the currency.
+    stage = 'verifyPurchase';
+    const parsed = paymentIntentMetadataSchema.safeParse(paymentIntent.metadata);
+    const rejection = !parsed.success
+      ? 'not a buzz purchase'
+      : parsed.data.userId !== Number(userId)
+      ? 'user mismatch'
+      : parsed.data.buzzAmount !== Number(amount)
+      ? 'amount mismatch'
+      : paymentIntent.amount * 10 !== parsed.data.buzzAmount
+      ? 'charge mismatch'
+      : null;
+    if (rejection) {
+      rejected = true;
+      logToAxiom(
+        {
+          name: 'buzz-purchase-completion-rejected',
+          type: 'warning',
+          reason: rejection,
+          userId,
+          stripePaymentIntentId,
+          requestedAmount: amount,
+        },
+        'webhooks'
+      ).catch(() => null);
+      throw throwBadRequestError('Unable to complete this purchase');
+    }
+    const purchaseDetails = { ...parsed.data, stripePaymentIntentId };
 
     if (metadata.transactionId) {
       // Avoid double down on buzz
@@ -1025,7 +1057,7 @@ export async function completeStripeBuzzTransaction({
       }${
         bulkBuzzMultiplier > 1 ? 'Bulk purchase bonus applied. ' : ''
       }A total of ${numberWithCommas(buzzAmount)} Buzz was added to your account.`,
-      details: { ...(details ?? {}), stripePaymentIntentId },
+      details: purchaseDetails,
       externalTransactionId: paymentIntent.id,
     })) as { transactionId: string };
 
@@ -1054,7 +1086,7 @@ export async function completeStripeBuzzTransaction({
         description: `A total of ${numberWithCommas(
           blueBuzzAdded
         )} Blue Buzz was added to your account for Bulk purchase.`,
-        details: { ...(details ?? {}), stripePaymentIntentId },
+        details: purchaseDetails,
       });
       stage = 'stripe.paymentIntents.update:blueBuzzGranted';
       await stripe.paymentIntents.update(stripePaymentIntentId, {
@@ -1083,6 +1115,7 @@ export async function completeStripeBuzzTransaction({
     return data;
   } catch (error) {
     const err = error as Error;
+    if (rejected) throw error;
     const willRetry = retry < MAX_RETRIES;
     logToAxiom(
       {
