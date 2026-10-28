@@ -92,7 +92,7 @@ const flagAppealKind = {
   OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReviewKind }],
 } satisfies Prisma.AppealWhereInput;
 
-/** The owner's latest in-app appeal on the model of one kind: the row a repeat request reopens. */
+/** The owner's in-app appeal on the model of one kind: a pending one, else their latest. */
 export function latestModelAppealOfKind({
   modelId,
   userId,
@@ -110,7 +110,8 @@ export function latestModelAppealOfKind({
       category: null,
       ...(lockReview ? lockReviewKind : flagAppealKind),
     },
-    orderBy: { id: 'desc' },
+    // AppealStatus sorts Pending first. A takeover can leave the pending row older than a resolved one.
+    orderBy: [{ status: 'asc' }, { id: 'desc' }],
     select: { id: true, status: true, resolvedAt: true },
   });
 }
@@ -118,17 +119,13 @@ export function latestModelAppealOfKind({
 /** The owner's pending in-app appeal on the model, of either kind: there is at most one, but it need
  *  not be their newest row. */
 export async function pendingModelAppeal({ modelId, userId }: { modelId: number; userId: number }) {
-  const appeal = await dbWrite.appeal.findFirst({
-    where: {
-      entityType: EntityType.Model,
-      entityId: modelId,
-      userId,
-      category: null,
-      status: AppealStatus.Pending,
-    },
-    select: { id: true, context: true },
-  });
-  return appeal && { id: appeal.id, lockReview: !!parseLockReviewContext(appeal.context) };
+  const [appeal] = await dbWrite.$queryRaw<{ id: number; context: unknown }[]>`
+    SELECT id, context FROM "Appeal"
+    WHERE "entityType" = 'Model' AND "entityId" = ${modelId} AND "userId" = ${userId}
+      AND category IS NULL AND status = 'Pending'
+    LIMIT 1
+  `;
+  return appeal ? { id: appeal.id, lockReview: !!parseLockReviewContext(appeal.context) } : null;
 }
 
 /** Turns the owner's pending lock review into their flag appeal; refused if it changed meanwhile. */

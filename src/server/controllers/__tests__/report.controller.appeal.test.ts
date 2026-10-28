@@ -58,7 +58,7 @@ beforeEach(() => {
   mockReopenAppeal.mockResolvedValue({ id: 1, status: 'Pending' });
   mockIsAppealBlockedByHoldMarker.mockResolvedValue(false);
   dbMock.dbRead.appeal.findFirst.mockResolvedValue(null);
-  dbMock.dbWrite.appeal.findFirst.mockResolvedValue(null);
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
 });
 
 describe('createEntityAppealHandler — Model ownership + flag gates', () => {
@@ -122,7 +122,7 @@ describe('createEntityAppealHandler — Model re-request', () => {
   });
 
   it('throws BAD_REQUEST when a request is already under review', async () => {
-    dbMock.dbWrite.appeal.findFirst.mockResolvedValue({ id: 7, context: null } as never);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 7, context: null }] as never);
 
     await expect(
       createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) })

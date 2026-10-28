@@ -173,7 +173,7 @@ const reject = (userId = MODERATOR) =>
 const loggedActivities = () =>
   mocks.trackModActivity.mock.calls.map(([, input]) => (input as { activity: string }).activity);
 
-beforeEach(() => {
+beforeEach(async () => {
   vi.clearAllMocks();
   mocks.settleResolvedAppeals.mockResolvedValue([]);
   mocks.createEntityAppeal.mockResolvedValue({ id: 1 });
@@ -181,7 +181,8 @@ beforeEach(() => {
   mocks.getLatestAppeal.mockResolvedValue(null);
   mocks.isAccountUnderLegalHold.mockResolvedValue(false);
   dbMock.dbRead.appeal.findFirst.mockResolvedValue(null);
-  dbMock.dbWrite.appeal.findFirst.mockResolvedValue(null);
+  dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(db).queryRaw as never);
+  await db.exec(`DELETE FROM "Appeal"`);
 });
 
 describe('approving a lock review', () => {
@@ -500,13 +501,19 @@ describe("an owner's request", () => {
   });
 });
 
+/** The owner's in-app appeal rows on MODEL, as `[id, status, context]`. */
+async function appealRows(...rows: [number, string, object | null][]) {
+  for (const [id, status, context] of rows)
+    await db.query(
+      `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, context) VALUES ($1, $2, 'Model', $3, $4, $5)`,
+      [id, OWNER, MODEL, status, context]
+    );
+}
+
 describe('a flag landing while a lock review is open', () => {
   it('lets the owner appeal the flag on the same row', async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
-    dbMock.dbWrite.appeal.findFirst.mockResolvedValue({
-      id: 9,
-      context: { kind: 'lock-review', locks: ['nsfw'] },
-    } as never);
+    await appealRows([9, 'Pending', { kind: 'lock-review', locks: ['nsfw'] }]);
     dbMock.dbWrite.appeal.updateMany.mockResolvedValue({ count: 1 } as never);
 
     await createEntityAppealHandler({ input: request(), ctx: owner() });
@@ -521,10 +528,7 @@ describe('a flag landing while a lock review is open', () => {
 
   it('refuses the takeover when the lock review was ruled on meanwhile', async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
-    dbMock.dbWrite.appeal.findFirst.mockResolvedValue({
-      id: 9,
-      context: { kind: 'lock-review', locks: ['nsfw'] },
-    } as never);
+    await appealRows([9, 'Pending', { kind: 'lock-review', locks: ['nsfw'] }]);
     dbMock.dbWrite.appeal.updateMany.mockResolvedValue({ count: 0 } as never);
 
     await expect(createEntityAppealHandler({ input: request(), ctx: owner() })).rejects.toThrow(
@@ -535,7 +539,10 @@ describe('a flag landing while a lock review is open', () => {
   it('refuses a request while an older row is pending behind a newer resolved one', async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
     mocks.getLatestAppeal.mockResolvedValue({ id: 12, status: AppealStatus.Rejected });
-    dbMock.dbWrite.appeal.findFirst.mockResolvedValue({ id: 4, context: null } as never);
+    await appealRows(
+      [4, 'Pending', null],
+      [12, 'Rejected', { kind: 'lock-review', locks: ['nsfw'] }]
+    );
 
     await expect(createEntityAppealHandler({ input: request(), ctx: owner() })).rejects.toThrow(
       /already under review/
@@ -543,9 +550,29 @@ describe('a flag landing while a lock review is open', () => {
     expect(mocks.reopenAppeal).not.toHaveBeenCalled();
   });
 
+  it('does not count a resolved row as pending', async () => {
+    ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
+    await appealRows([12, 'Rejected', { kind: 'lock-review', locks: ['nsfw'] }]);
+
+    await createEntityAppealHandler({ input: request(), ctx: owner() });
+
+    expect(mocks.createEntityAppeal).toHaveBeenCalled();
+  });
+
+  it('answers a reopen that meets another pending row in plain words', async () => {
+    dbMock.dbWrite.appeal.update.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('unique', { code: 'P2002', clientVersion: 'test' })
+    );
+
+    expect(await refusal(actualReport.reopenAppeal({ id: 9, message: 'again' }))).toEqual({
+      code: 'BAD_REQUEST',
+      message: 'Your request is already under review.',
+    });
+  });
+
   it('still refuses a second flag appeal', async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
-    dbMock.dbWrite.appeal.findFirst.mockResolvedValue({ id: 9, context: null } as never);
+    await appealRows([9, 'Pending', null]);
 
     await expect(createEntityAppealHandler({ input: request(), ctx: owner() })).rejects.toThrow(
       /already under review/
@@ -604,6 +631,8 @@ describe('a ruling whose owner notice fails', () => {
 
 describe('an owner deleting the model', () => {
   it('is told of neither a lock review nor a flag appeal closing, only of other appeals', async () => {
+    // The sweep's own reads are not the subject here: nothing else is held back.
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
     dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
       {
         id: 1,

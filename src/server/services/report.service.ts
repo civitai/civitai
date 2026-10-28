@@ -842,7 +842,8 @@ export async function reopenAppeal({
     });
   } catch (error) {
     // Another of the owner's rows went Pending meanwhile: one may be pending at a time.
-    if (isPrismaUniqueViolation(error)) throw throwBadRequestError(APPEAL_ALREADY_PENDING);
+    if (isPrismaUniqueViolation(error))
+      throw throwBadRequestError('Your request is already under review.');
     throw error;
   }
 }
