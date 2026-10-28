@@ -29,6 +29,6 @@
 /* The chat and the preview each scroll on their own, so the workspace takes the viewport below the
    site header and the page's title band instead of growing with its content. */
 .workspace {
-  height: calc(100dvh - var(--header-height) - 8rem);
+  height: var(--assistant-fill-height, calc(100dvh - var(--header-height) - 8rem));
   min-height: 32rem;
 }
