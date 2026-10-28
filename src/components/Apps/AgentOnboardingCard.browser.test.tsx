@@ -119,10 +119,11 @@ describe('AgentOnboardingCard — the copy control', () => {
     // This asserts one press → one `onCopy` and one clipboard write, and nothing more. It is
     // NOT a guard on `CopyAffordance`'s `stopPropagation()`: this card passes
     // `bodyClickCopies={false}`, so the Box carries no handler and nothing here can
-    // double-fire. Measured over this file plus `AppsBuildBody.agentPrompt` and
-    // `AuthorViaGit`: deleting that `stopPropagation()` leaves this green, and the test it
-    // reds is `🔴 POSITIVE CONTROL: a CLI copy still posts cli_copy` in
-    // `AppsBuildBody.agentPrompt.browser.test.tsx`, where the body click IS live.
+    // double-fire. Measured over this file plus `AppsBuildBody.agentPrompt`, `AuthorViaGit`
+    // and `CliSubmitCta`: deleting that `stopPropagation()` leaves ALL FOUR green. The test
+    // that used to red it posted `cli_copy` from a `CopyableCommand` in `/apps/build`; that
+    // event and those CLI steps were removed, and no `CopyableCommand` passes `onCopy` any
+    // more, so nothing in these files observes a doubled copy.
     const onCopy = vi.fn();
     await renderWithProviders(<AgentOnboardingCard onCopy={onCopy} />);
 

@@ -5,7 +5,6 @@ import {
   CIVITAI_CLI_GITHUB_URL,
   CIVITAI_CLI_RELEASES_URL,
   CLI_CREATE_COMMAND,
-  CLI_CREATE_SAMPLE_COMMAND,
   CLI_INSTALL_BREW,
   CLI_INSTALL_GO,
   CLI_INSTALL_NPM,
@@ -221,15 +220,6 @@ describe('CliSubmitCta (CLI-first submit primary CTA)', () => {
     expect(CIVITAI_CLI_RELEASES_URL).toBe('https://github.com/civitai/cli/releases');
     expect(CLI_CREATE_COMMAND).toBe('civitai app create');
     expect(CLI_SUBMIT_COMMAND).toBe('civitai app submit');
-  });
-
-  // The shared cliCommands module exposes BOTH create forms: the bare
-  // `civitai app create` (this CTA) and the with-sample-name
-  // `civitai app create my-app` (the get-started quickstart). Pin both so a
-  // change to either is a deliberate, reviewed edit.
-  test('the shared module exposes both create forms as the real one-liners', () => {
-    expect(CLI_CREATE_COMMAND).toBe('civitai app create');
-    expect(CLI_CREATE_SAMPLE_COMMAND).toBe('civitai app create my-app');
   });
 
   test('each command has a copy affordance with an accessible name', async () => {
