@@ -3,6 +3,7 @@ import { useRouter } from 'next/router';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
+import type * as NotificationsMod from '~/utils/notifications';
 import type * as TrpcMod from '~/utils/trpc';
 import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
 
@@ -19,7 +20,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
-vi.mock('~/utils/notifications', () => ({ showErrorNotification: mocks.notify }));
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsMod>()),
+  showErrorNotification: mocks.notify,
+}));
 vi.mock('~/utils/trpc', async (importOriginal) => {
   const { makeTrpcProxy } = await import('../../../../test/trpcProxyStub');
   return {
