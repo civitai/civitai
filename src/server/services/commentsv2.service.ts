@@ -875,11 +875,14 @@ export async function bulkSetCommentV2TosViolation({
   let count = 0;
 
   for (const id of ids) {
-    // An already-hidden comment is skipped: it may be one its author deleted, kept for a hold, and
-    // the author must not hear about a comment they removed.
+    // An already-hidden comment may be one its author deleted, kept for a hold: its reports are still
+    // actioned, but its author must not hear about a comment they removed.
+    const wasHidden = (
+      await dbWrite.commentV2.findUnique({ where: { id }, select: { tosViolation: true } })
+    )?.tosViolation;
     const updated = await dbWrite.commentV2
       .update({
-        where: { id, tosViolation: false },
+        where: { id },
         data: { tosViolation: true },
         select: { id: true, userId: true },
       })
@@ -907,6 +910,7 @@ export async function bulkSetCommentV2TosViolation({
       )
     );
 
+    if (wasHidden) continue;
     await createNotification({
       userId: updated.userId,
       type: 'tos-violation',

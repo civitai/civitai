@@ -146,14 +146,11 @@ describe('upsertComment — an edit of a comment hidden since the read', () => {
     threads.set(42, { locked: false, rooted: true });
   });
 
-  it("a member's edit touches only a comment still shown, and never the flag", async () => {
-    await edit({ tosViolation: false });
-    expect(db.commentV2.update).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: { id: 5, tosViolation: false },
-        data: expect.objectContaining({ tosViolation: undefined }),
-      })
-    );
+  it("a member's edit touches only a comment still shown, and cannot set the flag", async () => {
+    await edit({ tosViolation: true });
+    const [args] = db.commentV2.update.mock.calls[0] as [{ where: object; data: object }];
+    expect(args.where).toEqual({ id: 5, tosViolation: false });
+    expect(args.data).not.toMatchObject({ tosViolation: true });
   });
 
   it('answers a member as for a missing comment when the comment was hidden meanwhile', async () => {

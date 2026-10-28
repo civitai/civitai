@@ -496,7 +496,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       UNNEST(CASE
       WHEN c."parentId" IS NULL THEN (SELECT ARRAY_AGG(s."userId") FROM (
       SELECT DISTINCT cu."userId" FROM "CommentV3" cu
-      WHERE cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL AND (cu."legacyV1Id" IS NULL) = (c."legacyV1Id" IS NULL) AND cu."deletedAt" IS NULL AND cu."userId" != c."userId"
+      WHERE cu."entityType" = c."entityType" AND cu."entityId" = c."entityId" AND cu."parentId" IS NULL AND (cu."legacyV1Id" IS NULL) = (c."legacyV1Id" IS NULL) AND cu."deletedAt" IS NULL AND NOT cu."tosViolation"
+      AND cu."userId" != c."userId"
       ) s
       WHERE NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk
@@ -516,7 +517,8 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       )))
       ELSE (SELECT ARRAY_AGG(s."userId") FROM (
       SELECT DISTINCT cu."userId" FROM "CommentV3" cu
-      WHERE ((cu."parentId" = COALESCE(c."replyToId", c."parentId") AND cu."replyToId" IS NULL) OR cu."replyToId" = COALESCE(c."replyToId", c."parentId")) AND cu."deletedAt" IS NULL AND cu."userId" != c."userId"
+      WHERE ((cu."parentId" = COALESCE(c."replyToId", c."parentId") AND cu."replyToId" IS NULL) OR cu."replyToId" = COALESCE(c."replyToId", c."parentId")) AND cu."deletedAt" IS NULL AND NOT cu."tosViolation"
+      AND cu."userId" != c."userId"
       ) s
       WHERE NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk

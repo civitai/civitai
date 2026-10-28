@@ -155,6 +155,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
       await upsertComment({
         ...(entry.judgeCommentId !== null ? { id: entry.judgeCommentId } : {}),
         userId: judgingConfig.userId,
+        // The system judge, on a moderator endpoint: its comment is edited even when hidden for ToS.
+        isModerator: true,
         entityType: 'image',
         entityId: entry.imageId,
         content: review.comment,

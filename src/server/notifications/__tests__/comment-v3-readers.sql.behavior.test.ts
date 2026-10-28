@@ -613,6 +613,11 @@ describe('a comment hidden for ToS', () => {
     expect(ids).not.toContain(610);
   });
 
+  it('does not tell its author about later comments in the thread they were in', async () => {
+    const replies = pairs(await emitted('new-thread-response')).filter(([id]) => id === 611);
+    expect(replies.map(([, to]) => to)).not.toContain(8);
+  });
+
   it('leaves the review comment count, as a deleted one does', async () => {
     const where = countedTopLevelCommentSql(Prisma.raw('v'), 'review');
     const { rows } = await db.pg.query<{ n: number }>(

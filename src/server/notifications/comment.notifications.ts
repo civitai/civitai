@@ -264,7 +264,8 @@ export const CommentNotificationPriority = {
  */
 const siblingAuthors = (sameParent: string) => `(SELECT ARRAY_AGG(s."userId") FROM (
                      SELECT DISTINCT cu."userId" FROM "CommentV3" cu
-                     WHERE ${sameParent} AND cu."deletedAt" IS NULL AND cu."userId" != c."userId"
+                     WHERE ${sameParent} AND cu."deletedAt" IS NULL AND NOT cu."tosViolation"
+                       AND cu."userId" != c."userId"
                    ) s
                    WHERE ${notBlockedBetween('s."userId"', 'c."userId"')}
                      AND ${notCommentMuted('s."userId"', 'c')})`;

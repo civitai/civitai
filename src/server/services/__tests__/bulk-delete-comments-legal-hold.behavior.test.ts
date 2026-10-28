@@ -525,6 +525,15 @@ describe('a member deleting their own CommentV2', () => {
     ]);
   });
 
+  it("does not mark a comment it keeps on a delete that is not its author's", async () => {
+    await deleteComment({ id: 21 });
+    const { rows } = await holder.db.query<{ metadata: unknown }>(
+      `SELECT metadata FROM "CommentV2" WHERE id = 21`
+    );
+    expect(await state('CommentV2')).toMatchObject({ 21: 'hidden' });
+    expect(rows).toEqual([{ metadata: null }]);
+  });
+
   it('keeps a comment whose author only the hold marker covers', async () => {
     await createMarker();
     await deleteComment({ id: 31 });

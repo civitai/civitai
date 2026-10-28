@@ -52,13 +52,19 @@ describe('bulkSetCommentV2TosViolation', () => {
   });
 });
 
-// A comment already hidden may be one its author deleted, kept for a hold: flagging it again would
-// tell them about a comment they removed. The scoped update misses it, as it misses a missing row.
-it('bulkSetCommentV2TosViolation flags only a comment not already hidden', async () => {
-  await bulkSetCommentV2TosViolation({ ids: [1], actor });
-  expect(dbMock.dbWrite.commentV2.update).toHaveBeenCalledWith(
-    expect.objectContaining({ where: { id: 1, tosViolation: false } })
-  );
+// A comment already hidden may be one its author deleted, kept for a hold: its reports are still
+// actioned, but its author must not hear about a comment they removed.
+it('bulkSetCommentV2TosViolation actions an already-hidden comment without telling its author', async () => {
+  const { createNotification } = await import('~/server/services/notification.service');
+  vi.mocked(createNotification).mockClear();
+  dbMock.dbWrite.commentV2.findUnique.mockResolvedValueOnce({ tosViolation: true } as never);
+  dbMock.dbWrite.commentV2.findUnique.mockResolvedValueOnce({ tosViolation: false } as never);
+
+  await expect(bulkSetCommentV2TosViolation({ ids: [1, 2], actor })).resolves.toMatchObject({
+    count: 2,
+    notified: 1,
+  });
+  expect(createNotification).toHaveBeenCalledTimes(1);
 });
 
 describe('bulkSetCommentTosViolation', () => {
