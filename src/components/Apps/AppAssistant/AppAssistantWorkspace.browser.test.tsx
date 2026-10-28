@@ -492,12 +492,19 @@ async function mount() {
 const switcher = () => page.getByRole('button', { name: /^Switch app:/ });
 
 /** Opens `app` from the app switcher, as a user does. */
+/**
+ * A click waits for its target to be visible, stable and unobstructed, and the browser provider's
+ * default is no timeout, so a click that never becomes actionable hangs until the 15s test timeout
+ * and reports only that. With a limit, the failure names the locator.
+ */
+const CLICK_TIMEOUT_MS = 5000;
+
 async function openFromSwitcher(app: string) {
-  await switcher().click();
+  await switcher().click({ timeout: CLICK_TIMEOUT_MS });
   await page
     .getByRole('dialog', { name: 'Apps' })
     .getByRole('button', { name: new RegExp(`^${app}`) })
-    .click();
+    .click({ timeout: CLICK_TIMEOUT_MS });
   await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
   await expect.element(switcher()).toHaveAccessibleName(new RegExp(`^Switch app: ${app},`));
 }
@@ -644,7 +651,7 @@ describe('AppAssistantWorkspace with no apps', () => {
     await mount();
     await expect.element(switcher()).toBeVisible();
     expect(document.body.textContent).not.toMatch(/could not be reached/);
-    await switcher().click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(page.getByRole('dialog').getByText('New app')).toBeVisible();
     expect(document.body.textContent).not.toMatch(/could not be reached/);
   });
@@ -710,10 +717,12 @@ describe('AppAssistantWorkspace create_app (the first build request makes an app
     await m.chat!.tools.create_app.execute({ name: 'Game' }, ctx);
     expect(m.open).toHaveBeenLastCalledWith('game-2');
     const made = m.list.find((s) => s.app === 'game-2')!;
-    await switcher().click();
-    await page.getByRole('button', { name: 'Actions for game-2' }).click();
-    await page.getByRole('menuitem', { name: 'Delete app' }).click();
-    await page.getByRole('button', { name: 'Delete app' }).click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
+    await page
+      .getByRole('button', { name: 'Actions for game-2' })
+      .click({ timeout: CLICK_TIMEOUT_MS });
+    await page.getByRole('menuitem', { name: 'Delete app' }).click({ timeout: CLICK_TIMEOUT_MS });
+    await page.getByRole('button', { name: 'Delete app' }).click({ timeout: CLICK_TIMEOUT_MS });
     expect(m.remove).toHaveBeenCalledWith(made.name);
 
     // The same app shows up again (listed late) and is opened from the list.
@@ -771,7 +780,7 @@ describe('AppAssistantWorkspace app switcher', () => {
   test('lists the apps in plain words, and picking a paused one starts it', async () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa'), sandbox('sbx-bbbbbbbbbbbb', { state: 'suspended' })];
     await mount();
-    await switcher().click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
     const dialog = page.getByRole('dialog', { name: 'Apps' });
     await expect.element(dialog.getByText('Running', { exact: true })).toBeVisible();
     await expect.element(dialog.getByText('Paused', { exact: true })).toBeVisible();
@@ -780,20 +789,20 @@ describe('AppAssistantWorkspace app switcher', () => {
       /suspended|sbx-|sandbox/
     );
 
-    await dialog.getByRole('button', { name: /^app-bbbb/ }).click();
+    await dialog.getByRole('button', { name: /^app-bbbb/ }).click({ timeout: CLICK_TIMEOUT_MS });
     expect(m.open).toHaveBeenCalledWith('app-bbbb');
     await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-bbbb,/);
   });
 
   test('INVARIANT: picking an app from the switcher puts focus back on it', async () => {
     await mount();
-    await switcher().click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
     // Focus is trapped in the list while it is open, so it has to be given back.
     await vi.waitFor(() => expect(switcher().element()).not.toBe(document.activeElement));
     await page
       .getByRole('dialog', { name: 'Apps' })
       .getByRole('button', { name: /^app-aaaa/ })
-      .click();
+      .click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(page.getByRole('dialog')).not.toBeInTheDocument();
     await expect.element(switcher()).toHaveFocus();
   });
@@ -810,8 +819,10 @@ describe('AppAssistantWorkspace app switcher', () => {
     await openFirst();
     await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Paused');
     expect(document.body.textContent).not.toMatch(/paused, so the assistant|Resume/);
-    await switcher().click();
-    await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
+    await page
+      .getByRole('button', { name: 'Actions for app-aaaa' })
+      .click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(page.getByRole('menuitem', { name: 'Delete app' })).toBeVisible();
     expect(page.getByRole('menuitem', { name: /Resume|Pause/ }).elements()).toHaveLength(0);
   });
@@ -819,25 +830,31 @@ describe('AppAssistantWorkspace app switcher', () => {
   test('the switcher pauses a running app from its menu', async () => {
     await mount();
     await openFirst();
-    await switcher().click();
-    await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
-    await page.getByRole('menuitem', { name: 'Pause' }).click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
+    await page
+      .getByRole('button', { name: 'Actions for app-aaaa' })
+      .click({ timeout: CLICK_TIMEOUT_MS });
+    await page.getByRole('menuitem', { name: 'Pause' }).click({ timeout: CLICK_TIMEOUT_MS });
     expect(m.suspend).toHaveBeenCalledWith('sbx-aaaaaaaaaaaa');
   });
 
   test('deletes the open app only after the confirmation, and closes it', async () => {
     await mount();
     await openFirst();
-    await switcher().click();
-    await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
-    await page.getByRole('menuitem', { name: 'Delete app' }).click();
-    await page.getByRole('button', { name: 'Keep it' }).click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
+    await page
+      .getByRole('button', { name: 'Actions for app-aaaa' })
+      .click({ timeout: CLICK_TIMEOUT_MS });
+    await page.getByRole('menuitem', { name: 'Delete app' }).click({ timeout: CLICK_TIMEOUT_MS });
+    await page.getByRole('button', { name: 'Keep it' }).click({ timeout: CLICK_TIMEOUT_MS });
     expect(m.remove).not.toHaveBeenCalled();
 
-    await switcher().click();
-    await page.getByRole('button', { name: 'Actions for app-aaaa' }).click();
-    await page.getByRole('menuitem', { name: 'Delete app' }).click();
-    await page.getByRole('button', { name: 'Delete app' }).click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
+    await page
+      .getByRole('button', { name: 'Actions for app-aaaa' })
+      .click({ timeout: CLICK_TIMEOUT_MS });
+    await page.getByRole('menuitem', { name: 'Delete app' }).click({ timeout: CLICK_TIMEOUT_MS });
+    await page.getByRole('button', { name: 'Delete app' }).click({ timeout: CLICK_TIMEOUT_MS });
     expect(m.remove).toHaveBeenCalledWith('sbx-aaaaaaaaaaaa');
     await expect.element(switcher()).toHaveAccessibleName('Switch app: no app open');
   });
@@ -845,10 +862,12 @@ describe('AppAssistantWorkspace app switcher', () => {
   test('deleting another app from the switcher leaves the open one open', async () => {
     await mount();
     await openFirst();
-    await switcher().click();
-    await page.getByRole('button', { name: 'Actions for app-bbbb' }).click();
-    await page.getByRole('menuitem', { name: 'Delete app' }).click();
-    await page.getByRole('button', { name: 'Delete app' }).click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
+    await page
+      .getByRole('button', { name: 'Actions for app-bbbb' })
+      .click({ timeout: CLICK_TIMEOUT_MS });
+    await page.getByRole('menuitem', { name: 'Delete app' }).click({ timeout: CLICK_TIMEOUT_MS });
+    await page.getByRole('button', { name: 'Delete app' }).click({ timeout: CLICK_TIMEOUT_MS });
     expect(m.remove).toHaveBeenCalledWith('sbx-bbbbbbbbbbbb');
     await expect.element(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running');
   });
@@ -868,8 +887,8 @@ describe('AppAssistantWorkspace app switcher', () => {
     await mount();
     await openFirst();
     await startPreview('my-app');
-    await switcher().click();
-    await page.getByRole('button', { name: 'New app' }).click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
+    await page.getByRole('button', { name: 'New app' }).click({ timeout: CLICK_TIMEOUT_MS });
     expect(m.newChat).toHaveBeenCalledTimes(1);
     await expect.element(page.getByText('No app open')).toBeVisible();
     expect(document.querySelector('[data-testid="preview"]')).toBeNull();
@@ -1166,8 +1185,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
 
   // 0.14.0 asks again for a reply that lost its connection (Retry, or by itself as the page wakes) with
   // no before-send, so the page's hold above never sees it.
-  // Skipped: tests in this group time out at 15s on CI runs; the cause is not found, so the whole group waits.
-  describe.skip('a failed reply the chat asks for again', () => {
+  describe('a failed reply the chat asks for again', () => {
     /** The paused app's failed reply, and the page waking: the chat asks for it again by itself. */
     async function wakesPaused() {
       const screen = await openPaused();
@@ -1602,8 +1620,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
       expect(m.retried).toEqual(['retry']);
     });
 
-    // Skipped for CI browser-starvation timeouts, until it waits on state instead of time.
-    test.skip('🟡 an app paused again once it had started ends it', async () => {
+    test('🟡 an app paused again once it had started ends it', async () => {
       const screen = await wakesPaused();
       m.list = [m.list[0], { ...m.list[1], state: 'starting' }];
       screen.rerender(<Workspace />);
@@ -1616,8 +1633,7 @@ describe('AppAssistantWorkspace auto-resume', () => {
       expect(m.retryReply).not.toHaveBeenCalled();
     });
 
-    // Skipped for CI browser-starvation timeouts, until it waits on state instead of time.
-    test.skip('🟡 an app paused while the reply waits on the chat ends it', async () => {
+    test('🟡 an app paused while the reply waits on the chat ends it', async () => {
       const screen = await wakesPaused();
       setListing(true);
       runsB(screen);
@@ -1753,8 +1769,8 @@ describe('AppAssistantWorkspace on a visit', () => {
     m.list = [sandbox('sbx-aaaaaaaaaaaa', { lastActivityAt: '2026-10-01T10:00:00Z' })];
     const screen = await mount();
     await expect.element(switcher()).toHaveAccessibleName(/^Switch app: app-aaaa,/);
-    await switcher().click();
-    await page.getByRole('button', { name: 'New app' }).click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
+    await page.getByRole('button', { name: 'New app' }).click({ timeout: CLICK_TIMEOUT_MS });
     screen.rerender(<Workspace />);
     await settle();
     await expect.element(switcher()).toHaveAccessibleName('Switch app: no app open');
@@ -1787,7 +1803,7 @@ describe('AppAssistantWorkspace Build it', () => {
 
   test('the checklist card offers Build it, which sends the confirmation as the user', async () => {
     const card = await checklistCard();
-    await buildIt().click();
+    await buildIt().click({ timeout: CLICK_TIMEOUT_MS });
     await vi.waitFor(() => expect(m.delivered).toEqual(['Looks good — build it.']));
     await expect.element(buildIt()).not.toBeInTheDocument();
     card.remove();
@@ -1796,7 +1812,7 @@ describe('AppAssistantWorkspace Build it', () => {
   test('🟢 Build it pressed while the reply is still ending puts it in the box for the user to send', async () => {
     const card = await checklistCard();
     m.running = true;
-    await buildIt().click();
+    await buildIt().click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(buildIt()).not.toBeInTheDocument();
     expect(m.box).toBe('Looks good — build it.');
     expect(m.delivered).toEqual([]);
@@ -1807,7 +1823,7 @@ describe('AppAssistantWorkspace Build it', () => {
     const card = await checklistCard();
     type('Also add a timer');
     m.running = true;
-    await buildIt().click();
+    await buildIt().click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(buildIt()).not.toBeInTheDocument();
     expect(m.box).toBe('Also add a timer');
     // Offered back by the chat (0.15.0's giveBack), not by a notice of the page's own.
@@ -1819,7 +1835,7 @@ describe('AppAssistantWorkspace Build it', () => {
   test('🟢 Build it pressed while the chat holds goes into the empty box once, and is not offered back as well', async () => {
     const card = await checklistCard();
     m.listing = true;
-    await buildIt().click();
+    await buildIt().click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(buildIt()).not.toBeInTheDocument();
     expect(m.box).toBe('Looks good — build it.');
     await settle(100);
@@ -1830,7 +1846,7 @@ describe('AppAssistantWorkspace Build it', () => {
   test('🟡 Build it pressed while the user dictates goes straight out when the chat does not hold', async () => {
     const card = await checklistCard();
     m.dictating = true;
-    await buildIt().click();
+    await buildIt().click({ timeout: CLICK_TIMEOUT_MS });
     await vi.waitFor(() => expect(m.delivered).toEqual(['Looks good — build it.']));
     expect(m.box).toBe('');
     await settle(100);
@@ -1842,7 +1858,7 @@ describe('AppAssistantWorkspace Build it', () => {
     const card = await checklistCard();
     m.dictating = true;
     m.listing = true;
-    await buildIt().click();
+    await buildIt().click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(buildIt()).not.toBeInTheDocument();
     endDictation('and a timer');
     expect(m.box).toBe('and a timer');
@@ -1897,7 +1913,7 @@ describe('AppAssistantWorkspace mobile Chat/Preview', () => {
     expect(document.querySelector('[role="radiogroup"]')).toBeNull();
     await startPreview('my-app');
     await expect.element(page.getByRole('radio', { name: 'Preview' })).toBeChecked();
-    await page.getByText('Chat', { exact: true }).click();
+    await page.getByText('Chat', { exact: true }).click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(page.getByRole('radio', { name: 'Chat' })).toBeChecked();
     // The tunnel dropped and the assistant started it again.
     await startPreview('my-app');
@@ -2027,7 +2043,7 @@ describe('AppAssistantWorkspace consent', () => {
     expect(m.enable).not.toHaveBeenCalled();
     expect(document.querySelector('[data-testid="chat"]')).toBeNull();
 
-    await button.click();
+    await button.click({ timeout: CLICK_TIMEOUT_MS });
     expect(m.enable).toHaveBeenCalledTimes(1);
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
   });
@@ -2076,7 +2092,9 @@ describe('AppAssistantWorkspace revoke', () => {
 
     // Turning it back on brings the workspace back.
     m.getToken.mockResolvedValue('sandbox-token');
-    await page.getByRole('button', { name: 'Turn on App Assistant' }).click();
+    await page
+      .getByRole('button', { name: 'Turn on App Assistant' })
+      .click({ timeout: CLICK_TIMEOUT_MS });
     expect(m.enable).toHaveBeenCalledTimes(1);
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
   });
@@ -2104,7 +2122,7 @@ describe('AppAssistantWorkspace app errors', () => {
     await mount();
     const copy = 'That app was changing at the same moment. Try again.';
     await expect.element(page.getByText(copy)).toBeVisible();
-    await switcher().click();
+    await switcher().click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(page.getByRole('dialog').getByText(copy)).toBeVisible();
     expect(page.getByText(copy).elements()).toHaveLength(1);
   });
@@ -2129,7 +2147,7 @@ describe('AppAssistantWorkspace access failure', () => {
     const retry = page.getByRole('button', { name: 'Retry' });
     await expect.element(retry).toBeInTheDocument();
     expect(m.getToken).toHaveBeenCalledTimes(1);
-    await retry.click();
+    await retry.click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(page.getByTestId('chat')).toBeInTheDocument();
   });
 
@@ -2479,7 +2497,7 @@ describe('AppAssistantWorkspace paused-app notice', () => {
   test('🔴 after Start, the page asks for its apps itself until the app runs, even with the list poll stalled', async () => {
     m.list = pausedApps();
     const screen = await mount();
-    await startButton().click();
+    await startButton().click({ timeout: CLICK_TIMEOUT_MS });
     // The service has it starting, and then running; the page's list only changes when it asks.
     m.list = [{ ...m.list[0], state: 'starting' }, m.list[1]];
     screen.rerender(<Workspace />);
@@ -2520,7 +2538,9 @@ describe('AppAssistantWorkspace paused-app notice', () => {
     expect(m.startPolls).toBe(polls);
     // Check again: asks at once and keeps asking; once it runs, the notice goes.
     m.service = [{ ...m.list[0], state: 'running' }, m.list[1]];
-    await notice().getByRole('button', { name: 'Check again' }).click();
+    await notice()
+      .getByRole('button', { name: 'Check again' })
+      .click({ timeout: CLICK_TIMEOUT_MS });
     await vi.advanceTimersByTimeAsync(APP_START_POLL_MS * 2);
     await vi.waitFor(() =>
       expect(switcher()).toHaveAccessibleName('Switch app: app-aaaa, Running')
@@ -2548,7 +2568,7 @@ describe('AppAssistantWorkspace paused-app notice', () => {
     const screen = await mount();
     await expect.element(startButton()).toBeVisible();
     m.deferOpen = true;
-    await startButton().click();
+    await startButton().click({ timeout: CLICK_TIMEOUT_MS });
     expect(m.resume.mock.calls).toEqual([['app-aaaa']]);
     await expect.element(notice().getByText('Starting…', { exact: true })).toBeVisible();
     await expect.element(startButton()).toHaveAttribute('data-loading', 'true');
@@ -2570,7 +2590,7 @@ describe('AppAssistantWorkspace paused-app notice', () => {
     m.list = pausedApps();
     await mount();
     m.openReject = new SandboxApiError('Sandbox service error (500)', 500, 'unavailable');
-    await startButton().click();
+    await startButton().click({ timeout: CLICK_TIMEOUT_MS });
     await expect
       .element(
         notice().getByText('Your apps could not be reached right now. Try again in a moment.', {
@@ -2660,8 +2680,9 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
   });
   const actions = (app: string) => page.getByRole('button', { name: `Actions for ${app}` });
   async function openMenu(app: string) {
-    if (!document.querySelector('[role="dialog"]')) await switcher().click();
-    await actions(app).click();
+    if (!document.querySelector('[role="dialog"]'))
+      await switcher().click({ timeout: CLICK_TIMEOUT_MS });
+    await actions(app).click({ timeout: CLICK_TIMEOUT_MS });
   }
   const twoApps = () => [
     sandbox('sbx-aaaaaaaaaaaa'),
@@ -2706,7 +2727,7 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
     await openMenu('app-bbbb');
     // Deleted elsewhere since the page last listed it.
     m.list = [m.list[0]];
-    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await page.getByRole('menuitem', { name: /^Export/ }).click({ timeout: CLICK_TIMEOUT_MS });
     await vi.waitFor(() => expect(m.toasts).toHaveLength(1));
     expect(m.toasts[0]).toMatchObject({
       kind: 'error',
@@ -2724,9 +2745,9 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
     await mount();
     await openMenu('app-bbbb');
     m.deferOpen = true;
-    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await page.getByRole('menuitem', { name: /^Export/ }).click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(actions('app-bbbb')).toHaveAttribute('data-loading', 'true');
-    await actions('app-aaaa').click();
+    await actions('app-aaaa').click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(page.getByRole('menuitem', { name: /^Export/ })).toBeDisabled();
     // NEGATIVE CONTROL: once it is done, Export is on again.
     m.settleOpen!();
@@ -2740,7 +2761,7 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
     await mount();
     await openMenu('app-bbbb');
     m.deferOpen = true;
-    await page.getByRole('menuitem', { name: /^Start/ }).click();
+    await page.getByRole('menuitem', { name: /^Start/ }).click({ timeout: CLICK_TIMEOUT_MS });
     expect(m.resume.mock.calls).toEqual([['app-bbbb']]);
     await expect.element(actions('app-bbbb')).toHaveAttribute('data-loading', 'true');
     expect(actions('app-aaaa').element().hasAttribute('data-loading')).toBe(false);
@@ -2756,7 +2777,7 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
     m.list = twoApps();
     await mount();
     await openMenu('app-aaaa');
-    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await page.getByRole('menuitem', { name: /^Export/ }).click({ timeout: CLICK_TIMEOUT_MS });
     await vi.waitFor(() => expect(m.downloads).toHaveLength(1));
     expect(m.downloads[0].name).toBe('app-aaaa.zip');
     expect(m.downloads[0].href).toMatch(/^blob:/);
@@ -2775,7 +2796,7 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
     await mount();
     await openMenu('app-bbbb');
     m.deferOpen = true;
-    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await page.getByRole('menuitem', { name: /^Export/ }).click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(actions('app-bbbb')).toHaveAttribute('data-loading', 'true');
     expect(actions('app-aaaa').element().hasAttribute('data-loading')).toBe(false);
     expect(m.events).toEqual([]);
@@ -2797,7 +2818,7 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
     m.list = twoApps();
     await mount();
     await openMenu('app-aaaa');
-    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await page.getByRole('menuitem', { name: /^Export/ }).click({ timeout: CLICK_TIMEOUT_MS });
     await vi.waitFor(() => expect(m.toasts).toHaveLength(1));
     expect(m.toasts[0]).toMatchObject({
       kind: 'error',
@@ -2813,7 +2834,7 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
     m.list = twoApps();
     await mount();
     await openMenu('app-aaaa');
-    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await page.getByRole('menuitem', { name: /^Export/ }).click({ timeout: CLICK_TIMEOUT_MS });
     await vi.waitFor(() => expect(m.downloads).toHaveLength(1));
     expect(m.events).toEqual([
       'export sbx-aaaaaaaaaaaa app-aaaa',
@@ -2829,7 +2850,7 @@ describe('AppAssistantWorkspace app menu: Start and Export', () => {
     m.list = twoApps();
     await mount();
     await openMenu('app-aaaa');
-    await page.getByRole('menuitem', { name: /^Export/ }).click();
+    await page.getByRole('menuitem', { name: /^Export/ }).click({ timeout: CLICK_TIMEOUT_MS });
     await vi.waitFor(() => expect(m.toasts).toHaveLength(1));
     expect(m.toasts[0]).toMatchObject({
       kind: 'error',
@@ -2885,9 +2906,11 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     return screen;
   }
   async function confirmDelete(app: string) {
-    await card().getByRole('button', { name: 'Delete and continue' }).click();
+    await card()
+      .getByRole('button', { name: 'Delete and continue' })
+      .click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(page.getByRole('dialog', { name: `Delete ${app}?` })).toBeVisible();
-    await page.getByRole('button', { name: 'Delete app' }).click();
+    await page.getByRole('button', { name: 'Delete app' }).click({ timeout: CLICK_TIMEOUT_MS });
   }
 
   test('appears after the limit refusal: every app with its status and last use, the one used longest ago chosen', async () => {
@@ -3000,9 +3023,11 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
 
   test('Keep it in the confirmation deletes nothing and keeps the card', async () => {
     await atLimit();
-    await card().getByRole('button', { name: 'Delete and continue' }).click();
+    await card()
+      .getByRole('button', { name: 'Delete and continue' })
+      .click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(page.getByRole('dialog', { name: 'Delete app-bbbb?' })).toBeVisible();
-    await page.getByRole('button', { name: 'Keep it' }).click();
+    await page.getByRole('button', { name: 'Keep it' }).click({ timeout: CLICK_TIMEOUT_MS });
     await settle();
     expect(m.remove).not.toHaveBeenCalled();
     expect(m.send).not.toHaveBeenCalled();
@@ -3011,7 +3036,7 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
 
   test('confirmed, deletes the app picked, then sends the message that hit the limit again, once', async () => {
     await atLimit();
-    await card().getByRole('radio', { name: 'app-cccc' }).click();
+    await card().getByRole('radio', { name: 'app-cccc' }).click({ timeout: CLICK_TIMEOUT_MS });
     await confirmDelete('app-cccc');
     await vi.waitFor(() => expect(m.send).toHaveBeenCalledTimes(1));
     expect(m.remove.mock.calls).toEqual([['sbx-cccccccccccc']]);
@@ -3051,7 +3076,9 @@ describe('AppAssistantWorkspace free-a-slot card', () => {
     restore = stubExport();
     await atLimit();
     m.events = [];
-    await card().getByRole('button', { name: 'Export app-bbbb first' }).click();
+    await card()
+      .getByRole('button', { name: 'Export app-bbbb first' })
+      .click({ timeout: CLICK_TIMEOUT_MS });
     await vi.waitFor(() => expect(m.downloads.map((d) => d.name)).toEqual(['app-bbbb.zip']));
     expect(m.events).toEqual([
       'start app-bbbb',
@@ -3204,7 +3231,7 @@ describe('AppAssistantWorkspace keeps the app awake while the user works in its 
     await openFirst();
     await startPreview('my-app');
     await settle();
-    await page.getByRole('radio', { name: 'Chat' }).click();
+    await page.getByRole('radio', { name: 'Chat' }).click({ timeout: CLICK_TIMEOUT_MS });
     await expect.element(page.getByTestId('app-assistant-preview-pane')).not.toBeVisible();
     const before = pings().length;
     // Past the one-minute interval, so a ping before this point cannot be what hides one now.
@@ -3216,7 +3243,7 @@ describe('AppAssistantWorkspace keeps the app awake while the user works in its 
     expect(pings()).toHaveLength(before);
 
     // Positive control: the same press with Preview shown does ping.
-    await page.getByRole('radio', { name: 'Preview' }).click();
+    await page.getByRole('radio', { name: 'Preview' }).click({ timeout: CLICK_TIMEOUT_MS });
     pressInPane();
     await vi.waitFor(() => expect(pings()).toHaveLength(before + 1));
   });
