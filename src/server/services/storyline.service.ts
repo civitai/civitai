@@ -873,9 +873,15 @@ function storylineHeldSql({
     WITH RECURSIVE below AS (
       SELECT t.id FROM "Thread" t WHERE t."storylineId" = ${id}
       UNION
-      SELECT t.id FROM below b
-      JOIN "Thread" t ON t."parentThreadId" = b.id OR t."rootThreadId" = b.id
-        OR t."commentId" IN (SELECT k.id FROM "CommentV2" k WHERE k."threadId" = b.id)
+      -- One indexed lookup per link: an OR across them scans the whole Thread table every step.
+      SELECT x.id FROM below b CROSS JOIN LATERAL (
+        SELECT t.id FROM "Thread" t WHERE t."parentThreadId" = b.id
+        UNION ALL
+        SELECT t.id FROM "Thread" t WHERE t."rootThreadId" = b.id
+        UNION ALL
+        SELECT t.id FROM "CommentV2" k JOIN "Thread" t ON t."commentId" = k.id
+        WHERE k."threadId" = b.id
+      ) x
     ),
     authors AS MATERIALIZED (
       SELECT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id

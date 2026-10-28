@@ -118,9 +118,12 @@ beforeAll(async () => {
       "entityId" integer NOT NULL REFERENCES "Storyline"("id") ON DELETE CASCADE,
       PRIMARY KEY ("entityId", "entityType"));
     CREATE TABLE "CommentV3" ("id" serial PRIMARY KEY, "entityType" text NOT NULL,
-      "entityId" integer NOT NULL, "userId" integer NOT NULL,
+      "entityId" integer NOT NULL, "userId" integer NOT NULL, "parentId" integer, "replyToId" integer,
       FOREIGN KEY ("entityId", "entityType") REFERENCES "CommentTopic" ("entityId", "entityType")
         ON DELETE CASCADE);
+    -- As production: a parent with replies cannot be deleted on its own.
+    ALTER TABLE "CommentV3" ADD FOREIGN KEY ("parentId") REFERENCES "CommentV3" ("id") ON DELETE RESTRICT;
+    ALTER TABLE "CommentV3" ADD FOREIGN KEY ("replyToId") REFERENCES "CommentV3" ("id") ON DELETE SET NULL;
   `);
 });
 
@@ -177,6 +180,18 @@ describe('deleteStoryline under a real account hold', () => {
     expect(await storylineIds()).toEqual([2]);
   });
 
+  it('deletes a storyline whose comment topic holds a comment and a reply to it', async () => {
+    await db.pg.exec(`
+      INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('storyline', 1);
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (10, 'storyline', 1, ${CONTRIBUTOR});
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId", "parentId", "replyToId")
+        VALUES (11, 'storyline', 1, ${REPLIER}, 10, 10);
+    `);
+    await deleteStoryline({ id: 1, userId: OWNER });
+    expect(await storylineIds()).toEqual([2]);
+    expect(await rows(`SELECT id FROM "CommentV3"`)).toEqual([]);
+  });
+
   it('deletes when the only hold was released', async () => {
     await db.pg.exec(
       `INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${REPLIER}, now())`
@@ -202,7 +217,36 @@ describe('deleteStoryline under a real account hold', () => {
     ]);
   });
 
+  it('refuses when the held author is in a thread linked to it by its root alone', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Thread" (id, "commentId", "parentThreadId", "rootThreadId") VALUES (4, NULL, NULL, 1);
+      INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (4, 4, 6);
+    `);
+    await hold(6);
+    await expect(
+      deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+  });
+
+  it('refuses when the held author is two threads down, through a parent at each step', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Thread" (id, "commentId", "parentThreadId", "rootThreadId") VALUES
+        (5, NULL, 1, NULL), (6, NULL, 5, NULL);
+      INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (6, 6, 7);
+    `);
+    await hold(7);
+    await expect(
+      deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+  });
+
   it('is stopped by a hold placed after its check, by the delete itself', async () => {
+    await db.pg.exec(`
+      INSERT INTO "PlacementSpace" (surface, "entityType", "entityId", mode, price)
+        VALUES ('storyline', 'storyline', 1, 'review', 50);
+      INSERT INTO "Report" (id, status) VALUES (70, 'Pending');
+      INSERT INTO "StorylineReport" ("storylineId", "reportId") VALUES (1, 70);
+    `);
     const raw = pgliteRaw(db.pg);
     w.$executeRaw.mockImplementation((async (
       strings: TemplateStringsArray,
@@ -216,6 +260,9 @@ describe('deleteStoryline under a real account hold', () => {
     ).rejects.toMatchObject({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
     expect(await storylineIds()).toEqual([1, 2]);
     expect(await rows(`SELECT id FROM "CommentV2" ORDER BY id`)).toEqual([{ id: 1 }, { id: 2 }]);
+    // The writes before the refused DELETE are rolled back with it.
+    expect(await rows(`SELECT "entityId" FROM "PlacementSpace"`)).toEqual([{ entityId: 1 }]);
+    expect(await rows(`SELECT id, status FROM "Report"`)).toEqual([{ id: 70, status: 'Pending' }]);
   });
 
   it('refuses a moderator, naming the hold, when a reply author is held', async () => {
