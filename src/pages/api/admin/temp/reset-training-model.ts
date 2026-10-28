@@ -1,7 +1,8 @@
 import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
-import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { invalidateManyImageExistence } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { Availability, ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
@@ -49,26 +50,30 @@ export default WebhookEndpoint(async (req, res) => {
     where: { modelVersionId: { in: modelVersions.map((v) => v.id) } },
   });
 
+  // Images first, by id: the post delete only unlinks them. A held owner's rows are left, and the
+  // comment threads of the rows that go are detached when they hold a held author's comment.
   const postIds = posts.map((p) => p.id);
   if (postIds.length)
-    await dbWrite.$executeRaw(
-      detachHeldThreadsSql(
-        {
-          postId: Prisma.sql`SELECT unnest(${postIds}::int[])`,
-          imageId: Prisma.sql`SELECT i.id FROM "Image" i WHERE i."postId" = ANY(${postIds}::int[])`,
-        },
-        true
-      )
-    );
-  await dbWrite.post.deleteMany({
-    where: { id: { in: postIds } },
-  });
-
-  await Promise.all([
-    dbWrite.image.deleteMany({
-      where: { postId: { in: posts.map((p) => p.id) } },
-    }),
-  ]);
+    await dbWrite.$transaction([
+      dbWrite.$executeRaw`
+        WITH doomed AS (
+          SELECT i.id FROM "Image" i
+          WHERE i."postId" = ANY(${postIds}::int[])
+            AND NOT ${accountHoldSql(Prisma.raw('i."userId"'), true)}
+        ),
+        ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, true)}
+        DELETE FROM "Image" WHERE id IN (SELECT id FROM doomed)
+      `,
+      dbWrite.$executeRaw`
+        WITH doomed AS (
+          SELECT p.id FROM "Post" p
+          WHERE p.id = ANY(${postIds}::int[])
+            AND NOT ${accountHoldSql(Prisma.raw('p."userId"'), true)}
+        ),
+        ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, true)}
+        DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
+      `,
+    ]);
 
   res.status(200).json({ finished: true });
 });

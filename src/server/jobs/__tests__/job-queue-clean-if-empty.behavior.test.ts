@@ -18,6 +18,7 @@ const runJob = () => job.run({} as Parameters<typeof job.run>[0]).result;
 
 const OWNER = 7;
 const HELD = 8; // named on a pending report
+const MARKED = 9; // held by a hold marker
 
 beforeAll(async () => {
   holder.db = new PGlite();
@@ -47,6 +48,7 @@ beforeAll(async () => {
       "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE
     );
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
+    INSERT INTO "EvidenceHold" VALUES (${MARKED});
     CREATE TABLE "StorylineChapter" (
       "id" integer PRIMARY KEY,
       "postId" integer UNIQUE REFERENCES "Post"(id) ON DELETE SET NULL
@@ -116,8 +118,18 @@ describe('job-queue-clean-if-empty', () => {
     expect(await remainingPostIds()).toEqual([1]);
   });
 
+  it.each([HELD, MARKED])("leaves a held owner's empty post (owner %i)", async (owner) => {
+    await holder.db.exec(`INSERT INTO "Post" (id, "userId") VALUES (1, ${owner})`);
+    queuePosts(1);
+
+    await runJob();
+
+    expect(await remainingPostIds()).toEqual([1]);
+  });
+
   it.each([
     ['keeps', HELD, [1]],
+    ['keeps', MARKED, [1]],
     ['takes, as a control,', OWNER, []],
   ])("%s a comment on the deleted post's thread by an author", async (_, author, left) => {
     await holder.db.exec(`

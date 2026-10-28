@@ -3,6 +3,7 @@ import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
 import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
@@ -112,7 +113,16 @@ async function runRollback(params: MigrationParams): Promise<{
       )
   `;
   const sharedImageIds = new Set(sharedImages.map((r) => r.imageId));
-  const orphanedImageIds = imageIds.filter((id) => !sharedImageIds.has(id));
+  // A held owner's images are left as they are, tags included.
+  const heldImages = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT i.id FROM "Image" i
+    WHERE i.id IN (${Prisma.join(imageIds)})
+      AND ${accountHoldSql(Prisma.raw('i."userId"'), true)}
+  `;
+  const heldImageIds = new Set(heldImages.map((r) => r.id));
+  const orphanedImageIds = imageIds.filter(
+    (id) => !sharedImageIds.has(id) && !heldImageIds.has(id)
+  );
 
   log(
     `${orphanedImageIds.length} images are article-only (will delete), ${sharedImageIds.size} shared with other entities (will keep)`
@@ -149,12 +159,13 @@ async function runRollback(params: MigrationParams): Promise<{
   let imagesDeleted = 0;
   if (orphanedImageIds.length > 0) {
     const imgResult = await dbWrite.$executeRaw`
-      WITH ${detachHeldThreadsCte(
-        { imageId: Prisma.sql`SELECT unnest(${orphanedImageIds}::int[])` },
-        true
-      )}
-      DELETE FROM "Image"
-      WHERE id IN (${Prisma.join(orphanedImageIds)})
+      WITH doomed AS (
+        SELECT i.id FROM "Image" i
+        WHERE i.id IN (${Prisma.join(orphanedImageIds)})
+          AND NOT ${accountHoldSql(Prisma.raw('i."userId"'), true)}
+      ),
+      ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, true)}
+      DELETE FROM "Image" WHERE id IN (SELECT id FROM doomed)
     `;
     imagesDeleted = imgResult;
     log(`Deleted ${imagesDeleted} orphaned images`);
