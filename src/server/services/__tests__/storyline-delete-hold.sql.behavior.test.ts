@@ -175,9 +175,48 @@ describe('deleteStoryline under a real account hold', () => {
   const hold = (userId: number) =>
     db.pg.exec(`INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${userId}, NULL)`);
 
-  it('deletes with no hold on anyone', async () => {
+  it('deletes with no hold on anyone, comments and all', async () => {
     await deleteStoryline({ id: 1, userId: OWNER });
     expect(await storylineIds()).toEqual([2]);
+    expect(await rows(`SELECT id FROM "CommentV2"`)).toEqual([]);
+  });
+
+  for (const [who, userId] of [
+    ['the owner', OWNER],
+    ['the author of a comment on its thread', CONTRIBUTOR],
+  ] as const)
+    it(`refuses a moderator when ${who} is held, and nothing goes`, async () => {
+      await hold(userId);
+      await expect(
+        deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true })
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+      expect(await storylineIds()).toEqual([1, 2]);
+      expect(await rows(`SELECT id FROM "CommentV2" ORDER BY id`)).toEqual([{ id: 1 }, { id: 2 }]);
+    });
+
+  it('refuses a moderator when the author of a comment on its topic is held', async () => {
+    await db.pg.exec(`
+      INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('storyline', 1);
+      INSERT INTO "CommentV3" (id, "entityType", "entityId", "userId") VALUES (20, 'storyline', 1, 9);
+    `);
+    await hold(9);
+    await expect(
+      deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+    expect(await rows(`SELECT id FROM "CommentV3"`)).toEqual([{ id: 20 }]);
+  });
+
+  // A comment's reply thread with no parent or root link does not cascade; it is still walked,
+  // which can only refuse more than the cascade needs.
+  it('refuses when the held author is in a reply thread linked only through its comment', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Thread" (id, "commentId", "parentThreadId", "rootThreadId") VALUES (8, 1, NULL, NULL);
+      INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (8, 8, 8);
+    `);
+    await hold(8);
+    await expect(
+      deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
   });
 
   it('deletes a storyline whose comment topic holds a comment and a reply to it', async () => {

@@ -4,23 +4,9 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
-import type * as LegalHoldService from '~/server/services/legal-hold.service';
 
 const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
-// Which accounts the delete asks about is under test here, not what makes one held: an account is
-// held when it is in "HeldAccount".
-vi.mock('~/server/services/legal-hold.service', async (importOriginal) => {
-  const { Prisma } = await import('@prisma/client');
-  return {
-    ...(await importOriginal<typeof LegalHoldService>()),
-    holdMarkerViewExists: vi.fn().mockResolvedValue(true),
-    accountHoldSql: (id: Prisma.Sql) =>
-      Prisma.sql`EXISTS (SELECT 1 FROM "HeldAccount" h WHERE h."userId" = ${id})`,
-    ownerHeldSql: (id: Prisma.Sql) =>
-      Prisma.sql`EXISTS (SELECT 1 FROM "HeldAccount" h WHERE h."userId" = ${id})`,
-  };
-});
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
@@ -31,7 +17,6 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * a concurrent chapter add was checked once against a real Postgres (see the PR).
  */
 
-const { LEGAL_HOLD_REFUSAL } = await import('~/server/services/legal-hold.service');
 const { deleteStoryline, STORYLINE_DELETE_REFUSALS } = await import(
   '~/server/services/storyline.service'
 );
@@ -111,7 +96,13 @@ beforeAll(async () => {
     await db.pg.exec(migration(name));
   await db.pg.exec(`
     INSERT INTO "User" (id) VALUES (1), (2), (3);
-    CREATE TABLE "HeldAccount" ("userId" integer PRIMARY KEY);
+    -- What the real hold check reads (see storyline-delete-hold.sql.behavior.test.ts); empty here.
+    CREATE TABLE "CsamReport" (id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3),
+      "archivedAt" timestamp(3), details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]');
+    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text);
+    CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
+    CREATE VIEW "EvidenceHeldUser" AS
+      SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
     -- As production: a reply thread goes with its parent and root threads; a comment's delete
     -- only unlinks its reply thread.
     CREATE TABLE "Thread" ("id" serial PRIMARY KEY,
@@ -139,7 +130,6 @@ afterAll(async () => {
 beforeEach(async () => {
   await db.pg.exec(`
     DELETE FROM "Appeal";
-    DELETE FROM "HeldAccount";
     DELETE FROM "CommentV3";
     DELETE FROM "CommentTopic";
     DELETE FROM "CommentV2";
@@ -411,64 +401,6 @@ describe('deleteStoryline', () => {
       await report('Unactioned');
       await deleteStoryline({ id: 1, userId: OWNER });
       expect(await storylineIds()).toEqual([2]);
-    });
-  });
-
-  // The cascade deletes the storyline's comments, so a hold on anyone whose rows go keeps it.
-  describe('under an account hold', () => {
-    // A thread with a comment that has a reply thread, and a CommentV3 comment on its topic.
-    beforeEach(async () => {
-      await db.pg.exec(`
-        INSERT INTO "Thread" (id, "storylineId") VALUES (1, 1);
-        INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (1, 1, ${CONTRIBUTOR});
-        INSERT INTO "Thread" (id, "commentId", "parentThreadId", "rootThreadId") VALUES (2, 1, 1, 1);
-        INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (2, 2, 4);
-      `);
-    });
-    const held = (userId: number) =>
-      db.pg.exec(`INSERT INTO "HeldAccount" ("userId") VALUES (${userId})`);
-
-    it('deletes with nobody held, comments and all', async () => {
-      await deleteStoryline({ id: 1, userId: OWNER });
-      expect(await storylineIds()).toEqual([2]);
-      expect(await rows(`SELECT id FROM "CommentV2"`)).toEqual([]);
-    });
-
-    for (const [who, userId, asModerator] of [
-      ['owner, to the owner', OWNER, false],
-      ['owner, to a moderator', OWNER, true],
-      ['author of a comment', CONTRIBUTOR, true],
-      ['author of a reply', 4, true],
-    ] as const)
-      it(`is refused when the ${who} is held, and nothing goes`, async () => {
-        await held(userId);
-        await expect(
-          deleteStoryline(
-            asModerator ? { id: 1, userId: MODERATOR, isModerator: true } : { id: 1, userId: OWNER }
-          )
-        ).rejects.toMatchObject(
-          // The owner is told only what every owner refusal says.
-          asModerator
-            ? { code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL }
-            : { code: 'BAD_REQUEST', message: STORYLINE_DELETE_REFUSALS.owner }
-        );
-        expect(await storylineIds()).toEqual([1, 2]);
-        expect(await rows(`SELECT id FROM "CommentV2" ORDER BY id`)).toEqual([
-          { id: 1 },
-          { id: 2 },
-        ]);
-      });
-
-    it('is refused when an author of a comment on its topic is held', async () => {
-      await db.pg.exec(`
-        INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('storyline', 1);
-        INSERT INTO "CommentV3" ("entityType", "entityId", "userId") VALUES ('storyline', 1, 9);
-      `);
-      await held(9);
-      await expect(
-        deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true })
-      ).rejects.toMatchObject({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
-      expect(await storylineIds()).toEqual([1, 2]);
     });
   });
 
