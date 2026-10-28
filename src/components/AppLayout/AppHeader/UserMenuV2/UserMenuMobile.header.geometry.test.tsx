@@ -125,6 +125,9 @@ afterEach(() => {
   mocks.animated = true;
 });
 
+const profileRow = (card: Element) =>
+  card.querySelector('a[href^="/user/"]:not([href$="buzz-dashboard"])')!.parentElement!;
+
 async function renderHeader(viewport: Viewport = PHONE_VIEWPORT) {
   await renderAtViewport(
     <ContainerProvider containerName="main">
@@ -175,17 +178,47 @@ describe('mobile menu account card', () => {
       }
     }
 
-    const [name, toggle] = [profile, pin].map(box);
-    expect(
-      Math.abs(name.top + name.height / 2 - (toggle.top + toggle.height / 2))
-    ).toBeLessThanOrEqual(1);
+    const [name, toggle, cardBox] = [profile, pin, card].map(box);
+    // The pin sits in the card's top-right corner, clear of the name.
+    expect(toggle.top - cardBox.top).toBeLessThanOrEqual(8);
+    expect(cardBox.right - toggle.right).toBeLessThanOrEqual(8);
     // The name keeps room: the avatar and part of the name, not a sliver.
     expect(name.width).toBeGreaterThanOrEqual(100);
-    expect(toggle.left - name.right).toBeGreaterThanOrEqual(4);
+    const nameText = [...profile.querySelectorAll('span')].find((s) => s.textContent === username)!;
+    expect(toggle.left - box(nameText).right).toBeGreaterThanOrEqual(4);
     // The profile pin keeps its full touch target, inside the card.
     expect(toggle.width).toBeGreaterThanOrEqual(30);
-    expect(toggle.right).toBeLessThanOrEqual(box(card).right);
     expect(box(card).right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
+  });
+
+  test('lines the avatar, balances, Buy Buzz and the Pro chip up on one column', async () => {
+    const { card, buy, balances } = await renderHeader();
+    // The strip inside the Buzz link, not the link: padding on the link would not show in its box.
+    const strip = balances[0].parentElement!.parentElement!;
+    const avatar = card.querySelector('span.relative')!;
+    const chip = card.querySelector('a[class*="supportChip"]')!;
+    const [avatarBox, buzzBox, buyBox, chipBox, nameRow] = [
+      avatar,
+      strip,
+      buy,
+      chip,
+      profileRow(card),
+    ].map(box);
+
+    expect(Math.abs(avatarBox.left - buzzBox.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(buyBox.left - buzzBox.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(buyBox.right - buzzBox.right)).toBeLessThanOrEqual(1);
+    expect(Math.abs(chipBox.right - buzzBox.right)).toBeLessThanOrEqual(1);
+    // The user row sits close above the balances.
+    expect(buzzBox.top - nameRow.bottom).toBeLessThanOrEqual(8);
+  });
+
+  test('curves the top-left corner around the avatar', async () => {
+    const { card } = await renderHeader();
+    const style = getComputedStyle(card);
+    expect(parseFloat(style.borderTopLeftRadius)).toBeGreaterThan(
+      parseFloat(style.borderTopRightRadius)
+    );
   });
 
   test('shows Blue and Yellow as separate balances, not one total', async () => {

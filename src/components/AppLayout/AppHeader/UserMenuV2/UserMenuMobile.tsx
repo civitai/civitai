@@ -336,12 +336,29 @@ export function MobileHeaderRows({
     <div
       tabIndex={-1}
       data-autofocus
-      className={clsx(ACCOUNT_CARD_FRAME, 'm-1 flex flex-col gap-3 p-2 outline-none')}
+      // The top-left corner follows the 56px avatar: its radius plus the card's padding.
+      className={clsx(
+        ACCOUNT_CARD_FRAME,
+        'relative m-1 flex flex-col gap-2 rounded-tl-[36px] p-2 outline-none'
+      )}
     >
+      {onTogglePin && (
+        <LegacyActionIcon
+          size="lg"
+          variant="subtle"
+          color="gray"
+          className="absolute right-1 top-1 z-[1]"
+          aria-label={`${pinned ? 'Unpin' : 'Pin'} ${PROFILE_PIN.label}`}
+          aria-pressed={pinned}
+          onClick={onTogglePin}
+        >
+          <PinGlyph pinned={pinned} touch />
+        </LegacyActionIcon>
+      )}
       <div className="flex items-center gap-1">
         <MenuItemLink
           href={`/user/${currentUser.username}`}
-          className="min-w-0 flex-1 rounded-lg"
+          className="min-w-0 flex-1 rounded-lg !p-0"
           onClick={() => {
             trackHeader('profile');
             handleClose();
@@ -363,26 +380,17 @@ export function MobileHeaderRows({
             />
           </div>
         </MenuItemLink>
-        {!currentUser.tier && <SupportChip onClick={handleClose} />}
-        {onTogglePin && (
-          <LegacyActionIcon
-            size="lg"
-            variant="subtle"
-            color="gray"
-            className="shrink-0"
-            aria-label={`${pinned ? 'Unpin' : 'Pin'} ${PROFILE_PIN.label}`}
-            aria-pressed={pinned}
-            onClick={onTogglePin}
-          >
-            <PinGlyph pinned={pinned} touch />
-          </LegacyActionIcon>
+        {!currentUser.tier && (
+          <div className="self-end">
+            <SupportChip onClick={handleClose} />
+          </div>
         )}
       </div>
       {features.buzz && (
         <>
           <NextLink
             href="/user/buzz-dashboard"
-            className="block rounded-lg px-1"
+            className="block rounded-lg"
             onClick={() => {
               trackHeader('buzz-dashboard');
               handleClose();
