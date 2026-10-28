@@ -37,6 +37,8 @@ on:
       - 'src/server/middleware/**'
       - 'src/instrumentation.ts'
       - 'src/instrumentation.node.ts'
+      - 'src/env/**'
+      - '.env-example'
       - '.github/workflows/trpc-server-parity.yml'
   workflow_dispatch:
     inputs:
@@ -90,9 +92,16 @@ jobs:
         with:
           submodules: true
 
+      # Dependencies only for `fill-required-env.ts`, which loads the app's env schemas.
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
 
       # The preview pipeline builds and pushes the image for every PR head; it is usually there
       # before this job starts and is waited for (up to 40 minutes) otherwise. Its build runs the
@@ -124,6 +133,10 @@ jobs:
         run: |
           mkdir -p "$WORK"
           node scripts/trpc-server/parity/make-env.mjs .env-example "$WORK/parity.env"
+          # Every key the env schemas require in production, filled with a schema-shaped dummy.
+          # A clean environment, so the runner's own variables cannot satisfy a package loader.
+          env -i PATH="$PATH" HOME="$HOME" NODE_ENV=production \
+            pnpm exec tsx scripts/trpc-server/parity/fill-required-env.ts "$WORK/parity.env"
 
       - name: Start the OTLP receiver
         run: |
@@ -159,33 +172,49 @@ jobs:
           docker run "${common[@]}" --name trpc -p 3001:3000 "$IMAGE" node -- trpc-server/server.cjs
           docker run "${common[@]}" --name mutant -p 3002:3000 "$MUTANT_IMAGE" node -- trpc-server/server.cjs
 
-      # Before ANY request reaches it: the standalone server must have run instrumentation at boot.
-      # The heartbeat file is written by instrumentation's liveness heartbeat every 2s.
-      - name: Instrumentation ran at boot
+      # Instrumentation must have REGISTERED on both servers, or the reference is not a control:
+      #   - trpc: before ANY request reaches it (its own boot runs register() and gates requests);
+      #   - next: after it has served one warm-up request, in case it registers lazily.
+      # Each must show the same instrumentation log lines, no instrumentation load error, a
+      # running container, and an advancing liveness heartbeat.
+      - name: Instrumentation ran on both servers
         run: |
+          token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
+          running() { [ "$(docker inspect -f '{{.State.Running}}' "$1")" = true ]; }
+          check() {
+            c=$1; shift
+            logs=$(docker logs "$c" 2>&1)
+            for line in '[instrumentation] Running in nodejs runtime' '[instrumentation.node] OTEL SDK started' "$@"; do
+              grep -qF "$line" <<< "$logs" || { echo "$c: missing log line: $line"; tail -80 <<< "$logs"; exit 1; }
+              echo "$c: found: $line"
+            done
+            if grep -qF 'An error occurred while loading instrumentation hook' <<< "$logs"; then
+              echo "$c: instrumentation failed to load"; tail -80 <<< "$logs"; exit 1
+            fi
+            running "$c" || { echo "$c is not running"; tail -80 <<< "$logs"; exit 1; }
+            a=$(docker exec "$c" cat /tmp/heartbeat 2>/dev/null || true)
+            sleep 5
+            b=$(docker exec "$c" cat /tmp/heartbeat 2>/dev/null || true)
+            echo "$c: heartbeat $a -> $b"
+            [ -n "$a" ] && [ -n "$b" ] && [ "$b" -gt "$a" ] || { echo "$c: liveness heartbeat is not advancing"; exit 1; }
+          }
+
           for _ in $(seq 1 180); do
-            if docker logs trpc 2>&1 | grep -q '\[trpc-server\] ready'; then break; fi
-            if [ "$(docker inspect -f '{{.State.Running}}' trpc)" != true ]; then echo "trpc exited"; docker logs trpc 2>&1 | tail -100; exit 1; fi
+            docker logs trpc 2>&1 | grep -q '\[trpc-server\] ready' && break
+            running trpc || { echo "trpc exited"; docker logs trpc 2>&1 | tail -100; exit 1; }
             sleep 2
           done
-          docker logs trpc 2>&1 | grep -q '\[trpc-server\] ready' || { echo "trpc never became ready"; docker logs trpc 2>&1 | tail -100; exit 1; }
-          logs=$(docker logs trpc 2>&1)
-          for line in '[instrumentation] Running in nodejs runtime' '[instrumentation.node] OTEL SDK started' '[trpc-server] instrumentation registered'; do
-            grep -qF "$line" <<< "$logs" || { echo "missing boot log line: $line"; tail -100 <<< "$logs"; exit 1; }
-            echo "found: $line"
+          check trpc '[trpc-server] instrumentation registered' '[trpc-server] ready'
+
+          ok=
+          for _ in $(seq 1 150); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:3000/api/live?token=$token"; then ok=1; break; fi
+            running next || { echo "next exited"; docker logs next 2>&1 | tail -100; exit 1; }
+            sleep 2
           done
-          # Every line above is logged before the server logs "ready", which gates the first
-          # request; nothing has been sent to it yet. Now the heartbeat must be live and advancing.
-          a=$(docker exec trpc cat /tmp/heartbeat)
-          sleep 5
-          b=$(docker exec trpc cat /tmp/heartbeat)
-          echo "heartbeat $a -> $b"
-          [ -n "$a" ] && [ "$b" -gt "$a" ] || { echo "liveness heartbeat is not advancing"; exit 1; }
-          # Positive control: the same on Next.
-          na=$(docker exec next cat /tmp/heartbeat 2>/dev/null || echo 0)
+          [ -n "$ok" ] || { echo "next never answered its warm-up request"; docker logs next 2>&1 | tail -100; exit 1; }
           sleep 3
-          nb=$(docker exec next cat /tmp/heartbeat 2>/dev/null || echo 0)
-          echo "next heartbeat $na -> $nb"
+          check next
 
       - name: Wait for all three to answer
         run: |

@@ -5,6 +5,8 @@
  * data stores at the job's throwaway service containers. Nothing here is a real credential: the
  * session secret is random per run and exists only inside the job.
  *
+ * `fill-required-env.ts` then fills every other key the env schemas require, from the schemas.
+ *
  * Usage: node make-env.mjs <.env-example> <out-file>
  */
 
@@ -32,7 +34,7 @@ for (const raw of readFileSync(examplePath, 'utf8').split('\n')) {
 const HOST = 'host.docker.internal';
 const pg = `postgresql://postgres:postgres@${HOST}:5432/postgres`;
 
-Object.assign(env, {
+const overrides = {
   DATABASE_URL: pg,
   DATABASE_REPLICA_URL: pg,
   NOTIFICATION_DB_URL: pg,
@@ -46,6 +48,7 @@ Object.assign(env, {
   // as on a PR preview (see tests/preview-auth.setup.ts).
   IS_PREVIEW: 'true',
   // Both servers listen on 3000 inside their own container.
+  NODE_ENV: 'production',
   PORT: '3000',
   HOSTNAME: '0.0.0.0',
   PODNAME: 'parity',
@@ -57,11 +60,15 @@ Object.assign(env, {
   OTEL_TRACES_SAMPLE_RATIO: '1',
   OTEL_BSP_SCHEDULE_DELAY: '500',
   OTEL_SERVICE_NAME: 'parity',
-});
+};
+Object.assign(env, overrides);
 
 const lines = Object.entries(env).map(([k, v]) => {
   if (/[\r\n]/.test(v)) throw new Error(`${k}: a value with a newline cannot go in an env file`);
   return `${k}=${v}`;
 });
+// `fill-required-env.ts` reads this line: a schema rejecting one of these keys is a harness bug,
+// never something to paper over with a dummy.
+lines.unshift(`# owned: ${Object.keys(overrides).join(',')}`);
 writeFileSync(outPath, `${lines.join('\n')}\n`);
 console.log(`wrote ${lines.length} variables to ${outPath}`);
