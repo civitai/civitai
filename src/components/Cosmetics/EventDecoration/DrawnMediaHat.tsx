@@ -5,19 +5,13 @@ import { ImageMediaHat } from '~/components/Cosmetics/EventDecoration/EventDecor
 import { getHatRoom } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import { MEDIA_OVERLAY_ATTR, useDrawnMediaBox } from '~/components/EdgeMedia/useDrawnMediaBox';
 
-/**
- * How far past the slot's top and left edges the layer around it shows a hat. The image detail's
- * header (`p-3`) leaves 12px free above the slot, which is as far as a hat may reach without
- * covering the header's buttons; the slot's left edge is the window's.
- */
+/** The image detail's header leaves 12px free above the slot; the slot's left edge is the window's. */
 const SLOT_BLEED = { left: 0, top: 12 };
 
 /**
- * An image's hat on the box its picture is drawn in (the image detail letterboxes the picture in a
- * larger slot), as in the feed. The carousel clips what it draws, so the hat is portalled into
- * `layer`, over the slot, and measured from an empty host here, after the media and marked as a
- * media overlay so the sticker overlay beside it still finds the picture.
- * Nothing is drawn without a `layer`, or while `hidden` (the slide is moving).
+ * An image's hat on the box its picture is drawn in, portalled into `layer` because the carousel
+ * clips what it draws. An empty host stays in the slide, marked as a media overlay so the sticker
+ * overlay still finds the picture. Nothing is drawn without a `layer` or while `hidden`.
  */
 export function DrawnMediaHat({
   imageId,

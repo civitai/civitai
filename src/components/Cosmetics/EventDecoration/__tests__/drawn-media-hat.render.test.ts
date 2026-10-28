@@ -9,7 +9,7 @@ import type * as DrawnMediaBoxModule from '~/components/EdgeMedia/useDrawnMediaB
 
 /**
  * happy-dom has no layout, so this hands DrawnMediaHat a measured box and checks what it does with
- * it; ImageDetailCarouselHat.browser.test measures a real letterboxed picture but runs only locally.
+ * it; ImageDetailCarouselHat.browser.test measures a real letterboxed picture.
  */
 
 const act = (React as unknown as { act: typeof actType }).act;
