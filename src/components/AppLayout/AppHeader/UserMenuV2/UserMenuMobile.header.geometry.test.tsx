@@ -164,7 +164,7 @@ async function renderHeader(viewport: Viewport = PHONE_VIEWPORT) {
   const profile = card.querySelector('a[href^="/user/"]:not([href$="buzz-dashboard"])')!;
   const buzz = card.querySelector('a[href="/user/buzz-dashboard"]')!;
   const pin = card.querySelector('[aria-label="Pin Your Profile"]')!;
-  const buy = card.querySelector('button[aria-label="Buy Buzz"]')!;
+  const buy = card.querySelector<HTMLElement>('button[aria-label="Buy Buzz"]')!;
   const balances = [...buzz.querySelectorAll<HTMLElement>('[data-buzz-balance]')];
   return { card, profile, buzz, pin, buy, balances };
 }
@@ -325,7 +325,7 @@ describe('mobile menu account card', () => {
     const strip = stripOf(card);
     expect(strip.scrollWidth).toBeLessThanOrEqual(strip.clientWidth);
     // One row: the plus sits level with the balances, not under them.
-    const buy = card.querySelector('button[aria-label="Buy Buzz"]')!;
+    const buy = card.querySelector<HTMLElement>('button[aria-label="Buy Buzz"]')!;
     expect(box(buy).top).toBeLessThan(box(balances[1]).bottom);
     expect(box(strip).height).toBeLessThanOrEqual(56);
   });
