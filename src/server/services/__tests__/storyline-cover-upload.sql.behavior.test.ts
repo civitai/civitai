@@ -117,9 +117,10 @@ beforeAll(async () => {
       (61, 'removed-chapter-image', 1, ${OWNER}, 101, 'Scanned'),
       (62, 'other-storyline-image', 1, ${OWNER}, 102, 'Scanned'),
       -- In no post like an upload, but left behind by a deleted post: never uploaded here.
-      (58, 'left-by-a-deleted-post', 1, ${OWNER}, NULL, 'Scanned');
+      (58, 'left-by-a-deleted-post', 1, ${OWNER}, NULL, 'Scanned'),
+      (59, 'uploaded-for-another-storyline', 1, ${OWNER}, NULL, 'Scanned');
     INSERT INTO "StorylineCoverUpload" ("storylineId", "imageId") VALUES
-      (1, 50), (1, 51), (1, 52), (1, 53), (1, 54), (1, 55), (1, 56), (1, 57);
+      (1, 50), (1, 51), (1, 52), (1, 53), (1, 54), (1, 55), (1, 56), (1, 57), (2, 59);
     UPDATE "Image" SET "tosViolation" = true WHERE id = 57;
     UPDATE "Image" SET minor = true WHERE id = 55;
   `);
@@ -177,6 +178,10 @@ describe('an uploaded card cover, read by the feed', () => {
   it("never shows its owner's image in no post that was not uploaded as its pick", async () => {
     await expect(coverFor(58)).resolves.toBeNull();
     await expect(coverFor(58, { id: OWNER })).resolves.toBeNull();
+  });
+
+  it("never shows an image uploaded as another storyline's cover", async () => {
+    await expect(coverFor(59)).resolves.toBeNull();
   });
 
   it("never shows someone else's image in no post", async () => {
