@@ -37,6 +37,8 @@ async function main() {
       .where('img.ingestion', '=', 'Scanned')
       .where('img.nsfwLevelLocked', '=', false)
       .where('img.blockedFor', 'is', null)
+      .where('img.needsReview', 'is', null)
+      .where('img.acceptableMinor', '=', false)
       .where('img.nsfwLevel', 'not in', [0, LEVEL_BLOCKED])
       .where('p.publishedAt', 'is not', null)
       .orderBy('img.id', 'desc')

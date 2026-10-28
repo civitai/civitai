@@ -77,6 +77,7 @@ const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + mi
 
 const utc = (date: Date) => sql<Date>`${date.toISOString()}::timestamp`;
 
+/** Only images the public feeds would show: the same review-hold conditions as the image feed queries. */
 function servableItems(db: Executor) {
   return db
     .selectFrom('KnightsQueueItem as i')
@@ -90,6 +91,8 @@ function servableItems(db: Executor) {
     .where('img.nsfwLevel', 'not in', [0, NsfwLevel.Blocked])
     .where('img.ingestion', '!=', 'Blocked')
     .where('img.blockedFor', 'is', null)
+    .where('img.needsReview', 'is', null)
+    .where('img.acceptableMinor', '=', false)
     .where('p.publishedAt', 'is not', null)
     .where('p.publishedAt', '<', sql<Date>`(now() AT TIME ZONE 'utc')`);
 }

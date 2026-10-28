@@ -25,7 +25,8 @@ export type EnqueueRefusal =
   | 'bad-rank'
   | 'bad-votes'
   | 'bad-expiry'
-  | 'image-not-found';
+  | 'image-not-found'
+  | 'held-for-review';
 
 export type EnqueueOutcome = { imageId: number } & (
   | { outcome: 'enqueued'; itemId: number }
@@ -61,16 +62,17 @@ export async function enqueueKnightsItems(
   if (!question) return refuseAll('unknown-question');
   if (!question.active) return refuseAll('inactive-question');
 
-  const known = new Set(
+  // Serve only images the public feeds would show: the review-hold conditions the image feeds apply.
+  const images = new Map<number, boolean>(
     input.items.length === 0
       ? []
       : (
           await db
             .selectFrom('Image')
-            .select('id')
+            .select(['id', 'needsReview', 'acceptableMinor'])
             .where('id', 'in', [...new Set(input.items.map((i) => i.imageId))])
             .execute()
-        ).map((row) => row.id)
+        ).map((row) => [row.id, row.needsReview !== null || row.acceptableMinor])
   );
 
   const outcomes: (EnqueueOutcome | null)[] = [];
@@ -93,7 +95,9 @@ export async function enqueueKnightsItems(
         ? new Date(now.getTime() + KNIGHTS_STAGE_TTL_HOURS * 3_600_000)
         : item.expiresAt;
     if (expiresAt && expiresAt.getTime() <= now.getTime()) return refuse('bad-expiry');
-    if (!known.has(item.imageId)) return refuse('image-not-found');
+    const held = images.get(item.imageId);
+    if (held === undefined) return refuse('image-not-found');
+    if (held) return refuse('held-for-review');
     if (seen.has(item.imageId)) {
       outcomes[index] = { imageId: item.imageId, outcome: 'duplicate' };
       return;
@@ -133,7 +137,7 @@ export async function enqueueKnightsItems(
         SELECT 1 FROM "KnightsQueueItem" e
         WHERE e."questionKey" = ${input.questionKey}
           AND e."imageId" = v."imageId"
-          AND e."status" IN ('Open', 'Inquisitor')
+          AND e."status" IN ('Open', 'Inquisitor', 'Ruling')
           AND NOT e."isHiddenCheck"
       )
       ON CONFLICT DO NOTHING

@@ -77,7 +77,9 @@ const items = async () =>
 
 beforeAll(async () => {
   pg = new PGlite();
-  await pg.exec(`CREATE TABLE "Image" (id integer PRIMARY KEY);`);
+  await pg.exec(
+    `CREATE TABLE "Image" (id integer PRIMARY KEY, "needsReview" text, "acceptableMinor" boolean NOT NULL DEFAULT false);`
+  );
   await pg.exec(migration('20261210120000_knights_v2_queue'));
   await pg.exec(migration('20261211120000_knights_v2_sources'));
   db = new Kysely<DB>({ dialect: dialect(pg) });
@@ -93,6 +95,32 @@ beforeEach(async () => {
 });
 
 describe('enqueueKnightsItems', () => {
+  it.each([
+    ['held for review', `UPDATE "Image" SET "needsReview" = 'minor' WHERE id = 1`],
+    ['an acceptable minor', `UPDATE "Image" SET "acceptableMinor" = true WHERE id = 1`],
+  ])('refuses an image that is %s and queues the rest', async (_label, hold) => {
+    await pg.exec(hold);
+
+    const outcomes = await enqueueKnightsItems(
+      db,
+      {
+        source: 'owner-rating',
+        questionKey: Q,
+        items: [
+          { imageId: 1, priority: 1 },
+          { imageId: 2, priority: 1 },
+        ],
+      },
+      NOW
+    );
+
+    expect(outcomes).toMatchObject([
+      { imageId: 1, outcome: 'refused', reason: 'held-for-review' },
+      { imageId: 2, outcome: 'enqueued' },
+    ]);
+    expect((await items()).map((i) => i.imageId)).toEqual([2]);
+  });
+
   it('writes items with the question defaults and per-item overrides', async () => {
     const outcomes = await enqueueKnightsItems(
       db,
