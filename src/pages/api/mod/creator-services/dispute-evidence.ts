@@ -17,7 +17,9 @@ export default defineModeratorEndpoint('creatorServices.disputeEvidence', {
     '`priorDisputes` counts the other deals each party was on, either side, whose dispute opened in the last `days` days.',
     "`agentMode` is the dispute agent's kill switch (`off`, `shadow`, `propose` or `settle`); a missing or unknown setting reads as `off`. The agent does nothing unless it allows what it is about to do.",
     "A moderator who is the deal's buyer or seller answers FORBIDDEN.",
+    'Also open to an account without the moderator role that holds `creatorServices.reviewDispute`.',
   ],
+  grantHolders: ['creatorServices.reviewDispute'],
   input: z.object({ dealId: z.coerce.number().int().positive() }),
   async handler({ dealId }, { actor }) {
     const [review, resolve] = await Promise.all([

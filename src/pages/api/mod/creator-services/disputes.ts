@@ -11,7 +11,9 @@ export default defineModeratorEndpoint('creatorServices.disputes', {
     "`disputeReason` is the buyer's text, `cancellation_declined`, or a system hold: `seller_unavailable` (banned or deleted at payout) or `final_scan_failed`. It is null when the buyer gave only a code or was muted; the code is on the `Disputed` event's `reasonCode` (for `cancellation_declined`, on the latest `CancellationRequested` event).",
     "`finalsClear` false means Release will be refused: the round's finals have not all passed scanning.",
     '`latestReview` is the most recent dispute review ({ id, class, proposal, confidence, rationale, agentVersion, mode, createdAt }), or null. `proposal` null means it escalated to a human.',
+    'Also open to an account without the moderator role that holds `creatorServices.reviewDispute`.',
   ],
+  grantHolders: ['creatorServices.reviewDispute'],
   input: z.object({
     cursor: z.string().max(64).optional().describe('`nextCursor` from the previous page.'),
     limit: z.coerce.number().int().min(1).max(50).default(20),

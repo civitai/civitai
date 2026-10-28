@@ -7,6 +7,7 @@ import { refuseModerationAccountSession } from '~/server/auth/moderation-account
 import { isFullScopeUserKey, type BearerCredential } from '~/server/auth/full-user-credential';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { Tracker } from '~/server/clickhouse/client';
+import { hasModeratorGrant, type ModeratorGrantId } from '~/server/services/moderator-grants';
 import { sysRedis, REDIS_SYS_KEYS } from '~/server/redis/client';
 import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import {
@@ -21,7 +22,8 @@ import type { SessionUser } from '~/types/session';
 // enforced, or enforced and not documented. `/moderator/api` renders these specs, and a docs page that
 // drifts from its API is worse than no docs page — it is a list of calls that used to work.
 //
-// There is ONE actor rule: the caller is a signed-in moderator. No service token opens these, because
+// There is ONE actor rule: the caller is a signed-in moderator, or, on an endpoint that declares
+// `grantHolders`, a non-moderator user holding one of those grants. No service token opens these, because
 // the privileged-permission gate, the per-actor rate limit and the audit row are all evaluated against
 // the actor — a service identity would disable three controls at once and make the audit trail a
 // record of which key was used rather than who acted.
@@ -58,6 +60,7 @@ export type ModeratorSpec = {
   summary: string;
   /** Permission key required on top of the moderator role, from the `granted` feature-flag system. */
   privileged?: string;
+  grantHolders?: ModeratorGrantId[];
   input?: z.ZodType;
   returns?: string;
   notes?: string[];
@@ -70,6 +73,12 @@ export type ModeratorDefinition<S extends z.ZodType, TOutput> = {
   method?: ModeratorMethod;
   summary: string;
   privileged?: string;
+  /**
+   * Opens the endpoint to a user WITHOUT the moderator role who holds one of these moderator-app
+   * grants: a system account scoped to one job, which must not get `isModerator` because that opens
+   * every moderator procedure. Every other check still applies.
+   */
+  grantHolders?: ModeratorGrantId[];
   input?: S;
   returns?: string;
   notes?: string[];
@@ -121,6 +130,11 @@ async function resolveActor(req: NextApiRequest, res: NextApiResponse): Promise<
   const session = await getServerAuthSession({ req, res });
   if (!session?.user) return { status: 401, error: 'Not signed in' };
   return { actor: session.user as SessionUser, fullCredential: isFullScopeSession(req) };
+}
+
+async function holdsAnyGrant(actor: SessionUser, grants: ModeratorGrantId[] = []) {
+  for (const grant of grants) if (await hasModeratorGrant(actor, grant)) return true;
+  return false;
 }
 
 function collectInput(req: NextApiRequest): Record<string, unknown> {
@@ -197,6 +211,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
     method: def.method ?? 'POST',
     summary: def.summary,
     privileged: def.privileged,
+    grantHolders: def.grantHolders,
     input: def.input,
     returns: def.returns,
     notes: def.notes,
@@ -214,7 +229,7 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
 
     const { actor, fullCredential } = resolved;
     if (
-      !actor.isModerator ||
+      !(actor.isModerator || (await holdsAnyGrant(actor, def.grantHolders))) ||
       actor.bannedAt ||
       refuseModerationAccountSession(actor, 'moderator-endpoint')
     ) {

@@ -4,6 +4,7 @@ import { redisMock } from '~/__tests__/mocks';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as ModeratorGrants from '~/server/services/moderator-grants';
 
 // Minimal NextApiRequest/Response stand-in (avoids a node-mocks-http dependency).
 function createMocks({
@@ -43,10 +44,11 @@ function createMocks({
   return { req, res };
 }
 
-const { mockGetSession, mockServerSession, mockAudit } = vi.hoisted(() => ({
+const { mockGetSession, mockServerSession, mockAudit, mockHasGrant } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
   mockServerSession: vi.fn(),
   mockAudit: vi.fn(),
+  mockHasGrant: vi.fn(),
 }));
 
 // `sysRedis` comes from the canonical redis mock, registered globally in
@@ -79,6 +81,10 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
+vi.mock('~/server/services/moderator-grants', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeratorGrants>()),
+  hasModeratorGrant: mockHasGrant,
+}));
 // Short-circuits the endpoint-helpers import chain so this unit test does not pull the full
 // Prisma + axiom + auth tree.
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -121,6 +127,7 @@ beforeEach(() => {
   mockMultiIncr.value = 1;
   redisMock.sysRedis.multi.mockImplementation(multiFactory);
   redisMock.sysRedis.ttl.mockResolvedValue(60);
+  mockHasGrant.mockResolvedValue(false);
   signedInAs({});
 });
 
@@ -412,5 +419,81 @@ describe('the shared Civitai Moderation account', () => {
     const second = createMocks({ body: { value: 1 } });
     await handler(second.req as never, second.res as never);
     expect(second.res._getStatusCode()).toBe(200);
+  });
+});
+
+describe('grantHolders', () => {
+  const HOLDER = { id: 12, isModerator: false };
+  const holdsReview = () =>
+    mockHasGrant.mockImplementation(
+      async (_actor: unknown, id: string) => id === 'creatorServices.reviewDispute'
+    );
+  const opted = (handlerSpy = vi.fn().mockResolvedValue({ ok: true })) => ({
+    handler: defineModeratorEndpoint('test.opted', {
+      summary: 'Opted in.',
+      grantHolders: ['creatorServices.resolveDispute', 'creatorServices.reviewDispute'],
+      async handler(input, ctx) {
+        return handlerSpy(input, ctx);
+      },
+    }),
+    handlerSpy,
+  });
+  const call = async (handler: ReturnType<typeof opted>['handler']) => {
+    const { req, res } = createMocks({ body: { value: 1 } });
+    await handler(req as never, res as never);
+    return res._getStatusCode();
+  };
+
+  it('lets a non-moderator holding one of the grants through', async () => {
+    holdsReview();
+    signedInAs(HOLDER);
+    const { handler, handlerSpy } = opted();
+    expect(await call(handler)).toBe(200);
+    expect(handlerSpy.mock.calls[0][1].actor.id).toBe(12);
+    expect(mockHasGrant).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 12 }),
+      'creatorServices.reviewDispute'
+    );
+  });
+
+  it('refuses a non-moderator holding none of the grants', async () => {
+    signedInAs(HOLDER);
+    const { handler, handlerSpy } = opted();
+    expect(await call(handler)).toBe(403);
+    expect(handlerSpy).not.toHaveBeenCalled();
+  });
+
+  it('refuses the same grant holder on an endpoint that did not opt in', async () => {
+    holdsReview();
+    signedInAs(HOLDER);
+    const { handler, handlerSpy } = build();
+    expect(await call(handler)).toBe(403);
+    expect(handlerSpy).not.toHaveBeenCalled();
+  });
+
+  it('still refuses a banned grant holder', async () => {
+    holdsReview();
+    signedInAs({ ...HOLDER, bannedAt: new Date() as never });
+    expect(await call(opted().handler)).toBe(403);
+  });
+
+  it('still requires a full-scope credential from a grant holder', async () => {
+    holdsReview();
+    mockGetSession.mockResolvedValue({
+      user: { ...MOD, ...HOLDER },
+      apiKeyId: 1,
+      apiKeyType: 'User',
+      subject: { type: 'apiKey', id: 1 },
+      tokenScope: TokenScope.UserRead,
+    });
+    const { req, res } = createMocks({ headers: { authorization: 'Bearer k' } });
+    await opted().handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(403);
+    expect(res._getJSONData()).not.toEqual({ error: 'Moderator role required' });
+  });
+
+  it('does not look up grants for a moderator', async () => {
+    expect(await call(opted().handler)).toBe(200);
+    expect(mockHasGrant).not.toHaveBeenCalled();
   });
 });
