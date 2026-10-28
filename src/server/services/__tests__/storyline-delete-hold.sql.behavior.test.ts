@@ -10,12 +10,8 @@ vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 /**
- * The account-hold refusal through the real `accountHoldSql`, against a hold marker in the same
- * shape as production's (`EvidenceHold`, and the `EvidenceHeldUser` view over it). Deleting a storyline, run as written against an in-process Postgres built from the
- * shipped storyline migrations, so the cascades and the refusals are the database's own.
- *
- * PGlite has one session, so nothing here interleaves two transactions. The delete's lock against
- * a concurrent chapter add was checked once against a real Postgres (see the PR).
+ * Deleting a storyline under an account hold, through the real hold helpers, in an in-process
+ * Postgres built from the shipped storyline migrations plus hold tables shaped like production's.
  */
 
 const { LEGAL_HOLD_REFUSAL } = await import('~/server/services/legal-hold.service');

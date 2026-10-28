@@ -12,7 +12,7 @@ import {
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
-import { HOLD_KINDS, PAYOUT_KINDS } from '~/server/services/placement-escrow.service';
+import { placementMoneyInFlightSql } from '~/server/services/placement-escrow.service';
 import {
   accountHoldSql,
   contentKeptError,
@@ -854,11 +854,8 @@ export async function updateStoryline({
 
 /**
  * Whether deleting storyline `id` would delete anything of a held account: its owner's, or a
- * comment the cascade takes. That is its thread and every thread below it, reached the ways the
- * cascade reaches them (a reply thread's parent and root threads, which cascade) and through a
- * comment's reply thread (which does not cascade, so it can only over-refuse), plus its comment
- * topic. The owner is judged as other content deletes judge an owner (`ownerHeldSql`), comment
- * authors as `deleteCommentsV2UnlessHeld` judges them.
+ * comment its cascade takes. The `commentId` arm reaches threads the cascade does not delete, so it
+ * can only refuse more than needed.
  */
 function storylineHeldSql({
   id,
@@ -955,9 +952,7 @@ export async function deleteStoryline({
       if (appealOpen) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.appealOpen);
     }
     // A paid continuation targets a chapter's post, and an approved one is its chapter's
-    // placement. Unsettled is the escrow's own reading (`sweepUnpaidLegs`,
-    // `sweepUnplannedSettlements`): pending, a payout leg not yet paid, or a funded hold with no
-    // payout planned.
+    // placement.
     const [{ unsettled, approved }] = await tx.$queryRaw<
       { unsettled: boolean; approved: boolean }[]
     >`
@@ -974,26 +969,7 @@ export async function deleteStoryline({
           )
       )
       SELECT EXISTS (SELECT 1 FROM paid WHERE status = 'approved') AS approved, EXISTS (
-        SELECT 1 FROM paid p
-        WHERE (
-            p.status = 'pending'
-            OR EXISTS (
-              SELECT 1 FROM "PlacementTransaction" t
-              WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
-                AND t."transactionId" IS NULL AND t.amount > 0
-            )
-            OR (
-              EXISTS (
-                SELECT 1 FROM "PlacementTransaction" h
-                WHERE h."placementId" = p.id AND h.kind = ANY(${[...HOLD_KINDS]}::text[])
-                  AND h."transactionId" IS NOT NULL
-              )
-              AND NOT EXISTS (
-                SELECT 1 FROM "PlacementTransaction" t
-                WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
-              )
-            )
-          )
+        SELECT 1 FROM paid p WHERE ${placementMoneyInFlightSql(Prisma.raw('p'))}
       ) AS unsettled
     `;
     if (unsettled) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidContinuations);

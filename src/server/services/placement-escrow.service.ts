@@ -198,6 +198,37 @@ export const PAYOUT_KINDS = [
   'forfeit',
 ] as const;
 
+/** A receipted hold on placement `p` (a SQL alias): its escrow landed. */
+export const placementHoldFundedSql = (p: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "PlacementTransaction" h
+  WHERE h."placementId" = ${p}.id
+    AND h.kind = ANY(${[...HOLD_KINDS]}::text[])
+    AND h."transactionId" IS NOT NULL
+)`;
+
+/** Any payout leg planned for placement `p`. */
+export const placementPayoutPlannedSql = (p: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "PlacementTransaction" t
+  WHERE t."placementId" = ${p}.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
+)`;
+
+/** A payout leg of placement `p` claimed and not yet paid, the legs `sweepUnpaidLegs` resumes. */
+export const placementPayoutUnpaidSql = (p: Prisma.Sql) => Prisma.sql`EXISTS (
+  SELECT 1 FROM "PlacementTransaction" t
+  WHERE t."placementId" = ${p}.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
+    AND t."transactionId" IS NULL AND t.amount > 0
+)`;
+
+/**
+ * Placement `p`'s Buzz is still moving: pending, a payout leg unpaid, or funded with no payout
+ * planned (what `sweepUnplannedSettlements` recovers).
+ */
+export const placementMoneyInFlightSql = (p: Prisma.Sql) => Prisma.sql`(
+  ${p}.status = 'pending'
+  OR ${placementPayoutUnpaidSql(p)}
+  OR (${placementHoldFundedSql(p)} AND NOT ${placementPayoutPlannedSql(p)})
+)`;
+
 /**
  * `/user/transactions` renders a "View Image" link from `entityType`/`entityId`,
  * so the row reaches the image the placement is on and the copy never has to
@@ -1129,16 +1160,8 @@ export async function sweepUnplannedSettlements({
       -- forever and consumes a slot in every bounded batch — the starvation
       -- shape this sweep exists to be the recovery from. That population is
       -- terminal rather than silent: it is counted into the gauge below.
-      AND EXISTS (
-        SELECT 1 FROM "PlacementTransaction" h
-        WHERE h."placementId" = p.id
-          AND h.kind = ANY(${[...HOLD_KINDS]}::text[])
-          AND h."transactionId" IS NOT NULL
-      )
-      AND NOT EXISTS (
-        SELECT 1 FROM "PlacementTransaction" t
-        WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
-      )
+      AND ${placementHoldFundedSql(Prisma.raw('p'))}
+      AND NOT ${placementPayoutPlannedSql(Prisma.raw('p'))}
     LIMIT ${limit}
   `;
 
