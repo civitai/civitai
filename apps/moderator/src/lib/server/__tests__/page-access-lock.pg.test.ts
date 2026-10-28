@@ -21,8 +21,6 @@ const SERVER_ENV = process.env.MODERATOR_TEST_DATABASE_URL
   ? 'MODERATOR_TEST_DATABASE_URL'
   : 'ASSISTANT_RUNNER_TEST_DATABASE_URL';
 const SERVER_URL = process.env[SERVER_ENV];
-// Printed so a CI log shows this ran against a server rather than skipping.
-console.info(`[page-access-lock.pg] Postgres from ${SERVER_URL ? SERVER_ENV : 'nowhere: skipped'}`);
 const describePg = SERVER_URL ? describe : describe.skip;
 if (process.env.CI && !SERVER_URL)
   throw new Error('MODERATOR_TEST_DATABASE_URL (or its fallback) is not set in CI');
@@ -97,6 +95,8 @@ describePg('changePageRoles against a hand edit in another session', () => {
   let history: PGlite;
 
   beforeAll(async () => {
+    // Printed so a CI log shows this ran against a server rather than skipping.
+    console.info(`[page-access-lock.pg] Postgres from ${SERVER_ENV}`);
     server = connect(SERVER_URL!);
     await server.pool.query(`CREATE DATABASE "${name}"`);
     const url = new URL(SERVER_URL!);
