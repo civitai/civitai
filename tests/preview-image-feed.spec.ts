@@ -12,7 +12,7 @@ import { imageFeedVerdict, type ImageFeedPage } from './preview-image-feed.verdi
  * and the page carries `source` on the wire (image.controller.ts) naming who answered:
  *
  *  - `feed` / `db` / `meili` — someone answered the query: the page must be non-empty.
- *  - `retired` — the feeds index (`metrics_images_v1`) is retired (civitai#7054) and the
+ *  - `retired` — the feeds index (`metrics_images_v1`) is retired and the
  *    reader refused it. Only the retirement guard stamps this source, so this is the one
  *    case where an empty page passes, and it must be exactly the empty shape. Previews set
  *    no FEED_SERVICE_URL, so this is what a preview gets. An empty page under any other

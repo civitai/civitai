@@ -274,12 +274,9 @@ const transformData = async ({
 export type ImageMetricsSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor({
-  // Retired with the feeds Meilisearch. Writes and syncs no-op, so the call sites that still queue
-  // updates cost nothing, and no reader queries it: with a feed service the image feed is served
-  // there (isMeiliOff is true regardless of the flag), and without one the readers answer an empty
-  // page (search-index/retired-index-read.ts). Restoring means removing it from
-  // RETIRED_SEARCH_INDEXES and re-running a reset, since the index is stale for as long as it is
-  // retired.
+  // Retired (RETIRED_SEARCH_INDEXES). To restore: remove it there, re-add it to the ban purge
+  // targets in meilisearch/util.ts, and re-run a reset before any reader uses it. Until the reset,
+  // the index still holds content of users banned while it was retired.
   retired: isRetiredSearchIndex(INDEX_ID),
   workerCount: 10,
   indexName: INDEX_ID,

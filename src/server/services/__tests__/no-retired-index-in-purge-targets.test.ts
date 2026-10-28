@@ -512,8 +512,6 @@ describe('the ban purge only targets live, filterable search indexes', () => {
 
   it('reads the recorded number of targets out of both lists', () => {
     expect(mainEntries.length, countMessage('mainIndexConfigs')).toBe(6);
-    // 0: the only metrics target, METRICS_IMAGES_SEARCH_INDEX, was dropped when the feeds
-    // Meilisearch was retired, and `metricsIndexConfigs` went with it.
     expect(metricsEntries.length, countMessage('metricsIndexConfigs')).toBe(0);
   });
 
