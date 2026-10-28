@@ -47,14 +47,17 @@ export type StudioDatasetArchive =
 
 type FileMetadata = Record<string, unknown> & {
   datasetArchiveAttempts?: number;
+  /** A closed owner's row is never given up on, so its failures back off instead. ISO time. */
+  datasetArchiveRetryAfter?: string;
+  datasetArchiveServiceAttempts?: number;
   datasetArchive?: StudioDatasetArchive;
 };
 
 /**
  * Placeholders still waiting for their dataset, newest first: the newest workflows are the ones
- * whose blobs are surest to still exist. This predicate is the partial index
+ * whose blobs are surest to still exist. All but the last condition are the partial index
  * `ModelFile_studio_dataset_pending_idx` verbatim, so the query stays an index read once the
- * backlog is empty.
+ * backlog is empty; the last skips rows backing off after a failed service-token read.
  */
 export async function getPendingStudioDatasetFileIds(limit: number): Promise<number[]> {
   const rows = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -63,6 +66,10 @@ export async function getPendingStudioDatasetFileIds(limit: number): Promise<num
       AND "sizeKB" = 0
       AND metadata ? 'selectedEpochUrl'
       AND NOT metadata ? 'datasetArchive'
+      AND (
+        NOT metadata ? 'datasetArchiveRetryAfter'
+        OR (metadata->>'datasetArchiveRetryAfter')::timestamptz < now()
+      )
     ORDER BY id DESC
     LIMIT ${limit}
   `;
@@ -259,7 +266,18 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
       sizeKB: true,
       metadata: true,
       modelVersionId: true,
-      modelVersion: { select: { model: { select: { id: true, userId: true, meta: true } } } },
+      modelVersion: {
+        select: {
+          model: {
+            select: {
+              id: true,
+              userId: true,
+              meta: true,
+              user: { select: { bannedAt: true, deletedAt: true } },
+            },
+          },
+        },
+      },
     },
   });
   const metadata = (file?.metadata ?? {}) as FileMetadata;
@@ -280,18 +298,24 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
     ?.trainingStudioWorkflowId;
   if (!workflowId) return markUnavailable('not a Training Studio model');
 
+  // A banned or deleted owner cannot be minted a token, so their run is read with the service token.
+  const ownerClosed = !!(model.user.bannedAt || model.user.deletedAt);
   try {
-    const token = await getOrchestratorToken(model.userId);
+    const token = ownerClosed ? serviceToken() : await getOrchestratorToken(model.userId);
     let workflow: Workflow;
     try {
       workflow = await getWorkflow({ token, path: { workflowId } });
     } catch (error) {
-      if (error instanceof TRPCError && error.code === 'NOT_FOUND')
+      // Under the service token a not-found is not proof the run is gone: it fails safe below.
+      if (error instanceof TRPCError && error.code === 'NOT_FOUND' && !ownerClosed)
         return markUnavailable('workflow no longer exists');
       throw error;
     }
     const items = getStudioDatasetItems(workflow);
-    if (!items?.length) return markUnavailable('run has no blob dataset');
+    if (!items?.length) {
+      if (ownerClosed) throw new Error('run read with the service token has no blob dataset');
+      return markUnavailable('run has no blob dataset');
+    }
 
     const { baseUrl } = createOrchestratorClient(token).getConfig();
     if (!baseUrl) throw new Error('orchestrator endpoint is not configured');
@@ -350,12 +374,49 @@ export async function archiveStudioDataset(fileId: number): Promise<StudioDatase
     );
     return { fileId, outcome: 'archived', items: stored.included, skipped: stored.skipped };
   } catch (error) {
-    const attempts = (metadata.datasetArchiveAttempts ?? 0) + 1;
     const message = error instanceof Error ? error.message : String(error);
+    if (ownerClosed) {
+      // Never given up on: the owner can no longer re-upload, so this copy may be the only one left.
+      const serviceAttempts = (metadata.datasetArchiveServiceAttempts ?? 0) + 1;
+      await logToAxiom({
+        type: 'error',
+        name: 'studio-dataset-archive-service-read-failed',
+        fileId,
+        modelVersionId: file.modelVersionId,
+        attempts: serviceAttempts,
+        message,
+      }).catch(() => undefined);
+      const retryAfter = new Date(Date.now() + serviceRetryDelayMs(serviceAttempts));
+      await writeMetadata(file.id, {
+        ...metadata,
+        datasetArchiveServiceAttempts: serviceAttempts,
+        datasetArchiveRetryAfter: retryAfter.toISOString(),
+      });
+      return { fileId, outcome: 'retry', attempts: serviceAttempts, error: message };
+    }
+    // A ban landing mid-run refuses the owner's mint: the next run takes the service-token path.
+    if (error instanceof TRPCError && error.code === 'FORBIDDEN') {
+      const attempts = metadata.datasetArchiveAttempts ?? 0;
+      return { fileId, outcome: 'retry', attempts, error: message };
+    }
+    const attempts = (metadata.datasetArchiveAttempts ?? 0) + 1;
     if (attempts >= STUDIO_DATASET_MAX_ATTEMPTS) return markUnavailable(`failed: ${message}`);
     await writeMetadata(file.id, { ...metadata, datasetArchiveAttempts: attempts });
     return { fileId, outcome: 'retry', attempts, error: message };
   }
+}
+
+const SERVICE_RETRY_BASE_MS = 60 * 60 * 1000;
+const SERVICE_RETRY_MAX_MS = 24 * 60 * 60 * 1000;
+/** 1h, 2h, 4h ... capped at a day: still retried, without crowding newer rows out of a run. */
+export function serviceRetryDelayMs(attempts: number) {
+  return Math.min(SERVICE_RETRY_BASE_MS * 2 ** (attempts - 1), SERVICE_RETRY_MAX_MS);
+}
+
+function serviceToken() {
+  if (!env.ORCHESTRATOR_ACCESS_TOKEN)
+    throw new Error('no orchestrator service token is configured');
+  return env.ORCHESTRATOR_ACCESS_TOKEN;
 }
 
 async function writeMetadata(fileId: number, metadata: FileMetadata) {

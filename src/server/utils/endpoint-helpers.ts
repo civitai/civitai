@@ -16,7 +16,11 @@ import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
 import { instrumentApiResponse, reconstructApiRoute } from '~/server/prom/http-errors';
-import { isClientAbortError, isDriverAuthoredMessage } from '~/server/utils/errorHandling';
+import {
+  BANNED_ACCOUNT_MESSAGE,
+  isClientAbortError,
+  isDriverAuthoredMessage,
+} from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
@@ -856,7 +860,16 @@ export function OrchestratorEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return AuthedEndpoint(async (req, res, user) => {
-    const token = await getOrchestratorToken(user.id, { req, res });
+    if (user.bannedAt) return res.status(403).json({ error: BANNED_ACCOUNT_MESSAGE });
+    let token: string;
+    try {
+      token = await getOrchestratorToken(user.id, { req, res });
+    } catch (error) {
+      // The mint reads the ban from the primary, so it can refuse a session whose cached user predates the ban.
+      if (error instanceof TRPCError && error.code === 'FORBIDDEN')
+        return res.status(403).json({ error: error.message });
+      throw error;
+    }
     return await handler(req, res, user, token);
   }, allowedMethods);
 }

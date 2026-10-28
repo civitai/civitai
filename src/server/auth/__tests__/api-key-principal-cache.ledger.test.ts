@@ -120,10 +120,11 @@ const LEDGER: Record<string, { count: number; why: string }> = {
   'apps/auth/src/lib/server/oauth/worker-grant.ts': { count: 2, why: WORKER_ONLY },
   'apps/auth/src/lib/server/oauth/worker-admin.ts': { count: 1, why: WORKER_ONLY },
   'apps/training-studio/src/lib/server/orchestrator-token.ts': {
-    count: 2,
+    count: 3,
     why:
       'insert, and a delete of its own system keys within 30 s of expiry; a cached entry never ' +
-      'outlives expiresAt.',
+      'outlives expiresAt. The update expires a key it just inserted and never returned, so no ' +
+      'bearer request can have cached it.',
   },
 };
 
