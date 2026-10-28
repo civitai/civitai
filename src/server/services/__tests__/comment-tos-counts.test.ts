@@ -65,6 +65,11 @@ it('bulkSetCommentV2TosViolation actions an already-hidden comment without telli
     notified: 1,
   });
   expect(createNotification).toHaveBeenCalledTimes(1);
+  const actionedIds = dbMock.dbWrite.$queryRaw.mock.calls.map((call) => call.slice(1));
+  expect(actionedIds.some((values) => values.includes(1))).toBe(true);
+  expect(dbMock.dbWrite.commentV2.update).toHaveBeenCalledWith(
+    expect.objectContaining({ where: { id: 1 } })
+  );
 });
 
 describe('bulkSetCommentTosViolation', () => {

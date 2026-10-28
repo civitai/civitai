@@ -158,6 +158,14 @@ describe('upsertComment — an edit of a comment hidden since the read', () => {
     await expect(edit()).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 
+  it('lets an includeHidden edit reach a hidden comment, without setting the flag', async () => {
+    await edit({ includeHidden: true, tosViolation: true });
+    const [args] = db.commentV2.update.mock.calls[0] as [{ where: object; data: object }];
+    expect(args.where).toEqual({ id: 5 });
+    expect(args.data).not.toMatchObject({ tosViolation: true });
+    expect(args.data).not.toHaveProperty('includeHidden');
+  });
+
   it("leaves a moderator's edit as it was (control)", async () => {
     await edit({ isModerator: true, tosViolation: true });
     expect(db.commentV2.update).toHaveBeenCalledWith(
