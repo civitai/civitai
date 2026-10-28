@@ -69,6 +69,7 @@ const APPEALS: [number, number, string, number, string, string | null, string | 
   [6, 16, 'Model', 2006, 'Pending', null, null], // model still exists
   [7, 17, 'Model', 2007, 'Rejected', null, null], // decided model
   [8, 18, 'Image', 1008, 'Pending', '2026-09-10 00:00:00', null], // already routed
+  // 9-14: the appeal flow excludes the image or its appellant; each is treated like 1, 2 or 15.
   [9, 19, 'Image', 1009, 'Pending', null, 'appeal-19-1'], // in a report (object entry), also owner-deleted
   [10, 20, 'Image', 1010, 'Pending', null, null], // image in a report, bare entry
   [11, 21, 'Image', 1011, 'Pending', null, null], // appellant has a report filed on them
@@ -204,19 +205,19 @@ describe('voidOrphanedAppeals against Postgres', () => {
       6: 'Pending',
       7: 'Rejected',
       8: 'Pending',
-      9: 'void:quiet',
-      10: 'void:quiet',
-      11: 'void:quiet',
+      9: 'void:deleted-by-owner',
+      10: 'Pending:routed',
+      11: 'Pending:routed',
       12: 'Pending:routed',
-      13: 'void:quiet',
-      14: 'void:quiet',
+      13: 'Pending:routed',
+      14: 'Pending:routed',
       15: 'Pending:routed',
       16: 'void:quiet',
       17: 'void:quiet',
       18: 'void:deleted-by-owner',
       19: 'void:quiet',
     });
-    expect(result).toMatchObject({ closedQuietly: 9, closedOwnerDeleted: 2, routedForReview: 3 });
+    expect(result).toMatchObject({ closedQuietly: 4, closedOwnerDeleted: 3, routedForReview: 7 });
     // Only Pending, unstamped orphans are candidates: decided or existing models are never looked up.
     const modelLookup = vi
       .mocked(clickhouse!.$query)
@@ -227,11 +228,37 @@ describe('voidOrphanedAppeals against Postgres', () => {
     expect(refundedPrefixes()).toEqual([
       'appeal-11-1',
       'appeal-19-1',
-      'appeal-23-1',
       'appeal-28-1',
       'appeal-29-1',
     ]);
-    expect(notifiedUsers()).toEqual([11, 12, 22, 25, 28]);
+    expect(notifiedUsers()).toEqual([11, 12, 19, 20, 21, 22, 23, 24, 25, 28]);
+  });
+
+  // 2 and 13 differ only in that the flow excludes 13's appellant; 1 and 9 likewise for an owner delete.
+  it.each([
+    [2, 13],
+    [1, 9],
+  ])('shows appellant %i and excluded appellant %i the same outcome', async (normal, excluded) => {
+    await voidOrphanedAppeals();
+    const rows = await appeals();
+    const seen = (id: number) => {
+      const { status, resolvedReason, resolvedAt, entityRemovedAt } = rows.get(id)!;
+      const notices = vi
+        .mocked(holder.notify)
+        .mock.calls.map((c) => c[0] as { key: string; details: Record<string, unknown> })
+        .filter((n) => n.key.includes(`:${id}:`))
+        .map((n) => ({ key: n.key.replace(`:${id}:`, ':#:'), outcome: n.details.outcome }));
+      return {
+        status,
+        resolvedReason,
+        resolved: resolvedAt !== null,
+        routed: entityRemovedAt !== null,
+        notices,
+      };
+    };
+
+    expect(seen(normal).notices).toHaveLength(1);
+    expect(seen(excluded)).toEqual(seen(normal));
   });
 
   it.each(['throw', 'empty'] as const)(
@@ -264,11 +291,13 @@ describe('voidOrphanedAppeals against Postgres', () => {
 
   it('leaves alone every appeal decided or routed between the pick and the claims', async () => {
     // Close and route each guard on status and on the stamp.
-    // Decided meanwhile: 1 (owner close), 13 (quiet close), 2 (route). Stamped meanwhile: 9 (quiet close), 12 (route).
+    // Decided meanwhile: 1 (owner close), 5 (quiet close), 2 (route).
+    // Stamped meanwhile: 9 (owner close), 16 (quiet close), 12 (route).
     holder.afterPick = `
       UPDATE "Appeal" SET status = 'Approved' WHERE id = 1;
       UPDATE "Appeal" SET "entityRemovedAt" = '2026-09-20 00:00:00' WHERE id = 9;
-      UPDATE "Appeal" SET status = 'Rejected' WHERE id = 13;
+      UPDATE "Appeal" SET status = 'Rejected' WHERE id = 5;
+      UPDATE "Appeal" SET "entityRemovedAt" = '2026-09-20 00:00:00' WHERE id = 16;
       UPDATE "Appeal" SET status = 'Rejected' WHERE id = 2;
       UPDATE "Appeal" SET "entityRemovedAt" = '2026-09-20 00:00:00' WHERE id = 12;
     `;
@@ -285,16 +314,17 @@ describe('voidOrphanedAppeals against Postgres', () => {
       resolvedReason: null,
     });
     expect(rows.get(9)).toMatchObject({ status: 'Pending', resolvedAt: null });
-    expect(rows.get(13)).toMatchObject({
+    expect(rows.get(5)).toMatchObject({
       status: 'Rejected',
       resolvedAt: null,
       resolvedReason: null,
     });
+    expect(rows.get(16)).toMatchObject({ status: 'Pending', resolvedAt: null });
     expect(rows.get(2)).toMatchObject({ status: 'Rejected', entityRemovedAt: null });
     expect(rows.get(12)!.entityRemovedAt).toEqual(await routedMeanwhile());
     expect(refundedPrefixes()).toEqual(['appeal-28-1', 'appeal-29-1']);
-    expect(notifiedUsers()).toEqual([25, 28]);
-    expect(result).toMatchObject({ closedQuietly: 7, closedOwnerDeleted: 1, routedForReview: 1 });
+    expect(notifiedUsers()).toEqual([20, 21, 23, 24, 25, 28]);
+    expect(result).toMatchObject({ closedQuietly: 2, closedOwnerDeleted: 1, routedForReview: 5 });
   });
 
   it('does nothing on a second run', async () => {
@@ -329,7 +359,7 @@ describe('closeAppealsDeletedByOwner against Postgres', () => {
       entityIds: [7001, 7002, 7005],
       ownerId: 40,
     });
-    // User 21 is a defensive close (fixture): refunded, not told.
+    // The flow excludes user 21 (fixture); they are refunded and told like user 40.
     await closeAppealsDeletedByOwner({ entityType: 'Image', entityIds: [7004], ownerId: 21 });
 
     const rows = await appeals();
@@ -345,6 +375,7 @@ describe('closeAppealsDeletedByOwner against Postgres', () => {
       .mock.calls.map((c) => c[0] as { key: string; details: { refunded: boolean } });
     expect(notices.map((n) => [n.key, n.details.refunded]).sort()).toEqual([
       ['entity-appeal-content-removed:101:closed-owner-deleted', true],
+      ['entity-appeal-content-removed:106:closed-owner-deleted', true],
       ['entity-appeal-content-removed:107:closed-owner-deleted', false],
     ]);
   });
