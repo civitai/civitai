@@ -25,6 +25,12 @@ import { isDefined } from '~/utils/type-guards';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readModelVersionForFileViaKysely,
+  readModelVersionForFileViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import { hasEntityAccess } from './common.service';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
@@ -220,41 +226,12 @@ export const getFileForModelVersion = async ({
    */
   attribution: ResolveAttribution;
 }): Promise<ModelVersionFileResult> => {
-  const modelVersion = await dbRead.modelVersion.findFirst({
-    // `model: { is: {} }` requires the (required) `model` relation to exist.
-    // Without it, a ModelVersion whose `model` was hard-deleted (orphaned FK)
-    // makes Prisma throw "Inconsistent query result: Field model is required to
-    // return data, got null" at query execution → caught upstream → 500 on every
-    // download lookup for that version. With the filter the DB drops the orphan
-    // row, findFirst returns null, and we fall through to the `not-found` (404)
-    // branch below — a model-less version is genuinely not downloadable. Same
-    // class/fix as #2637 (relation-existence filter on orphaned required
-    // relations).
-    where: { id: modelVersionId, model: { is: {} } },
-    select: {
-      id: true,
-      status: true,
-      model: {
-        select: {
-          id: true,
-          name: true,
-          type: true,
-          publishedAt: true,
-          status: true,
-          userId: true,
-          mode: true,
-          nsfw: true,
-          availability: true,
-          poi: true,
-        },
-      },
-      name: true,
-      trainedWords: true,
-      createdAt: true,
-      requireAuth: true,
-      usageControl: true,
-    },
-  });
+  // The version and its model (readModelVersionForFileViaPrisma, hot-reads-5.reads.ts, keeps the
+  // `model: { is: {} }` orphan filter and why it exists). `kysely-hot-reads-5` on: both in one
+  // statement, on the same replica, the inner join standing in for that filter.
+  const modelVersion = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+    ? await readModelVersionForFileViaKysely((await loadKyselyDb()).kyselyRead, modelVersionId)
+    : await readModelVersionForFileViaPrisma(dbRead, modelVersionId);
 
   if (!modelVersion) return { status: 'not-found' };
 

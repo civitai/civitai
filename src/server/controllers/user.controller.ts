@@ -16,6 +16,12 @@ import type { Context, ProtectedContext } from '~/server/createContext';
 import { getStaticContent, resolveTosHash } from '~/server/services/content.service';
 import { LegalHoldError } from '~/server/services/legal-hold.service';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readModelVersionIdsViaKysely,
+  readModelVersionIdsViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import { onboardingCompletedCounter, onboardingErrorCounter } from '~/server/prom/client';
 import { recordUserFeatureToggle } from '~/server/prom/feature-toggle.metrics';
 import { getUserFollows } from '~/server/redis/caches';
@@ -890,10 +896,10 @@ export const getUserEngagedModelVersionsHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const userId = ctx.user.id;
-  const versions = await dbRead.modelVersion.findMany({
-    where: { modelId: input.id },
-    select: { id: true },
-  });
+  // `kysely-hot-reads-5` on: the same ids through Kysely, on the same replica.
+  const versions = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+    ? await readModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, input.id)
+    : await readModelVersionIdsViaPrisma(dbRead, input.id);
   const modelVersionIds = versions.map((x) => x.id);
 
   try {
