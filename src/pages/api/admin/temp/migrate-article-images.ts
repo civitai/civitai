@@ -141,8 +141,10 @@ async function runRollback(params: MigrationParams): Promise<{
   let tagsDeleted = 0;
   if (orphanedImageIds.length > 0) {
     const tagResult = await dbWrite.$executeRaw`
-      DELETE FROM "TagsOnImageNew"
-      WHERE "imageId" IN (${Prisma.join(orphanedImageIds)})
+      DELETE FROM "TagsOnImageNew" t
+      USING "Image" i
+      WHERE t."imageId" = i.id AND i.id IN (${Prisma.join(orphanedImageIds)})
+        AND NOT ${accountHoldSql(Prisma.raw('i."userId"'), true)}
     `;
     tagsDeleted = tagResult;
     log(`Deleted ${tagsDeleted} tag associations`);

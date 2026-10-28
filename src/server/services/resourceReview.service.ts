@@ -1,6 +1,7 @@
 import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
 import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { Prisma } from '@prisma/client';
+import { countedTopLevelCommentSql } from '~/server/services/comment-count.sql';
 import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -225,9 +226,9 @@ async function getReviewCommentCounts(reviewIds: number[]) {
   if (!reviewIds.length) return new Map<number, number>();
   const rows = await dbRead.$queryRaw<{ reviewId: number; count: number }[]>`
     SELECT "entityId" AS "reviewId", COUNT(*)::int AS count
-    FROM "CommentV3"
-    WHERE "entityType" = 'review' AND "entityId" IN (${Prisma.join(reviewIds)})
-      AND "parentId" IS NULL AND "deletedAt" IS NULL
+    FROM "CommentV3" v
+    WHERE ${countedTopLevelCommentSql(Prisma.raw('v'), 'review')}
+      AND "entityId" IN (${Prisma.join(reviewIds)})
     GROUP BY "entityId"
   `;
   return new Map(rows.map((row) => [row.reviewId, row.count]));
@@ -664,7 +665,10 @@ export const getPagedResourceReviews = async ({
       --   WHERE rrh."resourceReviewId" = rr.id
       -- ) "imageCount",
       (SELECT COUNT(*)::int FROM "CommentV3" v
-        WHERE v."entityType" = 'review' AND v."entityId" = rr.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) as "commentCount"
+        WHERE ${countedTopLevelCommentSql(
+          Prisma.raw('v'),
+          'review'
+        )} AND v."entityId" = rr.id) as "commentCount"
     FROM "ResourceReview" rr
     WHERE ${Prisma.join(AND, ' AND ')}
     ORDER BY rr."createdAt" DESC

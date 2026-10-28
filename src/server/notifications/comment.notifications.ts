@@ -13,8 +13,9 @@ import { QS } from '~/utils/qs';
 import { withDefiniteArticle } from '~/utils/string-helpers';
 
 /** A live CommentV3 row written since the cursor. Tombstones keep their row and must not notify. */
+// Not hidden for ToS either: an author's delete keeps a comment for a hold that way.
 export const liveV3Since = (lastSent: string) =>
-  `c."deletedAt" IS NULL AND c."createdAt" > '${lastSent}'`;
+  `c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '${lastSent}'`;
 
 /**
  * The id the model page's dialog addresses a comment by: its old Comment id. Every v1-shaped row has

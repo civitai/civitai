@@ -5,6 +5,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as CommentsV2Service from '~/server/services/commentsv2.service';
 import type * as ReactionService from '~/server/services/reaction.service';
 import type * as ReportService from '~/server/services/report.service';
+import type * as BlockCheckService from '~/server/services/block-check.service';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 
 /**
@@ -17,20 +18,35 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 // What the handlers do once let through is their own suites'; here, whether they are let through.
-const { deleteComment, upsertComment, toggleThreadMute, toggleReaction, createReport } = vi.hoisted(
-  () => ({
-    deleteComment: vi.fn(async ({ id }: { id: number }) => ({ id })),
-    upsertComment: vi.fn(async () => ({ id: 1 })),
-    toggleThreadMute: vi.fn(async () => true),
-    toggleReaction: vi.fn(async () => 'created'),
-    createReport: vi.fn(async () => ({ status: 'Pending' })),
-  })
-);
+const {
+  deleteComment,
+  upsertComment,
+  toggleHideComment,
+  togglePinComment,
+  toggleThreadMute,
+  toggleReaction,
+  createReport,
+} = vi.hoisted(() => ({
+  deleteComment: vi.fn(async ({ id }: { id: number }) => ({ id })),
+  upsertComment: vi.fn(async () => ({ id: 1 })),
+  toggleHideComment: vi.fn(async () => ({ id: 1 })),
+  togglePinComment: vi.fn(async () => ({ id: 1 })),
+  toggleThreadMute: vi.fn(async () => true),
+  toggleReaction: vi.fn(async () => 'created'),
+  createReport: vi.fn(async () => ({ status: 'Pending' })),
+}));
 vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CommentsV2Service>()),
   deleteComment,
   upsertComment,
+  toggleHideComment,
+  togglePinComment,
   toggleThreadMute,
+}));
+// The viewer owns the content every comment here hangs off, so the owner check lets them through.
+vi.mock('~/server/services/block-check.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof BlockCheckService>()),
+  getContentOwnerIdForComment: vi.fn(async () => ({ hidden: false, ownerId: 9 })),
 }));
 vi.mock('~/server/services/reaction.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ReactionService>()),
@@ -58,6 +74,8 @@ import { toggleReview } from '~/server/services/user.service';
 import {
   assertCommentEntityVisible,
   deleteCommentV2Handler,
+  toggleHideCommentHandler,
+  togglePinnedCommentHandler,
   upsertCommentV2Handler,
   getCommentHandler,
   toggleThreadMuteHandler,
@@ -619,11 +637,17 @@ describe('a member cannot act on a detached comment', () => {
       INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (3, ${OTHER}, 200);
       INSERT INTO "CommentV2" (id, "userId", "threadId", "tosViolation") VALUES (4, ${OTHER}, 200, true);
     `);
-    vi.mocked(dbMock.dbWrite.commentV2.findUnique).mockImplementation(
-      (async (args: { where: { id: number } }) =>
-        (await db.query(`SELECT * FROM "CommentV2" WHERE id = $1`, [args.where.id]))
-          .rows[0]) as never
-    );
+    // Only the selected columns, as Prisma returns them: a gate that forgets to select its column
+    // reads it as undefined.
+    vi.mocked(dbMock.dbWrite.commentV2.findUnique).mockImplementation((async (args: {
+      where: { id: number };
+      select?: Record<string, boolean>;
+    }) => {
+      const query = `SELECT * FROM "CommentV2" WHERE id = $1`;
+      const row = (await db.query<Record<string, unknown>>(query, [args.where.id])).rows[0];
+      if (!row || !args.select) return row;
+      return Object.fromEntries(Object.keys(args.select).map((k) => [k, row[k]]));
+    }) as never);
     await run(Prisma.sql`
       WITH ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT 10` }, true)}
       DELETE FROM "Post" WHERE id = 10`);
@@ -680,12 +704,27 @@ describe('a member cannot act on a detached comment', () => {
         }),
       service: upsertComment,
     },
+    hide: {
+      handler: (id: number, mod: boolean) =>
+        toggleHideCommentHandler({ ctx: ctx(mod), input: { id } }),
+      service: toggleHideComment,
+    },
+    pin: {
+      handler: (id: number, mod: boolean) =>
+        togglePinnedCommentHandler({ ctx: ctx(mod), input: { id } }),
+      service: togglePinComment,
+    },
   };
 
   describe.each(Object.entries(writes))('%s', (_name, act) => {
     it('refuses a member a comment hidden for ToS, as if it were gone', async () => {
       await expect(act.handler(4, false)).rejects.toMatchObject({ code: 'NOT_FOUND' });
       expect(act.service).not.toHaveBeenCalled();
+    });
+
+    it('lets a moderator act on a comment hidden for ToS', async () => {
+      await act.handler(4, true).catch(() => undefined);
+      expect(act.service).toHaveBeenCalled();
     });
 
     it('lets a member act on a live comment (control)', async () => {
@@ -709,6 +748,15 @@ describe('a member cannot act on a detached comment', () => {
       await act.handler(3, false).catch(() => undefined);
       expect(act.service).toHaveBeenCalled();
     });
+  });
+
+  // A moderator's delete of someone else's comment is not its author's, so a ToS restore may undo it.
+  it.each([
+    [false, true],
+    [true, false],
+  ])("marks a delete as the author's only for a member (moderator %s)", async (mod, byAuthor) => {
+    await acts.delete.handler(3, mod);
+    expect(deleteComment).toHaveBeenCalledWith(expect.objectContaining({ id: 3, byAuthor }));
   });
 
   // A missing comment gets this from the block check; a detached one must not read differently.

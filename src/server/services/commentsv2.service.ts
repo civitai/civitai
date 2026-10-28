@@ -492,11 +492,17 @@ export const upsertComment = async ({
   // Wrapped so the edit's charge and the edit itself commit together.
   const { updated, charged } = await dbWrite.$transaction(async (tx) => {
     const chargedStickers = await chargeStickers(tx);
-    const row = await tx.commentV2.update({
-      where: { id: data.id },
-      data,
-      select: commentV2Select,
-    });
+    // A member edits only a comment still on the page: one hidden since the read above (an author's
+    // delete can keep it that way for a hold) answers as gone, and only a moderator sets the flag.
+    const row = await tx.commentV2
+      .update({
+        where: isModerator ? { id: data.id } : { id: data.id, tosViolation: false },
+        data: isModerator ? data : { ...data, tosViolation: undefined },
+        select: commentV2Select,
+      })
+      .catch((e: { code?: string }) => {
+        throw e?.code === 'P2025' ? throwNotFoundError() : e;
+      });
     return { updated: row, charged: chargedStickers };
   });
   recordStickerUsage({
@@ -765,12 +771,18 @@ export const getCommentStorylineId = (commentId: number) =>
  * A comment kept for a hold is hidden instead, which its author cannot tell from a delete: it goes
  * from every read they get, and its points with it.
  */
-export const deleteComment = async ({ id }: { id: number }) => {
+export const deleteComment = async ({
+  id,
+  byAuthor = false,
+}: {
+  id: number;
+  byAuthor?: boolean;
+}) => {
   const comment = await dbWrite.commentV2.findUnique({ where: { id } });
   if (!comment) return null;
   const markerView = await holdMarkerViewExists();
   const { deleted, retained } = await dbWrite
-    .$transaction((tx) => deleteCommentsV2UnlessHeld(tx, [id], markerView, { byAuthor: true }))
+    .$transaction((tx) => deleteCommentsV2UnlessHeld(tx, [id], markerView, { byAuthor }))
     .catch((e: unknown) => {
       throw isLegalHoldAbort(e) ? contentKeptError(false) : e;
     });
@@ -863,9 +875,11 @@ export async function bulkSetCommentV2TosViolation({
   let count = 0;
 
   for (const id of ids) {
+    // An already-hidden comment is skipped: it may be one its author deleted, kept for a hold, and
+    // the author must not hear about a comment they removed.
     const updated = await dbWrite.commentV2
       .update({
-        where: { id },
+        where: { id, tosViolation: false },
         data: { tosViolation: true },
         select: { id: true, userId: true },
       })
@@ -1358,6 +1372,9 @@ export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] })
   let count = 0;
 
   for (const id of ids) {
+    // One its author deleted, kept for a hold, stays down: restoring it would republish it.
+    const row = await dbWrite.commentV2.findUnique({ where: { id }, select: { metadata: true } });
+    if ((row?.metadata as { removedByAuthor?: boolean } | null)?.removedByAuthor) continue;
     const updated = await dbWrite.commentV2
       .update({
         where: { id },

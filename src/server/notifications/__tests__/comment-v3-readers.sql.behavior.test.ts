@@ -45,7 +45,7 @@ const { commentCountArgs, allCommentCountArgs, commentV3Counts } = await import(
   '~/server/services/bot-account-detection/cohort'
 );
 const { liveCommentsOn } = await import('~/server/events/points/hooks');
-const { countedChallengeCommentSql } = await import('~/server/services/challenge.service');
+const { countedTopLevelCommentSql } = await import('~/server/services/comment-count.sql');
 const { getThreadMuted } = await import('~/server/services/commentsv2.service');
 
 const db = { pg: null as unknown as PGlite };
@@ -563,7 +563,7 @@ describe('the challenge comment count', () => {
       INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "parentId") VALUES
         (603, 'challenge', 60, 7, 'a reply', 600);
     `);
-    const where = countedChallengeCommentSql(Prisma.raw('v'));
+    const where = countedTopLevelCommentSql(Prisma.raw('v'), 'challenge');
     const { rows } = await db.pg.query<{ n: number }>(
       `SELECT count(*)::int AS n FROM "CommentV3" v WHERE ${where.text} AND v."entityId" = 60`,
       where.values as unknown[]
@@ -591,5 +591,34 @@ describe('the bot cohort comment counts', () => {
     ]);
     // User 6's only comment is deleted: no row at all.
     expect(await commentV3Counts.groupBy(allCommentCountArgs([6]))).toEqual([]);
+  });
+});
+
+describe('a comment hidden for ToS', () => {
+  beforeAll(async () => {
+    await db.pg.exec(`
+      INSERT INTO "ResourceReview" (id) VALUES (70);
+      INSERT INTO "CommentTopic"("entityType", "entityId") VALUES ('review', 70);
+      INSERT INTO "CommentV3"(id, "entityType", "entityId", "userId", content, "tosViolation") VALUES
+        (610, 'image', 10, 8, 'kept for a hold', true),
+        (611, 'image', 10, 9, 'live', false),
+        (612, 'review', 70, 8, 'kept for a hold', true),
+        (613, 'review', 70, 9, 'live', false);
+    `);
+  });
+
+  it('notifies no one of it, as a deleted one notifies no one', async () => {
+    const ids = pairs(await emitted('new-image-comment')).map(([id]) => id);
+    expect(ids).toContain(611);
+    expect(ids).not.toContain(610);
+  });
+
+  it('leaves the review comment count, as a deleted one does', async () => {
+    const where = countedTopLevelCommentSql(Prisma.raw('v'), 'review');
+    const { rows } = await db.pg.query<{ n: number }>(
+      `SELECT count(*)::int AS n FROM "CommentV3" v WHERE ${where.text} AND v."entityId" = 70`,
+      where.values as unknown[]
+    );
+    expect(rows[0].n).toBe(1);
   });
 });

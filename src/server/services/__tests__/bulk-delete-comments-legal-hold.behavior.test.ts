@@ -514,7 +514,7 @@ describe('a member deleting their own CommentV2', () => {
   });
 
   it('marks a comment it keeps as removed by its author, which a moderator bulk delete does not', async () => {
-    await deleteComment({ id: 21 });
+    await deleteComment({ id: 21, byAuthor: true });
     await bulkDeleteComments({ commentIds: [], commentV2Ids: [22] });
     const { rows } = await holder.db.query<{ id: number; metadata: unknown }>(
       `SELECT id, metadata FROM "CommentV2" WHERE id IN (21, 22) ORDER BY id`

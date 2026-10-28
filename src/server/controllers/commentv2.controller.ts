@@ -230,7 +230,7 @@ export const deleteCommentV2Handler = async ({
     // A detached or hidden comment is kept content: only a moderator removes it.
     if (!ctx.user.isModerator && (await isCommentGoneForMembers(input.id)))
       throw throwNotFoundError(`No comment with id ${input.id}`);
-    const deleted = await deleteComment(input);
+    const deleted = await deleteComment({ ...input, byAuthor: !ctx.user.isModerator });
     if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id }).catch(handleLogError);
@@ -359,6 +359,8 @@ export const toggleHideCommentHandler = async ({
   const { id } = input;
 
   try {
+    if (!isModerator && (await isCommentGoneForMembers(id)))
+      throw throwNotFoundError(`No comment with id ${id}`);
     const { hidden, ownerId } = await getContentOwnerIdForComment(id);
     if (!isModerator && ownerId !== userId) throw throwAuthorizationError();
 
@@ -382,6 +384,8 @@ export const togglePinnedCommentHandler = async ({
   const { id } = input;
 
   try {
+    if (!isModerator && (await isCommentGoneForMembers(id)))
+      throw throwNotFoundError(`No comment with id ${id}`);
     const { ownerId } = await getContentOwnerIdForComment(id);
     if (!isModerator && ownerId !== userId) throw throwAuthorizationError();
 

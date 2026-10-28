@@ -454,7 +454,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
       LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
       WHERE NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL)
-      AND c."deletedAt" IS NULL AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      AND c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
       AND c."userId" != pc."userId"
       AND NOT EXISTS (
       SELECT 1 FROM "UserEngagement" blk
@@ -569,7 +569,7 @@ describe('generated SQL — the blanket exclusion is gone, the slug join is live
       LEFT JOIN "Model" m ON (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) AND m.id = c."entityId"
       LEFT JOIN "ComicChapter" cch ON c."entityType" = 'comicChapter' AND cch.id = c."entityId"
       LEFT JOIN "app_listings" al ON c."entityType" = 'appListing' AND al."serial_id" = c."entityId"
-      WHERE c."deletedAt" IS NULL AND c."createdAt" > '2026-01-01T00:00:00.000Z'
+      WHERE c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '2026-01-01T00:00:00.000Z'
       AND (NOT (c."entityType" = 'model' AND c."legacyV1Id" IS NOT NULL) OR c."parentId" IS NOT NULL)
       AND (c."entityType" <> 'appListing' OR al.slug IS NOT NULL)
       )

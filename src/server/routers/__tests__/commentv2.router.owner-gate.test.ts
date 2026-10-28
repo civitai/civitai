@@ -27,7 +27,13 @@ const caller = () =>
   } as never);
 
 const deleteAs = async (row: { userId: number; tosViolation: boolean } | null) => {
-  vi.mocked(dbMock.dbRead.commentV2.findUnique).mockResolvedValue(row as never);
+  // Only the selected columns, as Prisma returns them.
+  vi.mocked(dbMock.dbRead.commentV2.findUnique).mockImplementation((async (args: {
+    select?: Record<string, boolean>;
+  }) =>
+    row && args.select
+      ? Object.fromEntries(Object.keys(args.select).map((k) => [k, row[k as keyof typeof row]]))
+      : row) as never);
   return caller()
     .delete({ id: 1 })
     .then(
