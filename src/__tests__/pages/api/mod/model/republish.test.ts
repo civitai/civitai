@@ -23,8 +23,14 @@ vi.mock('~/server/controllers/model.controller', () => ({ publishModelHandler })
 vi.mock('~/server/services/model-removed-with-owner.service', () => ({
   restoreModelRemovedWithOwner,
 }));
-vi.mock('~/server/services/model-version.service', () => ({ bustMvCache: vi.fn() }));
-vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate: vi.fn() } }));
+const { bustMvCache, queueUpdate, refreshCounts } = vi.hoisted(() => ({
+  bustMvCache: vi.fn(),
+  queueUpdate: vi.fn(),
+  refreshCounts: vi.fn(),
+}));
+vi.mock('~/server/services/model-version.service', () => ({ bustMvCache }));
+vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate } }));
+vi.mock('~/server/redis/caches', () => ({ userContentOverviewCache: { refresh: refreshCounts } }));
 
 import handler from '~/pages/api/mod/model/republish';
 
@@ -163,11 +169,19 @@ describe('model.republish on a model a content wipe kept', () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(
       model({ meta: { removedWithOwner: true, statusBeforeRemoval: 'Unpublished' } }) as never
     );
-    restoreModelRemovedWithOwner.mockResolvedValue({ status: 'Unpublished', versionIds: [] });
+    restoreModelRemovedWithOwner.mockResolvedValue({
+      status: 'Unpublished',
+      userId: 5,
+      versionIds: [11],
+    });
 
     expect(await call({ modelId: 42 })).toBe(200);
     expect(restoreModelRemovedWithOwner).toHaveBeenCalledWith(42);
     expect(publishModelHandler).not.toHaveBeenCalled();
-    expect(sent).toMatchObject({ modelId: 42, status: 'Unpublished', versionIds: [] });
+    expect(sent).toMatchObject({ modelId: 42, status: 'Unpublished', versionIds: [11] });
+    // Off its cached and indexed "hidden" state, and its owner's counts redone.
+    expect(bustMvCache).toHaveBeenCalledWith([11], 42);
+    expect(queueUpdate).toHaveBeenCalledWith([{ id: 42, action: 'Update' }]);
+    expect(refreshCounts).toHaveBeenCalledWith(5);
   });
 });

@@ -226,7 +226,7 @@ import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
-import { REMOVED_WITH_OWNER_META_KEYS } from '~/server/services/model-removed-with-owner.service';
+import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import {
   getResourceData,
   resolveCanGenerateForVersions,
@@ -934,12 +934,8 @@ export const publishModelHandler = async ({
 
     const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...rest } =
       modelMeta || {};
-    // A moderator publishing a model a content wipe hid ends that removal: its marker goes too.
-    const meta = Object.fromEntries(
-      Object.entries(rest).filter(
-        ([key]) => !(REMOVED_WITH_OWNER_META_KEYS as readonly string[]).includes(key)
-      )
-    ) as typeof rest;
+    // A moderator publishing a model a content wipe hid ends that removal: its record goes too.
+    const meta = withoutRemovedWithOwner(rest);
     const updatedModel = await publishModelById({
       ...input,
       meta: withModelRulesClearance(meta, modelMeta, isModerator),
@@ -1008,7 +1004,9 @@ export const unpublishModelHandler = async ({
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    const meta = (model.meta as ModelMeta | null) || {};
+    const stored = (model.meta as ModelMeta | null) || {};
+    // A violation unpublish of a model a content wipe hid makes it a take-down like any other.
+    const meta = input.reason ? withoutRemovedWithOwner(stored) : stored;
     const updatedModel = await unpublishModelById({
       ...input,
       meta,

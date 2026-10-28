@@ -1468,9 +1468,9 @@ async function modelsOffSite(ids: number[]) {
 }
 
 /**
- * Of the listed models, read on the primary, those a wipe deleted and those it kept and hid. A
- * hidden model is one still in the hidden status: a moderator who republished it leaves the marker
- * behind, and its bids then stand.
+ * Of the listed models, read on the primary, those a wipe deleted and those it kept and hid: still
+ * in the hidden status and carrying the wipe's record. A model a moderator took down for a
+ * violation is in the same status without the record, and its bids stand.
  */
 async function removedModels(ids: number[]) {
   if (!ids.length) return { gone: [], hidden: [] };
@@ -1690,25 +1690,26 @@ export const removeAllContent = async ({
     // stamps meta.unpublishedAt, which sends the owner a notification. Its bids are refunded with the
     // deleted models' below.
     await dbWrite.$executeRaw`
-      UPDATE "Model" km
-      SET status = ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)},
-          meta = ${asJsonbObjectSql('km.meta')} || jsonb_build_object(
-            'removedWithOwner', true,
-            'statusBeforeRemoval', km.status,
-            'versionsUnpublishedByRemoval', COALESCE((
-              SELECT jsonb_agg(jsonb_build_object('id', kv.id, 'status', kv.status) ORDER BY kv.id)
-              FROM "ModelVersion" kv
-              WHERE kv."modelId" = km.id AND kv.status IN ('Published', 'Scheduled')
-            ), '[]'::jsonb)
-          )
-      WHERE km."userId" = ${id} AND km.status IN ('Published', 'Scheduled', 'Unpublished')
-        AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`
+      WITH hidden AS (
+        UPDATE "Model" km
+        SET status = ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)},
+            meta = ${asJsonbObjectSql('km.meta')} || jsonb_build_object(
+              'removedWithOwner', true,
+              'statusBeforeRemoval', km.status,
+              'versionsUnpublishedByRemoval', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object('id', kv.id, 'status', kv.status) ORDER BY kv.id)
+                FROM "ModelVersion" kv
+                WHERE kv."modelId" = km.id AND kv.status IN ('Published', 'Scheduled')
+              ), '[]'::jsonb)
+            )
+        WHERE km."userId" = ${id} AND km.status IN ('Published', 'Scheduled', 'Unpublished')
+          AND ${unlessHeld}
+        RETURNING km.id, km.meta
+      )
       UPDATE "ModelVersion" mv SET status = 'Unpublished'
-      FROM "Model" m, jsonb_array_elements(m.meta -> 'versionsUnpublishedByRemoval') taken
-      WHERE m."userId" = ${id} AND m.status = ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)}
-        AND mv."modelId" = m.id AND mv.id = (taken ->> 'id')::int
-        AND mv.status IN ('Published', 'Scheduled') AND ${unlessHeld}`;
+      FROM hidden h, jsonb_array_elements(h.meta -> 'versionsUnpublishedByRemoval') taken
+      WHERE mv."modelId" = h.id AND mv.id = (taken ->> 'id')::int
+        AND mv.status IN ('Published', 'Scheduled')`;
     await dbWrite.$executeRaw`DELETE FROM "ChatMessage" WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "ChatMember" WHERE "userId" = ${id} AND ${unlessHeld}`;
     // Rows, storage objects and caches; then any image uploaded since the list was read.
@@ -1820,6 +1821,7 @@ export const removeAllContent = async ({
   });
   if (keptModelIds.length)
     await runStep('kept-model-caches', () => dropHiddenModelCaches(keptModelIds, id));
+  else await runStep('content-counts', () => userContentOverviewCache.refresh(id));
   await unindex('index-images', imagesSearchIndex, images);
   await unindex('index-image-metrics', imagesMetricsSearchIndex, images);
   await unindex('index-articles', articlesSearchIndex, articles);

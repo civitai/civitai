@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { publishModelHandler } from '~/server/controllers/model.controller';
 import { dbWrite } from '~/server/db/client';
+import { userContentOverviewCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { bustMvCache } from '~/server/services/model-version.service';
@@ -50,6 +51,7 @@ export default defineModeratorEndpoint('model.republish', {
       const restored = await restoreModelRemovedWithOwner(input.modelId);
       if (!restored) throw throwBadRequestError('Model is not unpublished as a violation');
       await bustMvCache(restored.versionIds, input.modelId);
+      await userContentOverviewCache.refresh(restored.userId);
       await modelsSearchIndex.queueUpdate([
         { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
       ]);

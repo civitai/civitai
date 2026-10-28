@@ -781,6 +781,32 @@ describe('removeAllContent', () => {
       expect(versions).toEqual(['Unpublished']);
     });
 
+    it('leaves a version a moderator took down while the model was hidden', async () => {
+      await holder.db.exec(`
+        INSERT INTO "Model" (id, "userId", status) VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'Published');
+        INSERT INTO "ModelVersion" ("modelId", status) VALUES (${GIVEN_BY_HELD}, 'Published');
+      `);
+      await removeAllContent({ id: CLEAN });
+      await holder.db.exec(
+        `UPDATE "ModelVersion" SET status = 'UnpublishedViolation' WHERE "modelId" = ${GIVEN_BY_HELD}`
+      );
+
+      await restoreModelRemovedWithOwner(GIVEN_BY_HELD);
+
+      const after = await holder.db.query<{ status: string }>(
+        `SELECT status FROM "ModelVersion" WHERE "modelId" = ${GIVEN_BY_HELD}`
+      );
+      expect(after.rows).toEqual([{ status: 'UnpublishedViolation' }]);
+    });
+
+    it('restores nothing on a record with no prior status', async () => {
+      await holder.db.exec(`
+        INSERT INTO "Model" (id, "userId", status, meta) VALUES
+          (${GIVEN_BY_HELD}, ${CLEAN}, 'UnpublishedViolation', '{"removedWithOwner": true}')
+      `);
+      expect(await restoreModelRemovedWithOwner(GIVEN_BY_HELD)).toBeNull();
+    });
+
     it('restores nothing on a model the wipe did not hide', async () => {
       await holder.db.exec(
         `INSERT INTO "Model" (id, "userId", status) VALUES (${GIVEN_BY_HELD}, ${HELD}, 'UnpublishedViolation')`
@@ -925,6 +951,24 @@ describe('removeAllContent', () => {
       expect.objectContaining({ versionIds: [MODEL_VERSION(GIVEN_BY_HELD)] })
     );
     expect(bustMvCache).toHaveBeenCalledWith(expect.any(Array), [GIVEN_BY_HELD], CLEAN);
+  });
+
+  it('leaves the bids on a kept model a moderator had already taken down', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Model" (id, "userId", status, meta)
+        VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'UnpublishedViolation', '{"unpublishedReason": "other"}')
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(refundBidsForVersions).not.toHaveBeenCalledWith(
+      expect.objectContaining({ versionIds: [MODEL_VERSION(GIVEN_BY_HELD)] })
+    );
+  });
+
+  it('refreshes the account’s content counts when it keeps no model', async () => {
+    expect(await removeAllContent({ id: CLEAN })).toMatchObject({ keptModelIds: [] });
+    expect(contentCounts.refresh).toHaveBeenCalledWith(CLEAN);
   });
 
   it('leaves the bids on a model an earlier wipe hid and a moderator republished', async () => {

@@ -10,10 +10,14 @@ import type * as PublishFromWorkflow from '~/server/services/orchestrator/traini
  * that version in the list, and the version came back Published.
  */
 
-const { publishModelById } = vi.hoisted(() => ({ publishModelById: vi.fn() }));
+const { publishModelById, unpublishModelById } = vi.hoisted(() => ({
+  publishModelById: vi.fn(),
+  unpublishModelById: vi.fn(),
+}));
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelService>()),
   publishModelById,
+  unpublishModelById,
 }));
 vi.mock(
   '~/server/services/orchestrator/training/publish-from-workflow',
@@ -27,7 +31,7 @@ vi.mock('~/server/services/duplicate-model-hash.service', async (importOriginal)
   assertNotCrossOwnerDuplicate: async () => undefined,
 }));
 
-const { publishModelHandler } = await import('../model.controller');
+const { publishModelHandler, unpublishModelHandler } = await import('../model.controller');
 const { KEPT_MODEL_STATUS } = await import('~/server/utils/legal-hold');
 
 const MODEL = 1;
@@ -123,5 +127,39 @@ describe('a moderator publishing a model a content wipe kept', () => {
     } as never);
     await publish([10], true);
     expect(publishModelById).toHaveBeenCalledWith(expect.objectContaining({ meta: { note: 1 } }));
+  });
+});
+
+describe('a moderator unpublishing a model a content wipe kept, for a violation', () => {
+  const record = {
+    removedWithOwner: true,
+    statusBeforeRemoval: 'Published',
+    versionsUnpublishedByRemoval: [{ id: 10, status: 'Published' }],
+  };
+  const unpublish = (reason?: string) =>
+    unpublishModelHandler({
+      input: { id: MODEL, ...(reason ? { reason } : {}) } as never,
+      ctx: { user: { id: 9, isModerator: true }, track: { modelEvent: vi.fn() } } as never,
+    }).catch(() => undefined);
+
+  beforeEach(() => {
+    unpublishModelById.mockReset();
+    unpublishModelById.mockResolvedValue({ id: MODEL, userId: 5 });
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      meta: { note: 1, ...record },
+      nsfw: false,
+    } as never);
+  });
+
+  it('makes it an ordinary take-down: the removal record goes', async () => {
+    await unpublish('other');
+    expect(unpublishModelById).toHaveBeenCalledWith(expect.objectContaining({ meta: { note: 1 } }));
+  });
+
+  it('keeps the record on an unpublish with no reason (control)', async () => {
+    await unpublish();
+    expect(unpublishModelById).toHaveBeenCalledWith(
+      expect.objectContaining({ meta: { note: 1, ...record } })
+    );
   });
 });
