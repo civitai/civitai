@@ -3769,6 +3769,8 @@ export type KnightsVote = {
   weight: number;
   verdict: Generated<string>;
   gold: number | null;
+  xp: Generated<number>;
+  settledAt: Timestamp | null;
   labelled: Generated<boolean>;
   converted: Generated<boolean>;
 };
@@ -4345,6 +4347,11 @@ export type NewOrderPlayer = {
   payoutBlockReason: string | null;
   payoutBlockedBy: number | null;
   payoutReleaseFrom: Timestamp | null;
+  /**
+   * Knights of New Order v2: gold of this player's votes that are not yet graded / that were earned.
+   */
+  goldPending: Generated<number>;
+  goldEarned: Generated<number>;
 };
 export type NewOrderRank = {
   type: NewOrderRankType;

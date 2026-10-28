@@ -5035,6 +5035,8 @@ export interface NewOrderPlayer {
   payoutBlockReason: string | null;
   payoutBlockedBy: number | null;
   payoutReleaseFrom: Date | null;
+  goldPending: number;
+  goldEarned: number;
 }
 
 export interface NewOrderLinkReview {
@@ -5102,6 +5104,8 @@ export interface KnightsVote {
   weight: number;
   verdict: string;
   gold: number | null;
+  xp: number;
+  settledAt: Date | null;
   labelled: boolean;
   converted: boolean;
 }

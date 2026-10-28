@@ -7997,6 +7997,10 @@ model NewOrderPlayer {
   payoutBlockReason String?
   payoutBlockedBy   Int?
   payoutReleaseFrom DateTime?
+
+  /// Knights of New Order v2: gold of this player's votes that are not yet graded / that were earned.
+  goldPending Int @default(0)
+  goldEarned  Int @default(0)
 }
 
 model NewOrderLinkReview {
@@ -8074,7 +8078,9 @@ model KnightsVote {
   answer      String
   weight      Float
   verdict     String   @default("pending") // pending | correct | failed | inconclusive
-  gold        Int?
+  gold        Int? // pending at vote time, earned when graded correct, 0 otherwise
+  xp          Int      @default(0) // XP paid for this vote: flat at vote time plus the bulk once graded correct
+  settledAt   DateTime? // set once progression for the final verdict was granted; the idempotency marker
   labelled    Boolean  @default(false)
   converted   Boolean  @default(false)
 

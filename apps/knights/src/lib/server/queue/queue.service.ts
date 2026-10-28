@@ -3,6 +3,8 @@ import { utc } from '@civitai/db/kysely';
 import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
+import { goldForRank, PROGRESSION } from '../progression/config';
+import { settleItemVotes } from '../progression/progression';
 import { servableImage } from '../servable-image';
 import {
   canVote,
@@ -324,6 +326,7 @@ export async function castVote(
         smites: Number(smites.n),
       });
       if (weight <= 0) return rejected('no-weight');
+      const gold = goldForRank(player.rankType);
 
       await trx
         .insertInto('KnightsVote')
@@ -336,7 +339,17 @@ export async function castVote(
           stage: item.minRank,
           answer: input.answer,
           weight,
+          xp: PROGRESSION.voteXp,
+          gold,
         })
+        .execute();
+      await trx
+        .updateTable('NewOrderPlayer')
+        .set({
+          exp: sql<number>`"exp" + ${PROGRESSION.voteXp}`,
+          goldPending: sql<number>`"goldPending" + ${gold}`,
+        })
+        .where('userId', '=', input.userId)
         .execute();
 
       const stageVotes: WeightedAnswer[] = await trx
@@ -377,6 +390,8 @@ export async function castVote(
         .where('id', '=', item.id)
         .execute();
       await gradeKnightsVotes(trx, item.id, decision.value);
+      // A rating still to be written back can be rerouted and its votes regraded, so it pays out once applied.
+      if (!writesBack) await settleItemVotes(trx, item.id, now);
 
       return { result: { status: 'resolved' }, settledItemId: writesBack ? item.id : undefined };
     });
@@ -454,6 +469,7 @@ async function reroute(db: Kysely<DB>, itemId: number, route: Reroute, now: Date
       itemId,
       route.kind === 'moderator' ? { correctAnswer: String(route.level) } : 'inconclusive'
     );
+    await settleItemVotes(trx, itemId, now);
   });
 }
 
@@ -479,12 +495,15 @@ const dueForWriteback = (eb: ExpressionBuilder<DB, 'KnightsQueueItem'>, now: Dat
 
 type SettleOutcome = 'applied' | 'failed' | 'rerouted' | 'unclaimed';
 
-async function markApplied(db: Executor, itemId: number, now: Date) {
-  await db
-    .updateTable('KnightsQueueItem')
-    .set({ appliedAt: utc(now), nextAttemptAt: null })
-    .where('id', '=', itemId)
-    .execute();
+async function markApplied(db: Kysely<DB>, itemId: number, now: Date) {
+  await db.transaction().execute(async (trx) => {
+    await trx
+      .updateTable('KnightsQueueItem')
+      .set({ appliedAt: utc(now), nextAttemptAt: null })
+      .where('id', '=', itemId)
+      .execute();
+    await settleItemVotes(trx, itemId, now);
+  });
 }
 
 /** One write-back try. The claim leases the item so a concurrent run cannot write it twice; only a throw is transient. */
@@ -632,6 +651,7 @@ export async function closeWithoutOutcome(db: Kysely<DB>, itemId: number, now: D
       .where('itemId', '=', itemId)
       .where('verdict', '=', 'pending')
       .execute();
+    await settleItemVotes(trx, itemId, now);
   });
 }
 
