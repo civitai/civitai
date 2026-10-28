@@ -6,7 +6,7 @@
  *   - Model.status = 'Draft' and ModelVersion.status = 'Draft'
  *   - A Post owned by the same user is already published
  *   - A Model-type file is attached
- *   - No moderator-relevant flags (poi/minor/needsReview/cannotPublish)
+ *   - No moderator-relevant flags (poi/minor/needsReview/cannotPublish, a content wipe's record)
  *   - Post was published within the last 30 days
  *
  * For each: flips Model and ModelVersion to Published using the Post's
@@ -39,6 +39,7 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dataForModelsCache } from '~/server/redis/caches';
 import { bustMvCache } from '~/server/services/model-version.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 import { booleanString } from '~/utils/zod-helpers';
 
 const schema = z.object({
@@ -219,6 +220,7 @@ export default WebhookEndpoint(async (req, res: NextApiResponse) => {
       AND COALESCE(m.minor, false) = false
       AND (m.meta->>'needsReview')   IS NULL
       AND (m.meta->>'cannotPublish') IS NULL
+      AND ${notRemovedWithOwnerSql('m.meta')}
       AND (mv.meta->>'needsReview')  IS NULL
     ORDER BY mv.id, p."publishedAt" ASC
     ${limit ? Prisma.sql`LIMIT ${limit}` : Prisma.empty}

@@ -184,4 +184,30 @@ describe('model.republish on a model a content wipe kept', () => {
     expect(queueUpdate).toHaveBeenCalledWith([{ id: 42, action: 'Update' }]);
     expect(refreshCounts).toHaveBeenCalledWith(5);
   });
+
+  it('clears the record on a draft the wipe kept in place', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      model({
+        status: 'Draft',
+        meta: { removedWithOwner: true, statusBeforeRemoval: 'Draft' },
+      }) as never
+    );
+    restoreModelRemovedWithOwner.mockResolvedValue({ status: 'Draft', userId: 5, versionIds: [] });
+
+    expect(await call({ modelId: 42 })).toBe(200);
+    expect(restoreModelRemovedWithOwner).toHaveBeenCalledWith(42);
+    expect(publishModelHandler).not.toHaveBeenCalled();
+    expect(sent).toMatchObject({ modelId: 42, status: 'Draft', versionIds: [] });
+  });
+
+  it('refuses a recorded model that has moved since the wipe', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      model({
+        status: 'Unpublished',
+        meta: { removedWithOwner: true, statusBeforeRemoval: 'Published' },
+      }) as never
+    );
+    expect(await call({ modelId: 42 })).toBe(400);
+    expect(restoreModelRemovedWithOwner).not.toHaveBeenCalled();
+  });
 });

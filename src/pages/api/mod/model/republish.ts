@@ -21,8 +21,8 @@ export default defineModeratorEndpoint('model.republish', {
     'Republish a model unpublished as a violation, with the versions that came down with it.',
   returns: '{ modelId, status, versionIds }',
   notes: [
-    'Refused unless the model is currently unpublished as a violation.',
-    'A model a content wipe kept goes back to the status it had, with only the versions the wipe took down.',
+    'Refused unless the model is currently unpublished as a violation, or is a model a content wipe kept in place (a draft).',
+    'A model a content wipe kept goes back to the status it had, with only the versions the wipe took down; one it kept in place only loses the wipe’s record.',
     'Only versions the same take-down unpublished go back up: never drafts, nor a version removed on its own.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
@@ -44,10 +44,12 @@ export default defineModeratorEndpoint('model.republish', {
       },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
-    if (model.deletedAt || model.status !== ModelStatus.UnpublishedViolation)
+    const record = model.meta as RemovedWithOwnerMeta | null;
+    const keptInPlace = !!record?.removedWithOwner && record.statusBeforeRemoval === model.status;
+    if (model.deletedAt || (model.status !== ModelStatus.UnpublishedViolation && !keptInPlace))
       throw throwBadRequestError('Model is not unpublished as a violation');
 
-    if ((model.meta as RemovedWithOwnerMeta | null)?.removedWithOwner) {
+    if (record?.removedWithOwner) {
       const restored = await restoreModelRemovedWithOwner(input.modelId);
       if (!restored)
         throw throwBadRequestError('Model has no complete removal record to restore from');

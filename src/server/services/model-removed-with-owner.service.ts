@@ -7,7 +7,7 @@ import {
 } from '~/server/utils/legal-hold';
 
 /**
- * The meta a content wipe writes on a model it keeps and hides: its status before, and the versions
+ * The meta a content wipe writes on a model it keeps: its status before, and the versions
  * it took down with the status each had. A moderator's restore puts back exactly those.
  */
 export type RemovedWithOwnerMeta = {
@@ -19,9 +19,10 @@ export type RemovedWithOwnerMeta = {
 export { REMOVED_WITH_OWNER_META_KEYS, withoutRemovedWithOwner };
 
 /**
- * Returns a model a content wipe hid to the status it had, and the versions the wipe took down to
- * theirs; a version it found already unpublished stays so. Clears the wipe's meta. Null when the
- * model is not one a wipe hid.
+ * Returns a model a content wipe kept to the status it had, and the versions the wipe took down to
+ * theirs; a version it found already unpublished stays so. Clears the wipe's meta, which on a model
+ * the wipe kept in place (a draft) is all a restore does. Null when the model carries no complete
+ * record, or has moved since the wipe.
  */
 export async function restoreModelRemovedWithOwner(
   modelId: number
@@ -31,8 +32,10 @@ export async function restoreModelRemovedWithOwner(
   >`
     WITH hidden AS (
       SELECT id, meta FROM "Model"
-      WHERE id = ${modelId} AND status = ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)}
+      WHERE id = ${modelId}
         AND meta ->> 'removedWithOwner' = 'true' AND meta ->> 'statusBeforeRemoval' IS NOT NULL
+        AND (status = ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)}
+          OR status::text = meta ->> 'statusBeforeRemoval')
       FOR UPDATE
     ), model AS (
       UPDATE "Model" m

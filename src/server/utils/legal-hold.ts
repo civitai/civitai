@@ -4,11 +4,7 @@ import { Prisma } from '@prisma/client';
 /** The owner `deleteUser` hands a kept model to. */
 export const PLACEHOLDER_OWNER_ID = -1;
 
-/**
- * The status a content wipe leaves a model it keeps in: moderator-only, so the owner cannot
- * republish it.
- */
-/** The meta keys of a content wipe's removal record on a model it kept and hid. */
+/** The meta keys of a content wipe's removal record on a model it kept. */
 export const REMOVED_WITH_OWNER_META_KEYS = [
   'removedWithOwner',
   'statusBeforeRemoval',
@@ -32,6 +28,11 @@ export const isRemovedWithOwner = (meta: unknown) =>
 export const notRemovedWithOwnerSql = (metaColumn: string) =>
   Prisma.raw(`(${metaColumn} ->> 'removedWithOwner') IS DISTINCT FROM 'true'`);
 
+/**
+ * The status a content wipe moves a published, scheduled or unpublished model it keeps to:
+ * moderator-only, so the owner cannot republish it. Any other kept model, a draft say, keeps its
+ * status.
+ */
 export const KEPT_MODEL_STATUS = 'UnpublishedViolation' satisfies `${ModelStatus}`;
 
 /** Whether the report aliased `hc` still holds: pending, not yet archived, or sent within the year. */

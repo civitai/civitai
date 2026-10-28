@@ -6193,7 +6193,8 @@ export const privateModelFromTraining = async ({
                 ...(stripServerOwnedMeta(
                   stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)
                 ) ?? {}),
-                ...pickServerOwnedMeta(storedMeta),
+                // Only a moderator gets here with a wipe's record; their publish ends it.
+                ...withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)),
                 ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
                 // Makes it so these models cannot go into auctions or be promoted
                 cannotPromote: true,
@@ -6374,7 +6375,11 @@ export const publishPrivateModel = async (
     // Back to what a moderator had set before the private cycle forced cannotPromote on.
     const { [RESTORE_CANNOT_PROMOTE_KEY]: restoreCannotPromote, ...storedMeta } = (current.meta ??
       {}) as ModelMeta & Record<string, unknown>;
-    const publishedMeta = { ...storedMeta, cannotPromote: restoreCannotPromote === true };
+    // Only a moderator gets here with a wipe's record; their publish ends it.
+    const publishedMeta = {
+      ...withoutRemovedWithOwner(storedMeta),
+      cannotPromote: restoreCannotPromote === true,
+    };
     const stillPublished = await tx.$queryRaw<{ id: number }[]>`
       SELECT id FROM "ModelVersion"
       WHERE id IN (${Prisma.join(versionIds)}) AND status = 'Published'

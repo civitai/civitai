@@ -1,4 +1,4 @@
-import { Prisma } from '@prisma/client';
+import type { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const {
@@ -127,7 +127,7 @@ const stubReads = ({
   txPosts.models = models;
   txPosts.versions = versions;
   mockDbWrite.$queryRaw.mockImplementation(async (...args: unknown[]) => {
-    const sql = (args[0] as string[]).join(' ');
+    const sql = sqlText(args[0]);
     // There is no "ComicEngagement" table — prod answers 42P01. Throwing rather than
     // returning [] keeps a revert from reading as "this project has no followers".
     if (sql.includes('"ComicEngagement"'))
@@ -145,8 +145,8 @@ const stubReads = ({
 const standaloneCall = () =>
   mockDbWrite.$queryRaw.mock.calls.find(
     (args) =>
-      (args[0] as string[]).join(' ').includes('FROM "Post" p') &&
-      !(args[0] as string[]).join(' ').includes('JOIN "ModelVersion"')
+      sqlText(args[0]).includes('FROM "Post" p') &&
+      !sqlText(args[0]).includes('JOIN "ModelVersion"')
   ) as unknown[];
 
 const runJob = () => (processScheduledPublishing as unknown as () => Promise<void>)();
@@ -497,13 +497,11 @@ describe('processScheduledPublishing :: lastVersionAt', () => {
     await runJob();
 
     const call = txExecuteRaw.mock.calls.find((args) =>
-      (args[0] as string[]).join(' ').includes('SET "lastVersionAt"')
+      sqlText(args[0]).includes('SET "lastVersionAt"')
     );
     expect(call).toBeDefined();
-    expect((call![0] as string[]).join('?')).toContain(
-      `SET "lastVersionAt" = date_trunc('milliseconds', NOW())`
-    );
-    expect(call!.slice(1).some((v) => v instanceof Date)).toBe(false);
+    expect(sqlText(call![0])).toContain(`SET "lastVersionAt" = date_trunc('milliseconds', NOW())`);
+    expect((call![0] as Prisma.Sql).values.some((v) => v instanceof Date)).toBe(false);
   });
 });
 
@@ -577,11 +575,10 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
     await runJob();
 
     const publish = txQueryRaw.mock.calls.find(([strings]) =>
-      (strings as string[]).join(' ').includes('UPDATE "Post" p')
+      sqlText(strings).includes('UPDATE "Post" p')
     );
     expect(publish).toBeDefined();
-    const [strings, ...values] = publish as unknown as [string[], ...unknown[]];
-    const flat = Prisma.sql(strings, ...values);
+    const flat = publish![0] as Prisma.Sql;
     expect(flat.text).toContain('(p.id, p."modelVersionId") IN (($1, $2))');
     expect(flat.values.slice(0, 2)).toEqual([7, 70]);
     expect(flat.values).not.toContain(8);

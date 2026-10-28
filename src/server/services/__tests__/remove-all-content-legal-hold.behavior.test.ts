@@ -825,6 +825,21 @@ describe('removeAllContent', () => {
       expect(versions).toEqual(['Unpublished']);
     });
 
+    it('clears the record on a draft it kept in place, so its owner may publish it again', async () => {
+      const { restored, model, versions } = await wipeThenRestore('Draft', ['Draft']);
+      expect(model).toEqual({ status: 'Draft', meta: { note: 1 } });
+      expect(versions).toEqual(['Draft']);
+      expect(restored).toMatchObject({ status: 'Draft', userId: CLEAN, versionIds: [] });
+    });
+
+    it('restores nothing on a recorded model that has moved since the wipe', async () => {
+      await holder.db.exec(`
+        INSERT INTO "Model" (id, "userId", status, meta) VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'Unpublished',
+          '{"removedWithOwner": true, "statusBeforeRemoval": "Published", "versionsUnpublishedByRemoval": []}')
+      `);
+      expect(await restoreModelRemovedWithOwner(GIVEN_BY_HELD)).toBeNull();
+    });
+
     it('leaves a version a moderator took down while the model was hidden', async () => {
       await holder.db.exec(`
         INSERT INTO "Model" (id, "userId", status) VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'Published');

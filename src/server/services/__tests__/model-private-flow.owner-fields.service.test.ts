@@ -326,6 +326,26 @@ describe('privateModelFromTraining — publish gates', () => {
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 
+  it('ends a content wipe’s record when a moderator runs it', async () => {
+    mockStored({
+      status: 'Training',
+      meta: {
+        note: 1,
+        ...{
+          removedWithOwner: true,
+          statusBeforeRemoval: 'Draft',
+          versionsUnpublishedByRemoval: [],
+        },
+      },
+    });
+
+    await privateFromTraining({ user: moderator });
+
+    expect(updateData().meta).not.toHaveProperty('removedWithOwner');
+    expect(updateData().meta).not.toHaveProperty('statusBeforeRemoval');
+    expect(updateData().meta).not.toHaveProperty('versionsUnpublishedByRemoval');
+  });
+
   it('lets a moderator through the cannotPublish gate', async () => {
     mockStored({ meta: { cannotPublish: true } });
 
@@ -674,6 +694,55 @@ describe('publishPrivateModel', () => {
 
     await expect(publish(false)).rejects.toThrow();
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  // The first read alone carries the record, so this fails if that gate goes.
+  it('refuses the owner a model a content wipe kept, and writes nothing', async () => {
+    mockPrivateModel({
+      meta: {
+        removedWithOwner: true,
+        statusBeforeRemoval: 'Draft',
+        versionsUnpublishedByRemoval: [],
+      },
+    });
+    lockedRow({});
+
+    await expect(publish(false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expectNothingWritten();
+  });
+
+  it('refuses the owner when a content wipe kept the model after it was read, and writes nothing', async () => {
+    mockPrivateModel({});
+    lockedRow({
+      meta: {
+        removedWithOwner: true,
+        statusBeforeRemoval: 'Draft',
+        versionsUnpublishedByRemoval: [],
+      },
+    });
+
+    await expect(publish(false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expectNothingWritten();
+  });
+
+  it('ends a content wipe’s record when a moderator publishes', async () => {
+    mockPrivateModel({
+      meta: {
+        note: 1,
+        ...{
+          removedWithOwner: true,
+          statusBeforeRemoval: 'Draft',
+          versionsUnpublishedByRemoval: [],
+        },
+      },
+    });
+
+    await publish(true);
+
+    expect(updateData().meta).toMatchObject({ note: 1 });
+    expect(updateData().meta).not.toHaveProperty('removedWithOwner');
+    expect(updateData().meta).not.toHaveProperty('statusBeforeRemoval');
+    expect(updateData().meta).not.toHaveProperty('versionsUnpublishedByRemoval');
   });
 
   it('lets a moderator through both gates', async () => {
