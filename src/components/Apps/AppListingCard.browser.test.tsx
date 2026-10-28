@@ -1342,6 +1342,28 @@ describe('AppListingCard — card A layout', () => {
     expect(title.scrollWidth).toBeGreaterThan(title.clientWidth);
   });
 
+  // The tooltip is the only way to read a clipped name, so it is pinned on its own.
+  test('🔴 a clipped title shows its full name in a tooltip on hover', async () => {
+    const name = 'An extraordinarily long application name that cannot possibly fit on one line';
+    await renderCard({ name });
+    const title = page.getByText(name, { exact: true });
+    expect(title.elements()).toHaveLength(1);
+    await title.hover();
+    // The portalled tooltip is a SECOND node carrying the same text.
+    await vi.waitFor(() => {
+      expect(page.getByText(name, { exact: true }).elements().length).toBeGreaterThan(1);
+    });
+  });
+
+  test('a title that fits shows no tooltip on hover', async () => {
+    await renderCard({ name: 'Short' });
+    const title = page.getByText('Short', { exact: true });
+    await title.hover();
+    // Give a tooltip time to appear (the clipped-title test above shows it does), then look.
+    await new Promise((r) => setTimeout(r, 800));
+    expect(title.elements()).toHaveLength(1);
+  });
+
   test('🔴 Open is the compact-sm button: 26px tall, still named "Open"', async () => {
     await renderCard();
     const open = page.getByRole('link', { name: 'Open', exact: true }).element();
