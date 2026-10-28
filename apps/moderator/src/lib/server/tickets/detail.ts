@@ -1,10 +1,11 @@
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import {
   freshdeskTicketUrl,
   getTicketConversation,
   getTicketDetail,
   isFreshdeskId,
   type TicketConversationResult,
+  type TicketDetail,
 } from '../freshdesk.service';
 import { getRoutedTicketContext } from '../decision-sources/support';
 import { sentByTickets } from './sent-by';
@@ -42,25 +43,68 @@ export async function resolveTicketView(
   return { routesTo, routed };
 }
 
-/** The one ticket page behind both views' routes. */
-export async function loadTicketDetail(view: TicketView, ticketId: string, locals: App.Locals) {
-  if (!isFreshdeskId(ticketId)) throw error(404, 'No such ticket.');
-  const canSeeEmail = !!locals.grants['decisions.support.pii'];
+type Refused = { status: 'refused'; code: 404 | 503; message: string };
 
+/**
+ * One ticket read live from Freshdesk, accepted only when it routes to `view`. 🔴 The page grant is per
+ * view, so a ticket served under the wrong view would show it to a role that may not open that view.
+ * The snapshot takes the fresh copy; what it held before supplies the router answer.
+ */
+async function readTicketForView(
+  view: TicketView,
+  ticketId: string
+): Promise<
+  | {
+      status: 'ok';
+      ticket: TicketDetail;
+      routed: Awaited<ReturnType<typeof resolveTicketView>>['routed'];
+    }
+  | Refused
+> {
+  if (!isFreshdeskId(ticketId)) return { status: 'refused', code: 404, message: 'No such ticket.' };
   const res = await getTicketDetail(ticketId);
-  if (res.status !== 'found') throw error(503, res.reason);
+  if (res.status !== 'found') return { status: 'refused', code: 503, message: res.reason };
   const { ticket } = res;
-
-  // The ticket was just read from Freshdesk, so the snapshot takes its copy; what it held before supplies the router answer.
   const known = await ticketSnapshot.patch(toRecord(ticket));
   const { routesTo, routed } = await resolveTicketView(ticketId, ticket, known);
-  // 🔴 The page grant is per view, so a ticket opened under the wrong view would show it to a role that
-  // may not open that view at all.
   if (routesTo !== view)
-    throw error(
-      404,
-      `Ticket ${ticketId} is not a ${view} ticket; it belongs to the ${routesTo} view.`
-    );
+    return {
+      status: 'refused',
+      code: 404,
+      message: `Ticket ${ticketId} is not a ${view} ticket; it belongs to the ${routesTo} view.`,
+    };
+  return { status: 'ok', ticket, routed };
+}
+
+/** Old `/tickets/<view>/<id>` links: the ticket opens in the triage list, once it is known to belong to the view. */
+export async function openTicketInView(view: TicketView, ticketId: string): Promise<never> {
+  const read = await readTicketForView(view, ticketId);
+  if (read.status === 'refused') error(read.code, read.message);
+  redirect(303, `/tickets/${view}?ticket=${read.ticket.id}`);
+}
+
+const CONVERSATION_UNAVAILABLE = {
+  status: 'unavailable' as const,
+  reason: 'Freshdesk could not be read.',
+};
+
+/**
+ * What the open ticket's detail pane shows: the ticket with its description, and the conversation. Never
+ * throws; a refusal carries the status the endpoint should answer with.
+ */
+export async function loadTicketPayload(
+  view: TicketView,
+  ticketId: string,
+  { canSeeEmail }: { canSeeEmail: boolean }
+) {
+  // Started with the ticket read: the two are independent, and a ticket refused below costs one wasted call.
+  const conversation: Promise<TicketConversationResult> = isFreshdeskId(ticketId)
+    ? getTicketConversation(ticketId).catch(() => CONVERSATION_UNAVAILABLE)
+    : Promise.resolve(CONVERSATION_UNAVAILABLE);
+
+  const read = await readTicketForView(view, ticketId);
+  if (read.status === 'refused') return read;
+  const { ticket, routed } = read;
 
   // The address is resolved here even without the grant, and never leaves the server without it.
   let civitaiUserId = routed?.civitaiUserId ?? null;
@@ -75,11 +119,8 @@ export async function loadTicketDetail(view: TicketView, ticketId: string, local
   const sentToSupport = hasSentToSupportTag(ticket.tags);
   const sentBy = sentToSupport ? (await sentByTickets([ticketId])).get(ticketId) ?? null : null;
 
-  const conversation: Promise<TicketConversationResult> = getTicketConversation(ticketId).catch(
-    () => ({ status: 'unavailable' as const, reason: 'Freshdesk could not be read.' })
-  );
-
   return {
+    status: 'ok' as const,
     ticket: {
       id: ticket.id,
       subject: ticket.subject,
@@ -91,16 +132,18 @@ export async function loadTicketDetail(view: TicketView, ticketId: string, local
       updatedAt: ticket.updatedAt,
       freshdeskUrl: freshdeskTicketUrl(ticket.id),
       description: ticket.description,
+      tags: ticket.tags,
       requesterName: ticket.requesterName,
       ...(canSeeEmail ? { requesterEmail: ticket.requesterEmail } : {}),
       civitaiUserId,
       sentToSupport,
       sentBy,
     },
-    view,
-    canReply: !!locals.grants['tickets.reply'],
-    canEscalate: view === 'moderation' && !!locals.grants['tickets.escalate'],
-    // Not awaited: SvelteKit streams it, so a slow conversation read delays that panel, not the page.
-    conversation,
+    conversation: await conversation,
   };
 }
+
+export type TicketPayload = Extract<
+  Awaited<ReturnType<typeof loadTicketPayload>>,
+  { status: 'ok' }
+>;

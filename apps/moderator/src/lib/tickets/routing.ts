@@ -2,6 +2,8 @@ import { STATUS } from './statuses';
 
 export type TicketView = 'moderation' | 'support';
 
+export const isTicketView = (v: unknown): v is TicketView => v === 'moderation' || v === 'support';
+
 /**
  * Which tickets belong to the moderation view. Everything else is support's. Edit this constant to move
  * a bucket between the views; nothing else encodes the rule.

@@ -1,13 +1,8 @@
 <script lang="ts">
-  import TicketList from '../TicketList.svelte';
-  import type { PageData } from './$types';
+  import TicketTriage from '../TicketTriage.svelte';
+  import type { ActionData, PageData } from './$types';
 
-  let { data }: { data: PageData } = $props();
+  let { data, form }: { data: PageData; form: ActionData } = $props();
 </script>
 
-<header class="page-header">
-  <h1>Support tickets</h1>
-  <p class="text-dark-2">Live tickets that moderation does not handle.</p>
-</header>
-
-<TicketList tickets={data.tickets} detailBase="/tickets/support" canSeeEmail={data.canSeeEmail} />
+<TicketTriage {data} {form} />

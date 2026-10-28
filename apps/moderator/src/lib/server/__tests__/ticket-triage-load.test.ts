@@ -1,0 +1,71 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const loadTicketPage = vi.fn();
+
+vi.mock('$lib/server/access', () => ({ requireAccess: () => {} }));
+vi.mock('../freshdesk.service', () => ({ isFreshdeskId: (v: string) => /^\d+$/.test(v) }));
+vi.mock('../tickets/list', () => ({
+  loadTicketPage: (...a: unknown[]) => loadTicketPage(...a),
+  parseTicketQuery: () => ({ q: '' }),
+}));
+
+const { ticketTriageLoad } = await import('../tickets/triage');
+
+const page = (over: Record<string, unknown> = {}) => ({
+  status: 'ok',
+  items: [{ id: '1' }],
+  pinned: null,
+  ...over,
+});
+const load = (
+  search: string,
+  grants: Record<string, boolean> = {},
+  view: 'moderation' | 'support' = 'moderation'
+) =>
+  ticketTriageLoad(view, {
+    url: new URL(`https://x.test/tickets/${view}${search}`),
+    locals: { user: {}, grants } as unknown as App.Locals,
+  });
+
+beforeEach(() => loadTicketPage.mockReset().mockResolvedValue(page()));
+
+describe('ticketTriageLoad', () => {
+  it('asks for the ticket in the URL to be pinned, and only a valid id', async () => {
+    await load('?ticket=77');
+    expect(loadTicketPage).toHaveBeenLastCalledWith('moderation', expect.anything(), {
+      canSeeEmail: false,
+      pinnedId: '77',
+    });
+    await load('?ticket=abc');
+    expect(loadTicketPage).toHaveBeenLastCalledWith('moderation', expect.anything(), {
+      canSeeEmail: false,
+      pinnedId: undefined,
+    });
+  });
+
+  it('reports a ticket that is neither on the page nor pinned as missing', async () => {
+    expect((await load('?ticket=77')).selectedMissing).toBe('77');
+    expect((await load('?ticket=1')).selectedMissing).toBeNull();
+    loadTicketPage.mockResolvedValue(page({ pinned: { id: '77' } }));
+    expect((await load('?ticket=77')).selectedMissing).toBeNull();
+    loadTicketPage.mockResolvedValue({ status: 'unavailable', reason: 'x' });
+    expect((await load('?ticket=77')).selectedMissing).toBeNull();
+  });
+
+  it('derives the viewer grants; escalation exists on the moderation view only', async () => {
+    const grants = {
+      'tickets.reply': true,
+      'tickets.escalate': true,
+      'decisions.support.pii': true,
+    };
+    expect(await load('', grants)).toMatchObject({
+      canReply: true,
+      canEscalate: true,
+      canSeeEmail: true,
+      fullBleed: true,
+      headerInline: true,
+    });
+    expect((await load('', grants, 'support')).canEscalate).toBe(false);
+    expect(await load('')).toMatchObject({ canReply: false, canEscalate: false });
+  });
+});

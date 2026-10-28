@@ -6,8 +6,8 @@ import { ticketSnapshot } from './snapshot';
 import type { TicketView } from '$lib/tickets/routing';
 import {
   TICKET_QUERY_MULTI_KEYS,
+  findTicket,
   queryTickets,
-  selectTickets,
   ticketListQuerySchema,
   type TicketFacets,
   type TicketItem,
@@ -53,6 +53,8 @@ export type TicketPageResult =
   | {
       status: 'ok';
       items: TicketRow[];
+      /** The ticket named by `pinnedId` when it belongs to the view but is not on this page. */
+      pinned: TicketRow | null;
       total: number;
       page: number;
       offset: number;
@@ -75,43 +77,27 @@ export type TicketPageResult =
 export async function loadTicketPage(
   view: TicketView,
   query: TicketListQuery,
-  { canSeeEmail }: { canSeeEmail: boolean }
+  { canSeeEmail, pinnedId }: { canSeeEmail: boolean; pinnedId?: string }
 ): Promise<TicketPageResult> {
   try {
     const read = await ticketSnapshot.get();
     if (read.status !== 'ok') return read;
-    const page = queryTickets(read.snapshot.tickets, query, { view, canSeeEmail });
+    const context = { view, canSeeEmail };
+    const page = queryTickets(read.snapshot.tickets, query, context);
+    const offPage =
+      pinnedId && !page.items.some((t) => t.id === pinnedId)
+        ? findTicket(read.snapshot.tickets, pinnedId, context)
+        : null;
+    const rows = await decorate(offPage ? [...page.items, offPage] : page.items, canSeeEmail);
     return {
       status: 'ok',
       ...page,
-      items: await decorate(page.items, canSeeEmail),
+      items: offPage ? rows.slice(0, -1) : rows,
+      pinned: offPage ? rows[rows.length - 1] : null,
       query,
       warnings: read.warnings,
       syncedAt: read.snapshot.syncedAt,
     };
-  } catch (e) {
-    console.error('[tickets] list failed', e);
-    return { status: 'unavailable', reason: 'The ticket list could not be read.' };
-  }
-}
-
-export type TicketListResult =
-  | { status: 'ok'; rows: TicketRow[]; warnings: string[] }
-  | Unavailable;
-
-/** Every live ticket of a view, newest activity first, unpaged. */
-export async function listTickets(
-  view: TicketView,
-  { includeEmail }: { includeEmail: boolean }
-): Promise<TicketListResult> {
-  try {
-    const read = await ticketSnapshot.get();
-    if (read.status !== 'ok') return read;
-    const { items } = selectTickets(read.snapshot.tickets, ticketListQuerySchema.parse({}), {
-      view,
-      canSeeEmail: includeEmail,
-    });
-    return { status: 'ok', rows: await decorate(items, includeEmail), warnings: read.warnings };
   } catch (e) {
     console.error('[tickets] list failed', e);
     return { status: 'unavailable', reason: 'The ticket list could not be read.' };

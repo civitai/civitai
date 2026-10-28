@@ -30,6 +30,9 @@ const writer = createTicketWriter({
     recordModActivity({ userId, entityType: 'ticket', entityId: ticketId, activity }),
 });
 
+/** The ticket a form acts on. The actions live on the list page, whose URL carries no ticket id. */
+const ticketIdOf = (form: FormData) => String(form.get('ticketId') ?? '');
+
 /**
  * Re-reads the ticket right before a write: it must still belong to THIS view, whose page grant the
  * moderator holds, or a stale tab could answer a ticket from a view the role may not open.
@@ -75,12 +78,12 @@ async function settled(view: TicketView, ticketId: string, outcome: WriteOutcome
   return { success: true as const, moved, warning: outcome.warning };
 }
 
-/** `?/reply`, `?/status` and (moderation only) `?/escalate`. All return `fail()` rather than throwing so the typed text survives a refusal. */
+/** `?/reply`, `?/status` and (moderation only) `?/escalate`, each posting a `ticketId` field. All return `fail()` rather than throwing so the typed text survives a refusal. */
 export function ticketActions(view: TicketView): Actions {
   return {
-    reply: requiresGrant('tickets.reply', async ({ request, params, locals }) => {
-      const ticketId = params.ticketId ?? '';
+    reply: requiresGrant('tickets.reply', async ({ request, locals }) => {
       const form = await request.formData();
+      const ticketId = ticketIdOf(form);
       const text = normalizeNewlines(String(form.get('body') ?? ''));
       const html = plainTextToHtml(text);
       if (!html) return fail(400, { error: 'Write a reply first.' });
@@ -96,9 +99,10 @@ export function ticketActions(view: TicketView): Actions {
       return settled(view, ticketId, await writer.reply(ticketId, html, statusAfter, locals.user));
     }),
 
-    status: requiresGrant('tickets.reply', async ({ request, params, locals }) => {
-      const ticketId = params.ticketId ?? '';
-      const status = Number((await request.formData()).get('status'));
+    status: requiresGrant('tickets.reply', async ({ request, locals }) => {
+      const form = await request.formData();
+      const ticketId = ticketIdOf(form);
+      const status = Number(form.get('status'));
       if (!isSettableStatus(status))
         return fail(400, { error: 'That status cannot be set from here.' });
 
@@ -109,9 +113,10 @@ export function ticketActions(view: TicketView): Actions {
 
     ...(view === 'moderation'
       ? {
-          escalate: requiresGrant('tickets.escalate', async ({ request, params, locals }) => {
-            const ticketId = params.ticketId ?? '';
-            const reason = String((await request.formData()).get('reason') ?? '').trim();
+          escalate: requiresGrant('tickets.escalate', async ({ request, locals }) => {
+            const form = await request.formData();
+            const ticketId = ticketIdOf(form);
+            const reason = String(form.get('reason') ?? '').trim();
             if (reason.length > MAX_REASON_CHARS)
               return fail(400, { error: `A reason is at most ${MAX_REASON_CHARS} characters.` });
 

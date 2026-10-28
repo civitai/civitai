@@ -1,10 +1,21 @@
 # Moderator app: ticket views
 
-`/tickets/moderation` and `/tickets/support` list Freshdesk tickets for the two queues; `/tickets/<view>/<id>`
-opens one. Each view is its own page grant. Acting on a ticket is a separate permission:
+`/tickets/moderation` and `/tickets/support` are triage pages (`docs/moderator-app/triage-layout.md`) over the
+two queues: the list on the left, the open ticket beside it. `/tickets/<view>/<id>` redirects to
+`/tickets/<view>?ticket=<id>`, after checking the ticket still routes to that view (404 otherwise). Each view
+is its own page grant. Acting on a ticket is a separate permission:
 `tickets.reply` (public reply, private note, status) and `tickets.escalate` ("Send to support": adds the
 `sent-to-support` tag and moves the ticket to the support group).
 
+- The URL is the only state: `?q=` (ticket number, subject, requester), repeated `status`, `feature` and
+  `topic`, `sent=only|exclude` (support view), `sort=updated|created`, `dir`, `page`, and `ticket` for the open
+  ticket. A ticket named by `?ticket=` that the filters or paging leave off the page is still selectable. The
+  list and its facet counts come from the snapshot in one load; the description and conversation are fetched
+  from `GET /api/tickets/<id>?view=<view>` when a ticket is selected. That endpoint is outside the central
+  route gate, so it checks the page grant of the view asked for and answers 404 for a ticket that routes to
+  the other view. Reply, status and "Send to support" post a `ticketId` field to the page's own actions;
+  a ticket that leaves the list afterwards (other view, resolved or closed) moves the selection on.
+  Without the grant a form stays on screen, disabled, with the reason.
 - Routing lives in one constant, `TICKET_ROUTING` (`apps/moderator/src/lib/tickets/routing.ts`). Precedence:
   "Waiting on Mod Lead" status → moderation; the `sent-to-support` tag → support; the ticket's Feature field;
   for a ticket with no Feature, the support-ticket router's topic. Setting "Waiting on Mod Lead" hands an

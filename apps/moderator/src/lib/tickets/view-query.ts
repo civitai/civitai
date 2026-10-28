@@ -181,6 +181,23 @@ export function selectTickets(
   };
 }
 
+/** One ticket of the view as a row, or null when the snapshot lacks it or it routes to the other view. */
+export function findTicket(
+  records: readonly TicketRecord[],
+  id: string,
+  { view, canSeeEmail }: QueryContext
+): TicketItem | null {
+  const t = records.find((r) => r.id === id);
+  if (!t) return null;
+  const routesTo = routeTicket({
+    cfFeature: t.cfFeature,
+    status: t.status,
+    routerTopic: t.routerTopic,
+    tags: t.tags,
+  });
+  return routesTo === view ? toItem(t, canSeeEmail) : null;
+}
+
 export type Page<T> = {
   items: T[];
   total: number;

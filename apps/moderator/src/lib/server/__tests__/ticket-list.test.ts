@@ -13,7 +13,7 @@ vi.mock('../decision-sources/support', () => ({
 vi.mock('../users.service', () => ({ MAX_INT4: 2_147_483_647 }));
 vi.mock('../tickets/sent-by', () => ({ sentByTickets: (...a: unknown[]) => sentBy(...a) }));
 
-const { listTickets, loadTicketPage, parseTicketQuery } = await import('../tickets/list');
+const { loadTicketPage, parseTicketQuery } = await import('../tickets/list');
 
 const rec = (id: number, over: Partial<TicketRecord> = {}): TicketRecord => ({
   id: String(id),
@@ -136,16 +136,31 @@ describe('loadTicketPage', () => {
   });
 });
 
-describe('listTickets', () => {
-  it('returns every ticket of the view unpaged, newest activity first', async () => {
-    const many = Array.from({ length: 130 }, (_, i) =>
-      rec(i + 1, {
-        updatedAt: `2026-01-01T00:${String(i % 60).padStart(2, '0')}:00Z`,
-        id: String(i + 1),
-      })
-    );
-    get.mockResolvedValue({ status: 'ok', snapshot: snapshot(many), warnings: [] });
-    const res = await listTickets('moderation', { includeEmail: false });
-    expect(res.status === 'ok' && res.rows).toHaveLength(130);
+describe('loadTicketPage pinned ticket', () => {
+  const q = parseTicketQuery(new URL('https://x.test/?status=3'));
+
+  it('returns a ticket of the view that the filters leave off the page', async () => {
+    get.mockResolvedValue({
+      status: 'ok',
+      snapshot: snapshot([rec(1, { status: 3 }), rec(2, { status: 2 })]),
+      warnings: [],
+    });
+    const res = await loadTicketPage('moderation', q, { canSeeEmail: false, pinnedId: '2' });
+    expect(res.status === 'ok' && res.items.map((i) => i.id)).toEqual(['1']);
+    expect(res.status === 'ok' && res.pinned?.id).toBe('2');
+    expect(res.status === 'ok' && res.pinned?.freshdeskUrl).toContain('/a/tickets/2');
+  });
+
+  it('pins nothing when the ticket is already on the page, is unknown, or belongs to the other view', async () => {
+    get.mockResolvedValue({
+      status: 'ok',
+      snapshot: snapshot([rec(1, { status: 3 }), rec(2, { status: 2, cfFeature: 'Billing' })]),
+      warnings: [],
+    });
+    for (const pinnedId of ['1', '99', '2']) {
+      const res = await loadTicketPage('moderation', q, { canSeeEmail: false, pinnedId });
+      expect(res.status === 'ok' && res.pinned).toBeNull();
+      expect(res.status === 'ok' && res.items.map((i) => i.id)).toEqual(['1']);
+    }
   });
 });

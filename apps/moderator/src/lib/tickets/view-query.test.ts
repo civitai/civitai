@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { TicketRecord } from './snapshot';
 import {
   NONE,
+  findTicket,
   paginate,
   queryTickets,
   selectTickets,
@@ -370,5 +371,26 @@ describe('selectTickets', () => {
   it('returns every match, unpaged', () => {
     const many = Array.from({ length: 130 }, () => rec());
     expect(selectTickets(many, query(), ctx()).items).toHaveLength(130);
+  });
+});
+
+describe('findTicket', () => {
+  it('returns the ticket as a row when it routes to the view, whatever the filters', () => {
+    const a = rec({ cfFeature: MOD });
+    const b = rec({ cfFeature: MOD });
+    expect(findTicket([a, b], b.id, ctx())?.id).toBe(b.id);
+  });
+
+  it('is null for a ticket of the other view, or one the snapshot does not hold', () => {
+    const support = rec({ cfFeature: 'Billing' });
+    expect(findTicket([support], support.id, ctx())).toBeNull();
+    expect(findTicket([support], support.id, ctx(false, 'support'))?.id).toBe(support.id);
+    expect(findTicket([support], '1', ctx(false, 'support'))).toBeNull();
+  });
+
+  it('keeps the address behind the PII grant', () => {
+    const t = rec({ requesterEmail: 'a@example.test' });
+    expect(findTicket([t], t.id, ctx(false))).not.toHaveProperty('requesterEmail');
+    expect(findTicket([t], t.id, ctx(true))?.requesterEmail).toBe('a@example.test');
   });
 });
