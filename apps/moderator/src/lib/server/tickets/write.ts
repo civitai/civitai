@@ -41,7 +41,6 @@ const failure = (
 };
 
 const by = (m: Moderator) => `${m.username ?? 'unknown'} (user ${m.id}) from the moderator app.`;
-const ucfirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 /**
  * Reply and status writes, each followed by a private note naming the moderator: the reply goes out as the
