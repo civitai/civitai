@@ -236,6 +236,28 @@ describe('deleteStoryline', () => {
       expect(await storylineIds()).toEqual([1, 2]);
     });
 
+    // Its parent chapter's post was deleted, so only the chapter's placementId ties it here.
+    it("refuses while an approved continuation is unpaid and its parent's post is gone", async () => {
+      await db.pg.exec(`
+        UPDATE "Placement" SET "targetId" = 999 WHERE id = 900;
+        UPDATE "StorylineChapter" SET "postId" = NULL WHERE id = 10;
+        UPDATE "PlacementTransaction" SET "transactionId" = NULL WHERE kind = 'toOwner';
+      `);
+      await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
+        STORYLINE_DELETE_REFUSALS.paidContinuations
+      );
+      expect(await storylineIds()).toEqual([1, 2]);
+    });
+
+    it('lets an unpriced pending continuation through', async () => {
+      await db.pg.exec(`
+        INSERT INTO "Placement" (id, surface, "targetType", "targetId", status, amount)
+          VALUES (903, 'storyline', 'post', 502, 'pending', 0);
+      `);
+      await deleteStoryline({ id: 1, userId: OWNER });
+      expect(await storylineIds()).toEqual([2]);
+    });
+
     it("ignores another storyline's pending continuation", async () => {
       await db.pg.exec(`
         INSERT INTO "Post" (id, "userId") VALUES (601, ${OWNER});
@@ -293,6 +315,13 @@ describe('deleteStoryline', () => {
 
     it('is kept from its owner, keeping the takedown on record', async () => {
       await expect(deleteStoryline({ id: 1, userId: OWNER })).rejects.toThrow(
+        STORYLINE_DELETE_REFUSALS.takenDown
+      );
+      expect(await storylineIds()).toEqual([1, 2]);
+    });
+
+    it('is kept from its owner when the owner is a moderator', async () => {
+      await expect(deleteStoryline({ id: 1, userId: OWNER, isModerator: true })).rejects.toThrow(
         STORYLINE_DELETE_REFUSALS.takenDown
       );
       expect(await storylineIds()).toEqual([1, 2]);

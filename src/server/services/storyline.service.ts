@@ -892,7 +892,8 @@ export async function deleteStoryline({
     `;
     if (!storyline) throw throwNotFoundError('Storyline not found');
     if (storyline.tosViolation) {
-      if (!isModerator) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.takenDown);
+      // The owner never, moderator or not: the takedown is against them.
+      if (!asModerator) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.takenDown);
       const [{ appealOpen }] = await tx.$queryRaw<{ appealOpen: boolean }[]>`
         SELECT EXISTS (
           SELECT 1 FROM "Appeal"

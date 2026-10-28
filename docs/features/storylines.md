@@ -74,9 +74,12 @@ section).
   review and are listed ahead of other contributors' at the end of a chapter.
 - **Moderators.** A moderator can manage any storyline as its creator does: title, status, who may
   continue, content level, covers, removing collaborators, and inserting, reordering, joining and
-  choosing the main route of chapters. Setting the price, endorsing collaborators, answering
-  continuations and deleting stay the creator's. Each such edit is recorded in the moderator
-  activity log.
+  choosing the main route of chapters. Setting the price, endorsing collaborators and answering
+  continuations stay the creator's. Each such edit is recorded in the moderator activity log.
+- **Deleting.** The creator or a moderator deletes a storyline from its page's menu. Every chapter's
+  post stays published; the storyline, its chapter order and its comments go. It is refused while a
+  paid continuation is pending or its Buzz has not settled, and a taken-down storyline is kept: its
+  creator cannot delete it, and a moderator cannot while the creator's appeal is open.
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or
   declined. A post above the storyline's content level cannot be submitted at all. A post submitted
   while still a draft or still being scanned reaches the queue once it is published and rated, or is
@@ -106,9 +109,8 @@ section).
 
 ## Not in the first version
 
-An in-app tool for making the next section, a way for authors to write image captions (the server
-side is built), and deleting a storyline: its creator
-marks it complete instead, and moderators take down one that breaks the rules.
+An in-app tool for making the next section, and a way for authors to write image captions (the
+server side is built).
 
 ## Trying it locally
 
