@@ -47,6 +47,11 @@ CREATE TABLE "Appeal" (
   "buzzTransactionId" TEXT,
   "entityRemovedAt" TIMESTAMP(3)
 );
+CREATE TABLE "Image" ("id" INTEGER PRIMARY KEY, "userId" INTEGER NOT NULL, "blockedFor" TEXT);
+CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "reason" TEXT NOT NULL);
+CREATE TABLE "UserReport" ("userId" INTEGER NOT NULL, "reportId" INTEGER NOT NULL);
+CREATE TABLE "CsamReport" ("id" INTEGER PRIMARY KEY, "userId" INTEGER, "images" JSONB NOT NULL DEFAULT '[]');
+CREATE TABLE "EvidenceHeldUser" ("userId" INTEGER PRIMARY KEY);
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER,
@@ -140,9 +145,52 @@ describe('getRemovedAppeals', () => {
   it('counts the same set the page lists', async () => {
     expect(await countRemovedAppeals()).toBe(2);
   });
+
+  // Each is like 11 but for one thing the main app's appeal exclusion flags. 26 is the control: its
+  // owner has a report and a block, neither of the kind that counts.
+  it('leaves out an appeal the main app excludes, and nothing else', async () => {
+    await db.exec(`
+      INSERT INTO "Report" ("id", "reason") VALUES (1, 'CSAM'), (2, 'TOSViolation');
+      INSERT INTO "UserReport" ("userId", "reportId") VALUES (22, 1), (26, 2);
+      INSERT INTO "CsamReport" ("id", "userId", "images") VALUES
+        (1, 21, '[]'), (2, NULL, '[{"id": 504}]'), (3, NULL, '[505]');
+      INSERT INTO "Image" ("id", "userId", "blockedFor") VALUES (900, 23, 'CSAM'), (901, 26, 'moderated');
+      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (27);
+      INSERT INTO "Appeal" ("id", "userId", "entityType", "entityId", "entityRemovedAt") VALUES
+        (21, 21, 'Image', 501, '2026-09-21'),
+        (22, 22, 'Image', 502, '2026-09-21'),
+        (23, 23, 'Image', 503, '2026-09-21'),
+        (24, 24, 'Image', 504, '2026-09-21'),
+        (25, 25, 'Image', 505, '2026-09-21'),
+        (26, 26, 'Image', 506, '2026-09-21'),
+        (27, 27, 'Image', 507, '2026-09-21'),
+        (28, 28, 'Model', 504, '2026-09-21');
+    `);
+
+    const { items } = await getRemovedAppeals({ limit: 20 });
+
+    expect(items.map((i) => i.id)).toEqual([12, 11, 26, 28]);
+    expect(await countRemovedAppeals()).toBe(4);
+  });
 });
 
 describe('resolveRemovedAppeal', () => {
+  // The same answer as an appeal another moderator decided, so an id posted by hand learns nothing.
+  it('decides nothing on an appeal the list leaves out', async () => {
+    await db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (1)`);
+
+    const closed = await resolveRemovedAppeal({
+      appealId: 11,
+      decision: 'Approved',
+      moderatorId: MOD,
+    });
+
+    expect(closed).toBeNull();
+    expect(await appeal(11)).toMatchObject({ status: 'Pending', resolvedBy: null });
+    expect(refundAppealFee).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
   it('approves: records the ruling, refunds, and tells the user the removal was a mistake', async () => {
     const closed = await resolveRemovedAppeal({
       appealId: 11,

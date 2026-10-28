@@ -36,23 +36,9 @@ import {
  * same absolutely-positioned icon at the same 8px offset, the same `aria-label`, the same
  * `Copied`/`$ command` swap, and the same `stopPropagation()` on the icon.
  */
-export function CopyableCommand({
-  command,
-  onCopy,
-}: {
-  command: string;
-  /**
-   * Fired on an ATTEMPTED copy — the funnel's `cli_copy` step.
-   *
-   * 🔴 NOT "on a successful copy". The reason is in `CopyAffordance`'s `onCopy` doc, which
-   * owns the call: `copy()` returns `void` and `CopyButton` surfaces no success signal, so a
-   * denied clipboard permission still emits. The DOC was what got corrected rather than the
-   * code — the funnel wants intent-to-copy.
-   */
-  onCopy?: (command: string) => void;
-}) {
+export function CopyableCommand({ command }: { command: string }) {
   return (
-    <CopyAffordance value={command} label={`Copy command: ${command}`} onCopy={onCopy}>
+    <CopyAffordance value={command} label={`Copy command: ${command}`}>
       {({ copied }) => (
         <Code
           block

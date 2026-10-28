@@ -5,6 +5,7 @@ import { getMimeTypeFromExt } from '~/shared/constants/mime-types';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { getMultipartPutUrl, getImageUploadBackend } from '~/utils/s3-utils';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import { trackImageUpload } from '~/server/services/image-upload-action.service';
 
 export default async function imageUploadMultipart(req: NextApiRequest, res: NextApiResponse) {
   // 5xx attribution: bypasses the endpoint wrappers, so its 500s were
@@ -30,6 +31,7 @@ export default async function imageUploadMultipart(req: NextApiRequest, res: Nex
 
     // Register in storage-resolver (fire-and-forget)
     registerMediaLocation(imageKey, backend, req.body.size ?? 0);
+    trackImageUpload(req, res, imageKey);
 
     res.status(200).json({ ...result, backend });
   } catch (error) {

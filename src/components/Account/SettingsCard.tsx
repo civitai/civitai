@@ -199,6 +199,7 @@ export function SettingsCard() {
         )}
 
         <Divider label="Features" />
+        <FitPostImagesToggle />
         <EarlyAdopterToggle />
         {normalizedToggleableFeatures.length > 0 && (
           <ToggleableFeatures data={normalizedToggleableFeatures} />
@@ -304,6 +305,23 @@ export function HideBlueBuzzToggle() {
       checked={hideBlueBuzzInHeader ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ hideBlueBuzzInHeader: e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
+  );
+}
+
+export function FitPostImagesToggle() {
+  const { fitPostImagesToScreen } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Switch
+      name="fitPostImagesToScreen"
+      label="Fit post images to screen"
+      description="Shows each image in a post whole, sized to fit your screen, instead of at full width."
+      checked={fitPostImagesToScreen ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ fitPostImagesToScreen: e.target.checked })}
       styles={{ track: { flex: '0 0 1em' } }}
     />
   );
