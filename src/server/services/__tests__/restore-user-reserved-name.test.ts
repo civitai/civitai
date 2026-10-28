@@ -58,6 +58,12 @@ describe('restoreUser and the reserved username', () => {
     }
   );
 
+  it('refuses restoring the shared account under another name', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: USER_ID });
+    await expect(restore('back')).rejects.toThrow(/keeps its reserved username/);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
   it('restores the shared account itself under its name, and other accounts under other names', async () => {
     await expect(restore('back')).resolves.toEqual(expect.objectContaining({ id: USER_ID }));
     setEnv({ CIVITAI_MODERATION_USER_ID: USER_ID });

@@ -1209,11 +1209,11 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
   if (!user.deletedAt) throw throwBadRequestError(`User ${id} is not deleted; nothing to restore`);
-  if (
-    username.toLowerCase() === MODERATION_ACCOUNT_USERNAME.toLowerCase() &&
-    id !== getModerationAccountId()
-  )
-    throw throwBadRequestError('This username is reserved.');
+  const reserved = username.toLowerCase() === MODERATION_ACCOUNT_USERNAME.toLowerCase();
+  const isShared = id === getModerationAccountId();
+  if (reserved && !isShared) throw throwBadRequestError('This username is reserved.');
+  if (isShared && !reserved)
+    throw throwBadRequestError('The shared moderation account keeps its reserved username.');
 
   // Make sure the username and email aren't claimed by some other user since the closure.
   const conflict = await dbWrite.user.findFirst({

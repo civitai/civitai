@@ -1,7 +1,7 @@
 import * as z from 'zod';
-import { isModerationAccountUser, MODERATION_ACCOUNT_USERNAME } from '@civitai/auth';
+import { MODERATION_ACCOUNT_USERNAME } from '@civitai/auth';
 import { dbWrite } from '~/server/db/client';
-import { getModerationAccountId } from '~/server/auth/moderation-account';
+import { isModerationAccountRow } from '~/server/auth/moderation-account';
 import { forceUpdateUserIdentity } from '~/server/services/user.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
@@ -30,7 +30,7 @@ export default defineModeratorEndpoint('user.updateIdentity', {
         where: { id: input.userId },
         select: { id: true, username: true },
       });
-      const isShared = !!current && isModerationAccountUser(current, getModerationAccountId());
+      const isShared = !!current && isModerationAccountRow(current);
       const reserved = input.username.toLowerCase() === MODERATION_ACCOUNT_USERNAME.toLowerCase();
       if (isShared && !reserved)
         throw throwBadRequestError("The shared moderation account's username cannot be changed.");

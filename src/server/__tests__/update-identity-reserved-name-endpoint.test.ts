@@ -10,6 +10,7 @@ import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 const SHARED = 900;
 const OTHER = 501;
+const SQUATTER = 502;
 
 const h = vi.hoisted(() => ({
   session: vi.fn(),
@@ -43,7 +44,11 @@ function call(body: Record<string, unknown>) {
   return (handler as (req: unknown, res: unknown) => Promise<unknown>)(req, res).then(() => status);
 }
 
-const usernames: Record<number, string> = { [SHARED]: 'CivitaiModeration', [OTHER]: 'someone' };
+const usernames: Record<number, string> = {
+  [SHARED]: 'CivitaiModeration',
+  [OTHER]: 'someone',
+  [SQUATTER]: 'civitaimoderation',
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -85,6 +90,10 @@ describe('POST /api/mod/user/update-identity and the reserved username', () => {
     } finally {
       usernames[SHARED] = 'CivitaiModeration';
     }
+  });
+
+  it('lets another account holding the name be renamed away while the id is configured', async () => {
+    expect(await call({ userId: SQUATTER, username: 'someone-else' })).toBe(200);
   });
 
   it('recognises the shared account by its name when its id is not configured', async () => {

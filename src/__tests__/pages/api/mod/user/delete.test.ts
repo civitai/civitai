@@ -303,6 +303,18 @@ describe('user.delete — the shared moderation account', () => {
     expect(deleteUser).not.toHaveBeenCalled();
   });
 
+  it('deletes another account holding the name while the shared id is configured', async () => {
+    liveTarget('CivitaiModeration');
+    setEnv({ CIVITAI_MODERATION_USER_ID: TARGET + 1 });
+    try {
+      const { status } = await call({ userId: TARGET, username: 'CivitaiModeration' });
+      expect(status).toBe(200);
+      expect(deleteUser).toHaveBeenCalledTimes(1);
+    } finally {
+      setEnv({ CIVITAI_MODERATION_USER_ID: '' });
+    }
+  });
+
   it('refuses deleting it, found by its id', async () => {
     setEnv({ CIVITAI_MODERATION_USER_ID: TARGET });
     try {

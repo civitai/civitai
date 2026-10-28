@@ -8,6 +8,15 @@ export function getModerationAccountId(): number | null {
   return typeof id === 'number' ? id : null;
 }
 
+/**
+ * Whether a user row is the shared account, for writes that protect it. By the configured id when there
+ * is one, so another row that happens to hold the name can still be renamed or deleted.
+ */
+export function isModerationAccountRow(row: { id: number; username?: string | null }): boolean {
+  const id = getModerationAccountId();
+  return id !== null ? row.id === id : isModerationAccountUser(row, null);
+}
+
 type Who = number | string | { id: number; username?: string | null } | null | undefined;
 
 /**
