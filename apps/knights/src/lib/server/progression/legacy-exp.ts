@@ -1,5 +1,7 @@
+import { REDIS_SYS_KEYS } from '@civitai/redis';
+
 /** The original game's exp counter: a hash keyed by user id, a cache of `NewOrderPlayer.exp`. */
-export const LEGACY_EXP_KEY = 'new-order:exp';
+export const LEGACY_EXP_KEY = REDIS_SYS_KEYS.NEW_ORDER.EXP;
 
 export type XpDelta = { playerId: number; xp: number };
 export type XpMirror = (deltas: XpDelta[]) => Promise<void>;
