@@ -98,7 +98,8 @@ import {
 } from '../image.service';
 import { isMeiliOff } from '../feed-primary.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
-import { imageFeedVerdict } from '../../../../tests/preview-image-feed.verdict';
+import superjson from 'superjson';
+import { imageFeedVerdict, type ImageFeedPage } from '../../../../tests/preview-image-feed.verdict';
 
 redisMock.redis.get.mockResolvedValue('[]');
 redisMock.redis.set.mockResolvedValue(undefined);
@@ -185,6 +186,8 @@ describe('getAllImagesIndex without a feed service (previews)', () => {
     // The preview smoke's verdict first (tests/preview-image-feed.verdict.ts): it accepts an
     // empty page only when the retirement guard named it.
     expect(imageFeedVerdict(result)).toBeNull();
+    // The smoke reads the raw superjson `json` body, where `undefined` arrives as `null`.
+    expect(imageFeedVerdict(superjson.serialize(result).json as ImageFeedPage)).toBeNull();
     expect(result).toEqual({ items: [], nextCursor: undefined, source: 'retired' });
     noMeiliCall();
   });

@@ -22,7 +22,8 @@ export function imageFeedVerdict(page: ImageFeedPage | undefined): string | null
   const source = page?.source;
   if (source === 'retired') {
     if (items.length) return `the retired index answered ${items.length} item(s); expected none`;
-    if (page?.nextCursor !== undefined) return 'the retired index answered a nextCursor';
+    // `!= null`: the smoke reads the raw superjson body, where `undefined` arrives as `null`.
+    if (page?.nextCursor != null) return 'the retired index answered a nextCursor';
     return null;
   }
   if (source !== 'feed' && source !== 'meili' && source !== 'db')
