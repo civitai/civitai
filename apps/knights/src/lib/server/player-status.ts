@@ -1,7 +1,9 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from '@civitai/shared/new-order-levels';
-import { fervorOf } from './progression/progression';
+import { calculateFervor, ledgerOf } from './progression/progression';
+import { accuracyOf, nextLadderEntry, standingOf, type Ledger } from './progression/rating';
+import { RATING } from './progression/config';
 
 export type PlayerStatus = {
   rank: string;
@@ -12,21 +14,52 @@ export type PlayerStatus = {
   fervor: number;
   goldPending: number;
   goldEarned: number;
+  rating: {
+    graded: number;
+    minGraded: number;
+    accuracy: number | null;
+    bar: number | null;
+    belowBar: boolean;
+  };
+  nextRank: {
+    rank: string;
+    fromLevel: number;
+    accuracyBar: number;
+    levelsToGo: number;
+    levelMet: boolean;
+    accuracyMet: boolean;
+  } | null;
 };
 
-type Standing = { fervor?: number; goldPending?: number; goldEarned?: number };
+type Extras = { ledger?: Ledger; goldPending?: number; goldEarned?: number };
 
-export function statusFrom(rank: string, exp: number, standing: Standing = {}): PlayerStatus {
+export function statusFrom(rank: string, exp: number, standing: Extras = {}): PlayerStatus {
   const progress = getLevelProgression(exp);
+  const ledger = standing.ledger ?? { correct: 0, graded: 0 };
+  const accuracy = accuracyOf(ledger);
+  const next = nextLadderEntry(rank);
   return {
     rank,
     level: progress.level,
     xpIntoLevel: progress.xpIntoLevel,
     xpForNextLevel: progress.xpForNextLevel,
     progressPercent: progress.progressPercent,
-    fervor: standing.fervor ?? 0,
+    fervor: calculateFervor(ledger),
     goldPending: standing.goldPending ?? 0,
     goldEarned: standing.goldEarned ?? 0,
+    rating: {
+      graded: ledger.graded,
+      minGraded: RATING.minGraded,
+      ...standingOf(rank, ledger),
+    },
+    nextRank: next && {
+      rank: next.rank,
+      fromLevel: next.fromLevel,
+      accuracyBar: next.accuracyBar,
+      levelsToGo: Math.max(0, next.fromLevel - progress.level),
+      levelMet: progress.level >= next.fromLevel,
+      accuracyMet: accuracy !== null && accuracy >= next.accuracyBar,
+    },
   };
 }
 
@@ -40,7 +73,7 @@ export async function getPlayerStatus(
     .where('userId', '=', userId)
     .executeTakeFirst();
   return player
-    ? statusFrom(player.rankType, player.exp, { ...player, fervor: await fervorOf(db, userId) })
+    ? statusFrom(player.rankType, player.exp, { ...player, ledger: await ledgerOf(db, userId) })
     : null;
 }
 

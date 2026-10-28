@@ -91,3 +91,13 @@ describe('voteWeight', () => {
     expect(voteWeight({ rank: 'Knight', level: 20, smites: 12 })).toBe(0);
   });
 });
+
+describe('voteWeight below the accuracy bar', () => {
+  it('is halved by the config factor', async () => {
+    const { RATING } = await import('../progression/config');
+    const base = voteWeight({ rank: 'Templar', level: 20, smites: 0 });
+    expect(voteWeight({ rank: 'Templar', level: 20, smites: 0, belowBar: true })).toBe(
+      Math.round(base * RATING.belowBarFactor * 100) / 100
+    );
+  });
+});

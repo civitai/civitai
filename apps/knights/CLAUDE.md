@@ -69,7 +69,11 @@ Migration `20261213120000_knights_v2_progression` (applied by hand): `KnightsVot
 - A vote pays flat XP at once and records `gold` (base x the voter's rank multiplier) as pending on the vote and in `goldPending`.
 - `settleItemVotes` pays a graded item once, only when its outcome is final (`Closed`, or `Resolved` and written back): correct = bulk XP, gold moves pending -> earned; wrong or inconclusive = gold dropped. `settledAt` plus the row lock make it idempotent. It runs in the transaction of every Knights path that finalises an item, and `POST /api/jobs/tick` sweeps (`settleFinalItems`) what other apps closed (the moderator app's rulings).
 - Fervor is computed from the ledger (the player's last `fervorWindow` settled correct/failed votes since `startAt`, inconclusive excluded); the status line reads it from there and settle also writes the `fervor` column. A vote cast before a `startAt` reset settles without paying.
-- `/dev/simulate` 404s unless SvelteKit's build-time `dev` is true.
+- Ranks (`progression/rating.ts`, knobs in `config.ts`: `RANK_LADDER`, `RATING`): level bands and accuracy bars per rank; `/ranks` lists them from config. Accuracy comes from the same `ledgerOf` window as fervor (one scan) and is "not yet rated" below `RATING.minGraded`.
+  - Rank-up runs in `settleItemVotes`, after XP is added, and needs the next rank's level and its bar; it can skip ranks, never demotes, and never touches Acolyte (Trials) or Inquisitor.
+  - Below the bar of one's own rank (rated only), `castVote` applies `RATING.belowBarFactor` to the vote's weight and gold. Standing is computed once per vote.
+  - Migration `20261214120000_knights_v2_paladin_rank` (applied by hand, after the client with `Paladin` is deployed) adds the enum value and its `NewOrderRank` row. The original game treats a Paladin as a Templar (`getPlayerById`, shared pools in `games/new-order/utils.ts`).
+- `/dev/simulate` 404s unless SvelteKit's build-time `dev` is true; it also has "Set level" (`dev/set-level.ts`) and shows accuracy.
 - XP is also added to the original game's Redis exp counter (`new-order:exp`, only when that player's field is present) after the commit, while both games run: its nightly reset overwrites `NewOrderPlayer.exp` from that counter, and an absent field is re-read from Postgres, which already holds the XP.
 
 ## Trials (`src/lib/server/trials`)

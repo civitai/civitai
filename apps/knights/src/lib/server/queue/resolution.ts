@@ -1,6 +1,7 @@
 import { NsfwLevel } from '@civitai/shared';
 import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 import { getLevelProgression } from '@civitai/shared/new-order-levels';
+import { RATING } from '../progression/config';
 import { RANK_WEIGHT, type Rank } from './ranks';
 
 const WEIGHT_NEUTRAL_LEVEL = 20;
@@ -13,10 +14,12 @@ export function voteWeight({
   rank,
   level,
   smites,
+  belowBar = false,
 }: {
   rank: Rank;
   level: number;
   smites: number;
+  belowBar?: boolean;
 }): number {
   if (rank === 'Inquisitor') return 0;
   const base = RANK_WEIGHT[rank];
@@ -25,7 +28,7 @@ export function voteWeight({
     base +
     (level - WEIGHT_NEUTRAL_LEVEL) / LEVELS_PER_WEIGHT_UNIT -
     smites / SMITES_PER_WEIGHT_UNIT;
-  return Math.max(0, Math.round(weight * 100) / 100);
+  return Math.max(0, Math.round(weight * (belowBar ? RATING.belowBarFactor : 1) * 100) / 100);
 }
 
 export type WeightedAnswer = { answer: string; weight: number };

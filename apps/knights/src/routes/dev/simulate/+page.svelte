@@ -1,6 +1,7 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import StatusBar from '$lib/StatusBar.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -24,8 +25,21 @@
   item is settled.
 </p>
 
+<StatusBar status={data.status} />
+
+<form method="POST" action="?/setLevel" use:enhance={submit} class="level">
+  <label>
+    Set my level
+    <input type="number" name="level" min="1" value={data.status.level} required />
+  </label>
+  <button type="submit" disabled={submitting}>Set level</button>
+  <span class="muted">Applies the rank-up that level and your recorded accuracy earn.</span>
+</form>
+
 {#if form?.message}
   <p class="notice" role="status">{form.message}</p>
+{:else if form?.success && form.levelSet}
+  <p class="notice" role="status">You are now level {form.levelSet}, {form.rank}.</p>
 {:else if form?.success}
   <p class="notice" role="status">
     Item #{form.itemId}: {form.cast} votes cast. It is now {form.itemStatus}{form.settled
@@ -60,6 +74,13 @@
   }
   .notice {
     color: var(--gold);
+  }
+  .level {
+    margin: 1rem 0;
+  }
+  .level input {
+    width: 5rem;
+    margin: 0 0.5rem;
   }
   .item {
     display: flex;

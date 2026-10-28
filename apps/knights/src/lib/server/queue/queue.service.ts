@@ -4,8 +4,9 @@ import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
 import { goldForRank, PROGRESSION } from '../progression/config';
+import { standingOf } from '../progression/rating';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
-import { settleAndMirror, settleItemVotes } from '../progression/progression';
+import { ledgerOf, settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '../servable-image';
 import {
   canVote,
@@ -323,14 +324,17 @@ export async function castVote(
           .where('cleansedAt', 'is', null)
           .executeTakeFirstOrThrow();
 
+        const { belowBar } = standingOf(player.rankType, await ledgerOf(trx, input.userId));
+
         // A vote that weighs nothing could still be the one that tips a split into a decision.
         const weight = voteWeight({
           rank: player.rankType,
           level: levelForExp(player.exp),
           smites: Number(smites.n),
+          belowBar,
         });
         if (weight <= 0) return rejected('no-weight');
-        const gold = goldForRank(player.rankType);
+        const gold = goldForRank(player.rankType, belowBar);
 
         await trx
           .insertInto('KnightsVote')

@@ -1,11 +1,14 @@
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { getLevelProgression } from '@civitai/shared/new-order-levels';
 import { finalItem } from '../queue/item-state';
 import { PROGRESSION } from './config';
+import { accuracyOf, earnedRank, type Ledger } from './rating';
 import { mirrorXp, type XpDelta, type XpMirror } from './legacy-exp';
 
 type Executor = Kysely<DB> | Transaction<DB>;
+type RankType = DB['NewOrderPlayer']['rankType'];
 
 /** Accuracy is floored so a poor streak does not zero fervor. */
 export function calculateFervor({ correct, graded }: { correct: number; graded: number }): number {
@@ -14,9 +17,9 @@ export function calculateFervor({ correct, graded }: { correct: number; graded: 
   return Math.floor(correct * PROGRESSION.fervorPerCorrect * accuracy);
 }
 
-/** Inconclusive and still-pending votes are not in the window, nor are votes cast before the career reset. */
-export async function fervorOf(db: Executor, playerId: number): Promise<number> {
-  const window = await db
+/** The player's last `fervorWindow` graded votes, one scan for fervor and accuracy. Inconclusive and still-pending votes are not in it, nor are votes cast before the career reset. */
+export async function ledgerOf(db: Executor, playerId: number): Promise<Ledger> {
+  const window = db
     .selectFrom('KnightsVote as v')
     .select('v.verdict')
     .where('v.playerId', '=', playerId)
@@ -27,11 +30,50 @@ export async function fervorOf(db: Executor, playerId: number): Promise<number> 
     )
     .orderBy('v.createdAt', 'desc')
     .limit(PROGRESSION.fervorWindow)
-    .execute();
-  return calculateFervor({
-    correct: window.filter((v) => v.verdict === 'correct').length,
-    graded: window.length,
-  });
+    .as('w');
+  const totals = await db
+    .selectFrom(window)
+    .select([
+      sql<string>`count(*)`.as('graded'),
+      sql<string>`count(*) filter (where w.verdict = 'correct')`.as('correct'),
+    ])
+    .executeTakeFirstOrThrow();
+  return { correct: Number(totals.correct), graded: Number(totals.graded) };
+}
+
+export const fervorOf = async (db: Executor, playerId: number): Promise<number> =>
+  calculateFervor(await ledgerOf(db, playerId));
+
+/** Moves a Knight, Templar or Paladin up to the highest rank their level and accuracy earn; never down, and the guard keeps a concurrent change of rank from being overwritten. */
+async function rankUp(
+  trx: Executor,
+  player: { userId: number; rankType: string; exp: number },
+  ledger: Ledger
+): Promise<string | null> {
+  const earned = earnedRank(
+    player.rankType,
+    getLevelProgression(player.exp).level,
+    accuracyOf(ledger)
+  );
+  if (!earned) return null;
+  const moved = await trx
+    .updateTable('NewOrderPlayer')
+    .set({ rankType: earned as RankType })
+    .where('userId', '=', player.userId)
+    .where('rankType', '=', player.rankType as RankType)
+    .executeTakeFirst();
+  return moved.numUpdatedRows > 0n ? earned : null;
+}
+
+/** For the dev tools: the same rank-up settle applies, on demand. */
+export async function applyRankUp(trx: Executor, playerId: number): Promise<string | null> {
+  const player = await trx
+    .selectFrom('NewOrderPlayer')
+    .select(['userId', 'rankType', 'exp'])
+    .where('userId', '=', playerId)
+    .forUpdate()
+    .executeTakeFirst();
+  return player ? rankUp(trx, player, await ledgerOf(trx, playerId)) : null;
 }
 
 export type SettleResult = { votes: number; xp: XpDelta[] };
@@ -96,16 +138,19 @@ export async function settleItemVotes(
   const xp: XpDelta[] = [];
   // Votes were read in player order, so concurrent settlements lock player rows in the same order.
   for (const [playerId, total] of perPlayer) {
-    await trx
+    const ledger = await ledgerOf(trx, playerId);
+    const after = await trx
       .updateTable('NewOrderPlayer')
       .set({
         exp: sql<number>`"exp" + ${total.xp}`,
         goldPending: sql<number>`GREATEST(0, "goldPending" - ${total.pending})`,
         goldEarned: sql<number>`"goldEarned" + ${total.earned}`,
-        fervor: await fervorOf(trx, playerId),
+        fervor: calculateFervor(ledger),
       })
       .where('userId', '=', playerId)
-      .execute();
+      .returning(['userId', 'rankType', 'exp'])
+      .executeTakeFirst();
+    if (after) await rankUp(trx, after, ledger);
     if (total.xp > 0) xp.push({ playerId, xp: total.xp });
   }
   return { votes: votes.length, xp };
