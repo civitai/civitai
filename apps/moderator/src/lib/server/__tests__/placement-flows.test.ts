@@ -36,6 +36,7 @@ const pair = (o: Record<string, unknown> = {}) => ({
   toOwner: '20',
   toSeller: '0',
   toPlatform: '5',
+  forfeited: '0',
   ...o,
 });
 
@@ -66,7 +67,9 @@ beforeEach(() => {
 
 describe('getPlacementFlows', () => {
   it('matches the set as placer or owner inside the window, and never by seller', async () => {
+    respond({ pairs: [pair()] });
     await getPlacementFlows([1, 2], 30);
+    // Pairs, placed, received, then the shown pair's stickers; the cosmetic names read nothing here.
     expect(captured).toHaveLength(4);
     for (const [i, sql] of captured.entries()) {
       expect(sql).toMatch(/\("p"\."placerId" in \(\$\d+, \$\d+\) or "p"\."ownerId" in/);
@@ -89,10 +92,28 @@ describe('getPlacementFlows', () => {
   it('sums only legs that moved', async () => {
     await getPlacementFlows([1], 30);
     expect(captured[0]).toMatch(/"t"\."transactionId" is not null/);
+    // A placement with no spendType predates the column, and its escrow is yellow.
+    expect(captured[0]).toContain(`coalesce(p."spendType", 'yellow')`);
     // Scoped to the matched placements, or each call sums every leg in the table.
     expect(captured[0]).toMatch(
       /"t"\."transactionId" is not null and "t"\."placementId" in \(select "p"\."id" from "Placement" as "p" where \("p"\."placerId" in/
     );
+  });
+
+  // Each leg kind lands in exactly one column; a kind left out reads as Buzz still in escrow.
+  it('sums each leg kind into its own column', async () => {
+    await getPlacementFlows([1], 30);
+    const legs: Record<string, unknown[]> = {};
+    for (const m of captured[0].matchAll(/t\.kind in \(([^)]*)\)\), 0\) as "(\w+)"/g))
+      legs[m[2]] = [...m[1].matchAll(/\$(\d+)/g)].map((n) => params[0][Number(n[1]) - 1]);
+    expect(legs).toEqual({
+      held: ['holdFee', 'holdPrincipal'],
+      refunded: ['principalToPlacer', 'feeToPlacer'],
+      toOwner: ['toOwner', 'feeToOwner'],
+      toSeller: ['toSeller'],
+      toPlatform: ['toPlatform'],
+      forfeited: ['forfeit'],
+    });
   });
 
   it('reads nothing for an empty or out-of-range set', async () => {
@@ -123,54 +144,103 @@ describe('getPlacementFlows', () => {
   });
 
   it('names both ends, marks a pair inside the set, and keeps only the statuses that occurred', async () => {
-    respond({ pairs: [pair(), pair({ ownerId: 9 })] });
+    respond({ pairs: [pair({ toSeller: '3', forfeited: '7' }), pair({ ownerId: 9 })] });
     const [inside, outside] = (await getPlacementFlows([1, 2], 30)).pairs;
     expect(inside).toMatchObject({
       placerName: 'u1',
       ownerName: 'u2',
       withinSet: true,
-      statuses: { approved: 2, declined: 1 },
+      placements: 3,
+      free: 1,
       held: 30,
       refunded: 5,
       toOwner: 20,
+      toSeller: 3,
       toPlatform: 5,
+      forfeited: 7,
     });
     expect(inside.statuses).toEqual({ approved: 2, declined: 1 });
     expect(outside.withinSet).toBe(false);
   });
 
   it('lists the most used stickers on a sticker pair, and none on another surface', async () => {
+    const sticker = (o: Record<string, unknown>) => ({
+      placerId: 1,
+      ownerId: 2,
+      sellerId: null,
+      currency: 'green',
+      ...o,
+    });
     respond({
-      pairs: [pair(), pair({ surface: 'remix' })],
+      pairs: [pair(), pair({ surface: 'remixGallery' })],
       stickers: [
-        ...[3, 1, 7, 4, 6, 2].map((count, i) => ({
-          placerId: 1,
-          ownerId: 2,
-          cosmeticId: String(10 + i),
-          count: String(count),
-        })),
-        { placerId: 1, ownerId: 8, cosmeticId: '99', count: '50' },
-        { placerId: 1, ownerId: 2, cosmeticId: null, count: '40' },
+        ...[3, 1, 7, 4, 6, 2].map((count, i) =>
+          sticker({ cosmeticId: String(10 + i), count: String(count) })
+        ),
+        sticker({ ownerId: 8, cosmeticId: '99', count: '50' }),
+        sticker({ cosmeticId: null, count: '40' }),
       ],
       cosmetics: [{ id: 12, name: 'Star' }],
     });
-    const [sticker, remix] = (await getPlacementFlows([1], 30)).pairs;
-    expect(sticker.stickers.map((s) => s.count)).toEqual([7, 6, 4, 3, 2]);
-    expect(sticker.stickers[0]).toEqual({ cosmeticId: 12, name: 'Star', count: 7 });
+    const [stickers, remix] = (await getPlacementFlows([1], 30)).pairs;
+    expect(stickers.stickers.map((s) => s.count)).toEqual([7, 6, 4, 3, 2]);
+    expect(stickers.stickers[0]).toEqual({ cosmeticId: 12, name: 'Star', count: 7 });
     expect(remix.stickers).toEqual([]);
+  });
+
+  // A sticker's seller is its creator, so one placer-owner pair splits into a row per creator (and per
+  // currency). Each row lists its own stickers, or one creator's are credited to another.
+  it("keeps each row's stickers to its own seller and currency", async () => {
+    respond({
+      pairs: [
+        pair({ sellerId: 50 }),
+        pair({ sellerId: 60 }),
+        pair({ sellerId: 50, currency: 'yellow' }),
+      ],
+      stickers: [
+        { placerId: 1, ownerId: 2, sellerId: 50, currency: 'green', cosmeticId: '10', count: '3' },
+        { placerId: 1, ownerId: 2, sellerId: 60, currency: 'green', cosmeticId: '20', count: '1' },
+        { placerId: 1, ownerId: 2, sellerId: 50, currency: 'yellow', cosmeticId: '30', count: '2' },
+      ],
+    });
+    const rows = (await getPlacementFlows([1], 30)).pairs;
+    expect(rows.map((r) => r.stickers.map((s) => s.cosmeticId))).toEqual([[10], [20], [30]]);
+    expect(captured.find((q) => q.includes('"cosmeticId"'))).toMatch(
+      /group by "p"\."placerId", "p"\."ownerId", "p"\."sellerId", coalesce\(p\."spendType", 'yellow'\), p\.data->>'cosmeticId'/
+    );
+  });
+
+  it('reads no stickers when no shown pair is a sticker pair', async () => {
+    respond({ pairs: [pair({ surface: 'remixGallery' })] });
+    await getPlacementFlows([1], 30);
+    expect(captured.some((q) => q.includes('"cosmeticId"'))).toBe(false);
   });
 
   it('totals each account as placer and as owner, by currency', async () => {
     respond({
-      placed: [{ userId: 1, currency: 'green', placements: '4', held: '40', refunded: '10' }],
+      placed: [
+        {
+          userId: 1,
+          currency: 'green',
+          placements: '4',
+          held: '40',
+          refunded: '10',
+          forfeited: '6',
+        },
+      ],
       received: [{ userId: 2, currency: 'yellow', placements: '2', earned: '15' }],
     });
     const { accounts } = await getPlacementFlows([1, 2], 30);
+    const placedSql = captured.find((q) => q.includes('"p"."placerId" as "userId"'))!;
+    const receivedSql = captured.find((q) => q.includes('"p"."ownerId" as "userId"'))!;
+    for (const leg of ['held', 'refunded', 'forfeited'])
+      expect(placedSql).toContain(`coalesce(sum(t."${leg}"), 0) as "${leg}"`);
+    expect(receivedSql).toContain(`coalesce(sum(t."toOwner"), 0) as "earned"`);
     expect(accounts).toEqual([
       {
         userId: 1,
         username: 'u1',
-        placed: { green: { placements: 4, held: 40, refunded: 10 } },
+        placed: { green: { placements: 4, held: 40, refunded: 10, forfeited: 6 } },
         received: {},
       },
       {

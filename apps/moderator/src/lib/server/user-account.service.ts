@@ -1644,12 +1644,15 @@ export async function getBuzzLedgerSide(
 
   // A counterparty id is only a USER id when the counterparty is a user-held account. Other account
   // types reuse the same integer space: `creatorProgramBank` transacts as account 202607/202608, and
-  // those are real, unrelated user ids (`vvendeta`, `sirnofish`) — resolving them would name an innocent
-  // creator as the counterparty of every Creator Program transfer.
+  // those are real, unrelated user ids — resolving them would name an innocent creator as the
+  // counterparty of every Creator Program transfer.
   const resolvable = page.filter((r) => USER_ACCOUNT_TYPES.has(r.counterpartyType));
   // A placement's legs run through the escrow account, so the counterparty on the row is account 0;
-  // the placement itself names who paid and who was paid.
-  const placements = await getPlacementParties(page.map((r) => r.externalTransactionId));
+  // the placement itself names who paid and who was paid. Only escrow rows are read as legs, so no
+  // other row's reference can borrow a placement's parties.
+  const escrowRef = (r: BuzzRow) =>
+    Number(r.counterpartyId) === 0 ? r.externalTransactionId : null;
+  const placements = await getPlacementParties(page.map(escrowRef));
   const ids = [
     ...new Set([
       ...resolvable.map((r) => Number(r.counterpartyId)),
@@ -1676,7 +1679,7 @@ export async function getBuzzLedgerSide(
       counterpartyName: isUser ? byId.get(id)?.username ?? null : null,
       counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
       externalTransactionId: r.externalTransactionId || null,
-      placement: placementOf(placements.get(placementIdOf(r.externalTransactionId) ?? 0), byId),
+      placement: placementOf(placements.get(placementIdOf(escrowRef(r)) ?? 0), byId),
     };
   });
 

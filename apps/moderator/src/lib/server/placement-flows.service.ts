@@ -12,10 +12,19 @@ import { isInt4Id, usersByIds } from './users.service';
 // The set is matched on placer and owner only. `sellerId` has no index, and a seller is reported on
 // the rows found that way.
 
-/** Leg kinds, as the main app's `PlacementTransactionKind` names them. */
-const HELD = ['holdFee', 'holdPrincipal'];
-const REFUNDED = ['principalToPlacer', 'feeToPlacer'];
-const TO_OWNER = ['toOwner', 'feeToOwner'];
+/** Where each leg kind's Buzz went, by the main app's `PlacementTransactionKind`. Every kind is
+ *  listed: one left out reads as Buzz still sitting in escrow. */
+const LEGS = {
+  held: ['holdFee', 'holdPrincipal'],
+  refunded: ['principalToPlacer', 'feeToPlacer'],
+  toOwner: ['toOwner', 'feeToOwner'],
+  toSeller: ['toSeller'],
+  toPlatform: ['toPlatform'],
+  /** Kept by the platform when a moderator removes the placement. */
+  forfeited: ['forfeit'],
+} as const;
+type Leg = keyof typeof LEGS;
+const LEG_NAMES = Object.keys(LEGS) as Leg[];
 
 export const PAIR_LIMIT = 100;
 const STICKERS_PER_PAIR = 5;
@@ -42,6 +51,7 @@ export type PlacementPair = {
   toOwner: number;
   toSeller: number;
   toPlatform: number;
+  forfeited: number;
   /** Placer and owner are both in the asked-about set. */
   withinSet: boolean;
   /** Sticker placements only: the most used stickers. */
@@ -52,7 +62,7 @@ export type PlacementAccount = {
   userId: number;
   username: string | null;
   /** By currency: placements this account made, and the Buzz it held and got back. */
-  placed: Record<string, { placements: number; held: number; refunded: number }>;
+  placed: Record<string, { placements: number; held: number; refunded: number; forfeited: number }>;
   /** By currency: placements on this account's content, and the Buzz paid to it as owner. */
   received: Record<string, { placements: number; earned: number }>;
 };
@@ -64,8 +74,9 @@ export type PlacementFlows = {
   truncated: boolean;
 };
 
-const legSum = (kinds: string[]) =>
-  sql<string>`coalesce(sum(t.amount) filter (where t.kind in (${sql.join(kinds)})), 0)`;
+const legSum = (kinds: readonly string[]) =>
+  sql<string>`coalesce(sum(t.amount) filter (where t.kind in (${sql.join([...kinds])})), 0)`;
+const sumOf = (leg: Leg) => sql<string>`coalesce(sum(t.${sql.ref(leg)}), 0)`.as(leg);
 
 export async function getPlacementFlows(userIds: number[], days = 90): Promise<PlacementFlows> {
   const ids = [...new Set(userIds)].filter(isInt4Id);
@@ -84,14 +95,7 @@ export async function getPlacementFlows(userIds: number[], days = 90): Promise<P
     (eb) =>
       eb
         .selectFrom('PlacementTransaction as t')
-        .select([
-          't.placementId',
-          legSum(HELD).as('held'),
-          legSum(REFUNDED).as('refunded'),
-          legSum(TO_OWNER).as('toOwner'),
-          legSum(['toSeller']).as('toSeller'),
-          legSum(['toPlatform']).as('toPlatform'),
-        ])
+        .select(['t.placementId', ...LEG_NAMES.map((leg) => legSum(LEGS[leg]).as(leg))])
         .where('t.transactionId', 'is not', null)
         // Without this the legs of every placement site-wide are summed before the join.
         .where('t.placementId', 'in', inScope.select('p.id'))
@@ -100,7 +104,7 @@ export async function getPlacementFlows(userIds: number[], days = 90): Promise<P
     (join) => join.onRef('t.placementId', '=', 'p.id')
   );
 
-  const [pairRows, placedRows, receivedRows, stickerRows] = await Promise.all([
+  const [pairRows, placedRows, receivedRows] = await Promise.all([
     placements
       .select((eb) => [
         'p.placerId',
@@ -113,11 +117,7 @@ export async function getPlacementFlows(userIds: number[], days = 90): Promise<P
         ...STATUSES.map((status) =>
           sql<string>`count(*) filter (where p.status = ${status})`.as(status)
         ),
-        sql<string>`coalesce(sum(t.held), 0)`.as('held'),
-        sql<string>`coalesce(sum(t.refunded), 0)`.as('refunded'),
-        sql<string>`coalesce(sum(t."toOwner"), 0)`.as('toOwner'),
-        sql<string>`coalesce(sum(t."toSeller"), 0)`.as('toSeller'),
-        sql<string>`coalesce(sum(t."toPlatform"), 0)`.as('toPlatform'),
+        ...LEG_NAMES.map(sumOf),
       ])
       .groupBy(['p.placerId', 'p.ownerId', 'p.sellerId', 'p.surface', currency])
       // Pairs inside the set first: with the cap, those are the rows the question is about.
@@ -130,8 +130,9 @@ export async function getPlacementFlows(userIds: number[], days = 90): Promise<P
         'p.placerId as userId',
         currency.as('currency'),
         eb.fn.countAll<string>().as('placements'),
-        sql<string>`coalesce(sum(t.held), 0)`.as('held'),
-        sql<string>`coalesce(sum(t.refunded), 0)`.as('refunded'),
+        sumOf('held'),
+        sumOf('refunded'),
+        sumOf('forfeited'),
       ])
       .where('p.placerId', 'in', ids)
       .groupBy(['p.placerId', currency])
@@ -146,20 +147,30 @@ export async function getPlacementFlows(userIds: number[], days = 90): Promise<P
       .where('p.ownerId', 'in', ids)
       .groupBy(['p.ownerId', currency])
       .execute(),
-    placements
-      .select((eb) => [
-        'p.placerId',
-        'p.ownerId',
-        sql<string>`(p.data->>'cosmeticId')`.as('cosmeticId'),
-        eb.fn.countAll<string>().as('count'),
-      ])
-      .where('p.surface', '=', 'sticker')
-      .groupBy(['p.placerId', 'p.ownerId', sql`p.data->>'cosmeticId'`])
-      .execute(),
   ]);
 
   const truncated = pairRows.length > PAIR_LIMIT;
   const shown = pairRows.slice(0, PAIR_LIMIT);
+
+  // Only for the sticker pairs shown, so the read is bounded by the pair cap rather than the table.
+  const stickerPairs = shown.filter((r) => r.surface === 'sticker');
+  const stickerRows = stickerPairs.length
+    ? await inScope
+        .select((eb) => [
+          'p.placerId',
+          'p.ownerId',
+          'p.sellerId',
+          currency.as('currency'),
+          sql<string>`(p.data->>'cosmeticId')`.as('cosmeticId'),
+          eb.fn.countAll<string>().as('count'),
+        ])
+        .where('p.surface', '=', 'sticker')
+        .where('p.placerId', 'in', [...new Set(stickerPairs.map((r) => r.placerId))])
+        .where('p.ownerId', 'in', [...new Set(stickerPairs.map((r) => r.ownerId))])
+        // The pair rows' own grouping, so each row lists only its own stickers.
+        .groupBy(['p.placerId', 'p.ownerId', 'p.sellerId', currency, sql`p.data->>'cosmeticId'`])
+        .execute()
+    : [];
 
   const cosmeticIds = [...new Set(stickerRows.map((s) => Number(s.cosmeticId)).filter(isInt4Id))];
   const [users, cosmetics] = await Promise.all([
@@ -189,16 +200,18 @@ export async function getPlacementFlows(userIds: number[], days = 90): Promise<P
     statuses: Object.fromEntries(
       STATUSES.map((status) => [status, Number(r[status])]).filter(([, n]) => n)
     ),
-    held: Number(r.held),
-    refunded: Number(r.refunded),
-    toOwner: Number(r.toOwner),
-    toSeller: Number(r.toSeller),
-    toPlatform: Number(r.toPlatform),
+    ...(Object.fromEntries(LEG_NAMES.map((leg) => [leg, Number(r[leg])])) as Record<Leg, number>),
     withinSet: inSet.has(r.placerId) && inSet.has(r.ownerId),
     stickers:
       r.surface === 'sticker'
         ? stickerRows
-            .filter((s) => s.placerId === r.placerId && s.ownerId === r.ownerId)
+            .filter(
+              (s) =>
+                s.placerId === r.placerId &&
+                s.ownerId === r.ownerId &&
+                s.sellerId === r.sellerId &&
+                s.currency === r.currency
+            )
             .map((s) => ({
               cosmeticId: Number(s.cosmeticId),
               name: cosmeticName.get(Number(s.cosmeticId)) ?? null,
@@ -218,7 +231,12 @@ export async function getPlacementFlows(userIds: number[], days = 90): Promise<P
         .filter((r) => r.userId === userId)
         .map((r) => [
           r.currency,
-          { placements: Number(r.placements), held: Number(r.held), refunded: Number(r.refunded) },
+          {
+            placements: Number(r.placements),
+            held: Number(r.held),
+            refunded: Number(r.refunded),
+            forfeited: Number(r.forfeited),
+          },
         ])
     ),
     received: Object.fromEntries(

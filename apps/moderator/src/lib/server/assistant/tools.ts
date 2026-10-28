@@ -633,7 +633,7 @@ export const TOOLS = [
   tool({
     name: 'placement_flows',
     description:
-      'Paid placements (stickers, remixes, gallery promotions) made by or on a set of accounts (1-100 accounts), with both ends named. These payments go through an escrow account, so buzz_flows never shows who paid whom for them; when buzz_flows or Buzz history shows placement debits or credits with no counterparty, this tool names it. Per account: placements made and received by currency, Buzz held and refunded as placer, Buzz earned as owner. Per placer-owner pair: count, free count, statuses, Buzz held, refunded and paid out to the owner, seller and platform, the stickers used, and withinSet when both are listed. A listed account that was only the seller is not matched.',
+      'Paid placements (stickers, remixes, gallery promotions) made by or on a set of accounts (1-100 accounts), with both ends named. These payments go through an escrow account, so buzz_flows never shows who paid whom for them; when buzz_flows or Buzz history shows placement debits or credits with no counterparty, this tool names it. Per account: placements made and received by currency, Buzz held, refunded and forfeited as placer, Buzz earned as owner. Per placer-owner pair: count, free count, statuses, Buzz held, refunded, paid out to the owner, seller and platform, or forfeited on a moderator removal, the stickers used, and withinSet when both are listed. A listed account that was only the seller is not matched.',
     input: z.object({
       userIds: userIdList(100),
       days: z.number().int().min(1).max(MAX_BUZZ_DAYS).default(90),

@@ -20,6 +20,7 @@ const queries = vi.hoisted(() => [] as string[]);
 const rowCount = vi.hoisted(() => ({ n: 0 }));
 const typeList = vi.hoisted(() => ({ types: [] as string[] }));
 const refs = vi.hoisted(() => ({ list: [] as string[] }));
+const counterparty = vi.hoisted(() => ({ id: '0' }));
 
 /** The row fetch and the type aggregate hit the same table on the same side; only one is capped. */
 const isTypeQuery = (q: string) => /SELECT DISTINCT type/.test(q);
@@ -33,7 +34,7 @@ const row = (i: number) => ({
   type: 'purchase',
   description: '',
   externalTransactionId: refs.list[i] ?? '',
-  counterpartyId: '0',
+  counterpartyId: counterparty.id,
 });
 
 vi.mock('../clickhouse', () => ({
@@ -66,6 +67,7 @@ const rowQuery = () => queries.find((q) => !isTypeQuery(q))!;
 
 beforeEach(() => {
   refs.list = [];
+  counterparty.id = '0';
   placementRows.rows = [];
   placementRows.sql.length = 0;
   queries.length = 0;
@@ -220,6 +222,17 @@ describe('placement legs', () => {
       { id: 31, surface: 'sticker', placerId: 5, placerName: 'u5', ownerId: 9, ownerName: 'u9' },
       null,
     ]);
+  });
+
+  // Only an escrow row is a placement leg; any other row's reference must not borrow its parties.
+  it('reads a placement only for rows whose counterparty is the escrow account', async () => {
+    refs.list = ['placement-31-toOwner'];
+    counterparty.id = '77';
+    rowCount.n = 1;
+    placementRows.rows = [{ id: 31, surface: 'sticker', placerId: 5, ownerId: 9, sellerId: null }];
+    const { rows } = await getBuzzLedgerSide(7, 'receipts', 90, { limit: 200 });
+    expect(placementRows.sql).toHaveLength(0);
+    expect(rows[0].placement).toBeNull();
   });
 
   it('reads nothing when no row on the page is a placement leg', async () => {
