@@ -220,8 +220,13 @@ describe('POST /api/admin/page-access — the change', () => {
     });
 
     it('is revoked while the catalogue cannot be read', async () => {
-      grantableRoles.mockResolvedValueOnce(null);
-      const res = await call({ body: { ...BODY, op: 'revoke', role: SYSTEM, expect: [SYSTEM] } });
+      // Not `mockResolvedValueOnce`: the catalogue is never read here, so a queued value would leak
+      // into the next test.
+      const catalogue = grantableRoles.getMockImplementation();
+      grantableRoles.mockImplementation(async () => null);
+      const res = await call({
+        body: { ...BODY, op: 'revoke', role: SYSTEM, expect: [SYSTEM] },
+      }).finally(() => grantableRoles.mockImplementation(catalogue!));
       expect(res.status).toBe(200);
       expect(changePageRoles.mock.calls[0][0].entries).toEqual([
         { path: '/blocklists', roles: [] },
