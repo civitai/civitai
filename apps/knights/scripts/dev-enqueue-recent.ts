@@ -1,11 +1,11 @@
 import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
 import type { DB } from '@civitai/db-schema/kysely';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { assertLocalDatabase } from '../src/lib/dev/local-database';
 
 const DEFAULT_COUNT = 50;
 const MAX_COUNT = 1000;
-const NSFW_LEVEL_QUESTION = 'knights.image.nsfwLevel';
 const LEVEL_R = 4;
 const LEVEL_BLOCKED = 32;
 
@@ -48,7 +48,7 @@ async function main() {
     const enqueueKnightsItems = await loadEnqueue();
     const outcomes = await enqueueKnightsItems(db, {
       source: 'dev-backfill',
-      questionKey: NSFW_LEVEL_QUESTION,
+      questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
       items: images.map((image) => ({
         imageId: image.id,
         priority: image.nsfwLevel >= LEVEL_R ? 2 : 1,

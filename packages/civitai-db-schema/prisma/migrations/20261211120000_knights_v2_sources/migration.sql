@@ -3,6 +3,7 @@
 ALTER TABLE "KnightsQueueItem" ADD COLUMN IF NOT EXISTS "prediction" JSONB;
 
 -- One open item per question and image. Hidden checks are exempt: they are served apart from the feed.
+-- Created non-concurrently: apply it before the queue holds duplicate open rows (none exist on any environment before v2 launches).
 -- Only 'Open' is indexed, so a later move to Resolved or Inquisitor can never collide with a newer open item.
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsQueueItem_open_question_image_key"
   ON "KnightsQueueItem" ("questionKey", "imageId")

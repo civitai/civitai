@@ -1,6 +1,7 @@
 import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { NsfwLevel } from '@civitai/shared';
+import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
 import {
   canVote,
   FEED_STRETCH_SIZE,
@@ -8,7 +9,6 @@ import {
   isStageRank,
   nextRank,
   stagesWorkedBy,
-  STAGE_TTL_HOURS,
   type Rank,
 } from './ranks';
 import {
@@ -22,8 +22,6 @@ import {
   type WeightedAnswer,
   type WritebackDecision,
 } from './resolution';
-
-export const NSFW_LEVEL_QUESTION = 'knights.image.nsfwLevel';
 
 export type ConsensusApplication = {
   questionKey: string;
@@ -190,7 +188,7 @@ export async function enqueueItem(db: Executor, input: NewItem, now: Date): Prom
   const minRank = input.minRank ?? question.minRank;
   if (!isStageRank(minRank)) throw new Error(`"${minRank}" is not a rank an item can wait at`);
   const expiresAt =
-    input.expiresAt === undefined ? addHours(now, STAGE_TTL_HOURS) : input.expiresAt;
+    input.expiresAt === undefined ? addHours(now, KNIGHTS_STAGE_TTL_HOURS) : input.expiresAt;
 
   const row = await db
     .insertInto('KnightsQueueItem')
@@ -231,7 +229,7 @@ async function escalate(
       .updateTable('KnightsQueueItem')
       .set({
         minRank: next,
-        expiresAt: utc(addHours(now, STAGE_TTL_HOURS)),
+        expiresAt: utc(addHours(now, KNIGHTS_STAGE_TTL_HOURS)),
         updatedAt: utc(now),
       })
       .where('id', '=', item.id)
@@ -373,7 +371,7 @@ export async function castVote(
       if (decision.kind === 'pending') return { result: { status: 'recorded' } };
       if (decision.kind === 'split') return { result: { status: await escalate(trx, item, now) } };
 
-      const writesBack = item.questionKey === NSFW_LEVEL_QUESTION;
+      const writesBack = item.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION;
       if (writesBack) {
         const winner = Number(decision.value);
         if (isBlockedLevel(winner) || isExcessiveDownRating(item.imageLevel, winner)) {
