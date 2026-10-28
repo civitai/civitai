@@ -18,6 +18,7 @@
     <dt>Sworn in</dt>
     <dd>{new Date(data.player.startAt).toLocaleDateString()}</dd>
   </dl>
+  <p><a href="/play">Begin judging</a></p>
 {:else}
   <p>You have not joined the Order yet.</p>
 {/if}

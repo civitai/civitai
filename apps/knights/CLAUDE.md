@@ -6,7 +6,7 @@ keyed loops, form actions, comments and the review agents. Every SvelteKit app h
 Knights of New Order as its own SvelteKit spoke, served at knights.civitai.com. It is deliberately free of
 civitai.com's styling: plain CSS in `src/global.css`, no Mantine, no `@civitai/ui`, no Tailwind.
 
-This is currently a shell. The game moves here from the main Next.js app: `src/components/Games`,
+The game is moving here from the main Next.js app: `src/components/Games`,
 `src/server/services/games/new-order.service.ts` and `src/server/jobs/new-order-jobs.ts`. It keeps using the main
 Postgres through `@civitai/db/kysely` and the existing `NewOrderPlayer` tables; do not add a second database.
 
@@ -22,6 +22,25 @@ through `@civitai/flipt`; the `testers` segment is configured in Flipt, not here
 - denied: a plain "not yet open" page (403)
 
 To open the app to everyone, drop the `accessFor` check in the hook.
+
+## Queue (`src/lib/server/queue`)
+
+Tables `KnightsQuestion`, `KnightsQueueItem` and `KnightsVote` (migration `20261210120000_knights_v2_queue`, applied by hand).
+Everything takes the Kysely client as an argument so `queue.pglite.test.ts` runs the real service and the real migration
+SQL on PGlite.
+
+- `getFeed`: open items at or below the player's rank, higher stages first, then priority and age, one question per
+  stretch. It never selects the image's rating. Hidden checks are not served yet (no grader).
+- `castVote`: one transaction that locks the item row, writes the ledger row with its weight, and decides the stage's
+  votes (`resolution.ts`): 5 votes and a 60% weighted share resolves; a split stays open to 10, then moves up
+  Knight -> Templar -> Inquisitor (Paladin joins `ESCALATION_PATH` with the rank). A rating more than one level below the
+  image's current one goes to Inquisitor. Votes stay `pending` across escalations and are graded by the final value.
+- A settled rating is written by `main-app.ts` via the main app's `/api/mod/image/kono-set-nsfw-level` (activity
+  `setNsfwLevelKono`) inside the vote's transaction; if that call fails the vote rolls back.
+- The vote ledger is partitioned by month. `POST /api/jobs/partitions` creates the next months; `POST /api/jobs/expire`
+  escalates items past `expiresAt`. Both need `Authorization: Bearer $JOBS_TOKEN`, so schedule them externally (daily
+  is enough); the user guard in `hooks.server.ts` skips `/api/jobs/`.
+- `/play` is the minimal voting page. Acolytes get no feed and cannot vote (Trials is a later slice).
 
 ## Wired packages
 
