@@ -50,6 +50,8 @@ const LOGGED_INPUT_OVER_LIMIT = `[input over ${LOGGED_INPUT_MAX_CHARS} character
 export const config = {
   api: {
     bodyParser: {
+      // The ONLY body limit on this route: `/api/trpc` is outside the proxy matcher, so the
+      // proxy's 10 MiB body-clone cap (`proxyClientMaxBodySize`) no longer applies.
       sizeLimit: '17mb',
     },
   },
