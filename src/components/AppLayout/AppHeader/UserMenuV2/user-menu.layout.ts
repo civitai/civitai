@@ -58,6 +58,7 @@ export const USER_MENU_LAYOUT: UserMenuNode[] = [
     item('challenges'),
   ]),
   group('creator-tools', 'Creator tools', IconChartHistogram, [
+    item('buzz-dashboard'),
     item('creator-studio'),
     item('creator-journey'),
     item('training'),

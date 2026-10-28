@@ -16,6 +16,7 @@ import { PostStickerOverlay } from '~/components/Post/Detail/PostStickerOverlay'
 import { StickerPlacementBatchProvider } from '~/components/Sticker/StickerPlacementBatchProvider';
 import { StickerPlacementCardBadge } from '~/components/Sticker/StickerPlacementCardBadge';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MAX_POST_IMAGES_WIDTH } from '~/server/common/constants';
 import type { VideoMetadata } from '~/server/schema/media.schema';
@@ -33,6 +34,10 @@ import {
 
 const maxWidth = MAX_POST_IMAGES_WIDTH;
 const maxInitialImages = 20;
+
+// Width at which the media's height equals the space below the header, so the whole image fits on screen.
+const fitToScreenWidth = (width: number, height: number) =>
+  `calc((100dvh - var(--header-height) - 16px) * ${width} / ${height})`;
 export function PostImages({
   postId,
   images,
@@ -51,6 +56,7 @@ export function PostImages({
   const [showMore, setShowMore] = useState(false);
   const videoRef = useRef<EdgeVideoRef | null>(null);
   const features = useFeatureFlags();
+  const { fitPostImagesToScreen } = useCurrentUserSettings();
 
   // Every image in the post, not the `_images` slice below: the batch provider
   // keys its chunks on the joined id string, so handing it a slice that grows on
@@ -103,7 +109,15 @@ export function PostImages({
                 mx="auto"
                 style={{
                   maxWidth: '100%',
-                  width: width < maxWidth ? width : maxWidth,
+                  width:
+                    fitPostImagesToScreen && image.width && image.height
+                      ? `min(${Math.min(width, maxWidth)}px, ${fitToScreenWidth(
+                          image.width,
+                          image.height
+                        )})`
+                      : width < maxWidth
+                      ? width
+                      : maxWidth,
                 }}
               >
                 <ImageGuard2 image={image} connectType="post" connectId={postId}>
