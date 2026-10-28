@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import { asJsonbObject } from '~/server/utils/jsonb-object';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
 
 // Unit tests for getModelEarlyAccessRefundRequirement and the refundEarlyAccess gate in
 // unpublishModelById. model.service.ts has a very large import graph, so most of its transitive
@@ -634,12 +635,13 @@ describe('unpublishModelById — early access refund gate', () => {
       versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
     };
 
+    setupModelStatus(KEPT_MODEL_STATUS, { commentsLocked: true, ...record });
+
     await unpublishModelById({
       id: MODEL_ID,
       userId: OWNER_ID,
       isModerator: true,
       reason: 'duplicate',
-      meta: { commentsLocked: true, ...record } as never,
     });
 
     const meta = mockTx.model.update.mock.calls[0][0].data.meta as Record<string, unknown>;
