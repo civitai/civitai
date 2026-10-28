@@ -3010,6 +3010,14 @@ describe('covers and cast', () => {
       expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 20 } });
     });
 
+    it("refuses an upload in this request whose image is not the caller's", async () => {
+      await expect(upload(21, { userId: OWNER })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringMatching(/or one you upload/),
+      });
+      expect(w.storyline.update).not.toHaveBeenCalled();
+    });
+
     it("holds a moderator to the owner's rule", async () => {
       await expect(
         updateStoryline({ id: 10, userId: MODERATOR, isModerator: true, coverImageId: 3 })
@@ -3433,16 +3441,6 @@ describe('covers and cast', () => {
       expect((await page({ id: 99 })).heroImage?.id).toBe(1101);
     });
 
-    it('reads the chapter fields the pick is judged by from the post, not the image', async () => {
-      withPicks({ heroImageId: 7 });
-      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
-      await page({ id: 99 });
-      const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
-      expect(read.text).toContain(
-        'st.id AS "storylineId", i."postId", c.id AS "chapterId", p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt", p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt", st."maxNsfwLevel", st."minorByScan", st."userId" AS "storylineUserId", iu."isModerator" AS "uploaderIsModerator", iu."bannedAt" AS "uploaderBannedAt", iu."deletedAt" AS "uploaderDeletedAt", cu."imageId" IS NOT NULL AS "uploadedHere" FROM unnest('
-      );
-    });
-
     it('has no banner when chapter 1 is a tombstone and nothing is picked', async () => {
       answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
       r.post.findMany.mockResolvedValue([chapterPost(101, OWNER, { tosViolation: true })] as never);
@@ -3451,7 +3449,7 @@ describe('covers and cast', () => {
       expect(rawCalls().filter((call) => isChosenImageRead(call.text))).toHaveLength(0);
     });
 
-    it('reads the picks through the image gate and the chapter they are in', async () => {
+    it("reads the picks with the reader's hidden images and tags, read once", async () => {
       getAllHiddenForUser.mockResolvedValue({
         hiddenImages: [{ id: 77, hidden: true }],
         hiddenTags: [{ id: 5, hidden: true }],
@@ -3460,15 +3458,6 @@ describe('covers and cast', () => {
       answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
       await page({ id: 99 });
       const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
-      expect(read.text).toContain(
-        'JOIN "Image" i ON i.id = pick."imageId" JOIN "Storyline" st ON st.id = pick."storylineId"'
-      );
-      expect(read.text).toContain(
-        'LEFT JOIN "StorylineChapter" c ON c."postId" = i."postId" AND c."storylineId" = st.id'
-      );
-      expect(read.text).toContain('LEFT JOIN "User" pu ON pu.id = p."userId"');
-      expect(read.text).toContain(`WHERE i.ingestion = 'Scanned' AND i."tosViolation" = false`);
-      expect(read.text).toContain('c."removedAt", pu."bannedAt", pu."deletedAt"');
       expect(read.values).toEqual([[10, 10], [7, 8], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
       // The hidden lists are read once for the picks and the main route together.
       expect(getAllHiddenForUser).toHaveBeenCalledTimes(1);

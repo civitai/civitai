@@ -3284,8 +3284,9 @@ function getStorylineImageGate(
 }
 
 /**
- * An image this reader may be shown from a storyline chapter. Expects `i` (Image), `p` (its Post)
- * and `st` (the Storyline its chapter is in).
+ * An image this reader may be shown for a storyline: a chapter image, or an image in no chapter
+ * that is listed as uploaded for this storyline. Expects `i` (Image), `p` (its Post, if any) and
+ * `st` (the Storyline).
  */
 function storylineImageVisible(gate: StorylineImageGate) {
   const viewerId = gate.viewer?.id ?? -1;
