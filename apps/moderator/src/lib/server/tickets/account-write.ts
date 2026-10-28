@@ -87,10 +87,18 @@ export function createTicketAccountActions(deps: AccountWriteDeps) {
 
   async function noted(event: RequestEvent, ticketId: string, what: string) {
     const { id, username } = event.locals.user;
-    const res = await deps.note(
-      ticketId,
-      `${what} by ${username ?? 'unknown'} (user ${id}) from the moderator app.`
-    );
+    const text = `${what} by ${username ?? 'unknown'} (user ${id}) from the moderator app.`;
+    let res: WriteResult;
+    try {
+      res = await deps.note(ticketId, text);
+    } catch (e) {
+      res = {
+        status: 'error',
+        httpStatus: null,
+        certain: false,
+        message: e instanceof Error ? e.message : String(e),
+      };
+    }
     if (res.status === 'ok') return { success: true as const };
     const why = res.status === 'error' ? res.message : 'the Freshdesk write key is not configured';
     return {

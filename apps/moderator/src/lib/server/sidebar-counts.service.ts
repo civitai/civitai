@@ -184,9 +184,9 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(countSiteAppeals),
     // Bounded: the view aggregates every hold row, so no index serves it.
     bounded(() => countEvidenceHoldsEnding(dbRead)),
-    // The stored snapshot only, never a Freshdesk build; absent keys show no badge, so they are not
-    // `unavailable`.
-    peekTicketCounts(() => ticketSnapshot.peek()),
+    // The stored snapshot only, never a Freshdesk build. Bounded so a slow Redis read cannot hold up
+    // the sidebar; absent keys show no badge, so a timeout is not `unavailable`.
+    bounded(() => peekTicketCounts(() => ticketSnapshot.peek())),
   ]);
   // Null where a bounded count did not answer.
   const maybe: Record<string, number | null> = {

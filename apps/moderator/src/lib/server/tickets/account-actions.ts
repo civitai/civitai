@@ -13,7 +13,7 @@ import { createTicketAccountActions, type LinkedUser } from './account-write';
  * The user a ticket links to, read live right before a write. The ticket must still be a moderation
  * ticket about an account: the same rule that decides whether the page shows the panel.
  */
-async function linkedUser(ticketId: string): Promise<LinkedUser> {
+export async function linkedUser(ticketId: string): Promise<LinkedUser> {
   if (!isFreshdeskId(ticketId)) return { status: 'refused', code: 404, message: 'No such ticket.' };
   const res = await getTicketDetail(ticketId);
   if (res.status !== 'found')

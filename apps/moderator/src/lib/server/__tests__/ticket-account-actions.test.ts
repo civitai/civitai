@@ -202,6 +202,14 @@ describe('the note on the ticket', () => {
     expect((res as { warning?: string }).warning).toContain('Freshdesk said no');
   });
 
+  it('keeps a landed change a success, with a warning, when the note call throws', async () => {
+    note.mockRejectedValue(new Error('socket hang up'));
+    const res = await run('accountUnban', { ticketId: '5', userId: '7' });
+    expect(res).toMatchObject({ success: true });
+    expect((res as { warning?: string }).warning).toContain('socket hang up');
+    expect(setBanned).toHaveBeenCalledTimes(1);
+  });
+
   it('warns when the write key is not configured', async () => {
     note.mockResolvedValue({ status: 'not_configured' });
     const res = await run('accountUnmute', { ticketId: '5', userId: '7' });
