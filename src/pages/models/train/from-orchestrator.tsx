@@ -57,7 +57,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         redirect: { destination: getLoginLink({ returnUrl: ctx.resolvedUrl }), permanent: false },
       };
 
-    // Mirror `guardedProcedure`: a banned, muted or not-yet-onboarded user can't create a model.
+    // A banned, muted or not-yet-onboarded user can't create a model.
     if (
       session.user.bannedAt ||
       session.user.muted ||

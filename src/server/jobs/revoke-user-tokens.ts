@@ -15,8 +15,7 @@ const RESEND_HOURS = 24;
 const ALERT_HOURS = 48;
 const WINDOW_HOURS = 72;
 // Inlined, not bound: Prisma binds numbers as int8 and make_interval only takes int4. Times are
-// compared in UTC: bannedAt is written in UTC by Prisma; deletedAt by now() in the session time
-// zone, which is UTC in prod.
+// compared in UTC, which the query pins explicitly rather than relying on the session time zone.
 const WINDOW = Prisma.raw(`make_interval(hours => ${WINDOW_HOURS})`);
 
 type Row = {
