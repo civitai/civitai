@@ -45,9 +45,15 @@ vi.mock('@civitai/cybertipline-tools', async (importOriginal) => ({
   },
 }));
 
+// Off by default; the upload-request IP case switches it on.
+const ch = vi.hoisted(() => ({
+  client: undefined as { $query: (sql: string) => unknown } | undefined,
+}));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<typeof ClickhouseClient>()),
-  clickhouse: undefined,
+  get clickhouse() {
+    return ch.client;
+  },
 }));
 
 // The sent-state update is written only in production.
@@ -79,6 +85,7 @@ import {
   processCsamReport as processClaimedReport,
 } from '~/server/services/csam.service-new';
 import { logToAxiom } from '~/server/logging/client';
+import { UPLOAD_REQUEST_IP_NOTE } from '~/server/services/image-upload-action.service';
 
 const stored = Buffer.from('the bytes the user uploaded');
 const sha256 = (data: Buffer) => createHash('sha256').update(data).digest('hex');
@@ -134,6 +141,7 @@ const lines = (subType: string) =>
 describe('NCMEC image upload', () => {
   beforeEach(() => {
     vi.mocked(logToAxiom).mockClear();
+    ch.client = undefined;
     submitReport.mockReset().mockResolvedValue({ data: { reportId: 99 } });
     uploadFile.mockReset().mockResolvedValue({ data: { fileId: 'file-1', hash: 'ncmec-md5' } });
     submitFileDetails.mockReset().mockResolvedValue({});
@@ -171,6 +179,23 @@ describe('NCMEC image upload', () => {
     expect(Buffer.from(await file.arrayBuffer()).equals(stored)).toBe(true);
     expect(file.type).toBe('image/webp');
     expect(submitReport.mock.calls[0][0]).not.toHaveProperty('additionalInfo');
+  });
+
+  it("sends the image's upload-request IP, with the note that explains it", async () => {
+    ch.client = {
+      $query: async (sql: string) =>
+        sql.includes('FROM actions')
+          ? [{ ip: '203.0.113.5', key: 'stored-key-501', time: '2025-12-31 23:59:00' }]
+          : [],
+    };
+
+    await processCsamReport(report);
+
+    const reported = submitReport.mock.calls[0][0].personOrUserReported;
+    expect(reported.ipCaptureEvent).toEqual([
+      expect.objectContaining({ ipAddress: '203.0.113.5', eventName: 'Upload' }),
+    ]);
+    expect(reported.additionalInfo).toBe(`Email: user@example.invalid\n${UPLOAD_REQUEST_IP_NOTE}`);
   });
 
   it('records the sha256 in the same update that marks the report sent', async () => {

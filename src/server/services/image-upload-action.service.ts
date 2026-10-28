@@ -24,9 +24,9 @@ export function trackImageUpload(req: NextApiRequest, res: NextApiResponse, key:
   );
 }
 
-/** Shown with a report's IP events: an image's Upload IP is the one that asked for its upload key. */
+/** Shown with a report's IP events: post-creation and upload-request IPs share the Upload event. */
 export const UPLOAD_REQUEST_IP_NOTE =
-  'Upload IPs for images are the upload-request IP: the address that requested the upload.';
+  'Upload IPs are either the address that created the post containing the image or the address that requested the image upload.';
 
 const chTime = (d: Date) => `parseDateTimeBestEffort('${d.toISOString()}')`;
 

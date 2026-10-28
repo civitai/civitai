@@ -43,6 +43,13 @@ describe.each([
     expect(m.uploadEvents).toHaveBeenCalledExactlyOnceWith({ userId: 42, imageIds: [1] });
     expect(events).toEqual([login, uploadRequest]);
   });
+
+  it('looks up no upload-request IPs for a report that is not about images', async () => {
+    const events = await getUserIpInfo({ userId: 42, type: 'TrainingData', details: {} });
+
+    expect(m.uploadEvents).not.toHaveBeenCalled();
+    expect(events).toEqual([login]);
+  });
 });
 
 describe('getReportedUserAdditionalInfo', () => {
