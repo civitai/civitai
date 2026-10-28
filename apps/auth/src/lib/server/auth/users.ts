@@ -66,13 +66,18 @@ export class SystemAccountSignInError extends Error {
   }
 }
 
-async function assertNotSystemAccount(userId: number): Promise<void> {
+/** Does this user carry the system-account marker in `User.meta`? */
+export async function isSystemAccountUser(userId: number): Promise<boolean> {
   const row = await db
     .selectFrom('User')
     .select('meta')
     .where('id', '=', userId)
     .executeTakeFirst();
-  if (isSystemAccountMeta(row?.meta)) throw new SystemAccountSignInError();
+  return isSystemAccountMeta(row?.meta);
+}
+
+async function assertNotSystemAccount(userId: number): Promise<void> {
+  if (await isSystemAccountUser(userId)) throw new SystemAccountSignInError();
 }
 
 /** True if a user already exists for this exact email — used to allow EXISTING users with a `+`-alias email to

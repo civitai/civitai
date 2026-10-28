@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { getModerationAccountId } from '~/server/auth/moderation-account';
+import { getMessageAuthors } from '~/server/services/message-as-civitai.service';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import { env } from '~/env/server';
@@ -1293,7 +1295,15 @@ export const getModeratorChatHandler = async ({
       })
       .catch(() => undefined);
 
-    return { chat, messages };
+    const moderationId = getModerationAccountId();
+    const sentBy =
+      moderationId === null
+        ? {}
+        : await getMessageAuthors(
+            messages.filter((m) => m.userId === moderationId).map((m) => m.id)
+          );
+
+    return { chat, messages, sentBy };
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);
