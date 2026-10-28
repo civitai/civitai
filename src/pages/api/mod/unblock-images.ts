@@ -1,9 +1,11 @@
 import { uniq } from 'lodash-es';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
+import { METRICS_IMAGES_SEARCH_INDEX } from '~/server/common/constants';
 import { ImageSort, NsfwLevel, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
+import { refuseRetiredIndexEndpoint } from '~/server/search-index/retired-index-read';
 import { getFeatureFlags } from '~/server/services/feature-flags.service';
 import {
   dropBlockedImageDeleteQueue,
@@ -30,6 +32,10 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
   ).catch();
 
   const features = getFeatureFlags({ user, req });
+
+  // The candidate ids come from the feeds index. Retired, it is a frozen snapshot, and the
+  // endpoint has no other list of images to unblock.
+  if (refuseRetiredIndexEndpoint(res, METRICS_IMAGES_SEARCH_INDEX, 'unblock-images')) return;
 
   const startedAt = Date.now();
   const updatedIds: number[] = [];
@@ -88,21 +94,32 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     }
 
     console.log(`[unblock-images] Updating ${updatedIds.length} images in the database...`);
-    await dbWrite.image.updateMany({
-      where: { id: { in: updatedIds } },
+    // The index row may be stale; only rows still blocked for moderation in the database, and
+    // still matching the filter above, are cleared.
+    const unblocked = await dbWrite.image.updateManyAndReturn({
+      where: {
+        id: { in: updatedIds },
+        blockedFor: { in: ['moderated', 'Moderated'] },
+        needsReview: null,
+        nsfwLevel: { notIn: [0, NsfwLevel.Blocked] },
+      },
       data: { blockedFor: null },
+      select: { id: true },
     });
-    console.log(`[unblock-images] DB update complete.`);
+    const unblockedIds = unblocked.map((image) => image.id);
+    console.log(
+      `[unblock-images] DB update complete: cleared ${unblockedIds.length} of ${updatedIds.length} candidates.`
+    );
 
     // This clears `blockedFor` without touching `ingestion`, so any row still sitting at
     // ingestion='Blocked' would be armed for purge by trg_blocked_image_delete_queue on the
     // very update that was meant to unblock it.
-    await dropBlockedImageDeleteQueue(updatedIds);
+    await dropBlockedImageDeleteQueue(unblockedIds);
 
     // Update search index for the unblocked images
-    console.log(`[unblock-images] Updating search index for ${updatedIds.length} images...`);
+    console.log(`[unblock-images] Updating search index for ${unblockedIds.length} images...`);
     await queueImageSearchIndexUpdate({
-      ids: updatedIds,
+      ids: unblockedIds,
       action: SearchIndexUpdateQueueAction.Update,
     });
     console.log(`[unblock-images] Search index update complete.`);
@@ -112,16 +129,16 @@ async function handler(req: NextApiRequest, res: NextApiResponse, user: SessionU
     await trackModActivity(user.id, {
       entityType: 'image',
       activity: 'review',
-      entityId: updatedIds,
+      entityId: unblockedIds,
     });
     console.log(`[unblock-images] Moderator activity tracked for user ${user.id}.`);
 
     const elapsed = Date.now() - startedAt;
     console.log(
-      `[unblock-images] Completed. Total updated: ${updatedIds.length}, Time: ${elapsed}ms`
+      `[unblock-images] Completed. Total updated: ${unblockedIds.length}, Time: ${elapsed}ms`
     );
 
-    return res.status(200).json({ updated: updatedIds.length, ms: elapsed });
+    return res.status(200).json({ updated: unblockedIds.length, ms: elapsed });
   } catch (error) {
     const e = error as Error;
     console.error('[unblock-images] Error:', e);
