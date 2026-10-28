@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import type * as PreviewFrameMod from '~/components/Apps/AppAssistant/previewFrame';
 import type { PreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
+import type { SandboxTunnelStatus } from '~/components/Apps/AppAssistant/previewTunnelStatus';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../../test/component-setup';
 
@@ -171,6 +172,89 @@ describe('AppAssistantPreview — a shown preview whose tunnel went', () => {
     await settle();
     // Control: it was checked meanwhile.
     expect(m.fetchFrame.mock.calls.length).toBeGreaterThan(before);
+    expect(page.getByTestId('frame').elements()).toHaveLength(1);
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
+  });
+});
+
+describe('AppAssistantPreview — asking the app’s sandbox when the tab comes back', () => {
+  const LIVE_CHECK_MS = 40;
+  const settle = () => new Promise((resolve) => setTimeout(resolve, LIVE_CHECK_MS * 5));
+  const setVisibility = (state: 'hidden' | 'visible') => {
+    Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => state });
+    document.dispatchEvent(new Event('visibilitychange', { bubbles: true }));
+  };
+  /** The user leaves the tab and comes back to it. */
+  const tabComesBack = async () => {
+    setVisibility('hidden');
+    await settle();
+    setVisibility('visible');
+  };
+  afterEach(() => {
+    delete (document as unknown as { visibilityState?: string }).visibilityState;
+  });
+
+  const renderShown = async (tunnelStatus: () => Promise<SandboxTunnelStatus | null>) => {
+    m.fetchFrame.mockImplementation(async () => FRAME);
+    const restart = offer();
+    await renderWithProviders(
+      <AppAssistantPreview
+        canPreview
+        session={RUNNER_SESSION}
+        restart={restart}
+        liveCheckMs={LIVE_CHECK_MS}
+        tunnelStatus={tunnelStatus}
+      />
+    );
+    await expect.element(page.getByTestId('frame')).toBeInTheDocument();
+    return restart;
+  };
+
+  test('turns into “The live preview isn’t running.” when civitai lists the tunnel but the sandbox’s is down', async () => {
+    const tunnelStatus = vi.fn(async () => ({ running: false, host: null }));
+    const restart = await renderShown(tunnelStatus);
+    await settle();
+    // Control: civitai alone says live; the sandbox is not asked on the interval (every ask counts
+    // as activity for the app's idle clock), only when the tab comes back.
+    expect(m.fetchFrame.mock.calls.length).toBeGreaterThan(1);
+    expect(tunnelStatus).not.toHaveBeenCalled();
+    expect(page.getByTestId('frame').elements()).toHaveLength(1);
+
+    await tabComesBack();
+    await expect.element(page.getByText('The live preview isn’t running.')).toBeInTheDocument();
+    expect(tunnelStatus).toHaveBeenCalled();
+    await restartButton().click();
+    expect(restart.onRestart).toHaveBeenCalledTimes(1);
+  });
+
+  test('turns into “isn’t running” when the sandbox’s tunnel runs to another host than civitai’s', async () => {
+    const tunnelStatus = vi.fn(async () => ({
+      running: true,
+      host: 'dev-0f0f0f0f0f0f0f0f.apps.example',
+    }));
+    await renderShown(tunnelStatus);
+    await tabComesBack();
+    await expect.element(page.getByText('The live preview isn’t running.')).toBeInTheDocument();
+  });
+
+  test('stays shown when the sandbox runs to the same host', async () => {
+    const tunnelStatus = vi.fn(async () => ({ running: true, host: HOST }));
+    await renderShown(tunnelStatus);
+    await tabComesBack();
+    await settle();
+    // Control: the sandbox was asked.
+    expect(tunnelStatus).toHaveBeenCalled();
+    expect(page.getByTestId('frame').elements()).toHaveLength(1);
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
+  });
+
+  test('stays shown when the sandbox cannot be reached: no answer is not “down”', async () => {
+    const tunnelStatus = vi.fn(async () => null);
+    await renderShown(tunnelStatus);
+    await tabComesBack();
+    await settle();
+    // Control: the sandbox was asked.
+    expect(tunnelStatus).toHaveBeenCalled();
     expect(page.getByTestId('frame').elements()).toHaveLength(1);
     expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
   });
