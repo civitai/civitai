@@ -5,7 +5,6 @@ import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-fe
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import type { CoverageAudience } from '~/server/services/generation/coverage-source';
-import { v4 as uuid } from 'uuid';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import {
   ArticleSort,
@@ -959,7 +958,7 @@ async function notifyCollectionSubmissionReceived({
           userIds: recipients,
           type: 'collection-submission-received',
           category: NotificationCategory.Update,
-          key: `collection-submission-received:${collection.id}:${uuid()}`,
+          key: `collection-submission-received:${collection.id}:${crypto.randomUUID()}`,
           details: { collectionId: collection.id, collectionName: collection.name },
         });
       })
@@ -2803,7 +2802,7 @@ export const updateCollectionItemsStatus = async ({
           type: notificationType,
           userId: item.addedById,
           category: NotificationCategory.Update,
-          key: `${notificationType}:${item.id}:${uuid()}`,
+          key: `${notificationType}:${item.id}:${crypto.randomUUID()}`,
           details: {
             status,
             reason,
