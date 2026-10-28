@@ -4156,3 +4156,56 @@ export async function removeEntityFromAllCollections(
     where: whereClause,
   });
 }
+
+const collectionItemEntityColumn = {
+  image: 'imageId',
+  model: 'modelId',
+  post: 'postId',
+  article: 'articleId',
+} as const satisfies Record<CollectionEntityType, string>;
+
+/**
+ * Moderator correction of an entry's category tag. Every item must already be in the collection,
+ * so a wrong id fails the whole call instead of silently tagging fewer entries than asked.
+ */
+export async function setCollectionItemsTag({
+  collectionId,
+  items,
+  tagId,
+}: {
+  collectionId: number;
+  items: { type: 'collectionItem' | CollectionEntityType; ids: number[] };
+  tagId: number | null;
+}) {
+  const collection = await dbWrite.collection.findUnique({
+    where: { id: collectionId },
+    select: { id: true, tags: { select: { tagId: true } } },
+  });
+  if (!collection) throw throwNotFoundError(`No collection with id ${collectionId}`);
+
+  if (tagId !== null && !collection.tags.some((t) => t.tagId === tagId))
+    throw throwBadRequestError(`Tag ${tagId} is not one of this collection's tags`);
+
+  const column = items.type === 'collectionItem' ? 'id' : collectionItemEntityColumn[items.type];
+  const ids = [...new Set(items.ids)];
+  const found = await dbWrite.collectionItem.findMany({
+    where: { collectionId, [column]: { in: ids } },
+    select: { id: true, imageId: true, modelId: true, postId: true, articleId: true },
+  });
+  const foundKeys = new Set(found.map((item) => item[column]));
+  const missing = ids.filter((id) => !foundKeys.has(id));
+  if (missing.length)
+    throw throwBadRequestError(
+      `Not in collection ${collectionId} (${items.type}): ${missing.join(', ')}`
+    );
+
+  const collectionItemIds = found.map((item) => item.id);
+  const { count } = await dbWrite.collectionItem.updateMany({
+    where: { collectionId, id: { in: collectionItemIds } },
+    data: { tagId },
+  });
+
+  await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
+
+  return { count, collectionItemIds };
+}
