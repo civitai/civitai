@@ -49,13 +49,19 @@ const endpoints = {
 const calls = {
   send: {
     method: 'POST',
-    body: { userId: 5, message: 'hi', idempotencyKey: 'key-00001' },
+    body: { userId: 5, message: 'hi', idempotencyKey: 'key-00001', actorId: 99 },
     service: 'sendAsCivitaiOnce',
+    actor: { actorId: 7 },
   },
   inbox: { method: 'GET', query: {}, service: 'getInbox' },
   thread: { method: 'GET', query: { userId: '5' }, service: 'getThread' },
-  claim: { method: 'POST', body: { userId: 5 }, service: 'claimThread' },
-  release: { method: 'POST', body: { userId: 5 }, service: 'releaseThread' },
+  claim: { method: 'POST', body: { userId: 5 }, service: 'claimThread', actor: { moderatorId: 7 } },
+  release: {
+    method: 'POST',
+    body: { userId: 5 },
+    service: 'releaseThread',
+    actor: { moderatorId: 7 },
+  },
 } as const;
 
 function invoke(name: keyof typeof endpoints) {
@@ -101,7 +107,11 @@ describe.each(Object.keys(calls) as (keyof typeof calls)[])('%s', (name) => {
   it('acts for a moderator holding the grant', async () => {
     h.hasGrant.mockResolvedValue(true);
     expect(await invoke(name)).toBe(200);
-    expect(h.service[calls[name].service]).toHaveBeenCalled();
+    const c = calls[name] as { service: keyof typeof h.service; actor?: object };
+    // The session's moderator, never an id from the request body.
+    if (c.actor)
+      expect(h.service[c.service]).toHaveBeenCalledWith(expect.objectContaining(c.actor));
+    else expect(h.service[c.service]).toHaveBeenCalled();
     expect(h.hasGrant).toHaveBeenCalledWith(
       expect.objectContaining({ id: 7 }),
       'user.message.asCivitai'

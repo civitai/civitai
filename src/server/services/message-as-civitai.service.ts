@@ -121,7 +121,7 @@ export type SendAsCivitaiInput = {
   actorId: number;
   userId: number;
   message: string;
-  context?: { reportId?: number; appealId?: number };
+  context?: { reportId?: number };
 };
 
 export async function sendAsCivitai({ actorId, userId, message, context }: SendAsCivitaiInput) {

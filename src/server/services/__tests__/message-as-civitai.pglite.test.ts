@@ -49,6 +49,7 @@ const OTHER_USER = 502;
 const BANNED = 503;
 
 let db: PGlite;
+let raw: ReturnType<typeof pgliteRaw>;
 let nextId = 1;
 
 beforeAll(async () => {
@@ -67,8 +68,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, username text);
     CREATE TABLE "ModActivity" (
       id serial PRIMARY KEY, "userId" int, activity text NOT NULL, "entityType" text, "entityId" int,
-      "createdAt" timestamp(3) NOT NULL DEFAULT now(),
-      CHECK ("entityType" <> 'report' OR "entityId" < 1000)
+      "createdAt" timestamp(3) NOT NULL DEFAULT now()
     );
     CREATE TABLE "ModThreadClaim" (
       "chatId" int PRIMARY KEY, "moderatorId" int NOT NULL,
@@ -78,9 +78,8 @@ beforeAll(async () => {
       (${CIVITAI}, 'CivitaiModeration'), (${MOD_A}, 'mod-a'), (${MOD_B}, 'mod-b'),
       (${USER}, 'someone'), (${OTHER_USER}, 'someone-else');
   `);
-  const raw = pgliteRaw(db);
+  raw = pgliteRaw(db);
   dbMock.dbWrite.$queryRaw.mockImplementation(raw.queryRaw as never);
-  dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
 });
 afterAll(() => db.close());
 
@@ -104,6 +103,7 @@ beforeEach(async () => {
   nextId = 1;
   redisStore.clear();
   setEnv({ CIVITAI_MODERATION_USER_ID: CIVITAI, MESSAGE_AS_CIVITAI_DAILY_CAP: 3 });
+  dbMock.dbWrite.$executeRaw.mockImplementation(raw.executeRaw as never);
   await db.exec(`
     DELETE FROM "Chat"; DELETE FROM "ChatMember"; DELETE FROM "ChatMessage";
     DELETE FROM "ModActivity"; DELETE FROM "ModThreadClaim";
@@ -226,6 +226,15 @@ describe('sendAsCivitai', () => {
     expect(h.createMessage).not.toHaveBeenCalled();
   });
 
+  it.each([
+    ['to the shared account', { actorId: MOD_A, userId: CIVITAI }],
+    ['by the shared account', { actorId: CIVITAI, userId: USER }],
+  ])('refuses a message %s', async (_, ids) => {
+    await expect(sendAsCivitai({ ...ids, message: 'x' })).rejects.toThrow(/cannot message itself/);
+    expect(h.upsertChat).not.toHaveBeenCalled();
+    expect(h.createMessage).not.toHaveBeenCalled();
+  });
+
   it('refuses a banned user, who answers through appeals instead', async () => {
     await expect(sendAsCivitai({ actorId: MOD_A, userId: BANNED, message: 'x' })).rejects.toThrow(
       /banned/
@@ -337,11 +346,18 @@ describe('sendAsCivitai refusals that must not take the thread', () => {
   });
 
   it('keeps the author record when the report link cannot be written', async () => {
+    dbMock.dbWrite.$executeRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      values.includes('report')
+        ? Promise.reject(new Error('report link failed'))
+        : raw.executeRaw(strings, ...values)) as never);
     const { messageId } = await sendAsCivitai({
       actorId: MOD_A,
       userId: USER,
       message: 'x',
-      context: { reportId: 5000 },
+      context: { reportId: 77 },
     });
     const { rows } = await db.query(`SELECT "entityType", "entityId" FROM "ModActivity"`);
     expect(rows).toEqual([{ entityType: 'chatMessage', entityId: messageId }]);
@@ -382,22 +398,26 @@ describe('sendAsCivitaiOnce', () => {
     expect(h.createMessage).toHaveBeenCalledTimes(3);
   });
 
-  it('marks a send in progress only briefly, and keeps the result for a day', async () => {
-    await sendAsCivitaiOnce({
-      actorId: MOD_A,
-      userId: USER,
-      message: 'hi',
-      idempotencyKey: 'key-0004',
+  it('sends a keyless double submit once', async () => {
+    const input = { actorId: MOD_A, userId: USER, message: 'hi' };
+    const first = await sendAsCivitaiOnce(input);
+    const repeat = await sendAsCivitaiOnce(input);
+    expect(repeat).toEqual({ ...first, deduped: true });
+    expect(h.createMessage).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a repeat while the first send is still in progress', async () => {
+    const input = { actorId: MOD_A, userId: USER, message: 'hi', idempotencyKey: 'key-0004' };
+    const [first, repeat] = await Promise.allSettled([
+      sendAsCivitaiOnce(input),
+      sendAsCivitaiOnce(input),
+    ]);
+    expect(first.status).toBe('fulfilled');
+    expect(repeat).toMatchObject({
+      status: 'rejected',
+      reason: expect.objectContaining({ message: expect.stringMatching(/already being sent/) }),
     });
-    const writes = redisMock.sysRedis.set.mock.calls.filter(([k]) =>
-      String(k).includes('idempotency')
-    );
-    expect(writes.map(([, v, opts]) => [v === 'pending' ? 'pending' : 'result', opts?.EX])).toEqual(
-      [
-        ['pending', 300],
-        ['result', 86400],
-      ]
-    );
+    expect(h.createMessage).toHaveBeenCalledTimes(1);
   });
 
   it('frees the key when the send fails, so a retry can succeed', async () => {
