@@ -107,3 +107,21 @@ describe('publishModelHandler on a model a content wipe kept', () => {
     expect(publishModelById).toHaveBeenCalledTimes(1);
   });
 });
+
+describe('a moderator publishing a model a content wipe kept', () => {
+  it('drops the removal marker from its meta', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: KEPT_MODEL_STATUS,
+      meta: {
+        note: 1,
+        removedWithOwner: true,
+        statusBeforeRemoval: 'Published',
+        versionsUnpublishedByRemoval: [{ id: 10, status: 'Published' }],
+      },
+      nsfw: false,
+      userId: 5,
+    } as never);
+    await publish([10], true);
+    expect(publishModelById).toHaveBeenCalledWith(expect.objectContaining({ meta: { note: 1 } }));
+  });
+});

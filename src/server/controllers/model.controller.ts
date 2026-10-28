@@ -226,6 +226,7 @@ import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
+import { REMOVED_WITH_OWNER_META_KEYS } from '~/server/services/model-removed-with-owner.service';
 import {
   getResourceData,
   resolveCanGenerateForVersions,
@@ -931,8 +932,14 @@ export const publishModelHandler = async ({
     });
     await assertNotCrossOwnerDuplicate({ modelId: input.id, ownerId: model.userId, isModerator });
 
-    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
+    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...rest } =
       modelMeta || {};
+    // A moderator publishing a model a content wipe hid ends that removal: its marker goes too.
+    const meta = Object.fromEntries(
+      Object.entries(rest).filter(
+        ([key]) => !(REMOVED_WITH_OWNER_META_KEYS as readonly string[]).includes(key)
+      )
+    ) as typeof rest;
     const updatedModel = await publishModelById({
       ...input,
       meta: withModelRulesClearance(meta, modelMeta, isModerator),

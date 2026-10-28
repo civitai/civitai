@@ -130,6 +130,7 @@ import { removeAllContent } from '~/server/services/user.service';
 import { deleteImages } from '~/server/services/image.service';
 import { refundBidsForVersions } from '~/server/services/auction.service';
 import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
+import { restoreModelRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { purgeUserAppStorageForAccountWipe } from '~/server/services/apps/user-storage-purge.service';
 import deleteUserImages from '~/pages/api/mod/delete-user-images';
 import removeAllContentWebhook from '~/pages/api/mod/remove-all-content';
@@ -198,6 +199,10 @@ beforeAll(async () => {
     );
     ALTER TABLE "CommentV2" ADD COLUMN "threadId" int REFERENCES "Thread"(id) ON DELETE CASCADE;
     CREATE TABLE "Collection" (id serial PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TYPE "ModelStatus" AS ENUM (
+      'Draft', 'Training', 'Published', 'Scheduled', 'Unpublished', 'UnpublishedViolation',
+      'GatherInterest', 'Deleted'
+    );
     ALTER TABLE "Model" ADD COLUMN status text NOT NULL DEFAULT 'Published', ADD COLUMN meta jsonb;
     CREATE TABLE "ModelVersion" (
       id serial PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL DEFAULT 'Published'
@@ -711,20 +716,107 @@ describe('removeAllContent', () => {
 
     await removeAllContent({ id: CLEAN });
 
+    const versions = await holder.db.query<{ id: number; status: string }>(
+      `SELECT id, status FROM "ModelVersion" WHERE "modelId" = ${GIVEN_BY_HELD} ORDER BY id`
+    );
+    expect(versions.rows.map((r) => r.status)).toEqual(['Unpublished', 'Draft']);
+    // What a moderator's restore needs: the prior status, and only the versions the wipe took down.
     const kept = await holder.db.query<{ status: string; meta: Record<string, unknown> }>(
       `SELECT status, meta FROM "Model" WHERE id = ${GIVEN_BY_HELD}`
     );
     expect(kept.rows).toEqual([
-      { status: KEPT_MODEL_STATUS, meta: { note: 1, removedWithOwner: true } },
+      {
+        status: KEPT_MODEL_STATUS,
+        meta: {
+          note: 1,
+          removedWithOwner: true,
+          statusBeforeRemoval: 'Published',
+          versionsUnpublishedByRemoval: [{ id: versions.rows[0].id, status: 'Published' }],
+        },
+      },
     ]);
-    const versions = await holder.db.query<{ status: string }>(
-      `SELECT status FROM "ModelVersion" WHERE "modelId" = ${GIVEN_BY_HELD} ORDER BY id`
-    );
-    expect(versions.rows.map((r) => r.status)).toEqual(['Unpublished', 'Draft']);
     expect(dropped().models).toContain(GIVEN_BY_HELD);
     // Control: a model only unheld owners had is deleted, as before.
     const gone = await holder.db.query(`SELECT 1 FROM "Model" WHERE id = ${GIVEN_BY_BYSTANDER}`);
     expect(gone.rows).toEqual([]);
+  });
+
+  describe('a moderator restore of a model the wipe kept', () => {
+    const wipeThenRestore = async (status: string, versions: string[]) => {
+      await holder.db.exec(`
+        INSERT INTO "Model" (id, "userId", status, meta)
+          VALUES (${GIVEN_BY_HELD}, ${CLEAN}, '${status}', '{"note": 1}');
+        INSERT INTO "ModelVersion" ("modelId", status)
+          SELECT ${GIVEN_BY_HELD}, s FROM unnest(ARRAY[${versions
+        .map((v) => `'${v}'`)
+        .join(',')}]) s;
+      `);
+      await removeAllContent({ id: CLEAN });
+      const restored = await restoreModelRemovedWithOwner(GIVEN_BY_HELD);
+      const model = await holder.db.query<{ status: string; meta: unknown }>(
+        `SELECT status, meta FROM "Model" WHERE id = ${GIVEN_BY_HELD}`
+      );
+      const after = await holder.db.query<{ status: string }>(
+        `SELECT status FROM "ModelVersion" WHERE "modelId" = ${GIVEN_BY_HELD} ORDER BY id`
+      );
+      return { restored, model: model.rows[0], versions: after.rows.map((r) => r.status) };
+    };
+
+    it('puts back a published model and only the versions the wipe took down', async () => {
+      const { restored, model, versions } = await wipeThenRestore('Published', [
+        'Published',
+        'Unpublished',
+        'Scheduled',
+        'Draft',
+      ]);
+      expect(model).toEqual({ status: 'Published', meta: { note: 1 } });
+      // The version unpublished before the wipe, and the draft, stay as they were.
+      expect(versions).toEqual(['Published', 'Unpublished', 'Scheduled', 'Draft']);
+      expect(restored?.status).toBe('Published');
+    });
+
+    it('puts a model its owner had unpublished back to unpublished', async () => {
+      const { model, versions } = await wipeThenRestore('Unpublished', ['Unpublished']);
+      expect(model).toEqual({ status: 'Unpublished', meta: { note: 1 } });
+      expect(versions).toEqual(['Unpublished']);
+    });
+
+    it('restores nothing on a model the wipe did not hide', async () => {
+      await holder.db.exec(
+        `INSERT INTO "Model" (id, "userId", status) VALUES (${GIVEN_BY_HELD}, ${HELD}, 'UnpublishedViolation')`
+      );
+      expect(await restoreModelRemovedWithOwner(GIVEN_BY_HELD)).toBeNull();
+    });
+  });
+
+  it('hides a kept model its owner had unpublished, and leaves a kept draft as it was', async () => {
+    const DRAFT_GIVEN_BY_HELD = SCHEDULED_GIVEN_BY_HELD + 1;
+    await holder.db.exec(`
+      INSERT INTO "ModelOwnership" ("modelId", "userId", reason)
+        SELECT ${DRAFT_GIVEN_BY_HELD}, ${HELD}, 'create'
+        WHERE NOT EXISTS (SELECT 1 FROM "ModelOwnership" WHERE "modelId" = ${DRAFT_GIVEN_BY_HELD});
+      INSERT INTO "Model" (id, "userId", status) VALUES
+        (${GIVEN_BY_HELD}, ${CLEAN}, 'Unpublished'), (${DRAFT_GIVEN_BY_HELD}, ${CLEAN}, 'Draft');
+      INSERT INTO "ModelVersion" ("modelId", status) VALUES (${GIVEN_BY_HELD}, 'Unpublished');
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    const kept = await holder.db.query<{ id: number; status: string; meta: unknown }>(
+      `SELECT id, status, meta FROM "Model" WHERE id IN (${GIVEN_BY_HELD}, ${DRAFT_GIVEN_BY_HELD}) ORDER BY id`
+    );
+    expect(kept.rows).toEqual([
+      {
+        id: GIVEN_BY_HELD,
+        status: KEPT_MODEL_STATUS,
+        meta: {
+          removedWithOwner: true,
+          statusBeforeRemoval: 'Unpublished',
+          versionsUnpublishedByRemoval: [],
+        },
+      },
+      { id: DRAFT_GIVEN_BY_HELD, status: 'Draft', meta: null },
+    ]);
   });
 
   it('hides only the wiped account’s models, scheduled ones included, and drops their caches', async () => {

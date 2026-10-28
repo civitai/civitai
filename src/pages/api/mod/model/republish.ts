@@ -1,6 +1,11 @@
 import * as z from 'zod';
 import { publishModelHandler } from '~/server/controllers/model.controller';
 import { dbWrite } from '~/server/db/client';
+import { modelsSearchIndex } from '~/server/search-index';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
+import { bustMvCache } from '~/server/services/model-version.service';
+import type { RemovedWithOwnerMeta } from '~/server/services/model-removed-with-owner.service';
+import { restoreModelRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
 import { ModelStatus } from '~/shared/utils/prisma/enums';
@@ -16,6 +21,7 @@ export default defineModeratorEndpoint('model.republish', {
   returns: '{ modelId, status, versionIds }',
   notes: [
     'Refused unless the model is currently unpublished as a violation.',
+    'A model a content wipe kept goes back to the status it had, with only the versions the wipe took down.',
     'Only versions the same take-down unpublished go back up: never drafts, nor a version removed on its own.',
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
@@ -39,6 +45,21 @@ export default defineModeratorEndpoint('model.republish', {
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
     if (model.deletedAt || model.status !== ModelStatus.UnpublishedViolation)
       throw throwBadRequestError('Model is not unpublished as a violation');
+
+    if ((model.meta as RemovedWithOwnerMeta | null)?.removedWithOwner) {
+      const restored = await restoreModelRemovedWithOwner(input.modelId);
+      if (!restored) throw throwBadRequestError('Model is not unpublished as a violation');
+      await bustMvCache(restored.versionIds, input.modelId);
+      await modelsSearchIndex.queueUpdate([
+        { id: input.modelId, action: SearchIndexUpdateQueueAction.Update },
+      ]);
+      return {
+        modelId: input.modelId,
+        status: restored.status,
+        versionIds: restored.versionIds,
+        affected: { modelIds: [input.modelId] },
+      };
+    }
 
     // A take-down stamps the model and each version it moved with one `unpublishedAt`, which tells
     // this take-down's versions from ones removed on their own or by their owner. An unstamped model

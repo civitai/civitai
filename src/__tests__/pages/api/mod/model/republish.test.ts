@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-const { publishModelHandler, session } = vi.hoisted(() => ({
+const { publishModelHandler, session, restoreModelRemovedWithOwner } = vi.hoisted(() => ({
   publishModelHandler: vi.fn(),
+  restoreModelRemovedWithOwner: vi.fn(),
   session: { user: { id: 7, isModerator: true, permissions: [], bannedAt: null } },
 }));
 
@@ -19,6 +20,11 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/controllers/model.controller', () => ({ publishModelHandler }));
+vi.mock('~/server/services/model-removed-with-owner.service', () => ({
+  restoreModelRemovedWithOwner,
+}));
+vi.mock('~/server/services/model-version.service', () => ({ bustMvCache: vi.fn() }));
+vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate: vi.fn() } }));
 
 import handler from '~/pages/api/mod/model/republish';
 
@@ -149,5 +155,19 @@ describe('model.republish', () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(null as never);
     expect(await call({ modelId: 42 })).toBe(404);
     expect(publishModelHandler).not.toHaveBeenCalled();
+  });
+});
+
+describe('model.republish on a model a content wipe kept', () => {
+  it('restores its prior status and versions instead of publishing it', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      model({ meta: { removedWithOwner: true, statusBeforeRemoval: 'Unpublished' } }) as never
+    );
+    restoreModelRemovedWithOwner.mockResolvedValue({ status: 'Unpublished', versionIds: [] });
+
+    expect(await call({ modelId: 42 })).toBe(200);
+    expect(restoreModelRemovedWithOwner).toHaveBeenCalledWith(42);
+    expect(publishModelHandler).not.toHaveBeenCalled();
+    expect(sent).toMatchObject({ modelId: 42, status: 'Unpublished', versionIds: [] });
   });
 });
