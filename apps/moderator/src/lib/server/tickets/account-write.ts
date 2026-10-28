@@ -2,7 +2,7 @@ import { fail, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { WriteResult } from '../freshdesk-write.service';
 import { int4Id, parseForm } from '../query';
-import { checkedResolutionReason, resolutionReasonFields } from '../resolution-reason';
+import { parseRestrictionRuling } from '../restriction-ruling';
 import type { ActionResult } from '../user-actions.service';
 import { unwiredRulingReason } from '$lib/restriction-types';
 
@@ -35,12 +35,6 @@ export type AccountWriteDeps = {
 };
 
 const target = z.object({ ticketId: z.string().regex(/^\d+$/, 'No such ticket.'), userId: int4Id });
-
-const rulingSchema = z.object({
-  userRestrictionId: int4Id,
-  status: z.enum(['Overturned', 'Upheld']),
-  ...resolutionReasonFields,
-});
 
 const NOT_PERMITTED = 'Not permitted.';
 
@@ -146,12 +140,10 @@ export function createTicketAccountActions(deps: AccountWriteDeps) {
       if (!deps.canAct(event.locals.user)) return fail(403, { error: NOT_PERMITTED });
       const ok = await checked(event);
       if (ok.refused) return ok.refused;
-      const input = parseForm(rulingSchema, ok.form);
-      if (typeof input === 'string') return fail(400, { error: input });
-      const reason = checkedResolutionReason('restriction', input.status, input);
-      if (typeof reason === 'string') return fail(400, { error: reason });
+      const ruling = parseRestrictionRuling(ok.form);
+      if (!ruling.ok) return fail(400, { error: ruling.error });
 
-      const row = await deps.restrictionOf(input.userRestrictionId);
+      const row = await deps.restrictionOf(ruling.userRestrictionId);
       if (!row) return fail(404, { error: 'Restriction not found.' });
       if (row.userId !== ok.userId)
         return fail(409, {
@@ -163,9 +155,10 @@ export function createTicketAccountActions(deps: AccountWriteDeps) {
       if (unwired) return fail(400, { error: unwired });
 
       const result = await deps.resolveRestriction({
-        userRestrictionId: input.userRestrictionId,
-        status: input.status,
-        ...reason,
+        userRestrictionId: ruling.userRestrictionId,
+        status: ruling.status,
+        resolvedReason: ruling.resolvedReason,
+        internalNotes: ruling.internalNotes,
         userId: ok.userId,
         moderatorId: event.locals.user.id,
       });
@@ -173,7 +166,7 @@ export function createTicketAccountActions(deps: AccountWriteDeps) {
       return noted(
         event,
         ok.ticketId,
-        `${input.status} restriction #${input.userRestrictionId} (${row.type}) of user ${ok.userId}`
+        `${ruling.status} restriction #${ruling.userRestrictionId} (${row.type}) of user ${ok.userId}`
       );
     },
   };
