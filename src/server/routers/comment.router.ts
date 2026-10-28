@@ -14,7 +14,7 @@ import {
   upsertCommentHandler,
 } from '~/server/controllers/comment.controller';
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { rateLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import type { CommentUpsertInput } from '~/server/schema/comment.schema';
@@ -49,7 +49,8 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   const isModerator = ctx.user.isModerator;
   let ownerId: number = userId;
   if (id) {
-    const comment = await dbRead.comment.findUnique({
+    // The primary: an author's delete that just hid it must hold against their edit right after.
+    const comment = await dbWrite.comment.findUnique({
       where: { id },
       select: { userId: true, tosViolation: true },
     });
@@ -61,7 +62,7 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
     }
   }
   if (parentId && !isModerator) {
-    const parent = await dbRead.comment.findUnique({
+    const parent = await dbWrite.comment.findUnique({
       where: { id: parentId },
       select: { tosViolation: true },
     });

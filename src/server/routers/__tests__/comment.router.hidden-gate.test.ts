@@ -48,7 +48,7 @@ beforeEach(() => {
   hidden = false;
   read.comment.findFirst.mockResolvedValue({ locked: false, modelId: 10 });
   read.model.findFirst.mockResolvedValue(null);
-  read.comment.findUnique.mockImplementation((async (args: { where: { id: number } }) =>
+  dbMock.dbWrite.comment.findUnique.mockImplementation((async (args: { where: { id: number } }) =>
     args.where.id === 5 ? { userId: author.id, tosViolation: hidden } : null) as never);
 });
 
