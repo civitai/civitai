@@ -10,9 +10,11 @@ export const isTicketView = (v: unknown): v is TicketView => v === 'moderation' 
  *
  * Uncertain buckets (Content Related Issue, User Report, abuse-report, account-issue) stay in support.
  */
+export const ACCOUNT_RESTRICTION_FEATURE = 'Account Restriction or Banned Account';
+
 export const TICKET_ROUTING = {
   /** Freshdesk `cf_feature` values that mean a moderator handles the ticket. */
-  moderationFeatures: ['Account Restriction or Banned Account', 'Moderation Decision'],
+  moderationFeatures: [ACCOUNT_RESTRICTION_FEATURE, 'Moderation Decision'],
   moderationStatuses: [STATUS.waitingOnMod],
   /** Router topics that count ONLY for a ticket that has no `cf_feature`. */
   fallbackTopics: ['nsfw-moderation', 'image-moderation-appeal'],

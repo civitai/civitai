@@ -8,6 +8,7 @@ import {
   type TicketDetail,
 } from '../freshdesk.service';
 import { getRoutedTicketContext } from '../decision-sources/support';
+import { accountSectionFor } from './account';
 import { sentByTickets } from './sent-by';
 import { ticketSnapshot, toRecord } from './snapshot';
 import { resolveUserId } from '../user-lookup.service';
@@ -41,6 +42,24 @@ export async function resolveTicketView(
     tags: ticket.tags,
   });
   return { routesTo, routed };
+}
+
+/**
+ * The Civitai user a ticket is about: the router's match, else the account behind the requester's address.
+ * Null when neither finds one; a failed address lookup is logged and reads as no match.
+ */
+export async function linkedCivitaiUserId(
+  ticket: { requesterEmail?: string | null },
+  routed: { civitaiUserId: number | null } | undefined
+): Promise<number | null> {
+  if (routed?.civitaiUserId != null) return routed.civitaiUserId;
+  if (!ticket.requesterEmail) return null;
+  try {
+    return await resolveUserId(ticket.requesterEmail);
+  } catch (e) {
+    console.error('[tickets] user lookup failed', e);
+    return null;
+  }
 }
 
 type Refused = { status: 'refused'; code: 404 | 503; message: string };
@@ -95,7 +114,7 @@ const CONVERSATION_UNAVAILABLE = {
 export async function loadTicketPayload(
   view: TicketView,
   ticketId: string,
-  { canSeeEmail }: { canSeeEmail: boolean }
+  { canSeeEmail, canViewAccount }: { canSeeEmail: boolean; canViewAccount: boolean }
 ) {
   // Started with the ticket read: the two are independent, and a ticket refused below costs one wasted call.
   const conversation: Promise<TicketConversationResult> = isFreshdeskId(ticketId)
@@ -107,14 +126,14 @@ export async function loadTicketPayload(
   const { ticket, routed } = read;
 
   // The address is resolved here even without the grant, and never leaves the server without it.
-  let civitaiUserId = routed?.civitaiUserId ?? null;
-  if (civitaiUserId === null && ticket.requesterEmail) {
-    try {
-      civitaiUserId = await resolveUserId(ticket.requesterEmail);
-    } catch (e) {
-      console.error('[tickets] user lookup failed', e);
-    }
-  }
+  const civitaiUserId = await linkedCivitaiUserId(ticket, routed);
+  const account = await accountSectionFor({
+    view,
+    cfFeature: ticket.cfFeature,
+    routerTopic: routed?.topic ?? null,
+    civitaiUserId,
+    canView: canViewAccount,
+  });
 
   const sentToSupport = hasSentToSupportTag(ticket.tags);
   const sentBy = sentToSupport ? (await sentByTickets([ticketId])).get(ticketId) ?? null : null;
@@ -139,6 +158,8 @@ export async function loadTicketPayload(
       sentToSupport,
       sentBy,
     },
+    // Present only for an account ticket whose viewer may open User Lookup; absent otherwise.
+    ...(account ? { account } : {}),
     conversation: await conversation,
   };
 }

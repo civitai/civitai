@@ -1,4 +1,4 @@
-import { requireAccess } from '$lib/server/access';
+import { canAccess, requireAccess } from '$lib/server/access';
 import { isFreshdeskId } from '../freshdesk.service';
 import { loadTicketPage, parseTicketQuery } from './list';
 import type { TicketView } from '$lib/tickets/routing';
@@ -31,6 +31,10 @@ export async function ticketTriageLoad(
     selectedMissing,
     canReply: !!locals.grants['tickets.reply'],
     canEscalate: view === 'moderation' && !!locals.grants['tickets.escalate'],
+    // The account actions keep the grants they need in User Lookup: the `/users` page for mutes and
+    // restrictions, `user.ban` for an unban. They are on the moderation view only.
+    canAccountAct: view === 'moderation' && canAccess(locals.user, '/users'),
+    canUnban: view === 'moderation' && !!locals.grants['user.ban'],
     fullBleed: true,
     headerInline: true,
   };

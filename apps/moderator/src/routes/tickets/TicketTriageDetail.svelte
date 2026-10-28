@@ -7,11 +7,13 @@
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_BUTTON, LINK_CLASS, dateTime, relativeTime } from '$lib/format';
   import { SSR_PENDING } from '$lib/ssr-pending';
+  import type { TicketAccount as Account } from '$lib/server/tickets/account';
   import type { TicketRow } from '$lib/server/tickets/list';
   import { fetchTicketPayload } from '$lib/tickets/fetch-detail';
   import { requesterLabel, sentByText } from '$lib/tickets/row';
   import { isLiveStatus } from '$lib/tickets/snapshot';
   import type { TicketView } from '$lib/tickets/routing';
+  import TicketAccount from './TicketAccount.svelte';
   import TicketEscalate from './TicketEscalate.svelte';
   import TicketReply from './TicketReply.svelte';
   import TicketStatusBadge from './TicketStatusBadge.svelte';
@@ -21,12 +23,18 @@
     view,
     canReply,
     canEscalate,
+    canAccountAct,
+    canUnban,
     onleave,
   }: {
     row: TicketRow;
     view: TicketView;
     canReply: boolean;
     canEscalate: boolean;
+    /** The `/users` page grant: mutes and restriction rulings need it. */
+    canAccountAct: boolean;
+    /** The `user.ban` permission: an unban needs it. */
+    canUnban: boolean;
     /** The ticket no longer belongs in this list (another view, or resolved): move to the next one. */
     onleave: (id: string) => void;
   } = $props();
@@ -58,6 +66,14 @@
     version += 1;
     void invalidateAll();
     if (!warning) toast.success(what);
+  }
+
+  // An account change leaves the ticket where it is: only the detail is read again, to show the new status.
+  function accountDone(what: string, data: Record<string, unknown> | undefined) {
+    version += 1;
+    const warning = typeof data?.warning === 'string' ? data.warning : null;
+    if (warning) toast.warning(`${what}. ${warning}`);
+    else toast.success(what);
   }
 
   const title = $derived(row.subject || '(no subject)');
@@ -140,17 +156,18 @@
      detail read knows better (the linked account, the requester) replaces the row's, once it arrives. -->
 {#snippet info()}
   {#await payload}
-    {@render cards(row.civitaiUserId, row.sentBy, null, row.requesterName, undefined)}
+    {@render cards(row.civitaiUserId, row.sentBy, null, row.requesterName, undefined, undefined)}
   {:then p}
     {@render cards(
       p.ticket.civitaiUserId,
       p.ticket.sentBy,
       p.ticket.tags,
       p.ticket.requesterName || row.requesterName,
-      p.ticket.requesterEmail
+      p.ticket.requesterEmail,
+      p.account
     )}
   {:catch}
-    {@render cards(row.civitaiUserId, row.sentBy, null, row.requesterName, undefined)}
+    {@render cards(row.civitaiUserId, row.sentBy, null, row.requesterName, undefined, undefined)}
   {/await}
 {/snippet}
 
@@ -159,9 +176,13 @@
   sent: TicketRow['sentBy'],
   tags: string[] | null,
   requesterName: string | null,
-  requesterEmail: string | null | undefined
+  requesterEmail: string | null | undefined,
+  account: Account | undefined
 )}
   {@const sentText = sentByText({ sentToSupport: row.sentToSupport, sentBy: sent })}
+  {#if account}
+    <TicketAccount ticketId={row.id} {account} canAct={canAccountAct} {canUnban} ondone={accountDone} />
+  {/if}
   <TriageCard title="Requester" dense>
     <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">
       <dt class="text-dark-2">Name</dt>

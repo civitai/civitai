@@ -2,7 +2,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const loadTicketPage = vi.fn();
 
-vi.mock('$lib/server/access', () => ({ requireAccess: () => {} }));
+const canAccess = vi.fn();
+vi.mock('$lib/server/access', () => ({
+  requireAccess: () => {},
+  canAccess: (...a: unknown[]) => canAccess(...a),
+}));
 vi.mock('../freshdesk.service', () => ({ isFreshdeskId: (v: string) => /^\d+$/.test(v) }));
 vi.mock('../tickets/list', () => ({
   loadTicketPage: (...a: unknown[]) => loadTicketPage(...a),
@@ -27,7 +31,10 @@ const load = (
     locals: { user: {}, grants } as unknown as App.Locals,
   });
 
-beforeEach(() => loadTicketPage.mockReset().mockResolvedValue(page()));
+beforeEach(() => {
+  loadTicketPage.mockReset().mockResolvedValue(page());
+  canAccess.mockReset().mockReturnValue(false);
+});
 
 describe('ticketTriageLoad', () => {
   it('asks for the ticket in the URL to be pinned, and only a valid id', async () => {
@@ -60,5 +67,24 @@ describe('ticketTriageLoad', () => {
     });
     expect((await load('', grants, 'support')).canEscalate).toBe(false);
     expect(await load('')).toMatchObject({ canReply: false, canEscalate: false });
+  });
+
+  it('keeps the account actions on the grants User Lookup asks for, moderation view only', async () => {
+    canAccess.mockImplementation((_u: unknown, path: string) => path === '/users');
+    expect(await load('', { 'user.ban': true })).toMatchObject({
+      canAccountAct: true,
+      canUnban: true,
+    });
+    expect(await load('')).toMatchObject({ canAccountAct: true, canUnban: false });
+    canAccess.mockReturnValue(false);
+    expect(await load('', { 'user.ban': true })).toMatchObject({
+      canAccountAct: false,
+      canUnban: true,
+    });
+    canAccess.mockReturnValue(true);
+    expect(await load('', { 'user.ban': true }, 'support')).toMatchObject({
+      canAccountAct: false,
+      canUnban: false,
+    });
   });
 });

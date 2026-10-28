@@ -70,11 +70,23 @@ describe('GET /api/tickets/[id]', () => {
     await call({ grants: { 'decisions.support.pii': true } });
     expect(loadTicketPayload).toHaveBeenLastCalledWith('moderation', '74924', {
       canSeeEmail: true,
+      canViewAccount: true,
     });
     await call();
     expect(loadTicketPayload).toHaveBeenLastCalledWith('moderation', '74924', {
       canSeeEmail: false,
+      canViewAccount: true,
     });
+  });
+
+  it('asks for the account section only for a viewer who may open User Lookup', async () => {
+    canAccess.mockImplementation((_u: unknown, path: string) => path !== '/retool/user-lookup');
+    await call();
+    expect(loadTicketPayload).toHaveBeenLastCalledWith('moderation', '74924', {
+      canSeeEmail: false,
+      canViewAccount: false,
+    });
+    expect(canAccess).toHaveBeenCalledWith(USER, '/retool/user-lookup');
   });
 
   it("answers the loader's refusal: 404 for a ticket of the other view, 503 when Freshdesk is down", async () => {

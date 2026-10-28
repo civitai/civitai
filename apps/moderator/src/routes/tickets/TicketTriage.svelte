@@ -25,6 +25,8 @@
     selectedMissing: string | null;
     canReply: boolean;
     canEscalate: boolean;
+    canAccountAct: boolean;
+    canUnban: boolean;
   };
 
   let { data, form }: { data: Data; form: { error?: string } | null | undefined } = $props();
@@ -278,6 +280,8 @@
             view={data.view}
             canReply={data.canReply}
             canEscalate={data.canEscalate}
+            canAccountAct={data.canAccountAct}
+            canUnban={data.canUnban}
             onleave={leave}
           />
         {/snippet}

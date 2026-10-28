@@ -27,6 +27,12 @@ is its own page grant. Acting on a ticket is a separate permission:
   timeouts and 5xx are reported as "may or may not have been" done, since the write may have landed.
 - Each reply, status change and escalation writes a ModActivity row (`ticketReply`, `ticketStatus`,
   `ticketEscalate`, entity type `ticket`).
+- A moderation ticket whose Feature is "Account Restriction or Banned Account" (or whose router topic is
+  `account-issue`) and that links to a Civitai user shows an Account card (ban, mute, open restrictions)
+  with Unban, Unmute / Lift timed mute and Overturn / Uphold for an open restriction. The card needs User
+  Lookup's page grant; each action keeps the grant it needs there (`user.ban`, or the `/users` page) and
+  re-checks that the posted user is the ticket's linked user. A private note names the moderator. Lifting
+  only: no ban, new restriction or strike from a ticket.
 - Both views read one shared Redis snapshot of every live ticket (subject, status, Feature, tags, dates,
   requester name; never a body or an email address), not Freshdesk, so a page load costs no Freshdesk calls. The snapshot
   is rebuilt in full from the status searches when missing or six hours old (Freshdesk search returns at most
