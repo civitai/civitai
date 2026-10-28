@@ -484,11 +484,11 @@ export function DesktopHeaderRows({
   if (!currentUser) return null;
 
   return (
-    <>
+    <div data-account-card className={clsx(ACCOUNT_CARD_FRAME, 'm-1 flex flex-col gap-1 p-1')}>
       <Menu.Item
         component={NextLink}
         href={`/user/${currentUser.username}`}
-        className="group"
+        className="group rounded-lg"
         aria-keyshortcuts={onTogglePin ? 'P' : undefined}
         rightSection={
           onTogglePin ? (
@@ -516,7 +516,7 @@ export function DesktopHeaderRows({
         <UserAvatar user={creator ?? currentUser} withUsername withHoverCard={false} />
       </Menu.Item>
       <DesktopBuzzItem onOpen={() => trackHeader('buzz-dashboard')} />
-    </>
+    </div>
   );
 }
 
@@ -531,12 +531,11 @@ function DesktopBuzzItem({ onOpen }: { onOpen: () => void }) {
       href="/user/buzz-dashboard"
       // Buy Buzz below stops its click, so it is not counted as an open.
       onClick={onOpen}
-      // Mantine's menu item resets border to 0, style included, so the frame needs the override.
-      className={clsx(ACCOUNT_CARD_FRAME, 'my-1 !border !border-solid')}
+      className="rounded-lg bg-white/70 dark:bg-dark-7/60"
       rightSection={
         <Button
           component="div"
-          variant="white"
+          variant="light"
           radius="xl"
           px={12}
           size="compact-xs"

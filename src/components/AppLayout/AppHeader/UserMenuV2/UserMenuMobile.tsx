@@ -374,18 +374,16 @@ export function MobileHeaderRows({
               withUsername
               textSize="lg"
               subText={
-                currentUser.tier ? <MembershipTierBadge tier={currentUser.tier} /> : undefined
+                currentUser.tier ? (
+                  <MembershipTierBadge tier={currentUser.tier} />
+                ) : (
+                  <SupportChip onClick={handleClose} />
+                )
               }
               withHoverCard={false}
             />
           </div>
         </MenuItemLink>
-        {/* Above the pin: their boxes meet at the corner, and a tap there belongs to the chip. */}
-        {!currentUser.tier && (
-          <div className="relative z-[2]">
-            <SupportChip onClick={handleClose} />
-          </div>
-        )}
       </div>
       {features.buzz && (
         <>

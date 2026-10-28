@@ -74,22 +74,33 @@ vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
 vi.mock('~/components/UserAvatar/UserAvatar', async () => {
   const { decorationFrameStyle } = await import('~/components/UserAvatar/decoration-frame.util');
   return {
-    UserAvatar: ({ user }: { user: { username: string } | null }) =>
+    UserAvatar: ({
+      user,
+      subText,
+    }: {
+      user: { username: string } | null;
+      subText?: React.ReactNode;
+    }) =>
       createElement(
         'div',
         { className: 'flex flex-nowrap items-center gap-2' },
         createElement(
           'span',
-          { className: 'relative size-8 shrink-0' },
+          { className: 'relative size-14 shrink-0' },
           mocks.decorated &&
             createElement('span', {
               'data-frame': true,
               className: 'bg-red-6',
               style: { ...decorationFrameStyle({ offset: '16px' }), zIndex: 1 },
             }),
-          createElement('span', { className: 'block size-8 rounded-full bg-gray-5' })
+          createElement('span', { className: 'block size-14 rounded-full bg-gray-5' })
         ),
-        createElement('span', { className: 'text-sm font-semibold' }, user?.username)
+        createElement(
+          'div',
+          { className: 'flex min-w-0 flex-col' },
+          createElement('span', { className: 'text-sm font-semibold' }, user?.username),
+          subText
+        )
       ),
   };
 });
@@ -112,6 +123,8 @@ vi.mock('~/components/AppLayout/AppHeader/hooks', async (importOriginal) => ({
   useGetCreator: () => undefined,
 }));
 
+// The harness replaces next/router with one shared router object.
+const { default: router } = await import('next/router');
 const { UserMenuCtx, UserMenuTrigger } = await import('~/components/AppLayout/AppHeader/UserMenu');
 const { LegacyActionIcon } = await import('~/components/LegacyActionIcon/LegacyActionIcon');
 const { MobileHeaderRows, UserMenuMobile } = await import('./UserMenuMobile');
@@ -124,6 +137,7 @@ afterEach(() => {
   mocks.signedIn = true;
   mocks.username = 'tester';
   mocks.tier = undefined;
+  vi.mocked(router.push).mockClear();
   mocks.balances = { blue: 1234, yellow: 209500 };
   mocks.animated = true;
 });
@@ -194,32 +208,49 @@ describe('mobile menu account card', () => {
     expect(box(card).right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
   });
 
-  test('lines the avatar, balances, Buy Buzz and the Pro chip up on one column', async () => {
+  test('lines the avatar, balances and Buy Buzz up on one column', async () => {
     const { card, buy, balances } = await renderHeader();
     // The strip inside the Buzz link, not the link: padding on the link would not show in its box.
     const strip = balances[0].parentElement!.parentElement!;
     const avatar = card.querySelector('span.relative')!;
-    const chip = card.querySelector('a[class*="supportChip"]')!;
-    const [avatarBox, buzzBox, buyBox, chipBox, nameRow] = [
-      avatar,
-      strip,
-      buy,
-      chip,
-      profileRow(card),
-    ].map(box);
+    const [avatarBox, stripBox, buyBox, nameRow] = [avatar, strip, buy, profileRow(card)].map(box);
 
-    expect(Math.abs(avatarBox.left - buzzBox.left)).toBeLessThanOrEqual(1);
-    expect(Math.abs(buyBox.left - buzzBox.left)).toBeLessThanOrEqual(1);
-    expect(Math.abs(buyBox.right - buzzBox.right)).toBeLessThanOrEqual(1);
-    expect(Math.abs(chipBox.right - buzzBox.right)).toBeLessThanOrEqual(1);
-    // The chip is centred on the avatar, as in the row's other states.
-    expect(
-      Math.abs(chipBox.top + chipBox.height / 2 - (avatarBox.top + avatarBox.height / 2))
-    ).toBeLessThanOrEqual(2);
-    // Where the pin's box meets the chip's, a tap reaches the chip.
-    expect(chip.contains(document.elementFromPoint(chipBox.right - 4, chipBox.top + 3))).toBe(true);
+    expect(Math.abs(avatarBox.left - stripBox.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(buyBox.left - stripBox.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(buyBox.right - stripBox.right)).toBeLessThanOrEqual(1);
     // The user row sits close above the balances.
-    expect(buzzBox.top - nameRow.bottom).toBeLessThanOrEqual(8);
+    expect(stripBox.top - nameRow.bottom).toBeLessThanOrEqual(8);
+  });
+
+  test('offers membership under the name of a non-member, and opens it without opening the profile', async () => {
+    const { card, profile } = await renderHeader();
+    const chip = [...card.querySelectorAll<HTMLElement>('[role="link"]')].find(
+      (el) => el.textContent === 'Become a member'
+    )!;
+    const nameText = [...profile.querySelectorAll('span')].find((s) => s.textContent === 'tester')!;
+
+    expect(card.textContent).not.toContain('Pro');
+    expect(box(chip).top).toBeGreaterThanOrEqual(box(nameText).bottom - 2);
+    expect(Math.abs(box(chip).left - box(nameText).left)).toBeLessThanOrEqual(1);
+
+    let profileClickPrevented = false;
+    // React handles clicks at its root container: a listener there runs after React's and sees the outcome.
+    const root = card.closest('body > div')!;
+    const seen = (event: Event) => {
+      profileClickPrevented = event.defaultPrevented;
+    };
+    root.addEventListener('click', seen);
+    chip.click();
+    root.removeEventListener('click', seen);
+    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(profileClickPrevented).toBe(true);
+  });
+
+  test('a member sees the tier badge and no offer', async () => {
+    mocks.tier = 'gold';
+    const { card } = await renderHeader();
+    expect(card.querySelector('[role="link"]')).toBeNull();
+    expect(card.textContent).not.toContain('Become a member');
   });
 
   test('keeps a long name clear of the pin when a tier badge replaces the chip', async () => {
@@ -230,7 +261,7 @@ describe('mobile menu account card', () => {
       (s) => s.textContent === mocks.username
     )!;
 
-    expect(card.querySelector('a[class*="supportChip"]')).toBeNull();
+    expect(card.querySelector('[role="link"]')).toBeNull();
     expect(box(pin).left - box(nameText).right).toBeGreaterThanOrEqual(4);
   });
 
@@ -391,7 +422,7 @@ describe('account card frame', () => {
     expect(dark.image).not.toBe(light.image);
   });
 
-  test('the desktop Buzz card carries the same frame as the phone card', async () => {
+  test('the desktop account card carries the same frame as the phone card', async () => {
     await renderAtViewport(
       <UserMenuCtx.Provider value={{ handleClose: () => undefined }}>
         <Menu opened withinPortal={false} width={260}>
@@ -404,7 +435,7 @@ describe('account card frame', () => {
         </Menu>
       </UserMenuCtx.Provider>
     );
-    const card = document.querySelector('a[href="/user/buzz-dashboard"]') as HTMLElement;
+    const card = document.querySelector('[data-account-card]') as HTMLElement;
     const frame = frameOf(card);
     expect(frame.border).toBe('1px');
     expect(frame.image).toContain('linear-gradient');
