@@ -86,7 +86,7 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
     const row = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
       ? await readKeyValueViaKysely((await loadKyselyDb()).kyselyRead, PLACEMENT_CONFIG_KEY)
       : await readKeyValueViaPrisma(dbRead, PLACEMENT_CONFIG_KEY);
-    const parsed = placementConfigSchema.safeParse(row && {});
+    const parsed = placementConfigSchema.safeParse(row?.value ?? {});
     if (parsed.success) stored = parsed.data;
   } catch {
     // Fall through to defaults.
