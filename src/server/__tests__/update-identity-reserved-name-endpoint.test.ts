@@ -52,7 +52,9 @@ beforeEach(() => {
     user: { id: 7, isModerator: true, permissions: ['retoolUpdateIdentity'], bannedAt: null },
   });
   dbMock.dbWrite.user.findUnique.mockImplementation((async ({ where }: { where: { id: number } }) =>
-    usernames[where.id] ? { id: where.id, username: usernames[where.id] } : null) as never);
+    where.id in usernames
+      ? { id: where.id, username: usernames[where.id] || null }
+      : null) as never);
   redisMock.sysRedis.multi.mockImplementation((() => {
     const chain = { set: () => chain, incr: () => chain, exec: async () => ['OK', 1] };
     return chain;
@@ -72,6 +74,17 @@ describe('POST /api/mod/user/update-identity and the reserved username', () => {
     expect(await call({ userId: SHARED, username: 'someone-new' })).toBe(400);
     expect(await call({ userId: SHARED, username: 'someone-new', name: 'Someone' })).toBe(400);
     expect(h.update).not.toHaveBeenCalled();
+  });
+
+  it('recognises the shared account by its id when its name was lost, and lets it be restored', async () => {
+    usernames[SHARED] = '';
+    try {
+      expect(await call({ userId: SHARED, username: 'someone-new' })).toBe(400);
+      expect(h.update).not.toHaveBeenCalled();
+      expect(await call({ userId: SHARED, username: 'CivitaiModeration' })).toBe(200);
+    } finally {
+      usernames[SHARED] = 'CivitaiModeration';
+    }
   });
 
   it('recognises the shared account by its name when its id is not configured', async () => {
