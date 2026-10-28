@@ -19,6 +19,7 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { CONTEST_BANNED_MESSAGE, isContestBanned } from '~/server/services/contest-ban';
 import { getEntityOwnerId } from '~/server/services/entity-owner.service';
 import { logToAxiom } from '~/server/logging/client';
 import { queueCollectionMembershipUpdate } from '~/server/services/collection-index-sync';
@@ -50,7 +51,6 @@ import type {
 import { collectionAiReviewSchema } from '~/server/schema/collection.schema';
 import type { ImageMetaProps } from '~/server/schema/image.schema';
 import { isNotTag, isTag } from '~/server/schema/tag.schema';
-import type { UserMeta } from '~/server/schema/user.schema';
 import { collectionsSearchIndex, imagesSearchIndex } from '~/server/search-index';
 import {
   collectionSelect,
@@ -2962,19 +2962,7 @@ export const validateContestCollectionEntry = async ({
   deferEntryFeeCharge?: boolean;
   canAccessUserChallenges?: boolean;
 }) => {
-  const user = await dbRead.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      meta: true,
-    },
-  });
-
-  const userMeta = (user?.meta ?? {}) as UserMeta;
-
-  if (userMeta?.contestBanDetails) {
-    throw throwBadRequestError('You are banned from participating in contests');
-  }
+  if (await isContestBanned(userId)) throw throwBadRequestError(CONTEST_BANNED_MESSAGE);
 
   // The source=User challenge (if any) that owns this collection. One lookup, reused by the flag
   // gate, the block gate, and the accepting-entries timing gate below — System/Mod (daily) and

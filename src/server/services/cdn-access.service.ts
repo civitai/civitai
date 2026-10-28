@@ -7,7 +7,7 @@ import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedow
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { uniq } from 'lodash-es';
-import { purgeUrlsOrThrow } from '~/server/cloudflare/client';
+import { CloudflarePurgeBusyError, purgeUrlsOrThrow } from '~/server/cloudflare/client';
 import { getImageEdgePurgeUrls } from '~/server/services/image-edge-purge';
 import { holdMarkerSql } from '~/server/services/legal-hold.service';
 import {
@@ -620,6 +620,8 @@ type PersistRetryRow = TakedownPersistRetry & {
   reservation?: string;
   /** What a row reserved over owed before (its own `retract` and schedule), handed back on settle. */
   reservedOver?: { retract?: boolean; purgeEdge?: boolean; nextAttemptAt?: string };
+  /** The persist landed and only the CDN purge is still owed; cleared by any new failure or reservation. */
+  purgeOnly?: boolean;
 };
 type UrlImage = { id: number | null; name: string | null; type: MediaType | null };
 
@@ -645,11 +647,12 @@ async function imagesOnUrl(url: string) {
  */
 async function sendTakedownPersist(
   url: string,
-  { retract, purgeEdge }: PersistOptions,
+  { retract, purgeEdge, purgeOnly }: PersistOptions & { purgeOnly?: boolean },
   images: UrlImage[],
   retraction?: Pick<CdnCallOptions, 'gate' | 'beforeSend'>
 ) {
-  await callCdnAccess(url, retract ? 'retract' : 'deny', { persist: true, ...retraction });
+  if (!purgeOnly)
+    await callCdnAccess(url, retract ? 'retract' : 'deny', { persist: true, ...retraction });
   if (!purgeEdge) return;
   const targets = images.length ? images : [{ id: null, name: null, type: null }];
   await purgeUrlsOrThrow(
@@ -728,7 +731,8 @@ export async function queueTakedownPersistRetry({
               ${JobQueueType.ImageCdnPersistRetry}::"JobQueueType", ${JSON.stringify(data)}::jsonb)
       ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET data =
         (COALESCE("JobQueue".data, '{}'::jsonb)
-          - 'attempts' - 'backoffs' - 'gaveUpAt' - 'nextAttemptAt' - 'reservation' - 'reservedOver')
+          - 'attempts' - 'backoffs' - 'gaveUpAt' - 'nextAttemptAt' - 'reservation' - 'reservedOver'
+          - 'purgeOnly')
         || EXCLUDED.data
         || jsonb_build_object(
           'retract', COALESCE(("JobQueue".data->>'retract')::boolean, false)
@@ -806,7 +810,7 @@ export async function reserveTakedownRetractions(
            ${JobQueueType.ImageCdnPersistRetry}::"JobQueueType", e->'data'
     FROM jsonb_array_elements(${JSON.stringify(entries)}::jsonb) AS e
     ON CONFLICT ("entityType", "entityId", "type") DO UPDATE SET data =
-      (COALESCE("JobQueue".data, '{}'::jsonb) - 'attempts' - 'backoffs' - 'gaveUpAt')
+      (COALESCE("JobQueue".data, '{}'::jsonb) - 'attempts' - 'backoffs' - 'gaveUpAt' - 'purgeOnly')
       || jsonb_build_object(
         'url', EXCLUDED.data->'url',
         'retract', true,
@@ -868,8 +872,9 @@ type RetryTotals = {
  * run separately, so retractions the image server is holding back never take a deny's place.
  *
  * Each due row gets one attempt per run. Sent or no longer a takedown (a url lifted since: persisting
- * it would deny a restored image): the row is removed. Held back unsent by the run's gate or a full
- * limiter: the row is left as it is. Anything else waits out a backoff (1, 5, 15, 60 minutes, then
+ * it would deny a restored image): the row is removed. Held back unsent by the run's gate, a full
+ * limiter, or the run's CDN purge budget (`CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN` purging rows, none
+ * after the CDN reports busy): the row is left as it is. Anything else waits out a backoff (1, 5, 15, 60 minutes, then
  * hourly); a timeout, a connection failure or an error status also spends one of
  * `PERSIST_RETRY_MAX_ATTEMPTS` attempts, a 429 or a lost url claim does not. Out of attempts, the row
  * is marked given up, logged as an error and kept for a human.
@@ -885,6 +890,7 @@ export async function retryTakedownPersists({ limit = PERSIST_RETRY_BATCH } = {}
     gaveUp: 0,
   };
   const gate = newRetractionGate();
+  const purges: PurgeBudget = { left: env.CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN, busy: false };
   await Promise.all(
     [false, true].map(async (retract) => {
       // Compared as text: casting a label the database does not know yet throws.
@@ -899,7 +905,7 @@ export async function retryTakedownPersists({ limit = PERSIST_RETRY_BATCH } = {}
       `;
       totals.queued += rows.length;
       await limitConcurrency(
-        rows.map((row) => () => retryTakedownPersist(row, gate, totals)),
+        rows.map((row) => () => retryTakedownPersist(row, gate, purges, totals)),
         CALL_CONCURRENCY
       );
     })
@@ -907,9 +913,13 @@ export async function retryTakedownPersists({ limit = PERSIST_RETRY_BATCH } = {}
   return totals;
 }
 
+/** A run's CDN purges: at most `left` more, and none once the CDN has said it is busy. */
+type PurgeBudget = { left: number; busy: boolean };
+
 async function retryTakedownPersist(
   row: { entityId: number; data: PersistRetryRow | null },
   gate: RetractionGate,
+  purges: PurgeBudget,
   totals: RetryTotals
 ) {
   const data = row.data;
@@ -937,7 +947,11 @@ async function retryTakedownPersist(
         // belongs to went through, and that delete refuses a held image. An image the delete kept is
         // still there, so it never gets one here, whatever the row says; at most its deny persists.
         const retract = data.retract === true && !!facts?.gone;
-        if (!retract && !facts?.denyStands) return 'skipped' as const;
+        if (!data.purgeOnly && !retract && !facts?.denyStands) return 'skipped' as const;
+        if (data.purgeEdge) {
+          if (purges.busy || purges.left <= 0) return 'held' as const;
+          purges.left--;
+        }
         await sendTakedownPersist(url, { ...data, retract }, (await imagesOnUrl(url)).images, {
           gate,
           beforeSend: claim.renew,
@@ -946,6 +960,11 @@ async function retryTakedownPersist(
       });
       if (!result.claimed) {
         totals.busy++;
+        return;
+      }
+      // Left as it is for a later run, like a retraction the gate holds back.
+      if (result.value === 'held') {
+        totals.throttled++;
         return;
       }
       outcome = result.value;
@@ -957,10 +976,13 @@ async function retryTakedownPersist(
         return;
       }
       if (error instanceof RetractionNotDoneError) totals.throttled++;
+      if (error instanceof CloudflarePurgeBusyError) purges.busy = true;
       // Only a failure says something about the row: a timeout, a connection failure, an error
-      // status. A 429 is load shedding and a lost claim is another run's turn; both back off without
-      // spending an attempt, so a long busy spell cannot use the cap up.
-      const counts = !(error instanceof ImageServerBusyError) && !(error instanceof ClaimLostError);
+      // status. A 429 (image server or CDN) is load shedding and a lost claim is another run's turn;
+      // these back off without spending an attempt, so a long busy spell cannot use the cap up.
+      const busy =
+        error instanceof ImageServerBusyError || error instanceof CloudflarePurgeBusyError;
+      const counts = !busy && !(error instanceof ClaimLostError);
       const attempts = (data.attempts ?? 0) + (counts ? 1 : 0);
       const backoffs = (data.backoffs ?? 0) + 1;
       const gaveUp = attempts >= PERSIST_RETRY_MAX_ATTEMPTS;
@@ -975,7 +997,11 @@ async function retryTakedownPersist(
       // A reservation still here outlived its delete's run; this retry owns the row now.
       delete next.reservation;
       delete next.reservedOver;
+      // Only the purge refused it: resending the persist (and any retraction) would repeat work done.
+      if (error instanceof CloudflarePurgeBusyError)
+        Object.assign(next, { retract: false, purgeOnly: true });
       if (gaveUp) totals.gaveUp++;
+      else if (error instanceof CloudflarePurgeBusyError) totals.throttled++;
       else if (!(error instanceof RetractionNotDoneError)) totals.failed++;
       await logToAxiom({
         type: gaveUp ? 'error' : 'warning',
@@ -1149,6 +1175,11 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
   const [facts, state] = await Promise.all([loadFacts(urls), loadState(urls)]);
 
   const pending = new Set<string>();
+  // Retractions past this run's cap: denied for now, and retracted by a later run.
+  const deferred = new Set<string>();
+  const maxRetracts = env.CDN_ACCESS_SYNC_MAX_RETRACTS_PER_RUN;
+  let retractsLeft = maxRetracts;
+  let retracts = 0;
   let calls = 0;
   let failed = 0;
   // After a 429 or a timeout the rest of the run's retractions wait for the next run; denies and
@@ -1163,7 +1194,13 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
           const [fresh, freshState] = await Promise.all([loadFacts([url]), loadState([url])]);
           call = callFor(url, fresh.get(url), freshState.get(url));
           if (!call) return;
+          if (call === 'retract' && retractsLeft-- <= 0) {
+            deferred.add(url);
+            if (freshState.get(url)?.state === 'Denied') return;
+            call = 'deny';
+          }
           calls++;
+          if (call === 'retract') retracts++;
           await applyCall(url, call, gate, claim);
         });
         if (!result.claimed) pending.add(url);
@@ -1201,7 +1238,21 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
         pending.add(row.url);
   }
 
-  const done = queue.filter((_, i) => urlsByRow[i].every((url) => !pending.has(url)));
+  const settled = (url: string) => !pending.has(url) && !deferred.has(url);
+  const done = queue.filter((_, i) => urlsByRow[i].every(settled));
+  // To the back of the queue, so a retraction backlog cannot hold up the denies and lifts behind it.
+  const rotate = queue.filter(
+    (_, i) => !urlsByRow[i].every(settled) && urlsByRow[i].every((url) => !pending.has(url))
+  );
+  for (const q of rotate) {
+    await dbWrite.$executeRaw`
+      UPDATE "JobQueue" SET "createdAt" = now()
+      WHERE type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+        AND "entityType" = ${q.entityType}::"EntityType"
+        AND "entityId" = ${q.entityId}
+        AND data IS NOT DISTINCT FROM ${q.data === null ? null : JSON.stringify(q.data)}::jsonb
+    `;
+  }
   for (const q of done) {
     // Matched on `data` too: a trigger that fired again mid-run rewrote it, and that row must stay.
     await dbWrite.$executeRaw`
@@ -1223,7 +1274,25 @@ export async function syncCdnAccess({ limit = CDN_ACCESS_SYNC_BATCH } = {}) {
       failed,
     }).catch(() => undefined);
 
-  return { queued: queue.length, calls, failed, throttled: gate.busy, removed: done.length };
+  if (retracts || deferred.size)
+    logToAxiom({
+      type: 'info',
+      name: 'cdn-access-sync-retracts',
+      message: 'retractions sent this run',
+      retracts,
+      deferred: deferred.size,
+      maxRetracts,
+    }).catch(() => undefined);
+
+  return {
+    queued: queue.length,
+    calls,
+    failed,
+    throttled: gate.busy,
+    retracts,
+    deferred: deferred.size,
+    removed: done.length,
+  };
 }
 
 // ── reconciler ──────────────────────────────────────────────────────────────────────────────────
@@ -1239,6 +1308,27 @@ export const REASSERT_CAP_PER_RUN = 25_000;
 const RECONCILE_PAGE = 1000;
 
 type ReconcileStep = CdnCall | 'reassert';
+
+/** Whether a `CdnAccessSync` row still covers the url, so the drain will look at it again. */
+async function syncQueued(url: string) {
+  const [row] = await dbWrite.$queryRaw<{ queued: boolean }[]>`
+    SELECT
+      EXISTS (
+        SELECT 1 FROM "JobQueue" q JOIN "Image" i ON i.id = q."entityId"
+        WHERE q.type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+          AND q."entityType" = ${EntityType.Image}::"EntityType" AND i.url = ${url}
+      ) OR EXISTS (
+        SELECT 1 FROM "JobQueue" q JOIN "Image" i ON i."postId" = q."entityId"
+        WHERE q.type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+          AND q."entityType" = ${EntityType.Post}::"EntityType" AND i.url = ${url}
+      ) OR EXISTS (
+        SELECT 1 FROM "JobQueue" q
+        WHERE q.type = ${JobQueueType.CdnAccessSync}::"JobQueueType"
+          AND q."entityType" = ${EntityType.Image}::"EntityType" AND q.data->>'url' = ${url}
+      ) AS queued
+  `;
+  return !!row?.queued;
+}
 
 /**
  * Daily pass over every url this path has denied: re-asserts a deny before it can expire, upgrades a
@@ -1262,6 +1352,8 @@ export async function reconcileCdnAccess({
     failed: 0,
     // Upgrades left for the next daily run: the state row still says Denied, so it plans them again.
     throttled: 0,
+    // Upgrades left to the drain, which paces retractions; its queue row still covers the url.
+    leftToSync: 0,
   };
   const gate = newRetractionGate();
   const stepFor = (
@@ -1310,6 +1402,10 @@ export async function reconcileCdnAccess({
             // Lifted by the drain since the page was read.
             if (!current) return null;
             const step = stepFor(current, fresh.get(row.url), planned === 'reassert');
+            if (step === 'retract' && (await syncQueued(row.url))) {
+              totals.leftToSync++;
+              return null;
+            }
             attempted = step;
             if (step === 'reassert') {
               // Re-assert only; a retraction does not need repeating.

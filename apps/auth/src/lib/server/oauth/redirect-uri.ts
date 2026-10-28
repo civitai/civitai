@@ -36,3 +36,20 @@ export function redirectUriMatches(registeredUris: string[], provided: string): 
     }
   });
 }
+
+/**
+ * The error response URL for a client whose `redirectUri` has already been checked with
+ * redirectUriMatches (RFC 6749 §4.1.2.1): `?error=…&error_description=…&state=…`.
+ */
+export function clientErrorUrl(
+  redirectUri: string,
+  state: string | undefined,
+  error: string,
+  description?: string
+): string {
+  const target = new URL(redirectUri);
+  target.searchParams.set('error', error);
+  if (description) target.searchParams.set('error_description', description);
+  if (state) target.searchParams.set('state', state);
+  return target.toString();
+}

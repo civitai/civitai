@@ -993,7 +993,7 @@ const onDownedVersionSql = (modelVersionId: Prisma.Sql) => Prisma.sql`EXISTS (
       OR m.status::text IN (${Prisma.join(constants.modPublishOnlyStatuses)}))
 )`;
 
-const TAKEN_DOWN_PUBLISH_ERROR =
+export const TAKEN_DOWN_PUBLISH_ERROR =
   "This post can't be published: its model or model version has been taken down.";
 
 export const updatePost = async ({

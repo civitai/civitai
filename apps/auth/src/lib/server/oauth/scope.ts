@@ -62,6 +62,60 @@ export function stringToScope(scope: string | string[] | undefined): number {
   return parsed;
 }
 
+// OIDC's standard scopes (OIDC Core §5.4). `openid` is a request for an id_token, not a permission;
+// `profile` and `email` are what UserRead already grants; refresh tokens are always issued, so
+// `offline_access` adds nothing.
+const OIDC_SCOPE_BITS: Record<string, number> = {
+  profile: TokenScope.UserRead,
+  email: TokenScope.UserRead,
+  offline_access: TokenScope.None,
+};
+
+/** A `scope` request parameter, decoded: the permission bitmask, and whether it asked for `openid`. */
+export interface ScopeRequest {
+  scope: number;
+  openid: boolean;
+}
+
+/**
+ * Parse a `scope` request parameter (RFC 6749 §3.3: space-separated tokens). Each token is a
+ * `TokenScope` name (`ModelsRead`), an OIDC scope (`openid`, `profile`, `email`, `offline_access`) or a
+ * decimal bitmask (`5`, the original form, which a bare number still is). Tokens are ORed together.
+ * Missing or blank is no permissions; the caller adds the UserRead baseline. Returns null for an
+ * unknown token or a value outside ALL_SCOPES.
+ */
+export function parseScopeRequest(raw: string | null | undefined): ScopeRequest | null {
+  let scope = 0;
+  let openid = false;
+  for (const token of (raw ?? '').split(/\s+/).filter(Boolean)) {
+    if (/^\d+$/.test(token)) {
+      const value = Number(token);
+      if (value > ALL_SCOPES) return null;
+      scope |= value;
+    } else if (token === 'openid') {
+      openid = true;
+    } else if (Object.hasOwn(OIDC_SCOPE_BITS, token)) {
+      scope |= OIDC_SCOPE_BITS[token];
+    } else if (Object.hasOwn(TokenScope, token) && token !== 'None') {
+      scope |= TokenScope[token as keyof typeof TokenScope];
+    } else {
+      return null;
+    }
+  }
+  return { scope, openid };
+}
+
+/**
+ * The scope names a `scope` parameter can obtain, for discovery's `scopes_supported`. It covers every
+ * grant, so it includes AppStoreCatalogWrite (client_credentials only). WorkerRegister is left out: only
+ * the worker token exchange mints it, never a `scope` request.
+ */
+export const SUPPORTED_SCOPE_NAMES: string[] = [
+  'openid',
+  ...Object.keys(OIDC_SCOPE_BITS),
+  ...Object.keys(TokenScope).filter((name) => name !== 'None' && name !== 'WorkerRegister'),
+];
+
 /** Human-readable labels for the scope bits set in `scope` (shared by the consent + device-verify screens). */
 export function scopeLabels(scope: number): string[] {
   return Object.entries(tokenScopeLabels)
