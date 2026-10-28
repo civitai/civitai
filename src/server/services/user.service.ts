@@ -1,3 +1,5 @@
+import { MODERATION_ACCOUNT_USERNAME } from '@civitai/auth';
+import { getModerationAccountId } from '~/server/auth/moderation-account';
 import { Prisma } from '@prisma/client';
 import {
   accountHoldSql,
@@ -1207,6 +1209,11 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
   });
   if (!user) throw throwNotFoundError(`No user with id ${id}`);
   if (!user.deletedAt) throw throwBadRequestError(`User ${id} is not deleted; nothing to restore`);
+  if (
+    username.toLowerCase() === MODERATION_ACCOUNT_USERNAME.toLowerCase() &&
+    id !== getModerationAccountId()
+  )
+    throw throwBadRequestError('This username is reserved.');
 
   // Make sure the username and email aren't claimed by some other user since the closure.
   const conflict = await dbWrite.user.findFirst({
