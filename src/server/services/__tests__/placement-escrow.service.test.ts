@@ -1684,10 +1684,7 @@ describe('a settlement with no funded escrow behind it', () => {
  */
 describe('the unplanned sweep only considers settlements it could actually finish', () => {
   const rawCalls = () => queryRaw.mock.calls as unknown as [TemplateStringsArray, ...unknown[]][];
-  // Flattened as Prisma flattens it, so a predicate built from a shared fragment reads the same.
-  const flat = (call: [TemplateStringsArray, ...unknown[]]) =>
-    Prisma.sql(call[0], ...(call.slice(1) as Prisma.Sql[]));
-  const sqlOf = (call: [TemplateStringsArray, ...unknown[]]) => flat(call).strings.join(' ? ');
+  const sqlOf = (call: [TemplateStringsArray, ...unknown[]]) => call[0].join(' ? ');
 
   it('requires a receipted hold, so an unfunded settlement never enters the batch', async () => {
     await sweepUnplannedSettlements({ olderThanMinutes: 0 });
@@ -1695,7 +1692,7 @@ describe('the unplanned sweep only considers settlements it could actually finis
     const [candidates] = rawCalls();
     // The hold kinds reach the query as a parameter, which a removed predicate
     // cannot leave behind — unlike prose in the SQL, which a rewrite could keep.
-    expect(flat(candidates).values).toContainEqual(['holdFee', 'holdPrincipal']);
+    expect(candidates.slice(1)).toContainEqual(['holdFee', 'holdPrincipal']);
     expect(sqlOf(candidates)).toMatch(/EXISTS[\s\S]*"transactionId" IS NOT NULL/);
   });
 

@@ -184,7 +184,7 @@ export const listExhaustedLegs = ({ limit = 100 }: { limit?: number } = {}) =>
     take: limit,
   });
 
-export const HOLD_KINDS = ['holdFee', 'holdPrincipal'] as const;
+const HOLD_KINDS = ['holdFee', 'holdPrincipal'] as const;
 
 /** Where the unfunded-settlement gauge stops counting. See the gauge's own note. */
 const UNFUNDED_GAUGE_CEILING = 1_000;
@@ -1160,8 +1160,16 @@ export async function sweepUnplannedSettlements({
       -- forever and consumes a slot in every bounded batch — the starvation
       -- shape this sweep exists to be the recovery from. That population is
       -- terminal rather than silent: it is counted into the gauge below.
-      AND ${placementHoldFundedSql(Prisma.raw('p'))}
-      AND NOT ${placementPayoutPlannedSql(Prisma.raw('p'))}
+      AND EXISTS (
+        SELECT 1 FROM "PlacementTransaction" h
+        WHERE h."placementId" = p.id
+          AND h.kind = ANY(${[...HOLD_KINDS]}::text[])
+          AND h."transactionId" IS NOT NULL
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM "PlacementTransaction" t
+        WHERE t."placementId" = p.id AND t.kind = ANY(${[...PAYOUT_KINDS]}::text[])
+      )
     LIMIT ${limit}
   `;
 
