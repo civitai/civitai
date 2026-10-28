@@ -1164,6 +1164,28 @@ export async function getAppealExcludedIds({
   return { images: new Set(images.map((r) => r.id)), users: new Set(users.map((r) => r.id)) };
 }
 
+/**
+ * The images whose appeal a hold marker refuses: all of them while the owner is under one, else
+ * those a hold kept. An image the check cannot read counts as refused.
+ */
+export async function getHoldMarkerBlockedImageIds({
+  imageIds,
+  userId,
+}: {
+  imageIds: number[];
+  userId: number;
+}) {
+  if (!imageIds.length) return new Set<number>();
+  const rows = await dbWrite.$queryRaw<{ id: number; blocked: unknown }[]>`
+    SELECT c.id,
+      EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${userId})
+        OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" h WHERE h."imageId" = c.id) AS blocked
+    FROM unnest(${imageIds}::int[]) AS c(id)
+  `;
+  const allowed = new Set(rows.filter((r) => r.blocked === false).map((r) => Number(r.id)));
+  return new Set(imageIds.filter((id) => !allowed.has(id)));
+}
+
 /** Whether the owner is under a hold marker or the image is one it kept. Unreadable counts as yes. */
 export async function isAppealBlockedByHoldMarker({
   imageId,
@@ -1172,11 +1194,7 @@ export async function isAppealBlockedByHoldMarker({
   imageId: number;
   userId: number;
 }) {
-  const [row] = await dbWrite.$queryRaw<{ blocked: unknown }[]>`
-    SELECT EXISTS (SELECT 1 FROM "EvidenceHeldUser" WHERE "userId" = ${userId})
-      OR EXISTS (SELECT 1 FROM "EvidenceHoldImage" WHERE "imageId" = ${imageId}) AS blocked
-  `;
-  return row?.blocked !== false;
+  return (await getHoldMarkerBlockedImageIds({ imageIds: [imageId], userId })).has(imageId);
 }
 
 /**

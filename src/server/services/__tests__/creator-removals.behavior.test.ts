@@ -94,11 +94,14 @@ beforeAll(async () => {
     -- Stands in for the hold-marker view; its definition is pinned against the real migration in
     -- remove-blocked-images-hold-guard.behavior.test.ts.
     CREATE TABLE "EvidenceHeldUser" ("userId" integer PRIMARY KEY, "heldUntil" timestamp(3));
+    CREATE TABLE "EvidenceHoldImage" ("imageId" integer PRIMARY KEY, "userId" integer NOT NULL);
   `);
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image", "Appeal", "RemovalScoreExemption", "EvidenceHeldUser"`);
+  await holder.db.exec(
+    `TRUNCATE "Image", "Appeal", "RemovalScoreExemption", "EvidenceHeldUser", "EvidenceHoldImage"`
+  );
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
       (${RESTORED}, ${OWNER}, NULL),
@@ -139,6 +142,27 @@ describe('the removed-images list', () => {
     const result = await getMyRemovedImages(OWNER);
 
     expect(result).toEqual({ total: 0, truncated: false, items: [] });
+  });
+
+  it('offers an appeal on a removed image no hold kept', async () => {
+    const result = await getMyRemovedImages(OWNER);
+
+    expect(result.items.find((i) => i.imageId === STILL_REMOVED)?.canAppeal).toBe(true);
+  });
+
+  // Once the hold ends the owner is no longer left out above, but the image it kept stays refused
+  // by the appeal endpoint until it is purged or released. The case above is the control.
+  it('lists an image a hold kept, after the hold ended, with no appeal', async () => {
+    const before = await getMyRemovedImages(OWNER);
+    await holder.db.exec(
+      `INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (${STILL_REMOVED}, ${OWNER})`
+    );
+
+    const result = await getMyRemovedImages(OWNER);
+
+    expect(result.items.map((i) => [i.imageId, i.canAppeal])).toEqual(
+      before.items.map((i) => [i.imageId, i.imageId === STILL_REMOVED ? false : i.canAppeal])
+    );
   });
 
   it('still says it stopped at the limit when an appeal reversed one of those rows', async () => {
