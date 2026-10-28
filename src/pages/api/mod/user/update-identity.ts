@@ -1,4 +1,7 @@
 import * as z from 'zod';
+import { isModerationAccountUser, MODERATION_ACCOUNT_USERNAME } from '@civitai/auth';
+import { dbWrite } from '~/server/db/client';
+import { getModerationAccountId } from '~/server/auth/moderation-account';
 import { forceUpdateUserIdentity } from '~/server/services/user.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
@@ -21,6 +24,17 @@ export default defineModeratorEndpoint('user.updateIdentity', {
   async handler(input) {
     if (input.username === undefined && input.email === undefined && input.name === undefined) {
       throw throwBadRequestError('At least one of username, email, name must be provided');
+    }
+    if (input.username !== undefined) {
+      const current = await dbWrite.user.findUnique({
+        where: { id: input.userId },
+        select: { id: true, username: true },
+      });
+      const isShared = !!current && isModerationAccountUser(current, getModerationAccountId());
+      const reserved = input.username.toLowerCase() === MODERATION_ACCOUNT_USERNAME.toLowerCase();
+      if (isShared && !reserved)
+        throw throwBadRequestError("The shared moderation account's username cannot be changed.");
+      if (!isShared && reserved) throw throwBadRequestError('This username is reserved.');
     }
     const result = await forceUpdateUserIdentity({
       userId: input.userId,
