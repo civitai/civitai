@@ -521,7 +521,11 @@ export async function forceUpdateUserIdentity({
 
   let user;
   try {
-    user = await dbWrite.user.update({ where: { id: userId }, data });
+    user = await dbWrite.user.update({
+      where: { id: userId },
+      data,
+      omit: { subscriptionId: true },
+    });
   } catch (error) {
     // Translate Prisma unique-constraint violations into a 4xx for callers.
     if (
@@ -599,7 +603,8 @@ export const updateUserById = async ({
       ? (await dbWrite.user.findUnique({ where: { id }, select: { username: true } }))?.username
       : undefined;
 
-  const user = await dbWrite.user.update({ where: { id }, data });
+  // The row goes back to clients (profile save, ban); the legacy billing pointer stays server-side.
+  const user = await dbWrite.user.update({ where: { id }, data, omit: { subscriptionId: true } });
 
   // Track user update with optional source context
   let location = 'user.service:updateUserById';
@@ -1072,8 +1077,8 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   const result = await dbWrite
     .$transaction([
       // A hold that landed after the check above fails this statement, and with it the whole
-      // transaction, so nothing else in it commits. It also clears "subscriptionId", which no Prisma delegate reaches: a second pointer to
-      // the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
+      // transaction, so nothing else in it commits. It also clears "subscriptionId": a second pointer
+      // to the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
       dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
       dbWrite.account.deleteMany({ where: { userId: user.id } }),
@@ -1638,8 +1643,8 @@ export const removeAllContent = async ({
         userId: id,
       }).catch(() => undefined)
     );
-    await refundBidsForDeletedModels(models, alertedBy);
-    throw new LegalHoldStoppedError();
+    const refundFailures = await refundBidsForDeletedModels(models, alertedBy);
+    throw new LegalHoldStoppedError(refundFailures.length ? ['bid-refunds'] : []);
   }
 
   // The main-database wipe is done. A step that throws is logged and named in `incomplete`, and the
@@ -1693,7 +1698,7 @@ export const removeAllContent = async ({
       message: 'Stopped by a legal hold before the App Blocks stores',
       userId: id,
     }).catch(() => undefined);
-    throw new LegalHoldStoppedError();
+    throw new LegalHoldStoppedError(incomplete);
   });
 
   // ── App Blocks per-user storage ─────────────────────────────────────────────
@@ -2448,7 +2453,7 @@ export const toggleBan = async ({
             data: { userId, entityType: 'user', entityId: id, activity: banActivity },
           });
         }
-        return tx.user.findUniqueOrThrow({ where: { id } });
+        return tx.user.findUniqueOrThrow({ where: { id }, omit: { subscriptionId: true } });
       })
     : await updateUserById({ id, data, updateSource: 'toggleBan' });
   void syncOwnerEventHats(id);

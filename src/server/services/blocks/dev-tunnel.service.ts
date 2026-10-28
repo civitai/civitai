@@ -1146,6 +1146,44 @@ export async function keepAliveDevTunnel(
   return { status: 'kept', lastActivityAt: stamped, hardExpiresAt: session.hardExpiresAt };
 }
 
+/**
+ * Keep `userId`'s tunnel at `host` from idling out, whoever opened it: a run, the page's Restart
+ * preview, or the browser. The same stamp as `keepAliveDevTunnel`, for a caller that does not hold
+ * the tunnel's id because it did not open it, but can see which host the app's sandbox is connected
+ * to right now (the runner reads it from the sandbox's own `tunnel_status`), so only a tunnel that
+ * is actually being served is kept.
+ *
+ * Ownership-checked like `keepAliveDevTunnel`: the record the host names must be `userId`'s and
+ * still be at that host. `not_found` covers no such tunnel, another author's, and one past its
+ * hard cap, so a caller learns nothing about a tunnel that is not its own.
+ */
+export async function keepAliveDevTunnelAtHost(
+  userId: number,
+  host: string
+): Promise<DevTunnelKeepAlive> {
+  if (!isValidDevHost(host, env.APPS_DOMAIN)) return { status: 'not_found' };
+  let sessionId: unknown;
+  try {
+    sessionId = await withSysReadDeadline(sysRedis.get(hostKey(host)));
+  } catch {
+    return { status: 'unavailable' };
+  }
+  if (!sessionId || typeof sessionId !== 'string') return { status: 'not_found' };
+  const read = await readSessionForReap(sessionId);
+  if (read.status === 'error') return { status: 'unavailable' };
+  if (read.status === 'absent') return { status: 'not_found' };
+  const session = read.session;
+  if (session.userId !== userId || session.host !== host) return { status: 'not_found' };
+  let stamped: number | null;
+  try {
+    stamped = await stampSessionActivity(session);
+  } catch {
+    return { status: 'unavailable' };
+  }
+  if (stamped === null) return { status: 'not_found' };
+  return { status: 'kept', lastActivityAt: stamped, hardExpiresAt: session.hardExpiresAt };
+}
+
 // ---------------------------------------------------------------------------
 // sish authz callback support
 // ---------------------------------------------------------------------------

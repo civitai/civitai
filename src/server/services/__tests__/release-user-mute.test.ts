@@ -56,6 +56,7 @@ describe('releaseUserMute', () => {
     expect(dbMock.dbWrite.user.update).toHaveBeenCalledWith({
       where: { id: USER },
       data: { muted: false, mutedAt: null, muteExpiresAt: null, meta: { other: 1 } },
+      omit: { subscriptionId: true },
     });
     expect(m.trackModActivity).toHaveBeenCalledExactlyOnceWith(
       MOD,

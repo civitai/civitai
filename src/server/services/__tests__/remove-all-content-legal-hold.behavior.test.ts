@@ -745,6 +745,7 @@ const moderator = {} as {
   restErrorReason: (body: unknown, status: number) => string | null;
   LEGAL_HOLD_REFUSAL: string;
   LEGAL_HOLD_STOPPED: string;
+  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE: string;
   HOLD_UNKNOWN_REFUSAL: string;
   purgeWarning: (body: unknown) => string | undefined;
   PURGE_INCOMPLETE: string;
@@ -760,6 +761,7 @@ beforeAll(async () => {
     restErrorReason: reader.restErrorReason,
     LEGAL_HOLD_REFUSAL: texts.LEGAL_HOLD_REFUSAL,
     LEGAL_HOLD_STOPPED: texts.LEGAL_HOLD_STOPPED,
+    LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE: texts.LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
     HOLD_UNKNOWN_REFUSAL: texts.HOLD_UNKNOWN_REFUSAL,
     purgeWarning: purge.purgeWarning,
     PURGE_INCOMPLETE: purge.PURGE_INCOMPLETE,
@@ -863,6 +865,46 @@ describe('/api/mod/remove-all-content', () => {
     expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
     expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
     expect(tracked).toHaveBeenCalledWith({ type: 'RemoveContent', targetUserId: CLEAN });
+  });
+
+  it('says a stopped wipe left bids unrefunded, when one of its refunds failed', async () => {
+    landsBefore = 'ChatMessage';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    vi.mocked(refundBidsForVersions).mockResolvedValueOnce({
+      bidsDeleted: [1],
+      recurringBidsDeleted: [],
+      refundFailed: ['tx-3'],
+    });
+    const res = await call(CLEAN);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({
+      message: moderator.LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
+      incomplete: ['bid-refunds'],
+    });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE);
+  });
+
+  it('says bids were left unrefunded when the hold lands after the refunds, before the App Blocks stores', async () => {
+    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
+      await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+      return { bidsDeleted: [1], recurringBidsDeleted: [], refundFailed: ['tx-4'] };
+    });
+    const res = await call(CLEAN);
+    expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({
+      message: moderator.LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
+      incomplete: ['bid-refunds'],
+    });
+  });
+
+  it('says only that it stopped when every refund of a stopped wipe went through', async () => {
+    landsBefore = 'ChatMessage';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+    const res = await call(CLEAN);
+    expect(refundBidsForVersions).toHaveBeenCalledTimes(1);
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
   });
 });
 
