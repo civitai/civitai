@@ -43,6 +43,10 @@ function getCommentMaxDepth(entityType: string) {
  */
 const autoExpandDepthOverrides: Record<string, number> = { challenge: 1, image: 3, bountyEntry: 3 };
 
+/** Per-surface page budget where `v3PageBudget` is too large, such as a narrow detail column. */
+const v3PageBudgetOverrides: Record<string, number> = {};
+const v3PageBudget = 40;
+
 function getCommentAutoExpandDepth(entityType: string) {
   const override = autoExpandDepthOverrides[entityType];
   if (override === undefined && !wideCommentSurfaces.has(entityType)) return 0;
@@ -419,6 +423,23 @@ export const constants = {
      */
     autoExpandBudget: 40,
     replyPageSize: 5,
+    /**
+     * The v3 suite's page, in rendered comments, replies included: top-level comments are added
+     * until the next would pass it, so one with a large thread costs its share and fewer load.
+     */
+    v3PageBudget,
+    getV3PageBudget({ entityType }: { entityType: string }) {
+      return v3PageBudgetOverrides[entityType] ?? v3PageBudget;
+    },
+    /**
+     * Surfaces whose comments are read from CommentV3 through the v3 suite. A surface's flip adds
+     * it here and mounts `CommentSection`; notifications build their deep links from this list.
+     */
+    v3ReadSurfaces: ['article'] as string[],
+    /** Most replies the v3 suite opens up front under one top-level comment. */
+    v3RepliesPerRoot: 10,
+    /** Replies per "show more" page in the v3 suite. */
+    v3ReplyPageSize: 10,
     maxLength: 50000, // 50k characters
   },
   altTruncateLength: 125,
