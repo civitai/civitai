@@ -24,6 +24,14 @@ export function withoutRemovedWithOwner<T extends object>(meta: T): T {
   ) as T;
 }
 
+/** Whether `meta` carries a content wipe's removal record: only a moderator may publish the model. */
+export const isRemovedWithOwner = (meta: unknown) =>
+  !!meta && typeof meta === 'object' && (meta as Record<string, unknown>).removedWithOwner === true;
+
+/** SQL: the model whose meta is `metaColumn` carries no content wipe's removal record. */
+export const notRemovedWithOwnerSql = (metaColumn: string) =>
+  Prisma.raw(`(${metaColumn} ->> 'removedWithOwner') IS DISTINCT FROM 'true'`);
+
 export const KEPT_MODEL_STATUS = 'UnpublishedViolation' satisfies `${ModelStatus}`;
 
 /** Whether the report aliased `hc` still holds: pending, not yet archived, or sent within the year. */

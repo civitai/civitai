@@ -815,7 +815,7 @@ describe('removeAllContent', () => {
     });
   });
 
-  it('hides a kept model its owner had unpublished, and leaves a kept draft as it was', async () => {
+  it('hides a kept model its owner had unpublished, and records a kept draft without moving it', async () => {
     const DRAFT_GIVEN_BY_HELD = SCHEDULED_GIVEN_BY_HELD + 1;
     await holder.db.exec(`
       INSERT INTO "ModelOwnership" ("modelId", "userId", reason)
@@ -841,7 +841,16 @@ describe('removeAllContent', () => {
           versionsUnpublishedByRemoval: [],
         },
       },
-      { id: DRAFT_GIVEN_BY_HELD, status: 'Draft', meta: null },
+      // Its status stays; the record is what stops its owner publishing it.
+      {
+        id: DRAFT_GIVEN_BY_HELD,
+        status: 'Draft',
+        meta: {
+          removedWithOwner: true,
+          statusBeforeRemoval: 'Draft',
+          versionsUnpublishedByRemoval: [],
+        },
+      },
     ]);
   });
 

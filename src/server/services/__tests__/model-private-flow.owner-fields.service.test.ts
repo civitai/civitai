@@ -311,6 +311,17 @@ describe('privateModelFromTraining — publish gates', () => {
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
   });
 
+  // A content wipe kept the model in training as it was; its record alone stops the owner.
+  it('refuses a non-moderator a model in training a content wipe kept', async () => {
+    mockStored({
+      status: 'Training',
+      meta: { removedWithOwner: true, statusBeforeRemoval: 'Training' },
+    });
+
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow(/not authorized/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
   it('lets a moderator through the cannotPublish gate', async () => {
     mockStored({ meta: { cannotPublish: true } });
 

@@ -34,6 +34,10 @@ const {
 // Hand-listed rather than spread via importOriginal: the rewards barrel reaches
 // modules that build query caches from the db client at import time, so pulling the
 // real one in drops this suite to zero collected tests.
+// A tagged template or a prebuilt Prisma.Sql, as the job passes either.
+const sqlText = (q: unknown) =>
+  Array.isArray(q) ? q.join(' ') : (q as { strings: string[] }).strings.join(' ');
+
 vi.mock('~/server/rewards', () => ({ firstDailyPostReward: { apply: mockApply } }));
 vi.mock('~/server/rewards/active/firstDailyPost.reward', () => ({
   getFirstDailyPostRewardedIds: mockRewardedIds,
@@ -145,8 +149,8 @@ beforeEach(() => {
   mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
     fn({
       $executeRaw: vi.fn(),
-      $queryRaw: vi.fn(async (strings: string[]) => {
-        const sql = strings.join(' ');
+      $queryRaw: vi.fn(async (strings: unknown) => {
+        const sql = sqlText(strings);
         if (sql.includes('FOR NO KEY UPDATE OF mv, p'))
           return txPosts.scheduled.map(({ id }) => ({ postId: id, versionId: 1 }));
         // Keyed on the RETURNING too: without it Postgres hands back no rows at all.
@@ -495,8 +499,8 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
     mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({
         $executeRaw: vi.fn(),
-        $queryRaw: vi.fn(async (strings: string[]) =>
-          strings.join(' ').includes('RETURNING mv.id') ? [{ id: 101 }] : []
+        $queryRaw: vi.fn(async (strings: unknown) =>
+          sqlText(strings).includes('RETURNING mv.id') ? [{ id: 101 }] : []
         ),
       })
     );
@@ -517,8 +521,8 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
   // A version takedown locks the version, then unpublishes its live posts, so the scheduled posts
   // publish only after the job holds their versions and the posts themselves.
   it('locks the posts and their versions before publishing the posts', async () => {
-    const txQueryRaw = vi.fn(async (strings: string[]) =>
-      strings.join(' ').includes('FOR NO KEY UPDATE OF mv, p') ? [{ postId: 7, versionId: 70 }] : []
+    const txQueryRaw = vi.fn(async (strings: unknown) =>
+      sqlText(strings).includes('FOR NO KEY UPDATE OF mv, p') ? [{ postId: 7, versionId: 70 }] : []
     );
     mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({ $executeRaw: vi.fn(), $queryRaw: txQueryRaw })
@@ -542,8 +546,8 @@ describe('processScheduledPublishing :: early access after a takedown', () => {
   // and its new version is unlocked: publishing it by id alone could put it live on a version a
   // takedown is downing. Keep the UPDATE keyed on the (post, version) pairs the lock returned.
   it('publishes only the post and version pairs the lock returned', async () => {
-    const txQueryRaw = vi.fn(async (strings: string[]) =>
-      strings.join(' ').includes('FOR NO KEY UPDATE OF mv, p') ? [{ postId: 7, versionId: 70 }] : []
+    const txQueryRaw = vi.fn(async (strings: unknown) =>
+      sqlText(strings).includes('FOR NO KEY UPDATE OF mv, p') ? [{ postId: 7, versionId: 70 }] : []
     );
     mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => Promise<unknown>) =>
       fn({ $executeRaw: vi.fn(), $queryRaw: txQueryRaw })

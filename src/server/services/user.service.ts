@@ -1688,7 +1688,8 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       WITH hidden AS (
         UPDATE "Model" km
-        SET status = ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)},
+        SET status = CASE WHEN km.status IN ('Published', 'Scheduled', 'Unpublished')
+                       THEN ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)} ELSE km.status END,
             meta = ${asJsonbObjectSql('km.meta')} || jsonb_build_object(
               'removedWithOwner', true,
               'statusBeforeRemoval', km.status,
@@ -1696,9 +1697,12 @@ export const removeAllContent = async ({
                 SELECT jsonb_agg(jsonb_build_object('id', kv.id, 'status', kv.status) ORDER BY kv.id)
                 FROM "ModelVersion" kv
                 WHERE kv."modelId" = km.id AND kv.status IN ('Published', 'Scheduled')
+                  AND km.status IN ('Published', 'Scheduled', 'Unpublished')
               ), '[]'::jsonb)
             )
-        WHERE km."userId" = ${id} AND km.status IN ('Published', 'Scheduled', 'Unpublished')
+        -- A draft or a model in training keeps its status: the record alone stops its owner
+        -- publishing it. One a moderator took down or deleted needs neither.
+        WHERE km."userId" = ${id} AND km.status NOT IN ('UnpublishedViolation', 'Deleted')
           AND ${unlessHeld}
         RETURNING km.id, km.meta
       )

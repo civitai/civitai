@@ -21,7 +21,7 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
-import { withoutRemovedWithOwner } from '~/server/utils/legal-hold';
+import { isRemovedWithOwner, withoutRemovedWithOwner } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -6032,7 +6032,7 @@ function assertPrivateFlowPublishable({
   isModerator?: boolean;
 }) {
   if (isModerator) return;
-  if (constants.modPublishOnlyStatuses.includes(status))
+  if (constants.modPublishOnlyStatuses.includes(status) || isRemovedWithOwner(meta))
     throw throwAuthorizationError('You are not authorized to publish this model');
   if ((meta as ModelMeta | null)?.cannotPublish)
     throw throwBadRequestError('This model cannot be published due to moderation restrictions.');

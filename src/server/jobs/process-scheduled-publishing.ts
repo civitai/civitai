@@ -21,6 +21,7 @@ import { markComicProjectsChapterPublished } from '~/server/services/comics/chap
 import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';
 import { isDefined } from '~/utils/type-guards';
 import { createJob, getJobDate } from './job';
+import { notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 
 type ScheduledEntity = {
   id: number;
@@ -31,6 +32,32 @@ type ScheduledEntity = {
 // Blast-radius guard on the reward sweep: any bulk write that stamps "publishedAt"
 // across a large batch would otherwise be reward-applied row by row in one run.
 const REWARD_SWEEP_LIMIT = 5000;
+
+/** Scheduled models due by `now` go live, unless a moderation rule or a wipe's record stops them. */
+export const scheduledModelsGoLiveSql = (ids: number[], now: Date) => Prisma.sql`
+  UPDATE "Model"
+  SET status = 'Published'
+  WHERE id IN (${Prisma.join(ids)})
+    AND status = 'Scheduled'
+    AND "publishedAt" <= ${now}
+    AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
+    AND ${notRemovedWithOwnerSql('meta')}
+`;
+
+/** Scheduled versions due by `now` go live, unless their model's moderation rule or record stops them. */
+export const scheduledVersionsGoLiveSql = (ids: number[], now: Date) => Prisma.sql`
+  UPDATE "ModelVersion" mv
+  SET status = 'Published', availability = 'Public'
+  FROM "Model" m
+  WHERE mv.id IN (${Prisma.join(ids)})
+    AND mv."modelId" = m.id
+    AND mv.status = 'Scheduled'
+    AND mv."publishedAt" <= ${now}
+    AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+    -- A model a content wipe kept goes live only by a moderator's hand.
+    AND ${notRemovedWithOwnerSql('m.meta')}
+  RETURNING mv.id
+`;
 
 export const processScheduledPublishing = createJob(
   'process-scheduled-publishing',
@@ -214,22 +241,15 @@ export const processScheduledPublishing = createJob(
             UPDATE "Model"
             SET "lastVersionAt" = date_trunc('milliseconds', NOW())
             WHERE id IN (${Prisma.join(modelsToUpdate)})
-              AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
+              AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
+              AND ${notRemovedWithOwnerSql('meta')};
           `;
         }
 
         if (scheduledModels.length) {
           const scheduledModelIds = scheduledModels.map(({ id }) => id);
 
-          await tx.$executeRaw`
-          -- Make scheduled models published
-          UPDATE "Model" 
-          SET status = 'Published'
-          WHERE id IN (${Prisma.join(scheduledModelIds)})
-            AND status = 'Scheduled'
-            AND "publishedAt" <= ${now}
-            AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
-        `;
+          await tx.$executeRaw(scheduledModelsGoLiveSql(scheduledModelIds, now));
         }
 
         if (scheduledPosts.length) {
@@ -268,6 +288,7 @@ export const processScheduledPublishing = createJob(
             AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
             AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
             AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+            AND ${notRemovedWithOwnerSql('m.meta')}
           RETURNING p.id, p."userId";
         `;
           // Images are reindexed post-commit via queueImageSearchIndexUpdate
@@ -280,18 +301,12 @@ export const processScheduledPublishing = createJob(
             .filter((item) => !!item.extras?.hasEarlyAccess)
             .map(({ id }) => id);
 
-          const published = await tx.$queryRaw<{ id: number }[]>`
-            -- Update scheduled versions published
-            UPDATE "ModelVersion" mv 
-            SET status = 'Published', availability = 'Public'
-            FROM "Model" m
-            WHERE mv.id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
-              AND mv."modelId" = m.id
-              AND mv.status = 'Scheduled'
-              AND mv."publishedAt" <= ${now}
-              AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
-            RETURNING mv.id;
-          `;
+          const published = await tx.$queryRaw<{ id: number }[]>(
+            scheduledVersionsGoLiveSql(
+              scheduledModelVersions.map(({ id }) => id),
+              now
+            )
+          );
           // Only what that statement published: it re-checks the status, so a version a moderator
           // took down after the select above drops out here, and the early-access publish, which
           // writes by id, never sees it.

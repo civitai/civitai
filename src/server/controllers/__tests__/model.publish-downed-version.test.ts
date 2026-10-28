@@ -108,6 +108,19 @@ describe('publishModelHandler on a model a content wipe kept', () => {
   });
 });
 
+describe('an owner publishing a draft model a content wipe kept', () => {
+  it('is refused, though the draft status itself is publishable', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: 'Draft',
+      meta: { removedWithOwner: true, statusBeforeRemoval: 'Draft' },
+      nsfw: false,
+      userId: 5,
+    } as never);
+    await expect(publish([10])).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(publishModelById).not.toHaveBeenCalled();
+  });
+});
+
 describe('a moderator publishing a model a content wipe kept', () => {
   it('drops the removal marker from its meta', async () => {
     dbMock.dbRead.model.findUnique.mockResolvedValue({
