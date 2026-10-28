@@ -1,6 +1,13 @@
+<script lang="ts">
+  import TicketList from '../TicketList.svelte';
+  import type { PageData } from './$types';
+
+  let { data }: { data: PageData } = $props();
+</script>
+
 <header class="page-header">
   <h1>Moderation tickets</h1>
-  <p class="text-dark-2">Support tickets about appeals, bans, restrictions and moderator decisions. The queue is coming.</p>
+  <p class="text-dark-2">Live tickets about appeals, bans, restrictions and moderator decisions.</p>
 </header>
 
-<div class="placeholder">Not built yet.</div>
+<TicketList tickets={data.tickets} detailBase="/tickets/moderation" canSeeEmail={data.canSeeEmail} />

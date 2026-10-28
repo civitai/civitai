@@ -1,0 +1,79 @@
+import { error } from '@sveltejs/kit';
+import {
+  freshdeskTicketUrl,
+  getTicketConversation,
+  getTicketDetail,
+  isFreshdeskId,
+  type TicketConversationResult,
+} from '../freshdesk.service';
+import { getRoutedTicketContext } from '../decision-sources/support';
+import { resolveUserId } from '../user-lookup.service';
+import { routeTicket, type TicketView } from '$lib/tickets/routing';
+import { statusLabel } from '$lib/tickets/statuses';
+
+/** The one ticket page behind both views' routes. */
+export async function loadTicketDetail(view: TicketView, ticketId: string, locals: App.Locals) {
+  if (!isFreshdeskId(ticketId)) throw error(404, 'No such ticket.');
+  const canSeeEmail = !!locals.grants['decisions.support.pii'];
+
+  const res = await getTicketDetail(ticketId);
+  if (res.status !== 'found') throw error(503, res.reason);
+  const { ticket } = res;
+
+  // The router's topic decides only a ticket with no feature, but its linked account helps any ticket.
+  // Its failure leaves the topic unknown, which routes a feature-less ticket to support.
+  const routed = await getRoutedTicketContext([ticketId], false).then(
+    (m) => m.get(ticketId),
+    (e) => {
+      console.error('[tickets] router context failed', e);
+      return undefined;
+    }
+  );
+  const routesTo = routeTicket({
+    cfFeature: ticket.cfFeature,
+    status: ticket.status,
+    routerTopic: routed?.topic,
+  });
+  // 🔴 The page grant is per view, so a ticket opened under the wrong view would show it to a role that
+  // may not open that view at all.
+  if (routesTo !== view)
+    throw error(
+      404,
+      `Ticket ${ticketId} is not a ${view} ticket; it belongs to the ${routesTo} view.`
+    );
+
+  // The address is resolved here even without the grant, and never leaves the server without it.
+  let civitaiUserId = routed?.civitaiUserId ?? null;
+  if (civitaiUserId === null && ticket.requesterEmail) {
+    try {
+      civitaiUserId = await resolveUserId(ticket.requesterEmail);
+    } catch (e) {
+      console.error('[tickets] user lookup failed', e);
+    }
+  }
+
+  const conversation: Promise<TicketConversationResult> = getTicketConversation(ticketId).catch(
+    () => ({ status: 'unavailable' as const, reason: 'Freshdesk could not be read.' })
+  );
+
+  return {
+    ticket: {
+      id: ticket.id,
+      subject: ticket.subject,
+      status: ticket.status,
+      statusLabel: statusLabel(ticket.status),
+      cfFeature: ticket.cfFeature,
+      routerTopic: routed?.topic ?? null,
+      createdAt: ticket.createdAt,
+      updatedAt: ticket.updatedAt,
+      freshdeskUrl: freshdeskTicketUrl(ticket.id),
+      description: ticket.description,
+      requesterName: ticket.requesterName,
+      ...(canSeeEmail ? { requesterEmail: ticket.requesterEmail } : {}),
+      civitaiUserId,
+    },
+    view,
+    // Not awaited: SvelteKit streams it, so a slow conversation read delays that panel, not the page.
+    conversation,
+  };
+}
