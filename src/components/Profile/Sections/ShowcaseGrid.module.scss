@@ -8,10 +8,16 @@ $black: var(--mantine-color-black, #000000);
   grid-template-rows: repeat(var(--rows, 2), auto);
   grid-auto-rows: 0;
   overflow: hidden;
-  margin-top: -8px;
-  // Event hats get only the items' 8px margin of room, and no room to grow.
-  --event-decoration-allowance: 8px;
+  // Room above and left of the edge cards for a worn event hat (ITEM_BLEED = 36px with the items'
+  // 8px margin) without moving them. The clip crops a hat that grows on hover, so it stays at rest size.
+  margin-top: -36px;
+  margin-left: -28px;
+  padding-top: 28px;
+  padding-left: 28px;
+  --event-decoration-allowance: 36px;
   --event-decoration-grow: 1;
+  // The padding above overlaps the section header; only the cards take the pointer.
+  pointer-events: none;
 
   &::-webkit-scrollbar {
     background: transparent;
@@ -25,6 +31,7 @@ $black: var(--mantine-color-black, #000000);
 
   & > * {
     margin: 8px;
+    pointer-events: auto;
   }
 
   @container (max-width: theme('screens.sm')) {
@@ -33,10 +40,13 @@ $black: var(--mantine-color-black, #000000);
     grid-template-rows: auto;
     scroll-snap-type: x mandatory;
     overflow-x: auto;
-    margin-right: -$spacing-md;
-    margin-left: -$spacing-md;
+    // The room on the left is the page's gutter, which the scroller's own padding sits in.
+    margin-left: 0;
     padding-left: $spacing-md;
     padding-right: $spacing-md;
+    // The scroller's own padding plus the cards' margin is all the room a hat has on the left.
+    --event-decoration-allowance: calc(#{$spacing-md} + 8px);
+    --event-decoration-allowance-top: 36px;
 
     & > * {
       scroll-snap-align: center;
@@ -50,10 +60,13 @@ $black: var(--mantine-color-black, #000000);
   grid-template-columns: repeat(var(--item-count), var(--default-width, 280px));
   grid-template-rows: auto;
   overflow: visible;
-  margin-right: -$spacing-md;
-  margin-left: -$spacing-md;
+  // The hat room is on the scroll area, which does the clipping; see `.scroll-area`.
+  margin-top: -8px;
+  margin-left: 0;
+  padding-top: 0;
   padding-left: $spacing-md;
   padding-right: $spacing-md;
+  pointer-events: auto;
 
   & > * {
     scroll-snap-align: initial;
@@ -61,6 +74,8 @@ $black: var(--mantine-color-black, #000000);
 
   @container (max-width: theme('screens.sm')) {
     scroll-snap-type: x mandatory;
+    // The scroll area's padding and the cards' margin leave the full ITEM_BLEED on the left.
+    --event-decoration-allowance: 36px;
 
     & > * {
       scroll-snap-align: center;
@@ -87,6 +102,11 @@ $black: var(--mantine-color-black, #000000);
 .scroll-area {
   overflow: auto;
   scroll-snap-type: auto;
+  // Room above and left of the first card for a worn event hat, without moving it.
+  margin-top: -36px;
+  margin-left: -28px;
+  padding-top: 36px;
+  padding-left: 28px;
 
   @container (max-width: theme('screens.sm')) {
     scroll-snap-type: x mandatory;

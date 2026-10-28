@@ -138,13 +138,13 @@ function CardHat({
       : getHatLayout(placement, fit, undefined, 0, cardWidth);
   // Moved into the card only as far as its container's room requires, which only CSS knows,
   // unless the caller measured that room.
-  const fitInto = (at: number, reach: number) =>
+  const fitInto = (at: number, reach: number, edge: 'left' | 'top') =>
     placement === 'corner' && allowance === undefined
-      ? `calc(${at}px + ${hatShiftCss(reach)})`
+      ? `calc(${at}px + ${hatShiftCss(reach, edge)})`
       : at;
   const box = {
-    left: fitInto(layout.left, layout.reach.left),
-    top: fitInto(layout.top, layout.reach.top),
+    left: fitInto(layout.left, layout.reach.left, 'left'),
+    top: fitInto(layout.top, layout.reach.top, 'top'),
     width: layout.width,
     height: layout.height,
     transform: `rotate(${layout.tilt}deg)`,

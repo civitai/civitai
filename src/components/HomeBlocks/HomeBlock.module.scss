@@ -85,6 +85,8 @@
     padding-left: var(--mantine-spacing-md);
     // The scroller's own padding plus the cards' `p-2` is all the room a hat has on the left.
     --event-decoration-allowance: calc(var(--mantine-spacing-md) + 8px);
+    // Above the cards the grid's own padding still gives the full ITEM_BLEED.
+    --event-decoration-allowance-top: 36px;
 
     & > * {
       scroll-snap-align: center;
