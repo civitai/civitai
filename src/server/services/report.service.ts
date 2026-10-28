@@ -1218,6 +1218,8 @@ function closeUnreviewedAppeals(limit: number) {
     WHERE id IN (
       SELECT id FROM "Appeal"
       WHERE status = 'Pending'::"AppealStatus"
+        -- Only images are routed for review; another type routed later needs its own decision here.
+        AND "entityType" = 'Image'::"EntityType"
         AND "entityRemovedAt" <= now() - make_interval(days => ${Prisma.raw(
           String(ROUTED_APPEAL_REVIEW_DAYS)
         )})

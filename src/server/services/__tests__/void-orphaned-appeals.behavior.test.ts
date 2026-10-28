@@ -355,7 +355,8 @@ describe('voidOrphanedAppeals against Postgres', () => {
            (31, 12, 'Image', 1031, 'Pending', $1, $1, now() - make_interval(days => $2, mins => 1), 'appeal-12-2'),
            (32, 30, 'Image', 1032, 'Pending', $1, $1, now() - make_interval(days => $2, mins => 1), 'appeal-30-2'),
            (33, 12, 'Image', 1033, 'Pending', $1, $1, now() - make_interval(days => $2 - 1), 'appeal-12-3'),
-           (34, 12, 'Image', 1034, 'Rejected', $1, $1, now() - make_interval(days => $2 * 2), 'appeal-12-4')`,
+           (34, 12, 'Image', 1034, 'Rejected', $1, $1, now() - make_interval(days => $2 * 2), 'appeal-12-4'),
+           (35, 12, 'Model', 2035, 'Pending', $1, $1, now() - make_interval(days => $2, mins => 1), 'appeal-12-5')`,
         // Computed in the database, whose clock and zone the deadline is measured in.
         [FILED, ROUTED_APPEAL_REVIEW_DAYS]
       );
@@ -395,6 +396,14 @@ describe('voidOrphanedAppeals against Postgres', () => {
       });
       expect(refundedPrefixes()).not.toContain('appeal-12-3');
       expect(refundedPrefixes()).not.toContain('appeal-12-4');
+    });
+
+    // 35 has waited as long as 31, but only images are routed for review today.
+    it('leaves a non-image appeal past the deadline alone', async () => {
+      await voidOrphanedAppeals();
+
+      expect((await appeals()).get(35)).toMatchObject({ status: 'Pending', resolvedAt: null });
+      expect(refundedPrefixes()).not.toContain('appeal-12-5');
     });
 
     it('refunds and tells each one once', async () => {
