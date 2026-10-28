@@ -9,12 +9,7 @@ import { isPaidAccessActive } from '@civitai/buzz';
 import { getPaidAccess } from '~/server/services/paid-access.service';
 import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import {
-  ModelFileVisibility,
-  ModelModifier,
-  ModelStatus,
-  ModelUsageControl,
-} from '~/shared/utils/prisma/enums';
+import { ModelModifier, ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
 import type { ResolveAttribution } from '~/utils/resolve-attribution';
@@ -31,6 +26,13 @@ import {
   readModelVersionForFileViaKysely,
   readModelVersionForFileViaPrisma,
 } from '~/server/services/hot-reads-5.reads';
+import {
+  downloadFileSelect,
+  downloadFilesWhere,
+  readDownloadFilesViaKysely,
+  readDownloadFilesViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
+import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
@@ -304,35 +306,28 @@ export const getFileForModelVersion = async ({
   }
 
   // Get the correct file
-  const fileSelect = {
-    id: true,
-    url: true,
-    name: true,
-    overrideName: true,
-    type: true,
-    metadata: true,
-    sizeKB: true,
-    hashes: { select: { hash: true }, where: { type: 'SHA256' as const } },
-  };
-
   let file: FileResult | null = null;
   // The files `file` sits beside, so the name it gets can be made distinct from theirs.
   let versionFiles: FileResult[] = [];
+  const readFiles = async (where: DownloadFilesWhere) =>
+    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+      ? readDownloadFilesViaKysely((await loadKyselyDb()).kyselyRead, where)
+      : readDownloadFilesViaPrisma(dbRead, downloadFilesWhere(where));
   if (fileId) {
     // Direct file lookup by ID — bypasses type-based resolution. Fetched as the whole version's
     // files rather than the one row so the siblings come along; it is the same single query.
-    const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
-    if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
-    const found = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
+    const found = await readFiles({ modelVersionId, publicOnly: !isOwner && !isMod });
     versionFiles = found as FileResult[];
     file = versionFiles.find((candidate) => candidate.id === fileId) ?? null;
   } else {
     // Try local files on this model version first. A replaced file is a quarantined component whose
     // linked replacement is the fallback below, so it must not win here.
-    const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId, replacedAt: null };
-    if (type) fileWhere.type = type;
-    if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
-    const files = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
+    const files = await readFiles({
+      modelVersionId,
+      notReplaced: true,
+      type,
+      publicOnly: !isOwner && !isMod,
+    });
     versionFiles = files as FileResult[];
     const metadata = {
       ...user?.filePreferences,
@@ -357,7 +352,7 @@ export const getFileForModelVersion = async ({
         // Fetch the primary 'Model' file from the linked version
         const linkedFile = await dbRead.modelFile.findFirst({
           where: { modelVersionId: linked.resourceId, type: 'Model' },
-          select: fileSelect,
+          select: downloadFileSelect,
           orderBy: { id: 'asc' },
         });
         if (linkedFile) {

@@ -12,6 +12,12 @@ import {
   createSerializedFileDownloadUrl,
 } from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readModelVersionPrivacyViaKysely,
+  readModelVersionPrivacyViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 import type { ModelVersionApiReturn } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVaeFiles } from '~/server/services/model.service';
@@ -210,13 +216,11 @@ export async function prepareModelVersionResponse(
   // Creator Controls: gate the version download count (public API — no owner/mod
   // bypass wired here, matching buildPublicModelResponse). The base query doesn't
   // carry meta/owner, so fetch the privacy inputs directly.
-  const privacy = await dbRead.modelVersion.findUnique({
-    where: { id: version.id },
-    select: {
-      meta: true,
-      model: { select: { meta: true, userId: true, user: { select: { settings: true } } } },
-    },
-  });
+  let privacy = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+    ? await readModelVersionPrivacyViaKysely((await loadKyselyDb()).kyselyRead, version.id)
+    : undefined;
+  // `undefined` is OFF, or a version whose model or user row is gone, for which Prisma throws.
+  if (privacy === undefined) privacy = await readModelVersionPrivacyViaPrisma(dbRead, version.id);
   // Only resolve CP membership when something is actually hidden (version meta, model
   // meta, or the owner's user default). When nothing is hidden, the resolver returns
   // NONE regardless of membership, so the cached membership read can be skipped —

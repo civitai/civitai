@@ -77,6 +77,15 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   `<civitai>/src/server/services/__tests__/hot-reads-5.kysely-parity.test.ts`, on the same Postgres
   service, with the same no-view check.
 
+  `hot-reads-6.db.ts` holds more high-volume lookups (a model version's owner and a post's detail
+  row, each with the user's cosmetics; a model's POI/owner check; user lookups by username; the
+  public donation goals cache's reads; a user's version engagements and recommended reviews; a
+  model's associated resources; the public API's metric-privacy inputs; the download path's file
+  list). They are served behind the default-off server Flipt flag `kysely-hot-reads-6` and read
+  base tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-6.kysely-parity.test.ts`, on the same Postgres
+  service, with the same no-view check.
+
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
   endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs

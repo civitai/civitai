@@ -38,6 +38,10 @@ import {
 } from '~/server/services/hot-reads-3.reads';
 import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
 import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
+import {
+  readModelAssociationTargetsViaKysely,
+  readModelAssociationTargetsViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
   assertTrainingSourcePublishable,
@@ -1894,11 +1898,12 @@ export const getAssociatedResourcesCardDataHandler = async ({
     const { fromId, type, ...userPreferences } = input;
     const { user } = ctx;
     const useNext = await nextCoverageEnabled();
-    const associatedResources = await dbRead.modelAssociations.findMany({
-      where: { fromModelId: fromId, type },
-      select: { toModelId: true, toArticleId: true },
-      orderBy: { index: 'asc' },
-    });
+    const associatedResources = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+      ? await readModelAssociationTargetsViaKysely((await loadKyselyDb()).kyselyRead, {
+          fromModelId: fromId,
+          type,
+        })
+      : await readModelAssociationTargetsViaPrisma(dbRead, { fromModelId: fromId, type });
 
     const resourcesIds = associatedResources.map(({ toModelId, toArticleId }) =>
       toModelId
