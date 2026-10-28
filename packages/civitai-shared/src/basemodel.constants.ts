@@ -875,7 +875,7 @@ export const ecosystems: EcosystemRecord[] = [
     displayName: 'Kling',
     familyId: 14,
     sortOrder: 212,
-    // txt2vid + img2vid (no vid2vid support currently)
+    // txt2vid + img2vid; vid2vid:edit on V4
   },
   { id: ECO.Grok, key: 'Grok', displayName: 'Grok', familyId: 13, sortOrder: 216 },
   {

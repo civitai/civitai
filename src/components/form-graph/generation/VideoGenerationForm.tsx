@@ -1,4 +1,4 @@
-import { Checkbox, Input, Select, Stack } from '@mantine/core';
+import { Checkbox, Input, Select, Stack, TagsInput } from '@mantine/core';
 import { AccordionLayout } from '~/components/generation_v2/AccordionLayout';
 import { Controller, MultiController } from 'form-graph/react';
 
@@ -15,6 +15,7 @@ import { InterpolationFactorInput } from '~/components/generation_v2/inputs/Inte
 import { ScaleFactorInput } from '~/components/generation_v2/inputs/ScaleFactorInput';
 import { SliderInput } from '~/components/generation_v2/inputs/SliderInput';
 import { VideoInput } from '~/components/generation_v2/inputs/VideoInput';
+import { ImageUploadMultipleInput } from '~/components/generation_v2/inputs/ImageUploadMultipleInput';
 import { PreprocessKindParamsInput } from '~/components/generation_v2/inputs/PreprocessKindParamsInput';
 import { PreprocessorExamples } from '~/components/generation_v2/inputs/PreprocessorExamples';
 import {
@@ -41,6 +42,11 @@ import {
 } from './form-helpers';
 import { GateRuleWarnings } from './GateRuleWarnings';
 import { Flux3KeyframesInput } from './inputs/Flux3KeyframesInput';
+import {
+  KlingElementsInput,
+  KlingMultiShotInput,
+  KlingReferenceVideosInput,
+} from './inputs/KlingV4Inputs';
 import { SourceImagesInput } from './inputs/SourceImagesInput';
 import type { GenerationStore } from './store';
 
@@ -169,8 +175,70 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
       />
       <Controller
         graph={videoHub}
+        name="middleImages"
+        render={({ value, meta, onChange, error }) => (
+          <ImageUploadMultipleInput
+            label={
+              <ControllerLabel
+                label="Middle Frames"
+                info="Optional frames the video passes through between the start and end images, in order."
+              />
+            }
+            value={value}
+            onChange={onChange}
+            max={meta?.max}
+            aspect="square"
+            error={error?.message}
+          />
+        )}
+      />
+      <Controller
+        graph={videoHub}
         name="video"
         render={({ value, onChange }) => <VideoInput value={value} onChange={onChange} />}
+      />
+      <Controller
+        graph={videoHub}
+        name="referenceVideos"
+        render={({ value, meta, onChange, error }) => (
+          <KlingReferenceVideosInput
+            value={value}
+            onChange={onChange}
+            limit={meta?.limit ?? 0}
+            error={error?.message}
+          />
+        )}
+      />
+      <Controller
+        graph={videoHub}
+        name="klingElements"
+        render={({ value, meta, onChange, error }) => (
+          <KlingElementsInput
+            value={value}
+            onChange={onChange}
+            limit={meta?.limit ?? 0}
+            error={error?.message}
+          />
+        )}
+      />
+      <Controller
+        graph={videoHub}
+        name="voiceIds"
+        render={({ value, meta, onChange, error }) => (
+          <TagsInput
+            label={
+              <ControllerLabel
+                label="Voice IDs"
+                info="Kling voice IDs to use in the video. At most three, counting voices on elements."
+              />
+            }
+            placeholder="Add a voice ID"
+            value={value}
+            onChange={onChange}
+            maxTags={meta?.limit}
+            error={error?.message}
+          />
+        )}
       />
       {/* vid2vid:preprocess — the standalone control-preprocessor workflow */}
       <Controller
@@ -297,6 +365,13 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
               className="!border-0 !bg-transparent"
             />
           </PromptEditorShell>
+        )}
+      />
+      <Controller
+        graph={videoHub}
+        name="multiShot"
+        render={({ value, onChange, error }) => (
+          <KlingMultiShotInput value={value} onChange={onChange} error={error?.message} />
         )}
       />
       <Controller

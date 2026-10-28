@@ -93,6 +93,8 @@ export function makeTextBlock(
     negativePromptMaxLength?: number;
     /** grok requires a prompt on every workflow, staged images included. */
     promptAlwaysRequired?: boolean;
+    /** Kling 4's multi-shot prompts replace the prompt. */
+    promptOptional?: (ext: TextBlockNeeds) => boolean;
   } = {}
 ) {
   const {
@@ -148,7 +150,8 @@ export function makeTextBlock(
       // graph's own fields, declared above. Meta is the text-field contract:
       // the snippets slice's PRESENCE doubles as the wildcards feature flag.
       .field('prompt', ({ triggerWords, snippets, _ext }) => {
-        const required = promptAlwaysRequired || !_ext.images?.length;
+        const required =
+          !opts.promptOptional?.(_ext) && (promptAlwaysRequired || !_ext.images?.length);
         return {
           ...textDef('prompt'),
           refine: required

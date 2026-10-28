@@ -16,6 +16,7 @@ export const klingVersionIds = {
   v2: 2623817,
   v2_5_turbo: 2623821,
   v3: 2698632,
+  v4: 3001,
 } as const;
 
 export const nanoBananaVersionIds = {

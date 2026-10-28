@@ -13,8 +13,9 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import { openaiVersionIds } from '~/shared/form-graph/generation/image/openai.graph';
-import { flux3VideoVersionIds } from '~/shared/generation/version-ids';
+import { flux3VideoVersionIds, klingVersionIds } from '~/shared/generation/version-ids';
 import { createFlux3VideoInput } from '../flux3-video.handler';
+import { createKlingInput } from '../kling.handler';
 import { createFormGraphStepInput } from '../index';
 import { createOpenAIInput } from '../openai.handler';
 
@@ -263,6 +264,147 @@ describe('flux3-video.handler', () => {
       ],
     });
     expect(firstInput(steps)).not.toHaveProperty('images');
+  });
+});
+
+describe('kling.handler v4', () => {
+  const V4 = klingVersionIds.v4;
+  const VIDEO = { url: 'https://example.com/a.mp4' };
+
+  it('text-to-video carries the ratio, resolution and duration on kling-v4', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'Kling',
+      model: { id: V4 },
+      prompt: 'a cat',
+      aspectRatio: '21:9',
+      resolution: '1080p',
+      duration: 12,
+    });
+    expect(firstInput(steps)).toEqual({
+      engine: 'kling-v4',
+      operation: 'textToVideo',
+      prompt: 'a cat',
+      aspectRatio: '21:9',
+      resolution: '1080p',
+      duration: 12,
+    });
+  });
+
+  it('multi-shot prompts replace the prompt text and the duration', async () => {
+    const steps = await dispatch({
+      workflow: 'txt2vid',
+      ecosystem: 'Kling',
+      model: { id: V4 },
+      duration: 12,
+      multiShot: [
+        { prompt: 'a cat wakes up', duration: 2 },
+        { prompt: 'the cat jumps', duration: 3 },
+      ],
+    });
+    const input = firstInput(steps);
+    expect(input).toMatchObject({
+      operation: 'textToVideo',
+      multiPrompt: [
+        { prompt: 'a cat wakes up', duration: 2 },
+        { prompt: 'the cat jumps', duration: 3 },
+      ],
+    });
+    expect(input).toHaveProperty('prompt', '');
+    expect(input).not.toHaveProperty('duration');
+  });
+
+  // The server resolves img2vid:first-last to img2vid before it parses.
+  it('start and end frames go out as keyframes, with middle frames between them', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid',
+      ecosystem: 'Kling',
+      model: { id: V4 },
+      prompt: 'a cat',
+      images: [IMAGE, IMAGE2],
+      middleImages: [IMAGE2],
+    });
+    const input = firstInput(steps);
+    expect(input).toMatchObject({
+      operation: 'imageToVideo',
+      sourceImage: IMAGE.url,
+      endImage: IMAGE2.url,
+      middleImages: [IMAGE2.url],
+    });
+    expect(input).not.toHaveProperty('images');
+    expect(input).not.toHaveProperty('aspectRatio');
+  });
+
+  it('reference-to-video sends images, videos, elements and voices', async () => {
+    const steps = await dispatch({
+      workflow: 'img2vid:ref2vid',
+      ecosystem: 'Kling',
+      model: { id: V4 },
+      prompt: 'a cat',
+      images: [IMAGE],
+      referenceVideos: [VIDEO],
+      klingElements: [
+        { images: [IMAGE, IMAGE2], voiceId: 'voice-a' },
+        { images: [], video: VIDEO },
+      ],
+      voiceIds: ['voice-b'],
+    });
+    expect(firstInput(steps)).toMatchObject({
+      operation: 'referenceToVideo',
+      images: [IMAGE.url],
+      videos: [VIDEO.url],
+      elements: [
+        { frontalImage: IMAGE.url, referenceImages: [IMAGE2.url], voiceId: 'voice-a' },
+        { videoUrl: VIDEO.url },
+      ],
+      voiceIds: ['voice-b'],
+    });
+  });
+
+  it('refuses a fourth voice counted across elements and voice IDs', () => {
+    const parsed = generationHub.parse(
+      {
+        workflow: 'img2vid:ref2vid',
+        ecosystem: 'Kling',
+        model: { id: V4 },
+        prompt: 'a cat',
+        klingElements: [{ images: [IMAGE, IMAGE2], voiceId: 'voice-a' }],
+        voiceIds: ['voice-b', 'voice-c', 'voice-d'],
+      },
+      BASE
+    );
+    expect(parsed.success).toBe(false);
+  });
+
+  it('an edit follows the source length, and a V3 pick on the edit workflow goes out on V4', async () => {
+    const steps = await dispatch({
+      workflow: 'vid2vid:edit',
+      ecosystem: 'Kling',
+      model: { id: klingVersionIds.v3 },
+      prompt: 'make it night',
+      video: VIDEO,
+      duration: 12,
+    });
+    const input = firstInput(steps);
+    expect(input).toMatchObject({
+      engine: 'kling-v4',
+      operation: 'videoToVideoEdit',
+      videoUrl: VIDEO.url,
+    });
+    expect(input).not.toHaveProperty('duration');
+    expect(input).not.toHaveProperty('multiPrompt');
+  });
+
+  it('refuses an edit when the picker has swapped V4 away, rather than sending another version', () => {
+    const data = {
+      workflow: 'vid2vid:edit',
+      ecosystem: 'Kling',
+      klingVersion: 'v3',
+      model: { id: klingVersionIds.v3, model: { type: 'Checkpoint' } },
+      prompt: 'make it night',
+    } as never;
+
+    expect(() => createKlingInput(data, ctx)).toThrow(/V4/);
   });
 });
 

@@ -142,6 +142,7 @@ const NON_DEFAULT_LIMITS: Array<[string, string, number, number]> = [
   ['HiDream-O1', 'img2img:edit', 1, 4],
   ['Ideogram', 'img2img:edit', 1, 4],
   ['Kling', 'img2vid:ref2vid', 1, 7],
+  ['Kling', 'vid2vid:edit', 0, 10],
   ['Krea2', 'img2img:edit', 1, 4],
   ['Krea3', 'img2img:edit', 1, 6],
   ['LTXV2', 'img2vid', 1, 2],

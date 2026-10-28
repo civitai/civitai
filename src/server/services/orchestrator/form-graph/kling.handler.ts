@@ -1,23 +1,31 @@
 /**
  * Kling handler for the form-graph lane — legacy engine (`kling`) for
- * V1.6/V2/V2.5 Turbo, `kling-v3` for V3. V3's multiShot/klingElements subtree is
- * not built (see `video/kling.graph.ts`), so the elements/multiPrompt build is omitted.
+ * V1.6/V2/V2.5 Turbo, `kling-v3` for V3, `kling-v4` for V4. V3's multiShot/klingElements
+ * subtree is not built (see `video/kling.graph.ts`); V4's is.
  */
 
 import type {
   KlingVideoGenInput,
   KlingV3VideoGenInput,
+  KlingV4ElementInput,
+  KlingV4VideoGenInput,
   KlingModel,
   VideoGenStepTemplate,
 } from '@civitai/orchestration-client';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { removeEmpty } from '~/utils/object-helpers';
 import { klingVersionIds } from '~/shared/generation/version-ids';
+import {
+  KLING_V4_EDIT_WORKFLOW,
+  type KlingV4Element,
+} from '~/shared/form-graph/generation/video/kling.graph';
 import { defineHandler } from '../handlers/handler-factory';
 import type { EcosystemData } from './types';
 
 type KlingData = EcosystemData<'Kling'>;
 type KlingLegacyData = Extract<KlingData, { klingVersion: 'legacy' }>;
 type KlingV3Data = Extract<KlingData, { klingVersion: 'v3' }>;
+type KlingV4Data = Extract<KlingData, { klingVersion: 'v4' }>;
 
 const versionIdToModel = new Map<number, KlingModel>([
   [klingVersionIds.v1_6, 'v1.6'],
@@ -26,7 +34,16 @@ const versionIdToModel = new Map<number, KlingModel>([
 ]);
 
 export const createKlingInput = defineHandler<KlingData, [VideoGenStepTemplate]>((data) => {
-  const input = data.klingVersion === 'v3' ? createV3Input(data) : createLegacyInput(data);
+  // A locked picker swaps a version the user may not see for the default, which would turn an
+  // edit into a text-to-video and bill for it.
+  if (data.workflow === KLING_V4_EDIT_WORKFLOW && data.klingVersion !== 'v4')
+    throw throwBadRequestError('Video edits need Kling V4');
+  const input =
+    data.klingVersion === 'v4'
+      ? createV4Input(data)
+      : data.klingVersion === 'v3'
+      ? createV3Input(data)
+      : createLegacyInput(data);
   return [{ $type: 'videoGen', input }];
 });
 
@@ -69,4 +86,39 @@ function createV3Input(data: KlingV3Data): KlingV3VideoGenInput {
     quantity: data.quantity ?? 1,
     seed: data.seed,
   }) as KlingV3VideoGenInput;
+}
+
+function toElementInput(element: KlingV4Element): KlingV4ElementInput {
+  const [frontal, ...references] = element.images;
+  return removeEmpty({
+    frontalImage: frontal?.url,
+    referenceImages: references.map((image) => image.url),
+    videoUrl: element.video?.url,
+    voiceId: element.voiceId,
+  });
+}
+
+function createV4Input(data: KlingV4Data): KlingV4VideoGenInput {
+  const shots = 'multiShot' in data && data.multiShot?.length ? data.multiShot : undefined;
+  const keyframes = data.operation === 'imageToVideo';
+  const images = 'images' in data ? data.images?.map((image) => image.url) : undefined;
+
+  return removeEmpty({
+    engine: 'kling-v4' as const,
+    operation: data.operation,
+    // The input requires the key even when the shots carry the prompts.
+    prompt: shots ? '' : data.prompt,
+    multiPrompt: shots?.map(({ prompt, duration }) => ({ prompt, duration })),
+    duration: shots || !('duration' in data) ? undefined : data.duration,
+    resolution: data.resolution,
+    aspectRatio: data.aspectRatio?.value as KlingV4VideoGenInput['aspectRatio'],
+    sourceImage: keyframes ? images?.[0] : undefined,
+    endImage: keyframes ? images?.[1] : undefined,
+    middleImages: 'middleImages' in data ? data.middleImages?.map((image) => image.url) : undefined,
+    images: keyframes ? undefined : images,
+    videoUrl: 'video' in data ? data.video?.url : undefined,
+    videos: 'referenceVideos' in data ? data.referenceVideos?.map((video) => video.url) : undefined,
+    elements: 'klingElements' in data ? data.klingElements?.map(toElementInput) : undefined,
+    voiceIds: 'voiceIds' in data ? data.voiceIds : undefined,
+  }) as KlingV4VideoGenInput;
 }

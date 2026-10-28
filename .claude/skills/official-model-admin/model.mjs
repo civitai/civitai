@@ -34,7 +34,7 @@ const HANDLERS_DIR = resolve(projectRoot, 'src/server/services/orchestrator/form
 const LOADABLE_FILE_TYPES = ['Model', 'Pruned Model', 'Diffusion Model', 'UNet', 'Negative', 'VAE'];
 // Closed models reachable only through their provider's API, plus fal, which hosts third-party models.
 const EXTERNAL_ENGINES = [
-  'fal', 'openai', 'google', 'gemini', 'seedance', 'seedream', 'kling', 'kling-v3',
+  'fal', 'openai', 'google', 'gemini', 'seedance', 'seedream', 'kling', 'kling-v3', 'kling-v4',
   'vidu', 'vidu-q3', 'sora', 'veo3', 'grok', 'minimax-h3',
 ];
 

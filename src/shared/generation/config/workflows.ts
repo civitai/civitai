@@ -438,13 +438,17 @@ export const workflowConfigs: WorkflowConfigs = {
     label: 'Edit Video',
     description: 'Edit a video with AI',
     category: 'video',
-    ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse],
+    ecosystemIds: [ECO.Grok, ECO.WanVideo27, ECO.HappyHorse, ECO.Kling],
     // HappyHorse v1.1 has no videoEdit operation — v1.0 only.
-    // Grok edit-video is likewise v1.0-only.
+    // Grok edit-video is likewise v1.0-only, and Kling edits are V4-only.
     excludeModelVersionIds: [
       happyHorseVersionIds['v1.1'],
       grokVersionIds['v1.5'],
       grokVersionIds['v2.0'],
+      klingVersionIds.v1_6,
+      klingVersionIds.v2,
+      klingVersionIds.v2_5_turbo,
+      klingVersionIds.v3,
     ],
   },
 

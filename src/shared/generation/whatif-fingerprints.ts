@@ -62,6 +62,24 @@ export const whatIfFingerprints: Record<string, WhatIfFingerprint> = {
     return entries?.map((entry) => entry.image?.url) ?? [];
   },
 
+  // Kling 4 bills by total shot length; shot text is free, but an empty shot blocks the estimate.
+  multiShot: (value) => {
+    const shots = value as { prompt?: string; duration?: number }[] | undefined;
+    return shots?.map((shot) => [shot.duration, !!shot.prompt?.trim()]) ?? [];
+  },
+  klingElements: (value) => {
+    const elements = value as
+      | { images?: ImageObjectValue[]; video?: { url: string }; voiceId?: string }[]
+      | undefined;
+    return (
+      elements?.map((element) => ({
+        images: element.images?.map((image) => image.url),
+        video: element.video?.url,
+        voice: !!element.voiceId,
+      })) ?? []
+    );
+  },
+
   // Content fields don't affect cost (site identity determines buzz type;
   // prompt moderation happens at submission time). Returning `undefined`
   // drops the key from the whatIf comparison entirely.
