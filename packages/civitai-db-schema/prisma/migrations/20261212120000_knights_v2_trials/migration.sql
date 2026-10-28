@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS "KnightsReferenceImage" (
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
+-- Unique across modules on purpose: one known answer per image, in one pool, never both.
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsReferenceImage_imageId_key" ON "KnightsReferenceImage" ("imageId");
 CREATE INDEX IF NOT EXISTS "KnightsReferenceImage_pool_status_source_idx" ON "KnightsReferenceImage" ("pool", "status", "source");
 CREATE INDEX IF NOT EXISTS "KnightsReferenceImage_modActivityId_idx" ON "KnightsReferenceImage" ("modActivityId");
