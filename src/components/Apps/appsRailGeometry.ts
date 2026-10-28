@@ -30,14 +30,14 @@ export const APPS_RAIL_COLLAPSED_WIDTH = 56;
 /**
  * The gap between the rail and the page body, px.
  *
- * 🔴 IT IS THE SAME 16 AS `SUBNAV_STICKY_GAP`, AND THAT EQUALITY IS ASSERTED RATHER
- * THAN IMPORTED. The rail is pinned to `subnavBottom + SUBNAV_STICKY_GAP`, so its top
- * gap and its side gap must be one number or the rail sits in an asymmetric corner.
- * Importing `~/hooks/useSubnavBottom` here would drag React into this module and undo
- * the whole reason it is separate, so `__tests__/appsRailGeometry.test.ts` pins the two
- * together instead. Move one and that test goes red.
+ * 32 because the rail panel paints 8px into this gap (see `.railSurface`), so the gap a
+ * reader sees is 24px, in line with the collections and hubs sidebars. It is deliberately
+ * NOT `SUBNAV_STICKY_GAP` (16, the rail's distance from the subnav above it): the side
+ * gap is the one the design asked to widen, and the sticky offset is not.
+ * `__tests__/appsRailGeometry.test.ts` pins the value against `.railRow`'s `gap` in the
+ * stylesheet.
  */
-export const APPS_RAIL_GAP = 16;
+export const APPS_RAIL_GAP = 32;
 
 /**
  * The narrowest VIEWPORT at which the rail renders at all. Below this the sections move

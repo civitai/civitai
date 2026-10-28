@@ -19,7 +19,7 @@
  *
  * 🔴 WHY A MEDIA QUERY RATHER THAN A CONTAINER QUERY, when the store grid one level
  * down uses the opposite. The grid asks "how wide is the box I am in", which is a
- * container question. This asks "is there room on this SCREEN for a 276px rail beside a
+ * container question. This asks "is there room on this SCREEN for a 292px rail beside a
  * usable page", which is a viewport question — and it has to be answered BEFORE the box
  * exists, since the rail is what decides that box's width. A container query on the row
  * would be querying the thing it is about to resize.
@@ -48,7 +48,7 @@
      `display: none`, which removes it as a flex item — so the row has ONE child and CSS
      emits no gap at all. That is what lets the narrow layout be byte-identical to the
      pre-rail page rather than starting 16px in. */
-  gap: 16px;
+  gap: 32px;
 }
 
 /* The rail's own box. Its WIDTH is an inline style (the collapse state is React's, and
@@ -84,7 +84,7 @@
    `AppsPageLayout.chromeAlignment.browser.test.tsx` measures
    `nav[aria-label="App sections"]` across 12 routes x 3 viewports x 2 rail states and
    asserts `navWidth === APPS_RAIL_WIDTH` (260), `navLeft === containerLeft` (16),
-   `bodyLeft - navLeft === appsRailChromeWidth(false)` (276) and
+   `bodyLeft - navLeft === appsRailChromeWidth(false)` (292) and
    `bodyWidth === contentWidth - railChrome`. The aside's width is an INLINE `width` under
    `box-sizing: border-box`, so anything that consumes the aside's content box shrinks the
    nav inside it and moves its left edge:
@@ -118,7 +118,7 @@
 
      • `margin: -8px` + `padding: 8px` cancel EXACTLY in both axes, so the wrapper's
        CONTENT box — and therefore the nav's rect — is byte-identical to no surface at all.
-       The paint simply bleeds 8px past the aside's box, into the 16px `.railRow` gap and
+       The paint simply bleeds 8px past the aside's box, into the 32px `.railRow` gap and
        the Container's 16px gutter. That buys 8px of VISUAL INSET at zero layout cost.
      • The measured reason to want it: both forms were rendered and compared, and flush puts
        the active-row highlight hard against the ring with no breathing space between them.
@@ -130,7 +130,7 @@
 
    ⚠️ The bleed has BOUNDS, and they are not stylistic — `AppsPageLayout.railSurface.browser
    .test.tsx` asserts the margins are symmetric and that the bleed stays inside BOTH the
-   16px `.railRow` gap and the 16px sticky offset. Past the first, the panel overlaps the
+   32px `.railRow` gap and the 16px sticky offset. Past the first, the panel overlaps the
    body column and swallows clicks meant for the page; past the second, a stuck rail
    overlaps the global subnav and swallows clicks in it.
 

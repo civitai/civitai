@@ -50,21 +50,17 @@ import { parseCookies } from '~/shared/utils/cookies';
  */
 
 describe('the rail costs what the ladder and the layout think it costs', () => {
-  test('276px open, 72px collapsed', () => {
-    expect(appsRailChromeWidth(false)).toBe(276);
-    expect(appsRailChromeWidth(true)).toBe(72);
+  test('292px open, 88px collapsed', () => {
+    expect(appsRailChromeWidth(false)).toBe(292);
+    expect(appsRailChromeWidth(true)).toBe(88);
     expect(APPS_RAIL_COLLAPSED_WIDTH).toBe(56);
   });
 
-  test('🔴 the rail`s SIDE gap is the same constant as its TOP gap', () => {
-    // The rail is pinned to `subnavBottom + SUBNAV_STICKY_GAP` and separated from the body
-    // by `APPS_RAIL_GAP`. If those two drift the rail sits in an asymmetric corner.
-    // `appsRailGeometry` deliberately does NOT import `useSubnavBottom` — that would pull
-    // React into a module `appListingGrid.ts` reads — so the equality is asserted rather
-    // than enforced by construction, which is what makes this test load-bearing rather
-    // than tautological.
-    expect(APPS_RAIL_GAP).toBe(SUBNAV_STICKY_GAP);
-    expect(APPS_RAIL_GAP).toBe(16);
+  test('🔴 the rail gap is 32, and the panel bleed leaves the reader 24px', () => {
+    expect(APPS_RAIL_GAP).toBe(32);
+    // The sticky offset (16) is the rail's distance from the subnav above it, not this
+    // gap, so the two are allowed to differ.
+    expect(SUBNAV_STICKY_GAP).toBe(16);
   });
 
   /**
@@ -115,10 +111,10 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
     expect(thresholds(code).length, 'no @media rules parsed out of the stylesheet').toBeGreaterThan(
       0
     );
-    // The strip really removed the prose: `276px` appears only in a docstring here and can
+    // The strip really removed the prose: `292px` appears only in a docstring here and can
     // never be a media threshold, so it cannot stop being a valid witness.
-    expect(source, 'the comment-strip control lost its witness').toContain('276px');
-    expect(code).not.toContain('276px');
+    expect(source, 'the comment-strip control lost its witness').toContain('292px');
+    expect(code).not.toContain('292px');
     // …and 1300 IS named in the prose, which is the thing the strip exists for: an
     // unstripped scan would find it with every real rule deleted.
     expect(source).toContain('1300');
@@ -132,6 +128,19 @@ describe('🔴 SEAM — the stylesheet switches at exactly APPS_RAIL_MIN_VIEWPOR
         'what actually decides whether the rail renders; the constant is what every ' +
         'geometry test and docstring reasons about. Move both or neither.'
     ).toEqual([APPS_RAIL_MIN_VIEWPORT]);
+  });
+
+  test("🔴 .railRow's gap EQUALS APPS_RAIL_GAP", () => {
+    const code = strip(readStyles());
+    const row = code.match(/\.railRow\s*\{([^}]*)\}/);
+    expect(row, 'no .railRow rule parsed out of the stylesheet').not.toBeNull();
+    const gap = row![1].match(/(?:^|[\s;])gap:\s*(\d+)px/);
+    expect(gap, '.railRow declares no px gap').not.toBeNull();
+    expect(
+      Number(gap![1]),
+      'the stylesheet and APPS_RAIL_GAP disagree. appsRailChromeWidth, the store grid and the ' +
+        'alignment ledger all reason about the constant; the browser lays out the stylesheet.'
+    ).toBe(APPS_RAIL_GAP);
   });
 
   test('🔴 the rail and the drawer trigger are MUTUALLY EXCLUSIVE, in both directions', () => {
