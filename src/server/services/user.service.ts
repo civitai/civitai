@@ -521,7 +521,11 @@ export async function forceUpdateUserIdentity({
 
   let user;
   try {
-    user = await dbWrite.user.update({ where: { id: userId }, data });
+    user = await dbWrite.user.update({
+      where: { id: userId },
+      data,
+      omit: { subscriptionId: true },
+    });
   } catch (error) {
     // Translate Prisma unique-constraint violations into a 4xx for callers.
     if (
