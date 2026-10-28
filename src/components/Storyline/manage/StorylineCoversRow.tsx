@@ -1,4 +1,4 @@
-import { Alert, Button, Group, Modal, Skeleton, Stack, Text } from '@mantine/core';
+import { Alert, Button, FileButton, Group, Modal, Skeleton, Stack, Text } from '@mantine/core';
 import { useDebouncedCallback } from '@mantine/hooks';
 import { IconCheck, IconPhoto } from '@tabler/icons-react';
 import clsx from 'clsx';
@@ -7,6 +7,7 @@ import { HeroPositionPicker } from '~/components/Comics/HeroPositionPicker';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useQueryImages } from '~/components/Image/image.utils';
+import { useCFImageUpload } from '~/hooks/useCFImageUpload';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
@@ -41,7 +42,9 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
       Promise.all([
         utils.storyline.getById.invalidate({ id: storylineId }),
         // The feed's cards show the cover, and nothing else this row sets.
-        'coverImageId' in input ? utils.storyline.getInfinite.invalidate() : undefined,
+        'coverImageId' in input || 'coverUpload' in input
+          ? utils.storyline.getInfinite.invalidate()
+          : undefined,
       ]),
     onError: (e) => setError(e.message),
   });
@@ -50,7 +53,36 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
     { delay: 400, flushOnUnmount: true }
   );
 
+  const { uploadToCF } = useCFImageUpload();
+  const [uploading, setUploading] = useState<Slot | null>(null);
+
   if (!storyline) return null;
+  // The file goes up first; the server then makes it an image of the uploader and scans it.
+  const upload = async (slot: Slot, file: File | null) => {
+    if (!file) return;
+    setUploading(slot);
+    setError(null);
+    try {
+      const result = await uploadToCF(file);
+      const image = {
+        url: result.id,
+        width: result.width,
+        height: result.height,
+        hash: result.hash,
+        mimeType: result.mimeType,
+        type: 'image' as const,
+      };
+      if (slot === 'banner') {
+        savePosition.flush();
+        setPosition(null);
+        update.mutate({ id: storylineId, heroUpload: image });
+      } else update.mutate({ id: storylineId, coverUpload: image });
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : 'The upload failed. Try again.');
+    } finally {
+      setUploading(null);
+    }
+  };
   const save = (picks: { coverImageId?: number | null; heroImageId?: number | null }) =>
     update.mutate({ id: storylineId, ...picks });
   // On the dialog stack, so it opens above the Manage modal this row sits in.
@@ -79,7 +111,8 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
           Covers
         </Text>
         <Text size="xs" c="dimmed">
-          Pictures from your chapters and your endorsed collaborators&apos; chapters.
+          Pictures from your chapters and your endorsed collaborators&apos; chapters, or one you
+          upload.
         </Text>
       </div>
 
@@ -89,7 +122,10 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
           onChange={() => openPicker('cover')}
           onReset={storyline.coverImageId != null ? () => save({ coverImageId: null }) : undefined}
           resetLabel="Use chapter 1"
-          disabled={update.isPending}
+          onUpload={(file) => upload('cover', file)}
+          uploading={uploading === 'cover'}
+          pending={storyline.coverPickHidden}
+          disabled={update.isPending || !!uploading}
         >
           <StorylineThumb image={storyline.coverImage} width={96} className="rounded-lg" />
         </CoverSlot>
@@ -107,7 +143,10 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
               : undefined
           }
           resetLabel="Remove banner"
-          disabled={update.isPending}
+          onUpload={(file) => upload('banner', file)}
+          uploading={uploading === 'banner'}
+          pending={storyline.heroPickHidden}
+          disabled={update.isPending || !!uploading}
         >
           {storyline.heroIsBanner && storyline.heroImage ? (
             <ImageGuard2 image={storyline.heroImage} explain={false}>
@@ -185,6 +224,9 @@ function CoverSlot({
   onChange,
   onReset,
   resetLabel,
+  onUpload,
+  uploading,
+  pending,
   disabled,
   children,
 }: {
@@ -193,6 +235,10 @@ function CoverSlot({
   /** Only when something is picked. */
   onReset?: () => void;
   resetLabel: string;
+  onUpload: (file: File | null) => void;
+  uploading: boolean;
+  /** The pick is not showing yet, usually an upload still being scanned. */
+  pending: boolean;
   disabled?: boolean;
   children: React.ReactNode;
 }) {
@@ -202,10 +248,28 @@ function CoverSlot({
         {label}
       </Text>
       {children}
+      {pending && (
+        <Text size="xs" c="dimmed" className="max-w-[240px]">
+          Processing: your pick shows here and on the storyline once its scan clears it.
+        </Text>
+      )}
       <Group gap="xs">
         <Button size="compact-sm" variant="default" onClick={onChange} disabled={disabled}>
           Change
         </Button>
+        <FileButton onChange={onUpload} accept="image/png,image/jpeg,image/webp">
+          {(props) => (
+            <Button
+              {...props}
+              size="compact-sm"
+              variant="default"
+              loading={uploading}
+              disabled={disabled && !uploading}
+            >
+              Upload
+            </Button>
+          )}
+        </FileButton>
         {onReset && (
           <Button
             size="compact-sm"

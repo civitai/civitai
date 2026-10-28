@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CoverImageService from '~/server/services/cover-image.service';
 import { Prisma } from '@prisma/client';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as PlacementService from '~/server/services/placement.service';
@@ -33,6 +34,12 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   setFetchThroughCache,
 }));
 const setFetchThroughCache = vi.hoisted(() => vi.fn());
+const resolveCoverImageId = vi.hoisted(() => vi.fn());
+vi.mock('~/server/services/cover-image.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CoverImageService>()),
+  resolveCoverImageId,
+}));
+const UPLOAD_URL = '00000000-0000-4000-8000-000000000001';
 const createNotification = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -2280,7 +2287,7 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     const { text, values } = sqlAt(1);
     expect(text).toContain('JOIN "Post" p ON p.id = i."postId"');
     expect(text).toContain('AND i.minor = false AND i.poi = false');
-    expect(text).toContain(`AND (p.availability <> 'Private' OR p."userId" = ?)`);
+    expect(text).toContain(`AND (p.id IS NULL OR p.availability <> 'Private' OR p."userId" = ?)`);
     expect(values.filter((v) => v === STRANGER)).toHaveLength(2);
   });
 
@@ -2706,7 +2713,7 @@ describe('covers and cast', () => {
   };
   const rawCalls = () => r.$queryRaw.mock.calls.map(composed);
   const isFirstImageRead = (text: string) => text.includes('DISTINCT ON (i."postId")');
-  const isChosenImageRead = (text: string) => text.includes('WHERE i.id = ANY(');
+  const isChosenImageRead = (text: string) => text.includes('AS pick("storylineId", "imageId")');
   const image = (id: number, extra: Record<string, unknown> = {}) => ({
     id,
     url: `img-${id}`,
@@ -2724,6 +2731,7 @@ describe('covers and cast', () => {
     ...image(id),
     storylineId: 10,
     postId: 500 + id,
+    chapterId: id,
     postUserId: OWNER,
     postNsfwLevel: PG,
     publishedAt: new Date('2026-10-01'),
@@ -2769,7 +2777,10 @@ describe('covers and cast', () => {
   });
 
   describe('choosing a cover or banner', () => {
-    /** Image -> the chapter it is in: storyline, author, removed. */
+    /**
+     * Image -> the chapter it is in (storyline, author, removed), or for `upload` an image in no
+     * post, owned by `userId`; `post` is a post that is no chapter.
+     */
     const images = (
       rows: Record<
         number,
@@ -2780,6 +2791,10 @@ describe('covers and cast', () => {
           removed?: boolean;
           minor?: boolean;
           poi?: boolean;
+          upload?: boolean;
+          post?: boolean;
+          ingestion?: string;
+          tosViolation?: boolean;
         }
       >
     ) =>
@@ -2789,16 +2804,24 @@ describe('covers and cast', () => {
             .filter((id) => rows[id])
             .map((id) => ({
               id,
+              userId: rows[id].userId,
+              postId: rows[id].upload ? null : 500 + id,
+              ingestion: rows[id].ingestion ?? 'Scanned',
+              tosViolation: !!rows[id].tosViolation,
               nsfwLevel: rows[id].level ?? PG,
               minor: !!rows[id].minor,
               poi: !!rows[id].poi,
-              post: {
-                storylineChapter: {
-                  storylineId: rows[id].storylineId ?? 10,
-                  userId: rows[id].userId,
-                  removedAt: rows[id].removed ? new Date() : null,
-                },
-              },
+              post: rows[id].upload
+                ? null
+                : {
+                    storylineChapter: rows[id].post
+                      ? null
+                      : {
+                          storylineId: rows[id].storylineId ?? 10,
+                          userId: rows[id].userId,
+                          removedAt: rows[id].removed ? new Date() : null,
+                        },
+                  },
             }))
         )) as never);
 
@@ -2815,6 +2838,16 @@ describe('covers and cast', () => {
         7: { userId: OWNER, level: 0 },
         8: { userId: OWNER, minor: true },
         9: { userId: OWNER, poi: true },
+        // Uploads (in no post) and a posted image that is no chapter.
+        20: { userId: OWNER, upload: true },
+        21: { userId: STRANGER, upload: true },
+        22: { userId: MODERATOR, upload: true },
+        23: { userId: OWNER, upload: true, ingestion: 'Pending', level: 0 },
+        24: { userId: OWNER, upload: true, level: NsfwLevel.X },
+        25: { userId: OWNER, upload: true, tosViolation: true },
+        26: { userId: OWNER, upload: true, ingestion: 'Blocked' },
+        27: { userId: OWNER, upload: true, minor: true },
+        28: { userId: OWNER, post: true },
       });
     });
 
@@ -2846,10 +2879,17 @@ describe('covers and cast', () => {
     });
 
     it.each([
-      ['a community chapter', 3, /own chapters or an endorsed collaborator/],
-      ["another storyline's chapter", 4, /own chapters or an endorsed collaborator/],
-      ['a removed chapter', 5, /own chapters or an endorsed collaborator/],
-      ['no chapter at all', 404, /own chapters or an endorsed collaborator/],
+      ['a community chapter', 3, /own chapters, an endorsed collaborator's/],
+      ["another storyline's chapter", 4, /own chapters, an endorsed collaborator's/],
+      ['a removed chapter', 5, /own chapters, an endorsed collaborator's/],
+      ['no chapter at all', 404, /own chapters, an endorsed collaborator's/],
+      ["someone else's upload", 21, /own chapters, an endorsed collaborator's, or one you upload/],
+      ["a moderator's upload, picked by the owner", 22, /or one you upload/],
+      ['a post of the owner that is no chapter', 28, /or one you upload/],
+      ['an upload above the ceiling', 24, /above the storyline's maximum rating/],
+      ['an upload taken down', 25, /cannot be used as a cover or banner/],
+      ['an upload its scan blocked', 26, /cannot be used as a cover or banner/],
+      ['an upload of a minor', 27, /cannot be used as a cover or banner/],
       ['above the ceiling', 6, /above the storyline's maximum rating/],
       ['not rated yet', 7, /not been rated yet/],
       ['a minor', 8, /cannot be used as a cover or banner/],
@@ -2874,6 +2914,41 @@ describe('covers and cast', () => {
       await expect(
         updateStoryline({ id: 10, userId: OWNER, coverImageId: 1, maxNsfwLevel: NsfwLevel.PG })
       ).resolves.toBeDefined();
+    });
+
+    it('takes an image its owner uploaded, as cover or banner', async () => {
+      await updateStoryline({ id: 10, userId: OWNER, coverImageId: 20, heroImageId: 20 });
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({
+        data: { coverImageId: 20, heroImageId: 20 },
+      });
+    });
+
+    it("takes a moderator's own upload on someone else's storyline", async () => {
+      await updateStoryline({ id: 10, userId: MODERATOR, isModerator: true, coverImageId: 22 });
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 22 } });
+    });
+
+    // Saved while the scan runs; the read gate shows it only once the scan clears and rates it.
+    it('keeps an upload whose scan has not finished, unlike an unrated chapter image', async () => {
+      await updateStoryline({ id: 10, userId: OWNER, coverImageId: 23 });
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 23 } });
+      await expect(updateStoryline({ id: 10, userId: OWNER, coverImageId: 7 })).rejects.toThrow(
+        /not been rated yet/
+      );
+    });
+
+    it('makes an uploaded file an image of the uploader, then picks it', async () => {
+      resolveCoverImageId.mockResolvedValueOnce(20);
+      await updateStoryline({
+        id: 10,
+        userId: OWNER,
+        coverUpload: { url: UPLOAD_URL, type: 'image' },
+      });
+      expect(resolveCoverImageId).toHaveBeenCalledWith({
+        coverImage: { url: UPLOAD_URL, type: 'image' },
+        userId: OWNER,
+      });
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 20 } });
     });
 
     it("holds a moderator to the owner's rule", async () => {
@@ -3242,6 +3317,40 @@ describe('covers and cast', () => {
       expect(rawCalls().filter((call) => isChosenImageRead(call.text))).toHaveLength(1);
     });
 
+    it('shows an uploaded pick (in no post) the gate passes, as banner and cover', async () => {
+      withPicks({ heroImageId: 30, coverImageId: 30 });
+      answerRaw(
+        [{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }],
+        [picked(30, { chapterId: null, postId: null })]
+      );
+      const storyline = await page({ id: 99 });
+      expect(storyline.heroImage?.id).toBe(30);
+      expect(storyline.heroIsBanner).toBe(true);
+      expect(storyline.coverImage?.id).toBe(30);
+    });
+
+    it('never shows a pick from a post that is no chapter of it', async () => {
+      withPicks({ heroImageId: 31 });
+      answerRaw(
+        [{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }],
+        [picked(31, { chapterId: null })]
+      );
+      expect((await page({ id: 99 })).heroImage?.id).toBe(1101);
+    });
+
+    it('tells the owner a pick is not showing yet, and readers nothing', async () => {
+      withPicks({ heroImageId: 30, coverImageId: 30 });
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }], []);
+      expect(await page({ id: OWNER })).toMatchObject({
+        coverPickHidden: true,
+        heroPickHidden: true,
+      });
+      expect(await page({ id: 99 })).toMatchObject({
+        coverPickHidden: false,
+        heroPickHidden: false,
+      });
+    });
+
     it('shows a pick from a chapter only its author or a moderator may see, to them', async () => {
       withPicks({ heroImageId: 7 });
       const unpublished = [picked(7, { postUserId: STRANGER, publishedAt: null })];
@@ -3257,7 +3366,7 @@ describe('covers and cast', () => {
       await page({ id: 99 });
       const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
       expect(read.text).toContain(
-        'c."storylineId", i."postId", p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt", p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt", st."maxNsfwLevel", st."minorByScan" FROM "Image" i'
+        'st.id AS "storylineId", i."postId", c.id AS "chapterId", p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt", p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt", st."maxNsfwLevel", st."minorByScan" FROM unnest('
       );
     });
 
@@ -3278,14 +3387,16 @@ describe('covers and cast', () => {
       answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
       await page({ id: 99 });
       const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
-      expect(read.text).toContain('JOIN "StorylineChapter" c ON c."postId" = i."postId"');
-      expect(read.text).toContain('JOIN "Storyline" st ON st.id = c."storylineId"');
-      expect(read.text).toContain('JOIN "User" pu ON pu.id = p."userId"');
       expect(read.text).toContain(
-        `WHERE i.id = ANY(?::int[]) AND i.ingestion = 'Scanned' AND i."tosViolation" = false`
+        'JOIN "Image" i ON i.id = pick."imageId" JOIN "Storyline" st ON st.id = pick."storylineId"'
       );
+      expect(read.text).toContain(
+        'LEFT JOIN "StorylineChapter" c ON c."postId" = i."postId" AND c."storylineId" = st.id'
+      );
+      expect(read.text).toContain('LEFT JOIN "User" pu ON pu.id = p."userId"');
+      expect(read.text).toContain(`WHERE i.ingestion = 'Scanned' AND i."tosViolation" = false`);
       expect(read.text).toContain('c."removedAt", pu."bannedAt", pu."deletedAt"');
-      expect(read.values).toEqual([[7, 8], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+      expect(read.values).toEqual([[10, 10], [7, 8], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
       // The hidden lists are read once for the picks and the main route together.
       expect(getAllHiddenForUser).toHaveBeenCalledTimes(1);
     });
@@ -3495,7 +3606,14 @@ describe('covers and cast', () => {
       expect(items[0]).not.toHaveProperty('coverImageId');
       // Three reads for the page, whatever its size: the page, first images, picks.
       expect(r.$queryRaw).toHaveBeenCalledTimes(3);
-      expect(rawCalls().find((call) => isChosenImageRead(call.text))!.values[0]).toEqual([7, 8, 9]);
+      expect(
+        rawCalls()
+          .find((call) => isChosenImageRead(call.text))!
+          .values.slice(0, 2)
+      ).toEqual([
+        [10, 11, 12],
+        [7, 8, 9],
+      ]);
       expect(rawCalls()[0].text).toContain('st."createdAt", st."coverImageId" FROM "Storyline" st');
     });
 

@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as ImageUtilsMod from '~/components/Image/image.utils';
+import type * as CFImageUploadMod from '~/hooks/useCFImageUpload';
 import { DialogProvider } from '~/components/Dialog/DialogProvider';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { StorylineCoversRow } from '~/components/Storyline/manage/StorylineCoversRow';
@@ -44,6 +45,8 @@ const STORYLINE = {
   heroImagePosition: 50,
   coverImageId: null as number | null,
   heroImageId: null as number | null,
+  coverPickHidden: false,
+  heroPickHidden: false,
 };
 
 const img = (id: number, postId: number, extra: Record<string, unknown> = {}) => ({
@@ -73,6 +76,7 @@ const mocks = vi.hoisted(() => ({
   safe: true,
   invalidateById: vi.fn(async () => undefined),
   invalidateInfinite: vi.fn(async () => undefined),
+  upload: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -105,6 +109,15 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ),
   };
 });
+vi.mock('~/hooks/useCFImageUpload', async (importOriginal) => ({
+  ...(await importOriginal<typeof CFImageUploadMod>()),
+  useCFImageUpload: () => ({
+    uploadToCF: mocks.upload,
+    files: [],
+    resetFiles: vi.fn(),
+    removeImage: vi.fn(),
+  }),
+}));
 vi.mock('~/components/Image/image.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageUtilsMod>()),
   useQueryImages: (input: unknown, options: unknown) => {
@@ -161,7 +174,22 @@ beforeEach(() => {
   mocks.safe = true;
   for (const fn of [mocks.imageQuery, mocks.mutate, mocks.invalidateById, mocks.invalidateInfinite])
     fn.mockClear();
+  mocks.upload.mockReset();
 });
+
+const UPLOAD = {
+  id: 'uuid-up',
+  url: 'https://cdn/x',
+  width: 768,
+  height: 1024,
+  hash: 'h',
+  mimeType: 'image/png',
+};
+const choose = async (slotName: string) => {
+  await expect.element(slot(slotName)).toBeVisible();
+  const input = slot(slotName).element().querySelector('input[type="file"]') as HTMLInputElement;
+  await userEvent.upload(input, new File(['x'], 'cover.png', { type: 'image/png' }));
+};
 
 // The picker opens on the dialog stack, as it does inside the Manage modal.
 const Row = () => (
@@ -367,5 +395,58 @@ describe('StorylineCoversRow', () => {
     mocks.refusal = null;
     await page.getByRole('button', { name: 'Use chapter 1' }).click();
     await expect.element(page.getByTestId('storyline-covers-error')).not.toBeInTheDocument();
+  });
+
+  test('an uploaded file is sent as the card cover, and the feed cards refresh', async () => {
+    mocks.upload.mockResolvedValue(UPLOAD);
+    renderWithProviders(<Row />);
+    await choose('Card cover');
+    await expect
+      .poll(() => mocks.mutate.mock.calls)
+      .toEqual([
+        [
+          {
+            id: 2,
+            coverUpload: {
+              url: 'uuid-up',
+              width: 768,
+              height: 1024,
+              hash: 'h',
+              mimeType: 'image/png',
+              type: 'image',
+            },
+          },
+        ],
+      ]);
+    expect(mocks.invalidateInfinite).toHaveBeenCalled();
+  });
+
+  test('an uploaded file is sent as the banner', async () => {
+    mocks.upload.mockResolvedValue(UPLOAD);
+    renderWithProviders(<Row />);
+    await choose('Banner');
+    await expect
+      .poll(() => mocks.mutate.mock.calls[0]?.[0])
+      .toEqual(
+        expect.objectContaining({ heroUpload: expect.objectContaining({ url: 'uuid-up' }) })
+      );
+    expect(mocks.mutate.mock.calls[0][0]).not.toHaveProperty('coverUpload');
+  });
+
+  test('a failed upload is said, and nothing is saved', async () => {
+    mocks.upload.mockRejectedValue(new Error('Upload refused'));
+    renderWithProviders(<Row />);
+    await choose('Card cover');
+    await expect
+      .element(page.getByTestId('storyline-covers-error'))
+      .toHaveTextContent('Upload refused');
+    expect(mocks.mutate).not.toHaveBeenCalled();
+  });
+
+  test('a pick that is not showing yet says it is processing, in its own slot', async () => {
+    mocks.storyline = { ...STORYLINE, coverImageId: 30, coverPickHidden: true };
+    renderWithProviders(<Row />);
+    await expect.element(slot('Card cover')).toHaveTextContent('Processing');
+    expect(slot('Banner').element().textContent).not.toContain('Processing');
   });
 });

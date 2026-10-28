@@ -1,3 +1,6 @@
+import { uniqBy } from 'lodash-es';
+import type { ImageInput } from '~/server/schema/image.schema';
+import { resolveCoverImageId } from '~/server/services/cover-image.service';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
@@ -759,6 +762,7 @@ export async function createStoryline({
         await assertStorylinePicks(tx, {
           storylineId: storyline.id,
           ownerId: userId,
+          callerId: userId,
           maxNsfwLevel,
           imageIds: [coverImageId, heroImageId],
         });
@@ -784,6 +788,8 @@ export async function updateStoryline({
   coverImageId,
   heroImageId,
   heroImagePosition,
+  coverUpload,
+  heroUpload,
   userId,
   isModerator,
 }: {
@@ -796,10 +802,15 @@ export async function updateStoryline({
   coverImageId?: number | null;
   heroImageId?: number | null;
   heroImagePosition?: number;
+  /** A file the caller just uploaded, made an image of theirs and picked. */
+  coverUpload?: ImageInput;
+  heroUpload?: ImageInput;
   userId: number;
   isModerator?: boolean;
 }) {
   const current = await getOwnedStoryline({ storylineId: id, userId, isModerator });
+  if (coverUpload) coverImageId = await resolveCoverImageId({ coverImage: coverUpload, userId });
+  if (heroUpload) heroImageId = await resolveCoverImageId({ coverImage: heroUpload, userId });
   if (maxNsfwLevel !== undefined) {
     if (!isStorylineCeilingLevel(maxNsfwLevel))
       throw throwBadRequestError('Invalid maximum rating');
@@ -807,12 +818,13 @@ export async function updateStoryline({
   }
   if (title !== undefined)
     await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
-  // A moderator editing is held to the owner's rule: the picks are the owner's chapters'. A pick
-  // sent back unchanged is not judged again, so the picker can resend the whole form after a
+  // A chapter image is held to the owner's rule, whoever picks it; an upload must be the picker's
+  // own. A pick sent back unchanged is not judged again, so the picker can resend the whole form after a
   // collaborator whose image it is has been removed.
   await assertStorylinePicks(dbWrite, {
     storylineId: id,
     ownerId: current.userId,
+    callerId: userId,
     maxNsfwLevel: storylineCeiling({
       maxNsfwLevel: maxNsfwLevel ?? current.maxNsfwLevel,
       minorByScan: current.minorByScan,
@@ -1306,16 +1318,26 @@ export async function resolveStorylineTitleAppeal({
  * the owner changes it, unless the image itself is deleted. An image that later becomes hidden or
  * above a reader's level is replaced, for that reader, by chapter 1's first image they may see.
  */
+export const STORYLINE_PICK_REFUSALS = {
+  notAllowed:
+    "Choose an image from your own chapters, an endorsed collaborator's, or one you upload",
+  cannotUse: 'This image cannot be used as a cover or banner',
+  unrated: 'This image has not been rated yet. Try again once it has been',
+} as const;
+
 async function assertStorylinePicks(
   db: Db,
   {
     storylineId,
     ownerId,
+    callerId,
     maxNsfwLevel,
     imageIds,
   }: {
     storylineId: number;
     ownerId: number;
+    /** Who is picking: an image they uploaded (in no post) is theirs to use. */
+    callerId: number;
     maxNsfwLevel: number;
     /** undefined is no change and null clears: neither is checked. */
     imageIds: (number | null | undefined)[];
@@ -1328,6 +1350,10 @@ async function assertStorylinePicks(
       where: { id: { in: ids } },
       select: {
         id: true,
+        userId: true,
+        postId: true,
+        ingestion: true,
+        tosViolation: true,
         nsfwLevel: true,
         minor: true,
         poi: true,
@@ -1345,21 +1371,28 @@ async function assertStorylinePicks(
   for (const imageId of ids) {
     const image = byId.get(imageId);
     const chapter = image?.post?.storylineChapter;
-    if (
-      !image ||
-      !chapter ||
-      chapter.storylineId !== storylineId ||
-      chapter.removedAt ||
-      !allowedAuthors.has(chapter.userId)
-    )
-      throw throwBadRequestError(
-        "Choose an image from your own chapters or an endorsed collaborator's"
-      );
+    const fromChapter =
+      !!chapter &&
+      chapter.storylineId === storylineId &&
+      !chapter.removedAt &&
+      allowedAuthors.has(chapter.userId);
+    const uploaded = !!image && image.postId == null && image.userId === callerId;
+    if (!image || (!fromChapter && !uploaded))
+      throw throwBadRequestError(STORYLINE_PICK_REFUSALS.notAllowed);
     // Never shown as a cover or banner (see storylineImageVisible), so refused rather than kept.
-    if (image.minor || image.poi)
-      throw throwBadRequestError('This image cannot be used as a cover or banner');
-    if (!image.nsfwLevel)
-      throw throwBadRequestError('This image has not been rated yet. Try again once it has been');
+    if (
+      image.minor ||
+      image.poi ||
+      image.tosViolation ||
+      image.ingestion === 'Blocked' ||
+      image.ingestion === 'Error' ||
+      image.ingestion === 'NotFound'
+    )
+      throw throwBadRequestError(STORYLINE_PICK_REFUSALS.cannotUse);
+    // A fresh upload is kept while its scan runs: the read gate shows it only once the scan has
+    // cleared and rated it, and the owner is told it is processing until then.
+    if (uploaded && (image.ingestion !== 'Scanned' || !image.nsfwLevel)) continue;
+    if (!image.nsfwLevel) throw throwBadRequestError(STORYLINE_PICK_REFUSALS.unrated);
     if (!storylineLevelAllowed({ postLevel: image.nsfwLevel, maxNsfwLevel }))
       throw throwBadRequestError("This image is rated above the storyline's maximum rating");
   }
@@ -2261,6 +2294,9 @@ export async function getStoryline({
     coverImage: chosen(id, coverImageId) ?? firstChapter?.firstImage ?? null,
     coverImageId: isOwnerView ? coverImageId : null,
     heroImageId: isOwnerView ? heroImageId : null,
+    // A pick that is not showing, usually an upload whose scan has not cleared it yet.
+    coverPickHidden: isOwnerView && coverImageId != null && !chosen(id, coverImageId),
+    heroPickHidden: isOwnerView && heroImageId != null && !banner,
     titleAppealable,
     titleAppeal,
     rootChapterId: root?.id ?? null,
@@ -3226,7 +3262,7 @@ function storylineImageVisible(gate: StorylineImageGate) {
       AND i."acceptableMinor" = false
       -- Shown to everyone who sees the card or page, so no minor or real-person image.
       AND i.minor = false AND i.poi = false
-      AND (p.availability <> 'Private' OR p."userId" = ${viewerId})
+      AND (p.id IS NULL OR p.availability <> 'Private' OR p."userId" = ${viewerId})
       AND i."nsfwLevel" <> 0
       AND (i."nsfwLevel" & ${gate.browsingLevel}::int) <> 0
       AND (i."nsfwLevel" & ~(${storylineCeilingSql} * 2 - 1)) = 0
@@ -3304,14 +3340,18 @@ async function getChosenStorylineImages(
   picks: { storylineId: number; imageId: number | null }[]
 ) {
   const key = (storylineId: number, imageId: number) => `${storylineId}:${imageId}`;
-  const imageIds = [...new Set(picks.flatMap((pick) => (pick.imageId ? [pick.imageId] : [])))];
+  const pairs = uniqBy(
+    picks.flatMap((pick) => (pick.imageId ? [{ ...pick, imageId: pick.imageId }] : [])),
+    (pick) => key(pick.storylineId, pick.imageId)
+  );
   const found = new Map<string, StorylineFeedCover>();
-  if (imageIds.length) {
+  if (pairs.length) {
     const resolved = await gate();
     const rows = await dbRead.$queryRaw<
       (StorylineFeedCover & {
         storylineId: number;
-        postId: number;
+        postId: number | null;
+        chapterId: number | null;
         postUserId: number;
         postNsfwLevel: number;
         publishedAt: Date | null;
@@ -3323,22 +3363,30 @@ async function getChosenStorylineImages(
         minorByScan: boolean;
       })[]
     >`
-      SELECT ${storylineImageColumns}, c."storylineId", i."postId",
+      SELECT ${storylineImageColumns}, st.id AS "storylineId", i."postId", c.id AS "chapterId",
         p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt",
         p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt",
         st."maxNsfwLevel", st."minorByScan"
-      FROM "Image" i
-      JOIN "StorylineChapter" c ON c."postId" = i."postId"
-      JOIN "Storyline" st ON st.id = c."storylineId"
-      JOIN "Post" p ON p.id = i."postId"
-      JOIN "User" pu ON pu.id = p."userId"
-      WHERE i.id = ANY(${imageIds}::int[])
-        AND ${storylineImageVisible(resolved)}
+      FROM unnest(${pairs.map((pair) => pair.storylineId)}::int[], ${pairs.map(
+      (pair) => pair.imageId
+    )}::int[]) AS pick("storylineId", "imageId")
+      JOIN "Image" i ON i.id = pick."imageId"
+      JOIN "Storyline" st ON st.id = pick."storylineId"
+      LEFT JOIN "StorylineChapter" c ON c."postId" = i."postId" AND c."storylineId" = st.id
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      LEFT JOIN "User" pu ON pu.id = p."userId"
+      WHERE ${storylineImageVisible(resolved)}
     `;
     for (const row of rows) {
+      // An image picked from outside the chapters (an upload) was checked when it was picked; the
+      // gate above still judges it on every read.
+      if (row.chapterId == null) {
+        if (!row.postId) found.set(key(row.storylineId, row.id), toStorylineImage(row));
+        continue;
+      }
       const tombstone = getStorylineChapterTombstone({
         post: {
-          id: row.postId,
+          id: row.postId!,
           userId: row.postUserId,
           nsfwLevel: row.postNsfwLevel,
           publishedAt: row.publishedAt,

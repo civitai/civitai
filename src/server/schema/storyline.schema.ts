@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { PG_INT4_MAX } from '~/server/common/constants';
+import { imageInputSchema } from '~/server/schema/image.schema';
 import {
   STORYLINE_CAPTION_MAX_LENGTH,
   STORYLINE_CEILING_LEVELS,
@@ -34,6 +35,10 @@ export const createStorylineSchema = z.object({
 });
 export type CreateStorylineInput = z.infer<typeof createStorylineSchema>;
 
+const storylineUploadSchema = imageInputSchema.extend({
+  type: z.literal('image').default('image'),
+});
+
 export const updateStorylineSchema = z.object({
   id: z.number().int().positive(),
   title: titleSchema.optional(),
@@ -41,6 +46,9 @@ export const updateStorylineSchema = z.object({
   maxNsfwLevel: ceilingSchema.optional(),
   whoCanContinue: z.nativeEnum(StorylineWhoCanContinue).optional(),
   ...picksSchema,
+  /** A still image the caller just uploaded, to make theirs and pick as the cover or banner. */
+  coverUpload: storylineUploadSchema.optional(),
+  heroUpload: storylineUploadSchema.optional(),
 });
 export type UpdateStorylineInput = z.infer<typeof updateStorylineSchema>;
 
