@@ -1,8 +1,21 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import type { SubmitFunction } from '@sveltejs/kit';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
+  let submitting = $state(false);
+
+  const submit: SubmitFunction = () => {
+    submitting = true;
+    return async ({ update }) => {
+      try {
+        await update();
+      } finally {
+        submitting = false;
+      }
+    };
+  };
 </script>
 
 <h1>Simulate other voters</h1>
@@ -15,14 +28,14 @@
   <p class="notice" role="status">{form.message}</p>
 {:else if form?.success}
   <p class="notice" role="status">
-    {form.cast} votes cast. The item is now {form.itemStatus}{form.settled
+    Item #{form.itemId}: {form.cast} votes cast. It is now {form.itemStatus}{form.settled
       ? '.'
       : ', its rating is still to be written back; run the tick job.'}
   </p>
 {/if}
 
 {#each data.items as item (item.id)}
-  <form method="POST" action="?/simulate" use:enhance class="item">
+  <form method="POST" action="?/simulate" use:enhance={submit} class="item">
     <img src={item.src} alt="" width="96" />
     <div>
       <p>
@@ -31,7 +44,7 @@
       </p>
       <input type="hidden" name="itemId" value={item.id} />
       {#each item.options as option (option.value)}
-        <button type="submit" name="answer" value={option.value}>Resolve as {option.label}</button>
+        <button type="submit" name="answer" value={option.value} disabled={submitting}>Resolve as {option.label}</button>
       {/each}
     </div>
   </form>
@@ -57,6 +70,10 @@
   img {
     object-fit: cover;
     border: 1px solid var(--border);
+  }
+  button:disabled {
+    opacity: 0.5;
+    cursor: wait;
   }
   button {
     margin: 0 0.5rem 0.5rem 0;

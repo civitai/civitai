@@ -1,4 +1,5 @@
 <script lang="ts">
+  import StatusBar from '$lib/StatusBar.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -13,18 +14,9 @@
 
 <h1>Your judgments</h1>
 
-{#if data.status}
-  {@const status = data.status}
-  <p class="status">
-    {status.rank} · Level {status.level} · {status.xpIntoLevel}/{status.xpForNextLevel} XP · Fervor {status.fervor}
-    · Gold {status.goldEarned} earned, {status.goldPending} pending
-  </p>
-  <div class="bar" aria-hidden="true">
-    <div class="fill" style:width="{status.progressPercent}%"></div>
-  </div>
-{/if}
+<StatusBar status={data.status} />
 
-{#each data.judgments as judgment (judgment.itemId)}
+{#each data.judgments as judgment (`${judgment.itemId}:${judgment.at}`)}
   <article class="judgment">
     {#if judgment.src}
       <img src={judgment.src} alt="The subject of this judgment" width="96" height="96" />
@@ -32,11 +24,11 @@
       <div class="gone" role="img" aria-label="This image is no longer shown"></div>
     {/if}
     <div>
-      <p class="prompt">{judgment.prompt}</p>
+      <p class="muted">{judgment.prompt}</p>
       <p>Your answer: {judgment.answerLabel}</p>
-      <p class="meta">
+      <p class="muted">
         <span class="state {judgment.status}">{STATUS_TEXT[judgment.status]}</span>
-        · {judgment.xp} XP · {judgment.gold} gold · {new Date(judgment.at).toLocaleString()}
+        · {judgment.xp} XP · {judgment.gold} gold{judgment.status === 'pending' ? ' pending' : ''} · {new Date(judgment.at).toLocaleString()}
       </p>
     </div>
   </article>
@@ -56,19 +48,6 @@
 <p><a href="/play">Back to judging</a></p>
 
 <style>
-  .status {
-    margin: 0 0 0.25rem;
-    color: var(--muted);
-  }
-  .bar {
-    height: 4px;
-    margin-bottom: 1rem;
-    background: var(--border);
-  }
-  .fill {
-    height: 100%;
-    background: var(--gold);
-  }
   .judgment {
     display: flex;
     gap: 1rem;
@@ -87,10 +66,7 @@
   p {
     margin: 0.15rem 0;
   }
-  .prompt {
-    color: var(--muted);
-  }
-  .meta {
+  .muted {
     color: var(--muted);
   }
   .state.correct {

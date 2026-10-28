@@ -3,6 +3,7 @@
   import { dev } from '$app/environment';
   import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import StatusBar from '$lib/StatusBar.svelte';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -26,23 +27,17 @@
 
 <h1>Knights of New Order</h1>
 
-{#if data.status}
-  {@const status = data.status}
-  <p class="status">
-    {status.rank} · Level {status.level} · {status.xpIntoLevel}/{status.xpForNextLevel} XP
+<StatusBar status={data.status}>
+  {#snippet position()}
     {#if data.mode === 'trials' && data.trial.kind === 'question' && !showReveal}
       · Trial {data.trial.run.position} of {data.trial.run.total}
     {/if}
-  </p>
-  <p class="status">
-    Fervor {status.fervor} · Gold {status.goldEarned} earned, {status.goldPending} pending ·
-    <a href="/judgments">Your judgments</a>
+  {/snippet}
+  {#snippet links()}
+    · <a href="/judgments">Your judgments</a>
     {#if dev}· <a href="/dev/simulate">Simulate other voters</a>{/if}
-  </p>
-  <div class="bar" aria-hidden="true">
-    <div class="fill" style:width="{status.progressPercent}%"></div>
-  </div>
-{/if}
+  {/snippet}
+</StatusBar>
 
 {#if showReveal && form?.reveal}
   <div class="reveal" role="status" class:right={form.reveal.correct}>
@@ -161,19 +156,6 @@
   }
   .notice {
     color: var(--gold);
-  }
-  .status {
-    margin: 0 0 0.25rem;
-    color: var(--muted);
-  }
-  .bar {
-    height: 4px;
-    margin-bottom: 1rem;
-    background: var(--border);
-  }
-  .fill {
-    height: 100%;
-    background: var(--gold);
   }
   .reveal {
     border-left: 3px solid var(--border);
