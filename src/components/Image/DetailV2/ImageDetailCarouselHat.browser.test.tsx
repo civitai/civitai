@@ -265,35 +265,47 @@ describe('the image detail wears the image hat on the picture', () => {
     // Sampled every frame from before the swipe, so a hat left behind by a moving slide is recorded
     // rather than polled for: a hat more than 50px from every picture's left edge is off its picture.
     const strays: number[] = [];
+    let shownBefore = 0;
+    let travel = 0;
+    let swiping = false;
     let sampling = true;
-    const sample = () => {
-      const h = hat();
-      if (h) {
-        const lefts = [...document.querySelectorAll('[data-testid="picture"]')].map(
-          (p) => rect(p).left
-        );
-        const off = Math.min(...lefts.map((left) => Math.abs(rect(h).left - left)));
-        if (off > 50) strays.push(off);
-      }
-      if (sampling) requestAnimationFrame(sample);
-    };
-    sample();
     // The first picture is as wide as the slot, so its left is the slot's.
     const slotLeft = rect(document.querySelector('[data-testid="picture"]')).left;
-    goNext();
+    const sample = () => {
+      const h = hat();
+      const pictures = [...document.querySelectorAll('[data-testid="picture"]')];
+      if (h) {
+        if (!swiping) shownBefore++;
+        const off = Math.min(...pictures.map((p) => Math.abs(rect(h).left - rect(p).left)));
+        if (off > 50) strays.push(off);
+      }
+      // One frame can land after the test has unmounted the carousel.
+      if (pictures[0]) travel = Math.max(travel, Math.abs(rect(pictures[0]).left - slotLeft));
+      if (sampling) requestAnimationFrame(sample);
+    };
+    try {
+      sample();
+      await vi.waitFor(() => expect(shownBefore).toBeGreaterThan(2));
+      swiping = true;
+      goNext();
 
-    // Settled on the second picture, which is flush with the slot again: the hat is on its corner.
-    await vi.waitFor(
-      () => {
-        const second = rect(document.querySelectorAll('[data-testid="picture"]')[1]);
-        expect(Math.abs(second.left - slotLeft)).toBeLessThan(1);
-        expect(hat()).not.toBeNull();
-        expect(rect(hat()).bottom).toBeGreaterThan(second.top + 4);
-        expect(rect(hat()).top).toBeLessThan(second.top - 4);
-      },
-      { timeout: 3000 }
-    );
-    sampling = false;
+      // Settled on the second picture, which is flush with the slot again: the hat is on its corner.
+      await vi.waitFor(
+        () => {
+          const second = rect(document.querySelectorAll('[data-testid="picture"]')[1]);
+          expect(Math.abs(second.left - slotLeft)).toBeLessThan(1);
+          expect(hat()).not.toBeNull();
+          expect(rect(hat()).bottom).toBeGreaterThan(second.top + 4);
+          expect(rect(hat()).top).toBeLessThan(second.top - 4);
+        },
+        { timeout: 3000 }
+      );
+    } finally {
+      sampling = false;
+    }
+    // The samples saw a hat before the swipe and the pictures really travelling, so no strays means
+    // something.
+    expect(travel).toBeGreaterThan(100);
     expect(strays).toEqual([]);
   });
 

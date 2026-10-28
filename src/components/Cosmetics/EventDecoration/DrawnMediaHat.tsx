@@ -15,8 +15,8 @@ const SLOT_BLEED = { left: 0, top: 12 };
 /**
  * An image's hat on the box its picture is drawn in (the image detail letterboxes the picture in a
  * larger slot), as in the feed. The carousel clips what it draws, so the hat is portalled into
- * `layer`, over the slot, and measured from an empty host here: after the media and BEFORE
- * ImageStickerOverlay, marked as a media overlay so the sticker overlay still finds the picture.
+ * `layer`, over the slot, and measured from an empty host here, after the media and marked as a
+ * media overlay so the sticker overlay beside it still finds the picture.
  * Nothing is drawn without a `layer`, or while `hidden` (the slide is moving).
  */
 export function DrawnMediaHat({
