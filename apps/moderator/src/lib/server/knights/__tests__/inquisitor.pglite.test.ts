@@ -159,7 +159,7 @@ describe('getInquisitorQueue block markers', () => {
 
     const queue = await getInquisitorQueue();
 
-    expect(queue.map((i) => [i.id, i.blocked, i.blockedFor])).toEqual([
+    expect(queue.map((i) => [i.id, i.hasBlockMarker, i.blockedFor])).toEqual([
       [1, true, 'tos'],
       [2, true, 'csam'],
       [3, false, null],

@@ -30,6 +30,8 @@ directly (e.g. `import { sql } from 'kysely'`).
 The `/kysely` subpath imports only `kysely` + `pg` (never Prisma), so a Vite/SSR app can use it without
 pulling the Prisma engine.
 
+`@civitai/db/knights` holds queries shared by the Knights apps: `gradeKnightsVotes(db, itemId, correctAnswer)` settles every pending vote on an item as correct or failed. It takes a Kysely client or a transaction.
+
 ## Env (Prisma entry only)
 
 `loadDbEnv()` (called by `createPrismaClients`) **requires** all of: `DATABASE_URL`,
@@ -67,7 +69,7 @@ Kysely does not expose its dialect's pool.
 - **NUMERIC/INT8 → number**: `createKyselyClients` registers pg type parsers so these come back as JS
   numbers, not strings. Registration is lazy (per-factory-call), so merely importing `@civitai/db`
   elsewhere (the Prisma path) never flips global pg parsing. `timestamp without time zone` is parsed as UTC;
-  `parseTimestampAsUtc` is exported from `@civitai/db/kysely` so a test driver (PGlite) can parse it identically.
+  `parseTimestampAsUtc` is exported from `@civitai/db/kysely` so a test driver (PGlite) can parse it identically. Bind a `Date` into a `timestamp` column with `utc(date)` (also from `@civitai/db/kysely`); node-postgres would otherwise send it in the host's timezone.
 - **`pg` is transitive**: declare it in the app only if you `import 'pg'` directly.
 - **Dropped connections**: a dropped pg connection emits `'error'`, which crashes the process when
   nothing listens. `createPool`, `createClients` and `createKyselyClients` attach `guardPool`

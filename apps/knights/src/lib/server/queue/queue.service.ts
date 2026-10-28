@@ -75,7 +75,6 @@ export type CastVoteResult =
 const addHours = (date: Date, hours: number) => new Date(date.getTime() + hours * 3_600_000);
 const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
 
-/** Only images the public feeds would show: the same review-hold conditions as the image feed queries. */
 function servableItems(db: Executor) {
   return db
     .selectFrom('KnightsQueueItem as i')

@@ -41,7 +41,7 @@ export function clearKnightsSourcesConfigCache() {
   cached = null;
 }
 
-/** Runs inside the image scan result path, so it reads at most once per TTL and a hung Redis counts as off. */
+/** Called from the image-scan result path; must never block it. */
 export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
   if (cached && cached.expiresAt > Date.now()) return cached.config;
 
@@ -54,7 +54,7 @@ export async function getKnightsSourcesConfig(): Promise<KnightsSourcesConfig> {
       sysRedis.get(REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES),
       timedOut,
     ]);
-    // A slow Redis is off for this call only; caching it would keep sampling off for a full TTL.
+    // Don't cache the timeout: it would turn sampling off for a full TTL.
     if (raw === TIMED_OUT) return OFF;
     const config = parseKnightsSourcesConfig(raw);
     cached = { config, expiresAt: Date.now() + CONFIG_TTL_MS };

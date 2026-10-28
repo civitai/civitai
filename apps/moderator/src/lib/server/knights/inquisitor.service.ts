@@ -21,8 +21,7 @@ export type InquisitorItem = {
   source: string;
   currentLevel: number;
   locked: boolean;
-  /** Set when the image is blocked or carries a block reason; ruling a lower level does not clear either. */
-  blocked: boolean;
+  hasBlockMarker: boolean;
   blockedFor: string | null;
   createdAt: Date;
   votes: InquisitorVote[];
@@ -91,7 +90,7 @@ export async function getInquisitorQueue(): Promise<InquisitorItem[]> {
     const labels = new Map(parseOptions(options).map((option) => [option.value, option.label]));
     return {
       ...item,
-      blocked: hasBlockMarker({ ingestion, blockedFor: item.blockedFor }),
+      hasBlockMarker: hasBlockMarker({ ingestion, blockedFor: item.blockedFor }),
       votes: tallies
         .filter((tally) => tally.itemId === item.id)
         .map((tally) => ({
@@ -114,10 +113,9 @@ const TAKEN_OVER =
 const NOT_CLOSED =
   'The rating was applied but the item was not closed; reload and rule again with the same level.';
 
-/** How long a claim holds the item. Well beyond the slowest rating write, so only a dead ruling lapses. */
+/** Must outlast the rating write, or a live ruling can be reclaimed. */
 export const RULING_LEASE_MS = 10 * 60_000;
 
-/** A 'Ruling' item reuses `resolvedBy` as the holder and `nextAttemptAt` as the lease end. */
 async function claim(itemId: number, moderatorId: number, now: Date) {
   return dbWrite
     .updateTable('KnightsQueueItem')
@@ -168,7 +166,6 @@ export async function ruleOnInquisitorItem(
   }
 
   try {
-    // Setting a rating never clears a block marker; only the confirmed Restore action does.
     const image = await dbWrite
       .selectFrom('Image')
       .select(['ingestion', 'blockedFor'])

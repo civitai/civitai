@@ -2,7 +2,7 @@ import { parse } from 'pg-connection-string';
 
 const LOCAL_HOSTS = new Set(['localhost', '127.0.0.1', '::1', '[::1]']);
 
-/** Reads the host the way `pg` will connect to it, so a `?host=` override cannot point a local-looking URL elsewhere. */
+/** Checks the host `pg` actually connects to, not the URL authority. */
 export function assertLocalDatabase(connectionString: string | undefined): void {
   if (!connectionString) throw new Error('DATABASE_URL is not set.');
   let host: string | null | undefined;

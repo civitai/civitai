@@ -8031,7 +8031,7 @@ model KnightsQuestion {
   items          KnightsQueueItem[]
 }
 
-/// One question about one image, waiting for votes. Status: Open | Resolved | Inquisitor | Ruling | Closed. Ruling is an Inquisitor's short claim: resolvedBy holds it and nextAttemptAt is the lease end.
+/// One question about one image, waiting for votes. Status: Open | Resolved | Inquisitor | Ruling | Closed. Ruling is an Inquisitor's claim: resolvedBy holds it, nextAttemptAt is the lease end.
 model KnightsQueueItem {
   id                Int             @id @default(autoincrement())
   questionKey       String
@@ -8052,7 +8052,7 @@ model KnightsQueueItem {
   applyAttempts     Int             @default(0) // write-back tries so far; the cap hands the item to the Inquisitors
   nextAttemptAt     DateTime? // the next write-back try is not due before this; also the lease of a running try
   reason            String? // why an item left the normal path: blocked | moderator-ruled | missing | level-moved | attempts-exhausted
-  prediction        Json? // what the producing model expected; shown to moderators, never to players
+  prediction        Json? // the producing model's expected answer; not served to players
   createdAt         DateTime        @default(now())
   updatedAt         DateTime        @updatedAt
 

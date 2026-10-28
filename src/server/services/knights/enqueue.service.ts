@@ -62,7 +62,6 @@ export async function enqueueKnightsItems(
   if (!question) return refuseAll('unknown-question');
   if (!question.active) return refuseAll('inactive-question');
 
-  // Serve only images the public feeds would show: the review-hold conditions the image feeds apply.
   const images = new Map<number, boolean>(
     input.items.length === 0
       ? []

@@ -6,5 +6,4 @@ export const KNIGHTS_NSFW_LEVEL_QUESTION = 'knights.image.nsfwLevel';
 /** Ranks a queue item can wait at. Acolytes cannot judge and Inquisitors are the end of the path. */
 export const KNIGHTS_STAGE_RANKS = ['Knight', 'Templar', 'Paladin'] as const;
 
-/** How long an item waits at a stage before it escalates. */
 export const KNIGHTS_STAGE_TTL_HOURS = 72;

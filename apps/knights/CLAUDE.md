@@ -34,7 +34,7 @@ SQL on PGlite.
 - `getFeed`: open items the player's rank may judge, higher stages first, then priority and age, from the first
   question in that order. Which ranks may judge a stage is `canVote` in `ranks.ts`, shared with `castVote`; Inquisitors
   and Acolytes get no feed. It never selects the image's rating. Hidden checks are not served yet (no grader).
-  Only images the v1 feed would serve are served: level not 0 or Blocked, no block marker, post published.
+  Only images the public feeds would show are served (`servableImage`, `src/lib/server/servable-image.ts`, shared with `getFeed`, `castVote` and the dev script): an image-type, published post, level not 0 or Blocked, no block marker, no review hold.
 - `castVote`: refuses what the feed would not serve, then one transaction that locks the item row, refuses a vote
   that would weigh 0 (`no-weight`), writes the ledger row with its weight, and decides the stage's votes (`resolution.ts`): 5 votes
   and a 60% weighted share resolves; a split stays open to 10, then moves up Knight -> Templar -> Inquisitor (Paladin has
@@ -66,9 +66,8 @@ SQL on PGlite.
 
 The enqueue contract is `{ source, questionKey, items: [{ imageId, priority: 1|2|3, minRank?, votesNeeded?, expiresAt?, prediction? }] }`.
 It is implemented once, in the main app: `src/server/services/knights/enqueue.service.ts` (`enqueueKnightsItems`, one batch insert).
-Per item it answers `enqueued` | `duplicate` | `refused` (`unknown-question`, `inactive-question`, `bad-priority`, `bad-rank`, `bad-votes`,
-`bad-expiry`, `image-not-found`). Defaults and the stage-rank rule match `enqueueItem` here; the stage ranks and TTL live in
-`@civitai/shared/new-order`. A duplicate is an image that already has an Open or Inquisitor item for the question; the partial unique
+Per item it answers `enqueued` | `duplicate` | `refused` (refusal reasons: see the result type in `enqueue.service.ts`). Defaults and the stage-rank rule match `enqueueItem` here; the stage ranks and TTL live in
+`@civitai/shared/new-order`. An open, Inquisitor or Ruling item for the same question and image makes a new one a duplicate; the partial unique
 index `KnightsQueueItem_open_question_image_key` (migration `20261211120000_knights_v2_sources`, applied by hand, with the `prediction` column) closes the race.
 
 - `POST /api/mod/knights/enqueue` (`src/pages/api/mod/knights/enqueue.ts`): a moderator session or full-access API key that also holds the
@@ -78,11 +77,10 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261211120000_knig
   **off unless** the sys Redis key `system:knights-v2-sources` (`REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES`) holds
   `{"enabled":true,"sfwRate":1,"nsfwRate":0.3}`; a missing or unreadable key means off, rates are 0-1 samples per pool. Set it in sys Redis; no
   deploy needed.
-- Later sources, not built: label-store low-confidence items, reports, rating appeals, yes/no producers.
 - Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant). A moderator's rating goes through the moderator app's
   `updateImageNsfwLevel` (activity `setNsfwLevel`), the item closes (`moderator-ruled`) and its pending votes are graded against that level, Blocked included.
 - Dev queue: with the migration applied to your local database, `cd apps/knights && pnpm run dev:enqueue-recent [count]` enqueues the newest eligible
-  images (published, scanned, unlocked, not blocked, level not 0; default 50, max 1000) as source `dev-backfill`. It reads `DATABASE_URL` from
+  images (scanned, unlocked, and servable: published, level not 0 or Blocked, no block marker, no review hold; default 50, max 1000) as source `dev-backfill`. It reads `DATABASE_URL` from
   `apps/knights/.env`, is safe to repeat, and refuses to run unless the host is `localhost` or `127.0.0.1`.
 
 ## Wired packages
