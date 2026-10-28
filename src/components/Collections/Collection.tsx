@@ -25,6 +25,7 @@ import {
   IconDotsVertical,
   IconInbox,
   IconInfoCircle,
+  IconLink,
   IconLock,
   IconPhoto,
 } from '@tabler/icons-react';
@@ -34,6 +35,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import type { CSSProperties } from 'react';
 import { useState } from 'react';
+import { useClipboard } from '@mantine/hooks';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -537,6 +539,7 @@ export function Collection({
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
   const pendingInvite = usePendingInviteFor(collectionId);
+  const { copied, copy } = useClipboard({ timeout: 1500 });
 
   if (!isLoading && (!collection || isBlocked)) {
     // An invitee to a private collection has no permission on it until they accept, and the
@@ -901,6 +904,19 @@ export function Collection({
                             Review {abbreviateNumber(pendingReviewCount)}
                           </Button>
                         )}
+                        <Tooltip label={copied ? 'Copied' : 'Copy a link to this collection'} withArrow>
+                          <Button
+                            variant="light"
+                            radius="xl"
+                            leftSection={<IconLink size={16} />}
+                            className={classes.headerAction}
+                            onClick={() =>
+                              copy(`${window.location.origin}/collections/${collection.id}`)
+                            }
+                          >
+                            Copy link
+                          </Button>
+                        </Tooltip>
                         <CollectionContextMenu
                           collectionId={collection.id}
                           ownerId={collection.user.id}

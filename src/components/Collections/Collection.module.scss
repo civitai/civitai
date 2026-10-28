@@ -9,3 +9,13 @@
     font-size: 34px;
   }
 }
+
+// Header actions fade in when the header is hovered, so the title stays the focus.
+.headerAction {
+  opacity: 0;
+  transition: opacity 150ms ease;
+}
+
+.header:hover .headerAction {
+  opacity: 1;
+}
