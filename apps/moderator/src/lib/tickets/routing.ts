@@ -15,19 +15,28 @@ export const TICKET_ROUTING = {
   fallbackTopics: ['nsfw-moderation', 'image-moderation-appeal'],
 } as const;
 
+/** Freshdesk tag that hands a ticket to support whatever else would route it to moderation. */
+export const SENT_TO_SUPPORT_TAG = 'sent-to-support';
+
+/** Whether `tags` carries the sent-to-support tag. Freshdesk treats tags case-insensitively. */
+export const hasSentToSupportTag = (tags: readonly string[] | undefined): boolean =>
+  !!tags?.some((t) => t.toLowerCase() === SENT_TO_SUPPORT_TAG);
+
 export type RoutingInput = {
   cfFeature: string | null | undefined;
   status: number;
   routerTopic: string | null | undefined;
+  tags?: readonly string[];
 };
 
 const isIn = (list: readonly (string | number)[], value: string | number) => list.includes(value);
 
 /**
- * The view a ticket belongs to. A `cf_feature` an agent set always wins over the router's guess, so a
+ * The view a ticket belongs to. The sent-to-support tag beats every other rule. A `cf_feature` an agent set always wins over the router's guess, so a
  * support-labelled ticket stays in support even when the router thinks it is about moderation.
  */
-export function routeTicket({ cfFeature, status, routerTopic }: RoutingInput): TicketView {
+export function routeTicket({ cfFeature, status, routerTopic, tags }: RoutingInput): TicketView {
+  if (hasSentToSupportTag(tags)) return 'support';
   const feature = cfFeature?.trim() ?? '';
   if (feature && isIn(TICKET_ROUTING.moderationFeatures, feature)) return 'moderation';
   if (isIn(TICKET_ROUTING.moderationStatuses, status)) return 'moderation';

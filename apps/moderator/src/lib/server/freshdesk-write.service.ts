@@ -91,3 +91,13 @@ export const setTicketStatus = (ticketId: string, status: number): Promise<Write
   isFreshdeskId(ticketId)
     ? freshdeskWrite('PUT', ticketPath(ticketId), { status })
     : Promise.resolve(badId);
+
+/** Fields of one ticket, replaced as given: Freshdesk's PUT replaces `tags` wholesale, so the caller
+ *  sends the full array. */
+export const updateTicket = (
+  ticketId: string,
+  fields: Record<string, unknown>
+): Promise<WriteResult> =>
+  isFreshdeskId(ticketId)
+    ? freshdeskWrite('PUT', ticketPath(ticketId), fields)
+    : Promise.resolve(badId);

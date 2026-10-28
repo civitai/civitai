@@ -4,10 +4,11 @@ import {
   type TicketSummary,
   type Unavailable,
 } from '../freshdesk.service';
+import { sentByTickets, type SentBy } from './sent-by';
 import { createLoadCache, readAll, type Budget, type Searched } from './search';
 import { getRoutedTicketContext, type RoutedTicketContext } from '../decision-sources/support';
 import { moderationQuery, statusQuery, unclassifiedQuery } from '$lib/tickets/queries';
-import { routeTicket, type TicketView } from '$lib/tickets/routing';
+import { hasSentToSupportTag, routeTicket, type TicketView } from '$lib/tickets/routing';
 import { LIVE_STATUSES, statusLabel } from '$lib/tickets/statuses';
 
 export type TicketRow = {
@@ -23,6 +24,10 @@ export type TicketRow = {
   createdAt: string | null;
   updatedAt: string | null;
   freshdeskUrl: string;
+  /** Carries the sent-to-support tag. */
+  sentToSupport: boolean;
+  /** Who sent it, when ModActivity has the row; a ticket tagged by hand has none. */
+  sentBy: SentBy | null;
 };
 
 export type TicketListResult =
@@ -104,7 +109,22 @@ export async function listTickets(
       );
     }
 
-    const rows = [...found.values()]
+    const visible = [...found.values()].filter(
+      (t) =>
+        routeTicket({
+          cfFeature: t.cfFeature,
+          status: t.status,
+          routerTopic: context.get(t.id)?.topic,
+          tags: t.tags,
+        }) === view
+    );
+    // Only the support view shows who sent a ticket, and only tagged tickets can have been sent.
+    const sentBy =
+      view === 'support'
+        ? await sentByTickets(visible.filter((t) => hasSentToSupportTag(t.tags)).map((t) => t.id))
+        : new Map<string, SentBy>();
+
+    const rows = visible
       .map((t): TicketRow => {
         const routed = context.get(t.id);
         return {
@@ -119,13 +139,10 @@ export async function listTickets(
           createdAt: t.createdAt,
           updatedAt: t.updatedAt,
           freshdeskUrl: freshdeskTicketUrl(t.id),
+          sentToSupport: hasSentToSupportTag(t.tags),
+          sentBy: sentBy.get(t.id) ?? null,
         };
       })
-      .filter(
-        (r) =>
-          routeTicket({ cfFeature: r.cfFeature, status: r.status, routerTopic: r.routerTopic }) ===
-          view
-      )
       .sort((a, b) => (b.updatedAt ?? '').localeCompare(a.updatedAt ?? ''));
     return { status: 'ok', rows, warnings };
   } catch (e) {

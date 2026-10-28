@@ -269,6 +269,7 @@ export type TicketSummary = {
   subject: string;
   status: number;
   cfFeature: string | null;
+  tags: string[];
   createdAt: string | null;
   updatedAt: string | null;
 };
@@ -280,6 +281,7 @@ type RawTicket = {
   created_at?: string | null;
   updated_at?: string | null;
   custom_fields?: { cf_feature?: string | null } | null;
+  tags?: unknown;
   description?: string | null;
   requester?: { name?: string | null; email?: string | null } | null;
 };
@@ -293,6 +295,7 @@ function summarise(t: RawTicket): TicketSummary | null {
     subject: t.subject ?? '',
     status: t.status,
     cfFeature: typeof feature === 'string' && feature.trim() ? feature.trim() : null,
+    tags: Array.isArray(t.tags) ? t.tags.filter((x): x is string => typeof x === 'string') : [],
     createdAt: t.created_at ?? null,
     updatedAt: t.updated_at ?? null,
   };

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { TICKET_ROUTING, routeTicket } from './routing';
+import { SENT_TO_SUPPORT_TAG, TICKET_ROUTING, routeTicket } from './routing';
 
 const OPEN = 2;
 const WAITING_ON_MOD_LEAD = 8;
@@ -43,5 +43,34 @@ describe('routeTicket', () => {
     expect(
       routeTicket({ cfFeature: 'Content Related Issue', status: OPEN, routerTopic: null })
     ).toBe('support');
+  });
+
+  describe('the sent-to-support tag', () => {
+    const tags = ['other', SENT_TO_SUPPORT_TAG];
+
+    it('routes a Moderation Decision ticket to support', () => {
+      expect(
+        routeTicket({ cfFeature: 'Moderation Decision', status: OPEN, routerTopic: null, tags })
+      ).toBe('support');
+    });
+
+    it('routes a "Waiting on Mod Lead" ticket to support', () => {
+      expect(
+        routeTicket({ cfFeature: null, status: WAITING_ON_MOD_LEAD, routerTopic: null, tags })
+      ).toBe('support');
+    });
+
+    it('routes a ticket with a moderation router topic to support', () => {
+      expect(
+        routeTicket({ cfFeature: null, status: OPEN, routerTopic: 'nsfw-moderation', tags })
+      ).toBe('support');
+    });
+
+    it('matches the tag whatever its case, and ignores other tags', () => {
+      const base = { cfFeature: 'Moderation Decision', status: OPEN, routerTopic: null };
+      expect(routeTicket({ ...base, tags: ['Sent-To-Support'] })).toBe('support');
+      expect(routeTicket({ ...base, tags: ['test-ticket-views'] })).toBe('moderation');
+      expect(routeTicket({ ...base, tags: [] })).toBe('moderation');
+    });
   });
 });

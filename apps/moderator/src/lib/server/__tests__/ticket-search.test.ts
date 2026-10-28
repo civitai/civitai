@@ -11,6 +11,7 @@ const ticket = (i: number): TicketSummary => ({
   subject: `t${i}`,
   status: 2,
   cfFeature: null,
+  tags: [],
   createdAt: `${day(i % 120)}T10:00:00Z`,
   updatedAt: null,
 });

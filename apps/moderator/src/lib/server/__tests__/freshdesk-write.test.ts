@@ -1,5 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { addPrivateNote, replyToTicket, setTicketStatus } from '../freshdesk-write.service';
+import {
+  addPrivateNote,
+  replyToTicket,
+  setTicketStatus,
+  updateTicket,
+} from '../freshdesk-write.service';
 
 /** Every call against a stubbed `fetch` — no Freshdesk request is made. */
 
@@ -59,6 +64,16 @@ describe('freshdesk write calls', () => {
     expect(url).toBe('https://help.example.test/api/v2/tickets/74924');
     expect(init.method).toBe('PUT');
     expect(body).toEqual({ status: 4 });
+  });
+
+  it('updates fields with PUT /tickets/{id}, sending the tags array as given', async () => {
+    fetchMock.mockResolvedValue(json({ id: 74924 }));
+    const fields = { tags: ['a', 'sent-to-support'], group_id: 154000246097, status: 2 };
+    expect(await updateTicket('74924', fields)).toEqual({ status: 'ok' });
+    const { url, init, body } = sent();
+    expect(url).toBe('https://help.example.test/api/v2/tickets/74924');
+    expect(init.method).toBe('PUT');
+    expect(body).toEqual(fields);
   });
 
   it('is not_configured without the write key, and never falls back to the read key', async () => {

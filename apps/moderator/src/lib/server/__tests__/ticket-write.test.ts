@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { createTicketWriter, type WriteDeps } from '../tickets/write';
 import type { WriteResult } from '../freshdesk-write.service';
 
+const FIELDS = { tags: ['a', 'sent-to-support'], group_id: 154000246097 };
 const ok: WriteResult = { status: 'ok' };
 const boom: WriteResult = { status: 'error', httpStatus: 500, certain: false, message: 'down' };
 const refused: WriteResult = {
@@ -12,12 +13,20 @@ const refused: WriteResult = {
 };
 const mod = { id: 7, username: 'alice' };
 
-function setup(over: Partial<{ reply: WriteResult; note: WriteResult; status: WriteResult }> = {}) {
+function setup(
+  over: Partial<{
+    reply: WriteResult;
+    note: WriteResult;
+    status: WriteResult;
+    escalate: WriteResult;
+  }> = {}
+) {
   const calls: string[] = [];
   const deps: WriteDeps = {
     reply: vi.fn(async () => (calls.push('reply'), over.reply ?? ok)),
     note: vi.fn(async () => (calls.push('note'), over.note ?? ok)),
     status: vi.fn(async () => (calls.push('status'), over.status ?? ok)),
+    escalate: vi.fn(async () => (calls.push('escalate'), over.escalate ?? ok)),
     record: vi.fn(async () => {}),
   };
   return { calls, deps, writer: createTicketWriter(deps) };
@@ -109,5 +118,47 @@ describe('set status', () => {
     expect((res as { warning: string }).warning).toMatch(
       /status was changed.*attribution note failed/i
     );
+  });
+});
+
+describe('escalate', () => {
+  it('updates the ticket, records the activity, then leaves a note with the reason', async () => {
+    const { calls, deps, writer } = setup();
+    const res = await writer.escalate('9', FIELDS, 'Not a moderation matter', mod);
+    expect(res).toEqual({ ok: true, statusChanged: true, movedTo: 'support' });
+    expect(calls).toEqual(['escalate', 'note']);
+    expect(deps.escalate).toHaveBeenCalledWith('9', FIELDS);
+    expect(deps.record).toHaveBeenCalledWith(7, 9, 'ticketEscalate');
+    expect(deps.note).toHaveBeenCalledWith(
+      '9',
+      'Sent to support by alice (user 7) from the moderator app.\nReason: Not a moderation matter'
+    );
+  });
+
+  it('omits the reason line when none was given', async () => {
+    const { deps, writer } = setup();
+    await writer.escalate('9', FIELDS, null, mod);
+    expect(deps.note).toHaveBeenCalledWith(
+      '9',
+      'Sent to support by alice (user 7) from the moderator app.'
+    );
+  });
+
+  it('reports a moved ticket whose note failed as a warning, not a failure', async () => {
+    const { writer } = setup({ note: boom });
+    const res = await writer.escalate('9', FIELDS, null, mod);
+    expect(res).toMatchObject({ ok: true, movedTo: 'support' });
+    expect((res as { warning: string }).warning).toMatch(/sent to support.*note failed/i);
+  });
+
+  it('says NOT sent to support only on a certain refusal, and records nothing', async () => {
+    const certain = setup({ escalate: refused });
+    const res = await certain.writer.escalate('9', FIELDS, null, mod);
+    expect((res as { message: string }).message).toMatch(/NOT sent to support/);
+    expect(certain.deps.record).not.toHaveBeenCalled();
+    expect(certain.calls).toEqual(['escalate']);
+
+    const unsure = await setup({ escalate: boom }).writer.escalate('9', FIELDS, null, mod);
+    expect((unsure as { message: string }).message).toMatch(/may or may not have been sent/);
   });
 });

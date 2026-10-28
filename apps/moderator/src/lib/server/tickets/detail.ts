@@ -7,8 +7,9 @@ import {
   type TicketConversationResult,
 } from '../freshdesk.service';
 import { getRoutedTicketContext } from '../decision-sources/support';
+import { sentByTickets } from './sent-by';
 import { resolveUserId } from '../user-lookup.service';
-import { routeTicket, type TicketView } from '$lib/tickets/routing';
+import { hasSentToSupportTag, routeTicket, type TicketView } from '$lib/tickets/routing';
 import { statusLabel } from '$lib/tickets/statuses';
 
 /**
@@ -19,7 +20,7 @@ import { statusLabel } from '$lib/tickets/statuses';
  */
 export async function resolveTicketView(
   ticketId: string,
-  ticket: { cfFeature: string | null; status: number }
+  ticket: { cfFeature: string | null; status: number; tags: string[] }
 ) {
   const routed = await getRoutedTicketContext([ticketId], false).then(
     (m) => m.get(ticketId),
@@ -32,6 +33,7 @@ export async function resolveTicketView(
     cfFeature: ticket.cfFeature,
     status: ticket.status,
     routerTopic: routed?.topic,
+    tags: ticket.tags,
   });
   return { routesTo, routed };
 }
@@ -64,6 +66,9 @@ export async function loadTicketDetail(view: TicketView, ticketId: string, local
     }
   }
 
+  const sentToSupport = hasSentToSupportTag(ticket.tags);
+  const sentBy = sentToSupport ? (await sentByTickets([ticketId])).get(ticketId) ?? null : null;
+
   const conversation: Promise<TicketConversationResult> = getTicketConversation(ticketId).catch(
     () => ({ status: 'unavailable' as const, reason: 'Freshdesk could not be read.' })
   );
@@ -83,9 +88,12 @@ export async function loadTicketDetail(view: TicketView, ticketId: string, local
       requesterName: ticket.requesterName,
       ...(canSeeEmail ? { requesterEmail: ticket.requesterEmail } : {}),
       civitaiUserId,
+      sentToSupport,
+      sentBy,
     },
     view,
     canReply: !!locals.grants['tickets.reply'],
+    canEscalate: view === 'moderation' && !!locals.grants['tickets.escalate'],
     // Not awaited: SvelteKit streams it, so a slow conversation read delays that panel, not the page.
     conversation,
   };

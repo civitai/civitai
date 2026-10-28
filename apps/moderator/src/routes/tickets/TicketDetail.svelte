@@ -1,12 +1,14 @@
 <script lang="ts">
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
+  import TicketEscalate from './TicketEscalate.svelte';
   import TicketReply from './TicketReply.svelte';
   import type { loadTicketDetail } from '$lib/server/tickets/detail';
 
   let { data }: { data: Awaited<ReturnType<typeof loadTicketDetail>> } = $props();
 
   const t = $derived(data.ticket);
+  const sentByLabel = $derived(t.sentBy?.username ?? (t.sentBy ? `user ${t.sentBy.moderatorId}` : null));
   const email = $derived('requesterEmail' in t ? (t.requesterEmail ?? '—') : null);
 </script>
 
@@ -47,6 +49,16 @@
         <span class="text-dark-2">no linked Civitai account</span>
       {/if}
     </dd>
+    {#if t.sentToSupport}
+      <dt class="text-dark-2">Sent to support</dt>
+      <dd>
+        {#if t.sentBy}
+          by {sentByLabel} · {dateTime(t.sentBy.at)}
+        {:else}
+          <span class="text-dark-2">by whom is not recorded</span>
+        {/if}
+      </dd>
+    {/if}
     <dt class="text-dark-2">Updated</dt>
     <dd>{dateTime(t.updatedAt)}</dd>
   </dl>
@@ -104,4 +116,8 @@
 
 {#if data.canReply}
   <TicketReply ticketId={t.id} view={data.view} currentStatus={t.status} />
+{/if}
+
+{#if data.canEscalate}
+  <TicketEscalate ticketId={t.id} />
 {/if}

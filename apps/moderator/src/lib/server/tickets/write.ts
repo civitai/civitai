@@ -1,10 +1,13 @@
 import type { WriteResult } from '../freshdesk-write.service';
+import type { EscalationFields } from '$lib/tickets/escalate';
+import type { TicketView } from '$lib/tickets/routing';
 import { statusLabel } from '$lib/tickets/statuses';
 
 export type WriteDeps = {
   reply: (ticketId: string, bodyHtml: string) => Promise<WriteResult>;
   note: (ticketId: string, text: string) => Promise<WriteResult>;
   status: (ticketId: string, status: number) => Promise<WriteResult>;
+  escalate: (ticketId: string, fields: EscalationFields) => Promise<WriteResult>;
   /** Best-effort record of who did it; never throws. */
   record: (moderatorId: number, ticketId: number, activity: string) => Promise<void>;
 };
@@ -12,7 +15,7 @@ export type WriteDeps = {
 export type Moderator = { id: number; username?: string };
 
 export type WriteOutcome =
-  | { ok: true; statusChanged: boolean; warning?: string }
+  | { ok: true; statusChanged: boolean; movedTo?: TicketView; warning?: string }
   | { ok: false; notConfigured: boolean; message: string };
 
 const NOT_CONFIGURED = 'FRESHDESK_WRITE_API_KEY is not configured — nothing was sent.';
@@ -117,6 +120,47 @@ export function createTicketWriter(deps: WriteDeps) {
         ...(noteError
           ? {
               warning: `The status was changed, but the attribution note failed (${noteError}) — add "${line}" to the ticket by hand.`,
+            }
+          : {}),
+      };
+    },
+
+    /**
+     * Hands a ticket to support: one PUT (tags, group, maybe status), then the activity row and a note
+     * naming the moderator and why. Nothing is emailed to the customer.
+     *
+     * 🔴 ONCE THE PUT HAS LANDED the ticket has left the moderation view, so a failed note is a `warning`
+     * on a success: a failure would send the moderator back to retry on a ticket that is already gone.
+     */
+    async escalate(
+      ticketId: string,
+      fields: EscalationFields,
+      reason: string | null,
+      moderator: Moderator
+    ): Promise<WriteOutcome> {
+      const res = await deps.escalate(ticketId, fields);
+      if (res.status !== 'ok')
+        return failure(
+          res,
+          'The ticket was NOT sent to support',
+          'The ticket may or may not have been sent to support'
+        );
+      await deps.record(moderator.id, ticketNumber(ticketId), 'ticketEscalate');
+
+      const lines = [
+        `Sent to support by ${by(moderator)}`,
+        ...(reason ? [`Reason: ${reason}`] : []),
+      ];
+      const noteError = await attribute(ticketId, lines);
+      return {
+        ok: true,
+        statusChanged: true,
+        movedTo: 'support',
+        ...(noteError
+          ? {
+              warning: `The ticket was sent to support, but the attribution note failed (${noteError}) — add "${lines.join(
+                ' '
+              )}" to the ticket by hand.`,
             }
           : {}),
       };

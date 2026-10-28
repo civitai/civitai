@@ -45,7 +45,18 @@
             >↗</a
           >
         </TableCell>
-        <TableCell class="max-w-md whitespace-normal">{row.subject || '—'}</TableCell>
+        <TableCell class="max-w-md whitespace-normal">
+          {row.subject || '—'}
+          {#if row.sentToSupport}
+            <div>
+              <Badge variant="outline"
+                >Sent to support{row.sentBy
+                  ? ` by ${row.sentBy.username ?? `user ${row.sentBy.moderatorId}`}`
+                  : ''}</Badge
+              >
+            </div>
+          {/if}
+        </TableCell>
         <TableCell>{row.statusLabel}</TableCell>
         <TableCell>
           {#if row.cfFeature}
