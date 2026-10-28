@@ -74,7 +74,11 @@ import {
 } from '~/shared/utils/appeal';
 import { clickhouse } from '~/server/clickhouse/client';
 import { getModeratedTags } from '~/server/services/system-cache';
-import { LOCK_REVIEW_KIND, type LockReviewContext } from '@civitai/shared/lock-review';
+import {
+  LOCK_REVIEW_KIND,
+  type LockReviewContext,
+  parseLockReviewContext,
+} from '@civitai/shared/lock-review';
 
 export const getReportById = <TSelect extends Prisma.ReportSelect>({
   id,
@@ -841,6 +845,10 @@ export function reopenAppeal({
   });
 }
 
+const lockReviewWhere = {
+  context: { path: ['kind'], equals: LOCK_REVIEW_KIND },
+} satisfies Prisma.AppealWhereInput;
+
 export function getAppealCount({
   userId,
   status,
@@ -859,6 +867,8 @@ export function getAppealCount({
       category: null,
       // Waiting on review because the content was removed first is not the user's doing.
       NOT: { status: AppealStatus.Pending, entityRemovedAt: { not: null } },
+      // A request to unlock a setting is not a dispute of a removal.
+      AND: [{ OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReviewWhere }] }],
     },
   });
 }
@@ -1079,7 +1089,12 @@ async function refundAppealFee(appeal: AppealFeeRef) {
 type ClaimedOrphan = Omit<AppealFeeRef, 'buzzTransactionId'> & {
   userId: number;
   buzzTransactionId: string | null;
+  context?: unknown;
 };
+
+/** An owner who deleted their model is never told its lock review closed. Whether that notice is sent
+ *  is held back for an account under a hold, and a lock review can be filed at will to read that. */
+const notifiesOwnerDeleted = (appeal: ClaimedOrphan) => !parseLockReviewContext(appeal.context);
 
 type OrphanCandidate = ClaimedOrphan & {
   createdAt: Date;
@@ -1237,7 +1252,7 @@ function closeOrphans(ids: number[], reason: string | null) {
       "resolvedAt" = now(), "updatedAt" = now()
     WHERE id = ANY(${ids})
       AND status = 'Pending'::"AppealStatus" AND "entityRemovedAt" IS NULL
-    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId", context
   `;
 }
 
@@ -1248,7 +1263,7 @@ function routeOrphansForReview(ids: number[]) {
     SET "entityRemovedAt" = now(), "updatedAt" = now()
     WHERE id = ANY(${ids})
       AND status = 'Pending'::"AppealStatus" AND "entityRemovedAt" IS NULL
-    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId", context
   `;
 }
 
@@ -1325,7 +1340,7 @@ export async function closeAppealsDeletedByOwner({
         "resolvedAt" = now(), "updatedAt" = now()
       WHERE "entityType" = ${entityType}::"EntityType" AND "entityId" = ANY(${entityIds})
         AND "userId" = ${ownerId} AND status = 'Pending'::"AppealStatus"
-      RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+      RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId", context
     `;
   } catch (e) {
     logFailure(e, {});
@@ -1346,7 +1361,7 @@ export async function closeAppealsDeletedByOwner({
     return;
   }
   for (const appeal of closed)
-    if (!quiet.has(appeal.id))
+    if (!quiet.has(appeal.id) && notifiesOwnerDeleted(appeal))
       await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', refunded.get(appeal.id));
 }
 
@@ -1447,7 +1462,8 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
   for (const appeal of closedQuietly) await refund(appeal);
   for (const appeal of closedOwnerDeleted) {
     const wasRefunded = await refund(appeal);
-    await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', wasRefunded);
+    if (notifiesOwnerDeleted(appeal))
+      await notifyOrphanedAppeal(appeal, 'closed-owner-deleted', wasRefunded);
   }
   for (const appeal of routed) await notifyOrphanedAppeal(appeal, 'under-review');
 
@@ -1475,7 +1491,6 @@ export async function resolveEntityAppeal({
   /** 'flag' leaves a model's pending lock review, which is ruled on by its own path, open. */
   modelAppealKind?: 'flag';
 }) {
-  const lockReview = { context: { path: ['kind'], equals: LOCK_REVIEW_KIND } };
   // One statement claims the appeals: a concurrent resolution that already closed one gets nothing
   // back for it, so only one of them refunds.
   const appeals = await dbWrite.appeal.updateManyAndReturn({
@@ -1487,7 +1502,7 @@ export async function resolveEntityAppeal({
       category: null,
       // A JSON path NOT alone also drops the rows whose context is NULL, which every flag appeal's is.
       ...(modelAppealKind === 'flag' && {
-        OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReview }],
+        OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReviewWhere }],
       }),
     },
     data: {

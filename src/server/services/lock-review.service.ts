@@ -12,6 +12,7 @@ import {
 import { resolutionReasonError } from '@civitai/shared/resolution-reasons';
 import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
@@ -78,6 +79,14 @@ export async function getLockReviewState({
   };
 }
 
+export async function isLockReview(appealId: number) {
+  const appeal = await dbWrite.appeal.findUnique({
+    where: { id: appealId },
+    select: { context: true },
+  });
+  return !!parseLockReviewContext(appeal?.context);
+}
+
 export async function assertLockReviewAllowed({
   modelId,
   userId,
@@ -111,12 +120,15 @@ export async function assertLockReviewAllowed({
  * are still locked, and never changes their values.
  */
 export async function resolveLockReviewAppeal({
+  appealId,
   modelId,
   approve,
   userId,
   resolvedReason,
   internalNotes,
 }: {
+  /** The request the moderator was shown; a model can carry another, after a transfer. */
+  appealId: number;
   modelId: number;
   approve: boolean;
   userId: number;
@@ -149,11 +161,9 @@ export async function resolveLockReviewAppeal({
         } AS held
       FROM "Appeal" a
       JOIN "Model" m ON m.id = a."entityId"
-      WHERE a."entityType" = 'Model' AND a."entityId" = ${modelId}
+      WHERE a.id = ${appealId} AND a."entityType" = 'Model' AND a."entityId" = ${modelId}
         AND a.status = 'Pending' AND a.category IS NULL
         AND a.context->>'kind' = ${LOCK_REVIEW_KIND}
-      ORDER BY "ownerFiled" DESC, a.id DESC
-      LIMIT 1
       FOR UPDATE OF a, m
     `;
     const asked = parseLockReviewContext(row?.context);
@@ -203,6 +213,16 @@ export async function resolveLockReviewAppeal({
   });
 
   if (unlocked.length) await preventReplicationLag('model', modelId);
-  await settleResolvedAppeals(claimed, { status });
+  // The ruling is committed: a failed notice must not read as a failed ruling, which cannot be retried.
+  await settleResolvedAppeals(claimed, { status }).catch((error: Error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'lock-review-settle',
+      message: 'Owner not told of a lock review ruling',
+      appealId,
+      modelId,
+      error: error.message,
+    })
+  );
   return { unlocked };
 }

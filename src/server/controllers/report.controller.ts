@@ -10,7 +10,7 @@ import type {
   GetRecentAppealsInput,
 } from '~/server/schema/report.schema';
 import { getImageById } from '~/server/services/image.service';
-import { assertLockReviewAllowed } from '~/server/services/lock-review.service';
+import { assertLockReviewAllowed, isLockReview } from '~/server/services/lock-review.service';
 import type { LockReviewContext } from '@civitai/shared/lock-review';
 import {
   createEntityAppeal,
@@ -152,7 +152,13 @@ export async function createEntityAppealHandler({
 
         // Asking again after a denial is intended, so reuse the row.
         const existing = await getLatestAppeal({ ...input, userId });
-        if (existing?.status === AppealStatus.Pending)
+        // A flag that landed on a model with a lock review open takes the row over: the review can
+        // only be rejected now, and the flag must not go undisputed while it waits.
+        const takesOverLockReview =
+          !context &&
+          existing?.status === AppealStatus.Pending &&
+          (await isLockReview(existing.id));
+        if (existing?.status === AppealStatus.Pending && !takesOverLockReview)
           throw throwBadRequestError('Your review request for this model is already under review');
         if (existing)
           return await reopenAppeal({

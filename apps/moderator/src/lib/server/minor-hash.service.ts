@@ -620,6 +620,7 @@ export async function getMinorFlagAppealsForReview({
       SELECT count(*)::int + 1 AS nth
       FROM "Appeal" ya
       WHERE ya."userId" = pg."userId" AND ya."entityType" = 'Model' AND ya.category IS NULL
+        AND COALESCE(ya.context->>'kind', '') <> ${LOCK_REVIEW_KIND}
         AND ya."createdAt" >= date_trunc('year', pg."appealCreatedAt")
         AND (ya."createdAt", ya.id) < (pg."appealCreatedAt", pg."appealId")
     ) ya ON TRUE

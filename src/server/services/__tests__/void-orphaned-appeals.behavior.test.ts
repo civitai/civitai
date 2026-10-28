@@ -107,7 +107,8 @@ beforeAll(async () => {
       "resolvedAt" timestamp(3),
       "resolvedReason" text,
       "buzzTransactionId" text,
-      "entityRemovedAt" timestamp(3)
+      "entityRemovedAt" timestamp(3),
+      context jsonb
     );
   `);
 

@@ -213,6 +213,7 @@
   {#snippet decision()}
     <form method="POST" action={actionHref('rejectLockReview')} use:enhance={decide} class="w-full">
       <input type="hidden" name="modelId" value={row.modelId} />
+      <input type="hidden" name="appealId" value={row.appealId} />
       <TriageDecisionBar
         compact
         {buttons}

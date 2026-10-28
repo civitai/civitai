@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as BuzzService from '~/server/services/buzz.service';
 import type * as ClickhouseClient from '~/server/clickhouse/client';
@@ -459,13 +460,30 @@ describe('getAppealCount', () => {
     });
 
     expect(dbMock.dbRead.appeal.count).toHaveBeenCalledWith({
-      where: {
+      where: expect.objectContaining({
         userId: 1,
         status: { in: [AppealStatus.Pending, AppealStatus.Rejected] },
         createdAt: { gte: startDate },
         category: null,
         NOT: { status: AppealStatus.Pending, entityRemovedAt: { not: null } },
-      },
+      }),
+    });
+  });
+
+  it('does not count a request to unlock a locked setting', async () => {
+    await getAppealCount({ userId: 1, status: [AppealStatus.Rejected] });
+
+    expect(dbMock.dbRead.appeal.count).toHaveBeenCalledWith({
+      where: expect.objectContaining({
+        AND: [
+          {
+            OR: [
+              { context: { equals: Prisma.AnyNull } },
+              { NOT: { context: { path: ['kind'], equals: 'lock-review' } } },
+            ],
+          },
+        ],
+      }),
     });
   });
 });

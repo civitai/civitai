@@ -13,6 +13,11 @@ export default defineModeratorEndpoint('model.resolveLockReview', {
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
   input: z.object({
+    appealId: z.coerce
+      .number()
+      .int()
+      .positive()
+      .describe('The request ruled on, as the queue listed it.'),
     modelId: z.coerce.number().int().positive().describe('The model whose request to rule on.'),
     approve: moderatorBoolean.describe('True unlocks the named settings, false keeps them locked.'),
     resolvedReason: z
@@ -29,6 +34,7 @@ export default defineModeratorEndpoint('model.resolveLockReview', {
   }),
   async handler(input, ctx) {
     const { unlocked } = await resolveLockReviewAppeal({
+      appealId: input.appealId,
       modelId: input.modelId,
       approve: input.approve,
       userId: ctx.actor.id,

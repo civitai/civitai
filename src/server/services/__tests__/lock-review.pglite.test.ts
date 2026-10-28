@@ -166,9 +166,9 @@ const appealRow = async () =>
   ).rows[0];
 
 const approve = (userId = MODERATOR) =>
-  resolveLockReviewAppeal({ modelId: MODEL, approve: true, userId });
+  resolveLockReviewAppeal({ appealId: 1, modelId: MODEL, approve: true, userId });
 const reject = (userId = MODERATOR) =>
-  resolveLockReviewAppeal({ modelId: MODEL, approve: false, userId });
+  resolveLockReviewAppeal({ appealId: 1, modelId: MODEL, approve: false, userId });
 
 const loggedActivities = () =>
   mocks.trackModActivity.mock.calls.map(([, input]) => (input as { activity: string }).activity);
@@ -448,5 +448,93 @@ describe("an owner's request", () => {
 
     expect(underHold).toEqual(unheld);
     expect(mocks.createEntityAppeal.mock.calls[1]).toEqual(unheldRow);
+  });
+});
+
+describe('a flag landing while a lock review is open', () => {
+  it('lets the owner appeal the flag on the same row', async () => {
+    ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
+    mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Pending });
+    dbMock.dbWrite.appeal.findUnique.mockResolvedValue({
+      context: { kind: 'lock-review', locks: ['nsfw'] },
+    } as never);
+
+    await createEntityAppealHandler({ input: request(), ctx: owner() });
+
+    expect(mocks.reopenAppeal).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 9, context: null })
+    );
+  });
+
+  it('still refuses a second flag appeal', async () => {
+    ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
+    mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Pending });
+    dbMock.dbWrite.appeal.findUnique.mockResolvedValue({ context: null } as never);
+
+    await expect(createEntityAppealHandler({ input: request(), ctx: owner() })).rejects.toThrow(
+      /already under review/
+    );
+    expect(mocks.reopenAppeal).not.toHaveBeenCalled();
+  });
+});
+
+describe('two pending requests on one model', () => {
+  it('rules on the one the moderator was shown', async () => {
+    await seed({ locked: ['nsfw', 'tags'], asked: ['nsfw'] });
+    await db.query(
+      `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", context) VALUES (2, $1, 'Model', $2, $3)`,
+      [OWNER, MODEL, { kind: 'lock-review', locks: ['tags'] }]
+    );
+
+    const { unlocked } = await resolveLockReviewAppeal({
+      appealId: 2,
+      modelId: MODEL,
+      approve: true,
+      userId: MODERATOR,
+    });
+
+    expect(unlocked).toEqual(['tags']);
+    expect((await modelRow()).lockedProperties).toEqual(['nsfw']);
+    const { rows } = await db.query<{ id: number; status: string }>(
+      `SELECT id, status FROM "Appeal" ORDER BY id`
+    );
+    expect(rows).toEqual([
+      { id: 1, status: 'Pending' },
+      { id: 2, status: 'Approved' },
+    ]);
+  });
+});
+
+describe('an owner deleting the model', () => {
+  it('is never told its lock review closed, as it would be of a flag appeal', async () => {
+    dbMock.dbWrite.$queryRaw.mockResolvedValueOnce([
+      {
+        id: 1,
+        userId: OWNER,
+        entityType: EntityType.Model,
+        entityId: MODEL,
+        buzzTransactionId: null,
+        context: { kind: 'lock-review', locks: ['nsfw'] },
+      },
+      {
+        id: 2,
+        userId: OWNER,
+        entityType: EntityType.Model,
+        entityId: MODEL + 1,
+        buzzTransactionId: null,
+        context: null,
+      },
+    ] as never);
+
+    await actualReport.closeAppealsDeletedByOwner({
+      entityType: EntityType.Model,
+      entityIds: [MODEL, MODEL + 1],
+      ownerId: OWNER,
+    });
+
+    const told = mocks.createNotification.mock.calls.map(
+      ([n]) => (n as { details: { entityId: number } }).details.entityId
+    );
+    expect(told).toEqual([MODEL + 1]);
   });
 });
