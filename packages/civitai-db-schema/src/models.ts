@@ -5082,6 +5082,10 @@ export interface KnightsQueueItem {
   resolvedAt: Date | null;
   resolvedBy: number | null;
   appliedAt: Date | null;
+  resolvedFromLevel: number | null;
+  applyAttempts: number;
+  nextAttemptAt: Date | null;
+  reason: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

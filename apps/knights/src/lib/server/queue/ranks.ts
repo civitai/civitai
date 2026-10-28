@@ -11,6 +11,11 @@ export const RANK_WEIGHT: Record<Exclude<Rank, 'Inquisitor'>, number> = {
   Paladin: 2,
 };
 
+/** Ranks an item can wait at: the ones that judge, not the entry rank or the final one. */
+export const STAGE_RANKS: readonly Rank[] = RANKS.filter(
+  (rank) => rank !== 'Acolyte' && rank !== 'Inquisitor'
+);
+
 /** How long an escalated item may wait for its votes before moving up another rank. */
 export const STAGE_TTL_HOURS = 72;
 
@@ -19,6 +24,8 @@ export const FEED_STRETCH_SIZE = 10;
 export const rankIndex = (rank: string): number => RANKS.indexOf(rank as Rank);
 
 export const isRank = (value: string): value is Rank => rankIndex(value) !== -1;
+
+export const isStageRank = (value: string): value is Rank => STAGE_RANKS.includes(value as Rank);
 
 /** The rank an item moves to when its current stage cannot decide it, or null at the end of the path. */
 export function nextRank(rank: string): Rank | null {

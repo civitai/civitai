@@ -3708,6 +3708,10 @@ export type KnightsQueueItem = {
   resolvedAt: Timestamp | null;
   resolvedBy: number | null;
   appliedAt: Timestamp | null;
+  resolvedFromLevel: number | null;
+  applyAttempts: Generated<number>;
+  nextAttemptAt: Timestamp | null;
+  reason: string | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };

@@ -29,7 +29,16 @@ CREATE TABLE "Image" (
   "width" INTEGER,
   "height" INTEGER,
   "type" TEXT NOT NULL DEFAULT 'image',
-  "nsfwLevel" INTEGER NOT NULL DEFAULT 0
+  "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
+  "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false,
+  "metadata" JSONB NOT NULL DEFAULT '{}',
+  "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
+  "blockedFor" TEXT,
+  "postId" INTEGER
+);
+CREATE TABLE "Post" (
+  "id" INTEGER PRIMARY KEY,
+  "publishedAt" TIMESTAMP(3)
 );
 CREATE TABLE "NewOrderPlayer" (
   "userId" INTEGER PRIMARY KEY,

@@ -11,6 +11,7 @@ import {
   ensureVotePartitions,
   escalateExpired,
   getFeed,
+  MAX_APPLY_ATTEMPTS,
   type QueueDeps,
 } from './queue.service';
 
@@ -19,8 +20,11 @@ const NOW = new Date('2026-12-15T12:00:00Z');
 
 let pg: PGlite;
 let db: Kysely<DB>;
-const applyConsensus = vi.fn<QueueDeps['applyConsensus']>(async () => undefined);
-const deps = (): QueueDeps => ({ applyConsensus, now: () => NOW });
+const APPLIED = { outcome: 'applied' } as const;
+const applyConsensus = vi.fn<QueueDeps['applyConsensus']>(async () => APPLIED);
+const depsAt = (now: Date): QueueDeps => ({ applyConsensus, now: () => now });
+const deps = () => depsAt(NOW);
+const afterMinutes = (minutes: number) => new Date(NOW.getTime() + minutes * 60_000);
 
 async function player(userId: number, rankType: string, exp = 0) {
   await pg.query(`INSERT INTO "NewOrderPlayer" ("userId","rankType","exp") VALUES ($1,$2,$3)`, [
@@ -30,8 +34,9 @@ async function player(userId: number, rankType: string, exp = 0) {
   ]);
 }
 
-async function image(id: number, nsfwLevel = 0) {
-  await pg.query(`INSERT INTO "Image" ("id","url","nsfwLevel") VALUES ($1,$2,$3)`, [
+async function image(id: number, nsfwLevel = 4, publishedAt: string | null = '2020-01-01') {
+  await pg.query(`INSERT INTO "Post" ("id","publishedAt") VALUES ($1,$2)`, [id, publishedAt]);
+  await pg.query(`INSERT INTO "Image" ("id","url","nsfwLevel","postId") VALUES ($1,$2,$3,$1)`, [
     id,
     `key-${id}`,
     nsfwLevel,
@@ -88,7 +93,7 @@ afterAll(async () => {
 beforeEach(async () => {
   applyConsensus.mockClear();
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image" RESTART IDENTITY`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY`
   );
 });
 
@@ -402,7 +407,16 @@ describe('resolution', () => {
     const graded = await verdicts(id);
     expect(graded.map((v) => v.verdict)).toEqual(Array(5).fill('correct'));
 
-    expect(await applyPendingResolutions(db, deps())).toEqual({ applied: 1, failed: 0 });
+    expect(await applyPendingResolutions(db, deps())).toEqual({
+      applied: 0,
+      failed: 0,
+      rerouted: 0,
+    });
+    expect(await applyPendingResolutions(db, depsAt(afterMinutes(6)))).toEqual({
+      applied: 1,
+      failed: 0,
+      rerouted: 0,
+    });
     expect(applyConsensus).toHaveBeenCalledTimes(2);
     expect(applyConsensus).toHaveBeenLastCalledWith({
       questionKey: Q,
@@ -410,26 +424,15 @@ describe('resolution', () => {
       value: '4',
       actorId: 5,
     });
-    expect((await itemRow(id)).appliedAt).toEqual(NOW);
+    expect((await itemRow(id)).appliedAt).toEqual(afterMinutes(6));
     expect(await verdicts(id)).toEqual(graded);
 
-    expect(await applyPendingResolutions(db, deps())).toEqual({ applied: 0, failed: 0 });
+    expect(await applyPendingResolutions(db, depsAt(afterMinutes(60)))).toEqual({
+      applied: 0,
+      failed: 0,
+      rerouted: 0,
+    });
     expect(applyConsensus).toHaveBeenCalledTimes(2);
-  });
-
-  it('leaves a still-failing write-back for the next retry', async () => {
-    await fiveKnights();
-    await image(10, 4);
-    const id = await item(10);
-    applyConsensus.mockRejectedValue(new Error('main app down'));
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '4');
-
-    expect(await applyPendingResolutions(db, deps())).toEqual({ applied: 0, failed: 1 });
-    expect((await itemRow(id)).appliedAt).toBeNull();
-    applyConsensus.mockReset();
-    applyConsensus.mockResolvedValue(undefined);
-    expect(await applyPendingResolutions(db, deps())).toEqual({ applied: 1, failed: 0 });
   });
 
   it('does not hold a transaction open while the rating is written back', async () => {
@@ -449,6 +452,7 @@ describe('resolution', () => {
           () => true
         );
       lockedDuringCall = row;
+      return APPLIED;
     });
     await vote(5, id, '4');
     expect(lockedDuringCall).toBe(false);
@@ -467,6 +471,282 @@ describe('resolution', () => {
       await pg.query<{ weight: number }>(`SELECT weight FROM "KnightsVote" ORDER BY "playerId"`)
     ).rows.map((r) => r.weight);
     expect(weights).toEqual([0.68, 1.18, 0.35]);
+  });
+});
+
+describe('writing a settled rating back', () => {
+  async function settledItem(imageId = 10, level = 4) {
+    await fiveKnights();
+    await image(imageId, level);
+    const id = await item(imageId);
+    applyConsensus.mockRejectedValueOnce(new Error('main app down'));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '4');
+    return id;
+  }
+  const pendingRun = (minutes: number) =>
+    applyPendingResolutions(db, depsAt(afterMinutes(minutes)));
+
+  it('records the level the image had when the players settled', async () => {
+    const id = await settledItem(10, 8);
+    expect(await itemRow(id)).toMatchObject({ resolvedFromLevel: 8, applyAttempts: 1 });
+  });
+
+  it('backs off after a failure and does not retry before the wait is over', async () => {
+    const id = await settledItem();
+    expect((await itemRow(id)).nextAttemptAt).toEqual(afterMinutes(5));
+
+    applyConsensus.mockClear();
+    expect(await pendingRun(4)).toEqual({ applied: 0, failed: 0, rerouted: 0 });
+    expect(applyConsensus).not.toHaveBeenCalled();
+
+    applyConsensus.mockRejectedValueOnce(new Error('still down'));
+    expect(await pendingRun(5)).toEqual({ applied: 0, failed: 1, rerouted: 0 });
+    expect((await itemRow(id)).nextAttemptAt).toEqual(afterMinutes(15));
+    expect((await itemRow(id)).applyAttempts).toBe(2);
+  });
+
+  it('hands the item to the Inquisitors once the attempts run out', async () => {
+    const id = await settledItem();
+    applyConsensus.mockRejectedValue(new Error('main app down'));
+    let minutes = 0;
+    for (let attempt = 2; attempt < MAX_APPLY_ATTEMPTS; attempt++) {
+      minutes += 24 * 60;
+      expect(await pendingRun(minutes)).toMatchObject({ failed: 1 });
+    }
+    expect(await itemRow(id)).toMatchObject({ status: 'Resolved' });
+
+    minutes += 24 * 60;
+    expect(await pendingRun(minutes)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Inquisitor',
+      reason: 'attempts-exhausted',
+      resolvedValue: null,
+      appliedAt: null,
+    });
+    expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
+    applyConsensus.mockResolvedValue(APPLIED);
+    expect(await pendingRun(minutes + 24 * 60)).toEqual({ applied: 0, failed: 0, rerouted: 0 });
+  });
+
+  it('does not let stuck rows starve newer ones', async () => {
+    const stuck = await settledItem(10);
+    applyConsensus.mockRejectedValue(new Error('main app down'));
+    await pendingRun(5);
+    expect((await itemRow(stuck)).applyAttempts).toBe(2);
+
+    await fiveKnights(11);
+    const fresh: number[] = [];
+    for (const imageId of [20, 21]) {
+      await image(imageId);
+      const id = await item(imageId);
+      for (const u of [11, 12, 13, 14, 15]) await vote(u, id, '4');
+      fresh.push(id);
+    }
+
+    applyConsensus.mockReset();
+    applyConsensus.mockResolvedValue(APPLIED);
+    expect(await applyPendingResolutions(db, depsAt(afterMinutes(16)), { limit: 2 })).toEqual({
+      applied: 2,
+      failed: 0,
+      rerouted: 0,
+    });
+    for (const id of fresh) expect((await itemRow(id)).appliedAt).not.toBeNull();
+    expect((await itemRow(stuck)).appliedAt).toBeNull();
+  });
+
+  it('stops starting tries once its time budget is spent', async () => {
+    const id = await settledItem();
+    applyConsensus.mockClear();
+    expect(await applyPendingResolutions(db, depsAt(afterMinutes(10)), { budgetMs: 0 })).toEqual({
+      applied: 0,
+      failed: 0,
+      rerouted: 0,
+    });
+    expect(applyConsensus).not.toHaveBeenCalled();
+    expect((await itemRow(id)).applyAttempts).toBe(1);
+  });
+
+  it('lets only one run claim an item at a time', async () => {
+    const id = await settledItem();
+    let release: () => void = () => undefined;
+    applyConsensus.mockReset();
+    applyConsensus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve(APPLIED);
+        })
+    );
+    const first = pendingRun(10);
+    await vi.waitFor(() => expect(applyConsensus).toHaveBeenCalledTimes(1));
+    expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 0 });
+    release();
+    expect(await first).toEqual({ applied: 1, failed: 0, rerouted: 0 });
+    expect(applyConsensus).toHaveBeenCalledTimes(1);
+    expect((await itemRow(id)).appliedAt).not.toBeNull();
+  });
+
+  describe('when the image is no longer the one the players judged', () => {
+    const lock = (id: number, reason: string, level: number) =>
+      pg.query(
+        `UPDATE "Image" SET "nsfwLevelLocked"=true, "nsfwLevel"=$2, metadata=jsonb_build_object('nsfwLevelReason',$3::text) WHERE id=$1`,
+        [id, level, reason]
+      );
+
+    it('sends a blocked image to the Inquisitors without calling the main app', async () => {
+      const id = await settledItem();
+      await pg.query(`UPDATE "Image" SET "blockedFor"='tos' WHERE id=10`);
+      applyConsensus.mockClear();
+
+      expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
+      expect(applyConsensus).not.toHaveBeenCalled();
+      expect(await itemRow(id)).toMatchObject({
+        status: 'Inquisitor',
+        reason: 'blocked',
+        resolvedValue: null,
+      });
+      expect((await verdicts(id)).every((v) => v.verdict === 'pending')).toBe(true);
+      expect(await pendingRun(600)).toEqual({ applied: 0, failed: 0, rerouted: 0 });
+    });
+
+    it('closes against a moderator ruling and grades the votes by it', async () => {
+      const id = await settledItem();
+      await lock(10, 'Moderator review', 8);
+      applyConsensus.mockClear();
+
+      expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
+      expect(applyConsensus).not.toHaveBeenCalled();
+      expect(await itemRow(id)).toMatchObject({ status: 'Closed', reason: 'moderator-ruled' });
+      expect((await verdicts(id)).every((v) => v.verdict === 'failed')).toBe(true);
+    });
+
+    it('grades the votes that match the moderator as correct', async () => {
+      const id = await settledItem();
+      await lock(10, 'Moderator review', 4);
+      await pendingRun(10);
+      expect((await verdicts(id)).every((v) => v.verdict === 'correct')).toBe(true);
+    });
+
+    it('does not call the main app for an image another level now', async () => {
+      const id = await settledItem(10, 4);
+      await pg.query(`UPDATE "Image" SET "nsfwLevel"=16 WHERE id=10`);
+      applyConsensus.mockClear();
+
+      expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
+      expect(applyConsensus).not.toHaveBeenCalled();
+      expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', reason: 'level-moved' });
+    });
+
+    it('still writes to an image an earlier Knights vote locked at the same level', async () => {
+      const id = await settledItem();
+      await lock(10, 'Knights Vote', 4);
+      applyConsensus.mockResolvedValue(APPLIED);
+      expect(await pendingRun(10)).toEqual({ applied: 1, failed: 0, rerouted: 0 });
+      expect((await itemRow(id)).appliedAt).not.toBeNull();
+    });
+
+    it('closes an item whose image is gone, with the votes inconclusive', async () => {
+      const id = await settledItem();
+      await pg.query(`DELETE FROM "Image" WHERE id=10`);
+      expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
+      expect(await itemRow(id)).toMatchObject({ status: 'Closed', reason: 'missing' });
+      expect((await verdicts(id)).every((v) => v.verdict === 'inconclusive')).toBe(true);
+    });
+
+    it.each([
+      ['blocked', { kind: 'Inquisitor', reason: 'blocked' }],
+      ['missing', { kind: 'Closed', reason: 'missing' }],
+      ['locked', { kind: 'Closed', reason: 'moderator-ruled' }],
+    ] as const)('treats the main app refusing as %s as final', async (reason, expected) => {
+      const id = await settledItem();
+      applyConsensus.mockResolvedValue({ outcome: 'skipped', reason, currentLevel: 8 });
+
+      expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
+      expect(await itemRow(id)).toMatchObject({ status: expected.kind, reason: expected.reason });
+      expect(await pendingRun(600)).toEqual({ applied: 0, failed: 0, rerouted: 0 });
+      expect(applyConsensus).toHaveBeenCalledTimes(2);
+    });
+
+    it('takes a refusal on the first try off the retry path at once', async () => {
+      await fiveKnights();
+      await image(10, 4);
+      const id = await item(10);
+      applyConsensus.mockResolvedValue({ outcome: 'skipped', reason: 'locked', currentLevel: 8 });
+      for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '4');
+
+      expect(await itemRow(id)).toMatchObject({ status: 'Closed', reason: 'moderator-ruled' });
+      expect((await verdicts(id)).every((v) => v.verdict === 'failed')).toBe(true);
+    });
+  });
+});
+
+describe('what the feed serves', () => {
+  it.each([
+    [
+      'an unscanned image (level 0)',
+      () => pg.query(`UPDATE "Image" SET "nsfwLevel"=0 WHERE id=10`),
+    ],
+    ['a Blocked level', () => pg.query(`UPDATE "Image" SET "nsfwLevel"=32 WHERE id=10`)],
+    ['a block reason', () => pg.query(`UPDATE "Image" SET "blockedFor"='tos' WHERE id=10`)],
+    ['Blocked ingestion', () => pg.query(`UPDATE "Image" SET "ingestion"='Blocked' WHERE id=10`)],
+    ['an unpublished post', () => pg.query(`UPDATE "Post" SET "publishedAt"=NULL WHERE id=10`)],
+    [
+      'a post scheduled for later',
+      () => pg.query(`UPDATE "Post" SET "publishedAt"='2099-01-01' WHERE id=10`),
+    ],
+    ['an image with no post', () => pg.query(`UPDATE "Image" SET "postId"=NULL WHERE id=10`)],
+  ])('hides %s and refuses a vote on it', async (_label, hide) => {
+    await player(1, 'Knight');
+    await image(10);
+    const id = await item(10);
+    expect((await getFeed(db, 1))?.items.map((i) => i.id)).toEqual([id]);
+
+    await hide();
+    expect(await getFeed(db, 1)).toBeNull();
+    expect(await vote(1, id, '4')).toMatchObject({ status: 'rejected', reason: 'unavailable' });
+    expect(await verdicts(id)).toEqual([]);
+  });
+});
+
+describe('vote weight', () => {
+  it('refuses a vote that weighs nothing, so a head always carries weight', async () => {
+    await player(1, 'Knight');
+    await pg.query(
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId") SELECT 1 FROM generate_series(1,6)`
+    );
+    await image(10);
+    const id = await item(10);
+
+    expect(await vote(1, id, '4')).toMatchObject({ status: 'rejected', reason: 'no-weight' });
+    expect(await verdicts(id)).toEqual([]);
+  });
+});
+
+describe('enqueueItem ranks', () => {
+  it.each(['Acolyte', 'Inquisitor', 'Archon', ''])(
+    'refuses an item waiting at %j',
+    async (rank) => {
+      await image(10);
+      await expect(
+        enqueueItem(db, { questionKey: Q, imageId: 10, source: 'test', minRank: rank }, NOW)
+      ).rejects.toThrow(/rank/);
+    }
+  );
+
+  it.each(['Knight', 'Templar', 'Paladin'])('accepts %s', async (rank) => {
+    await image(10);
+    await expect(
+      enqueueItem(db, { questionKey: Q, imageId: 10, source: 'test', minRank: rank }, NOW)
+    ).resolves.toEqual(expect.any(Number));
+  });
+
+  it('refuses a question whose own rank is not one an item can wait at', async () => {
+    await pg.exec(`INSERT INTO "KnightsQuestion" ("key","kind","prompt","options","minRank")
+      VALUES ('knights.test.bad','bool','Hat?','[{"value":"yes","label":"Yes"}]','Acolyte')`);
+    await image(10);
+    await expect(
+      enqueueItem(db, { questionKey: 'knights.test.bad', imageId: 10, source: 'test' }, NOW)
+    ).rejects.toThrow(/rank/);
   });
 });
 

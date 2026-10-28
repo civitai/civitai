@@ -12,6 +12,7 @@ const REJECTION_TEXT: Record<RejectReason, string> = {
   'already-voted': 'You have already judged this one.',
   'not-open': 'This one has already been settled.',
   unavailable: 'This one is not open for judging.',
+  'no-weight': 'Your standing is too low for your judgment to count yet.',
 };
 
 export const load: PageServerLoad = async ({ locals }) => {

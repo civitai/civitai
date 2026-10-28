@@ -26,7 +26,8 @@ describe('on a host that is not on UTC', () => {
 
   it('stores and compares every timestamp as a UTC instant', async () => {
     await pg.exec(`INSERT INTO "NewOrderPlayer" ("userId","rankType") VALUES (1,'Knight');
-      INSERT INTO "Image" ("id","url") VALUES (10,'key-10')`);
+      INSERT INTO "Post" ("id","publishedAt") VALUES (10,'2020-01-01');
+      INSERT INTO "Image" ("id","url","nsfwLevel","postId") VALUES (10,'key-10',4,10)`);
     const id = await enqueueItem(
       db,
       { questionKey: 'knights.image.nsfwLevel', imageId: 10, source: 'test' },
@@ -35,7 +36,7 @@ describe('on a host that is not on UTC', () => {
     await castVote(
       db,
       { userId: 1, itemId: id, answer: '4' },
-      { applyConsensus: async () => undefined, now: () => NOW }
+      { applyConsensus: async () => ({ outcome: 'applied' }), now: () => NOW }
     );
 
     const stored = await pg.query<{ voted: string; expires: string }>(

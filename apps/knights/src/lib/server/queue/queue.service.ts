@@ -4,18 +4,23 @@ import {
   canVote,
   FEED_STRETCH_SIZE,
   isRank,
+  isStageRank,
   nextRank,
   stagesWorkedBy,
   STAGE_TTL_HOURS,
   type Rank,
 } from './ranks';
 import {
+  BLOCKED_LEVEL,
   decideChoice,
+  decideWriteback,
   isBlockedLevel,
   isExcessiveDownRating,
   levelForExp,
   voteWeight,
+  type ImageState,
   type WeightedAnswer,
+  type WritebackDecision,
 } from './resolution';
 
 export const NSFW_LEVEL_QUESTION = 'knights.image.nsfwLevel';
@@ -27,14 +32,27 @@ export type ConsensusApplication = {
   actorId: number;
 };
 
+/** What the world said to a settled answer. A skip is final; only a throw is worth retrying. */
+export type ApplyOutcome =
+  | { outcome: 'applied' }
+  | { outcome: 'skipped'; reason: 'missing' | 'blocked' | 'locked'; currentLevel: number | null };
+
 export type QueueDeps = {
   /**
-   * Writes a settled answer back to the world, after the vote has committed. It must be safe to
-   * repeat: when it throws the item stays settled and unapplied, and the expire job calls it again.
+   * Writes a settled answer back to the world, after the vote has committed. A throw is a transient
+   * failure: the item stays settled and unapplied, and the expire job calls it again with backoff.
    */
-  applyConsensus: (application: ConsensusApplication) => Promise<void>;
+  applyConsensus: (application: ConsensusApplication) => Promise<ApplyOutcome>;
   now: () => Date;
 };
+
+/** A write-back that keeps failing is handed to the Inquisitors after this many tries. */
+export const MAX_APPLY_ATTEMPTS = 8;
+const LEASE_MINUTES = 2;
+const MAX_BACKOFF_MINUTES = 360;
+/** Minutes to wait after the nth failed try: 5, 10, 20, ... up to six hours. */
+export const backoffMinutes = (attempts: number) =>
+  Math.min(5 * 2 ** Math.max(0, attempts - 1), MAX_BACKOFF_MINUTES);
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
@@ -51,13 +69,15 @@ export type RejectReason =
   | 'unavailable'
   | 'not-eligible'
   | 'bad-answer'
-  | 'already-voted';
+  | 'already-voted'
+  | 'no-weight';
 
 export type CastVoteResult =
   | { status: 'rejected'; reason: RejectReason }
   | { status: 'recorded' | 'resolved' | 'escalated' | 'inquisitor' };
 
 const addHours = (date: Date, hours: number) => new Date(date.getTime() + hours * 3_600_000);
+const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
 
 const utc = (date: Date) => sql<Date>`${date.toISOString()}::timestamp`;
 
@@ -67,10 +87,16 @@ function servableItems(db: Executor) {
     .selectFrom('KnightsQueueItem as i')
     .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')
     .innerJoin('Image as img', 'img.id', 'i.imageId')
+    .innerJoin('Post as p', 'p.id', 'img.postId')
     .where('i.status', '=', 'Open')
     .where('i.isHiddenCheck', '=', false)
     .where('q.active', '=', true)
-    .where('img.type', '=', 'image');
+    .where('img.type', '=', 'image')
+    .where('img.nsfwLevel', 'not in', [0, BLOCKED_LEVEL])
+    .where('img.ingestion', '!=', 'Blocked')
+    .where('img.blockedFor', 'is', null)
+    .where('p.publishedAt', 'is not', null)
+    .where('p.publishedAt', '<', sql<Date>`(now() AT TIME ZONE 'utc')`);
 }
 
 export async function getFeed(db: Executor, userId: number): Promise<Feed | null> {
@@ -160,6 +186,8 @@ export async function enqueueItem(db: Executor, input: NewItem, now: Date): Prom
     .select(['minRank', 'votesToResolve'])
     .where('key', '=', input.questionKey)
     .executeTakeFirstOrThrow();
+  const minRank = input.minRank ?? question.minRank;
+  if (!isStageRank(minRank)) throw new Error(`"${minRank}" is not a rank an item can wait at`);
   const expiresAt =
     input.expiresAt === undefined ? addHours(now, STAGE_TTL_HOURS) : input.expiresAt;
 
@@ -169,7 +197,7 @@ export async function enqueueItem(db: Executor, input: NewItem, now: Date): Prom
       questionKey: input.questionKey,
       imageId: input.imageId,
       source: input.source,
-      minRank: input.minRank ?? question.minRank,
+      minRank,
       votesNeeded: input.votesNeeded ?? question.votesToResolve,
       priority: input.priority ?? 2,
       isHiddenCheck: input.isHiddenCheck ?? false,
@@ -213,6 +241,24 @@ async function escalate(
   return 'inquisitor';
 }
 
+/** Replaces the verdicts of every vote on an item, settled ones included. */
+async function regradeVotes(
+  trx: Executor,
+  itemId: number,
+  verdict: 'pending' | 'inconclusive' | { correctAnswer: string }
+) {
+  await trx
+    .updateTable('KnightsVote')
+    .set({
+      verdict:
+        typeof verdict === 'string'
+          ? verdict
+          : sql<string>`CASE WHEN "answer" = ${verdict.correctAnswer} THEN 'correct' ELSE 'failed' END`,
+    })
+    .where('itemId', '=', itemId)
+    .execute();
+}
+
 async function toInquisitor(trx: Executor, itemId: number, now: Date) {
   await trx
     .updateTable('KnightsQueueItem')
@@ -220,8 +266,6 @@ async function toInquisitor(trx: Executor, itemId: number, now: Date) {
     .where('id', '=', itemId)
     .execute();
 }
-
-type Settled = { itemId: number; application: ConsensusApplication };
 
 export async function castVote(
   db: Kysely<DB>,
@@ -231,9 +275,9 @@ export async function castVote(
   const now = deps.now();
   await ensureMonthPartition(db, { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 });
 
-  const { result, settled } = await db
+  const { result, settledItemId } = await db
     .transaction()
-    .execute(async (trx): Promise<{ result: CastVoteResult; settled?: Settled }> => {
+    .execute(async (trx): Promise<{ result: CastVoteResult; settledItemId?: number }> => {
       const rejected = (reason: RejectReason) => ({
         result: { status: 'rejected', reason } as const,
       });
@@ -256,6 +300,7 @@ export async function castVote(
           'i.imageId',
           'i.minRank',
           'i.votesNeeded',
+          'img.nsfwLevel as imageLevel',
           'q.options',
           'q.maxVotes',
           'q.threshold',
@@ -291,6 +336,14 @@ export async function castVote(
         .where('cleansedAt', 'is', null)
         .executeTakeFirstOrThrow();
 
+      // A vote that weighs nothing could still be the one that tips a split into a decision.
+      const weight = voteWeight({
+        rank: player.rankType,
+        level: levelForExp(player.exp),
+        smites: Number(smites.n),
+      });
+      if (weight <= 0) return rejected('no-weight');
+
       await trx
         .insertInto('KnightsVote')
         .values({
@@ -301,11 +354,7 @@ export async function castVote(
           imageId: item.imageId,
           stage: item.minRank,
           answer: input.answer,
-          weight: voteWeight({
-            rank: player.rankType,
-            level: levelForExp(player.exp),
-            smites: Number(smites.n),
-          }),
+          weight,
         })
         .execute();
 
@@ -326,13 +375,8 @@ export async function castVote(
 
       const writesBack = item.questionKey === NSFW_LEVEL_QUESTION;
       if (writesBack) {
-        const image = await trx
-          .selectFrom('Image')
-          .select('nsfwLevel')
-          .where('id', '=', item.imageId)
-          .executeTakeFirst();
         const winner = Number(decision.value);
-        if (isBlockedLevel(winner) || (image && isExcessiveDownRating(image.nsfwLevel, winner))) {
+        if (isBlockedLevel(winner) || isExcessiveDownRating(item.imageLevel, winner)) {
           await toInquisitor(trx, item.id, now);
           return { result: { status: 'inquisitor' } };
         }
@@ -345,6 +389,7 @@ export async function castVote(
           resolvedValue: decision.value,
           resolvedAt: utc(now),
           resolvedBy: input.userId,
+          resolvedFromLevel: writesBack ? item.imageLevel : null,
           appliedAt: writesBack ? null : utc(now),
           updatedAt: utc(now),
         })
@@ -352,81 +397,214 @@ export async function castVote(
         .execute();
       await gradeVotes(trx, item.id, decision.value);
 
-      return {
-        result: { status: 'resolved' },
-        settled: writesBack
-          ? {
-              itemId: item.id,
-              application: {
-                questionKey: item.questionKey,
-                imageId: item.imageId,
-                value: decision.value,
-                actorId: input.userId,
-              },
-            }
-          : undefined,
-      };
+      return { result: { status: 'resolved' }, settledItemId: writesBack ? item.id : undefined };
     });
 
-  if (settled) await applySettled(db, settled, deps);
+  if (settledItemId !== undefined) await settleResolved(db, settledItemId, deps);
   return result;
 }
 
-/** Writes one settled answer back and marks it applied. A failure leaves it for the next retry. */
-async function applySettled(db: Kysely<DB>, settled: Settled, deps: QueueDeps): Promise<boolean> {
-  try {
-    await deps.applyConsensus(settled.application);
-    await db
-      .updateTable('KnightsQueueItem')
-      .set({ appliedAt: utc(deps.now()) })
-      .where('id', '=', settled.itemId)
-      .where('appliedAt', 'is', null)
-      .execute();
-    return true;
-  } catch (error) {
-    console.error('knights: could not write a settled answer back, it will be retried', {
-      itemId: settled.itemId,
-      error,
-    });
-    return false;
-  }
+async function readImageState(db: Executor, imageId: number): Promise<ImageState | null> {
+  const image = await db
+    .selectFrom('Image')
+    .select([
+      'nsfwLevel',
+      'nsfwLevelLocked as locked',
+      'ingestion',
+      'blockedFor',
+      sql<string | null>`"metadata"->>'nsfwLevelReason'`.as('lockReason'),
+    ])
+    .where('id', '=', imageId)
+    .executeTakeFirst();
+  return image ?? null;
 }
 
-/** Retries every settled answer that has not been written back yet. */
-export async function applyPendingResolutions(
+type Reroute =
+  | Exclude<WritebackDecision, { kind: 'apply' }>
+  | { kind: 'inquisitor'; reason: 'attempts-exhausted' };
+
+/**
+ * Takes a settled item off the write-back path for good. Its votes were graded when it settled, so
+ * they are graded again by what really decided the image: a moderator's current level, or nothing
+ * when it is gone, or the Inquisitors' ruling still to come.
+ */
+async function reroute(db: Kysely<DB>, itemId: number, route: Reroute, now: Date) {
+  await db.transaction().execute(async (trx) => {
+    const left = {
+      appliedAt: null,
+      nextAttemptAt: null,
+      updatedAt: utc(now),
+    };
+    if (route.kind === 'inquisitor') {
+      await trx
+        .updateTable('KnightsQueueItem')
+        .set({
+          ...left,
+          status: 'Inquisitor',
+          minRank: 'Inquisitor',
+          expiresAt: null,
+          resolvedValue: null,
+          resolvedAt: null,
+          resolvedBy: null,
+          resolvedFromLevel: null,
+          reason: route.reason,
+        })
+        .where('id', '=', itemId)
+        .execute();
+      await regradeVotes(trx, itemId, 'pending');
+      return;
+    }
+
+    await trx
+      .updateTable('KnightsQueueItem')
+      .set({
+        ...left,
+        status: 'Closed',
+        reason: route.kind === 'moderator' ? 'moderator-ruled' : 'missing',
+      })
+      .where('id', '=', itemId)
+      .execute();
+    await regradeVotes(
+      trx,
+      itemId,
+      route.kind === 'moderator' ? { correctAnswer: String(route.level) } : 'inconclusive'
+    );
+  });
+}
+
+function rerouteForSkip(
+  outcome: Extract<ApplyOutcome, { outcome: 'skipped' }>
+): Exclude<WritebackDecision, { kind: 'apply' }> {
+  if (outcome.reason === 'missing') return { kind: 'missing' };
+  if (outcome.reason === 'locked' && outcome.currentLevel && outcome.currentLevel > 0) {
+    return { kind: 'moderator', level: outcome.currentLevel };
+  }
+  return { kind: 'inquisitor', reason: outcome.reason === 'blocked' ? 'blocked' : 'level-moved' };
+}
+
+type SettleOutcome = 'applied' | 'failed' | 'rerouted' | 'unclaimed';
+
+/**
+ * One try at writing a settled rating back. The claim bumps the attempt count and leases the item, so
+ * a second job run or the vote that just settled it cannot write it twice. The image is looked at
+ * first: if it was blocked, ruled by a moderator or has moved since the players settled, the rating is
+ * not written (and the main app refuses it again anyway). Only a throw is transient.
+ */
+async function settleResolved(
   db: Kysely<DB>,
-  deps: QueueDeps,
-  { limit = 100 }: { limit?: number } = {}
-): Promise<{ applied: number; failed: number }> {
-  const pending = await db
-    .selectFrom('KnightsQueueItem')
-    .select(['id', 'questionKey', 'imageId', 'resolvedValue', 'resolvedBy'])
+  itemId: number,
+  deps: QueueDeps
+): Promise<SettleOutcome> {
+  const now = deps.now();
+  const claimed = await db
+    .updateTable('KnightsQueueItem')
+    .set({
+      applyAttempts: sql<number>`"applyAttempts" + 1`,
+      nextAttemptAt: utc(addMinutes(now, LEASE_MINUTES)),
+      updatedAt: utc(now),
+    })
+    .where('id', '=', itemId)
     .where('status', '=', 'Resolved')
     .where('appliedAt', 'is', null)
     .where('resolvedValue', 'is not', null)
     .where('resolvedBy', 'is not', null)
+    .where((eb) => eb.or([eb('nextAttemptAt', 'is', null), eb('nextAttemptAt', '<=', utc(now))]))
+    .returning([
+      'questionKey',
+      'imageId',
+      'resolvedValue',
+      'resolvedBy',
+      'resolvedFromLevel',
+      'applyAttempts',
+    ])
+    .executeTakeFirst();
+  if (!claimed) return 'unclaimed';
+
+  const decision = decideWriteback(
+    await readImageState(db, claimed.imageId),
+    claimed.resolvedFromLevel
+  );
+  if (decision.kind !== 'apply') {
+    await reroute(db, itemId, decision, now);
+    return 'rerouted';
+  }
+
+  try {
+    const outcome = await deps.applyConsensus({
+      questionKey: claimed.questionKey,
+      imageId: claimed.imageId,
+      value: claimed.resolvedValue as string,
+      actorId: claimed.resolvedBy as number,
+    });
+    if (outcome.outcome === 'skipped') {
+      await reroute(db, itemId, rerouteForSkip(outcome), now);
+      return 'rerouted';
+    }
+    await db
+      .updateTable('KnightsQueueItem')
+      .set({ appliedAt: utc(deps.now()), nextAttemptAt: null })
+      .where('id', '=', itemId)
+      .execute();
+    return 'applied';
+  } catch (error) {
+    console.error('knights: could not write a settled answer back, it will be retried', {
+      itemId,
+      attempt: claimed.applyAttempts,
+      error,
+    });
+    if (claimed.applyAttempts >= MAX_APPLY_ATTEMPTS) {
+      await reroute(db, itemId, { kind: 'inquisitor', reason: 'attempts-exhausted' }, now);
+      return 'rerouted';
+    }
+    await db
+      .updateTable('KnightsQueueItem')
+      .set({ nextAttemptAt: utc(addMinutes(now, backoffMinutes(claimed.applyAttempts))) })
+      .where('id', '=', itemId)
+      .execute();
+    return 'failed';
+  }
+}
+
+/**
+ * Retries every settled answer whose next try is due, fresh ones before those that have already
+ * failed, so a few stuck rows cannot starve newer ones. A run stops starting tries once its time
+ * budget is spent; what is left is picked up by the next run.
+ */
+export async function applyPendingResolutions(
+  db: Kysely<DB>,
+  deps: QueueDeps,
+  {
+    limit = 100,
+    concurrency = 4,
+    budgetMs = 45_000,
+  }: { limit?: number; concurrency?: number; budgetMs?: number } = {}
+): Promise<{ applied: number; failed: number; rerouted: number }> {
+  const due = await db
+    .selectFrom('KnightsQueueItem')
+    .select('id')
+    .where('status', '=', 'Resolved')
+    .where('appliedAt', 'is', null)
+    .where('resolvedValue', 'is not', null)
+    .where('resolvedBy', 'is not', null)
+    .where((eb) =>
+      eb.or([eb('nextAttemptAt', 'is', null), eb('nextAttemptAt', '<=', utc(deps.now()))])
+    )
+    .orderBy('applyAttempts', 'asc')
     .orderBy('resolvedAt', 'asc')
+    .orderBy('id', 'asc')
     .limit(limit)
     .execute();
 
-  const counts = { applied: 0, failed: 0 };
-  for (const row of pending) {
-    const ok = await applySettled(
-      db,
-      {
-        itemId: row.id,
-        application: {
-          questionKey: row.questionKey,
-          imageId: row.imageId,
-          value: row.resolvedValue as string,
-          actorId: row.resolvedBy as number,
-        },
-      },
-      deps
-    );
-    if (ok) counts.applied++;
-    else counts.failed++;
-  }
+  const counts = { applied: 0, failed: 0, rerouted: 0 };
+  const startedAt = Date.now();
+  let next = 0;
+  const worker = async () => {
+    while (next < due.length && Date.now() - startedAt < budgetMs) {
+      const outcome = await settleResolved(db, due[next++].id, deps);
+      if (outcome !== 'unclaimed') counts[outcome]++;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, due.length) }, worker));
   return counts;
 }
 

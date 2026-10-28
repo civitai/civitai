@@ -29,6 +29,10 @@ CREATE TABLE IF NOT EXISTS "KnightsQueueItem" (
   "resolvedAt" TIMESTAMP(3),
   "resolvedBy" INTEGER,
   "appliedAt" TIMESTAMP(3),
+  "resolvedFromLevel" INTEGER,
+  "applyAttempts" INTEGER NOT NULL DEFAULT 0,
+  "nextAttemptAt" TIMESTAMP(3),
+  "reason" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );

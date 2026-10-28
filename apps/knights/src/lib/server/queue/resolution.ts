@@ -73,7 +73,50 @@ export function isExcessiveDownRating(current: number, winner: number): boolean 
   return Math.log2(current) - Math.log2(winner) > 1;
 }
 
-const BLOCKED_LEVEL = 32;
+export const BLOCKED_LEVEL = 32;
 
 /** Blocking an image is a moderator's decision, so a consensus on it is handed to the Inquisitors. */
 export const isBlockedLevel = (value: number): boolean => value === BLOCKED_LEVEL;
+
+/** The part of an image the write-back depends on. */
+export type ImageState = {
+  nsfwLevel: number;
+  locked: boolean;
+  lockReason: string | null;
+  ingestion: string;
+  blockedFor: string | null;
+};
+
+// The lock reason the main app records for a Knights rating; any other reason on a lock is a moderator's.
+const KNIGHTS_LOCK_REASON = 'Knights Vote';
+
+/** Mirrors the main app's block marker: any one of the three means the image is blocked. */
+export const hasBlockMarker = (image: Pick<ImageState, 'nsfwLevel' | 'ingestion' | 'blockedFor'>) =>
+  image.ingestion === 'Blocked' || image.nsfwLevel === BLOCKED_LEVEL || image.blockedFor != null;
+
+export type WritebackDecision =
+  | { kind: 'apply' }
+  | { kind: 'missing' }
+  | { kind: 'inquisitor'; reason: 'blocked' | 'level-moved' }
+  | { kind: 'moderator'; level: number };
+
+/**
+ * Whether a settled rating may still be written. `resolvedFromLevel` is the level the players'
+ * image had when they settled; an image that has since moved is a moderator's to look at.
+ */
+export function decideWriteback(
+  image: ImageState | null,
+  resolvedFromLevel: number | null
+): WritebackDecision {
+  if (!image) return { kind: 'missing' };
+  if (hasBlockMarker(image)) return { kind: 'inquisitor', reason: 'blocked' };
+  if (image.locked && image.lockReason !== KNIGHTS_LOCK_REASON) {
+    return image.nsfwLevel > 0
+      ? { kind: 'moderator', level: image.nsfwLevel }
+      : { kind: 'inquisitor', reason: 'level-moved' };
+  }
+  if (resolvedFromLevel !== null && image.nsfwLevel !== resolvedFromLevel) {
+    return { kind: 'inquisitor', reason: 'level-moved' };
+  }
+  return { kind: 'apply' };
+}

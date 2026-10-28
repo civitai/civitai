@@ -45,6 +45,14 @@ describe('vote action', () => {
     });
   });
 
+  it('tells a player whose vote would weigh nothing why it was not counted', async () => {
+    castVote.mockResolvedValue({ status: 'rejected', reason: 'no-weight' });
+    expect(await submit({ itemId: '3', answer: '4' })).toMatchObject({
+      status: 409,
+      data: { message: expect.stringMatching(/standing/i) },
+    });
+  });
+
   it('asks for an answer when the form is incomplete', async () => {
     expect(await submit({ itemId: 'x' })).toMatchObject({ status: 400 });
     expect(castVote).not.toHaveBeenCalled();
