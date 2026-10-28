@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { decideChoice, isExcessiveDownRating, levelForExp, voteWeight } from './resolution';
+import {
+  decideChoice,
+  isBlockedLevel,
+  isExcessiveDownRating,
+  levelForExp,
+  voteWeight,
+} from './resolution';
 
 const rule = { votesNeeded: 5, maxVotes: 10, threshold: 0.6 };
 const votes = (answers: string[], weight = 1) => answers.map((answer) => ({ answer, weight }));
@@ -50,6 +56,13 @@ describe('isExcessiveDownRating', () => {
   it('flags more than one level below the current rating', () => {
     expect(isExcessiveDownRating(16, 4)).toBe(true);
     expect(isExcessiveDownRating(8, 1)).toBe(true);
+  });
+});
+
+describe('isBlockedLevel', () => {
+  it('is true only for Blocked', () => {
+    expect(isBlockedLevel(32)).toBe(true);
+    expect([1, 2, 4, 8, 16].some(isBlockedLevel)).toBe(false);
   });
 });
 

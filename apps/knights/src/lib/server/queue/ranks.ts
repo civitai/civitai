@@ -1,7 +1,7 @@
 export const RANKS = ['Acolyte', 'Knight', 'Templar', 'Paladin', 'Inquisitor'] as const;
 export type Rank = (typeof RANKS)[number];
 
-/** Ranks an item escalates through, lowest first. Paladin joins once the rank exists in the enum. */
+/** Ranks an item escalates through, lowest first. Paladin has a vote weight but is not on the path yet. */
 export const ESCALATION_PATH: readonly Rank[] = ['Knight', 'Templar', 'Inquisitor'];
 
 export const RANK_WEIGHT: Record<Exclude<Rank, 'Inquisitor'>, number> = {
@@ -32,3 +32,7 @@ export const canVote = (playerRank: string, itemMinRank: string): boolean =>
   playerRank !== 'Inquisitor' &&
   rankIndex(playerRank) !== -1 &&
   rankIndex(playerRank) >= rankIndex(itemMinRank);
+
+/** The item stages a player of this rank may judge, from the same rule `castVote` enforces. */
+export const stagesWorkedBy = (playerRank: string): Rank[] =>
+  RANKS.filter((stage) => canVote(playerRank, stage));

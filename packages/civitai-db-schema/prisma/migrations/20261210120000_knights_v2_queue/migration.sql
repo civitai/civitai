@@ -19,14 +19,16 @@ CREATE TABLE IF NOT EXISTS "KnightsQueueItem" (
   "questionKey" TEXT NOT NULL REFERENCES "KnightsQuestion"("key") ON DELETE CASCADE ON UPDATE CASCADE,
   "imageId" INTEGER NOT NULL,
   "source" TEXT NOT NULL,
-  "minRank" TEXT NOT NULL DEFAULT 'Knight',
-  "votesNeeded" INTEGER NOT NULL DEFAULT 5,
+  "minRank" TEXT NOT NULL,
+  "votesNeeded" INTEGER NOT NULL,
   "priority" INTEGER NOT NULL DEFAULT 2,
   "status" TEXT NOT NULL DEFAULT 'Open',
   "expiresAt" TIMESTAMP(3),
   "isHiddenCheck" BOOLEAN NOT NULL DEFAULT false,
   "resolvedValue" TEXT,
   "resolvedAt" TIMESTAMP(3),
+  "resolvedBy" INTEGER,
+  "appliedAt" TIMESTAMP(3),
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
   "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -34,6 +36,7 @@ CREATE TABLE IF NOT EXISTS "KnightsQueueItem" (
 CREATE INDEX IF NOT EXISTS "KnightsQueueItem_status_minRank_priority_createdAt_idx"
   ON "KnightsQueueItem" ("status", "minRank", "priority", "createdAt");
 CREATE INDEX IF NOT EXISTS "KnightsQueueItem_status_expiresAt_idx" ON "KnightsQueueItem" ("status", "expiresAt");
+CREATE INDEX IF NOT EXISTS "KnightsQueueItem_status_appliedAt_idx" ON "KnightsQueueItem" ("status", "appliedAt");
 CREATE INDEX IF NOT EXISTS "KnightsQueueItem_imageId_idx" ON "KnightsQueueItem" ("imageId");
 
 -- Partitioned by month. A unique key on a partitioned table must include the partition key, so
@@ -57,8 +60,8 @@ CREATE TABLE IF NOT EXISTS "KnightsVote" (
 CREATE INDEX IF NOT EXISTS "KnightsVote_playerId_createdAt_idx" ON "KnightsVote" ("playerId", "createdAt");
 CREATE INDEX IF NOT EXISTS "KnightsVote_itemId_stage_idx" ON "KnightsVote" ("itemId", "stage");
 
--- Current month and the next two. The Knights app's partition job keeps creating them ahead of time;
--- a vote in a month with no partition fails.
+-- Current month and the next two. The Knights app's partition job keeps creating them ahead of time,
+-- and a vote creates its own month's partition if the job has not.
 DO $$
 DECLARE
   month_start DATE;

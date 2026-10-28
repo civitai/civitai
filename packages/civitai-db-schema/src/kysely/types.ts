@@ -3698,14 +3698,16 @@ export type KnightsQueueItem = {
   questionKey: string;
   imageId: number;
   source: string;
-  minRank: Generated<string>;
-  votesNeeded: Generated<number>;
+  minRank: string;
+  votesNeeded: number;
   priority: Generated<number>;
   status: Generated<string>;
   expiresAt: Timestamp | null;
   isHiddenCheck: Generated<boolean>;
   resolvedValue: string | null;
   resolvedAt: Timestamp | null;
+  resolvedBy: number | null;
+  appliedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };

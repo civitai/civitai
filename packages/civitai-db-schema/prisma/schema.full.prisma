@@ -8038,18 +8038,21 @@ model KnightsQueueItem {
   question      KnightsQuestion @relation(fields: [questionKey], references: [key], onDelete: Cascade)
   imageId       Int
   source        String
-  minRank       String          @default("Knight")
-  votesNeeded   Int             @default(5)
+  minRank       String // the stage the item is at; starts at the question's minRank
+  votesNeeded   Int // starts at the question's votesToResolve
   priority      Int             @default(2) // 1 first, 3 last
   status        String          @default("Open")
   expiresAt     DateTime?
   isHiddenCheck Boolean         @default(false)
   resolvedValue String?
   resolvedAt    DateTime?
+  resolvedBy    Int? // the player whose vote settled it
+  appliedAt     DateTime? // null while a settled rating is still to be written to the image
   createdAt     DateTime        @default(now())
   updatedAt     DateTime        @updatedAt
 
   @@index([status, minRank, priority, createdAt])
+  @@index([status, appliedAt])
   @@index([status, expiresAt])
   @@index([imageId])
 }

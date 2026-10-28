@@ -5080,6 +5080,8 @@ export interface KnightsQueueItem {
   isHiddenCheck: boolean;
   resolvedValue: string | null;
   resolvedAt: Date | null;
+  resolvedBy: number | null;
+  appliedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }

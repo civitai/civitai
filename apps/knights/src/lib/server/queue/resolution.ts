@@ -3,6 +3,10 @@ import { RANK_WEIGHT, type Rank } from './ranks';
 const BASE_XP_FOR_NEXT_LEVEL = 250;
 const XP_GROWTH_RATE = 1.18;
 
+const WEIGHT_NEUTRAL_LEVEL = 20;
+const LEVELS_PER_WEIGHT_UNIT = 60;
+const SMITES_PER_WEIGHT_UNIT = 6;
+
 export function levelForExp(totalXp: number): number {
   let level = 1;
   let xpForNextLevel = BASE_XP_FOR_NEXT_LEVEL;
@@ -27,7 +31,10 @@ export function voteWeight({
   if (rank === 'Inquisitor') return 0;
   const base = RANK_WEIGHT[rank];
   if (base === 0) return 0;
-  const weight = base + (level - 20) / 60 - smites / 6;
+  const weight =
+    base +
+    (level - WEIGHT_NEUTRAL_LEVEL) / LEVELS_PER_WEIGHT_UNIT -
+    smites / SMITES_PER_WEIGHT_UNIT;
   return Math.max(0, Math.round(weight * 100) / 100);
 }
 
@@ -65,3 +72,8 @@ export function isExcessiveDownRating(current: number, winner: number): boolean 
   if (current <= 0 || winner <= 0 || winner >= current) return false;
   return Math.log2(current) - Math.log2(winner) > 1;
 }
+
+const BLOCKED_LEVEL = 32;
+
+/** Blocking an image is a moderator's decision, so a consensus on it is handed to the Inquisitors. */
+export const isBlockedLevel = (value: number): boolean => value === BLOCKED_LEVEL;
