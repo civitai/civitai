@@ -273,6 +273,9 @@ export const handleTRPCError = (error: Error): TRPCError => {
   }
 };
 
+export const BANNED_ACCOUNT_MESSAGE =
+  'You cannot perform this action because your account has been banned';
+
 export function throwAuthorizationError(message: string | null = null) {
   message ??= 'You are not authorized to perform this action';
   throw new TRPCError({

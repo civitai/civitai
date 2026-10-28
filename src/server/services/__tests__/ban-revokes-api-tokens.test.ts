@@ -2,12 +2,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as LegalHold from '~/server/services/legal-hold.service';
 import type * as Revocation from '~/server/services/user-token-revocation.service';
+import type * as ApiKeyService from '~/server/services/api-key.service';
 
 // A banned or deleted account's API keys and OAuth tokens must stop working everywhere, including
 // in the orchestrator's auth cache. `revokeUserTokens` does that and is covered on its own; this
 // pins that every ban and deletion reaches it.
 
-const { revokeUserTokens } = vi.hoisted(() => ({ revokeUserTokens: vi.fn() }));
+const { revokeUserTokens, forgetGenerationToken } = vi.hoisted(() => ({
+  revokeUserTokens: vi.fn(),
+  forgetGenerationToken: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/services/api-key.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ApiKeyService>()),
+  forgetGenerationToken,
+}));
 vi.mock('~/server/services/user-token-revocation.service', async (importOriginal) => ({
   ...(await importOriginal<typeof Revocation>()),
   revokeUserTokens,
@@ -28,7 +36,7 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
-const { deleteUser, toggleBan } = await import('~/server/services/user.service');
+const { deleteUser, restoreUser, toggleBan } = await import('~/server/services/user.service');
 
 const USER = 4242;
 const STALE = { tokenRevocation: { confirmedAt: '2026-01-01T00:00:00.000Z' } };
@@ -116,6 +124,14 @@ describe('banning revokes the account’s API tokens', () => {
     expect(revokeUserTokens).not.toHaveBeenCalled();
     expect(writtenMeta().tokenRevocation).toEqual(STALE.tokenRevocation);
   });
+
+  // A mint in flight when the ban landed can cache its token after the ban dropped it.
+  it('an unban drops the cached generation token', async () => {
+    dbMock.dbRead.user.findUnique.mockResolvedValue(account(new Date()) as never);
+    dbMock.dbWrite.user.findUnique.mockResolvedValue(account(new Date()) as never);
+    await toggleBan({ id: USER, userId: 1, isModerator: true } as never);
+    expect(forgetGenerationToken).toHaveBeenCalledWith(USER);
+  });
 });
 
 describe('deleting an account revokes its API tokens', () => {
@@ -131,5 +147,16 @@ describe('deleting an account revokes its API tokens', () => {
       }
     ).data.meta;
     expect(meta.tokenRevocation).toBeUndefined();
+  });
+});
+
+describe('restoring an account', () => {
+  it('drops the cached generation token', async () => {
+    dbMock.dbWrite.user.findFirst
+      .mockResolvedValueOnce({ id: USER, deletedAt: new Date(), meta: {} } as never)
+      .mockResolvedValueOnce(null as never);
+    dbMock.dbWrite.$transaction.mockResolvedValue([] as never);
+    await restoreUser({ id: USER, username: 'someone', email: 'someone@example.test' } as never);
+    expect(forgetGenerationToken).toHaveBeenCalledWith(USER);
   });
 });
