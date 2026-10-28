@@ -62,8 +62,13 @@ vi.mock('~/server/email/templates', async (importOriginal) => ({
   moderationActionEmail: { send: mocks.sendEmail },
 }));
 
-const { resolveLockReviewAppeal, getLockReviewState, LOCK_REVIEW_HELD, LOCK_REVIEW_UNAVAILABLE } =
-  await import('~/server/services/lock-review.service');
+const {
+  resolveLockReviewAppeal,
+  getLockReviewState,
+  latestModelAppealOfKind,
+  LOCK_REVIEW_HELD,
+  LOCK_REVIEW_UNAVAILABLE,
+} = await import('~/server/services/lock-review.service');
 const { createEntityAppealHandler } = await import('~/server/controllers/report.controller');
 const actualReport = await vi.importActual<typeof ReportService>(
   '~/server/services/report.service'
@@ -182,6 +187,9 @@ beforeEach(async () => {
   mocks.isAccountUnderLegalHold.mockResolvedValue(false);
   dbMock.dbRead.appeal.findFirst.mockResolvedValue(null);
   dbMock.dbWrite.$queryRaw.mockImplementation(pgliteRaw(db).queryRaw as never);
+  dbMock.dbRead.$queryRaw.mockImplementation(pgliteRaw(db).queryRaw as never);
+  dbMock.dbWrite.appeal.update.mockReset();
+  dbMock.dbWrite.appeal.updateMany.mockReset();
   await db.exec(`DELETE FROM "Appeal"`);
 });
 
@@ -417,10 +425,7 @@ describe("an owner's request", () => {
   it('reopens the earlier row as a lock review once the cooldown is over', async () => {
     ownModel();
     mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Rejected });
-    dbMock.dbRead.appeal.findFirst.mockImplementation(((args: { where: object }) =>
-      Promise.resolve(
-        'context' in args.where ? { id: 9, status: AppealStatus.Rejected } : null
-      )) as never);
+    await appealRows([9, 'Rejected', { kind: 'lock-review', locks: ['nsfw'] }]);
 
     await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
 
@@ -456,24 +461,43 @@ describe("an owner's request", () => {
   it("reopens only the owner's flag-appeal row for a flag appeal, never a lock review", async () => {
     ownModel({ minor: true, meta: { minorFlagSnapshot: { source: 'auto' } } });
     mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Rejected });
-    dbMock.dbRead.appeal.findFirst.mockResolvedValue({
-      id: 4,
-      status: AppealStatus.Approved,
-    } as never);
+    await appealRows(
+      [4, 'Approved', null],
+      [9, 'Rejected', { kind: 'lock-review', locks: ['nsfw'] }]
+    );
 
     await createEntityAppealHandler({ input: request(), ctx: owner() });
 
     expect(mocks.reopenAppeal).toHaveBeenCalledWith(expect.objectContaining({ id: 4 }));
-    expect(dbMock.dbRead.appeal.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          OR: [
-            { context: { equals: Prisma.AnyNull } },
-            { NOT: { context: { path: ['kind'], equals: 'lock-review' } } },
-          ],
-        }),
-      })
-    );
+  });
+
+  it.each([
+    [
+      'their latest row of the kind',
+      [
+        [4, 'Approved'],
+        [12, 'Rejected'],
+      ],
+      12,
+    ],
+    [
+      'a pending row over a newer resolved one',
+      [
+        [3, 'Pending'],
+        [12, 'Rejected'],
+      ],
+      3,
+    ],
+  ] as const)('reads %s', async (_, rows, expected) => {
+    await appealRows(...rows.map(([id, status]) => [id, status, null] as [number, string, null]));
+
+    const appeal = await latestModelAppealOfKind({
+      modelId: MODEL,
+      userId: OWNER,
+      lockReview: false,
+    });
+
+    expect(appeal?.id).toBe(expected);
   });
 
   it('files a new row when the owner has no row of that kind yet', async () => {

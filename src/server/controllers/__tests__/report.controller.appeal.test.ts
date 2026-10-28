@@ -58,6 +58,7 @@ beforeEach(() => {
   mockReopenAppeal.mockResolvedValue({ id: 1, status: 'Pending' });
   mockIsAppealBlockedByHoldMarker.mockResolvedValue(false);
   dbMock.dbRead.appeal.findFirst.mockResolvedValue(null);
+  dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
   dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
 });
 
@@ -134,19 +135,10 @@ describe('createEntityAppealHandler — Model re-request', () => {
 
   it('reopens a rejected request rather than creating a second row', async () => {
     mockGetLatestAppeal.mockResolvedValue({ id: 7, status: 'Rejected', resolvedAt: new Date() });
-    dbMock.dbRead.appeal.findFirst.mockResolvedValue({ id: 7, status: 'Rejected' } as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 7, status: 'Rejected' }] as never);
 
     const result = await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
 
-    expect(dbMock.dbRead.appeal.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          entityType: EntityType.Model,
-          entityId: 2186217,
-          userId: 602767,
-        }),
-      })
-    );
     expect(mockReopenAppeal).toHaveBeenCalledWith({
       id: 7,
       message: baseInput.message,
@@ -159,7 +151,7 @@ describe('createEntityAppealHandler — Model re-request', () => {
   // An approved appeal unflags the model, but a later re-upload can flag it again.
   it('reopens an approved request when the model has been flagged again', async () => {
     mockGetLatestAppeal.mockResolvedValue({ id: 7, status: 'Approved', resolvedAt: new Date() });
-    dbMock.dbRead.appeal.findFirst.mockResolvedValue({ id: 7, status: 'Approved' } as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: 7, status: 'Approved' }] as never);
 
     await createEntityAppealHandler({ input: baseInput, ctx: ctxUser(602767) });
 

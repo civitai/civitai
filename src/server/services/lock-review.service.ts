@@ -87,13 +87,10 @@ export async function getLockReviewState({
 const lockReviewKind = {
   context: { path: ['kind'], equals: LOCK_REVIEW_KIND },
 } satisfies Prisma.AppealWhereInput;
-// A JSON path NOT alone also drops the NULL context every flag appeal has.
-const flagAppealKind = {
-  OR: [{ context: { equals: Prisma.AnyNull } }, { NOT: lockReviewKind }],
-} satisfies Prisma.AppealWhereInput;
 
-/** The owner's in-app appeal on the model of one kind: a pending one, else their latest. */
-export function latestModelAppealOfKind({
+/** The owner's in-app appeal on the model of one kind: a pending one, else their latest. A takeover
+ *  can leave the pending row older than a resolved one. */
+export async function latestModelAppealOfKind({
   modelId,
   userId,
   lockReview,
@@ -102,18 +99,21 @@ export function latestModelAppealOfKind({
   userId: number;
   lockReview: boolean;
 }) {
-  return dbRead.appeal.findFirst({
-    where: {
-      entityType: EntityType.Model,
-      entityId: modelId,
-      userId,
-      category: null,
-      ...(lockReview ? lockReviewKind : flagAppealKind),
-    },
-    // AppealStatus sorts Pending first. A takeover can leave the pending row older than a resolved one.
-    orderBy: [{ status: 'asc' }, { id: 'desc' }],
-    select: { id: true, status: true, resolvedAt: true },
-  });
+  const [appeal] = await dbRead.$queryRaw<
+    { id: number; status: AppealStatus; resolvedAt: Date | null }[]
+  >`
+    SELECT id, status, "resolvedAt" FROM "Appeal"
+    WHERE "entityType" = 'Model' AND "entityId" = ${modelId} AND "userId" = ${userId}
+      AND category IS NULL
+      AND ${
+        lockReview
+          ? Prisma.sql`context->>'kind' = ${LOCK_REVIEW_KIND}`
+          : Prisma.sql`COALESCE(context->>'kind', '') <> ${LOCK_REVIEW_KIND}`
+      }
+    ORDER BY status = 'Pending' DESC, id DESC
+    LIMIT 1
+  `;
+  return appeal ?? null;
 }
 
 /** The owner's pending in-app appeal on the model, of either kind: there is at most one, but it need
