@@ -13,7 +13,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    const { processed, legacyPaymentIntentIds } = await getPaymentIntentsForBuzz(results.data);
+    const { processed, legacyPaymentIntentIds, failedPaymentIntentIds } =
+      await getPaymentIntentsForBuzz(results.data);
 
     return res.status(200).json({
       ok: true,
@@ -24,6 +25,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
             message: 'legacy purchase, escalate to engineering',
           }
         : {}),
+      ...(failedPaymentIntentIds.length ? { failed: failedPaymentIntentIds } : {}),
     });
   } catch (error: any) {
     return res.status(500).json({ ok: false, error: error.message });

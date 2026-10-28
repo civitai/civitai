@@ -1649,8 +1649,9 @@ export const getPaymentIntentsForBuzz = async ({
   );
 
   const processedPurchases: Array<{ transactionId: string }> = [];
+  const failedPaymentIntentIds: string[] = [];
   for (const batch of batches) {
-    const processed = await Promise.all(
+    const results = await Promise.allSettled(
       batch.map((intent) => {
         const metadata = intent.metadata as Schema.PaymentIntentMetadataSchema;
 
@@ -1661,10 +1662,13 @@ export const getPaymentIntentsForBuzz = async ({
         });
       })
     );
-    processedPurchases.push(...processed);
+    results.forEach((result, i) => {
+      if (result.status === 'fulfilled') processedPurchases.push(result.value);
+      else failedPaymentIntentIds.push(batch[i].id);
+    });
   }
 
-  return { processed: processedPurchases, legacyPaymentIntentIds };
+  return { processed: processedPurchases, legacyPaymentIntentIds, failedPaymentIntentIds };
 };
 
 export const getSetupIntent = async ({

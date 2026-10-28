@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   intents: new Map<string, Record<string, any>>(),
   createTransaction: vi.fn(),
   multipliersFetch: vi.fn(),
+  retrieve: vi.fn(),
 }));
 
 vi.mock('~/server/redis/caches', async (importOriginal) => ({
@@ -40,6 +41,7 @@ vi.mock('~/server/utils/get-server-stripe', () => ({
     paymentIntents: {
       list: async () => ({ data: [...h.intents.values()].map((pi) => structuredClone(pi)) }),
       retrieve: async (id: string) => {
+        h.retrieve(id);
         const pi = h.intents.get(id);
         return pi ? structuredClone(pi) : null;
       },
@@ -82,11 +84,12 @@ function seedIntent(
   return id;
 }
 
-// The mod reprocess path passes userId through as the raw metadata string, as it did before.
 const credits = () =>
-  (h.createTransaction.mock.calls as [{ amount: number; toAccountId: number | string }][]).map(
-    ([payload]) => ({ amount: payload.amount, toAccountId: Number(payload.toAccountId) })
+  (h.createTransaction.mock.calls as [{ amount: number; toAccountId: number }][]).map(
+    ([payload]) => ({ amount: payload.amount, toAccountId: payload.toAccountId })
   );
+
+const REJECTED = 'Unable to complete this purchase';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -160,7 +163,7 @@ describe('completeStripeBuzzTransaction — credits what was paid, to who paid i
         stripePaymentIntentId: pi,
         userId: OWNER,
       })
-    ).rejects.toThrow();
+    ).rejects.toThrow(REJECTED);
     expect(credits()).toEqual([]);
   });
 
@@ -182,7 +185,7 @@ describe('completeStripeBuzzTransaction — credits what was paid, to who paid i
 
     await expect(
       completeStripeBuzzTransaction({ amount: BUZZ, stripePaymentIntentId: pi, userId: OTHER })
-    ).rejects.toThrow();
+    ).rejects.toThrow(REJECTED);
     expect(credits()).toEqual([]);
   });
 
@@ -191,8 +194,21 @@ describe('completeStripeBuzzTransaction — credits what was paid, to who paid i
 
     await expect(
       completeStripeBuzzTransaction({ amount: BUZZ, stripePaymentIntentId: pi, userId: OWNER })
-    ).rejects.toThrow();
+    ).rejects.toThrow(REJECTED);
     expect(credits()).toEqual([]);
+  });
+
+  it('does not retry a refused completion', async () => {
+    const pi = seedIntent('pi_no_retry');
+
+    await expect(
+      completeStripeBuzzTransaction({
+        amount: BUZZ * 100,
+        stripePaymentIntentId: pi,
+        userId: OWNER,
+      })
+    ).rejects.toThrow(REJECTED);
+    expect(h.retrieve).toHaveBeenCalledTimes(1);
   });
 
   it('refuses a purchase whose Buzz amount does not match what was charged', async () => {
@@ -200,7 +216,7 @@ describe('completeStripeBuzzTransaction — credits what was paid, to who paid i
 
     await expect(
       completeStripeBuzzTransaction({ amount: BUZZ, stripePaymentIntentId: pi, userId: OWNER })
-    ).rejects.toThrow();
+    ).rejects.toThrow(REJECTED);
     expect(credits()).toEqual([]);
   });
 });
@@ -213,6 +229,19 @@ describe('getPaymentIntentsForBuzz — mod reprocess', () => {
     const result = await getPaymentIntentsForBuzz({});
 
     expect(credits()).toEqual([{ amount: BUZZ, toAccountId: OWNER }]);
-    expect(result).toMatchObject({ legacyPaymentIntentIds: ['pi_legacy'] });
+    expect(result).toMatchObject({
+      legacyPaymentIntentIds: ['pi_legacy'],
+      failedPaymentIntentIds: [],
+    });
+  });
+
+  it('credits the rest of a batch when one purchase is refused, and reports it', async () => {
+    seedIntent('pi_mismatch', { amount: 50 });
+    seedIntent('pi_pending');
+
+    const result = await getPaymentIntentsForBuzz({});
+
+    expect(credits()).toEqual([{ amount: BUZZ, toAccountId: OWNER }]);
+    expect(result).toMatchObject({ failedPaymentIntentIds: ['pi_mismatch'] });
   });
 });

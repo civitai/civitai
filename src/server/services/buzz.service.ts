@@ -1027,6 +1027,9 @@ export async function completeStripeBuzzTransaction({
       throw throwBadRequestError('Unable to complete this purchase');
     }
     const purchaseDetails = { ...parsed.data, stripePaymentIntentId };
+    // The reprocess path passes raw string metadata; carry the parsed numbers from here on.
+    amount = parsed.data.buzzAmount;
+    userId = parsed.data.userId;
 
     if (metadata.transactionId) {
       // Avoid double down on buzz
