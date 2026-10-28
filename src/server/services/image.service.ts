@@ -7847,8 +7847,8 @@ export async function reportCsamImages({
       where: { id: { in: imageIds } },
       data: { needsReview: 'csam' },
     });
-    // A new report puts a set-aside image back in the CSAM queue. The table is applied by hand, so
-    // a report made before it exists still goes through.
+    // Reporting an image already flagged leaves its flag unchanged, so the set-aside trigger does not
+    // fire and this delete is what puts the image back in the queue. The table is applied by hand.
     const [setAside] = await tx.$queryRaw<{ exists: boolean }[]>`
       SELECT to_regclass('"CsamQueueSetAside"') IS NOT NULL AS exists`;
     if (setAside?.exists)

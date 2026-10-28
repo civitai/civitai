@@ -6717,12 +6717,12 @@ enum CsamQueueSetAsideOutcome {
 }
 
 /// An image a moderator took out of the CSAM review queue without changing the image. Whether the row
-/// still counts is decided when the queue is read; the row itself never expires.
+/// still counts is decided when the queue is read; a changed flag or a new report deletes it.
 model CsamQueueSetAside {
   imageId      Int                      @id
   userId       Int
   outcome      CsamQueueSetAsideOutcome
-  /// The report an `AfterReport` row follows.
+  /// The report an `AfterReport` row follows. Nothing writes `AfterReport` rows yet.
   csamReportId Int?
   moderatorId  Int
   createdAt    DateTime                 @default(now())

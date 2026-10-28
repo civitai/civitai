@@ -1,10 +1,8 @@
 -- Images a moderator took out of the CSAM review queue without changing the image itself. Apply it
--- BEFORE deploying the code that writes it (reads skip the table while it is missing). Applied
--- MANUALLY, per environment. The foreign keys keep a row from outliving its image or naming a report
--- that does not exist; the queue decides when it reads whether a row still counts.
--- One transaction, so a lock timeout leaves nothing behind and the file can be run again. The
--- foreign key and the trigger both lock "Image" against writes: better to fail fast than to queue
--- behind a long transaction and block every write to the table.
+-- BEFORE deploying the code that writes it (reads skip the table while it is missing).
+-- The foreign key and the trigger both lock "Image" against writes: better to fail fast than to
+-- queue behind a long transaction and block every write to the table. A lock timeout rolls
+-- everything back; re-run only after a failure.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 

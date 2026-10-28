@@ -302,7 +302,7 @@ describe('the CSAM queue filtered to one user', () => {
 
 describe('images set aside from the CSAM queue', () => {
   // 301 is not held: dismissed 400 days ago (61), set aside after a report (63), no row (64). 302 is
-  // held: dismissed 400 days ago (65), set aside after a report (66).
+  // held, with the same two rows (65, 66): a hold changes nothing here.
   beforeAll(async () => {
     await db.exec(SET_ASIDE_MIGRATION);
     await db.exec(`
@@ -345,30 +345,22 @@ describe('images set aside from the CSAM queue', () => {
       })
     ).items.map((i) => i.id);
 
-  it('keeps a dismissal out for good, and a row set aside after a report only while held', async () => {
+  it('keeps a dismissal out for good, and counts nothing else', async () => {
     expect(await pendingOf(301)).toBe(2);
     expect(await listed(301)).toEqual([64, 63]);
-    expect(await pendingOf(302)).toBe(0);
-    expect(await listed(302)).toEqual([]);
+    expect(await pendingOf(302)).toBe(1);
+    expect(await listed(302)).toEqual([66]);
+  });
+
+  it('offers to dismiss only the removed images not yet dismissed', async () => {
+    const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+    expect(users.find((u) => u.userId === 301)?.removed).toBe(2);
   });
 
   it('badges what the by-user page shows as pending', async () => {
     const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
     const pending = users.reduce((n, u) => n + u.pending, 0);
     expect(Number((await getImageReviewCounts()).csam)).toBe(pending);
-  });
-
-  it('shows rows set aside after a report while the marker view is missing', async () => {
-    await db.exec(`DROP VIEW "EvidenceHeldUser"`);
-    try {
-      expect(await pendingOf(301)).toBe(2);
-      expect(await pendingOf(302)).toBe(1);
-      expect(await listed(302)).toEqual([66]);
-    } finally {
-      await db.exec(
-        `CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId"`
-      );
-    }
   });
 
   const setAsideIds = async (ids: number[]) =>
@@ -411,30 +403,6 @@ describe('images set aside from the CSAM queue', () => {
     } finally {
       await db.exec(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 68`);
     }
-  });
-
-  it('leaves the other queues alone', async () => {
-    // A row that would count, on an image in another queue: the trigger keeps this from happening,
-    // the reads do not rely on it.
-    await db.exec(`
-      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES (69, 302, 'minor', 'Scanned');
-      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId") VALUES
-        (69, 302, 'AfterReport', 1);
-    `);
-    const minorListed = async () =>
-      (
-        await getImageReviewQueue({
-          needsReview: 'minor',
-          browsingLevel: ALL_LEVELS,
-          userId: 302,
-          limit: 50,
-        })
-      ).items.map((i) => i.id);
-    const withRow = Number((await getImageReviewCounts()).minor);
-    expect(await minorListed()).toEqual([69]);
-
-    await db.exec(`DELETE FROM "CsamQueueSetAside" WHERE "imageId" = 69`);
-    expect(Number((await getImageReviewCounts()).minor)).toBe(withRow);
   });
 
   it('shows every image while the table is missing', async () => {

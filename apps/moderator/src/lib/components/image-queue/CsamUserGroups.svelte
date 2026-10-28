@@ -111,29 +111,30 @@
           >
         </TableCell>
         <TableCell class="whitespace-nowrap text-sm">
-          {#if user.heldBy.length}
-            <span class="text-xs text-dark-2">
-              Held: {holdLegLabels(user.heldBy)} · review one by one
-            </span>
-          {:else if user.removed > 0}
-            <form
-              method="POST"
-              action="?/dismissUserFlags"
-              class="flex items-center gap-2"
-              use:enhance={clearSubmit(user.userId)}
-            >
-              <input type="hidden" name="userId" value={user.userId} />
-              <input type="hidden" name="expectedCount" value={user.removed} />
-              <ConfirmSubmit
-                label="Clear"
-                name="op"
-                value="clear"
-                count={user.removed}
-                noun="removed-image flag"
-                submitting={clearing === user.userId}
-              />
-            </form>
-          {/if}
+          <div class="flex items-center gap-2">
+            {#if user.heldBy.length}
+              <span class="text-xs text-dark-2">Held: {holdLegLabels(user.heldBy)}</span>
+            {/if}
+            {#if user.removed > 0}
+              <form
+                method="POST"
+                action="?/dismissUserFlags"
+                class="flex items-center gap-2"
+                use:enhance={clearSubmit(user.userId)}
+              >
+                <input type="hidden" name="userId" value={user.userId} />
+                <input type="hidden" name="expectedCount" value={user.removed} />
+                <ConfirmSubmit
+                  label="Dismiss, keep removed"
+                  name="op"
+                  value="dismiss"
+                  count={user.removed}
+                  noun="removed image"
+                  submitting={clearing === user.userId}
+                />
+              </form>
+            {/if}
+          </div>
         </TableCell>
       </TableRow>
     {/each}

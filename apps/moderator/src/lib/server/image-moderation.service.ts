@@ -17,6 +17,9 @@ import { bustProfilePictures } from './profile-picture-cache';
 import { NsfwLevel } from '@civitai/shared';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
 import { holdRemovals, type HeldRemoval } from './removal-hold';
+import { setAsideCounts, setAsideState } from './csam-queue-set-aside';
+import type { Transaction } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 
 // The negation of `isFlagOnlyRemaining`, written null-safe: `NOT (needsReview = x AND ...)` is NULL,
 // not true, for every row with no flag, and would refuse every ordinary accept.
@@ -290,7 +293,7 @@ export async function blockImage({
 /**
  * Takes a removed image out of the CSAM review queue as dismissed, leaving the image itself as it is:
  * flag, block and uploader untouched. False when it is not a removed, flagged image or was already
- * taken out, e.g. another moderator got there first.
+ * dismissed, e.g. another moderator got there first.
  */
 export async function dismissFromCsamQueue({
   imageId,
@@ -309,41 +312,90 @@ export async function dismissFromCsamQueue({
       .forUpdate()
       .executeTakeFirst();
     if (!image) return false;
-
-    const { numInsertedOrUpdatedRows } = await tx
-      .insertInto('CsamQueueSetAside')
-      .values({
-        imageId,
-        userId: image.userId,
-        outcome: 'Dismissed',
-        moderatorId: userId,
-        createdAt: sql<Date>`now() AT TIME ZONE 'UTC'`,
-      })
-      // A dismissal is final. A row set aside after a report becomes one, so an image that came back
-      // to the queue can still be dismissed.
-      .onConflict((oc) =>
-        oc
-          .column('imageId')
-          .doUpdateSet({
-            outcome: 'Dismissed',
-            moderatorId: userId,
-            createdAt: sql<Date>`now() AT TIME ZONE 'UTC'`,
-          })
-          .where('CsamQueueSetAside.outcome', '=', 'AfterReport')
-      )
-      .executeTakeFirst();
-    if (!Number(numInsertedOrUpdatedRows)) return false;
-
-    // In the same transaction, so the dismissal cannot exist without its row. Never one of the main
-    // app's MODERATOR_TAKEDOWN_ACTIVITIES, which license destroying the image.
-    await insertModActivityBatch(tx, {
-      userId,
-      entityType: 'image',
-      entityIds: [imageId],
-      activity: 'dismissFromCsamQueue',
-    });
-    return true;
+    const dismissed = await insertDismissals(tx, [{ imageId, userId: image.userId }], userId);
+    return dismissed === 1;
   });
+}
+
+export type DismissUserResult =
+  | { ok: true; dismissed: number; remaining: number }
+  | { ok: false; reason: 'changed' | 'unavailable' };
+
+class QueueChanged extends Error {}
+
+/**
+ * `dismissFromCsamQueue` for every one of one user's removed, flagged images not already dismissed,
+ * in one transaction. `expectedCount` is what the moderator confirmed; any other number rolls back,
+ * so nothing is dismissed that was not shown. `remaining` is what still needs a verdict.
+ */
+export async function dismissUserFromCsamQueue({
+  userId,
+  expectedCount,
+  moderatorId,
+}: {
+  userId: number;
+  expectedCount: number;
+  moderatorId: number;
+}): Promise<DismissUserResult> {
+  try {
+    return await dbWrite.transaction().execute(async (tx) => {
+      const state = await setAsideState(tx);
+      if (!state.table) return { ok: false, reason: 'unavailable' } as const;
+      const images = await tx
+        .selectFrom('Image as i')
+        .select('i.id')
+        .where('i.userId', '=', userId)
+        .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+        .where('i.ingestion', '=', 'Blocked')
+        .where(sql<boolean>`not ${setAsideCounts('i', state)}`)
+        .forUpdate()
+        .execute();
+      if (images.length !== expectedCount) throw new QueueChanged();
+      const rows = images.map(({ id }) => ({ imageId: id, userId }));
+      if ((await insertDismissals(tx, rows, moderatorId)) !== rows.length) throw new QueueChanged();
+      const { remaining } = await tx
+        .selectFrom('Image as i')
+        .select(sql<number>`count(*)::int`.as('remaining'))
+        .where('i.userId', '=', userId)
+        .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+        .where(sql<boolean>`not ${setAsideCounts('i', state)}`)
+        .executeTakeFirstOrThrow();
+      return { ok: true, dismissed: rows.length, remaining: Number(remaining) } as const;
+    });
+  } catch (e) {
+    if (e instanceof QueueChanged) return { ok: false, reason: 'changed' };
+    throw e;
+  }
+}
+
+/** Writes a Dismissed row and its log entry for each image without a row. Returns how many it wrote. */
+async function insertDismissals(
+  tx: Transaction<DB>,
+  rows: { imageId: number; userId: number }[],
+  moderatorId: number
+): Promise<number> {
+  if (!rows.length) return 0;
+  const inserted = await tx
+    .insertInto('CsamQueueSetAside')
+    .values(
+      rows.map((r) => ({
+        ...r,
+        outcome: 'Dismissed' as const,
+        moderatorId,
+        createdAt: sql<Date>`now() AT TIME ZONE 'UTC'`,
+      }))
+    )
+    .onConflict((oc) => oc.column('imageId').doNothing())
+    .returning('imageId')
+    .execute();
+  // Never one of the main app's MODERATOR_TAKEDOWN_ACTIVITIES, which license destroying the image.
+  await insertModActivityBatch(tx, {
+    userId: moderatorId,
+    entityType: 'image',
+    entityIds: inserted.map((r) => r.imageId),
+    activity: 'dismissFromCsamQueue',
+  });
+  return inserted.length;
 }
 
 /**

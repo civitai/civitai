@@ -2945,7 +2945,7 @@ export type CsamQueueSetAside = {
   userId: number;
   outcome: CsamQueueSetAsideOutcome;
   /**
-   * The report an `AfterReport` row follows.
+   * The report an `AfterReport` row follows. Nothing writes `AfterReport` rows yet.
    */
   csamReportId: number | null;
   moderatorId: number;

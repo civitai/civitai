@@ -61,8 +61,14 @@ vi.mock('../mod-activity', async (importOriginal) => ({
 }));
 vi.mock('../search-index', () => ({ syncSearchIndex: vi.fn() }));
 
-const { acceptImage, blockImage, dismissFromCsamQueue, FlagOnlyRemovedError, resolveImageAppeal } =
-  await import('../image-moderation.service');
+const {
+  acceptImage,
+  blockImage,
+  dismissFromCsamQueue,
+  dismissUserFromCsamQueue,
+  FlagOnlyRemovedError,
+  resolveImageAppeal,
+} = await import('../image-moderation.service');
 
 const SCHEMA = `
 CREATE TYPE "EntityType" AS ENUM ('Image', 'Post', 'Model');
@@ -297,6 +303,81 @@ describe('dismissFromCsamQueue', () => {
       ingestion: 'Blocked',
     });
     expect(await setAside()).toEqual([]);
+  });
+});
+
+describe('dismissUserFromCsamQueue', () => {
+  // User 8: FLAGGED_REMOVED and 55 removed, 56 still live, 57 removed and already dismissed.
+  beforeEach(async () => {
+    await db.exec(`
+      INSERT INTO "Image" ("id", "userId", "needsReview", "blockedFor", "ingestion", "nsfwLevel") VALUES
+        (55, 8, 'csam', 'moderated', 'Blocked', 32),
+        (56, 8, 'csam', NULL, 'Scanned', 4),
+        (57, 8, 'csam', 'moderated', 'Blocked', 32);
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId", "createdAt")
+        VALUES (57, 8, 'Dismissed', 1, now());
+    `);
+  });
+  const flags = async () =>
+    (
+      await db.query<{ id: number; needsReview: string | null }>(
+        `SELECT id, "needsReview" FROM "Image" WHERE "userId" = 8 ORDER BY id`
+      )
+    ).rows;
+  const dismissedIds = async () =>
+    (
+      await db.query<{ imageId: number }>(
+        `SELECT "imageId" FROM "CsamQueueSetAside" WHERE outcome = 'Dismissed' ORDER BY 1`
+      )
+    ).rows.map((r) => r.imageId);
+  const loggedIds = async () =>
+    (
+      await db.query<{ entityId: number }>(
+        `SELECT "entityId" FROM "ModActivity" WHERE activity = 'dismissFromCsamQueue' ORDER BY 1`
+      )
+    ).rows.map((r) => r.entityId);
+
+  it('dismisses every removed image not yet dismissed and keeps every flag', async () => {
+    expect(await dismissUserFromCsamQueue({ userId: 8, expectedCount: 2, moderatorId: 2 })).toEqual(
+      {
+        ok: true,
+        dismissed: 2,
+        remaining: 1,
+      }
+    );
+
+    expect(await flags()).toEqual([
+      { id: FLAGGED_REMOVED, needsReview: 'csam' },
+      { id: 55, needsReview: 'csam' },
+      { id: 56, needsReview: 'csam' },
+      { id: 57, needsReview: 'csam' },
+    ]);
+    expect(await dismissedIds()).toEqual([FLAGGED_REMOVED, 55, 57]);
+    expect(await loggedIds()).toEqual([FLAGGED_REMOVED, 55]);
+  });
+
+  it('dismisses nothing when the count differs from what the moderator confirmed', async () => {
+    expect(await dismissUserFromCsamQueue({ userId: 8, expectedCount: 3, moderatorId: 2 })).toEqual(
+      {
+        ok: false,
+        reason: 'changed',
+      }
+    );
+
+    expect(await dismissedIds()).toEqual([57]);
+    expect(await loggedIds()).toEqual([]);
+  });
+
+  it('dismisses nothing before the table exists', async () => {
+    await db.exec(`ALTER TABLE "CsamQueueSetAside" RENAME TO "CsamQueueSetAsideAway"`);
+    try {
+      expect(
+        await dismissUserFromCsamQueue({ userId: 8, expectedCount: 2, moderatorId: 2 })
+      ).toEqual({ ok: false, reason: 'unavailable' });
+    } finally {
+      await db.exec(`ALTER TABLE "CsamQueueSetAsideAway" RENAME TO "CsamQueueSetAside"`);
+    }
+    expect(await loggedIds()).toEqual([]);
   });
 });
 

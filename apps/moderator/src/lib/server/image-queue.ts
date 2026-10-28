@@ -14,12 +14,12 @@ import {
   blockImage,
   closedAppellants,
   dismissFromCsamQueue,
+  dismissUserFromCsamQueue,
   FlagOnlyRemovedError,
   resolveImageAppeal,
   sendBulkAppealEmails,
 } from '$lib/server/image-moderation.service';
 import { setReportStatus } from '$lib/server/reports.service';
-import { clearUserCsamFlags } from '$lib/server/csam-flag-clear';
 import { getActorMeta } from '$lib/server/request-meta';
 import { dbRead } from '$lib/server/db';
 import { approvedAppealOf } from '$lib/server/removal-hold';
@@ -283,7 +283,7 @@ export const imageQueueActions = {
     return { success: true, imageId };
   },
 
-  // Clears the flag from every one of one user's removed images, from the by-user view of the same queue.
+  // `dismissFlag` for every one of one user's removed images, from the by-user view of the same queue.
   dismissUserFlags: async ({ request, locals, params }) => {
     if (params.slug !== FLAG_KEPT_THROUGH_BLOCK) return fail(403, { error: 'Not available here.' });
     const input = parseForm(
@@ -291,19 +291,21 @@ export const imageQueueActions = {
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });
-    const result = await clearUserCsamFlags({ ...input, moderatorId: locals.user.id });
+    const result = await dismissUserFromCsamQueue({ ...input, moderatorId: locals.user.id });
     if (!result.ok)
-      return fail(409, {
+      return fail(result.reason === 'unavailable' ? 503 : 409, {
         error:
-          result.reason === 'held'
-            ? `User #${input.userId}'s flags cannot be cleared in bulk. Review the images one by one.`
-            : `User #${input.userId}'s queue changed since it was shown. Nothing was cleared. Reload.`,
+          result.reason === 'unavailable'
+            ? 'Dismissing is not available yet. Nothing was dismissed.'
+            : `User #${input.userId}'s queue changed since it was shown. Nothing was dismissed. Reload.`,
       });
     return {
       success: true,
-      cleared: `Cleared ${result.cleared} flag${result.cleared === 1 ? '' : 's'} for user #${
-        input.userId
-      }.${result.remaining ? ` ${result.remaining} still need a verdict.` : ''}`,
+      cleared: `Dismissed ${result.dismissed} removed image${
+        result.dismissed === 1 ? '' : 's'
+      } for user #${input.userId}.${
+        result.remaining ? ` ${result.remaining} still need a verdict.` : ''
+      }`,
     };
   },
 
