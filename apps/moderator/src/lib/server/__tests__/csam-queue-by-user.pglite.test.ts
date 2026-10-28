@@ -414,6 +414,21 @@ describe('images set aside from the CSAM queue', () => {
     expect(await setAsideIds([68])).toEqual([68]);
   });
 
+  it('counts a dismissal only while the image is removed, even with the row left behind', async () => {
+    await db.exec(`ALTER TABLE "Image" DISABLE TRIGGER "Image_csam_queue_set_aside_end"`);
+    try {
+      await db.exec(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 68`);
+      expect(await setAsideIds([68])).toEqual([68]);
+      expect(await listed(303)).toEqual([68, 67]);
+      expect(await pendingOf(303)).toBe(2);
+    } finally {
+      await db.exec(`
+        UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 68;
+        ALTER TABLE "Image" ENABLE TRIGGER "Image_csam_queue_set_aside_end";
+      `);
+    }
+  });
+
   it('shows every image while the table is missing', async () => {
     await db.exec(`ALTER TABLE "CsamQueueSetAside" RENAME TO "CsamQueueSetAsideAway"`);
     try {
