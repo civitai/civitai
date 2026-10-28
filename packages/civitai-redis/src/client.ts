@@ -2537,6 +2537,11 @@ export const REDIS_SYS_KEYS = {
      */
     DELETED_USER_IMAGE_PURGE_LIMIT: 'system:deleted-user-image-purge-limit',
     /*
+      JSON switch for the Knights of New Order v2 queue sources (scan sample, owner self-rating):
+      `{"enabled":true,"sfwRate":1,"nsfwRate":0.3}`. A missing or unreadable key means off.
+     */
+    KNIGHTS_V2_SOURCES: 'system:knights-v2-sources',
+    /*
       Set of userIds whose grace-blocked images are waiting on the
       restore-user-images job. `restoreUser` adds an id once its restore
       transaction commits; the job drops it once the reversal runs out of rows

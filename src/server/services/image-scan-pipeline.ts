@@ -41,6 +41,7 @@ import {
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
+import { queueScanSampleForKnights } from '~/server/services/knights/sources';
 import { classifyImageScanFailure } from '~/server/services/image-scan-failure';
 import type { MediaMetadata } from '~/server/schema/media.schema';
 import {
@@ -991,6 +992,7 @@ export async function applyIngestionSideEffects({
 
       if (!reviewKey && image.type === 'image') {
         await addToNewOrderQueue({ imageId: image.id, nsfw: audit.nsfw });
+        await queueScanSampleForKnights({ imageId: image.id, nsfw: audit.nsfw });
       }
     }
   }

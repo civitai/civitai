@@ -3712,6 +3712,7 @@ export type KnightsQueueItem = {
   applyAttempts: Generated<number>;
   nextAttemptAt: Timestamp | null;
   reason: string | null;
+  prediction: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
