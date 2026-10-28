@@ -153,11 +153,7 @@ describe('publishModelById — Model rules literal hold', () => {
       versionIds: [100],
       meta: { foo: 1 },
     });
-    expect(holdModelForLiteralRules).toHaveBeenCalledWith({
-      modelId: MODEL_ID,
-      ...HOLD,
-      meta: { foo: 1 },
-    });
+    expect(holdModelForLiteralRules).toHaveBeenCalledWith({ modelId: MODEL_ID, ...HOLD });
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
     expect(result).toMatchObject({ id: MODEL_ID });
   });
@@ -259,11 +255,7 @@ describe('publishPrivateModel — Model rules literal hold', () => {
       versionIds: [100, 101],
       meta: { foo: 1 },
     });
-    expect(holdModelForLiteralRules).toHaveBeenCalledWith({
-      modelId: MODEL_ID,
-      ...HOLD,
-      meta: { foo: 1 },
-    });
+    expect(holdModelForLiteralRules).toHaveBeenCalledWith({ modelId: MODEL_ID, ...HOLD });
     expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
   });
 
