@@ -59,6 +59,8 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   throwOnBlockedUserContent: vi.fn(),
 }));
 const { scanEntityInBackground } = vi.hoisted(() => ({ scanEntityInBackground: vi.fn() }));
+const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
+vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanSubmit>()),
   scanEntityInBackground,
@@ -719,6 +721,27 @@ describe('authorization', () => {
       });
     });
 
+    it('keeps a committed edit when logging it as a mod action fails', async () => {
+      trackModActivity.mockReset();
+      trackModActivity.mockRejectedValueOnce(new Error('pool timeout'));
+      await expect(
+        updateStoryline({ id: 10, title: 'x', userId: MODERATOR, isModerator: true })
+      ).resolves.toBeDefined();
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
+    });
+
+    it("logs a moderator's edit as a mod action, and not the owner's", async () => {
+      trackModActivity.mockReset();
+      await updateStoryline({ id: 10, title: 'x', userId: OWNER });
+      expect(trackModActivity).not.toHaveBeenCalled();
+      await updateStoryline({ id: 10, title: 'x', userId: MODERATOR, isModerator: true });
+      expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+        entityType: 'storyline',
+        entityId: 10,
+        activity: 'update',
+      });
+    });
+
     it.each([
       ['an endorsed collaborator', COLLABORATOR],
       ['a stranger', STRANGER],
@@ -813,6 +836,52 @@ describe('authorization', () => {
       expect(w.storylineCollaborator.upsert.mock.calls[0][0]).toMatchObject({
         create: { storylineId: 10, userId: COLLABORATOR },
       });
+    });
+
+    // Decided with the Storylines lead: an endorsed collaborator's priced continuations skip the
+    // owner's review, so endorsing stays the owner's even for a moderator. Removing is a safety action.
+    it('refuses a moderator endorsing anyone, themselves included', async () => {
+      for (const targetUserId of [COLLABORATOR, MODERATOR])
+        await expect(
+          addStorylineCollaborator({
+            storylineId: 10,
+            targetUserId,
+            userId: MODERATOR,
+            ...{ isModerator: true },
+          })
+        ).rejects.toMatchObject(forbidden);
+      expect(w.storylineCollaborator.upsert).not.toHaveBeenCalled();
+    });
+
+    it('lets a moderator remove a collaborator, logged as a mod action', async () => {
+      trackModActivity.mockReset();
+      await removeStorylineCollaborator({
+        storylineId: 10,
+        targetUserId: COLLABORATOR,
+        userId: MODERATOR,
+        isModerator: true,
+      });
+      expect(w.storylineCollaborator.deleteMany).toHaveBeenCalledTimes(1);
+      expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+        entityType: 'storyline',
+        entityId: 10,
+        activity: 'removeCollaborator',
+      });
+    });
+
+    it('refuses a stranger endorsing or removing someone', async () => {
+      await expect(
+        addStorylineCollaborator({ storylineId: 10, targetUserId: COLLABORATOR, userId: STRANGER })
+      ).rejects.toMatchObject(forbidden);
+      await expect(
+        removeStorylineCollaborator({
+          storylineId: 10,
+          targetUserId: COLLABORATOR,
+          userId: STRANGER,
+        })
+      ).rejects.toMatchObject(forbidden);
+      expect(w.storylineCollaborator.upsert).not.toHaveBeenCalled();
+      expect(w.storylineCollaborator.deleteMany).not.toHaveBeenCalled();
     });
 
     it('refuses a collaborator endorsing someone else', async () => {

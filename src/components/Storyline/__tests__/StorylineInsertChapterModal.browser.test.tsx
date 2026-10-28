@@ -10,6 +10,12 @@ const mocks = vi.hoisted(() => ({
   addOwn: vi.fn(),
   refusal: null as string | null,
   invalidate: vi.fn(),
+  currentUser: { id: 10, username: 'owner' } as {
+    id: number;
+    username: string;
+    isModerator?: boolean;
+  },
+  postsOf: undefined as string | undefined,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -45,6 +51,7 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             data: {
               id: 2,
               userId: 10,
+              user: { id: 10, username: 'owner' },
               status: 'Ongoing',
               maxNsfwLevel: 4,
               collaborators: [],
@@ -55,28 +62,31 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
           }),
         },
         'post.getInfinite': {
-          useInfiniteQuery: () => ({
-            data: {
-              pages: [
-                {
-                  nextCursor: undefined,
-                  items: [
-                    {
-                      id: 900,
-                      title: 'My new post',
-                      nsfwLevel: 1,
-                      publishedAt: new Date(),
-                      imageCount: 1,
-                      user: { id: 10 },
-                      images: [],
-                    },
-                  ],
-                },
-              ],
-            },
-            isLoading: false,
-            isError: false,
-          }),
+          useInfiniteQuery: (input: { username?: string }) => {
+            mocks.postsOf = input.username;
+            return {
+              data: {
+                pages: [
+                  {
+                    nextCursor: undefined,
+                    items: [
+                      {
+                        id: 900,
+                        title: 'My new post',
+                        nsfwLevel: 1,
+                        publishedAt: new Date(),
+                        imageCount: 1,
+                        user: { id: 10 },
+                        images: [],
+                      },
+                    ],
+                  },
+                ],
+              },
+              isLoading: false,
+              isError: false,
+            };
+          },
         },
         'post.get': {
           useQuery: () => ({
@@ -94,7 +104,7 @@ vi.mock('~/components/Dialog/DialogProvider', () => ({
   useDialogContext: () => ({ opened: true, onClose: vi.fn(), zIndex: 300 }),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({
-  useCurrentUser: () => ({ id: 10, username: 'owner' }),
+  useCurrentUser: () => mocks.currentUser,
 }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ storylines: true }),
@@ -112,6 +122,7 @@ vi.mock('~/components/Storyline/StorylineThumb', () => ({ StorylineThumb: () => 
 beforeEach(() => {
   for (const fn of [mocks.insert, mocks.addOwn, mocks.invalidate]) fn.mockReset();
   mocks.refusal = null;
+  mocks.currentUser = { id: 10, username: 'owner' };
 });
 
 const open = (insertBeforeChapterId?: number) =>
@@ -137,6 +148,23 @@ describe('inserting a chapter from the map', () => {
     });
     expect(mocks.addOwn).not.toHaveBeenCalled();
     await expect.element(page.getByText('Inserted into your storyline.')).toBeVisible();
+  });
+
+  test("a moderator inserts one of the owner's posts, not their own", async () => {
+    mocks.currentUser = { id: 99, username: 'mod', isModerator: true };
+    open(121);
+    const ownersPost = page.getByRole('radio', { name: /My new post/ });
+    await expect.element(ownersPost).toBeVisible();
+    await ownersPost.click();
+    await page.getByRole('button', { name: 'Insert chapter' }).click();
+
+    expect(mocks.postsOf).toBe('owner');
+    expect(mocks.insert).toHaveBeenCalledWith({
+      storylineId: 2,
+      parentChapterId: 104,
+      childChapterId: 121,
+      postId: 900,
+    });
   });
 
   test("the server's refusal is shown and the dialog stays", async () => {

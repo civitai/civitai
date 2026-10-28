@@ -7,6 +7,8 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { REDIS_KEYS } from '~/server/redis/client';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 
+const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
+vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof CacheHelpers>()),
@@ -318,6 +320,11 @@ describe('moveStorylineChapter within the run', () => {
   it("lets a moderator move the owner's chapters", async () => {
     expect(await move(5, 2, { userId: 4, isModerator: true })).toEqual({
       chapterIds: [1, 2, 5, 3, 4, 6],
+    });
+    expect(trackModActivity).toHaveBeenCalledWith(4, {
+      entityType: 'storyline',
+      entityId: 1,
+      activity: 'moveChapter',
     });
     await expectWellFormed([1, 2, 5, 3, 4, 6]);
   });

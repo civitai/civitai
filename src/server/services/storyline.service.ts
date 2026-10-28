@@ -10,6 +10,8 @@ import {
   setFetchThroughCache,
 } from '~/server/utils/cache-helpers';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import type { StorylineModActivity } from '~/server/services/moderator.service';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
@@ -165,6 +167,36 @@ async function getOwnedStoryline({
   if (!storyline) throw throwNotFoundError('Storyline not found');
   if (storyline.userId !== userId && !isModerator) throw throwAuthorizationError();
   return storyline;
+}
+
+/**
+ * Logs a write by anyone but the owner, which `getOwnedStoryline` admits only for a moderator.
+ * Called after the write commits, so a failed log must not report the edit as failed.
+ */
+async function trackStorylineModEdit({
+  storylineId,
+  ownerId,
+  userId,
+  activity,
+}: {
+  storylineId: number;
+  ownerId: number;
+  userId: number;
+  activity: StorylineModActivity['activity'];
+}) {
+  if (userId === ownerId) return;
+  try {
+    await trackModActivity(userId, { entityType: 'storyline', entityId: storylineId, activity });
+  } catch (error) {
+    logToAxiom({
+      name: 'storyline-mod-activity',
+      type: 'error',
+      message: 'moderator storyline edit not logged',
+      storylineId,
+      activity,
+      error: error instanceof Error ? error.message : String(error),
+    }).catch(() => undefined);
+  }
 }
 
 /**
@@ -804,6 +836,12 @@ export async function updateStoryline({
   // An edited title is how an owner has a title verdict looked at again.
   if (title !== undefined && title !== current.title)
     scanEntityInBackground({ entityType: 'Storyline', entityId: id });
+  await trackStorylineModEdit({
+    storylineId: id,
+    ownerId: current.userId,
+    userId,
+    activity: 'update',
+  });
   return updated;
 }
 
@@ -1325,7 +1363,11 @@ export async function setCanonChapter({
     );
   if (edges.length > 1)
     throw throwBadRequestError('This chapter continues several chapters: choose which one');
-  await getOwnedStoryline({ storylineId: edge.storylineId, userId, isModerator });
+  const { userId: ownerId } = await getOwnedStoryline({
+    storylineId: edge.storylineId,
+    userId,
+    isModerator,
+  });
   if (edge.chapter.removedAt)
     throw throwBadRequestError('A removed chapter cannot be the main route');
 
@@ -1341,6 +1383,12 @@ export async function setCanonChapter({
     });
     // An insert can have moved the edge since it was read; rolls back the line above with it.
     if (!count) throw throwBadRequestError('That chapter no longer follows this one');
+  });
+  await trackStorylineModEdit({
+    storylineId: edge.storylineId,
+    ownerId,
+    userId,
+    activity: 'setCanon',
   });
 }
 
@@ -1415,7 +1463,7 @@ export async function linkStorylineChapter({
   });
   if (!parent) throw throwNotFoundError('Chapter not found');
   const { storylineId } = parent;
-  await getOwnedStoryline({ storylineId, userId, isModerator });
+  const { userId: ownerId } = await getOwnedStoryline({ storylineId, userId, isModerator });
 
   try {
     await dbWrite.$transaction(async (tx) => {
@@ -1464,6 +1512,7 @@ export async function linkStorylineChapter({
       throw throwBadRequestError('Joining chapters is not available yet');
     throw error;
   }
+  await trackStorylineModEdit({ storylineId, ownerId, userId, activity: 'linkChapter' });
 }
 
 type InsertEdgeRow = {
@@ -1594,6 +1643,7 @@ export async function insertStorylineChapter({
 
   // The insert has committed; stale counts until the entry expires beat reporting it as failed.
   await bustFetchThroughCache(forkCountsKey(parentChapterId)).catch(() => undefined);
+  await trackStorylineModEdit({ storylineId, ownerId, userId, activity: 'insertChapter' });
   return { chapterId };
 }
 
@@ -1801,6 +1851,7 @@ export async function moveStorylineChapter({
       bustFetchThroughCache(forkCountsKey(id)).catch(() => undefined)
     )
   );
+  await trackStorylineModEdit({ storylineId, ownerId, userId, activity: 'moveChapter' });
   return { chapterIds: result.chapterIds };
 }
 
@@ -1867,18 +1918,20 @@ export async function getStorylineLinkTargets({
   );
 }
 
+/**
+ * The owner only, never a moderator: an endorsed collaborator's priced continuations are approved
+ * without review, so endorsing is approving them in advance.
+ */
 export async function addStorylineCollaborator({
   storylineId,
   targetUserId,
   userId,
-  isModerator,
 }: {
   storylineId: number;
   targetUserId: number;
   userId: number;
-  isModerator?: boolean;
 }) {
-  const storyline = await getOwnedStoryline({ storylineId, userId, isModerator });
+  const storyline = await getOwnedStoryline({ storylineId, userId });
   if (targetUserId === storyline.userId)
     throw throwBadRequestError('The owner is already part of their storyline');
 
@@ -1915,8 +1968,16 @@ export async function removeStorylineCollaborator({
   isModerator?: boolean;
 }) {
   // A collaborator may also step down themselves.
-  if (targetUserId !== userId) await getOwnedStoryline({ storylineId, userId, isModerator });
+  const owned =
+    targetUserId === userId ? null : await getOwnedStoryline({ storylineId, userId, isModerator });
   await dbWrite.storylineCollaborator.deleteMany({ where: { storylineId, userId: targetUserId } });
+  if (owned)
+    await trackStorylineModEdit({
+      storylineId,
+      ownerId: owned.userId,
+      userId,
+      activity: 'removeCollaborator',
+    });
 }
 
 /**

@@ -11,6 +11,8 @@ import { createFakeDb, type FakeDb } from './storyline-loop.fake-db';
  * with two parents.
  */
 
+const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
+vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 const blockedPairIds = vi.hoisted(() => ({ ids: [] as number[] }));
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
@@ -148,6 +150,11 @@ describe('linkStorylineChapter', () => {
 
     await link(24, R, MODERATOR, true);
     expect(edgesInto(R)).toHaveLength(2);
+    expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+      entityType: 'storyline',
+      entityId: expect.any(Number),
+      activity: 'linkChapter',
+    });
   });
 
   it.each([
