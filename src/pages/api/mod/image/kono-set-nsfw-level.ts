@@ -4,9 +4,18 @@ import { NsfwLevel } from '~/server/common/enums';
 import { updateImageNsfwLevel } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 
+// Blocked is a moderator's call: a player consensus can raise or lower a rating, never block.
+const VOTABLE_LEVELS: number[] = [
+  NsfwLevel.PG,
+  NsfwLevel.PG13,
+  NsfwLevel.R,
+  NsfwLevel.X,
+  NsfwLevel.XXX,
+];
+
 const schema = z.object({
   imageId: z.coerce.number().int().positive(),
-  nsfwLevel: z.coerce.number().pipe(z.enum(NsfwLevel)),
+  nsfwLevel: z.coerce.number().refine((level) => VOTABLE_LEVELS.includes(level)),
   userId: z.coerce.number().int().positive(),
 });
 
@@ -23,6 +32,7 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     id: imageId,
     nsfwLevel,
     userId,
+    // The only branch that sets the level and locks it directly; the other records a rating request.
     isModerator: true,
     activity: 'setNsfwLevelKono',
     status: 'Actioned',

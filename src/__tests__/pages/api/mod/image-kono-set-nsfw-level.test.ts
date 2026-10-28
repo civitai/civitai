@@ -24,7 +24,7 @@ const call = (method: string, body: Record<string, unknown>) => {
 beforeEach(() => vi.clearAllMocks());
 
 describe('/api/mod/image/kono-set-nsfw-level', () => {
-  it('sets the rating as a Knights result, not a moderator ruling', async () => {
+  it('records a Knights result, not a moderator ruling', async () => {
     const { done } = call('POST', { imageId: '12', nsfwLevel: '4', userId: '9' });
     await done;
 
@@ -44,6 +44,18 @@ describe('/api/mod/image/kono-set-nsfw-level', () => {
       call('POST', { imageId: '12', nsfwLevel: '3', userId: '9' }).done
     ).rejects.toThrow();
     expect(updateImageNsfwLevel).not.toHaveBeenCalled();
+  });
+
+  it.each(['32', '0', '64'])('refuses level %s: a vote never blocks an image', async (level) => {
+    await expect(
+      call('POST', { imageId: '12', nsfwLevel: level, userId: '9' }).done
+    ).rejects.toThrow();
+    expect(updateImageNsfwLevel).not.toHaveBeenCalled();
+  });
+
+  it.each(['1', '2', '4', '8', '16'])('accepts the regular level %s', async (level) => {
+    await call('POST', { imageId: '12', nsfwLevel: level, userId: '9' }).done;
+    expect(updateImageNsfwLevel).toHaveBeenCalledTimes(1);
   });
 
   it('only answers POST', async () => {
