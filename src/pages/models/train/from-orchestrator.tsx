@@ -57,8 +57,12 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         redirect: { destination: getLoginLink({ returnUrl: ctx.resolvedUrl }), permanent: false },
       };
 
-    // Mirror `guardedProcedure`: a muted or not-yet-onboarded user can't create a model.
-    if (session.user.muted || !Flags.hasFlag(session.user.onboarding, OnboardingSteps.Buzz))
+    // Mirror `guardedProcedure`: a banned, muted or not-yet-onboarded user can't create a model.
+    if (
+      session.user.bannedAt ||
+      session.user.muted ||
+      !Flags.hasFlag(session.user.onboarding, OnboardingSteps.Buzz)
+    )
       return { redirect: { destination: '/models', permanent: false } };
 
     const workflowId = typeof ctx.query.workflowId === 'string' ? ctx.query.workflowId : undefined;

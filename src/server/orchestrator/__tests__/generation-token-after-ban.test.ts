@@ -69,4 +69,10 @@ describe('the generation token after a ban', () => {
       orchestratorConfirmed: true,
     });
   });
+
+  it('a cache that never answers does not stall the ban', { timeout: 5_000 }, async () => {
+    envMock.set({ REDIS_SYS_READ_TIMEOUT_MS: 50 });
+    redisMock.sysRedis.hDel.mockImplementationOnce((() => new Promise(() => {})) as never);
+    await expect(expireUserApiKeys(USER)).resolves.toMatchObject({ expired: 1 });
+  });
 });
