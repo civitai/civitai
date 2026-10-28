@@ -290,6 +290,9 @@ function withApiMetrics(
   });
 }
 
+/** The token may also arrive in this header; it wins over `?token=` when both are present. */
+const TOKEN_HEADER = 'x-webhook-token';
+
 /**
  * 🔴 EMPTY IS NOT CONFIGURED. A secret that is set but blank is refused rather than compared, and
  * whitespace-only counts as blank. Without this, a blank secret leaves every endpoint on this wrapper
@@ -316,7 +319,10 @@ export function TokenSecuredEndpoint(
       return;
     }
 
-    if (req.query.token !== token) {
+    const headerToken = req.headers?.[TOKEN_HEADER];
+    const presented =
+      typeof headerToken === 'string' && headerToken ? headerToken : req.query.token;
+    if (presented !== token) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }

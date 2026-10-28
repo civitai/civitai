@@ -17,12 +17,13 @@ afterEach(() => {
 });
 
 describe('applyConsensusToMainApp', () => {
-  it('posts the rating to the Knights endpoint with the shared token', async () => {
+  it('posts the rating to the Knights endpoint with the shared token in a header', async () => {
     fetchMock.mockResolvedValue(new Response('{}', { status: 200 }));
     await applyConsensusToMainApp(application);
 
     const [url, init] = fetchMock.mock.calls[0];
-    expect(String(url)).toBe('https://main.example/api/mod/image/kono-set-nsfw-level?token=secret');
+    expect(String(url)).toBe('https://main.example/api/mod/image/kono-set-nsfw-level');
+    expect(new Headers(init?.headers).get('x-webhook-token')).toBe('secret');
     expect(JSON.parse(String(init?.body))).toEqual({ imageId: 12, nsfwLevel: 8, userId: 9 });
   });
 

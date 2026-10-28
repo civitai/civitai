@@ -11,18 +11,15 @@ export async function applyConsensusToMainApp(application: ConsensusApplication)
   if (!token) throw new Error('WEBHOOK_TOKEN is not configured');
 
   const base = trimSlash(env.CIVITAI_APP_URL || 'https://civitai.com');
-  const res = await fetch(
-    `${base}/api/mod/image/kono-set-nsfw-level?token=${encodeURIComponent(token)}`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        imageId: application.imageId,
-        nsfwLevel: Number(application.value),
-        userId: application.actorId,
-      }),
-      signal: AbortSignal.timeout(8000),
-    }
-  );
+  const res = await fetch(`${base}/api/mod/image/kono-set-nsfw-level`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-webhook-token': token },
+    body: JSON.stringify({
+      imageId: application.imageId,
+      nsfwLevel: Number(application.value),
+      userId: application.actorId,
+    }),
+    signal: AbortSignal.timeout(8000),
+  });
   if (!res.ok) throw new Error(`main app refused the rating (${res.status})`);
 }
