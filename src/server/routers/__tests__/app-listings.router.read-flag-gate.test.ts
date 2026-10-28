@@ -26,11 +26,13 @@ const {
   mockResolveStoreVisibilityScope,
   mockListAvailableListings,
   mockGetListingDetail,
+  mockGetListingCard,
   mockListAppListingReviews,
 } = vi.hoisted(() => ({
   mockResolveStoreVisibilityScope: vi.fn(),
   mockListAvailableListings: vi.fn(),
   mockGetListingDetail: vi.fn(),
+  mockGetListingCard: vi.fn(),
   mockListAppListingReviews: vi.fn(),
 }));
 
@@ -49,6 +51,7 @@ vi.mock('~/server/services/app-blocks-flag', () => ({
 vi.mock('~/server/services/blocks/app-listing.service', () => ({
   listAvailableListings: (...a: unknown[]) => mockListAvailableListings(...a),
   getListingDetail: (...a: unknown[]) => mockGetListingDetail(...a),
+  getListingCard: (...a: unknown[]) => mockGetListingCard(...a),
 }));
 vi.mock('~/server/services/blocks/app-listing-review.service', () => ({
   listAppListingReviews: (...a: unknown[]) => mockListAppListingReviews(...a),
@@ -340,6 +343,55 @@ describe('the viewer handed to the store reads (for the viewer-scoped `restricte
     expect(mockGetListingDetail).toHaveBeenLastCalledWith(
       expect.anything(),
       expect.objectContaining({ viewer: { userId: null, isModerator: false } })
+    );
+  });
+});
+
+describe('appListings.getAppCard — scope gate', () => {
+  it('anonymous (none): NOT_FOUND, service NOT consulted', async () => {
+    const caller = appListingsRouter.createCaller(fakeCtx(undefined) as never);
+    await expect(caller.getAppCard({ slug: 'foo' })).rejects.toBeInstanceOf(TRPCError);
+    expect(mockGetListingCard).not.toHaveBeenCalled();
+  });
+
+  it('moderator (full): card served with scope=full', async () => {
+    mockGetListingCard.mockResolvedValue({ id: 'apl_1' });
+    const caller = appListingsRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.getAppCard({ slug: 'foo' })).resolves.toMatchObject({ id: 'apl_1' });
+    expect(mockGetListingCard).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: 'full' })
+    );
+  });
+
+  it('a listing the service refuses (null): NOT_FOUND', async () => {
+    mockGetListingCard.mockResolvedValue(null);
+    const caller = appListingsRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(caller.getAppCard({ slug: 'hidden' })).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+    });
+  });
+
+  it('public-external: served with scope=public-external', async () => {
+    publicExternal = true;
+    mockGetListingCard.mockResolvedValue({ id: 'apl_1' });
+    const caller = appListingsRouter.createCaller(fakeCtx(undefined) as never);
+    await caller.getAppCard({ slug: 'ext' });
+    expect(mockGetListingCard).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ scope: 'public-external' })
+    );
+  });
+
+  it('hands the service the session viewer and the request browsing level', async () => {
+    mockGetListingCard.mockResolvedValue({ id: 'apl_1' });
+    const caller = appListingsRouter.createCaller(
+      fakeCtx({ ...modUser, showNsfw: false, browsingLevel: 7 }, { canViewNsfw: true }) as never
+    );
+    await caller.getAppCard({ slug: 'foo' });
+    expect(mockGetListingCard).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ viewer: { userId: 1, isModerator: true }, viewerBrowsingLevel: 1 })
     );
   });
 });
