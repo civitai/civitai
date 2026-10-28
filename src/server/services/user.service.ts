@@ -1519,7 +1519,8 @@ async function unindexDeleted(
 }
 
 // With `modelIds` when it could not be read which models went: its versions are only candidates
-// to check, never `versionIds` to refund, since a model a hold kept still holds live bids.
+// to check, never `versionIds` to refund: a model a hold kept and left public holds live bids, and
+// one that is gone, or still hidden (UnpublishedViolation with meta.removedWithOwner), is refunded.
 type BidRefundFailure =
   | { versionIds: number[]; transactionIds?: string[]; error?: string }
   | { modelIds: number[]; candidateVersionIds: number[]; error: string };
@@ -1542,7 +1543,7 @@ async function refundBidsForRemovedModels(
       type: 'error',
       message:
         'modelIds' in failure
-          ? 'A content wipe could not tell which models it deleted; check which candidates are gone before refunding any bids'
+          ? 'A content wipe could not tell which models it removed; refund only the candidates whose model is gone, or still hidden (UnpublishedViolation with meta.removedWithOwner)'
           : 'A content wipe could not refund bids; refund them by hand',
       source: 'remove-all-content',
       userId: wipe.userId,
