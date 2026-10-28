@@ -1319,15 +1319,6 @@ export async function resolveStorylineTitleAppeal({
   return { granted: grant };
 }
 
-/**
- * The cover and banner may only be images from this storyline's chapters written by its owner or
- * by an endorsed collaborator (the endorsement is their consent), not from removed chapters, and
- * rated within the ceiling. Anything else is refused, whatever the client offered.
- *
- * Checked when chosen only. A collaborator removed later leaves their image as the cover until
- * the owner changes it, unless the image itself is deleted. An image that later becomes hidden or
- * above a reader's level is replaced, for that reader, by chapter 1's first image they may see.
- */
 export const STORYLINE_PICK_REFUSALS = {
   notAllowed:
     "Choose an image from your own chapters, an endorsed collaborator's, or one you upload",
@@ -1335,6 +1326,16 @@ export const STORYLINE_PICK_REFUSALS = {
   unrated: 'This image has not been rated yet. Try again once it has been',
 } as const;
 
+/**
+ * The cover and banner may only be an image from this storyline's chapters, written by its owner
+ * or an endorsed collaborator (the endorsement is their consent) and not removed, or one the caller
+ * uploaded. A chapter image must also be rated within the ceiling; an upload is taken whatever its
+ * scan says and judged when read. Anything else is refused, whatever the client offered.
+ *
+ * Checked when chosen only. A collaborator removed later leaves their image as the cover until
+ * the owner changes it, unless the image itself is deleted. An image that later becomes hidden or
+ * above a reader's level is replaced, for that reader, by chapter 1's first image they may see.
+ */
 async function assertStorylinePicks(
   db: Db,
   {
