@@ -1,23 +1,12 @@
+import { NsfwLevel } from '@civitai/shared';
+import { getLevelProgression } from '@civitai/shared/new-order-levels';
 import { RANK_WEIGHT, type Rank } from './ranks';
-
-const BASE_XP_FOR_NEXT_LEVEL = 250;
-const XP_GROWTH_RATE = 1.18;
 
 const WEIGHT_NEUTRAL_LEVEL = 20;
 const LEVELS_PER_WEIGHT_UNIT = 60;
 const SMITES_PER_WEIGHT_UNIT = 6;
 
-export function levelForExp(totalXp: number): number {
-  let level = 1;
-  let xpForNextLevel = BASE_XP_FOR_NEXT_LEVEL;
-  let remaining = totalXp;
-  while (remaining >= xpForNextLevel) {
-    remaining -= xpForNextLevel;
-    level++;
-    xpForNextLevel = Math.floor(xpForNextLevel * XP_GROWTH_RATE);
-  }
-  return level;
-}
+export const levelForExp = (totalXp: number): number => getLevelProgression(totalXp).level;
 
 export function voteWeight({
   rank,
@@ -73,10 +62,8 @@ export function isExcessiveDownRating(current: number, winner: number): boolean 
   return Math.log2(current) - Math.log2(winner) > 1;
 }
 
-export const BLOCKED_LEVEL = 32;
-
 /** Blocking an image is a moderator's decision, so a consensus on it is handed to the Inquisitors. */
-export const isBlockedLevel = (value: number): boolean => value === BLOCKED_LEVEL;
+export const isBlockedLevel = (value: number): boolean => value === NsfwLevel.Blocked;
 
 /** The part of an image the write-back depends on. */
 export type ImageState = {
@@ -92,7 +79,7 @@ const KNIGHTS_LOCK_REASON = 'Knights Vote';
 
 /** Mirrors the main app's block marker: any one of the three means the image is blocked. */
 export const hasBlockMarker = (image: Pick<ImageState, 'nsfwLevel' | 'ingestion' | 'blockedFor'>) =>
-  image.ingestion === 'Blocked' || image.nsfwLevel === BLOCKED_LEVEL || image.blockedFor != null;
+  image.ingestion === 'Blocked' || image.nsfwLevel === NsfwLevel.Blocked || image.blockedFor != null;
 
 export type WritebackDecision =
   | { kind: 'apply' }

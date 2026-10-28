@@ -16,6 +16,7 @@ export default defineConfig(({ mode }) => {
         '@civitai/db-schema',
         '@civitai/flipt',
         '@civitai/redis',
+        '@civitai/shared',
       ],
     },
   };

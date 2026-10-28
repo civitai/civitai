@@ -1,5 +1,6 @@
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { NsfwLevel } from '@civitai/shared';
 import {
   canVote,
   FEED_STRETCH_SIZE,
@@ -11,7 +12,6 @@ import {
   type Rank,
 } from './ranks';
 import {
-  BLOCKED_LEVEL,
   decideChoice,
   decideWriteback,
   isBlockedLevel,
@@ -92,7 +92,7 @@ function servableItems(db: Executor) {
     .where('i.isHiddenCheck', '=', false)
     .where('q.active', '=', true)
     .where('img.type', '=', 'image')
-    .where('img.nsfwLevel', 'not in', [0, BLOCKED_LEVEL])
+    .where('img.nsfwLevel', 'not in', [0, NsfwLevel.Blocked])
     .where('img.ingestion', '!=', 'Blocked')
     .where('img.blockedFor', 'is', null)
     .where('p.publishedAt', 'is not', null)
