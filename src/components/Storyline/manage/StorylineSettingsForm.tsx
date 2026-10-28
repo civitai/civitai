@@ -32,6 +32,7 @@ export function StorylineSettingsForm({
   onWhoCanContinueChange,
   onPriceChange,
   priceUnavailable,
+  priceReadOnly,
   coverRow,
   disabled,
 }: {
@@ -50,6 +51,8 @@ export function StorylineSettingsForm({
   onPriceChange: (price: number | null) => void;
   /** The space read refuses this storyline for now: no slider, only a note. */
   priceUnavailable?: boolean;
+  /** A moderator sees the price but cannot set it: it is the owner's consent to be paid. */
+  priceReadOnly?: boolean;
   coverRow?: ReactNode;
   disabled?: boolean;
 }) {
@@ -124,6 +127,7 @@ export function StorylineSettingsForm({
         label="Price to continue"
         action={
           !priceUnavailable &&
+          !priceReadOnly &&
           space &&
           space.setPrice != null &&
           !complete && (
@@ -152,7 +156,7 @@ export function StorylineSettingsForm({
                 value={price}
                 fallback={space?.price ?? 0}
                 cap={space?.cap ?? null}
-                disabled={disabled || !space || complete}
+                disabled={disabled || priceReadOnly || !space || complete}
                 onChange={setPrice}
                 onCommit={(value) => {
                   setPrice(value);
@@ -160,6 +164,11 @@ export function StorylineSettingsForm({
                 }}
               />
             </div>
+            {priceReadOnly && (
+              <Text size="xs" c="dimmed">
+                Only the storyline&apos;s creator can change the price.
+              </Text>
+            )}
             <Text size="xs" c="dimmed">
               {(space?.price ?? 0) > 0
                 ? 'Contributors pay when they submit. Accept and you keep it; decline and they are refunded minus a small fee; if it expires they are refunded in full.'

@@ -19,6 +19,7 @@ vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   useIsMobile: () => mocks.narrow,
   useHasCoarsePointer: () => mocks.touch,
 }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   ...(await importOriginal<typeof QueriesModule>()),
   useStorylineChildren: () => ({ data: mocks.children, isLoading: false }),

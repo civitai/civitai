@@ -271,13 +271,17 @@ export function useOwnStorylinePosts({
   enabled,
   excludePostId,
   publishedOnly = false,
+  author,
 }: {
   enabled: boolean;
   excludePostId?: number;
   /** Leaves out drafts and posts scheduled for later. */
   publishedOnly?: boolean;
+  /** Whose posts to list, when not the viewer's: a moderator inserting for the owner. */
+  author?: { id: number; username: string | null };
 }) {
-  const currentUser = useCurrentUser();
+  const viewer = useCurrentUser();
+  const currentUser = author ?? viewer;
   // Every level: a post above the storyline's ceiling has to be listed to be refused out loud.
   // Newest, all time: the default sort lists only posts that already have reactions, which leaves
   // out the post just made to continue the story.

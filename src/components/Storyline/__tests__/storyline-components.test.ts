@@ -795,7 +795,7 @@ describe('StorylineCollaboratorsPanel', () => {
       React.createElement(StorylineCollaboratorsPanel, {
         ownerId: owner,
         collaborators: [{ id: 50, username: 'tehalex' }],
-        canManage: true,
+        canEndorse: true,
         onAdd: () => undefined,
         onRemove: (userId) => calls.push(`remove:${userId}`),
         ...overrides,
@@ -849,12 +849,12 @@ describe('StorylineCollaboratorsPanel', () => {
     expect(empty).not.toContain('Endorsed');
   });
 
-  it('shows the list without controls to someone who cannot manage it', () => {
-    const el = panel({ canManage: false });
+  it('offers a moderator removing but not endorsing', () => {
+    const el = panel({ canEndorse: false });
 
     expect(visibleText(el)).toContain('user 50');
     expect(el.querySelector('[aria-label="user search"]')).toBeNull();
-    expect(el.querySelector('[aria-label="Remove tehalex"]')).toBeNull();
+    expect(el.querySelector('[aria-label="Remove tehalex"]')).not.toBeNull();
   });
 });
 

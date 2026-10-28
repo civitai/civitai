@@ -10,6 +10,8 @@ import { createStorylineLinkJudge } from '~/shared/utils/storyline-graph';
 import type * as CacheHelpers from '~/server/utils/cache-helpers';
 import type * as UserPreferencesService from '~/server/services/user-preferences.service';
 
+const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
+vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 vi.mock('~/server/services/user-preferences.service', async (importOriginal) => ({
   ...(await importOriginal<typeof UserPreferencesService>()),
@@ -461,10 +463,17 @@ describe('insertStorylineChapter on a first-parent edge', () => {
   });
 
   it("writes the owner's chapter when a moderator inserts the owner's post", async () => {
+    trackModActivity.mockClear();
     const { chapterId: X } = await insert(await post(), { userId: 4, isModerator: true });
     expect(await rows(`SELECT "userId" FROM "StorylineChapter" WHERE id = $1`, [X])).toEqual([
       { userId: OWNER },
     ]);
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+    expect(trackModActivity).toHaveBeenCalledWith(4, {
+      entityType: 'storyline',
+      entityId: STORY,
+      activity: 'insertChapter',
+    });
   });
 });
 

@@ -60,8 +60,8 @@ importers:
         specifier: ^0.13.0
         version: 0.13.0(@civitai/sdk@0.21.0)
       '@civitai/components-chat':
-        specifier: ^0.31.0
-        version: 0.31.0(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.0.17)
+        specifier: ^0.32.1
+        version: 0.32.1(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.0.17)
       '@civitai/cybertipline-tools':
         specifier: ^0.1.0
         version: 0.1.0
@@ -2399,13 +2399,6 @@ packages:
   '@civitai/client@0.2.0-beta.98':
     resolution: {integrity: sha512-hjWw+5xI7xkFjk6PcteUSMA9Y/BegaY3E8M/clJc/tCz3DNgwVACz2W7wazysrUwn4VuzKtq+9nzF048CrSDEA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
-
-  '@civitai/components-chat@0.31.0':
-    resolution: {integrity: sha512-F5r6pqNc/X6oeD/jr/+HCEbP/dH0AtdCQeO4Ombq2YVIFB003jVi7XACSjxenrX2f5QiveV+sVpXycydCWwGtQ==}
-    engines: {node: '>=20'}
-    peerDependencies:
-      '@civitai/sdk': '>=0.8.0 <1.0.0'
-      lit: ^3.3.0
 
   '@civitai/components-chat@0.32.1':
     resolution: {integrity: sha512-ASsV7mDDOSQZRoQKMQ6stsAyXwwsuyX+PHpajQskn8xa0rfIVqDqZHmzp3f9P7NSXeWtbnBGXOi7ngsYj1T3zw==}
@@ -14061,7 +14054,7 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
-  '@civitai/components-chat@0.31.0(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.0.17)':
+  '@civitai/components-chat@0.32.1(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.0.17)':
     dependencies:
       '@ai-sdk/openai-compatible': 2.0.77(zod@4.0.17)
       '@civitai/components': 0.13.0(@civitai/sdk@0.21.0)

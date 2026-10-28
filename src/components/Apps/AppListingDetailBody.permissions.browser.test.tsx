@@ -167,8 +167,22 @@ describe('AppListingDetailBody — pre-launch permission disclosure', () => {
     await expect.element(within.getByTestId('apps-listing-permissions')).toBeInTheDocument();
     // Both, not just the first — the fixture's two scopes are distinct strings so
     // "rendered only one" is a different DOM than "rendered both".
-    await expect.element(within.getByText(PLAIN_SCOPE)).toBeInTheDocument();
-    await expect.element(within.getByText(SENSITIVE_SCOPE)).toBeInTheDocument();
+    await expect.element(within.getByText('See the model it sits on')).toBeInTheDocument();
+    await expect.element(within.getByText('Run AI work with your Buzz')).toBeInTheDocument();
+  });
+
+  test('the live card speaks plain language: no scope ids, a Sensitive marker on the sensitive one', async () => {
+    const { container } = await renderBody(base({ scopes: [PLAIN_SCOPE, SENSITIVE_SCOPE] }));
+    const card = container.querySelector('[data-testid="apps-listing-permissions"]') as HTMLElement;
+    expect(card, 'the permissions card must render').not.toBeNull();
+    // Plain `toContain` on `textContent`: `not.toBeInTheDocument()` is inert in this repo.
+    expect(card.textContent).not.toContain(PLAIN_SCOPE);
+    expect(card.textContent).not.toContain(SENSITIVE_SCOPE);
+    expect(card.querySelectorAll('[data-permission-row]')).toHaveLength(2);
+    const sensitiveRow = card.querySelector(`[data-permission-row="${SENSITIVE_SCOPE}"]`)!;
+    const plainRow = card.querySelector(`[data-permission-row="${PLAIN_SCOPE}"]`)!;
+    expect(sensitiveRow.textContent).toContain('Sensitive');
+    expect(plainRow.textContent).not.toContain('Sensitive');
   });
 
   test('the section is ABSENT — not empty — when the app declares no scopes', async () => {

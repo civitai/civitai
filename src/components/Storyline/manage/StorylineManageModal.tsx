@@ -43,8 +43,9 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
     isError,
   } = trpc.storyline.getById.useQuery({ id: storylineId }, { enabled: !!features.storylines });
   const isOwner = !!currentUser && storyline?.userId === currentUser.id;
-  const space = useStorylineSpace(storylineId, { enabled: isOwner });
-  const chapterLevels = useStorylineChapterLevels(storylineId, { enabled: isOwner });
+  const canManage = isOwner || (!!storyline && !!currentUser?.isModerator);
+  const space = useStorylineSpace(storylineId, { enabled: canManage });
+  const chapterLevels = useStorylineChapterLevels(storylineId, { enabled: canManage });
 
   const invalidate = () => utils.storyline.getById.invalidate({ id: storylineId });
   const update = trpc.storyline.update.useMutation({
@@ -94,7 +95,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
         </Group>
       ) : isError || !storyline ? (
         <Alert color="red">This storyline could not be loaded.</Alert>
-      ) : !isOwner ? (
+      ) : !canManage ? (
         <Alert color="gray">Only the storyline&apos;s creator can manage it.</Alert>
       ) : (
         <Tabs defaultValue="settings" keepMounted={false}>
@@ -135,8 +136,9 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
               }
               onPriceChange={space.save}
               priceUnavailable={space.unavailable}
+              priceReadOnly={!isOwner}
             />
-            {storyline.chapterCount === 0 && !storyline.tosViolation && (
+            {isOwner && storyline.chapterCount === 0 && !storyline.tosViolation && (
               <StorylineDeleteRow
                 deleting={remove.isPending}
                 onDelete={() => remove.mutate({ id: storylineId })}
@@ -148,7 +150,7 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
             <StorylineCollaboratorsPanel
               ownerId={storyline.userId}
               collaborators={storyline.collaborators}
-              canManage
+              canEndorse={isOwner}
               adding={addCollaborator.isPending}
               removingId={
                 removeCollaborator.isPending ? removeCollaborator.variables?.userId : undefined
@@ -158,10 +160,12 @@ export default function StorylineManageModal({ storylineId }: { storylineId: num
             />
           </Tabs.Panel>
 
-          <Group justify="space-between" mt="lg">
-            <Button component="a" href={STORYLINE_QUEUE_RECEIVED_URL} variant="light">
-              Review continuations
-            </Button>
+          <Group justify={isOwner ? 'space-between' : 'flex-end'} mt="lg">
+            {isOwner && (
+              <Button component="a" href={STORYLINE_QUEUE_RECEIVED_URL} variant="light">
+                Review continuations
+              </Button>
+            )}
             <Button variant="default" onClick={dialog.onClose}>
               Done
             </Button>

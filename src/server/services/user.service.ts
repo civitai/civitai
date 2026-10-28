@@ -134,6 +134,8 @@ import { imageRemovalMode, PRIOR_INGESTION_KEY } from '~/server/utils/image-remo
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
+import { revokeUserTokens } from '~/server/services/user-token-revocation.service';
+import { forgetGenerationToken } from '~/server/services/api-key.service';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { BountyEngagementType, ModelEngagementType } from '~/shared/utils/prisma/enums';
@@ -1067,7 +1069,11 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     ? { deletedAt: new Date(), status: 'Deleted' }
     : { userId: -1 };
 
-  const meta = { ...((user.meta ?? {}) as UserMeta), imageRemoval: imageRemovalMode(removeImages) };
+  const meta = {
+    ...((user.meta ?? {}) as UserMeta),
+    imageRemoval: imageRemovalMode(removeImages),
+    tokenRevocation: undefined,
+  };
 
   const result = await dbWrite
     .$transaction([
@@ -1129,6 +1135,7 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   };
 
   await runStep('invalidate-session', () => invalidateSession(id, 'moderation'));
+  await runStep('revoke-user-tokens', () => revokeUserTokens(user.id));
   await runStep('cancel-stripe-subscription', () =>
     cancelSubscription({ userId: user.id, removeRecord: true })
   );
@@ -1274,6 +1281,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     }),
     disarmAccountDeletionImagePurge(id),
   ]);
+  await forgetGenerationToken(id);
 
   // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.
   await reopenGenerationRestrictionsOfRestoredAccount(id).catch((error) =>
@@ -2434,6 +2442,7 @@ export const toggleBan = async ({
           detailsInternal,
           detailsExternal,
         },
+        tokenRevocation: undefined,
       };
 
   const data = { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta };
@@ -2464,6 +2473,9 @@ export const toggleBan = async ({
   );
 
   if (!bannedAt) {
+    // Ahead of the slow cleanup below: until this lands, their API keys still generate.
+    await revokeUserTokens(id);
+
     // Run cleanup operations in parallel groups
     // Group A: DB-heavy operations (run together)
     // Group B: External API operations (run together)
@@ -2670,6 +2682,9 @@ export const toggleBan = async ({
     await reinstateSubscription({ userId: id }).catch((error) =>
       logToAxiom({ name: 'reinstate-stripe-subscription', type: 'error', message: error.message })
     );
+
+    // A mint in flight when the ban landed can cache its token after the ban dropped it.
+    await forgetGenerationToken(id);
 
     // 🔴 GIVE THE PUBLISHER'S BLOCKS BACK. Without this a lifted ban left every one of
     // their block instances 403ing for up to MAX_BLOCK_TOKEN_LIFETIME_SECONDS — 4h where a

@@ -906,6 +906,19 @@ describe('/api/mod/remove-all-content', () => {
     expect(res.statusCode).toBe(409);
     expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED });
   });
+
+  it('names a failed step other than the refunds without saying bids were left unrefunded', async () => {
+    indexes.models.queueUpdate.mockRejectedValueOnce(new Error('queue down'));
+    vi.mocked(refundBidsForVersions).mockImplementationOnce(async () => {
+      await holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+      return { bidsDeleted: [1], recurringBidsDeleted: [], refundFailed: [] };
+    });
+    const res = await call(CLEAN);
+    expect(purgeUserAppStorageForAccountWipe).not.toHaveBeenCalled();
+    expect(res.statusCode).toBe(409);
+    expect(res.body).toEqual({ message: LEGAL_HOLD_STOPPED, incomplete: ['index-models'] });
+    expect(moderatorReads(res)).toBe(moderator.LEGAL_HOLD_STOPPED);
+  });
 });
 
 describe('/api/mod/delete-user-images', () => {
