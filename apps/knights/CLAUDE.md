@@ -60,7 +60,19 @@ SQL on PGlite.
   own month if missing; `POST /api/jobs/tick` also escalates items past `expiresAt`. Both need
   `Authorization: Bearer $JOBS_TOKEN`.
 - The user guard in `hooks.server.ts` skips exactly the two routes in `JOB_PATHS`; a new job route must be added there.
-- `/play` is the minimal voting page. Acolytes get no feed and cannot vote (Trials is a later slice).
+- `/play` is the minimal voting page, with a status line (rank, level and XP from `@civitai/shared/new-order-levels`, and the trial position for Acolytes). Acolytes get Trials instead of the feed and cannot vote; Knights and above keep the feed.
+
+## Trials (`src/lib/server/trials`)
+
+Tables `KnightsReferenceImage`, `KnightsTrialRun`, `KnightsTrialAnswer`, `KnightsHarvestCursor` (migration `20261212120000_knights_v2_trials`, applied by hand). Knobs are the constants in `trials/config.ts`.
+
+- A reference image has a known `answer`, a `source` (`core` | `harvested`; `agreement`, from Templar/Paladin agreement, is a later source) and a `pool`. `imageId` is unique, so an image sits in `trials` or in `hiddenCheck`, never both. Hidden checks are not served yet. Core rows are curated elsewhere (moderator app, later) and need an `explanation`.
+- `POST /api/jobs/harvest` (`Authorization: Bearer $JOBS_TOKEN`) reads `ModActivity` rows `setNsfwLevel` on images past a cursor, no older than `maxRulingAgeDays`. It keeps an image only while it is still locked at that level (not by a Knights vote), a rating (not Blocked), unblocked, published, an image, and not ruled on again since. The pool is a fixed function of the image id and `hiddenCheckShare`. Images already present are skipped. It also retires fresh items older than `freshMaxAgeDays` or whose image moved. Safe to run repeatedly; schedule it daily.
+- A run is per question key (`TRIAL_MODULES`; only `knights.image.nsfwLevel`), seeded per player: `seed` and the planned `itemIds` are stored on the run. It opens with core items, then fresh ones, preferring fresh items the player has not met in an earlier run. One open run per player and module.
+- After each answer the page shows right or wrong, the correct level and, for core items, the explanation; the answer is never sent before the pick. Answers must come in the planned order.
+- The score counts fresh items only. `score >= passMark` passes; passing every module sets `NewOrderPlayer.rankType` to Knight. Failing sets `cooldownUntil`; the next run gets a new seed.
+- `KnightsReferenceImage.answers` and `failures` count per item, for flagging items that are failed unusually often (no UI yet).
+- Defaults: `runLength` 12, `freshCount` 8, `minFresh` 3 (fewer and Trials is unavailable), `passMark` 0.75, `cooldownHours` 24; harvest `batchSize` 500, `maxBatches` 10, `maxRulingAgeDays` 14, `hiddenCheckShare` 0.3, `freshMaxAgeDays` 60.
 
 ## Wired packages
 
