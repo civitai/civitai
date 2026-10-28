@@ -1,6 +1,6 @@
-export const NSFW_LEVEL_QUESTION = 'knights.image.nsfwLevel';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 
-export const TRIAL_MODULES: readonly string[] = [NSFW_LEVEL_QUESTION];
+export const TRIAL_MODULES: readonly string[] = [KNIGHTS_NSFW_LEVEL_QUESTION];
 
 export const TRIALS = {
   runLength: 12,

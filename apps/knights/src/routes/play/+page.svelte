@@ -29,7 +29,7 @@
   {@const status = data.status}
   <p class="status">
     {status.rank} · Level {status.level} · {status.xpIntoLevel}/{status.xpForNextLevel} XP
-    {#if data.mode === 'trials' && data.trial.kind === 'question'}
+    {#if data.mode === 'trials' && data.trial.kind === 'question' && !showReveal}
       · Trial {data.trial.run.position} of {data.trial.run.total}
     {/if}
   </p>
@@ -39,7 +39,7 @@
 {/if}
 
 {#if showReveal && form?.reveal}
-  <div class="reveal" class:right={form.reveal.correct}>
+  <div class="reveal" role="status" class:right={form.reveal.correct}>
     <img src={form.reveal.src} alt="The subject you just judged" />
     <p class="verdict">{form.reveal.correct ? 'Rightly judged.' : 'Not quite.'}</p>
     <p>The answer: {form.reveal.correctLabel}</p>
@@ -82,7 +82,7 @@
     </form>
 
     {#if form?.message}
-      <p class="notice">{form.message}</p>
+      <p class="notice" role="status">{form.message}</p>
     {/if}
   {:else if data.trial.kind === 'cooldown'}
     <p>Your last trial fell short. Return after {new Date(data.trial.until).toUTCString()}.</p>
@@ -112,7 +112,7 @@
   </form>
 
   {#if form?.message}
-    <p class="notice">{form.message}</p>
+    <p class="notice" role="status">{form.message}</p>
   {/if}
 {:else}
   <p>Nothing awaits your judgment right now. Return later.</p>

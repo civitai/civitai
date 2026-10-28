@@ -224,6 +224,26 @@ describe('getTrial', () => {
     expect((await pg.query(`SELECT 1 FROM "KnightsTrialRun"`)).rows).toHaveLength(1);
   });
 
+  it('opens exactly one run when loads for the same player overlap', async () => {
+    await player(1);
+    await standardPool();
+    const views = await Promise.all([1, 2, 3].map(() => getTrial(db, 1, deps)));
+    const ids = views.map((v) => (v.kind === 'question' ? v.run.id : null));
+    expect(new Set(ids).size).toBe(1);
+    expect(ids[0]).not.toBeNull();
+    expect(
+      (await pg.query(`SELECT 1 FROM "KnightsTrialRun" WHERE "finishedAt" IS NULL`)).rows
+    ).toHaveLength(1);
+  });
+
+  it('never serves an image under review or marked acceptable-minor', async () => {
+    await player(1);
+    await standardPool();
+    await pg.query(`UPDATE "Image" SET "needsReview"='minor' WHERE "id"=11`);
+    await pg.query(`UPDATE "Image" SET "acceptableMinor"=true WHERE "id"=12`);
+    expect((await getTrial(db, 1, deps)).kind).toBe('unavailable');
+  });
+
   it('skips an item whose image went away mid-run', async () => {
     await player(1);
     await standardPool();
@@ -432,6 +452,37 @@ describe('a run too thin to decide', () => {
     expect(runs[0]).toMatchObject({ result: 'void', score: null, cooldownUntil: null });
     expect(view.run.id).toBe(runs[1].id);
     expect(await rank(1)).toBe('Acolyte');
+  });
+});
+
+describe('overlapping loads that close a run', () => {
+  it('close it once and leave exactly one open run', async () => {
+    await player(1);
+    await standardPool();
+    seeds = [1, 2];
+    for (let i = 0; i < 4; i++) {
+      const view = await current(1);
+      await answerTrial(
+        db,
+        { questionKey: Q, userId: 1, referenceId: view.item.referenceId, answer: '4' },
+        deps
+      );
+    }
+    await pg.query(
+      `UPDATE "Image" SET "ingestion"='Blocked' WHERE "id" IN (
+         SELECT "imageId" FROM "KnightsReferenceImage" r
+         WHERE "source"<>'core' AND NOT EXISTS (SELECT 1 FROM "KnightsTrialAnswer" a WHERE a."referenceId"=r."id"))`
+    );
+    for (const id of [21, 22, 23, 24]) await reference(id);
+
+    await Promise.all([1, 2, 3].map(() => getTrial(db, 1, deps)));
+
+    const runs = (
+      await pg.query<{ result: string | null }>(
+        `SELECT "result" FROM "KnightsTrialRun" ORDER BY "id"`
+      )
+    ).rows;
+    expect(runs.map((r) => r.result)).toEqual(['void', null]);
   });
 });
 

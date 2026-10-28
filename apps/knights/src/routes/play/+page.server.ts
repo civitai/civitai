@@ -119,7 +119,6 @@ export const actions: Actions = {
         success: true,
         reveal: {
           correct: result.correct,
-          yourAnswer: answer,
           correctLabel: result.correctLabel,
           explanation: result.explanation,
           src: imageUrl(result.imageKey),

@@ -1,8 +1,9 @@
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { servableImage } from '../servable-image';
 import { TRIAL_MODULES, TRIALS } from './config';
 import { planRun, scoreRun } from './plan';
-import { utc } from './utc';
+import { utc } from '@civitai/db/kysely';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
@@ -58,10 +59,7 @@ function servableReferences(db: Executor, questionKey: string) {
     .where('r.questionKey', '=', questionKey)
     .where('r.pool', '=', 'trials')
     .where('r.status', '=', 'active')
-    .where('img.type', '=', 'image')
-    .where('img.ingestion', '!=', 'Blocked')
-    .where('img.blockedFor', 'is', null)
-    .where('p.publishedAt', 'is not', null);
+    .where(servableImage);
 }
 
 export async function promoteToKnight(db: Executor, userId: number) {
@@ -144,6 +142,7 @@ async function startRun(
     freshCount: TRIALS.freshCount,
   });
 
+  // Overlapping loads race to open the run; the partial unique index lets one win, and the rest read its run.
   await db
     .insertInto('KnightsTrialRun')
     .values({

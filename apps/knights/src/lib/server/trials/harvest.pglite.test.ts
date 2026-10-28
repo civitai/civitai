@@ -29,6 +29,8 @@ type ImageOpts = {
   type?: string;
   ingestion?: string;
   blockedFor?: string | null;
+  needsReview?: string | null;
+  acceptableMinor?: boolean;
   published?: boolean;
 };
 
@@ -38,8 +40,8 @@ async function image(id: number, o: ImageOpts = {}) {
     o.published === false ? null : '2020-01-01',
   ]);
   await pg.query(
-    `INSERT INTO "Image" ("id","url","nsfwLevel","nsfwLevelLocked","metadata","type","ingestion","blockedFor","postId")
-     VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$1)`,
+    `INSERT INTO "Image" ("id","url","nsfwLevel","nsfwLevelLocked","metadata","type","ingestion","blockedFor","needsReview","acceptableMinor","postId")
+     VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9,$10,$1)`,
     [
       id,
       `key-${id}`,
@@ -49,6 +51,8 @@ async function image(id: number, o: ImageOpts = {}) {
       o.type ?? 'image',
       o.ingestion ?? 'Scanned',
       o.blockedFor ?? null,
+      o.needsReview ?? null,
+      o.acceptableMinor ?? false,
     ]
   );
 }
@@ -97,6 +101,8 @@ describe('harvestRulings', () => {
     ['an unrated image', { level: 0 }],
     ['a blocked ingestion', { ingestion: 'Blocked' }],
     ['a blockedFor marker', { blockedFor: 'tos' }],
+    ['a review hold', { needsReview: 'minor' }],
+    ['an acceptable-minor image', { acceptableMinor: true }],
     ['an unpublished post', { published: false }],
     ['a non-image', { type: 'video' }],
   ] as const)('skips %s', async (_label, opts: ImageOpts) => {
@@ -201,15 +207,20 @@ describe('harvestRulings', () => {
     await image(1, { level: 8 });
     await image(2, { level: 4, ingestion: 'Blocked' });
     await image(3, { level: 4 });
+    await image(4, { level: 4, needsReview: 'minor' });
+    await image(5, { level: 4, acceptableMinor: true });
     await pg.query(
       `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source") VALUES
-       (1,'trials','4','harvested'), (2,'trials','4','harvested'), (3,'trials','4','harvested')`
+       (1,'trials','4','harvested'), (2,'trials','4','harvested'), (3,'trials','4','harvested'),
+       (4,'trials','4','harvested'), (5,'trials','4','harvested')`
     );
     await harvestRulings(db, { now: NOW });
     expect((await references()).map((r) => [r.imageId, r.status])).toEqual([
       [1, 'retired'],
       [2, 'retired'],
       [3, 'active'],
+      [4, 'retired'],
+      [5, 'retired'],
     ]);
   });
 });

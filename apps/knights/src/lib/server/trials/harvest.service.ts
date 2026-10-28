@@ -1,11 +1,15 @@
 import { sql, type Kysely } from 'kysely';
+import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
-import { HARVEST, NSFW_LEVEL_QUESTION, type HarvestConfig } from './config';
+import { validNsfwLevels } from '@civitai/shared';
+import {
+  KNIGHTS_NSFW_LEVEL_QUESTION,
+  KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+} from '@civitai/shared/new-order';
+import { servableImage } from '../servable-image';
+import { HARVEST, type HarvestConfig } from './config';
 import { poolFor } from './plan';
-import { utc } from './utc';
 
-const RATING_LEVELS = [1, 2, 4, 8, 16];
 /** The moderator action that makes a reference answer. */
 const MODERATOR_RULING_ACTIVITY = 'setNsfwLevel';
 /** Any of these after a ruling means the image was rated again, so the ruling no longer stands. */
@@ -55,16 +59,12 @@ export async function harvestRulings(
       .innerJoin('Post as p', 'p.id', 'img.postId')
       .select(['a.id as activityId', 'img.id as imageId', 'img.nsfwLevel as level'])
       .where('a.id', 'in', ids)
-      .where('img.type', '=', 'image')
-      .where('img.nsfwLevel', 'in', RATING_LEVELS)
+      .where(servableImage)
+      .where('img.nsfwLevel', 'in', [...validNsfwLevels])
       .where('img.nsfwLevelLocked', '=', true)
       .where(
         sql<boolean>`"img"."metadata"->>'nsfwLevelReason' IS DISTINCT FROM ${KNIGHTS_VOTE_NSFW_LEVEL_REASON}`
       )
-      .where('img.ingestion', '!=', 'Blocked')
-      .where('img.blockedFor', 'is', null)
-      .where('p.publishedAt', 'is not', null)
-      .where('p.publishedAt', '<', utc(now))
       .where((eb) =>
         eb.not(
           eb.exists(
@@ -86,7 +86,7 @@ export async function harvestRulings(
         .values(
           holding.map((row) => ({
             imageId: row.imageId,
-            questionKey: NSFW_LEVEL_QUESTION,
+            questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
             pool: poolFor(row.imageId, config.hiddenCheckShare),
             answer: String(row.level),
             source: 'harvested',
@@ -131,12 +131,12 @@ async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Pr
           eb.exists(
             eb
               .selectFrom('Image as img')
+              .innerJoin('Post as p', 'p.id', 'img.postId')
               .select(sql<number>`1`.as('one'))
               .whereRef('img.id', '=', 'r.imageId')
               .whereRef(sql`"img"."nsfwLevel"::text`, '=', 'r.answer')
               .where('img.nsfwLevelLocked', '=', true)
-              .where('img.ingestion', '!=', 'Blocked')
-              .where('img.blockedFor', 'is', null)
+              .where(servableImage)
           )
         ),
       ])
