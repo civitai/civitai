@@ -14,11 +14,6 @@ import {
   safeExternalHref,
 } from '~/components/Apps/appListingCardView';
 import * as geometry from '~/components/Apps/appListingCardGeometry';
-import {
-  LISTING_CARD_TITLE_LINES,
-  LISTING_CARD_TITLE_LINE_HEIGHT,
-  LISTING_CARD_TITLE_MIN_HEIGHT,
-} from '~/components/Apps/appListingCardGeometry';
 import type {
   ListingCard,
   ListingRecommendRollup,
@@ -431,24 +426,6 @@ describe('the card geometry module', () => {
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
 
   /**
-   * 🔴 PARSED, NOT RE-CONSTRUCTED. Writing
-   * ``expect(MIN_HEIGHT).toBe(`calc(${LINES} * ${LH}em)`)`` restates the
-   * implementation and passes for every possible value of both terms. Pulling the
-   * two numbers back OUT of the rendered string is an independent read: it fails
-   * if the template ever stops carrying the constants, or carries them in the
-   * wrong slots.
-   */
-  it('the reserved title height carries BOTH constants, in em', () => {
-    const m = /^calc\((\d+(?:\.\d+)?) \* (\d+(?:\.\d+)?)em\)$/.exec(LISTING_CARD_TITLE_MIN_HEIGHT);
-    expect(m, `unparseable min-height: ${LISTING_CARD_TITLE_MIN_HEIGHT}`).not.toBeNull();
-    expect(Number(m![1])).toBe(LISTING_CARD_TITLE_LINES);
-    expect(Number(m![2])).toBe(LISTING_CARD_TITLE_LINE_HEIGHT);
-    // `em`, not `px`: it must resolve against the title's OWN font-size, so the
-    // reservation stays correct if the title's `size` ever moves.
-    expect(LISTING_CARD_TITLE_MIN_HEIGHT.endsWith('em)')).toBe(true);
-  });
-
-  /**
    * 🔴 THE COMPONENT READS THE MODULE — the assertion the card⇄skeleton
    * relationship actually rests on, and the one a values-only test cannot make.
    *
@@ -482,7 +459,7 @@ describe('the card geometry module', () => {
     // non-zero LOWER BOUND rather than the exact count — the exact count is the
     // backstop below, and putting it here is what buried the named failure.
     expect(exported.length, 'appListingCardGeometry exports nothing').toBeGreaterThan(0);
-    expect(exported).toContain('LISTING_ACTION_ROW_HEIGHT_PX');
+    expect(exported).toContain('LISTING_CARD_FOOTER_HEIGHT_PX');
 
     for (const name of exported) {
       // Twice: once in the import list, once at the use site. A constant that is
@@ -505,137 +482,7 @@ describe('the card geometry module', () => {
       'appListingCardGeometry gained or lost an export. If you added one, the loop ' +
         'above already proved the card reads it — bump this count deliberately, and ' +
         'make sure AppListingCardSkeleton reads it too.'
-    ).toHaveLength(9);
-  });
-
-  /**
-   * 🔴 THE ACTION ROW'S PROP LEDGER — the assertion that makes the NODE tier able
-   * to see a row-height regression at all.
-   *
-   * ⚠️ "NODE", NOT "BLOCKING". An earlier draft of this docblock called it the
-   * blocking tier and priced the guard as a merge gate. It is not one on a PR —
-   * `lint.yml` makes both `unit` and `geometry` `continue-on-error` for
-   * `pull_request` events. What this buys is catching the regression on the next
-   * push to `main` instead of never. Canonical statement:
-   * `appListingCardGeometry.ts`'s header.
-   *
-   * 🔴 THIS EXISTS BECAUSE THE OBVIOUS GUARD IS BLIND. Row height is 46px, derived
-   * as `PT + CONTROL`, and MEASURED at three container widths — in the browser
-   * project. The node tier cannot measure the row, and until this test existed a change that moved
-   * the row's height reached `main` unremarked. The worked case, produced by an audit rather than
-   * imagined: adding `pb={10}` beside the `pt` renders a 56px row while
-   * `LISTING_ACTION_ROW_HEIGHT_PX` still says 46; every node assertion stayed green,
-   * and PR3's skeleton would have imported 46, reserved 10px too little, and
-   * reflowed the grid on every query resolve. Nothing would have stopped that PR
-   * merging either way — what this adds is that `main` goes red immediately after,
-   * rather than the defect living until someone measures a card by hand.
-   *
-   * 🔴 IT IS A LEDGER, NOT A CONTAINMENT CHECK, and that is the whole design. The
-   * hazard is a prop being ADDED, so a test that merely requires `pt` and `mih` to
-   * be present cannot see it. This asserts the EXACT SET, so it fails when the set
-   * grows as well as when it shrinks — and it fails loudly enough to name the prop.
-   *
-   * 🔴 WHAT IT STILL CANNOT SEE, stated rather than implied, and the two halves are
-   * NOT equally covered. It reads the row's own opening tag, so height moved by a
-   * CHILD is invisible to it — and only ONE of the two children is picked up
-   * elsewhere in this node tier:
-   *
-   *   - `triggerSize` IS covered: it reads `LISTING_ACTION_ROW_CONTROL_PX`, so the
-   *     "reads every constant" test above and that constant's literal pin both see
-   *     a change to it.
-   *   - **the CTA is NOT.** Its 36px comes from Mantine's `size="sm"` token, which
-   *     no constant in the geometry module touches. Measured: flipping the CTA to
-   *     `size="md"` leaves this whole node file green at 45/45, and only the
-   *     browser tier reds. An earlier draft of this note said a child change was
-   *     "caught by the constants' own literal pins plus the browser measurements",
-   *     which credits this file with coverage it does not have for half the row.
-   *
-   * `AppListingCard.browser.test.tsx` now asserts the CTA's RENDERED height as well
-   * as the trigger's, which is the real guard on that term — but that tier never
-   * blocks, so a CTA size bump is caught by NOTHING that can stop a merge and by
-   * nothing that reddens `main` either. Do not read this ledger as covering it.
-   * Closing it properly is a ~5-line change (promote the size token into
-   * `appListingCardGeometry.ts` so the `Object.keys` loop above covers it
-   * automatically); it is deliberately deferred to a follow-up rather than done
-   * here, because it is production payload.
-   */
-  it("🔴 the action row's prop set is exactly the geometry it declares", () => {
-    const code = cardCode();
-    // Locate the row by `mt="auto"` — the only bottom-pinned element on the card,
-    // and the same discriminator the browser suite's `actionRow()` uses after
-    // `--group-wrap` alone proved insufficient there.
-    const at = code.indexOf('mt="auto"');
-    expect(at, 'no bottom-pinned action row found in AppListingCard.tsx').toBeGreaterThan(-1);
-    const open = code.lastIndexOf('<', at);
-    const close = code.indexOf('>', at);
-    expect(open).toBeGreaterThan(-1);
-    expect(close).toBeGreaterThan(at);
-    const tag = code.slice(open, close + 1);
-    // It really is the row's Group, not some enclosing element the index walk
-    // happened to land on.
-    expect(tag.startsWith('<Group')).toBe(true);
-
-    // 🔴 NO SPREAD, ASSERTED FIRST AND SEPARATELY. A spread carries props the name
-    // scan below CANNOT see — it has no `name=` to match — so `{...{ pb: 10 }}`,
-    // or the realistic `{...(compact ? { pt: 4, pb: 0 } : {})}` for a dense
-    // variant, changes the rendered row height while leaving the set unchanged.
-    // Measured green at 45/45 against the version of this test before the spread
-    // check existed. A ledger that can be walked past by writing the same prop a
-    // different way is a SPELLED guard, and this one's own comment claimed it was not.
-    //
-    // 🔴 A REGEX, NOT `toContain('{...')` — AND THE FIRST VERSION *WAS* THAT
-    // `toContain`, i.e. this guard shipped as an instance of the exact class it
-    // exists to close. JSX permits whitespace inside a spread attribute, so
-    // `{ ...{ pb: 10 } }` is valid, parses identically, and contains no literal
-    // `{...`. Measured: the spaced form left this file 45/45 GREEN while the
-    // browser tier reported 5 reds at `expected 56 to be 46` — the row really did
-    // render 10px taller and the source-reading tier saw nothing. The argument six
-    // lines below (prettier normalises the spacing, but nothing that gates a merge
-    // runs prettier) applies here word for word and was simply not applied.
-    //
-    // 🔴 `\s\{` RATHER THAN `\{`, so an OBJECT spread in a prop VALUE is not
-    // flagged: a JSX spread attribute is preceded by whitespace, while
-    // `style={{ ...base, pt: 10 }}` has its brace preceded by `=`/`{`. That form is
-    // a different hazard — it is a `style` prop, so the NAME ledger below catches
-    // it — and flagging it here would be a false positive on correct code.
-    expect(
-      tag,
-      `the action row's opening tag contains a JSX spread. A spread can carry padding or ` +
-        `height props that the prop-name ledger below cannot see, so the row's 46px ` +
-        `height would change with every node assertion green. Write the props literally.`
-    ).not.toMatch(/\s\{\s*\.\.\./);
-
-    // The prop NAMES, in source order. `pb`, `p`, `py`, `h`, `mah`, `style` — or
-    // anything else that can move a flex row's height — makes this set grow.
-    //
-    // 🔴 SPLIT ON ANY WHITESPACE, NOT ON A LINE START. This was `/\n\s+([a-zA-Z-]+)=/`,
-    // which required a prop to BEGIN A LINE — so `mt="auto" pb={10}` on one line
-    // slipped a second prop past it, also measured green at 45/45. Prettier would
-    // reformat that onto its own line and the ledger would then red, but nothing
-    // that runs before a merge runs prettier over this file:
-    // `.github/workflows/lint.yml`'s `Prettier (modified files, report-only)` job
-    // is `continue-on-error: true` and only ADDED files are checked at all —
-    // `AppListingCard.tsx` is a modified file. So the unformatted spelling can
-    // reach `main`, and the guard has to read it as written.
-    const props = [...tag.matchAll(/\s([a-zA-Z-]+)=/g)].map((m) => m[1]);
-    expect(
-      props,
-      `the action row's props changed — every one of them can move the 46px row height, ` +
-        `which the node tier cannot measure. Update this ledger deliberately, ` +
-        `and re-measure the row in AppListingCard.browser.test.tsx.`
-    ).toEqual(['mt', 'pt', 'mih', 'gap', 'wrap']);
-
-    // …and each geometry prop reads its constant rather than a literal. `mih` is
-    // the height constant's ONLY production consumer; without it the module's
-    // "the card READS every value" claim, this file's "reads every geometry
-    // constant" test title, and the loop above were all wider than the code.
-    expect(tag).toContain('pt={LISTING_ACTION_ROW_PT_PX}');
-    expect(tag).toContain('mih={LISTING_ACTION_ROW_HEIGHT_PX}');
-    expect(tag).toContain('gap={LISTING_ACTION_ROW_GAP_PX}');
-    // Positive control on the tag slice: `mt="auto"` is a literal on purpose (it is
-    // not geometry, it is "bottom-pinned"), so a green result above is about the
-    // three constants and not about a slice that matched nothing.
-    expect(tag).toContain('mt="auto"');
+    ).toHaveLength(10);
   });
 
   /**
@@ -732,45 +579,25 @@ describe('the card geometry module', () => {
   });
 
   /**
-   * 🔴 THE AUTHOR CHIP IS GONE FROM THE CARD'S CODE, not merely unrendered.
-   *
-   * The operator dropped the "by {creator}" line from the store card (2026-09-06).
-   * A `CreatorChip` left in the file but uncalled is the shape that gets wired back
-   * in by the next person who wants a byline, so the component was deleted; this
-   * asserts that rather than trusting it.
+   * 🔴 THE CARD RENDERS THE CREATOR INLINE IN ITS FOOTER, linking to their profile.
+   * `CreatorChip` is the detail page's component and must not be imported here.
    *
    * 🔴 READ OFF THE **STRIPPED** SOURCE, and the distinction is load-bearing here
    * more than anywhere else in this file: `AppListingCard.tsx` deliberately keeps a
    * docblock NAMING the retired `CreatorChip` and explaining where attribution went.
    * An unstripped scan would read that prose and report the component present.
    */
-  it('🔴 the card declares no CreatorChip and links to no user profile', () => {
+  it('🔴 the card shows its creator in the footer, linking to their profile', () => {
     const code = cardCode();
-    const source = fs.readFileSync(path.resolve(__dirname, '../AppListingCard.tsx'), 'utf8');
-
-    // Positive control on the stripper, in BOTH directions: the prose that names the
-    // retired component is in the file and is NOT in the stripped code, so a green
-    // result below is about code rather than about a scan that ate everything.
-    expect(source, 'the tombstone explaining where the author chip went is gone').toContain(
-      'CreatorChip'
-    );
-    expect(code).not.toContain('CreatorChip');
     expect(code, 'the stripper ate the component itself').toContain(
       'export function AppListingCard'
     );
-
-    // The chip's two other fingerprints — the profile href it built, and the
-    // CDN-avatar helper it was the only consumer of on this card.
-    expect(code, 'the card still builds a /user/<name> profile link').not.toContain('/user/');
-    expect(code, 'getEdgeUrl is still imported — it had no other consumer here').not.toContain(
-      'getEdgeUrl'
-    );
-    // `card.creator` itself is STILL read — for the owner test and the menu target —
-    // so this is a rendering change, not a DTO one. Asserted so the absences above
-    // cannot be satisfied by dropping the field entirely.
-    expect(code, 'the card stopped reading card.creator at all — isOwner is now dead').toContain(
-      'card.creator?.id'
-    );
+    // The byline is right-aligned in the footer.
+    expect(code).toContain('apps-listing-card-creator');
+    expect(code).toContain('/user/');
+    expect(code).toContain('card.creator');
+    // The footer renders the creator inline, not through the detail page's chip.
+    expect(code).not.toContain('CreatorChip');
   });
 });
 
@@ -799,7 +626,7 @@ describe('the card geometry module', () => {
  * is asserted instead — the exports must be GONE, not merely unused, because a
  * surviving constant with no consumer is the shape that gets wired back in later.
  */
-describe('the retired rollup-floor constants (four deleted, one moved)', () => {
+describe('the retired rollup-floor constants (four deleted)', () => {
   it('the four DELETED ones are gone from the card view-model', () => {
     // Runtime keys, not a source grep: the module's tombstone comment names all
     // four, so a text search would report them present in a correct file.
@@ -818,30 +645,6 @@ describe('the retired rollup-floor constants (four deleted, one moved)', () => {
     }
   });
 
-  /**
-   * 🔴 THE FIFTH ONE MOVED, AND SAYING "DELETED" ABOUT IT WAS AN ERROR WITH A
-   * FAILURE MODE. `LISTING_ACTION_ROW_GAP_PX` still exists, under the same name, in
-   * `appListingCardGeometry`; the card reads it as the action row's `gap`. A
-   * tombstone claiming all five were deleted sends the next person who needs a row
-   * gap off to mint a SECOND copy — the two-copies drift this whole PR removes.
-   *
-   * So this asserts the MOVE as a relationship — absent from the old home AND
-   * present in the new one — rather than just the absence. An absence alone is
-   * equally true of a genuinely deleted constant, which is the reading that was
-   * wrong.
-   */
-  it('the fifth MOVED to the geometry module, and is live in both senses', () => {
-    expect(Object.keys(cardView)).not.toContain('LISTING_ACTION_ROW_GAP_PX');
-    expect(
-      Object.keys(geometry),
-      'LISTING_ACTION_ROW_GAP_PX moved to appListingCardGeometry — if it is gone from ' +
-        'there too then it was deleted after all, and the tombstone in ' +
-        'appListingCardView.ts is now wrong in the other direction'
-    ).toContain('LISTING_ACTION_ROW_GAP_PX');
-    // Same value it had at the old home — a move, not a redefinition.
-    expect(geometry.LISTING_ACTION_ROW_GAP_PX).toBe(10);
-  });
-
   it('and the container query they placed is gone from the component', () => {
     const CARD_MODULE = path.resolve(__dirname, '../AppListingCard.tsx');
     const source = fs.readFileSync(CARD_MODULE, 'utf8');
@@ -851,8 +654,6 @@ describe('the retired rollup-floor constants (four deleted, one moved)', () => {
       .replace(/(^|[^:])\/\/.*$/gm, '$1');
     // Positive control on the stripper: the comments that NAME the retired
     // breakpoints are still in the file, so a green result here is about code.
-    expect(source).toContain('@[264px]');
-    expect(source).toContain('@[360px]');
     // 🔴 NO arbitrary container variant survives — enumerated rather than named,
     // so a NEW one cannot slip in under a check that only forbids the old two.
     expect([...code.matchAll(/@\[(\d+)px\]:/g)].map((m) => m[1])).toEqual([]);

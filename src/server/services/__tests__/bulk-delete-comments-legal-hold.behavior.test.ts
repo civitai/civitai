@@ -1,4 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -42,7 +45,7 @@ vi.mock('~/server/rewards', async (importOriginal) => ({
 }));
 
 import { bulkDeleteComments } from '~/server/services/comment.service';
-import { isLegalHoldAbort } from '~/server/services/legal-hold.service';
+import { isLegalHoldAbort, logHoldRetained } from '~/server/services/legal-hold.service';
 
 const CLEAN = 1;
 const HELD = 2; // named on a pending report
@@ -51,16 +54,14 @@ const MARKED = 3; // held by the marker view
 const ids = (...authors: number[]) => authors.flatMap((a) => [a * 10 + 1, a * 10 + 2]);
 
 /** Runs just before the first statement whose text includes `on`. */
-let hook: { on: string; run: () => Promise<unknown> } | null = null;
+let hook: { on: string; run: (sql: Prisma.Sql) => Promise<unknown> } | null = null;
 
 const asSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
   Array.isArray(first)
     ? Prisma.sql(first as TemplateStringsArray, ...(values as never[]))
     : (first as Prisma.Sql);
 
-beforeAll(async () => {
-  holder.db = new PGlite();
-  await holder.db.exec(`
+const SCHEMA = `
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
       details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]'
@@ -83,7 +84,11 @@ beforeAll(async () => {
       id int PRIMARY KEY, "commentId" int UNIQUE REFERENCES "CommentV2"(id) ON DELETE SET NULL
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
-  `);
+`;
+
+beforeAll(async () => {
+  holder.db = new PGlite();
+  await holder.db.exec(SCHEMA);
 });
 
 beforeEach(async () => {
@@ -109,7 +114,7 @@ beforeEach(async () => {
     if (hook && sql.text.includes(hook.on)) {
       const { run } = hook;
       hook = null;
-      await run();
+      await run(sql);
     }
     return (await holder.db.query(sql.text, sql.values)).rows;
   };
@@ -177,6 +182,90 @@ async function state(table: 'Comment' | 'CommentV2') {
     `SELECT id, "tosViolation" FROM "${table}" ORDER BY id`
   );
   return Object.fromEntries(rows.map((r) => [r.id, r.tosViolation ? 'hidden' : 'public']));
+}
+
+/**
+ * The most times one statement ran a per-account hold check that cannot be hashed (the
+ * blocked-image leg, aliased `bi`) when the first DELETE on `table` ran. The EXPLAIN is rolled
+ * back, so the delete itself still runs after it.
+ */
+async function mostHoldChecksPerStatement(table: 'Comment' | 'CommentV2', commentIds: number[]) {
+  let loops = -1;
+  hook = {
+    on: `DELETE FROM "${table}"`,
+    run: async (sql) => {
+      await holder.db.query('SAVEPOINT explain');
+      const { rows } = await holder.db.query<{ 'QUERY PLAN': { Plan: PlanNode }[] }>(
+        `EXPLAIN (ANALYZE, FORMAT JSON) ${sql.text}`,
+        sql.values
+      );
+      await holder.db.query('ROLLBACK TO SAVEPOINT explain');
+      loops = maxLoops(rows[0]['QUERY PLAN'][0].Plan, /^bi(_\d+)?$/);
+    },
+  };
+  await bulkDeleteComments(
+    table === 'Comment'
+      ? { commentIds, commentV2Ids: [] }
+      : { commentIds: [], commentV2Ids: commentIds }
+  );
+  return loops;
+}
+
+type PlanNode = { Alias?: string; 'Actual Loops'?: number; Plans?: PlanNode[] };
+const maxLoops = (node: PlanNode, alias: RegExp): number =>
+  Math.max(
+    node.Alias && alias.test(node.Alias) ? node['Actual Loops'] ?? 0 : 0,
+    ...(node.Plans ?? []).map((child) => maxLoops(child, alias))
+  );
+
+/**
+ * Runs `sql` on a copy of the stand-in in a worker, so a statement that never ends fails the test
+ * rather than hanging it: PGlite ignores statement_timeout, and blocks the thread it runs on.
+ */
+async function runBounded(sql: Prisma.Sql, ms: number) {
+  const seed = [SCHEMA];
+  for (const table of ['CsamReport', 'Image', 'CommentV2', 'Thread', 'Comment', 'Model']) {
+    const { rows } = await holder.db.query(`SELECT * FROM "${table}"`);
+    if (rows.length)
+      seed.push(
+        `INSERT INTO "${table}" SELECT * FROM json_populate_recordset(NULL::"${table}", '${JSON.stringify(
+          rows
+        ).replace(/'/g, "''")}')`
+      );
+  }
+  const worker = new Worker(
+    `const { parentPort, workerData } = require('node:worker_threads');
+    (async () => {
+      const { PGlite } = await import(workerData.pglite);
+      const db = new PGlite();
+      await db.exec(workerData.seed);
+      const { rows } = await db.query(workerData.text, workerData.values);
+      parentPort.postMessage({ deleted: rows.length });
+    })().catch((e) => parentPort.postMessage({ error: e.message }));`,
+    {
+      eval: true,
+      workerData: {
+        pglite: pathToFileURL(createRequire(import.meta.url).resolve('@electric-sql/pglite')).href,
+        seed: seed.join(';\n'),
+        text: sql.text,
+        values: sql.values,
+      },
+    }
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      new Promise<{ deleted?: number; error?: string }>((resolve) =>
+        worker.once('message', resolve)
+      ),
+      new Promise<{ timedOutAfterMs: number }>((resolve) => {
+        timer = setTimeout(() => resolve({ timedOutAfterMs: ms }), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    await worker.terminate();
+  }
 }
 
 const retainedLogs = () =>
@@ -339,6 +428,16 @@ describe('a legacy comment with replies', () => {
     });
     expect(await state('Comment')).not.toHaveProperty('51');
   });
+
+  it('checks each author below it once, however many replies they wrote', async () => {
+    await holder.db.exec(`
+      DELETE FROM "Comment" WHERE id = 41;
+      INSERT INTO "Comment" (id, "userId", "modelId", content, "parentId")
+        SELECT 1000 + g, 4 + g % 3, 100, 'zzfixture', CASE WHEN g = 0 THEN 11 ELSE 1000 + (g - 1) / 3 END
+        FROM generate_series(0, 29) g;
+    `);
+    expect(await mostHoldChecksPerStatement('Comment', [11])).toBe(3);
+  });
 });
 
 describe('a CommentV2 with replies', () => {
@@ -402,6 +501,115 @@ describe('a CommentV2 with replies', () => {
     });
     expect(await state('CommentV2')).toMatchObject({ 72: 'public' });
     expect(await state('CommentV2')).not.toHaveProperty('11');
+  });
+
+  it('checks each author below it once, however many replies they wrote', async () => {
+    // 30 replies by three authors, each in the reply thread of the one before.
+    await holder.db.exec(`
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content)
+        SELECT 1000 + g, 4 + g % 3, CASE WHEN g = 0 THEN 900 ELSE 2000 + g - 1 END, 'zzfixture'
+        FROM generate_series(0, 29) g;
+      INSERT INTO "Thread" (id, "commentId") SELECT 2000 + g, 1000 + g FROM generate_series(0, 29) g;
+    `);
+    expect(await mostHoldChecksPerStatement('CommentV2', [11])).toBe(3);
+  });
+
+  it.each([
+    ['keeps it for a held reply in the loop', HELD, 0],
+    ['deletes it when no reply in the loop is held', CLEAN, 1],
+  ])('ends on a reply chain that loops back on itself, and %s', async (_, author, deleted) => {
+    // 11 sits in thread 100, so thread 100 hanging off reply 72 closes a loop: 11 → 900 → 72 → 100.
+    await holder.db.exec(`
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES
+        (72, ${CLEAN}, 900, 'zzfixture'), (76, ${author}, 100, 'zzfixture');
+      INSERT INTO "Thread" (id, "commentId") VALUES (100, 72);
+    `);
+    let outcome: unknown;
+    hook = {
+      on: 'DELETE FROM "CommentV2"',
+      run: async (sql) => {
+        outcome = await runBounded(sql, 20_000);
+        throw new Error('ran in the worker');
+      },
+    };
+
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11] })).rejects.toThrow(
+      'ran in the worker'
+    );
+    expect(outcome).toEqual({ deleted });
+  });
+
+  it('goes when the held reply is in a thread already unlinked from it', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "commentId") VALUES (902, NULL);
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (77, ${HELD}, 902, 'zzfixture');
+    `);
+
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 1,
+      retainedHidden: 0,
+    });
+  });
+});
+
+describe('logging the authors whose rows were kept', () => {
+  const loggedLegs = () =>
+    Object.fromEntries(
+      vi
+        .mocked(loggingMock.logToAxiom)
+        .mock.calls.map(
+          ([entry]) => (entry as { details?: { userId?: number; legs?: unknown } }).details
+        )
+        .filter((d) => d?.userId !== undefined)
+        .map((d) => [d!.userId, d!.legs])
+    );
+
+  it('reads every author’s holds in one statement', async () => {
+    await logHoldRetained('test', [CLEAN, HELD, MARKED, CLEAN, HELD, 4, 5, 6]);
+
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(loggedLegs()).toEqual({
+      [CLEAN]: [],
+      [HELD]: ['report'],
+      [MARKED]: [],
+      4: [],
+      5: [],
+      6: [],
+    });
+  });
+
+  it('adds one statement for the marker, whatever the number of authors', async () => {
+    await createMarker();
+
+    await logHoldRetained('test', [CLEAN, HELD, MARKED, 4, 5, 6]);
+
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(loggedLegs()).toMatchObject({
+      [CLEAN]: [],
+      [HELD]: ['report'],
+      [MARKED]: ['hold-marker'],
+    });
+  });
+
+  it('logs at most 200 authors, and counts the rest', async () => {
+    await logHoldRetained(
+      'test',
+      Array.from({ length: 205 }, (_, i) => 1000 + i)
+    );
+
+    expect(Object.keys(loggedLegs())).toHaveLength(200);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'test: rows retained for 5 more authors' })
+    );
+  });
+
+  it('logs every author as held when the marker table stands without its view', async () => {
+    await createMarker(false);
+
+    await logHoldRetained('test', [CLEAN, HELD]);
+
+    expect(loggedLegs()).toEqual({ [CLEAN]: ['hold-marker'], [HELD]: ['report', 'hold-marker'] });
   });
 });
 

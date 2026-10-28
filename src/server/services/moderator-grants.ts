@@ -23,6 +23,7 @@ export type ModeratorGrantId =
   | 'csam.report.file'
   | 'user.ban'
   | 'user.strike'
+  | 'user.message.asCivitai'
   | 'labelStore.submitPrediction';
 
 export async function hasModeratorGrant(

@@ -582,6 +582,10 @@ export const userMeta = z.object({
       lastError: z.string().optional(),
     })
     .optional(),
+  // Cleared whenever a ban or deletion is applied anew.
+  tokenRevocation: z
+    .object({ confirmedAt: z.string().optional(), alertedAt: z.string().optional() })
+    .optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 

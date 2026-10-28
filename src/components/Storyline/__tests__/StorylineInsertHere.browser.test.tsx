@@ -4,7 +4,12 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import type * as QueriesMod from '~/components/Storyline/storyline.queries';
 import { StorylineChapterLanes } from '~/components/Storyline/StorylineLaneMap';
 
-const mocks = vi.hoisted(() => ({ openContinue: vi.fn(), graph: undefined as unknown }));
+const mocks = vi.hoisted(() => ({
+  openContinue: vi.fn(),
+  graph: undefined as unknown,
+  currentUser: null as null | { id: number; isModerator?: boolean },
+}));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   ...(await importOriginal<typeof QueriesMod>()),
@@ -74,6 +79,7 @@ const insertButtons = () => page.getByRole('button', { name: 'Insert a chapter h
 beforeEach(() => {
   mocks.openContinue.mockReset();
   mocks.graph = graphOf();
+  mocks.currentUser = null;
 });
 
 describe('Insert here on the chapters map', () => {
@@ -101,6 +107,13 @@ describe('Insert here on the chapters map', () => {
     renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
     await expect.element(page.getByTestId('storyline-lanes')).toBeVisible();
     expect(slots()).toBe(0);
+  });
+
+  test("a moderator sees the owner's controls", async () => {
+    mocks.currentUser = { id: 99, isModerator: true };
+    renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
+    await expect.element(insertButtons().first()).toBeInTheDocument();
+    expect(slots()).toBe(2);
   });
 
   test("no control into a contributor's chapter from its first parent", async () => {

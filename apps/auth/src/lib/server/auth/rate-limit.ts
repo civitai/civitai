@@ -27,3 +27,23 @@ export async function checkRateLimit(
     return true; // fail open
   }
 }
+
+/**
+ * Whether `identifier` has already used up `limit` in the current window, WITHOUT counting this request.
+ * For a bucket charged only on some outcomes (checkRateLimit counts every call). Fail-open like it.
+ */
+export async function isRateLimited(
+  bucket: string,
+  identifier: string | null | undefined,
+  limit: number
+): Promise<boolean> {
+  if (!identifier) return false;
+  const redis = getRedis();
+  if (!redis) return false;
+  try {
+    const r = redis as unknown as { get(k: string): Promise<string | null> };
+    return Number((await r.get(`auth:rate-limit:${bucket}:${identifier}`)) ?? 0) >= limit;
+  } catch {
+    return false;
+  }
+}

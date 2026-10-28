@@ -10,7 +10,7 @@
   const nav = [
     { href: '/admin', label: 'Overview' },
     { href: '/admin/spoke-domains', label: 'Spoke Domains' },
-    { href: '/admin/access', label: 'OAuth Access' },
+    { href: '/admin/access', label: 'OAuth Apps' },
     { href: '/admin/roles', label: 'Roles' },
     { href: '/admin/membership', label: 'Membership' },
   ];
