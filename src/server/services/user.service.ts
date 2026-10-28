@@ -2456,9 +2456,8 @@ export const toggleBan = async ({
   );
 
   if (!bannedAt) {
-    // Ahead of the slow cleanup below: until this lands, their API keys still generate. One attempt
-    // only, so an orchestrator outage doesn't hold up the ban; the revoke-user-tokens job retries.
-    await revokeUserTokens(id, { retryDelaysMs: [] });
+    // Ahead of the slow cleanup below: until this lands, their API keys still generate.
+    await revokeUserTokens(id);
 
     // Run cleanup operations in parallel groups
     // Group A: DB-heavy operations (run together)
