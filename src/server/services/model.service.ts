@@ -2112,8 +2112,13 @@ export const deleteModelById = async ({
   /** Who deletes it; null when no person ordered it (a system-run account wipe). */
   userId: number | null;
   isModerator?: boolean;
-  /** Called with the refunds that failed when its bids are refunded; otherwise they are only logged. */
-  onBidRefundFailed?: (failure: { versionIds: number[]; transactionIds: string[] }) => void;
+  /**
+   * Called with the refunds that failed, or the error that stopped them, when its bids are refunded;
+   * the delete then still returns. Without it, a failure is only logged, or thrown.
+   */
+  onBidRefundFailed?: (
+    failure: { versionIds: number[] } & ({ transactionIds: string[] } | { error: string })
+  ) => void;
 }) => {
   if (!isModerator) {
     const versions = await dbRead.modelVersion.findMany({
@@ -2233,9 +2238,14 @@ export const deleteModelById = async ({
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
   // deleted model stops serving a stale 200 (it would 404 on rebuild).
   await bustPublicModelResponseCache(id);
-  const { refundFailed } = await deleteBidsForModel({ modelId: id });
-  if (refundFailed.length)
-    onBidRefundFailed?.({ versionIds: deletedVersionIds, transactionIds: refundFailed });
+  try {
+    const { refundFailed } = await deleteBidsForModel({ modelId: id });
+    if (refundFailed.length)
+      onBidRefundFailed?.({ versionIds: deletedVersionIds, transactionIds: refundFailed });
+  } catch (e) {
+    if (!onBidRefundFailed) throw e;
+    onBidRefundFailed({ versionIds: deletedVersionIds, error: (e as Error)?.message });
+  }
 
   return deletedModel;
 };

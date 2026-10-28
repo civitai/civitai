@@ -1597,6 +1597,7 @@ export const removeAllContent = async ({
   // answers, questions and reviews are here because each cascades its comment thread.
   const unlessHeld = Prisma.sql`NOT ${held}`;
   const softDeleteFailed: { modelId: number; message: string }[] = [];
+  const softDeleteRefundFailures: BidRefundFailure[] = [];
   let stopped: boolean;
   try {
     // A parent's delete cascades into its comment threads, other people's comments included; a
@@ -1654,7 +1655,8 @@ export const removeAllContent = async ({
           id: modelId,
           userId: actorUserId,
           isModerator: true,
-          onBidRefundFailed: (failure) => alertBidRefundFailures([failure], alertedBy),
+          onBidRefundFailed: (failure) =>
+            softDeleteRefundFailures.push(...alertBidRefundFailures([failure], alertedBy)),
         }).catch((e: unknown) =>
           softDeleteFailed.push({ modelId, message: (e as Error)?.message })
         );
@@ -1708,7 +1710,9 @@ export const removeAllContent = async ({
       }).catch(() => undefined)
     );
     const refundFailures = await refundBidsForDeletedModels(models, alertedBy);
-    throw new LegalHoldStoppedError(refundFailures.length ? ['bid-refunds'] : []);
+    throw new LegalHoldStoppedError(
+      refundFailures.length || softDeleteRefundFailures.length ? ['bid-refunds'] : []
+    );
   }
 
   // The main-database wipe is done. A step that throws is logged and named in `incomplete`, and the
@@ -1753,7 +1757,8 @@ export const removeAllContent = async ({
   await runStep('article-metrics', () => articleMetrics.queueUpdate(articles.map((a) => a.id)));
 
   const refundFailures = await refundBidsForDeletedModels(models, alertedBy);
-  if (refundFailures.length) failed('bid-refunds', 'some bids were not refunded');
+  if (refundFailures.length || softDeleteRefundFailures.length)
+    failed('bid-refunds', 'some bids were not refunded');
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
   // again before either.

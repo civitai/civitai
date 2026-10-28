@@ -915,8 +915,9 @@ describe('removeAllContent keeps other people’s comments a held author is part
       return null;
     }) as never);
 
-    await removeAllContent({ id: CLEAN, actorUserId: 77 });
+    const result = await removeAllContent({ id: CLEAN, actorUserId: 77 });
 
+    expect(result).toMatchObject({ incomplete: expect.arrayContaining(['bid-refunds']) });
     expect(refundAlerts()).toContainEqual(
       expect.objectContaining({
         source: 'remove-all-content',

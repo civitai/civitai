@@ -290,6 +290,31 @@ describe('deleteModelById — soft delete', () => {
     });
   });
 
+  it('hands its caller a refund that threw, and still returns the deleted model', async () => {
+    mockDeleteBidsForModel.mockRejectedValueOnce(new Error('buzz down'));
+    const onBidRefundFailed = vi.fn();
+    mockDbWrite.$transaction.mockImplementationOnce((async (fn: (t: unknown) => unknown) =>
+      fn({
+        $executeRaw: vi.fn(async () => 1),
+        model: {
+          update: vi.fn(async () => ({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfwLevel: 1,
+            modelVersions: [{ id: VERSION_ID }],
+          })),
+        },
+      })) as never);
+
+    await expect(
+      deleteModelById({ id: MODEL_ID, userId: 77, isModerator: true, onBidRefundFailed })
+    ).resolves.toMatchObject({ id: MODEL_ID });
+    expect(onBidRefundFailed).toHaveBeenCalledWith({
+      versionIds: [VERSION_ID],
+      error: 'buzz down',
+    });
+  });
+
   it('records no deleter when no person ordered the delete', async () => {
     const { data } = await deleteInTx(1, { userId: null, isModerator: true });
 
