@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { describe, expect, test } from 'vitest';
 import { nextLayout, renderAtViewport } from '../../../../test/geometry-setup';
 import { useFillScrollParent } from '~/components/Apps/AppAssistant/useFillScrollParent';
@@ -50,6 +51,19 @@ describe('useFillScrollParent', () => {
 
   test('grows back when only the scroller is resized, with no window event', async () => {
     await renderAtViewport(<Page bandHeight={140} withFill />);
+    const before = fill().getBoundingClientRect().height;
+    scroller().style.height = '800px';
+    await nextLayout();
+    await nextLayout();
+    expect(fill().getBoundingClientRect().height).toBe(before + 200);
+  });
+
+  test('still follows the scroller after the effects re-run, as in StrictMode', async () => {
+    await renderAtViewport(
+      <StrictMode>
+        <Page bandHeight={140} withFill />
+      </StrictMode>
+    );
     const before = fill().getBoundingClientRect().height;
     scroller().style.height = '800px';
     await nextLayout();

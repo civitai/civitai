@@ -42,6 +42,7 @@ export function useFillScrollParent<T extends HTMLElement>() {
     return () => {
       window.removeEventListener('resize', measure);
       observer.current?.disconnect();
+      observed.current = null;
     };
   }, [measure]);
 
