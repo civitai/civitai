@@ -772,7 +772,7 @@ describe('removeAllContent', () => {
       expect(model).toEqual({ status: 'Published', meta: { note: 1 } });
       // The version unpublished before the wipe, and the draft, stay as they were.
       expect(versions).toEqual(['Published', 'Unpublished', 'Scheduled', 'Draft']);
-      expect(restored?.status).toBe('Published');
+      expect(restored).toMatchObject({ status: 'Published', userId: CLEAN });
     });
 
     it('puts a model its owner had unpublished back to unpublished', async () => {

@@ -1004,9 +1004,7 @@ export const unpublishModelHandler = async ({
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    const stored = (model.meta as ModelMeta | null) || {};
-    // A violation unpublish of a model a content wipe hid makes it a take-down like any other.
-    const meta = input.reason ? withoutRemovedWithOwner(stored) : stored;
+    const meta = (model.meta as ModelMeta | null) || {};
     const updatedModel = await unpublishModelById({
       ...input,
       meta,

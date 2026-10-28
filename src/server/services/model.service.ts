@@ -21,6 +21,7 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
+import { withoutRemovedWithOwner } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -4404,7 +4405,9 @@ export const unpublishModelById = async ({
       const updatedMeta = preserveModStatus
         ? meta
         : {
-            ...meta,
+            // A violation take-down of a model a content wipe hid ends the wipe's record: from here
+            // on it is an ordinary take-down, which a restore must not undo.
+            ...(reason ? withoutRemovedWithOwner(meta ?? {}) : meta),
             ...(reason
               ? {
                   unpublishedReason: reason,

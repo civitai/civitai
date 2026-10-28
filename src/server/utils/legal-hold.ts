@@ -15,6 +15,15 @@ export const REMOVED_WITH_OWNER_META_KEYS = [
   'versionsUnpublishedByRemoval',
 ] as const;
 
+/** `meta` without a content wipe's removal record, for a moderator decision that ends it. */
+export function withoutRemovedWithOwner<T extends object>(meta: T): T {
+  return Object.fromEntries(
+    Object.entries(meta).filter(
+      ([key]) => !(REMOVED_WITH_OWNER_META_KEYS as readonly string[]).includes(key)
+    )
+  ) as T;
+}
+
 export const KEPT_MODEL_STATUS = 'UnpublishedViolation' satisfies `${ModelStatus}`;
 
 /** Whether the report aliased `hc` still holds: pending, not yet archived, or sent within the year. */

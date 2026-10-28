@@ -621,6 +621,29 @@ describe('unpublishModelById — early access refund gate', () => {
   const takeDownSql = () => takeDown().sql.replace(/\s+/g, ' ');
   const takeDownParams = () => takeDown().values;
 
+  // Every take-down path calls this, the moderator app's included, so the record is ended here.
+  it("ends a content wipe's removal record on a violation take-down", async () => {
+    setupRefundData({ accessRows: [] });
+    setupUnpublishWrites();
+    const record = {
+      removedWithOwner: true,
+      statusBeforeRemoval: 'Published',
+      versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
+    };
+
+    await unpublishModelById({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      isModerator: true,
+      reason: 'duplicate',
+      meta: { commentsLocked: true, ...record } as never,
+    });
+
+    const meta = mockTx.model.update.mock.calls[0][0].data.meta as Record<string, unknown>;
+    expect(meta).toMatchObject({ commentsLocked: true, unpublishedReason: 'duplicate' });
+    for (const key of Object.keys(record)) expect(meta).not.toHaveProperty(key);
+  });
+
   it('merges the unpublish keys into each version meta instead of replacing it', async () => {
     setupRefundData({ accessRows: [] });
     setupUnpublishWrites();

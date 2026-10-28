@@ -49,7 +49,8 @@ export default defineModeratorEndpoint('model.republish', {
 
     if ((model.meta as RemovedWithOwnerMeta | null)?.removedWithOwner) {
       const restored = await restoreModelRemovedWithOwner(input.modelId);
-      if (!restored) throw throwBadRequestError('Model is not unpublished as a violation');
+      if (!restored)
+        throw throwBadRequestError('Model has no complete removal record to restore from');
       await bustMvCache(restored.versionIds, input.modelId);
       await userContentOverviewCache.refresh(restored.userId);
       await modelsSearchIndex.queueUpdate([
