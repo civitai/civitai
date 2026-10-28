@@ -43,6 +43,7 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
   useFeatureFlags: () => ({}),
 }));
+vi.mock('~/components/UserSettings/hooks', () => ({ useCurrentUserSettings: () => ({}) }));
 // The hat's popover needs the event's live data; name the image it is worn on instead.
 vi.mock('~/components/Cosmetics/EventDecoration/WornHatPopover', () => ({
   WornHatPopover: ({
