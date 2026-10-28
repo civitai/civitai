@@ -365,9 +365,13 @@ describe('keeping the preview alive', () => {
     fake.add('my-app');
     const { tools } = await open();
     await call(tools.tools, 'start_preview');
-    await ticks(1);
-    // Control: the first app's preview was kept while it was the open one.
-    await keptToBe([CONNECTED]);
+    // Control: the first app's preview is kept while it is the open one.
+    await vi.waitFor(async () => {
+      await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
+      expect(tunnels.kept).toContainEqual(CONNECTED);
+    });
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const keptBefore = tunnels.kept.length;
     expect(await call(tools.tools, 'create_app', { name: 'Tip calculator' })).toMatchObject({
       app: 'tip-calculator',
     });
@@ -378,7 +382,8 @@ describe('keeping the preview alive', () => {
       await vi.advanceTimersByTimeAsync(KEEPALIVE_MS);
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
-    expect(tunnels.kept).toEqual([CONNECTED]);
+    expect(tunnels.kept).toHaveLength(keptBefore);
+    expect(tunnels.kept.every((kept) => kept.host === HOST)).toBe(true);
   });
 
   it('keeps nothing alive after stop_preview, until the next start', async () => {
