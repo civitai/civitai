@@ -1,7 +1,14 @@
+import type { ModelStatus } from '@prisma/client';
 import { Prisma } from '@prisma/client';
 
 /** The owner `deleteUser` hands a kept model to. */
 export const PLACEHOLDER_OWNER_ID = -1;
+
+/**
+ * The status a content wipe leaves a model it keeps in: moderator-only, so the owner cannot
+ * republish it.
+ */
+export const KEPT_MODEL_STATUS = 'UnpublishedViolation' satisfies `${ModelStatus}`;
 
 /** Whether the report aliased `hc` still holds: pending, not yet archived, or sent within the year. */
 export const reportHolds = (hc: string) =>

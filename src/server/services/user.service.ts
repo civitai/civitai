@@ -10,7 +10,7 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
-import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+import { KEPT_MODEL_STATUS, PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -1463,6 +1463,16 @@ async function modelsOffSite(ids: number[]) {
   return ids.filter((i) => !live.has(i));
 }
 
+/** The listed models the wipe deleted, or kept and hid, read on the primary. */
+async function removedModelIds(ids: number[]) {
+  if (!ids.length) return [];
+  const live = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Model" WHERE id = ANY(${ids}::int[])
+      AND meta ->> 'removedWithOwner' IS DISTINCT FROM 'true'`;
+  const kept = new Set(live.map((r) => r.id));
+  return ids.filter((i) => !kept.has(i));
+}
+
 /** Queues a search-index Delete for each listed row that no longer exists. */
 async function unindexDeleted(
   lists: [
@@ -1516,20 +1526,15 @@ async function refundEachDeletedModel(
   models: { id: number; name: string; modelVersions: { id: number }[] }[]
 ): Promise<BidRefundFailure[]> {
   const versionIdsOf = (m: (typeof models)[number]) => m.modelVersions.map((v) => v.id);
-  let gone: Set<number>;
+  let removed: Set<number>;
   try {
-    gone = new Set(
-      await goneIds(
-        'Model',
-        models.map((m) => m.id)
-      )
-    );
+    removed = new Set(await removedModelIds(models.map((m) => m.id)));
   } catch (e) {
     return [{ modelIds: models.map((m) => m.id), error: (e as Error).message }];
   }
   const failures: BidRefundFailure[] = [];
   for (const m of models) {
-    if (!gone.has(m.id)) continue;
+    if (!removed.has(m.id)) continue;
     const versionIds = versionIdsOf(m);
     try {
       const { refundFailed } = await refundBidsForVersions({
@@ -1651,8 +1656,9 @@ export const removeAllContent = async ({
           Prisma.sql`SELECT om.id FROM "Model" om WHERE om."userId" = ${id}`,
           markerView
         )})`;
-    // A model kept above still leaves the site; its record and files stay. Status only: the
-    // unpublish flow stamps meta.unpublishedAt, which sends the owner a notification.
+    // A model kept above still leaves the site, in a status only a moderator can publish from; its
+    // record and files stay. Status only: the unpublish flow stamps meta.unpublishedAt, which sends
+    // the owner a notification. Its bids are refunded with the deleted models' below.
     await dbWrite.$executeRaw`
       UPDATE "ModelVersion" mv SET status = 'Unpublished'
       FROM "Model" m
@@ -1660,7 +1666,7 @@ export const removeAllContent = async ({
         AND mv.status IN ('Published', 'Scheduled') AND ${unlessHeld}`;
     await dbWrite.$executeRaw`
       UPDATE "Model"
-      SET status = 'Unpublished',
+      SET status = ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)},
           meta = ${asJsonbObjectSql('meta')} || jsonb_build_object('removedWithOwner', true)
       WHERE "userId" = ${id} AND status IN ('Published', 'Scheduled') AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "ChatMessage" WHERE "userId" = ${id} AND ${unlessHeld}`;

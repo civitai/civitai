@@ -28,6 +28,7 @@ vi.mock('~/server/services/duplicate-model-hash.service', async (importOriginal)
 }));
 
 const { publishModelHandler } = await import('../model.controller');
+const { KEPT_MODEL_STATUS } = await import('~/server/utils/legal-hold');
 
 const MODEL = 1;
 // Version 10 is live; 11 a moderator took down; 12 is deleted.
@@ -84,6 +85,24 @@ describe('publishModelHandler with a taken-down version in the list', () => {
   });
 
   it('still publishes the owner live versions', async () => {
+    await publish([10]);
+    expect(publishModelById).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('publishModelHandler on a model a content wipe kept', () => {
+  it('refuses the owner', async () => {
+    dbMock.dbRead.model.findUnique.mockResolvedValue({
+      status: KEPT_MODEL_STATUS,
+      meta: { removedWithOwner: true },
+      nsfw: false,
+      userId: 5,
+    } as never);
+    await expect(publish([10])).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(publishModelById).not.toHaveBeenCalled();
+  });
+
+  it('still lets the owner republish a model unpublished the ordinary way (control)', async () => {
     await publish([10]);
     expect(publishModelById).toHaveBeenCalledTimes(1);
   });

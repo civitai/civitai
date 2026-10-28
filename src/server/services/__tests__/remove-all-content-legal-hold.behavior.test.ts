@@ -125,6 +125,7 @@ import {
 import { removeAllContent } from '~/server/services/user.service';
 import { deleteImages } from '~/server/services/image.service';
 import { refundBidsForVersions } from '~/server/services/auction.service';
+import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
 import { purgeUserAppStorageForAccountWipe } from '~/server/services/apps/user-storage-purge.service';
 import deleteUserImages from '~/pages/api/mod/delete-user-images';
 import removeAllContentWebhook from '~/pages/api/mod/remove-all-content';
@@ -710,7 +711,7 @@ describe('removeAllContent', () => {
       `SELECT status, meta FROM "Model" WHERE id = ${GIVEN_BY_HELD}`
     );
     expect(kept.rows).toEqual([
-      { status: 'Unpublished', meta: { note: 1, removedWithOwner: true } },
+      { status: KEPT_MODEL_STATUS, meta: { note: 1, removedWithOwner: true } },
     ]);
     const versions = await holder.db.query<{ status: string }>(
       `SELECT status FROM "ModelVersion" WHERE "modelId" = ${GIVEN_BY_HELD} ORDER BY id`
@@ -745,7 +746,7 @@ describe('removeAllContent', () => {
       ).rows.map((r) => r.status);
     expect(
       await status(`"Model" WHERE id IN (${GIVEN_BY_HELD}, ${SCHEDULED_GIVEN_BY_HELD})`)
-    ).toEqual(['Unpublished']);
+    ).toEqual([KEPT_MODEL_STATUS]);
     expect(
       await status(
         `"ModelVersion" WHERE "modelId" IN (${GIVEN_BY_HELD}, ${SCHEDULED_GIVEN_BY_HELD})`
@@ -770,6 +771,46 @@ describe('removeAllContent', () => {
     );
   });
 
+  it('refunds the bids on a model it keeps and hides', async () => {
+    await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${GIVEN_BY_HELD}, ${CLEAN})`);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(refundBidsForVersions).toHaveBeenCalledWith({
+      versionIds: [MODEL_VERSION(GIVEN_BY_HELD)],
+      name: 'zzfixture',
+      notificationKey: GIVEN_BY_HELD,
+    });
+  });
+
+  it('hides a kept model and alerts when its bid refund fails', async () => {
+    await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${GIVEN_BY_HELD}, ${CLEAN})`);
+    const refund = vi.mocked(refundBidsForVersions);
+    const usual = refund.getMockImplementation();
+    refund.mockImplementation(async (args) => {
+      if (args.versionIds.includes(MODEL_VERSION(GIVEN_BY_HELD))) throw new Error('buzz down');
+      return usual!(args);
+    });
+    let result: Awaited<ReturnType<typeof removeAllContent>>;
+    try {
+      result = await removeAllContent({ id: CLEAN, actorUserId: 9 });
+    } finally {
+      refund.mockImplementation(usual!);
+    }
+
+    expect(result.incomplete).toEqual(['bid-refunds']);
+    const kept = await holder.db.query<{ status: string }>(
+      `SELECT status FROM "Model" WHERE id = ${GIVEN_BY_HELD}`
+    );
+    expect(kept.rows).toEqual([{ status: KEPT_MODEL_STATUS }]);
+    expect(refundAlerts()).toEqual([
+      expect.objectContaining({
+        versionIds: [MODEL_VERSION(GIVEN_BY_HELD)],
+        error: 'buzz down',
+      }),
+    ]);
+  });
+
   it('drops a hidden model from search when a hold stops the wipe after the hide', async () => {
     await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${GIVEN_BY_HELD}, ${CLEAN})`);
     landsBefore = 'ChatMessage';
@@ -780,7 +821,7 @@ describe('removeAllContent', () => {
     const kept = await holder.db.query<{ status: string }>(
       `SELECT status FROM "Model" WHERE id = ${GIVEN_BY_HELD}`
     );
-    expect(kept.rows).toEqual([{ status: 'Unpublished' }]);
+    expect(kept.rows).toEqual([{ status: KEPT_MODEL_STATUS }]);
     expect(dropped().models).toContain(GIVEN_BY_HELD);
   });
 
