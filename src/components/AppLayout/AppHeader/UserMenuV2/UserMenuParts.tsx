@@ -7,11 +7,7 @@ import { QueueCountBadge } from '~/components/Placement/QueueCountBadge';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import type { ResolvedMenuItem } from './resolveUserMenu';
 import type { useUserMenuPins } from './useUserMenuPins';
-import {
-  findUserMenuGroup,
-  USER_MENU_LAYOUT,
-  USER_MENU_SIGNED_OUT_LAYOUT,
-} from './user-menu.layout';
+import { findUserMenuGroup, getUserMenuLayout } from './user-menu.layout';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { TrackActionInput } from '~/server/schema/track.schema';
@@ -32,6 +28,7 @@ export function MenuItemLabel({ item }: { item: UserMenuItem & { badgeMuted?: bo
       )}
       <QueueCountBadge
         count={item.badge ?? 0}
+        tooltip={item.badgeTooltip}
         max={99}
         ml={4}
         color={item.badgeMuted ? 'gray' : undefined}
@@ -169,7 +166,7 @@ export function userMenuClickAction({
   fromPins: boolean;
   surface: UserMenuSurface;
 }): TrackActionInput {
-  const layout = signedIn ? USER_MENU_LAYOUT : USER_MENU_SIGNED_OUT_LAYOUT;
+  const layout = getUserMenuLayout({ signedIn, mobile: surface === 'mobile' });
   return {
     type: 'UserMenu_Click',
     details: { item: id, group: findUserMenuGroup(layout, id) ?? null, pinned: fromPins, surface },

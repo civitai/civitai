@@ -919,7 +919,12 @@ export const publishModelVersionHandler = async ({
             meta: version.model.meta as ModelMeta | null,
           })
         : null;
-    const updatedVersion = await publishModelVersionById({ ...input, meta, republishing });
+    const updatedVersion = await publishModelVersionById({
+      ...input,
+      meta,
+      republishing,
+      enforceTakedown: !ctx.user.isModerator,
+    });
     let held = false;
     if (literalHold) {
       try {
@@ -928,7 +933,7 @@ export const publishModelVersionHandler = async ({
           ...literalHold,
         });
       } catch (error) {
-        // The version is already published; the ModelRules scan below is the backstop.
+        // The version is already published and stays so.
         logToAxiom({
           name: 'text-scan',
           type: 'error',
@@ -940,7 +945,7 @@ export const publishModelVersionHandler = async ({
       }
     }
     // The Model scan reads only public versions, so the newly public one needs a scan of its own.
-    scanModelAndRules(updatedVersion.modelId, { rules: !ctx.user.isModerator });
+    scanModelAndRules(updatedVersion.modelId, { rules: false });
     // The takedown refreshed the caches, and the model is no longer live to announce or reindex.
     if (held) return { ...updatedVersion, held };
 
@@ -1038,7 +1043,7 @@ export const unpublishModelVersionHandler = async ({
     if (scope.kind === 'model') {
       const model = await getModel({
         id: scope.modelId,
-        select: { meta: true, nsfw: true },
+        select: { nsfw: true },
       });
       if (!model) throw throwNotFoundError(`No model with id ${scope.modelId}`);
 
@@ -1047,7 +1052,6 @@ export const unpublishModelVersionHandler = async ({
       await unpublishModelById({
         ...input,
         id: scope.modelId,
-        meta: (model.meta as ModelMeta | null) ?? undefined,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       });
@@ -1481,6 +1485,7 @@ export async function publishPrivateModelVersionHandler({
       publishedAt: new Date(),
       availability: Availability.Private,
     },
+    enforceTakedown: !ctx.user.isModerator,
   });
 
   await dataForModelsCache.refresh(version.model.id);

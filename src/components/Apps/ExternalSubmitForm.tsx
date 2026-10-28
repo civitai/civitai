@@ -57,6 +57,7 @@ import type { MarketplaceCategory } from '~/server/services/blocks/marketplace-c
 import type { OffsiteContentRating } from '~/server/schema/blocks/offsite-listing.schema';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -112,9 +113,6 @@ type Submitted = { listingId: string; publishRequestId: string; slug: string };
  */
 export const OAUTH_REQUIREMENT_EXPLAINER =
   'An OAuth app is the registration that lets people sign in to your app with their Civitai account, and that decides what your app may read or do on their behalf. Every standalone listing links to one, so visitors can see up front what they would be granting.';
-
-/** Where Cancel / "View my submissions" go. One constant, two call sites. */
-const MY_APPS_HREF = '/apps/build';
 
 /** The exact sentence shown when the author owns no eligible OAuth client. */
 export const NO_ELIGIBLE_CLIENTS_TEXT =
@@ -900,7 +898,7 @@ function ExternalCreateForm() {
                   <Group justify="flex-end">
                     <Button
                       component={Link}
-                      href="/apps/build"
+                      href={MY_APPS_HREF}
                       rightSection={<IconExternalLink size={16} />}
                     >
                       View my submissions

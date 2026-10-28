@@ -15,9 +15,11 @@ import {
 } from '~/server/schema/blocks/app-listing.schema';
 import {
   getAppListingDetailSchema,
+  getForkSessionSchema,
   listAllListingsForModerationSchema,
   listAppListingsSchema,
   listListingForksSchema,
+  startForkSchema,
   type ListingForksPage,
 } from '~/server/schema/blocks/app-listing-read.schema';
 import { FORK_SETTING_DISABLED_MESSAGE } from '~/shared/constants/app-fork.constants';
@@ -1238,6 +1240,20 @@ export const appListingsRouter = router({
   }),
 
   /**
+   * OWNER: each of the caller's on-platform apps' document-store usage (production namespace)
+   * against the per-app limits — the card on the `/apps/build` workbench. Owned apps only;
+   * a collaborator seat does not reach it (see the service header). `{ status: 'disabled' }`
+   * when document storage is off, so the client never shows a zero it did not measure.
+   */
+  getMyDocStoreUsage: appDeveloperProcedure.query(async ({ ctx }) => {
+    if (!ctx.user) throw throwAuthorizationError('Not authenticated');
+    const { getMyDocStoreUsage } = await import(
+      '~/server/services/apps/doc-store-owner-usage.service'
+    );
+    return getMyDocStoreUsage(ctx.user.id);
+  }),
+
+  /**
    * AUTHOR: the authoring context for ONE listing — the read behind the canonical
    * `/apps/listing/<appListingId>/edit` page.
    *
@@ -2133,6 +2149,42 @@ export const appListingsRouter = router({
       });
     }),
 
+  /**
+   * FORK — start a fork of a listing for the caller: picks the fork's slug, records the server-side
+   * fork session (the ONLY source of the fork's provenance) and returns the seed the App Assistant
+   * page hands to the sandbox service. Every gate lives in `startAppFork` (App Assistant access,
+   * the `app-blocks-fork` flag, a publicly visible and forkable parent with an approved commit,
+   * the per-user rate limit); the store scope comes from the same middleware every store read uses.
+   */
+  startFork: protectedProcedure
+    .use(enforceAppListingsReadFlag)
+    .input(startForkSchema)
+    .mutation(async ({ ctx, input }) => {
+      const { scope } = applyStoreGates(ctx, 'trpc-fork-start');
+      const { startAppFork } = await import('~/server/services/blocks/app-fork-start.service');
+      return startAppFork({
+        user: ctx.user,
+        listingId: input.listingId,
+        scope,
+        redCapable: isRedCapableRequest(ctx),
+        req: ctx.req,
+      });
+    }),
+
+  /**
+   * FORK — the caller's own fork session by slug, for the App Assistant page (`?fork=<slug>`).
+   * `null` for a slug that is not the caller's, missing or expired; `seed: null` once the seed URL
+   * has expired. Behind the same rollout flag as `startFork`.
+   */
+  getForkSession: protectedProcedure.input(getForkSessionSchema).query(async ({ ctx, input }) => {
+    const { isAppBlocksForkEnabled } = await import('~/server/services/app-blocks-flag');
+    if (!(await isAppBlocksForkEnabled({ user: ctx.user }))) return null;
+    const { getForkSessionForUser } = await import(
+      '~/server/services/blocks/app-fork-start.service'
+    );
+    return getForkSessionForUser({ userId: ctx.user.id, forkSlug: input.forkSlug });
+  }),
+
   /** Per-listing public detail, by EXACTLY ONE of slug or id (approved only). */
   getAppDetail: publicProcedure
     .use(enforceAppListingsReadFlag)
@@ -2160,6 +2212,33 @@ export const appListingsRouter = router({
       });
       if (!detail) throw throwNotFoundError('Listing not found');
       return detail;
+    }),
+
+  getAppCard: publicProcedure
+    .use(enforceAppListingsReadFlag)
+    .use(
+      rateLimit({
+        limit: 60,
+        period: 60,
+        errorMessage: 'Too many marketplace requests — slow down.',
+      })
+    )
+    .input(getAppListingDetailSchema)
+    .query(async ({ ctx, input }) => {
+      const { scope, floor } = applyStoreGates(ctx, 'trpc-detail');
+      if (scope === 'none') {
+        throw throwNotFoundError('Listing not found');
+      }
+      const { getListingCard } = await import('~/server/services/blocks/app-listing.service');
+      const card = await getListingCard(input, {
+        redCapable: isRedCapableRequest(ctx),
+        scope,
+        floor,
+        viewer: listingViewerFromCtx(ctx),
+        viewerBrowsingLevel: getRequestBrowsingLevel(ctx),
+      });
+      if (!card) throw throwNotFoundError('Listing not found');
+      return card;
     }),
 
   // -------------------------------------------------------------------------

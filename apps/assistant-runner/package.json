@@ -1,6 +1,6 @@
 {
   "name": "@civitai/assistant-runner-app",
-  "version": "0.0.7",
+  "version": "0.0.13",
   "private": true,
   "type": "module",
   "main": "./dist/server.js",
@@ -14,11 +14,11 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "2.0.77",
     "@civitai/app-assistant": "workspace:*",
-    "@civitai/components-chat": "0.25.0",
+    "@civitai/components-chat": "0.32.0",
     "@dbos-inc/dbos-sdk": "5.3.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "ai": "6.0.289",
-    "fastify": "^5.2.1",
+    "fastify": "^5.12.6",
     "jose": "6.0.12",
     "pg": "^8.13.1",
     "zod": "^4.0.17"

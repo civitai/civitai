@@ -2,11 +2,14 @@ import {
   addOwnerChapterSchema,
   createStorylineSchema,
   getStorylinesInfiniteSchema,
+  insertStorylineChapterSchema,
   joinStorylineEarlyAccessSchema,
   leaveStorylineSchema,
   linkStorylineChapterSchema,
+  moveStorylineChapterSchema,
   moderateStorylineTitleSchema,
   setCanonChapterSchema,
+  setFirstChapterSchema,
   setStorylineImageCaptionSchema,
   setStorylineTakedownSchema,
   storylineBranchChoiceSchema,
@@ -25,6 +28,7 @@ import {
   addOwnerChapter,
   addStorylineCollaborator,
   createStoryline,
+  deleteStoryline,
   getStoryline,
   getStorylineCanonAhead,
   getStorylineChapterLevels,
@@ -38,14 +42,17 @@ import {
   getStorylineLinkTargets,
   getStorylinesForPosts,
   getStorylinesInfinite,
+  insertStorylineChapter,
   joinStorylineEarlyAccess,
   linkStorylineChapter,
   moderateStorylineTitle,
+  moveStorylineChapter,
   recordStorylineBranchChoice,
   recordStorylineCreateClick,
   removePendingChapter,
   removeStorylineCollaborator,
   setCanonChapter,
+  setFirstChapter,
   setStorylineTakedown,
   updateStoryline,
 } from '~/server/services/storyline.service';
@@ -225,11 +232,19 @@ export const storylineRouter = router({
       updateStoryline({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
 
+  delete: storylineWriteProcedure
+    .input(storylineIdSchema)
+    .mutation(({ input, ctx }) => deleteStoryline({ id: input.id, userId: ctx.user.id })),
+
   setImageCaption: storylineWriteProcedure
     .input(setStorylineImageCaptionSchema)
     .mutation(({ input, ctx }) =>
       setStorylineImageCaption({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
     ),
+
+  setFirstChapter: storylineWriteProcedure
+    .input(setFirstChapterSchema)
+    .mutation(({ input, ctx }) => setFirstChapter({ ...input, userId: ctx.user.id })),
 
   addChapter: storylineWriteProcedure
     .input(addOwnerChapterSchema)
@@ -243,6 +258,18 @@ export const storylineRouter = router({
       isModerator: ctx.user.isModerator,
     })
   ),
+
+  insertChapter: storylineWriteProcedure
+    .input(insertStorylineChapterSchema)
+    .mutation(({ input, ctx }) =>
+      insertStorylineChapter({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
+
+  moveChapter: storylineWriteProcedure
+    .input(moveStorylineChapterSchema)
+    .mutation(({ input, ctx }) =>
+      moveStorylineChapter({ ...input, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
 
   linkChapter: storylineWriteProcedure
     .input(linkStorylineChapterSchema)
@@ -267,7 +294,6 @@ export const storylineRouter = router({
         storylineId: input.storylineId,
         targetUserId: input.userId,
         userId: ctx.user.id,
-        isModerator: ctx.user.isModerator,
       })
     ),
 

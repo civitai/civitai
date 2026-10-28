@@ -289,6 +289,8 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
     isOwner &&
     !!postId &&
     id > 0 &&
+    isScanned &&
+    !needsReview &&
     !contestCollection &&
     !!postPublishedAt &&
     new Date(postPublishedAt) <= new Date();

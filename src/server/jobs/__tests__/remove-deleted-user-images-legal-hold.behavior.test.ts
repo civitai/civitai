@@ -337,7 +337,7 @@ describe('remove-deleted-user-images under any account hold', () => {
   const restoreTable = `ALTER TABLE IF EXISTS "EvidenceHold_hidden" RENAME TO "EvidenceHold";`;
   const restoreMarker = () => holder.db.exec(restoreView + restoreTable);
 
-  it('holds every account while the marker table has no view', async () => {
+  it('drains nothing while the marker table has no view', async () => {
     await holder.db.exec(hideView);
     try {
       await run();
@@ -345,27 +345,27 @@ describe('remove-deleted-user-images under any account hold', () => {
       await restoreMarker();
     }
 
+    expect(mockDeleteImages).not.toHaveBeenCalled();
     expect(await imagesOf(HELD)).toBe(MANY);
     expect(await imagesOf(UNHELD)).toBe(5);
   });
 
-  it('holds an account once the marker objects appear mid-run', async () => {
-    await holder.db.exec(hideView + hideTable);
-    let appeared = false;
-    hooks.beforeDelete = async (ids) => {
-      if (!appeared && ids.every((id) => id <= MANY)) {
-        await restoreMarker();
-        appeared = true;
-      }
-    };
+  // A database from before the migration: the delete path would read its kept-image table after
+  // the DELETE commits, so the run must not reach it.
+  it('drains nothing, and does not throw, without any marker object', async () => {
+    const hideKept = `ALTER TABLE "EvidenceHoldImage" RENAME TO "EvidenceHoldImage_hidden";`;
+    const restoreKept = `ALTER TABLE IF EXISTS "EvidenceHoldImage_hidden" RENAME TO "EvidenceHoldImage";`;
+    await holder.db.exec(hideView + hideTable + hideKept);
     try {
-      await run();
+      await expect(run()).resolves.toMatchObject({ skipped: 'hold-marker-view-missing' });
     } finally {
+      await holder.db.exec(restoreKept);
       await restoreMarker();
     }
 
-    expect(appeared).toBe(true);
-    expect(await imagesOf(HELD)).toBe(MANY);
+    expect(mockDeleteImages).not.toHaveBeenCalled();
+    expect(await imagesOf(UNHELD)).toBe(5);
+    expect(await postsOf(UNHELD)).toBe(1);
   });
 
   it('keeps the images of the placeholder owner', async () => {

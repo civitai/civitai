@@ -1,6 +1,8 @@
 <script lang="ts">
   import type { Snippet } from 'svelte';
   import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
+  import type { ReportEntity } from '$lib/reports';
+  import LastWorked from './LastWorked.svelte';
 
   /**
    * The page shape every non-table report queue shares: the queue on the left, the open item across the
@@ -14,11 +16,13 @@
    */
   let {
     title,
+    entity,
     queue,
     detail,
     detailLabel,
   }: {
     title: string;
+    entity: ReportEntity;
     /** The queue column — `ReportQueueColumn`. */
     queue: Snippet;
     /** The open item — the child page, laid out with `ReportDetailColumns`. */
@@ -28,7 +32,9 @@
 </script>
 
 <div class="flex flex-col xl:h-svh">
-  <TriagePageHeader {title} />
+  <TriagePageHeader {title}>
+    {#snippet meta()}<LastWorked {entity} />{/snippet}
+  </TriagePageHeader>
 
   <div class="flex min-h-0 flex-1 flex-col border-t border-dark-4 xl:flex-row">
     <aside
@@ -38,7 +44,11 @@
       {@render queue()}
     </aside>
 
-    <section aria-label={detailLabel} class="flex min-w-0 flex-1 flex-col bg-dark-8 xl:min-h-0">
+    <!-- `relative` bounds a `SelectionBar` in the detail to this pane, off the queue column. -->
+    <section
+      aria-label={detailLabel}
+      class="relative flex min-w-0 flex-1 flex-col bg-dark-8 xl:min-h-0"
+    >
       {@render detail()}
     </section>
   </div>

@@ -33,7 +33,7 @@ cp .claude/skills/mod-actions/.env.example .claude/skills/mod-actions/.env
 
 | File | Domain | Commands |
 |------|--------|----------|
-| `query.mjs` | User moderation | user, ban, mute, leaderboard, remove-content, dm |
+| `query.mjs` | User moderation | user, ban, mute, leaderboard, remove-content, dm, inbox, thread, creator-program-ban, end-buzz-membership |
 | `strikes.mjs` | Strike system | get-user, standings, list, create, void |
 | `images.mjs` | Image moderation | review-queue, review-counts, moderate, tos-violation, rescan, report-csam, poi-tags, user-images, rating-requests, ingestion-errors, resolve-ingestion, downleveled, pending-ingestion, toggle-flag |
 | `reports.mjs` | Report handling | list, set-status, bulk-status, update, appeals, appeal-details, resolve-appeal |
@@ -58,10 +58,13 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 | `mute <id\|username>` | Toggle mute status |
 | `leaderboard <id\|username> <true\|false>` | Set leaderboard eligibility |
 | `remove-content <id\|username>` | Remove all user content (DESTRUCTIVE) |
-| `dm <id\|username>` | Send a DM (requires `--message`) |
+| `dm <id\|username>` | Message the user as the shared **Civitai Moderation** account (requires `--message`; needs the `user.message.asCivitai` permission). The user sees only that account and can reply; you are recorded as the sender. Prints an idempotency key first: if the response is lost, rerun with `--key <key>` and it sends at most once. Refused while another moderator holds the thread's claim, or when the user already has several unanswered messages from the account in 24 h. `--as-self` sends from your own account instead (the old behaviour). |
+| `inbox` | Civitai Moderation threads whose last message is the user's, oldest first (`--all`: every thread, newest first) |
+| `thread <id\|username>` | A user's Civitai Moderation thread, naming the moderator behind each message, and who holds its claim |
 | `creator-program-ban <id\|username> <set\|clear>` | Ban from / unban from the Creator Program (requires `--internal <reason>`; optional `--gate <ref>`; needs the `user.creatorProgram.ban` permission). Use this, never a raw `onboarding` UPDATE. |
+| `end-buzz-membership <id\|username>` | End the account's Buzz-purchased membership now: `canceled`, `canceledAt`/`endedAt` = now, so the tier's perks stop (requires `--internal <reason>`; needs the `user.membership.code` permission). Stripe and code memberships are untouched. Moves no Buzz: refund the purchase separately. |
 
-**Options:** `--json`, `--dry-run`, `--reason <code>`, `--message <text>`, `--internal <text>`, `--gate <ref>`
+**Options:** `--json`, `--dry-run`, `--reason <code>`, `--message <text>`, `--internal <text>`, `--gate <ref>`, `--key <key>`, `--as-self`, `--all`
 
 **Ban Reason Codes:** SexualMinor, SexualMinorGenerator, SexualMinorTraining, SexualPOI, Bestiality, Scat, Nudify, Harassment, SpamBot, LeaderboardCheating, BuzzCheating, RRDViolation, Other
 
@@ -69,7 +72,10 @@ node .claude/skills/mod-actions/query.mjs <command> [options]
 node .claude/skills/mod-actions/query.mjs user 3879899
 node .claude/skills/mod-actions/query.mjs ban 3879899 --reason Other --message "ToS violation" --dry-run
 node .claude/skills/mod-actions/query.mjs dm 3879899 --message "Please review our guidelines"
+node .claude/skills/mod-actions/query.mjs inbox
+node .claude/skills/mod-actions/query.mjs thread 3879899
 node .claude/skills/mod-actions/query.mjs creator-program-ban 12345 set --internal "Counterparty farming" --gate hub:request:abc
+node .claude/skills/mod-actions/query.mjs end-buzz-membership 12345 --internal "Buzz refunded by support" --dry-run
 ```
 
 ---

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { commentNotifications, threadUrlMap } from '~/server/notifications/comment.notifications';
-import { notBlockedBetween, notThreadMuted } from '~/server/notifications/base.notifications';
+import { notBlockedBetween, notCommentMuted } from '~/server/notifications/base.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 
 const sqlOf = (def: { prepareQuery?: (a: never) => unknown }) =>
@@ -13,19 +13,20 @@ describe('crucible comment notifications', () => {
     ).toMatch(/^\/crucibles\/12\?/);
   });
 
-  it('notifies the creator off the crucibleId thread join, never about their own comment', () => {
+  it('notifies the creator of a top-level crucible comment, never about their own comment', () => {
     const sql = sqlOf(commentNotifications['new-crucible-comment']);
-    expect(sql).toContain('JOIN "Thread" t ON t.id = c."threadId" AND t."crucibleId" IS NOT NULL');
-    expect(sql).toContain('JOIN "Crucible" cr ON cr.id = t."crucibleId"');
+    expect(sql).toContain(`c."entityType" = 'crucible'`);
+    expect(sql).toContain('c."parentId" IS NULL');
+    expect(sql).toContain('JOIN "Crucible" cr ON cr.id = c."entityId"');
     expect(sql).toContain('cr."userId" "ownerId"');
     expect(sql).toContain('c."userId" != cr."userId"');
     expect(sql).not.toContain('LEFT JOIN');
   });
 
-  it('keeps the block and per-thread mute filters on the creator notification', () => {
+  it('keeps the block and mute filters on the creator notification', () => {
     const sql = sqlOf(commentNotifications['new-crucible-comment']);
     expect(sql).toContain(notBlockedBetween('cr."userId"', 'c."userId"'));
-    expect(sql).toContain(notThreadMuted('cr."userId"', 't.id'));
+    expect(sql).toContain(notCommentMuted('cr."userId"', 'c'));
   });
 
   it('deep-links the creator notification to the comment', () => {
@@ -55,26 +56,12 @@ describe('crucible comment notifications', () => {
     ['new-comment-reply', commentNotifications['new-comment-reply']],
     ['new-thread-response', commentNotifications['new-thread-response']],
     ['new-mention', mentionNotifications['new-mention']],
-  ])('%s resolves a crucible thread instead of the dead "comment" fallback', (_, def) => {
+  ])('%s resolves a crucible comment instead of the dead "comment" fallback', (_, def) => {
+    // The thread type is the entity type itself, so 'crucible' reaches threadUrlMap through the
+    // CASE's ELSE arm. Only the types the map cannot take as-is are rewritten, and crucible is not
+    // one of them.
     const sql = sqlOf(def);
-    expect(sql).toContain('"crucibleId"');
-    expect(sql).toContain(`THEN 'crucible'`);
-  });
-});
-
-describe('new-mention: every crucibleId placement', () => {
-  const lines = sqlOf(mentionNotifications['new-mention'])
-    .split('\n')
-    .map((l) => l.trim())
-    .filter((l) => l.includes('crucibleId'));
-
-  it('is selected, in order, into parent id, type, comment parent id and comment parent type', () => {
-    expect(lines).toEqual([
-      'root."crucibleId",',
-      't."crucibleId",',
-      `WHEN COALESCE(root."crucibleId", t."crucibleId") IS NOT NULL THEN 'crucible'`,
-      't."crucibleId",',
-      `WHEN t."crucibleId" IS NOT NULL THEN 'crucible'`,
-    ]);
+    expect(sql).toContain(`ELSE c."entityType"::text`);
+    expect(sql).not.toContain(`WHEN 'crucible' THEN`);
   });
 });

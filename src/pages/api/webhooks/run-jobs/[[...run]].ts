@@ -23,6 +23,7 @@ import { creatorProgramCounterpartyReview } from '~/server/jobs/creator-program-
 import { creatorProgramPrepayoutReview } from '~/server/jobs/creator-program-prepayout-review';
 import { dedupeOfficialUploadsJob } from '~/server/jobs/dedupe-official-uploads';
 import { applyContestTags } from '~/server/jobs/apply-contest-tags';
+import { postIntentClaimSweep } from '~/server/jobs/post-intent-claim-sweep';
 import { applyDiscordRoles } from '~/server/jobs/apply-discord-roles';
 import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
@@ -48,6 +49,7 @@ import { sweepStaleAgentReviewsJob } from '~/server/jobs/sweep-stale-agent-revie
 import { sweepReviewStorageJob } from '~/server/jobs/sweep-review-storage';
 import { reconcileNowpaymentsJob } from '~/server/jobs/reconcile-nowpayments';
 import { notifyStuckCryptoDepositsJob } from '~/server/jobs/notify-stuck-crypto-deposits';
+import { watchOpenNowpaymentsJob } from '~/server/jobs/watch-open-nowpayments';
 import { cosmeticPerceptualHashSweepJob } from '~/server/jobs/cosmetic-phash-sweep';
 import { countReviewImages } from '~/server/jobs/count-review-images';
 import { creatorProgramJobs } from '~/server/jobs/creators-program-jobs';
@@ -56,6 +58,7 @@ import { challengeAutoQueueJob } from '~/server/jobs/challenge-auto-queue';
 import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { challengeHealthCheckJob } from '~/server/jobs/challenge-health-check';
 import { evidenceHoldExpiryAlertJob } from '~/server/jobs/evidence-hold-expiry-alert';
+import { revokeUserTokensJob } from '~/server/jobs/revoke-user-tokens';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
@@ -106,6 +109,7 @@ import {
 } from '~/server/jobs/build-resource-intent-cooc';
 import { buildResourceIntentTagIndexJob } from '~/server/jobs/build-resource-intent-tag-index';
 import { processHuggingFaceImportsJob } from '~/server/jobs/process-huggingface-imports';
+import { archiveStudioTrainingDatasetsJob } from '~/server/jobs/archive-studio-training-datasets';
 import { storageUsageMediaJob, storageUsageNightlyJob } from '~/server/jobs/storage-usage';
 import { processRewards, rewardsDailyReset } from '~/server/jobs/process-rewards';
 import { processScheduledPublishing } from '~/server/jobs/process-scheduled-publishing';
@@ -167,6 +171,7 @@ export const jobs: Job[] = [
   gdprStripeScrubJob,
   scanFilesFallbackJob,
   processHuggingFaceImportsJob,
+  archiveStudioTrainingDatasetsJob,
   storageUsageNightlyJob,
   storageUsageMediaJob,
   sendNotificationsJob,
@@ -181,6 +186,7 @@ export const jobs: Job[] = [
   removeOldDrafts,
   resetToDraftWithoutRequirements,
   applyContestTags,
+  postIntentClaimSweep,
   ...applyDiscordRoles,
   userDeletedCleanup,
   removeDeletedUserImages,
@@ -271,6 +277,7 @@ export const jobs: Job[] = [
   challengeAutoQueueJob,
   challengeHealthCheckJob,
   evidenceHoldExpiryAlertJob,
+  revokeUserTokensJob,
   contestCollectionYoutubeUpload,
   contestCollectionVimeoUpload,
   dummyJob,
@@ -301,6 +308,7 @@ export const jobs: Job[] = [
   processTimedUnmutesJob,
   reconcileNowpaymentsJob,
   notifyStuckCryptoDepositsJob,
+  watchOpenNowpaymentsJob,
   processEnqueuedComicPanelsJob,
   auditRemixSourcesJob,
   dedupeOfficialUploadsJob,

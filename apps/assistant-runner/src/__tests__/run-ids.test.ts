@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { runIdFor } from '../run-ids';
+import { runIdFor } from '../core/run-ids';
 
 describe('runIdFor', () => {
   it('is the same run for the same viewer and key, and another for anyone else', () => {

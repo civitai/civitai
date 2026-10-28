@@ -38,8 +38,13 @@ import type { PostAppChipOutcome } from '~/server/services/blocks/post-app-chip.
  *                     is how the launch looks from here.
  *   - `degraded`    — the fail-open catch fired. **This is the alertable one.**
  *
- * Bounded at five series, and deliberately NOT labelled by app, post, user or
- * scope: this is a public, anon-capable, high-traffic read, and any of those
+ * `surface` names which page resolved it: `post` (post detail) or `image` (the
+ * image detail page, which reuses the same resolver — `image-app-chip.service.ts`).
+ * The metric NAME predates the image surface and is kept so existing queries keep
+ * reading; slice by `surface` when the two need telling apart.
+ *
+ * Bounded at ten series (five outcomes × two surfaces), and deliberately NOT
+ * labelled by app, post, image, user or scope: this is a public, anon-capable, high-traffic read, and any of those
  * would be unbounded cardinality.
  *
  * 🔴 It is NOT a substitute for the store-scope counters in
@@ -65,7 +70,8 @@ const metrics =
     reads: new client.Counter({
       name: PROM_PREFIX + 'post_app_chip_reads_total',
       help:
-        'Cumulative post-detail "Published with <app>" chip resolutions, by outcome: ' +
+        'Cumulative "Published with <app>" chip resolutions on the post and image detail ' +
+        'pages, by `surface` (`post` | `image`) and outcome: ' +
         '`chip` (a chip was produced), `no-marker` (not an app-published post — the common ' +
         'path), `unresolved` (a marker resolving to no nameable app; reachable by design via ' +
         "the dev-scoped mint path, so a nonzero rate is normal), `gated` (the viewer's store " +
@@ -75,14 +81,17 @@ const metrics =
         'as it does for an ordinary post, so without this counter the chip can disappear ' +
         'site-wide with no other signal. A `chip` rate falling to zero while `no-marker` ' +
         'continues is the same fault seen from the other side.',
-      labelNames: ['outcome'],
+      labelNames: ['outcome', 'surface'],
     }),
   });
 
+/** Which detail page resolved the chip. */
+export type AppChipSurface = 'post' | 'image';
+
 /** Record one chip resolution. Never throws — telemetry must not break a read. */
-export function recordPostAppChipRead(outcome: PostAppChipOutcome): void {
+export function recordPostAppChipRead(outcome: PostAppChipOutcome, surface: AppChipSurface): void {
   try {
-    metrics.reads.inc({ outcome });
+    metrics.reads.inc({ outcome, surface });
   } catch {
     /* never throw from telemetry — a fail-open path must not be made to fail */
   }

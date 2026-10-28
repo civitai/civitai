@@ -69,6 +69,13 @@ export const getCommentCountByModelSchema = z.object({
   hidden: z.boolean().optional(),
 });
 
+export type GetCommentCountsByModelInput = z.infer<typeof getCommentCountsByModelSchema>;
+export const getCommentCountsByModelSchema = z.object({
+  modelId: z.number(),
+  /** `false` when the client already holds every visible comment: only the hidden count runs. */
+  includeVisible: z.boolean().default(true),
+});
+
 export type ToggleReactionInput = z.infer<typeof toggleReactionInput>;
 export const toggleReactionInput = z.object({
   id: z.number(),

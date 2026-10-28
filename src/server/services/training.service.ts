@@ -14,6 +14,7 @@ import {
   handleError,
   submitWorkflow as clientSubmitWorkflow,
 } from '@civitai/orchestration-client';
+import { UploadType } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { preventModelVersionLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -47,13 +48,14 @@ import {
   withRetries,
 } from '~/server/utils/errorHandling';
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
+import { env as clientEnv } from '~/env/client';
 import { TrainingStatus } from '~/shared/utils/prisma/enums';
 import {
-  deleteObject,
   getB2S3Client,
   getGetUrl,
   getPutUrl,
   getS3Client,
+  getUploadBucket,
   isB2Url,
   parseKey,
 } from '~/utils/s3-utils';
@@ -311,6 +313,18 @@ export type AutoCaptionResponse = {
   [key: string]: string;
 };
 
+// The auto-label input is the zip the client just uploaded via /api/upload, whose keys are
+// `${type}/${userId}/...` (see buildUploadKey).
+function assertOwnTrainingTempUpload(url: string, userId: number) {
+  const { key, bucket } = parseKey(url);
+  if (
+    !bucket ||
+    bucket !== getUploadBucket(isB2Url(url) ? 'b2' : 'default') ||
+    !key.startsWith(`${UploadType.TrainingImagesTemp}/${userId}/`)
+  )
+    throw throwBadRequestError('Invalid URL');
+}
+
 export const autoTagHandler = async ({
   url,
   modelId,
@@ -318,11 +332,10 @@ export const autoTagHandler = async ({
 }: AutoTagInput & {
   userId: number;
 }) => {
+  assertOwnTrainingTempUpload(url, userId);
   const { url: getUrl } = isB2Url(url)
     ? await getGetUrl(url, { s3: getB2S3Client() })
     : await getGetUrl(url);
-  const { key, bucket } = parseKey(url);
-  if (!bucket) throw throwBadRequestError('Invalid URL');
 
   // todo check if this property comes through
 
@@ -340,12 +353,10 @@ export const autoTagHandler = async ({
   console.log(response, payload);
 
   if (response.status === 429) {
-    deleteObject(bucket, key).catch();
     throw throwRateLimitError();
   }
 
   if (!response.ok) {
-    deleteObject(bucket, key).catch();
     throw throwBadRequestError(
       'We are not able to process your request at this time. Please try again later.'
     );
@@ -363,11 +374,10 @@ export const autoCaptionHandler = async ({
 }: AutoCaptionInput & {
   userId: number;
 }) => {
+  assertOwnTrainingTempUpload(url, userId);
   const { url: getUrl } = isB2Url(url)
     ? await getGetUrl(url, { s3: getB2S3Client() })
     : await getGetUrl(url);
-  const { key, bucket } = parseKey(url);
-  if (!bucket) throw throwBadRequestError('Invalid URL');
 
   const payload: Orchestrator.Training.ImageAutoCaptionJobPayload = {
     mediaUrl: getUrl,
@@ -384,12 +394,10 @@ export const autoCaptionHandler = async ({
   });
 
   if (response.status === 429) {
-    deleteObject(bucket, key).catch();
     throw throwRateLimitError();
   }
 
   if (!response.ok) {
-    deleteObject(bucket, key).catch();
     throw throwBadRequestError(
       'We are not able to process your request at this time. Please try again later.'
     );
@@ -644,7 +652,7 @@ type AutoLabelStepMetadata = {
 // ⚠ Deliberate NARROWING that comes with it: `isPublicHttpsUrl` also refuses *public* bare
 // IPv4/IPv6 literals and dot-less hostnames. A legitimate media URL is a DNS name, and the
 // canonical helper makes the same call for App Blocks manifests, so the two now agree.
-function assertSafeMediaUrls(urls: string[]) {
+export function assertSafeMediaUrls(urls: string[]) {
   for (const raw of urls) {
     let parsed: URL;
     try {
@@ -664,6 +672,29 @@ function assertSafeMediaUrls(urls: string[]) {
     if (!lexical.ok) {
       throw throwBadRequestError('mediaUrl host is not reachable');
     }
+  }
+}
+
+// For submits on the system orchestrator token: only media on Civitai's orchestrator, where uploads
+// land. The raw string is forwarded, so it must already be canonical (which also refuses the
+// backslash and control bytes WHATWG rewrites); the host judged here is then the host any parser
+// sees. `@` is refused anywhere: a parser splitting the authority on the last `@` would read the
+// host from the query. Both host comparisons include the port.
+export function assertCivitaiMediaUrls(urls: string[]) {
+  const publicHost = new URL(clientEnv.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT).host;
+  for (const raw of urls) {
+    const parsed = URL.canParse(raw) ? new URL(raw) : null;
+    const ok =
+      parsed &&
+      parsed.href === raw &&
+      !parsed.hash &&
+      !raw.includes('@') &&
+      (isTrustedOrchestratorUrl(raw) ||
+        (parsed.protocol === 'https:' && parsed.host === publicHost));
+    if (!ok)
+      throw throwBadRequestError(
+        'Auto-label only accepts media uploaded to Civitai. Upload the file, then try again.'
+      );
   }
 }
 

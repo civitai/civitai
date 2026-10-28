@@ -1,6 +1,6 @@
 {
   "name": "@civitai/orchestrator-gateway",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "private": true,
   "type": "module",
   "main": "./dist/server.js",
@@ -19,7 +19,7 @@
     "@civitai/redis": "workspace:*",
     "@fastify/cookie": "^11.0.2",
     "@trpc/server": "^11.17.0",
-    "fastify": "^5.2.1",
+    "fastify": "^5.12.6",
     "prom-client": "^14.2.0",
     "zod": "^4.0.17"
   },

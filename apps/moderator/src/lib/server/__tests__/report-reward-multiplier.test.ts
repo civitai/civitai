@@ -113,12 +113,15 @@ async function rowsFor({
   tiers,
   storedBonus,
   ineligible = [],
+  unpaid,
   events,
 }: {
   /** Ordered [reporterId, cached tier] pairs — an object would reorder integer keys. */
   tiers: [number, unknown][];
   storedBonus: number;
   ineligible?: number[];
+  /** `unpaidReporterIds`: the reporters the report itself marks as earning nothing. */
+  unpaid?: number[];
   /** Raw RewardsBonusEvent rows, when a case needs a window rather than a plain multiplier. */
   events?: unknown[];
 }) {
@@ -129,7 +132,7 @@ async function rowsFor({
   });
   bonusEvents.mockReturnValue(events ?? bonus(storedBonus));
   ineligibleRows.mockReturnValue(ineligible.map((id) => ({ id })));
-  await rewardReportReporters({ reportId: 1, reporterIds });
+  await rewardReportReporters({ reportId: 1, reporterIds, unpaidReporterIds: unpaid });
   expect(insert).toHaveBeenCalledTimes(1);
   // The destination is as load-bearing as the values: a wrong table or format writes nowhere
   // process-rewards reads, and every reporter is silently never paid.
@@ -165,6 +168,28 @@ async function rowFor({
 
 beforeEach(() => {
   vi.clearAllMocks();
+});
+
+describe('rewardReportReporters for reporters the report marks as earning nothing', () => {
+  it('pays them nothing, the filer and a folded-in reporter alike, and the rest as before', async () => {
+    const rows = await rowsFor({
+      tiers: [
+        [41, cached(1)],
+        [42, cached(1)],
+        [43, cached(1)],
+      ],
+      storedBonus: 10,
+      unpaid: [41, 42],
+    });
+
+    expect(
+      rows.map((row: { toUserId: number; multiplier: number }) => [row.toUserId, row.multiplier])
+    ).toEqual([
+      [41, 0],
+      [42, 0],
+      [43, 1],
+    ]);
+  });
 });
 
 describe('rewardReportReporters multiplier', () => {

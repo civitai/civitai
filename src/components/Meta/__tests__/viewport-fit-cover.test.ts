@@ -91,6 +91,7 @@ const INSET_CONSUMERS = [
   'src/components/Image/DetailV2/ImageDetail2.tsx',
   'src/components/ImageGeneration/GeneratedOutputLightbox.tsx',
   'src/components/IterativeEditor/IterativeImageEditor.module.scss',
+  'src/components/Post/Detail/PostDetail.tsx',
   // The ONE node_modules viewport-edge surface paid at its call site rather
   // than at the `@layer mantine` seam: `@mantine/nprogress` renders a
   // `<Progress>`, so its static class is `mantine-Progress-root` — shared with
@@ -245,6 +246,9 @@ describe('the viewport meta opts into the full display area', () => {
       // edge-anchored chrome, so opting it into the display cutout would push its
       // text under the notch and buy nothing.
       if (repoPath(file) === 'src/server/auth/login-error-page.ts') continue;
+      // Same shape: the email-unsubscribe confirm page is a standalone document an API route
+      // serves directly, a single centred column with no edge-anchored chrome.
+      if (repoPath(file) === 'src/pages/api/notifications/email-unsubscribe.ts') continue;
       // Comments only — strings are the subject here, so stripping them would
       // remove the very thing being looked for.
       const src = stripComments(fs.readFileSync(file, 'utf8'));

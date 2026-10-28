@@ -1,9 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
 
-import type { GrantStore } from '../interfaces';
-import { Runner } from '../runner';
+import type { GrantStore } from '../core/interfaces';
+import { Runner } from '../core/runner';
 import type { VerifiedGrant } from '../tokens';
-import { noTools, unconfiguredModel, unconfiguredStore } from '../unconfigured';
+import { noTools, unconfiguredModel, unconfiguredStore } from '../core/unconfigured';
 
 const quiet = { info: () => undefined, warn: () => undefined, error: () => undefined };
 
@@ -34,6 +34,7 @@ const grant: VerifiedGrant = {
   id: 'g-1',
   expiresAt: new Date(Date.now() + 60_000),
   subagents: false,
+  preview: false,
 };
 
 const request = {

@@ -1,9 +1,9 @@
 import { createAssistantModel, FreeTier, freeTierFetch } from '@civitai/components-chat/core';
 import type { LanguageModel } from 'ai';
 
-import type { Logger, ModelCallLedger, ModelContext, ModelProvider } from './interfaces';
+import type { Logger, ModelContext, ModelProvider } from './core/interfaces';
 import { MintRefusedError, type TokenSource } from './minter';
-import { ModelCalls } from './model-calls';
+import { ModelCalls, type ModelCallLedger } from './model-calls';
 import type { OrchestrationClient } from './orchestration';
 
 export interface OrchestrationModelOptions {
@@ -25,7 +25,7 @@ export interface OrchestrationModelOptions {
 
 /**
  * The reply's model: orchestration's chat completions, built by the chat package's own
- * `createAssistantModel` and `freeTierFetch` (`@civitai/components-chat` 0.25.0), as the browser's
+ * `createAssistantModel` and `freeTierFetch` (`@civitai/components-chat` 0.32), as the browser's
  * App Assistant builds it: the same OpenAI-compatible provider under the same provider name (so
  * `AgentCore`'s provider options reach the request), the same 401 retry, the viewer's own `chat`
  * token on every request (minted inside it), so orchestration bills the viewer under the App
@@ -59,8 +59,8 @@ export class OrchestrationModels implements ModelProvider {
     const freeTier = new FreeTier(() => orchestration.getFreeTier(tokens));
     const tier = context.tier;
     const calls = this.#calls;
-    // Inside the free-tier fetch, so each request it sends (a free one, then a paid one when the
-    // free one is slow to start) is kept, and the free one it gives up on is cancelled.
+    // Inside the free-tier fetch, so each request it sends (a free one, or a paid one once the free
+    // allowance is used up and the tier allows paying) is kept.
     const send = (signed: typeof fetch) =>
       calls
         ? calls.fetch(

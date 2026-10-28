@@ -65,7 +65,8 @@ vi.mock('~/env/other', async (importOriginal) => ({
   isProd: true,
 }));
 
-const res = {} as NextApiResponse;
+// The route sets its default API response headers before delegating (applyApiRequestPolicy).
+const res = { setHeader: () => res } as unknown as NextApiResponse;
 let route: NextApiHandler;
 
 /**
@@ -82,7 +83,7 @@ const request = (width: number) =>
     method: 'GET',
     headers: {},
     query: { trpc: Array(width).fill('a').join(','), batch: '1' },
-  } as unknown as NextApiRequest);
+  }) as unknown as NextApiRequest;
 
 describe('src/pages/api/trpc/[trpc].ts wiring', () => {
   beforeAll(async () => {

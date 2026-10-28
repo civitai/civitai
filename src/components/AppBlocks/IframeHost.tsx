@@ -28,6 +28,7 @@ import {
 } from './ChromeSurface';
 import type { ChromeSurfaceControl } from './ChromeSurface';
 import { ChromeReviewMenuItem } from './ChromeReviewEntry';
+import { ChromeForkMenuItem } from './ChromeForkEntry';
 import { ChromeRecentAppIcon } from './ChromeRecentAppIcon';
 import type { AppFeedbackModalTarget } from './ChromeFeedbackEntry';
 import { AppFeedbackModal, ChromeFeedbackButton } from './ChromeFeedbackEntry';
@@ -641,7 +642,9 @@ export function AppBlockChrome({
           the app's own owner — which the ledger guard's own message warns against.
           So it is repointed, keeping the label ("My apps" still names what an owner
           arrives at: state C is their app list) and taking the subnav's glyph for
-          the row it now shares, `IconCode`.
+          the row it now shares, `IconCode`. It carries `?view=apps` (`MY_APPS_HREF`,
+          spelled literally because the chrome-nav ledger parses literal hrefs): an author
+          who also holds the App Assistant would otherwise land on the assistant.
 
           🔴 WHAT THAT DOES *NOT* DO IS DEFEAT A KILL SWITCH — and the previous
           version of this note is why the question has to be asked. `/apps/build`
@@ -670,7 +673,10 @@ export function AppBlockChrome({
       >
         App activity
       </ChromeSurfaceItem>
-      <ChromeSurfaceItem href="/apps/build" leftSection={<IconCode size={14} stroke={1.5} />}>
+      <ChromeSurfaceItem
+        href="/apps/build?view=apps"
+        leftSection={<IconCode size={14} stroke={1.5} />}
+      >
         My apps
       </ChromeSurfaceItem>
       {isModerator && (
@@ -772,6 +778,9 @@ export function AppBlockChrome({
           dropdown AND in the sheet, since Mantine unmounts a closed `Drawer`'s
           children exactly as it unmounts a closed `Menu.Dropdown`'s. */}
       <ChromeReviewMenuItem slug={slug} onOpenReview={setReviewListingId} />
+      {/* FORKABLE APPS — "Fork": same lazy listing read and same render-its-own-gates shape as
+          the review item above; hidden on the dev tunnel and the review preview. */}
+      <ChromeForkMenuItem slug={slug} hostSurface={hostSurface} />
       {appBlockId && (
         <ChromeSurfaceItem
           leftSection={<IconShieldLock size={14} stroke={1.5} />}

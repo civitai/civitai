@@ -72,6 +72,7 @@
 
   const detections = $derived(row.flags.filter((f) => f.redetected));
   const match = $derived(row.match);
+  const poiMatch = $derived(row.poiMatch);
   const leads = $derived(leadRefs(row));
   const labels = $derived([...new Set(leads.map((f) => f.label))]);
   const decisions = $derived(needsReviewDecisions(leads));
@@ -94,7 +95,7 @@
   {#snippet chips()}
     <EnforcementChip applied={false} />
     {#each detections as flag (flag.label)}<FlaggedSourceBadge row={flag} />{/each}
-    {#if match}<MetaChip tone="blue">hash</MetaChip>{/if}
+    {#if match || poiMatch}<MetaChip tone="blue">hash</MetaChip>{/if}
     {#each labels as label (label)}<FlagBadge {label} />{/each}
     {#if match}<MetaChip tone="amber">different uploader</MetaChip>{/if}
     <CrossTabChips chips={alsoIn} linked tone="amber" />
@@ -143,6 +144,43 @@
           <p class="m-0 text-[11px] text-dark-2" title={dateTime(match.uploadedAt)}>
             hash sweep · file uploaded {ago(match.uploadedAt)}
           </p>
+        </div>
+      </TriageCard>
+    {/if}
+
+    {#if poiMatch}
+      <SharedFileCard
+        row={{
+          modelId: row.modelId,
+          modelName: row.modelName,
+          userId: row.userId,
+          username: row.username,
+          hash: poiMatch.hash,
+          fileName: poiMatch.fileName,
+          fileSizeKB: poiMatch.fileSizeKB,
+          modelVersionId: poiMatch.modelVersionId,
+          minorModelId: poiMatch.seedModelId ?? undefined,
+          minorModelName: poiMatch.seedModelName,
+          minorModelVersionId: poiMatch.seedModelVersionId,
+        }}
+        {civitaiUrl}
+        label="poi"
+        status={{ label: 'not flagged', tone: 'green' }}
+      />
+      <TriageCard dense title={match ? 'Why no real-person flag was applied' : 'Why nothing was applied'}>
+        <div class="space-y-2 text-dark-0">
+          <!-- Why it was queued is not stored, and the seeds may have changed since, so this says
+               only what queueing guarantees. -->
+          <p class="m-0">
+            When the match was made, no model from the same uploader with a moderator behind its
+            real-person flag shared this file, so the flag was not copied over automatically.
+            Decide whether this upload is the same content under a new name.
+          </p>
+          {#if poiMatch.matchedAt}
+            <p class="m-0 text-[11px] text-dark-2" title={dateTime(poiMatch.matchedAt)}>
+              hash sweep · matched {ago(poiMatch.matchedAt)}
+            </p>
+          {/if}
         </div>
       </TriageCard>
     {/if}

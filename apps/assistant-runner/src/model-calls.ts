@@ -3,7 +3,7 @@ import { createHash } from 'node:crypto';
 import type pg from 'pg';
 
 import { RUNNER_SCHEMA } from './grants';
-import type { Logger, ModelCallLedger, ModelCallScope } from './interfaces';
+import type { Logger } from './core/interfaces';
 import type { TokenSource } from './minter';
 import {
   FINAL_STATUSES,
@@ -11,6 +11,27 @@ import {
   type OrchestrationClient,
   type WorkflowState,
 } from './orchestration';
+
+/** The model requests one stored orchestration workflow may answer. */
+export interface ModelCallScope {
+  runId: string;
+  userId: string;
+  conversationId: string;
+  seq: number;
+  /** Also a workflow an earlier run of the same turn sent (`ModelContext.carriesOn`). */
+  carriesOn?: boolean;
+}
+
+/**
+ * Which orchestration workflow each model request was sent as, kept the moment orchestration names
+ * it (before its answer is read), so a request asked again after a crash finds it. Keyed by run and
+ * by a hash of what the request asks (`callKey`). Holds ids only: never a token.
+ */
+export interface ModelCallLedger {
+  /** The workflow the latest request with this key in `scope` was sent as, else `null`. */
+  find(scope: ModelCallScope, key: string): Promise<string | null>;
+  save(scope: ModelCallScope, key: string, workflowId: string): Promise<void>;
+}
 
 /**
  * The response header orchestration names a chat completion's workflow in, set once the workflow is
@@ -43,11 +64,16 @@ const TABLE = `"${RUNNER_SCHEMA}".model_calls`;
  * (which names today's date), each by role, content, tool calls and the call it answers. A request
  * asked again from the same saved steps gets the same key; any other request, another. `undefined`
  * for a body that is not a chat completion request.
+ *
+ * Tool images are left out: `AgentCore` (components-chat 0.28+) shows a tool's image once, in a user
+ * message after that step's tool results, and saves only a note in its place. The same step asked
+ * again after a crash is rebuilt from the saved steps without it, so with the image in the key it
+ * would miss the workflow it was first sent as and be paid for twice.
  */
 export function callKey(body: unknown): string | undefined {
   if (!isRecord(body) || !Array.isArray(body.messages)) return undefined;
   const asked = body.messages
-    .filter((message) => isRecord(message) && message.role !== 'system')
+    .filter((message) => isRecord(message) && message.role !== 'system' && !isToolImages(message))
     .map((message: Record<string, unknown>) => [
       message.role,
       message.content ?? null,
@@ -63,6 +89,28 @@ export function callKey(body: unknown): string | undefined {
   return createHash('sha256')
     .update(JSON.stringify([body.model ?? null, asked]))
     .digest('hex');
+}
+
+/**
+ * The message `AgentCore` adds to show a step's tool images (`ToolImages.withImages`): a user message
+ * of `Returned by <tool> (<call id>):` lines, each followed by that call's images, as the
+ * OpenAI-compatible provider sends it. A viewer's own message has this shape only when its every
+ * text part starts with `Returned by ` and it carries an image.
+ */
+function isToolImages(message: Record<string, unknown>): boolean {
+  const content = message.content;
+  if (message.role !== 'user' || !Array.isArray(content) || content.length === 0) return false;
+  return (
+    content.some((part) => isRecord(part) && part.type === 'image_url') &&
+    content.every(
+      (part) =>
+        isRecord(part) &&
+        (part.type === 'image_url' ||
+          (part.type === 'text' &&
+            typeof part.text === 'string' &&
+            part.text.startsWith('Returned by ')))
+    )
+  );
 }
 
 /** One answer of a chat completion, as the step that reuses it rebuilds it. */
@@ -402,9 +450,8 @@ export class ModelCalls {
 
   /**
    * The response, its body passed through as read: the request's signal aborting, or its reader
-   * cancelling the body (the free-tier fetch giving up on a slow free answer cancels it before it
-   * aborts), before the body ends cancels the workflow; the body breaking off by itself leaves the
-   * workflow for a request asked again to wait for.
+   * cancelling the body, before the body ends cancels the workflow; the body breaking off by itself
+   * leaves the workflow for a request asked again to wait for.
    */
   #watched(
     call: Call,

@@ -22,7 +22,14 @@ const log = (data: MixedObject) => {
   logToAxiom({ name: 'nowpayments-webhook', type: 'error', ...data }).catch(() => null);
 };
 
-const ACTIONABLE_STATUSES = ['confirming', 'finished', 'partially_paid', 'failed'];
+const ACTIONABLE_STATUSES = [
+  'confirming',
+  'confirmed',
+  'sending',
+  'finished',
+  'partially_paid',
+  'failed',
+];
 
 const eventFromPayment = (
   payment: NOWPayments.CreatePaymentResponse

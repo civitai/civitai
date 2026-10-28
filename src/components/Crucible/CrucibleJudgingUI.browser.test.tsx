@@ -1,6 +1,7 @@
 import { useState, type ComponentProps } from 'react';
 import { afterEach, beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
+import type * as IsMobileMod from '~/hooks/useIsMobile';
 import type * as TrpcMod from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
@@ -23,21 +24,26 @@ const mediaOutcome = vi.hoisted(() => new Map<string, 'loadedmetadata' | 'error'
 const lastVideoProps = vi.hoisted(() => new Map<string, Record<string, unknown>>());
 // A clip's decoded length. Unset means long enough never to loop within a test.
 const clipDurations = vi.hoisted(() => new Map<string, number>());
+const lastHtml5Controls = vi.hoisted(() => new Map<string, unknown>());
+const device = vi.hoisted(() => ({ mobile: false }));
 
 vi.mock('~/components/EdgeMedia/EdgeMedia', async () => {
   const { useEffect, useRef } = await import('react');
   return {
     EdgeMedia: function EdgeMediaStub({
       src,
+      html5Controls,
       videoProps,
     }: {
       src: string;
+      html5Controls?: boolean;
       videoProps?: {
         onTimeUpdate?: (e: { currentTarget: { currentTime: number; duration: number } }) => void;
       };
     }) {
       const videoRef = useRef<HTMLVideoElement>(null);
       lastVideoProps.set(src, videoProps ?? {});
+      lastHtml5Controls.set(src, html5Controls);
       useEffect(() => {
         const outcome = mediaOutcome.get(src) ?? 'loadedmetadata';
         if (outcome !== 'pending') videoRef.current?.dispatchEvent(new Event(outcome));
@@ -77,6 +83,13 @@ const reactionEnv = vi.hoisted(() => ({
   lookupLoaded: true,
 }));
 
+const openReportModal = vi.hoisted(() => vi.fn());
+vi.mock('~/components/Dialog/triggers/report', () => ({ openReportModal }));
+
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<typeof IsMobileMod>()),
+  useHasCoarsePointer: () => device.mobile,
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => reactionEnv.viewer }));
 vi.mock('~/providers/FeatureFlagsProvider', () => ({ useFeatureFlags: () => ({}) }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -267,6 +280,9 @@ beforeEach(() => {
   clipDurations.clear();
   mediaOutcome.clear();
   lastVideoProps.clear();
+  lastHtml5Controls.clear();
+  device.mobile = false;
+  localStorage.removeItem('global-volume');
   myReactions.clear();
   reactionToggle.mockClear();
   reactionEnv.viewer = { id: 7 };
@@ -621,6 +637,19 @@ describe('CrucibleJudgingUI — video playback', () => {
     await vi.waitFor(() => {
       expect(video('left').muted).toBe(true);
       expect(video('right').muted).toBe(true);
+    });
+  });
+
+  test("a clip starts at the judge's saved volume", async () => {
+    localStorage.setItem('global-volume', '0.3');
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    await vi.waitFor(() => {
+      expect(video('left').volume).toBeCloseTo(0.3);
+      expect(video('right').volume).toBeCloseTo(0.3);
     });
   });
 
@@ -1209,6 +1238,37 @@ describe('CrucibleJudgingUI — reactions', () => {
     expect(onSkip).not.toHaveBeenCalled();
   });
 
+  test('clicking the card itself votes for that side (control for the report test below)', async () => {
+    const { onVote } = await renderPair();
+
+    document
+      .querySelector<HTMLElement>('[data-testid="crucible-report"][data-side="right"]')!
+      .parentElement!.click();
+
+    await vi.waitFor(() => expect(onVote).toHaveBeenCalledTimes(1));
+  });
+
+  test('reporting opens the report modal for that side and does not vote or skip', async () => {
+    const { onVote, onSkip } = await renderPair();
+    const reportButton = (side: string) =>
+      document.querySelector<HTMLButtonElement>(
+        `[data-testid="crucible-report"][data-side="${side}"] button`
+      )!;
+
+    reportButton('right').click();
+    for (const key of ['Enter', ' ', '1']) {
+      reportButton('left').dispatchEvent(
+        new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true })
+      );
+    }
+    await pastFeedbackDelay();
+
+    expect(openReportModal).toHaveBeenCalledTimes(1);
+    expect(openReportModal).toHaveBeenCalledWith({ entityType: 'image', entityId: rightImageId });
+    expect(onVote).not.toHaveBeenCalled();
+    expect(onSkip).not.toHaveBeenCalled();
+  });
+
   test('Enter and Space on a reaction button neither vote nor skip', async () => {
     const { onVote, onSkip } = await renderPair();
 
@@ -1296,5 +1356,155 @@ describe('CrucibleJudgingUI — reactions', () => {
     for (const attr of ['count', 'countunknown', 'hasreacted', 'cantclick']) {
       expect(reactionBar('left')!.querySelector(`[${attr}]`)).toBeNull();
     }
+  });
+});
+
+describe('CrucibleJudgingUI — touch-screen video controls', () => {
+  type IosClip = HTMLVideoElement & { webkitEnterFullscreen?: () => void };
+  const fullscreenButton = () =>
+    card('left')!.querySelector<HTMLButtonElement>('[aria-label="Fullscreen"]')!;
+
+  // Paused, so the sequence never plays a clip the test did not ask for.
+  const renderTouch = async () => {
+    device.mobile = true;
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} paused />
+    );
+    await expectBothCardsRendered();
+    await afterPassiveEffects();
+    play.mockClear();
+    pause.mockClear();
+    return { play, pause };
+  };
+
+  test('desktop keeps the native controls and has no fullscreen button', async () => {
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    expect(lastHtml5Controls.get(srcOf(1))).toBe(true);
+    expect(card('left')!.querySelector('[aria-label="Fullscreen"]')).toBeNull();
+  });
+
+  test('a phone hides the native controls and fullscreen brings them back', async () => {
+    await renderTouch();
+    expect(lastHtml5Controls.get(srcOf(1))).toBe(false);
+
+    const clip = video('left');
+    const requestFullscreen = vi.fn(() => Promise.resolve());
+    clip.requestFullscreen = requestFullscreen;
+    fullscreenButton().click();
+
+    expect(clip.controls).toBe(true);
+    expect(requestFullscreen).toHaveBeenCalledOnce();
+
+    // iOS Safari has no fullscreenchange for <video>; it reports the exit on the element.
+    clip.dispatchEvent(new Event('webkitendfullscreen'));
+    expect(clip.controls).toBe(false);
+  });
+
+  test('leaving fullscreen where the Fullscreen API exists removes the controls', async () => {
+    await renderTouch();
+    const clip = video('left');
+    clip.requestFullscreen = vi.fn(() => Promise.resolve());
+    fullscreenButton().click();
+    expect(clip.controls, 'precondition: fullscreen turned them on').toBe(true);
+
+    // Nothing is fullscreen in the test page, which is what an exit looks like.
+    expect(document.fullscreenElement).toBeNull();
+    document.dispatchEvent(new Event('fullscreenchange'));
+
+    expect(clip.controls).toBe(false);
+  });
+
+  test('an iPhone, which has no requestFullscreen on a clip, enters through webkitEnterFullscreen', async () => {
+    await renderTouch();
+    const clip = video('left') as IosClip;
+    clip.requestFullscreen = undefined as never;
+    const webkitEnterFullscreen = vi.fn();
+    clip.webkitEnterFullscreen = webkitEnterFullscreen;
+
+    fullscreenButton().click();
+
+    expect(webkitEnterFullscreen).toHaveBeenCalledOnce();
+    expect(clip.controls).toBe(true);
+  });
+
+  test('tapping a clip on a phone plays it, and tapping again pauses it', async () => {
+    const { play, pause } = await renderTouch();
+
+    const clip = video('right');
+    clip.click();
+    expect(sidesCalledOn(play)).toEqual(['right']);
+
+    // The stubbed element never really plays, so mark it playing to take the pause branch.
+    Object.defineProperty(clip, 'paused', { value: false, configurable: true });
+    clip.click();
+    expect(sidesCalledOn(pause)).toEqual(['right']);
+  });
+
+  test('a click on a desktop clip leaves playback to the native controls', async () => {
+    const play = vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    const pause = vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} paused />
+    );
+    await expectBothCardsRendered();
+    await afterPassiveEffects();
+    play.mockClear();
+    pause.mockClear();
+
+    video('right').click();
+    await afterPassiveEffects();
+
+    expect(sidesCalledOn(play)).toEqual([]);
+    expect(sidesCalledOn(pause)).toEqual([]);
+  });
+
+  test('the sound toggle on a phone does not play or pause a clip', async () => {
+    const { play, pause } = await renderTouch();
+
+    card('left')!.querySelector<HTMLButtonElement>('[aria-label="Mute clips"]')!.click();
+    await vi.waitFor(() => expect(video('left').muted).toBe(true));
+    await afterPassiveEffects();
+
+    expect(sidesCalledOn(play)).toEqual([]);
+    expect(sidesCalledOn(pause)).toEqual([]);
+  });
+
+  test('a click on a clip in fullscreen is left to its native controls', async () => {
+    const { play, pause } = await renderTouch();
+    const clip = video('right');
+    clip.controls = true;
+
+    clip.click();
+    await afterPassiveEffects();
+
+    expect(sidesCalledOn(play)).toEqual([]);
+    expect(sidesCalledOn(pause)).toEqual([]);
+  });
+});
+
+describe('CrucibleJudgingUI — unmuting keeps the saved volume', () => {
+  test('unmuting after a mute leaves the clip and the stored level at the saved volume', async () => {
+    localStorage.setItem('global-volume', '0.3');
+    vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined);
+    renderWithProviders(
+      <CrucibleJudgingUI pair={pairOf(1, 2)} onVote={vi.fn()} onSkip={vi.fn()} />
+    );
+    await expectBothCardsRendered();
+
+    card('left')!.querySelector<HTMLButtonElement>('[aria-label="Mute clips"]')!.click();
+    await vi.waitFor(() => expect(video('left').muted).toBe(true));
+    // Something else moved the element off the saved level while it was muted.
+    video('left').volume = 1;
+    card('left')!.querySelector<HTMLButtonElement>('[aria-label="Unmute clips"]')!.click();
+
+    await vi.waitFor(() => expect(video('left').muted).toBe(false));
+    expect(video('left').volume).toBeCloseTo(0.3);
+    expect(localStorage.getItem('global-volume')).toBe('0.3');
   });
 });

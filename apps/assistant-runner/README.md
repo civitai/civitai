@@ -13,9 +13,18 @@ key configured the service refuses every run-API request (401); with it but with
 refuses every start (403 `refused`, saying its tools are not set up) rather than reply with no tools.
 See [Not built yet](#not-built-yet).
 
+**Layout.** `src/core/` is the generic runner (the DBOS workflows, the run API, the journal, the head
+and progress writes) and reaches the rest only through the seams in `src/core/interfaces.ts`; the
+`core-boundary` test fails on any import from `src/core/` to outside it. Everything civitai's own
+stays outside: viewer tokens and run grants (`tokens.ts`, `grants.ts`, `minter.ts`,
+`credentials.ts`), orchestration (`orchestration*.ts`, `model-calls.ts`, `conversation-store.ts`),
+App Assistant (`app-assistant/`, including the SDK pin), the Restart preview route (`app.ts`) and
+`server.ts`, which wires them together. `reply-dbos-calls.pg.test.ts` pins the DBOS calls a reply
+makes, which `WORKFLOW_VERSION` protects.
+
 ## How it works
 
-- **Protocol.** It implements the run protocol of `@civitai/components-chat@0.25.0`, entry
+- **Protocol.** It implements the run protocol of `@civitai/components-chat@0.32.0`, entry
   `@civitai/components-chat/runner-protocol`, protocol version `v: 1`:
 
   | Call                             | Answer                                                                                                                                                        |
@@ -28,6 +37,18 @@ See [Not built yet](#not-built-yet).
   | `POST /conversations/<id>/patch` | `204`; title or model written into the head. `404` for a chat the viewer does not have                                                                        |
 
   Plus `GET /healthz` (process up) and `GET /readyz` (DBOS launched), always at the root.
+
+  Features (`src/core/protocol.ts`; `RUN_FEATURE_EDIT` in the package since 0.31.0): every start's
+  and lookup's answer lists `features: ['edit']`, and a start may carry `turn.edit`: the
+  user edited their latest message, so `turn.user` replaces the saved message of turn `seq` (the head's latest, or the next when the head ends just before it), the reply that
+  followed it is dropped, and the turn is replied to afresh (nothing carries on from the old reply,
+  and a chat named after its first message is named after the edited one). An edit is a new reply,
+  charged as one. A page shows Edit only once a runner lists `edit`; it sends `edit` without
+  `retry`, so a runner without this answers `stale-turn` instead of replying to the old message.
+  A retry carries on only from a run that answered the message the turn holds now, and a retry
+  carrying another message than the head holds is refused as `stale-turn`. Rolling back to
+  a runner without this while an edit's run is queued and has not begun would reply to the edited
+  message but keep the old one in the head (`WORKFLOW_VERSION` is unchanged).
 
 - **Where it is served.** The run API lives under `RUNNER_BASE_PATH`, e.g. `/api/assistant-runner`,
   so the page reaches it on its own origin (its `remoteRunner.url`);
@@ -75,7 +96,7 @@ See [Not built yet](#not-built-yet).
     service's own origin (else the token is never sent and no tools are offered); each request carries a
     freshly minted `sandbox` token. A reply is cut to its first 2,000 and last 6,000 characters, and a
     call may go 610 s without progress: the chat's own MCP connection and added-server tool adapter
-    (`createMcpConnection`, `extraToolSet` from `@civitai/components-chat/core` 0.25.0), so a lost
+    (`createMcpConnection`, `extraToolSet` from `@civitai/components-chat/core` 0.32.0), so a lost
     reply stream is answered at once, as in the browser.
   - **Paused mid-reply.** The app is woken only as the reply starts. When a call is refused later
     (the connection cannot be opened, or the MCP address answers with an error status), the runner
@@ -134,10 +155,15 @@ See [Not built yet](#not-built-yet).
        `/api/apps/assistant/preview?blockId=`, which finds the user's live tunnel by itself. The
        tunnel's id never leaves the run's memory: not in a result, the journal, the head or DBOS.
     3. While the run lives, the runner calls civitai's `keepalive` every 5 minutes (civitai's idle
-       window is 30; a failed call is retried at the next tick, and each one re-judges the gates);
-       a `NOT_FOUND`, refusal or dead grant stops it. When the run ends it stops keeping the tunnel
-       alive and civitai's normal idle expiry applies, so the user keeps the preview for a while.
-       The 8-hour cap never moves.
+       window is 30; a failed call is retried at the next tick, and each one re-judges the gates)
+       for the open app's preview, whoever opened it: this run, an earlier reply, or the page's
+       Restart preview. It names the host the app's sandbox is connected to (`tunnel_status`), and
+       civitai keeps the grant's user's tunnel at that host, never another user's; a sandbox with
+       no tunnel running (paused, disconnected) keeps nothing alive. A `NOT_FOUND` is asked again
+       at the next tick; a refusal or dead grant stops it, and so does `stop_preview` until the
+       next start. Each tick's `tunnel_status` request is activity for the app too, so a live run
+       also keeps its app from pausing as idle. When the run ends it stops keeping the tunnel alive and civitai's normal idle expiry
+       applies, so the user keeps the preview for a while. The 8-hour cap never moves.
     4. `stop_preview` closes the run's own tunnel at civitai (`stop`) and the sandbox's side
        (`tunnel_disconnect`); a preview an earlier reply started is closed from the sandbox's side
        and idles out at civitai.
@@ -158,10 +184,12 @@ See [Not built yet](#not-built-yet).
     opens the preview again; civitai replaces the user's tunnel for that block. The instructions say the
     preview opens by itself, keep `start_preview` for when the user asks to reopen it, and tell
     the assistant to start the dev server first and to use `sandbox__preview_check` (with
-    `screenshot: true` when the look matters) to see what the user sees. A screenshot reaches the
-    model only once the chat package forwards image parts of an MCP result: today its `extraToolSet`
-    keeps only the text (`mcpResultToText`), so the instructions tell the assistant to go by the
-    text when no image comes back and never to describe a picture it did not receive.
+    `screenshot: true` when the look matters) to see what the user sees. The screenshot reaches the
+    model through the chat package (0.28.0 and later): `extraToolSet` keeps an MCP result's image
+    for `AgentCore`, which shows it once, in a user message right after that step's tool results;
+    the saved conversation keeps only a one-line note in its place. A model that takes no images
+    is asked for that step again without them. The instructions still tell the assistant to go by
+    the text when no image comes back and never to describe a picture it did not receive.
   - **Subagents:** read-only subagents (`dispatch_agent`, the page's allowlist and instructions) when the
     run grant says the viewer has `appAssistantSubagents` (civitai signs `subagents: true` into it; the
     page's word is not taken). Their progress is journaled as `subagent-progress`.
@@ -225,7 +253,7 @@ See [Not built yet](#not-built-yet).
   under `modelCall` (`reused`, `waiting`, `asked-again` with its `reason`, `cancelled`). The key
   leaves out the system prompt (it names the date). Rows are deleted with the runs' retention.
 - **Runs left on an old version.** DBOS recovers a run only in a process of the same
-  `WORKFLOW_VERSION` (`src/runner.ts`). At start and every 10 minutes, a runner cancels the runs its
+  `WORKFLOW_VERSION` (`src/core/runner.ts`). At start and every 10 minutes, a runner cancels the runs its
   own executor id holds under another version and saves each reply as interrupted, keeping its
   finished steps: the user's slot frees and the page offers Continue, which carries on from those
   steps. A replica touches only its own executor id, so a run another replica still holds is never
@@ -338,12 +366,15 @@ Known gaps:
 - The page learns of a runner's preview only from the live `tool-reported` event, which a reload
   or another device does not replay: the pane then shows nothing until a later reply starts or
   restarts the dev server, or the user asks to reopen it and the assistant calls `start_preview`
-  (the instructions keep it for that). Asking civitai's
+  (the instructions keep it for that), or the user clicks the pane's Restart preview
+  (`POST apps/:app/preview`, no reply and no Buzz; `src/app-assistant/preview-restart.ts`), which
+  first starts the dev server when it is not running, as after every pause. Asking civitai's
   preview route on load was tried and dropped: civitai keeps a tunnel's record up to its idle
   window after the sandbox side is gone (a pause, a `stop_preview` of an earlier reply's
   preview), so it would show a dead preview.
-- A run recovered after a crash has lost its preview's tunnel id (it is kept in memory only): it stops
-  keeping that tunnel alive, which idles out; the assistant's next `start_preview` opens another.
+- A run recovered after a crash has lost its preview's tunnel id (it is kept in memory only); it
+  still keeps the app's preview alive by its host, but `stop_preview` then closes only the
+  sandbox's side, and civitai's side idles out.
 
 - A model call cut by a crash is not streamed again: once its workflow ends, its whole answer
   arrives at once (orchestration has no reattach to a stream in flight). One cut before

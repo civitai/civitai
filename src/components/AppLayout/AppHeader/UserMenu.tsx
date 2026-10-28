@@ -12,6 +12,7 @@ import {
   getPrimaryShade,
   useMantineColorScheme,
 } from '@mantine/core';
+import { CountIndicator } from '~/components/AppLayout/AppHeader/CountIndicator';
 import { useHotkeys } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
@@ -61,6 +62,7 @@ import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification } from '~/utils/notifications';
@@ -85,11 +87,11 @@ export function UserMenu() {
   return features.userMenuV2 ? <UserMenuV2 /> : <LegacyUserMenu />;
 }
 
-/** `indicator` is positioned by the caller, who must pass a `relative` className. */
+/** `badge` is the count label (e.g. "5", "99+"); it is drawn exactly like the bell's and chat's. */
 export const UserMenuTrigger = forwardRef<
   HTMLButtonElement,
-  { open: boolean; indicator?: React.ReactNode; className?: string; onClick?: () => void }
->(function UserMenuTrigger({ open, indicator, className, ...props }, ref) {
+  { open: boolean; badge?: string; className?: string; onClick?: () => void }
+>(function UserMenuTrigger({ open, badge, className, ...props }, ref) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const creator = useGetCreator();
@@ -97,9 +99,9 @@ export const UserMenuTrigger = forwardRef<
   return (
     <UnstyledButton
       ref={ref}
-      aria-label={currentUser ? 'Account menu' : 'Menu'}
+      aria-label={currentUser ? `Account menu${badge ? `, ${badge} waiting for you` : ''}` : 'Menu'}
       className={clsx(
-        'flex items-center hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
+        'flex items-center rounded-[var(--mantine-radius-default)] hover:bg-gray-1 @md:rounded-[32px] dark:hover:bg-dark-5',
         { ['bg-gray-1 dark:bg-dark-5']: open },
         className
       )}
@@ -113,12 +115,17 @@ export const UserMenuTrigger = forwardRef<
         })}
       >
         <div className="@max-md:hidden">
-          <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
+          <CountIndicator label={badge} disabled={!badge}>
+            <UserAvatar user={creator ?? currentUser} size="md" withHoverCard={false} />
+          </CountIndicator>
         </div>
         {features.buzz && currentUser && <HeaderUserBuzz />}
       </div>
-      <Burger opened={open} className={clsx({ ['@md:hidden']: !!currentUser })} />
-      {indicator}
+      <div className={clsx({ ['@md:hidden']: !!currentUser })}>
+        <CountIndicator label={badge} disabled={!badge}>
+          <Burger opened={open} />
+        </CountIndicator>
+      </div>
     </UnstyledButton>
   );
 });
@@ -569,52 +576,15 @@ export function MenuItemLink({
 }
 
 /** `onOpen` runs when the row itself is opened, not when Buy Buzz is pressed. */
-export function BuzzMenuItem({
-  onOpen,
-  compact = false,
-}: { onOpen?: () => void; compact?: boolean } = {}) {
+export function BuzzMenuItem({ onOpen }: { onOpen?: () => void } = {}) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const isMobile = useIsMobile({ breakpoint: 'md' });
   const onBuyBuzz = useBuyBuzz();
   const { handleClose } = useUserMenuContext();
-  const [mainBuzzColor] = useAvailableBuzz();
 
   if (!features.buzz) return null;
   if (!currentUser) return null;
-
-  const buyBuzz = (
-    <Button
-      component="div"
-      variant={compact ? 'light' : 'white'}
-      radius="xl"
-      px={12}
-      size="compact-xs"
-      onClick={(e: React.MouseEvent) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onBuyBuzz({});
-      }}
-    >
-      Buy Buzz
-    </Button>
-  );
-
-  // One blended total beside the Buy Buzz button, so the row fits a phone line next to the name.
-  if (compact)
-    return (
-      <NextLink
-        href="/user/buzz-dashboard"
-        className="flex shrink-0 items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-gray-1 hover:dark:bg-dark-4"
-        onClick={() => {
-          onOpen?.();
-          handleClose();
-        }}
-      >
-        <UserBuzz animated={features.buzzSpendPop} iconSize={16} iconGap={2} textSize="sm" />
-        {buyBuzz}
-      </NextLink>
-    );
 
   return (
     <MenuItemLink
@@ -626,24 +596,75 @@ export function BuzzMenuItem({
       }}
     >
       <div className="flex items-center gap-1" onClick={handleClose}>
-        <UserBuzz
+        <BuzzBalances
           animated={features.buzzSpendPop}
           iconSize={16}
           textSize={isMobile ? 'sm' : 'md'}
           withAbbreviation={!isMobile}
           withTooltip={!isMobile}
-          accountTypes={['blue']}
-        />
-        <UserBuzz
-          animated={features.buzzSpendPop}
-          iconSize={16}
-          textSize={isMobile ? 'sm' : 'md'}
-          withAbbreviation={!isMobile}
-          withTooltip={!isMobile}
-          accountTypes={[mainBuzzColor]}
         />
       </div>
-      {buyBuzz}
+      <Button
+        component="div"
+        variant="white"
+        radius="xl"
+        px={12}
+        size="compact-xs"
+        onClick={(e: React.MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onBuyBuzz({});
+        }}
+      >
+        Buy Buzz
+      </Button>
     </MenuItemLink>
+  );
+}
+
+type BuzzBalanceProps = Pick<
+  React.ComponentProps<typeof UserBuzz>,
+  'animated' | 'iconSize' | 'textSize' | 'withAbbreviation' | 'withTooltip'
+>;
+
+/**
+ * Blue Buzz and the domain's own Buzz as separate balances, never summed. `labelled` names each one
+ * in its own segment; the segments stack when they do not fit side by side.
+ */
+export function BuzzBalances({
+  labelled = false,
+  ...buzzProps
+}: BuzzBalanceProps & { labelled?: boolean }) {
+  const [mainBuzzColor] = useAvailableBuzz();
+  const types: BuzzSpendType[] = ['blue', mainBuzzColor];
+
+  if (!labelled)
+    return (
+      <>
+        {types.map((type) => (
+          <UserBuzz key={type} accountTypes={[type]} {...buzzProps} />
+        ))}
+      </>
+    );
+
+  // Every segment draws its left divider and the row starts 1px outside the box, so whichever segment
+  // starts a line, first or wrapped, has its divider clipped away.
+  return (
+    <div className="overflow-hidden rounded-lg bg-white dark:bg-dark-7">
+      <div className="-ml-px flex flex-wrap">
+        {types.map((type) => (
+          <div
+            key={type}
+            data-buzz-balance={type}
+            className="flex flex-[1_0_auto] items-center justify-between gap-3 whitespace-nowrap border-l border-gray-3 px-3 py-2 dark:border-dark-4"
+          >
+            <Text size="xs" c="dimmed" tt="capitalize">
+              {type}
+            </Text>
+            <UserBuzz accountTypes={[type]} {...buzzProps} />
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }

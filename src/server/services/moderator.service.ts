@@ -1,3 +1,4 @@
+import type { shownActivity } from '@civitai/shared/held-media';
 import { dbWrite } from '~/server/db/client';
 
 type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
@@ -38,7 +39,14 @@ type ImageTagModActivity = {
 
 export type ImageModActivity = {
   entityType: 'image';
-  activity: TagActivities | 'review' | 'setNsfwLevel' | 'resolveAppeal' | 'setNsfwLevelKono';
+  activity:
+    | TagActivities
+    | 'review'
+    | 'setNsfwLevel'
+    | 'resolveAppeal'
+    | 'setNsfwLevelKono'
+    | 'heldMedia:view'
+    | ReturnType<typeof shownActivity>;
 };
 
 type ArticleModActivity = {
@@ -69,6 +77,7 @@ type UserModActivity = {
     | 'mute'
     | 'unmute'
     | 'revokeTimedMute'
+    | 'createSystemAccount'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
@@ -92,6 +101,8 @@ type UserModActivity = {
     | `mintMembershipCode:${string}`
     // Support withdrew an unredeemed code it minted (`revokeMembershipCode:<tier>:<months>`).
     | `revokeMembershipCode:${string}`
+    // Support ended a Buzz-purchased membership early (`endBuzzMembership:<productId>`).
+    | `endBuzzMembership:${string}`
     // A moderator awarded Creator Score (`grantCreatorScore:<grantId>:<amount>`) or withdrew a grant
     // (`revokeCreatorScore:<grantId>`). The grant itself lives on CreatorScoreGrant.
     | `grantCreatorScore:${string}`
@@ -101,7 +112,8 @@ type UserModActivity = {
     | `creatorProgramBan:${string}`
     // A lost payment dispute on a payment this account made
     // (`chargeback:<disputeId>:<banned|already-banned|skipped-moderator>`), written as the system user.
-    | `chargeback:${string}`;
+    | `chargeback:${string}`
+    | `creditCryptoDeposit:${string}`;
 };
 
 type ComicProjectModActivity = {
@@ -130,6 +142,24 @@ type BountyEntryModActivity = {
   activity: `clearFileCheck:${string}` | `reblockFileCheck:${string}`;
 };
 
+/** The CSAM report page opened an account's held media; the activity carries how many items. */
+type HeldMediaGridModActivity = {
+  entityType: 'user';
+  activity: `heldMedia:grid:${number}`;
+};
+
+/** A moderator changed someone else's storyline through its owner's controls. */
+export type StorylineModActivity = {
+  entityType: 'storyline';
+  activity:
+    | 'update'
+    | 'insertChapter'
+    | 'moveChapter'
+    | 'linkChapter'
+    | 'setCanon'
+    | 'removeCollaborator';
+};
+
 type SiteAlertModActivity = {
   entityType: 'siteAlert';
   activity: 'post' | 'edit' | 'extend' | 'end';
@@ -151,6 +181,8 @@ type ModActivity = {
   | FeedbackModActivity
   | BountyEntryModActivity
   | SiteAlertModActivity
+  | HeldMediaGridModActivity
+  | StorylineModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or

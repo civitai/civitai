@@ -55,7 +55,10 @@ vi.mock('~/utils/trpc', () => ({
       unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
-    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    generation: {
+      resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -1238,6 +1241,62 @@ describe('PageBlockHost terminal error surface (Task: readable error + Retry)', 
   }, 25_000);
 });
 
+describe('PageBlockHost onFallbackChange (App Assistant offers Restart preview on it)', () => {
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+  });
+
+  test('reports token_error when the token fails, as the fallback shows', async () => {
+    const onFallbackChange = vi.fn();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        token={null}
+        tokenError
+        onConsentGranted={vi.fn()}
+        onFallbackChange={onFallbackChange}
+      />
+    );
+    await expect.element(page.getByTestId('app-page-fallback')).toBeInTheDocument();
+    // Called with it (the host may then retry by itself, which reports null again).
+    await vi.waitFor(() => expect(onFallbackChange).toHaveBeenCalledWith('token_error'));
+  });
+
+  test('reports timeout when the app never says it is ready', async () => {
+    const onFallbackChange = vi.fn();
+    useFakeClock();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        onConsentGranted={vi.fn()}
+        onFallbackChange={onFallbackChange}
+      />
+    );
+    await expect.element(page.getByTestId('app-page-loading')).toBeInTheDocument();
+    expect(onFallbackChange.mock.calls.filter(([reason]) => reason !== null)).toEqual([]);
+
+    await advancePastWindow(11_000);
+    await vi.waitFor(() => expect(onFallbackChange).toHaveBeenCalledWith('timeout'), {
+      timeout: 5_000,
+      interval: 100,
+    });
+  }, 20_000);
+
+  test('CONTROL: an app that becomes ready reports no reason at all', async () => {
+    const onFallbackChange = vi.fn();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        onConsentGranted={vi.fn()}
+        onFallbackChange={onFallbackChange}
+      />
+    );
+    await driveToReady();
+    expect(onFallbackChange).toHaveBeenCalled();
+    expect(onFallbackChange.mock.calls.filter(([reason]) => reason !== null)).toEqual([]);
+  });
+});
+
 describe('PageBlockHost Retry (Task: re-attempt load from terminal fallback)', () => {
   beforeEach(() => {
     useDialogStore.getState().closeAll();
@@ -1643,6 +1702,165 @@ describe('PageBlockHost readiness announce (BLOCK_HELLO)', () => {
     expect(helloSpy).not.toHaveBeenCalled();
     helloSpy.mockRestore();
   });
+});
+
+/**
+ * DEV-TUNNEL GUEST RELOAD → ask the parent for a fresh entry URL (`onGuestReloaded`).
+ *
+ * 🔴 REGRESSION. Vite's live reload is `location.reload()` INSIDE the frame. The host's
+ * init controller has stopped at BLOCK_READY, so the reloaded document never gets a
+ * BLOCK_INIT; and once the ~120 s entry token in `?dev=` has expired the reload is a
+ * 401 the app never even runs in. Either way the preview froze until a manual Reload.
+ * Before the fix nothing observed the frame reloading, so `onGuestReloaded` was never
+ * called and the first test below is red.
+ *
+ * Two signals feed `isDevTunnelGuestReload`: a BLOCK_HELLO while ready (a new document
+ * whose entry was still valid), and the frame element's `load` event when it leaves more
+ * loads than hellos — the refused reload: a 401 + X-Frame-Options page runs no app code
+ * (so no BLOCK_HELLO), but Chromium still fires `load` on the element (measured
+ * 2026-10-23). A load is synthesised with
+ * `dispatchEvent`; the REAL initial load is waited for first (a document-level CAPTURE
+ * listener, installed before render, so it cannot miss it — `load` does not bubble but
+ * capture still reaches the target), so every count below is exact.
+ */
+describe('PageBlockHost dev-tunnel guest reload → onGuestReloaded', () => {
+  let stopTracking: (() => void) | null = null;
+  afterEach(() => {
+    stopTracking?.();
+    stopTracking = null;
+  });
+
+  /** Count the frame's REAL (trusted) load events. Install BEFORE rendering. */
+  function trackRealFrameLoads() {
+    let trusted = 0;
+    const handler = (e: Event) => {
+      if (e.isTrusted && e.target instanceof HTMLIFrameElement) trusted += 1;
+    };
+    document.addEventListener('load', handler, true);
+    stopTracking = () => document.removeEventListener('load', handler, true);
+    return () => trusted;
+  }
+
+  /** The guest document loaded again (Vite `location.reload()`, or its 401 page). */
+  function guestReload() {
+    const el = iframeElQuery();
+    if (!el) throw new Error('iframe missing');
+    el.dispatchEvent(new Event('load'));
+  }
+
+  async function mountAt(surface: 'dev-tunnel' | 'page-run' | 'private-run') {
+    const realLoads = trackRealFrameLoads();
+    const onGuestReloaded = vi.fn();
+    renderWithProviders(
+      <PageBlockHost {...baseProps} surface={surface} onGuestReloaded={onGuestReloaded} />
+    );
+    await pollFor('the frame’s initial load', () => realLoads() >= 1);
+    return onGuestReloaded;
+  }
+
+  const settle = () => new Promise((r) => setTimeout(r, 150));
+
+  test('dev-tunnel: a reload after BLOCK_READY asks for a fresh entry exactly once', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    await driveToReady();
+    await settle();
+    // Nothing reloaded yet. (NOT a control for "the initial load after ready is not a
+    // reload": the initial load here landed BEFORE ready, so the status check rejects it.
+    // That ordering is pinned by the predicate's unit test, devTunnelGuestReload.test.ts.)
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+    await settle();
+    expect(onGuestReloaded).toHaveBeenCalledTimes(1);
+  });
+
+  test('dev-tunnel: a burst of reloads asks once (one remount, never a storm)', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    await driveToReady();
+
+    for (let i = 0; i < 5; i++) guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalled());
+    await settle();
+    expect(onGuestReloaded).toHaveBeenCalledTimes(1);
+  });
+
+  test('dev-tunnel: a reload BEFORE ready does not ask (the running handshake serves it)', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    // e.g. Vite's "new dependencies optimized, reloading" during the first boot: the
+    // controller is still re-posting BLOCK_INIT, so the new document gets one anyway.
+    guestReload();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    await driveToReady();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    // ...and the count carried: the next load after ready is a reload.
+    guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+  });
+
+  test('dev-tunnel: a BLOCK_HELLO after ready (a reload whose entry was still valid) asks once', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel');
+    await driveToReady();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    // The reloaded document announces itself; its own load follows.
+    postFromBlock('BLOCK_HELLO');
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+    guestReload();
+    await settle();
+    expect(onGuestReloaded).toHaveBeenCalledTimes(1);
+  });
+
+  // 🔴 REGRESSION (round-1 audit). An app whose boot replaces its document ONCE before
+  // READY (a `location.replace`, Vite's dependency-optimizer reload): two documents, each
+  // saying hello once, and the second one's own load landing after READY. Counting loads
+  // over the frame's whole life called that last load a reload — on every remount, a loop.
+  test('dev-tunnel: a document replaced during boot is not a reload once it is ready', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel'); // document 1 has loaded
+    postFromBlock('BLOCK_HELLO'); // document 1's hello
+    postFromBlock('BLOCK_HELLO'); // document 2 announces itself, still loading
+    await driveToReady();
+    guestReload(); // document 2's own load, after READY: 2 loads, 2 hellos
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    // ...and the count is live: a load no hello accounts for is a reload.
+    guestReload();
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+  });
+
+  // 🔴 REGRESSION (round-2 audit). An app that starts its SDK late (e.g. in a React mount
+  // effect) says hello AFTER its own document's load. Resetting a load count on each hello
+  // erased that load, so the later refused (401) reload read as a first load and the
+  // preview stayed frozen. Counting loads against hellos needs no ordering.
+  test('dev-tunnel: a hello AFTER its own load still lets the later 401 reload ask', async () => {
+    const onGuestReloaded = await mountAt('dev-tunnel'); // the document has loaded...
+    postFromBlock('BLOCK_HELLO'); // ...and only now says hello
+    await driveToReady();
+    await settle();
+    expect(onGuestReloaded).not.toHaveBeenCalled();
+
+    guestReload(); // the 401 page: no app code, no hello
+    await vi.waitFor(() => expect(onGuestReloaded).toHaveBeenCalledTimes(1));
+  });
+
+  test.each(['page-run', 'private-run'] as const)(
+    '%s: a reload after BLOCK_READY never asks — dev-tunnel only',
+    async (surface) => {
+      const onGuestReloaded = await mountAt(surface);
+      await driveToReady();
+
+      for (let i = 0; i < 3; i++) guestReload();
+      postFromBlock('BLOCK_HELLO');
+      await settle();
+      expect(onGuestReloaded).not.toHaveBeenCalled();
+    }
+  );
 });
 
 // ===========================================================================

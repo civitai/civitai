@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { newReferenceRow } from '$lib/model-rules';
 import {
+  EMPTY,
   RuleDraftsState,
   fieldsOf,
   ruleDraftsStorageKey,
@@ -102,7 +104,7 @@ describe('what a try sends', () => {
     drafts.edit(rules[2], { ...fieldsOf(rules[2]), subject: 'Regex edited' });
     const blank = drafts.add();
     const named = drafts.add();
-    drafts.editNew(named, { subject: 'New rule', description: '', aliases: '', note: '' });
+    drafts.editNew(named, { ...EMPTY, subject: 'New rule' });
     expect(blank).toBe(-1);
     expect(drafts.overrides(rules)).toEqual([
       { id: -2, subject: 'New rule', description: '', aliases: [], enabled: true },
@@ -124,15 +126,25 @@ describe('Save all', () => {
     drafts.edit(saved(), { ...fieldsOf(saved()), subject: 'Edited' });
     drafts.add();
     const named = drafts.add();
-    drafts.editNew(named, { subject: 'New rule', description: '', aliases: 'X', note: '' });
+    drafts.editNew(named, { ...EMPTY, subject: 'New rule', aliases: 'X' });
     expect(drafts.saveAllPayload([saved()])).toEqual([
-      { draftId: -2, subject: 'New rule', description: '', aliases: 'X', note: '' },
+      {
+        draftId: -2,
+        subject: 'New rule',
+        description: '',
+        aliases: 'X',
+        category: '',
+        references: [],
+        note: '',
+      },
       {
         draftId: 3,
         id: 3,
         subject: 'Edited',
         description: 'Desc',
         aliases: 'One',
+        category: '',
+        references: [],
         note: '',
         baseUpdatedAt: UPDATED.toISOString(),
       },
@@ -195,5 +207,79 @@ describe('storage that reads but cannot write', () => {
     drafts.reload();
     expect(drafts.ids).toEqual([3, 4, 9]);
     expect(drafts.get(3)?.subject).toBe('Edited');
+  });
+});
+
+describe('category and references', () => {
+  const withRefs = saved({
+    category: 'artist',
+    references: [{ url: 'https://example.com/a', label: 'Portfolio' }, { url: 'https://example.com/b' }],
+  });
+
+  it('reads them from the saved rule, and a rule without them reads as none', () => {
+    expect(fieldsOf(withRefs)).toMatchObject({
+      category: 'artist',
+      references: [
+        { url: 'https://example.com/a', label: 'Portfolio' },
+        { url: 'https://example.com/b', label: '' },
+      ],
+    });
+    expect(fieldsOf(saved())).toMatchObject({ category: '', references: [] });
+  });
+
+  it('counts a change to either as an edit, and an unchanged copy as none', () => {
+    const drafts = make();
+    drafts.edit(withRefs, fieldsOf(withRefs));
+    expect(drafts.get(3)).toBeUndefined();
+    drafts.edit(withRefs, { ...fieldsOf(withRefs), category: 'ip' });
+    expect(drafts.get(3)).toMatchObject({ category: 'ip' });
+    drafts.edit(withRefs, { ...fieldsOf(withRefs), references: [] });
+    expect(drafts.get(3)?.references).toEqual([]);
+  });
+
+  it('loads a draft stored before the two fields existed', () => {
+    const store = memoryStore();
+    store.data.set(
+      KEY,
+      JSON.stringify({
+        '3': {
+          subject: 'Old',
+          description: '',
+          aliases: '',
+          note: '',
+          baseUpdatedAt: UPDATED.toISOString(),
+        },
+        '4': { subject: 'Odd', description: '', aliases: '', note: '', category: 'bogus', references: [5, { url: 'https://example.com' }], baseUpdatedAt: null },
+      })
+    );
+    const drafts = make(store);
+    drafts.reload();
+    expect(drafts.get(3)).toMatchObject({ subject: 'Old', category: '', references: [] });
+    expect(drafts.get(4)).toMatchObject({
+      category: '',
+      references: [{ url: 'https://example.com', label: '' }],
+    });
+  });
+
+  it('does not send blank reference rows to Save all, and a row-only draft is not empty', () => {
+    const drafts = make();
+    const id = drafts.add();
+    drafts.editNew(id, { ...EMPTY, references: [newReferenceRow('  ', 'x')] });
+    expect(drafts.saveAllPayload([])).toEqual([]);
+    drafts.editNew(id, {
+      ...EMPTY,
+      subject: 'S',
+      references: [
+        newReferenceRow('https://example.com', ' '),
+        newReferenceRow(),
+      ],
+    });
+    expect(drafts.saveAllPayload([])[0].references).toEqual([{ url: 'https://example.com' }]);
+    drafts.editNew(id, {
+      ...EMPTY,
+      subject: 'S',
+      references: [newReferenceRow('', 'Orphan label')],
+    });
+    expect(drafts.saveAllPayload([])[0].references).toEqual([{ url: '', label: 'Orphan label' }]);
   });
 });

@@ -27,6 +27,7 @@ import {
   isMarketplaceCategory,
 } from '~/server/services/blocks/marketplace-categories.constants';
 import { offsiteContentRatingLabel } from '~/shared/constants/browsingLevel.constants';
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -350,7 +351,7 @@ export function ManifestEditForm({
       {mutation.data && (
         <Alert color="green" variant="light">
           Submitted as review request <code>{mutation.data.publishRequestId}</code>. Track it on{' '}
-          <Link href="/apps/build">My apps</Link>.
+          <Link href={MY_APPS_HREF}>My apps</Link>.
         </Alert>
       )}
     </Stack>

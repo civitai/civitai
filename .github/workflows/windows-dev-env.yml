@@ -67,25 +67,93 @@ name: Windows dev-env smoke
 # `scripts/__tests__/main-branch-ci-coverage.test.ts` asserts it as a repo-wide
 # relationship over every push-reachable job.
 
+# ── PATH FILTER: ONLY CHANGES TO WHAT THE STEPS BELOW EXECUTE ───────────────
+#
+# Free runner minutes are not free concurrency: each run holds two Windows job
+# slots against the plan's concurrent-job limit for its whole length. So this
+# runs only when a file it actually executes or reads changes. The list was
+# derived from the steps, not guessed:
+#
+#   checkout (submodules: true)  .gitmodules, the event-engine-common gitlink
+#   pnpm/action-setup, setup-node  package.json (packageManager), .nvmrc
+#   pnpm install --frozen-lockfile  package.json, pnpm-lock.yaml,
+#       pnpm-workspace.yaml, .npmrc, patches/** (patchedDependencies), every
+#       workspace package.json. It also runs lifecycle scripts:
+#     root preinstall   `npx only-allow pnpm`
+#     root prepare      `husky` (.husky/**)
+#     root postinstall  `pnpm run db:generate` = scripts/generate-slim-schema.js
+#         over packages/civitai-db-schema/prisma/schema.full.prisma, then
+#         `prisma generate`, whose generators include
+#         scripts/prisma-enum-generator.mjs and write into
+#         packages/civitai-db-schema/src
+#     apps/* prepare    `svelte-kit sync` in the SvelteKit apps, which reads
+#         each app's config and route tree, hence all of apps/**
+#   db:generate standalone  the same postinstall chain again
+#
+# Not listed on purpose: src/** and the Windows-branching dev scripts named in
+# the header (test-unit-run.mjs, dev-server skill scripts). No step here runs
+# them, so a change to them alone would only re-run an unchanged install.
+# If you add a step, add what it reads here. Both triggers carry the same list;
+# on `main` that also keeps the cache fix above working, because the cache key
+# is the lockfile hash and the lockfile is in the list.
+#
+# Nothing hangs when this skips: `main` and `release` have no
+# required_status_checks. If this check ever becomes required, the filter has
+# to go, or a PR that skips it waits forever.
 on:
   pull_request:
     branches: [main, release]
+    paths:
+      - '.github/workflows/windows-dev-env.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.npmrc'
+      - '.nvmrc'
+      - 'patches/**'
+      - '.husky/**'
+      - '.gitmodules'
+      - 'event-engine-common'
+      - 'scripts/generate-slim-schema.js'
+      - 'scripts/prisma-enum-generator.mjs'
+      - 'packages/*/package.json'
+      - 'packages/civitai-db-schema/**'
+      - 'apps/**'
   push:
     branches: [main]
+    paths:
+      - '.github/workflows/windows-dev-env.yml'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.npmrc'
+      - '.nvmrc'
+      - 'patches/**'
+      - '.husky/**'
+      - '.gitmodules'
+      - 'event-engine-common'
+      - 'scripts/generate-slim-schema.js'
+      - 'scripts/prisma-enum-generator.mjs'
+      - 'packages/*/package.json'
+      - 'packages/civitai-db-schema/**'
+      - 'apps/**'
+  # With the path filter above, most `main` pushes skip this workflow, so a
+  # release can't count on a push run for its pin. Dispatch it on the pin's
+  # branch instead; the run groups by that branch's ref, apart from `main`.
+  workflow_dispatch:
 
 permissions:
   contents: read
 
-# On a PR, unchanged: `github.ref` is `refs/pull/N/merge`, so a new push to the
-# branch cancels the in-flight run.
-#
-# On a push to `main` it MUST NOT be `github.ref` — that is one group for the
-# whole branch, so a busy `main` would cancel its own runs and only the last
-# commit would ever be checked (and the losers would render as `cancelled`,
-# which is indistinguishable from a real failure). Same expression as `lint.yml`,
-# for the same reason, and pinned by the same test.
+# One group per ref, for pull requests AND pushes: a new push to a PR branch
+# cancels its in-flight run, and a newer commit on `main` cancels the run for an
+# older one. The newest `main` run checks a tree containing every older commit,
+# so `main` still gets a verdict; intermediate commits show as `cancelled`.
+# Until 2026-10 a push grouped by `github.sha` so every `main` commit kept its
+# own run, which queued behind PR runs under the plan's concurrent-job limit.
+# Same expression and reasoning as `lint.yml`.
 concurrency:
-  group: windows-dev-env-${{ github.event_name == 'pull_request' && github.ref || github.sha }}
+  group: windows-dev-env-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:

@@ -19,8 +19,7 @@ vi.mock('next/navigation', async (importOriginal) => {
   const actual = (await importOriginal()) as Record<string, unknown>;
   return { ...actual, usePathname: () => state.pathname };
 });
-// `NEXT_PUBLIC_SEARCH_HOST` is unset in the component environment, and the module builds a client
-// from it at IMPORT time — which throws before any test runs.
+// The module builds a client at IMPORT time; faked so it can never send.
 vi.mock('@meilisearch/instant-meilisearch', () => ({
   instantMeiliSearch: () => ({ search: async () => ({ results: [] }) }),
 }));

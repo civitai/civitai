@@ -233,6 +233,17 @@ describe('keep-training base model pin', () => {
     await continueTraining(client, opts, { checkText });
     expect('model' in submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input).toBe(false);
   });
+
+  it("keeps an edit run's sample input images paired with its prompts", async () => {
+    const samples = {
+      prompts: ['ohwx, make it night'],
+      sourceImages: ['https://orch.example/blobs/a.png'],
+    };
+    getWorkflow.mockResolvedValue(source({ ecosystem: 'flux2klein', samples }));
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-next' } });
+    await continueTraining(client, opts, { checkText });
+    expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.samples).toEqual(samples);
+  });
 });
 
 describe('keep-training checkpoint reference', () => {
@@ -318,5 +329,84 @@ describe('retired base', () => {
     submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-wan' } });
     await submitTrainingBatch(client, [wanRun(wan21.air)], { checkText });
     expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.model).toBe(wan21.air);
+  });
+});
+
+describe('sample input images', () => {
+  const kleinRun = (): TrainingRunInput => ({
+    ...baseRun(),
+    ecosystem: 'flux2klein',
+    modelVariant: '9b',
+    prompts: ['ohwx, make it night', 'ohwx, add snow'],
+  });
+  const images = ['https://orch.example/blobs/a.png', 'https://orch.example/blobs/b.png'];
+
+  it('sends them on the samples, beside the prompts they pair with', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-edit' } });
+    await submitTrainingBatch(client, [{ ...kleinRun(), sourceImages: images }], { checkText });
+    expect(submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.samples).toEqual({
+      prompts: ['ohwx, make it night', 'ohwx, add snow'],
+      sourceImages: images,
+    });
+  });
+
+  it('sends no sourceImages key on a text-only run', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-text' } });
+    await submitTraining(client, kleinRun());
+    const samples = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input.samples;
+    expect('sourceImages' in samples).toBe(false);
+  });
+
+  it('refuses images a run cannot use, or that do not pair one-to-one, before submitting', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), sourceImages: [images[0]!] }], { checkText })
+    ).rejects.toThrow(/runs\[0\]\.sourceImages are not supported for this model/);
+    await expect(
+      submitTrainingBatch(client, [{ ...kleinRun(), sourceImages: [images[0]!] }], { checkText })
+    ).rejects.toThrow(/runs\[0\]\.sourceImages must have one image per sample prompt/);
+    await expect(
+      submitTrainingBatch(client, [{ ...kleinRun(), sourceImages: [images[0]!, ''] }], {
+        checkText,
+      })
+    ).rejects.toThrow(/runs\[0\]\.sourceImages must be an array of image URLs/);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+});
+
+describe('Prodigy learning rate', () => {
+  // Prodigy finds its own step size and expects lr 1; the orchestrator refuses lr >= 0.1 for
+  // anything else. The main trainer couples the two the same way.
+  it('sends lr 1 for a Prodigy run, whatever the run carries', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-prodigy' } });
+    await submitTraining(client, { ...baseRun(), optimizer: 'Prodigy' });
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(input).toMatchObject({ optimizerType: 'prodigy', lr: 1, textEncoderLr: 1 });
+    expect(input.trainTextEncoder).toBe(true);
+  });
+
+  it('keeps the text encoder off for a Prodigy run that does not train it', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-prodigy-te-off' } });
+    await submitTraining(client, { ...baseRun(), optimizer: 'Prodigy', textEncoderLr: 0 });
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(input).toMatchObject({ lr: 1, textEncoderLr: 0, trainTextEncoder: false });
+  });
+
+  it('leaves the rate alone for other optimizers', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-adafactor' } });
+    await submitTraining(client, baseRun());
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(input).toMatchObject({ lr: 5e-4, textEncoderLr: 5e-5 });
+  });
+
+  it('refuses a Prodigy-level rate on another optimizer before anything is submitted', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), unetLr: 1 }], { checkText })
+    ).rejects.toThrow(/unetLr must be less than 0.1 for non-Prodigy optimizers/);
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), textEncoderLr: 0.1 }], { checkText })
+    ).rejects.toThrow(/textEncoderLr must be less than 0.1 for non-Prodigy optimizers/);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
   });
 });

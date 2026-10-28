@@ -59,6 +59,8 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   throwOnBlockedUserContent: vi.fn(),
 }));
 const { scanEntityInBackground } = vi.hoisted(() => ({ scanEntityInBackground: vi.fn() }));
+const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
+vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanSubmit>()),
   scanEntityInBackground,
@@ -186,9 +188,12 @@ describe('writeChapterEdgeForPlacement', () => {
     },
   };
 
-  const findChapter = (parent: unknown) =>
-    (({ where }: { where: { placementId?: number; postId?: number } }) =>
-      Promise.resolve(where.postId === args.parentPostId ? parent : null)) as never;
+  // By its post, as the approval finds it, and by its id, as the add re-reads it under its locks.
+  const findChapter = (parent: { id: number }) =>
+    (({ where }: { where: { id?: number; placementId?: number; postId?: number } }) =>
+      Promise.resolve(
+        where.postId === args.parentPostId || where.id === parent.id ? parent : null
+      )) as never;
 
   const findByPlacement = (row: unknown) =>
     (({ where }: { where: { placementId?: number } }) =>
@@ -402,9 +407,9 @@ describe('writeChapterEdgeForPlacement', () => {
     expect(tx.storylineChapterEdge.findFirst).toHaveBeenCalledTimes(1);
     expect(tx.storylineChapter.create).toHaveBeenCalledTimes(1);
     expect(tx.storylineChapterEdge.create).toHaveBeenCalledTimes(1);
-    // The parent-author block check and the parent lock (the owner placing on their own
-    // storyline skips the owner check).
-    expect(tx.$queryRaw).toHaveBeenCalledTimes(2);
+    // The parent-author block check, the storyline's shared lock, and the parent lock, taken
+    // again for the canon slot (the owner placing on their own storyline skips the owner check).
+    expect(tx.$queryRaw).toHaveBeenCalledTimes(4);
     expect(w.post.findUnique).not.toHaveBeenCalled();
     expect(w.storylineChapterEdge.findFirst).not.toHaveBeenCalled();
     expect(w.storylineChapter.create).not.toHaveBeenCalled();
@@ -716,6 +721,28 @@ describe('authorization', () => {
       });
     });
 
+    it('keeps a committed edit when logging it as a mod action fails', async () => {
+      trackModActivity.mockReset();
+      trackModActivity.mockRejectedValueOnce(new Error('pool timeout'));
+      await expect(
+        updateStoryline({ id: 10, title: 'x', userId: MODERATOR, isModerator: true })
+      ).resolves.toBeDefined();
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
+    });
+
+    it("logs a moderator's edit as a mod action, and not the owner's", async () => {
+      trackModActivity.mockReset();
+      await updateStoryline({ id: 10, title: 'x', userId: OWNER });
+      expect(trackModActivity).not.toHaveBeenCalled();
+      await updateStoryline({ id: 10, title: 'x', userId: MODERATOR, isModerator: true });
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
+      expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+        entityType: 'storyline',
+        entityId: 10,
+        activity: 'update',
+      });
+    });
+
     it.each([
       ['an endorsed collaborator', COLLABORATOR],
       ['a stranger', STRANGER],
@@ -775,6 +802,7 @@ describe('authorization', () => {
       w.storylineChapterEdge.findMany.mockResolvedValue([
         { parentChapterId: 20, storylineId: 10, chapter: { removedAt: null } },
       ] as never);
+      w.storylineChapterEdge.updateMany.mockResolvedValue({ count: 1 } as never);
     });
 
     it('moves canon for the owner: clears the old one, then sets the new one', async () => {
@@ -783,6 +811,19 @@ describe('authorization', () => {
         { where: { parentChapterId: 20, canon: true }, data: { canon: false } },
         { where: { chapterId: 31, parentChapterId: 20 }, data: { canon: true } },
       ]);
+    });
+
+    it("logs a moderator's canon choice as a mod action, and not the owner's", async () => {
+      trackModActivity.mockReset();
+      await setCanonChapter({ chapterId: 31, userId: OWNER });
+      expect(trackModActivity).not.toHaveBeenCalled();
+      await setCanonChapter({ chapterId: 31, userId: MODERATOR, isModerator: true });
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
+      expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+        entityType: 'storyline',
+        entityId: 10,
+        activity: 'setCanon',
+      });
     });
 
     it.each([
@@ -809,6 +850,53 @@ describe('authorization', () => {
       expect(w.storylineCollaborator.upsert.mock.calls[0][0]).toMatchObject({
         create: { storylineId: 10, userId: COLLABORATOR },
       });
+    });
+
+    // Decided with the Storylines lead: an endorsed collaborator's priced continuations skip the
+    // owner's review, so endorsing stays the owner's even for a moderator. Removing is a safety action.
+    it('refuses a moderator endorsing anyone, themselves included', async () => {
+      for (const targetUserId of [COLLABORATOR, MODERATOR])
+        await expect(
+          addStorylineCollaborator({
+            storylineId: 10,
+            targetUserId,
+            userId: MODERATOR,
+            ...{ isModerator: true },
+          })
+        ).rejects.toMatchObject(forbidden);
+      expect(w.storylineCollaborator.upsert).not.toHaveBeenCalled();
+    });
+
+    it('lets a moderator remove a collaborator, logged as a mod action', async () => {
+      trackModActivity.mockReset();
+      await removeStorylineCollaborator({
+        storylineId: 10,
+        targetUserId: COLLABORATOR,
+        userId: MODERATOR,
+        isModerator: true,
+      });
+      expect(w.storylineCollaborator.deleteMany).toHaveBeenCalledTimes(1);
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
+      expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+        entityType: 'storyline',
+        entityId: 10,
+        activity: 'removeCollaborator',
+      });
+    });
+
+    it('refuses a stranger endorsing or removing someone', async () => {
+      await expect(
+        addStorylineCollaborator({ storylineId: 10, targetUserId: COLLABORATOR, userId: STRANGER })
+      ).rejects.toMatchObject(forbidden);
+      await expect(
+        removeStorylineCollaborator({
+          storylineId: 10,
+          targetUserId: COLLABORATOR,
+          userId: STRANGER,
+        })
+      ).rejects.toMatchObject(forbidden);
+      expect(w.storylineCollaborator.upsert).not.toHaveBeenCalled();
+      expect(w.storylineCollaborator.deleteMany).not.toHaveBeenCalled();
     });
 
     it('refuses a collaborator endorsing someone else', async () => {
@@ -3041,6 +3129,29 @@ describe('covers and cast', () => {
     expect(r.storylineChapter.findMany.mock.calls[0][0]).toMatchObject({
       take: STORYLINE_GRAPH_LIMIT + 1,
     });
+  });
+
+  it("flags the map's contributor chapters as via a placement, tombstones included", async () => {
+    r.storylineChapter.findMany.mockResolvedValue([
+      { id: 1, depth: 0, removedAt: null, placementId: null, post: chapterPost(101, OWNER) },
+      { id: 2, depth: 1, removedAt: null, placementId: 7, post: chapterPost(102, STRANGER) },
+      {
+        id: 3,
+        depth: 1,
+        removedAt: null,
+        placementId: 8,
+        post: chapterPost(103, STRANGER, { tosViolation: true }),
+      },
+    ] as never);
+    r.storylineChapterEdge.findMany.mockResolvedValue([] as never);
+    answerRaw([]);
+    const { chapters } = await getStorylineGraph({ id: 10, viewer: { id: 99 }, browsingLevel: PG });
+    expect(chapters.map((c) => [c.chapterId, c.tombstone, c.viaPlacement])).toEqual([
+      [1, null, false],
+      [2, null, true],
+      [3, 'removed', true],
+    ]);
+    expect(JSON.stringify(chapters)).not.toContain('placementId');
   });
 
   describe('the storyline page', () => {

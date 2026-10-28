@@ -11,6 +11,8 @@
   import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { cn } from '@civitai/ui/utils.js';
   import { num } from '$lib/format';
+  import SelectionBar from '$lib/components/SelectionBar.svelte';
+  import TipButton from '$lib/components/TipButton.svelte';
   import { VIOLATION_TYPES, VIOLATION_LABELS } from '$lib/violations';
   import { IMAGE_FLAG_VALUES } from '$lib/image-flags';
   import { TOS_REASONS, type CannedReason } from '$lib/moderation-reasons';
@@ -127,6 +129,22 @@
   };
 </script>
 
+{#snippet summary()}
+  <p class="text-sm text-dark-2">
+    {#if count === 0}
+      Select images to act on them.
+    {:else}
+      <span class="font-semibold text-white">{num(count)}</span> selected
+      {#if ownerCount > 1}
+        <span class="text-amber-300">· spanning {ownerCount} accounts</span>
+      {/if}
+      {#if offScreen > 0}
+        <span class="text-amber-300">· {num(offScreen)} on other pages</span>
+      {/if}
+    {/if}
+  </p>
+{/snippet}
+
 <section
   class={bare
     ? undefined
@@ -136,19 +154,7 @@
       )}
 >
   <div class="flex flex-wrap items-center justify-between gap-3">
-    <p class="text-sm text-dark-2">
-      {#if count === 0}
-        Select images to act on them.
-      {:else}
-        <span class="font-semibold text-white">{num(count)}</span> selected
-        {#if ownerCount > 1}
-          <span class="text-amber-300">· spanning {ownerCount} accounts</span>
-        {/if}
-        {#if offScreen > 0}
-          <span class="text-amber-300">· {num(offScreen)} on other pages</span>
-        {/if}
-      {/if}
-    </p>
+    {@render summary()}
 
     <div class="flex flex-wrap gap-2">
       {#if selectable.length > 0}
@@ -164,34 +170,60 @@
       {/if}
     </div>
   </div>
+</section>
 
+<SelectionBar {count} onclear={() => selected.clear()} {summary}>
   {#if overCap}
-    <p class="mt-3 rounded-md border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-200">
+    <p class="rounded-md border border-red-500/40 bg-red-500/10 p-2 text-sm text-red-200">
       {num(count)} selected — one action takes {num(maxSelection ?? 0)}. Unselect
       {num(count - (maxSelection ?? 0))} before acting.
     </p>
   {/if}
 
-  {#if count > 0 && !overCap && !confirming && !notifying && !flagging}
-    <div class="mt-3 flex flex-wrap gap-2">
-      <Button size="sm" variant="destructive" onclick={() => (confirming = 'remove')}>
+  {#if !overCap && !confirming && !notifying && !flagging}
+    <div class="flex flex-wrap gap-2">
+      <TipButton
+        tip="Take the selected images down. You pick a reason, and can message the owners, next."
+        size="sm"
+        variant="destructive"
+        onclick={() => (confirming = 'remove')}
+      >
         Remove selected
-      </Button>
+      </TipButton>
       <!-- Confirmed like Remove. It sits next to a destructive button and is itself destructive in a
            way that reads as safe: restore clears needsReview, poi and blockedFor, republishes at
            `ingestion = 'Scanned'` and disables the review tags, with no record of the prior values. -->
-      <Button size="sm" onclick={() => (confirming = 'restore')}>Restore selected</Button>
+      <TipButton
+        tip="Republish the selected images and clear their review, POI and block flags. The old values are not kept. Confirmed next."
+        size="sm"
+        onclick={() => (confirming = 'restore')}
+      >
+        Restore selected
+      </TipButton>
       {#if notify}
-        <Button size="sm" onclick={() => (notifying = true)}>Notify owners</Button>
+        <TipButton
+          tip="Send one notification to each affected account. You write the message next."
+          size="sm"
+          onclick={() => (notifying = true)}
+        >
+          Notify owners
+        </TipButton>
       {/if}
       {#if flags}
-        <Button size="sm" variant="outline" onclick={() => (flagging = !flagging)}>Flags</Button>
+        <TipButton
+          tip="Set or clear the POI and minor flags on the selected images."
+          size="sm"
+          variant="outline"
+          onclick={() => (flagging = !flagging)}
+        >
+          Flags
+        </TipButton>
       {/if}
     </div>
   {/if}
 
   {#if confirming === 'remove'}
-    <form method="POST" action="?/remove" use:enhance={onSubmit} class="mt-3">
+    <form method="POST" action="?/remove" use:enhance={onSubmit}>
       <input type="hidden" name="imageIds" value={ids} />
       <div class="rounded-md border border-red-500/40 bg-red-500/10 p-3">
         <p class="mb-2 text-sm text-white">
@@ -314,7 +346,7 @@
   {/if}
 
   {#if confirming === 'restore'}
-    <form method="POST" action="?/restore" use:enhance={onSubmit} class="mt-3">
+    <form method="POST" action="?/restore" use:enhance={onSubmit}>
       <input type="hidden" name="imageIds" value={ids} />
       <div class="rounded-md border border-amber-500/40 bg-amber-500/10 p-3">
         <p class="mb-2 text-sm text-white">
@@ -343,7 +375,7 @@
   {/if}
 
   {#if flagging}
-    <form method="POST" action="?/setFlag" use:enhance={onSubmit} class="mt-3">
+    <form method="POST" action="?/setFlag" use:enhance={onSubmit}>
       <input type="hidden" name="imageIds" value={ids} />
       <p class="mb-2 text-xs text-dark-2">
         POI marks a real person; minor marks a depicted minor. Setting either restricts the image.
@@ -372,7 +404,7 @@
   {/if}
 
   {#if notifying}
-    <form method="POST" action="?/notifyOwners" use:enhance={onSubmit} class="mt-3">
+    <form method="POST" action="?/notifyOwners" use:enhance={onSubmit}>
       <input type="hidden" name="imageIds" value={ids} />
       <p class="mb-2 text-xs text-dark-2">One notification per affected account, not per image.</p>
       <Textarea name="message" rows={2} placeholder="What should these users be told?" required />
@@ -384,4 +416,4 @@
       </div>
     </form>
   {/if}
-</section>
+</SelectionBar>

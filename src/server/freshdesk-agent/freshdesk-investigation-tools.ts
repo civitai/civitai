@@ -3,6 +3,8 @@ import { env } from '~/env/server';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead } from '~/server/db/client';
 import nowpaymentsCaller from '~/server/http/nowpayments/nowpayments.caller';
+import { findHandGrantsForDeposit } from '~/server/services/nowpayments-manual-credit';
+import { OPEN_DEPOSIT_STATUSES } from '~/server/common/chain-config';
 import { agentLog } from './freshdesk-debug';
 
 // Helper to safely run a parameterized query and return rows (empty array on error)
@@ -843,6 +845,30 @@ async function safeCHQuery<T extends object>(query: string, label: string): Prom
   }
 }
 
+async function describeHoldingGrants(userId: number, deposit: CryptoDepositRow) {
+  try {
+    const payment = await nowpaymentsCaller.getPaymentStatus(deposit.paymentId.toString());
+    const { covering } = await findHandGrantsForDeposit(userId, {
+      paymentId: Number(deposit.paymentId),
+      payinHash: payment?.payin_hash ?? null,
+      expectedBuzz: 0,
+      paymentCreatedAt: payment?.created_at ?? deposit.createdAt,
+    });
+    if (covering.length)
+      return covering
+        .map(
+          (m) => `${m.type} of ${m.amount} Buzz on ${formatDate(new Date(m.date))} (ref ${m.ref})`
+        )
+        .join('; ');
+  } catch (e) {
+    agentLog('investigateCryptoPayments: hand grant lookup failed', {
+      paymentId: deposit.paymentId.toString(),
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+  return 'not found now; the "Deposit held" log entry for this payment names it';
+}
+
 export async function investigateCryptoPayments(userId: number): Promise<string> {
   const [wallets, deposits, claims, buzzTxns] = await Promise.all([
     safeQuery<CryptoWalletRow>(Prisma.sql`
@@ -932,6 +958,12 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
         }${fees}`
       );
       lines.push(`    Buzz credited: ${buzzTotal}${multiplierStr}`);
+      if (d.status === 'held') {
+        lines.push(
+          '    Already paid by a staff hand grant citing this payment; do not credit by hand'
+        );
+        lines.push(`    Matching grant: ${await describeHoldingGrants(userId, d)}`);
+      }
       lines.push(`    Created: ${formatDate(d.createdAt)} | Updated: ${formatDate(d.updatedAt)}`);
     }
   }
@@ -954,7 +986,7 @@ export async function investigateCryptoPayments(userId: number): Promise<string>
   const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
   const stuckDeposits = deposits.filter(
     (d) =>
-      ['waiting', 'confirming', 'partially_paid'].includes(d.status) &&
+      [...OPEN_DEPOSIT_STATUSES, 'partially_paid'].includes(d.status) &&
       new Date(d.createdAt) > sevenDaysAgo
   );
 

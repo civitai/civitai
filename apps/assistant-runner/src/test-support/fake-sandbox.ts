@@ -27,7 +27,9 @@ export interface FakeSandboxRecord {
 /** What a fake tool does with a call. */
 export type FakeToolBody = (
   args: Record<string, unknown>,
-  signal: AbortSignal
+  signal: AbortSignal,
+  /** The sandbox (its name) the call was made in; a body that wraps another may leave it out. */
+  sandbox?: string
 ) => Promise<string> | string;
 
 /** The public half of the single-use key the fake sandbox's `tunnel_key` makes (TEST-ONLY, not a real key). */
@@ -69,11 +71,22 @@ export class FakeSandboxService {
   readonly abandoned: string[] = [];
   /** The next N `tools/call` requests are answered 503, as a paused sandbox's address is. */
   failCalls = 0;
+  /**
+   * MCP `initialize` is accepted and never answered (until the client hangs up), as a sandbox that
+   * listens but is wedged: the connect every tool call waits on never completes.
+   */
+  hangInitialize = false;
   /** How many looks at a starting sandbox it takes to run. */
   startsAfter = 1;
   /** Apps deleted just before their next open: the open then makes a new, empty one (201). */
   readonly deleteBeforeOpen = new Set<string>();
+  /** How many apps the user may keep: a create past it is refused 409, as the service's cap is. */
+  keepLimit = Infinity;
   readonly tools = new Map<string, FakeToolBody>();
+  /** The host each sandbox's tunnel runs to (by sandbox name), as `tunnel_status` reports it. */
+  readonly tunnelHosts = new Map<string, string>();
+  /** Tools this sandbox does not list, as an older sandbox image without them. */
+  readonly hiddenTools = new Set<string>();
   #server: HttpServer | undefined;
   #base = '';
   #looks = new Map<string, number>();
@@ -88,10 +101,18 @@ export class FakeSandboxService {
     this.tools.set('tunnel_key', () =>
       JSON.stringify({ publicKey: FAKE_TUNNEL_PUBLIC_KEY, stoppedTunnel: false })
     );
-    this.tools.set('tunnel_connect', (args) =>
-      JSON.stringify({ running: true, host: args.host, localPort: 5173 })
-    );
-    this.tools.set('tunnel_disconnect', () => JSON.stringify({ stopped: true }));
+    this.tools.set('tunnel_connect', (args, _signal, sandbox) => {
+      this.tunnelHosts.set(String(sandbox), String(args.host));
+      return JSON.stringify({ running: true, host: args.host, localPort: 5173 });
+    });
+    this.tools.set('tunnel_disconnect', (_args, _signal, sandbox) => {
+      this.tunnelHosts.delete(String(sandbox));
+      return JSON.stringify({ stopped: true });
+    });
+    this.tools.set('tunnel_status', (_args, _signal, sandbox) => {
+      const host = this.tunnelHosts.get(String(sandbox));
+      return JSON.stringify(host ? { running: true, host } : { running: false, host: null });
+    });
     this.tools.set('run_command', async (args, signal) => {
       if (args.command === 'hang')
         await new Promise<void>((resolve) => signal.addEventListener('abort', () => resolve()));
@@ -174,6 +195,8 @@ export class FakeSandboxService {
         if (found.state === 'suspended') found.state = 'starting';
         return json(200, this.#view(found));
       }
+      if (this.sandboxes.length >= this.keepLimit)
+        return json(409, { error: `sandbox limit (${this.keepLimit}) reached; delete one first` });
       return json(201, this.#view(this.add(app, 'starting')));
     }
     const item = /^\/v1\/sandboxes\/([a-z0-9-]+)(\/suspend)?$/.exec(url.pathname);
@@ -193,6 +216,10 @@ export class FakeSandboxService {
       const record = this.sandboxes.find((s) => s.name === mcp[1]);
       if (!record || record.state !== 'running') return json(503, { error: 'not running' });
       const message = body as { method?: string; id?: unknown } | undefined;
+      if (message?.method === 'initialize' && this.hangInitialize) {
+        await new Promise<void>((resolve) => res.on('close', () => resolve()));
+        return;
+      }
       if (message?.method === 'tools/call' && this.failCalls > 0) {
         this.failCalls--;
         return json(503, { error: 'not running' });
@@ -219,7 +246,7 @@ export class FakeSandboxService {
       { capabilities: { tools: {} } }
     );
     server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: TOOLS.map((tool) => ({
+      tools: TOOLS.filter((tool) => !this.hiddenTools.has(tool.name)).map((tool) => ({
         ...tool,
         inputSchema: { type: 'object', properties: {}, additionalProperties: true },
       })),
@@ -234,7 +261,7 @@ export class FakeSandboxService {
         const signal = AbortSignal.any([closed, extra.signal]);
         // A body that throws fails as sandbox-mcp's tools fail: an error result, never a thrown call.
         try {
-          return { content: [{ type: 'text', text: await body(args, signal) }] };
+          return { content: [{ type: 'text', text: await body(args, signal, sandbox) }] };
         } catch (error) {
           return {
             content: [{ type: 'text', text: `error: ${(error as Error)?.message ?? error}` }],

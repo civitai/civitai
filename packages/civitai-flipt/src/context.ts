@@ -12,6 +12,8 @@ export type FliptTargetUser = {
   isModerator?: boolean;
   tier?: string;
   isEarlyAdopter?: boolean;
+  /** An approved App Access Request — server-derived by the auth hub, never client input. */
+  appBuilderApproved?: boolean;
 };
 
 export function buildFliptContext(
@@ -28,6 +30,8 @@ export function buildFliptContext(
     // Always emitted for a logged-in user (never opted in ⇒ 'false') so a segment can match on
     // the string equally rather than on key presence — same shape as `isModerator`.
     ctx.isEarlyAdopter = String(!!user.isEarlyAdopter);
+    // Same shape for the app-builder grant: the `app-builder-approved` segment matches "true".
+    ctx.appBuilderApproved = String(!!user.appBuilderApproved);
   } else {
     ctx.isLoggedIn = 'false';
   }

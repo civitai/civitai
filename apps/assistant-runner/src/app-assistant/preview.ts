@@ -1,4 +1,6 @@
 import {
+  DEV_SERVER_COMMAND,
+  DEV_SERVER_PORT,
   START_PREVIEW,
   STOP_PREVIEW,
   isAppBlockId,
@@ -7,12 +9,12 @@ import {
 } from '@civitai/app-assistant';
 import type { ChatTool } from '@civitai/components-chat/core';
 
-import type { Logger } from '../interfaces';
+import type { Logger } from '../core/interfaces';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 
 /**
- * How often a live run stamps its tunnel's idle clock. civitai reaps a tunnel 30 minutes after its
- * last activity (`DEV_TUNNEL_IDLE_SECONDS`); every 5 minutes leaves five more chances inside that
+ * How often a live run stamps its app's tunnel's idle clock. civitai reaps a tunnel 30 minutes
+ * after its last activity (`DEV_TUNNEL_IDLE_SECONDS`); every 5 minutes leaves five more chances inside that
  * window when a call fails (civitai's `unavailable` is retried at the next one), costs at most 24
  * calls in a 2-hour run, and, since every call re-judges the user's gates, a gate turned off stops
  * keeping the tunnel alive within about 5 minutes.
@@ -21,6 +23,27 @@ export const PREVIEW_KEEPALIVE_MS = 5 * 60_000;
 
 /** The most of a sandbox tool's own words the assistant is told when the tunnel would not open. */
 const DETAIL_CHARS = 500;
+
+/**
+ * How long `startDevServer` waits for the dev server it started to listen; its last probe can run
+ * up to `PROBE_TIMEOUT_MS` past it. Vite on a scaffolded App Block listens within seconds. The whole
+ * Restart is one request whose grant lives about 2 minutes and must still open the tunnel after
+ * this, behind up to `RESTART_WAIT_MS` of waiting for a starting app, so this is kept short.
+ */
+export const DEV_SERVER_WAIT_MS = 20_000;
+const DEV_SERVER_POLL_MS = 1_000;
+/** One probe's own bound: the sandbox kills it (and all it started) past this. */
+const PROBE_TIMEOUT_MS = 10_000;
+/**
+ * Exits 0 when something listens on the dev server's port, on IPv4 or IPv6 (Vite may listen on `::1`
+ * only), else 3. Each connect gives up after 1 s.
+ */
+const LISTEN_PROBE =
+  `node -e 'const net=require("net");` +
+  `const p=(h)=>new Promise((r)=>{const s=net.connect(${DEV_SERVER_PORT},h);` +
+  `const d=(v)=>{s.destroy();r(v)};s.setTimeout(1000,()=>d(false));` +
+  `s.once("connect",()=>d(true));s.once("error",()=>d(false))});` +
+  `Promise.all([p("127.0.0.1"),p("::1")]).then((a)=>process.exit(a.includes(true)?0:3))'`;
 
 export interface RunnerPreviewDeps {
   /** The reply's sandbox: the app open now, and the runner's own calls to its tools. */
@@ -37,6 +60,9 @@ export interface RunnerPreviewDeps {
   log: Logger;
   runId: string;
   keepaliveMs?: number;
+  /** `startDevServer`'s wait for the dev server to listen (`DEV_SERVER_WAIT_MS`), and its step. */
+  devServerWaitMs?: number;
+  devServerPollMs?: number;
 }
 
 /** The tunnel this run opened: kept in this process's memory only, never in a result. */
@@ -72,8 +98,10 @@ export type AutoPreview = { shown: StartedPreview } | { error: string };
  * sandbox at a host civitai did not open. What a result says (and so what the page and the saved
  * conversation see) is the block id and the host, never the tunnel's id.
  *
- * While the run lives the tunnel is kept from idling out (`PREVIEW_KEEPALIVE_MS`); `close()`, as the
- * run ends, stops that and leaves the tunnel to civitai's normal idle expiry, so the user can keep
+ * While the run lives (`keepWhileRunning`) the open app's preview is kept from idling out
+ * (`PREVIEW_KEEPALIVE_MS`), whoever opened it: this run, an earlier one, or the page's Restart
+ * preview, as long as the app's sandbox is connected to it. `close()`, as the run
+ * ends, stops that and leaves the tunnel to civitai's normal idle expiry, so the user can keep
  * looking at it for a while after the reply ends.
  */
 export class RunnerPreview {
@@ -81,6 +109,8 @@ export class RunnerPreview {
   #open: OpenTunnel | null = null;
   #timer: ReturnType<typeof setInterval> | undefined;
   #keeping = false;
+  /** Set by `keepWhileRunning`: a run's preview (never a run-less restart's) is kept alive. */
+  #keepCurrent = false;
   #closed = false;
   /**
    * Starts and stops run one at a time: the chat runs a step's calls together, and two starts at
@@ -92,6 +122,20 @@ export class RunnerPreview {
 
   constructor(deps: RunnerPreviewDeps) {
     this.#deps = deps;
+  }
+
+  /**
+   * For a run: from now until `close()`, keeps the open app's preview from idling out, whoever
+   * opened it. Each tick asks the open app's sandbox which host its tunnel is connected to
+   * (`tunnel_status`) and has civitai keep the run's user's tunnel at that host: never another
+   * app's (it is not that app's sandbox), never another user's (civitai checks the owner), and
+   * never one the sandbox has let go (paused, disconnected), which civitai then lets idle out.
+   * Paused by `stop_preview` (the user asked for it to go) until the next start.
+   */
+  keepWhileRunning(): void {
+    if (this.#closed) return;
+    this.#keepCurrent = true;
+    this.#keepAlive();
   }
 
   /** Stops keeping the tunnel alive (the run ended); the tunnel itself stays until it idles out. */
@@ -167,6 +211,124 @@ export class RunnerPreview {
         return { error: (error as Error)?.message ?? 'The preview could not start.' };
       }
     });
+  }
+
+  /**
+   * Opens the preview again outside any reply: the page's Restart preview (`PreviewRestarter`), after
+   * a reload found none live. The same start as `start_preview`, for the same block, scopes and auth
+   * `openAfterDevServer` reads (the manifest in the directory the running dev server was started
+   * in, else the app's own key). Throws `DevServerNotRunningError` when the sandbox says its dev
+   * server is not running, as there would be nothing to show.
+   */
+  reopen(signal?: AbortSignal): Promise<StartedPreview> {
+    return this.#serial(async () => {
+      const app = this.#deps.sandbox.active;
+      if (this.#closed || !app || app.state !== 'running') throw new DevServerNotRunningError();
+      const status = await this.#deps.sandbox.call('dev_server_status', {}, signal);
+      const parsed = status.isError ? null : parseJson(status.text);
+      if ((parsed as { running?: unknown } | null)?.running !== true)
+        throw new DevServerNotRunningError();
+      const manifest = await this.#manifest(projectDirOf(parsed) ?? app.app, signal);
+      return this.#start(manifest, signal);
+    });
+  }
+
+  /**
+   * Starts the open app's dev server when it is not running (the page's Restart preview, as after
+   * every resume: a resumed sandbox runs none), as the assistant is told to, with
+   * `sandbox__dev_server_start` and `cd <project> && DEV_SERVER_COMMAND`, then waits, bounded, for it
+   * to listen. Never a second one: one already running (or started meanwhile by another start, which
+   * the sandbox refuses ours for) is only waited for. The project is the directory the sandbox last
+   * ran it in, else the app key's own, else the only top-level directory, that holds a
+   * `block.manifest.json`. Throws `DevServerStartError`, saying what failed, when it does not run.
+   */
+  startDevServer(signal?: AbortSignal): Promise<void> {
+    return this.#serial(async () => {
+      const app = this.#deps.sandbox.active;
+      if (this.#closed || !app || app.state !== 'running') throw new DevServerNotRunningError();
+      const status = await this.#devServerStatus(signal);
+      if (status?.running !== true) {
+        const dir = await this.#projectDir(app.app, status, signal);
+        if (!dir) throw new DevServerStartError('no-project');
+        const started = await this.#deps.sandbox.call(
+          'dev_server_start',
+          { command: `cd ${dir} && ${DEV_SERVER_COMMAND}` },
+          signal
+        );
+        const answer = started.isError ? null : asStatus(parseJson(started.text));
+        // Refused: another start may have won (the sandbox runs one at a time); else it failed.
+        if (started.isError && (await this.#devServerStatus(signal))?.running !== true)
+          throw new DevServerStartError('refused');
+        if (answer && answer.running === false) throw new DevServerStartError('exited', answer);
+      }
+      await this.#listening(signal);
+    });
+  }
+
+  async #devServerStatus(signal?: AbortSignal): Promise<DevServerStatus | null> {
+    const status = await this.#deps.sandbox.call('dev_server_status', {}, signal);
+    return status.isError ? null : asStatus(parseJson(status.text));
+  }
+
+  /** Where to start the dev server: see `startDevServer`; `null` when none is clear. */
+  async #projectDir(
+    appKey: string,
+    status: DevServerStatus | null,
+    signal?: AbortSignal
+  ): Promise<string | null> {
+    const remembered = projectDirOf(status);
+    // Still a project: a directory renamed or removed since then is passed over.
+    if (remembered && isProjectDir(remembered) && (await this.#hasManifest(remembered, signal)))
+      return remembered;
+    if (isProjectDir(appKey) && (await this.#hasManifest(appKey, signal))) return appKey;
+    const listed = await this.#deps.sandbox.call(
+      'run_command',
+      {
+        command:
+          'for f in */block.manifest.json; do [ -f "$f" ] && printf "%s\\n" "${f%/block.manifest.json}"; done; exit 0',
+        timeout_ms: PROBE_TIMEOUT_MS,
+      },
+      signal
+    );
+    if (listed.isError || exitCodeOf(listed.text) !== 0) return null;
+    const dirs = outputOf(listed.text)
+      .split('\n')
+      .map((line) => line.trim())
+      .filter(Boolean);
+    return dirs.length === 1 && isProjectDir(dirs[0]!) ? dirs[0]! : null;
+  }
+
+  async #hasManifest(dir: string, signal?: AbortSignal): Promise<boolean> {
+    try {
+      const read = await this.#deps.sandbox.call(
+        'read_file',
+        { path: `${dir}/block.manifest.json` },
+        signal
+      );
+      return !read.isError && manifestOf(read.text) !== null;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Waits up to `devServerWaitMs` for something to listen on the dev server's port, looking at the
+   * dev server between probes: one that stopped is not waited for.
+   */
+  async #listening(signal?: AbortSignal): Promise<void> {
+    const deadline = Date.now() + (this.#deps.devServerWaitMs ?? DEV_SERVER_WAIT_MS);
+    for (;;) {
+      const probe = await this.#deps.sandbox.call(
+        'run_command',
+        { command: LISTEN_PROBE, timeout_ms: PROBE_TIMEOUT_MS },
+        signal
+      );
+      if (!probe.isError && exitCodeOf(probe.text) === 0) return;
+      const status = await this.#devServerStatus(signal);
+      if (status && status.running === false) throw new DevServerStartError('exited', status);
+      if (Date.now() >= deadline) throw new DevServerStartError('timeout');
+      await sleep(this.#deps.devServerPollMs ?? DEV_SERVER_POLL_MS, signal);
+    }
   }
 
   /** What the start needs from the project's manifest; `{}` (the app's own key) when unreadable. */
@@ -252,7 +414,8 @@ export class RunnerPreview {
         signal
       );
     } catch (error) {
-      throw new Error(refusalMessage(error));
+      // The refusal itself goes with it: the page's Restart preview answers by its status.
+      throw new Error(refusalMessage(error), { cause: error });
     }
     const close = (sessionId: string) =>
       tunnels.stop(sessionId).catch((error) => this.#warn(error, 'closing a preview failed'));
@@ -302,7 +465,7 @@ export class RunnerPreview {
       declaredAuth,
       result,
     };
-    this.#keepAlive();
+    if (this.#keepCurrent) this.#keepAlive();
     return result;
   }
 
@@ -341,24 +504,46 @@ export class RunnerPreview {
   }
 
   async #tick(): Promise<void> {
-    const open = this.#open;
-    if (!open || this.#closed || this.#keeping) return;
+    if (this.#closed || this.#keeping) return;
     this.#keeping = true;
+    let host: string | null = null;
     try {
-      await this.#deps.tunnels.keepalive(open.sessionId);
+      host = await this.#connectedHost();
+      // Ended, or stopped (`stop_preview`), while the sandbox was asked.
+      if (!host || this.#closed || !this.#timer) return;
+      await this.#deps.tunnels.keepalive({ host });
     } catch (error) {
-      // Gone (past its cap, closed elsewhere), refused, or the grant is no longer good: nothing left
-      // to keep alive. `unavailable` is asked again at the next tick.
-      if (!(error instanceof DevTunnelError) || error.code !== 'unavailable') {
-        if (this.#open === open) {
-          this.#open = null;
-          this.#stopKeeping();
-        }
+      if (error instanceof DevTunnelError && error.status === 404) {
+        // civitai has no tunnel of the user's at that host (it went, at its cap or stopped): one may
+        // open later (the page's Restart preview), so the next tick looks again. One this run
+        // opened there is gone, so a start of the same preview opens a new one.
+        if (this.#open?.host === host) this.#open = null;
+        return;
       }
+      // Refused (a gate, the dev-tunnel flag) or the grant is no longer good: nothing to keep alive
+      // for this run. `unavailable`, and a sandbox that would not answer, are asked again next tick.
+      if (error instanceof DevTunnelError && error.code !== 'unavailable') this.#stopKeeping();
       this.#warn(error, 'keeping a preview alive failed');
     } finally {
       this.#keeping = false;
     }
+  }
+
+  /**
+   * The host the open app's sandbox has a tunnel running to (`tunnel_status`), else `null`: no app
+   * open and running, no tunnel in it, or an answer that does not say.
+   */
+  async #connectedHost(): Promise<string | null> {
+    const app = this.#deps.sandbox.active;
+    if (!app || app.state !== 'running') return null;
+    const status = await this.#deps.sandbox.call('tunnel_status', {});
+    // Another app opened meanwhile: its sandbox is asked at the next tick.
+    if (status.isError || this.#deps.sandbox.active?.name !== app.name) return null;
+    const { running, host } = (parseJson(status.text) ?? {}) as {
+      running?: unknown;
+      host?: unknown;
+    };
+    return running === true && typeof host === 'string' && host ? host : null;
   }
 
   #warn(error: unknown, message: string): void {
@@ -367,6 +552,85 @@ export class RunnerPreview {
       { runId: this.#deps.runId, err: (error as Error)?.name, status, code },
       message
     );
+  }
+}
+
+/** The dev server is not running (or the sandbox would not say), so a preview would show nothing. */
+export class DevServerNotRunningError extends Error {
+  override name = 'DevServerNotRunningError';
+  constructor() {
+    super('The dev server is not running.');
+  }
+}
+
+/**
+ * Starting the dev server failed: `no-project` (which project to start was not clear), `refused` (the
+ * sandbox would not start it), `exited` (it stopped as soon as it started; `exitCode` is its code),
+ * or `timeout` (it never listened in time).
+ */
+export class DevServerStartError extends Error {
+  override name = 'DevServerStartError';
+  readonly exitCode: number | null;
+  constructor(
+    readonly reason: 'no-project' | 'refused' | 'exited' | 'timeout',
+    status?: DevServerStatus
+  ) {
+    super(`The dev server did not start (${reason}).`);
+    const code = status?.lastExit?.code;
+    this.exitCode = typeof code === 'number' ? code : null;
+  }
+}
+
+/** What `sandbox__dev_server_status` (and a start) answers, as far as it is read here. */
+interface DevServerStatus {
+  running?: unknown;
+  command?: unknown;
+  lastExit?: { code?: unknown } | null;
+}
+
+function asStatus(value: unknown): DevServerStatus | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as DevServerStatus)
+    : null;
+}
+
+/**
+ * A project directory safe to put in a shell command unquoted: one top-level name (as `projectDirOf`
+ * reads it), not starting with a dash or a dot.
+ */
+function isProjectDir(dir: string): boolean {
+  return /^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/.test(dir);
+}
+
+/** `sandbox__run_command`'s exit code (its first line, `exit_code: N`), else `null`. */
+export function exitCodeOf(text: string): number | null {
+  const match = /^exit_code: (-?\d+)/.exec(text);
+  return match ? Number(match[1]) : null;
+}
+
+/** `sandbox__run_command`'s output: what follows its header's `---` line. */
+export function outputOf(text: string): string {
+  const at = text.indexOf('\n---\n');
+  return at < 0 ? '' : text.slice(at + 5);
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(done, ms);
+    function done() {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', done);
+      resolve();
+    }
+    signal?.addEventListener('abort', done, { once: true });
+  });
+}
+
+function parseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 }
 

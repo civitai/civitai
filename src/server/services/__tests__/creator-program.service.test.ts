@@ -219,6 +219,18 @@ describe('userCapCache peak-earning query', () => {
     expect(sql).not.toMatch(/'tip'/);
   });
 
+  it('counts user-paid tips and generation tips from the cutover', async () => {
+    vi.setSystemTime(BANKABLE_CUTOVER);
+    try {
+      const { sql } = await runLookup([userId]);
+
+      expect(sql).toMatch(/type = 'tip' AND fromAccountId != 0 AND fromAccountId != toAccountId/);
+      expect(sql).toMatch(/startsWith\(externalTransactionId, 'generation-tip-'\)/);
+    } finally {
+      vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
+    }
+  });
+
   it('counts license fees and early-access purchases', async () => {
     const { sql } = await runLookup([userId]);
 
@@ -239,7 +251,10 @@ describe('userCapCache peak-earning query', () => {
       const { sql, result } = await runLookup([userId]);
 
       expect(sql).toContain(`WHERE ${PEAK_EARNING_PREDICATE_SQL}\n`);
-      expect(sql).not.toContain('compensation');
+      // Only generation tips, never the generation price itself.
+      expect(sql).not.toMatch(
+        /'compensation'(?! AND fromAccountId = 0 AND startsWith\(externalTransactionId, 'generation-tip-'\))/
+      );
       expect(result[userId].countsCompensation).toBe(false);
     } finally {
       vi.setSystemTime(new Date('2026-04-15T12:00:00Z'));
@@ -547,8 +562,8 @@ describe('bankBuzz', () => {
     });
 
     function mockBankableLedger({ snapshot, earned }: { snapshot: number; earned: number }) {
-      mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
-        const sql = parts.join('');
+      mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+        const sql = typeof parts === 'string' ? parts : parts.join('');
         if (sql.includes('AS balance')) return [{ balance: String(snapshot) }];
         if (sql.includes('AS consumed')) return [{ earned: String(earned), consumed: '0' }];
         return [{ balance: 35000 }];
@@ -595,7 +610,7 @@ describe('bankBuzz', () => {
       const releasedAt = evalScript.mock.invocationCallOrder[release];
 
       const bankableReads = mockClickhouse.$query.mock.calls.flatMap(([parts], i) =>
-        (parts as string[]).join('').includes('AS consumed')
+        (typeof parts === 'string' ? parts : (parts as string[]).join('')).includes('AS consumed')
           ? [mockClickhouse.$query.mock.invocationCallOrder[i]]
           : []
       );
@@ -733,8 +748,9 @@ describe('after the bankable-amount cutover, with ClickHouse failing', () => {
     mockDbWrite.user.findFirstOrThrow.mockResolvedValue(mockUser());
     mockCapCache();
     mockGetUserBuzzAccount.mockResolvedValue([{ balance: 100000 }]);
-    mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
-      if (parts.join('').includes('AS consumed')) throw new Error('clickhouse down');
+    mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+      const sql = typeof parts === 'string' ? parts : parts.join('');
+      if (sql.includes('AS consumed')) throw new Error('clickhouse down');
       return [{ balance: 35000 }];
     });
   });
@@ -767,8 +783,8 @@ describe('getBanked after the bankable-amount cutover', () => {
   beforeEach(() => {
     vi.setSystemTime(new Date('2026-12-15T12:00:00Z'));
     mockCapCache();
-    mockClickhouse.$query.mockImplementation(async (parts: string[]) => {
-      const sql = parts.join('');
+    mockClickhouse.$query.mockImplementation(async (parts: string[] | string) => {
+      const sql = typeof parts === 'string' ? parts : parts.join('');
       if (sql.includes('AS balance')) return [{ balance: '30000' }];
       return [{ earned: '10000', consumed: '0' }];
     });
@@ -785,6 +801,7 @@ describe('getBanked after the bankable-amount cutover', () => {
     expect(result.bankable).toEqual({
       snapshot: 30000,
       earned: 10000,
+      spent: 0,
       consumed: 0,
       remaining: 35000,
     });

@@ -50,6 +50,7 @@ import {
   TokenScopePresets,
   tokenScopePresetLabels,
   tokenScopeGrid,
+  toggleGridScope,
 } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 import classes from './OAuthAppsCard.module.css';
@@ -81,7 +82,7 @@ function ScopeSelector({
   };
 
   const handleToggleFlag = (flag: number) => {
-    onChange(Flags.toggleFlag(tokenScope, flag));
+    onChange(toggleGridScope(tokenScope, flag));
   };
 
   return (

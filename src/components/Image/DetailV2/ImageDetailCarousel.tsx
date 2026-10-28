@@ -81,7 +81,7 @@ function shouldHandleHotkey(event: KeyboardEvent, carouselRoot: HTMLElement | nu
 
 // Comfortably longer than embla's scroll animation (duration 25), so it only
 // ever fires for a 'settle' that was genuinely dropped.
-const SETTLE_FALLBACK_MS = 800;
+export const SETTLE_FALLBACK_MS = 800;
 
 export function ImageDetailCarousel({
   images,
@@ -107,10 +107,6 @@ export function ImageDetailCarousel({
 }) {
   const [embla, setEmbla] = useState<EmblaCarouselType | null>(null);
   const emblaRef = useRef<EmblaCarouselType | null>(null);
-  const handleSetEmbla = (api: EmblaCarouselType) => {
-    emblaRef.current = api;
-    setEmbla(api);
-  };
 
   // Embla owns the slide animation, but `index` is the source of truth. Feeding
   // it back in as `startIndex` would reInit the engine on every navigation,
@@ -147,18 +143,37 @@ export function ImageDetailCarousel({
     if (!syncingRef.current) navigate?.(slideIndex);
   };
 
-  useEffect(() => {
-    if (!embla || embla.selectedScrollSnap() === index) return;
+  const followIndex = (api: EmblaCarouselType) => {
     syncingRef.current = true;
-    embla.scrollTo(index);
+    // A slide added in the same commit as the index that names it is not embla's yet, and its
+    // own reinit would announce the old slide and write it back through `navigate`.
+    if (index >= api.slideNodes().length && index < images.length)
+      api.reInit({ startIndex: index });
+    else if (api.selectedScrollSnap() !== index) api.scrollTo(index);
     syncingRef.current = false;
-  }, [embla, index]);
+  };
+
+  // The provider announces embla's start slide right after handing it over, so an index that moved
+  // after mount (a cached branch) has to be followed first, or that announcement writes the old one back.
+  const handleSetEmbla = (api: EmblaCarouselType) => {
+    emblaRef.current = api;
+    followIndex(api);
+    setEmbla(api);
+  };
+
+  useEffect(() => {
+    if (embla) followIndex(embla);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- not on every render
+  }, [embla, index, images.length]);
 
   // The URL replace and the incoming neighbor's full-size decode hang off the
   // settled index rather than the live one — landing either mid-transform is
   // what makes the swipe stutter on mobile. Embla emits 'settle' once the
   // animation is done AND the finger is up.
   const [settledIndex, setSettledIndex] = useState(index);
+  // The hat is drawn in a layer outside embla's clipping viewport, so it cannot ride a moving slide.
+  const [hatLayer, setHatLayer] = useState<HTMLDivElement | null>(null);
+  const [moving, setMoving] = useState(false);
   const onSettleRef = useRef(onSettle);
   onSettleRef.current = onSettle;
 
@@ -172,6 +187,7 @@ export function ImageDetailCarousel({
         fallback = undefined;
       }
       const current = embla.selectedScrollSnap();
+      setMoving(false);
       setSettledIndex(current);
       onSettleRef.current?.(current);
     };
@@ -185,10 +201,20 @@ export function ImageDetailCarousel({
       fallback = setTimeout(commit, SETTLE_FALLBACK_MS);
     };
 
-    embla.on('settle', commit).on('reInit', commit).on('select', armFallback);
+    const startMoving = () => setMoving(true);
+
+    embla
+      .on('settle', commit)
+      .on('reInit', commit)
+      .on('select', armFallback)
+      .on('scroll', startMoving);
     return () => {
       if (fallback) clearTimeout(fallback);
-      embla.off('settle', commit).off('reInit', commit).off('select', armFallback);
+      embla
+        .off('settle', commit)
+        .off('reInit', commit)
+        .off('select', armFallback)
+        .off('scroll', startMoving);
     };
   }, [embla]);
 
@@ -199,7 +225,7 @@ export function ImageDetailCarousel({
   if (!images.length) return null;
 
   return (
-    <div ref={ref} className="flex min-h-0 flex-1 items-stretch justify-stretch">
+    <div ref={ref} className="relative flex min-h-0 flex-1 items-stretch justify-stretch">
       <Embla
         withControls={canNavigate}
         className="flex-1"
@@ -226,6 +252,8 @@ export function ImageDetailCarousel({
                     <ImageContent
                       image={image}
                       active={index === i}
+                      hatLayer={index === i ? hatLayer : null}
+                      hatHidden={moving}
                       {...connect}
                       videoRef={index === i ? videoRef : undefined}
                     />
@@ -236,6 +264,8 @@ export function ImageDetailCarousel({
           </Embla.Container>
         </Embla.Viewport>
       </Embla>
+      {/* Not clipped like the viewport, so a hat can hang past the picture's corner. */}
+      <div ref={setHatLayer} className="pointer-events-none absolute inset-0 isolate" />
     </div>
   );
 }
@@ -244,8 +274,16 @@ function ImageContent({
   image,
   videoRef,
   active = true,
+  hatLayer,
+  hatHidden,
   ...connect
-}: { image: ImageProps; active?: boolean } & ConnectProps & ImageDetailCarouselProps) {
+}: {
+  image: ImageProps;
+  active?: boolean;
+  hatLayer: HTMLElement | null;
+  hatHidden: boolean;
+} & ConnectProps &
+  ImageDetailCarouselProps) {
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
     getInitialValueInEffect: false,
     key: 'detailView_defaultMuted',
@@ -342,11 +380,18 @@ function ImageContent({
               controls={active}
               videoProps={{
                 autoPlay: active,
+                // A slide mid-transition is still in view, which the player's own in-view check
+                // reads as a reason to play.
+                standby: !active,
               }}
             />
           )}
-          {/* The hat before the stickers, so stickers paint and take the pointer above it. */}
-          <DrawnMediaHat imageId={image.id} decoration={image.eventDecoration} />
+          <DrawnMediaHat
+            imageId={image.id}
+            decoration={image.eventDecoration}
+            layer={hatLayer}
+            hidden={hatHidden}
+          />
           {safe && <ImageStickerOverlay imageId={image.id} />}
         </div>
       )}

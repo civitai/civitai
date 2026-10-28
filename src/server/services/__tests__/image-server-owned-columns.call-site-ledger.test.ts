@@ -223,12 +223,12 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
   'src/pages/api/testing/model3d-seed.ts#handler': { calls: 1, spreads: [], serverColumns: [] },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockUploadImage': {
     calls: 1,
-    spreads: ['storedObjectEtagMetadata(measured.etag)'],
+    spreads: ['storedObjectEtagMetadata(measured.etag)', 'blurhashMetadata(blur)'],
     serverColumns: [],
   },
   'src/server/services/blocks/block-image-upload.service.ts#persistBlockWorkflowOutputImage': {
     calls: 1,
-    spreads: [],
+    spreads: ['blurhashMetadata(blur)'],
     serverColumns: [],
   },
   'src/server/services/creator-service-deal-file.service.ts#createScanImage': {
@@ -257,6 +257,11 @@ const CREATE_IMAGE_CALLER_LEDGER: Record<
     serverColumns: [],
   },
   'src/server/services/orchestrator/poll-iteration.ts#downloadAndUploadImage': {
+    calls: 1,
+    spreads: [],
+    serverColumns: [],
+  },
+  'src/server/services/post-intent/post-intent.service.ts#publishIntent': {
     calls: 1,
     spreads: [],
     serverColumns: [],
@@ -659,6 +664,11 @@ const IMAGE_FK_WRITE_LEDGER: Record<
   'src/server/services/user-preferences.service.ts#toggleHideImage': {
     writes: ['imageId'],
     decision: 'subject',
+  },
+  // The image createImageIngestionRequest is scanning.
+  'src/server/services/video-audio-scan.service.ts#submitVideoAudioScan': {
+    writes: ['imageId'],
+    decision: 'server-derived',
   },
 };
 

@@ -16,6 +16,8 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
+  import HeldMedia from '$lib/components/image-queue/HeldMedia.svelte';
+  import { reportHeldGridView } from '$lib/held-media';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
   import { readCursorTrail, writeCursorTrail, clearPaging, IMAGE_PAGE_PARAM } from '$lib/paging';
   import { getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
@@ -44,6 +46,7 @@
     endLabel = 'End of queue.',
     minColumn = 300,
     pagerTop = false,
+    heldMedia = false,
   }: {
     items: T[];
     civitaiUrl: string;
@@ -69,7 +72,24 @@
     /** The numbered pager above the grid as well as below it, for a page long enough that the bottom
      *  one is a scroll away — the user report queue's 60-image account grid. */
     pagerTop?: boolean;
+    /** Media from storage (`/api/held-media`) instead of the public CDN, and the corner link opens
+     *  the full-size file rather than the image's page on the site. The CSAM queue only. */
+    heldMedia?: boolean;
   } = $props();
+
+  const fullHref = (item: T) =>
+    heldMedia ? `/images/csam/held/${item.id}` : `${civitaiUrl}/images/${item.id}`;
+  const fullLabel = $derived(heldMedia ? 'Open full size' : 'Open on Civitai');
+
+  // Once per page view, at its first non-empty render: keyed on the URL, so an action that refreshes
+  // the same page adds no row.
+  let reportedHref: string | null = null;
+  $effect(() => {
+    const href = pageState.url.href;
+    if (!heldMedia || !items.length || reportedHref === href) return;
+    reportedHref = href;
+    reportHeldGridView(items.length);
+  });
 
   const key = (item: T) => keyOf?.(item) ?? item.id;
   const itemKeys = $derived(items.map(key));
@@ -106,6 +126,14 @@
 
   const goFirst = () => navigate(clearPaging);
 </script>
+
+{#snippet media(item: T)}
+  {#if heldMedia}
+    <HeldMedia {item} class="max-h-full max-w-full object-contain" />
+  {:else}
+    <EdgeMedia src={item.url} type={item.type} width={450} class="max-h-full max-w-full object-contain" />
+  {/if}
+{/snippet}
 
 {#snippet numberedPager(summary = true)}
   <NumberedPager
@@ -148,36 +176,26 @@
               aria-label={isSelected ? 'Deselect image' : 'Select image'}
               class="flex h-full w-full cursor-pointer items-center justify-center"
             >
-              <EdgeMedia
-                src={item.url}
-                type={item.type}
-                width={450}
-                class="max-h-full max-w-full object-contain"
-              />
+              {@render media(item)}
             </button>
             <a
-              href={`${civitaiUrl}/images/${item.id}`}
+              href={fullHref(item)}
               target="_blank"
               rel="noreferrer"
-              title="Open on Civitai"
-              aria-label="Open on Civitai"
+              title={fullLabel}
+              aria-label={fullLabel}
               class="absolute bottom-2 right-2 z-10 rounded bg-black/70 p-1.5 text-white hover:bg-black/90"
             >
               <IconExternalLink size={16} />
             </a>
           {:else}
             <a
-              href={`${civitaiUrl}/images/${item.id}`}
+              href={fullHref(item)}
               target="_blank"
               rel="noreferrer"
               class="flex h-full w-full items-center justify-center"
             >
-              <EdgeMedia
-                src={item.url}
-                type={item.type}
-                width={450}
-                class="max-h-full max-w-full object-contain"
-              />
+              {@render media(item)}
             </a>
           {/if}
           {#if item.nsfwLevel != null}

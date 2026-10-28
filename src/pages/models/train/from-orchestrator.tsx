@@ -7,11 +7,13 @@ import { Meta } from '~/components/Meta/Meta';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { TRAINING_WORKFLOW_TAG } from '~/server/services/orchestrator/training/workflow-state';
+import type { PublishRefusalReason } from '~/server/services/orchestrator/training/publish-from-workflow';
 import {
   createDraftModelFromWorkflow,
-  isTrainingNotApprovedRefusal,
+  getPublishRefusalReason,
   stampWorkflowDraftModel,
 } from '~/server/services/orchestrator/training/publish-from-workflow';
+import { env } from '~/env/client';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { dbWrite } from '~/server/db/client';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -42,7 +44,10 @@ type PrepareProps = {
   existingModelFileId: number | null;
 };
 
-type PageProps = { session: Session } & (PrepareProps | { refusal: 'not-approved' });
+type Refusal = PublishRefusalReason | 'not-found' | 'unavailable';
+type RefusalProps = { refusal: Refusal };
+
+type PageProps = { session: Session } & (PrepareProps | RefusalProps);
 
 export const getServerSideProps = createServerSideProps<PageProps>({
   useSession: true,
@@ -52,8 +57,12 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         redirect: { destination: getLoginLink({ returnUrl: ctx.resolvedUrl }), permanent: false },
       };
 
-    // Mirror `guardedProcedure`: a muted or not-yet-onboarded user can't create a model.
-    if (session.user.muted || !Flags.hasFlag(session.user.onboarding, OnboardingSteps.Buzz))
+    // A banned, muted or not-yet-onboarded user can't create a model.
+    if (
+      session.user.bannedAt ||
+      session.user.muted ||
+      !Flags.hasFlag(session.user.onboarding, OnboardingSteps.Buzz)
+    )
       return { redirect: { destination: '/models', permanent: false } };
 
     const workflowId = typeof ctx.query.workflowId === 'string' ? ctx.query.workflowId : undefined;
@@ -61,23 +70,23 @@ export const getServerSideProps = createServerSideProps<PageProps>({
     if (!workflowId || !Number.isFinite(epoch))
       return { redirect: { destination: '/models', permanent: false } };
 
+    const refuse = (refusal: Refusal) => ({ props: { session, refusal } });
+
     const token = await getOrchestratorToken(session.user.id, {
       req: ctx.req as unknown as NextApiRequest,
       res: ctx.res as unknown as NextApiResponse,
     });
     // A workflow the caller doesn't own returns NOT_FOUND from the orchestrator — that IS the ownership
-    // check, so redirect. A transient upstream fault (503) is NOT "not found" — let it surface as an error
-    // page the user can retry, rather than silently bouncing them as if the run doesn't exist.
+    // check. A transient upstream fault (503) is NOT "not found" — let it surface as an error page the
+    // user can retry, rather than telling them the run doesn't exist.
     let workflow;
     try {
       workflow = await getWorkflow({ token, path: { workflowId } });
     } catch (e) {
-      if (e instanceof TRPCError && e.code === 'NOT_FOUND')
-        return { redirect: { destination: '/models', permanent: false } };
+      if (e instanceof TRPCError && e.code === 'NOT_FOUND') return refuse('not-found');
       throw e;
     }
-    if (!workflow || !workflow.tags?.includes(TRAINING_WORKFLOW_TAG))
-      return { redirect: { destination: '/models', permanent: false } };
+    if (!workflow || !workflow.tags?.includes(TRAINING_WORKFLOW_TAG)) return refuse('not-found');
 
     let modelId: number;
     let modelVersionId: number;
@@ -89,12 +98,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         selectedEpochNumber: epoch,
       }));
     } catch (error) {
-      // A run whose dataset is not approved renders an explanation instead of the redirect below.
-      if (isTrainingNotApprovedRefusal(error))
-        return { props: { session, refusal: 'not-approved' as const } };
-      // Any other refusal (an unresolvable base, no downloadable checkpoint) sends the user to their
-      // models list rather than a 500 page.
-      return { redirect: { destination: '/models', permanent: false } };
+      return refuse(getPublishRefusalReason(error) ?? 'unavailable');
     }
 
     await stampWorkflowDraftModel({ token, workflow, modelId, modelVersionId });
@@ -109,7 +113,7 @@ export const getServerSideProps = createServerSideProps<PageProps>({
         select: { id: true, metadata: true },
       }),
     ]);
-    if (!version) return { redirect: { destination: '/models', permanent: false } };
+    if (!version) return refuse('not-found');
 
     // Re-entry on an already-materialized draft whose blobs have since expired: nothing left to
     // finalize, so land in the wizard — step 2 if a model file exists, else the manual picker,
@@ -148,24 +152,30 @@ export const getServerSideProps = createServerSideProps<PageProps>({
   },
 });
 
-export default function TrainFromOrchestratorPage(
-  props: PrepareProps | { refusal: 'not-approved' }
-) {
-  if ('refusal' in props) return <TrainingNotApproved />;
+export default function TrainFromOrchestratorPage(props: PrepareProps | RefusalProps) {
+  if ('refusal' in props) return <PublishRefused refusal={props.refusal} />;
   return <PrepareModel {...props} />;
 }
 
-function TrainingNotApproved() {
+const refusalMessages: Record<Refusal, string> = {
+  'not-approved':
+    'This training run’s dataset hasn’t been approved, so a model can’t be created from it. If the dataset is still being reviewed, try again once the review is complete.',
+  'unsupported-base':
+    'Models trained on this base model can’t be published as a model page yet. Your run and its checkpoints are still available in Training Studio.',
+  'no-checkpoint':
+    'This training run has no checkpoint left to publish. Checkpoints are only kept for a limited time after training finishes.',
+  'not-found': 'We couldn’t find this training run on your account.',
+  unavailable: 'We couldn’t create a model page from this training run. Please try again later.',
+};
+
+function PublishRefused({ refusal }: RefusalProps) {
   return (
     <>
       <Meta title="Can't publish this training run" deIndex />
       <Center h="60vh">
         <Stack align="center" gap="sm" maw={440}>
-          <Text ta="center">
-            This training run&rsquo;s dataset hasn&rsquo;t been approved, so a model can&rsquo;t be
-            created from it. If the dataset is still being reviewed, try again once the review is
-            complete.
-          </Text>
+          <Text ta="center">{refusalMessages[refusal]}</Text>
+          <Anchor href={env.NEXT_PUBLIC_TRAINING_STUDIO_URL}>Back to Training Studio</Anchor>
           <Anchor href="/models">Back to models</Anchor>
         </Stack>
       </Center>

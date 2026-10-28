@@ -14,6 +14,12 @@ import type { Session } from '~/types/session';
 import { SessionProvider } from '~/providers/SessionProvider';
 import { resolveAuthGuard } from '~/server/auth/route-guard';
 import { SESSION_UNRESOLVED_REQ_KEY } from '~/shared/constants/render-session.constants';
+import {
+  SHELL_EDGE_HEADERS,
+  SHELL_RENDERED_REQ_KEY,
+  SHELL_REQ_KEY,
+} from '~/shared/constants/shell.constants';
+import type { ShellRender } from '~/server/shell/shell-render';
 import type { AppContext, AppProps } from 'next/app';
 import App from 'next/app';
 import Head from 'next/head';
@@ -57,6 +63,7 @@ import { FiltersProvider } from '~/providers/FiltersProvider';
 import { ThirdPartyConsentProvider } from '~/components/Consent/ThirdPartyConsentProvider';
 import { GoogleAnalytics } from '~/providers/GoogleAnalytics';
 import { FaroProvider } from '~/components/Faro/FaroProvider';
+import { isHardLoadSignedIn } from '~/utils/faro/pageAttributes';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { AppsRailProvider } from '~/components/Apps/appsRailState';
 // import { PaddleProvider } from '~/providers/PaddleProvider';
@@ -83,6 +90,11 @@ import {
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import type { ParsedCookies } from '~/shared/utils/cookies';
 import { parseCookies } from '~/shared/utils/cookies';
+import {
+  hasSessionCookie,
+  sessionCookieKind,
+  type SessionCookieKind,
+} from '~/shared/utils/session-cookie';
 import { RegisterCatchNavigation } from '~/store/catch-navigation.store';
 import { ClientHistoryStore } from '~/store/ClientHistoryStore';
 import { trpc } from '~/utils/trpc';
@@ -150,6 +162,10 @@ type CustomAppProps = {
   chatSettings?: UserSettingsChat;
   canIndex: boolean;
   hasAuthCookie: boolean;
+  /** Full render only, diagnostics only: which session cookie families the request carried (names,
+   *  never values), whatever the session lookup made of them (`hasAuthCookie` is narrower). Read by
+   *  SessionProvider at mount. */
+  sessionCookie?: SessionCookieKind;
   region?: RegionInfo;
   domain: ColorDomain;
   host: string;
@@ -180,6 +196,7 @@ function MyApp(props: CustomAppProps) {
       seed = Date.now(),
       canIndex,
       hasAuthCookie: pageHasAuthCookie,
+      sessionCookie: pageSessionCookie,
       settings,
       browsingSettingsAddons,
       liveNow = false,
@@ -200,6 +217,10 @@ function MyApp(props: CustomAppProps) {
   // Fixed for the tab: the shell machinery stays mounted after navigating off the shell page, so
   // the tree above the page never remounts.
   const [bootedShell] = useState(() => shell === true);
+  // The hard load's viewer, for the RUM page attributes (src/utils/faro/pageAttributes.ts).
+  const [bootedSignedIn] = useState(() =>
+    isHardLoadSignedIn({ session, hasAuthCookie: pageHasAuthCookie })
+  );
   const {
     cookies,
     hasAuthCookie,
@@ -298,6 +319,7 @@ function MyApp(props: CustomAppProps) {
           <SessionProvider
             session={session ? session : !hasAuthCookie ? null : undefined}
             seed={sessionSeed}
+            sessionCookie={pageSessionCookie}
             refetchOnWindowFocus={false}
             refetchWhenOffline={false}
           >
@@ -344,7 +366,12 @@ function MyApp(props: CustomAppProps) {
                         `FaroProvider` accepts `undefined | null`
                         by design; pinned by
                         src/tests/pages/app-region-optional-chain.test.ts. */}
-                    <FaroProvider region={region?.countryCode} />
+                    {/* RUM page attributes: see src/utils/faro/pageAttributes.ts. */}
+                    <FaroProvider
+                      region={region?.countryCode}
+                      shell={bootedShell}
+                      signedIn={bootedSignedIn}
+                    />
                     <GoogleAnalytics />
                     <AccountProvider>
                       <CivitaiSessionProvider disableHidden={cookies.disableHidden}>
@@ -478,13 +505,11 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       : undefined
   );
 
-  // Match BOTH session cookie families: the new hub `civ-token` / `__Secure-civ-token` AND the legacy
-  // next-auth `civitai-token` / `__Secure-civitai-token` (still honored during the cutover). Note the suffixes
-  // don't subsume each other — `civitai-token` does NOT end with `civ-token` — so both checks are required.
+  // Either session cookie family, hub `civ-token` or legacy `civitai-token` (`~/shared/utils/session-cookie`).
   // Used to seed `SessionProvider` (unknown → fetch on mount) and `loggedIn` below.
-  let hasAuthCookie = Object.keys(cookies).some(
-    (x) => x.endsWith('civ-token') || x.endsWith('civitai-token')
-  );
+  let hasAuthCookie = hasSessionCookie(cookies);
+  // Kept as read: `hasAuthCookie` is cleared below when the lookup says signed out.
+  const sessionCookie = sessionCookieKind(cookies);
   // const session = hasAuthCookie ? await getSession(appContext.ctx) : undefined;
   // const flags = getFeatureFlags({ user: session?.user, host: appContext.ctx.req?.headers.host });
   const { serverDomainMap, getRequestDomainColor, getAllServerHosts, getAvailableOAuthProviders } =
@@ -502,6 +527,68 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
 
   // Read the verified-bot header set by botDetectionMiddleware.
   const verifiedBot = parseVerifiedBotHeader(request.headers[VERIFIED_BOT_HEADER]);
+
+  // Static shell (`~/server/shell/shell-mode`): ONE HTML for every viewer and every URL of the
+  // route. This branch may read no session, no region, no URL and no viewer cookie but the colour
+  // scheme, which is part of the edge cache key. `typeof window` block: see the bootstrap below.
+  let shellRender: ShellRender | null = null;
+  if (typeof window === 'undefined') {
+    const { resolveShellRender } = await import('~/server/shell/shell-render');
+    shellRender = await resolveShellRender(request, appContext.ctx.pathname);
+  }
+  const renderRequest = request as typeof request & {
+    [SHELL_REQ_KEY]?: string;
+    [SHELL_RENDERED_REQ_KEY]?: string;
+    [SESSION_UNRESOLVED_REQ_KEY]?: boolean;
+  };
+  // Assigned on every run: a page that throws runs this again for `/_error`, on the same response,
+  // which must then carry no edge-cache header a shell attempt may have left.
+  renderRequest[SHELL_REQ_KEY] = shellRender?.route;
+  renderRequest[SHELL_RENDERED_REQ_KEY] = undefined;
+  if (!shellRender) {
+    const { res } = appContext.ctx;
+    for (const name of SHELL_EDGE_HEADERS) {
+      if (res?.getHeader?.(name) !== undefined) res?.removeHeader(name);
+    }
+  }
+  if (shellRender) {
+    // 🔴 The shell must not carry its URL. Next 16.3.1 writes this very query object into
+    // `__NEXT_DATA__.query` and renders with this router (`render.js`), so both are emptied here,
+    // before anything renders; the client restores them from `location` (`useShellPagePending`).
+    const query = appContext.ctx.query;
+    for (const key of Object.keys(query)) delete query[key];
+    appContext.ctx.asPath = appContext.ctx.pathname;
+    (appContext.router as { asPath: string }).asPath = appContext.ctx.pathname;
+    renderRequest[SESSION_UNRESOLVED_REQ_KEY] = false;
+
+    const { seeds } = shellRender;
+    // Every key here is reviewed: `shell-render.test.ts` pins the exact set.
+    return {
+      pageProps: {
+        ...pageProps,
+        shell: true,
+        colorScheme: (['light', 'dark', 'auto'] as const).includes(colorScheme as 'dark')
+          ? colorScheme
+          : 'dark',
+        cookies: parseCookies({}),
+        canIndex,
+        flags: shellRender.flags,
+        tosMeta: seeds.tosMeta,
+        browsingSettingsAddons: seeds.browsingSettingsAddons,
+        liveNow: seeds.liveNow,
+        // The full render's `Date.now()` would make every response distinct.
+        seed: Math.floor(Date.now() / 60_000) * 60_000,
+        // Unknown until the page data: SessionProvider waits for it instead of fetching.
+        hasAuthCookie: true,
+        domain: getRequestDomainColor(request),
+        serverDomains,
+        availableOAuthProviders,
+        host: request.headers.host ?? '',
+        verifiedBot: null,
+      },
+      ...appProps,
+    };
+  }
 
   // The per-user settings bootstrap, read in-process (the same function
   // `/api/user/settings` serves). This sits on EVERY SSR page render's critical
@@ -691,7 +778,21 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     const { checkPreviewAccess } = await import('~/server/auth/preview-access');
     if (!(await checkPreviewAccess(session.user))) guardTo = '/preview-restricted';
   }
-  if (guardTo && appContext.ctx.res) {
+  if (!guardTo && typeof window === 'undefined') {
+    const { sharedSlotNavigationSyncUrl } = await import('~/server/auth/shared-slot-sync');
+    guardTo =
+      sharedSlotNavigationSyncUrl({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        cookies,
+      }) ?? undefined;
+  }
+  // 🔴 Next still runs the page's `getServerSideProps` after this, and re-enters this function on
+  // the SAME, already-sent response when it returns `notFound` (re-render of /404) or throws
+  // (re-render of /_error). A second `writeHead` there throws ERR_HTTP_HEADERS_SENT.
+  // Pinned by `app-guard-redirect-once.test.ts`.
+  if (guardTo && appContext.ctx.res && !appContext.ctx.res.headersSent) {
     appContext.ctx.res.writeHead(302, { Location: guardTo });
     appContext.ctx.res.end();
   }
@@ -720,6 +821,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
       following,
       seed: Date.now(),
       hasAuthCookie,
+      sessionCookie,
       region,
       domain,
       serverDomains,

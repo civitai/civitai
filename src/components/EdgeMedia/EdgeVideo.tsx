@@ -27,6 +27,7 @@ import clsx from 'clsx';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import styles from './EdgeVideo.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useDialogId } from '~/components/Dialog/dialogId';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { getVideoPosition, recordVideoPosition } from '~/store/video-playback.store';
 
@@ -51,6 +52,8 @@ type VideoProps = Omit<
   imageId?: number;
   /** Play after a second of hover when not autoplaying. */
   hoverPlay?: boolean;
+  /** Mounted for preloading, not on screen: never plays, whatever the viewport says. */
+  standby?: boolean;
 };
 
 export type EdgeVideoRef = {
@@ -69,6 +72,8 @@ const getFullscreenServerSnapshot = () => false;
 // Safari needs special handling (forced width, eager preload). userAgent is stable, so compute once.
 const IN_SAFARI =
   typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
+
+export const GLOBAL_VOLUME_KEY = 'global-volume';
 
 export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
   (
@@ -91,6 +96,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       disablePoster,
       imageId,
       hoverPlay = true,
+      standby = false,
       onLoad,
       onError,
       onLoadedData,
@@ -121,7 +127,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const isSelfFullscreen =
       isFullscreen && !!containerRef.current && document.fullscreenElement === containerRef.current;
     const [volume, setVolume] = useLocalStorage({
-      key: 'global-volume',
+      key: GLOBAL_VOLUME_KEY,
       defaultValue: muted ? 0 : 0.5,
     });
 
@@ -290,10 +296,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const node = useScrollAreaRef();
 
     // ensure that video only plays when it is in the current view/dialog
-    const dialogCount = useDialogStore((state) => state.dialogs.length);
-    const stackRef = useRef<number | null>(null);
-    if (stackRef.current === null) stackRef.current = dialogCount;
-    const isCurrentStack = stackRef.current === dialogCount;
+    // Not a depth captured at mount: a player that mounts under an already-open dialog (the page
+    // behind the image detail remounts on a remix click) would take that depth as its own.
+    const dialogId = useDialogId();
+    const isCurrentStack = useDialogStore((state) => {
+      const top = state.dialogs[state.dialogs.length - 1];
+      return dialogId === undefined ? !top : top?.id === dialogId;
+    });
 
     const [canPlay, setCanPlay] = useState(false);
     useEffect(() => {
@@ -315,7 +324,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     useEffect(() => {
       const videoElem = ref.current;
       if (!videoElem) return;
-      if (isCurrentStack && (canPlay || props.autoPlay)) {
+      if (!standby && isCurrentStack && (canPlay || props.autoPlay)) {
         // Coming back from the detail dialog, this element is still paused where it was left;
         // the other player kept the position moving.
         const resumeAt = resumeId ? getVideoPosition(resumeId) : undefined;
@@ -332,7 +341,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         // the video the moment it is maximized.
         videoElem.pause();
       }
-    }, [canPlay, isCurrentStack, props.autoPlay, isSelfFullscreen, resumeId]);
+    }, [canPlay, isCurrentStack, standby, props.autoPlay, isSelfFullscreen, resumeId]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {

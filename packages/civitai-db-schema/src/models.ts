@@ -106,7 +106,7 @@ export type TagSource = "User" | "Rekognition" | "WD14" | "Computed" | "ImageHas
 
 export type PartnerPricingModel = "Duration" | "PerImage";
 
-export type ApiKeyType = "System" | "User" | "Access" | "Refresh";
+export type ApiKeyType = "System" | "User" | "Access" | "Refresh" | "Worker";
 
 export type CommentEntityType = "model" | "image" | "post" | "article" | "review" | "bounty" | "bountyEntry" | "comicChapter" | "challenge" | "model3d" | "model3dReview" | "appListing" | "crucible" | "storyline";
 
@@ -184,7 +184,7 @@ export type PurchasableRewardUsage = "SingleUse" | "MultiUse";
 
 export type EntityType = "Image" | "Post" | "Article" | "Bounty" | "BountyEntry" | "ModelVersion" | "Model" | "Collection" | "Comment" | "CommentV2" | "CommentV3" | "User" | "UserProfile" | "ResourceReview" | "ChatMessage" | "Model3D" | "Storyline";
 
-export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync";
+export type JobQueueType = "CleanUp" | "UpdateMetrics" | "UpdateNsfwLevel" | "UpdateSearchIndex" | "CleanIfEmpty" | "ModerationRequest" | "BlockedImageDelete" | "ImageScan" | "ReplacedImageDelete" | "ImageStorageDelete" | "CdnAccessSync" | "ImageCdnPersistRetry";
 
 export type VaultItemStatus = "Pending" | "Stored" | "Failed";
 
@@ -548,6 +548,7 @@ export interface User {
   rewardsEligibility: RewardsEligibility;
   eligibilityChangedAt: Date | null;
   customerId: string | null;
+  subscriptionId: string | null;
   paddleCustomerId: string | null;
   profile?: UserProfile | null;
   profilePictureId: number | null;
@@ -573,6 +574,7 @@ export interface User {
   notificationSettings?: UserNotificationSettings[];
   pushSubscriptions?: PushSubscription[];
   pushSettings?: UserPushSetting[];
+  emailOptOuts?: UserEmailNotificationOptOut[];
   webhooks?: Webhook[];
   interests?: ModelInterest[];
   engagingUsers?: UserEngagement[];
@@ -584,6 +586,8 @@ export interface User {
   feedback?: Feedback[];
   feedbackHandled?: Feedback[];
   feedbackOwnerStatus?: Feedback[];
+  appAccessRequests?: AppAccessRequest[];
+  appAccessReviewed?: AppAccessRequest[];
   questions?: Question[];
   answers?: Answer[];
   commentsv2?: CommentV2[];
@@ -1356,6 +1360,14 @@ export interface ModActivity {
   entityType: string | null;
   entityId: number | null;
   createdAt: Date;
+  host: string | null;
+}
+
+export interface ModThreadClaim {
+  chatId: number;
+  moderatorId: number;
+  claimedAt: Date;
+  expiresAt: Date;
 }
 
 export interface Report {
@@ -2133,6 +2145,18 @@ export interface Feedback {
   hiddenFromOwnerAt: Date | null;
 }
 
+export interface AppAccessRequest {
+  id: number;
+  userId: number;
+  user?: User;
+  whatToBuild: string;
+  status: string;
+  createdAt: Date;
+  reviewedAt: Date | null;
+  reviewedById: number | null;
+  reviewedBy?: User | null;
+}
+
 export interface ApiKey {
   id: number;
   key: string;
@@ -2147,6 +2171,8 @@ export interface ApiKey {
   clientId: string | null;
   client?: OauthClient | null;
   buzzLimit: JsonValue | null;
+  workerDeviceId: number | null;
+  workerDevice?: WorkerDevice | null;
 }
 
 export interface OauthClient {
@@ -2161,6 +2187,8 @@ export interface OauthClient {
   allowedScopes: number;
   isConfidential: boolean;
   accessMode: string;
+  skipConsent: boolean;
+  tokenRateLimit: number | null;
   userId: number;
   user?: User;
   isVerified: boolean;
@@ -2175,6 +2203,32 @@ export interface OauthClient {
   subscriptionAttributions?: BlockSubscriptionAttribution[];
   goodPurchases?: BlockGoodPurchase[];
   connectListings?: AppListing[];
+  workerClient?: WorkerClient | null;
+  workerDevices?: WorkerDevice[];
+}
+
+export interface WorkerClient {
+  clientId: string;
+  client?: OauthClient;
+  provider: string;
+  subjectTokenTypes: string[];
+  saladContainerGroupIds: string[];
+  createdAt: Date;
+}
+
+export interface WorkerDevice {
+  id: number;
+  clientId: string;
+  client?: OauthClient;
+  issuer: string;
+  subject: string;
+  status: string;
+  firstSeenAt: Date;
+  lastSeenAt: Date;
+  lastIp: string | null;
+  blockedAt: Date | null;
+  blockedReason: string | null;
+  tokens?: ApiKey[];
 }
 
 export interface UserRole {
@@ -2385,6 +2439,30 @@ export interface AppListing {
   subListings?: AppSubListing[];
   subListingParent?: AppSubListingParent | null;
   feedback?: Feedback[];
+}
+
+export interface AppPostIntent {
+  listingId: string;
+  host: string;
+  pathPrefix: string;
+  enabled: boolean;
+  reviewedById: number | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface PostIntentManifest {
+  id: number;
+  manifestUrl: string;
+  appId: string;
+  listingId: string;
+  userId: number;
+  manifest: JsonValue;
+  staged: JsonValue;
+  claimExpiresAt: Date;
+  postId: number | null;
+  postedAt: Date | null;
+  createdAt: Date;
 }
 
 export interface AppListingScreenshot {
@@ -2900,6 +2978,13 @@ export interface PushSubscription {
 }
 
 export interface UserPushSetting {
+  userId: number;
+  user?: User;
+  type: string;
+  createdAt: Date;
+}
+
+export interface UserEmailNotificationOptOut {
   userId: number;
   user?: User;
   type: string;
@@ -4101,6 +4186,9 @@ export interface EvidenceHoldImage {
   userId: number;
   postId: number | null;
   keptAt: Date;
+  priorIngestion: string | null;
+  priorBlockedFor: string | null;
+  priorNsfwLevel: number | null;
 }
 
 export interface EvidenceHoldPost {
@@ -4744,6 +4832,19 @@ export interface ScanLabelFlag {
   createdAt: Date;
 }
 
+export interface ImageAudioScan {
+  imageId: number;
+  workflowId: string;
+  status: string;
+  flagged: boolean | null;
+  hasAudio: boolean | null;
+  result: JsonValue | null;
+  resultVersion: number | null;
+  error: string | null;
+  createdAt: Date;
+  completedAt: Date | null;
+}
+
 export interface ScanLabelVote {
   itemId: number;
   userId: number;
@@ -4752,12 +4853,14 @@ export interface ScanLabelVote {
   reasonComment: string | null;
   msOnItem: number | null;
   createdAt: Date;
+  claimToken: string | null;
 }
 
 export interface ScanLabelClaim {
   itemId: number;
   userId: number;
   expiresAt: Date;
+  token: string | null;
 }
 
 export interface ScanLabelCopyObject {
@@ -6620,6 +6723,7 @@ export interface ServiceOffering {
   removedDetails: string | null;
   removedAt: Date | null;
   removedById: number | null;
+  sellerAffirmation: JsonValue | null;
   createdAt: Date;
   updatedAt: Date;
   deals?: ServiceDeal[];
@@ -6675,6 +6779,24 @@ export interface ServiceDeal {
   events?: ServiceDealEvent[];
   files?: ServiceDealFile[];
   transactions?: ServiceDealTransaction[];
+  disputeReviews?: ServiceDisputeReview[];
+}
+
+export interface ServiceDisputeReview {
+  id: number;
+  dealId: number;
+  deal?: ServiceDeal;
+  class: string;
+  proposal: ServiceDisputeResolution | null;
+  confidence: number | null;
+  rationale: string;
+  evidence: JsonValue;
+  agentVersion: string;
+  mode: string;
+  humanRuling: ServiceDisputeResolution | null;
+  humanId: number | null;
+  agreed: boolean | null;
+  createdAt: Date;
 }
 
 export interface ServiceDealEvent {
@@ -6709,6 +6831,10 @@ export interface ServiceDealFile {
   processingAt: Date | null;
   scanStatus: ServiceDealFileScanStatus;
   malwareScanStatus: ServiceDealFileScanStatus;
+  malwareScanWorkflowId: string | null;
+  malwareScanStartedAt: Date | null;
+  malwareScanSubmittedAt: Date | null;
+  malwareScanAttempts: number;
   unpackedAt: Date | null;
   deliveryKey: string | null;
   deliverySize: number | null;

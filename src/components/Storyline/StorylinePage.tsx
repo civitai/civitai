@@ -1,11 +1,19 @@
 import { ActionIcon, Alert, Button, Container, Skeleton, Text, Title } from '@mantine/core';
 import {
+  IconBolt,
   IconBook2,
+  IconCircleCheck,
+  IconEye,
+  IconFiles,
+  IconLock,
   IconPlayerPlayFilled,
   IconPlus,
+  IconRosetteDiscountCheck,
   IconSettings,
+  IconShieldHalf,
   IconUsers,
 } from '@tabler/icons-react';
+import type { Icon as TablerIcon } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { FLAG_ALERT_MESSAGES } from '~/components/Model/minor-flag-alert-state';
@@ -14,10 +22,9 @@ import { EntityDiscussion } from '~/components/CommentsV2/EntityDiscussion';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
 import { openStorylineManageModal } from '~/components/Storyline/manage/openStorylineManageModal';
+import { openStorylineFirstChapterModal } from '~/components/Storyline/openStorylineFirstChapterModal';
 import {
-  StorylineCeilingChip,
   StorylineClosedChip,
-  StorylinePriceChip,
   StorylineRoleChip,
   StorylineStat,
   StorylineStatusChip,
@@ -30,10 +37,14 @@ import { StorylineChapterLanes } from '~/components/Storyline/StorylineLaneMap';
 import { storylineChapterLink } from '~/components/Storyline/storyline-mode.utils';
 import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read-link';
 import { useStorylineContinueTerms } from '~/components/Storyline/storyline.queries';
+import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
+import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
 import { EntityType } from '~/shared/utils/prisma/enums';
+import { STORYLINE_CEILING_LEVELS } from '~/shared/utils/storyline';
 import { trpc } from '~/utils/trpc';
 
 type Storyline = RouterOutput['storyline']['getById'];
@@ -102,7 +113,12 @@ export function StorylinePage({ id }: { id: number }) {
           {/* A storyline with no chapter 1 yet is its owner's draft, with nothing to discuss. */}
           {mainPath.length > 0 && (
             // The thread brings its own "Comments" heading; the card only names the region.
-            <section aria-label="Discussion" className={clsx(storylineCardClass, 'p-3.5 sm:p-5')}>
+            // The thread keeps its own top margin for the pages it stands alone on; here the card's
+            // padding is the only space above it.
+            <section
+              aria-label="Discussion"
+              className={clsx(storylineCardClass, 'p-3.5 sm:p-5 [&>.mantine-Stack-root]:!mt-0')}
+            >
               <EntityDiscussion
                 entityType="storyline"
                 entityId={storyline.id}
@@ -127,6 +143,7 @@ function StorylineHeader({
   lastPostId: number | null;
   terms: ContinueTerms;
 }) {
+  const currentUser = useCurrentUser();
   return (
     <header
       className={clsx(
@@ -146,40 +163,33 @@ function StorylineHeader({
         <div className="min-w-0 flex-1">
           <div className="mb-2 flex flex-wrap gap-1.5">
             <StorylineStatusChip status={storyline.status} />
-            <StorylineCeilingChip maxNsfwLevel={storyline.maxNsfwLevel} />
-            <StorylineContinueChip storyline={storyline} terms={terms} />
+            <StorylineClosedNotice storyline={storyline} terms={terms} />
           </div>
           <Title order={1} fw={800} lh={1.05} className="break-words text-[26px] sm:text-[40px]">
             {storyline.title}
           </Title>
-          <div className="mt-2 flex items-center gap-2 text-sm">
-            <Text span size="sm" c="dimmed">
-              Started by
-            </Text>
-            <UserAvatar user={storyline.user} withUsername linkToProfile size="sm" />
+          <div className="mt-2 flex flex-wrap gap-3.5">
+            <StorylineStat
+              icon={IconBook2}
+              count={storyline.chapterCount}
+              one="chapter"
+              many="chapters"
+              showLabel
+              size="sm"
+            />
+            <StorylineStat
+              icon={IconUsers}
+              count={storyline.contributorCount}
+              one="creator"
+              many="creators"
+              showLabel
+              size="sm"
+            />
           </div>
         </div>
       </div>
 
       <div className="flex flex-col gap-2.5 md:items-end">
-        <div className="flex flex-wrap gap-3.5">
-          <StorylineStat
-            icon={IconBook2}
-            count={storyline.chapterCount}
-            one="chapter"
-            many="chapters"
-            showLabel
-            size="sm"
-          />
-          <StorylineStat
-            icon={IconUsers}
-            count={storyline.contributorCount}
-            one="creator"
-            many="creators"
-            showLabel
-            size="sm"
-          />
-        </div>
         <div className="flex flex-wrap gap-2">
           {startLink && (
             <Button
@@ -203,6 +213,18 @@ function StorylineHeader({
               Write chapter 1
             </Button>
           )}
+          {!startLink && storyline.chapterCount === 0 && storyline.viewerRole === 'owner' && (
+            <Button
+              variant="default"
+              size="lg"
+              // Its own row on a phone, after Manage, so neither label is cut off.
+              className="order-last grow basis-full sm:order-none sm:grow-0 sm:basis-auto"
+              leftSection={<IconFiles size={18} />}
+              onClick={() => openStorylineFirstChapterModal({ storylineId: storyline.id })}
+            >
+              Use a post you&apos;ve published
+            </Button>
+          )}
           {lastPostId && terms?.open && storyline.status !== 'Complete' && (
             <Button
               variant="default"
@@ -214,7 +236,7 @@ function StorylineHeader({
               Continue the story
             </Button>
           )}
-          {storyline.viewerRole === 'owner' && (
+          {(storyline.viewerRole === 'owner' || currentUser?.isModerator) && (
             <ActionIcon
               variant="default"
               size={50}
@@ -236,7 +258,7 @@ function StorylineHeader({
   );
 }
 
-function StorylineContinueChip({
+function StorylineClosedNotice({
   storyline,
   terms,
 }: {
@@ -244,7 +266,6 @@ function StorylineContinueChip({
   terms: ContinueTerms;
 }) {
   if (!terms || storyline.status === 'Complete') return null;
-  if (terms.open) return <StorylinePriceChip price={terms.price} />;
   if (terms.closedReason === 'collaboratorsOnly')
     return <StorylineClosedChip label="Collaborators only" />;
   if (terms.closedReason === 'closed') return <StorylineClosedChip label="Closed" />;
@@ -289,9 +310,13 @@ function StorylineChapters({ storyline }: { storyline: Storyline }) {
 function StorylineContributors({ contributors }: { contributors: Storyline['contributors'] }) {
   return (
     <Section icon={<IconUsers size={18} />} title="Contributors" id="storyline-contributors">
-      <ul className="m-0 flex list-none flex-col gap-2 p-0">
+      {/* Pulled out to the card's edges so each divider runs the full width. */}
+      <ul className="m-0 -mx-3.5 flex list-none flex-col divide-x-0 divide-y divide-solid divide-gray-3 p-0 sm:-mx-5 dark:divide-dark-4">
         {contributors.map(({ user, role, chapterCount }) => (
-          <li key={user.id} className="flex items-center justify-between gap-2">
+          <li
+            key={user.id}
+            className="flex items-center justify-between gap-2 px-3.5 py-2.5 first:pt-0 last:pb-0 sm:px-5"
+          >
             <UserAvatar
               user={user}
               withUsername
@@ -308,6 +333,23 @@ function StorylineContributors({ contributors }: { contributors: Storyline['cont
   );
 }
 
+function Detail({
+  icon: Icon,
+  children,
+  testId,
+}: {
+  icon: TablerIcon;
+  children: ReactNode;
+  testId?: string;
+}) {
+  return (
+    <li className="flex items-start gap-2.5" data-testid={testId}>
+      <Icon size={18} className="text-dimmed mt-px shrink-0" aria-hidden />
+      <Text size="sm">{children}</Text>
+    </li>
+  );
+}
+
 function StorylineAboutContinuing({
   storyline,
   terms,
@@ -316,25 +358,41 @@ function StorylineAboutContinuing({
   terms: ContinueTerms;
 }) {
   const owner = storyline.user.username ?? 'The creator';
-  const sentence =
-    storyline.status === 'Complete'
-      ? 'This storyline is complete and takes no more chapters.'
-      : terms?.closedReason === 'closed'
-      ? 'This storyline is not taking new chapters right now.'
-      : storyline.whoCanContinue === 'Collaborators'
-      ? `Only ${owner}'s collaborators can continue it.`
-      : `Anyone can continue. ${owner} reviews each one; endorsed collaborators skip review.`;
+  const complete = storyline.status === 'Complete';
+  const ceiling = (STORYLINE_CEILING_LEVELS as readonly number[]).includes(storyline.maxNsfwLevel)
+    ? browsingLevelLabels[storyline.maxNsfwLevel as keyof typeof browsingLevelLabels]
+    : null;
   return (
     <Section title="About continuing" id="storyline-about-continuing">
-      <div className="flex flex-wrap gap-1.5">
-        {terms?.open && storyline.status !== 'Complete' && (
-          <StorylinePriceChip price={terms.price} />
+      <ul className="m-0 flex list-none flex-col gap-2.5 p-0">
+        {complete ? (
+          <Detail icon={IconCircleCheck}>
+            This storyline is complete and takes no more chapters.
+          </Detail>
+        ) : terms?.closedReason === 'closed' ? (
+          <Detail icon={IconLock}>This storyline is not taking new chapters right now.</Detail>
+        ) : storyline.whoCanContinue === 'Collaborators' ? (
+          <Detail icon={IconLock}>Only {owner}&apos;s collaborators can continue it.</Detail>
+        ) : (
+          <>
+            <Detail icon={IconUsers}>Anyone can continue</Detail>
+            <Detail icon={IconEye}>{owner} reviews each one</Detail>
+            <Detail icon={IconRosetteDiscountCheck}>Endorsed collaborators skip review</Detail>
+          </>
         )}
-        <StorylineCeilingChip maxNsfwLevel={storyline.maxNsfwLevel} />
-      </div>
-      <Text size="sm" c="dimmed" mt={8}>
-        {sentence}
-      </Text>
+        {terms?.open && !complete && (
+          <Detail icon={IconBolt} testId="storyline-price-detail">
+            {terms.price > 0
+              ? `${storylinePriceLabel(terms.price)} to continue`
+              : 'Free to continue'}
+          </Detail>
+        )}
+        {ceiling && (
+          <Detail icon={IconShieldHalf} testId="storyline-ceiling-detail">
+            Up to {ceiling}
+          </Detail>
+        )}
+      </ul>
     </Section>
   );
 }

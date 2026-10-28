@@ -17,12 +17,12 @@ export default function MyServiceRequestsPage({ openOnly }: { openOnly: boolean 
 
   return (
     <>
-      <Meta title="My service requests" deIndex />
+      <Meta title="Service Requests" deIndex />
       <Container size="md" py="lg">
         <Stack gap="md">
           <Stack gap={2}>
             <Title order={1} size="h2">
-              My service requests
+              Service Requests
             </Title>
             <Text c="dimmed" size="sm">
               {openOnly

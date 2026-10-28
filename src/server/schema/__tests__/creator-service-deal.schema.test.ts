@@ -17,6 +17,7 @@ describe('requestServiceDealSchema', () => {
         expectedRevisionsIncluded: 1,
         expectedDeliveryDays: 3,
         requestText: ' draw my cat ',
+        disclosureVersion: 'v1',
         revisionsIncluded: 9,
         deliveryDays: 1,
         price: 1,
@@ -30,11 +31,12 @@ describe('requestServiceDealSchema', () => {
       expectedRevisionsIncluded: 1,
       expectedDeliveryDays: 3,
       requestText: 'draw my cat',
+      disclosureVersion: 'v1',
     });
   });
 
   it('requires the revisions and delivery days the buyer was shown', () => {
-    const base = { offeringId: 1, expectedPrice: 500, requestText: 'x' };
+    const base = { offeringId: 1, expectedPrice: 500, requestText: 'x', disclosureVersion: 'v1' };
     expect(requestServiceDealSchema.safeParse(base).success).toBe(false);
     expect(
       requestServiceDealSchema.safeParse({ ...base, expectedRevisionsIncluded: 0 }).success
@@ -47,6 +49,20 @@ describe('requestServiceDealSchema', () => {
       }).success
     ).toBe(true);
   });
+});
+
+it('requires the disclosure version the buyer was shown', () => {
+  const input = {
+    offeringId: 1,
+    expectedPrice: 500,
+    expectedRevisionsIncluded: 0,
+    expectedDeliveryDays: 1,
+    requestText: 'x',
+  };
+  expect(requestServiceDealSchema.safeParse(input).success).toBe(false);
+  expect(requestServiceDealSchema.safeParse({ ...input, disclosureVersion: 'v1' }).success).toBe(
+    true
+  );
 });
 
 describe('exit reasons', () => {

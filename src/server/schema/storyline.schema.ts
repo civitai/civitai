@@ -65,6 +65,11 @@ export const addOwnerChapterSchema = z.object({
   postId: z.number().int().positive(),
 });
 
+export const setFirstChapterSchema = z.object({
+  storylineId: z.number().int().positive(),
+  postId: z.number().int().positive(),
+});
+
 export const storylineChapterSchema = z.object({ chapterId: z.number().int().positive() });
 
 /** `browsingLevel` is optional so the request's own level and the domain cap can fill it in. */
@@ -81,6 +86,19 @@ export const storylinePathSchema = storylineChapterReadSchema.extend({
 /** `parentChapterId` names the route when the chapter continues several chapters. */
 export const setCanonChapterSchema = storylineChapterSchema.extend({
   parentChapterId: z.number().int().positive().optional(),
+});
+
+export const insertStorylineChapterSchema = z.object({
+  storylineId: z.number().int().positive(),
+  parentChapterId: z.number().int().positive(),
+  childChapterId: z.number().int().positive(),
+  postId: z.number().int().positive(),
+});
+
+export const moveStorylineChapterSchema = z.object({
+  storylineId: z.number().int().positive(),
+  chapterId: z.number().int().positive(),
+  afterChapterId: z.number().int().positive(),
 });
 
 export const linkStorylineChapterSchema = z.object({

@@ -1161,6 +1161,56 @@ describe('route faults and CORS', () => {
     });
   });
 
+  it.each([
+    [
+      'the pool cannot hand out a connection',
+      { connect: new Error('timeout exceeded when trying to connect') },
+    ],
+    [
+      'the connection drops inside the transaction',
+      { query: Object.assign(new Error('terminating connection'), { code: '57P01' }) },
+    ],
+  ])(
+    '%s: a retryable 503 service_unavailable with Retry-After, not a 500',
+    async (_name, fault: { connect?: Error; query?: Error }) => {
+      const { A } = freshApps();
+      // The REAL store over a pool that fails: the seam is the store's translation AND the
+      // route's status/header mapping, so neither is stubbed.
+      h.store = createDocStore({
+        db: {
+          connect: async () => {
+            if (fault.connect) throw fault.connect;
+            const real = await harness.db.connect();
+            return {
+              query: async (sql: string, params?: unknown[]) => {
+                if (
+                  fault.query &&
+                  !sql.startsWith('BEGIN') &&
+                  sql !== 'ROLLBACK' &&
+                  !sql.includes('pg_roles')
+                ) {
+                  throw fault.query;
+                }
+                return real.query(sql, params);
+              },
+              release: (arg?: Error | boolean) => real.release(arg),
+            };
+          },
+        },
+      });
+      const t = await mint({ app: A, uid: VIEWER_IDS.v1, scopes: contract.defaultScopes });
+      const r = await call({ token: t, method: 'GET', path: '/prefs/k' });
+      expect(r.status).toBe(503);
+      expect(r.headers['retry-after']).toBe('1');
+      expect(r.body).toEqual({
+        code: 'service_unavailable',
+        message: 'storage is temporarily unavailable',
+        error: 'storage is temporarily unavailable',
+        details: { retryAfter: 1 },
+      });
+    }
+  );
+
   it('the preflight from an opaque origin allows PUT and DELETE', async () => {
     const r = await call({ token: null, method: 'OPTIONS', path: '/prefs/k', origin: 'null' });
     expect(r.status).toBe(204);
@@ -1198,12 +1248,29 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       body: { data: { x: 1 } },
     });
     expect(mine.status).toBe(200);
-    const info = (await call({ token: v1, method: 'GET', path: '' })).body as {
+    const shared = await call({
+      token: v2,
+      method: 'PUT',
+      path: '/posts/theirs',
+      body: { data: { status: 'open' } },
+    });
+    expect(shared.status).toBe(200);
+    type Info = {
       usage: { app: { docs: number; bytes: number }; viewer: { docs: number; bytes: number } };
     };
-    expect(info.usage.app.docs).toBe(4);
-    expect(info.usage.viewer.docs).toBe(1);
-    expect(info.usage.viewer.bytes).toBeLessThan(info.usage.app.bytes);
+    const info = (await call({ token: v1, method: 'GET', path: '' })).body as Info;
+    // `app` is the SHARED data only (v2's one post): the four private docs are each viewer's own.
+    // `{"status": "open"}` is 18 bytes of jsonb text; `{"x": 1}` is 8.
+    expect(info.usage).toEqual({
+      app: { docs: 1, bytes: 18 },
+      viewer: { docs: 1, bytes: 8 },
+    });
+    const theirs = (await call({ token: v2, method: 'GET', path: '' })).body as Info;
+    // v2: three empty private docs (`{}`, 2 bytes each) and the post.
+    expect(theirs.usage).toEqual({
+      app: { docs: 1, bytes: 18 },
+      viewer: { docs: 4, bytes: 24 },
+    });
   });
 
   it('a refused write is refunded to the burst: 5 not_author refusals, then 6 writes all land', async () => {
@@ -1386,6 +1453,10 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
     ['a raw database error', () => new Error('connection refused')],
     ['storage_disabled', () => new DocStoreError('storage_disabled', 'disabled')],
     [
+      'a database the store could not reach (service_unavailable)',
+      () => new DocStoreError('service_unavailable', 'unavailable', { retryAfter: 1 }),
+    ],
+    [
       'lock contention',
       () => new DocStoreError('rate_limited', 'busy', { reason: 'contention', retryAfter: 1 }),
     ],
@@ -1418,7 +1489,10 @@ describe('review findings: refusal detail, usage, budget refunds, review gates, 
       context_binding: 403,
     };
     for (const [kind, status] of Object.entries(STATUS_SENT) as [BlockScopeRefusalKind, number][]) {
-      const body = storageRefusalBody({ kind, status, error: `e-${kind}` });
+      const body = storageRefusalBody({ kind, status, error: `e-${kind}` }, {
+        method: 'GET',
+        query: {},
+      } as unknown as NextApiRequest);
       expect(STORAGE_ERROR_STATUS[body.code], kind).toBe(status);
       expect(body.message, kind).toBe(`e-${kind}`);
       expect(body.error, kind).toBe(`e-${kind}`);

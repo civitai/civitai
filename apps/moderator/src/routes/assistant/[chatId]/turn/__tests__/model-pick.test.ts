@@ -63,4 +63,17 @@ describe('POST /assistant/[chatId]/turn', () => {
     expect(admitTurn).toHaveBeenCalledWith(7, { id: 1, roles: ['moderator:mod-high-access'] });
     expect(executeTurn).toHaveBeenCalledWith(expect.objectContaining({ allowance }));
   });
+
+  it('keeps a long-silent stream alive with blank lines, which the client skips', async () => {
+    vi.useFakeTimers();
+    try {
+      executeTurn.mockImplementationOnce(() => new Promise((r) => setTimeout(() => r({}), 25_000)));
+      const res = await post({ prompt: 'q' });
+      const text = res.text();
+      await vi.advanceTimersByTimeAsync(26_000);
+      expect(await text).toBe('\n');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

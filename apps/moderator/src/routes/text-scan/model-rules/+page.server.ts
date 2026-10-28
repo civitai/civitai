@@ -4,68 +4,41 @@ import type { Actions, PageServerLoad } from './$types';
 import { modelRuleFormSchema, type ModelRuleForm } from '$lib/model-rules';
 import { requiresGrant } from '$lib/server/access';
 import { logAxiomError } from '$lib/server/axiom';
-import { civitaiLinkUrl } from '$lib/server/civitai-url';
 import {
   LegacyRuleError,
-  MATCH_MODES,
   ModelRuleNotFoundError,
   ModelRuleStaleError,
   ModelRuleVersionNotFoundError,
   RestoreRefusedError,
   RuleNeedsReviewError,
+  countNotSubjectDismissalsByRule,
   createModelRule,
-  getModelRuleMatches,
   listModelRules,
   restoreModelRuleVersion,
   setModelRuleEnabled,
   updateModelRule,
 } from '$lib/server/model-rules.service';
 import { int4Id, jsonField, parseForm, parseQuery } from '$lib/server/query';
-import {
-  restorePrompt,
-  restoreSchema,
-  savePrompt,
-  saveSchema,
-} from '$lib/server/text-scan-lab/prompt-save';
-import { runTry } from '$lib/server/text-scan-lab/try';
-import { readerOf } from '$lib/server/chat-read-audit';
-import { loadPrompts, promptAuthors } from '$lib/server/text-scan-lab/version';
-import { cancelAction, quoteAction, startAction } from '$lib/server/text-scan-tests/form-actions';
 import { MAX_INT4 } from '$lib/server/users.service';
-import { MODEL_RULES_POLICY_KEY } from '$lib/text-scan-lab/types';
-import { WORKSPACE_ONLY } from '$lib/text-scan-tests/types';
-
-const PAGE_SIZE = 50;
+import { runLiteralTry } from './literal-try.server';
+import { runAliasSuggestionResult, runSuggestAliases } from './suggest-aliases.server';
 
 const querySchema = z.object({
-  tab: z.enum(['rules', 'matches']).catch('rules'),
   q: z.string().trim().max(200).catch(''),
   status: z.enum(['all', 'enabled', 'disabled']).catch('all'),
-  mode: z.enum(MATCH_MODES).catch('all'),
-  rule: int4Id.optional().catch(undefined),
-  cursor: z.string().max(64).optional().catch(undefined),
 });
 
 export const load: PageServerLoad = async ({ url }) => {
   const query = parseQuery(url, querySchema);
-  const base = { query, civitaiUrl: civitaiLinkUrl(), wide: true };
-
-  if (query.tab === 'matches') {
-    const matches = await getModelRuleMatches({
-      mode: query.mode,
-      ruleId: query.rule,
-      cursor: query.cursor,
-      limit: PAGE_SIZE,
-    });
-    return { ...base, rules: null, policy: null, authors: {}, matches };
-  }
-
-  const [rules, policy] = await Promise.all([
+  // The counts are decoration: a failure leaves the rules listed without them.
+  const [rules, dismissals] = await Promise.all([
     listModelRules(),
-    loadPrompts(MODEL_RULES_POLICY_KEY, 'policy prompt'),
+    countNotSubjectDismissalsByRule().catch((err) => {
+      console.error('Model rule dismissal counts failed', err);
+      return {} as Record<number, number>;
+    }),
   ]);
-  const authors = await promptAuthors(policy.ok ? policy.value : null);
-  return { ...base, rules, policy, authors, matches: null };
+  return { query, rules, dismissals, wide: true };
 };
 
 const ruleSaveSchema = modelRuleFormSchema.extend({
@@ -84,6 +57,8 @@ const saveAllSchema = z.object({
           subject: z.string(),
           description: z.string(),
           aliases: z.string(),
+          category: z.string(),
+          references: z.array(z.object({ url: z.string(), label: z.string().optional() })),
           note: z.string(),
           baseUpdatedAt: z.string().max(40).optional(),
         })
@@ -93,8 +68,6 @@ const saveAllSchema = z.object({
     'Malformed rules.'
   ),
 });
-const policySaveSchema = saveSchema.omit({ key: true });
-const policyRestoreSchema = restoreSchema.omit({ key: true });
 
 const STALE_CACHE =
   'Could not clear the rules cache; the main app may serve the old rules for a while.';
@@ -124,8 +97,17 @@ async function saveRule(
 }
 
 export const actions: Actions = {
-  try: async ({ request, locals }) =>
-    runTry(readerOf(locals.user), await request.formData(), { only: WORKSPACE_ONLY.modelRules }),
+  try: async ({ request }) => runLiteralTry(await request.formData()),
+
+  // Billed on every run, so it takes the same grant as saving the rule it feeds.
+  suggestAliases: requiresGrant('textScan.modelRules.edit', async ({ request }) =>
+    runSuggestAliases(await request.formData())
+  ),
+
+  // Free to repeat, but it reads the billed search, so it takes the same grant.
+  aliasSuggestionResult: requiresGrant('textScan.modelRules.edit', async ({ request }) =>
+    runAliasSuggestionResult(await request.formData())
+  ),
 
   save: requiresGrant('textScan.modelRules.edit', async ({ request, locals }) => {
     const form = await request.formData();
@@ -219,20 +201,4 @@ export const actions: Actions = {
       return fail(refusal.status, { error: refusal.error });
     }
   }),
-
-  savePolicy: requiresGrant('textScan.modelRules.edit', async ({ request }) => {
-    const input = parseForm(policySaveSchema, await request.formData());
-    if (typeof input === 'string') return fail(400, { error: input });
-    return savePrompt({ ...input, key: MODEL_RULES_POLICY_KEY });
-  }),
-
-  restorePolicy: requiresGrant('textScan.modelRules.edit', async ({ request }) => {
-    const input = parseForm(policyRestoreSchema, await request.formData());
-    if (typeof input === 'string') return fail(400, { error: input });
-    return restorePrompt({ ...input, key: MODEL_RULES_POLICY_KEY });
-  }),
-
-  quoteRun: (event) => quoteAction(event, 'modelRules'),
-  startRun: (event) => startAction(event, 'modelRules'),
-  cancelRun: cancelAction,
 };

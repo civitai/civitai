@@ -35,6 +35,10 @@ export type ImageReviewItem = {
   postTitle: string | null;
   entityType: string | null;
   entityId: number | null;
+  mimeType: string | null;
+  /** Raw `metadata` text, for the placeholder of a file that cannot be shown. */
+  size: string | null;
+  duration: string | null;
   reviewTags: ReviewTag[];
 };
 
@@ -99,6 +103,9 @@ export async function getImageReviewQueue({
       'p.title as postTitle',
       'ic.entityType',
       'ic.entityId',
+      'i.mimeType',
+      sql<string | null>`i.metadata ->> 'size'`.as('size'),
+      sql<string | null>`i.metadata ->> 'duration'`.as('duration'),
     ])
     // needsReview + ingestion equality drives the Image_needsReview_index partial index. The bit-op
     // browsing-level test and the correlated tag EXISTS/NOT EXISTS subqueries stay as sql fragments.
@@ -185,6 +192,33 @@ function reviewQueueIngestion(needsReview: ImageReviewType): ('Scanned' | 'Block
 
 export const CSAM_QUEUE_USER_LIMIT = 500;
 
+/** A CSAM-queue image listed as `{ id }` in a sent image report on its owner, unless that send
+ *  recorded it as missing. The send reads only `{ id }` entries. `image` is the table or alias the
+ *  image row is read as. */
+function coveredBySentCsamReport(image: string) {
+  const col = (name: string) => sql.ref(`${image}.${name}`);
+  return sql<boolean>`exists (
+    select 1
+    from "CsamReport" r
+    cross join lateral jsonb_array_elements(
+      case when jsonb_typeof(r.images) = 'array' then r.images else '[]'::jsonb end
+    ) e
+    where r."userId" = ${col('userId')}
+      and r."reportSentAt" is not null
+      and r.type = 'Image'
+      and e ->> 'id' = ${col('id')}::text
+      and not exists (
+        select 1
+        from jsonb_array_elements(
+          case when jsonb_typeof(r.details -> 'images') = 'array' then r.details -> 'images'
+          else '[]'::jsonb end
+        ) d
+        where d ->> 'id' = ${col('id')}::text
+          and d ->> 'source' = 'missing'
+      )
+  )`;
+}
+
 /** A hold leg, except that `evidenceHold` read without the marker view holds EVERY user, so it says
  *  the status is unknown rather than that this user is on a hold. */
 export type CsamQueueHoldReason = FlagClearHoldLeg | 'evidenceHoldUnknown';
@@ -193,6 +227,8 @@ export type CsamQueueUser = {
   userId: number;
   username: string | null;
   flagged: number;
+  /** Flagged and not yet covered by a sent CSAM report: the user's share of the queue's badge. */
+  pending: number;
   /** Flagged and already removed, at any browsing level: what a bulk clear would clear. */
   removed: number;
   latestImageId: number;
@@ -216,12 +252,14 @@ export async function getCsamQueueByUser({
     .select([
       'i.userId',
       sql<number>`count(*)::int`.as('flagged'),
+      sql<number>`(count(*) filter (where not ${coveredBySentCsamReport('i')}))::int`.as('pending'),
       sql<number>`max(i.id)`.as('latestImageId'),
     ])
     .where(sql<boolean>`(i."nsfwLevel" = 0 OR (i."nsfwLevel" & ${browsingLevel}) != 0)`)
     .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
     .where('i.ingestion', 'in', reviewQueueIngestion(FLAG_KEPT_THROUGH_BLOCK))
     .groupBy('i.userId')
+    .orderBy('pending', 'desc')
     .orderBy(sql`count(*)`, 'desc')
     .orderBy('i.userId')
     .limit(CSAM_QUEUE_USER_LIMIT + 1)
@@ -264,6 +302,7 @@ export async function getCsamQueueByUser({
       userId: g.userId,
       username: usernames.get(g.userId) ?? null,
       flagged: Number(g.flagged),
+      pending: Number(g.pending),
       removed: removedByUser.get(g.userId) ?? 0,
       latestImageId: Number(g.latestImageId),
       reportSentAt: reportsByUser.get(g.userId) ?? null,
@@ -276,10 +315,16 @@ export async function getCsamQueueByUser({
 
 // Excludes the `reported`/`appeal` buckets (own pages now) — UNIONing them seq-scans Report (~445ms vs ~2ms).
 export async function getImageReviewCounts(): Promise<Record<string, number>> {
+  const covered = coveredBySentCsamReport('Image');
   const rows = await dbRead
     .selectFrom('Image')
     .select('needsReview')
-    .select((eb) => eb.fn.countAll<number>().as('count'))
+    // The CSAM queue counts only what is still pending, as its by-user page does.
+    .select(
+      sql<number>`count(*) filter (where "needsReview" <> ${FLAG_KEPT_THROUGH_BLOCK} or not ${covered})`.as(
+        'count'
+      )
+    )
     .where('needsReview', 'is not', null)
     .where('needsReview', '!=', 'appeal')
     .where((eb) =>

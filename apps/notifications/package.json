@@ -1,6 +1,6 @@
 {
   "name": "@civitai/notifications-app",
-  "version": "0.0.17",
+  "version": "0.0.20",
   "private": true,
   "type": "module",
   "main": "./dist/server.js",
@@ -18,7 +18,7 @@
     "@civitai/notifications": "workspace:*",
     "@civitai/redis": "workspace:*",
     "dayjs": "^1.11.13",
-    "fastify": "^5.2.1",
+    "fastify": "^5.12.6",
     "lodash-es": "^4.17.21",
     "pg-format": "^1.0.4",
     "prom-client": "^14.2.0",

@@ -19,7 +19,7 @@ import type * as IsMobile from '~/hooks/useIsMobile';
  */
 const mocks = vi.hoisted(() => ({
   actions: [] as TrackActionInput[],
-  user: { id: 1, username: 'tester' } as { id: number; username: string } | null,
+  user: { id: 1, username: 'tester' } as { id: number; username: string; tier?: string } | null,
   flags: { buzz: true } as Record<string, boolean>,
 }));
 
@@ -172,6 +172,18 @@ describe('UserMenu_Click', () => {
     expect(civitaiLink.onClick).toHaveBeenCalledTimes(1);
     expect(mocks.actions.map((a) => a.type === 'UserMenu_Click' && a.details)).toEqual([
       { item: 'civitai-link', group: 'creator-tools', pinned: false, surface: 'mobile' },
+    ]);
+  });
+
+  it('records a phone Create row under the create group', async () => {
+    await mount(
+      createElement(MobileItem, {
+        item: { id: 'create-generate', label: 'Generate', icon: IconBox, href: '/generate' },
+      })
+    );
+    await click(row('Generate'));
+    expect(details()).toEqual([
+      { item: 'create-generate', group: 'create', pinned: false, surface: 'mobile' },
     ]);
   });
 
@@ -336,17 +348,18 @@ describe('UserMenu_Click', () => {
   // their place.
   it.each([
     // Desktop rows are Mantine Menu.Items, which close the menu themselves.
-    ['desktop', () => inMenu(createElement(DesktopHeaderRows)), 0],
-    ['mobile', () => createElement(MobileHeaderRows), 2],
+    ['desktop', () => inMenu(createElement(DesktopHeaderRows)), 0, 'Buy Buzz'],
+    // The phone sheet closes before the purchase opens.
+    ['mobile', () => createElement(MobileHeaderRows), 3, 'Buy Buzz'],
   ] as const)(
     'records the %s header rows as header opens, and not Buy Buzz',
-    async (surface, node, closes) => {
+    async (surface, node, closes, buyLabel) => {
       await mount(node());
       await click(row('Avatar'));
       await click(document.querySelector('a[href="/user/buzz-dashboard"]'));
       await click(
         [...document.querySelectorAll('.mantine-Button-root')].find(
-          (el) => el.textContent === 'Buy Buzz'
+          (el) => el.textContent === buyLabel
         )
       );
 
@@ -392,14 +405,20 @@ describe('UserMenu_Click', () => {
     }
   );
 
-  // The Pro chip replaced a full row that closed the menu through `MenuItemLink`.
-  it('closes the menu from the Pro chip, and records nothing', async () => {
+  it('offers membership on the mobile card to a viewer with no tier, and closes the menu', async () => {
     mocks.flags = { buzz: true, buzzSpendPop: true, canWrite: true };
     await mount(createElement(MobileHeaderRows));
-    await click(document.querySelector('a[href="/purchase/buzz"], a[href*="/pricing"]'));
 
+    await click(document.querySelector('a[href="/purchase/buzz"]'));
     expect(handleClose).toHaveBeenCalledTimes(1);
-    expect(mocks.actions).toEqual([]);
+  });
+
+  it('shows a member their tier on the mobile card, not the membership offer', async () => {
+    mocks.user = { id: 1, username: 'tester', tier: 'gold' };
+    await mount(createElement(MobileHeaderRows));
+
+    expect(document.querySelector('a[href="/user/buzz-dashboard"]')).not.toBeNull();
+    expect(document.querySelector('a[href="/purchase/buzz"], a[href*="/pricing"]')).toBeNull();
   });
 
   // The legacy menu renders the shared Buzz row with no `onOpen`, for every viewer without the flag.

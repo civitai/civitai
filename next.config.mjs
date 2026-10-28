@@ -183,6 +183,10 @@ export default defineNextConfig(
     generateEtags: false,
     compress: false,
     images: {
+      // Every next/image source is a static file under /public, so serve it directly instead of
+      // through /_next/image. remotePatterns below is unused while this is on; it is kept as the
+      // allow-list to restore if the optimizer is ever turned back on.
+      unoptimized: true,
       remotePatterns: [
         { hostname: 's3.us-west-1.wasabisys.com' },
         { hostname: 'model-share.s3.us-west-1.wasabisys.com' },
@@ -213,6 +217,10 @@ export default defineNextConfig(
       // ESM-only, and its entry re-exports a directory, which Node refuses when the package is
       // left external; bundling it lets Turbopack resolve the directory.
       '@civitai/orchestration-client',
+      // ESM-only with an `import`-only exports map (no `require` or `default`
+      // condition), and the server imports it at runtime (`checkComfyGraph`).
+      // Bundling it resolves the subpath at build time instead of at runtime.
+      '@civitai/app-sdk',
       '@civitai/db-schema',
       '@civitai/db',
       '@civitai/db-queries',
@@ -340,8 +348,9 @@ export default defineNextConfig(
       // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
       // memory and not just what lands on disk.
       turbopackFileSystemCacheForBuild: false,
-      // Defaults on (~4 GB in `.next/dev` per checkout). The dev-server skill turns it off for
-      // worktree sessions, which multiply that across a disk; see its SKILL.md.
+      // Defaults on (~4 GB in `.next/dev` per checkout), and it is what lets Turbopack evict dev
+      // memory after a snapshot, so turning it off makes RSS only climb. The dev-server skill sweeps
+      // idle worktrees' caches to bound the disk; see its SKILL.md.
       turbopackFileSystemCacheForDev: process.env.NEXT_DEV_FS_CACHE !== 'false',
       // NB: `lodash-es`, `@tabler/icons-react` and `@headlessui/react` are already in Next's
       // built-in default list (config.js merges ours into it) — kept here only as intent.
@@ -425,7 +434,7 @@ export default defineNextConfig(
         // that reads as a live route, and `appsPageWidths`' fs-walk would then demand a
         // width classification for a route that never renders.
         //
-        // 🔴 ALL THREE ARE `statusCode: 301`, NOT `permanent: true`. Next maps `permanent`
+        // 🔴 ALL OF THEM ARE `statusCode: 301`, NOT `permanent: true`. Next maps `permanent`
         // to **308**, which preserves the request METHOD — correct in general, but these
         // are GET-only pages whose inbound links are bookmarks, notification URLs and
         // search results, and 301 is the status those consumers cache and rewrite on. The
@@ -436,18 +445,35 @@ export default defineNextConfig(
         // on `/apps/build` DIRECTLY. Repointing only the two new rules and leaving that
         // one would have made it a two-hop 301→301 — which costs a round trip, and which
         // some link-equity and bookmark-rewriting consumers stop following.
+        //
+        // 🔴 THE TWO "MY APPS" ROUTES LAND ON `?view=apps`, NOT BARE `/apps/build`. The page
+        // renders the App Assistant for every viewer `canAccessAppAssistant` admits, authors
+        // included, so a bare destination would open an author's old "My apps" bookmark on the
+        // assistant. `?view=apps` switches an author to their app list and is ignored for
+        // everyone else. Next merges the inbound query with the destination's, so other params
+        // still pass through. Same URL as `MY_APPS_HREF` (`apps-build.constants.ts`) — this file
+        // cannot import TypeScript, and the redirects test pins the two together.
         {
           source: '/apps/my-submissions',
-          destination: '/apps/build',
+          destination: '/apps/build?view=apps',
           statusCode: 301,
         },
         {
           source: '/apps/mine',
-          destination: '/apps/build',
+          destination: '/apps/build?view=apps',
           statusCode: 301,
         },
         {
           source: '/apps/get-started',
+          destination: '/apps/build',
+          statusCode: 301,
+        },
+        // `/apps/assistant` merged into `/apps/build` too: the page renders the App Assistant
+        // workspace for the viewers `canAccessAppAssistant` admits. Next carries the query string
+        // across, so `/apps/assistant?fork=<slug>` lands on `/apps/build?fork=<slug>` and still
+        // opens the fork.
+        {
+          source: '/apps/assistant',
           destination: '/apps/build',
           statusCode: 301,
         },

@@ -18,7 +18,7 @@ const resolve = (await import('../../../pages/api/mod/training-data/resolve'))
   .default as unknown as Handler;
 const actor = { actor: { id: 99 } };
 
-const EPOCH_URL = 'https://orchestration.example/v2/consumer/blobs/epoch-5.safetensors';
+const EPOCH_URL = 'https://orchestration.civitai.com/v2/consumer/blobs/epoch-5.safetensors';
 const ZIP_URL = 's3://bucket/training/123.zip';
 const onModel = (meta: Record<string, unknown>) => ({ modelVersion: { model: { meta } } });
 const studioModel = onModel({ trainingStudioWorkflowId: 'wf-studio' });
@@ -82,6 +82,20 @@ describe('trainingData.resolve', () => {
       'v_training_data.zip',
       expect.anything()
     );
+  });
+
+  it('resolves the Training Studio row once its dataset zip has been archived', async () => {
+    findMany.mockResolvedValue([
+      row({
+        url: ZIP_URL,
+        metadata: { selectedEpochUrl: EPOCH_URL, trainingResults: { workflowId: 'wf-studio' } },
+        ...studioModel,
+      }),
+    ]);
+
+    await expect(resolve.handler({ modelVersionId: 123 }, actor)).resolves.toMatchObject({
+      url: 'https://signed/url',
+    });
   });
 
   it('resolves an ordinary zip run on another version of a Training Studio model', async () => {

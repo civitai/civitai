@@ -185,6 +185,7 @@
       img.tags = parsed.tags;
       img.caption = parsed.caption;
       img.labelTried = text.length > 0;
+      img.labelError = undefined;
       // The aborted drain's catch skips flag-clearing on abort — without this, mid-flight tiles
       // stay `labeling` forever and the whole step wedges (toggle disabled, Continue blocked).
       img.labeling = false;
@@ -616,7 +617,7 @@
         labelRun = { total: targets.length, done: 0, keys: new Set(byKey.keys()) };
         // A result that resolves between abort and delivery must be dropped — post-switch it
         // would write an OLD-mode label into a freshly reset tile and mark it done.
-        await runAutoLabel(
+        const sent = await runAutoLabel(
           labelMode,
           media,
           items,
@@ -626,6 +627,8 @@
           },
           controller.signal
         );
+        // Every target was over the per-image cap: re-selecting them again would spin without end.
+        if (sent === 0) break;
         // In manual mode label only the pass the user asked for — draining uploads that settled
         // mid-run is the automatic behavior the toggle opts out of.
         if (autoLabel !== 'auto') break;
@@ -648,6 +651,7 @@
     img.labeling = false;
     img.labelTried = true; // attempted (any outcome) — the drain labels each image once; failures go manual
     if (labelRun?.keys.has(r.key)) labelRun.done += 1; // count only this pass's own targets
+    img.labelError = r.status === 'failed' ? r.error : undefined;
     if (r.status === 'failed') return;
     if (r.tags?.length) {
       // The user's exclude list: auto-label results never apply these (case-insensitive exact tag).
@@ -766,7 +770,7 @@
   async function relabelOne(id: number) {
     const img = images.find((x) => x.id === id);
     if (!img || !img.blobUrl || img.labeling) return;
-    patch(id, { labeling: true, labelTried: false, tags: [], caption: '' });
+    patch(id, { labeling: true, labelTried: false, labelError: undefined, tags: [], caption: '' });
     try {
       // Not a drain-pass index, so the drain's progress counter never counts it.
       const item = [{ key: 'relabel', mediaUrl: img.blobUrl }];
@@ -1320,6 +1324,9 @@
                     <IconSparkles size={12} stroke={2} /> labeling…
                   </div>
                 {:else if img.tags.length === 0 && !img.caption}
+                  {#if img.labelError}
+                    <div class="mb-1 font-mono text-xs leading-tight text-red-300">{img.labelError}</div>
+                  {/if}
                   <button
                     type="button"
                     onclick={() => openEditor(img.id)}

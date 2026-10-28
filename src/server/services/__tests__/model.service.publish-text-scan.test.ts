@@ -8,10 +8,16 @@ import type * as TextScanSubmit from '~/server/services/text-scan/submit';
 
 const { mockTx } = vi.hoisted(() => ({
   mockTx: {
-    model: { update: vi.fn(), updateMany: vi.fn(), findUniqueOrThrow: vi.fn() },
+    model: {
+      update: vi.fn(),
+      updateMany: vi.fn(),
+      findUniqueOrThrow: vi.fn(),
+      findUnique: vi.fn(),
+    },
     modelVersion: { findFirst: vi.fn(), updateMany: vi.fn() },
     post: { updateMany: vi.fn() },
     $executeRaw: vi.fn(),
+    $queryRaw: vi.fn(),
   },
 }));
 
@@ -19,7 +25,7 @@ vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanSubmit>()),
   scanEntitiesInBackground: vi.fn(),
   scanEntityInBackground: vi.fn(),
-  scanModelRules: vi.fn(),
+  checkModelRulesInBackground: vi.fn(),
 }));
 vi.mock('~/server/services/model-moderation.adapter', async (importOriginal) => ({
   ...(await importOriginal<typeof ModelModerationAdapter>()),
@@ -103,12 +109,12 @@ import { publishModelById, publishPrivateModel } from '~/server/services/model.s
 import {
   scanEntitiesInBackground,
   scanEntityInBackground,
-  scanModelRules,
+  checkModelRulesInBackground,
 } from '~/server/services/text-scan/submit';
 
-// Counts ModelRules scans however they are queued.
+// Counts Model rules checks however they are queued.
 const modelRulesScans = () =>
-  vi.mocked(scanModelRules).mock.calls.length +
+  vi.mocked(checkModelRulesInBackground).mock.calls.length +
   vi.mocked(scanEntityInBackground).mock.calls.filter(([args]) => args.entityType === 'ModelRules')
     .length;
 
@@ -122,6 +128,9 @@ beforeEach(() => {
   dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: typeof mockTx) => unknown) =>
     fn(mockTx)
   );
+  // The publish re-reads the model under its lock; it is the same row the first read saw.
+  mockTx.model.findUnique.mockImplementation(((args: unknown) =>
+    dbMock.dbWrite.model.findUnique(args as never)) as never);
   mockTx.model.update.mockResolvedValue({
     id: MODEL_ID,
     userId: OWNER_ID,
@@ -191,7 +200,10 @@ describe('publishPrivateModel text scan', () => {
       status: 'Published',
       meta: {},
     });
-    dbMock.dbRead.modelVersion.findMany.mockResolvedValue([{ id: PUBLISHED }]);
+    dbMock.dbWrite.modelVersion.findMany.mockResolvedValue([{ id: PUBLISHED }]);
+    // The in-transaction re-read: the version is still Published, the model is not taken down.
+    mockTx.$queryRaw.mockImplementation((async (strings: string[]) =>
+      strings.join('').includes('FROM "ModelVersion"') ? [{ id: PUBLISHED }] : []) as never);
   });
 
   it("scans the model and the owner's posts on its versions when it publishes them", async () => {
@@ -222,18 +234,21 @@ describe('publishPrivateModel text scan', () => {
   });
 
   it.each([
-    ['enforceModelRules off (a moderator publish)', true, 0],
-    ['enforceModelRules on (a non-moderator publish)', false, 1],
-  ])('queues the ModelRules scan for %s publish: %s time(s)', async (_who, isModerator, times) => {
-    dbMock.dbWrite.post.findMany
-      .mockResolvedValueOnce([{ modelVersionId: PUBLISHED }])
-      .mockResolvedValueOnce([{ id: 1 }]);
+    ['enforceModelRules off (a moderator publish)', true],
+    ['enforceModelRules on (a non-moderator publish)', false],
+  ])(
+    'queues no Model rules check after %s: the literal check ran before the publish',
+    async (_who, isModerator) => {
+      dbMock.dbWrite.post.findMany
+        .mockResolvedValueOnce([{ modelVersionId: PUBLISHED }])
+        .mockResolvedValueOnce([{ id: 1 }]);
 
-    await publishPrivateModel(
-      { modelId: MODEL_ID, publishVersions: true, isModerator },
-      { enforceModelRules: !isModerator }
-    );
+      await publishPrivateModel(
+        { modelId: MODEL_ID, publishVersions: true, isModerator },
+        { enforceModelRules: !isModerator }
+      );
 
-    expect(modelRulesScans()).toBe(times);
-  });
+      expect(modelRulesScans()).toBe(0);
+    }
+  );
 });

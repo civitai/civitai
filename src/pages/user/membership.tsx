@@ -173,12 +173,13 @@ export default function UserMembership() {
       if (result.kept) {
         showSuccessNotification({
           title: 'Membership kept',
-          message: 'Your membership will continue after your free months end.',
+          message:
+            'Your membership will continue after your free months end. Renewals use a saved card.',
         });
         await queryUtils.subscriptions.getUserSubscription.invalidate();
         await currentUser?.refresh();
       } else if (result.portalUrl) {
-        // No payment method on file — send them to the Stripe portal to add one
+        // No card on file: send them to Stripe to add one
         window.location.assign(result.portalUrl);
       }
     },

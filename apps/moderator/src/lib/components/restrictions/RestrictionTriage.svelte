@@ -162,8 +162,8 @@
     {@render tabs?.()}
     <div class="flex flex-col gap-1.5">
       <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <TriageFilterChips groups={[]} sort={statusGroup} selectionParam={SELECTION} />
-        <TriageFilterChips groups={[]} sort={sortGroup} selectionParam={SELECTION} />
+        <TriageFilterChips status={statusGroup} selectionParam={SELECTION} />
+        <TriageFilterChips sort={sortGroup} selectionParam={SELECTION} />
       </div>
       <TriageFilterChips groups={[originGroup]} selectionParam={SELECTION} />
     </div>

@@ -86,6 +86,7 @@ vi.mock('~/server/services/model-file.service', () => ({
   deleteFilesForModelVersionCache: vi.fn(),
 }));
 
+import { getPaidAccess } from '~/server/services/paid-access.service';
 import {
   assertUserEarlyAccessLimits,
   mergeVersions,
@@ -616,6 +617,65 @@ describe('assertUserEarlyAccessLimits', () => {
     await expect(
       assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
     ).resolves.toBeUndefined();
+  });
+
+  describe('on a published version', () => {
+    const published = (gate: { timeframeDays: number | null; endsAt: Date | null } | null) => {
+      mockDbRead.modelVersion.findUnique.mockResolvedValueOnce({
+        initialPublishedAt: new Date('2026-01-01T00:00:00Z'),
+        status: 'Published',
+      });
+      mockDbWrite.paidAccess.findUnique.mockResolvedValueOnce(gate);
+    };
+
+    it('lets an ended window be resubmitted unchanged, without counting it against the caps', async () => {
+      published({ timeframeDays: 7, endsAt: new Date(Date.now() - 86_400_000) });
+      mockMaxModels.mockReturnValue(0);
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).resolves.toBeUndefined();
+      expect(mockDbRead.$queryRaw).not.toHaveBeenCalled();
+    });
+
+    it('judges the gate from the primary, not a stale cache', async () => {
+      const endsAt = new Date(Date.now() - 86_400_000);
+      // The cache still holds the 7-day window; a moderator has since changed it to 3 days.
+      vi.mocked(getPaidAccess).mockResolvedValue({ 10: { timeframeDays: 7, endsAt } } as never);
+      published({ timeframeDays: 3, endsAt });
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).rejects.toThrow("Early access can't be started");
+      vi.mocked(getPaidAccess).mockResolvedValue({});
+    });
+
+    it('refuses restarting an ended window with a different length', async () => {
+      published({ timeframeDays: 7, endsAt: new Date(Date.now() - 86_400_000) });
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 14, versionId: 10 })
+      ).rejects.toThrow("Early access can't be started");
+    });
+
+    it('refuses starting a window on a version that never had one', async () => {
+      published(null);
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).rejects.toThrow("Early access can't be started");
+    });
+
+    it('lets a running window be re-saved', async () => {
+      published({ timeframeDays: 7, endsAt: new Date(Date.now() + 86_400_000) });
+      primeActive([10]);
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: 7, versionId: 10 })
+      ).resolves.toBeUndefined();
+    });
+
+    it('lets a save that sends no window through', async () => {
+      await expect(
+        assertUserEarlyAccessLimits({ userId: 1, timeframeDays: undefined, versionId: 10 })
+      ).resolves.toBeUndefined();
+      expect(mockDbRead.modelVersion.findUnique).not.toHaveBeenCalled();
+    });
   });
 
   it('allows a new version while under the cap', async () => {

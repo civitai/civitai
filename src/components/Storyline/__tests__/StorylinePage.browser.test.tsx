@@ -76,6 +76,7 @@ const mocks = vi.hoisted(() => ({
   discussion: vi.fn(),
   openContinue: vi.fn(),
   openManage: vi.fn(),
+  openFirstChapter: vi.fn(),
   openDialog: vi.fn(),
   shares: {} as Record<number, unknown>,
   graph: undefined as Record<string, unknown> | undefined,
@@ -111,6 +112,9 @@ vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
 }));
 vi.mock('~/components/Storyline/manage/openStorylineManageModal', () => ({
   openStorylineManageModal: mocks.openManage,
+}));
+vi.mock('~/components/Storyline/openStorylineFirstChapterModal', () => ({
+  openStorylineFirstChapterModal: mocks.openFirstChapter,
 }));
 vi.mock('~/components/Storyline/StorylineCover', () => ({
   StorylineHero: ({
@@ -216,7 +220,7 @@ describe('StorylinePage', () => {
     // No banner picked: the server's hero is a portrait, so it is a backdrop, never a wide crop.
     expect(hero()).toEqual({ image: 'cover-pick', backdrop: 'true', position: '30' });
     expect(cardCover()).toEqual([{ image: 'cover-pick', ratio: '3/4' }]);
-    expect(testIds('storyline-ceiling-chip')).toContain('Up to PG-13');
+    expect(testIds('storyline-ceiling-detail')).toEqual(['Up to PG-13']);
     await expect
       .element(page.getByRole('link', { name: 'Start reading' }))
       .toHaveAttribute('href', '/images/5010?storylineChapter=130');
@@ -246,6 +250,23 @@ describe('StorylinePage', () => {
     );
     await expect.element(page.getByText('Comments for storyline 2')).toBeVisible();
     expect(mocks.discussion).toHaveBeenCalledWith('storyline', 2);
+  });
+
+  test('the header carries the title and its counts, and no price, rating or "Started by"', async () => {
+    mocks.terms = { open: true, closedReason: null, price: 0 };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    const header = page.getByRole('banner').element();
+    expect(header.textContent).toContain('chapters');
+    expect(header.textContent).toContain('creators');
+    expect(header.textContent).not.toContain('Started by');
+    expect(header.textContent).not.toContain('Free to continue');
+    expect(header.textContent).not.toContain('Up to');
+    // Where they are now: the details under "About continuing".
+    const about = page.getByRole('region', { name: 'About continuing' }).element();
+    expect(about.textContent).toContain('Free to continue');
+    expect(about.textContent).toContain('Up to PG-13');
   });
 
   test('a picked banner shows sharp at its focus', async () => {
@@ -285,7 +306,7 @@ describe('StorylinePage', () => {
     renderWithProviders(<StorylinePage id={2} />);
 
     await expect.element(heading()).toBeVisible();
-    expect(testIds('storyline-ceiling-chip')).toEqual([]);
+    expect(testIds('storyline-ceiling-detail')).toEqual([]);
   });
 
   test('a Complete storyline offers no Continue and no price, whatever the terms say', async () => {
@@ -295,7 +316,7 @@ describe('StorylinePage', () => {
 
     await expect.element(heading()).toBeVisible();
     expect(page.getByRole('button', { name: /Continue the story/ }).elements()).toHaveLength(0);
-    expect(testIds('storyline-price-chip')).toEqual([]);
+    expect(testIds('storyline-price-detail')).toEqual([]);
   });
 
   test('continues from the end of the canon path, and says the price before you press', async () => {
@@ -303,7 +324,7 @@ describe('StorylinePage', () => {
     renderWithProviders(<StorylinePage id={2} />);
 
     await expect.element(heading()).toBeVisible();
-    expect(testIds('storyline-price-chip')).toEqual(['Free to continue', 'Free to continue']);
+    expect(testIds('storyline-price-detail')).toEqual(['Free to continue']);
     await page.getByRole('button', { name: 'Continue the story' }).click();
     expect(mocks.openContinue).toHaveBeenCalledWith({ parentPostId: 504 });
     expect(mocks.termsFor).toHaveBeenLastCalledWith(504);
@@ -314,7 +335,7 @@ describe('StorylinePage', () => {
     renderWithProviders(<StorylinePage id={2} />);
 
     await expect.element(heading()).toBeVisible();
-    expect(testIds('storyline-price-chip')).toEqual(['1,500 to continue', '1,500 to continue']);
+    expect(testIds('storyline-price-detail')).toEqual(['1,500 Buzz to continue']);
   });
 
   test.each([
@@ -331,16 +352,12 @@ describe('StorylinePage', () => {
 
     await expect.element(heading()).toBeVisible();
     expect(page.getByRole('button', { name: /Continue the story/ }).elements()).toHaveLength(0);
-    expect(testIds('storyline-price-chip')).toEqual([]);
+    expect(testIds('storyline-price-detail')).toEqual([]);
     expect(testIds('storyline-closed-chip')).toEqual(closed);
   });
 
   test.each([
-    [
-      {},
-      null,
-      'Anyone can continue. Sillycat83 reviews each one; endorsed collaborators skip review.',
-    ],
+    [{}, null, 'Anyone can continueSillycat83 reviews each oneEndorsed collaborators skip review'],
     [{ whoCanContinue: 'Collaborators' }, null, "Only Sillycat83's collaborators can continue it."],
     [
       { whoCanContinue: 'Collaborators' },
@@ -374,7 +391,7 @@ describe('StorylinePage', () => {
     await expect.element(heading()).toBeVisible();
     expect(testIds('storyline-closed-chip')).toEqual([]);
     expect(page.getByRole('region', { name: 'About continuing' }).element().textContent).toContain(
-      'Anyone can continue.'
+      'Anyone can continue'
     );
   });
 
@@ -452,6 +469,39 @@ describe('StorylinePage', () => {
       .element(page.getByRole('link', { name: 'Write chapter 1' }))
       .toHaveAttribute('href', '/posts/create?storyline=2');
     expect(page.getByRole('link', { name: 'Start reading' }).elements()).toHaveLength(0);
+  });
+
+  test('an owner whose storyline has no chapter 1 yet can use a post already published', async () => {
+    mocks.storyline = {
+      ...STORYLINE,
+      viewerRole: 'owner',
+      chapterCount: 0,
+      contributorCount: 0,
+      rootPostId: null,
+      mainPath: [],
+      contributors: [],
+    };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await page.getByRole('button', { name: "Use a post you've published" }).click();
+    expect(mocks.openFirstChapter).toHaveBeenCalledWith({ storylineId: 2 });
+  });
+
+  test.each([
+    ['a stranger, on an empty storyline', { viewerRole: null, chapterCount: 0, mainPath: [] }],
+    [
+      'a collaborator, on an empty storyline',
+      { viewerRole: 'collaborator', chapterCount: 0, mainPath: [] },
+    ],
+    ['the owner, once chapter 1 exists', { viewerRole: 'owner' }],
+  ])('%s is not offered a published post as chapter 1', async (_, overrides) => {
+    mocks.storyline = { ...STORYLINE, contributors: [], ...overrides };
+    renderWithProviders(<StorylinePage id={2} />);
+
+    await expect.element(heading()).toBeVisible();
+    expect(
+      page.getByRole('button', { name: "Use a post you've published" }).elements()
+    ).toHaveLength(0);
   });
 
   test('no one else is offered "Write chapter 1"', async () => {

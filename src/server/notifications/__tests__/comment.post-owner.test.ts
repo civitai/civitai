@@ -20,9 +20,10 @@ describe('new-post-comment', () => {
       clickhouse: undefined,
     }) as string;
 
-  it('notifies the post owner off the postId thread join', () => {
-    expect(sql()).toContain('JOIN "Thread" t ON t.id = c."threadId" AND t."postId" IS NOT NULL');
-    expect(sql()).toContain('JOIN "Post" p ON p.id = t."postId"');
+  it('notifies the post owner of a top-level post comment', () => {
+    expect(sql()).toContain(`c."entityType" = 'post'`);
+    expect(sql()).toContain('c."parentId" IS NULL');
+    expect(sql()).toContain('JOIN "Post" p ON p.id = c."entityId"');
     expect(sql()).toContain('p."userId" "ownerId"');
   });
 

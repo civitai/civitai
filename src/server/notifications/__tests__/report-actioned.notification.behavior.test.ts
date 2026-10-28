@@ -30,6 +30,7 @@ beforeAll(async () => {
     CREATE TABLE "ModelReport" ("reportId" int);
     CREATE TABLE "CommentReport" ("reportId" int);
     CREATE TABLE "CommentV2Report" ("reportId" int);
+    CREATE TABLE "CommentV3Report" ("reportId" int);
     CREATE TABLE "ArticleReport" ("reportId" int);
     CREATE TABLE "PostReport" ("reportId" int);
     CREATE TABLE "CollectionReport" ("reportId" int);

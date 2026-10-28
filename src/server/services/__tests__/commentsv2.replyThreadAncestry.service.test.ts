@@ -23,7 +23,7 @@ beforeEach(() => {
 
   db.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
     const sql = strings.join('?');
-    if (sql.includes('muteable_threads')) return [{ id: 0, rooted: true }];
+    if (sql.includes('thread_ancestors')) return [{ id: 0, rooted: true }];
     if (sql.includes('RECURSIVE chain')) return [{ locked: false, unresolved: false }];
     return [];
   });

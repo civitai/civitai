@@ -9,9 +9,10 @@ import {
   Skeleton,
   Tooltip,
 } from '@mantine/core';
-import { useHotkeys, useReducedMotion } from '@mantine/hooks';
+import { readLocalStorageValue, useHotkeys, useReducedMotion } from '@mantine/hooks';
 import type { HotkeyItem } from '@mantine/hooks';
 import {
+  IconMaximize,
   IconPlayerSkipForward,
   IconPhotoOff,
   IconRefresh,
@@ -23,12 +24,15 @@ import { LazyMotion } from 'motion/react';
 import { div as MotionDiv, span as MotionSpan } from 'motion/react-m';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { GLOBAL_VOLUME_KEY } from '~/components/EdgeMedia/EdgeVideo';
 import {
   JudgeReactionBar,
   type JudgeReactionBarProps,
 } from '~/components/Crucible/JudgeReactionBar';
+import { CrucibleReportButton } from '~/components/Crucible/CrucibleReportButton';
 import { useHydratedImageReactions } from '~/components/Reaction/useHydratedImageReactions';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useHasCoarsePointer } from '~/hooks/useIsMobile';
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 import { MediaType } from '~/shared/utils/prisma/enums';
@@ -512,6 +516,8 @@ function ImageCard({
     }
   };
 
+  const coarsePointer = useHasCoarsePointer();
+
   const lastTimeRef = useRef<number | null>(null);
   const watchedRef = useRef(0);
   // Keyed on the PAIR, not on this entry: pair selection is a random sample that excludes only
@@ -656,8 +662,22 @@ function ImageCard({
           reactions={reactions ?? []}
           reactionsLoaded={reactionsLoaded}
           side={position}
-          // Native video controls own the bottom edge, so the pill sits above them.
-          className={clsx('absolute right-2.5 z-10', isVideo ? 'bottom-[60px]' : 'bottom-2.5')}
+          // Desktop video shows native controls along the bottom edge, so the pill sits above them.
+          className={clsx(
+            'absolute right-2.5 z-10',
+            isVideo && !coarsePointer ? 'bottom-[60px]' : 'bottom-2.5'
+          )}
+        />
+
+        <CrucibleReportButton
+          imageId={entry.image.id}
+          side={position}
+          // Video's sound (and, on touch, fullscreen) buttons own the top-right corner, so the
+          // flag sits left of them.
+          className={clsx(
+            'absolute top-2.5 z-10',
+            !isVideo ? 'right-2.5' : coarsePointer ? 'right-[112px]' : 'right-[60px]'
+          )}
         />
 
         {plusOneId != null && (
@@ -675,6 +695,18 @@ function ImageCard({
       </Box>
     </Paper>
   );
+}
+
+/**
+ * EdgeVideo keeps the level in `global-volume` but only reads it after hydrating, so a fresh clip
+ * sits at 1.0 and unmuting it makes EdgeVideo save that over the judge's level.
+ */
+function setElementSound(video: HTMLVideoElement, soundOn: boolean) {
+  if (soundOn) {
+    const stored = readLocalStorageValue<number>({ key: GLOBAL_VOLUME_KEY, defaultValue: 0 });
+    if (stored > 0 && stored <= 1) video.volume = stored;
+  }
+  video.muted = !soundOn;
 }
 
 type JudgingMediaProps = {
@@ -711,6 +743,7 @@ function JudgingMedia({
   onTimeUpdate,
 }: JudgingMediaProps) {
   const ref = useRef<HTMLDivElement>(null);
+  const coarsePointer = useHasCoarsePointer();
   const [status, setStatus] = useState<MediaStatus>('loading');
   const isVideo = entry.image.type === MediaType.video;
   const getVideo = () => ref.current?.querySelector('video') ?? null;
@@ -731,7 +764,7 @@ function JudgingMedia({
 
   const applySound = useCallback(() => {
     const video = ref.current?.querySelector('video');
-    if (video) video.muted = !soundOn;
+    if (video) setElementSound(video, soundOn);
   }, [soundOn]);
   useEffect(applySound, [applySound]);
 
@@ -788,8 +821,42 @@ function JudgingMedia({
     if (e.pointerType !== 'mouse' || sequencing || paused) return;
     const video = getVideo();
     if (!video) return;
-    video.muted = !soundOn;
+    setElementSound(video, soundOn);
     play(video);
+  };
+
+  const handleTap = (e: React.MouseEvent) => {
+    const video = getVideo();
+    // Fullscreen's native controls handle taps; toggling here too would double-toggle.
+    if (!video || e.target !== video || video.controls) return;
+    if (video.paused) play(video);
+    else video.pause();
+  };
+
+  useEffect(() => {
+    const video = getVideo();
+    if (!video || !coarsePointer || status !== 'loaded') return;
+    const exit = () => {
+      video.controls = false;
+    };
+    const onFullscreenChange = () => {
+      if (!document.fullscreenElement) exit();
+    };
+    document.addEventListener('fullscreenchange', onFullscreenChange);
+    video.addEventListener('webkitendfullscreen', exit);
+    return () => {
+      document.removeEventListener('fullscreenchange', onFullscreenChange);
+      video.removeEventListener('webkitendfullscreen', exit);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `getVideo` only reads the ref
+  }, [coarsePointer, status]);
+
+  const enterFullscreen = () => {
+    const video = getVideo() as (HTMLVideoElement & { webkitEnterFullscreen?: () => void }) | null;
+    if (!video) return;
+    video.controls = true;
+    if (video.requestFullscreen) video.requestFullscreen().catch(() => undefined);
+    else video.webkitEnterFullscreen?.();
   };
 
   const handlePointerLeave = (e: React.PointerEvent) => {
@@ -817,6 +884,7 @@ function JudgingMedia({
       onErrorCapture={handleError}
       onPlayCapture={isVideo ? () => onPlay(side) : undefined}
       onVolumeChangeCapture={isVideo ? handleVolumeChange : undefined}
+      onClick={isVideo && coarsePointer ? handleTap : undefined}
       onPointerEnter={isVideo ? handlePointerEnter : undefined}
       onPointerLeave={isVideo ? handlePointerLeave : undefined}
     >
@@ -826,9 +894,9 @@ function JudgingMedia({
         // Off for video, where it autoplays every clip in view: a judge plays one at a time.
         anim={!isVideo}
         muted
-        // Native rather than EdgeVideo's own bar, which has no seek control — judging a clip
-        // means re-watching a moment, not just replaying it from the top.
-        html5Controls
+        // Native rather than EdgeVideo's own bar, which has no seek control (judges re-watch moments).
+        // Off on touch screens, where the native bar covers most of the clip; fullscreen turns it on.
+        html5Controls={!coarsePointer}
         width={600}
         // EdgeImage caps maxWidth at the requested width, which pinned a narrower image
         // to the left of its box instead of centring it.
@@ -881,18 +949,33 @@ function JudgingMedia({
       )}
 
       {isVideo && status === 'loaded' && (
-        <ActionIcon
-          className="absolute right-2 top-2 z-10 bg-black/60 hover:bg-black/80"
-          size={44}
-          radius="xl"
-          variant="filled"
-          color="dark"
-          aria-label={soundOn ? 'Mute clips' : 'Unmute clips'}
-          aria-pressed={soundOn}
-          onClick={() => onSoundChange(!soundOn)}
-        >
-          {soundOn ? <IconVolume size={24} /> : <IconVolumeOff size={24} />}
-        </ActionIcon>
+        <div className="absolute right-2 top-2 z-10 flex gap-2">
+          {coarsePointer && (
+            <ActionIcon
+              className="bg-black/60 hover:bg-black/80"
+              size={44}
+              radius="xl"
+              variant="filled"
+              color="dark"
+              aria-label="Fullscreen"
+              onClick={enterFullscreen}
+            >
+              <IconMaximize size={24} />
+            </ActionIcon>
+          )}
+          <ActionIcon
+            className="bg-black/60 hover:bg-black/80"
+            size={44}
+            radius="xl"
+            variant="filled"
+            color="dark"
+            aria-label={soundOn ? 'Mute clips' : 'Unmute clips'}
+            aria-pressed={soundOn}
+            onClick={() => onSoundChange(!soundOn)}
+          >
+            {soundOn ? <IconVolume size={24} /> : <IconVolumeOff size={24} />}
+          </ActionIcon>
+        </div>
       )}
     </div>
   );

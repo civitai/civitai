@@ -15,6 +15,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { type ClassifiableException, classifyException } from '~/utils/faro/classifyException';
 import { buildRumGeoAttributes } from '~/utils/faro/geoAttributes';
 import { buildRumExperimentAttributes } from '~/utils/faro/experimentFlags';
+import { buildRumPageAttributes } from '~/utils/faro/pageAttributes';
 import { deepRedact } from '~/utils/faro/redact';
 import { resolveFaroSampling } from '~/utils/faro/traceSampler';
 import { buildResourceTimingInstrumentations } from './ResourceTimingInstrumentation';
@@ -195,9 +196,16 @@ interface InitFaroOptions {
    * no session falls out of a Loki logfmt grouping. See geoAttributes.ts.
    */
   geoAttributes: Record<string, string>;
+  /** Per-document `render_mode` / `viewer` page attributes; see pageAttributes.ts. */
+  pageAttributes: Record<string, string>;
 }
 
-function initFaro({ resourceTimingCohort, experimentAttributes, geoAttributes }: InitFaroOptions) {
+function initFaro({
+  resourceTimingCohort,
+  experimentAttributes,
+  geoAttributes,
+  pageAttributes,
+}: InitFaroOptions) {
   if (faroInitStarted) return;
   if (typeof window === 'undefined') return;
   if ((window as unknown as Record<string, unknown>)[WINDOW_GUARD_KEY]) return;
@@ -267,6 +275,8 @@ function initFaro({ resourceTimingCohort, experimentAttributes, geoAttributes }:
         ? { session: { attributes: sessionAttributes } }
         : {}),
     },
+    // Per-document page attributes (→ Loki `page_attr_*`); see pageAttributes.ts.
+    pageTracking: { page: { attributes: pageAttributes } },
     // Error-storm guard: drop known browser noise so a broken deploy can't turn every
     // session into a flood.
     ignoreErrors: [
@@ -328,7 +338,16 @@ function initFaro({ resourceTimingCohort, experimentAttributes, geoAttributes }:
   });
 }
 
-export function FaroProvider({ region }: { region?: string | null }) {
+export function FaroProvider({
+  region,
+  shell,
+  signedIn,
+}: {
+  region?: string | null;
+  /** The hard load's render mode and viewer, frozen by `_app`; see pageAttributes.ts. */
+  shell: boolean;
+  signedIn: boolean;
+}) {
   const features = useFeatureFlags();
   const enabled = env.NEXT_PUBLIC_FARO_ENABLED && !!features.faro;
 
@@ -339,6 +358,7 @@ export function FaroProvider({ region }: { region?: string | null }) {
           resourceTimingCohort: !!features.faroResourceTiming,
           experimentAttributes: buildRumExperimentAttributes(features),
           geoAttributes: buildRumGeoAttributes(region),
+          pageAttributes: buildRumPageAttributes({ shell, signedIn }),
         });
         // If a prior transition paused an already-initialised instance, resume it.
         if (faroInitStarted) faro?.unpause?.();

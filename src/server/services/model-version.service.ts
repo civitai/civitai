@@ -1,4 +1,10 @@
 import { Prisma } from '@prisma/client';
+import {
+  contentKeptError,
+  deleteUnlessHeld,
+  ownerHeld,
+  ownerHeldSql,
+} from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
@@ -30,12 +36,19 @@ import {
   SearchIndexUpdateQueueAction,
 } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { readDownedVersion } from '~/server/services/model-takedown-lock';
 import {
   getDbWithoutLag,
+  getKyselyWithoutLag,
   preventModelVersionLag,
   preventModelVersionLagBatch,
   preventReplicationLag,
 } from '~/server/db/db-lag-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readDefaultModelVersionsViaKysely,
+  readDefaultModelVersionsViaPrisma,
+} from '~/server/services/hot-reads-3.reads';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache, modelVersionAccessCache } from '~/server/redis/caches';
@@ -240,25 +253,17 @@ export const getDefaultModelVersion = async ({
   userId?: number;
   isModerator?: boolean;
 }) => {
-  const db = await getDbWithoutLag('model', modelId);
-  const result = await db.model.findUnique({
-    where: { id: modelId },
-    select: {
-      modelVersions: {
-        take: 10,
-        where: modelVersionId ? { id: modelVersionId } : undefined,
-        orderBy: { index: 'asc' },
-        select: {
-          id: true,
-          status: true,
-          publishedAt: true,
-          model: { select: { id: true, userId: true, availability: true, status: true } },
-          availability: true,
-          trainingStatus: true,
-        },
-      },
-    },
-  });
+  // `kysely-hot-reads-3` on: the same read in one Kysely statement instead of three Prisma queries,
+  // on the client the same lag decision picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
+  const result = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_3))
+    ? await readDefaultModelVersionsViaKysely(await getKyselyWithoutLag('model', modelId), {
+        modelId,
+        modelVersionId,
+      })
+    : await readDefaultModelVersionsViaPrisma(await getDbWithoutLag('model', modelId), {
+        modelId,
+        modelVersionId,
+      });
 
   if (!result) throw throwNotFoundError();
 
@@ -383,9 +388,16 @@ export async function assertUserEarlyAccessLimits({
       (!!existing?.initialPublishedAt && existing.initialPublishedAt <= new Date()) ||
       existing?.status === ModelStatus.Published;
     if (everPublished) {
-      const gate = (await getPaidAccess('ModelVersion', [versionId]))[versionId];
+      // The primary, not getPaidAccess's hour-old cache: writeModelVersionGateAndGoal decides from the
+      // primary whether to rewrite this gate, and the two must agree on which row they are looking at.
+      const gate = await dbWrite.paidAccess.findUnique({
+        where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
+        select: { timeframeDays: true, endsAt: true },
+      });
       const hasActiveTimedGate =
         !!gate && gate.timeframeDays != null && (gate.endsAt == null || gate.endsAt > new Date());
+      // writeModelVersionGateAndGoal leaves this gate as it is, so there is no window to cap.
+      if (gate && isEndedTimedGateResubmitted(gate, { timeframeDays })) return;
       if (!hasActiveTimedGate)
         throw throwBadRequestError(
           "Early access can't be started on a version that has already been published."
@@ -455,16 +467,43 @@ export const getLicensingRoots = async ({
   return { roots, defaultVersionId };
 };
 
+// An edit form reloads an ended window's row and sends it back with the rest of the version. Writing it
+// would recompute endsAt from publishedAt, which the ending job has moved to the expiry, and so restart
+// the paywall. Judged on the server clock: a client clock must never decide that a gate has ended.
+export function isEndedTimedGateResubmitted(
+  stored: { timeframeDays?: number | null; endsAt: Date | null },
+  input: { permanent?: boolean; timeframeDays?: number | null },
+  now: Date = new Date()
+) {
+  return (
+    stored.timeframeDays != null &&
+    stored.endsAt != null &&
+    stored.endsAt <= now &&
+    !input.permanent &&
+    input.timeframeDays === stored.timeframeDays
+  );
+}
+
 // Shared tail of both upsertModelVersion branches: write the gate + (optional) donation goal natively,
 // then invalidate the derived caches. Kept out of the version write's transaction deliberately.
+// Returns whether the stored gate was kept as it was (see isEndedTimedGateResubmitted).
 async function writeModelVersionGateAndGoal(
   version: { id: number; modelId: number },
   ownerId: number,
   paidAccess: ModelVersionPaidAccessInputSchema | null | undefined,
   donationGoal: { amount: number } | null | undefined
 ) {
-  await writePaidAccessForModelVersion(version.id, paidAccess ?? null);
-  if (donationGoal)
+  const stored = paidAccess
+    ? await dbWrite.paidAccess.findUnique({
+        where: { entityType_entityId: { entityType: 'ModelVersion', entityId: version.id } },
+        select: { timeframeDays: true, endsAt: true },
+      })
+    : null;
+  const keptGate = !!stored && !!paidAccess && isEndedTimedGateResubmitted(stored, paidAccess);
+
+  if (!keptGate) await writePaidAccessForModelVersion(version.id, paidAccess ?? null);
+  // A goal ends a running window early; an ended one has nothing left to end.
+  if (donationGoal && !keptGate)
     await ensureDonationGoal({
       entityType: 'ModelVersion',
       entityId: version.id,
@@ -477,6 +516,7 @@ async function writeModelVersionGateAndGoal(
     bustMvCache(version.id, version.modelId),
     dataForModelsCache.refresh(version.modelId),
   ]);
+  return keptGate;
 }
 
 // Entity-change audit shapes (docs/entity-change-tracking-plan.md): normalize the
@@ -1183,7 +1223,12 @@ export const upsertModelVersion = async ({
     );
 
     const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
-    await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
+    const keptGate = await writeModelVersionGateAndGoal(
+      version,
+      model.userId,
+      paidAccess,
+      donationGoal
+    );
 
     if (tracker) {
       const changeRows = diffEntityChanges({
@@ -1201,7 +1246,7 @@ export const upsertModelVersion = async ({
           ...data,
           // Mirror the write semantics above: paidAccess + monetization are always
           // applied (absent input = gate cleared / monetization deleted).
-          paidAccess: toPaidAccessAuditState(paidAccess),
+          paidAccess: keptGate ? paidAccessBefore : toPaidAccessAuditState(paidAccess),
           monetization: toMonetizationAuditShape(monetization),
         },
         actorRole: resolveActorRole({
@@ -1378,7 +1423,7 @@ export const updateModelVersionPaidAccess = async ({
   const paidAccessBefore = tracker ? await readPaidAccessAuditState(id) : null;
   // Native: paid access + donation goal are written directly (a published version's existing goal is
   // never replaced — ensureDonationGoal is create-once). Shares upsertModelVersion's write+bust tail.
-  await writeModelVersionGateAndGoal(
+  const keptGate = await writeModelVersionGateAndGoal(
     { id, modelId },
     existingVersion.model.userId,
     paidAccess,
@@ -1388,7 +1433,8 @@ export const updateModelVersionPaidAccess = async ({
   // After the gate write, so a failed write can't leave the version marked as having affirmed a price
   // it never got. Merged in SQL rather than read-modify-write: `meta` is shared with moderation flags
   // (needsReview / declinedReason), and rewriting the whole object would clobber a concurrent change.
-  if (rightsAffirmation)
+  // A kept gate applied no price, so there is nothing affirmed.
+  if (rightsAffirmation && !keptGate)
     await dbWrite.$executeRaw`
       UPDATE "ModelVersion"
       SET meta = ${asJsonbObjectSql('meta')} || ${JSON.stringify({ rightsAffirmation })}::jsonb
@@ -1401,7 +1447,7 @@ export const updateModelVersionPaidAccess = async ({
       entityId: id,
       ownerId: existingVersion.model.userId,
       before: { paidAccess: paidAccessBefore },
-      after: { paidAccess: toPaidAccessAuditState(paidAccess) },
+      after: { paidAccess: keptGate ? paidAccessBefore : toPaidAccessAuditState(paidAccess) },
       actorRole: resolveActorRole({
         actorUserId: actorUserId ?? 0,
         ownerId: existingVersion.model.userId,
@@ -1460,6 +1506,13 @@ async function purgeModelVersionByHashCacheById(modelVersionId: number) {
   });
   await purgeModelVersionByHashCache(hashes.map((h) => h.hash));
 }
+
+/** The versions `ids` with their model owner as `m."userId"`, for `deleteUnlessHeld`. */
+const versionOwnerSql = (ids: number[]) => Prisma.sql`
+  FROM "ModelVersion" mv
+  JOIN "Model" m ON m.id = mv."modelId"
+  WHERE mv.id = ANY(${ids}::int[])
+`;
 
 export const deleteVersionById = async ({
   id,
@@ -1536,7 +1589,20 @@ export const deleteVersionById = async ({
       where: { entityType: 'ModelVersion', entityId: id },
     });
 
-    const deleted = await tx.modelVersion.delete({ where: { id } });
+    // The caller returns the whole row, so it is read here, under the lock taken above.
+    const deleted = await tx.modelVersion.findUniqueOrThrow({ where: { id } });
+    // A held owner's version is refused, and the throw rolls back the access rows removed above.
+    const outcome = await deleteUnlessHeld(
+      tx.$executeRaw`
+        DELETE FROM "ModelVersion" mv
+        USING "Model" m
+        WHERE mv.id = ${id}
+          AND m.id = mv."modelId"
+          AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+      `,
+      { expected: 1, isModerator, db: tx, ownerFrom: versionOwnerSql([id]) }
+    );
+    if (outcome === 'short') throw throwNotFoundError(`No model version with id ${id}`);
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
 
     return deleted;
@@ -1645,7 +1711,12 @@ export const deleteVersionById = async ({
 export const updateModelVersionById = async ({
   id,
   data,
-}: GetByIdInput & { data: Prisma.ModelVersionUpdateInput }) => {
+  enforceTakedown,
+}: GetByIdInput & {
+  data: Prisma.ModelVersionUpdateInput;
+  /** Refuse a version, or a version of a model, a moderator took down: true for everyone but moderators. Required, so no caller skips it by omission. */
+  enforceTakedown: boolean;
+}) => {
   // Check if trying to publish a model version when model is marked as cannotPublish
   if (data.status === ModelStatus.Published) {
     const modelVersion = await dbWrite.modelVersion.findUniqueOrThrow({
@@ -1673,6 +1744,8 @@ export const updateModelVersionById = async ({
   const restData = publishedAt !== undefined ? { ...data, publishedAt: undefined } : data;
 
   const result = await dbWrite.$transaction(async (tx) => {
+    if (enforceTakedown && (await readDownedVersion(tx, id, 'update')))
+      throw throwAuthorizationError('You are not authorized to publish this model version');
     const updated = await tx.modelVersion.update({ where: { id }, data: restData });
     if (publishedAt !== undefined) {
       const writeCount = await tx.$executeRaw`
@@ -1858,9 +1931,12 @@ export const publishModelVersionById = async ({
   publishedAt,
   meta,
   republishing,
+  enforceTakedown,
 }: PublishVersionInput & {
   meta?: ModelVersionMeta;
   republishing?: boolean;
+  /** Refuse a version, or a version of a model, a moderator took down: true for everyone but moderators. Required, so no caller skips it by omission. */
+  enforceTakedown: boolean;
 }) => {
   let status: ModelStatus = ModelStatus.Published;
   if (publishedAt && publishedAt > new Date()) status = ModelStatus.Scheduled;
@@ -1933,6 +2009,13 @@ export const publishModelVersionById = async ({
 
   const version = await dbWrite.$transaction(
     async (tx) => {
+      // Re-checked here, under a lock, because the caller's check ran before this transaction and
+      // a takedown can land in between. Locked even when not enforced: it takes the model before
+      // the version, and the writes below would otherwise take them the other way round.
+      const downed = await readDownedVersion(tx, id, 'update');
+      if (enforceTakedown && downed)
+        throw throwAuthorizationError('You are not authorized to publish this model version');
+
       let updatedVersion;
       if (status === ModelStatus.Published && paidAccessGate) {
         // Materialize the timed gate's endsAt from the publish timestamp (see the EA publish path).
@@ -3516,6 +3599,10 @@ export const mergeVersions = async ({
     }
   }
 
+  // Checked again in the delete below; this only spares a held owner the long transaction.
+  if (await ownerHeld(dbWrite, Prisma.sql`FROM "Model" m WHERE m.id = ${modelId}`))
+    throw contentKeptError(false);
+
   // Populated inside the tx after files are moved to the target — captures any
   // file row that slipped past the move and would be orphaned by the cascade.
   let sourceFileUrls: string[] = [];
@@ -3531,6 +3618,8 @@ export const mergeVersions = async ({
         ORDER BY id
         FOR UPDATE
       `;
+      if (runs.length !== new Set([targetVersionId, ...sourceVersionIds]).size)
+        throw throwNotFoundError('One or more versions to merge no longer exist.');
       const sourceRuns = runs.filter((r) => sourceVersionIds.includes(r.id));
       const lockedSource = sourceRuns.find(
         (r) => r.trainingStatus && versionRemovalLockedTrainingStatuses.includes(r.trainingStatus)
@@ -3812,9 +3901,24 @@ export const mergeVersions = async ({
       await tx.paidAccess.deleteMany({
         where: { entityType: 'ModelVersion', entityId: { in: sourceVersionIds } },
       });
-      await tx.modelVersion.deleteMany({
-        where: { id: { in: sourceVersionIds } },
-      });
+      // A held owner's merge is refused, and the throw rolls back the whole merge.
+      const outcome = await deleteUnlessHeld(
+        tx.$executeRaw`
+          DELETE FROM "ModelVersion" mv
+          USING "Model" m
+          WHERE mv.id = ANY(${sourceVersionIds}::int[])
+            AND m.id = mv."modelId"
+            AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+        `,
+        {
+          expected: new Set(sourceVersionIds).size,
+          isModerator: false,
+          db: tx,
+          ownerFrom: versionOwnerSql(sourceVersionIds),
+        }
+      );
+      if (outcome === 'short')
+        throw throwNotFoundError('One or more source versions no longer exist.');
 
       // 13. Update the model's lastVersionAt
       await updateModelLastVersionAt({ id: modelId, tx });

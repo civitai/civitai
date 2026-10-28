@@ -1,4 +1,5 @@
 import { showErrorNotification } from '~/utils/notifications';
+import { dealQueryError } from '~/components/CreatorShop/Services/deals/deal-ui';
 import { trpc } from '~/utils/trpc';
 import type { RouterOutput } from '~/types/router';
 
@@ -10,12 +11,29 @@ type TrpcishError = { message: string; data?: { code?: string } | null };
 export const isConflict = (error: unknown) =>
   (error as TrpcishError | null)?.data?.code === 'CONFLICT';
 
+/**
+ * The app default is `staleTime: Infinity` with no refetch on focus, so a deal page or list that
+ * was already cached kept its old data until a hard reload. The other party changes a deal
+ * (delivers a round, sends a request) without this client's mutations ever running, so these
+ * queries refetch on every open and on tab refocus.
+ */
+export const DEAL_FRESHNESS = {
+  staleTime: 0,
+  refetchOnMount: 'always',
+  refetchOnWindowFocus: true,
+} as const;
+
 export function useServiceDeal(id: number) {
-  const { data, isLoading, refetch } = trpc.creatorServiceDeal.get.useQuery(
+  const { data, isLoading, error, refetch } = trpc.creatorServiceDeal.get.useQuery(
     { id },
-    { enabled: id > 0, retry: false }
+    { enabled: id > 0, retry: false, ...DEAL_FRESHNESS }
   );
-  return { deal: data, isLoading, refetch };
+  return {
+    deal: data,
+    isLoading,
+    error: dealQueryError(error),
+    refetch,
+  };
 }
 
 export function useMyServiceDeals({
@@ -30,7 +48,7 @@ export function useMyServiceDeals({
   const { data, isLoading, fetchNextPage, hasNextPage, isFetchingNextPage } =
     trpc.creatorServiceDeal.listMine.useInfiniteQuery(
       { role, status, limit: 20 },
-      { enabled, getNextPageParam: (last) => last.nextCursor }
+      { enabled, getNextPageParam: (last) => last.nextCursor, ...DEAL_FRESHNESS }
     );
   return {
     deals: data?.pages.flatMap((page) => page.items) ?? [],

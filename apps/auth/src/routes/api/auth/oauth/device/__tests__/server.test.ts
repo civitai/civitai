@@ -279,6 +279,16 @@ describe('device authorization — client_credentials-only scopes', () => {
     expect(h.hSet).not.toHaveBeenCalled();
   });
 
+  it('rejects WorkerRegister even when the client ceiling carries it', async () => {
+    h.clientRow = clientRow(TokenScope.UserRead | TokenScope.WorkerRegister);
+    const res = await POST(
+      makeEvent({ client_id: 'civitai-cli', scope: String(TokenScope.WorkerRegister) })
+    );
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.hSet).not.toHaveBeenCalled();
+  });
+
   it('still accepts the rest of that ceiling (positive control)', async () => {
     h.clientRow = clientRow(TokenScope.UserRead | TokenScope.AppStoreCatalogWrite);
     const res = await POST(makeEvent({ client_id: 'civitai-cli', scope: '1' }));

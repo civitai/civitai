@@ -144,6 +144,10 @@ export type BaseModelRecord = {
 // Ecosystem Constants
 // =============================================================================
 
+/** The upscaler used when none is picked: CivitaiOfficial's copy of Remacri, so it carries no creator fee. */
+export const DEFAULT_UPSCALER = { modelId: 3022421, versionId: 3432055 } as const;
+export const DEFAULT_UPSCALER_AIR = `urn:air:other:upscaler:civitai:${DEFAULT_UPSCALER.modelId}@${DEFAULT_UPSCALER.versionId}`;
+
 export const ECO = {
   // Root ecosystems - Image models
   SD1: 1,
@@ -1858,7 +1862,7 @@ export const ecosystemSettings: EcosystemSettings[] = [
   {
     ecosystemId: ECO.Other,
     defaults: {
-      model: { id: 164821 },
+      model: { id: DEFAULT_UPSCALER.versionId },
     },
   },
   {

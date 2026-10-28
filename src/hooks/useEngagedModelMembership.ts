@@ -8,6 +8,7 @@ import {
   initEngagedModelsPersistence,
 } from '~/store/engaged-models.persist';
 import { trpcVanilla } from '~/utils/trpc';
+import { scheduleBatcherFlush } from '~/utils/trpc-batch-window';
 
 /**
  * Batched dataloader for engagement membership (PR2). Components register the
@@ -61,13 +62,14 @@ function dropStateFromAnEarlierGeneration() {
 
 /**
  * Test/injection seam. Production uses the vanilla tRPC client + an ~80ms
- * debounce flush; tests swap in a controllable fetcher and a synchronous
+ * debounce flush (which, while `trpcUnifiedBatchWindow` applies, then waits for the
+ * shared batch window to close); tests swap in a controllable fetcher and a synchronous
  * scheduler. `schedule` returns void so a test override may return void too.
  */
 export const engagedMembershipBatcher = {
   fetch: (modelIds: number[]) => trpcVanilla.user.getEngagedModelsByIds.query({ modelIds }),
   schedule: (cb: () => void): void => {
-    setTimeout(cb, ENGAGED_MEMBERSHIP_DEBOUNCE_MS);
+    scheduleBatcherFlush(cb, ENGAGED_MEMBERSHIP_DEBOUNCE_MS);
   },
   scheduleRetry: (cb: () => void): void => {
     setTimeout(cb, ENGAGED_MEMBERSHIP_RETRY_MS);

@@ -1,4 +1,5 @@
 import {
+  Alert,
   Anchor,
   Badge,
   Button,
@@ -13,7 +14,7 @@ import {
   ThemeIcon,
   Title,
 } from '@mantine/core';
-import { IconDots, IconLock, IconPlus } from '@tabler/icons-react';
+import { IconDots, IconEyeOff, IconLock, IconPlus } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
@@ -23,6 +24,7 @@ import {
   useMutateMyServices,
   useQueryMyServices,
 } from '~/components/CreatorShop/Services/creator-service.util';
+import { PublishServiceModal } from '~/components/CreatorShop/Services/SellerAffirmation';
 import { ServiceOfferingFormModal } from '~/components/CreatorShop/Services/ServiceOfferingFormModal';
 import { ServiceDealsList } from '~/components/CreatorShop/Services/deals/ServiceDealsList';
 import { ServiceRatingBadge } from '~/components/CreatorShop/Services/ServiceRatingBadge';
@@ -42,8 +44,23 @@ const statusBadge: Record<ServiceOfferingStatus, { color: string; label: string 
 const openForm = (offering?: ServiceOffering) =>
   dialogStore.trigger({ component: ServiceOfferingFormModal, props: { offering } });
 
-export function ManageServicesPanel() {
-  const { eligibility, offerings, hiddenOffDomain, isLoading } = useQueryMyServices(true);
+export type ShopPublishState = { onPublish: () => void; publishing: boolean };
+
+/**
+ * `unpublishedShop` is set only while the seller's Creator Shop is known to be a draft.
+ * `servicesEnabled` false is a seller without the services flag: they can only pause and remove.
+ */
+export function ManageServicesPanel({
+  unpublishedShop,
+  servicesEnabled = true,
+}: {
+  unpublishedShop?: ShopPublishState;
+  servicesEnabled?: boolean;
+}) {
+  const { eligibility, offerings, hiddenOffDomain, isLoading } = useQueryMyServices(
+    true,
+    servicesEnabled
+  );
   const router = useRouter();
   const redDomain = useServerDomains().red;
   const syncAccount = useSyncAccount();
@@ -74,6 +91,12 @@ export function ManageServicesPanel() {
       </Group>
 
       {eligibility && !canSell && <SellGate eligibility={eligibility} />}
+      {!servicesEnabled && (
+        <Text size="sm" c="dimmed">
+          Services aren&apos;t open to your account right now. You can still pause or remove your
+          services and finish your open deals.
+        </Text>
+      )}
 
       <Stack gap="xs">
         <Title order={3}>Incoming requests</Title>
@@ -89,7 +112,12 @@ export function ManageServicesPanel() {
       {offerings.length > 0 && (
         <Stack gap="sm">
           {offerings.map((offering) => (
-            <OfferingRow key={offering.id} offering={offering} canSell={canSell} />
+            <OfferingRow
+              key={offering.id}
+              offering={offering}
+              canSell={canSell}
+              unpublishedShop={unpublishedShop}
+            />
           ))}
         </Stack>
       )}
@@ -144,7 +172,15 @@ function SellGate({
   );
 }
 
-function OfferingRow({ offering, canSell }: { offering: ServiceOffering; canSell: boolean }) {
+function OfferingRow({
+  offering,
+  canSell,
+  unpublishedShop,
+}: {
+  offering: ServiceOffering;
+  canSell: boolean;
+  unpublishedShop?: ShopPublishState;
+}) {
   const { setStatus, remove } = useMutateMyServices();
   const domain = useDomainColor();
   const badge = statusBadge[offering.status];
@@ -204,7 +240,14 @@ function OfferingRow({ offering, canSell }: { offering: ServiceOffering; canSell
               ) : (
                 canSell && (
                   <Menu.Item
-                    onClick={() => setStatus.mutate({ id: offering.id, status: 'Active' })}
+                    onClick={() =>
+                      offering.termsAffirmed
+                        ? setStatus.mutate({ id: offering.id, status: 'Active' })
+                        : dialogStore.trigger({
+                            component: PublishServiceModal,
+                            props: { offering },
+                          })
+                    }
                   >
                     Publish
                   </Menu.Item>
@@ -217,6 +260,21 @@ function OfferingRow({ offering, canSell }: { offering: ServiceOffering; canSell
           </Menu>
         </Group>
       </Group>
+      {isActive && unpublishedShop && (
+        <Alert color="yellow" icon={<IconEyeOff size={18} />} p="xs" mt="sm">
+          <Group justify="space-between" wrap="nowrap" gap="sm">
+            <Text size="sm">Buyers can&apos;t see this until you publish your shop.</Text>
+            <Button
+              size="compact-sm"
+              color="yellow"
+              loading={unpublishedShop.publishing}
+              onClick={unpublishedShop.onPublish}
+            >
+              Publish shop
+            </Button>
+          </Group>
+        </Alert>
+      )}
     </Paper>
   );
 }

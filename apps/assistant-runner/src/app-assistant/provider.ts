@@ -28,12 +28,13 @@ import {
 import type { ChatToolResult, RunPageState } from '@civitai/components-chat/runner-protocol';
 import type { ToolSet } from 'ai';
 
-import type { Logger, OpenTools, ToolContext, ToolProvider } from '../interfaces';
+import type { Logger, OpenTools, ToolContext, ToolProvider } from '../core/interfaces';
 import { MintRefusedError, type TokenSource } from '../minter';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 import { toolResultsOf } from './history';
 import { RunnerPreview, type AutoPreview } from './preview';
 import { AppSandbox } from './sandbox';
+import { SdkUpgrades } from './sdk-pin';
 
 /**
  * What App Assistant's page says about itself as a reply starts (`remoteRunner.pageState`): the key
@@ -107,6 +108,10 @@ export interface AppAssistantToolsOptions {
   wakePollMs?: number;
   /** How often a live run keeps its preview alive (`PREVIEW_KEEPALIVE_MS` unless set; tests). */
   previewKeepaliveMs?: number;
+  /** How long a reply's start waits for the app's `package.json` (`SDK_PIN_READ_TIMEOUT_MS`; tests). */
+  sdkPinReadTimeoutMs?: number;
+  /** The `@civitai/sdk` upgrade's budget before it is rolled back (`SDK_UPGRADE_TIMEOUT_MS`; tests). */
+  sdkUpgradeTimeoutMs?: number;
 }
 
 /** No dev-tunnel endpoints configured: every start is refused as not set up. */
@@ -127,9 +132,19 @@ const unconfiguredTunnels: DevTunnels = {
  */
 export class AppAssistantTools implements ToolProvider {
   readonly #options: AppAssistantToolsOptions;
+  /** Which conversations' apps had their `@civitai/sdk` upgrade tried: shared by every run. */
+  readonly #sdkUpgrades: SdkUpgrades;
 
   constructor(options: AppAssistantToolsOptions) {
     this.#options = options;
+    this.#sdkUpgrades = new SdkUpgrades({
+      ...(options.sdkPinReadTimeoutMs !== undefined
+        ? { readTimeoutMs: options.sdkPinReadTimeoutMs }
+        : {}),
+      ...(options.sdkUpgradeTimeoutMs !== undefined
+        ? { upgradeTimeoutMs: options.sdkUpgradeTimeoutMs }
+        : {}),
+    });
   }
 
   async open(context: ToolContext): Promise<OpenTools> {
@@ -145,7 +160,9 @@ export class AppAssistantTools implements ToolProvider {
     const sandbox = new AppSandbox({
       client,
       baseUrl: sandboxUrl,
-      token: () => sandboxToken(),
+      // Not ended by a Stop (the mint has its own bound): a Stop does not cut short an upgrade of
+      // the app's packages, which must still finish or roll back (`SdkUpgrades`).
+      token: () => tokens('sandbox'),
       signal,
       log,
       runId,
@@ -210,7 +227,30 @@ export class AppAssistantTools implements ToolProvider {
           ? { keepaliveMs: this.#options.previewKeepaliveMs }
           : {}),
       });
-      if (this.#options.devTunnels) openPreviewAfterDevServer(sandboxTools, preview, context);
+      if (this.#options.devTunnels) {
+        openPreviewAfterDevServer(sandboxTools, preview, context);
+        // The app's preview stays up while the run works, whoever opened it (this run, the page's
+        // Restart preview): a hidden tab sends the tunnel no activity of its own.
+        preview.keepWhileRunning();
+      }
+      // An app on an older @civitai/sdk than the host's is upgraded by the runner itself, before the
+      // assistant's first step, so none of its calls runs meanwhile (never throws; rolls back on failure).
+      const livePreview = preview;
+      const sdkUpgrade = await this.#sdkUpgrades.upgrade({
+        sandbox,
+        // Not listed: its MCP server is not answering (no tools at all), or has no such tool.
+        hasTool: (name) => `sandbox__${name}` in sandboxTools,
+        startDevServer: () => livePreview.startDevServer(),
+        // The install changed files: both gates hear of it as of any command, so checks run again.
+        report: (result) => {
+          core.onToolResult(result);
+          context.report?.(reportOf(result));
+        },
+        conversationId,
+        runId,
+        log,
+        signal,
+      });
       const pageTools: Record<string, ChatTool> = {
         ...appTools.tools,
         ...core.tools,
@@ -267,14 +307,17 @@ export class AppAssistantTools implements ToolProvider {
         },
         // The runner's variant names only tools it has (no web or guide tool, no tunnel).
         rules: assistantSystemPrompt('remote', subagents),
-        instructions: buildAssistantInstructions({
-          sandbox: sandbox.active,
-          apps: (apps ?? []).map((s) => s.app),
-          // civitai judges the dev-tunnel gates at `start_preview`; a refusal says to go without it.
-          canPreview: true,
-          previewHost: null,
-          runner: 'remote',
-        }),
+        instructions: [
+          buildAssistantInstructions({
+            sandbox: sandbox.active,
+            apps: (apps ?? []).map((s) => s.app),
+            // civitai judges the dev-tunnel gates at `start_preview`; a refusal says to go without it.
+            canPreview: true,
+            previewHost: null,
+            runner: 'remote',
+          }),
+          ...(sdkUpgrade ? [sdkUpgrade] : []),
+        ].join('\n\n'),
         hostTools: Object.keys(page),
       };
     } catch (error) {

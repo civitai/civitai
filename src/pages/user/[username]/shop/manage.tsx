@@ -42,7 +42,14 @@ function ManageShopPage() {
   const canManage = isOwner || isModerator;
   const features = useFeatureFlags();
   // Services are managed by their seller only; a moderator managing someone else's shop sees cosmetics.
-  const showServicesTab = features.creatorServices && isOwner;
+  const servicesFlag = !!features.creatorServices;
+  const servicesEnabled = servicesFlag && isOwner;
+  // Without the flag the owner keeps the tab while they have services left to pause or remove.
+  const { data: mine } = trpc.creatorService.getMine.useQuery(undefined, {
+    enabled: isOwner && !servicesFlag,
+  });
+  const showServicesTab =
+    servicesEnabled || (isOwner && !!mine && (mine.items.length > 0 || mine.hiddenOffDomain > 0));
   const tab = showServicesTab && router.query.tab === 'services' ? 'services' : 'cosmetics';
   const setTab = (value: string | null) =>
     router.replace(
@@ -107,6 +114,7 @@ function ManageShopPage() {
     <Stack gap="lg" mt="md" pb="xl">
       <ManageHeader
         canAddItems={isOwner}
+        showCosmeticActions={tab === 'cosmetics'}
         targetUserId={manageUserId}
         backHref={`/user/${username}/shop`}
       />
@@ -115,7 +123,7 @@ function ManageShopPage() {
         <PublishShopBanner
           cosmeticCount={items.length}
           cosmeticsLoading={isLoading}
-          servicesCount={showServicesTab}
+          servicesCount={servicesEnabled}
           onEnable={() => updateSettings.mutate({ enabled: true, userId: manageUserId })}
           enabling={updateSettings.isPending}
         />
@@ -129,7 +137,18 @@ function ManageShopPage() {
           </Tabs.List>
           <Tabs.Panel value="cosmetics">{cosmetics}</Tabs.Panel>
           <Tabs.Panel value="services">
-            <ManageServicesPanel />
+            <ManageServicesPanel
+              servicesEnabled={servicesEnabled}
+              unpublishedShop={
+                servicesEnabled && settings && settings.enabled !== true
+                  ? {
+                      onPublish: () =>
+                        updateSettings.mutate({ enabled: true, userId: manageUserId }),
+                      publishing: updateSettings.isPending,
+                    }
+                  : undefined
+              }
+            />
           </Tabs.Panel>
         </Tabs>
       ) : (

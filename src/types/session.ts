@@ -42,6 +42,12 @@ export interface SessionUser {
    * must not take a DB read (feature-flags.service.ts).
    */
   isEarlyAdopter?: boolean;
+  /**
+   * An approved App Access Request, read from `AppAccessRequest` by the auth hub's session producer
+   * (never from settings or client input). `buildFliptContext` emits it as `appBuilderApproved`,
+   * which the `app-builder-approved` Flipt segment matches.
+   */
+  appBuilderApproved?: boolean;
   banDetails?: ReturnType<typeof getUserBanDetails>;
   deletedAt?: Date;
   subscriptions?: UserSubscriptionsByBuzzType; // multi-subscription support per buzzType

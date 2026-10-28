@@ -16,6 +16,8 @@ import {
 } from '~/server/services/placement-space.service';
 import {
   assertCanContinueStoryline,
+  continuationPostSelect,
+  continuationReadiness,
   writeChapterEdgeForPlacement,
 } from '~/server/services/storyline.service';
 import {
@@ -93,51 +95,6 @@ export type StorylinePlacementData = {
   /** ISO time the readiness pass admitted it. Absent on a row that never waited. */
   readyAt?: string;
 };
-
-/** What the refusals and the readiness check read off a continuation post. */
-export const continuationPostSelect = {
-  userId: true,
-  publishedAt: true,
-  nsfwLevel: true,
-  tosViolation: true,
-  storylineChapter: { select: { id: true } },
-  images: {
-    select: { ingestion: true, tosViolation: true, minor: true, poi: true, needsReview: true },
-  },
-} satisfies Prisma.PostSelect;
-
-type ContinuationPost = Prisma.PostGetPayload<{ select: typeof continuationPostSelect }>;
-
-/**
- * Where a continuation post stands.
- *
- * `doomed` is a moderation verdict on the post or any image in it and never
- * passes by waiting. `pending` is a state that resolves on its own: not
- * published, scheduled for later, an image still scanning, or no rating yet.
- * `inReview` is a scanned image a moderator has to look at.
- */
-export function continuationReadiness(
-  post: Pick<ContinuationPost, 'publishedAt' | 'nsfwLevel' | 'tosViolation' | 'images'>,
-  now = new Date()
-): 'doomed' | 'pending' | 'inReview' | 'ready' {
-  if (
-    post.tosViolation ||
-    post.images.some(
-      (image) => image.tosViolation || image.minor || image.poi || image.ingestion === 'Blocked'
-    )
-  )
-    return 'doomed';
-  if (
-    !post.publishedAt ||
-    post.publishedAt > now ||
-    !post.images.length ||
-    post.images.some((image) => image.ingestion !== 'Scanned') ||
-    !post.nsfwLevel
-  )
-    return 'pending';
-  if (post.images.some((image) => image.needsReview != null)) return 'inReview';
-  return 'ready';
-}
 
 /**
  * Submits a continuation to a storyline, priced or not.
@@ -482,9 +439,17 @@ export async function settleStorylineContinuation({
 
       // Locked first, so an answer and the parent's removal take turns: the
       // removal's write waits for this lock, and this read waits for the
-      // removal's commit and then sees it.
-      if (parentPostId)
+      // removal's commit and then sees it. The storyline's shared lock comes
+      // before it, in the order an insert takes the two (`lockStorylineForAdd`).
+      if (parentPostId) {
+        await tx.$queryRaw`
+          SELECT st.id FROM "Storyline" st
+          JOIN "StorylineChapter" c ON c."storylineId" = st.id
+          WHERE c."postId" = ${parentPostId}
+          FOR SHARE OF st
+        `;
         await tx.$queryRaw`SELECT id FROM "StorylineChapter" WHERE "postId" = ${parentPostId} FOR NO KEY UPDATE`;
+      }
       const parent = parentPostId
         ? await tx.storylineChapter.findUnique({
             where: { postId: parentPostId },
@@ -758,32 +723,49 @@ const toSetting = (
 ): PlacementSpaceSetting | undefined =>
   row ? { mode: row.mode as PlacementSpaceMode, price: row.price } : undefined;
 
-/**
- * A storyline's continuation settings, for its creator. Resolved from the storyline's own row and
- * the creator's account rather than through a chapter, so it works before any chapter exists.
- * Complete reads as closed, as it does for a contributor.
- */
-export async function getStorylineSpace({
+async function getManagedStoryline({
   storylineId,
   userId,
+  isModerator,
 }: {
   storylineId: number;
   userId: number;
-}): Promise<StorylineSpace> {
+  isModerator?: boolean;
+}) {
   const storyline = await dbWrite.storyline.findUnique({
     where: { id: storylineId },
     select: { userId: true, status: true },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
-  if (storyline.userId !== userId)
+  if (storyline.userId !== userId && !isModerator)
     throw throwAuthorizationError('placement: that is not your storyline');
+  return storyline;
+}
+
+/**
+ * A storyline's continuation settings, for its creator, or read-only for a moderator. Resolved from
+ * the storyline's own row and the creator's account rather than through a chapter, so it works
+ * before any chapter exists. Complete reads as closed, as it does for a contributor.
+ */
+export async function getStorylineSpace({
+  storylineId,
+  userId,
+  isModerator,
+}: {
+  storylineId: number;
+  userId: number;
+  isModerator?: boolean;
+}): Promise<StorylineSpace> {
+  const storyline = await getManagedStoryline({ storylineId, userId, isModerator });
+  // The owner's account default and price cap, whoever is looking.
+  const ownerId = storyline.userId;
 
   const rows = await dbWrite.placementSpace.findMany({
     where: {
       surface: SURFACE,
       OR: [
         { entityType: 'storyline', entityId: storylineId },
-        { entityType: 'user', entityId: userId },
+        { entityType: 'user', entityId: ownerId },
       ],
     },
     select: { entityType: true, mode: true, price: true },
@@ -793,7 +775,7 @@ export async function getStorylineSpace({
     storyline: toSetting(own),
     user: toSetting(rows.find((row) => row.entityType === 'user')),
   });
-  const { max: cap } = await placementPriceRange(userId, SURFACE);
+  const { max: cap } = await placementPriceRange(ownerId, SURFACE);
 
   return {
     storylineId,
@@ -805,7 +787,10 @@ export async function getStorylineSpace({
   };
 }
 
-/** Writes a storyline's own level of the space. `setPlacementSpace` checks ownership. */
+/**
+ * Writes a storyline's own level of the space, for its owner only: `setPlacementSpace` gives a
+ * moderator no bypass.
+ */
 export async function setStorylineSpace({
   storylineId,
   mode,

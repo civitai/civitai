@@ -105,6 +105,8 @@ import {
   isChallengeHiddenByCoverScan,
   isChallengeHiddenByPoiCover,
   isImageHiddenFromGreenViewer,
+  winnerImageFields,
+  winnerImageStateSql,
 } from '~/server/games/daily-challenge/challenge-visibility';
 import {
   getChallengeExcludedUserIds,
@@ -141,6 +143,7 @@ import {
 } from '~/shared/constants/challenge.constants';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import type { CollectionMetadataSchema } from '~/server/schema/collection.schema';
+import { hasBlockMarker } from '~/server/common/image-visibility';
 import { imageSelect } from '~/server/selectors/image.selector';
 import {
   deriveChallengeNsfwLevel,
@@ -318,7 +321,7 @@ const challengeCardQuery = Prisma.sql`
       c."buzzType",
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
-      COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
+      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) as "commentCount",
       c."nsfwLevel",
       c."allowedNsfwLevel",
       c."modelVersionIds",
@@ -347,12 +350,12 @@ const challengeCardQuery = Prisma.sql`
 // The site a list is served to. Required wherever cover images go out, so a caller can't skip it.
 type SiteViewer = { isGreen: boolean; viewerId?: number };
 
-// A cover the site's rating ceiling allows for this viewer, else null.
-function coverWithinSite<T extends { nsfwLevel: number }>(
-  cover: T | null | undefined,
-  site: SiteViewer
-): T | null {
-  if (!cover) return null;
+// A cover the site's rating ceiling allows for this viewer, else null. A blocked cover is withheld
+// on every site.
+function coverWithinSite<
+  T extends { nsfwLevel: number; ingestion: ImageIngestionStatus; blockedFor: string | null }
+>(cover: T | null | undefined, site: SiteViewer): T | null {
+  if (!cover || hasBlockMarker(cover)) return null;
   return site.isGreen && isImageHiddenFromGreenViewer(cover.nsfwLevel, site.viewerId)
     ? null
     : cover;
@@ -486,7 +489,7 @@ export async function getMyChallenges({
     SELECT c.id, c.title, c.theme, c.invitation, c."coverImageId", c."startsAt", c."endsAt",
            c.status, c.source, c."buzzType", c."prizePool",
            (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') AS "entryCount",
-           COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) AS "commentCount",
+           (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) AS "commentCount",
            c."nsfwLevel", c."allowedNsfwLevel", c."modelVersionIds",
            NULL::int AS "modelId", NULL::text AS "modelName",
            c."collectionId", c."createdById",
@@ -955,12 +958,10 @@ async function buildChallengeDetail(
         select: imageSelect,
       })
     : null;
-  const coverImage =
-    fetchedCover &&
-    green?.isGreen &&
-    isImageHiddenFromGreenViewer(fetchedCover.nsfwLevel, green.viewerId)
-      ? null
-      : fetchedCover;
+  const coverImage = coverWithinSite(fetchedCover, {
+    isGreen: green?.isGreen ?? false,
+    viewerId: green?.viewerId,
+  });
 
   // Get winners if challenge is completed
   let winners: ChallengeDetail['winners'] = [];
@@ -3531,9 +3532,11 @@ export async function getActiveEvents(
   if (allChallengeIds.length > 0) {
     const counts = await dbRead.$queryRaw<
       Array<{ challengeId: number; commentCount: number }>
-    >`SELECT "challengeId", "commentCount" FROM "Thread" WHERE "challengeId" IN (${Prisma.join(
-      allChallengeIds
-    )})`;
+    >`SELECT "entityId" AS "challengeId", COUNT(*)::int AS "commentCount"
+       FROM "CommentV3"
+       WHERE "entityType" = 'challenge' AND "parentId" IS NULL AND "deletedAt" IS NULL
+         AND "entityId" IN (${Prisma.join(allChallengeIds)})
+       GROUP BY "entityId"`;
     for (const row of counts) commentCounts.set(row.challengeId, row.commentCount);
   }
 
@@ -4210,7 +4213,7 @@ export async function getCompletedChallengesWithWinners(
       c."buzzType",
       c."prizePool",
       (SELECT COUNT(*) FROM "CollectionItem" WHERE "collectionId" = c."collectionId" AND status = 'ACCEPTED') as "entryCount",
-      COALESCE((SELECT t."commentCount" FROM "Thread" t WHERE t."challengeId" = c.id), 0) as "commentCount",
+      (SELECT COUNT(*)::int FROM "CommentV3" v WHERE v."entityType" = 'challenge' AND v."entityId" = c.id AND v."parentId" IS NULL AND v."deletedAt" IS NULL) as "commentCount",
       c."nsfwLevel",
       c."allowedNsfwLevel",
       c."modelVersionIds",
@@ -4262,6 +4265,9 @@ export async function getCompletedChallengesWithWinners(
       imageUrl: string | null;
       imageNsfwLevel: number | null;
       imageHash: string | null;
+      imageIngestion: ImageIngestionStatus | null;
+      imageBlockedFor: string | null;
+      imageReviewed: boolean | null;
       buzzAwarded: number;
       reason: string | null;
       collectionItemNote: string | null;
@@ -4276,6 +4282,7 @@ export async function getCompletedChallengesWithWinners(
       i.url as "imageUrl",
       i."nsfwLevel" as "imageNsfwLevel",
       i.hash as "imageHash",
+      ${winnerImageStateSql},
       cw."buzzAwarded",
       cw.reason,
       ci.note as "collectionItemNote"
@@ -4307,15 +4314,14 @@ export async function getCompletedChallengesWithWinners(
   const winnersByChallengeId = new Map<number, ChallengeWinnerSummary[]>();
   for (const w of winnerRows) {
     const list = winnersByChallengeId.get(w.challengeId) ?? [];
-    const hideThumb = isGreen && isImageHiddenFromGreenViewer(w.imageNsfwLevel, currentUserId);
+    const image = winnerImageFields(w);
+    const hideThumb = isGreen && isImageHiddenFromGreenViewer(image.imageNsfwLevel, currentUserId);
     list.push({
       place: w.place,
       userId: w.userId,
       username: w.username,
-      imageId: w.imageId,
-      imageUrl: hideThumb ? null : w.imageUrl,
-      imageNsfwLevel: w.imageNsfwLevel,
-      imageHash: w.imageHash,
+      ...image,
+      imageUrl: hideThumb ? null : image.imageUrl,
       buzzAwarded: w.buzzAwarded,
       reason: w.reason,
       judgeScore: parseJudgeScore(w.collectionItemNote),

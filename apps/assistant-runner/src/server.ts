@@ -2,20 +2,27 @@ import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
 import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
+import { PreviewRestarter } from './app-assistant/preview-restart';
 import { AppAssistantTools } from './app-assistant/provider';
 import { loadConfig } from './config';
-import { AdvisoryLock, OrchestrationConversationStore } from './conversation-store';
+import { OrchestrationConversationStore } from './conversation-store';
+import { AdvisoryLock } from './core/advisory-lock';
 import { RunCredentials } from './credentials';
 import { RunGrants } from './grants';
 import { PgModelCalls } from './model-calls';
-import type { ConversationStore, Logger, ModelProvider, ToolProvider } from './interfaces';
+import type { ConversationStore, Logger, ModelProvider, ToolProvider } from './core/interfaces';
 import { TokenMinter } from './minter';
 import { OrchestrationClient } from './orchestration';
 import { OrchestrationModels } from './orchestration-model';
-import { createPool } from './pg-pool';
-import { Runner } from './runner';
+import { createPool } from './core/pg-pool';
+import { Runner } from './core/runner';
 import { createTokenVerifier, viewerAuthenticator } from './tokens';
-import { noTools, unconfiguredModel, unconfiguredStore, unconfiguredTools } from './unconfigured';
+import {
+  noTools,
+  unconfiguredModel,
+  unconfiguredStore,
+  unconfiguredTools,
+} from './core/unconfigured';
 
 const config = loadConfig();
 /** Why a start is refused when the runner has no sandbox service (`SANDBOX_URL`). */
@@ -61,6 +68,7 @@ const lockPool = createPool(
 let models: ModelProvider = unconfiguredModel;
 let store: ConversationStore = unconfiguredStore;
 let tools: ToolProvider = unconfiguredTools;
+let previews: PreviewRestarter | undefined;
 const civitai = config.civitai;
 if (civitai) {
   const credentials = new RunCredentials(
@@ -97,6 +105,16 @@ if (civitai) {
         log,
       })
     : noTools;
+  // The page's Restart preview: the request's own preview grant, for that request only.
+  if (civitai.sandboxUrl)
+    previews = new PreviewRestarter({
+      sandboxUrl: civitai.sandboxUrl,
+      forGrant: (grant) => ({
+        tokens: credentials.forGrant(grant),
+        tunnels: devTunnels.forRun(async () => grant),
+      }),
+      log,
+    });
 }
 
 const runner = new Runner({
@@ -118,6 +136,7 @@ const verifier = civitai ? createTokenVerifier(civitai.publicKey) : undefined;
 const app = buildApp({
   service: runner,
   ...(verifier ? { authenticator: viewerAuthenticator(verifier), grants: verifier } : {}),
+  ...(previews ? { previews } : {}),
   basePath: config.basePath,
   logger: loggerOptions(config.logLevel),
 });

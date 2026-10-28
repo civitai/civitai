@@ -25,10 +25,9 @@
  * HA migration, briefly it will be), every authenticated request that
  * needs an orchestrator token falls through to
  * `getTemporaryUserApiKey(userId)`. That function runs **1 INSERT + 2
- * deleteMany** per call. At civitai-dp-prod scale (80 pods × ~1k RPS) a
- * sustained sysRedis-down event would aim ~80k inserts/s and ~160k
- * deletes/s at the primary — the "cold-mint amplification" failure mode
- * tracked by the `sysredis-token-mint-amplification-warn` alert (see
+ * deleteMany** per call. Across the fleet, a sustained sysRedis-down event
+ * would aim that INSERT + delete load at the primary for every request —
+ * the "cold-mint amplification" failure mode (see
  * `logSysRedisFailOpen('token-mint-amplification', ...)` in
  * `get-orchestrator-token.ts`).
  *
@@ -87,9 +86,8 @@
  *
  * A revoked user therefore keeps minting/holding a valid orchestrator
  * token for up to `ORCHESTRATOR_TOKEN_CACHE_TTL_MS` on any pod whose
- * cache they touched — and this is per-pod across all ~220 pods
- * (api ~80 + jobs ~10 + ssr ~130). Worst-case fleet-wide window: TTL_MS
- * × per-pod-staggered cache lifetime. The previously claimed
+ * cache they touched, on every pod that serves the app. Worst-case
+ * fleet-wide window: TTL_MS × per-pod-staggered cache lifetime. The previously claimed
  * "orchestrator rejects, next request mints fresh" self-healing
  * behaviour does NOT exist — a 401 from the orchestrator surfaces to
  * the user as an auth error and the cache entry is left in place until
@@ -112,10 +110,9 @@
  *     stale-window.
  *
  * Incident response: revoking ALL active orchestrator tokens for a user
- * requires (a) `kubectl rollout restart` of `civitai-dp-prod-api`,
- * `civitai-dp-prod` (SSR), and `civitai-dp-prod-jobs` to clear all
- * per-pod caches, plus (b) `DELETE FROM "ApiKey" WHERE "userId" = X AND
- * "name" = 'generation-token'` to invalidate any in-flight bearer tokens.
+ * requires (a) restarting every pod that serves the app (ask an infra
+ * owner) to clear all per-pod caches, plus (b) `DELETE FROM "ApiKey"
+ * WHERE "userId" = X AND "name" = 'generation-token'` to invalidate any in-flight bearer tokens.
  * Waiting ≥ `ORCHESTRATOR_TOKEN_CACHE_TTL_MS` is an acceptable
  * alternative to (a) for non-urgent cases.
  *
@@ -156,7 +153,7 @@ import { cacheHitCounter, cacheMissCounter } from '~/server/prom/client';
 const CACHE_NAME = 'orchestrator-token-cold-mint';
 const CACHE_TYPE = 'lruCache';
 
-// 50k entries × ~60s TTL. With 80 pods, an active-user set in the low
+// 50k entries × ~60s TTL. An active-user set in the low
 // thousands will round-trip each user to the DB roughly once per minute
 // per pod during sysRedis-down — a 60-100x reduction in DB load vs the
 // uncached fallback. Both knobs can be tuned via env without code change.

@@ -18,15 +18,17 @@ import { dbRead } from '~/server/db/client';
 import { rateLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import type { CommentUpsertInput } from '~/server/schema/comment.schema';
+import { reactionRateLimits } from '~/server/schema/reaction.schema';
 import {
   commentRateLimits,
   commentUpsertInput,
   getAllCommentsSchema,
   getCommentCountByModelSchema,
+  getCommentCountsByModelSchema,
   getCommentReactionsSchema,
   toggleReactionInput,
 } from '~/server/schema/comment.schema';
-import { getVisibleCommentCount } from '~/server/services/comment.service';
+import { getVisibleCommentCount, getVisibleCommentCounts } from '~/server/services/comment.service';
 import {
   guardedProcedure,
   middleware,
@@ -36,6 +38,7 @@ import {
   router,
 } from '~/server/trpc';
 import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { SITE_REACTION_RATE_LIMIT_KEY } from '~/shared/constants/block-reaction.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
@@ -127,6 +130,12 @@ export const commentRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCommentCountByModelSchema)
     .query(({ input, ctx }) => getVisibleCommentCount({ input, user: ctx.user })),
+  // Both of the model page's counts (the plain and the hidden view) in one call. The single-count
+  // procedure above stays for client bundles that still call it.
+  getVisibleCountsByModel: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getCommentCountsByModelSchema)
+    .query(({ input, ctx }) => getVisibleCommentCounts({ input, user: ctx.user })),
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(commentUpsertInput)
@@ -139,9 +148,11 @@ export const commentRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteUserCommentHandler),
-  toggleReaction: protectedProcedure
+  toggleReaction: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleReactionInput)
+    // One reaction quota per user, shared with reaction.toggle.
+    .use(rateLimit(reactionRateLimits, undefined, { sharedKey: SITE_REACTION_RATE_LIMIT_KEY }))
     .mutation(({ input, ctx }) =>
       toggleReactionHandler({
         ctx,

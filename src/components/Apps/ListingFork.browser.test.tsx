@@ -127,7 +127,7 @@ describe('ListingForkSetting — the author opt-in', () => {
       'Forking' +
         "Let others fork this app's source" +
         "Others can copy your app's source into their own App Assistant workspace and publish it as a new app. " +
-        'Every published fork shows “Forked from” with a link to your app, and that credit can’t be removed. ' +
+        'Published forks usually show “Forked from” with a link back to your app. ' +
         'Forks don’t share your earnings, and a fork has to pass its own review before it can sell anything. ' +
         'Turning this off stops new forks; forks that already exist stay up.'
     );

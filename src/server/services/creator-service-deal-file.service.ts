@@ -2,6 +2,11 @@ import { Prisma } from '@prisma/client';
 import { CopyObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { randomUUID } from 'crypto';
 import { getEdgeUrl } from '~/client-utils/edge-url';
+import type {
+  ServiceDealAccessKind,
+  ServiceDealAccessRole,
+  Tracker,
+} from '~/server/clickhouse/tracker';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -400,8 +405,8 @@ export async function deleteServiceDealFile({
 /**
  * Records a verdict on a Final. Only a Pending Final takes one, so a repeat or late result cannot
  * overturn an earlier one. Passed also needs the file unpacked and ready, never refused, its malware
- * scan passed (or skipped while the scan is off) and every image passed. A Failed Final sends a delivered deal to the moderators; one not
- * yet delivered cannot be delivered while it stands (see `dealReadyToDeliver`).
+ * scan passed (or skipped while the scan is off) and every image passed. A Failed Final sends a
+ * delivered deal to the moderators; one not yet delivered cannot be delivered while it stands (see `dealReadyToDeliver`).
  */
 export async function recordFinalScanResult({
   fileId,
@@ -488,8 +493,21 @@ type FileRow = {
   status: ServiceDealFileStatus;
   failReason: string | null;
   scanStatus: ServiceDealFileScanStatus;
+  malwareScanStatus: ServiceDealFileScanStatus;
   watermarkedKey: string | null;
 };
+
+/**
+ * A Final's own scan verdicts let the buyer have it. Checked at the gate as well as by
+ * `recordFinalScanResult`, so a Final whose malware scan failed or never finished stays locked
+ * whatever its aggregate says. A scan skipped while the scan was off counts, as it did then.
+ */
+const finalScansClear = (row: {
+  scanStatus: ServiceDealFileScanStatus;
+  malwareScanStatus: ServiceDealFileScanStatus;
+}) =>
+  row.scanStatus === 'Passed' &&
+  (row.malwareScanStatus === 'Passed' || row.malwareScanStatus === 'NotScanned');
 
 /** The buyer's claim on a deal's final files: it is paid for, and not since reversed. */
 export const buyerOwnsFinals = (deal: Pick<DealForFiles, 'status' | 'completedAt'>) =>
@@ -527,7 +545,7 @@ export async function listServiceDealFiles({
 
   const rows = await dbWrite.$queryRaw<FileRow[]>`
     SELECT f."id", f."round", f."kind", f."fileName", f."mimeType", f."size", f."deliverySize",
-      f."status", f."failReason", f."scanStatus", f."watermarkedKey"
+      f."status", f."failReason", f."scanStatus", f."malwareScanStatus", f."watermarkedKey"
     FROM "ServiceDealFile" f
     WHERE f."dealId" = ${dealId}::int
     ORDER BY f."round", f."id"`;
@@ -543,7 +561,7 @@ export async function listServiceDealFiles({
       row.kind === 'Final' &&
       row.status === 'Ready' &&
       (privileged ||
-        (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && row.scanStatus === 'Passed'));
+        (buyerOwnsFinals(deal) && row.round === deal.revisionsUsed && finalScansClear(row)));
     const lockedFinal = buyerOnly && row.kind === 'Final' && !downloadable;
     const key = row.watermarkedKey;
 
@@ -570,7 +588,20 @@ export async function listServiceDealFiles({
   });
 }
 
-export type ServiceDealFileDownload = { bucket: string; key: string; fileName: string };
+type ServiceDealFileAccess = {
+  dealId: number;
+  fileId: number;
+  userId: number;
+  role: ServiceDealAccessRole;
+  kind: ServiceDealAccessKind;
+};
+
+export type ServiceDealFileDownload = {
+  bucket: string;
+  key: string;
+  fileName: string;
+  access: ServiceDealFileAccess;
+};
 
 /**
  * The object a user may download, or null (the route answers 404 for null, so a file id reveals
@@ -586,20 +617,26 @@ export async function resolveServiceDealFileDownload({
   userId,
   isModerator,
   delivered = false,
+  moderatorFetch = false,
 }: {
   fileId: number;
   userId: number;
   isModerator: boolean;
   delivered?: boolean;
+  /** The moderator dispute tool. Recorded as a ModeratorFetch under the caller's role on the deal;
+   *  it never counts as the buyer's download. */
+  moderatorFetch?: boolean;
 }): Promise<ServiceDealFileDownload | null> {
   const [row] = await dbWrite.$queryRaw<
     {
+      dealId: number;
       s3Key: string;
       deliveryKey: string | null;
       fileName: string;
       kind: ServiceDealFileKind;
       round: number;
       scanStatus: ServiceDealFileScanStatus;
+      malwareScanStatus: ServiceDealFileScanStatus;
       status: ServiceDealFileStatus;
       buyerId: number;
       sellerId: number;
@@ -608,7 +645,8 @@ export async function resolveServiceDealFileDownload({
       completedAt: Date | null;
     }[]
   >`
-    SELECT f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus", f."status",
+    SELECT f."dealId", f."s3Key", f."deliveryKey", f."fileName", f."kind", f."round", f."scanStatus",
+      f."malwareScanStatus", f."status",
       d."buyerId", d."sellerId", d."status"::text AS "dealStatus", d."revisionsUsed", d."completedAt"
     FROM "ServiceDealFile" f JOIN "ServiceDeal" d ON d."id" = f."dealId"
     WHERE f."id" = ${fileId}::int`;
@@ -621,7 +659,7 @@ export async function resolveServiceDealFileDownload({
       row.kind === 'Final' &&
       row.status === 'Ready' &&
       row.round === row.revisionsUsed &&
-      row.scanStatus === 'Passed' &&
+      finalScansClear(row) &&
       buyerOwnsFinals({ status: row.dealStatus, completedAt: row.completedAt }));
   if (!allowed) return null;
 
@@ -633,17 +671,55 @@ export async function resolveServiceDealFileDownload({
     // An archive is only ever handed out in the form the server built.
     else if (fileExtension(row.fileName) === 'zip') return null;
   }
-  return { bucket: await getBucket(), key, fileName: row.fileName };
+  const role: ServiceDealAccessRole =
+    row.sellerId === userId ? 'Seller' : row.buyerId === userId ? 'Buyer' : 'Moderator';
+  return {
+    bucket: await getBucket(),
+    key,
+    fileName: row.fileName,
+    access: {
+      dealId: row.dealId,
+      fileId,
+      userId,
+      role,
+      kind: moderatorFetch ? 'ModeratorFetch' : 'Download',
+    },
+  };
 }
 
-export async function getServiceDealFileDownloadUrl(target: ServiceDealFileDownload) {
+/** Not awaited, so recording never slows or fails a download; it still awaits delivery so a lost
+ *  row is logged. */
+export async function getServiceDealFileDownloadUrl(
+  target: ServiceDealFileDownload,
+  tracker: Pick<Tracker, 'serviceDealFileAccess'>
+) {
   const { url } = await getGetUrlByKey(target.key, {
     bucket: target.bucket,
     fileName: target.fileName,
     expiresIn: SERVICE_FILE_DOWNLOAD_EXPIRY_SECONDS,
   });
+  try {
+    tracker
+      .serviceDealFileAccess(target.access, { awaitDelivery: true })
+      .then((sent) => {
+        // False is a tracker that is switched off: nothing was written.
+        if (!sent) logAccessFailure(target.access)(new Error('Tracker not configured'));
+      })
+      .catch(logAccessFailure(target.access));
+  } catch (error) {
+    logAccessFailure(target.access)(error);
+  }
   return url;
 }
+
+const logAccessFailure = (access: ServiceDealFileAccess) => (error: unknown) =>
+  logToAxiom({
+    name: 'creator-service-file-access',
+    type: 'error',
+    message: 'Could not record a deal file access',
+    ...access,
+    error: error instanceof Error ? error.message : String(error),
+  }).catch(() => null);
 
 // ---------------------------------------------------------------------------------------------
 // Preview pipeline (the job)

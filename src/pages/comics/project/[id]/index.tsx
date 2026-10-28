@@ -43,7 +43,7 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { defaultPresetRatio, PRESET_MODEL_SIZES } from '~/shared/generation/preset-sizes';
-import { slugit } from '~/utils/string-helpers';
+import { slugitOr } from '~/utils/string-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -1068,9 +1068,9 @@ function ProjectWorkspace() {
           }
 
           // Drop the creator into their published work — basking is mandatory.
-          const publicUrl = `/comics/${projectId}/${slugit(project.name)}/${
+          const publicUrl = `/comics/${projectId}/${slugitOr(project.name, 'comic')}/${
             chapterPosition + 1
-          }/${slugit(chapterName)}`;
+          }/${slugitOr(chapterName, 'chapter')}`;
           showSuccessNotification({
             title: 'Chapter published! 🎉',
             message: (
@@ -1462,7 +1462,9 @@ function ProjectWorkspace() {
               </ActionIcon>
               <button
                 className={styles.gradientBtn}
-                onClick={() => router.push(`/comics/${projectId}/${slugit(project.name)}`)}
+                onClick={() =>
+                  router.push(`/comics/${projectId}/${slugitOr(project.name, 'comic')}`)
+                }
                 disabled={!hasReadyPanelsWithImages}
               >
                 <IconBook size={16} />

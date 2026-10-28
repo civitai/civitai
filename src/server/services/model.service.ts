@@ -3,9 +3,13 @@ import type { EventViewer } from '~/server/events/event-access';
 import {
   coverageColumn,
   coveragePair,
+  coveragePairWithReadiness,
+  coveredForUserSql,
   pickCovered,
   nextCoverageEnabled,
+  type CoverageAudience,
 } from '~/server/services/generation/coverage-source';
+import type { VersionReadiness } from '~/shared/generation/generator-readiness';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import {
@@ -19,6 +23,7 @@ import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
+import { publishedRangeBounds, publishedRangeError } from '~/shared/utils/published-range';
 import type { SearchParams, SearchResponse } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { clickhouse, Tracker } from '~/server/clickhouse/client';
@@ -36,6 +41,7 @@ import { ModelSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { toApiModelFile } from '~/server/common/model-helpers';
 import type { Context } from '~/server/createContext';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { readDownedModel } from '~/server/services/model-takedown-lock';
 import {
   planReciprocalAssociations,
   selectNewlyAddedModelIds,
@@ -43,12 +49,13 @@ import {
 import type { AssociationType } from '~/shared/utils/prisma/enums';
 import {
   getDbWithoutLag,
+  getKyselyWithoutLag,
   preventModelVersionLagBatch,
   preventReplicationLag,
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
 import { createProfanityFilter } from '~/libs/profanity-simple';
-import { isFlipt } from '~/server/flipt/client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import {
   isTransientMeiliError,
@@ -111,7 +118,11 @@ import {
 } from '~/server/search-index';
 import type { ModelSearchIndexRecord } from '~/server/search-index/models.search-index';
 import type { ContentDecorationCosmetic } from '~/server/selectors/cosmetic.selector';
-import { associatedResourceSelect } from '~/server/selectors/model.selector';
+import {
+  associatedResourceSelect,
+  modelWithDetailsSelect,
+} from '~/server/selectors/model.selector';
+import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
@@ -171,11 +182,7 @@ import type { holdModelForLiteralRules } from '~/server/services/text-scan/actio
 import { loadModelRulesUnpublishDetail } from '~/server/services/text-scan/model-rules';
 import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-rules-hold';
 import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
-import {
-  scanEntitiesInBackground,
-  scanModelAndRules,
-  scanModelRules,
-} from '~/server/services/text-scan/submit';
+import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import {
   bustMvCache,
   bustPublicModelResponseCache,
@@ -302,6 +309,20 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   user?: SessionUser;
   select: TSelect;
 }) => {
+  // The model page's read (`getModelHandler`, the only caller passing this select). With
+  // `kysely-hot-reads-2` on it reads through Kysely, in the same shape, on the client the same lag
+  // decision picks: `getKyselyWithoutLag` is `getDbWithoutLag`'s twin. Off, the Prisma read below.
+  if (
+    (select as Prisma.ModelSelect) === modelWithDetailsSelect &&
+    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_2))
+  ) {
+    const model = await readModelWithDetailsViaKysely(await getKyselyWithoutLag('model', id), id);
+    return model as unknown as Awaited<ReturnType<typeof findModel<TSelect>>>;
+  }
+  return findModel(id, select);
+};
+
+async function findModel<TSelect extends Prisma.ModelSelect>(id: number, select: TSelect) {
   const db = await getDbWithoutLag('model', id);
   const result = await db.model.findFirst({
     where: {
@@ -311,7 +332,7 @@ export const getModel = async <TSelect extends Prisma.ModelSelect>({
   });
 
   return result;
-};
+}
 
 type ModelRaw = {
   id: number;
@@ -409,6 +430,40 @@ export async function getPermanentPaidAccessModelIds(): Promise<number[]> {
   return rows.map((r) => Number(r.modelId));
 }
 
+/**
+ * A flagged model, unless a Model rules takedown flagged it: that is ruled on in the model rule matches queue.
+ * A JSON-null `modelRules` is no takedown, so it stays listed, as it does in the Prisma `AnyNull` filter.
+ */
+export const MODEL_NEEDS_REVIEW_WITHOUT_RULES_SQL = Prisma.sql`(m."meta"->>'needsReview' = 'true'
+          AND (m."meta"->'modelRules' IS NULL OR m."meta"->'modelRules' = 'null'::jsonb))`;
+
+/** A feed card's Create: the model page's coverage rule when the caller passed the viewer's audience. */
+export function feedVersionCanGenerate({
+  version,
+  modelType,
+  next,
+  coverage,
+  readiness,
+}: {
+  version: { covered: boolean; coveredNext: boolean; baseModel?: string; flags?: number };
+  modelType: ModelType;
+  next: boolean;
+  coverage?: CoverageAudience;
+  readiness?: VersionReadiness;
+}) {
+  return isGenerationEligible({
+    ...(coverage
+      ? coveragePairWithReadiness(version, readiness, next, {
+          member: coverage.member,
+          isCheckpoint: modelType === 'Checkpoint',
+        })
+      : coveragePair(version, next)),
+    baseModel: version.baseModel ?? '',
+    modelType,
+    flags: version.flags ?? 0,
+  });
+}
+
 export const getModelsRaw = async ({
   input,
   include,
@@ -417,9 +472,12 @@ export const getModelsRaw = async ({
   ignoreBrowsingAddons,
   ownerUserId,
   publicVersionsOnly,
+  onlyModelIds,
+  excludeModelIds,
   _forceBaseModelMetrics,
   eventDecorationViewer,
   faceBrowsingLevel,
+  coverage,
 }: {
   input: Omit<GetAllModelsOutput, 'limit' | 'page'> & {
     take?: number;
@@ -447,6 +505,12 @@ export const getModelsRaw = async ({
   /** Keep only Public-availability versions, whatever `hidePrivateModels` resolves to. */
   publicVersionsOnly?: boolean;
   /**
+   * Restrict to / drop these model ids — the browse feed's official-checkpoint pin. Unlike
+   * `input.ids`, neither relaxes `hidePrivateModels`, so the pinned rows pass every feed filter.
+   */
+  onlyModelIds?: number[];
+  excludeModelIds?: number[];
+  /**
    * The level that picks each model's .com or .red face when `input.browsingLevel` is a content
    * filter rather than the viewer's (the featured block queries every level, then shows SFW only).
    */
@@ -456,12 +520,23 @@ export const getModelsRaw = async ({
   // Who sees event decorations before launch (see getEventDecorationsForEntity). Set only by
   // routes whose response is never cached for another viewer.
   eventDecorationViewer?: EventViewer;
+  /**
+   * The viewer's `coverageAudience`, which narrows generation coverage for free accounts. Set only
+   * by routes whose response is never cached for another viewer; omitted, every viewer gets the
+   * audience-blind answer.
+   */
+  coverage?: CoverageAudience;
 }) => {
   // Ahead of every early empty return below, including the Meilisearch no-hits one: the point of
   // throwing rather than falling back is that the misuse is legible, and an empty page hides it.
   if (input.sort === ModelSort.RecentlyAdded && !input.collectionId) {
     throw throwBadRequestError('Recently Added sort requires a collectionId');
   }
+  const publishedError = publishedRangeError({
+    from: input.publishedFrom,
+    to: input.publishedTo,
+  });
+  if (publishedError) throw throwBadRequestError(publishedError);
 
   const blockedEnforcement = await enforceBlockedBrowsingTagsForModels(
     input,
@@ -490,6 +565,8 @@ export const getModelsRaw = async ({
     sort,
     period,
     periodMode,
+    publishedFrom,
+    publishedTo,
     hidden,
     checkpointType,
     status,
@@ -682,7 +759,7 @@ export const getModelsRaw = async ({
   if (needsReview && sessionUser?.isModerator) {
     AND.push(Prisma.sql`
       (
-        m."meta"->>'needsReview' = 'true'
+        ${MODEL_NEEDS_REVIEW_WITHOUT_RULES_SQL}
         OR
         EXISTS (
           SELECT 1 FROM "ModelVersion" mv
@@ -821,6 +898,9 @@ export const getModelsRaw = async ({
       )})`
     );
   }
+  const published = publishedRangeBounds({ from: publishedFrom, to: publishedTo });
+  if (published.gte) AND.push(Prisma.sql`m."publishedAt" >= ${published.gte}`);
+  if (published.lt) AND.push(Prisma.sql`m."publishedAt" < ${published.lt}`);
   // If the user is not a moderator, only show published models
   if (!sessionUser?.isModerator || !status?.length) {
     AND.push(Prisma.sql`${pSql}."status" = ${ModelStatus.Published}::"ModelStatus"`);
@@ -852,6 +932,10 @@ export const getModelsRaw = async ({
   if (allowNoCredit !== undefined) AND.push(Prisma.sql`m."allowNoCredit" = ${allowNoCredit}`);
 
   if (!!ids?.length) AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(ids, ',')})`);
+  if (onlyModelIds?.length)
+    AND.push(Prisma.sql`mm."modelId" IN (${Prisma.join(onlyModelIds, ',')})`);
+  if (excludeModelIds?.length)
+    AND.push(Prisma.sql`mm."modelId" NOT IN (${Prisma.join(excludeModelIds, ',')})`);
 
   if (!!modelVersionIds?.length) {
     AND.push(Prisma.sql`EXISTS (
@@ -944,9 +1028,11 @@ export const getModelsRaw = async ({
   }
 
   if (supportsGeneration) {
+    const audience = coverage ?? { next: await nextCoverageEnabled(), member: true };
     AND.push(
-      Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverage" gc WHERE gc."modelId" = m."id" AND gc.${Prisma.raw(
-        `"${coverageColumn(await nextCoverageEnabled())}"`
+      Prisma.sql`EXISTS (SELECT 1 FROM "GenerationCoverage" gc WHERE gc."modelId" = m."id" AND ${coveredForUserSql(
+        audience,
+        'gc'
       )})`
     );
   }
@@ -1063,7 +1149,26 @@ export const getModelsRaw = async ({
     AND.push(browsingLevelQuery);
   }
 
-  const queryWith = Prisma.sql``;
+  // A published range is at most a month, a few tens of thousands of models. Materializing them
+  // gives the planner a small driver; walking the ModelMetric feed index in lastVersionAt order
+  // until enough of them turn up costs up to a second and a half for a year-old range.
+  const rangedModels =
+    published.gte && published.lt
+      ? Prisma.sql`ranged AS MATERIALIZED (
+        SELECT "id" FROM "Model"
+        WHERE ${
+          !sessionUser?.isModerator || !status?.length
+            ? Prisma.sql`"status" = ${ModelStatus.Published}::"ModelStatus" AND `
+            : Prisma.empty
+        }"publishedAt" >= ${published.gte} AND "publishedAt" < ${published.lt}${
+          types?.length
+            ? Prisma.sql` AND "type" = ANY(ARRAY[${Prisma.join(types)}]::"ModelType"[])`
+            : Prisma.empty
+        }
+      )`
+      : undefined;
+  const queryWith = rangedModels ? Prisma.sql`WITH ${rangedModels}` : Prisma.sql``;
+  const rangedJoin = rangedModels ? Prisma.sql`JOIN ranged ON ranged."id" = m."id"` : Prisma.empty;
 
   // Build dynamic FROM clause based on query path
   // Four paths:
@@ -1159,6 +1264,7 @@ export const getModelsRaw = async ({
       ${Prisma.raw(cursorProp ? cursorProp : 'null')} as "cursorId"`;
 
   const fromAndJoin = Prisma.sql`${fromClause}
+      ${rangedJoin}
       ${collectionJoin}`;
 
   const limitValue = (take ?? 100) + 1;
@@ -1509,7 +1615,13 @@ export const getModels = async <TSelect extends Prisma.ModelSelect>({
   if (needsReview && sessionUser?.isModerator) {
     AND.push({
       OR: [
-        { meta: { path: ['needsReview'], equals: true } },
+        {
+          // A Model rules takedown is ruled on in the model rule matches queue, not here.
+          AND: [
+            { meta: { path: ['needsReview'], equals: true } },
+            { meta: { path: ['modelRules'], equals: Prisma.AnyNull } },
+          ],
+        },
         { modelVersions: { some: { meta: { path: ['needsReview'], equals: true } } } },
       ],
     });
@@ -1670,6 +1782,9 @@ export const getModelsWithImagesAndModelVersions = async ({
   domain,
   eventDecorationViewer,
   faceBrowsingLevel,
+  onlyModelIds,
+  excludeModelIds,
+  coverage,
 }: {
   input: GetAllModelsOutput;
   user?: SessionUser;
@@ -1682,6 +1797,11 @@ export const getModelsWithImagesAndModelVersions = async ({
   domain?: DomainColor;
   /** See `getModelsRaw`. */
   faceBrowsingLevel?: number;
+  /** See `getModelsRaw`. */
+  onlyModelIds?: number[];
+  excludeModelIds?: number[];
+  /** See `getModelsRaw`. */
+  coverage?: CoverageAudience;
 }) => {
   input.limit = input.limit ?? 100;
 
@@ -1706,6 +1826,9 @@ export const getModelsWithImagesAndModelVersions = async ({
     include: ['cosmetics'],
     eventDecorationViewer,
     faceBrowsingLevel,
+    onlyModelIds,
+    excludeModelIds,
+    coverage,
   });
 
   const modelVersionIds = items
@@ -1784,7 +1907,16 @@ export const getModelsWithImagesAndModelVersions = async ({
     feedMembershipMap = await getValidCreatorMembershipMap([...membershipCandidates]);
   }
 
-  const next = await nextCoverageEnabled();
+  const next = coverage?.next ?? (await nextCoverageEnabled());
+  // Residency from the cache the submit path reads, so the card and the submit agree.
+  let readinessById: Map<number, VersionReadiness> | undefined;
+  if (coverage?.next && !coverage.member) {
+    const { resourceDataCache } = await import('~/server/redis/resource-data.redis');
+    const versionIds = items
+      .filter((m) => m.type === 'Checkpoint' && m.modelVersions[0])
+      .map((m) => m.modelVersions[0].id);
+    readinessById = new Map((await resourceDataCache.fetch(versionIds)).map((r) => [r.id, r]));
+  }
   const result = {
     nextCursor,
     isPrivate,
@@ -1810,11 +1942,12 @@ export const getModelsWithImagesAndModelVersions = async ({
           (input.user || input.username || includeDrafts);
         if (!filteredImages.length && !showImageless) return null;
 
-        const canGenerate = isGenerationEligible({
-          ...coveragePair(version, next),
-          baseModel: version?.baseModel ?? '',
+        const canGenerate = feedVersionCanGenerate({
+          version,
           modelType: model.type,
-          flags: version?.flags ?? 0,
+          next,
+          coverage,
+          readiness: readinessById?.get(version.id),
         });
 
         const isOwner = isMod || model.user.id === user?.id;
@@ -3916,8 +4049,7 @@ const publishedModelSelect = {
   status: true,
 } satisfies Prisma.ModelSelect;
 
-// Fails open like the check: a model that cannot be held is published, and the post-publish
-// ModelRules scan is the backstop.
+// Fails open like the check: a model that cannot be held is published.
 async function tryHoldModelForLiteralRules(args: Parameters<typeof holdModelForLiteralRules>[0]) {
   try {
     // Dynamic: the action imports model-version.service, which imports this module.
@@ -3982,7 +4114,7 @@ export const publishModelById = async ({
       versionIds: versionIds ?? [],
       meta,
     });
-    if (hold && (await tryHoldModelForLiteralRules({ modelId: id, ...hold, meta }))) {
+    if (hold && (await tryHoldModelForLiteralRules({ modelId: id, ...hold }))) {
       return dbWrite.model.findUniqueOrThrow({ where: { id }, select: publishedModelSelect });
     }
   }
@@ -4013,6 +4145,19 @@ export const publishModelById = async ({
             throw throwAuthorizationError('You are not authorized to publish this model');
           throw error;
         });
+
+      // A version a moderator took down must not come back because its id was in this list. Every
+      // listed row is read under a share lock, so a take-down racing this publish is either seen or
+      // waits for it; a status filter in the WHERE would skip, unlocked, a row it is changing.
+      if (enforceModelRules && includeVersions) {
+        const listed = await tx.$queryRaw<{ status: ModelStatus }[]>`
+          SELECT status FROM "ModelVersion"
+          WHERE id IN (${Prisma.join(versionIds)}) AND "modelId" = ${id}
+          FOR SHARE
+        `;
+        if (listed.some((v) => constants.modPublishOnlyStatuses.includes(v.status)))
+          throw throwAuthorizationError('You are not authorized to publish this model version');
+      }
 
       // Anti-bump guard: publishedAt is immutable once a model has gone
       // public. Allowed transitions: NULL (Draft) -> set, or future
@@ -4198,11 +4343,15 @@ export const unpublishModelById = async ({
   reason,
   customMessage,
   refundEarlyAccess,
-  meta,
+  metaPatch,
+  metaUnset,
   userId,
   isModerator,
 }: UnpublishModelSchema & {
-  meta?: ModelMeta;
+  /** Meta keys to set. Merged into the stored meta under the transaction's lock, never written over it. */
+  metaPatch?: Partial<ModelMeta>;
+  /** Meta keys to remove from the stored meta. */
+  metaUnset?: (keyof ModelMeta)[];
   userId: number;
   isModerator?: boolean;
 }) => {
@@ -4238,14 +4387,29 @@ export const unpublishModelById = async ({
       // moderator's explanation, timestamp and actor are all left untouched — refreshing
       // `unpublishedAt` alone re-fires the take-down notification, and `customMessage` is the ONLY
       // explanation rendered when the reason is 'other', which is the largest bucket.
-      const existing = await tx.model.findUniqueOrThrow({
-        where: { id },
-        select: { status: true },
-      });
+      //
+      // Locked, and first: the status decided here and the meta merged below must be the row as it is
+      // now. A caller's earlier read of the meta is stale by the time this runs, and writing it back
+      // drops whatever a moderator set in between.
+      const [existing] = await tx.$queryRaw<{ status: ModelStatus; meta: unknown }[]>`
+        SELECT status, meta FROM "Model" WHERE id = ${id} FOR NO KEY UPDATE
+      `;
+      if (!existing) throw throwNotFoundError(`No model with id ${id}`);
       // Any moderator-only status, not UnpublishedViolation alone: Deleted is the other one, and
       // clearing it lets an owner republish a soft-deleted model.
       const preserveModStatus =
         !reason && constants.modPublishOnlyStatuses.includes(existing.status);
+
+      const stored =
+        existing.meta && typeof existing.meta === 'object' && !Array.isArray(existing.meta)
+          ? (existing.meta as Record<string, unknown>)
+          : {};
+      const meta = {
+        ...Object.fromEntries(
+          Object.entries(stored).filter(([key]) => !metaUnset?.includes(key as keyof ModelMeta))
+        ),
+        ...metaPatch,
+      } as ModelMeta;
 
       const unpublishedAt = new Date().toISOString();
       const updatedMeta = preserveModStatus
@@ -4427,7 +4591,13 @@ export const getDraftModelsByUserId = async <TSelect extends Prisma.ModelSelect>
       },
       {
         uploadType: ModelUploadType.Trained,
-        status: { in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation] },
+        // Scheduled belongs here, not on the Training tab: getTrainingModelsByUserId
+        // whitelists only Draft/Training, so a trained model scheduled to publish would
+        // otherwise appear on no tab. Draft/Training stay excluded here — they surface on
+        // the Training tab, and listing them notIn [Published, Deleted] would double-list.
+        status: {
+          in: [ModelStatus.Unpublished, ModelStatus.UnpublishedViolation, ModelStatus.Scheduled],
+        },
       },
       // A Published model is excluded by the model-status branches above, so a new
       // version scheduled on it (version status Scheduled, publishedAt in the future)
@@ -5578,6 +5748,7 @@ export async function migrateResourceToCollection({
         data: modelIds.map((id) => ({
           collectionId: collection.id,
           modelId: id,
+          addedById: model.userId,
         })),
       });
 
@@ -5913,6 +6084,10 @@ export const privateModelFromTraining = async ({
     meta: model.meta,
     isModerator: user.isModerator,
   });
+  // A model a moderator took down stays down when a moderator runs this flow too: restoring it is
+  // its own moderator action.
+  if (constants.modPublishOnlyStatuses.includes(model.status))
+    throw throwAuthorizationError('You are not authorized to publish this model');
 
   const storedMeta = model.meta as ModelMeta | null;
   // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
@@ -5945,80 +6120,109 @@ export const privateModelFromTraining = async ({
     throw throwBadRequestError('You have reached the maximum number of private models');
   }
 
+  // A version a moderator took down stays down, whoever runs this flow: it neither republishes it,
+  // posts to it, nor resets it to a Draft its owner could publish when the flow fails. Restoring one
+  // is its own moderator action.
+  const keepDowned = { status: { notIn: constants.modPublishOnlyStatuses } };
+  const isPublishable = (v: { status: ModelStatus }) =>
+    !constants.modPublishOnlyStatuses.includes(v.status);
+  // Set when a take-down reached the model first: nothing was written, so there is nothing to roll back.
+  let takenDown = false;
+
   try {
-    const result = await dbWrite.model.update({
-      select: {
-        id: true,
-        name: true,
-        description: true,
-        nsfwLevel: true,
-        poi: true,
-        minor: true,
-        sfwOnly: true,
-        nsfw: true,
-        gallerySettings: true,
-        status: true,
-        meta: true,
-        modelVersions: {
-          where: modelVersionIds
-            ? {
-                id: {
-                  in: modelVersionIds,
+    // One transaction: the model row stays locked until its versions are written, so a model
+    // take-down waits, and its own cascade then takes these versions down with it.
+    const result = await dbWrite.$transaction(
+      async (tx) => {
+        const result = await tx.model
+          .update({
+            select: {
+              id: true,
+              name: true,
+              description: true,
+              nsfwLevel: true,
+              poi: true,
+              minor: true,
+              sfwOnly: true,
+              nsfw: true,
+              gallerySettings: true,
+              status: true,
+              meta: true,
+              modelVersions: {
+                where: modelVersionIds
+                  ? {
+                      id: {
+                        in: modelVersionIds,
+                      },
+                    }
+                  : undefined,
+                select: {
+                  id: true,
+                  status: true,
                 },
-              }
-            : undefined,
-          select: {
-            id: true,
-          },
-        },
+              },
+            },
+            // Re-checked by the write itself, so a model take-down that lands after the check above wins.
+            where: { id, ...keepDowned },
+            data: {
+              ...data,
+              meta: {
+                // This write replaces meta wholesale. A moderator's form never holds the hidden
+                // moderation-owned keys, so they are carried under the moderator's input.
+                ...(user.isModerator
+                  ? pickModerationOwnedMeta(storedMeta, { includeFlowKeys: false })
+                  : {}),
+                ...(stripServerOwnedMeta(
+                  stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)
+                ) ?? {}),
+                ...pickServerOwnedMeta(storedMeta),
+                ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
+                // Makes it so these models cannot go into auctions or be promoted
+                cannotPromote: true,
+                ...(restoreCannotPromote && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
+              },
+              availability: Availability.Private,
+              status: ModelStatus.Published,
+              sfwOnly: true, // Private models only allow sfw generation
+            },
+          })
+          .catch((error) => {
+            if (error?.code !== 'P2025') throw error;
+            takenDown = true;
+            throw throwAuthorizationError('You are not authorized to publish this model');
+          });
+
+        if (result.modelVersions.length > 0) {
+          const now = new Date();
+
+          // Make this private:
+          await tx.modelVersion.updateMany({
+            where: { modelId: id, ...keepDowned },
+            data: {
+              // availability: Availability.Private, -- moved to second updateMany
+              publishedAt: now,
+              status: ModelStatus.Published,
+            },
+          });
+
+          // Do this after the fact to avoid some triggers. Downed versions too: Private is the safe side
+          // if a moderator later restores one through a path that leaves availability alone.
+          await tx.modelVersion.updateMany({
+            where: { modelId: id },
+            data: {
+              availability: Availability.Private,
+            },
+          });
+        }
+        return result;
       },
-      where: { id },
-      data: {
-        ...data,
-        meta: {
-          // This write replaces meta wholesale. A moderator's form never holds the hidden
-          // moderation-owned keys, so they are carried under the moderator's input.
-          ...(user.isModerator
-            ? pickModerationOwnedMeta(storedMeta, { includeFlowKeys: false })
-            : {}),
-          ...(stripServerOwnedMeta(stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)) ??
-            {}),
-          ...pickServerOwnedMeta(storedMeta),
-          ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
-          // Makes it so these models cannot go into auctions or be promoted
-          cannotPromote: true,
-          ...(restoreCannotPromote && { [RESTORE_CANNOT_PROMOTE_KEY]: true }),
-        },
-        availability: Availability.Private,
-        status: ModelStatus.Published,
-        sfwOnly: true, // Private models only allow sfw generation
-      },
-    });
+      { timeout: 10000 }
+    );
 
     if (result.modelVersions.length > 0) {
-      const now = new Date();
-
-      // Make this private:
-      await dbWrite.modelVersion.updateMany({
-        where: { modelId: id },
-        data: {
-          // availability: Availability.Private, -- moved to second updateMany
-          publishedAt: now,
-          status: ModelStatus.Published,
-        },
-      });
-
-      // Do this after the fact to avoid some triggers.
-      await dbWrite.modelVersion.updateMany({
-        where: { modelId: id },
-        data: {
-          availability: Availability.Private,
-        },
-      });
-
       // Create posts:
       await Promise.all(
-        result.modelVersions.map(async (modelVersion) => {
+        result.modelVersions.filter(isPublishable).map(async (modelVersion) => {
           await createModelVersionPostFromTraining({
             modelVersionId: modelVersion.id,
             user,
@@ -6037,13 +6241,15 @@ export const privateModelFromTraining = async ({
 
     return withoutMinorHashMeta(result);
   } catch (error) {
-    await dbWrite.model.update({
-      where: { id },
+    if (takenDown) throw error;
+    // Never a Draft over a take-down that landed during the flow.
+    await dbWrite.model.updateMany({
+      where: { id, ...keepDowned },
       data: { status: ModelStatus.Draft, availability: Availability.Public },
     });
 
     await dbWrite.modelVersion.updateMany({
-      where: { modelId: id },
+      where: { modelId: id, ...keepDowned },
       data: {
         status: ModelStatus.Draft,
         publishedAt: null,
@@ -6081,7 +6287,7 @@ export const publishPrivateModel = async (
 
   assertPrivateFlowPublishable({ status: model.status, meta: model.meta, isModerator });
 
-  const versions = await dbRead.modelVersion.findMany({
+  const versions = await dbWrite.modelVersion.findMany({
     where: { modelId, status: ModelStatus.Published },
     select: { id: true, baseModel: true, publishedAt: true, meta: true },
   });
@@ -6128,24 +6334,37 @@ export const publishPrivateModel = async (
       versionIds,
       meta: model.meta as ModelMeta | null,
     });
-    if (
-      hold &&
-      (await tryHoldModelForLiteralRules({
-        modelId,
-        ...hold,
-        meta: (model.meta ?? {}) as ModelMeta,
-      }))
-    ) {
+    if (hold && (await tryHoldModelForLiteralRules({ modelId, ...hold }))) {
       return { versionIds, held: true };
     }
   }
 
-  // Back to what a moderator had set before the private cycle forced cannotPromote on.
-  const { [RESTORE_CANNOT_PROMOTE_KEY]: restoreCannotPromote, ...storedMeta } = (model.meta ??
-    {}) as ModelMeta & Record<string, unknown>;
-  const publishedMeta = { ...storedMeta, cannotPromote: restoreCannotPromote === true };
-
   await dbWrite.$transaction(async (tx) => {
+    // Everything above ran before this transaction, and a takedown can land in between. Re-read
+    // under a lock that the writes below then hold: the model first, then its versions, the order
+    // a model takedown takes them. Filtered on Published, a version taken down meanwhile drops out.
+    if ((await readDownedModel(tx, modelId, 'update')) && !isModerator)
+      throw throwAuthorizationError('You are not authorized to publish this model');
+    // Re-read under that lock: the meta written back below must be the row as it is now, or a
+    // moderator's change since the read above is overwritten.
+    const current = await tx.model.findUnique({
+      where: { id: modelId },
+      select: { status: true, meta: true },
+    });
+    if (!current) throw throwNotFoundError('Model not found');
+    assertPrivateFlowPublishable({ status: current.status, meta: current.meta, isModerator });
+    // Back to what a moderator had set before the private cycle forced cannotPromote on.
+    const { [RESTORE_CANNOT_PROMOTE_KEY]: restoreCannotPromote, ...storedMeta } = (current.meta ??
+      {}) as ModelMeta & Record<string, unknown>;
+    const publishedMeta = { ...storedMeta, cannotPromote: restoreCannotPromote === true };
+    const stillPublished = await tx.$queryRaw<{ id: number }[]>`
+      SELECT id FROM "ModelVersion"
+      WHERE id IN (${Prisma.join(versionIds)}) AND status = 'Published'
+      FOR NO KEY UPDATE
+    `;
+    if (stillPublished.length !== versionIds.length)
+      throw throwAuthorizationError('You are not authorized to publish this model version');
+
     // Availability + demotion to null flip unconditionally; the publish
     // bump to `now` is routed through the anti-bump SQL guard below so an
     // already-public post (e.g. a Public→Private→Public flip) keeps its
@@ -6175,6 +6394,7 @@ export const publishPrivateModel = async (
           END,
           "metadata" = "metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
         WHERE "modelVersionId" IN (${Prisma.join(versionIds, ',')})
+        AND "userId" = ${model.userId}
         AND ("publishedAt" IS NULL OR "publishedAt" > NOW())
       `;
     }
@@ -6226,7 +6446,6 @@ export const publishPrivateModel = async (
       `;
     }
   });
-  if (publishVersions && enforceModelRules) scanModelRules(modelId);
 
   const updatedImageIds = await dbRead.image.findMany({
     where: {

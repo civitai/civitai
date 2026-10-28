@@ -20,6 +20,10 @@ pnpm run db:moderator:pull   # Re-introspect the moderator DB into apps/moderato
 - **`apps/moderator/prisma/schema.prisma` is separate and tracked.** It is introspected, never authored: run `pnpm run db:moderator:pull` then `pnpm run db:moderator:generate` (see `apps/moderator/CLAUDE.md`). `db:generate` does not produce it.
 - **Run `pnpm run db:check-generated` after touching `schema.full.prisma`.** It regenerates and diffs `packages/civitai-db-schema/src`, so a forgotten regen fails there.
 
+## Event tracking goes to ClickHouse, not Postgres
+
+Event and activity records (downloads, views, accesses, clicks: anything appended per action and read for analytics or audit) go to ClickHouse through the existing tracker (`src/server/clickhouse/tracker.ts`), not into a new Postgres table. A PR that stores event data in Postgres needs a written reason, agreed with the project owner before the PR is opened.
+
 ## Migration details
 
 - Migration files live in `packages/civitai-db-schema/prisma/migrations/` for review/history and are never auto-run. It is the only directory Prisma reads; the root `prisma/migrations/` path predates the monorepo, no longer exists, and CI blocks re-creating it.

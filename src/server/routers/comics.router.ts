@@ -1,6 +1,8 @@
+import { TRPCError } from '@trpc/server';
 import { z } from 'zod';
 import type { SessionUser } from '~/types/session';
 import { comicProjectMetaSchema, parseComicProjectMeta } from '~/server/schema/comics.schema';
+import { COMIC_ON_RED_ERROR } from '~/utils/comic-helpers';
 import {
   router,
   protectedProcedure,
@@ -74,6 +76,7 @@ import { orchestratorChatCompletionCost } from '~/server/services/comics/orchest
 import { DEFAULT_CHAT_COMPLETION_MODEL } from '~/server/services/orchestrator/chatCompletion';
 import { resolveReferenceMentions } from '~/server/services/comics/mention-resolver';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { markComicProjectsChapterPublished } from '~/server/services/comics/chapter-publish.service';
 import {
   BlockedByUsers,
   BlockedUsers,
@@ -1874,16 +1877,6 @@ export const comicsRouter = router({
         throw throwNotFoundError('Comic not found');
       }
 
-      // Block NSFW projects on green domain.
-      // Project nsfwLevel is bit_or of all chapters, so check for ANY NSFW bits.
-      if (
-        ctx.features.isGreen &&
-        project.nsfwLevel !== 0 &&
-        Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
-      ) {
-        throw throwNotFoundError('Comic not found');
-      }
-
       // Block TOS-violated projects for non-owner, non-mod
       const isOwnerOrModViewer =
         ctx.user != null && (project.userId === ctx.user.id || ctx.user.isModerator === true);
@@ -1961,6 +1954,16 @@ export const comicsRouter = router({
         throw throwNotFoundError('Comic not found');
       }
 
+      // After every visibility gate, so only a comic red would actually serve gets the red prompt;
+      // anything else still 404s.
+      if (
+        ctx.features.isGreen &&
+        project.nsfwLevel !== 0 &&
+        Flags.intersects(project.nsfwLevel, nsfwBrowsingLevelsFlag)
+      ) {
+        throw new TRPCError({ code: 'FORBIDDEN', message: COMIC_ON_RED_ERROR });
+      }
+
       // Check early access for chapters that are currently in EA
       const now = new Date();
       const eaChapters = filteredChapters.filter(
@@ -2019,6 +2022,7 @@ export const comicsRouter = router({
 
       // All counters from `ComicProjectMetric` (Postgres). See `getComicMetricRows`.
       const metric = (await getComicMetricRows([project.id])).get(project.id) ?? null;
+      const passesSfwGate = ctx.user ? hasSafeBrowsingLevel : hasPublicBrowsingLevel;
 
       return {
         id: project.id,
@@ -2026,8 +2030,14 @@ export const comicsRouter = router({
         description: project.description,
         nsfwLevel: project.nsfwLevel,
         meta: parseComicProjectMeta(project.meta),
-        coverImage: project.coverImage,
-        heroImage: project.heroImage,
+        coverImage:
+          ctx.features.isGreen && project.coverImage && !passesSfwGate(project.coverImage.nsfwLevel)
+            ? null
+            : project.coverImage,
+        heroImage:
+          ctx.features.isGreen && project.heroImage && !passesSfwGate(project.heroImage.nsfwLevel)
+            ? null
+            : project.heroImage,
         heroImagePosition: project.heroImagePosition,
         user: project.user,
         isOwnerOrMod: canViewDrafts,
@@ -2428,10 +2438,15 @@ export const comicsRouter = router({
         }
       }
 
-      const updated = await dbWrite.comicProject.update({
+      let updated = await dbWrite.comicProject.update({
         where: { id: input.id },
         data,
       });
+
+      if ('coverImageId' in data || 'heroImageId' in data) {
+        await updateComicNsfwLevels([input.id]);
+        updated = await dbWrite.comicProject.findUniqueOrThrow({ where: { id: input.id } });
+      }
 
       await comicsSearchIndex.queueUpdate([
         { id: input.id, action: SearchIndexUpdateQueueAction.Update },
@@ -4871,12 +4886,9 @@ export const comicsRouter = router({
         return updated;
       }
 
-      // Set project publishedAt on first ever chapter publish
-      if (!chapter.project.publishedAt) {
-        await dbWrite.comicProject.update({
-          where: { id: chapter.project.id },
-          data: { publishedAt: new Date() },
-        });
+      // Re-publishing a live chapter (e.g. to change early access) must not resurface the comic in Newest.
+      if (chapter.status !== ComicChapterStatus.Published || !chapter.project.publishedAt) {
+        await markComicProjectsChapterPublished([chapter.project.id]);
       }
 
       // Notify followers on first publish

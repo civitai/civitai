@@ -57,6 +57,8 @@ const featureFlags = createFeatureFlags({
   apiKeys: ['public'],
   apiKeyBuzzLimit: { availability: ['mod'], fliptKey: 'api-key-buzz-limit' },
   oauthApps: { availability: ['mod'], fliptKey: 'oauth-apps' },
+  // App mode of /intent/post (manifest links from approved apps). Off: every intent is open mode.
+  appPostIntent: { availability: ['mod'], fliptKey: 'app-post-intent' },
   // Faro RUM frontend observability. Default OFF (mods only); widen the cohort via
   // Flipt (`faro`). Runtime kill-switch for the Faro Web SDK — the FaroProvider only
   // initialises when this flag is on AND the NEXT_PUBLIC_FARO_* build-args are set.
@@ -84,6 +86,13 @@ const featureFlags = createFeatureFlags({
   // and can be turned off without turning batching off. Has no effect while `trpcBatching`
   // is off. availability ['mod'] is the Flipt-down fallback (mirrors `trpcBatching`).
   trpcBatchingFirstCommit: { availability: ['mod'], fliptKey: 'trpc-batching-first-commit' },
+  // One shared flush window for batched tRPC queries (`~/utils/trpc-batch-window`). ON: batchable
+  // queries wait up to 16 ms for the window and both browser clients share one batch link, so
+  // queries started a few ms apart leave as one request. The engaged-models and sale-badge
+  // batchers keep their own 80/50 ms windows (never more calls) and only send their flush with the
+  // next window. Only where batching applies (`trpcBatching` on, signed in). OFF: unchanged. `[]` =
+  // DARK and fails CLOSED when the key is absent or Flipt is down.
+  trpcUnifiedBatchWindow: { availability: [], fliptKey: 'trpc-unified-batch-window' },
   // Show an unresolved reaction count as a "Couldn't load" badge instead of the zero it
   // collapses to. OFF renders exactly today's behaviour: the server still marks the
   // counts unknown, the client ignores it. The unknown state fires on every ClickHouse
@@ -144,6 +153,11 @@ const featureFlags = createFeatureFlags({
   // Opens `GET /api/page-data/images/[imageId]` (404 while off). `[]`: dark and fails CLOSED — the
   // moderator cohort is a Flipt rollout, never this static list.
   shellImages: { availability: [], fliptKey: 'shell-images' },
+  // Kill switch for every static shell render (`~/server/shell/shell-mode`): while off, no request
+  // gets a shell whatever its cookie says. Read with no user (entity `anonymous`), so it is one
+  // switch for everyone, never a per-user rollout. `[]`: dark, and fails CLOSED when the key is
+  // absent or Flipt is down — a shell is an optimisation, so losing it costs only CPU.
+  shellMaster: { availability: [], fliptKey: 'shell-master' },
   // The two-pane /user/account shell. `['mod']` is the staging cohort while it bakes — it is the
   // static fallback only, so it decides nothing while Flipt answers; the `account-settings-v2`
   // rollout is still the on-switch, and OFF serves the legacy single-column page byte-identically.
@@ -165,6 +179,29 @@ const featureFlags = createFeatureFlags({
   // static fallback would switch it on for every moderator at deploy). OFF = the Mantine shell,
   // unchanged. Hydration cannot mismatch: server and client read the same serialised flags.
   shellDesignSystemMarkup: { availability: [], fliptKey: 'shell-design-system-markup' },
+  // Server CPU switch for the tRPC flag guards (`isFlagProtected`, `appDeveloperProcedure`). ON:
+  // a guard reads only the flag it names from `ctx.features` (lazy, once per HTTP request).
+  // OFF: it reads that flag out of the whole registry (`getFeatureFlags`), as before. Same answer
+  // per key either way; ON drops the whole-result cache's up-to-10s lag on a Flipt change. `[]` =
+  // DARK and fails CLOSED when the key is absent or Flipt is down, so OFF is the default.
+  trpcFlagGuardPerRequest: { availability: [], fliptKey: 'trpc-flag-guard-per-request' },
+  // SSR-CPU kill switch for the model page's above-the-fold UI (title row, version buttons, the
+  // version-details grid, action row and Details rows, trigger words, AIR, hash): the same
+  // `@civitai/components` markup as `shellDesignSystemMarkup`, in place of per-instance Mantine
+  // `Badge`/`Button`/`Tooltip`/`Group`/`Grid`/`Code`. Menus, popovers, hover cards and the accordion
+  // stay on Mantine. `[]`: dark and fails CLOSED, so the `model-page-design-system-markup` rollout
+  // is the only on-switch. The shared components it touches take a `ds` prop from the model page,
+  // so the flag changes nothing anywhere else.
+  modelPageDesignSystemMarkup: {
+    availability: [],
+    fliptKey: 'model-page-design-system-markup',
+  },
+  // Browser site search through /api/search, which applies the viewer's and the site's rules on
+  // the server, instead of straight to Meilisearch with a per-viewer token. OFF = the direct path,
+  // unchanged, so this is also the kill switch while the proxy's load on the API pods is unknown.
+  // Ramp it by percentage in Flipt. `[]`, not `['mod']`: nobody gets it until the Flipt flag
+  // exists (see `reactionCountsUnknown`).
+  siteSearchProxy: { availability: [], fliptKey: 'site-search-proxy' },
   // Measurement switch: while ON, signed-in `/images/[imageId]` HTML renders write a capped log
   // line (imageId, Cloudflare colo, minute) — see `~/server/logging/image-render-sample`. Read with
   // no user (entity `anonymous`), so it is all-or-nothing, not a per-user rollout. `availability:
@@ -430,6 +467,8 @@ const featureFlags = createFeatureFlags({
   cosmeticShop: ['public'],
   // Mods get it by default; unlock testers via the `creator-shop` Flipt flag.
   creatorShop: { availability: ['mod'], fliptKey: 'creator-shop' },
+  // The /search/semantic page and its procedures. Devs and testers come in through the Flipt flag.
+  semanticImageSearch: { availability: ['mod'], fliptKey: 'semantic-image-search' },
   // Creator Services: sellers offer paid work, paid through Buzz escrow. `[]`, not `['mod']`, so
   // the Flipt flag is the only on-switch, including for moderators.
   creatorServices: { availability: [], fliptKey: 'creator-services' },
@@ -753,7 +792,7 @@ const featureFlags = createFeatureFlags({
   // only on-switch + kill-switch. (Mirrors the `hiddenPrefsCompact` /
   // `genTabDeferView` `availability: []` precedent.)
   appBlocksAgenticReview: { availability: [], fliptKey: 'app-blocks-agentic-review' },
-  // App Assistant (`/apps/assistant`); read only through `canAccessAppAssistant`. `[]` rather than
+  // App Assistant (on `/apps/build`); read only through `canAccessAppAssistant`. `[]` rather than
   // `['mod']` for the `appBlocksAgenticReview` reason: client and server agree while the flag is absent.
   appAssistant: { availability: [], fliptKey: 'app-assistant' },
   // App Assistant read-only subagents (`dispatch_agent`). `['mod']` on purpose: moderators get it at
@@ -889,6 +928,13 @@ const featureFlags = createFeatureFlags({
   resourceIntentV1: { availability: [], fliptKey: 'resource-intent-v1' },
   resourceIntentV1Shadow: { availability: [], fliptKey: 'resource-intent-v1-shadow' },
   resourceIntentJudgeCapture: { availability: [], fliptKey: 'resource-intent-judge-capture' },
+  // The model page discussion's comment counts in ONE call (`comment.getVisibleCountsByModel`,
+  // the plain and the hidden view's counts together) instead of two `getVisibleCountByModel` calls,
+  // and no visible count at all when the first `comment.getAll` page holds every comment (the
+  // count then equals the loaded comments). Off = the two calls, as before. Dark like the above:
+  // Flipt owns it, and an absent key or an unreachable Flipt reads OFF. Independent of the server
+  // flag `kysely-hot-reads-4`, which picks how the new procedure reads (Prisma or Kysely).
+  commentCountsSingleCall: { availability: [], fliptKey: 'comment-counts-single-call' },
 });
 
 export const featureFlagKeys = Object.keys(featureFlags) as FeatureFlagKey[];
@@ -1173,11 +1219,13 @@ function computeFeatureFlags(ctx: FeatureAccessContext): FeatureAccess {
 // one user scrolling the feed (many getInfinite calls) — skip the per-flag work.
 //
 // KEY COMPLETENESS IS A CORRECTNESS INVARIANT. The cache key must include EVERY
-// input hasFeature reads: user id/isModerator/tier/isEarlyAdopter/permissions,
-// host (domain gating), and the FULL region. `isEarlyAdopter` is in the key for
-// exactly this reason — it feeds buildFliptContext, so an entry cached before the
-// user toggled it would keep the OLD cohort decision for the whole TTL, which is
-// precisely the staleness the toggle's `refreshSession` exists to prevent.
+// input hasFeature reads: user id/isModerator/tier/isEarlyAdopter/appBuilderApproved/
+// permissions, host (domain gating), and the FULL region. `isEarlyAdopter` and
+// `appBuilderApproved` are in the key for exactly this reason — both feed
+// buildFliptContext, so an entry cached before the user toggled the setting (or a
+// moderator approved/revoked their app access request) would keep the OLD cohort
+// decision for the whole TTL, which is precisely the staleness the `refreshSession`
+// after each of those writes exists to prevent.
 // Region gates compliance-sensitive
 // restricted-region features, so two different regions must NEVER share an entry
 // — the whole region object is serialized into the key to guarantee that. Live
@@ -1198,7 +1246,7 @@ function featureAccessKey({ user, req, host = req?.headers.host }: FeatureAccess
   const u = user
     ? `u:${user.id}:${user.isModerator ? 1 : 0}:${user.tier ?? 'free'}:${
         user.isEarlyAdopter ? 1 : 0
-      }:${(user.permissions ?? []).slice().sort().join(',')}`
+      }:${user.appBuilderApproved ? 1 : 0}:${(user.permissions ?? []).slice().sort().join(',')}`
     : 'anon';
   return `${u}|h:${host ?? ''}|r:${region ? JSON.stringify(region) : ''}`;
 }

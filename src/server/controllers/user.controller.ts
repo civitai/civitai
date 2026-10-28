@@ -63,6 +63,7 @@ import type {
 } from '~/server/selectors/cosmetic.selector';
 import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getPendingCollectionReviewCounts } from '~/server/services/collection.service';
+import { requestServableLevels } from '~/server/utils/browsing-level';
 import { getUserNotificationCount } from '~/server/services/notification.service';
 import { countUnclaimedPrizes } from '~/server/services/prize.service';
 import { summarizeUnreadCounts } from '~/server/utils/unread-notification-counts';
@@ -147,6 +148,7 @@ import { releaseStrikeMuteOnTosAcceptance } from '~/server/services/strike.servi
 import { trackModActivity } from '~/server/services/moderator.service';
 import { logToAxiom } from '~/server/logging/client';
 import { Flags } from '~/shared/utils/flags';
+import { isSystemAccountMeta } from '@civitai/auth';
 import type { ModelVersionEngagementType } from '~/shared/utils/prisma/enums';
 import { CosmeticType, ModelEngagementType, UserEngagementType } from '~/shared/utils/prisma/enums';
 import { isUUID } from '~/utils/string-helpers';
@@ -326,10 +328,12 @@ export const checkUserNotificationsHandler = async ({ ctx }: { ctx: ProtectedCon
       // getUserNotificationCount: an under-reported badge for one session beats
       // taking the notification bell down with it.
       getPendingPlacementCounts({ ownerId: id }).catch(() => ({ sticker: 0, remix: 0 })),
-      getPendingCollectionReviewCounts({ userId: id }).catch(() => ({
-        total: 0,
-        byCollection: {},
-      })),
+      getPendingCollectionReviewCounts({ userId: id, levels: requestServableLevels(ctx) }).catch(
+        () => ({
+          total: 0,
+          byCollection: {},
+        })
+      ),
     ]);
 
     // `pendingPlacements` rides along here rather than getting its own query:
@@ -544,6 +548,11 @@ export const completeOnboardingHandler = async ({
         });
         if (!validCaptcha) throw throwAuthorizationError('Recaptcha Failed. Please try again.');
 
+        // No "already onboarded" gate: a resubmit is how a failed payment is retried, and the
+        // externalTransactionId below keeps that from paying twice.
+        const current = await dbWrite.user.findUnique({ where: { id }, select: { meta: true } });
+        const bonusOwed = !isSystemAccountMeta(current?.meta);
+
         await dbWrite.user.update({ where: { id }, data: { onboarding } });
         if (input.userReferralCode || input.source) {
           await createUserReferral({
@@ -554,17 +563,18 @@ export const completeOnboardingHandler = async ({
           });
         }
 
-        await withRetries(() =>
-          createBuzzTransaction({
-            fromAccountId: 0,
-            toAccountId: ctx.user.id,
-            amount: getUserBuzzBonusAmount(),
-            description: 'Onboarding bonus',
-            type: TransactionType.Reward,
-            externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
-            toAccountType: 'blue',
-          })
-        ).catch(handleLogError);
+        if (bonusOwed)
+          await withRetries(() =>
+            createBuzzTransaction({
+              fromAccountId: 0,
+              toAccountId: ctx.user.id,
+              amount: getUserBuzzBonusAmount(),
+              description: 'Onboarding bonus',
+              type: TransactionType.Reward,
+              externalTransactionId: `${ctx.user.id}-onboarding-bonus`,
+              toAccountType: 'blue',
+            })
+          ).catch(handleLogError);
         break;
       }
     }

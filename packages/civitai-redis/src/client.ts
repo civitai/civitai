@@ -2319,6 +2319,20 @@ export const REDIS_SYS_KEYS = {
      */
     APPS_CATALOG_RATE_LIMIT: 'system:blocks:apps-catalog-rate-limit',
     /**
+     * FORKABLE APPS — one server-side fork session per fork slug, keyed
+     * `system:blocks:fork-session:${forkSlug}`. JSON: who forked, the parent block and the
+     * approved parent commit, the parent listing, and the seed handed to the sandbox service.
+     * Written `SET NX` (the write is also the slug's reservation), TTL 30 days. The ONLY
+     * source `submitVersion` reads a fork's provenance from (`app-fork-start.service.ts`).
+     */
+    FORK_SESSION: 'system:blocks:fork-session',
+    /**
+     * FORKABLE APPS — per-user fork-start counters, keyed
+     * `system:blocks:fork-rate-limit:${userId}:${windowSeconds}`. `SET NX EX` + `INCR` in one
+     * MULTI (always created with its TTL); fail-closed on a redis error.
+     */
+    FORK_RATE_LIMIT: 'system:blocks:fork-rate-limit',
+    /**
      * Per-user (fallback per-IP) rate-limit counter for the token-auth
      * self-scoped submission WITHDRAW (`/api/v1/blocks/withdraw`). Same
      * `SET NX EX` + `INCR` MULTI shape as `SUBMISSIONS_RATE_LIMIT` (always
@@ -2492,6 +2506,8 @@ export const REDIS_SYS_KEYS = {
     // The training-studio app's cached per-model "from" price map (packed JSON), quoted from the
     // orchestrator `whatif`. Shared across pods so the ~21 estimate calls run once per TTL, not per load.
     STUDIO_FROM_PRICES: 'packed:training:studio-from-prices',
+    // Items the Training Studio auto-labelled per user per UTC day (system-paid), key :<userId>:<yyyy-mm-dd>.
+    STUDIO_AUTO_LABEL_DAILY: 'training:studio-auto-label-daily',
   },
   CLIENT: 'client',
   SITE_ALERTS: {
@@ -2501,6 +2517,10 @@ export const REDIS_SYS_KEYS = {
   },
   SYSTEM: {
     FEATURES: 'system:features',
+    /** Per-user daily notification-email counters: `<prefix>:<userId>:<YYYY-MM-DD>`. */
+    NOTIFICATION_EMAIL_USER_QUOTA: 'system:notification-email-user-quota',
+    /** Per-type hourly notification-email counters: `<prefix>:<type>:<YYYY-MM-DDTHH>`. */
+    NOTIFICATION_EMAIL_TYPE_QUOTA: 'system:notification-email-type-quota',
     PERMISSIONS: 'system:permissions',
     USER_SCORE_MULTIPLIERS: 'system:user-score-multipliers',
     NON_CRITICAL_HEALTHCHECKS: 'non-critical-healthchecks',
@@ -2587,6 +2607,10 @@ export const REDIS_SYS_KEYS = {
   SESSION: {
     ALL: 'session:all',
     TOKEN_STATE: 'session:token-state',
+    // Hash `familyId → 'invalid'`: every token of a sign-in lineage ends together.
+    FAMILY_STATE: 'session:family-state',
+    // `session:user-cut:${userId}` → epoch ms; tokens of that user signed before it are revoked.
+    USER_CUT: 'session:user-cut',
     LEGACY_UPGRADE_LOCK: 'session:legacy-upgrade-lock',
     // Single-use identity for an in-flight authorization whose spoke is OUTSIDE the hub's cookie scope
     // (e.g. civitai.red) — `session:pending-authz:${id}` → { userId, domain }, short TTL, deleted once
@@ -2617,9 +2641,13 @@ export const REDIS_SYS_KEYS = {
   CREATOR_PROGRAM: {
     FLIP_PHASES: 'creator-program:flip-phases',
     BANKABLE_SNAPSHOT: 'creator-program:bankable-snapshot',
+    // Hash: field = creator userId, value = JSON { through, spent }: Buzz the creator paid other
+    // users from the bankable cutover up to `through`, a settled UTC day boundary. Only later days
+    // are read from ClickHouse. No TTL: rename the key if what counts as paid changes.
+    BANKABLE_SPENT: 'creator-program:bankable-spent',
     // String, Buzz. The smallest two-way amount between a creator and one user that the
-    // counterparty review files. Ops-owned and deliberately without a default in code: the review
-    // skips, and logs that it skipped, until it is set.
+    // counterparty review files. A positive value overrides `DEFAULT_COUNTERPARTY_REVIEW_MIN`
+    // (`readMinimum`).
     COUNTERPARTY_REVIEW_MIN: 'creator-program:counterparty-review-min',
     // Hash: field = creator userId, value = JSON { warnedAt, chatId, counterparties: { [userId]:
     // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
@@ -2813,6 +2841,10 @@ export const REDIS_SYS_KEYS = {
   RETOOL_ENDPOINT: {
     RATE_LIMIT: 'retool-endpoint:rate-limit',
   },
+  MESSAGE_AS_CIVITAI: {
+    IDEMPOTENCY: 'message-as-civitai:idempotency',
+    SEND_LOCK: 'message-as-civitai:send-lock',
+  },
   CRUCIBLE: {
     ELO: 'crucible:elo',
     VOTED_PAIRS: 'crucible:voted',
@@ -2832,6 +2864,9 @@ export const REDIS_SYS_KEYS = {
 // `RedisKeyStringsCache` / `RedisKeyTemplateCache` are derived from these literals and are
 // unchanged by the prefixing.
 const REDIS_KEYS_UNPREFIXED = {
+  POST_INTENT: {
+    RATE_LIMIT: 'post-intent:rate-limit',
+  },
   BLOCKS: {
     REGISTRY: 'packed:caches:block-registry',
     TOKEN_RATE_LIMIT: 'blocks:token-rate-limit',
@@ -3158,6 +3193,9 @@ const REDIS_KEYS_UNPREFIXED = {
     POTENTIAL_POOL_VALUE: 'buzz:potential-pool-value:v2',
     EARNED: 'buzz:earned:v2',
   },
+  CREATOR_SERVICES: {
+    ACCESS_RECORDED_SINCE: 'packed:caches:creator-services:access-recorded-since',
+  },
   CREATOR_PROGRAM: {
     CAPS: 'packed:caches:creator-program:caps',
     CASH: 'packed:caches:creator-program:cash',
@@ -3177,6 +3215,14 @@ const REDIS_KEYS_UNPREFIXED = {
   ARTICLE: {
     SCAN_UPDATE: 'article:scan-update',
     RESCAN: 'article:rescan',
+  },
+  REACTION: {
+    /*
+      Use: marks a reaction toggle arriving, so a reverse toggle on the same user, entity and
+      reaction inside the window is ignored as a client double-fire.
+      Structure: string '1' set NX PX, key = `reaction:toggle-guard:${userId}:${entityType}:${entityId}:${reaction}`.
+     */
+    TOGGLE_GUARD: 'reaction:toggle-guard',
   },
   RATING_REVIEW: {
     /*
@@ -3203,6 +3249,13 @@ const REDIS_KEYS_UNPREFIXED = {
   },
   CRUCIBLE: {
     USER_BUZZ_WON: 'packed:caches:crucible:user-buzz-won',
+  },
+  SEMANTIC_SEARCH: {
+    /*
+      Use: the embedding of a semantic image search query, so a repeated query makes no orchestrator call.
+      Structure: packed number[], key = `${QUERY_VECTOR}:${model}:${dimensions}:${modelRevision}:${profile}:${sha256(text)}`, TTL 7d.
+     */
+    QUERY_VECTOR: 'semantic-search:query-vector',
   },
 } as const;
 

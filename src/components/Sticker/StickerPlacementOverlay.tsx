@@ -1,3 +1,5 @@
+import { Button } from '@mantine/core';
+import { IconEye, IconEyeOff } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
@@ -332,6 +334,20 @@ export function StickerPlacementOverlay({
     if (!armed) setReplayed(false);
   }, [armed]);
 
+  const answering =
+    interactive &&
+    viewerId != null &&
+    placements.some((placement) => placement.isPending && placement.ownerId === viewerId);
+  const [peeking, setPeeking] = useState(false);
+  // Reset once nothing is pending, so the next request does not arrive hidden.
+  useEffect(() => {
+    if (!answering) setPeeking(false);
+  }, [answering]);
+  const peek = peeking && answering;
+  // `visibility`, not `opacity`: hidden controls must not take a tap. Not
+  // unmounted either, which would drop the measurements that position them.
+  const peekStyle: CSSProperties | undefined = peek ? { visibility: 'hidden' } : undefined;
+
   if (!placements.length) return null;
 
   const visible = step == null ? ordered : ordered.slice(0, step + 1);
@@ -520,6 +536,7 @@ export function StickerPlacementOverlay({
                     // and the ring goes with the edges.
                     surface === 'card' ? 'inset-0' : '-inset-1'
                   )}
+                  style={peekStyle}
                 />
               )}
 
@@ -547,7 +564,10 @@ export function StickerPlacementOverlay({
                     )}
                     // Counter-rotated: rotation runs to ±180 and a mark riding
                     // the sticker's own transform reads upside down.
-                    style={{ transform: `rotate(${-placement.data.rotation}deg)` }}
+                    style={{
+                      transform: `rotate(${-placement.data.rotation}deg)`,
+                      ...peekStyle,
+                    }}
                   >
                     {stack.map((mark) => (
                       <span key={mark.key} className={clsx(PLACEMENT_MARK_CLASS, mark.className)}>
@@ -704,7 +724,21 @@ export function StickerPlacementOverlay({
           className="pointer-events-none absolute inset-0 overflow-hidden"
           style={{ zIndex: PENDING_CONTROL_Z }}
         >
-          {pendingControls}
+          <div className="pointer-events-none absolute inset-0" style={peekStyle}>
+            {pendingControls}
+          </div>
+          <Button
+            size="sm"
+            h={44}
+            radius="xl"
+            variant="default"
+            className="pointer-events-auto absolute right-2 top-2"
+            leftSection={peek ? <IconEye size={16} /> : <IconEyeOff size={16} />}
+            aria-pressed={peek}
+            onClick={() => setPeeking(!peek)}
+          >
+            {peek ? 'Show controls' : 'Hide controls'}
+          </Button>
         </div>
       )}
     </>

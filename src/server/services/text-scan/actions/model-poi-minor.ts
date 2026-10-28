@@ -594,7 +594,7 @@ async function notifyModelOwner({
   await createNotification({
     userId,
     type: 'model-text-scan-flagged',
-    category: NotificationCategory.System,
+    category: NotificationCategory.Moderation,
     key: `model-text-scan-flagged:${modelId}:${label}:${workflowId}`,
     details: { modelId, modelName, label },
   });

@@ -80,3 +80,25 @@ describe('elementBackend trigger word check', () => {
     await expect(checkGiven(core.submitTrainingBatch)({ triggerWord: 'ok' })).rejects.toBe(failure);
   });
 });
+
+describe('elementBackend auto-label payer', () => {
+  const items = [{ key: 'a.png', mediaUrl: 'https://blob.example/a.png' }];
+
+  it('never submits with the user token when the host offers no system-paid path', async () => {
+    const getOrchestratorToken = vi.fn(async () => 'user-token');
+    const backend = elementBackend({ ...host(), getOrchestratorToken });
+    await expect(backend.autoLabelSubmit(items, 'tag', 'image')).rejects.toThrow(/unavailable/);
+    expect(getOrchestratorToken).not.toHaveBeenCalled();
+  });
+
+  it("uses the host's auto-label when it offers one", async () => {
+    const autoLabelSubmit = vi.fn(async () => ({ workflowId: 'wf-sys' }));
+    const getOrchestratorToken = vi.fn(async () => 'user-token');
+    const backend = elementBackend({ ...host(), getOrchestratorToken, autoLabelSubmit });
+    await expect(backend.autoLabelSubmit(items, 'tag', 'image')).resolves.toEqual({
+      workflowId: 'wf-sys',
+    });
+    expect(autoLabelSubmit).toHaveBeenCalledWith(items, 'tag', 'image');
+    expect(getOrchestratorToken).not.toHaveBeenCalled();
+  });
+});

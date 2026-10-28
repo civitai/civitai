@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { UserMenuTrigger } from '~/components/AppLayout/AppHeader/UserMenu';
+import { useChatStore } from '~/components/Chat/ChatProvider';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsMobile } from '~/hooks/useIsMobile';
@@ -29,22 +30,16 @@ export default function UserMenuV2() {
 
   const setOpen = (next: boolean) => {
     if (!next) pins.flush();
+    // On a phone the menu sheet and the chat window are both full-screen.
+    if (next && isMobile) useChatStore.setState({ open: false });
     setOpenState(next);
   };
 
   const trigger = (
     <UserMenuTrigger
       open={open}
-      className="relative"
-      indicator={
-        currentUser && attention > 0 ? (
-          <span
-            className="absolute -top-0.5 left-0 z-10 flex h-4 min-w-4 items-center justify-center rounded-full bg-red-6 px-1 text-[10px] font-bold leading-none text-white @max-md:left-auto @max-md:right-0"
-            aria-label={`${attention} waiting for you`}
-          >
-            {attention > 99 ? '99+' : attention}
-          </span>
-        ) : undefined
+      badge={
+        currentUser && attention > 0 ? (attention > 99 ? '99+' : String(attention)) : undefined
       }
     />
   );

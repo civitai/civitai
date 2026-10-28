@@ -3,6 +3,7 @@ import {
   HOLD_UNKNOWN_REFUSAL,
   LEGAL_HOLD_REFUSAL,
   LEGAL_HOLD_STOPPED,
+  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
   type DeleteHold,
 } from '$lib/legal-hold';
 import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
@@ -46,7 +47,9 @@ import type { HeldSummary } from './removal-hold';
 // endpoint's ClickHouse audit records. The ban endpoint records itself as
 // `userId: -1` internally, so without this log a ban would have no attribution at all.
 
-export type ActionResult = { ok: true; warning?: string } | { ok: false; error: string };
+export type ActionResult =
+  | { ok: true; warning?: string }
+  | { ok: false; error: string; retryAfterSeconds?: number };
 
 /** Main-app endpoints authenticated by `WEBHOOK_TOKEN` in the query string. The token must never reach
  *  the client, so every one of these is called from a form action, never proxied. */
@@ -99,6 +102,9 @@ export type JsonResult =
       /** The recovered text alone, without the action label, so a caller that overrides the message
        *  can still carry what the far side said. */
       reason?: string;
+      /** A rate-limit refusal's `Retry-After`: the request was refused before the endpoint acted, so
+       *  it is safe to send again once this has passed. */
+      retryAfterSeconds?: number;
     };
 
 /** The refusal an endpoint wrote for the operator. A rate limit also carries how long is left, which
@@ -186,6 +192,8 @@ async function postJson(opts: {
       // limit has left. Reducing that to a status code is what makes a moderator retry the same
       // forbidden action, or re-login against a 403 that re-logging in cannot fix.
       const reason = await readError(res);
+      const retryAfter = res.status === 429 ? Number(res.headers.get('retry-after')) : NaN;
+      const retryAfterSeconds = retryAfter > 0 ? retryAfter : undefined;
       // Recovered = the body parsed as the envelope this app reads. It is NOT proof the app wrote it.
       if (reason)
         return {
@@ -193,8 +201,14 @@ async function postJson(opts: {
           error: `${opts.label}: ${reason}`,
           status: res.status,
           reason,
+          retryAfterSeconds,
         };
-      return { ok: false, error: `${opts.label} returned ${res.status}.`, status: res.status };
+      return {
+        ok: false,
+        error: `${opts.label} returned ${res.status}.`,
+        status: res.status,
+        retryAfterSeconds,
+      };
     }
     return {
       ok: true,
@@ -225,6 +239,8 @@ export type ModEndpoint =
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
   | 'cosmetic/holdings-removed'
+  | 'messages/claim'
+  | 'messages/release'
   | 'creator-services/resolve-dispute'
   | 'csam/training-data-report'
   | 'image/tag-vote'
@@ -241,6 +257,9 @@ export type ModEndpoint =
   | 'model/set-poi'
   | 'model/take-down'
   | 'model/unpublish'
+  | 'poi-flag/confirm'
+  | 'poi-flag/dismiss'
+  | 'poi-flag/revert'
   | 'restriction/resolve'
   | 'review/delete'
   | 'review/set-exclude'
@@ -250,12 +269,14 @@ export type ModEndpoint =
   | 'strike/void'
   | 'text-scan'
   | 'text-scan/csam-hold/resolve'
+  | 'text-scan/model-rules-hold/resolve'
   | 'training-data/resolve'
   | 'user/creator-score-grant'
   | 'user/creator-score-grant-revoke'
   | 'user/delete'
   | 'user/membership-code'
   | 'user/membership-code-revoke'
+  | 'user/message-as-civitai'
   | 'user/remove-reactions'
   | 'user/toggle-moderator'
   | 'user/unmute'
@@ -281,6 +302,8 @@ export type ModReadEndpoint =
   | 'creator-services/deal-file-url'
   | 'creator-services/deal-files'
   | 'creator-services/disputes'
+  | 'messages/inbox'
+  | 'messages/thread'
   | 'user/legal-hold'
   | 'user/reactions';
 
@@ -464,6 +487,9 @@ export async function bulkCommentAction(input: {
 }
 
 // BULK REVIEW ACTIONS (Retool's DeleteReview / ExcludeOrIncludeReview).
+// The main app's review endpoints reject more than 500 ids in one call.
+const REVIEW_BATCH = 500;
+
 export async function bulkReviewAction(input: {
   action: 'delete' | 'setExclude';
   reviewIds: number[];
@@ -473,17 +499,29 @@ export async function bulkReviewAction(input: {
 }): Promise<ActionResult> {
   if (!input.reviewIds.length) return { ok: false, error: 'Select at least one review.' };
 
-  const body: Record<string, unknown> = { reviewIds: input.reviewIds };
-  if (input.action === 'setExclude') body.exclude = input.exclude ?? true;
+  let affected = 0;
+  for (let i = 0; i < input.reviewIds.length; i += REVIEW_BATCH) {
+    const body: Record<string, unknown> = {
+      reviewIds: input.reviewIds.slice(i, i + REVIEW_BATCH),
+    };
+    if (input.action === 'setExclude') body.exclude = input.exclude ?? true;
 
-  const result = await callModEndpoint(
-    input.action === 'delete' ? 'review/delete' : 'review/set-exclude',
-    body,
-    input.action === 'delete' ? 'Review delete' : 'Review exclude'
-  );
-  if (!result.ok) return result;
+    const result = await callModEndpoint(
+      input.action === 'delete' ? 'review/delete' : 'review/set-exclude',
+      body,
+      input.action === 'delete' ? 'Review delete' : 'Review exclude'
+    );
+    if (!result.ok) {
+      if (!affected) return result;
+      await logAction(`reviews:${input.action}:${affected}`, input.userId, input.moderatorId);
+      return {
+        ok: false,
+        error: `${affected} of ${input.reviewIds.length} went through, then: ${result.error} Reload.`,
+      };
+    }
+    affected += countOf(result.body, ['count']);
+  }
 
-  const affected = countOf(result.body, ['count']);
   if (affected === 0)
     return { ok: false, error: 'Nothing changed — those reviews may already be gone. Reload.' };
 
@@ -1512,9 +1550,13 @@ export async function purgeAllContent(input: {
     if (result.status === 403 && result.reason === HOLD_UNKNOWN_REFUSAL)
       return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
     // A hold stopped it part-way, after some of the account was deleted: that is recorded.
-    if (result.status === 409 && result.reason === LEGAL_HOLD_STOPPED) {
+    if (
+      result.status === 409 &&
+      (result.reason === LEGAL_HOLD_STOPPED ||
+        result.reason === LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE)
+    ) {
       await logAction('purgeAllContent', input.userId, input.moderatorId);
-      return { ok: false, error: LEGAL_HOLD_STOPPED };
+      return { ok: false, error: result.reason };
     }
     // The wipe runs to completion on the main app whether or not this side is still waiting, so a
     // lost answer is reported as started, never as failed: a failure invites a second purge.
@@ -1685,6 +1727,10 @@ export async function deleteAccount(input: {
   // window the operator reads as a failed deletion.
   const result = await callModEndpoint('user/delete', body, 'Account deletion', 60_000);
   if (!result.ok) {
+    if (result.status === 403 && result.reason === LEGAL_HOLD_REFUSAL)
+      return { ok: false, error: LEGAL_HOLD_REFUSAL };
+    if (result.status === 403 && result.reason === HOLD_UNKNOWN_REFUSAL)
+      return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
     // 🔴 ONE QUESTION: could this request have reached the handler?
     //
     // `deleteUser` commits before an unbounded post-commit step, so a lost response does NOT mean

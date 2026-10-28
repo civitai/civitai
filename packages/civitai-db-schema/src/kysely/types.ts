@@ -304,6 +304,23 @@ export type ApiKey = {
   lastUsedAt: Timestamp | null;
   clientId: string | null;
   buzzLimit: unknown | null;
+  /**
+   * Set on `Worker` tokens only: the device the token was issued to.
+   */
+  workerDeviceId: number | null;
+};
+export type AppAccessRequest = {
+  id: Generated<number>;
+  userId: number;
+  whatToBuild: string;
+  /**
+   * pending | approved | declined (CHECK `AppAccessRequest_status_check`). At most one `pending` row
+   * per user: the migration's PARTIAL unique index, which Prisma cannot express.
+   */
+  status: Generated<string>;
+  createdAt: Generated<Timestamp>;
+  reviewedAt: Timestamp | null;
+  reviewedById: number | null;
 };
 export type AppBlock = {
   id: string;
@@ -655,6 +672,15 @@ export type AppPageAccess = {
   roles: string[];
   updatedById: number | null;
   updatedAt: Generated<Timestamp>;
+};
+export type AppPostIntent = {
+  listing_id: string;
+  host: string;
+  path_prefix: string;
+  enabled: Generated<boolean>;
+  reviewed_by_id: number | null;
+  created_at: Generated<Timestamp>;
+  updated_at: Generated<Timestamp>;
 };
 export type AppReviewAgentReport = {
   id: string;
@@ -3133,6 +3159,9 @@ export type EvidenceHoldImage = {
   userId: number;
   postId: number | null;
   keptAt: Generated<Timestamp>;
+  priorIngestion: string | null;
+  priorBlockedFor: string | null;
+  priorNsfwLevel: number | null;
 };
 export type EvidenceHoldPost = {
   postId: number;
@@ -3373,6 +3402,24 @@ export type Image = {
   minor: Generated<boolean>;
   poi: Generated<boolean>;
   acceptableMinor: Generated<boolean>;
+};
+export type ImageAudioScan = {
+  imageId: number;
+  workflowId: string;
+  /**
+   * Pending | Succeeded | Failed
+   */
+  status: Generated<string>;
+  /**
+   * null when the video has no audio or the scan failed: unknown, never "clean"
+   */
+  flagged: boolean | null;
+  hasAudio: boolean | null;
+  result: unknown | null;
+  resultVersion: number | null;
+  error: string | null;
+  createdAt: Generated<Timestamp>;
+  completedAt: Timestamp | null;
 };
 export type ImageCaption = {
   imageId: number;
@@ -3710,6 +3757,7 @@ export type ModActivity = {
   entityType: string | null;
   entityId: number | null;
   createdAt: Generated<Timestamp>;
+  host: string | null;
 };
 export type Model = {
   id: Generated<number>;
@@ -4176,6 +4224,12 @@ export type ModerationRuleVersion = {
   createdById: number;
   createdAt: Generated<Timestamp>;
 };
+export type ModThreadClaim = {
+  chatId: number;
+  moderatorId: number;
+  claimedAt: Generated<Timestamp>;
+  expiresAt: Timestamp;
+};
 export type NewOrderPlayer = {
   userId: number;
   rankType: NewOrderRankType;
@@ -4218,6 +4272,16 @@ export type OauthClient = {
    * Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
    */
   accessMode: Generated<string>;
+  /**
+   * Staff-only, confidential system apps only (auth hub admin, OAuth Apps): signed-in users go straight through
+   * /authorize with no consent screen, as first-party (spoke) clients do. Ignored for a public app.
+   */
+  skipConsent: Generated<boolean>;
+  /**
+   * Staff-only, confidential system apps only: this client's own /oauth/token limit per minute, used once a request
+   * is past the per-IP limit and the client has proved its secret. Null = the per-IP limit only.
+   */
+  tokenRateLimit: number | null;
   userId: number;
   isVerified: Generated<boolean>;
   createdAt: Generated<Timestamp>;
@@ -4466,6 +4530,19 @@ export type PostHelper = {
 export type PostImageTag = {
   postId: number;
   tagId: number;
+};
+export type PostIntentManifest = {
+  id: Generated<number>;
+  manifest_url: string;
+  app_id: string;
+  listing_id: string;
+  user_id: number;
+  manifest: unknown;
+  staged: Generated<unknown>;
+  claim_expires_at: Timestamp;
+  post_id: number | null;
+  posted_at: Timestamp | null;
+  created_at: Generated<Timestamp>;
 };
 export type PostMetric = {
   postId: number;
@@ -4964,6 +5041,7 @@ export type ScanLabelClaim = {
   itemId: number;
   userId: number;
   expiresAt: Timestamp;
+  token: Generated<string | null>;
 };
 export type ScanLabelCopyObject = {
   key: string;
@@ -5023,6 +5101,7 @@ export type ScanLabelVote = {
   reasonComment: string | null;
   msOnItem: number | null;
   createdAt: Generated<Timestamp>;
+  claimToken: string | null;
 };
 export type ScannerContentSnapshot = {
   contentHash: string;
@@ -5144,9 +5223,19 @@ export type ServiceDealFile = {
   processingAt: Timestamp | null;
   scanStatus: Generated<ServiceDealFileScanStatus>;
   /**
-   * The malware scanner's own verdict; `scanStatus` can pass only once this has. No scanner writes it yet.
+   * The malware scanner's own verdict; `scanStatus` can pass only once this has.
    */
   malwareScanStatus: Generated<ServiceDealFileScanStatus>;
+  /**
+   * The scan workflow the verdict is awaited from; cleared when a submission has to be retried.
+   */
+  malwareScanWorkflowId: string | null;
+  /**
+   * When the file was first handed to the scan; the give-up window runs from here.
+   */
+  malwareScanStartedAt: Timestamp | null;
+  malwareScanSubmittedAt: Timestamp | null;
+  malwareScanAttempts: Generated<number>;
   /**
    * Set once the file's contents have been listed and checked (a zip unpacked, an image read).
    */
@@ -5192,6 +5281,30 @@ export type ServiceDealTransaction = {
   lastError: string | null;
   createdAt: Generated<Timestamp>;
 };
+export type ServiceDisputeReview = {
+  id: Generated<number>;
+  dealId: number;
+  /**
+   * Allowed values: DISPUTE_REVIEW_CLASSES in creator-service-dispute-review.service.ts.
+   */
+  class: string;
+  proposal: ServiceDisputeResolution | null;
+  confidence: number | null;
+  rationale: string;
+  /**
+   * The evidence bundle the review read, as submitted.
+   */
+  evidence: unknown;
+  agentVersion: string;
+  /**
+   * Allowed values: DISPUTE_REVIEW_MODES in the same file.
+   */
+  mode: string;
+  humanRuling: ServiceDisputeResolution | null;
+  humanId: number | null;
+  agreed: boolean | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ServiceOffering = {
   id: Generated<number>;
   sellerId: number;
@@ -5217,6 +5330,11 @@ export type ServiceOffering = {
   removedDetails: string | null;
   removedAt: Timestamp | null;
   removedById: number | null;
+  /**
+   * The seller's agreement to the services terms when they published: userId, offeringId,
+   * affirmedAt, version and the statement verbatim. Null until first published.
+   */
+  sellerAffirmation: unknown | null;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
@@ -5729,6 +5847,7 @@ export type User = {
   rewardsEligibility: Generated<RewardsEligibility>;
   eligibilityChangedAt: Timestamp | null;
   customerId: string | null;
+  subscriptionId: string | null;
   paddleCustomerId: string | null;
   profilePictureId: number | null;
   settings: Generated<unknown | null>;
@@ -5785,6 +5904,11 @@ export type UserCreatorMilestone = {
   milestoneKey: string;
   achievedAt: Generated<Timestamp>;
   seenAt: Timestamp | null;
+};
+export type UserEmailNotificationOptOut = {
+  userId: number;
+  type: string;
+  createdAt: Generated<Timestamp>;
 };
 export type UserEngagement = {
   userId: number;
@@ -6084,6 +6208,40 @@ export type WildcardSetCategory = {
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };
+export type WorkerClient = {
+  clientId: string;
+  /**
+   * The orchestrator provider this pool's workers register as.
+   */
+  provider: string;
+  /**
+   * The `subject_token_type` URNs this client may exchange.
+   */
+  subjectTokenTypes: Generated<string[]>;
+  /**
+   * Salad container groups whose IMDS tokens this client accepts.
+   */
+  saladContainerGroupIds: Generated<string[]>;
+  createdAt: Generated<Timestamp>;
+};
+export type WorkerDevice = {
+  id: Generated<number>;
+  clientId: string;
+  /**
+   * `self` (device id sent by the worker) or `salad` (Salad IMDS token).
+   */
+  issuer: string;
+  subject: string;
+  /**
+   * `active` or `blocked`.
+   */
+  status: Generated<string>;
+  firstSeenAt: Generated<Timestamp>;
+  lastSeenAt: Generated<Timestamp>;
+  lastIp: string | null;
+  blockedAt: Timestamp | null;
+  blockedReason: string | null;
+};
 export type DB = {
   _LicenseToModel: LicenseToModel;
   Account: Account;
@@ -6113,10 +6271,12 @@ export type DB = {
   app_listings: AppListing;
   app_ownership_events: AppOwnershipEvent;
   app_ownership_transfers: AppOwnershipTransfer;
+  app_post_intents: AppPostIntent;
   app_review_agent_reports: AppReviewAgentReport;
   app_sub_listing_parents: AppSubListingParent;
   app_sub_listings: AppSubListing;
   app_user_scope_grants: AppUserScopeGrant;
+  AppAccessRequest: AppAccessRequest;
   Appeal: Appeal;
   AppealDecisionRecord: AppealDecisionRecord;
   AppealTrainingObjectDeletion: AppealTrainingObjectDeletion;
@@ -6285,6 +6445,7 @@ export type DB = {
   HomeBlock: HomeBlock;
   HuggingFaceImport: HuggingFaceImport;
   Image: Image;
+  ImageAudioScan: ImageAudioScan;
   ImageCaption: ImageCaption;
   ImageCdnAccess: ImageCdnAccess;
   ImageCdnAccessClaim: ImageCdnAccessClaim;
@@ -6351,6 +6512,7 @@ export type DB = {
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
   ModerationRule: ModerationRule;
   ModerationRuleVersion: ModerationRuleVersion;
+  ModThreadClaim: ModThreadClaim;
   NewOrderPlayer: NewOrderPlayer;
   NewOrderRank: NewOrderRank;
   NewOrderSmite: NewOrderSmite;
@@ -6365,6 +6527,7 @@ export type DB = {
   PlacementTransaction: PlacementTransaction;
   platform_default_blocks: PlatformDefaultBlock;
   Post: Post;
+  post_intent_manifests: PostIntentManifest;
   PostHelper: PostHelper;
   PostImageTag: PostImageTag;
   PostMetric: PostMetric;
@@ -6423,6 +6586,7 @@ export type DB = {
   ServiceDealFile: ServiceDealFile;
   ServiceDealFileEntry: ServiceDealFileEntry;
   ServiceDealTransaction: ServiceDealTransaction;
+  ServiceDisputeReview: ServiceDisputeReview;
   ServiceOffering: ServiceOffering;
   ServiceOfferingReport: ServiceOfferingReport;
   Session: Session;
@@ -6473,6 +6637,7 @@ export type DB = {
   UserCosmeticShopPurchaseCosmetic: UserCosmeticShopPurchaseCosmetic;
   UserCosmeticShopPurchases: UserCosmeticShopPurchases;
   UserCreatorMilestone: UserCreatorMilestone;
+  UserEmailNotificationOptOut: UserEmailNotificationOptOut;
   UserEngagement: UserEngagement;
   UserHub: UserHub;
   UserHubFollow: UserHubFollow;
@@ -6502,4 +6667,6 @@ export type DB = {
   Webhook: Webhook;
   WildcardSet: WildcardSet;
   WildcardSetCategory: WildcardSetCategory;
+  WorkerClient: WorkerClient;
+  WorkerDevice: WorkerDevice;
 };

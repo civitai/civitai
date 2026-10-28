@@ -196,11 +196,22 @@ export function PostEditSidebar({ post }: { post: PostDetailEditable }) {
             data.publishedAt = publishedAt ?? null;
           });
           if (result?.storyline) {
+            const { link, message, ...said } = storylinePublishMessage(result.storyline, {
+              chapterNumber: storylineChapterNumber,
+            });
             showNotification({
-              ...storylinePublishMessage(result.storyline, {
-                chapterNumber: storylineChapterNumber,
-              }),
-              autoClose: 10000,
+              ...said,
+              message: link ? (
+                <>
+                  {message}{' '}
+                  <Anchor component={Link} href={link.href} inherit>
+                    {link.label}
+                  </Anchor>
+                </>
+              ) : (
+                message
+              ),
+              autoClose: link ? false : 10000,
             });
             await Promise.all([
               queryUtils.storyline.getForPosts.invalidate(),

@@ -25,6 +25,8 @@ section).
   its first image and its share of readers. The main path is shown first and largest, with Read as
   the main action, then continuations by the storyline's endorsed collaborators, then everyone
   else's, ordered by how many readers took them. Writing a continuation sits below.
+  On a desktop, a chapter with exactly one way on also continues down it on →, and the Read button
+  shows the key; with several paths → does nothing here.
 - **Where branches meet.** Two branches can rejoin at one chapter. The reader's path and chapter
   numbers follow the way they came (the URL carries it, so a shared link reproduces the route), and
   the chip's map marks a chapter where another branch joins (the page's chapters list draws it too).
@@ -62,10 +64,19 @@ section).
 - **Starting one.** "Start a storyline" on /storylines names it and sets its terms, then opens the post
   editor with the storyline already attached. The post that is published from there becomes chapter 1.
   Until then the storyline is empty and only its creator sees it.
+- **Starting from a published post.** An empty storyline's creator can pick a post they have already
+  published as its chapter 1 ("Use a post you've published"). A published post's menu also offers
+  "Make this chapter 1 of a storyline", which starts a new storyline from it. A chapter 1 rated above
+  an empty storyline's maximum content level raises the maximum to fit it.
 - **Settings.** Status (ongoing or complete), who may continue it, the maximum content level, and the
   price, if any, to submit a continuation.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
   review and are listed ahead of other contributors' at the end of a chapter.
+- **Moderators.** A moderator can manage any storyline as its creator does: title, status, who may
+  continue, content level, covers, removing collaborators, and inserting, reordering, joining and
+  choosing the main route of chapters. Setting the price, endorsing collaborators, answering
+  continuations and deleting stay the creator's. Each such edit is recorded in the moderator
+  activity log.
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or
   declined. A post above the storyline's content level cannot be submitted at all. A post submitted
   while still a draft or still being scanned reaches the queue once it is published and rated, or is

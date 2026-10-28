@@ -12,10 +12,9 @@ import { buildPostLoginOriginCheck } from '$lib/server/oauth/first-party';
 // expires), clear the hub's `.civitai.com` cookies, and redirect back. locals.tokenId is set by hooks from the
 // verified cookie.
 //
-// POST does the real work — POST-only on purpose: it's the CSRF-protected logout. SvelteKit's built-in CSRF
-// origin check covers SAME-ORIGIN form POSTs; the login page + admin layout both submit a real
-// <form method="POST" action="/logout"> for their sign-out buttons. The token-revoke + cookie-clear only ever
-// happen here.
+// POST does the real work — POST-only on purpose, origin-checked in hooks.server.ts. The login page + admin
+// layout both submit a real <form method="POST" action="/logout"> for their sign-out buttons. The
+// token-revoke + cookie-clear only ever happen here.
 //
 // GET is the CROSS-DOMAIN-logout LANDING page: a cross-site spoke (civitai.red) can't clear the hub's
 // `.civitai.com` cookies or revoke the hub session itself, and can't POST here directly (cross-origin form POST
@@ -50,7 +49,8 @@ export const GET: RequestHandler = async ({ url }) => {
     headers: {
       'content-type': 'text/html; charset=utf-8',
       'cache-control': 'no-store',
-      'referrer-policy': 'no-referrer',
+      // Not no-referrer: under it the auto-submitted POST carries `Origin: null`, which the origin check refuses.
+      'referrer-policy': 'same-origin',
     },
   });
 };
@@ -59,8 +59,8 @@ export const POST: RequestHandler = async ({ cookies, locals, url }) => {
   if (locals.tokenId) {
     await sessions.invalidateToken(locals.tokenId, locals.user?.id).catch(() => {});
   }
-  // Clear the hub's `.civitai.com` session AND device cookies (the seamless-switch account set must not survive
-  // logout on a shared machine — mirrors the spoke's buildLogoutCookies). Also clear any leftover LEGACY
+  // Clear the hub's session AND device cookies under every name, `.civitai.com` and host-only (the
+  // seamless-switch account set must not survive logout on a shared machine). Also clear any leftover LEGACY
   // next-auth cookies on `.civitai.com` — the main app's hybrid fallback still honors the legacy session cookie,
   // so leaving it would silently re-authenticate the user after a cross-domain logout.
   clearSession(cookies);

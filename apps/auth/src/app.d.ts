@@ -10,6 +10,8 @@ declare global {
       tokenId?: string;
       /** Moderator impersonation (F): the moderator's id when this is an impersonation session. */
       impersonatedBy?: number;
+      /** This browser's device id: the device cookie, or the `deviceId` an `internal`-shape caller sent. */
+      deviceId?: string;
     }
     // interface PageData {}
     // interface PageState {}

@@ -1,6 +1,6 @@
 import { IconAward, IconScreenShare, IconSwords, IconTrophy } from '@tabler/icons-react';
 import { useMantineTheme, getPrimaryShade, useComputedColorScheme } from '@mantine/core';
-import { useGetMenuItems } from '~/components/AppLayout/AppHeader/hooks';
+import { useGetActionMenuItems, useGetMenuItems } from '~/components/AppLayout/AppHeader/hooks';
 import { openCivitaiLinkDialog } from '~/components/CivitaiLink/CivitaiLinkPopover';
 import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
 import { useSupportMenuItems } from '~/components/Support/useSupportMenuItems';
@@ -15,6 +15,7 @@ export function useUserMenuRegistry({ opened }: { opened: boolean }): UserMenuRe
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const groups = useGetMenuItems();
+  const actions = useGetActionMenuItems();
   const support = useSupportMenuItems({ opened });
   const { unclaimedPrizes } = useQueryNotificationsCount();
 
@@ -23,6 +24,7 @@ export function useUserMenuRegistry({ opened }: { opened: boolean }): UserMenuRe
     if (group.visible === false) continue;
     for (const item of group.items) if (item.id) registry[item.id] = item;
   }
+  for (const item of actions) if (item.id) registry[item.id] = item;
   for (const { id, ...item } of support) registry[id] = { ...item, external: !!item.href };
 
   registry.prizes = {
@@ -32,6 +34,7 @@ export function useUserMenuRegistry({ opened }: { opened: boolean }): UserMenuRe
     color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
     label: 'Prizes',
     badge: unclaimedPrizes,
+    badgeTooltip: "Prizes you haven't claimed yet",
   };
   // The site pages, as the nav bar links them; `challenges` is "Your Challenges".
   registry['browse-challenges'] = {

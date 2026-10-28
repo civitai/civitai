@@ -7,8 +7,15 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { StartStorylineModal } from '~/components/Storyline/StartStorylineModal';
 import {
   STORYLINES_INTRO_DISMISSED_KEY,
-  StorylinesIntro,
+  StorylinesIntro as StorylinesIntroCard,
 } from '~/components/Storyline/StorylinesIntro';
+import { useIntroDismissed } from '~/hooks/useIntroDismissed';
+
+/** The page owns the dismissed state, so the card is rendered the way the page does. */
+function StorylinesIntro() {
+  const [dismissed, dismiss] = useIntroDismissed(STORYLINES_INTRO_DISMISSED_KEY);
+  return <StorylinesIntroCard dismissed={dismissed} onDismiss={dismiss} />;
+}
 
 /**
  * The welcome card on /storylines. Its "start one" button opens the start sheet when signed in, and
@@ -121,7 +128,10 @@ describe('StorylinesIntro', () => {
     renderWithProviders(<StorylinesIntro />);
 
     await page.getByRole('button', { name: 'Start a storyline' }).click();
-    expect(trigger).toHaveBeenCalledWith({ component: StartStorylineModal });
+    expect(trigger).toHaveBeenCalledWith({
+      component: StartStorylineModal,
+      props: { post: undefined },
+    });
     expect(page.getByTestId('login-redirect').elements()).toHaveLength(0);
     // A button that opens the sheet, not a link that leaves the page.
     expect(page.getByRole('link', { name: 'Start a storyline' }).elements()).toHaveLength(0);

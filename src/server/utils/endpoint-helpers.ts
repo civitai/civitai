@@ -1,6 +1,6 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
-import { legacySessionCookieName, sessionCookieName } from '@civitai/auth';
+import { hostSessionCookieName, legacySessionCookieName, sessionCookieName } from '@civitai/auth';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
@@ -437,10 +437,10 @@ const CREDENTIALED_VARY = 'Authorization, Cookie';
  * Cookie names that can carry a session, hence make a response caller-dependent.
  *
  * 🔴 DERIVED, never spelled out. `@civitai/auth` owns the naming, and it varies
- * along two axes: the current thin-session cookie vs the legacy next-auth one
- * (both are still honoured by `getServerAuthSession`), and the `__Secure-`
- * prefix, which is applied when serving over https and dropped for http dev. All
- * four spellings are enumerated by calling the helpers with an explicit boolean,
+ * along three axes: the host-only `__Host-` session cookie, the shared thin-session
+ * cookie, and the legacy next-auth one (all still honoured by `getServerAuthSession`,
+ * whatever this app's cookie mode), plus the secure prefix, which is applied when
+ * serving over https and dropped for http dev. All five spellings are enumerated by calling the helpers with an explicit boolean,
  * rather than letting the env-derived default pick one — the guard must hold in
  * dev and prod alike, and it must not silently narrow if a deploy's env changes.
  *
@@ -451,6 +451,7 @@ const CREDENTIALED_VARY = 'Authorization, Cookie';
  */
 const SESSION_COOKIE_NAMES = Array.from(
   new Set([
+    hostSessionCookieName(true),
     sessionCookieName(true),
     sessionCookieName(false),
     legacySessionCookieName(true),

@@ -1,21 +1,16 @@
 import { Alert, Button, Collapse, Divider, Group, Stack, Text, Title } from '@mantine/core';
 import { useDisclosure } from '@mantine/hooks';
-import {
-  IconArrowRight,
-  IconBrandDiscord,
-  IconChevronDown,
-  IconPlus,
-  IconTerminal2,
-} from '@tabler/icons-react';
+import { IconArrowRight, IconChevronDown, IconPlus, IconTerminal2 } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useCallback, useEffect, useId, useRef } from 'react';
-import { APPS_REQUEST_ACCESS_HREF } from '~/components/Apps/cliCommands';
+import { AppAccessRequestPanel } from '~/components/Apps/AppAccessRequest/AppAccessRequestPanel';
 import { AgentOnboardingCard } from '~/components/Apps/AgentOnboardingCard';
 import { AppsBuildBodySkeleton } from '~/components/Apps/AppsBuildBodySkeleton';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { GetStartedBody } from '~/components/Apps/GetStartedBody';
 import { ManualSetupCollapse, ManualSetupSteps } from '~/components/Apps/ManualSetupCollapse';
 import { MyAppsBody } from '~/components/Apps/MyAppsBody';
+import { AppDocStoreUsageCard } from '~/components/Apps/AppDocStoreUsageCard';
 import {
   resolveAppsBuildSettled,
   resolveAppsBuildState,
@@ -268,6 +263,7 @@ export function AppsBuildBody() {
           </Button>
         </Group>
         <MyAppsBody />
+        <AppDocStoreUsageCard />
         <BuildResourcesStrip onCopyCommand={onCopyCommand} onCopyAgentPrompt={onCopyAgentPrompt} />
       </Stack>
     );
@@ -310,26 +306,16 @@ export function AppsBuildBody() {
       <Alert
         color="blue"
         variant="light"
-        title="Publishing is invite-only right now"
+        title="You don't need to be a developer"
         data-testid="apps-build-request-access"
       >
         <Stack gap="sm" align="flex-start">
           <Text size="sm">
-            Anyone can build and run an app locally today, with a coding agent or by hand with the
-            CLI. Publishing one to the Civitai store is still limited to a curated group while the
-            platform is in beta.
+            You don&apos;t need to be a developer to build an app: describe what you want and the
+            App Assistant builds it with you. It is open to a small group while the platform is in
+            beta — request access and tell us what you&apos;d like to make.
           </Text>
-          <Button
-            component="a"
-            href={APPS_REQUEST_ACCESS_HREF}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={() => track('request_access', 'pitch')}
-            variant="light"
-            leftSection={<IconBrandDiscord size={16} />}
-          >
-            Ask about access
-          </Button>
+          <AppAccessRequestPanel onRequest={() => track('request_access', 'pitch')} />
         </Stack>
       </Alert>
     </Stack>
