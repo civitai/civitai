@@ -138,3 +138,26 @@ describe('whether a reply changed the status', () => {
     expect(await reply('')).toMatchObject({ statusChanged: false });
   });
 });
+
+describe('whether a status-only action changed the status', () => {
+  const setStatus = () => run('moderation', 'status', { ticketId: '5', status: '3' });
+
+  it('reports a status that landed', async () => {
+    expect(await setStatus()).toMatchObject({ success: true, statusChanged: true });
+  });
+
+  it('refuses without claiming a change when Freshdesk certainly rejected it', async () => {
+    setTicketStatus.mockResolvedValue({ status: 'error', certain: true, message: 'no' });
+    const res = await setStatus();
+    expect(res).toMatchObject({ status: 502 });
+    expect(JSON.stringify(res)).not.toContain('statusChanged');
+  });
+
+  it('refuses without claiming a change when the outcome is uncertain', async () => {
+    setTicketStatus.mockResolvedValue({ status: 'error', certain: false, message: 'timeout' });
+    const res = await setStatus();
+    expect(res).toMatchObject({ status: 502 });
+    expect(JSON.stringify(res)).toContain('may or may not');
+    expect(JSON.stringify(res)).not.toContain('statusChanged');
+  });
+});

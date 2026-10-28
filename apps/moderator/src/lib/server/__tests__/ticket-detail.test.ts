@@ -26,7 +26,9 @@ vi.mock('../tickets/account', () => ({
   accountSectionFor: (...a: unknown[]) => accountSectionFor(...a),
 }));
 
-const { loadTicketPayload, openTicketInView } = await import('../tickets/detail');
+const { loadTicketPayload, openTicketInView, resolveTicketView } = await import(
+  '../tickets/detail'
+);
 
 const ticket = (over: Record<string, unknown> = {}) => ({
   id: '5',
@@ -175,5 +177,36 @@ describe('openTicketInView', () => {
 
   it('keeps the 404 for a ticket of the other view', async () => {
     await expect(openTicketInView('support', '5')).rejects.toMatchObject({ status: 404 });
+  });
+});
+
+describe('resolveTicketView when the router lookup fails', () => {
+  const known = (over: Record<string, unknown> = {}) => ({
+    id: '5',
+    subject: 'Banned',
+    status: 2,
+    cfFeature: null,
+    tags: [],
+    createdAt: null,
+    updatedAt: null,
+    routerTopic: 'image-moderation-appeal',
+    civitaiUserId: null,
+    enrichedAt: Date.now(),
+    ...over,
+  });
+  const noFeature = { cfFeature: null, status: 2, tags: [] as string[] };
+
+  it('keeps routing a ticket to the view its stored topic puts it in', async () => {
+    routedContext.mockRejectedValue(new Error('router down'));
+    const res = await resolveTicketView('5', noFeature, known() as never);
+    expect(res.routesTo).toBe('moderation');
+    expect(res.routed).toEqual({ topic: 'image-moderation-appeal', civitaiUserId: null });
+  });
+
+  it('has no topic to route by without a stored record', async () => {
+    routedContext.mockRejectedValue(new Error('router down'));
+    const res = await resolveTicketView('5', noFeature);
+    expect(res.routed).toBeUndefined();
+    expect(res.routesTo).toBe('support');
   });
 });

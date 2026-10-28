@@ -19,7 +19,7 @@ import { statusLabel } from '$lib/tickets/statuses';
 /**
  * The view a ticket belongs to now, with the router context that decided it. `known` is the snapshot's copy:
  * its router answer stands in for a lookup while it is current and linked to an account; an unlinked one
- * may be stale, so it is asked again. A router failure leaves the topic unknown.
+ * may be stale, so it is asked again. A router failure falls back to the snapshot's copy; with none, the topic is unknown.
  */
 export async function resolveTicketView(
   ticketId: string,
@@ -33,7 +33,9 @@ export async function resolveTicketView(
           (m) => m.get(ticketId),
           (e) => {
             console.error('[tickets] router context failed', e);
-            return undefined;
+            return known
+              ? { topic: known.routerTopic ?? null, civitaiUserId: known.civitaiUserId ?? null }
+              : undefined;
           }
         );
   const routesTo = routeTicket({
