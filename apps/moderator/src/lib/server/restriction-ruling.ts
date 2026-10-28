@@ -8,25 +8,26 @@ const rulingSchema = z.object({
   ...resolutionReasonFields,
 });
 
-export type RestrictionRuling = {
-  userRestrictionId: number;
-  status: 'Upheld' | 'Overturned';
-  resolvedReason: string;
-  internalNotes: string | undefined;
-};
+export type RestrictionRulingInput = z.infer<typeof rulingSchema>;
 
-/** Parses and validates a ruling form. Checks that need the row (`unwiredRulingReason`, owner, status) stay with the caller. */
+/**
+ * Parses a ruling form's shape. The reason is checked separately by `rulingReason`, after the caller's
+ * row checks: a missing or unwired restriction answers with its own refusal, not "pick a reason".
+ */
 export function parseRestrictionRuling(
   form: FormData
-): ({ ok: true } & RestrictionRuling) | { ok: false; error: string } {
+): { ok: true; input: RestrictionRulingInput } | { ok: false; error: string } {
   const input = parseForm(rulingSchema, form);
   if (typeof input === 'string') return { ok: false, error: input };
+  return { ok: true, input };
+}
+
+export function rulingReason(
+  input: RestrictionRulingInput
+):
+  | { ok: true; resolvedReason: string; internalNotes: string | undefined }
+  | { ok: false; error: string } {
   const reason = checkedResolutionReason('restriction', input.status, input);
   if (typeof reason === 'string') return { ok: false, error: reason };
-  return {
-    ok: true,
-    userRestrictionId: input.userRestrictionId,
-    status: input.status,
-    ...reason,
-  };
+  return { ok: true, ...reason };
 }
