@@ -30,13 +30,14 @@ const toDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
 export const addDays = (day: string, n: number): string => toDay(toMs(day) + n * DAY_MS);
 
 /**
- * `expression` restricted to tickets created within `range`. Freshdesk compares `created_at` by day and
+ * `expression` restricted to tickets created within `range`. The expression is parenthesised so an `OR`
+ * in it cannot absorb the window. Freshdesk compares `created_at` by day and
  * the bounds are written one day outside the range, so a strict comparison yields exactly the range.
  * If the comparison turns out to be inclusive the window only overlaps its neighbours by a day, which
  * the caller's de-duplication by ticket id absorbs; it never leaves a gap.
  */
 export const createdWithin = (expression: string, { from, to }: DayRange): string =>
-  `${expression} AND created_at:>'${addDays(from, -1)}' AND created_at:<'${addDays(to, 1)}'`;
+  `(${expression}) AND created_at:>'${addDays(from, -1)}' AND created_at:<'${addDays(to, 1)}'`;
 
 /** The two halves of a range, adjacent and non-overlapping, or null for a single day. */
 export function bisectDays({ from, to }: DayRange): [DayRange, DayRange] | null {

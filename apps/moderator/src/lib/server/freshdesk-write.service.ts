@@ -13,13 +13,20 @@ import { freshdeskHost, isFreshdeskId } from './freshdesk.service';
 export type WriteResult =
   | { status: 'ok' }
   | { status: 'not_configured' }
-  | { status: 'error'; httpStatus: number | null; message: string };
+  /** `certain`: Freshdesk refused the request (or none was made), so the write did NOT happen. False
+   *  for a network failure, a timeout or a 5xx, where it may have landed before the answer was lost. */
+  | { status: 'error'; httpStatus: number | null; certain: boolean; message: string };
 
-const error = (httpStatus: number | null, message: string): WriteResult => ({
+const error = (httpStatus: number | null, message: string, certain: boolean): WriteResult => ({
   status: 'error',
   httpStatus,
+  certain,
   message,
 });
+
+/** A 4xx other than 408 is a refusal; 408 says the server gave up waiting, which proves nothing. */
+const isRefusal = (httpStatus: number) =>
+  httpStatus >= 400 && httpStatus < 500 && httpStatus !== 408;
 
 async function freshdeskWrite(
   method: 'POST' | 'PUT',
@@ -43,7 +50,8 @@ async function freshdeskWrite(
         429,
         `Freshdesk's rate limit is reached${
           Number.isFinite(wait) && wait > 0 ? ` — retry in ${wait}s` : ' — retry shortly'
-        }.`
+        }.`,
+        true
       );
     }
     // Only Freshdesk's own one-line description reaches the operator, never the raw body.
@@ -53,15 +61,19 @@ async function freshdeskWrite(
         typeof b?.description === 'string' ? b.description.slice(0, 200) : null
       )
       .catch(() => null);
-    return error(res.status, `Freshdesk refused it (${res.status})${detail ? `: ${detail}` : ''}`);
+    return error(
+      res.status,
+      `Freshdesk refused it (${res.status})${detail ? `: ${detail}` : ''}`,
+      isRefusal(res.status)
+    );
   } catch (e) {
     console.error('[freshdesk] write failed', method, path.replace(/\d+/g, '#'), e);
-    return error(null, 'Freshdesk could not be reached.');
+    return error(null, 'Freshdesk could not be reached.', false);
   }
 }
 
 const ticketPath = (ticketId: string, suffix = '') => `/tickets/${ticketId}${suffix}`;
-const badId = error(null, 'Not a Freshdesk ticket id.');
+const badId = error(null, 'Not a Freshdesk ticket id.', true);
 
 /** A public reply: Freshdesk emails it to the requester. `bodyHtml` must already be safe HTML. */
 export const replyToTicket = (ticketId: string, bodyHtml: string): Promise<WriteResult> =>

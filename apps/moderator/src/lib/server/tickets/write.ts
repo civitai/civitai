@@ -17,10 +17,25 @@ export type WriteOutcome =
 
 const NOT_CONFIGURED = 'FRESHDESK_WRITE_API_KEY is not configured — nothing was sent.';
 
-const failure = (res: Exclude<WriteResult, { status: 'ok' }>, what: string): WriteOutcome =>
-  res.status === 'not_configured'
-    ? { ok: false, notConfigured: true, message: NOT_CONFIGURED }
-    : { ok: false, notConfigured: false, message: `${what}: ${res.message}` };
+/**
+ * "NOT done" is said only when Freshdesk certainly refused the write. After a network error, a timeout
+ * or a 5xx the write may have landed, and telling the moderator it did not invites a duplicate.
+ */
+const failure = (
+  res: Exclude<WriteResult, { status: 'ok' }>,
+  notDone: string,
+  maybeDone: string
+): WriteOutcome => {
+  if (res.status === 'not_configured')
+    return { ok: false, notConfigured: true, message: NOT_CONFIGURED };
+  return {
+    ok: false,
+    notConfigured: false,
+    message: res.certain
+      ? `${notDone}: ${res.message}`
+      : `${maybeDone} (${res.message}) — check the ticket in Freshdesk before retrying.`,
+  };
+};
 
 const by = (m: Moderator) => `${m.username ?? 'unknown'} (user ${m.id}) from the moderator app.`;
 const ucfirst = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
@@ -50,7 +65,8 @@ export function createTicketWriter(deps: WriteDeps) {
       moderator: Moderator
     ): Promise<WriteOutcome> {
       const sent = await deps.reply(ticketId, bodyHtml);
-      if (sent.status !== 'ok') return failure(sent, 'The reply was NOT sent');
+      if (sent.status !== 'ok')
+        return failure(sent, 'The reply was NOT sent', 'The reply may or may not have been sent');
       await deps.record(moderator.id, ticketNumber(ticketId), 'ticketReply');
 
       const warnings: string[] = [];
@@ -86,7 +102,12 @@ export function createTicketWriter(deps: WriteDeps) {
 
     async setStatus(ticketId: string, status: number, moderator: Moderator): Promise<WriteOutcome> {
       const res = await deps.status(ticketId, status);
-      if (res.status !== 'ok') return failure(res, 'The status was NOT changed');
+      if (res.status !== 'ok')
+        return failure(
+          res,
+          'The status was NOT changed',
+          'The status may or may not have been changed'
+        );
       await deps.record(moderator.id, ticketNumber(ticketId), 'ticketStatus');
       const line = `Status set to ${statusLabel(status)} by ${by(moderator)}`;
       const noteError = await attribute(ticketId, [line]);

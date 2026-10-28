@@ -3,7 +3,13 @@ import { createTicketWriter, type WriteDeps } from '../tickets/write';
 import type { WriteResult } from '../freshdesk-write.service';
 
 const ok: WriteResult = { status: 'ok' };
-const boom: WriteResult = { status: 'error', httpStatus: 500, message: 'down' };
+const boom: WriteResult = { status: 'error', httpStatus: 500, certain: false, message: 'down' };
+const refused: WriteResult = {
+  status: 'error',
+  httpStatus: 400,
+  certain: true,
+  message: 'Freshdesk refused it (400)',
+};
 const mod = { id: 7, username: 'alice' };
 
 function setup(over: Partial<{ reply: WriteResult; note: WriteResult; status: WriteResult }> = {}) {
@@ -33,6 +39,20 @@ describe('reply', () => {
     expect(res).toMatchObject({ ok: false });
     expect(calls).toEqual(['reply']);
     expect(deps.record).not.toHaveBeenCalled();
+  });
+
+  it('says the reply was NOT sent only when Freshdesk certainly refused it', async () => {
+    const res = await setup({ reply: refused }).writer.reply('9', '<p>hi</p>', null, mod);
+    expect(res).toMatchObject({ ok: false });
+    expect((res as { message: string }).message).toMatch(/reply was NOT sent/);
+  });
+
+  it('says the reply may have been sent when the outcome is uncertain', async () => {
+    const res = await setup({ reply: boom }).writer.reply('9', '<p>hi</p>', null, mod);
+    const { message } = res as { message: string };
+    expect(message).toMatch(/may or may not have been sent/);
+    expect(message).toMatch(/check .*before retrying/i);
+    expect(message).not.toMatch(/NOT sent/);
   });
 
   it('reports a sent reply whose attribution note failed, instead of success or failure', async () => {

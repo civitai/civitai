@@ -55,7 +55,13 @@ describe('creation-day windows', () => {
 
   it('writes the bounds one day outside the range, across month and year ends', () => {
     expect(createdWithin('status:2', { from: '2025-01-01', to: '2025-12-31' })).toBe(
-      "status:2 AND created_at:>'2024-12-31' AND created_at:<'2026-01-01'"
+      "(status:2) AND created_at:>'2024-12-31' AND created_at:<'2026-01-01'"
+    );
+  });
+
+  it('parenthesises the expression so an OR cannot absorb the window', () => {
+    expect(createdWithin('a:1 OR b:2', { from: '2025-01-10', to: '2025-01-12' })).toBe(
+      "(a:1 OR b:2) AND created_at:>'2025-01-09' AND created_at:<'2025-01-13'"
     );
   });
 

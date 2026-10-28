@@ -80,7 +80,7 @@ describe('freshdesk write calls', () => {
       new Response('', { status: 429, headers: { 'retry-after': '37' } })
     );
     const res = await replyToTicket('1', '<p>x</p>');
-    expect(res).toMatchObject({ status: 'error', httpStatus: 429 });
+    expect(res).toMatchObject({ status: 'error', httpStatus: 429, certain: true });
     expect((res as { message: string }).message).toMatch(/rate limit.*retry in 37s/i);
   });
 
@@ -89,12 +89,27 @@ describe('freshdesk write calls', () => {
     expect(await setTicketStatus('1', 3)).toEqual({
       status: 'error',
       httpStatus: 400,
+      certain: true,
       message: 'Freshdesk refused it (400): Validation failed',
     });
   });
 
+  it('treats a 5xx and a 408 as uncertain, not as a refusal', async () => {
+    for (const status of [500, 503, 408]) {
+      fetchMock.mockResolvedValueOnce(new Response('', { status }));
+      expect(await replyToTicket('1', '<p>x</p>')).toMatchObject({
+        httpStatus: status,
+        certain: false,
+      });
+    }
+  });
+
   it('maps a network failure to an error rather than throwing', async () => {
     fetchMock.mockRejectedValue(new Error('socket hang up'));
-    expect(await addPrivateNote('1', 'n')).toMatchObject({ status: 'error', httpStatus: null });
+    expect(await addPrivateNote('1', 'n')).toMatchObject({
+      status: 'error',
+      httpStatus: null,
+      certain: false,
+    });
   });
 });
