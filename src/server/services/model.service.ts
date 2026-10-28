@@ -2107,10 +2107,13 @@ export const deleteModelById = async ({
   id,
   userId,
   isModerator,
+  onBidRefundFailed,
 }: GetByIdInput & {
   /** Who deletes it; null when no person ordered it (a system-run account wipe). */
   userId: number | null;
   isModerator?: boolean;
+  /** Called with the refunds that failed when its bids are refunded; otherwise they are only logged. */
+  onBidRefundFailed?: (failure: { versionIds: number[]; transactionIds: string[] }) => void;
 }) => {
   if (!isModerator) {
     const versions = await dbRead.modelVersion.findMany({
@@ -2230,7 +2233,9 @@ export const deleteModelById = async ({
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
   // deleted model stops serving a stale 200 (it would 404 on rebuild).
   await bustPublicModelResponseCache(id);
-  await deleteBidsForModel({ modelId: id });
+  const { refundFailed } = await deleteBidsForModel({ modelId: id });
+  if (refundFailed.length)
+    onBidRefundFailed?.({ versionIds: deletedVersionIds, transactionIds: refundFailed });
 
   return deletedModel;
 };

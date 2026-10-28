@@ -45,7 +45,7 @@ const {
   mockCollectionsQueueUpdate: vi.fn(),
   mockModelsQueueUpdate: vi.fn(),
   mockQueueImageSearchIndexUpdate: vi.fn(),
-  mockDeleteBidsForModel: vi.fn(),
+  mockDeleteBidsForModel: vi.fn(async () => ({ refundFailed: [] as string[] })),
 }));
 
 vi.mock('~/server/db/db-lag-helpers', () => ({
@@ -264,6 +264,30 @@ describe('deleteModelById — soft delete', () => {
     const { data } = await deleteInTx(1, { userId: 77, isModerator: true });
 
     expect(data).toMatchObject({ status: 'Deleted', deletedBy: 77 });
+  });
+
+  it('hands its caller the bid refunds that failed, with the versions they were on', async () => {
+    mockDeleteBidsForModel.mockResolvedValueOnce({ refundFailed: ['tx-1'] });
+    const onBidRefundFailed = vi.fn();
+    mockDbWrite.$transaction.mockImplementationOnce((async (fn: (t: unknown) => unknown) =>
+      fn({
+        $executeRaw: vi.fn(async () => 1),
+        model: {
+          update: vi.fn(async () => ({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfwLevel: 1,
+            modelVersions: [{ id: VERSION_ID }],
+          })),
+        },
+      })) as never);
+
+    await deleteModelById({ id: MODEL_ID, userId: 77, isModerator: true, onBidRefundFailed });
+
+    expect(onBidRefundFailed).toHaveBeenCalledWith({
+      versionIds: [VERSION_ID],
+      transactionIds: ['tx-1'],
+    });
   });
 
   it('records no deleter when no person ordered the delete', async () => {

@@ -895,10 +895,37 @@ describe('removeAllContent keeps other people’s comments a held author is part
     await removeAllContent({ id: CLEAN, actorUserId: 77 });
 
     expect(deleteModelById).toHaveBeenCalledTimes(1);
-    expect(deleteModelById).toHaveBeenCalledWith({ id: MODEL, userId: 77, isModerator: true });
+    expect(deleteModelById).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MODEL, userId: 77, isModerator: true })
+    );
     // The legacy comment cascades with the model, so a hard delete would take it.
     expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([{ id: MODEL }]);
     expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
+  });
+
+  // The same alerted line as a hard-deleted model's failed refund, which the bids need by hand.
+  it('alerts on a bid refund that fails for the model it soft-deletes', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
+    `);
+    deleteModelById.mockImplementationOnce((async (args: {
+      onBidRefundFailed?: (f: { versionIds: number[]; transactionIds: string[] }) => void;
+    }) => {
+      args.onBidRefundFailed?.({ versionIds: [41], transactionIds: ['tx-1'] });
+      return null;
+    }) as never);
+
+    await removeAllContent({ id: CLEAN, actorUserId: 77 });
+
+    expect(refundAlerts()).toContainEqual(
+      expect.objectContaining({
+        source: 'remove-all-content',
+        userId: CLEAN,
+        moderatorId: 77,
+        versionIds: [41],
+        transactionIds: ['tx-1'],
+      })
+    );
   });
 
   it('still finishes the wipe when that soft delete fails, and names it incomplete', async () => {
@@ -910,7 +937,9 @@ describe('removeAllContent keeps other people’s comments a held author is part
     const result = await removeAllContent({ id: CLEAN });
 
     // No moderator named: the wipe is no one's delete, so none is recorded as the deleter.
-    expect(deleteModelById).toHaveBeenCalledWith({ id: MODEL, userId: null, isModerator: true });
+    expect(deleteModelById).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MODEL, userId: null, isModerator: true })
+    );
     expect(result).toMatchObject({ incomplete: expect.arrayContaining(['model-soft-delete']) });
     expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
   });

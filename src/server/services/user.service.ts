@@ -1451,7 +1451,14 @@ async function refundBidsForDeletedModels(
   models: { id: number; name: string; modelVersions: { id: number }[] }[],
   wipe: { userId: number; actorUserId: number | null }
 ): Promise<BidRefundFailure[]> {
-  const failures = await refundEachDeletedModel(models);
+  return alertBidRefundFailures(await refundEachDeletedModel(models), wipe);
+}
+
+/** Logs each failed bid refund of a wipe as its own `bid-refund-failed` line, and returns them. */
+function alertBidRefundFailures(
+  failures: BidRefundFailure[],
+  wipe: { userId: number; actorUserId: number | null }
+): BidRefundFailure[] {
   for (const failure of failures)
     logToAxiom({
       name: 'bid-refund-failed',
@@ -1643,8 +1650,13 @@ export const removeAllContent = async ({
     if (commentHeld.length) {
       const { deleteModelById } = await import('~/server/services/model.service');
       for (const { id: modelId } of commentHeld)
-        await deleteModelById({ id: modelId, userId: actorUserId, isModerator: true }).catch(
-          (e: unknown) => softDeleteFailed.push({ modelId, message: (e as Error)?.message })
+        await deleteModelById({
+          id: modelId,
+          userId: actorUserId,
+          isModerator: true,
+          onBidRefundFailed: (failure) => alertBidRefundFailures([failure], alertedBy),
+        }).catch((e: unknown) =>
+          softDeleteFailed.push({ modelId, message: (e as Error)?.message })
         );
     }
     const doomedModels = Prisma.sql`${owned('Model')}
