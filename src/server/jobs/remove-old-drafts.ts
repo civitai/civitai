@@ -233,9 +233,7 @@ export const removeOldDrafts = createJob('remove-old-drafts', '43 2 * * *', asyn
 
       if (deletable.length === 0) continue;
 
-      // A held model is kept: its owner, or any owner it had before, is held, the account hold
-      // included, since a held-for-image owner's model files can be evidence too. The hold is checked
-      // in the DELETE itself, so one placed after the replica SELECT still stops it.
+      // Checked in the DELETE itself, so a hold placed after the replica SELECT still stops it.
       const deletedRows = await dbWrite.$queryRaw<{ id: number }[]>`
         DELETE FROM "Model" m
         WHERE m.id = ANY(${deletable})

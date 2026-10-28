@@ -233,9 +233,6 @@ const FLOW_KEYS = [
   'takenDownBy',
   'archivedAt',
   'archivedBy',
-  'removedWithOwner',
-  'statusBeforeRemoval',
-  'versionsUnpublishedByRemoval',
 ] as const;
 
 const FORGED = {
@@ -252,10 +249,6 @@ const FORGED = {
   takenDownBy: 999,
   archivedAt: '2000-01-01T00:00:00.000Z',
   archivedBy: 999,
-  // Set on its own taken-down model, this would drop it from the take-down hash candidates.
-  removedWithOwner: true,
-  statusBeforeRemoval: 'forged',
-  versionsUnpublishedByRemoval: [{ id: 999, status: 'Published' }],
 };
 
 const STORED_FLOW_META = {
@@ -272,9 +265,6 @@ const STORED_FLOW_META = {
   takenDownBy: MODERATOR_ID,
   archivedAt: '2026-01-01T00:00:00.000Z',
   archivedBy: MODERATOR_ID,
-  removedWithOwner: true,
-  statusBeforeRemoval: 'Published',
-  versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
 };
 
 describe('moderation-flow meta keys', () => {
@@ -326,6 +316,41 @@ describe('moderation-flow meta keys', () => {
     });
 
     expect(updateData().meta).toEqual({ ...STORED_FLOW_META, cannotPublish: false });
+  });
+});
+
+// A content wipe's removal record: client meta can neither set nor change it, a moderator's included
+// (their edit form sends stored meta back, which could put a stale record onto a live model).
+describe('removal record keys', () => {
+  const RECORD = {
+    removedWithOwner: true,
+    statusBeforeRemoval: 'Published',
+    versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
+  };
+
+  it.each([
+    ['an owner', OWNER_ID, false],
+    ['a moderator', MODERATOR_ID, true],
+  ])('drops them from %s’s meta on a model without them', async (_, userId, isModerator) => {
+    mockStored({ meta: {} });
+    await upsert({
+      id: MODEL_ID,
+      userId,
+      isModerator,
+      meta: { ...RECORD, hideBuzz: true } as ModelUpsertInput['meta'],
+    });
+    expect(updateData().meta).toEqual({ hideBuzz: true });
+  });
+
+  it('keeps the stored record when a moderator saves different values', async () => {
+    mockStored({ meta: RECORD });
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      meta: { removedWithOwner: false, statusBeforeRemoval: 'Draft' } as ModelUpsertInput['meta'],
+    });
+    expect(updateData().meta).toEqual(RECORD);
   });
 });
 

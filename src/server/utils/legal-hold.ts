@@ -8,6 +8,13 @@ export const PLACEHOLDER_OWNER_ID = -1;
  * The status a content wipe leaves a model it keeps in: moderator-only, so the owner cannot
  * republish it.
  */
+/** The meta keys of a content wipe's removal record on a model it kept and hid. */
+export const REMOVED_WITH_OWNER_META_KEYS = [
+  'removedWithOwner',
+  'statusBeforeRemoval',
+  'versionsUnpublishedByRemoval',
+] as const;
+
 export const KEPT_MODEL_STATUS = 'UnpublishedViolation' satisfies `${ModelStatus}`;
 
 /** Whether the report aliased `hc` still holds: pending, not yet archived, or sent within the year. */

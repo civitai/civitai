@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
-import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
+import { KEPT_MODEL_STATUS, REMOVED_WITH_OWNER_META_KEYS } from '~/server/utils/legal-hold';
 
 /**
  * The meta a content wipe writes on a model it keeps and hides: its status before, and the versions
@@ -12,11 +12,7 @@ export type RemovedWithOwnerMeta = {
   versionsUnpublishedByRemoval?: { id: number; status: string }[];
 };
 
-export const REMOVED_WITH_OWNER_META_KEYS = [
-  'removedWithOwner',
-  'statusBeforeRemoval',
-  'versionsUnpublishedByRemoval',
-] as const;
+export { REMOVED_WITH_OWNER_META_KEYS };
 
 /** `meta` without a content wipe's removal record, for a moderator decision that ends it. */
 export function withoutRemovedWithOwner<T extends object>(meta: T): T {

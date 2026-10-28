@@ -2410,10 +2410,8 @@ export const permaDeleteModelById = async ({
         },
       });
 
-      // A held model is refused, and the rollback restores its posts and images: its owner, or any
-      // owner it had before, is held. The hold is checked in the DELETE itself, so one placed during
-      // this transaction still stops it. It is the account hold too: its image legs cover the images
-      // this deletes.
+      // Checked in the DELETE itself, so a hold placed during this transaction still stops it, and
+      // the rollback restores the posts and images.
       const [deletedModel] = await tx.$queryRaw<
         { id: number; userId: number; nsfwLevel: number }[]
       >`

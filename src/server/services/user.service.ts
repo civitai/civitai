@@ -1684,11 +1684,7 @@ export const removeAllContent = async ({
           Prisma.sql`SELECT om.id FROM "Model" om WHERE om."userId" = ${id}`,
           markerView
         )})`;
-    // A model kept above still leaves the site, in a status only a moderator can publish from; its
-    // record and files stay. The model's prior status and the versions taken down with it are written
-    // on it, so a moderator's restore can put back exactly those. Status only: the unpublish flow
-    // stamps meta.unpublishedAt, which sends the owner a notification. Its bids are refunded with the
-    // deleted models' below.
+    // Status only: the unpublish flow stamps meta.unpublishedAt, which notifies the owner.
     await dbWrite.$executeRaw`
       WITH hidden AS (
         UPDATE "Model" km
