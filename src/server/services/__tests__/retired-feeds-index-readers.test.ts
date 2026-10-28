@@ -90,6 +90,7 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 }));
 
 import {
+  getAllImagesIndex,
   getImagesFromFeedSearch,
   getImagesFromSearch,
   getImagesFromSearchPostFilter,
@@ -166,6 +167,22 @@ describe('readers of the retired feeds index answer without it', () => {
     getFliptBooleanMock.mockRejectedValue(new Error('flipt down'));
     const result = await getImagesFromSearch(input());
     expect(result).toMatchObject({ data: [] });
+    noMeiliCall();
+  });
+});
+
+describe('getAllImagesIndex without a feed service (next.civitai.com before talos-infra#2384, previews)', () => {
+  it('answers an empty page named as the index path, without querying the index', async () => {
+    const result = await getAllImagesIndex({
+      limit: 5,
+      period: 'AllTime',
+      sort: 'Newest',
+      browsingLevel: 1,
+      include: [],
+      headers: { src: 'test' },
+    } as unknown as Parameters<typeof getAllImagesIndex>[0]);
+    // `source` is what the preview smoke test branches on (tests/preview-image-feed.spec.ts).
+    expect(result).toEqual({ items: [], nextCursor: undefined, source: 'meili' });
     noMeiliCall();
   });
 });

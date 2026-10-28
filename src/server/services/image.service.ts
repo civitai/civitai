@@ -3549,9 +3549,12 @@ export const getAllImagesIndex = async (
   }
 
   if (!searchResults.length) {
+    // Named like the non-empty return below: an empty index page (a retired index answers
+    // one on every request) is still the index path's page.
     return {
       nextCursor: undefined,
       items: [],
+      ...(searchSource && { source: searchSource }),
     };
   }
 

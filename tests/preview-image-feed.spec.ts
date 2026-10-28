@@ -4,42 +4,26 @@ import { trpcQuery } from './preview-trpc';
 import { retryFlaky } from './preview-retry';
 
 /**
- * Image-feed content smoke: the real /images browse feed actually renders content.
+ * Image-feed smoke: the real /images browse feed answers from the source this deploy has.
  *
- * preview-feed.spec.ts covers the models feed (model.getAll, DB-backed) but
- * deliberately skipped images. This adds the images half against the ACTUAL feed:
+ * preview-feed.spec.ts covers the models feed (model.getAll, DB-backed). This covers the
+ * images half: a broad image.getInfinite (no entity filter) goes through getAllImagesIndex,
+ * and the page carries `source` on the wire (image.controller.ts) naming who answered:
  *
- *  - A broad image.getInfinite (no entity filter) routes server-side through
- *    getAllImagesIndex — the MEILISEARCH index path (image.controller.ts:300-320),
- *    not the DB. The index `metrics_images_v1` (~114M docs) lives on the in-cluster
- *    feeds-meilisearch proxy, and previews reach it via
- *    METRICS_SEARCH_HOST=http://feeds-proxy.internal.svc.cluster.local
- *    (same host prod uses; verified both feeds backends populated 2026-06-11). So
- *    the broad feed IS available to previews and this asserts the real /images
- *    surface end to end (meili query + DB hydration).
+ *  - `feed` — the feed service (FEED_SERVICE_URL set; production). Must be a real,
+ *    non-empty page.
+ *  - `meili` — the search-index path. The feeds index (`metrics_images_v1`) is retired
+ *    (civitai#7054): nothing writes to it, so its readers answer an empty page rather than
+ *    serve frozen moderation fields. Previews set no FEED_SERVICE_URL, so this is what a
+ *    preview gets, and the test asserts that contract: an empty page, not an error and
+ *    not stale rows. If previews gain a feed service, `source` becomes `feed` and the
+ *    non-empty assertion applies instead.
+ *  - `db` — the Postgres path (imageIndexFeed off). Must be non-empty.
  *
- * Why NOT a modelId-scoped DB query instead: a bare-modelId image.getInfinite
- * forces the DB path (getAllImages), but that scan over the 115M-row dev clone
- * takes >60s per model and blew the test timeout — the index path is both the real
- * feed AND the fast/reliable one (~3s). (An earlier 1-core preview pod
- * intermittently returned 0 from the broad feed — suspected server-side abort under
- * CPU throttle; on the 2-core pod, post the CPU bump, it returns content in ~3s.)
- *
- * Runs as `tester` (free member that PASSES the preview gate). image.getInfinite is
- * a heavyProcedure, reachable for a gate-passing user. page.request carries the
- * storageState auth cookie; preview-trpc stamps Origin/Referer for the CSRF gate —
- * same authed-tRPC pattern as the sibling preview-feed / preview-engagement specs.
- *
- * Verified tRPC shape: image.getInfinite (server/routers/image.router.ts:126),
- * input getInfiniteImagesSchema; `{ limit }` valid (all fields defaulted), returns
- * { items: [{ id }], nextCursor }.
- *
- * Tolerant on COUNT, strict on STRUCTURE: assert ">= 1 image with a numeric id" —
- * the structural intent is "the /images feed produced a real, non-empty page", not
- * any specific image. An empty feed is the regression this guards. NOTE: this path
- * depends on the shared feeds-meilisearch being healthy; a feeds incident could
- * make it (report-only) flake — that's the accepted cost of covering the real feed
- * rather than a synthetic DB query.
+ * Runs as `tester` (free member that PASSES the preview gate). image.getInfinite is a
+ * heavyProcedure, reachable for a gate-passing user. page.request carries the storageState
+ * auth cookie; preview-trpc stamps Origin/Referer for the CSRF gate — same authed-tRPC
+ * pattern as the sibling preview-feed / preview-engagement specs.
  *
  * Only runs under playwright.preview.config.ts (needs PREVIEW_URL + minted states).
  */
@@ -50,7 +34,7 @@ const FEED_LIMIT = 5;
 test.describe('images browse feed renders real content (tester)', () => {
   test.use({ storageState: storageStatePath(ROLE) });
 
-  test('image.getInfinite (the /images feed via meili) returns a non-empty page', async ({
+  test('image.getInfinite answers from its source: a feed page, or empty from the retired index', async ({
     page,
   }) => {
     // Warm the request context against the preview origin (auth cookie + a real
@@ -58,23 +42,33 @@ test.describe('images browse feed renders real content (tester)', () => {
     // background traffic never idles, so a networkidle nav hangs to timeout.
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
-    // image.getInfinite is meili-backed via the shared in-cluster feeds-proxy, which
-    // intermittently returns HTTP 408 ("Image search is temporarily overloaded —
-    // please retry") under concurrent preview-build load. The app's own error tells
-    // us to retry; Playwright's whole-test retries fire within seconds (all <5s) so
-    // they don't outlast the overload. retryFlaky spaces the retries with backoff to
-    // ride it out — honest: a sustained overload still fails after the attempts.
+    // The feed and index paths can answer a retryable 503 under load; retryFlaky spaces
+    // the retries with backoff. A sustained failure still fails after the attempts.
     const data = await retryFlaky('image.getInfinite feed', () =>
-      trpcQuery<{ items: Array<{ id: number }> }>(page.request, 'image.getInfinite', {
-        limit: FEED_LIMIT,
-      })
+      trpcQuery<{ items: Array<{ id: number }>; source?: string }>(
+        page.request,
+        'image.getInfinite',
+        { limit: FEED_LIMIT }
+      )
     );
 
     const items = data?.items ?? [];
+    const source = data?.source;
     expect(Array.isArray(items), 'image.getInfinite returns an items array').toBe(true);
+    expect(['feed', 'meili', 'db'], 'the page names the source that answered it').toContain(source);
+
+    if (source === 'meili') {
+      // No feed service on this deploy: the retired feeds index must not be read.
+      expect(
+        items,
+        'the retired metrics_images_v1 index answers an empty page, never stale rows'
+      ).toEqual([]);
+      return;
+    }
+
     expect(
       items.length,
-      'the /images feed (meili-backed) should render >= 1 image'
+      `the /images feed (source=${source}) should render >= 1 image`
     ).toBeGreaterThan(0);
     expect(typeof items[0]?.id, 'a feed image should carry a numeric id').toBe('number');
   });
