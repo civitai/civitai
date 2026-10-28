@@ -250,6 +250,27 @@ describe('moveImagesToPost', () => {
     expectNothingWritten();
   });
 
+  it('reads the takedown without locking the version when the poster does not own the model', async () => {
+    mockPosts(postRow({ modelVersionId: 55 }), { ownsModel: false });
+
+    await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER });
+
+    const reads = db.$queryRaw.mock.calls
+      .map(rawSql)
+      .filter((q: string) => q.includes('AS downed'));
+    expect(reads.length).toBeGreaterThan(0);
+    for (const q of reads) expect(q).not.toMatch(/FOR (SHARE|NO KEY UPDATE|UPDATE)/);
+  });
+
+  it("refuses a non-owner's split onto a taken-down version", async () => {
+    mockPosts(postRow({ modelVersionId: 55 }), { ownsModel: false, downed: true });
+
+    await expect(
+      moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER })
+    ).rejects.toThrow(/taken down/);
+    expectNothingWritten();
+  });
+
   it.each([
     ['another version', 55, 66],
     ['a version', null, 66],

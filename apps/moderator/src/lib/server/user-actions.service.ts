@@ -239,6 +239,8 @@ export type ModEndpoint =
   | 'comment/remove-as-tos'
   | 'comment/restore-from-tos'
   | 'cosmetic/holdings-removed'
+  | 'messages/claim'
+  | 'messages/release'
   | 'creator-services/resolve-dispute'
   | 'csam/training-data-report'
   | 'image/tag-vote'
@@ -274,6 +276,7 @@ export type ModEndpoint =
   | 'user/delete'
   | 'user/membership-code'
   | 'user/membership-code-revoke'
+  | 'user/message-as-civitai'
   | 'user/remove-reactions'
   | 'user/toggle-moderator'
   | 'user/unmute'
@@ -299,6 +302,8 @@ export type ModReadEndpoint =
   | 'creator-services/deal-file-url'
   | 'creator-services/deal-files'
   | 'creator-services/disputes'
+  | 'messages/inbox'
+  | 'messages/thread'
   | 'user/legal-hold'
   | 'user/reactions';
 

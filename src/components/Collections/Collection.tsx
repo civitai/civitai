@@ -96,6 +96,7 @@ import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettings
 import { ToolMultiSelect } from '~/components/Tool/ToolMultiSelect';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsContestBanned } from '~/hooks/useIsContestBanned';
 import { constants } from '~/server/common/constants';
 import { ArticleSort, ImageSort, ModelSort, PostSort } from '~/server/common/enums';
 import type { CollectionContributorPermissionFlags } from '~/server/services/collection.service';
@@ -522,6 +523,7 @@ export function Collection({
   const router = useRouter();
   const theme = useMantineTheme();
   const currentUser = useCurrentUser();
+  const isContestBanned = useIsContestBanned();
   const { userBrowsingLevel } = useBrowsingLevelContext();
   const { collection, permissions, collaborators, pendingReviewCount, isLoading } =
     useCollection(collectionId);
@@ -795,21 +797,16 @@ export function Collection({
                         [CollectionType.Image, CollectionType.Post].some(
                           (x) => x === collection.type
                         ) ? (
-                          <HoverCard
-                            width={300}
-                            disabled={!currentUser?.meta?.contestBanDetails}
-                            withArrow
-                            withinPortal
-                          >
+                          <HoverCard width={300} disabled={!isContestBanned} withArrow withinPortal>
                             <HoverCard.Target>
                               {/* Required div to display hovercard even when button is disabled */}
                               <div>
                                 <Button
                                   color="blue"
                                   radius="xl"
-                                  disabled={!!currentUser?.meta?.contestBanDetails}
+                                  disabled={isContestBanned}
                                   onClick={() => {
-                                    if (currentUser?.meta?.contestBanDetails) {
+                                    if (isContestBanned) {
                                       return;
                                     }
 
@@ -833,7 +830,7 @@ export function Collection({
                               </div>
                             </HoverCard.Target>
                             <HoverCard.Dropdown px="md" py={8}>
-                              {currentUser?.meta?.contestBanDetails && (
+                              {isContestBanned && (
                                 <Text>
                                   Due to breaking the rules in the past, you are ineligible for
                                   participation in this event.

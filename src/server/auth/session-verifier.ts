@@ -13,6 +13,7 @@ import {
 import type { SessionClaims } from '@civitai/auth';
 import { sysRedis, withSysReadDeadline } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { refuseModerationAccountSession } from './moderation-account';
 import { observeSessionLeg } from './session-metrics';
 
 // Read-only use: only isRevoked is called, so the write-side config is irrelevant here.
@@ -22,6 +23,7 @@ const registry = createSessionRegistry({
 });
 
 export async function isRevoked(claims: SessionClaims): Promise<boolean> {
+  if (refuseModerationAccountSession(claims.sub, 'session-token')) return true;
   const tokenId = claims.jti;
   if (!tokenId) return false; // can't check — fail open
   // Bound the revocation read with the shared wall-clock deadline (REDIS_SYS_READ_TIMEOUT_MS, default 2000ms):

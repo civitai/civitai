@@ -28,6 +28,7 @@ import {
 import { clickhouse } from '~/server/clickhouse/client';
 import { listModelEngagements } from '@civitai/db-queries/model';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { contestBannedAtSql, contestBannedSql } from '~/server/services/contest-ban';
 import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats } from '~/server/events/points/sync';
@@ -333,10 +334,10 @@ export const getUsers = async ({
   // `bannedAt` is an ISO-8601 UTC string, so the text sort is chronological; every row carries one
   // (checked against production).
   const orderBy = contestBanned
-    ? `ORDER BY u."meta" #>> '{contestBanDetails,bannedAt}' DESC`
+    ? Prisma.sql`ORDER BY ${contestBannedAtSql} DESC`
     : query
-    ? 'ORDER BY LENGTH(username) ASC'
-    : '';
+    ? Prisma.sql`ORDER BY LENGTH(username) ASC`
+    : Prisma.empty;
 
   // ORDER BY goes after every predicate. It used to share a line with `u."id" != -1`, above the
   // `contestBanned` clause, so a caller passing both emitted `... ORDER BY ... AND ...` and Postgres
@@ -358,10 +359,8 @@ export const getUsers = async ({
       }
       AND u."deletedAt" IS NULL
       AND u."id" != -1
-      AND ${
-        contestBanned ? Prisma.sql`u."meta"->>'contestBanDetails' IS NOT NULL` : Prisma.sql`TRUE`
-      }
-      ${Prisma.raw(orderBy)}
+      AND ${contestBanned ? contestBannedSql : Prisma.sql`TRUE`}
+      ${orderBy}
       ${Prisma.raw(limit ? 'LIMIT ' + limit : '')}
   `;
 
