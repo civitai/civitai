@@ -437,6 +437,21 @@ export async function isAppBlocksPipelineEnabled(): Promise<boolean> {
 }
 
 /**
+ * GLOBAL rollback switch for the per-app serving objects (Deployment, Service, IngressRoute,
+ * Middleware) that a production app deploy used to create in the apps namespace.
+ *
+ * Apps are served by the shared static server, so by default a deploy publishes there and creates
+ * none of them. This flag turns them back on without a code revert. OFF is the default on purpose:
+ * an absent flag or an unreachable Flipt evaluates `false`, which is the intended production state.
+ * Evaluated globally (no user), so it must be a plain base-`enabled` boolean to turn on.
+ */
+export const APP_BLOCKS_PER_APP_OBJECTS_FLAG = 'app-blocks-per-app-objects';
+
+export async function isAppBlocksPerAppObjectsEnabled(): Promise<boolean> {
+  return isFlipt(APP_BLOCKS_PER_APP_OBJECTS_FLAG);
+}
+
+/**
  * GLOBAL gate for the RUNTIME token-verification surface (Decision 4).
  *
  * Evaluates the dedicated `app-blocks-runtime-enabled` flag with no user

@@ -24,7 +24,9 @@ const mocks = vi.hoisted(() => ({
     closedReason: 'closed' | 'collaboratorsOnly' | null;
   },
   openContinue: vi.fn(),
+  currentUser: null as null | { id: number; isModerator?: boolean },
 }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   ...(await importOriginal<typeof QueriesModule>()),
@@ -133,6 +135,7 @@ describe('StorylineEndOfChapter', () => {
     document.body.innerHTML = '';
     mocks.isLoading = false;
     mocks.safe = true;
+    mocks.currentUser = null;
     mocks.forkShares = { enough: false, total: 0, minChoices: 1, shares: {} };
     mocks.trackCreateClick.mockClear();
     mocks.trigger.mockClear();
@@ -434,6 +437,23 @@ describe('StorylineEndOfChapter', () => {
     document.body.innerHTML = '';
     const noPost = render({ isOwner: true });
     expect([own, join].map((sel) => noPost.querySelector(sel))).toEqual([null, null]);
+  });
+
+  it('offers a moderator joining for the owner, and keeps their own way of continuing', () => {
+    mocks.children = [];
+    mocks.terms = { open: true, price: 0, closedReason: null };
+    mocks.currentUser = { id: 99, isModerator: true };
+    mocks.openContinue.mockClear();
+    const view = render({ parentPostId: 15 });
+    expect(view.querySelector('[data-testid="storyline-add-own-chapter"]')).toBeNull();
+    expect(view.querySelector('[data-testid="storyline-write-next-price"]')).not.toBeNull();
+    const rejoin = view.querySelector<HTMLButtonElement>(
+      '[data-testid="storyline-join-existing-chapter"]'
+    );
+    act(() => rejoin?.click());
+    expect(mocks.openContinue.mock.calls).toEqual([
+      [{ parentPostId: 15, parentChapterId: 4, mode: 'join' }],
+    ]);
   });
 
   it('puts writing below every path, outside the cards', () => {

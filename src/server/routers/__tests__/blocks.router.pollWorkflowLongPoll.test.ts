@@ -1,3 +1,4 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -264,6 +265,16 @@ beforeEach(() => {
 });
 
 describe('blocks.pollWorkflow — long poll wiring', () => {
+  // A block token outlives a ban by up to its lifetime; the token mint refuses the account.
+  it('a token whose account is banned gets no orchestrator read', async () => {
+    mockGetOrchestratorToken.mockRejectedValue(new TRPCError({ code: 'FORBIDDEN' }));
+
+    await expect(
+      caller().pollWorkflow({ blockToken: 'tok', workflowId: 'wf_running', waitSeconds: 9 })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(mockGetWorkflow).not.toHaveBeenCalled();
+  });
+
   it('BACK-COMPAT: without waitSeconds the orchestrator read carries NO query at all', async () => {
     mockGetWorkflow.mockResolvedValue(RUNNING);
 

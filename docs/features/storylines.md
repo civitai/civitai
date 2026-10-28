@@ -72,6 +72,11 @@ section).
   price, if any, to submit a continuation.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
   review and are listed ahead of other contributors' at the end of a chapter.
+- **Moderators.** A moderator can manage any storyline as its creator does: title, status, who may
+  continue, content level, covers, removing collaborators, and inserting, reordering, joining and
+  choosing the main route of chapters. Setting the price, endorsing collaborators, answering
+  continuations and deleting stay the creator's. Each such edit is recorded in the moderator
+  activity log.
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or
   declined. A post above the storyline's content level cannot be submitted at all. A post submitted
   while still a draft or still being scanned reaches the queue once it is published and rated, or is

@@ -4,9 +4,16 @@ import type { CoverageAudience } from '~/server/services/generation/coverage-sou
 import { CacheTTL } from '~/server/common/constants';
 import { CrucibleSort, ImageSort, ModelSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import { isFliptPublic } from '~/server/flipt/tester-segment';
 import { dbReadFallbackCounter } from '~/server/prom/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
+import {
+  homeBlockByIdSelect,
+  readHomeBlockViaKysely,
+  readHomeBlockViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   GetHomeBlockByIdInputSchema,
@@ -222,21 +229,26 @@ export const getHomeBlockById = async ({
   viewer: EventViewer;
 }) => {
   const homeBlockFindArgs = {
-    select: {
-      id: true,
-      metadata: true,
-      type: true,
-      userId: true,
-      sourceId: true,
-    },
+    select: homeBlockByIdSelect,
     where: {
       id,
     },
   } as const;
-  const homeBlock = await dbRead.homeBlock.findUniqueOrThrow(homeBlockFindArgs).catch(() => {
+  // A miss (or any error) on the replica falls back to the primary, through Prisma, so its
+  // not-found throw is unchanged. `kysely-hot-reads-5` on: the replica read is through Kysely, and
+  // a missing row there takes the same fallback. A call with no `id` (the input allows it) stays
+  // on Prisma, which rejects it as before.
+  const fallback = () => {
     dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
     return dbWrite.homeBlock.findUniqueOrThrow(homeBlockFindArgs);
-  });
+  };
+  const homeBlock =
+    id !== undefined && (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+      ? await readHomeBlockViaKysely((await loadKyselyDb()).kyselyRead, id).then(
+          (row) => row ?? fallback(),
+          fallback
+        )
+      : await readHomeBlockViaPrisma(dbRead, id).catch(fallback);
 
   if (!homeBlock) {
     return null;

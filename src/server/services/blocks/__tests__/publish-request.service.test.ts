@@ -805,7 +805,7 @@ describe('submitVersion — consecutive hyphens in a NEW blockId', () => {
     expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
   });
 
-  it.each(['my-app', 'a-b-c', 'plainapp'])('accepts a first version of %s', async (blockId) => {
+  it.each(['my-app', 'ab-c-d', 'plainapp'])('accepts a first version of %s', async (blockId) => {
     const buf = await makeBundle(blockId);
     const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
     expect(result.slug).toBe(blockId);
@@ -817,6 +817,23 @@ describe('submitVersion — consecutive hyphens in a NEW blockId', () => {
     const buf = await makeBundle('old--name');
     const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
     expect(result.slug).toBe('old--name');
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a first version with a reserved blockId', async () => {
+    const buf = await makeBundle('dev-0123456789abcdef');
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER })
+    ).rejects.toThrow('blockId "dev-0123456789abcdef" is reserved: ids starting with "dev-"');
+    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
+    expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  it('accepts a new version of an EXISTING app whose blockId is now reserved', async () => {
+    dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_legacy', appId: 'app_9' });
+    const buf = await makeBundle('dev-legacy');
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
+    expect(result.slug).toBe('dev-legacy');
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
   });
 });

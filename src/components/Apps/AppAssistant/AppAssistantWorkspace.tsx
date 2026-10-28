@@ -70,6 +70,7 @@ import {
 } from '~/components/Apps/AppAssistant/previewTools';
 import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
 import { pingSandbox, usePreviewKeepAlive } from '~/components/Apps/AppAssistant/previewKeepAlive';
+import { fetchSandboxTunnelStatus } from '~/components/Apps/AppAssistant/previewTunnelStatus';
 import {
   RESTART_PREVIEW_FAILED,
   appAssistantRemoteRunnerFor,
@@ -537,6 +538,17 @@ export function AppAssistantWorkspace({
     [mcpUrl, tokens]
   );
   usePreviewKeepAlive(previewPane, keepAwake);
+  // The pane asks the open app's sandbox whether the preview's tunnel is still up (server runner).
+  const tunnelStatus = useMemo(
+    () =>
+      mcpUrl && remoteRunner
+        ? () =>
+            fetchSandboxTunnelStatus(mcpUrl, (opts) =>
+              tokens.getToken({ ...opts, purpose: 'sandbox' })
+            )
+        : undefined,
+    [mcpUrl, remoteRunner, tokens]
+  );
 
   // A failed reply the chat asks for again (Retry, or by itself as the page wakes) fires no before-send,
   // so a paused app would not be woken and the reply would go on without its tools. The ask is held
@@ -1302,6 +1314,7 @@ export function AppAssistantWorkspace({
               canPreview={canPreview}
               session={session}
               restart={previewRestart}
+              tunnelStatus={tunnelStatus}
             />
           </Paper>
         )}

@@ -9,8 +9,7 @@ import { bounded } from '$lib/server/bounded';
 // nav pruning happens client-side (a badge only shows for a nav item the user can see).
 export const GET: RequestHandler = async ({ locals }) => {
   if (!locals.user) return json({});
-  // Civitai Messages has its own short cache outside the shared fill, where it waited behind every slower
-  // count and timed out.
+  // Kept out of the shared fill: there it waits behind the slowest count.
   const [{ counts, unavailable }, civitaiMessages] = await Promise.all([
     getSidebarCounts(),
     bounded(getAwaitingReplyBadge, 1_000),

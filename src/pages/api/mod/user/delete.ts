@@ -4,7 +4,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { hasModeratorGrant } from '~/server/services/moderator-grants';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { deleteUser } from '~/server/services/user.service';
-import { LEGAL_HOLD_REFUSAL, LegalHoldError } from '~/server/services/legal-hold.service';
+import { LegalHoldError, legalHoldMessage } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint, moderatorBoolean } from '~/server/utils/moderator-endpoint';
@@ -127,7 +127,7 @@ export default defineModeratorEndpoint('user.delete', {
     } catch (e) {
       // No moderator override: a hold is released by Legal, not here.
       if (e instanceof LegalHoldError)
-        throw new TRPCError({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+        throw new TRPCError({ code: 'FORBIDDEN', message: legalHoldMessage(e) });
       throw e;
     }
 

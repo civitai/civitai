@@ -434,6 +434,8 @@ model User {
   eligibilityChangedAt    DateTime?
   // Payment provider related
   customerId              String?                @unique // Stripe
+  // Legacy Stripe subscription id; the account scrub clears it.
+  subscriptionId          String?
   paddleCustomerId        String?                @unique
 
   profile              UserProfile?
@@ -671,6 +673,9 @@ model User {
   gameFrameGames          GameFrameGame[]
 
   @@index([deletedAt])
+  /// Partial in the database (WHERE "bannedAt" IS NOT NULL), as it exists in prod; Prisma cannot
+  /// express the predicate.
+  @@index([bannedAt], map: "User_banned")
 }
 
 model CustomerSubscription {
@@ -2881,6 +2886,7 @@ model ApiKey {
 
   @@index([clientId])
   @@index([workerDeviceId])
+  @@index([userId])
 }
 
 model OauthClient {

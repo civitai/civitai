@@ -134,6 +134,8 @@ import { imageRemovalMode, PRIOR_INGESTION_KEY } from '~/server/utils/image-remo
 import { generateKey, generateSecretHash } from '~/server/utils/key-generator';
 import { DEFAULT_PAGE_SIZE, getPagination, getPagingData } from '~/server/utils/pagination-helpers';
 import { invalidateSession, refreshSession } from '~/server/auth/session-invalidation';
+import { revokeUserTokens } from '~/server/services/user-token-revocation.service';
+import { forgetGenerationToken } from '~/server/services/api-key.service';
 import { getNsfwLevelDeprecatedReverseMapping } from '~/shared/constants/browsingLevel.constants';
 import { Flags } from '~/shared/utils/flags';
 import type { BountyEngagementType, ModelEngagementType } from '~/shared/utils/prisma/enums';
@@ -520,7 +522,11 @@ export async function forceUpdateUserIdentity({
 
   let user;
   try {
-    user = await dbWrite.user.update({ where: { id: userId }, data });
+    user = await dbWrite.user.update({
+      where: { id: userId },
+      data,
+      omit: { subscriptionId: true },
+    });
   } catch (error) {
     // Translate Prisma unique-constraint violations into a 4xx for callers.
     if (
@@ -598,7 +604,8 @@ export const updateUserById = async ({
       ? (await dbWrite.user.findUnique({ where: { id }, select: { username: true } }))?.username
       : undefined;
 
-  const user = await dbWrite.user.update({ where: { id }, data });
+  // The row goes back to clients (profile save, ban); the legacy billing pointer stays server-side.
+  const user = await dbWrite.user.update({ where: { id }, data, omit: { subscriptionId: true } });
 
   // Track user update with optional source context
   let location = 'user.service:updateUserById';
@@ -1062,13 +1069,17 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
     ? { deletedAt: new Date(), status: 'Deleted' }
     : { userId: -1 };
 
-  const meta = { ...((user.meta ?? {}) as UserMeta), imageRemoval: imageRemovalMode(removeImages) };
+  const meta = {
+    ...((user.meta ?? {}) as UserMeta),
+    imageRemoval: imageRemovalMode(removeImages),
+    tokenRevocation: undefined,
+  };
 
   const result = await dbWrite
     .$transaction([
       // A hold that landed after the check above fails this statement, and with it the whole
-      // transaction, so nothing else in it commits. It also clears "subscriptionId", which no Prisma delegate reaches: a second pointer to
-      // the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
+      // transaction, so nothing else in it commits. It also clears "subscriptionId": a second pointer
+      // to the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
       dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
       dbWrite.account.deleteMany({ where: { userId: user.id } }),
@@ -1124,6 +1135,7 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
   };
 
   await runStep('invalidate-session', () => invalidateSession(id, 'moderation'));
+  await runStep('revoke-user-tokens', () => revokeUserTokens(user.id));
   await runStep('cancel-stripe-subscription', () =>
     cancelSubscription({ userId: user.id, removeRecord: true })
   );
@@ -1269,6 +1281,7 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     }),
     disarmAccountDeletionImagePurge(id),
   ]);
+  await forgetGenerationToken(id);
 
   // The account is restored at this point: a throw would read as a failed restore, and a retry is refused.
   await reopenGenerationRestrictionsOfRestoredAccount(id).catch((error) =>
@@ -1420,16 +1433,17 @@ async function unindexDeleted(
   }
 }
 
-// `modelIds` alone when it could not be read which models went: some may still hold live bids, so
-// it names no versions to refund.
+// With `modelIds` when it could not be read which models went: its versions are only candidates
+// to check, never `versionIds` to refund, since a model a hold kept still holds live bids.
 type BidRefundFailure =
   | { versionIds: number[]; transactionIds?: string[]; error?: string }
-  | { modelIds: number[]; error: string };
+  | { modelIds: number[]; candidateVersionIds: number[]; error: string };
 
 /**
  * A model a hold kept keeps its bids; versions are passed by id because the model row is gone. Never
  * throws: a re-run of the wipe finds no models to refund, so each failure is logged as its own
- * `bid-refund-failed` line (alerted on) with the ids a manual refund needs, and returned.
+ * `bid-refund-failed` line (alerted on) with the ids a manual refund needs, or the candidates to check
+ * when it could not tell which models went, and returned.
  */
 async function refundBidsForDeletedModels(
   models: { id: number; name: string; modelVersions: { id: number }[] }[],
@@ -1440,7 +1454,10 @@ async function refundBidsForDeletedModels(
     logToAxiom({
       name: 'bid-refund-failed',
       type: 'error',
-      message: 'A content wipe could not refund bids; refund them by hand',
+      message:
+        'modelIds' in failure
+          ? 'A content wipe could not tell which models it deleted; check which candidates are gone before refunding any bids'
+          : 'A content wipe could not refund bids; refund them by hand',
       source: 'remove-all-content',
       userId: wipe.userId,
       moderatorId: wipe.actorUserId,
@@ -1462,7 +1479,13 @@ async function refundEachDeletedModel(
       )
     );
   } catch (e) {
-    return [{ modelIds: models.map((m) => m.id), error: (e as Error).message }];
+    return [
+      {
+        modelIds: models.map((m) => m.id),
+        candidateVersionIds: models.flatMap(versionIdsOf),
+        error: (e as Error).message,
+      },
+    ];
   }
   const failures: BidRefundFailure[] = [];
   for (const m of models) {
@@ -1508,16 +1531,17 @@ export const removeAllContent = async ({
   const { markerView } = await assertAccountNotUnderLegalHold(id);
   const held = accountHoldSql(Prisma.sql`${id}::int`, markerView);
 
-  const models = await dbRead.model.findMany({
+  // The primary, as the deletes below: a row the replica has not seen yet is still deleted.
+  const models = await dbWrite.model.findMany({
     where: { userId: id },
     select: { id: true, name: true, modelVersions: { select: { id: true } } },
   });
-  const images = await dbRead.image.findMany({
+  const images = await dbWrite.image.findMany({
     where: { userId: id },
     select: { id: true, url: true },
   });
-  const articles = await dbRead.article.findMany({ where: { userId: id }, select: { id: true } });
-  const collections = await dbRead.collection.findMany({
+  const articles = await dbWrite.article.findMany({ where: { userId: id }, select: { id: true } });
+  const collections = await dbWrite.collection.findMany({
     where: { userId: id },
     select: { id: true },
   });
@@ -1621,8 +1645,8 @@ export const removeAllContent = async ({
         userId: id,
       }).catch(() => undefined)
     );
-    await refundBidsForDeletedModels(models, alertedBy);
-    throw new LegalHoldStoppedError();
+    const refundFailures = await refundBidsForDeletedModels(models, alertedBy);
+    throw new LegalHoldStoppedError(refundFailures.length ? ['bid-refunds'] : []);
   }
 
   // The main-database wipe is done. A step that throws is logged and named in `incomplete`, and the
@@ -1676,7 +1700,7 @@ export const removeAllContent = async ({
       message: 'Stopped by a legal hold before the App Blocks stores',
       userId: id,
     }).catch(() => undefined);
-    throw new LegalHoldStoppedError();
+    throw new LegalHoldStoppedError(incomplete);
   });
 
   // ── App Blocks per-user storage ─────────────────────────────────────────────
@@ -2418,6 +2442,7 @@ export const toggleBan = async ({
           detailsInternal,
           detailsExternal,
         },
+        tokenRevocation: undefined,
       };
 
   const data = { bannedAt: bannedAt ? null : new Date(), meta: updatedMeta };
@@ -2430,7 +2455,7 @@ export const toggleBan = async ({
             data: { userId, entityType: 'user', entityId: id, activity: banActivity },
           });
         }
-        return tx.user.findUniqueOrThrow({ where: { id } });
+        return tx.user.findUniqueOrThrow({ where: { id }, omit: { subscriptionId: true } });
       })
     : await updateUserById({ id, data, updateSource: 'toggleBan' });
   void syncOwnerEventHats(id);
@@ -2448,6 +2473,9 @@ export const toggleBan = async ({
   );
 
   if (!bannedAt) {
+    // Ahead of the slow cleanup below: until this lands, their API keys still generate.
+    await revokeUserTokens(id);
+
     // Run cleanup operations in parallel groups
     // Group A: DB-heavy operations (run together)
     // Group B: External API operations (run together)
@@ -2654,6 +2682,9 @@ export const toggleBan = async ({
     await reinstateSubscription({ userId: id }).catch((error) =>
       logToAxiom({ name: 'reinstate-stripe-subscription', type: 'error', message: error.message })
     );
+
+    // A mint in flight when the ban landed can cache its token after the ban dropped it.
+    await forgetGenerationToken(id);
 
     // 🔴 GIVE THE PUBLISHER'S BLOCKS BACK. Without this a lifted ban left every one of
     // their block instances 403ing for up to MAX_BLOCK_TOKEN_LIFETIME_SECONDS — 4h where a

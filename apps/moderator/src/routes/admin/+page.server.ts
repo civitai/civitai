@@ -102,7 +102,7 @@ export const actions: Actions = {
         userId: locals.user.id,
         via: 'admin-page',
         expect,
-        expectAmong: grantable,
+        manages: grantable,
       });
       return { success: true, count: changed.length };
     } catch (e) {

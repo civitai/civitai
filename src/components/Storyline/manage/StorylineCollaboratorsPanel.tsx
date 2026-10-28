@@ -12,7 +12,7 @@ export type StorylineCollaborator = { id: number; username: string | null };
 export function StorylineCollaboratorsPanel({
   ownerId,
   collaborators,
-  canManage,
+  canEndorse,
   onAdd,
   onRemove,
   adding,
@@ -20,7 +20,8 @@ export function StorylineCollaboratorsPanel({
 }: {
   ownerId: number;
   collaborators: StorylineCollaborator[];
-  canManage: boolean;
+  /** Only the owner endorses: it pre-approves the collaborator's priced continuations. */
+  canEndorse: boolean;
   onAdd: (user: StorylineCollaborator) => void;
   onRemove: (userId: number) => void;
   adding?: boolean;
@@ -32,7 +33,7 @@ export function StorylineCollaboratorsPanel({
 
   return (
     <Stack gap="md">
-      {canManage && (
+      {canEndorse && (
         <Stack gap={6}>
           <Group gap="xs" align="flex-start" wrap="nowrap">
             <div className="min-w-0 grow">
@@ -111,17 +112,15 @@ export function StorylineCollaboratorsPanel({
               }
               subTextForce
             />
-            {canManage && (
-              <LegacyActionIcon
-                size="sm"
-                color="red"
-                aria-label={`Remove ${user.username ?? 'collaborator'}`}
-                loading={removingId === user.id}
-                onClick={() => onRemove(user.id)}
-              >
-                <IconTrash size={14} />
-              </LegacyActionIcon>
-            )}
+            <LegacyActionIcon
+              size="sm"
+              color="red"
+              aria-label={`Remove ${user.username ?? 'collaborator'}`}
+              loading={removingId === user.id}
+              onClick={() => onRemove(user.id)}
+            >
+              <IconTrash size={14} />
+            </LegacyActionIcon>
           </Group>
         ))}
         {!collaborators.length && (
