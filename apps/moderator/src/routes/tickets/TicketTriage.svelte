@@ -4,18 +4,15 @@
   import { page } from '$app/state';
   import { IconZoomCancel } from '@tabler/icons-svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
-  import TriageFilterChips, {
-    type ChipGroup,
-  } from '$lib/components/triage/TriageFilterChips.svelte';
   import TriagePageHeader from '$lib/components/triage/TriagePageHeader.svelte';
   import TriageShell from '$lib/components/triage/TriageShell.svelte';
   import { LINK_CLASS, dateTime, shortAge } from '$lib/format';
   import type { TicketPageResult, TicketRow } from '$lib/server/tickets/list';
-  import { statusOptions, syncedAgo, valueOptions } from '$lib/tickets/filters';
+  import { syncedAgo } from '$lib/tickets/filters';
   import { requesterLabel, rowChip, sentByText } from '$lib/tickets/row';
   import type { TicketView } from '$lib/tickets/routing';
   import { urlWith } from '$lib/url';
-  import TicketFilterChips from './TicketFilterChips.svelte';
+  import TicketFilterBar from './TicketFilterBar.svelte';
   import TicketStatusBadge from './TicketStatusBadge.svelte';
   import TicketTriageDetail from './TicketTriageDetail.svelte';
 
@@ -59,34 +56,6 @@
     const timer = setInterval(() => (now = Date.now()), 30_000);
     return () => clearInterval(timer);
   });
-
-  const sortGroup = $derived({
-    key: 'sort',
-    label: 'Sort',
-    values: ['updated', 'created'],
-    labels: { updated: 'Updated', created: 'Created' },
-    active: query?.sort ?? 'updated',
-    defaultValue: 'updated',
-  } satisfies ChipGroup);
-  const dirGroup = $derived({
-    key: 'dir',
-    label: 'Order',
-    values: ['desc', 'asc'],
-    labels: { desc: 'Newest first', asc: 'Oldest first' },
-    active: query?.dir ?? 'desc',
-    defaultValue: 'desc',
-  } satisfies ChipGroup);
-  const sentGroup = $derived({
-    key: 'sent',
-    label: 'Sent to support',
-    values: ['only', 'exclude'],
-    labels: { only: 'Sent by moderators', exclude: 'Not sent' },
-    active: query?.sent ?? '',
-    defaultValue: '',
-    toggle: true,
-    compact: true,
-    counts: ok ? { only: ok.facets.sent.only, exclude: ok.facets.sent.exclude } : undefined,
-  } satisfies ChipGroup);
 
   const filtersActive = $derived(
     !!query &&
@@ -140,36 +109,7 @@
 
 {#snippet listHeader()}
   {#if ok}
-    <div class="flex flex-col gap-2">
-      <div class="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <TriageFilterChips sort={sortGroup} selectionParam={SELECTION} />
-        <TriageFilterChips sort={dirGroup} selectionParam={SELECTION} />
-        {#if data.view === 'support'}
-          <TriageFilterChips groups={[sentGroup]} selectionParam={SELECTION} />
-        {/if}
-      </div>
-      <TicketFilterChips
-        param="status"
-        label="Status"
-        options={statusOptions(ok.query.status, ok.facets.status)}
-        drop={DROPPED}
-        collapsible={false}
-      />
-      <TicketFilterChips
-        param="feature"
-        label="Feature"
-        options={valueOptions(ok.query.feature, ok.facets.feature, 'No feature')}
-        drop={DROPPED}
-        collapsible
-      />
-      <TicketFilterChips
-        param="topic"
-        label="Router topic"
-        options={valueOptions(ok.query.topic, ok.facets.topic, 'No topic')}
-        drop={DROPPED}
-        collapsible
-      />
-    </div>
+    <TicketFilterBar view={data.view} result={ok} drop={DROPPED} />
   {/if}
 {/snippet}
 

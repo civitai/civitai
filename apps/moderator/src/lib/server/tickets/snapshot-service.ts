@@ -284,6 +284,11 @@ export function createSnapshotService(deps: SnapshotDeps) {
 
   return {
     /** The snapshot with the warnings to show above it. Awaits Freshdesk only when there is none yet. */
+    /** The stored snapshot as it is, with no refresh and no Freshdesk call; null when there is none. */
+    peek(): Promise<Snapshot | null> {
+      return store.read();
+    },
+
     async get(): Promise<SnapshotRead> {
       let snapshot: Snapshot | null;
       try {

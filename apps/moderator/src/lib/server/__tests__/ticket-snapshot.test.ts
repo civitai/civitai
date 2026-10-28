@@ -167,6 +167,26 @@ describe('reading the snapshot', () => {
   });
 });
 
+describe('peeking at the snapshot', () => {
+  it('returns a due snapshot as stored, without Freshdesk, the lock or a refresh', async () => {
+    const { service, store, fullRead, deltaRead, settle } = setup(
+      snapshotOf({ attemptedAt: NOW - T.fullRetryMs * 10 })
+    );
+    expect((await service.peek())?.tickets).toHaveLength(2);
+    await settle();
+    expect(fullRead).not.toHaveBeenCalled();
+    expect(deltaRead).not.toHaveBeenCalled();
+    expect(store.lock).not.toHaveBeenCalled();
+  });
+
+  it('returns null, and builds nothing, when there is no snapshot', async () => {
+    const { service, fullRead, store } = setup(null);
+    expect(await service.peek()).toBeNull();
+    expect(fullRead).not.toHaveBeenCalled();
+    expect(store.write).not.toHaveBeenCalled();
+  });
+});
+
 describe('single flight', () => {
   it('serves the current snapshot when another process holds the lock', async () => {
     const { service, state, fullRead, deltaRead, settle } = setup(snapshotOf());
