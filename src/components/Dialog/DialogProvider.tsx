@@ -1,6 +1,12 @@
 import React, { createContext, useContext, useEffect, useState } from 'react';
 import type { Dialog } from '~/components/Dialog/dialogStore';
-import { dialogStore, useDialogStore, useIsLevelFocused } from '~/components/Dialog/dialogStore';
+import {
+  DialogIdContext,
+  dialogStore,
+  useDialogId,
+  useDialogStore,
+  useIsLevelFocused,
+} from '~/components/Dialog/dialogStore';
 import trieMemoize from 'trie-memoize';
 
 type DialogState = {
@@ -17,16 +23,7 @@ const DialogContext = createContext<DialogState>({
   onClose: () => undefined,
 });
 export const useDialogContext = () => useContext(DialogContext);
-
-/**
- * The store id of the dialog a component is rendered in (`undefined` outside one).
- *
- * 🔴 A SEPARATE CONTEXT, NOT A FIELD ON `DialogContext`. Most dialogs spread
- * `useDialogContext()` straight into Mantine's `<Modal>`, which forwards unknown props
- * to the DOM — an id there would land as a stray attribute on every modal.
- */
-const DialogIdContext = createContext<Dialog['id'] | undefined>(undefined);
-export const useDialogId = () => useContext(DialogIdContext);
+export { useDialogId };
 
 const DialogProviderInner = ({ dialog, index }: { dialog: Dialog; index: number }) => {
   const [opened, setOpened] = useState(false);

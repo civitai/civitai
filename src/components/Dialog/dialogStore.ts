@@ -1,5 +1,5 @@
 import type React from 'react';
-import { useRef } from 'react';
+import { createContext, useContext, useRef } from 'react';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
@@ -84,6 +84,16 @@ export function createDialogTrigger<T = any>(
   return (options?: Omit<DialogSettings<T>, 'component'>) =>
     dialogStore.trigger({ component, ...defaultOptions, ...options } as DialogSettings<T>);
 }
+
+/**
+ * The store id of the dialog a component is rendered in (`undefined` outside one).
+ *
+ * 🔴 A SEPARATE CONTEXT, NOT A FIELD ON `DialogContext`. Most dialogs spread
+ * `useDialogContext()` straight into Mantine's `<Modal>`, which forwards unknown props
+ * to the DOM — an id there would land as a stray attribute on every modal.
+ */
+export const DialogIdContext = createContext<Dialog['id'] | undefined>(undefined);
+export const useDialogId = () => useContext(DialogIdContext);
 
 export function useIsLevelFocused() {
   const levelRef = useRef<number>();
