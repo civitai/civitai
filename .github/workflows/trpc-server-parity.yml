@@ -69,8 +69,11 @@ jobs:
           --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
     env:
       IMAGE: civitai-web:parity
-      WORK: ${{ runner.temp }}/parity
     steps:
+      # The `runner` context is not available in job-level env, so the work dir is set here.
+      - name: Work directory
+        run: echo "WORK=$RUNNER_TEMP/parity" >> "$GITHUB_ENV"
+
       - uses: actions/checkout@v4
         with:
           submodules: true
@@ -135,7 +138,7 @@ jobs:
       # The heartbeat file is written by instrumentation's liveness heartbeat every 2s.
       - name: Instrumentation ran at boot
         run: |
-          for i in $(seq 1 180); do
+          for _ in $(seq 1 180); do
             if docker logs trpc 2>&1 | grep -q '\[trpc-server\] ready'; then break; fi
             if [ "$(docker inspect -f '{{.State.Running}}' trpc)" != true ]; then echo "trpc exited"; docker logs trpc 2>&1 | tail -100; exit 1; fi
             sleep 2
@@ -164,7 +167,7 @@ jobs:
           token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
           for port in 3000 3001 3002; do
             ok=
-            for i in $(seq 1 150); do
+            for _ in $(seq 1 150); do
               if curl -fsS -o /dev/null "http://127.0.0.1:$port/api/live?token=$token"; then ok=1; break; fi
               sleep 2
             done
