@@ -8,6 +8,10 @@ import type {
 } from '~/server/schema/csam.schema';
 import { csamCapabilitiesDictionary, csamContentsDictionary } from '~/server/schema/csam.schema';
 import { clickhouse } from '~/server/clickhouse/client';
+import {
+  getImageUploadIpEvents,
+  UPLOAD_REQUEST_IP_NOTE,
+} from '~/server/services/image-upload-action.service';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
@@ -105,7 +109,7 @@ type CsamReportUserActivity = {
   ip: string;
   time: string;
   details?: {
-    type: 'post' | 'model-version';
+    type: 'post' | 'model-version' | 'image-upload-request';
     id: number;
   };
 };
@@ -382,6 +386,9 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
         }));
         captureEvents = captureEvents.concat(postCaptureEvents);
       }
+      captureEvents = captureEvents.concat(
+        await getImageUploadIpEvents({ userId: report.userId, imageIds })
+      );
       break;
     case 'TrainingData':
       const modelVersionId = report.details?.modelVersionIds?.[0];
@@ -596,7 +603,15 @@ async function getInitialReportData(claim: SendClaim) {
           dateTime: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
         };
       }),
-      additionalInfo: reportedUser.email ? `Email: ${reportedUser.email}` : undefined,
+      additionalInfo:
+        [
+          reportedUser.email ? `Email: ${reportedUser.email}` : null,
+          userActivity?.some((a) => a.details?.type === 'image-upload-request')
+            ? UPLOAD_REQUEST_IP_NOTE
+            : null,
+        ]
+          .filter(Boolean)
+          .join('\n') || undefined,
     },
   } satisfies Report;
 }
