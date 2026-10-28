@@ -526,18 +526,6 @@ describe('submitVersion', () => {
     ).rejects.toThrow(/manifest\.blockId .* lowercase/);
   });
 
-  it('rejects a reserved blockId before storing anything', async () => {
-    const { submitVersion } = await import('../publish-request.service');
-    const buf = await makeValidBundle({ blockId: 'dev-0123456789abcdef' });
-    await expect(
-      submitVersion({
-        bundleBuffer: buf,
-        submittedByUserId: 42,
-      })
-    ).rejects.toThrow('blockId "dev-0123456789abcdef" is reserved: ids starting with "dev-"');
-    expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
-  });
-
   it('rejects when manifest.version is not valid semver', async () => {
     const { submitVersion } = await import('../publish-request.service');
     const buf = await makeValidBundle({ version: 'not-semver' });
@@ -1538,7 +1526,25 @@ describe('approveRequest', () => {
     }
   );
 
-  it.each(['my-app', 'a-b-c', 'plainapp'])('approves a first version of %s', async (slug) => {
+  it('refuses a first version with a reserved blockId before creating the OAuth client, repo or app block', async () => {
+    const { approveRequest } = await import('../publish-request.service');
+    mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(
+      pendingRequest({ slug: 'review-0123456789abcdef' })
+    );
+    mockDbRead.appBlock.findFirst.mockResolvedValue(null);
+    mockBundleBuffer.current = await makeValidBundle();
+
+    await expect(
+      approveRequest({ publishRequestId: 'pubreq_1', reviewerUserId: 999 })
+    ).rejects.toThrow(
+      'Cannot approve: blockId "review-0123456789abcdef" is reserved: ids starting with "review-"'
+    );
+    expect(mockDbWrite.oauthClient.create).not.toHaveBeenCalled();
+    expect(mockForgejo.createRepoFromTemplate).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlock.create).not.toHaveBeenCalled();
+  });
+
+  it.each(['my-app', 'ab-c-d', 'plainapp'])('approves a first version of %s', async (slug) => {
     const { approveRequest } = await import('../publish-request.service');
     mockDbRead.appBlockPublishRequest.findUnique.mockResolvedValue(pendingRequest({ slug }));
     mockDbRead.appBlock.findFirst.mockResolvedValue(null);

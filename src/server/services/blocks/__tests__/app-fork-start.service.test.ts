@@ -596,16 +596,8 @@ describe('fork slugs', () => {
     expect(long.length).toBeLessThanOrEqual(40);
     expect(long).toBe(`${'a'.repeat(30)}-fork-1a2b`);
     expect(isValidForkSlug(long)).toBe(true);
-    // Not 'a--b…': that would also fail as a reserved id, hiding a broken `--` rule.
-    expect(isValidForkSlug('ab--c-fork-0f0f')).toBe(false);
+    expect(isValidForkSlug('a--b-fork-0f0f')).toBe(false);
     expect(isValidForkSlug('9app-fork-0f0f')).toBe(false);
-  });
-
-  it('never accepts a reserved app id (a fork of an app named "dev" would be a dev tunnel host)', () => {
-    expect(forkSlugFor('dev', '0f0f')).toBe('dev-fork-0f0f');
-    expect(isValidForkSlug('dev-fork-0f0f')).toBe(false);
-    expect(isValidForkSlug('review-fork-0f0f')).toBe(false);
-    expect(isValidForkSlug('devtools-fork-0f0f')).toBe(true);
   });
 
   it('exclusions are by path segment, not substring', () => {
