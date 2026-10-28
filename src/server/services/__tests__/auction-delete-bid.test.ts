@@ -172,6 +172,7 @@ describe('deleteBid — a bid paid across accounts (auction prefix)', () => {
 
     expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(2);
     expect(refundTransaction).not.toHaveBeenCalled();
+    expect(markedDeleted()).toBe(true);
   });
 
   it('keeps a bid whose second charge fails to refund, and a retry refunds only that one', async () => {

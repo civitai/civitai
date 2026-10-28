@@ -1420,11 +1420,11 @@ async function unindexDeleted(
   }
 }
 
-// With `modelIds` when it could not be read which models went: its versions are candidates to
-// check, since a model a hold kept still holds live bids.
+// With `modelIds` when it could not be read which models went: its versions are only candidates
+// to check, never `versionIds` to refund, since a model a hold kept still holds live bids.
 type BidRefundFailure =
   | { versionIds: number[]; transactionIds?: string[]; error?: string }
-  | { modelIds: number[]; versionIds: number[]; error: string };
+  | { modelIds: number[]; candidateVersionIds: number[]; error: string };
 
 /**
  * A model a hold kept keeps its bids; versions are passed by id because the model row is gone. Never
@@ -1440,7 +1440,10 @@ async function refundBidsForDeletedModels(
     logToAxiom({
       name: 'bid-refund-failed',
       type: 'error',
-      message: 'A content wipe could not refund bids; refund them by hand',
+      message:
+        'modelIds' in failure
+          ? 'A content wipe could not tell which models it deleted; check which candidates are gone before refunding any bids'
+          : 'A content wipe could not refund bids; refund them by hand',
       source: 'remove-all-content',
       userId: wipe.userId,
       moderatorId: wipe.actorUserId,
@@ -1465,7 +1468,7 @@ async function refundEachDeletedModel(
     return [
       {
         modelIds: models.map((m) => m.id),
-        versionIds: models.flatMap(versionIdsOf),
+        candidateVersionIds: models.flatMap(versionIdsOf),
         error: (e as Error).message,
       },
     ];

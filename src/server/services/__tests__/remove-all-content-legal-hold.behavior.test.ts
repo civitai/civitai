@@ -576,12 +576,16 @@ describe('removeAllContent', () => {
     expect(refundBidsForVersions).not.toHaveBeenCalled();
   });
 
-  it('names the versions to check when it cannot tell which models went', async () => {
+  it('names the versions to check, and none to refund, when it cannot tell which models went', async () => {
     failGoneModels = true;
     await removeAllContent({ id: CLEAN, actorUserId: 9 });
-    expect(refundAlerts()).toEqual([
-      expect.objectContaining({ modelIds: [MODEL], versionIds: [MODEL_VERSION(MODEL)] }),
+    const alerts = refundAlerts();
+    expect(alerts).toEqual([
+      expect.objectContaining({ modelIds: [MODEL], candidateVersionIds: [MODEL_VERSION(MODEL)] }),
     ]);
+    // A model a hold kept may be among them, and its bids still stand.
+    expect(alerts[0]).not.toHaveProperty('versionIds');
+    expect(alerts[0].message).not.toMatch(/refund them/);
   });
 
   it('drops from storage and the indexes the rows the replica does not have yet', async () => {
