@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { dev } from '$app/environment';
   import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import type { ActionData, PageData } from './$types';
@@ -32,6 +33,11 @@
     {#if data.mode === 'trials' && data.trial.kind === 'question' && !showReveal}
       · Trial {data.trial.run.position} of {data.trial.run.total}
     {/if}
+  </p>
+  <p class="status">
+    Fervor {status.fervor} · Gold {status.goldEarned} earned, {status.goldPending} pending ·
+    <a href="/judgments">Your judgments</a>
+    {#if dev}· <a href="/dev/simulate">Simulate other voters</a>{/if}
   </p>
   <div class="bar" aria-hidden="true">
     <div class="fill" style:width="{status.progressPercent}%"></div>

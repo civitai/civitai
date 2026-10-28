@@ -10,4 +10,15 @@ describe('statusFrom', () => {
     });
     expect(statusFrom('Knight', 300)).toMatchObject({ level: 2, xpIntoLevel: 50 });
   });
+
+  it('carries fervor and gold, and defaults them to zero', () => {
+    expect(statusFrom('Knight', 0, { fervor: 50, goldPending: 100, goldEarned: 25 })).toMatchObject(
+      {
+        fervor: 50,
+        goldPending: 100,
+        goldEarned: 25,
+      }
+    );
+    expect(statusFrom('Acolyte', 0)).toMatchObject({ fervor: 0, goldPending: 0, goldEarned: 0 });
+  });
 });
