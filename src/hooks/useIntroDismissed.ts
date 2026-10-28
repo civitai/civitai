@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 /**
- * Whether the intro stored under `key` was dismissed, and a dismiss that remembers it. Starts
+ * Whether the intro stored under `key` was dismissed, and a dismiss that remembers it, and a restore that forgets it. Starts
  * dismissed so the server render and returning visitors never flash the intro before localStorage
  * is read; a missing key, or blocked storage, shows it.
  */
@@ -23,5 +23,12 @@ export function useIntroDismissed(key: string) {
     } catch {}
   };
 
-  return [dismissed, dismiss] as const;
+  const restore = () => {
+    setDismissed(false);
+    try {
+      localStorage.removeItem(key);
+    } catch {}
+  };
+
+  return [dismissed, dismiss, restore] as const;
 }
