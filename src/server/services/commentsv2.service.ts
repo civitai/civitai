@@ -41,7 +41,9 @@ import type {
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
 import {
   accountHoldSql,
+  contentKeptError,
   holdMarkerViewExists,
+  isLegalHoldAbort,
   logHoldRetained,
 } from '~/server/services/legal-hold.service';
 import {
@@ -741,6 +743,18 @@ export const isThreadDetached = (threadId: number) => isDetached(threadDetachedS
 
 export const isCommentDetached = (commentId: number) => isDetached(commentDetachedSql(commentId));
 
+/**
+ * Whether a member gets the comment as missing: gone, hidden for ToS, which is also how an author's
+ * delete keeps one for a hold, or detached. Read on the primary, so a delete just made counts.
+ */
+export const isCommentGoneForMembers = async (commentId: number) => {
+  const row = await dbWrite.commentV2.findUnique({
+    where: { id: commentId },
+    select: { tosViolation: true },
+  });
+  return !row || row.tosViolation || (await isCommentDetached(commentId));
+};
+
 export const getCommentThreadStorylineId = (threadId: number) =>
   firstStorylineId(storylineOfThreadSql(threadId));
 
@@ -755,9 +769,11 @@ export const deleteComment = async ({ id }: { id: number }) => {
   const comment = await dbWrite.commentV2.findUnique({ where: { id } });
   if (!comment) return null;
   const markerView = await holdMarkerViewExists();
-  const { deleted, retained } = await dbWrite.$transaction((tx) =>
-    deleteCommentsV2UnlessHeld(tx, [id], markerView)
-  );
+  const { deleted, retained } = await dbWrite
+    .$transaction((tx) => deleteCommentsV2UnlessHeld(tx, [id], markerView, { byAuthor: true }))
+    .catch((e: unknown) => {
+      throw isLegalHoldAbort(e) ? contentKeptError(false) : e;
+    });
   if (!deleted.length && !retained.length) return null;
   if (retained.length)
     void logHoldRetained(
@@ -778,7 +794,8 @@ export const deleteComment = async ({ id }: { id: number }) => {
 export async function deleteCommentsV2UnlessHeld(
   tx: Prisma.TransactionClient,
   ids: number[],
-  markerView: boolean
+  markerView: boolean,
+  { byAuthor = false } = {}
 ) {
   if (ids.length === 0) return { deleted: [], retained: [] };
   const deleted = await tx.$queryRaw<{ userId: number; threadId: number }[]>`
@@ -791,8 +808,12 @@ export async function deleteCommentsV2UnlessHeld(
       )
     RETURNING c."userId", c."threadId"
   `;
+  // One its author removed is marked, so a moderator's ToS restore can tell it from a ToS removal.
+  const removedByAuthor = byAuthor
+    ? Prisma.sql`, metadata = COALESCE(metadata, '{}'::jsonb) || '{"removedByAuthor": true}'::jsonb`
+    : Prisma.empty;
   const retained = await tx.$queryRaw<{ userId: number }[]>`
-    UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now()
+    UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now() ${removedByAuthor}
     WHERE id = ANY(${ids}::int[])
     RETURNING "userId"
   `;

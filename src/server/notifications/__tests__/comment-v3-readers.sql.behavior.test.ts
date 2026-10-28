@@ -521,6 +521,13 @@ describe('the permalink row', () => {
     );
   });
 
+  it('finds no row for a comment hidden for ToS, but for a moderator', async () => {
+    // 400 is hidden for ToS, 401 only by the sweep (the detail fetcher's rows).
+    expect(await getCommentPermalinkRow(400)).toBeUndefined();
+    expect(await getCommentPermalinkRow(400, { includeHidden: true })).toMatchObject({ id: 400 });
+    expect(await getCommentPermalinkRow(401)).toMatchObject({ id: 401 });
+  });
+
   it('finds no row for a deleted comment, and no link for a listing with no slug', async () => {
     expect(await getCommentPermalinkRow(108)).toBeUndefined();
     expect(buildCommentPermalink(await getCommentPermalinkRow(305))).toBeNull();

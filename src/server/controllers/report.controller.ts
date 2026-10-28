@@ -10,7 +10,7 @@ import type {
   GetRecentAppealsInput,
 } from '~/server/schema/report.schema';
 import { getImageById } from '~/server/services/image.service';
-import { isCommentDetached } from '~/server/services/commentsv2.service';
+import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import {
   createEntityAppeal,
@@ -53,7 +53,7 @@ export async function createReportHandler({
     if (
       input.type === ReportEntity.CommentV2 &&
       !ctx.user.isModerator &&
-      (await isCommentDetached(input.id))
+      (await isCommentGoneForMembers(input.id))
     )
       throw throwNotFoundError('The content you are trying to report no longer exists');
     const result = await createReport({

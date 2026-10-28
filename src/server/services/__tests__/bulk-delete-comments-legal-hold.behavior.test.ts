@@ -51,7 +51,11 @@ vi.mock('~/server/rewards', async (importOriginal) => ({
 
 import { bulkDeleteComments, deleteCommentById } from '~/server/services/comment.service';
 import { deleteComment } from '~/server/services/commentsv2.service';
-import { isLegalHoldAbort, logHoldRetained } from '~/server/services/legal-hold.service';
+import {
+  isLegalHoldAbort,
+  logHoldRetained,
+  OWNER_CONTENT_KEPT,
+} from '~/server/services/legal-hold.service';
 
 const CLEAN = 1;
 const HELD = 2; // named on a pending report
@@ -83,7 +87,8 @@ const SCHEMA = `
     );
     CREATE TABLE "CommentV2" (
       id int PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL, content text NOT NULL,
-      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now()
+      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now(),
+      metadata jsonb
     );
     -- A comment's reply thread; deleting the comment only unlinks it, as in production.
     CREATE TABLE "Thread" (
@@ -502,9 +507,35 @@ describe('a member deleting their own CommentV2', () => {
   ])('%s, and takes its points back as a delete does', async (_, id, author, after) => {
     await expect(deleteComment({ id })).resolves.toMatchObject({ id, userId: author });
     expect((await state('CommentV2'))[id] ?? 'gone').toBe(after);
+    expect(pointsRemoved).toHaveBeenCalledTimes(1);
     expect(pointsRemoved).toHaveBeenCalledWith([
       expect.objectContaining({ userId: author, threadId: author * 100 }),
     ]);
+  });
+
+  it('marks a comment it keeps as removed by its author, which a moderator bulk delete does not', async () => {
+    await deleteComment({ id: 21 });
+    await bulkDeleteComments({ commentIds: [], commentV2Ids: [22] });
+    const { rows } = await holder.db.query<{ id: number; metadata: unknown }>(
+      `SELECT id, metadata FROM "CommentV2" WHERE id IN (21, 22) ORDER BY id`
+    );
+    expect(rows).toEqual([
+      { id: 21, metadata: { removedByAuthor: true } },
+      { id: 22, metadata: null },
+    ]);
+  });
+
+  it('keeps a comment whose author only the hold marker covers', async () => {
+    await createMarker();
+    await deleteComment({ id: 31 });
+    expect(await state('CommentV2')).toMatchObject({ 31: 'hidden' });
+  });
+
+  it('refuses, deleting nothing, when the view goes after the read', async () => {
+    await createMarker();
+    hook = { on: 'DELETE FROM', run: () => holder.db.query(`DROP VIEW "EvidenceHeldUser"`) };
+    await expect(deleteComment({ id: 11 })).rejects.toThrow(OWNER_CONTENT_KEPT);
+    expect(await state('CommentV2')).toMatchObject({ 11: 'public' });
   });
 
   it('is kept, hidden, while a held author replied under it', async () => {

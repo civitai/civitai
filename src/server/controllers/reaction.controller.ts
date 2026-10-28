@@ -17,7 +17,7 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
-import { isCommentDetached } from '~/server/services/commentsv2.service';
+import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import {
   getNsfwLevelDeprecatedReverseMapping,
@@ -283,7 +283,7 @@ export const toggleReactionHandler = async ({
     if (
       input.entityType === 'comment' &&
       !ctx.user.isModerator &&
-      (await isCommentDetached(input.entityId))
+      (await isCommentGoneForMembers(input.entityId))
     )
       // The same answer a missing comment gets from the block check.
       throw throwNotFoundError(`No comment with id ${input.entityId}`);

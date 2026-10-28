@@ -5,9 +5,10 @@ import { threadUrlMap } from '~/server/notifications/comment.notifications';
  * What `/comments/v2/<id>` reads: the comment's entity, plus the two addresses that are not the
  * entity id. A comic chapter is addressed by its project, and an app listing by its slug
  * (`entityId` is `app_listings.serial_id`, an integer that appears nowhere in the URL). A tombstone
- * is not addressable: nothing of a deleted comment should be reachable by link.
+ * is not addressable: nothing of a deleted comment should be reachable by link. Nor, but for a
+ * moderator, is one hidden for ToS, which is also how an author's delete keeps a comment for a hold.
  */
-export const getCommentPermalinkRow = (commentId: number) =>
+export const getCommentPermalinkRow = (commentId: number, { includeHidden = false } = {}) =>
   kyselyRead
     .selectFrom('CommentV3 as c')
     .leftJoin('ComicChapter as cch', (join) =>
@@ -25,6 +26,7 @@ export const getCommentPermalinkRow = (commentId: number) =>
     ])
     .where('c.id', '=', commentId)
     .where('c.deletedAt', 'is', null)
+    .$if(!includeHidden, (qb) => qb.where('c.tosViolation', '=', false))
     .executeTakeFirst();
 
 export type CommentPermalinkRow = NonNullable<Awaited<ReturnType<typeof getCommentPermalinkRow>>>;

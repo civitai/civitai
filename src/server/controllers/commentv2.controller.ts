@@ -45,6 +45,7 @@ import {
   getCommentsInfinite,
   getCommentThreadBounty,
   isCommentDetached,
+  isCommentGoneForMembers,
   isThreadDetached,
   getCommentThreadCrucibleId,
   getCommentStorylineId,
@@ -140,6 +141,13 @@ export const upsertCommentV2Handler = async ({
   input: UpsertCommentV2Input;
 }) => {
   try {
+    if (!ctx.user.isModerator) {
+      // Editing, or replying to, a comment a member cannot see answers as if it were gone.
+      const gone = [input.id, input.entityType === 'comment' ? input.entityId : undefined];
+      for (const id of gone)
+        if (id && (await isCommentGoneForMembers(id)))
+          throw throwNotFoundError(`No comment with id ${id}`);
+    }
     const target = await assertCommentEntityVisible(input, ctx);
     // An edit is also gated by the stored comment's own thread: `entityType` is client-supplied.
     const storyline = input.id
@@ -219,8 +227,8 @@ export const deleteCommentV2Handler = async ({
   input: GetByIdInput;
 }) => {
   try {
-    // A detached comment is kept content: only a moderator removes it.
-    if (!ctx.user.isModerator && (await isCommentDetached(input.id)))
+    // A detached or hidden comment is kept content: only a moderator removes it.
+    if (!ctx.user.isModerator && (await isCommentGoneForMembers(input.id)))
       throw throwNotFoundError(`No comment with id ${input.id}`);
     const deleted = await deleteComment(input);
     if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);

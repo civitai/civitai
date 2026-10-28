@@ -17,15 +17,19 @@ import { ReportEntity } from '~/shared/utils/report-helpers';
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
 // What the handlers do once let through is their own suites'; here, whether they are let through.
-const { deleteComment, toggleThreadMute, toggleReaction, createReport } = vi.hoisted(() => ({
-  deleteComment: vi.fn(async ({ id }: { id: number }) => ({ id })),
-  toggleThreadMute: vi.fn(async () => true),
-  toggleReaction: vi.fn(async () => 'created'),
-  createReport: vi.fn(async () => ({ status: 'Pending' })),
-}));
+const { deleteComment, upsertComment, toggleThreadMute, toggleReaction, createReport } = vi.hoisted(
+  () => ({
+    deleteComment: vi.fn(async ({ id }: { id: number }) => ({ id })),
+    upsertComment: vi.fn(async () => ({ id: 1 })),
+    toggleThreadMute: vi.fn(async () => true),
+    toggleReaction: vi.fn(async () => 'created'),
+    createReport: vi.fn(async () => ({ status: 'Pending' })),
+  })
+);
 vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CommentsV2Service>()),
   deleteComment,
+  upsertComment,
   toggleThreadMute,
 }));
 vi.mock('~/server/services/reaction.service', async (importOriginal) => ({
@@ -54,6 +58,7 @@ import { toggleReview } from '~/server/services/user.service';
 import {
   assertCommentEntityVisible,
   deleteCommentV2Handler,
+  upsertCommentV2Handler,
   getCommentHandler,
   toggleThreadMuteHandler,
 } from '~/server/controllers/commentv2.controller';
@@ -608,10 +613,17 @@ describe('a member cannot act on a detached comment', () => {
   beforeEach(async () => {
     await db.exec(`INSERT INTO "Post" VALUES (10, ${OWNER}), (11, ${OWNER})`);
     await seedThread('postId', 10, HELD);
+    // 4 is hidden for ToS, which is also how an author's delete keeps a comment for a hold.
     await db.exec(`
       INSERT INTO "Thread" (id, "postId") VALUES (200, 11);
       INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (3, ${OTHER}, 200);
+      INSERT INTO "CommentV2" (id, "userId", "threadId", "tosViolation") VALUES (4, ${OTHER}, 200, true);
     `);
+    vi.mocked(dbMock.dbWrite.commentV2.findUnique).mockImplementation(
+      (async (args: { where: { id: number } }) =>
+        (await db.query(`SELECT * FROM "CommentV2" WHERE id = $1`, [args.where.id]))
+          .rows[0]) as never
+    );
     await run(Prisma.sql`
       WITH ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT 10` }, true)}
       DELETE FROM "Post" WHERE id = 10`);
@@ -648,6 +660,39 @@ describe('a member cannot act on a detached comment', () => {
       service: createReport,
     },
   };
+  const writes = {
+    delete: acts.delete,
+    reaction: acts.reaction,
+    report: acts.report,
+    edit: {
+      handler: (id: number, mod: boolean) =>
+        upsertCommentV2Handler({
+          ctx: ctx(mod),
+          input: { id, entityType: 'model', entityId: 1, content: 'edited' } as never,
+        }),
+      service: upsertComment,
+    },
+    reply: {
+      handler: (id: number, mod: boolean) =>
+        upsertCommentV2Handler({
+          ctx: ctx(mod),
+          input: { entityType: 'comment', entityId: id, content: 'reply' } as never,
+        }),
+      service: upsertComment,
+    },
+  };
+
+  describe.each(Object.entries(writes))('%s', (_name, act) => {
+    it('refuses a member a comment hidden for ToS, as if it were gone', async () => {
+      await expect(act.handler(4, false)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(act.service).not.toHaveBeenCalled();
+    });
+
+    it('lets a member act on a live comment (control)', async () => {
+      await act.handler(3, false).catch(() => undefined);
+      expect(act.service).toHaveBeenCalled();
+    });
+  });
 
   describe.each(Object.entries(acts))('%s', (_name, act) => {
     it('refuses a member a detached comment, as if it were gone', async () => {
