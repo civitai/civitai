@@ -26,8 +26,9 @@
   min-height: 0;
 }
 
-/* The chat and the preview each scroll on their own, so the workspace takes the viewport below the
-   site header and the page's title band instead of growing with its content. */
+/* The chat and the preview each scroll on their own, so the workspace fills its scroll container
+   instead of growing with its content. `useFillScrollParent` sets the height; the calc is the
+   fallback until it has measured. */
 .workspace {
   height: var(--assistant-fill-height, calc(100dvh - var(--header-height) - 8rem));
   min-height: 32rem;
