@@ -54,9 +54,9 @@ import helpers *back* from it — a bidirectional edge).
 surface across the whole codebase, not just the data-graph.** Plan for a cycle-fixing pass.
 
 **Mitigations / fix patterns:**
-- **Enable the circular-dependency plugin first.** `next.config.mjs` already contains a
-  commented-out `circular-dependency-plugin` block; run with `CIRCULAR_DEPENDENCY_PLUGIN=true`
-  to map cycles at build time *before* they bite at runtime. Do this up front.
+- **Map cycles first.** The never-enabled `circular-dependency-plugin` block has been removed
+  from `next.config.mjs`; add a cycle check back temporarily to map cycles at build time
+  *before* they bite at runtime. Do this up front.
 - **Break bidirectional edges by extracting shared leaf values** (constants, schemas, enums)
   into zero-import leaf modules. Example fix from this session: moved `klingVersionIds` /
   `nanoBananaVersionIds` / `viduVersionIds` out of the `*-graph.ts` files into a new leaf

@@ -196,6 +196,16 @@ export async function createStorylinePlacement({
       if (!dropped.count) throw throwBadRequestError(STORYLINE_REFUSALS.alreadySubmitted);
     }
 
+    // After the draft row, the order `deleteStoryline` locks them in, so a delete and a submit
+    // take turns and the delete sees this placement.
+    const [storyline] = await tx.$queryRaw<{ id: number }[]>`
+      SELECT st.id FROM "Storyline" st
+      JOIN "StorylineChapter" c ON c."storylineId" = st.id
+      WHERE c."postId" = ${parentPostId}
+      FOR SHARE OF st
+    `;
+    if (!storyline) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+
     return tx.placement.create({
       data: {
         surface: SURFACE,

@@ -50,6 +50,7 @@ import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { PostComments } from '~/components/Post/Detail/PostComments';
 import { PostControls } from '~/components/Post/Detail/PostControls';
 import { PostImages } from '~/components/Post/Detail/PostImages';
+import { POST_INFO_PANEL_PIN } from '~/components/Post/Detail/postInfoPanelPin';
 import { StorylinePostNext, StorylinePostPill } from '~/components/Storyline/StorylinePostChapter';
 import { PostPublishedWithApp } from '~/components/Post/Detail/PostPublishedWithApp';
 import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
@@ -434,8 +435,8 @@ export function PostDetailContent({ postId }: Props) {
           ),
         }}
       >
-        <div className="flex justify-center gap-8 px-3">
-          <div className="flex w-full max-w-[728px] flex-col gap-3 @lg:my-3 @max-lg:pb-24">
+        <div className="flex justify-center gap-8 px-3 @max-lg:flex-col @max-lg:items-center @max-lg:gap-0">
+          <div className="flex w-full max-w-[728px] flex-col gap-3 @lg:my-3">
             {isOwnerOrMod && post.wasPublished && !post.publishedAt && (
               <Alert
                 color="yellow"
@@ -529,7 +530,8 @@ export function PostDetailContent({ postId }: Props) {
               <div
                 className={clsx(
                   'flex min-w-0 flex-col gap-3',
-                  'bg-white @max-lg:fixed @max-lg:inset-x-0 @max-lg:bottom-0 @max-lg:z-[200] @max-lg:rounded-t-2xl @max-lg:shadow-[0_-6px_20px_rgba(0,0,0,0.25)] dark:bg-dark-7',
+                  POST_INFO_PANEL_PIN,
+                  'bg-white @max-lg:rounded-t-2xl @max-lg:shadow-[0_-6px_20px_rgba(0,0,0,0.25)] dark:bg-dark-7',
                   !sheetOpen && '@max-lg:max-h-[112px] @max-lg:overflow-hidden',
                   sheetOpen && '@max-lg:max-h-[75dvh] @max-lg:overflow-y-auto',
                   '@max-lg:px-3 @max-lg:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]'

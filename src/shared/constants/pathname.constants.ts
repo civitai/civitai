@@ -84,6 +84,7 @@ const pathnamesTokens = [
   '/collections',
   '/content/[[...slug]]',
   '/discord/link-role',
+  '/comments/[id]',
   '/comments/v2/[id]',
   '/images/[imageId]',
   '/',

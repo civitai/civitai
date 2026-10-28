@@ -20,7 +20,6 @@ import dayjs from '~/shared/utils/dayjs';
 import { truncate } from 'lodash-es';
 import type { InferGetServerSidePropsType } from 'next';
 import React, { useEffect, useMemo } from 'react';
-import { useRouter } from 'next/router';
 import * as z from 'zod';
 import { FirstPublishCard } from '~/components/CreatorJourney/FirstPublishCard';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
@@ -84,7 +83,6 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import classes from './[[...slug]].module.scss';
 import { RenderRichText } from '~/components/RichTextEditor/RenderRichText';
-import { useInView } from 'react-intersection-observer';
 import { isViewer } from '~/utils/is-viewer';
 
 const NOT_FOUND = Symbol('article-not-found');
@@ -161,7 +159,7 @@ export const getServerSideProps = createServerSideProps({
           // 308 only for bare-id → slug canonical mapping with no query string,
           // because some browsers cache 308 keyed on path only and drop the
           // query on subsequent hits (which strands deep-link params from
-          // /comments/v2/<id> and notification redirects). 307 anywhere a
+          // /comments/<id> and notification redirects). 307 anywhere a
           // query is involved or the slug differs — those redirects are
           // request-specific and should not be cached.
           const permanent = !currentSlug && !queryString;
@@ -203,23 +201,6 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
       { id },
       { enabled: refused, refetchInterval: (query) => (query.state.data === true ? 15_000 : false) }
     );
-
-  // Intersection observer for lazy loading comments
-  const { ref: commentsRef, inView: commentsInView } = useInView({
-    triggerOnce: true,
-    rootMargin: '100px', // Start loading when 100px away from viewport (reduced from 400px; this delays loading and may worsen perceived performance)
-    threshold: 0.1, // Trigger when 10% of the element is visible
-  });
-
-  // Force eager mount when the URL targets the comments section, so deep links
-  // (#comments, ?highlight=, mod report redirects) load comments on first paint
-  // instead of waiting for the user to scroll into the IntersectionObserver.
-  // Derived per-render so it stays in sync with router state across navigations
-  // (the page component instance is reused by _app without a key).
-  const router = useRouter();
-  const forceEagerComments =
-    !!router.query.highlight ||
-    (typeof window !== 'undefined' && window.location.hash === '#comments');
 
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === article?.user.id);
@@ -627,10 +608,8 @@ function ArticleDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
             />
           </ContainerGrid2.Col>
         </ContainerGrid2>
-        <div id="comments" ref={commentsRef}>
-          {(commentsInView || forceEagerComments) && (
-            <ArticleDetailComments articleId={article.id} userId={article.user.id} />
-          )}
+        <div id="comments">
+          <ArticleDetailComments articleId={article.id} userId={article.user.id} />
         </div>
       </Container>
     </Gated>

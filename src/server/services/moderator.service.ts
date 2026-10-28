@@ -157,7 +157,8 @@ export type StorylineModActivity = {
     | 'moveChapter'
     | 'linkChapter'
     | 'setCanon'
-    | 'removeCollaborator';
+    | 'removeCollaborator'
+    | 'delete';
 };
 
 type SiteAlertModActivity = {
