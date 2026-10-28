@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 

@@ -83,7 +83,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
     }
   ),
 }));
-// Its own suites cover the soft delete; here it marks the model Deleted, as it does.
+// The soft delete is model-removal-collection-reindex's; here, only which models get it, and how.
 const { deleteModelById } = vi.hoisted(() => ({ deleteModelById: vi.fn(async () => null) }));
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
@@ -850,6 +850,7 @@ describe('removeAllContent keeps other people’s comments a held author is part
 
     expect(deleteModelById).toHaveBeenCalledTimes(1);
     expect(deleteModelById).toHaveBeenCalledWith({ id: MODEL, userId: 77, isModerator: true });
+    // The legacy comment cascades with the model, so a hard delete would take it.
     expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([{ id: MODEL }]);
     expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
   });
@@ -862,6 +863,8 @@ describe('removeAllContent keeps other people’s comments a held author is part
 
     const result = await removeAllContent({ id: CLEAN });
 
+    // No moderator named: the wipe is no one's delete, so none is recorded as the deleter.
+    expect(deleteModelById).toHaveBeenCalledWith({ id: MODEL, userId: null, isModerator: true });
     expect(result).toMatchObject({ incomplete: expect.arrayContaining(['model-soft-delete']) });
     expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
   });

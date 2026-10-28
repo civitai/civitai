@@ -2108,7 +2108,8 @@ export const deleteModelById = async ({
   userId,
   isModerator,
 }: GetByIdInput & {
-  userId: number;
+  /** Who deletes it; null when no person ordered it (a system-run account wipe). */
+  userId: number | null;
   isModerator?: boolean;
 }) => {
   if (!isModerator) {
@@ -2164,7 +2165,7 @@ export const deleteModelById = async ({
         UPDATE "Post"
         SET "metadata" = "metadata" || jsonb_build_object(
           'unpublishedAt', ${new Date().toISOString()},
-          'unpublishedBy', ${userId},
+          'unpublishedBy', ${userId}::int,
           'prevPublishedAt', "publishedAt"
                                        ),
             "publishedAt" = NULL

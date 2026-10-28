@@ -210,7 +210,10 @@ describe('deleteModelById — soft delete', () => {
   });
 
   /** Runs deleteModelById on a transaction of its own; `recorded` is what the status record reports. */
-  async function deleteInTx(recorded: number) {
+  async function deleteInTx(
+    recorded: number,
+    by: { userId: number | null; isModerator?: boolean } = { userId: OWNER_ID }
+  ) {
     const order: string[] = [];
     const tx = {
       $executeRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -232,7 +235,7 @@ describe('deleteModelById — soft delete', () => {
     };
     mockDbWrite.$transaction.mockImplementationOnce((async (fn: (t: typeof tx) => unknown) =>
       fn(tx)) as never);
-    await deleteModelById({ id: MODEL_ID, userId: OWNER_ID } as any);
+    await deleteModelById({ id: MODEL_ID, ...by } as any);
     const [[{ data }]] = tx.model.update.mock.calls as unknown as [[{ data: object }]];
     return { order, data };
   }
@@ -254,6 +257,19 @@ describe('deleteModelById — soft delete', () => {
     expect(data).toMatchObject({ status: 'Deleted' });
     expect(data).not.toHaveProperty('deletedBy');
     expect(data).not.toHaveProperty('deletedAt');
+  });
+
+  // The account wipe soft-deletes another account's model this way, as a moderator.
+  it("soft-deletes another account's model for a moderator, recording the moderator", async () => {
+    const { data } = await deleteInTx(1, { userId: 77, isModerator: true });
+
+    expect(data).toMatchObject({ status: 'Deleted', deletedBy: 77 });
+  });
+
+  it('records no deleter when no person ordered the delete', async () => {
+    const { data } = await deleteInTx(1, { userId: null, isModerator: true });
+
+    expect(data).toMatchObject({ status: 'Deleted', deletedBy: null });
   });
 });
 

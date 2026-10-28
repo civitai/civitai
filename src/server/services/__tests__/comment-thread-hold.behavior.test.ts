@@ -45,7 +45,8 @@ import {
   deleteResourceReview,
   deleteResourceReviews,
 } from '~/server/services/resourceReview.service';
-import { deleteImageById } from '~/server/services/image.service';
+import { deleteImageById, deleteImages } from '~/server/services/image.service';
+import { deletePost } from '~/server/services/post.service';
 import { toggleReview } from '~/server/services/user.service';
 import {
   assertCommentEntityVisible,
@@ -86,7 +87,7 @@ beforeAll(async () => {
     CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "EvidenceHold" ("userId" int NOT NULL);
     CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
-    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "ResourceReview" (
       id int PRIMARY KEY, "userId" int NOT NULL,
@@ -146,7 +147,7 @@ beforeEach(async () => {
   );
   // Statements in order on one connection, as the array form sends them.
   vi.mocked(dbMock.dbWrite.$transaction).mockImplementation((async (ops: unknown) =>
-    Promise.all(ops as unknown[])) as never);
+    typeof ops === 'function' ? ops(dbMock.dbWrite) : Promise.all(ops as unknown[])) as never);
   const deleteRow = (table: string) =>
     (async ({ where }: { where: { id: number } }) =>
       (await db.query(`DELETE FROM "${table}" WHERE id = $1 RETURNING *`, [where.id]))
@@ -307,6 +308,15 @@ describe('a detached thread is off the site', () => {
       DELETE FROM "Post" WHERE id = 10`);
   });
 
+  it('reads a thread linked to it by its parent thread only as detached', async () => {
+    await db.exec(`
+      INSERT INTO "Thread" (id, "parentThreadId") VALUES (103, 101);
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (9, ${OTHER}, 103);
+    `);
+    expect(await isThreadDetached(103)).toBe(true);
+    expect(await isCommentDetached(9)).toBe(true);
+  });
+
   it('reads the detached tree as detached, from its root and from a reply in it', async () => {
     expect(await isThreadDetached(100)).toBe(true);
     expect(await isThreadDetached(101)).toBe(true);
@@ -372,12 +382,14 @@ describe('the production delete paths keep held threads', () => {
   const sites = {
     deleteImageById: {
       column: 'imageId',
+      parentId: 50,
       seedParent: () => db.exec(`INSERT INTO "Image" (id, "userId") VALUES (50, ${OWNER})`),
       run: () => deleteImageById({ id: 50, updatePost: false }),
       parentGone: async () => (await db.query(`SELECT id FROM "Image"`)).rows.length === 0,
     },
     toggleReview: {
       column: 'reviewId',
+      parentId: 30,
       seedParent: () =>
         db.exec(`
           INSERT INTO "Model" VALUES (20, ${OTHER});
@@ -387,6 +399,7 @@ describe('the production delete paths keep held threads', () => {
     },
     deleteResourceReviews: {
       column: 'reviewId',
+      parentId: 30,
       seedParent: () =>
         db.exec(`
           INSERT INTO "Model" VALUES (20, ${OTHER});
@@ -394,12 +407,26 @@ describe('the production delete paths keep held threads', () => {
       run: () => deleteResourceReviews({ ids: [30] }).catch(() => undefined),
       parentGone: async () => (await db.query(`SELECT id FROM "ResourceReview"`)).rows.length === 0,
     },
+    deleteImages: {
+      column: 'imageId',
+      parentId: 50,
+      seedParent: () => db.exec(`INSERT INTO "Image" (id, "userId") VALUES (50, ${OWNER})`),
+      run: () => deleteImages([50], false).catch(() => undefined),
+      parentGone: async () => (await db.query(`SELECT id FROM "Image"`)).rows.length === 0,
+    },
+    deletePost: {
+      column: 'postId',
+      parentId: 10,
+      seedParent: () => db.exec(`INSERT INTO "Post" VALUES (10, ${OWNER})`),
+      run: () => deletePost({ id: 10, isModerator: true }).catch(() => undefined),
+      parentGone: async () => (await db.query(`SELECT id FROM "Post"`)).rows.length === 0,
+    },
   };
 
   describe.each(Object.entries(sites))('%s', (_name, site) => {
     it('keeps a held reply nested below unheld ones, with the comments it answers', async () => {
       await site.seedParent();
-      await seedNested(site.column, site.column === 'imageId' ? 50 : 30, HELD);
+      await seedNested(site.column, site.parentId, HELD);
 
       await site.run();
 
@@ -410,7 +437,7 @@ describe('the production delete paths keep held threads', () => {
 
     it('keeps a held comment alone in a root thread', async () => {
       await site.seedParent();
-      await seedRootOnly(site.column, site.column === 'imageId' ? 50 : 30, HELD);
+      await seedRootOnly(site.column, site.parentId, HELD);
 
       await site.run();
 
@@ -420,13 +447,26 @@ describe('the production delete paths keep held threads', () => {
 
     it('takes an unheld tree with the parent (control)', async () => {
       await site.seedParent();
-      await seedNested(site.column, site.column === 'imageId' ? 50 : 30, OTHER);
+      await seedNested(site.column, site.parentId, OTHER);
 
       await site.run();
 
       expect(await site.parentGone()).toBe(true);
       expect(await commentIds()).toEqual([]);
     });
+  });
+
+  it('keeps a held thread on an image of a deleted post', async () => {
+    await db.exec(`
+      INSERT INTO "Post" VALUES (10, ${OWNER});
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (50, ${OWNER}, 10);
+    `);
+    await seedNested('imageId', 50, HELD);
+
+    await deletePost({ id: 10, isModerator: true }).catch(() => undefined);
+
+    expect((await db.query(`SELECT id FROM "Image"`)).rows).toEqual([]);
+    expect(await commentIds()).toEqual([1, 2, 3]);
   });
 
   it('leaves an image the hold marker trigger keeps with its thread on it', async () => {
@@ -501,6 +541,14 @@ describe('a member cannot act on a detached comment', () => {
     it('lets a member act on a live comment (control)', async () => {
       await act.handler(3, false).catch(() => undefined);
       expect(act.service).toHaveBeenCalled();
+    });
+  });
+
+  // A missing comment gets this from the block check; a detached one must not read differently.
+  it('refuses a reaction on a detached comment with the missing-comment message', async () => {
+    await expect(acts.reaction.handler(2, false)).rejects.toMatchObject({
+      code: 'NOT_FOUND',
+      message: 'No comment with id 2',
     });
   });
 

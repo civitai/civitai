@@ -1628,7 +1628,7 @@ export const removeAllContent = async ({
     if (commentHeld.length) {
       const { deleteModelById } = await import('~/server/services/model.service');
       for (const { id: modelId } of commentHeld)
-        await deleteModelById({ id: modelId, userId: actorUserId ?? id, isModerator: true }).catch(
+        await deleteModelById({ id: modelId, userId: actorUserId, isModerator: true }).catch(
           (e: unknown) => softDeleteFailed.push({ modelId, message: (e as Error)?.message })
         );
     }
@@ -1665,6 +1665,7 @@ export const removeAllContent = async ({
       type: 'error',
       message: 'Stopped by a legal hold placed during the wipe',
       userId: id,
+      ...(softDeleteFailed.length && { softDeleteFailed }),
     }).catch(() => undefined);
     await unindexDeleted([
       [modelsSearchIndex, 'Model', models],

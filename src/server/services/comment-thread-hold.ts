@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { accountHoldSql } from '~/server/services/legal-hold.service';
-import { threadAncestorsCte } from '~/server/common/thread-chain';
+import { MAX_THREAD_CHAIN_DEPTH } from '~/server/common/thread-chain';
 
 /** The `Thread` columns whose parent row, when deleted, deletes the thread and every comment in it. */
 export type ThreadParentColumn =
@@ -139,20 +139,26 @@ export function heldLegacyCommentOnModelSql(modelId: Prisma.Sql, markerView: boo
 }
 
 /**
- * Whether the thread `seed` selects is in a detached tree: it or any thread above it, up the reply
- * chain or to its root, was detached from a deleted parent.
+ * Whether the thread `seed` selects is in a detached tree: it or any thread above it, along the edges
+ * the detach walks down (the reply edge, `rootThreadId`, `parentThreadId`), was detached from a
+ * deleted parent.
  */
 const detachedAboveSql = (seed: string) => Prisma.sql`
-  ${Prisma.raw(threadAncestorsCte(seed))}
+  WITH RECURSIVE up AS (
+    SELECT ${Prisma.raw(seed)} AS id, 0 AS depth
+    UNION
+    SELECT n.id, up.depth + 1
+    FROM up
+    JOIN "Thread" th ON th.id = up.id
+    CROSS JOIN LATERAL (
+      SELECT pc."threadId" AS id FROM "CommentV2" pc WHERE pc.id = th."commentId"
+      UNION ALL SELECT th."rootThreadId" WHERE th."rootThreadId" IS NOT NULL
+      UNION ALL SELECT th."parentThreadId" WHERE th."parentThreadId" IS NOT NULL
+    ) n
+    WHERE up.depth < ${Prisma.raw(String(MAX_THREAD_CHAIN_DEPTH))}
+  )
   SELECT EXISTS (
-    SELECT 1
-    FROM (
-      SELECT mt."id" FROM thread_ancestors mt
-      UNION ALL
-      SELECT t."rootThreadId" FROM thread_ancestors mt JOIN "Thread" t ON t.id = mt."id"
-    ) chain
-    JOIN "Thread" th ON th.id = chain."id"
-    WHERE th.metadata -> 'detachedFrom' IS NOT NULL
+    SELECT 1 FROM up JOIN "Thread" t ON t.id = up.id WHERE t.metadata -> 'detachedFrom' IS NOT NULL
   ) AS detached`;
 
 export const threadDetachedSql = (threadId: number) => detachedAboveSql(String(Number(threadId)));
