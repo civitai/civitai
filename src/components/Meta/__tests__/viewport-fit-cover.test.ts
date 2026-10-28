@@ -90,6 +90,9 @@ const INSET_CONSUMERS = [
   'src/components/Games/NewOrder/NewOrderImageRatings.tsx',
   'src/components/Image/DetailV2/ImageDetail2.tsx',
   'src/components/ImageGeneration/GeneratedOutputLightbox.tsx',
+  // The mobile generator is `fixed` over the whole viewport: it pads its top by the status bar's
+  // inset (the open form sheet starts below it) and its closed form bar by the home indicator's.
+  'src/components/ImageGeneration/MobileGenerator.module.scss',
   'src/components/IterativeEditor/IterativeImageEditor.module.scss',
   'src/components/Post/Detail/PostDetail.tsx',
   // The ONE node_modules viewport-edge surface paid at its call site rather
@@ -111,6 +114,9 @@ const INSET_CONSUMERS = [
   // above, through inline `styles`.
   'src/components/Support/SupportModal.tsx',
   'src/components/generation_v2/GenerationLayout.tsx',
+  // The generator footer's frame in the mobile generator: when only alert strips show, it drops
+  // GenerationLayout's 0.5rem floor but keeps the home indicator's inset.
+  'src/components/generation_v2/FooterStrips.module.scss',
   'src/pages/avatar-generator.tsx',
   'src/pages/comics/project/[id]/ProjectWorkspace.module.scss',
   // `src/providers/ThemeProvider.tsx` LEFT this list deliberately. It used to
