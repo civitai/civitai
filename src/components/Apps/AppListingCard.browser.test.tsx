@@ -1358,10 +1358,12 @@ describe('AppListingCard — card A layout', () => {
   test('a title that fits shows no tooltip on hover', async () => {
     await renderCard({ name: 'Short' });
     const title = page.getByText('Short', { exact: true });
+    const before = title.elements().length;
+    expect(before, 'the title did not render').toBeGreaterThan(0);
     await title.hover();
     // Give a tooltip time to appear (the clipped-title test above shows it does), then look.
     await new Promise((r) => setTimeout(r, 800));
-    expect(title.elements()).toHaveLength(1);
+    expect(title.elements()).toHaveLength(before);
   });
 
   test('🔴 Open is the compact-sm button: 26px tall, still named "Open"', async () => {
