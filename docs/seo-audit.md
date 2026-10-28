@@ -128,7 +128,7 @@ are SEO-visible.
 - [ ] `/user-id/:userId` — [user-id/[userId].tsx](../src/pages/user-id/[userId].tsx) (confirm canonical points at username URL)
 - [x] `/tag/:tagname` — [tag/[tagname].tsx](../src/pages/tag/[tagname].tsx) (tag aggregation, can include NSFW) *(2026-09-16: green counts and lists safe models only and noindexes mature-only tags; see [seo-improvements.md](seo-improvements.md) §1)*
 - [ ] `/reviews/:reviewId` — [reviews/[reviewId].tsx](../src/pages/reviews/[reviewId].tsx)
-- [ ] `/comments/v2/:id` — [comments/v2/[id].tsx](../src/pages/comments/v2/[id].tsx) (likely should de-index)
+- [ ] `/comments/:id` — [comments/[id].tsx](../src/pages/comments/[id].tsx) (likely should de-index; `/comments/v2/:id` is an alias re-exporting it)
 - [ ] `/challenges/:id/:slug?` — [challenges/[id]/[[...slug]].tsx](../src/pages/challenges/[id]/[[...slug]].tsx)
 - [ ] `/events/:slug` — [events/[slug].tsx](../src/pages/events/[slug].tsx)
 - [ ] `/leaderboard/:id` — [leaderboard/[id].tsx](../src/pages/leaderboard/[id].tsx)
