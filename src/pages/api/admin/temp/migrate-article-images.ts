@@ -2,6 +2,7 @@ import { ArticleStatus, Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
 import { pgDbRead } from '~/server/db/pgDb';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { dataProcessor } from '~/server/db/db-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
@@ -148,6 +149,10 @@ async function runRollback(params: MigrationParams): Promise<{
   let imagesDeleted = 0;
   if (orphanedImageIds.length > 0) {
     const imgResult = await dbWrite.$executeRaw`
+      WITH ${detachHeldThreadsCte(
+        { imageId: Prisma.sql`SELECT unnest(${orphanedImageIds}::int[])` },
+        true
+      )}
       DELETE FROM "Image"
       WHERE id IN (${Prisma.join(orphanedImageIds)})
     `;

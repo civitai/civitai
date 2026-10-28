@@ -13,6 +13,7 @@ import {
   updateCollectionsNsfwLevels,
   updateNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
 import { limitConcurrency, Limiter } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 // TEMP: unused while collection enqueue is disabled below. REVERT.
@@ -286,17 +287,21 @@ const handleJobQueueCleanIfEmpty = createJob(
         // stranding the creator. Keeping the shell lets them re-add showcase images. A storyline
         // chapter's post is kept for the same reason: deleting it leaves the chapter without content.
         await dbWrite.$executeRaw`
-          DELETE FROM "Post" p
-          WHERE id IN (${Prisma.join(ids)})
-            AND NOT EXISTS (SELECT 1 FROM "Image" WHERE "postId" = p.id)
-            AND NOT EXISTS (
-              SELECT 1 FROM "ModelVersion" mv
-              JOIN "Model" m ON m.id = mv."modelId"
-              WHERE mv.id = p."modelVersionId"
-                AND p."userId" = m."userId"
-                AND mv.status = 'Published'::"ModelStatus"
-            )
-            AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = p.id)
+          WITH doomed AS (
+            SELECT p.id FROM "Post" p
+            WHERE p.id IN (${Prisma.join(ids)})
+              AND NOT EXISTS (SELECT 1 FROM "Image" WHERE "postId" = p.id)
+              AND NOT EXISTS (
+                SELECT 1 FROM "ModelVersion" mv
+                JOIN "Model" m ON m.id = mv."modelId"
+                WHERE mv.id = p."modelVersionId"
+                  AND p."userId" = m."userId"
+                  AND mv.status = 'Published'::"ModelStatus"
+              )
+              AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = p.id)
+          ),
+          ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, true)}
+          DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
         `;
       });
 

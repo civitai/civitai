@@ -1,5 +1,7 @@
+import { Prisma } from '@prisma/client';
 import * as z from 'zod';
 import { dbWrite } from '~/server/db/client';
+import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
 import { invalidateManyImageExistence } from '~/server/services/image.service';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { Availability, ModelStatus, ModelUploadType } from '~/shared/utils/prisma/enums';
@@ -47,8 +49,19 @@ export default WebhookEndpoint(async (req, res) => {
     where: { modelVersionId: { in: modelVersions.map((v) => v.id) } },
   });
 
+  const postIds = posts.map((p) => p.id);
+  if (postIds.length)
+    await dbWrite.$executeRaw(
+      detachHeldThreadsSql(
+        {
+          postId: Prisma.sql`SELECT unnest(${postIds}::int[])`,
+          imageId: Prisma.sql`SELECT i.id FROM "Image" i WHERE i."postId" = ANY(${postIds}::int[])`,
+        },
+        true
+      )
+    );
   await dbWrite.post.deleteMany({
-    where: { id: { in: posts.map((p) => p.id) } },
+    where: { id: { in: postIds } },
   });
 
   await Promise.all([

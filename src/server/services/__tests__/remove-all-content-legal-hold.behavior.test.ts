@@ -1148,6 +1148,24 @@ describe('/api/mod/delete-user-images', () => {
     expect((await remaining(BYSTANDER)).Post).toBe(1);
   });
 
+  it.each([
+    ['keeps', HELD, [5000]],
+    ['takes, as a control,', BYSTANDER, []],
+  ])("%s a comment on the deleted post's thread by an author", async (_, author, left) => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "postId") VALUES (5000, 1);
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${author}, 5000);
+    `);
+
+    expect((await call(CLEAN)).statusCode).toBe(200);
+
+    expect((await remaining(CLEAN)).Post).toBe(0);
+    const { rows } = await holder.db.query<{ id: number }>(
+      `SELECT id FROM "CommentV2" WHERE id >= 5000`
+    );
+    expect(rows.map((r) => r.id)).toEqual(left);
+  });
+
   it('deletes an unheld account’s images while the marker view exists', async () => {
     await createMarkerView();
     expect((await call(CLEAN)).statusCode).toBe(200);
