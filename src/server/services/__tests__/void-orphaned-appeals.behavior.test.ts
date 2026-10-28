@@ -398,7 +398,7 @@ describe('voidOrphanedAppeals against Postgres', () => {
     });
 
     it('refunds and tells each one once', async () => {
-      await voidOrphanedAppeals();
+      expect(await voidOrphanedAppeals()).toMatchObject({ closedUnreviewed: 2 });
       vi.clearAllMocks();
 
       const second = await voidOrphanedAppeals();
