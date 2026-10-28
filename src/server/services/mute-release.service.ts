@@ -22,7 +22,11 @@ export type MuteReleaseArgs = {
 };
 
 export type MuteRelease =
-  | { released: true; closedCaseIds: number[]; user: Prisma.UserGetPayload<object> }
+  | {
+      released: true;
+      closedCaseIds: number[];
+      user: Prisma.UserGetPayload<{ omit: { subscriptionId: true } }>;
+    }
   | { released: false; reason: 'not-found' | 'not-timed' | 'scam-case'; closedCaseIds: [] };
 
 /**
@@ -59,6 +63,8 @@ export async function releaseMuteInTransaction(
         ? { meta: { ...(cleared.meta as object), ...metaPatch } as Prisma.InputJsonValue }
         : {}),
     },
+    // The row goes back to the moderator who unmuted; the legacy billing pointer stays server-side.
+    omit: { subscriptionId: true },
   });
   await trackModActivity(actorId, { entityType: 'user', entityId: userId, activity }, tx);
   const closedCaseIds = byModerator ? await closeScamCasesOpenedBefore(userId, new Date(), tx) : [];
