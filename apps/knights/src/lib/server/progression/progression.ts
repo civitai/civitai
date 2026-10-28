@@ -23,7 +23,7 @@ export async function fervorOf(db: Executor, playerId: number): Promise<number> 
     .where('v.settledAt', 'is not', null)
     .where('v.verdict', 'in', ['correct', 'failed'])
     .where(
-      sql<SqlBool>`v."createdAt" >= (SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = v."playerId")`
+      sql<SqlBool>`v."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = v."playerId"), 'epoch')`
     )
     .orderBy('v.createdAt', 'desc')
     .limit(PROGRESSION.fervorWindow)

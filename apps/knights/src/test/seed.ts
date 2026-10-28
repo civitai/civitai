@@ -7,7 +7,7 @@ export async function seedPlayer(
   { startAt }: { startAt?: string } = {}
 ) {
   await pg.query(
-    `INSERT INTO "NewOrderPlayer" ("userId","rankType","startAt") VALUES ($1,$2,COALESCE($3::timestamp, now()))`,
+    `INSERT INTO "NewOrderPlayer" ("userId","rankType","startAt") VALUES ($1,$2,COALESCE($3::timestamp, '2020-01-01'))`,
     [userId, rankType, startAt ?? null]
   );
 }
