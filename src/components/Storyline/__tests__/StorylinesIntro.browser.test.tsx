@@ -4,9 +4,11 @@ import { MantineProvider } from '@mantine/core';
 import { renderToString } from 'react-dom/server';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import EventVideoModal from '~/components/Events/ScoredEvent/EventVideoModal';
 import { StartStorylineModal } from '~/components/Storyline/StartStorylineModal';
 import {
   STORYLINES_INTRO_DISMISSED_KEY,
+  STORYLINES_INTRO_VIDEO,
   StorylinesIntro as StorylinesIntroCard,
 } from '~/components/Storyline/StorylinesIntro';
 import { useIntroDismissed } from '~/hooks/useIntroDismissed';
@@ -135,6 +137,30 @@ describe('StorylinesIntro', () => {
     expect(page.getByTestId('login-redirect').elements()).toHaveLength(0);
     // A button that opens the sheet, not a link that leaves the page.
     expect(page.getByRole('link', { name: 'Start a storyline' }).elements()).toHaveLength(0);
+  });
+
+  // Launch decision (2026-10-28): the film ships with the page. Setting STORYLINES_INTRO_VIDEO to
+  // null removes both buttons and fails this on purpose.
+  test('the podium play button (desktop) and "Watch the video" (phone) both open the film in a modal', async () => {
+    const trigger = vi.spyOn(dialogStore, 'trigger').mockImplementation(() => undefined as never);
+    renderWithProviders(<StorylinesIntro />);
+    await expect
+      .element(page.getByRole('heading', { name: 'Welcome to Storylines' }))
+      .toBeVisible();
+
+    // Each is hidden at the other's width, so they are found in the DOM rather than by role.
+    const buttons = [...document.querySelectorAll('button')].filter((b) =>
+      /^Watch the/.test(b.getAttribute('aria-label') ?? b.textContent ?? '')
+    );
+    expect(buttons.map((b) => b.getAttribute('aria-label') ?? b.textContent)).toEqual([
+      'Watch the video',
+      'Watch the Storylines video',
+    ]);
+    for (const button of buttons) button.click();
+    expect(trigger.mock.calls).toEqual([
+      [{ component: EventVideoModal, props: { video: STORYLINES_INTRO_VIDEO } }],
+      [{ component: EventVideoModal, props: { video: STORYLINES_INTRO_VIDEO } }],
+    ]);
   });
 
   test('the old hint about the post menu and the editor switch is gone', async () => {

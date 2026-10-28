@@ -1,7 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { readFileSync } from 'fs';
 import path from 'path';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { NsfwLevel } from '~/server/common/enums';
@@ -163,6 +163,30 @@ describe('the storylines feed', () => {
       EMPTY,
       WITH_CHAPTER,
     ]);
+  });
+
+  // Launch decision (2026-10-28): a moderator browsing /storylines saw every taken-down storyline.
+  // Taken down is out of the feed for everyone; its owner and moderators open it by its URL.
+  describe('a taken-down storyline', () => {
+    const setTakenDown = (takenDown: boolean) =>
+      db.pg.exec(
+        `UPDATE "Storyline" SET "tosViolation" = ${takenDown}, "tosViolationByModerator" = ${takenDown} WHERE id = 3`
+      );
+    beforeEach(() => setTakenDown(true));
+    afterEach(() => setTakenDown(false));
+
+    it('is out of the feed for a stranger', async () => {
+      await expect(feedIds({ id: STRANGER })).resolves.toEqual([WITH_CHAPTER]);
+    });
+    it('is out of the feed for its owner', async () => {
+      await expect(feedIds({ id: OWNER })).resolves.toEqual([EMPTY, WITH_CHAPTER]);
+    });
+    it('is out of the feed for a moderator', async () => {
+      await expect(feedIds({ id: MODERATOR, isModerator: true })).resolves.toEqual([
+        EMPTY,
+        WITH_CHAPTER,
+      ]);
+    });
   });
 
   it('gives the owner their empty storyline with no chapter 1 and no cover', async () => {

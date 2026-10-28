@@ -4,12 +4,14 @@ import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as IsMobileMod from '~/hooks/useIsMobile';
 import type * as BrowsingLevelMod from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useRouter } from 'next/router';
 import StorylinesPage from '~/pages/storylines';
+import { StorylineFeedFilters } from '~/components/Storyline/StorylineFeedFilters';
 import { STORYLINES_INTRO_DISMISSED_KEY } from '~/components/Storyline/StorylinesIntro';
 
 /**
  * The /storylines landing, clicked through in a real browser: the welcome can be dismissed and
- * brought back, and the sort and filter menus sit up with the page title.
+ * brought back, and the sort and filter menus live in the sub-nav and reach the feed through the URL.
  */
 
 const mocks = vi.hoisted(() => ({ feedInput: vi.fn() }));
@@ -79,34 +81,56 @@ describe('the /storylines landing', () => {
     expect(page.getByRole('button', { name: 'What are storylines?' }).elements()).toHaveLength(0);
   });
 
-  test('the hero shows the demo art from the edge, with no play button until there is a film', async () => {
+  test('the hero shows the demo art from the edge, with a play button for the film', async () => {
     renderWithProviders(<StorylinesPage />);
     await expect.element(welcome()).toBeVisible();
     const hero = page.getByTestId('storylines-intro-hero').element();
     expect(hero.querySelector('img')?.getAttribute('src')).toContain(
       'c86ab790-e9ae-4f8b-9460-bfa77aca52ab'
     );
-    expect(hero.querySelector('button')).toBeNull();
+    expect(hero.querySelector('button')?.getAttribute('aria-label')).toBe(
+      'Watch the Storylines video'
+    );
   });
 
-  test('the sort and filters sit beside the title, with no "Discover" heading', async () => {
+  // Justin (2026-10-28): the sort and filters belong in the sub-nav, as on Models and Images, not
+  // beside the title. The sub-nav renders `StorylineFeedFilters` for /storylines (SubNav.tsx).
+  test('the page itself has no sort or filter menus, and no "Discover" heading', async () => {
     renderWithProviders(<StorylinesPage />);
     await expect.element(page.getByRole('heading', { name: 'Storylines', level: 1 })).toBeVisible();
-
     expect(document.body.textContent).not.toContain('Discover');
-    const title = page.getByRole('heading', { name: 'Storylines', level: 1 }).element();
-    const controls = page.getByRole('button', { name: 'Newest' }).element();
-    // One row of controls with the title, above the welcome and the feed.
-    const welcomeCard = page.getByRole('region', { name: 'Welcome to Storylines' }).element();
-    expect(title.compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
-    expect(
-      controls.compareDocumentPosition(welcomeCard) & Node.DOCUMENT_POSITION_FOLLOWING
-    ).toBeTruthy();
+    expect(page.getByRole('button', { name: 'Newest' }).elements()).toHaveLength(0);
+    expect(page.getByRole('button', { name: 'Filters' }).elements()).toHaveLength(0);
+  });
 
-    await page.getByRole('button', { name: 'Newest' }).click();
-    await page.getByRole('menuitem', { name: 'Most chapters' }).click();
-    await expect
-      .poll(() => mocks.feedInput.mock.lastCall?.[0])
-      .toEqual(expect.objectContaining({ sort: 'mostChapters' }));
+  test('the feed reads its sort and filter from the URL the sub-nav writes', async () => {
+    const router = useRouter();
+    router.query = { sort: 'mostChapters', filter: 'open' };
+    try {
+      renderWithProviders(<StorylinesPage />);
+      await expect
+        .poll(() => mocks.feedInput.mock.lastCall?.[0])
+        .toEqual(expect.objectContaining({ sort: 'mostChapters', filter: 'open' }));
+    } finally {
+      router.query = {};
+    }
+  });
+
+  test('picking a sort in the sub-nav writes it to the URL, shallowly', async () => {
+    const router = useRouter();
+    router.pathname = '/storylines';
+    vi.mocked(router.replace).mockClear();
+    try {
+      renderWithProviders(<StorylineFeedFilters />);
+      await page.getByRole('button', { name: 'Newest' }).click();
+      await page.getByRole('menuitem', { name: 'Most chapters' }).click();
+      expect(router.replace).toHaveBeenCalledWith(
+        { pathname: '/storylines', query: { sort: 'mostChapters' } },
+        undefined,
+        { shallow: true }
+      );
+    } finally {
+      router.pathname = '/';
+    }
   });
 });

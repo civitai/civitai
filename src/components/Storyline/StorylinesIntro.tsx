@@ -24,10 +24,14 @@ export const STORYLINES_INTRO_DISMISSED_KEY = 'storylines-intro-dismissed';
 
 /**
  * The film that explains Storylines, played from the welcome's hero. It is an edge-hosted video's
- * id, as the birthday event's `heroVideo` is. Empty until the film is published: the hero then
- * shows its art with no play button.
+ * id, as the birthday event's `heroVideo` is. Set to null, the hero shows its art with no play
+ * button.
  */
-export const STORYLINES_INTRO_VIDEO: { id: string; title: string } | null = null;
+export const STORYLINES_INTRO_VIDEO: { id: string; title: string; duration?: number } | null = {
+  id: '1083c3b4-8ccb-4081-973e-c846f334c1c5',
+  title: 'Storylines',
+  duration: 75.947,
+};
 
 /** Chapter 2 of the demo story: CivBot and CivChan at rival podiums. An edge image id, like a post's. */
 const HERO_ART = 'c86ab790-e9ae-4f8b-9460-bfa77aca52ab';
@@ -130,6 +134,21 @@ export function StorylinesIntro({
             Stories told in images, one chapter at a time, by more than one creator. Read one from
             the start, or pick it up where it ends and write what happens next.
           </Text>
+          {/* The hero art, which carries the play button, is desktop only. */}
+          {STORYLINES_INTRO_VIDEO && (
+            <Button
+              variant="light"
+              color="violet"
+              radius="xl"
+              size="xs"
+              mb="md"
+              className="md:hidden"
+              leftSection={<IconPlayerPlayFilled size={14} />}
+              onClick={() => openIntroVideo(STORYLINES_INTRO_VIDEO)}
+            >
+              Watch the video
+            </Button>
+          )}
 
           {/* Compact rows on a phone, so the first storylines start on the first screen. */}
           <div className="grid grid-cols-1 gap-1 sm:grid-cols-3 sm:gap-4">

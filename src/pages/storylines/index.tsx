@@ -1,14 +1,12 @@
 import { ActionIcon, Group, Stack, Title, Tooltip } from '@mantine/core';
 import { IconHelp } from '@tabler/icons-react';
-import { useState } from 'react';
 import { FeedLayout } from '~/components/AppLayout/FeedLayout';
 import { Page } from '~/components/AppLayout/Page';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { Meta } from '~/components/Meta/Meta';
 import { StartStorylineButton } from '~/components/Storyline/StartStorylineButton';
-import type { StorylineFeedFilter } from '~/components/Storyline/StorylineFiltersDropdown';
-import type { StorylineFeedSort } from '~/components/Storyline/StorylinesFeed';
-import { StorylinesFeed, StorylinesFeedControls } from '~/components/Storyline/StorylinesFeed';
+import { useStorylineFeedParams } from '~/components/Storyline/StorylineFeedFilters';
+import { StorylinesFeed } from '~/components/Storyline/StorylinesFeed';
 import {
   STORYLINES_INTRO_DISMISSED_KEY,
   StorylinesIntro,
@@ -25,8 +23,8 @@ export const getServerSideProps = createServerSideProps({
 });
 
 function StorylinesPage() {
-  const [filter, setFilter] = useState<StorylineFeedFilter>('all');
-  const [sort, setSort] = useState<StorylineFeedSort>('newest');
+  // Picked in the sub-nav (`StorylineFeedFilters`).
+  const { filter, sort } = useStorylineFeedParams();
   const [introDismissed, dismissIntro, restoreIntro] = useIntroDismissed(
     STORYLINES_INTRO_DISMISSED_KEY
   );
@@ -36,9 +34,8 @@ function StorylinesPage() {
       <Meta title="Storylines" canonical={STORYLINES_URL} />
       <MasonryContainer>
         <Stack gap="md">
-          {/* On a phone the menus take their own row under the title and the button. */}
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-            <Group gap={4} wrap="nowrap" className="order-1">
+          <Group gap="sm" wrap="nowrap" justify="space-between">
+            <Group gap={4} wrap="nowrap">
               <Title order={1}>Storylines</Title>
               {introDismissed && (
                 <Tooltip label="What are storylines?" withinPortal>
@@ -54,16 +51,8 @@ function StorylinesPage() {
                 </Tooltip>
               )}
             </Group>
-            <div className="order-3 w-full sm:order-2 sm:w-auto">
-              <StorylinesFeedControls
-                sort={sort}
-                onSort={setSort}
-                filter={filter}
-                onFilter={setFilter}
-              />
-            </div>
-            <StartStorylineButton className="order-2 ml-auto sm:order-3" />
-          </div>
+            <StartStorylineButton />
+          </Group>
           <StorylinesIntro dismissed={introDismissed} onDismiss={dismissIntro} />
           <StorylinesFeed filter={filter} sort={sort} />
         </Stack>
