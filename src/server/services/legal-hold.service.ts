@@ -191,8 +191,8 @@ export async function deleteUnlessHeld(
     isModerator: boolean | undefined;
     db: Pick<Prisma.TransactionClient, '$queryRaw'>;
     ownerFrom: Prisma.Sql;
-    /** What the DELETE was guarded by, over `ownerFrom`'s aliases; by default `ownerHeldSql`. */
-    held?: Prisma.Sql;
+    /** What the DELETE was guarded by, over `ownerFrom`'s aliases. */
+    held: Prisma.Sql;
   }
 ): Promise<'deleted' | 'short'> {
   const removed = await statement.catch((e: unknown) => {

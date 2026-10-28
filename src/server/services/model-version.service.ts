@@ -2,6 +2,7 @@ import { Prisma } from '@prisma/client';
 import {
   contentKeptError,
   deleteUnlessHeld,
+  heldModelIdsSql,
   modelRowHeldSql,
   ownerHeld,
 } from '~/server/services/legal-hold.service';
@@ -3916,7 +3917,8 @@ export const mergeVersions = async ({
           USING "Model" m
           WHERE mv.id = ANY(${sourceVersionIds}::int[])
             AND m.id = mv."modelId"
-            AND NOT ${modelRowHeldSql()}
+            -- One model: its owners, present and past, checked once rather than once per version.
+            AND m.id NOT IN (${heldModelIdsSql(Prisma.sql`SELECT ${modelId}::int`, true)})
         `,
         {
           expected: new Set(sourceVersionIds).size,
