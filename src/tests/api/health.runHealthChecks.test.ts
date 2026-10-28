@@ -129,7 +129,6 @@ describe('runHealthChecks — sysRedis soft dependency', () => {
   });
 
   it('runs exactly the live dependency checks: the retired feeds Meilisearch is not one', async () => {
-    // `searchMetrics` probed the feeds Meilisearch (METRICS_SEARCH_HOST), which is retired.
     // Pinned as the whole set so a re-added or dropped check is reviewed.
     const { results } = await runHealthChecks(liveSignal());
     expect(Object.keys(results).sort()).toEqual(

@@ -172,7 +172,7 @@ describe('readers of the retired feeds index answer without it', () => {
   });
 });
 
-describe('getAllImagesIndex without a feed service (next.civitai.com before talos-infra#2384, previews)', () => {
+describe('getAllImagesIndex without a feed service (previews)', () => {
   it('answers an empty page named as the index path, without querying the index', async () => {
     const result = await getAllImagesIndex({
       limit: 5,

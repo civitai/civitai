@@ -633,10 +633,8 @@ describe('the ban purge only targets live, filterable search indexes', () => {
 
   it('reads a quoted attribute path, which this repo already writes', () => {
     // 🔴 Precedent: the `requiringMeta` branch of `src/server/services/image.service.ts` pushes
-    // `("blockedFor" = …)` at the metrics-images index, which declares `blockedFor` filterable and
-    // was a purge target until it was retired. Before this, `ATTRIBUTE_PATH` had no leading quote,
-    // so a future purge entry written in the repo's own existing style resolved to null and was
-    // reported as unreadable — a guard false-positive.
+    // `("blockedFor" = …)` at the metrics-images index, which declares `blockedFor` filterable. A
+    // purge entry written in that style must resolve, not be reported as unreadable.
     expect(filterAttributes('"blockedFor" = 3')).toEqual(['blockedFor']);
     expect(filterAttributes('("blockedFor" = 3)')).toEqual(['blockedFor']);
     expect(filterAttributes('"user.username" IN ["a"] AND "blockedFor" = 3')).toEqual([

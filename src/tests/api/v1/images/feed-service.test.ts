@@ -36,7 +36,6 @@ const h = vi.hoisted(() => ({
   rawQuery: vi.fn(),
 }));
 
-// These tests pin the Meilisearch read path kept for a restore; see the helper.
 vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
   (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
 );

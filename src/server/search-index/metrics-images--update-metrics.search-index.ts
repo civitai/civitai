@@ -31,7 +31,6 @@ type Metrics = {
 };
 
 export const imagesMetricsDetailsSearchIndexUpdateMetrics = createSearchIndexUpdateProcessor({
-  // Retired with the index it writes to; see metrics-images.search-index.ts.
   retired: isRetiredSearchIndex(INDEX_ID),
   workerCount: 1,
   indexName: INDEX_ID,

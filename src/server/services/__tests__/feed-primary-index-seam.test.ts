@@ -5,7 +5,6 @@ import type * as FeedPrimary from '~/server/services/feed-primary.service';
 import type * as UserHubService from '~/server/services/user-hub.service';
 import type { ResolvedHubSources } from '~/server/services/user-hub.service';
 
-// These tests pin the Meilisearch read path kept for a restore; see the helper.
 vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
   (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
 );
