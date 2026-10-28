@@ -147,18 +147,19 @@ export function ownerHeldSql(owner: Prisma.Sql): Prisma.Sql {
  */
 export async function ownerHeld(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
-  from: Prisma.Sql
+  from: Prisma.Sql,
+  held: Prisma.Sql = ownerHeldSql(Prisma.raw('m."userId"'))
 ): Promise<boolean> {
-  const rows = await db.$queryRaw<{ held: unknown }[]>`SELECT ${ownerHeldSql(
-    Prisma.raw('m."userId"')
-  )} AS held ${from}`.catch((e: unknown) => {
-    logToAxiom({
-      type: 'error',
-      name: 'content-legal-hold-check-failed',
-      message: (e as Error).message,
-    }).catch(() => undefined);
-    return null;
-  });
+  const rows = await db.$queryRaw<{ held: unknown }[]>`SELECT ${held} AS held ${from}`.catch(
+    (e: unknown) => {
+      logToAxiom({
+        type: 'error',
+        name: 'content-legal-hold-check-failed',
+        message: (e as Error).message,
+      }).catch(() => undefined);
+      return null;
+    }
+  );
   if (!rows) return true;
   return rows.some((r) => r.held !== false);
 }
@@ -184,11 +185,14 @@ export async function deleteUnlessHeld(
     isModerator,
     db,
     ownerFrom,
+    held,
   }: {
     expected: number;
     isModerator: boolean | undefined;
     db: Pick<Prisma.TransactionClient, '$queryRaw'>;
     ownerFrom: Prisma.Sql;
+    /** What the DELETE was guarded by, over `ownerFrom`'s aliases; by default `ownerHeldSql`. */
+    held?: Prisma.Sql;
   }
 ): Promise<'deleted' | 'short'> {
   const removed = await statement.catch((e: unknown) => {
@@ -201,7 +205,7 @@ export async function deleteUnlessHeld(
     throw contentKeptError(isModerator);
   });
   if (removed >= expected) return 'deleted';
-  if (await ownerHeld(db, ownerFrom)) throw contentKeptError(isModerator);
+  if (await ownerHeld(db, ownerFrom, held)) throw contentKeptError(isModerator);
   return 'short';
 }
 
@@ -293,6 +297,17 @@ export function modelDataHeldSql(modelId: Prisma.Sql, markerView: boolean): Pris
     WHERE ho."modelId" = ${modelId}
       AND (${placeholderRowHoldsSql} OR ${accountHoldSql(Prisma.raw('ho."userId"'), markerView)})
   ))`;
+}
+
+/**
+ * Whether the data of the model aliased `m` is held, by its owner's holds or by any owner it had: the
+ * guard for a DELETE of its files or versions.
+ */
+export function modelRowHeldSql(): Prisma.Sql {
+  return Prisma.sql`(${ownerHeldSql(Prisma.raw('m."userId"'))} OR ${modelDataHeldSql(
+    Prisma.raw('m.id'),
+    true
+  )})`;
 }
 
 /**

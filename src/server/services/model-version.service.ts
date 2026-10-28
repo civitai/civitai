@@ -2,8 +2,8 @@ import { Prisma } from '@prisma/client';
 import {
   contentKeptError,
   deleteUnlessHeld,
+  modelRowHeldSql,
   ownerHeld,
-  ownerHeldSql,
 } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { asResourceValue } from '~/shared/utils/resource.utils';
@@ -1598,9 +1598,15 @@ export const deleteVersionById = async ({
         USING "Model" m
         WHERE mv.id = ${id}
           AND m.id = mv."modelId"
-          AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+          AND NOT ${modelRowHeldSql()}
       `,
-      { expected: 1, isModerator, db: tx, ownerFrom: versionOwnerSql([id]) }
+      {
+        expected: 1,
+        isModerator,
+        db: tx,
+        ownerFrom: versionOwnerSql([id]),
+        held: modelRowHeldSql(),
+      }
     );
     if (outcome === 'short') throw throwNotFoundError(`No model version with id ${id}`);
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
@@ -3600,7 +3606,9 @@ export const mergeVersions = async ({
   }
 
   // Checked again in the delete below; this only spares a held owner the long transaction.
-  if (await ownerHeld(dbWrite, Prisma.sql`FROM "Model" m WHERE m.id = ${modelId}`))
+  if (
+    await ownerHeld(dbWrite, Prisma.sql`FROM "Model" m WHERE m.id = ${modelId}`, modelRowHeldSql())
+  )
     throw contentKeptError(false);
 
   // Populated inside the tx after files are moved to the target — captures any
@@ -3908,13 +3916,14 @@ export const mergeVersions = async ({
           USING "Model" m
           WHERE mv.id = ANY(${sourceVersionIds}::int[])
             AND m.id = mv."modelId"
-            AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+            AND NOT ${modelRowHeldSql()}
         `,
         {
           expected: new Set(sourceVersionIds).size,
           isModerator: false,
           db: tx,
           ownerFrom: versionOwnerSql(sourceVersionIds),
+          held: modelRowHeldSql(),
         }
       );
       if (outcome === 'short')
