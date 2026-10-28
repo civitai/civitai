@@ -16,6 +16,7 @@ const { setCollectionItemsTag } = await import('~/server/services/collection.ser
 const CONTEST = 100;
 const OTHER = 200;
 const CONCEPT_TAG = 195;
+const CHARACTER_TAG = 197;
 const JUDGED_TAG = 196;
 const OTHER_COLLECTION_TAG = 300;
 // Written to entries by the paid-review flow but never added to the collection's tags.
@@ -34,6 +35,7 @@ const rows = [
   { ...entry, id: 6, collectionId: CONTEST, articleId: 16 },
   { ...entry, id: 8, collectionId: CONTEST, imageId: 18, tagId: JUDGED_TAG },
   { ...entry, id: 9, collectionId: CONTEST, imageId: 19, tagId: REVIEW_REQUEST_TAG },
+  { ...entry, id: 10, collectionId: CONTEST, imageId: 20, tagId: CONCEPT_TAG },
 ];
 
 beforeEach(() => {
@@ -46,6 +48,7 @@ beforeEach(() => {
             id: CONTEST,
             tags: [
               { tagId: CONCEPT_TAG, filterableOnly: false },
+              { tagId: CHARACTER_TAG, filterableOnly: false },
               { tagId: JUDGED_TAG, filterableOnly: true },
             ],
           }
@@ -82,6 +85,7 @@ describe('setCollectionItemsTag', () => {
     const result = await set({ type: 'collectionItem', ids: [1, 2] });
 
     expect(result).toEqual({ count: WRITE_COUNT, collectionItemIds: [1, 2] });
+    expect(mockDbWrite.collectionItem.updateMany).toHaveBeenCalledTimes(1);
     expect(mockDbWrite.collectionItem.updateMany).toHaveBeenCalledWith({
       where: expect.objectContaining({ collectionId: CONTEST, id: { in: [1, 2] } }),
       data: { tagId: CONCEPT_TAG },
@@ -142,7 +146,19 @@ describe('setCollectionItemsTag', () => {
     await set({ type: 'collectionItem', ids: [1] });
 
     expect(mockDbWrite.collectionItem.updateMany.mock.calls[0][0]?.where).toMatchObject({
-      OR: [{ tagId: null }, { tagId: { in: [CONCEPT_TAG] } }],
+      OR: [{ tagId: null }, { tagId: { in: [CONCEPT_TAG, CHARACTER_TAG] } }],
+    });
+  });
+
+  it.each([
+    ['moves an entry to another category', CHARACTER_TAG],
+    ['clears an entry holding a category tag', null],
+  ])('%s', async (_, tagId) => {
+    await set({ type: 'collectionItem', ids: [10] }, tagId);
+
+    expect(mockDbWrite.collectionItem.updateMany).toHaveBeenCalledWith({
+      where: expect.objectContaining({ collectionId: CONTEST, id: { in: [10] } }),
+      data: { tagId },
     });
   });
 
