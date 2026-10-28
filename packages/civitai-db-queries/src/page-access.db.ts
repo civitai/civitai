@@ -37,8 +37,12 @@ export async function getPageAccessGrants(db: Kysely<DB>, app: string): Promise<
 /**
  * `getPageAccessGrants` for some paths, read inside `trx` after taking a transaction-scoped lock on the
  * app's grants, so every writer that takes it is serialised until its transaction ends. One lock per app
- * rather than `FOR UPDATE`: a row lock cannot cover a path that has no row yet, and two writers creating
- * the same row would both pass a compare-and-set against "absent".
+ * because a row lock cannot cover a path that has no row yet, and two writers creating the same row would
+ * both pass a compare-and-set against "absent".
+ *
+ * The rows are read `FOR UPDATE` as well, for a writer that does not take that lock (an UPDATE run by
+ * hand): it waits for this transaction rather than being overwritten by it. A hand INSERT of a row that
+ * does not exist yet is still not covered.
  */
 export async function lockPageAccessGrants(
   trx: Transaction<DB>,
@@ -52,6 +56,7 @@ export async function lockPageAccessGrants(
     .select(['path', 'roles'])
     .where('app', '=', app)
     .where('path', 'in', paths)
+    .forUpdate()
     .execute();
   return Object.fromEntries(rows.map((r) => [r.path, r.roles]));
 }
