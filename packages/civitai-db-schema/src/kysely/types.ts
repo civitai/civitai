@@ -3680,6 +3680,49 @@ export type KeyValue = {
   key: string;
   value: unknown;
 };
+export type KnightsQuestion = {
+  key: string;
+  version: Generated<number>;
+  kind: string;
+  prompt: string;
+  options: unknown;
+  minRank: Generated<string>;
+  votesToResolve: Generated<number>;
+  maxVotes: Generated<number>;
+  threshold: Generated<number>;
+  active: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+};
+export type KnightsQueueItem = {
+  id: Generated<number>;
+  questionKey: string;
+  imageId: number;
+  source: string;
+  minRank: Generated<string>;
+  votesNeeded: Generated<number>;
+  priority: Generated<number>;
+  status: Generated<string>;
+  expiresAt: Timestamp | null;
+  isHiddenCheck: Generated<boolean>;
+  resolvedValue: string | null;
+  resolvedAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type KnightsVote = {
+  itemId: number;
+  playerId: number;
+  createdAt: Generated<Timestamp>;
+  questionKey: string;
+  imageId: number;
+  stage: string;
+  answer: string;
+  weight: number;
+  verdict: Generated<string>;
+  gold: number | null;
+  labelled: Generated<boolean>;
+  converted: Generated<boolean>;
+};
 export type Leaderboard = {
   id: string;
   index: number;
@@ -6488,6 +6531,9 @@ export type DB = {
   ItemDefinition: ItemDefinition;
   JobQueue: JobQueue;
   KeyValue: KeyValue;
+  KnightsQuestion: KnightsQuestion;
+  KnightsQueueItem: KnightsQueueItem;
+  KnightsVote: KnightsVote;
   Leaderboard: Leaderboard;
   LeaderboardResult: LeaderboardResult;
   License: License;

@@ -59,6 +59,7 @@ export const UPDATED_AT_TABLES = new Set<keyof DB>([
   'ImageReaction',
   'Item',
   'ItemDefinition',
+  'KnightsQueueItem',
   'LicensingRoot',
   'MembershipGift',
   'Model',
