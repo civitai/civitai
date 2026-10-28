@@ -205,7 +205,7 @@ export default Page(
                       className="absolute right-2 top-2 z-10 w-[200px] max-w-full"
                       placeholder="Select a queue"
                       value={selectedQueue}
-                      // Paladin is a Knights of New Order v2 rank; this game serves it from the Templar pools.
+                      // See `legacyRank`.
                       data={Object.keys(NewOrderRankType).filter(
                         (rank) => rank !== NewOrderRankType.Paladin
                       )}

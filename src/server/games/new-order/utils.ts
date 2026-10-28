@@ -647,9 +647,12 @@ const queuePoolKeys = {
 };
 
 // Paladin only exists in the Knights app; the original game keeps those players in the Templar queues.
+export const legacyRank = (rank: NewOrderRankType): Exclude<NewOrderRankType, 'Paladin'> =>
+  rank === 'Paladin' ? 'Templar' : rank;
+
 export const poolKeys = {
   ...queuePoolKeys,
-  [NewOrderRankType.Paladin]: queuePoolKeys[NewOrderRankType.Templar],
+  [NewOrderRankType.Paladin]: queuePoolKeys[legacyRank('Paladin')],
 };
 
 const queuePoolCounters = {
@@ -729,7 +732,7 @@ const queuePoolCounters = {
 
 export const poolCounters = {
   ...queuePoolCounters,
-  [NewOrderRankType.Paladin]: queuePoolCounters[NewOrderRankType.Templar],
+  [NewOrderRankType.Paladin]: queuePoolCounters[legacyRank('Paladin')],
 };
 
 type NewOrderSlot = 'a' | 'b';

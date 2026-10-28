@@ -1,3 +1,4 @@
+// Every rank a player can hold must resolve to a queue.
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('~/server/redis/client', async () => ({
@@ -10,14 +11,20 @@ vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() })
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/utils/errorHandling', () => ({ handleLogError: vi.fn() }));
 
-import { poolCounters, poolKeys } from '~/server/games/new-order/utils';
+import { legacyRank, poolCounters, poolKeys } from '~/server/games/new-order/utils';
 
-// The Knights app promotes players to Paladin. Anything in the original game that indexes
-// a queue by a player's rank must still find one.
-describe('Paladin in the original game queues', () => {
-  it('shares the Templar pools instead of having none', () => {
-    expect(poolKeys.Paladin).toBe(poolKeys.Templar);
-    expect(poolCounters.Paladin).toBe(poolCounters.Templar);
-    expect(poolCounters.Paladin.a.length).toBeGreaterThan(0);
+describe('legacyRank', () => {
+  it('maps Paladin to Templar and leaves every other rank alone', () => {
+    expect(legacyRank('Paladin')).toBe('Templar');
+    expect(legacyRank('Templar')).toBe('Templar');
+    expect(legacyRank('Knight')).toBe('Knight');
+    expect(legacyRank('Acolyte')).toBe('Acolyte');
+  });
+
+  it('always has pools for the mapped rank', () => {
+    for (const rank of ['Acolyte', 'Knight', 'Templar', 'Paladin'] as const) {
+      expect(poolKeys[legacyRank(rank)].a.length).toBeGreaterThan(0);
+      expect(poolCounters[legacyRank(rank)].a.length).toBeGreaterThan(0);
+    }
   });
 });

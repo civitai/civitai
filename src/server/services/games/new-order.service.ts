@@ -27,6 +27,7 @@ import {
   getImageRatingsCounter,
   getVotingCooldownUntil,
   getVotingRateLimitConfig,
+  legacyRank,
   pendingBuzzCounter,
   recentlyGrantedBuzzCounter,
   poolCounters,
@@ -165,11 +166,8 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
     getVotingCooldownUntil(playerId),
   ]);
 
-  // The queues, vote limits and rated-image cache know no Paladin; the Knights app promotes to it.
-  const rankType =
-    playerData.rankType === NewOrderRankType.Paladin
-      ? NewOrderRankType.Templar
-      : playerData.rankType;
+  // Paladin has no pools in this game; see `legacyRank`.
+  const rankType = legacyRank(playerData.rankType);
 
   return { ...playerData, rankType, ...user, stats, cooldownUntil };
 }
