@@ -59,6 +59,7 @@ function operationFor(entry: CatalogEntry): Operation | null {
     // still learns the limit and the permission without opening the handler.
     'x-rate-limit': doc.rateLimit,
     ...(doc.privileged ? { 'x-privileged': doc.privileged } : {}),
+    ...(doc.grantHolders ? { 'x-grant-holders': doc.grantHolders } : {}),
   };
 
   if (doc.notes?.length) op.description = doc.notes.join('\n\n');

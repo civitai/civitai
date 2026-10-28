@@ -5,6 +5,7 @@ import { setEnv } from '~/__tests__/mocks/env.mock';
 import { REDIS_SYS_KEYS } from '~/server/redis/client';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import type * as ModeratorGrants from '~/server/services/moderator-grants';
+import { FULL_SCOPE_SESSION_REQUIRED } from '~/server/utils/require-full-scope-session';
 
 // Minimal NextApiRequest/Response stand-in (avoids a node-mocks-http dependency).
 function createMocks({
@@ -423,7 +424,7 @@ describe('the shared Civitai Moderation account', () => {
 });
 
 describe('grantHolders', () => {
-  const HOLDER = { id: 12, isModerator: false };
+  const HOLDER = { id: 12, isModerator: false, roles: ['dispute-agent', 'moderator:viewer'] };
   const holdsReview = () =>
     mockHasGrant.mockImplementation(
       async (_actor: unknown, id: string) => id === 'creatorServices.reviewDispute'
@@ -451,7 +452,7 @@ describe('grantHolders', () => {
     expect(await call(handler)).toBe(200);
     expect(handlerSpy.mock.calls[0][1].actor.id).toBe(12);
     expect(mockHasGrant).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 12 }),
+      { roles: ['dispute-agent'] },
       'creatorServices.reviewDispute'
     );
   });
@@ -489,7 +490,7 @@ describe('grantHolders', () => {
     const { req, res } = createMocks({ headers: { authorization: 'Bearer k' } });
     await opted().handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(403);
-    expect(res._getJSONData()).not.toEqual({ error: 'Moderator role required' });
+    expect(res._getJSONData()).toEqual({ error: FULL_SCOPE_SESSION_REQUIRED });
   });
 
   it('does not look up grants for a moderator', async () => {

@@ -63,6 +63,11 @@ function EndpointCard({ endpoint }: { endpoint: CatalogEntry }) {
             {doc.privileged}
           </Badge>
         )}
+        {doc.grantHolders?.map((grant) => (
+          <Badge key={grant} color="gray" title="Also open to a non-moderator holding this grant">
+            {grant}
+          </Badge>
+        ))}
         <Text size="xs" c="dimmed">
           {doc.rateLimit.max}/{doc.rateLimit.windowSeconds}s
         </Text>

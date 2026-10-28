@@ -18,7 +18,6 @@ export default defineModeratorEndpoint('creatorServices.disputeReview', {
     '`proposal` null means the review escalates to a human. The latest review is shown on the dispute card, and filled with the human ruling when the deal is resolved.',
     '`disputeOpenedAt` is `deal.disputeOpenedAt` from the dispute-evidence bundle the review read. If the dispute has been reopened since, it answers CONFLICT: read the evidence again.',
     'A deal that is not Disputed answers CONFLICT. A moderator who is its buyer or seller answers FORBIDDEN.',
-    'Also open to an account without the moderator role that holds `creatorServices.reviewDispute`.',
   ],
   grantHolders: ['creatorServices.reviewDispute'],
   rateLimit: { max: 60, windowSeconds: 60 },

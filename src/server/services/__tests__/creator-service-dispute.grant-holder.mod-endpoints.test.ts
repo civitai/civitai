@@ -1,14 +1,19 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { redisMock } from '~/__tests__/mocks';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
-import type * as ModeratorGrants from '~/server/services/moderator-grants';
+import type * as DealService from '~/server/services/creator-service-deal.service';
+import type * as DealFileService from '~/server/services/creator-service-deal-file.service';
+import type * as DealFileAccess from '~/server/services/creator-service-deal-file-access';
 import type * as DisputeReviewService from '~/server/services/creator-service-dispute-review.service';
+import type * as ModeratorGrants from '~/server/services/moderator-grants';
 
 /**
- * The dispute agent's system account holds `creatorServices.reviewDispute` and is NOT a moderator.
- * Through the real endpoint wrapper, it reaches exactly the three endpoints the review loop calls and
- * none of the ones that move Buzz or hand out files.
+ * The dispute agent's system account holds `creatorServices.reviewDispute` through a role and is NOT a
+ * moderator. Through the real endpoint wrapper, it reaches exactly the three endpoints the review loop
+ * calls and none of the ones that move Buzz or hand out files.
  */
+
+const GRANT_ROLE = 'dispute-agent';
 
 const { mockGetSession, mockHasGrant, service } = vi.hoisted(() => ({
   mockGetSession: vi.fn(),
@@ -17,10 +22,9 @@ const { mockGetSession, mockHasGrant, service } = vi.hoisted(() => ({
     listDisputedServiceDeals: vi.fn(),
     resolveServiceDealDispute: vi.fn(),
     getServiceDisputeEvidence: vi.fn(),
-    recordServiceDisputeReview: vi.fn(),
+    createServiceDisputeReview: vi.fn(),
     listServiceDealFiles: vi.fn(),
     readServiceDealFileAccess: vi.fn(),
-    resolveServiceDealFileDownload: vi.fn(),
     getServiceDealFileDownloadUrl: vi.fn(),
   },
 }));
@@ -34,20 +38,34 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
-  handleEndpointError: (res: { status: (n: number) => { json: (b: unknown) => unknown } }) =>
-    res.status(500).json({ error: 'handler threw' }),
+  handleEndpointError: (
+    res: { status: (n: number) => { json: (b: unknown) => unknown } },
+    e: unknown
+  ) => res.status(500).json({ error: 'handler threw', message: (e as Error).message }),
 }));
 vi.mock('~/server/services/moderator-grants', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorGrants>()),
   hasModeratorGrant: mockHasGrant,
 }));
-vi.mock('~/server/services/creator-service-deal.service', () => service);
+vi.mock('~/server/services/creator-service-deal.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof DealService>()),
+  listDisputedServiceDeals: service.listDisputedServiceDeals,
+  resolveServiceDealDispute: service.resolveServiceDealDispute,
+}));
 vi.mock('~/server/services/creator-service-dispute-review.service', async (importOriginal) => ({
   ...(await importOriginal<typeof DisputeReviewService>()),
-  ...service,
+  getServiceDisputeEvidence: service.getServiceDisputeEvidence,
+  createServiceDisputeReview: service.createServiceDisputeReview,
 }));
-vi.mock('~/server/services/creator-service-deal-file.service', () => service);
-vi.mock('~/server/services/creator-service-deal-file-access', () => service);
+vi.mock('~/server/services/creator-service-deal-file.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof DealFileService>()),
+  listServiceDealFiles: service.listServiceDealFiles,
+  getServiceDealFileDownloadUrl: service.getServiceDealFileDownloadUrl,
+}));
+vi.mock('~/server/services/creator-service-deal-file-access', async (importOriginal) => ({
+  ...(await importOriginal<typeof DealFileAccess>()),
+  readServiceDealFileAccess: service.readServiceDealFileAccess,
+}));
 
 type Endpoint = (req: never, res: never) => Promise<unknown>;
 const load = async (name: string) =>
@@ -75,30 +93,45 @@ async function call(name: string, input: Record<string, unknown> = {}) {
   return { status, payload };
 }
 
-const SYSTEM_ACCOUNT = { id: 13, isModerator: false, roles: ['dispute-agent'], bannedAt: null };
-
-beforeEach(() => {
-  vi.clearAllMocks();
-  redisMock.sysRedis.multi.mockImplementation(() => {
-    const chain = {
-      set: vi.fn().mockReturnThis(),
-      incr: vi.fn().mockReturnThis(),
-      exec: vi.fn().mockResolvedValue(['OK', 1]),
-    };
-    return chain;
-  });
+const signedInAs = (user: { isModerator: boolean; roles: string[] }) =>
   mockGetSession.mockResolvedValue({
-    user: SYSTEM_ACCOUNT,
+    user: { id: 13, bannedAt: null, ...user },
     apiKeyId: 1,
     apiKeyType: 'User',
     subject: { type: 'apiKey', id: 1 },
     tokenScope: TokenScope.Full,
   });
+
+const REVIEW = {
+  dealId: 15,
+  class: 'B1',
+  proposal: 'Release',
+  confidence: 0.75,
+  rationale: 'Buyer downloaded the final before disputing.',
+  evidence: {},
+  agentVersion: 'v0.2',
+  mode: 'shadow',
+  disputeOpenedAt: '2026-10-20T00:00:00Z',
+};
+const ROLE_REFUSED = { status: 403, payload: { error: 'Moderator role required' } };
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  redisMock.sysRedis.multi.mockImplementation(() => ({
+    set: vi.fn().mockReturnThis(),
+    incr: vi.fn().mockReturnThis(),
+    exec: vi.fn().mockResolvedValue(['OK', 1]),
+  }));
+  signedInAs({ isModerator: false, roles: [GRANT_ROLE] });
+  // The real rule's shape: `moderator:admin` holds every grant; otherwise a role the grant row lists.
   mockHasGrant.mockImplementation(
-    async (_actor: unknown, id: string) => id === 'creatorServices.reviewDispute'
+    async (user: { roles?: string[] }, id: string) =>
+      !!user.roles?.includes('moderator:admin') ||
+      (id === 'creatorServices.reviewDispute' && !!user.roles?.includes(GRANT_ROLE))
   );
   service.listDisputedServiceDeals.mockResolvedValue({ items: [] });
   service.getServiceDisputeEvidence.mockResolvedValue({ deal: { id: 15 } });
+  service.createServiceDisputeReview.mockResolvedValue({ id: 3, createdAt: 'now' });
 });
 
 describe('a non-moderator holding creatorServices.reviewDispute', () => {
@@ -114,28 +147,42 @@ describe('a non-moderator holding creatorServices.reviewDispute', () => {
     expect(service.getServiceDisputeEvidence).toHaveBeenCalledWith({ dealId: 15, viewerId: 13 });
   });
 
-  it('gets past the role check on dispute-review', async () => {
-    const { payload } = await call('dispute-review', {});
-    expect(payload).not.toEqual({ error: 'Moderator role required' });
+  it('writes a dispute review as itself', async () => {
+    expect(await call('dispute-review', REVIEW)).toEqual({
+      status: 200,
+      payload: { id: 3, createdAt: 'now' },
+    });
+    expect(service.createServiceDisputeReview).toHaveBeenCalledWith(
+      expect.objectContaining({ dealId: 15, reviewerId: 13 })
+    );
   });
 
   it.each(['resolve-dispute', 'deal-files', 'deal-file-url'])('is refused by %s', async (name) => {
-    expect(await call(name, { dealId: '15', fileId: '18' })).toEqual({
-      status: 403,
-      payload: { error: 'Moderator role required' },
-    });
+    expect(await call(name, { dealId: '15', fileId: '18' })).toEqual(ROLE_REFUSED);
     expect(service.resolveServiceDealDispute).not.toHaveBeenCalled();
     expect(service.listServiceDealFiles).not.toHaveBeenCalled();
     expect(service.getServiceDealFileDownloadUrl).not.toHaveBeenCalled();
   });
 });
 
-describe('a non-moderator holding no grant', () => {
+describe.each([
+  ['no grant role', []],
+  ['only a kept moderator:admin role (a demoted moderator)', ['moderator:admin']],
+])('a non-moderator with %s', (_label, roles) => {
   it.each(['disputes', 'dispute-evidence', 'dispute-review'])('is refused by %s', async (name) => {
-    mockHasGrant.mockResolvedValue(false);
-    expect(await call(name, { dealId: '15' })).toEqual({
-      status: 403,
-      payload: { error: 'Moderator role required' },
-    });
+    signedInAs({ isModerator: false, roles });
+    expect(await call(name, name === 'dispute-review' ? REVIEW : { dealId: '15' })).toEqual(
+      ROLE_REFUSED
+    );
+    expect(service.createServiceDisputeReview).not.toHaveBeenCalled();
   });
+});
+
+it("a moderator without the grant passes the wrapper but not dispute-review's own check", async () => {
+  signedInAs({ isModerator: true, roles: [] });
+  const { payload } = await call('dispute-review', REVIEW);
+  expect(payload).toMatchObject({
+    message: expect.stringContaining('creatorServices.reviewDispute'),
+  });
+  expect(service.createServiceDisputeReview).not.toHaveBeenCalled();
 });

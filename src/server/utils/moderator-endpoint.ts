@@ -77,6 +77,9 @@ export type ModeratorDefinition<S extends z.ZodType, TOutput> = {
    * Opens the endpoint to a user WITHOUT the moderator role who holds one of these moderator-app
    * grants: a system account scoped to one job, which must not get `isModerator` because that opens
    * every moderator procedure. Every other check still applies.
+   *
+   * Only roles outside `moderator:` count here: demoting a moderator clears `isModerator` but keeps
+   * their roles, and `moderator:admin` holds every grant without a row.
    */
   grantHolders?: ModeratorGrantId[];
   input?: S;
@@ -133,7 +136,8 @@ async function resolveActor(req: NextApiRequest, res: NextApiResponse): Promise<
 }
 
 async function holdsAnyGrant(actor: SessionUser, grants: ModeratorGrantId[] = []) {
-  for (const grant of grants) if (await hasModeratorGrant(actor, grant)) return true;
+  const roles = (actor.roles ?? []).filter((role) => !role.startsWith('moderator:'));
+  for (const grant of grants) if (await hasModeratorGrant({ roles }, grant)) return true;
   return false;
 }
 
@@ -229,9 +233,9 @@ export function defineModeratorEndpoint<S extends z.ZodType, TOutput>(
 
     const { actor, fullCredential } = resolved;
     if (
-      !(actor.isModerator || (await holdsAnyGrant(actor, def.grantHolders))) ||
       actor.bannedAt ||
-      refuseModerationAccountSession(actor, 'moderator-endpoint')
+      refuseModerationAccountSession(actor, 'moderator-endpoint') ||
+      !(actor.isModerator || (await holdsAnyGrant(actor, def.grantHolders)))
     ) {
       return res.status(403).json({ error: 'Moderator role required' });
     }
@@ -314,6 +318,7 @@ export type ModeratorEndpointDoc = {
   method: ModeratorMethod;
   summary: string;
   privileged?: string;
+  grantHolders?: ModeratorGrantId[];
   returns?: string;
   notes?: string[];
   rateLimit: { max: number; windowSeconds: number };
@@ -360,6 +365,7 @@ export function specToDoc(spec: ModeratorSpec): ModeratorEndpointDoc {
     summary: spec.summary,
     rateLimit: spec.rateLimit,
     ...(spec.privileged ? { privileged: spec.privileged } : {}),
+    ...(spec.grantHolders?.length ? { grantHolders: spec.grantHolders } : {}),
     ...(spec.returns ? { returns: spec.returns } : {}),
     ...(spec.notes?.length ? { notes: spec.notes } : {}),
   };
