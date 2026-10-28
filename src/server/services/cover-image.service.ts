@@ -142,11 +142,8 @@ async function findReusableImageId({
   // or local database. On a database without it this is a sequential scan of `Image`; keep that
   // in mind before adding a call site on a hotter path than "the user saved a cover with no id".
   //
-  // 🔴 Scoped to `userId` on purpose. `Image.url` is the bare object key and it is visible in
-  // every public image URL, so an unscoped url→row reuse would let anyone attach somebody
-  // else's (possibly unpublished, blocked or moderated) image as their own cover just by
-  // reading a key off the site. Scoping to the caller keeps the outcome identical to what
-  // `createImage` would have produced — a row owned by the caller — minus the duplicate.
+  // Scoped to `userId`: only the caller's own rows are reused, which keeps the outcome identical
+  // to what `createImage` would have produced (a row owned by the caller), minus the duplicate.
   const candidates = await dbWrite.image.findMany({
     where: { url, userId },
     select: {
