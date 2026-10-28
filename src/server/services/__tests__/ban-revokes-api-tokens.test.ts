@@ -31,6 +31,8 @@ vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService:
 const { deleteUser, toggleBan } = await import('~/server/services/user.service');
 
 const USER = 4242;
+// A ban makes one attempt and leaves retrying to the job, so an outage doesn't hold up the moderator.
+const ONE_ATTEMPT = { retryDelaysMs: [] };
 const STALE = { tokenRevocation: { confirmedAt: '2026-01-01T00:00:00.000Z' } };
 const account = (bannedAt: Date | null) => ({
   id: USER,
@@ -64,13 +66,13 @@ describe('banning revokes the account’s API tokens', () => {
     dbMock.dbWrite.user.findUnique.mockResolvedValue(account(null) as never);
     await toggleBan({ id: USER, userId: 1, isModerator: true } as never);
     expect(revokeUserTokens).toHaveBeenCalledTimes(1);
-    expect(revokeUserTokens).toHaveBeenCalledWith(USER);
+    expect(revokeUserTokens).toHaveBeenCalledWith(USER, ONE_ATTEMPT);
     expect(writtenMeta().tokenRevocation).toBeUndefined();
   });
 
   it('revokes them before the slow cleanup starts', async () => {
     dbMock.dbRead.user.findUnique.mockResolvedValue(account(null) as never);
-    let finish = () => {};
+    let finish: () => void = () => undefined;
     revokeUserTokens.mockImplementation(() => new Promise<void>((r) => (finish = r)));
     const ban = toggleBan({ id: USER, userId: 1, isModerator: true } as never);
     await vi.waitFor(() => expect(revokeUserTokens).toHaveBeenCalled());
@@ -84,7 +86,7 @@ describe('banning revokes the account’s API tokens', () => {
     dbMock.dbRead.user.findUnique.mockResolvedValue(account(new Date()) as never);
     await toggleBan({ id: USER, userId: 1, force: true } as never);
     expect(revokeUserTokens).toHaveBeenCalledTimes(1);
-    expect(revokeUserTokens).toHaveBeenCalledWith(USER);
+    expect(revokeUserTokens).toHaveBeenCalledWith(USER, ONE_ATTEMPT);
     expect(writtenMeta().tokenRevocation).toBeUndefined();
   });
 
@@ -103,7 +105,7 @@ describe('banning revokes the account’s API tokens', () => {
       })) as never);
     await toggleBan({ id: USER, userId: -1, onlyBan: true } as never);
     expect(revokeUserTokens).toHaveBeenCalledTimes(1);
-    expect(revokeUserTokens).toHaveBeenCalledWith(USER);
+    expect(revokeUserTokens).toHaveBeenCalledWith(USER, ONE_ATTEMPT);
     expect(updateMany.mock.calls[0][0].data.meta.tokenRevocation).toBeUndefined();
   });
 
