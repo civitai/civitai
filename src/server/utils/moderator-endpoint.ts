@@ -22,8 +22,8 @@ import type { SessionUser } from '~/types/session';
 // enforced, or enforced and not documented. `/moderator/api` renders these specs, and a docs page that
 // drifts from its API is worse than no docs page — it is a list of calls that used to work.
 //
-// There is ONE actor rule: the caller is a signed-in moderator, or, on an endpoint that declares
-// `grantHolders`, a non-moderator user holding one of those grants. No service token opens these, because
+// There is ONE actor rule: the caller is a signed-in user who is a moderator or, on an endpoint that
+// declares `grantHolders`, holds one of those grants. No service token opens these, because
 // the privileged-permission gate, the per-actor rate limit and the audit row are all evaluated against
 // the actor — a service identity would disable three controls at once and make the audit trail a
 // record of which key was used rather than who acted.
@@ -76,9 +76,9 @@ export type ModeratorDefinition<S extends z.ZodType, TOutput> = {
   /**
    * Opens the endpoint to a user WITHOUT the moderator role who holds one of these moderator-app
    * grants: a system account scoped to one job, which must not get `isModerator` because that opens
-   * every moderator procedure. Every other check still applies.
+   * every moderator procedure.
    *
-   * Only roles outside `moderator:` count here: demoting a moderator clears `isModerator` but keeps
+   * Only roles outside `moderator:` count: demoting a moderator clears `isModerator` but keeps
    * their roles, and `moderator:admin` holds every grant without a row.
    */
   grantHolders?: ModeratorGrantId[];

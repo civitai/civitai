@@ -7,12 +7,6 @@ import type * as DealFileAccess from '~/server/services/creator-service-deal-fil
 import type * as DisputeReviewService from '~/server/services/creator-service-dispute-review.service';
 import type * as ModeratorGrants from '~/server/services/moderator-grants';
 
-/**
- * The dispute agent's system account holds `creatorServices.reviewDispute` through a role and is NOT a
- * moderator. Through the real endpoint wrapper, it reaches exactly the three endpoints the review loop
- * calls and none of the ones that move Buzz or hand out files.
- */
-
 const GRANT_ROLE = 'dispute-agent';
 
 const { mockGetSession, mockHasGrant, service } = vi.hoisted(() => ({
@@ -123,7 +117,7 @@ beforeEach(() => {
     exec: vi.fn().mockResolvedValue(['OK', 1]),
   }));
   signedInAs({ isModerator: false, roles: [GRANT_ROLE] });
-  // The real rule's shape: `moderator:admin` holds every grant; otherwise a role the grant row lists.
+  // Mirrors `hasModeratorGrant`: `moderator:admin` holds every grant, otherwise only the role the grant row lists.
   mockHasGrant.mockImplementation(
     async (user: { roles?: string[] }, id: string) =>
       !!user.roles?.includes('moderator:admin') ||
