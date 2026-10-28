@@ -242,8 +242,22 @@ describe('mobile menu account card', () => {
     root.addEventListener('click', seen);
     chip.click();
     root.removeEventListener('click', seen);
-    expect(router.push).toHaveBeenCalledTimes(1);
+    expect(router.push).toHaveBeenCalledExactlyOnceWith('/purchase/buzz');
     expect(profileClickPrevented).toBe(true);
+  });
+
+  test('the offer opens from the keyboard, and in a new tab on a modified click', async () => {
+    const { card } = await renderHeader();
+    const chip = card.querySelector<HTMLElement>('[role="link"]')!;
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+
+    chip.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(router.push).toHaveBeenCalledExactlyOnceWith('/purchase/buzz');
+
+    chip.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    expect(open).toHaveBeenCalledExactlyOnceWith('/purchase/buzz', '_blank', 'noopener');
+    expect(router.push).toHaveBeenCalledTimes(1);
+    open.mockRestore();
   });
 
   test('a member sees the tier badge and no offer', async () => {

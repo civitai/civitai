@@ -214,18 +214,20 @@ export const SupportButtonPolymorphic = createPolymorphicComponent<
 export function SupportChip({ onClick }: { onClick?: () => void }) {
   const { href, icon: Icon, variant } = useSupportOption();
   const router = useRouter();
-  const open = (event: React.SyntheticEvent) => {
+  const open = (event: React.SyntheticEvent, newTab = false) => {
     event.preventDefault();
     event.stopPropagation();
     onClick?.();
-    void router.push(href);
+    if (newTab) window.open(href, '_blank', 'noopener');
+    else void router.push(href);
   };
   return (
     <span
       role="link"
       tabIndex={0}
-      onClick={open}
-      onKeyDown={(event) => event.key === 'Enter' && open(event)}
+      onClick={(event) => open(event, event.metaKey || event.ctrlKey)}
+      onAuxClick={(event) => event.button === 1 && open(event, true)}
+      onKeyDown={(event) => event.key === 'Enter' && open(event, event.metaKey || event.ctrlKey)}
       className={clsx(classes.supportButton, classes.supportChip, getVariantStyles(variant))}
     >
       <Text component="span" size="xs" fw={700} className={classes.supportButtonText}>
