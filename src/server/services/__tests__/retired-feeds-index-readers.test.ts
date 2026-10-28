@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 // The feeds index (`metrics_images_v1`) is retired: nothing writes to it, so its moderation fields
 // (nsfwLevel, poi, minor, blockedFor, availability) are frozen. Every reader must answer without
 // it. A reader that asks a feature flag first is not enough: a flag read that fails returns
-// false, which is how next.civitai.com (no FEED_SERVICE_URL) would reach the stale index.
+// false, and a deploy with no FEED_SERVICE_URL (previews) never consults the flag at all.
 //
 // `metricsSearchClient` is truthy here; a null client returns early before any query, which would
 // make "no Meilisearch call" vacuous.

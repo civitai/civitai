@@ -241,7 +241,7 @@ export const processUserContentRemovalQueue = async () => {
   ];
 
   // METRICS_IMAGES_SEARCH_INDEX (the feeds index) is omitted: it is retired with the feeds
-  // Meilisearch (HQ 793s8c2maetp) and nothing reads it on the `feed-service-meili-off` path.
+  // Meilisearch, and its readers answer without it (see search-index/retired-index-read.ts).
 
   const processIndex = async (indexName: string, filter: string, client: MeiliSearch | null) => {
     if (!client) return;

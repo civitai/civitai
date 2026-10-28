@@ -274,11 +274,12 @@ const transformData = async ({
 export type ImageMetricsSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 export const imagesMetricsDetailsSearchIndex = createSearchIndexUpdateProcessor({
-  // Retired with the feeds Meilisearch (feeds-meilisearch-2, HQ 793s8c2maetp): feed reads moved to
-  // the feed service behind the `feed-service-meili-off` flag, so nothing reads this index on the
-  // flag-on path. Writes and syncs no-op, so the call sites that still queue updates cost nothing.
-  // 🔴 One-way while retired: turning the flag back off would read a STALE index. Restoring means
-  // removing it from RETIRED_SEARCH_INDEXES and re-running a reset.
+  // Retired with the feeds Meilisearch. Writes and syncs no-op, so the call sites that still queue
+  // updates cost nothing, and no reader queries it: with a feed service the image feed is served
+  // there (isMeiliOff is true regardless of the flag), and without one the readers answer an empty
+  // page (search-index/retired-index-read.ts). Restoring means removing it from
+  // RETIRED_SEARCH_INDEXES and re-running a reset, since the index is stale for as long as it is
+  // retired.
   retired: isRetiredSearchIndex(INDEX_ID),
   workerCount: 10,
   indexName: INDEX_ID,
