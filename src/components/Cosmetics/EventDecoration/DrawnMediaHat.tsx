@@ -13,16 +13,11 @@ import { MEDIA_OVERLAY_ATTR, useDrawnMediaBox } from '~/components/EdgeMedia/use
 const SLOT_BLEED = { left: 0, top: 12 };
 
 /**
- * An image's hat on the picture itself where the media is letterboxed inside a larger slot (the
- * image detail): the slot's corner is often empty space, so the hat goes on the box the media is
- * drawn in, at the feed-card size and smaller on a narrower picture. It sits on the picture's
- * corner as in the feed, reaching out past the picture's edge.
- *
- * The slot's carousel clips what it draws, so the hat is drawn into `layer`, an unclipped layer
- * over the slot, from here, where it is measured: an empty host comes after the media and BEFORE
- * ImageStickerOverlay, inside a positioned parent, marked as a media overlay so the sticker overlay
- * still finds the picture. Without a `layer`, or while `hidden` (the slide is moving, so the hat
- * would be left behind), nothing is drawn.
+ * An image's hat on the box its picture is drawn in (the image detail letterboxes the picture in a
+ * larger slot), as in the feed. The carousel clips what it draws, so the hat is portalled into
+ * `layer`, over the slot, and measured from an empty host here: after the media and BEFORE
+ * ImageStickerOverlay, marked as a media overlay so the sticker overlay still finds the picture.
+ * Nothing is drawn without a `layer`, or while `hidden` (the slide is moving).
  */
 export function DrawnMediaHat({
   imageId,

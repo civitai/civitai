@@ -8,15 +8,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as DrawnMediaBoxModule from '~/components/EdgeMedia/useDrawnMediaBox';
 
 /**
- * The image detail's hat sits on the box its picture is drawn in, drawn into a layer outside the
- * clipping carousel. happy-dom has no layout, so this hands DrawnMediaHat a measured box and checks
- * what it does with it; the browser test (ImageDetailCarouselHat.browser.test) measures a real
- * letterboxed picture but runs only locally.
- * To whoever changes this: the hat goes into the layer, not the slide, on the drawn box's top-left
- * corner as in the feed, at the box's width (so a narrow picture wears a smaller hat), reaching
- * out past the picture by as much as the slot and the header's free space allow; the host left in
- * the slide is marked as a media overlay so the sticker overlay beside it still finds the picture;
- * and nothing at all is drawn or measured when the image carries no hat, has no layer, or is moving.
+ * happy-dom has no layout, so this hands DrawnMediaHat a measured box and checks what it does with
+ * it; ImageDetailCarouselHat.browser.test measures a real letterboxed picture but runs only locally.
  */
 
 const act = (React as unknown as { act: typeof actType }).act;

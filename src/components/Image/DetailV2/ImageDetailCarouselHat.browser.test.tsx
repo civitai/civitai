@@ -262,15 +262,39 @@ describe('the image detail wears the image hat on the picture', () => {
       <Viewer image={mocks.image(true)} second={mocks.image(true, 2000, 1000, 2)} />
     );
     await vi.waitFor(() => expect(hat()).not.toBeNull());
+    // Sampled every frame from before the swipe, so a hat left behind by a moving slide is recorded
+    // rather than polled for: a hat more than 50px from every picture's left edge is off its picture.
+    const strays: number[] = [];
+    let sampling = true;
+    const sample = () => {
+      const h = hat();
+      if (h) {
+        const lefts = [...document.querySelectorAll('[data-testid="picture"]')].map(
+          (p) => rect(p).left
+        );
+        const off = Math.min(...lefts.map((left) => Math.abs(rect(h).left - left)));
+        if (off > 50) strays.push(off);
+      }
+      if (sampling) requestAnimationFrame(sample);
+    };
+    sample();
+    // The first picture is as wide as the slot, so its left is the slot's.
+    const slotLeft = rect(document.querySelector('[data-testid="picture"]')).left;
     goNext();
-    // A slide on its way has no hat left behind in the layer.
-    await vi.waitFor(() => expect(hat()).toBeNull());
-    // Settled on the second picture: the hat is back on its corner.
-    await vi.waitFor(() => expect(hat()).not.toBeNull(), { timeout: 3000 });
-    const pictures = [...document.querySelectorAll('[data-testid="picture"]')];
-    const second = rect(pictures[1]);
-    expect(rect(hat()).bottom).toBeGreaterThan(second.top + 4);
-    expect(rect(hat()).top).toBeLessThan(second.top - 4);
+
+    // Settled on the second picture, which is flush with the slot again: the hat is on its corner.
+    await vi.waitFor(
+      () => {
+        const second = rect(document.querySelectorAll('[data-testid="picture"]')[1]);
+        expect(Math.abs(second.left - slotLeft)).toBeLessThan(1);
+        expect(hat()).not.toBeNull();
+        expect(rect(hat()).bottom).toBeGreaterThan(second.top + 4);
+        expect(rect(hat()).top).toBeLessThan(second.top - 4);
+      },
+      { timeout: 3000 }
+    );
+    sampling = false;
+    expect(strays).toEqual([]);
   });
 
   test('gate: no hat when the image carries none', async () => {
