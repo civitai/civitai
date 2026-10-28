@@ -389,6 +389,9 @@ export function AppListingCard({
               fw={700}
               lh={LISTING_CARD_TITLE_LINE_HEIGHT}
               c="light-dark(var(--mantine-color-dark-9), var(--mantine-color-white))"
+              // Above the stretched link's `::after`, or the pointer never reaches the text
+              // and the tooltip cannot open. A click here still bubbles to the link.
+              className="relative z-10"
               tooltipLabel={card.name}
             >
               {card.name}

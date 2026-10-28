@@ -157,24 +157,24 @@ export function appsMeasureCss(measure: AppsMeasure): number | string {
  * steps exactly where the surplus appears.
  *
  * 🔴 1100, LOWERED FROM 1200 BY THE LEFT-RAIL CHANGE, AND THE LOWERING IS A REPAIR OF
- * THIS CONSTANT'S OWN PURPOSE RATHER THAN A NEW DENSITY OPINION. The rail takes 276px
+ * THIS CONSTANT'S OWN PURPOSE RATHER THAN A NEW DENSITY OPINION. The rail takes 292px
  * off every `/apps/*` body, so at 1200 the second column stopped arriving AT ALL:
  *
- *   rail OPEN at a 2560 viewport → 2242 of grid: `floor((2242 + 16) / (1200 + 16))` = 1
+ *   rail OPEN at a 2560 viewport → 2226 of grid: `floor((2226 + 16) / (1200 + 16))` = 1
  *
  * — i.e. the 640px content-to-control gap this constant exists to close reopened on
  * exactly the monitors it was written for.
  *
- * ⚠️ THE TRUE UPPER BOUND IS **1113**, NOT 1100, AND THIS COMMENT SAID 1100 UNTIL AN AUDIT
- * SOLVED IT RATHER THAN SAMPLING IT. Two columns need `2n + 16 ≤ 2242`, so the largest
- * admissible `n` is 1113 — verified by scanning every integer: `floor((2242+16)/(1113+16))`
- * is 2 and 1114 is the first value that fails. The original claim ("1100 is the LOOSEST
+ * ⚠️ THE TRUE UPPER BOUND IS **1105**, NOT 1100, AND THIS COMMENT SAID 1100 UNTIL AN AUDIT
+ * SOLVED IT RATHER THAN SAMPLING IT. Two columns need `2n + 16 ≤ 2226`, so the largest
+ * admissible `n` is 1105 — verified by scanning every integer: `floor((2226+16)/(1105+16))`
+ * is 2 and 1106 is the first value that fails. The original claim ("1100 is the LOOSEST
  * value that restores it, and 1120 already fails") generalised a five-point sample
  * (1050/1100/1120/1150/1200) into a global property, and the sample simply had no point
  * between 1100 and 1120. That is the sentence someone would have quoted the next time they
  * needed this bound.
  *
- * 1100 IS STILL THE SHIPPED VALUE, deliberately: it sits 13px under the bound, so the
+ * 1100 IS STILL THE SHIPPED VALUE, deliberately: it sits 5px under the bound, so the
  * second column survives a small change in the rail width, the gutter or the scrollbar
  * allowance without the rung silently vanishing. A value AT the bound would be maximally
  * loose and maximally fragile.
@@ -189,8 +189,8 @@ export function appsMeasureCss(measure: AppsMeasure): number | string {
  * `n × 1100 + (n − 1) × 16` of grid, so two need **2216**):
  *
  *   content 1888 (the OLD 1920 container):      `floor((1888 + 16) / 1116)` = **1 column**
- *   content 1602 (1920 viewport, rail open):    `floor((1602 + 16) / 1116)` = **1 column**
- *   content 2242 (2560 viewport, rail open):    `floor((2242 + 16) / 1116)` = **2 columns**
+ *   content 1586 (1920 viewport, rail open):    `floor((1586 + 16) / 1116)` = **1 column**
+ *   content 2226 (2560 viewport, rail open):    `floor((2226 + 16) / 1116)` = **2 columns**
  *   content 2528 (the container, no rail):      `floor((2528 + 16) / 1116)` = **2 columns**
  *
  * — i.e. nothing a 1300, 1440 or 1920 monitor shows changes at either value (all three
@@ -228,7 +228,7 @@ export const APPS_CARD_LIST_GAP = 16;
  *
  * ⚠️ THE WORKED NUMBERS HERE USED TO READ "492.8px at five columns" AND ARE RE-DERIVED:
  * the left-rail re-tune moved the ladder, so the reachable top is FOUR columns — 620px in
- * the 2528 of grid a 2560 container yields with no rail, 548.5px in the 2242 it yields
+ * the 2528 of grid a 2560 container yields with no rail, 544.5px in the 2226 it yields
  * with the rail open. Both still beat the 460px four-up the 1920 container shipped, which
  * is the claim this paragraph exists to make. A FIFTH column is declared at 2840 of grid
  * and is deliberately unreachable here in every rail state; raising this constant past
