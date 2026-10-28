@@ -43,10 +43,27 @@ CREATE TABLE "NewOrderSmite" (
 );
 `;
 
+const pad = (n: number, width = 2) => String(n).padStart(width, '0');
+
+// node-postgres sends a Date as local time with the host's UTC offset, and a `timestamp without time
+// zone` column drops the offset. PGlite would send the UTC instant instead, hiding any code that
+// leans on the host timezone, so mimic the real driver.
+function asNodePgParameter(value: unknown): unknown {
+  if (!(value instanceof Date)) return value;
+  const offset = -value.getTimezoneOffset();
+  const sign = offset < 0 ? '-' : '+';
+  const abs = Math.abs(offset);
+  return (
+    `${pad(value.getFullYear(), 4)}-${pad(value.getMonth() + 1)}-${pad(value.getDate())}` +
+    `T${pad(value.getHours())}:${pad(value.getMinutes())}:${pad(value.getSeconds())}` +
+    `.${pad(value.getMilliseconds(), 3)}${sign}${pad(Math.floor(abs / 60))}:${pad(abs % 60)}`
+  );
+}
+
 function dialect(pg: PGlite): Dialect {
   const connection: DatabaseConnection = {
     async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
-      const result = await pg.query(compiled.sql, compiled.parameters as unknown[]);
+      const result = await pg.query(compiled.sql, compiled.parameters.map(asNodePgParameter));
       return { rows: result.rows as R[], numAffectedRows: BigInt(result.affectedRows ?? 0) };
     },
     // eslint-disable-next-line require-yield
@@ -75,7 +92,10 @@ function dialect(pg: PGlite): Dialect {
 
 /** A real in-process Postgres with the committed migration applied over stand-in main tables. */
 export async function createQueueDb(): Promise<{ pg: PGlite; db: Kysely<DB> }> {
-  const pg = await PGlite.create();
+  // The same reading as @civitai/db: `timestamp without time zone` holds UTC instants.
+  const pg = await PGlite.create({
+    parsers: { 1114: (value: string) => new Date(`${value.replace(' ', 'T')}Z`) },
+  });
   await pg.exec(STAND_INS);
   await pg.exec(readFileSync(MIGRATION, 'utf8'));
   return { pg, db: new Kysely<DB>({ dialect: dialect(pg) }) };

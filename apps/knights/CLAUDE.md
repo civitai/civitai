@@ -29,17 +29,22 @@ Tables `KnightsQuestion`, `KnightsQueueItem` and `KnightsVote` (migration `20261
 Everything takes the Kysely client as an argument so `queue.pglite.test.ts` runs the real service and the real migration
 SQL on PGlite.
 
-- `getFeed`: open items at or below the player's rank, higher stages first, then priority and age, one question per
-  stretch. It never selects the image's rating. Hidden checks are not served yet (no grader).
-- `castVote`: one transaction that locks the item row, writes the ledger row with its weight, and decides the stage's
-  votes (`resolution.ts`): 5 votes and a 60% weighted share resolves; a split stays open to 10, then moves up
-  Knight -> Templar -> Inquisitor (Paladin joins `ESCALATION_PATH` with the rank). A rating more than one level below the
-  image's current one goes to Inquisitor. Votes stay `pending` across escalations and are graded by the final value.
+- `enqueueItem`: an item's `minRank` and `votesNeeded` default to its question's `minRank` and `votesToResolve`; an
+  override on the item wins.
+- `getFeed`: open items the player's rank may judge, higher stages first, then priority and age, from the first
+  question in that order. Which ranks may judge a stage is `canVote` in `ranks.ts`, shared with `castVote`; Inquisitors
+  and Acolytes get no feed. It never selects the image's rating. Hidden checks are not served yet (no grader).
+- `castVote`: refuses what the feed would not serve (hidden check, inactive question, non-image), then one transaction
+  that locks the item row, writes the ledger row with its weight, and decides the stage's votes (`resolution.ts`): 5 votes
+  and a 60% weighted share resolves; a split stays open to 10, then moves up Knight -> Templar -> Inquisitor (Paladin has
+  a vote weight but is not on `ESCALATION_PATH` yet). A rating more than one level below the image's current one, or a
+  Blocked consensus, goes to Inquisitor. Votes stay `pending` across escalations and are graded by the final value.
 - A settled rating is written by `main-app.ts` via the main app's `/api/mod/image/kono-set-nsfw-level` (activity
-  `setNsfwLevelKono`) inside the vote's transaction; if that call fails the vote rolls back.
-- The vote ledger is partitioned by month. `POST /api/jobs/partitions` creates the next months; `POST /api/jobs/expire`
-  escalates items past `expiresAt`. Both need `Authorization: Bearer $JOBS_TOKEN`, so schedule them externally (daily
-  is enough); the user guard in `hooks.server.ts` skips `/api/jobs/`.
+  `setNsfwLevelKono`) after the vote commits, with no lock held. The item is `Resolved` with `appliedAt` null until the
+  call succeeds; `POST /api/jobs/expire` retries every unapplied one, so schedule it every few minutes.
+- The vote ledger is partitioned by month. `POST /api/jobs/partitions` creates the next months and a vote creates its
+  own month if missing; `POST /api/jobs/expire` escalates items past `expiresAt`. Both need
+  `Authorization: Bearer $JOBS_TOKEN`; the user guard in `hooks.server.ts` skips `/api/jobs/`.
 - `/play` is the minimal voting page. Acolytes get no feed and cannot vote (Trials is a later slice).
 
 ## Wired packages

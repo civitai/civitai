@@ -11,7 +11,6 @@ export default defineConfig({
   test: {
     name: 'app:knights',
     environment: 'node',
-    env: { TZ: 'UTC' },
     include: ['src/**/*.{test,spec}.ts'],
   },
 });

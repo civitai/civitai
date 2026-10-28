@@ -5,7 +5,9 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import {
   castVote,
+  applyPendingResolutions,
   closeWithoutOutcome,
+  enqueueItem,
   ensureVotePartitions,
   escalateExpired,
   getFeed,
@@ -44,21 +46,23 @@ async function item(
     question?: string;
     hidden?: boolean;
     expires?: Date;
+    votesNeeded?: number;
   } = {}
 ) {
-  const res = await pg.query<{ id: number }>(
-    `INSERT INTO "KnightsQueueItem" ("questionKey","imageId","source","minRank","priority","isHiddenCheck","expiresAt")
-     VALUES ($1,$2,'test',$3,$4,$5,$6) RETURNING id`,
-    [
-      o.question ?? Q,
+  return enqueueItem(
+    db,
+    {
+      questionKey: o.question ?? Q,
       imageId,
-      o.minRank ?? 'Knight',
-      o.priority ?? 2,
-      o.hidden ?? false,
-      o.expires ?? null,
-    ]
+      source: 'test',
+      minRank: o.minRank ?? 'Knight',
+      priority: o.priority,
+      isHiddenCheck: o.hidden,
+      votesNeeded: o.votesNeeded,
+      expiresAt: o.expires ?? null,
+    },
+    NOW
   );
-  return res.rows[0].id;
 }
 
 const itemRow = async (id: number) =>
@@ -135,6 +139,43 @@ describe('getFeed', () => {
     expect(await getFeed(db, 2)).toBeNull();
   });
 
+  it('fills the stretch from the chosen question even when another question has more items', async () => {
+    await player(1, 'Knight');
+    for (let i = 0; i < 12; i++) await image(100 + i);
+    for (let i = 0; i < 3; i++) await item(100 + i, { priority: 2 });
+    for (let i = 3; i < 12; i++)
+      await item(100 + i, { priority: 1, question: 'knights.test.bool' });
+    for (let i = 0; i < 40; i++) {
+      await image(200 + i);
+      await item(200 + i, { priority: 2 });
+    }
+    const feed = await getFeed(db, 1);
+    expect(feed?.question.key).toBe('knights.test.bool');
+    expect(feed?.items.length).toBe(9);
+  });
+
+  it('serves nothing to Inquisitors, and the feed and castVote agree on every rank', async () => {
+    await player(1, 'Inquisitor');
+    await image(10);
+    const id = await item(10);
+    expect(await getFeed(db, 1)).toBeNull();
+    expect(await vote(1, id, '4')).toMatchObject({ status: 'rejected', reason: 'not-eligible' });
+
+    for (const [userId, rank] of [
+      [2, 'Acolyte'],
+      [3, 'Knight'],
+      [4, 'Templar'],
+      [5, 'Paladin'],
+    ] as const) {
+      await player(userId, rank);
+      const servedItems = (await getFeed(db, userId))?.items.map((i) => i.id) ?? [];
+      const outcome = await vote(userId, id, '999');
+      expect(outcome.status === 'rejected' && outcome.reason !== 'not-eligible').toBe(
+        servedItems.includes(id)
+      );
+    }
+  });
+
   it('serves one question at a time', async () => {
     await player(1, 'Knight');
     await image(10);
@@ -164,6 +205,66 @@ describe('castVote rejections', () => {
     });
     expect(await vote(2, high, '4')).toMatchObject({ status: 'recorded' });
     expect(await vote(2, high, '8')).toMatchObject({ status: 'rejected', reason: 'already-voted' });
+  });
+});
+
+describe('castVote eligibility matches the feed', () => {
+  it.each([
+    [
+      'a hidden check',
+      (id: number) =>
+        pg.query(`UPDATE "KnightsQueueItem" SET "isHiddenCheck"=true WHERE id=$1`, [id]),
+    ],
+    [
+      'an inactive question',
+      () => pg.query(`UPDATE "KnightsQuestion" SET active=false WHERE key='knights.test.bool'`),
+    ],
+    ['a non-image', () => pg.query(`UPDATE "Image" SET type='video' WHERE id=10`)],
+  ])('refuses a vote on %s', async (_label, hide) => {
+    await player(1, 'Knight');
+    await image(10);
+    const id = await item(10, { question: 'knights.test.bool' });
+    await hide(id);
+    try {
+      expect(await getFeed(db, 1)).toBeNull();
+      expect(await vote(1, id, 'yes')).toMatchObject({ status: 'rejected', reason: 'unavailable' });
+      expect(await verdicts(id)).toEqual([]);
+    } finally {
+      await pg.query(`UPDATE "KnightsQuestion" SET active=true WHERE key='knights.test.bool'`);
+    }
+  });
+});
+
+describe('question defaults', () => {
+  it('takes the question rank and vote count unless the item sets its own', async () => {
+    await pg.exec(`INSERT INTO "KnightsQuestion" ("key","kind","prompt","options","minRank","votesToResolve")
+      VALUES ('knights.test.defaults','bool','Hat?','[{"value":"yes","label":"Yes"}]','Templar',2)`);
+    await image(10);
+    await image(11);
+    const inherited = await enqueueItem(
+      db,
+      { questionKey: 'knights.test.defaults', imageId: 10, source: 'test' },
+      NOW
+    );
+    const overridden = await enqueueItem(
+      db,
+      {
+        questionKey: 'knights.test.defaults',
+        imageId: 11,
+        source: 'test',
+        minRank: 'Knight',
+        votesNeeded: 3,
+      },
+      NOW
+    );
+    expect(await itemRow(inherited)).toMatchObject({ minRank: 'Templar', votesNeeded: 2 });
+    expect(await itemRow(overridden)).toMatchObject({ minRank: 'Knight', votesNeeded: 3 });
+    expect((await itemRow(inherited)).expiresAt).toEqual(new Date('2026-12-18T12:00:00Z'));
+
+    await player(1, 'Templar');
+    await player(2, 'Templar');
+    await vote(1, inherited, 'yes');
+    expect((await vote(2, inherited, 'yes')).status).toBe('resolved');
   });
 });
 
@@ -273,18 +374,84 @@ describe('resolution', () => {
     expect(await itemRow(id)).toMatchObject({ status: 'Resolved' });
   });
 
-  it('rolls the final vote back when the rating cannot be applied', async () => {
+  it('keeps a Blocked consensus away from the image and hands it to the Inquisitors', async () => {
+    await fiveKnights();
+    await image(10, 16);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '32');
+
+    expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', resolvedValue: null });
+    expect(applyConsensus).not.toHaveBeenCalled();
+  });
+
+  it('commits the vote when the rating cannot be written back, and a retry applies it once', async () => {
     await fiveKnights();
     await image(10, 4);
     const id = await item(10);
     for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
 
     applyConsensus.mockRejectedValueOnce(new Error('main app down'));
-    await expect(vote(5, id, '4')).rejects.toThrow('main app down');
-    expect(await itemRow(id)).toMatchObject({ status: 'Open' });
-    expect((await verdicts(id)).length).toBe(4);
-
+    vi.spyOn(console, 'error').mockImplementationOnce(() => undefined);
     expect((await vote(5, id, '4')).status).toBe('resolved');
+    expect(await itemRow(id)).toMatchObject({
+      status: 'Resolved',
+      resolvedValue: '4',
+      resolvedBy: 5,
+      appliedAt: null,
+    });
+    const graded = await verdicts(id);
+    expect(graded.map((v) => v.verdict)).toEqual(Array(5).fill('correct'));
+
+    expect(await applyPendingResolutions(db, deps())).toEqual({ applied: 1, failed: 0 });
+    expect(applyConsensus).toHaveBeenCalledTimes(2);
+    expect(applyConsensus).toHaveBeenLastCalledWith({
+      questionKey: Q,
+      imageId: 10,
+      value: '4',
+      actorId: 5,
+    });
+    expect((await itemRow(id)).appliedAt).toEqual(NOW);
+    expect(await verdicts(id)).toEqual(graded);
+
+    expect(await applyPendingResolutions(db, deps())).toEqual({ applied: 0, failed: 0 });
+    expect(applyConsensus).toHaveBeenCalledTimes(2);
+  });
+
+  it('leaves a still-failing write-back for the next retry', async () => {
+    await fiveKnights();
+    await image(10, 4);
+    const id = await item(10);
+    applyConsensus.mockRejectedValue(new Error('main app down'));
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '4');
+
+    expect(await applyPendingResolutions(db, deps())).toEqual({ applied: 0, failed: 1 });
+    expect((await itemRow(id)).appliedAt).toBeNull();
+    applyConsensus.mockReset();
+    applyConsensus.mockResolvedValue(undefined);
+    expect(await applyPendingResolutions(db, deps())).toEqual({ applied: 1, failed: 0 });
+  });
+
+  it('does not hold a transaction open while the rating is written back', async () => {
+    await fiveKnights();
+    await image(10, 4);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
+
+    let lockedDuringCall: boolean | undefined;
+    applyConsensus.mockImplementationOnce(async () => {
+      const row = await pg
+        .query<{ id: number }>(`SELECT id FROM "KnightsQueueItem" WHERE id=$1 FOR UPDATE NOWAIT`, [
+          id,
+        ])
+        .then(
+          () => false,
+          () => true
+        );
+      lockedDuringCall = row;
+    });
+    await vote(5, id, '4');
+    expect(lockedDuringCall).toBe(false);
   });
 
   it('weights votes by rank and smites', async () => {
@@ -340,6 +507,24 @@ describe('closeWithoutOutcome', () => {
     await closeWithoutOutcome(db, id, NOW);
     expect(await itemRow(id)).toMatchObject({ status: 'Closed', resolvedValue: null });
     expect((await verdicts(id)).map((v) => v.verdict)).toEqual(['inconclusive', 'inconclusive']);
+  });
+});
+
+describe('vote partitions', () => {
+  it('creates the month partition on demand when the job has not', async () => {
+    await player(1, 'Knight');
+    await image(10);
+    const id = await item(10);
+    const res = await castVote(
+      db,
+      { userId: 1, itemId: id, answer: '4' },
+      { applyConsensus, now: () => new Date('2033-07-09T10:00:00Z') }
+    );
+    expect(res.status).toBe('recorded');
+    const found = await pg.query<{ found: boolean }>(
+      `SELECT to_regclass('"KnightsVote_2033_07"') IS NOT NULL AS found`
+    );
+    expect(found.rows[0].found).toBe(true);
   });
 });
 

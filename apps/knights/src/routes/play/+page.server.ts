@@ -11,6 +11,7 @@ const REJECTION_TEXT: Record<RejectReason, string> = {
   'bad-answer': 'That answer is not on offer.',
   'already-voted': 'You have already judged this one.',
   'not-open': 'This one has already been settled.',
+  unavailable: 'This one is not open for judging.',
 };
 
 export const load: PageServerLoad = async ({ locals }) => {
@@ -34,10 +35,15 @@ export const actions: Actions = {
       return fail(400, { message: 'Pick an answer.' });
     }
 
-    const result = await castVote(db, { userId: locals.user.id, itemId, answer }, queueDeps);
-    if (result.status === 'rejected') {
-      return fail(409, { message: REJECTION_TEXT[result.reason] });
+    try {
+      const result = await castVote(db, { userId: locals.user.id, itemId, answer }, queueDeps);
+      if (result.status === 'rejected') {
+        return fail(409, { message: REJECTION_TEXT[result.reason] });
+      }
+      return { voted: itemId };
+    } catch (error) {
+      console.error('knights: vote failed', { itemId, error });
+      return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });
     }
-    return { voted: itemId };
   },
 };
