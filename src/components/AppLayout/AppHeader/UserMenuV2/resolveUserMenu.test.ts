@@ -173,6 +173,7 @@ describe('moving items between groups', () => {
     expect(findUserMenuGroup(USER_MENU_LAYOUT, 'browse-challenges')).toBe('rewards');
     expect(findUserMenuGroup(USER_MENU_LAYOUT, 'civitai-link')).toBe('creator-tools');
     expect(findUserMenuGroup(USER_MENU_LAYOUT, 'link-app')).toBe('creator-tools');
+    expect(findUserMenuGroup(USER_MENU_LAYOUT, 'buzz-dashboard')).toBe('creator-tools');
     expect(findUserMenuGroup(USER_MENU_LAYOUT, 'getting-started')).toBe('help');
   });
 
