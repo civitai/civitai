@@ -943,8 +943,8 @@ importers:
         specifier: workspace:*
         version: link:../../packages/civitai-app-assistant
       '@civitai/components-chat':
-        specifier: 0.25.0
-        version: 0.25.0(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.4.3)
+        specifier: 0.32.0
+        version: 0.32.0(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.4.3)
       '@dbos-inc/dbos-sdk':
         specifier: 5.3.0
         version: 5.3.0
@@ -2400,15 +2400,15 @@ packages:
     resolution: {integrity: sha512-hjWw+5xI7xkFjk6PcteUSMA9Y/BegaY3E8M/clJc/tCz3DNgwVACz2W7wazysrUwn4VuzKtq+9nzF048CrSDEA==}
     engines: {git: '>=2.11.0', node: '>=18.0.0', npm: '>=7.19.0', yarn: '>=1.7.0'}
 
-  '@civitai/components-chat@0.25.0':
-    resolution: {integrity: sha512-3+74g4R6mA2sADvPyiht/vplgGwI5TkG4WdyfrQ8fRDwseAfPTylr9TkYaj6JgHQ3oLLuLB+3YnkuSAWq0dbLQ==}
+  '@civitai/components-chat@0.31.0':
+    resolution: {integrity: sha512-F5r6pqNc/X6oeD/jr/+HCEbP/dH0AtdCQeO4Ombq2YVIFB003jVi7XACSjxenrX2f5QiveV+sVpXycydCWwGtQ==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/sdk': '>=0.8.0 <1.0.0'
       lit: ^3.3.0
 
-  '@civitai/components-chat@0.31.0':
-    resolution: {integrity: sha512-F5r6pqNc/X6oeD/jr/+HCEbP/dH0AtdCQeO4Ombq2YVIFB003jVi7XACSjxenrX2f5QiveV+sVpXycydCWwGtQ==}
+  '@civitai/components-chat@0.32.0':
+    resolution: {integrity: sha512-JOEpTj3mnT/+pQazyWBpIKs9dW4d6lg9lHXt72P9pavW+5LrptqCNiEqUczS1vGI6jDztx2byN5xV59LbIOBQA==}
     engines: {node: '>=20'}
     peerDependencies:
       '@civitai/sdk': '>=0.8.0 <1.0.0'
@@ -14061,13 +14061,13 @@ snapshots:
       tslib: 2.8.1
     optional: true
 
-  '@civitai/components-chat@0.25.0(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.4.3)':
+  '@civitai/components-chat@0.31.0(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.0.17)':
     dependencies:
-      '@ai-sdk/openai-compatible': 2.0.77(zod@4.4.3)
+      '@ai-sdk/openai-compatible': 2.0.77(zod@4.0.17)
       '@civitai/components': 0.13.0(@civitai/sdk@0.21.0)
       '@civitai/sdk': 0.21.0
-      '@modelcontextprotocol/sdk': 1.32.1(zod@4.4.3)
-      ai: 6.0.289(zod@4.4.3)
+      '@modelcontextprotocol/sdk': 1.32.1(zod@4.0.17)
+      ai: 6.0.289(zod@4.0.17)
       dompurify: 3.4.17
       lit: 3.3.3
       marked: 18.1.0
@@ -14077,13 +14077,13 @@ snapshots:
       - supports-color
       - zod
 
-  '@civitai/components-chat@0.31.0(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.0.17)':
+  '@civitai/components-chat@0.32.0(@civitai/sdk@0.21.0)(lit@3.3.3)(zod@4.4.3)':
     dependencies:
-      '@ai-sdk/openai-compatible': 2.0.77(zod@4.0.17)
+      '@ai-sdk/openai-compatible': 2.0.77(zod@4.4.3)
       '@civitai/components': 0.13.0(@civitai/sdk@0.21.0)
       '@civitai/sdk': 0.21.0
-      '@modelcontextprotocol/sdk': 1.32.1(zod@4.0.17)
-      ai: 6.0.289(zod@4.0.17)
+      '@modelcontextprotocol/sdk': 1.32.1(zod@4.4.3)
+      ai: 6.0.289(zod@4.4.3)
       dompurify: 3.4.17
       lit: 3.3.3
       marked: 18.1.0
