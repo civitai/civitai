@@ -358,6 +358,18 @@ describe('/admin save', () => {
     expect(rows.rows).toEqual([{ roles_carried: [SYSTEM], roles_dropped: ['moderator:retired'] }]);
   });
 
+  it('records a repeated stored role once', async () => {
+    await main.exec(
+      `INSERT INTO "AppPageAccess" (app, path, roles) VALUES ('moderator', '${DISPUTE}', ARRAY['${HIGH}', '${SYSTEM}', '${SYSTEM}'])`
+    );
+    await save({ [DISPUTE]: [] }, { [DISPUTE]: [HIGH] });
+    expect(await stored(DISPUTE)).toEqual([SYSTEM]);
+    const rows = await history.query<{ roles_carried: string[] }>(
+      'SELECT roles_carried FROM page_access_change'
+    );
+    expect(rows.rows).toEqual([{ roles_carried: [SYSTEM] }]);
+  });
+
   it('still refuses a role outside the catalogue sent by the page', async () => {
     const result = await save({ [DISPUTE]: [SYSTEM] }, { [DISPUTE]: [] });
     expect(result).toMatchObject({ status: 400 });

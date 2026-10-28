@@ -18,7 +18,7 @@ describe('storeUnavailableMessage', () => {
   const names = { tables: 'The x tables', database: 'the x database', schemaFile: 'x/schema.sql' };
   it('names the file to apply, and the role to apply it as, per cause', () => {
     expect(storeUnavailableMessage('no-schema', names)).toBe(
-      'The x tables do not exist yet — apply x/schema.sql.'
+      'The x tables do not exist yet or are out of date — apply x/schema.sql.'
     );
     expect(storeUnavailableMessage('no-grant', names)).toBe(
       'The x tables exist but this role cannot read them — re-run x/schema.sql as the application role.'

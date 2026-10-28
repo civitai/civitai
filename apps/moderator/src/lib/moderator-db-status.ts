@@ -33,7 +33,7 @@ export function storeUnavailableMessage(
 ): string {
   switch (status) {
     case 'no-schema':
-      return `${names.tables} do not exist yet — apply ${names.schemaFile}.`;
+      return `${names.tables} do not exist yet or are out of date — apply ${names.schemaFile}.`;
     case 'no-grant':
       return `${names.tables} exist but this role cannot read them — re-run ${names.schemaFile} as the application role.`;
     case 'not-configured':
