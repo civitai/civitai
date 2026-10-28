@@ -6,12 +6,13 @@
   import TriageColumns from '$lib/components/triage/TriageColumns.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_BUTTON, LINK_CLASS, dateTime, relativeTime } from '$lib/format';
-  import { SSR_PENDING } from '$lib/ssr-pending';
+  import { keepLast } from '$lib/keep-last.svelte';
   import type { TicketAccount as Account } from '$lib/server/tickets/account';
+  import type { TicketPayload } from '$lib/server/tickets/detail';
   import type { TicketRow } from '$lib/server/tickets/list';
-  import { fetchTicketPayload } from '$lib/tickets/fetch-detail';
+  import { createDetailLoader } from '$lib/tickets/fetch-detail';
+  import { closedOut } from '$lib/tickets/outcome';
   import { requesterLabel, sentByText } from '$lib/tickets/row';
-  import { isLiveStatus } from '$lib/tickets/snapshot';
   import type { TicketView } from '$lib/tickets/routing';
   import TicketAccount from './TicketAccount.svelte';
   import TicketEscalate from './TicketEscalate.svelte';
@@ -44,19 +45,26 @@
   // The list is read again after every write and hands over a new `row` object for the same ticket;
   // a derived of the id alone passes on only a real change, so the detail is fetched once per (ticket, version).
   const id = $derived(row.id);
-  // Fetched when a ticket opens, not with the list: it is a Freshdesk call per ticket. The server half
-  // is `SSR_PENDING`, never null, or the browser's content would land outside its {#await} block.
-  const payload = $derived.by(() => {
+  // Fetched when a ticket opens, not with the list: it is a Freshdesk call per ticket, so the loader waits
+  // for the selection to settle. `keepLast` (the sanctioned exception to derive-the-promise) holds the
+  // last read through a refetch, so a write does not blank the pane or unmount the Account card.
+  const loader = createDetailLoader();
+  const detail = keepLast(() => {
     void version;
-    return browser ? fetchTicketPayload(id, view) : SSR_PENDING;
+    return browser ? loader.load(id, view) : null;
   });
+  $effect(() => loader.cancel);
+  // The last read belongs to the open ticket only: the pane is remounted per ticket, but never show another's.
+  const read = $derived(
+    detail.value?.ok && detail.value.payload.ticket.id === row.id ? detail.value : null
+  );
+  const failure = $derived(detail.value && !detail.value.ok ? detail.value.message : null);
 
   function done(what: string, data: Record<string, unknown> | undefined, status: number | null) {
     const moved = data?.moved;
     const warning = typeof data?.warning === 'string' ? data.warning : null;
     const left = moved === 'moderation' || moved === 'support';
-    const resolved = status !== null && !isLiveStatus(status);
-    if (left || resolved) {
+    if (left || closedOut(data, status)) {
       const where = left ? `${what}; it is now in the ${moved} view` : `${what}; it is closed out`;
       if (warning) toast.warning(`${where}. ${warning}`);
       else toast.success(where);
@@ -65,7 +73,8 @@
     }
     version += 1;
     void invalidateAll();
-    if (!warning) toast.success(what);
+    if (warning) toast.warning(`${what}. ${warning}`);
+    else toast.success(what);
   }
 
   // An account change leaves the ticket where it is: only the detail is read again, to show the new status.
@@ -98,77 +107,82 @@
 
 <!-- 🔴 TEXT, NEVER `{@html}`: the description and every message are customer-written. -->
 {#snippet evidence()}
-  {#await payload}
-    <p class="m-0 text-sm text-dark-2">Loading the ticket from Freshdesk…</p>
-  {:then p}
-    <section class="mb-5">
-      <h3 class="m-0 mb-2 text-[11px] font-semibold tracking-[0.5px] text-dark-2 uppercase">Ticket</h3>
-      {#if p.ticket.description.status === 'found'}
-        <p class="m-0 text-sm break-words whitespace-pre-wrap text-white">{p.ticket.description.text}</p>
-        {#if p.ticket.description.truncated}
-          <p class="m-0 mt-2 text-xs text-dark-2">Cut short here — the rest is in Freshdesk.</p>
-        {/if}
-      {:else if p.ticket.description.status === 'none'}
-        <p class="m-0 text-sm text-dark-2">Freshdesk has no description for this ticket.</p>
-      {:else}
-        <p class="m-0 text-sm text-dark-2">{p.ticket.description.reason}</p>
-      {/if}
-    </section>
-
-    <section>
-      <h3 class="m-0 mb-1 text-[11px] font-semibold tracking-[0.5px] text-dark-2 uppercase">
-        Conversation
-      </h3>
-      <p class="m-0 mb-3 text-xs text-dark-2">
-        Customer messages and public agent replies, oldest first. Private notes are not shown.
+  {#if read}
+    {#if read.stale}
+      <p class="m-0 mb-3 text-xs text-amber-300" role="status">
+        Showing the last read of this ticket: {read.stale}
       </p>
-      {#if p.conversation.status === 'found'}
-        {#if p.conversation.messages.length === 0}
-          <p class="m-0 text-sm text-dark-2">No messages beyond the original ticket.</p>
-        {/if}
-        <ol class="m-0 flex list-none flex-col gap-3 p-0">
-          {#each p.conversation.messages as m (m.conversationId)}
-            <li class="rounded-lg border border-dark-4 bg-dark-7 p-3">
-              <p class="m-0 mb-1 text-xs text-dark-2">
-                {m.from === 'customer' ? 'Customer' : 'Agent'} · {dateTime(m.createdAt)}
-              </p>
-              <p class="m-0 text-sm break-words whitespace-pre-wrap text-white">{m.text}</p>
-            </li>
-          {/each}
-        </ol>
-        {#if p.conversation.truncated}
-          <p class="m-0 mt-2 text-xs text-dark-2">
-            Only the earliest messages are shown — the rest is in Freshdesk.
-          </p>
-        {/if}
-      {:else}
-        <p class="m-0 text-sm text-red-300">Could not read the conversation: {p.conversation.reason}</p>
+    {/if}
+    {@render ticketBody(read.payload)}
+  {:else if failure}
+    <p class="m-0 text-sm text-red-300" role="alert">Could not read the ticket: {failure}</p>
+  {:else}
+    <p class="m-0 text-sm text-dark-2">Loading the ticket from Freshdesk…</p>
+  {/if}
+{/snippet}
+
+{#snippet ticketBody(p: TicketPayload)}
+  <section class="mb-5">
+    <h3 class="m-0 mb-2 text-[11px] font-semibold tracking-[0.5px] text-dark-2 uppercase">Ticket</h3>
+    {#if p.ticket.description.status === 'found'}
+      <p class="m-0 text-sm break-words whitespace-pre-wrap text-white">{p.ticket.description.text}</p>
+      {#if p.ticket.description.truncated}
+        <p class="m-0 mt-2 text-xs text-dark-2">Cut short here — the rest is in Freshdesk.</p>
       {/if}
-    </section>
-  {:catch err}
-    <p class="m-0 text-sm text-red-300" role="alert">
-      Could not read the ticket: {err instanceof Error ? err.message : 'Freshdesk could not be read.'}
+    {:else if p.ticket.description.status === 'none'}
+      <p class="m-0 text-sm text-dark-2">Freshdesk has no description for this ticket.</p>
+    {:else}
+      <p class="m-0 text-sm text-dark-2">{p.ticket.description.reason}</p>
+    {/if}
+  </section>
+
+  <section>
+    <h3 class="m-0 mb-1 text-[11px] font-semibold tracking-[0.5px] text-dark-2 uppercase">
+      Conversation
+    </h3>
+    <p class="m-0 mb-3 text-xs text-dark-2">
+      Customer messages and public agent replies, oldest first. Private notes are not shown.
     </p>
-  {/await}
+    {#if p.conversation.status === 'found'}
+      {#if p.conversation.messages.length === 0}
+        <p class="m-0 text-sm text-dark-2">No messages beyond the original ticket.</p>
+      {/if}
+      <ol class="m-0 flex list-none flex-col gap-3 p-0">
+        {#each p.conversation.messages as m (m.conversationId)}
+          <li class="rounded-lg border border-dark-4 bg-dark-7 p-3">
+            <p class="m-0 mb-1 text-xs text-dark-2">
+              {m.from === 'customer' ? 'Customer' : 'Agent'} · {dateTime(m.createdAt)}
+            </p>
+            <p class="m-0 text-sm break-words whitespace-pre-wrap text-white">{m.text}</p>
+          </li>
+        {/each}
+      </ol>
+      {#if p.conversation.truncated}
+        <p class="m-0 mt-2 text-xs text-dark-2">
+          Only the earliest messages are shown — the rest is in Freshdesk.
+        </p>
+      {/if}
+    {:else}
+      <p class="m-0 text-sm text-red-300">Could not read the conversation: {p.conversation.reason}</p>
+    {/if}
+  </section>
 {/snippet}
 
 <!-- The row already has everything but the tags, so the cards do not wait on the conversation. What the
      detail read knows better (the linked account, the requester) replaces the row's, once it arrives. -->
 {#snippet info()}
-  {#await payload}
-    {@render cards(row.civitaiUserId, row.sentBy, null, row.requesterName, undefined, undefined)}
-  {:then p}
+  {#if read}
     {@render cards(
-      p.ticket.civitaiUserId,
-      p.ticket.sentBy,
-      p.ticket.tags,
-      p.ticket.requesterName || row.requesterName,
-      p.ticket.requesterEmail,
-      p.account
+      read.payload.ticket.civitaiUserId,
+      read.payload.ticket.sentBy,
+      read.payload.ticket.tags,
+      read.payload.ticket.requesterName || row.requesterName,
+      read.payload.ticket.requesterEmail,
+      read.payload.account
     )}
-  {:catch}
+  {:else}
     {@render cards(row.civitaiUserId, row.sentBy, null, row.requesterName, undefined, undefined)}
-  {/await}
+  {/if}
 {/snippet}
 
 {#snippet cards(

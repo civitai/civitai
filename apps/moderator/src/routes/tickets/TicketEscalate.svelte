@@ -19,6 +19,10 @@
   let confirming = $state(false);
 
   const escalate = new FormState({
+    // Enter in a text field submits without the confirm button; only that button's submit goes through.
+    onSubmit: ({ cancel }) => {
+      if (!confirming) cancel();
+    },
     onSuccess: (data) => ondone('Sent to support', data, null),
     onSettled: () => (confirming = false),
   });

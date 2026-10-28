@@ -1,6 +1,6 @@
 import { error, json } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
-import { canAccess } from '$lib/server/access';
+import { canAccess, requireAccess } from '$lib/server/access';
 import { loadTicketPayload } from '$lib/server/tickets/detail';
 import { isTicketView } from '$lib/tickets/routing';
 
@@ -14,8 +14,7 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   const view = url.searchParams.get('view');
   if (!isTicketView(view)) error(400, 'Bad view.');
   if (!locals.user) error(403, 'Not signed in.');
-  if (!canAccess(locals.user, `/tickets/${view}`))
-    error(403, 'You do not have access to this page.');
+  requireAccess(locals.user, `/tickets/${view}`);
 
   const res = await loadTicketPayload(view, params.id, {
     canSeeEmail: !!locals.grants['decisions.support.pii'],

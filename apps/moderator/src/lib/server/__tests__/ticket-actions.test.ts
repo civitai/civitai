@@ -120,3 +120,21 @@ describe('the actions of the support view', () => {
     expect(writes()).toEqual([]);
   });
 });
+
+describe('whether a reply changed the status', () => {
+  const reply = (statusAfter: string) =>
+    run('moderation', 'reply', { ...BODY, ticketId: '5', statusAfter });
+
+  it('reports a requested status that landed', async () => {
+    expect(await reply('4')).toMatchObject({ success: true, statusChanged: true });
+  });
+
+  it('reports a requested status that failed, so the page does not claim it', async () => {
+    setTicketStatus.mockResolvedValue({ status: 'error', message: 'Freshdesk said no' });
+    expect(await reply('4')).toMatchObject({ success: true, statusChanged: false });
+  });
+
+  it('reports no change when none was requested', async () => {
+    expect(await reply('')).toMatchObject({ statusChanged: false });
+  });
+});

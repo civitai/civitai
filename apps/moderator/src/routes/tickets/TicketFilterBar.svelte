@@ -90,7 +90,7 @@
     />
   {/if}
   {#if shown.includes('sent')}
-    <Select.Root type="single" value={query.sent ?? ''} onValueChange={pickSent}>
+    <Select.Root type="single" bind:value={() => query.sent ?? '', pickSent}>
       <Select.Trigger
         size="sm"
         class="h-7 border-dark-4 text-xs"
@@ -113,7 +113,7 @@
     </Button>
   {/if}
   <div class="ml-auto">
-    <Select.Root type="single" value={sortCurrent} onValueChange={pickSort}>
+    <Select.Root type="single" bind:value={() => sortCurrent, pickSort}>
       <Select.Trigger size="sm" class="h-7 border-dark-4 text-xs" aria-label="Sort">
         {SORT_OPTIONS.find((o) => o.value === sortCurrent)?.label}
       </Select.Trigger>

@@ -3,7 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const canAccess = vi.fn();
 const loadTicketPayload = vi.fn();
 
-vi.mock('$lib/server/access', () => ({ canAccess: (...a: unknown[]) => canAccess(...a) }));
+vi.mock('$lib/server/access', () => ({
+  canAccess: (...a: unknown[]) => canAccess(...a),
+  requireAccess: (user: unknown, path: string) => {
+    if (!canAccess(user, path)) throw Object.assign(new Error('forbidden'), { status: 403 });
+  },
+}));
 vi.mock('$lib/server/tickets/detail', () => ({
   loadTicketPayload: (...a: unknown[]) => loadTicketPayload(...a),
 }));

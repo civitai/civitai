@@ -41,6 +41,10 @@
   );
 
   const form = new FormState({
+    // Enter in a text field submits without the confirm button; only that button's submit goes through.
+    onSubmit: ({ cancel }) => {
+      if (!confirming) cancel();
+    },
     onSuccess: (data) => ondone(`Restriction ${verdict.toLowerCase()}`, data),
     onSettled: () => (confirming = false),
     reset: false,

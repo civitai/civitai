@@ -26,23 +26,34 @@
 
   let text = $state('');
   let statusAfter = $state(LEAVE);
-  // Seeded once on purpose; a $derived would overwrite the user's pending choice.
-  // svelte-ignore state_referenced_locally
-  let statusOnly = $state(SETTABLE_STATUSES.some((s) => s === currentStatus) ? String(currentStatus) : '');
+  // The status-only choice, until the operator picks one it follows the ticket's own status.
+  let picked = $state<string | null>(null);
+  const statusOnly = $derived(
+    picked ?? (SETTABLE_STATUSES.some((s) => s === currentStatus) ? String(currentStatus) : '')
+  );
   let confirming = $state(false);
 
   const reply = new FormState({
+    // Enter in a text field must not send an email; only the confirm button's submit goes through.
+    onSubmit: ({ cancel }) => {
+      if (!confirming) cancel();
+    },
     onSuccess: (data) => {
       const set = statusAfter === LEAVE ? null : Number(statusAfter);
       text = '';
       statusAfter = LEAVE;
+      picked = null;
       ondone('Reply sent', data, set);
     },
     onSettled: () => (confirming = false),
   });
   // reset: false, because a form reset would snap the pre-filled select to its first option.
   const status = new FormState({
-    onSuccess: (data) => ondone('Status changed', data, Number(statusOnly)),
+    onSuccess: (data) => {
+      const set = Number(statusOnly);
+      picked = null;
+      ondone('Status changed', data, set);
+    },
     reset: false,
   });
 
@@ -118,7 +129,12 @@
     class="flex items-center gap-1.5 border-t border-dark-4 pt-2.5"
   >
     <input type="hidden" name="ticketId" value={ticketId} />
-    <Select.Root type="single" name="status" bind:value={statusOnly} disabled={!canReply || busy}>
+    <Select.Root
+      type="single"
+      name="status"
+      bind:value={() => statusOnly, (v) => (picked = v)}
+      disabled={!canReply || busy}
+    >
       <Select.Trigger class="h-8 min-w-0 flex-1 text-[13px]" aria-label="Status only" title={why}>
         {statusOnly ? statusLabel(Number(statusOnly)) : 'Change status only'}
       </Select.Trigger>

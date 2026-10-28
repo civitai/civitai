@@ -75,7 +75,12 @@ async function settled(view: TicketView, ticketId: string, outcome: WriteOutcome
       if (routesTo !== view) moved = routesTo;
     }
   }
-  return { success: true as const, moved, warning: outcome.warning };
+  return {
+    success: true as const,
+    moved,
+    statusChanged: outcome.statusChanged,
+    warning: outcome.warning,
+  };
 }
 
 /** `?/reply`, `?/status` and (moderation only) `?/escalate`, each posting a `ticketId` field. All return `fail()` rather than throwing so the typed text survives a refusal. */

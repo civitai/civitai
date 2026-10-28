@@ -6,7 +6,7 @@
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Checkbox } from '@civitai/ui/components/ui/checkbox/index.js';
   import * as Popover from '@civitai/ui/components/ui/popover/index.js';
-  import { optionText, selectionHref, triggerText, type FilterOption } from '$lib/tickets/filters';
+  import { selectionHref, triggerText, type FilterOption } from '$lib/tickets/filters';
 
   let {
     param,
@@ -25,14 +25,18 @@
   const uid = $props.id();
   const selected = $derived(options.filter((o) => o.active).map((o) => o.value));
 
-  // The ticks are a draft until the menu closes: one navigation per menu, not one per checkbox.
+  // The ticks are a draft that only Apply commits: Escape or a click outside discards it, and one
+  // navigation covers the whole menu, not one per checkbox.
+  let open = $state(false);
   let draft = $state<string[]>([]);
 
-  function openChange(open: boolean) {
-    if (open) {
-      draft = [...selected];
-      return;
-    }
+  function setOpen(next: boolean) {
+    if (next) draft = [...selected];
+    open = next;
+  }
+
+  function apply() {
+    open = false;
     const changed = draft.length !== selected.length || draft.some((v) => !selected.includes(v));
     if (changed) {
       void goto(selectionHref(page.url, param, draft, drop), { noScroll: true, keepFocus: true });
@@ -44,7 +48,7 @@
   }
 </script>
 
-<Popover.Root onOpenChange={openChange}>
+<Popover.Root bind:open={() => open, setOpen}>
   <Popover.Trigger
     class={cn(
       'inline-flex h-7 items-center gap-1 rounded-lg border px-2 text-xs transition-colors outline-none focus-visible:ring-3 focus-visible:ring-ring/50',
@@ -56,24 +60,27 @@
     {triggerText(label, selected.length)}
     <IconChevronDown class="size-3.5 text-dark-2" aria-hidden="true" />
   </Popover.Trigger>
-  <Popover.Content align="start" class="max-h-80 w-64 gap-1 overflow-y-auto p-1.5">
+  <Popover.Content
+    align="start"
+    role="group"
+    aria-label={label}
+    class="max-h-80 w-64 gap-1 overflow-y-auto p-1.5"
+  >
     {#each options as option (option.value)}
       {@const id = `${uid}-${option.value}`}
       <label
         for={id}
         class={cn(
           'flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 text-sm hover:bg-dark-5',
-          option.count === 0 && !draft.includes(option.value) && 'opacity-50'
+          option.count === 0 && !draft.includes(option.value) && 'text-dark-2'
         )}
       >
         <Checkbox
           {id}
-          checked={draft.includes(option.value)}
-          onCheckedChange={(on) => tick(option.value, on)}
+          bind:checked={() => draft.includes(option.value), (on) => tick(option.value, on)}
         />
         <span class="min-w-0 flex-1 truncate">{option.label}</span>
-        <span class="text-xs text-dark-2 tabular-nums" aria-hidden="true">{option.count}</span>
-        <span class="sr-only">{optionText(option)}</span>
+        <span class="text-xs text-dark-2 tabular-nums">{option.count}</span>
       </label>
     {:else}
       <p class="m-0 px-1.5 py-1 text-xs text-dark-2">No values in this view.</p>
@@ -82,11 +89,7 @@
       <Button size="sm" variant="ghost" disabled={draft.length === 0} onclick={() => (draft = [])}>
         Clear
       </Button>
-      <Popover.Close>
-        {#snippet child({ props })}
-          <Button size="sm" {...props}>Apply</Button>
-        {/snippet}
-      </Popover.Close>
+      <Button size="sm" onclick={apply}>Apply</Button>
     </div>
   </Popover.Content>
 </Popover.Root>
