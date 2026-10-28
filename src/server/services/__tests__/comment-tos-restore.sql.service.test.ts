@@ -17,17 +17,24 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
  */
 
 const statements: string[] = [];
+/** Ids whose clear finds no row, as for a comment that is gone. */
+const missing = new Set<number>();
 
 const record = (first: unknown, rest: unknown[]) => {
-  if (Array.isArray(first) && Array.isArray((first as unknown as TemplateStringsArray).raw)) {
-    statements.push(
-      (first as string[]).reduce((acc, chunk, i) => acc + (i ? `$${i}` : '') + chunk, '')
-    );
-  } else {
-    statements.push(String(first));
-  }
+  const text =
+    Array.isArray(first) && Array.isArray((first as unknown as TemplateStringsArray).raw)
+      ? (first as string[]).reduce((acc, chunk, i) => acc + (i ? `$${i}` : '') + chunk, '')
+      : String(first);
+  statements.push(text);
+  // The clear: an unheld author's comment, cleared.
+  if (text.includes('WITH target AS'))
+    return rest.some((v) => typeof v === 'number' && missing.has(v))
+      ? []
+      : [{ userId: 1, held: false, cleared: true }];
   return [] as unknown[];
 };
+/** The statement that reopens reports. */
+const reopen = () => statements.find((sql) => sql.includes('UPDATE "Report"')) ?? '';
 
 dbMock.dbWrite.$queryRaw.mockImplementation(async (first: unknown, ...rest: unknown[]) =>
   record(first, rest)
@@ -39,14 +46,13 @@ const { bulkClearCommentTosViolation } = await import('~/server/services/comment
 describe('clearing a comment ToS flag', () => {
   beforeEach(() => {
     statements.length = 0;
-    dbMock.dbWrite.commentV2.update.mockResolvedValue({ id: 7 });
-    dbMock.dbWrite.comment.update.mockResolvedValue({ id: 7 });
+    missing.clear();
   });
 
   it('reopens ONLY the reports the flag actioned', async () => {
     await bulkClearCommentV2TosViolation({ ids: [7] });
 
-    const sql = statements[0] ?? '';
+    const sql = reopen();
     // `= Actioned`, never `<> Pending`: the second form also reopens a moderator's dismissal.
     expect(sql).toMatch(/r\.status = \$\d+::"ReportStatus"/);
     expect(sql).not.toMatch(/r\.status <> /);
@@ -57,7 +63,11 @@ describe('clearing a comment ToS flag', () => {
     const { ReportStatus } = await import('~/shared/utils/prisma/enums');
     await bulkClearCommentV2TosViolation({ ids: [7] });
 
-    const call = dbMock.dbWrite.$queryRaw.mock.calls[0];
+    const call = dbMock.dbWrite.$queryRaw.mock.calls.find(([first]) =>
+      Array.from(first as string[])
+        .join('')
+        .includes('UPDATE "Report"')
+    );
     expect(call?.slice(1)).toContain(ReportStatus.Pending);
     expect(call?.slice(1)).toContain(ReportStatus.Actioned);
   });
@@ -65,7 +75,7 @@ describe('clearing a comment ToS flag', () => {
   it('scopes to TOSViolation reports on that comment', async () => {
     await bulkClearCommentV2TosViolation({ ids: [7] });
 
-    const sql = statements[0] ?? '';
+    const sql = reopen();
     expect(sql).toContain('"CommentV2Report"');
     expect(sql).toContain('c."commentV2Id"');
     expect(sql).toContain('r.reason =');
@@ -73,7 +83,7 @@ describe('clearing a comment ToS flag', () => {
 
   it('counts rows it cleared, not ids it was handed', async () => {
     // A comment already unflagged must not count, or the caller reports a restore that did nothing.
-    dbMock.dbWrite.commentV2.update.mockRejectedValueOnce(new Error('no such row'));
+    missing.add(8);
 
     const result = await bulkClearCommentV2TosViolation({ ids: [7, 8] });
 
@@ -84,7 +94,7 @@ describe('clearing a comment ToS flag', () => {
     // Not a formality: an unguarded loop would emit a bare UPDATE with no id bound.
     const result = await bulkClearCommentV2TosViolation({ ids: [] });
 
-    expect(result).toEqual({ count: 0, reopenedReports: 0 });
+    expect(result).toEqual({ count: 0, reopenedReports: 0, retainedHidden: 0 });
     expect(statements).toHaveLength(0);
   });
 
@@ -93,7 +103,7 @@ describe('clearing a comment ToS flag', () => {
     // wrong for reopening. If it ever starts reusing it, this fails.
     await bulkClearCommentTosViolation({ ids: [7] });
 
-    const sql = statements[0] ?? '';
+    const sql = reopen();
     expect(sql).toContain('"CommentReport"');
     expect(sql).toContain('c."commentId"');
     expect(sql).not.toMatch(/r\.status <> /);

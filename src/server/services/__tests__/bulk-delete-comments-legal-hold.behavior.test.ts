@@ -41,7 +41,11 @@ vi.mock('~/server/rewards', async (importOriginal) => ({
   reportAcceptedReward: { apply: reward },
 }));
 
-import { bulkDeleteComments } from '~/server/services/comment.service';
+import {
+  bulkClearCommentTosViolation,
+  bulkDeleteComments,
+} from '~/server/services/comment.service';
+import { bulkClearCommentV2TosViolation } from '~/server/services/commentsv2.service';
 import { isLegalHoldAbort } from '~/server/services/legal-hold.service';
 
 const CLEAN = 1;
@@ -83,6 +87,11 @@ beforeAll(async () => {
       id int PRIMARY KEY, "commentId" int UNIQUE REFERENCES "CommentV2"(id) ON DELETE SET NULL
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
+    CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Dismissed');
+    CREATE TYPE "ReportReason" AS ENUM ('TOSViolation', 'NSFW', 'Other');
+    CREATE TABLE "Report" (id int PRIMARY KEY, status "ReportStatus" NOT NULL, reason "ReportReason" NOT NULL);
+    CREATE TABLE "CommentReport" ("commentId" int NOT NULL, "reportId" int NOT NULL);
+    CREATE TABLE "CommentV2Report" ("commentV2Id" int NOT NULL, "reportId" int NOT NULL);
   `);
 });
 
@@ -97,7 +106,8 @@ beforeEach(async () => {
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
-    TRUNCATE "CsamReport", "Image", "Comment", "CommentV2", "Thread", "Model";
+    TRUNCATE "CsamReport", "Image", "Comment", "CommentV2", "Thread", "Model", "Report",
+      "CommentReport", "CommentV2Report";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "Comment" (id, "userId", "modelId", content) VALUES ${rows()};
     INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES ${rows()};
@@ -114,7 +124,8 @@ beforeEach(async () => {
     return (await holder.db.query(sql.text, sql.values)).rows;
   };
   // The stand-in has one connection, so a statement sent outside the transaction would still land
-  // inside it. In production it would not: any write on the shared client while one is open fails.
+  // inside it. In production it would run on another connection, outside the transaction and its
+  // rollback, so one sent there is an error here.
   let inTransaction = false;
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (
     first: TemplateStringsArray | Prisma.Sql,
@@ -459,5 +470,75 @@ describe('both tables in one batch', () => {
 
     expect(metrics.model.queueUpdate.mock.calls).toEqual([[CLEAN * 100]]);
     expect(metrics.user.queueUpdate.mock.calls).toEqual([[CLEAN + 50]]);
+  });
+});
+
+const CLEARS = [
+  ['Comment', bulkClearCommentTosViolation, 'CommentReport', 'commentId'],
+  ['CommentV2', bulkClearCommentV2TosViolation, 'CommentV2Report', 'commentV2Id'],
+] as const;
+
+describe.each(CLEARS)('restoring %s from a ToS flag', (table, clear, reportTable, reportKey) => {
+  beforeEach(async () => {
+    // Every comment flagged, each with the ToS report the flag actioned.
+    await holder.db.exec(`
+      UPDATE "${table}" SET "tosViolation" = true;
+      INSERT INTO "Report" (id, status, reason) SELECT id, 'Actioned', 'TOSViolation' FROM "${table}";
+      INSERT INTO "${reportTable}" ("${reportKey}", "reportId") SELECT id, id FROM "${table}";
+    `);
+  });
+  const reports = async () =>
+    Object.fromEntries(
+      (
+        await holder.db.query<{ id: number; status: string }>(`SELECT id, status FROM "Report"`)
+      ).rows.map((r) => [r.id, r.status])
+    );
+
+  it('puts an unheld author’s comment back and reopens its report (control)', async () => {
+    await expect(clear({ ids: ids(CLEAN) })).resolves.toEqual({
+      count: 2,
+      reopenedReports: 2,
+      retainedHidden: 0,
+    });
+    expect(await state(table)).toMatchObject({ 11: 'public', 12: 'public' });
+    expect(await reports()).toMatchObject({ 11: 'Pending', 12: 'Pending' });
+  });
+
+  it('leaves a held author’s comment hidden, its report as it was, and says how many', async () => {
+    await createMarker();
+
+    await expect(clear({ ids: ids(CLEAN, HELD, MARKED) })).resolves.toEqual({
+      count: 2,
+      reopenedReports: 2,
+      retainedHidden: 4,
+    });
+    expect(await state(table)).toEqual({
+      11: 'public',
+      12: 'public',
+      21: 'hidden',
+      22: 'hidden',
+      31: 'hidden',
+      32: 'hidden',
+    });
+    expect(await reports()).toMatchObject({ 21: 'Actioned', 31: 'Actioned' });
+    expect(retainedLogs().sort()).toEqual([HELD, MARKED]);
+  });
+
+  it('clears nothing while the marker table stands without its view', async () => {
+    await createMarker(false);
+
+    await expect(clear({ ids: ids(CLEAN) })).resolves.toMatchObject({
+      count: 0,
+      retainedHidden: 2,
+    });
+    expect(await state(table)).toMatchObject({ 11: 'hidden', 12: 'hidden' });
+  });
+
+  it('counts a missing comment as neither cleared nor kept', async () => {
+    await expect(clear({ ids: [999] })).resolves.toEqual({
+      count: 0,
+      reopenedReports: 0,
+      retainedHidden: 0,
+    });
   });
 });

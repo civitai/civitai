@@ -34,7 +34,11 @@ import type {
   ToggleThreadMuteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
-import { accountHoldSql, logHoldRetained } from '~/server/services/legal-hold.service';
+import {
+  accountHoldSql,
+  holdMarkerViewExists,
+  logHoldRetained,
+} from '~/server/services/legal-hold.service';
 import {
   getBlockCheckOwnerIdsForComment,
   getBlockCheckOwnerIdsForReply,
@@ -1301,24 +1305,21 @@ export async function getCommentsInfinite({
  *    moment it is being restored.
  */
 export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0, reopenedReports: 0 };
+  if (ids.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0 };
 
   const enums = await import('~/shared/utils/prisma/enums');
+  const markerView = await holdMarkerViewExists();
 
   let reopenedReports = 0;
   // Rows actually cleared, NOT ids submitted — a comment already unflagged must not be counted, or the
   // caller reports a restore that restored nothing.
   let count = 0;
+  const retained: number[] = [];
 
   for (const id of ids) {
-    const updated = await dbWrite.commentV2
-      .update({
-        where: { id },
-        data: { tosViolation: false },
-        select: { id: true },
-      })
-      .catch(() => null);
-    if (!updated) continue;
+    const outcome = await clearTosUnlessHeld('CommentV2', id, markerView);
+    if (outcome?.held) retained.push(outcome.userId);
+    if (!outcome?.cleared) continue;
     count += 1;
 
     // Only `Actioned` rows: a report someone Dismissed for its own reasons was not closed by this flag,
@@ -1335,5 +1336,30 @@ export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] })
     reopenedReports += reports.length;
   }
 
-  return { count, reopenedReports };
+  if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
+  return { count, reopenedReports, retainedHidden: retained.length };
+}
+
+/**
+ * Clears the ToS flag on the comment `id` unless its author is held: a held author's comment a
+ * moderator's delete kept, hidden, stays hidden. The hold is read in the same statement as the write.
+ */
+export async function clearTosUnlessHeld(
+  table: 'Comment' | 'CommentV2',
+  id: number,
+  markerView: boolean
+) {
+  const [row] = await dbWrite.$queryRaw<{ userId: number; held: boolean; cleared: boolean }[]>`
+    WITH target AS (
+      SELECT c.id, c."userId", ${accountHoldSql(Prisma.raw('c."userId"'), markerView)} AS held
+      FROM ${Prisma.raw(`"${table}"`)} c WHERE c.id = ${id}
+    ), cleared AS (
+      UPDATE ${Prisma.raw(`"${table}"`)} c SET "tosViolation" = false, "updatedAt" = now()
+      FROM target t WHERE c.id = t.id AND t.held IS FALSE
+      RETURNING c.id
+    )
+    SELECT t."userId", t.held IS NOT FALSE AS held, EXISTS (SELECT 1 FROM cleared) AS cleared
+    FROM target t
+  `;
+  return row ?? null;
 }
