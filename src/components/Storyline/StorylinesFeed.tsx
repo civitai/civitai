@@ -16,12 +16,11 @@ import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import { openStorylineManageModal } from '~/components/Storyline/manage/openStorylineManageModal';
 import { openStorylineFirstChapterModal } from '~/components/Storyline/openStorylineFirstChapterModal';
 import { storylineUrl, storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
-import { StorylineFiltersDropdown } from '~/components/Storyline/StorylineFiltersDropdown';
 import type { StorylineFeedFilter } from '~/components/Storyline/StorylineFiltersDropdown';
+import type { StorylineFeedSort } from '~/components/Storyline/StorylineFeedFilters';
 import {
   StorylineClosedChip,
   StorylinePriceChip,
@@ -36,41 +35,9 @@ import { trpc } from '~/utils/trpc';
 
 type StorylineCard = RouterOutput['storyline']['getInfinite']['items'][number];
 
-export const STORYLINE_FEED_SORTS = [
-  { value: 'newest', label: 'Newest' },
-  { value: 'mostChapters', label: 'Most chapters' },
-] as const;
-
-export type StorylineFeedSort = (typeof STORYLINE_FEED_SORTS)[number]['value'];
-
 const gridClass =
   'grid list-none grid-cols-2 gap-2.5 p-0 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))] sm:gap-4';
 const cardClass = `flex h-full flex-col overflow-hidden ${storylineCardClass}`;
-
-/** The sort and filter menus, kept beside the page title like any other feed's. */
-export function StorylinesFeedControls({
-  sort,
-  onSort,
-  filter,
-  onFilter,
-}: {
-  sort: StorylineFeedSort;
-  onSort: (sort: StorylineFeedSort) => void;
-  filter: StorylineFeedFilter;
-  onFilter: (filter: StorylineFeedFilter) => void;
-}) {
-  return (
-    <Group gap={8} wrap="nowrap">
-      <SelectMenuV2
-        label={STORYLINE_FEED_SORTS.find((s) => s.value === sort)?.label ?? sort}
-        value={sort}
-        onClick={onSort}
-        options={[...STORYLINE_FEED_SORTS]}
-      />
-      <StorylineFiltersDropdown value={filter} onChange={onFilter} />
-    </Group>
-  );
-}
 
 export function StorylinesFeed({
   filter,

@@ -3263,8 +3263,10 @@ export async function getStorylinesInfinite({
   const isModerator = !!viewer?.isModerator;
 
   const where: Prisma.Sql[] = [
-    // As `isStorylineHidden`, including a storyline with no chapter 1 yet.
-    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (rc.id IS NOT NULL AND st."tosViolation" = false AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL))`,
+    // As `isStorylineHidden`, including a storyline with no chapter 1 yet, except that a taken-down
+    // one is out of the feed for its owner and moderators too. They still open it by its URL.
+    Prisma.sql`st."tosViolation" = false`,
+    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (rc.id IS NOT NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL))`,
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (${storyLevelSql} & ${browsingLevel}::int) <> 0)`,
   ];
   // One array parameter, not one bind per id: the list can run to tens of thousands.

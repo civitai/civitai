@@ -181,6 +181,7 @@ import type {
   MetricsImageFilterableAttribute,
   MetricsImageSortableAttribute,
 } from '~/server/search-index/metrics-images.search-index';
+import { refuseRetiredIndexRead } from '~/server/search-index/retired-index-read';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -3552,9 +3553,12 @@ export const getAllImagesIndex = async (
   }
 
   if (!searchResults.length) {
+    // Named like the non-empty return below, so a caller can tell a retired-index refusal
+    // (`retired`) from an index that answered nothing (`meili`).
     return {
       nextCursor: undefined,
       items: [],
+      ...(searchSource && { source: searchSource }),
     };
   }
 
@@ -3878,6 +3882,15 @@ export async function getImagesFromSearch(input: ImageSearchInput) {
 }
 
 async function searchImages(input: ImageSearchInput) {
+  // `retired` names the refusal on the wire, so a caller can tell this empty page from an index
+  // that answered nothing (tests/preview-image-feed.spec.ts relies on it).
+  if (refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'searchImages'))
+    return {
+      data: [],
+      nextCursor: undefined,
+      source: 'retired' as const,
+      filterMode: 'none' as const,
+    };
   if (!metricsSearchClient)
     return {
       data: [],
@@ -3928,6 +3941,10 @@ export async function getImagesFromFeedSearch(
     throw throwInternalServerError(
       new Error('getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path')
     );
+
+  // ImagesFeed reads the feeds index (`metrics_images_v1`) through FEED_IMAGE_HOST.
+  if (refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'feedSearch'))
+    return { nextCursor: undefined, items: [] };
 
   try {
     const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
@@ -4315,7 +4332,8 @@ function buildHubFilter(
 }
 
 export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
-  if (!metricsSearchClient) return { data: [], nextCursor: undefined };
+  if (!metricsSearchClient || refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'preFilter'))
+    return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
 
   const {
@@ -4954,7 +4972,8 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
 }
 
 export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
-  if (!metricsSearchClient) return { data: [], nextCursor: undefined };
+  if (!metricsSearchClient || refuseRetiredIndexRead(METRICS_IMAGES_SEARCH_INDEX, 'postFilter'))
+    return { data: [], nextCursor: undefined };
   let { postIds = [] } = input;
 
   const {

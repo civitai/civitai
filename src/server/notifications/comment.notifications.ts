@@ -10,6 +10,7 @@ import { storylineUrl } from '~/components/Storyline/storyline-routes';
 import { OWNER_SUBMISSIONS_URL } from '~/server/notifications/app-listing.notifications';
 import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { QS } from '~/utils/qs';
+import { withDefiniteArticle } from '~/utils/string-helpers';
 
 /** A live CommentV3 row written since the cursor. Tombstones keep their row and must not notify. */
 export const liveV3Since = (lastSent: string) =>
@@ -314,7 +315,9 @@ export const commentNotifications = createNotificationProcessor({
     category: NotificationCategory.Comment,
     priority: CommentNotificationPriority.DirectResponse,
     prepareMessage: ({ details }) => ({
-      message: `${details.username} responded to your comment on the ${details.modelName} model`,
+      message: `${details.username} responded to your comment on ${withDefiniteArticle(
+        details.modelName
+      )} model`,
       url: getModelCommentThreadUrl({
         modelId: details.modelId,
         commentId: details.parentId ?? details.commentId,
@@ -445,7 +448,9 @@ export const commentNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       if (!details.threadType) {
         return {
-          message: `${details.username} responded to the ${details.parentType} thread on the ${details.modelName} model`,
+          message: `${details.username} responded to the ${
+            details.parentType
+          } thread on ${withDefiniteArticle(details.modelName)} model`,
           url: `/models/${details.modelId}?dialog=${details.parentType}Thread&${details.parentType}Id=${details.parentId}&highlight=${details.commentId}`,
         };
       }
@@ -509,13 +514,17 @@ export const commentNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       if (!details.version) {
         return {
-          message: `${details.username} responded to your review on the ${details.modelName} model`,
+          message: `${details.username} responded to your review on ${withDefiniteArticle(
+            details.modelName
+          )} model`,
           url: `/models/${details.modelId}?dialog=reviewThread&reviewId=${details.reviewId}&highlight=${details.commentId}`,
         };
       }
 
       return {
-        message: `${details.username} responded to your review on the ${details.modelName} model`,
+        message: `${details.username} responded to your review on ${withDefiniteArticle(
+          details.modelName
+        )} model`,
         url: `/reviews/${details.reviewId}?highlight=${details.commentId}`,
       };
     },
@@ -561,14 +570,15 @@ export const commentNotifications = createNotificationProcessor({
     prepareMessage: ({ details }) => {
       if (details.version) {
         let message = `${details.username} commented on your image`;
-        if (details.modelName) message += ` posted to the ${details.modelName} model`;
+        if (details.modelName)
+          message += ` posted to ${withDefiniteArticle(details.modelName)} model`;
         const url = `/images/${details.imageId}?highlight=${details.commentId}`;
         return { message, url };
       }
       // Prep message
       const message = `${details.username} commented on your ${
         details.reviewId ? 'review image' : 'example image'
-      } posted to the ${details.modelName} model`;
+      } posted to ${withDefiniteArticle(details.modelName)} model`;
       // Prep URL
       const searchParams: Record<string, string> = {
         model: details.modelId,
@@ -640,7 +650,7 @@ export const commentNotifications = createNotificationProcessor({
       // Untitled is the common case for model-gallery posts, and without a disambiguator a creator
       // gets a run of identical rows. Same fallback new-image-comment uses.
       let message = `${details.username} commented on your post`;
-      if (details.modelName) message += ` on the ${details.modelName} model`;
+      if (details.modelName) message += ` on ${withDefiniteArticle(details.modelName)} model`;
       return { message, url: `/posts/${details.postId}?highlight=${details.commentId}` };
     },
     prepareQuery: ({ lastSent }) => `
