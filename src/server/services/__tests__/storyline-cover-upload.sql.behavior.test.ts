@@ -82,6 +82,12 @@ beforeAll(async () => {
     '20261122120000_storyline_pending_chapter',
   ])
     await db.pg.exec(migration(name));
+  // Needs "Image" (made above); re-runnable, as its header says.
+  for (const name of [
+    '20261210120000_storyline_cover_upload',
+    '20261210120000_storyline_cover_upload',
+  ])
+    await db.pg.exec(migration(name));
 
   await db.pg.exec(`
     INSERT INTO "User" (id, username, "isModerator") VALUES
@@ -109,7 +115,11 @@ beforeAll(async () => {
       -- Chapter images: chapter 1 of this storyline, a removed chapter of it, another storyline's.
       (60, 'chapter-1-image', 1, ${OWNER}, 100, 'Scanned'),
       (61, 'removed-chapter-image', 1, ${OWNER}, 101, 'Scanned'),
-      (62, 'other-storyline-image', 1, ${OWNER}, 102, 'Scanned');
+      (62, 'other-storyline-image', 1, ${OWNER}, 102, 'Scanned'),
+      -- In no post like an upload, but left behind by a deleted post: never uploaded here.
+      (58, 'left-by-a-deleted-post', 1, ${OWNER}, NULL, 'Scanned');
+    INSERT INTO "StorylineCoverUpload" ("storylineId", "imageId") VALUES
+      (1, 50), (1, 51), (1, 52), (1, 53), (1, 54), (1, 55), (1, 56), (1, 57);
     UPDATE "Image" SET "tosViolation" = true WHERE id = 57;
     UPDATE "Image" SET minor = true WHERE id = 55;
   `);
@@ -162,6 +172,11 @@ describe('an uploaded card cover, read by the feed', () => {
 
   it('shows nothing for a rated upload while it is being scanned again', async () => {
     await expect(coverFor(56)).resolves.toBeNull();
+  });
+
+  it("never shows its owner's image in no post that was not uploaded as its pick", async () => {
+    await expect(coverFor(58)).resolves.toBeNull();
+    await expect(coverFor(58, { id: OWNER })).resolves.toBeNull();
   });
 
   it("never shows someone else's image in no post", async () => {

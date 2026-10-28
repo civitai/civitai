@@ -2213,6 +2213,7 @@ model Image {
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
+  storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
 
   @@index([featuredAt])
@@ -10350,6 +10351,7 @@ model Storyline {
   pendingChapters StorylinePendingChapter[]
   collaborators StorylineCollaborator[]
   reports       StorylineReport[]
+  coverUploads  StorylineCoverUpload[]
   /// The storyline's own discussion (commentsv2 entity type `storyline`), separate from chapter 1's post thread.
   thread        Thread?
 
@@ -10520,6 +10522,19 @@ model StorylineEarlyAccessSignup {
   createdAt   DateTime @default(now())
 
   @@index([createdAt])
+}
+
+/// An image uploaded through a storyline's Manage as its card cover or banner. An image in no post
+/// is used as a pick only when it is listed here, which no image a deleted post left behind is.
+model StorylineCoverUpload {
+  storylineId Int
+  storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  imageId     Int
+  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@id([storylineId, imageId])
+  @@index([imageId])
 }
 
 model StorylineReport {

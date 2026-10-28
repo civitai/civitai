@@ -655,12 +655,14 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     decision: 'owner-checked',
     guards: { imageId: 'if (image.post.userId !== userId)' },
   },
-  // The owner's cover and banner picks: from this storyline's own chapters by the owner or an
-  // endorsed collaborator, refused otherwise. A pick sent back unchanged is not judged again.
+  // The cover and banner picks: from this storyline's own chapters by the owner or an endorsed
+  // collaborator, or an image this request uploaded, refused otherwise. A pick sent back unchanged
+  // is not judged again. `imageId` records an upload: only ids `resolveCoverImageId` just returned.
   'src/server/services/storyline.service.ts#updateStoryline': {
-    writes: ['coverImageId', 'heroImageId'],
+    writes: ['imageId', 'coverImageId', 'heroImageId'],
     decision: 'owner-checked',
     guards: {
+      imageId: 'await assertStorylinePicks(dbWrite, {',
       coverImageId: 'await assertStorylinePicks(dbWrite, {',
       heroImageId: 'await assertStorylinePicks(dbWrite, {',
     },

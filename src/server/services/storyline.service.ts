@@ -809,18 +809,19 @@ export async function updateStoryline({
   isModerator?: boolean;
 }) {
   const current = await getOwnedStoryline({ storylineId: id, userId, isModerator });
-  // An upload is a file the caller put up: a key already behind another account's image is not.
+  // An upload is a file the caller just put up, so its key is behind no image yet. One that is
+  // could be an image left behind by a deleted post, which must not come back as a cover.
   for (const upload of [coverUpload, heroUpload])
     if (
       upload &&
-      (await dbWrite.image.findFirst({
-        where: { url: upload.url, userId: { not: userId } },
-        select: { id: true },
-      }))
+      (await dbWrite.image.findFirst({ where: { url: upload.url }, select: { id: true } }))
     )
       throw throwBadRequestError(STORYLINE_PICK_REFUSALS.cannotUse);
   if (coverUpload) coverImageId = await resolveCoverImageId({ coverImage: coverUpload, userId });
   if (heroUpload) heroImageId = await resolveCoverImageId({ coverImage: heroUpload, userId });
+  const uploadedIds = [coverUpload && coverImageId, heroUpload && heroImageId].filter(
+    (imageId): imageId is number => !!imageId
+  );
   if (maxNsfwLevel !== undefined) {
     if (!isStorylineCeilingLevel(maxNsfwLevel))
       throw throwBadRequestError('Invalid maximum rating');
@@ -835,6 +836,7 @@ export async function updateStoryline({
     storylineId: id,
     ownerId: current.userId,
     callerId: userId,
+    uploadedIds,
     maxNsfwLevel: storylineCeiling({
       maxNsfwLevel: maxNsfwLevel ?? current.maxNsfwLevel,
       minorByScan: current.minorByScan,
@@ -849,19 +851,26 @@ export async function updateStoryline({
   // raising it again brings them back.
   // Closing a Complete storyline to continuations is left to the placement layer reading the
   // status, so there is no second switch here to disagree with it.
-  const updated = await dbWrite.storyline.update({
-    where: { id },
-    data: {
-      title,
-      status,
-      maxNsfwLevel,
-      whoCanContinue,
-      coverImageId,
-      heroImageId,
-      heroImagePosition,
-    },
-    select: { ...storylineSelect, ...storylinePicksSelect },
-  });
+  const [, updated] = await dbWrite.$transaction([
+    // What lets the read path use an image in no post as this storyline's pick.
+    dbWrite.storylineCoverUpload.createMany({
+      data: uploadedIds.map((imageId) => ({ storylineId: id, imageId })),
+      skipDuplicates: true,
+    }),
+    dbWrite.storyline.update({
+      where: { id },
+      data: {
+        title,
+        status,
+        maxNsfwLevel,
+        whoCanContinue,
+        coverImageId,
+        heroImageId,
+        heroImagePosition,
+      },
+      select: { ...storylineSelect, ...storylinePicksSelect },
+    }),
+  ]);
   // An edited title is how an owner has a title verdict looked at again.
   if (title !== undefined && title !== current.title)
     scanEntityInBackground({ entityType: 'Storyline', entityId: id });
@@ -1342,6 +1351,7 @@ async function assertStorylinePicks(
     storylineId,
     ownerId,
     callerId,
+    uploadedIds = [],
     maxNsfwLevel,
     imageIds,
   }: {
@@ -1349,6 +1359,8 @@ async function assertStorylinePicks(
     ownerId: number;
     /** Who is picking: an image they uploaded (in no post) is theirs to use. */
     callerId: number;
+    /** Images this request uploaded. The only images in no post a pick may be. */
+    uploadedIds?: number[];
     maxNsfwLevel: number;
     /** undefined is no change and null clears: neither is checked. */
     imageIds: (number | null | undefined)[];
@@ -1387,7 +1399,11 @@ async function assertStorylinePicks(
       chapter.storylineId === storylineId &&
       !chapter.removedAt &&
       allowedAuthors.has(chapter.userId);
-    const uploaded = !!image && image.postId == null && image.userId === callerId;
+    const uploaded =
+      !!image &&
+      image.postId == null &&
+      image.userId === callerId &&
+      uploadedIds.includes(image.id);
     if (!image || (!fromChapter && !uploaded))
       throw throwBadRequestError(STORYLINE_PICK_REFUSALS.notAllowed);
     // The caller's own upload is taken whatever its scan says: a refusal here would tell them the
@@ -3368,6 +3384,7 @@ async function getChosenStorylineImages(
         uploaderIsModerator: boolean | null;
         uploaderBannedAt: Date | null;
         uploaderDeletedAt: Date | null;
+        uploadedHere: boolean;
         postUserId: number;
         postNsfwLevel: number;
         publishedAt: Date | null;
@@ -3384,7 +3401,7 @@ async function getChosenStorylineImages(
         p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt",
         st."maxNsfwLevel", st."minorByScan", st."userId" AS "storylineUserId",
         iu."isModerator" AS "uploaderIsModerator", iu."bannedAt" AS "uploaderBannedAt",
-        iu."deletedAt" AS "uploaderDeletedAt"
+        iu."deletedAt" AS "uploaderDeletedAt", cu."imageId" IS NOT NULL AS "uploadedHere"
       FROM unnest(${pairs.map((pair) => pair.storylineId)}::int[], ${pairs.map(
       (pair) => pair.imageId
     )}::int[]) AS pick("storylineId", "imageId")
@@ -3394,15 +3411,17 @@ async function getChosenStorylineImages(
       LEFT JOIN "Post" p ON p.id = i."postId"
       LEFT JOIN "User" pu ON pu.id = p."userId"
       JOIN "User" iu ON iu.id = i."userId"
+      LEFT JOIN "StorylineCoverUpload" cu ON cu."storylineId" = st.id AND cu."imageId" = i.id
       WHERE ${storylineImageVisible(resolved)}
     `;
     for (const row of rows) {
-      // An upload, in no post: only one by the storyline's owner or a moderator, as it was picked,
-      // whose account still stands and whom this reader has not blocked. A post-less image can
-      // also be one left behind by a deleted post, which this keeps out.
+      // An image in no post: only one uploaded as this storyline's pick (an image a deleted post
+      // left behind never is), by its owner or a moderator whose account still stands and whom
+      // this reader has not blocked.
       if (row.chapterId == null) {
         if (
           !row.postId &&
+          row.uploadedHere &&
           (row.userId === row.storylineUserId || row.uploaderIsModerator) &&
           !row.uploaderBannedAt &&
           !row.uploaderDeletedAt &&

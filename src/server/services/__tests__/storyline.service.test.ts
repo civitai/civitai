@@ -2736,6 +2736,8 @@ describe('covers and cast', () => {
     uploaderIsModerator: false,
     uploaderBannedAt: null,
     uploaderDeletedAt: null,
+    // Listed as uploaded here; only read for a pick in no post.
+    uploadedHere: true,
     postUserId: OWNER,
     postNsfwLevel: PG,
     publishedAt: new Date('2026-10-01'),
@@ -2832,6 +2834,10 @@ describe('covers and cast', () => {
     beforeEach(() => {
       w.storylineCollaborator.findMany.mockResolvedValue([{ userId: COLLABORATOR }] as never);
       w.storyline.update.mockResolvedValue({} as never);
+      // The array form a pick's save uses; a callback runs on the same client, as on create.
+      w.$transaction.mockImplementation(((arg: unknown) =>
+        typeof arg === 'function' ? arg(w) : Promise.all(arg as unknown[])) as never);
+      resolveCoverImageId.mockReset();
       images({
         1: { userId: OWNER },
         2: { userId: COLLABORATOR },
@@ -2916,16 +2922,52 @@ describe('covers and cast', () => {
       ).resolves.toBeDefined();
     });
 
-    it('takes an image its owner uploaded, as cover or banner', async () => {
-      await updateStoryline({ id: 10, userId: OWNER, coverImageId: 20, heroImageId: 20 });
-      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({
-        data: { coverImageId: 20, heroImageId: 20 },
+    /** Uploads a file the server makes image `imageId` of the caller, and picks it. */
+    const upload = (
+      imageId: number,
+      caller: { userId: number; isModerator?: boolean },
+      slot = 'coverUpload'
+    ) => {
+      resolveCoverImageId.mockResolvedValueOnce(imageId);
+      return updateStoryline({ id: 10, ...caller, [slot]: { url: UPLOAD_URL, type: 'image' } });
+    };
+
+    it('takes an image its owner uploads, as cover or banner, and records it as uploaded here', async () => {
+      await upload(20, { userId: OWNER });
+      await upload(20, { userId: OWNER }, 'heroUpload');
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 20 } });
+      expect(w.storyline.update.mock.calls[1][0]).toMatchObject({ data: { heroImageId: 20 } });
+      expect(w.storylineCoverUpload.createMany.mock.calls[0][0]).toEqual({
+        data: [{ storylineId: 10, imageId: 20 }],
+        skipDuplicates: true,
       });
     });
 
     it("takes a moderator's own upload on someone else's storyline", async () => {
-      await updateStoryline({ id: 10, userId: MODERATOR, isModerator: true, coverImageId: 22 });
+      await upload(22, { userId: MODERATOR, isModerator: true });
       expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 22 } });
+    });
+
+    // Only an image uploaded in this request: an image in no post can also be one a deleted post
+    // left behind, kept for a reason that must not bring it back as a cover.
+    it("refuses its owner's image in no post picked by id, and records nothing", async () => {
+      await expect(updateStoryline({ id: 10, userId: OWNER, coverImageId: 20 })).rejects.toThrow(
+        /or one you upload/
+      );
+      expect(w.storyline.update).not.toHaveBeenCalled();
+      expect(w.storylineCoverUpload.createMany).not.toHaveBeenCalled();
+    });
+
+    it('does not judge again an uploaded pick sent back unchanged', async () => {
+      w.storyline.findUnique.mockResolvedValue({
+        ...storylineRow(),
+        coverImageId: 20,
+        heroImageId: null,
+        heroImagePosition: 50,
+      } as never);
+      await updateStoryline({ id: 10, userId: OWNER, coverImageId: 20 });
+      expect(w.image.findMany).not.toHaveBeenCalled();
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 20 } });
     });
 
     // A refusal would tell the uploader their scan's verdict; the read gate keeps it hidden instead.
@@ -2935,37 +2977,32 @@ describe('covers and cast', () => {
       ['blocked by its scan', 26],
       ['of a minor', 27],
     ])("takes its owner's own upload %s, without a word", async (_n, id) => {
-      await updateStoryline({ id: 10, userId: OWNER, coverImageId: id });
+      await upload(id, { userId: OWNER });
       expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: id } });
     });
 
     it('keeps an upload whose scan has not finished, unlike an unrated chapter image', async () => {
-      await updateStoryline({ id: 10, userId: OWNER, coverImageId: 23 });
+      await upload(23, { userId: OWNER });
       expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 23 } });
       await expect(updateStoryline({ id: 10, userId: OWNER, coverImageId: 7 })).rejects.toThrow(
         /not been rated yet/
       );
     });
 
-    it("refuses an upload whose file is another account's image, and makes nothing", async () => {
+    // A fresh upload's key is behind no image yet; one that is may be a deleted post's leftover.
+    it('refuses an upload whose file is already an image, even its own, and makes nothing', async () => {
       w.image.findFirst.mockResolvedValueOnce({ id: 5 } as never);
       await expect(
         updateStoryline({ id: 10, userId: OWNER, coverUpload: { url: UPLOAD_URL, type: 'image' } })
       ).rejects.toThrow(/cannot be used as a cover or banner/);
-      expect(w.image.findFirst.mock.calls[0][0]).toMatchObject({
-        where: { url: UPLOAD_URL, userId: { not: OWNER } },
-      });
+      expect(w.image.findFirst.mock.calls[0][0]).toMatchObject({ where: { url: UPLOAD_URL } });
+      expect(w.image.findFirst.mock.calls[0][0].where).not.toHaveProperty('userId');
       expect(resolveCoverImageId).not.toHaveBeenCalled();
       expect(w.storyline.update).not.toHaveBeenCalled();
     });
 
     it('makes an uploaded file an image of the uploader, then picks it', async () => {
-      resolveCoverImageId.mockResolvedValueOnce(20);
-      await updateStoryline({
-        id: 10,
-        userId: OWNER,
-        coverUpload: { url: UPLOAD_URL, type: 'image' },
-      });
+      await upload(20, { userId: OWNER });
       expect(resolveCoverImageId).toHaveBeenCalledWith({
         coverImage: { url: UPLOAD_URL, type: 'image' },
         userId: OWNER,
@@ -3402,7 +3439,7 @@ describe('covers and cast', () => {
       await page({ id: 99 });
       const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
       expect(read.text).toContain(
-        'st.id AS "storylineId", i."postId", c.id AS "chapterId", p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt", p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt", st."maxNsfwLevel", st."minorByScan", st."userId" AS "storylineUserId", iu."isModerator" AS "uploaderIsModerator", iu."bannedAt" AS "uploaderBannedAt", iu."deletedAt" AS "uploaderDeletedAt" FROM unnest('
+        'st.id AS "storylineId", i."postId", c.id AS "chapterId", p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt", p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt", st."maxNsfwLevel", st."minorByScan", st."userId" AS "storylineUserId", iu."isModerator" AS "uploaderIsModerator", iu."bannedAt" AS "uploaderBannedAt", iu."deletedAt" AS "uploaderDeletedAt", cu."imageId" IS NOT NULL AS "uploadedHere" FROM unnest('
       );
     });
 
