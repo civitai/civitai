@@ -1,0 +1,210 @@
+name: tRPC server parity
+
+# Boots ONE production image twice, with ONE environment: once as Next (`server.js`, the default
+# CMD) and once as the standalone tRPC server (`node -- trpc-server/server.cjs`). Then it sends the
+# same requests to both and fails on any response difference that is not declared in
+# `scripts/trpc-server/parity/cases.mjs`. It also:
+#   - checks the standalone server registered instrumentation at BOOT (liveness heartbeat written
+#     and the instrumentation log lines present before it received any request);
+#   - fails if the standalone server stops emitting the request span an external latency alert
+#     keys on by name (`assert-spans.mjs`), with Next's own export as the positive control;
+#   - runs the same requests against a copy of the standalone server with its internal-header
+#     strip removed, and fails unless that break shows up as a red case — the negative control
+#     that proves this harness can see a broken server at all.
+#
+# Runs when anything that can change either server's answers changes: the server itself, the
+# image, Next/tRPC (package.json / lockfile / patches), the route modules it serves, and the
+# request policy the tRPC route applies.
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'scripts/trpc-server/**'
+      - 'scripts/ci/assert-standalone-boot-graph.mjs'
+      - 'Dockerfile'
+      - 'next.config.mjs'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'patches/**'
+      - 'src/pages/api/trpc/**'
+      - 'src/pages/api/live.ts'
+      - 'src/pages/api/health.ts'
+      - 'src/pages/api/ready.ts'
+      - 'src/pages/api/metrics.ts'
+      - 'src/proxy.ts'
+      - 'src/server/middleware/**'
+      - 'src/instrumentation.ts'
+      - 'src/instrumentation.node.ts'
+      - '.github/workflows/trpc-server-parity.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: trpc-server-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: Next vs standalone tRPC server
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    services:
+      # Throwaway stores, empty. DB-backed procedures therefore fail — on both servers alike,
+      # which is still compared.
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      IMAGE: civitai-web:parity
+      WORK: ${{ runner.temp }}/parity
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+
+      # The image build needs more disk and memory than a stock runner leaves free.
+      - name: Free disk and add swap
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force > /dev/null
+          sudo swapoff -a || true
+          sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile > /dev/null && sudo swapon /swapfile
+          df -h / && free -h
+
+      # The production image, exactly as the Dockerfile builds it — including the boot-graph gate,
+      # which now also loads the standalone server's requires from the shipped tree. The type
+      # check is skipped here only because the Lint workflow runs it on every PR.
+      - name: Build the image
+        env:
+          DOCKER_BUILDKIT: '1'
+        run: |
+          docker build --target runner --build-arg CIVITAI_SKIP_BUILD_TYPECHECK=1 -t "$IMAGE" .
+
+      - name: Write the shared environment
+        run: |
+          mkdir -p "$WORK"
+          node scripts/trpc-server/parity/make-env.mjs .env-example "$WORK/parity.env"
+
+      - name: Start the OTLP receiver
+        run: |
+          nohup node scripts/trpc-server/parity/otlp-stub.mjs --port 4318 --out "$WORK/spans.json" \
+            --watch 'executing api route (pages) /api/trpc/[trpc]' --watch 'test-span' \
+            > "$WORK/otlp-stub.log" 2>&1 &
+          echo $! > "$WORK/otlp-stub.pid"
+
+      # The negative control: the standalone server with ONE line removed — the strip of
+      # client-sent internal headers. The anchor must match exactly once, or the control would
+      # be testing nothing.
+      - name: Build the mutant server file
+        run: |
+          mkdir -p "$WORK/mutant"
+          cp scripts/trpc-server/server.cjs "$WORK/mutant/server.cjs"
+          anchor='^    compat.filterInternalHeaders(req.headers);$'
+          n=$(grep -c "$anchor" "$WORK/mutant/server.cjs" || true)
+          if [ "$n" != 1 ]; then echo "mutation anchor matched $n lines, expected 1"; exit 2; fi
+          sed -i "s|$anchor|    // MUTANT: internal-header strip removed|" "$WORK/mutant/server.cjs"
+          diff scripts/trpc-server/server.cjs "$WORK/mutant/server.cjs" || true
+          if cmp -s scripts/trpc-server/server.cjs "$WORK/mutant/server.cjs"; then echo "mutant is identical"; exit 2; fi
+
+      - name: Start the servers
+        run: |
+          common=(--detach --add-host host.docker.internal:host-gateway --env-file "$WORK/parity.env")
+          docker run "${common[@]}" --name next -p 3000:3000 "$IMAGE"
+          docker run "${common[@]}" --name trpc -p 3001:3000 "$IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" --name mutant -p 3002:3000 \
+            -v "$WORK/mutant/server.cjs:/app/trpc-server/server.cjs:ro" "$IMAGE" node -- trpc-server/server.cjs
+
+      # Before ANY request reaches it: the standalone server must have run instrumentation at boot.
+      # The heartbeat file is written by instrumentation's liveness heartbeat every 2s.
+      - name: Instrumentation ran at boot
+        run: |
+          for i in $(seq 1 180); do
+            if docker logs trpc 2>&1 | grep -q '\[trpc-server\] ready'; then break; fi
+            if [ "$(docker inspect -f '{{.State.Running}}' trpc)" != true ]; then echo "trpc exited"; docker logs trpc 2>&1 | tail -100; exit 1; fi
+            sleep 2
+          done
+          docker logs trpc 2>&1 | grep -q '\[trpc-server\] ready' || { echo "trpc never became ready"; docker logs trpc 2>&1 | tail -100; exit 1; }
+          logs=$(docker logs trpc 2>&1)
+          for line in '[instrumentation] Running in nodejs runtime' '[instrumentation.node] OTEL SDK started' '[trpc-server] instrumentation registered'; do
+            grep -qF "$line" <<< "$logs" || { echo "missing boot log line: $line"; tail -100 <<< "$logs"; exit 1; }
+            echo "found: $line"
+          done
+          # Every line above is logged before the server logs "ready", which gates the first
+          # request; nothing has been sent to it yet. Now the heartbeat must be live and advancing.
+          a=$(docker exec trpc cat /tmp/heartbeat)
+          sleep 5
+          b=$(docker exec trpc cat /tmp/heartbeat)
+          echo "heartbeat $a -> $b"
+          [ -n "$a" ] && [ "$b" -gt "$a" ] || { echo "liveness heartbeat is not advancing"; exit 1; }
+          # Positive control: the same on Next.
+          na=$(docker exec next cat /tmp/heartbeat 2>/dev/null || echo 0)
+          sleep 3
+          nb=$(docker exec next cat /tmp/heartbeat 2>/dev/null || echo 0)
+          echo "next heartbeat $na -> $nb"
+
+      - name: Wait for all three to answer
+        run: |
+          token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
+          for port in 3000 3001 3002; do
+            ok=
+            for i in $(seq 1 150); do
+              if curl -fsS -o /dev/null "http://127.0.0.1:$port/api/live?token=$token"; then ok=1; break; fi
+              sleep 2
+            done
+            [ -n "$ok" ] || { echo "port $port never answered /api/live"; docker logs next 2>&1 | tail -60; docker logs trpc 2>&1 | tail -60; exit 1; }
+            echo "port $port is up"
+          done
+
+      - name: Parity (Next vs standalone)
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/parity.json"
+
+      - name: Negative control (Next vs mutant must be red)
+        if: always()
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3002 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/mutant.json" \
+            --expect-red client-sent-internal-headers
+
+      - name: The alerted span is still emitted
+        if: always()
+        run: |
+          # The batch span processor flushes every 500ms here; give it a few cycles.
+          sleep 5
+          kill -TERM "$(cat "$WORK/otlp-stub.pid")"
+          sleep 2
+          ip() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"; }
+          node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
+            --reference-ip "$(ip next)" --candidate-ip "$(ip trpc)"
+
+      - name: Server logs
+        if: always()
+        run: |
+          for c in next trpc mutant; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trpc-server-parity
+          path: |
+            ${{ runner.temp }}/parity/*.json
+            ${{ runner.temp }}/parity/otlp-stub.log
+          if-no-files-found: ignore
