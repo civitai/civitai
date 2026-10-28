@@ -569,6 +569,22 @@ export async function processCsamReport(runStart: CsamReportProps) {
   }
 }
 
+export function getReportedUserAdditionalInfo(
+  email: string | null,
+  userActivity: CsamReportUserActivity[]
+) {
+  return (
+    [
+      email ? `Email: ${email}` : null,
+      userActivity.some((a) => a.details?.type === 'image-upload-request')
+        ? UPLOAD_REQUEST_IP_NOTE
+        : null,
+    ]
+      .filter(Boolean)
+      .join('\n') || undefined
+  );
+}
+
 async function getInitialReportData(claim: SendClaim) {
   const { report } = claim;
   const reportingUser = await getReportingUser(report.reportedById);
@@ -603,15 +619,7 @@ async function getInitialReportData(claim: SendClaim) {
           dateTime: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
         };
       }),
-      additionalInfo:
-        [
-          reportedUser.email ? `Email: ${reportedUser.email}` : null,
-          userActivity?.some((a) => a.details?.type === 'image-upload-request')
-            ? UPLOAD_REQUEST_IP_NOTE
-            : null,
-        ]
-          .filter(Boolean)
-          .join('\n') || undefined,
+      additionalInfo: getReportedUserAdditionalInfo(reportedUser.email, userActivity),
     },
   } satisfies Report;
 }

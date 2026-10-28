@@ -6,6 +6,7 @@ import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as HttpErrors from '~/server/prom/http-errors';
 import type * as OriginHelpers from '~/server/utils/origin-helpers';
+import type * as ImageUploadAction from '~/server/services/image-upload-action.service';
 
 // Covers the FALLBACK image-upload relay (`/api/v1/image-upload/relay`).
 //
@@ -32,11 +33,13 @@ const {
   mockGetServerAuthSession,
   mockUploadImageBufferToStore,
   mockIsAllowedOriginRequest,
+  mockTrackImageUpload,
   prodFlag,
 } = vi.hoisted(() => ({
   mockGetServerAuthSession: vi.fn(),
   mockUploadImageBufferToStore: vi.fn(),
   mockIsAllowedOriginRequest: vi.fn(),
+  mockTrackImageUpload: vi.fn(),
   // A getter-backed box, so a single test can flip `isProd` without a second file.
   prodFlag: { value: false },
 }));
@@ -66,6 +69,11 @@ vi.mock('~/server/prom/http-errors', async (importOriginal) => ({
 vi.mock('~/server/utils/origin-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof OriginHelpers>()),
   isAllowedOriginRequest: mockIsAllowedOriginRequest,
+}));
+
+vi.mock('~/server/services/image-upload-action.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUploadAction>()),
+  trackImageUpload: mockTrackImageUpload,
 }));
 
 import handler, {
@@ -244,6 +252,8 @@ describe('image-upload relay', () => {
     const [buf, opts] = mockUploadImageBufferToStore.mock.calls[0];
     expect(Buffer.from(buf).toString()).toBe('image-bytes');
     expect(opts).toEqual({ contentType: 'image/png' });
+    // The upload-request IP is recorded against the key the store minted.
+    expect(mockTrackImageUpload).toHaveBeenCalledExactlyOnceWith(req, res, 'server-minted-uuid');
   });
 
   it('reassembles a MULTI-CHUNK body in order', async () => {
