@@ -234,12 +234,12 @@ describe('AppAssistantPreview — asking the app’s sandbox when the tab comes 
   });
 
   test('turns into “isn’t running” when the sandbox’s tunnel runs to another host than civitai’s', async () => {
-    const tunnelStatus = vi.fn(async () => ({
-      running: true,
-      host: 'dev-0f0f0f0f0f0f0f0f.apps.example',
-    }));
+    let answer: SandboxTunnelStatus = { running: true, host: HOST };
+    const tunnelStatus = vi.fn(async () => answer);
     await renderShown(tunnelStatus);
-    // Asked on the first check after load, with no need for the tab to come back.
+    await vi.waitFor(() => expect(tunnelStatus).toHaveBeenCalledTimes(1));
+    answer = { running: true, host: 'dev-0f0f0f0f0f0f0f0f.apps.example' };
+    await tabComesBack();
     await expect.element(page.getByText('The live preview isn’t running.')).toBeInTheDocument();
     await settle();
     expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(1);
@@ -257,12 +257,15 @@ describe('AppAssistantPreview — asking the app’s sandbox when the tab comes 
   });
 
   test('stays shown when the sandbox cannot be reached: no answer is not “down”', async () => {
-    const tunnelStatus = vi.fn(async () => null);
+    let answer: SandboxTunnelStatus | null = { running: true, host: HOST };
+    const tunnelStatus = vi.fn(async () => answer);
     await renderShown(tunnelStatus);
+    await vi.waitFor(() => expect(tunnelStatus).toHaveBeenCalledTimes(1));
+    answer = null;
     await tabComesBack();
+    // Control: the sandbox was asked again, and would not say.
+    await vi.waitFor(() => expect(tunnelStatus).toHaveBeenCalledTimes(2));
     await settle();
-    // Control: the sandbox was asked.
-    expect(tunnelStatus).toHaveBeenCalled();
     expect(page.getByTestId('frame').elements()).toHaveLength(1);
     expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(0);
   });
