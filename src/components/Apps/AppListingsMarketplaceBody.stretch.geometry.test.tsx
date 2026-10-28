@@ -297,13 +297,22 @@ function cardPartsOf(cell: HTMLElement) {
         stack.outerHTML.slice(0, 300)
     );
   }
-  const actionRow = pinned[0];
+  // Card A: the bottom-pinned child is the DIVIDER; the footer (stats + creator, the card's
+  // bottom row) is the element that follows it, and is what this file measures.
+  const divider = pinned[0];
+  const actionRow = divider.nextElementSibling as HTMLElement | null;
+  if (!actionRow || actionRow.getAttribute('data-testid') !== 'apps-listing-card-footer') {
+    throw new Error(
+      'the element after the pinned divider is not the card footer: ' +
+        stack.outerHTML.slice(0, 300)
+    );
+  }
   // VALIDATION 1 — the action row is the one holding the card's controls. The title block
   // above it holds a link too, so this does not identify it alone; it is what rules out
   // having resolved to a `<Text>` tagline.
-  if (actionRow.querySelectorAll('a[href], button').length === 0) {
+  if (!actionRow.querySelector('[data-testid="apps-listing-recommend-rollup"]')) {
     throw new Error(
-      'resolved "action row" holds no link or button — the walk found the wrong element: ' +
+      'resolved "footer" holds no recommend rollup — the walk found the wrong element: ' +
         actionRow.outerHTML.slice(0, 300)
     );
   }
@@ -314,7 +323,7 @@ function cardPartsOf(cell: HTMLElement) {
   // CONTROL for the whole file; if the row were the first child that control would be
   // `null` on every card and `new Set([null,null,…]).size` would be 1, which the control
   // reports as "the fixtures do not differ" rather than as a broken walk.
-  if (actionRow.previousElementSibling === null) {
+  if (divider.previousElementSibling === null) {
     throw new Error(
       'resolved "action row" is the card body\'s FIRST child, so there is no content above ' +
         'it to measure: ' +
@@ -325,7 +334,7 @@ function cardPartsOf(cell: HTMLElement) {
   // fixtures must genuinely differ in natural content height, or "the heights are equal"
   // is a fact about identical cards rather than about stretching. It is unaffected by the
   // auto margin, so it still differs while the stretch is working.
-  const lastContent = actionRow.previousElementSibling as HTMLElement | null;
+  const lastContent = divider.previousElementSibling as HTMLElement | null;
   return {
     card,
     actionRow,

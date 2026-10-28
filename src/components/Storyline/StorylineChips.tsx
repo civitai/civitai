@@ -1,4 +1,4 @@
-import { Badge, Text } from '@mantine/core';
+import { Badge, Text, Tooltip } from '@mantine/core';
 import type { BadgeProps } from '@mantine/core';
 import {
   IconBolt,
@@ -7,13 +7,10 @@ import {
   IconLock,
   IconRosetteDiscountCheck,
   IconRoute,
-  IconShieldHalf,
   IconUsers,
 } from '@tabler/icons-react';
 import type { Icon as TablerIcon } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { STORYLINE_CEILING_LEVELS } from '~/shared/utils/storyline';
 import { numberWithCommas } from '~/utils/number-helpers';
 
 export const storylineCardClass =
@@ -25,7 +22,6 @@ function Chip({
   ...props
 }: Omit<BadgeProps, 'size' | 'radius' | 'variant'> & {
   onImage?: boolean;
-  title?: string;
   'data-testid'?: string;
 }) {
   return (
@@ -123,31 +119,21 @@ export function StorylinePriceChip({
 }) {
   const priced = price > 0;
   const full = priced ? `${numberWithCommas(price)} to continue` : 'Free to continue';
-  return (
+  const chip = (
     <Chip
-      className={className}
+      className={short ? undefined : className}
       color={priced ? 'yellow' : 'green'}
       leftSection={priced ? <IconBolt size={12} /> : undefined}
-      title={short ? (priced ? `${numberWithCommas(price)} Buzz to continue` : full) : undefined}
       data-testid="storyline-price-chip"
     >
       {short ? (priced ? numberWithCommas(price) : 'Free') : full}
     </Chip>
   );
-}
-
-export function StorylineCeilingChip({ maxNsfwLevel }: { maxNsfwLevel: number }) {
-  // Only a real ceiling: the label table also names 0 ("?") and Blocked.
-  if (!(STORYLINE_CEILING_LEVELS as readonly number[]).includes(maxNsfwLevel)) return null;
-  const label = browsingLevelLabels[maxNsfwLevel as keyof typeof browsingLevelLabels];
+  if (!short) return chip;
   return (
-    <Chip
-      color="gray"
-      leftSection={<IconShieldHalf size={12} />}
-      data-testid="storyline-ceiling-chip"
-    >
-      Up to {label}
-    </Chip>
+    <Tooltip label={priced ? `${numberWithCommas(price)} Buzz to continue` : full}>
+      <span className={clsx('inline-flex', className)}>{chip}</span>
+    </Tooltip>
   );
 }
 
@@ -203,16 +189,12 @@ export function StorylineStat({
 }) {
   const label = count === 1 ? one : many;
   return (
-    <Text
-      component="span"
-      size={size}
-      c="dimmed"
-      className="flex items-center gap-1"
-      title={`${count} ${label}`}
-    >
-      <Icon size={size === 'sm' ? 15 : 14} stroke={2} aria-hidden />
-      {count}
-      <span className={showLabel ? undefined : 'sr-only'}>{` ${label}`}</span>
-    </Text>
+    <Tooltip label={`${count} ${label}`}>
+      <Text component="span" size={size} c="dimmed" className="flex items-center gap-1">
+        <Icon size={size === 'sm' ? 15 : 14} stroke={2} aria-hidden />
+        {count}
+        <span className={showLabel ? undefined : 'sr-only'}>{` ${label}`}</span>
+      </Text>
+    </Tooltip>
   );
 }

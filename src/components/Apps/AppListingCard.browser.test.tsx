@@ -41,12 +41,6 @@ import '~/styles/globals.css';
 import '@mantine/core/styles.layer.css';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
-import { Button, Text } from '@mantine/core';
-import {
-  LISTING_ACTION_ROW_HEIGHT_PX,
-  LISTING_CARD_TITLE_LINES,
-  LISTING_CARD_TITLE_LINE_HEIGHT,
-} from '~/components/Apps/appListingCardGeometry';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /**
@@ -331,80 +325,10 @@ function Sized({ width, card }: { width: number; card: ListingCard }) {
   );
 }
 
-/**
- * 🔴 GUARD ON THE GUARD. Proves the stylesheet cascade above actually applied
- * before any geometry is trusted. If either import ever silently stops working
- * (renamed export path, harness change), every measurement below reverts to CSS
- * initial values and starts passing for the wrong reason — this fails loudly
- * instead, and names the cause.
- */
-function assertLayoutIsReal(row: HTMLElement) {
-  expect(
-    getComputedStyle(row).display,
-    'Mantine stylesheet did not apply — every geometry assertion below is vacuous'
-  ).toBe('flex');
-}
-
-/**
- * The action row, located from the primary CTA.
- *
- * 🔴 THE CTA IS NOW A DIRECT CHILD OF THE ROW — one level shallower than it was.
- * It used to sit inside a nested "action cluster" `Group` that existed only to
- * hold it and the `⋮` together as ONE flex item opposite the recommend rollup;
- * with the rollup relocated to the meta block, the row IS that cluster and the
- * wrapper is gone. A helper that still climbed twice would silently return the
- * card's `Stack` — which is also a flex container, so `assertLayoutIsReal` would
- * pass on it and every geometry assertion below would be about the wrong box.
- * Hence the shape check: only the action row carries `--group-wrap`.
- */
-function assertIsActionRow(row: HTMLElement) {
-  // 🔴 `mt="auto"` IS THE DISCRIMINATOR, and `--group-wrap` alone was NOT ENOUGH.
-  // The retired action cluster was ALSO a `wrap="nowrap"` Group, so a wrap check
-  // passes on it — measured: against pre-change code this helper landed on the
-  // cluster and the container-248 width assertion went GREEN, because at that one
-  // width the cluster happened to fill the row. Only the ROW is bottom-pinned.
-  expect(row.style.marginTop, 'actionRow() did not land on the action row').toBe('auto');
-  expect(row.style.getPropertyValue('--group-wrap')).toBe('nowrap');
-}
-
-function actionRow(ctaName: string) {
-  const cta = page.getByRole('link', { name: ctaName, exact: true }).element() as HTMLElement;
-  const row = cta.parentElement as HTMLElement;
-  assertIsActionRow(row);
-  return { cta, row };
-}
-
 /** The recommend rollup, wherever it is. Used for BOTH presence and absence. */
 const ROLLUP_SELECTOR = '[data-testid="apps-listing-recommend-rollup"]';
 /** The play count, wherever it is. Used for BOTH presence and absence. */
 const PLAY_COUNT_SELECTOR = '[data-testid="apps-listing-play-count"]';
-
-/**
- * The card's META BLOCK — the `Stack` holding the title and the two conditional
- * badges, reached from the title's own `Anchor`. Located structurally rather than
- * by a test id so a change that MOVES something out of it cannot be papered over
- * by moving an id with it.
- *
- * 🔴 THE LOCATOR IS UNCHANGED BY THE ROLLUP'S SECOND MOVE, and that is exactly
- * what the structural resolution bought. The block used to hold title / creator /
- * rollup / badges; the creator chip is deleted and the rollup now renders below the
- * action row, so today it holds title + badges. Walking from the title's `<a>` to
- * `anchor.parentElement` still lands on the same `Stack` either way — which is why
- * the guard below can assert the rollup is OUTSIDE it without the block having to
- * be re-located.
- */
-function metaBlock(titleText: string): HTMLElement {
-  const title = page.getByText(titleText, { exact: true }).element() as HTMLElement;
-  const anchor = title.closest('a') as HTMLElement;
-  expect(anchor, `no <a> around the title "${titleText}"`).not.toBeNull();
-  return anchor.parentElement as HTMLElement;
-}
-
-/** A reviewed card — the rollup then says something other than "No reviews yet". */
-const REVIEWED_ROLLUP = {
-  recommend: { recommendedCount: 91, notRecommendedCount: 9, recommendPct: 0.91 },
-  reviewCount: 100,
-};
 
 /**
  * Two elements share one flex line.
@@ -623,7 +547,10 @@ describe('AppListingCard', () => {
     // fails against a correctly-rendered component.
     expect(style).toContain('--text-fz: var(--mantine-font-size-xl)');
     expect(style).toContain('font-weight: 700');
-    expect(style).toContain('color: var(--mantine-color-white)');
+    // Light theme: white on the light card body is invisible, so the colour is theme-aware.
+    expect(style).toContain(
+      'color: light-dark(var(--mantine-color-dark-9), var(--mantine-color-white))'
+    );
     // 🔴 `lh={1.2}` is load-bearing and easy to delete by accident: without it the
     // title inherits `--mantine-line-height-xl` (1.65), which at 20px is 33px vs
     // 24px — a ~14px card-height swing across a 2-line clamp, and card height is
@@ -636,335 +563,6 @@ describe('AppListingCard', () => {
     expect(title.tagName).not.toBe('H4');
     expect(cardRoot()!.querySelector('h1,h2,h3,h4,h5,h6')).toBeNull();
   });
-
-  /**
-   * 🔴 THE NUMBERS THE COMMENTS QUOTE AS MEASUREMENTS — pinned, so they are
-   * measurements rather than folklore.
-   *
-   * Two figures do real argumentative work in this component's comments and in
-   * `appListingCardGeometry.ts`, and until now NOTHING asserted either of them:
-   *
-   *   - **Mantine `md` is 42px tall.** This is the whole reason the CTA grows
-   *     HORIZONTALLY instead of up the size scale — the row is a load-bearing 46px
-   *     and the next size up would not fit. It is quoted three times.
-   *   - **`--mantine-line-height-xl` is 1.65, i.e. 33px at the title's 20px.** This
-   *     is why `lh` on the title is called load-bearing: without it the reserved
-   *     two lines would be 66px rather than 48, an ~18px card-height swing.
-   *
-   * A number quoted as a measurement that nothing re-derives is exactly the shape
-   * that gets cited for years after it stops being true — a Mantine upgrade
-   * retuning either token would leave every comment and both design decisions
-   * silently wrong. Both are one `getComputedStyle` away in a tier that already
-   * renders the card, so there is no excuse for leaving them unpinned.
-   *
-   * 🔴 NOT A MERGE GATE: no check in this repo blocks a merge. They are still the only place either
-   * number is checked at all.
-   */
-  describe('🔴 the Mantine tokens the geometry comments quote', () => {
-    test('the next button size up (`md`) is 42px — taller than the 46px row can afford', async () => {
-      // Rendered rather than read off a CSS variable: the claim is about a
-      // BUTTON's height, and a token lookup would not see a padding or border
-      // change that also moves it.
-      renderWithProviders(
-        <div>
-          <Button size="sm" data-testid="probe-sm">
-            Probe
-          </Button>
-          <Button size="md" data-testid="probe-md">
-            Probe
-          </Button>
-        </div>
-      );
-      await expect.element(page.getByTestId('probe-sm')).toBeInTheDocument();
-      const sm = page.getByTestId('probe-sm').element() as HTMLElement;
-      const md = page.getByTestId('probe-md').element() as HTMLElement;
-      // `sm` is the CTA's size and the row's CONTROL term — 36, the same number
-      // `LISTING_ACTION_ROW_CONTROL_PX` spells and the `⋮` trigger renders at.
-      expect(
-        Math.round(sm.getBoundingClientRect().height),
-        'Mantine `sm` is the CTA size AND the control term of the 46px row height'
-      ).toBe(36);
-      // …and `md` is 42, which is why "just bump the size" is not available: 42 + a
-      // 10px `pt` is 52, and the row must stay 46 inside an `h-full` grid row.
-      expect(
-        Math.round(md.getBoundingClientRect().height),
-        'the comments justify growing the CTA horizontally by saying `md` is 42px tall — ' +
-          'if that is no longer true, re-argue the decision instead of re-quoting the number'
-      ).toBe(42);
-    });
-
-    test("an xl Text with no `lh` inherits 1.65 — 33px, not the title's 24px", async () => {
-      renderWithProviders(
-        <div>
-          <Text size="xl" data-testid="probe-default-lh">
-            Probe
-          </Text>
-          <Text size="xl" lh={LISTING_CARD_TITLE_LINE_HEIGHT} data-testid="probe-pinned-lh">
-            Probe
-          </Text>
-        </div>
-      );
-      await expect.element(page.getByTestId('probe-default-lh')).toBeInTheDocument();
-      const bare = page.getByTestId('probe-default-lh').element() as HTMLElement;
-      const pinned = page.getByTestId('probe-pinned-lh').element() as HTMLElement;
-      // 20px x 1.65 = 33px. This is the value the title would inherit if `lh` were
-      // ever dropped, and the reason the comment calls it load-bearing.
-      expect(
-        getComputedStyle(bare).lineHeight,
-        'the comments justify `lh` on the title by saying the inherited xl line-height is ' +
-          '1.65 (33px at 20px) — pin the new value and re-derive the reserved height if this moved'
-      ).toBe('33px');
-      // …against the 24px the pinned constant produces. The gap is what the
-      // reserved two lines are worth: 48px vs 66px.
-      expect(getComputedStyle(pinned).lineHeight).toBe('24px');
-
-      // 🔴 THE "~18px SWING" THE COMMENTS QUOTE IS NOT ASSERTED SEPARATELY, AND
-      // THAT IS DELIBERATE — it is `LISTING_CARD_TITLE_LINES * (33 - 24)`, i.e.
-      // FULLY DETERMINED by the two measurements above. A third assertion over it
-      // could only fail in worlds where one of them has already failed, so it would
-      // be an UNREACHABLE guard: green for the whole life of the file, red only as
-      // a second copy of someone else's failure.
-      //
-      // 🔴 TWO WRONG VERSIONS SHIPPED BEFORE THIS COMMENT DID, both flagged by
-      // audit. First `expect(2 * 33 - 2 * 24).toBe(18)` — a tautology over two
-      // hardcoded literals, wired to neither measurement, unable to fail at all,
-      // with a comment calling it the arithmetic guard. Then a version computed
-      // from `getComputedStyle` on both probes, which is honest arithmetic but
-      // still unreachable for the reason above: measured, the mutation that retunes
-      // the pinned line-height (1.2 -> 1.4) kills the `24px` pin FIRST and the
-      // swing line never executes. Decoration that reads as a guard is the same
-      // class as the walkable spread check above, so it is stated in prose instead.
-      expect(LISTING_CARD_TITLE_LINES).toBe(2); // the multiplier in that arithmetic
-    });
-  });
-
-  /**
-   * 🔴 THE TITLE RESERVES TWO LINES WHETHER OR NOT IT USES THEM — asserted as an
-   * ALIGNMENT claim between two cards, not as a style read on one.
-   *
-   * The defect this fixes is only visible in a ROW: a one-line title is 24px and a
-   * wrapped one is 48px, so everything under it lands at a different y on every
-   * card. A `min-height` on a single card is a fact about that card; "the lines up
-   * under the title line up" is the property a shopper actually sees, and it is a
-   * RELATIONSHIP, so it has to be measured across two cards in one flex row rather
-   * than inferred from a computed style.
-   *
-   * 🔴 THE PROBE MOVED FROM THE CREATOR CHIP TO THE TAGLINE, AND THAT IS A
-   * NARROWING OF THE CLAIM, NOT A SUBSTITUTION OF CONVENIENCE. This suite used to
-   * measure two cards' `a[href^="/user/"]` chips. The store card no longer renders
-   * an author chip at all, and the recommend rollup left the meta block in the same
-   * change — so the only content still positioned by the title's height is the
-   * conditional badge row (Beta / restricted-visibility / owner Incomplete) and the
-   * tagline. The action row and the stats line below it
-   * are bottom-pinned by `mt="auto"`, so measuring THEM would pass with the
-   * reservation deleted and would be a guard on nothing. The tagline is the
-   * shallowest thing the reservation still moves, so it is what this measures.
-   *
-   * 🔴 THE FIXTURES THEREFORE CARRY A TAGLINE, unlike `base()`'s default use
-   * elsewhere in this file — one that is SHORT enough to occupy one line under the
-   * `line-clamp-3`, and IDENTICAL on both cards, so a difference in its `top` can
-   * only come from the title box above it.
-   *
-   * 🔴 THE FIXTURES ARE PAIRWISE DISTINCT AND OFF THE BOUNDARY, deliberately. A
-   * 1-line title against a 2-line one would sit exactly ON the reservation and the
-   * mutation "remove the min-height" would be unreachable — 2 lines is 2 lines
-   * either way. The long title is chosen to overflow to THREE lines at this column
-   * width, which is asserted below rather than assumed, so the clamp is doing real
-   * work and the short card is genuinely a line short of the reservation.
-   */
-  describe('🔴 the title reserves its two lines, so the rows under it align', () => {
-    /** One line at the width used below. */
-    const SHORT_TITLE = 'Ink';
-    /** Long enough to wrap past the clamp — proven, not assumed, in the test. */
-    const LONG_TITLE =
-      'Procedurally Generated Landscape Compositor With Depth Aware Relighting And Batch Export';
-    /**
-     * The probe. IDENTICAL on both cards and short enough to be one line under the
-     * `line-clamp-3`, so its `top` is a function of the title box alone.
-     */
-    const TAGLINE = 'Quick tools';
-
-    /** The two cards' roots, in DOM order: [short-title card, long-title card]. */
-    function cardRoots(): HTMLElement[] {
-      return Array.from(document.querySelectorAll('[class*="Card-root"]')) as HTMLElement[];
-    }
-
-    test('a 1-line title and a 3-line title put their TAGLINES at the SAME y', async () => {
-      renderWithProviders(
-        <div style={{ display: 'flex', width: 640, alignItems: 'flex-start' }}>
-          <div style={{ width: 320 }}>
-            <AppListingCard
-              card={base({ name: SHORT_TITLE, slug: 'short-title', tagline: TAGLINE })}
-              canOpenPage
-            />
-          </div>
-          <div style={{ width: 320 }}>
-            <AppListingCard
-              card={base({ name: LONG_TITLE, slug: 'long-title', tagline: TAGLINE })}
-              canOpenPage
-            />
-          </div>
-        </div>
-      );
-      // Render barrier on BOTH cards — a `.getBoundingClientRect()` on a
-      // pre-commit DOM throws, and the throw poisons every later test in the file.
-      await expect.element(page.getByText(SHORT_TITLE, { exact: true })).toBeInTheDocument();
-      await expect.element(page.getByText(LONG_TITLE, { exact: true })).toBeInTheDocument();
-
-      const [shortCard, longCard] = cardRoots();
-      expect(shortCard, 'both cards rendered').toBeTruthy();
-      expect(longCard, 'both cards rendered').toBeTruthy();
-      // Stylesheet guard: without the real cascade every measurement below is a
-      // CSS initial value and passes for the wrong reason.
-      assertLayoutIsReal(shortCard.querySelector('[class*="Group-root"]') as HTMLElement);
-
-      const shortTitle = shortCard.querySelector('a[href^="/apps/store-preview/"] span')!;
-      const longTitle = longCard.querySelector('a[href^="/apps/store-preview/"] span')!;
-
-      // 🔴 THE FIXTURE CONTROL. The long title really does overflow its two-line
-      // clamp here (vertical overflow = `scrollHeight > clientHeight`), and the
-      // short one really does not fill it. Without this pair the alignment
-      // assertion could be green because BOTH titles happened to be one line.
-      expect(
-        longTitle.scrollHeight,
-        'the long fixture must overflow the 2-line clamp at this column width'
-      ).toBeGreaterThan(longTitle.clientHeight);
-      expect(shortTitle.scrollHeight).toBeLessThanOrEqual(shortTitle.clientHeight);
-
-      // Both title boxes are the SAME height — the reservation doing its work.
-      expect(shortTitle.getBoundingClientRect().height).toBeCloseTo(
-        longTitle.getBoundingClientRect().height,
-        0
-      );
-      // 2 lines x 1.2 line-height x 20px (`size="xl"`) = 48px.
-      expect(Math.round(shortTitle.getBoundingClientRect().height)).toBe(48);
-
-      // 🔴 THE CLAIM THIS TEST IS FOR. `top`, not centre: a difference here is
-      // exactly the visible defect, and the two taglines are the same height so a
-      // centre comparison would say nothing extra.
-      //
-      // 🔴 THE PROBE IS RESOLVED FROM EACH CARD'S OWN SUBTREE, and both are asserted
-      // present BEFORE they are compared — a `null` on either side would otherwise
-      // throw on `.getBoundingClientRect()` and read as a harness fault rather than
-      // as the tagline having stopped rendering.
-      const shortTagline = Array.from(shortCard.querySelectorAll('p')).find(
-        (el) => el.textContent === TAGLINE
-      ) as HTMLElement | undefined;
-      const longTagline = Array.from(longCard.querySelectorAll('p')).find(
-        (el) => el.textContent === TAGLINE
-      ) as HTMLElement | undefined;
-      expect(shortTagline, 'the short-title card rendered no tagline').toBeTruthy();
-      expect(longTagline, 'the long-title card rendered no tagline').toBeTruthy();
-      // NON-VACUITY: the probes are two DIFFERENT elements, one per card. A `find`
-      // that landed on the same node twice would compare a box with itself.
-      expect(shortTagline).not.toBe(longTagline);
-      expect(
-        shortTagline!.getBoundingClientRect().top,
-        'the tagline must land at the same y whatever the title length — the title box ' +
-          'reserves LISTING_CARD_TITLE_LINES x LISTING_CARD_TITLE_LINE_HEIGHT for every card'
-      ).toBeCloseTo(longTagline!.getBoundingClientRect().top, 0);
-    });
-
-    /**
-     * 🔴 AND THE AUTHOR CHIP THIS SUITE USED TO MEASURE IS REALLY GONE, asserted
-     * here rather than left implicit in the rewrite above — otherwise "we now
-     * measure the tagline" would be indistinguishable from "we stopped measuring
-     * the chip because it was inconvenient".
-     *
-     * The absence is a `querySelector` returning `null`, NOT
-     * `expect.element(...).not.toBeInTheDocument()`, which is INERT in this repo
-     * (civitai/civitai#4197). It is controlled by a POSITIVE read of the same
-     * shape first: the card's title anchor IS found by an equivalent
-     * `querySelector`, so a `null` for the profile link is a real read of a
-     * rendered card and not a selector that matches nothing anywhere.
-     */
-    test('🔴 the card renders NO author chip — no profile link, no "by <name>"', async () => {
-      renderWithProviders(
-        <Sized width={320} card={base({ creator: { id: 5, username: 'alice', image: null } })} />
-      );
-      await expect.element(page.getByText('My App', { exact: true })).toBeInTheDocument();
-      const [card] = cardRoots();
-      expect(card, 'the card did not render').toBeTruthy();
-
-      // POSITIVE CONTROL, same call shape as the absence below.
-      expect(
-        card.querySelector('a[href^="/apps/store-preview/"]'),
-        'the title anchor is missing — this card did not render, so the absence below is vacuous'
-      ).not.toBeNull();
-
-      expect(
-        card.querySelector('a[href^="/user/"]'),
-        'the author chip is back on the store card — attribution belongs on the DETAIL ' +
-          'surfaces (AppDetailsModal / appDetailAuthorView / AppListingDetailBody), not here'
-      ).toBeNull();
-      // …and not as un-linked text either, which a chip stripped of its Anchor
-      // would be. Read off `textContent`, for the same #4197 reason.
-      expect(
-        card.textContent,
-        'the card still prints a "by <creator>" byline, just without the link'
-      ).not.toContain('by alice');
-    });
-
-    /**
-     * The clamp survived the switch from the `line-clamp-2` utility class to
-     * `TruncatedText`'s multi-line mode — a swap that is easy to get wrong,
-     * because that component's DEFAULT mode writes an INLINE `white-space: nowrap`
-     * which silently beats the utility class and yields ONE ellipsised line.
-     */
-    test('🔴 a long title still clamps at two lines rather than one', async () => {
-      renderWithProviders(
-        <Sized width={320} card={base({ name: LONG_TITLE, slug: 'long-title' })} />
-      );
-      await expect.element(page.getByText(LONG_TITLE, { exact: true })).toBeInTheDocument();
-      const title = page.getByText(LONG_TITLE, { exact: true }).element() as HTMLElement;
-      const style = getComputedStyle(title);
-      expect(style.webkitLineClamp).toBe('2');
-      expect(style.whiteSpace).not.toBe('nowrap');
-      // …and it renders as two lines, not one: 2 x 24px.
-      expect(Math.round(title.getBoundingClientRect().height)).toBe(48);
-    });
-
-    /**
-     * The other half `TruncatedText` buys: a clamped name is unreadable, so it is
-     * revealed on hover — and ONLY when it actually clips (a runtime measurement,
-     * not a guess).
-     */
-    test('a clamped title reveals its full value in a tooltip on hover', async () => {
-      renderWithProviders(
-        <Sized width={320} card={base({ name: LONG_TITLE, slug: 'long-title' })} />
-      );
-      const label = page.getByText(LONG_TITLE, { exact: true });
-      await expect.element(label).toBeInTheDocument();
-      await label.hover();
-      // The portalled tooltip is a SECOND node carrying the same text.
-      await vi.waitFor(() => {
-        expect(page.getByText(LONG_TITLE, { exact: true }).elements().length).toBeGreaterThan(1);
-      });
-    });
-  });
-
-  /**
-   * 🔴 THE RETIRED S5 AUTHOR-LINE ASSERTION, AND WHY IT IS DELETED RATHER THAN
-   * RELAXED.
-   *
-   * A test here pinned the author line's typography — `sm` / `fw 500`, and NOT
-   * white — as decision 3 of the S5 chrome pass ("size + weight only; taking both
-   * title and author to white flattens the hierarchy on a dark-6 body"), together
-   * with an ACCEPTED contrast residual of 4.73 (AA pass by 0.23, AAA fail).
-   *
-   * There is no author line on this card any more, so that assertion has no
-   * subject. Leaving it asserting the old typography against a card that renders no
-   * such element would be a test that can only fail; relaxing it into something
-   * that passes either way would be worse — a green claim about a hierarchy that no
-   * longer exists reads as coverage and stops anyone looking. What replaces it is
-   * the ABSENCE guard above ("the card renders NO author chip"), which is the claim
-   * that is now true and is mutation-visible.
-   *
-   * 🔴 THE CONTRAST RESIDUAL IS NOT SILENTLY RESOLVED — IT MOVED. The detail
-   * surfaces still render attribution and are untouched by this change, so if that
-   * 4.73 mattered it matters THERE now (`AppListingDetailBody`'s own `CreatorChip`),
-   * not here. This paragraph exists so nobody reads the deletion as a fix.
-   */
 
   // 🔴 ONE render per test. An earlier version rendered all three variants in a
   // single body and called `.unmount()` between them; that fights the scaffold's
@@ -1411,94 +1009,6 @@ describe('AppListingCard', () => {
     expect(placeholder.getAttribute('aria-hidden')).toBe('true');
   });
 
-  // ── Larger CTAs (feedback #2) ────────────────────────────────────────────────
-  // Both the kind-aware primary CTA and the owner-only secondary "Edit" moved one
-  // step up Mantine's size scale (xs → sm). Asserted via the `--button-height`
-  // custom property Mantine's Button varsResolver writes inline from `size`,
-  // which is the size prop's observable effect (the stylesheet isn't loaded here).
-
-  test('the kind-aware primary CTA renders at Mantine size "sm" (bumped from xs)', async () => {
-    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
-    await expect.element(page.getByRole('link', { name: 'Open' })).toBeInTheDocument();
-    const open = page.getByRole('link', { name: 'Open' }).element() as HTMLElement;
-    expect(open.style.getPropertyValue('--button-height')).toBe('var(--button-height-sm)');
-  });
-
-  test('the EXTERNAL Visit CTA also renders at size "sm" and keeps its new-tab anchor semantics', async () => {
-    renderWithProviders(
-      <AppListingCard
-        card={base({
-          kind: 'offsite',
-          kindData: { kind: 'offsite', externalUrl: 'https://ext.app' },
-        })}
-      />
-    );
-    await expect.element(page.getByRole('link', { name: 'Visit' })).toBeInTheDocument();
-    const visit = page.getByRole('link', { name: 'Visit' }).element() as HTMLElement;
-    expect(visit.style.getPropertyValue('--button-height')).toBe('var(--button-height-sm)');
-    // Enlarging must not flatten the kind-aware logic: still a real anchor.
-    expect(visit.tagName).toBe('A');
-    expect(visit.getAttribute('target')).toBe('_blank');
-    expect(visit.getAttribute('rel')).toBe('noopener noreferrer');
-  });
-
-  test('🔴 the action row is exactly [CTA, ⋮] and does NOT wrap', async () => {
-    // 🔴 Regression guard for the obvious-but-wrong fix to the taller `sm` buttons.
-    // Letting this row wrap would put the `⋮` on its own line, so an OWNER card
-    // would be TALLER than a menu-less one — and inside an `h-full` grid row that
-    // grows every card in the row across the whole store.
-    //
-    // 🔴 THE CHILD LEDGER IS THE POINT, not an incidental structural check. The
-    // row's geometry claim ("the CTA is the row minus the trigger and the gap")
-    // is only true while these are its ONLY two children — a third one, of any
-    // kind, silently invalidates every width assertion in this file. Asserting the
-    // SET rather than a containment means the ledger fails when it grows as well
-    // as when it shrinks.
-    mocks.currentUser = OWNER; // → the `⋮`, i.e. the widest action set
-    renderWithProviders(<AppListingCard card={base({})} canOpenPage />);
-    await expect.element(page.getByTestId('apps-listing-card-actions-menu')).toBeInTheDocument();
-
-    const trigger = page.getByTestId('apps-listing-card-actions-menu').element() as HTMLElement;
-    // The trigger sits inside a `flexShrink: 0` Box the shared menu renders, so the
-    // ROW is ONE level up from that Box — not two, as it was while a nested action
-    // cluster stood between them.
-    const triggerBox = trigger.parentElement as HTMLElement;
-    const row = triggerBox.parentElement as HTMLElement;
-    const cta = page.getByRole('link', { name: 'Open', exact: true }).element() as HTMLElement;
-
-    assertIsActionRow(row);
-    expect(Array.from(row.children)).toEqual([cta, triggerBox]);
-    // The CTA is the side that grows; the trigger's box never does either way.
-    expect(cta.style.flexGrow).toBe('1');
-    expect(triggerBox.style.flexShrink).toBe('0');
-    // 🔴 AND `justify="space-between"` IS GONE. It was there to push the actions
-    // away from the rollup; with one growing child it distributes nothing, and
-    // leaving it would be a declaration a later reader has to prove inert.
-    // Mantine always writes `--group-justify` (defaulting to `flex-start`), so the
-    // assertion is on the VALUE, not on the property's absence — asserting `''`
-    // fails against correct code, which it did on this test's first run.
-    expect(row.style.getPropertyValue('--group-justify')).toBe('flex-start');
-    // 🔴 …as is the `marginLeft: 'auto'` that was its second mechanism. Same
-    // reason: flexible lengths resolve BEFORE auto margins, so with the CTA
-    // filling the row there is never any free space for one to absorb.
-    expect(cta.style.marginLeft).toBe('');
-    expect(triggerBox.style.marginLeft).toBe('');
-  });
-
-  test('🔴 the `⋮` trigger is 36px — the row-height contract', async () => {
-    // The row is `pt="xs"` (10px) + a 36px control = 46px, and it lives in an
-    // `h-full` grid row, so a taller control here grows every card in that row
-    // across the store. The trigger must therefore match the `sm` CTA button
-    // exactly. (The control it replaced — the icon-only Edit — was also 36.)
-    mocks.currentUser = OWNER;
-    renderWithProviders(<Sized width={314} card={base({})} />);
-    await expect.element(page.getByTestId('apps-listing-card-actions-menu')).toBeInTheDocument();
-    const trigger = page.getByTestId('apps-listing-card-actions-menu').element() as HTMLElement;
-    const box = trigger.getBoundingClientRect();
-    expect(Math.round(box.width)).toBe(36);
-    expect(Math.round(box.height)).toBe(36);
-  });
-
   /**
    * CTA ICONS (product-feedback pass). Each action gets its own glyph so three
    * same-shaped buttons become distinguishable at a glance in a dense grid.
@@ -1551,372 +1061,6 @@ describe('AppListingCard', () => {
       await expect.element(view).toHaveAttribute('href', '/apps/store-preview/my-app');
       expect(ctaIcons('View details')).toHaveLength(1);
     });
-
-    test('🔴 the action row still holds at NOWRAP with the wider buttons', async () => {
-      // The row is `wrap="nowrap"` for a documented reason: a wrapped line would
-      // put the `⋮` under the CTA, so a card WITH a menu would be taller than one
-      // without and would grow the height of a whole `h-full` grid row. Icons make
-      // the button ~22px wider, so this pins that the row did not quietly gain
-      // wrapping to cope.
-      //
-      // Rendered in a NARROW column — the tight case is md/lg (3–4 columns), not
-      // the wide single-column base — and with the OWNER `⋮` present, which is the
-      // widest configuration the row ever has.
-      mocks.currentUser = { id: 5, username: 'alice' };
-      renderWithProviders(<Sized width={340} card={base({})} />);
-      await expect
-        .element(page.getByRole('link', { name: 'Open', exact: true }))
-        .toBeInTheDocument();
-
-      const { row, cta } = actionRow('Open');
-      assertLayoutIsReal(row);
-      const trigger = page.getByTestId('apps-listing-card-actions-menu').element() as HTMLElement;
-
-      // Now that layout is real, this is a genuine assertion: with the stylesheet
-      // loaded `Group` resolves `flex-wrap` from `--group-wrap`, so flipping the
-      // component to `wrap="wrap"` makes this read `wrap`.
-      expect(getComputedStyle(row).flexWrap).toBe('nowrap');
-
-      // …and BEHAVIOURALLY: both controls are on one line and nothing overflows
-      // the row box. This is the half a `--group-wrap` assertion cannot prove.
-      expect(sameLine(cta, trigger)).toBe(true);
-      expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
-    });
-
-    /**
-     * 🔴 THE ACTION ROW AFTER THE ROLLUP MOVED OUT.
-     *
-     * The row used to hold two competing children — the recommend rollup and an
-     * action cluster — under `justify="space-between"`, and most of this file's
-     * geometry was about arbitrating between them: a `min-width` floor on the
-     * rollup, a `@[264px]` container query hiding it below the width where even
-     * the floor did not fit, a measured 184px "widest action cluster", and a
-     * derived 264 threshold. Every one of those tests is DELETED rather than
-     * relaxed — their subject no longer exists, and a green test asserting a
-     * relationship that is gone reads as coverage while providing none.
-     *
-     * What replaces them is the smaller set of claims the row can still make:
-     *
-     *   | container | CTA (menu)        | CTA (no menu) | row h |
-     *   |-----------|-------------------|---------------|-------|
-     *   |       248 | 248 − 36 − 10     |           248 |    46 |
-     *   |       282 | 282 − 36 − 10     |           282 |    46 |
-     *   |       462 | 462 − 36 − 10     |           462 |    46 |
-     *
-     * 248 / 282 / 462 are the same three action-row widths the pre-change code
-     * measured — 248 inside the 280px card the store renders at FOUR COLUMNS on a
-     * 1168px grid, 282 one step wider, and 462 the wide end where the CTA has real
-     * slack to grow into. They are kept because the row-height claim is the one
-     * that must hold everywhere, and re-deriving a fresh set of widths would drop
-     * the continuity with the numbers the file already reasons about.
-     *
-     * 🔴 ANCHORED TO THE GRID RUNG, NOT TO A VIEWPORT — see the `Sized` docblock
-     * for why. This paragraph used to derive 248 from "container 1200 → grid
-     * column 296 → card 280" and call 462 "the wide single-column `base` case";
-     * both described a store layout rather than a card, and both have since gone
-     * stale. No number here moved: what changed is that the justification no
-     * longer claims anything about how a viewport becomes a column.
-     *
-     * 🔴 THE CTA WIDTHS ARE WRITTEN AS ARITHMETIC, NOT AS THE THREE RESULTING
-     * NUMBERS, because the arithmetic is the claim: the CTA takes the whole row
-     * minus the trigger and the gap. Three literals would pass just as well
-     * against a CTA that happened to land there for some other reason.
-     */
-    describe("the action row at the store's real container widths", () => {
-      // The widest CTA ("View details") — an off-site listing with no external
-      // target makes `getListingCta` fall through to the unified detail. Fully
-      // typed rather than cast: a cast here previously HID a missing `externalUrl`
-      // and a sub-kind that was not a member of its union at all, and neither
-      // `tsc` error reached vitest, which type-strips.
-      const WIDEST_CTA = {
-        kind: 'offsite' as const,
-        recommend: { recommendedCount: 91, notRecommendedCount: 9, recommendPct: 0.91 },
-        reviewCount: 100,
-        kindData: {
-          kind: 'offsite',
-          externalUrl: null,
-        } satisfies ListingCard['kindData'],
-      };
-
-      /**
-       * 🔴 THE CTA FILLS THE ROW — asserted at TWO named container widths, because
-       * one measurement is not a general claim.
-       *
-       * A narrow one (248 — the action row inside the four-column card) and a wide
-       * one (462). Both are above the row's ~184px natural content, so both are
-       * cases where the CTA must GROW; a single width could not distinguish "it
-       * fills" from "it happens to fit".
-       *
-       * 🔴 NO SUPERLATIVE. These used to read "the store's tightest real geometry"
-       * and "the widest". Neither is a claim this file can keep: which rung is
-       * narrowest, and which is widest, is decided by the store's grid — not this
-       * component's, and it has changed. What the pair still buys — two widths far
-       * enough apart that "it fills" is a general claim rather than one
-       * measurement — does not need either word.
-       *
-       * 🔴 THE EXPECTED VALUE IS BUILT FROM THE MEASURED TRIGGER AND THE MEASURED
-       * GAP, not from `LISTING_ACTION_ROW_CONTROL_PX` / `_GAP_PX`. Deriving it
-       * from the constants the component reads would move the expectation with any
-       * mutation of them, and the test could never fail. The constants are checked
-       * against those measurements separately, below.
-       */
-      describe('🔴 the CTA fills the row minus the trigger and the gap', () => {
-        // One test per width rather than a loop with `unmount()` — that fights the
-        // scaffold's global `afterEach(cleanup)` over the shared container and
-        // leaves every LATER test in the file rendering into an empty body.
-        for (const [outer, container] of [
-          [280, 248],
-          [494, 462],
-        ] as const) {
-          test(`container ${container}`, async () => {
-            mocks.currentUser = OWNER; // → a `⋮`, i.e. the row's two-child case
-            renderWithProviders(<Sized width={outer} card={base(WIDEST_CTA)} />);
-            await expect
-              .element(page.getByRole('link', { name: 'View details', exact: true }))
-              .toBeInTheDocument();
-            const { row, cta } = actionRow('View details');
-            assertLayoutIsReal(row);
-            expect(Math.round(row.clientWidth)).toBe(container);
-
-            const trigger = page
-              .getByTestId('apps-listing-card-actions-menu')
-              .element() as HTMLElement;
-            const triggerWidth = trigger.getBoundingClientRect().width;
-            const gap = parseFloat(getComputedStyle(row).columnGap);
-            // The two terms the CTA is the row MINUS, measured rather than
-            // assumed — and each pinned to the literal it is contracted to be, so
-            // a green result cannot be two compensating errors.
-            expect(Math.round(triggerWidth)).toBe(36);
-            expect(gap).toBe(10);
-
-            expect(
-              cta.getBoundingClientRect().width,
-              `the CTA must fill the action row minus the 36px trigger and the 10px gap — ` +
-                `asserted at container 248 AND container 462, this one is ${container}`
-            ).toBeCloseTo(container - triggerWidth - gap, 0);
-            // …and it fills it to the right edge, with no overflow.
-            expect(cta.getBoundingClientRect().left).toBeCloseTo(
-              row.getBoundingClientRect().left,
-              0
-            );
-            expect(row.scrollWidth).toBeLessThanOrEqual(row.clientWidth + 1);
-          });
-        }
-      });
-
-      /**
-       * 🔴 THE MENU-LESS CASE — the other half of "fills the row", and the arm that
-       * a fill implemented only on the menu's side would leave untouched.
-       *
-       * Every viewer except {owner, moderator} gets no `⋮` (`surface="card"`), so
-       * for them the row holds ONE child and the CTA is the whole row. Run over
-       * both a signed-out and a signed-in non-owner from ONE assertion body: the
-       * claim is that those two measure IDENTICALLY, and two independently-written
-       * tests cannot make a claim about a relationship. (A previous version of this
-       * file ran the signed-out arm alone and was structurally blind to a 137.9 →
-       * 184 shift that had just landed on every signed-in shopper.)
-       */
-      describe('🔴 with no `⋮`, the CTA is the whole row', () => {
-        for (const [label, user] of [
-          ['signed-out', null],
-          ['signed-in non-owner, non-moderator', SHOPPER],
-        ] as const) {
-          test(`${label}`, async () => {
-            mocks.currentUser = user;
-            renderWithProviders(<Sized width={314} card={base(WIDEST_CTA)} />);
-            await expect
-              .element(page.getByRole('link', { name: 'View details', exact: true }))
-              .toBeInTheDocument();
-            const { row, cta } = actionRow('View details');
-            assertLayoutIsReal(row);
-            expect(page.getByTestId('apps-listing-card-actions-menu').elements()).toHaveLength(0);
-            expect(Math.round(row.clientWidth)).toBe(282);
-            // No trigger, no gap to leave — the CTA is the entire row.
-            expect(cta.getBoundingClientRect().width).toBeCloseTo(282, 0);
-            // 🔴 THE CONTROL HALF OF THE ROW-HEIGHT DERIVATION, AND IT WAS MISSING.
-            // `LISTING_ACTION_ROW_HEIGHT_PX` is `pt` (10) + a 36px CONTROL, and the
-            // suite asserted the 36 for the `⋮` trigger and for NOTHING ELSE. The
-            // CTA's own 36 was only ever asserted as the CSS variable STRING
-            // `var(--button-height-sm)` — which survives a theme override of that
-            // token, a border or padding on the button, or swapping `Button` for
-            // another element entirely.
-            //
-            // 🔴 IT MATTERS MORE ON THIS ROW THAN IT LOOKS, because `mih` MASKS it:
-            // the row is floored at 46 whatever its child renders, so a CTA that
-            // shrinks leaves the row measuring 46 and every row-height assertion
-            // green. Measured on this arm with the CTA at `size="xs"`: with `mih`
-            // the suite reported 2 reds (both size-token tests only); without `mih`
-            // it reported 4, the extra two being these arms at `expected 40 to be
-            // 46`. The floor is correct and stays — this assertion is what puts the
-            // control back under observation despite it.
-            expect(
-              Math.round(cta.getBoundingClientRect().height),
-              'the CTA must render at the same 36px as the ⋮ trigger — that 36 is the ' +
-                'CONTROL term of LISTING_ACTION_ROW_HEIGHT_PX (pt 10 + control 36 = 46), ' +
-                "and the row's `mih` floor hides a shrunken control from every height assertion"
-            ).toBe(36);
-            expect(Math.round(row.getBoundingClientRect().height)).toBe(46);
-          });
-        }
-      });
-
-      /**
-       * 🔴 ROW HEIGHT IS 46px AT EVERY WIDTH — the invariant the whole store's grid
-       * rests on, since the row sits in an `h-full` grid row and a taller control
-       * here grows every card in that row.
-       *
-       * 🔴 46 IS A LITERAL HERE, DELIBERATELY. `LISTING_ACTION_ROW_HEIGHT_PX` is
-       * asserted to EQUAL it in the same test rather than substituted for it:
-       * writing `toBe(LISTING_ACTION_ROW_HEIGHT_PX)` would move the expectation in
-       * lockstep with any mutation of the constant, so a changed constant would
-       * render a 52px row and still pass. Measured at 248, 282 and 462 — the three
-       * container widths the pre-change comment named.
-       */
-      describe('🔴 the row is 46px tall', () => {
-        for (const [outer, container] of [
-          [280, 248],
-          [314, 282],
-          [494, 462],
-        ] as const) {
-          test(`container ${container}`, async () => {
-            mocks.currentUser = OWNER;
-            renderWithProviders(<Sized width={outer} card={base(WIDEST_CTA)} />);
-            await expect
-              .element(page.getByRole('link', { name: 'View details', exact: true }))
-              .toBeInTheDocument();
-            const { row } = actionRow('View details');
-            assertLayoutIsReal(row);
-            expect(Math.round(row.clientWidth)).toBe(container);
-            expect(
-              Math.round(row.getBoundingClientRect().height),
-              `the action row must stay 46px at container ${container} — it lives in an h-full grid row`
-            ).toBe(46);
-            // …and the shared constant, which the skeleton will import, says the
-            // same thing the render just did.
-            expect(LISTING_ACTION_ROW_HEIGHT_PX).toBe(46);
-            // The two terms that produce it, read off the real box.
-            expect(parseFloat(getComputedStyle(row).paddingTop)).toBe(10);
-            const trigger = page
-              .getByTestId('apps-listing-card-actions-menu')
-              .element() as HTMLElement;
-            expect(Math.round(trigger.getBoundingClientRect().height)).toBe(36);
-          });
-        }
-      });
-    });
-
-    /**
-     * 🔴 THE RECOMMEND ROLLUP MOVED AGAIN — OUTSIDE the meta block, and BELOW the
-     * action row.
-     *
-     * ⚠️ THIS TEST IS RETARGETED, NOT RELAXED, AND THE DISTINCTION IS THE WHOLE
-     * REASON IT EXISTS. It previously asserted "in the meta block and NOT in the
-     * action row", written specifically so that a change moving the rollup out of
-     * the meta block could not be papered over. This change IS that move, so the
-     * old assertion went red BY DESIGN. The response is a new invariant that is at
-     * least as strong — the rollup is in NEITHER of the two containers, and it is
-     * positioned BELOW the row — and emphatically not an assertion that would pass
-     * under either arrangement.
-     *
-     * Every half is in one test on purpose: "it is below the action row" is also
-     * true of a card that renders it TWICE (once below, once in the meta block),
-     * and "it is not in the meta block" is also true of a card that does not render
-     * it at all.
-     *
-     * 🔴 EVERY ABSENCE IS `querySelector(...) === null`, NOT
-     * `expect.element(...).not.toBeInTheDocument()`. That matcher is INERT in this
-     * repo (civitai/civitai#4197) — it passes whether or not the element is there.
-     * The form used here is controlled in the same test: the identical
-     * `querySelector(ROLLUP_SELECTOR)` call against the CARD ROOT returns the node,
-     * so a `null` from the meta block or the row is a real read and not a selector
-     * that matches nothing.
-     *
-     * 🔴 EACH HALF CARRIES ITS OWN MESSAGE, so a mutant rendering the rollup in
-     * BOTH places fails naming which place is wrong rather than on an ambiguous
-     * count.
-     */
-    test('🔴 the rollup renders BELOW the action row — not in it, and not in the meta block', async () => {
-      mocks.currentUser = OWNER; // the widest row — if it fits anywhere, it fits here
-      renderWithProviders(<Sized width={314} card={base({ ...REVIEWED_ROLLUP })} />);
-      // 🔴 THE BARRIER IS THE CTA, NOT THE ROLLUP'S OWN TEXT. `getByText` is
-      // strict-mode: a mutation that renders the rollup in TWO places resolves to
-      // two nodes and THROWS at the locator, so the test would go red for a locator
-      // reason before any assertion ran — and a red for the wrong reason proves
-      // nothing about the guard. The CTA is unique under every arrangement of the
-      // rollup, so it is the barrier.
-      await expect
-        .element(page.getByRole('link', { name: 'Open', exact: true }))
-        .toBeInTheDocument();
-
-      // 🔴 POSITIVE CONTROL FIRST, using the SAME `querySelector(ROLLUP_SELECTOR)`
-      // call shape as the two absences below — so a `null` from either container is
-      // a real read and not a selector that matches nothing anywhere.
-      const card = document.querySelector('[class*="Card-root"]') as HTMLElement;
-      expect(card, 'the card did not render').not.toBeNull();
-      const rollup = card.querySelector(ROLLUP_SELECTOR) as HTMLElement | null;
-      expect(
-        rollup,
-        'the recommend rollup is not on the card at all — either it stopped rendering or ' +
-          'ROLLUP_SELECTOR matches nothing, and both absences below would then be vacuous'
-      ).not.toBeNull();
-
-      const { row } = actionRow('Open');
-      assertLayoutIsReal(row);
-      const meta = metaBlock('My App');
-
-      // 🔴 THE TWO CLAIMS THIS TEST EXISTS FOR, each with its own message.
-      expect(
-        meta.querySelector(ROLLUP_SELECTOR),
-        'the recommend rollup is back in the META BLOCK — the operator moved it below the CTA'
-      ).toBeNull();
-      expect(
-        row.querySelector(ROLLUP_SELECTOR),
-        'the recommend rollup is inside the ACTION ROW — that row holds the CTA and the ⋮ ' +
-          'trigger and nothing else, and sharing it is what cost a min-width floor, a ' +
-          '@container breakpoint and a derived threshold constant last time'
-      ).toBeNull();
-      expect(meta.contains(rollup!)).toBe(false);
-      expect(row.contains(rollup!)).toBe(false);
-      // The row is exactly the CTA + the trigger's box, nothing else.
-      expect(row.children).toHaveLength(2);
-
-      // …and exactly ONE in the whole document — not zero (which would satisfy both
-      // absences vacuously) and not two (a copy left behind in either container).
-      expect(document.querySelectorAll(ROLLUP_SELECTOR)).toHaveLength(1);
-
-      // 🔴 AND IT IS *BELOW* THE ROW, not merely outside it — a position claim no
-      // containment check can make, and the half of the operator's ask ("move
-      // reviews + plays below the CTA") that containment alone does not express.
-      // `top` against the row's `bottom`, so "below" means genuinely after it in
-      // the block flow rather than merely lower-topped inside an overlap.
-      expect(
-        rollup!.getBoundingClientRect().top,
-        'the rollup does not start below the action row — "below the CTA" is the ask, and ' +
-          'being outside the row is not the same claim'
-      ).toBeGreaterThanOrEqual(row.getBoundingClientRect().bottom);
-
-      // 🔴 AND `mt="auto"` STILL BOTTOM-PINS THE PAIR. The action row carries the
-      // auto top margin and is no longer the Stack's LAST child, so "the row is at
-      // the bottom" has to be re-measured rather than inherited from before the
-      // move: a column flex container's single auto margin absorbs all free space,
-      // which should push the row AND everything after it down together. What that
-      // means observably is that the STATS LINE — now the last child — ends flush
-      // with the Stack's content box.
-      //
-      // Measured against the Stack rather than the Card, because `Card padding="md"`
-      // sits outside the Stack and would put a constant 16px in the comparison.
-      const stack = row.parentElement as HTMLElement;
-      expect(stack.contains(rollup!), 'the stats line is not a sibling of the action row').toBe(
-        true
-      );
-      expect(
-        stack.getBoundingClientRect().bottom - rollup!.getBoundingClientRect().bottom,
-        'the bottom-pinned group is not flush with the bottom of the card body. `mt="auto"` ' +
-          'must stay on the FIRST of the bottom-pinned children (the action row) — moved to a ' +
-          'later one, or removed, a gap opens under the stats line and the CTA floats up.'
-      ).toBeLessThan(1);
-    });
-
     /**
      * 🔴 THE PLAY COUNT — RENDERED ONLY FOR A COUNT OF ONE OR MORE. BOTH
      * `openCount === null` AND `openCount === 0` RENDER NOTHING.
@@ -1984,11 +1128,11 @@ describe('AppListingCard', () => {
           'the play count wrapped onto its own line — that makes the card ~17px taller than ' +
             'AppListingCardSkeleton reserves, on every card in the h-full grid row'
         ).toBe(true);
-        // …and both sit below the action row.
-        const { row } = actionRow('Open');
-        expect(play!.getBoundingClientRect().top).toBeGreaterThanOrEqual(
-          row.getBoundingClientRect().bottom
-        );
+        // …and both sit in the footer.
+        expect(
+          play!.closest('[data-testid="apps-listing-card-footer"]'),
+          'the play count is not in the footer'
+        ).not.toBeNull();
       });
 
       test('🔴 openCount 0 (MEASURED AND EMPTY) renders NO play count — no "0 plays" chip', async () => {
@@ -2140,6 +1284,156 @@ describe('AppListingCard', () => {
  * CONTROL from the same fixture proving the card rendered at all, so "no Beta" can
  * never be satisfied by a card that rendered nothing.
  */
+/**
+ * Card A (design pass of 2026-10-27): the icon straddles the cover, the title and Open sit on
+ * the ICON's centre line, the whole card is one link, and a footer row holds the stats on the
+ * left and the creator on the right.
+ *
+ * Every measurement is a RELATIONSHIP between boxes (centres, edges, a shared y across cards),
+ * not a style read, and each is taken against the real stylesheet.
+ */
+describe('AppListingCard — card A layout', () => {
+  const rect = (el: Element) => el.getBoundingClientRect();
+  const midY = (el: Element) => rect(el).top + rect(el).height / 2;
+  const testId = (id: string) => document.querySelector(`[data-testid="${id}"]`) as HTMLElement;
+  const coverBox = () =>
+    Array.from(document.querySelectorAll<HTMLElement>('div')).find(
+      (d) => d.style.aspectRatio.replace(/\s/g, '') === '16/9'
+    )!;
+
+  async function renderCard(over: Partial<ListingCard> = {}, width = 320) {
+    renderWithProviders(
+      <Sized width={width} card={base({ iconUrl: LOADABLE_IMAGE_DATA_URI, ...over })} />
+    );
+    await expect.element(page.getByRole('link', { name: 'Open', exact: true })).toBeInTheDocument();
+    const header = testId('apps-listing-card-header');
+    // Guard on the guard: with no stylesheet the header is not a flex row and every number
+    // below is vacuous.
+    expect(getComputedStyle(header).display, 'Mantine stylesheet did not apply').toBe('flex');
+    return header;
+  }
+
+  test('🔴 the icon, the title and Open share ONE centre line', async () => {
+    const header = await renderCard();
+    const icon = header.firstElementChild as HTMLElement;
+    const title = page.getByText('My App', { exact: true }).element();
+    const open = page.getByRole('link', { name: 'Open', exact: true }).element();
+    expect(rect(icon).height).toBe(56);
+    expect(Math.abs(midY(title) - midY(icon)), 'title is off the icon centre').toBeLessThanOrEqual(
+      1
+    );
+    expect(Math.abs(midY(open) - midY(icon)), 'Open is off the icon centre').toBeLessThanOrEqual(1);
+    // Open is on the TITLE's row, to its right, not under it.
+    expect(rect(open).left).toBeGreaterThanOrEqual(rect(title).right);
+  });
+
+  test('🔴 the icon straddles the cover edge: 14px over, the rest below', async () => {
+    const header = await renderCard();
+    const icon = header.firstElementChild as HTMLElement;
+    expect(coverBox(), 'no 16:9 cover box').toBeDefined();
+    expect(Math.abs(rect(icon).top - (rect(coverBox()).bottom - 14))).toBeLessThanOrEqual(1);
+  });
+
+  test('🔴 the title is ONE line even when far too long, and clips instead of wrapping', async () => {
+    const name = 'An extraordinarily long application name that cannot possibly fit on one line';
+    await renderCard({ name });
+    const title = page.getByText(name, { exact: true }).element() as HTMLElement;
+    expect(rect(title).height, 'title wrapped').toBeLessThanOrEqual(25);
+    expect(title.scrollWidth).toBeGreaterThan(title.clientWidth);
+  });
+
+  test('🔴 Open is the compact-sm button: 26px tall, still named "Open"', async () => {
+    await renderCard();
+    const open = page.getByRole('link', { name: 'Open', exact: true }).element();
+    expect(rect(open).height).toBe(26);
+  });
+
+  test('🔴 the footer is pinned: cards of different content end their footers at the same y', async () => {
+    renderWithProviders(
+      <div style={{ display: 'flex', alignItems: 'stretch', width: 660, gap: 16 }}>
+        <Sized width={320} card={base({ slug: 'a', name: 'Short', tagline: null })} />
+        <Sized
+          width={320}
+          card={base({
+            slug: 'b',
+            name: 'Tall',
+            tagline: 'A tagline long enough to wrap onto several lines in a narrow card. '.repeat(
+              3
+            ),
+          })}
+        />
+      </div>
+    );
+    await expect.element(page.getByText('Tall', { exact: true })).toBeInTheDocument();
+    const footers = Array.from(
+      document.querySelectorAll('[data-testid="apps-listing-card-footer"]')
+    );
+    expect(footers).toHaveLength(2);
+    const cards = footers.map((f) => f.closest('.mantine-Card-root') as HTMLElement);
+    // Control: the cards are the same height (stretched), but their CONTENT differs, so the
+    // footer only lines up if it is bottom-pinned.
+    expect(rect(cards[0]).height).toBe(rect(cards[1]).height);
+    expect(
+      document.body.textContent,
+      'control: the tall card must actually carry its tagline'
+    ).toContain('A tagline long enough');
+    expect(Math.abs(rect(footers[0]).top - rect(footers[1]).top)).toBeLessThanOrEqual(1);
+  });
+
+  test('🔴 the creator is right-aligned in the footer, the stats on the left', async () => {
+    await renderCard();
+    const footer = testId('apps-listing-card-footer');
+    const creator = testId('apps-listing-card-creator');
+    const stats = testId('apps-listing-card-stats');
+    expect(creator.textContent).toBe('alice');
+    expect(Math.abs(rect(creator).right - rect(footer).right)).toBeLessThanOrEqual(1);
+    expect(Math.abs(rect(stats).left - rect(footer).left)).toBeLessThanOrEqual(1);
+    expect(rect(creator).left).toBeGreaterThan(rect(stats).right);
+  });
+
+  test('🔴 hit-test: the card body is the title link; Open and the creator stay clickable above it', async () => {
+    await renderCard();
+    const center = (el: Element) => {
+      const r = rect(el);
+      return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    };
+    const card = document.querySelector('.mantine-Card-root') as HTMLElement;
+    const c = rect(card);
+    const body = document.elementFromPoint(c.left + c.width / 2, c.top + c.height * 0.75);
+    expect(
+      body?.closest('a')?.getAttribute('href'),
+      'a click in the card body does not reach the detail link'
+    ).toContain('my-app');
+    const openHit = center(page.getByRole('link', { name: 'Open', exact: true }).element());
+    expect(openHit?.closest('a')?.textContent).toBe('Open');
+    expect(center(testId('apps-listing-card-creator'))?.closest('a')?.getAttribute('href')).toBe(
+      '/user/alice'
+    );
+  });
+
+  test('🔴 a creator with no username renders no byline link (never a bare /user/ href)', async () => {
+    await renderCard({ creator: { id: 5, username: null, image: null } });
+    expect(document.querySelectorAll('a[href="/user/"]')).toHaveLength(0);
+    expect(testId('apps-listing-card-creator'), 'control: footer must still render').toBeNull();
+    expect(testId('apps-listing-card-footer')).not.toBeNull();
+  });
+
+  test('🔴 the ⋮ menu sits inside the cover top-right, for the owner', async () => {
+    mocks.currentUser = OWNER;
+    await renderCard();
+    const trigger = page.getByTestId('apps-listing-card-actions-menu').element();
+    const cover = rect(coverBox());
+    const t = rect(trigger);
+    expect(t.right).toBeLessThanOrEqual(cover.right);
+    expect(cover.right - t.right).toBeLessThan(16);
+    expect(t.top - cover.top).toBeLessThan(16);
+    expect(t.bottom).toBeLessThanOrEqual(cover.bottom);
+    // Hit-test: the trigger, not the stretched card link, owns its own point.
+    const hit = document.elementFromPoint(t.left + t.width / 2, t.top + t.height / 2);
+    expect(trigger.contains(hit)).toBe(true);
+  });
+});
+
 describe('AppListingCard — the beta badge', () => {
   test('renders a Beta badge when the listing declares beta', async () => {
     renderWithProviders(<AppListingCard card={base({ isBeta: true })} canOpenPage />);

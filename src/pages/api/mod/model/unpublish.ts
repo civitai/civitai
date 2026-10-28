@@ -2,7 +2,6 @@ import * as z from 'zod';
 import { unpublishReasons, type UnpublishReason } from '~/server/common/moderation-helpers';
 import { dbRead } from '~/server/db/client';
 import { dataForModelsCache } from '~/server/redis/caches';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import { unpublishModelById } from '~/server/services/model.service';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
@@ -33,7 +32,7 @@ export default defineModeratorEndpoint('model.unpublish', {
 
     const model = await dbRead.model.findUnique({
       where: { id: input.modelId },
-      select: { meta: true, nsfw: true },
+      select: { nsfw: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.modelId}`);
 
@@ -41,7 +40,6 @@ export default defineModeratorEndpoint('model.unpublish', {
       id: input.modelId,
       reason: input.reason,
       customMessage: input.customMessage || undefined,
-      meta: (model.meta as ModelMeta | null) || {},
       userId: ctx.actor.id,
       isModerator: true,
     });

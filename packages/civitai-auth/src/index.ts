@@ -24,6 +24,11 @@ export { createImpersonationClient } from './impersonation-client'; // moderator
 export { probeInternalParity } from './hub'; // does the hub accept this app's service credential
 export type { ImpersonationClient, ImpersonationResult } from './impersonation-client';
 export { createSpokeGuard } from './spoke-guard'; // framework-agnostic first-party app session+role gate
+export {
+  MODERATION_ACCOUNT_USERNAME,
+  isModerationAccountUser,
+  parseModerationAccountId,
+} from './moderation-account';
 export type {
   SpokeGuard,
   SpokeGuardCheckOptions,

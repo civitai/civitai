@@ -51,7 +51,7 @@ beforeEach(() => {
 
 describe('holdModelForLiteralRules', () => {
   it('takes the model to review with the unpublish notice keys and no claim on a public row', async () => {
-    await holdModelForLiteralRules({ modelId: 7, ...hold(), meta: { foo: 1 } });
+    await holdModelForLiteralRules({ modelId: 7, ...hold() });
 
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(unpublishModelById).toHaveBeenCalledWith({
@@ -60,8 +60,7 @@ describe('holdModelForLiteralRules', () => {
       isModerator: true,
       reason: 'other',
       customMessage: MODEL_RULES_UNPUBLISH_MESSAGE,
-      meta: {
-        foo: 1,
+      metaPatch: {
         needsReview: true,
         modelRules: {
           ruleIds: [3],
@@ -71,6 +70,7 @@ describe('holdModelForLiteralRules', () => {
           source: 'literal',
         },
       },
+      metaUnset: [],
     });
     expect(refreshModelData).toHaveBeenCalledWith(7);
     expect(bustPublicModelResponseCache).toHaveBeenCalledWith(7);
@@ -78,7 +78,10 @@ describe('holdModelForLiteralRules', () => {
 
   it('records the hold as applied', async () => {
     await holdModelForLiteralRules({ modelId: 7, ...hold() });
-    expect(syncModelRulesHold).toHaveBeenCalledWith(7, expect.objectContaining({ applied: true, ruleIds: [3] }));
+    expect(syncModelRulesHold).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({ applied: true, ruleIds: [3] })
+    );
   });
 
   it('still holds the model when the hold cannot be recorded', async () => {
@@ -89,8 +92,8 @@ describe('holdModelForLiteralRules', () => {
 
   it('is cleared by a moderator republish', async () => {
     await holdModelForLiteralRules({ modelId: 7, ...hold() });
-    const { meta } = unpublishModelById.mock.calls[0][0];
-    expect(modelRulesClearedOnRepublish(meta)).toEqual({ ruleIds: [3], textHash: 'h1' });
+    const { metaPatch } = unpublishModelById.mock.calls[0][0];
+    expect(modelRulesClearedOnRepublish(metaPatch)).toEqual({ ruleIds: [3], textHash: 'h1' });
   });
 });
 
@@ -113,7 +116,7 @@ describe('unpublishLiveModelForLiteralRules', () => {
         id: 7,
         reason: 'other',
         customMessage: MODEL_RULES_UNPUBLISH_MESSAGE,
-        meta: expect.objectContaining({ foo: 1, needsReview: true }),
+        metaPatch: expect.objectContaining({ needsReview: true }),
       })
     );
   });
@@ -137,12 +140,6 @@ describe('unpublishLiveModelForLiteralRules', () => {
     const [, , workflowId] = claim().values;
     expect(workflowId).toBe('literal:h1:3,4');
     expect(workflowId).not.toBe('literal:h1:3');
-  });
-
-  it('does nothing for a model that is gone', async () => {
-    dbMock.dbWrite.model.findUnique.mockResolvedValue(null);
-    await expect(run()).resolves.toBe(false);
-    expect(unpublishModelById).not.toHaveBeenCalled();
   });
 });
 

@@ -1,7 +1,7 @@
 import { Anchor, Avatar, Text } from '@mantine/core';
 import { getListingDetailHref } from '~/components/Apps/appListingCardView';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
-import type { PostAppChip } from '~/server/services/blocks/post-app-chip.logic';
+import type { PostAppChip, PostAppChipItem } from '~/server/services/blocks/post-app-chip.logic';
 
 /**
  * The post-detail "Published with <app>" attribution chip.
@@ -70,6 +70,11 @@ export function PostPublishedWithApp({ app }: { app?: PostAppChip | null }) {
       )}
       <Text size="xs" c="dimmed" className="min-w-0">
         Published with{' '}
+        {app.item && (
+          <>
+            <ChipItemName item={app.item} /> on{' '}
+          </>
+        )}
         {app.slug ? (
           <Anchor component={Link} href={getListingDetailHref(app.slug)} inherit>
             {app.name}
@@ -79,5 +84,20 @@ export function PostPublishedWithApp({ app }: { app?: PostAppChip | null }) {
         )}
       </Text>
     </div>
+  );
+}
+
+function ChipItemName({ item }: { item: PostAppChipItem }) {
+  if (!item.href) return <>{item.name}</>;
+  if (item.external)
+    return (
+      <Anchor href={item.href} target="_blank" rel="noopener noreferrer" inherit>
+        {item.name}
+      </Anchor>
+    );
+  return (
+    <Anchor component={Link} href={item.href} inherit>
+      {item.name}
+    </Anchor>
   );
 }

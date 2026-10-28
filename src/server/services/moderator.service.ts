@@ -1,3 +1,4 @@
+import type { shownActivity } from '@civitai/shared/held-media';
 import { dbWrite } from '~/server/db/client';
 
 type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
@@ -44,7 +45,8 @@ export type ImageModActivity = {
     | 'setNsfwLevel'
     | 'resolveAppeal'
     | 'setNsfwLevelKono'
-    | 'heldMedia:view';
+    | 'heldMedia:view'
+    | ReturnType<typeof shownActivity>;
 };
 
 type ArticleModActivity = {
