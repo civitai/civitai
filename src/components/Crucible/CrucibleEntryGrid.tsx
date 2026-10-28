@@ -142,8 +142,9 @@ export function CrucibleEntryGrid({
   const gridOrder = [...userEntries, ...displayEntries];
   const openableImageIds = gridOrder.filter(canSeeDetails).map((entry) => entry.imageId);
   const hiddenEntries = gridOrder.filter((entry) => !canSeeDetails(entry));
-  const hiddenMedia: CrucibleEntryMedia[] = hiddenEntries.map(({ id, image }) => ({
+  const hiddenMedia: CrucibleEntryMedia[] = hiddenEntries.map(({ id, imageId, image }) => ({
     entryId: id,
+    imageId,
     url: image.url,
     name: image.name,
     type: image.type,

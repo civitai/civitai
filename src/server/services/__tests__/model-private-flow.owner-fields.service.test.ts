@@ -169,6 +169,10 @@ function updateData() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  // clearAllMocks keeps a one-shot transaction a test queued but never reached; drop it.
+  mockDbWrite.$transaction.mockReset();
+  mockDbWrite.$transaction.mockImplementation((async (arg: unknown) =>
+    typeof arg === 'function' ? arg(mockDbWrite) : Promise.all(arg as unknown[])) as never);
   vi.mocked(getTextScanMode).mockResolvedValue('off');
   mockEvaluateContent.mockReturnValue(cleanEvaluation);
   mockStored();
@@ -462,6 +466,98 @@ describe('publishPrivateModel', () => {
     const meta = updateData().meta as Record<string, unknown>;
     expect(meta.cannotPromote).toBe(true);
     expect(meta).not.toHaveProperty('restoreCannotPromote');
+  });
+
+  // The transaction's locked re-read of the model, through a client of its own so a read that
+  // skips the transaction is not satisfied by the first read's mock. mockPrivateModel is the first
+  // read; this is the row a moderator's write left by the time the lock is held.
+  const lockedRow = (row: { status?: string; meta?: Record<string, unknown> } | null) => {
+    const findUnique = vi
+      .fn()
+      .mockResolvedValue(
+        row && { id: MODEL_ID, userId: OWNER_ID, status: ModelStatus.Published, meta: null, ...row }
+      );
+    mockDbWrite.$transaction.mockImplementationOnce((async (fn: (tx: unknown) => unknown) =>
+      fn({
+        $queryRaw: mockDbWrite.$queryRaw,
+        $executeRaw: mockDbWrite.$executeRaw,
+        post: { updateMany: mockDbWrite.post.updateMany },
+        modelVersion: { updateMany: mockDbWrite.modelVersion.updateMany },
+        model: { update: mockDbWrite.model.update, findUnique },
+      })) as never);
+    return findUnique;
+  };
+
+  const expectNothingWritten = () => {
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.post.updateMany).not.toHaveBeenCalled();
+    expect(
+      mockDbWrite.$executeRaw.mock.calls.some(([strings]) =>
+        (strings as string[]).join('?').includes('UPDATE "Post"')
+      )
+    ).toBe(false);
+  };
+
+  it("keeps a moderator's meta change made after it was read", async () => {
+    mockPrivateModel({ meta: { cannotPromote: true, restoreCannotPromote: true } });
+    lockedRow({ meta: { cannotPromote: true, restoreCannotPromote: true, minor: true } });
+
+    await publish(false);
+
+    expect(updateData().meta).toEqual({ cannotPromote: true, minor: true });
+  });
+
+  it('re-reads the model only once it holds the lock', async () => {
+    mockPrivateModel({});
+    const reread = lockedRow({});
+
+    await publish(false);
+
+    const lock = mockDbWrite.$queryRaw.mock.calls.findIndex(([strings]) =>
+      (strings as string[]).join('').includes('FROM "Model"')
+    );
+    expect(lock).toBeGreaterThanOrEqual(0);
+    expect(reread).toHaveBeenCalledTimes(1);
+    expect(mockDbWrite.$queryRaw.mock.invocationCallOrder[lock]).toBeLessThan(
+      reread.mock.invocationCallOrder[0]
+    );
+  });
+
+  it('refuses the owner when publishing was blocked after it was read, and writes nothing', async () => {
+    mockPrivateModel({});
+    lockedRow({ meta: { cannotPublish: true } });
+
+    await expect(publish(false)).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expectNothingWritten();
+  });
+
+  it.each([ModelStatus.UnpublishedViolation, ModelStatus.Deleted])(
+    'refuses the owner when the model became %s after it was read, and writes nothing',
+    async (status) => {
+      mockPrivateModel({});
+      lockedRow({ status });
+
+      await expect(publish(false)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+      expectNothingWritten();
+    }
+  );
+
+  it('lets a moderator publish when publishing was blocked after it was read, keeping the block', async () => {
+    mockPrivateModel({});
+    lockedRow({ meta: { cannotPublish: true } });
+
+    await publish(true);
+
+    expect(updateData().meta).toMatchObject({ cannotPublish: true });
+  });
+
+  it('refuses, and writes nothing, when the model was deleted after it was read', async () => {
+    mockPrivateModel({});
+    lockedRow(null);
+
+    await expect(publish(false)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expectNothingWritten();
   });
 
   // The checks above run before the write transaction; a takedown can land in between.
