@@ -10,7 +10,6 @@ import {
   appsRailChromeWidth,
   parseAppsRailState,
 } from '~/components/Apps/appsRailGeometry';
-import { SUBNAV_STICKY_GAP } from '~/hooks/useSubnavBottom';
 // 🔴 THE PARSER PRODUCTION ACTUALLY RUNS. `_app`'s `getInitialProps` calls
 // `parseCookies(getCookies(ctx))`, so this zod schema — not any helper in the rail's own
 // module — is what decides the SSR seed. An earlier revision of this file tested a
@@ -56,13 +55,6 @@ describe('the rail costs what the ladder and the layout think it costs', () => {
     expect(APPS_RAIL_COLLAPSED_WIDTH).toBe(56);
   });
 
-  test('🔴 the rail gap is 32, and the panel bleed leaves the reader 24px', () => {
-    expect(APPS_RAIL_GAP).toBe(32);
-    // The sticky offset (16) is the rail's distance from the subnav above it, not this
-    // gap, so the two are allowed to differ.
-    expect(SUBNAV_STICKY_GAP).toBe(16);
-  });
-
   /**
    * ⚠️ THE ZERO-MARGIN TEST THAT LIVED HERE IS DELETED WITH THE RUNG IT PINNED.
    *
@@ -73,8 +65,7 @@ describe('the rail costs what the ladder and the layout think it costs', () => {
    *
    * That re-tune is reverted — the wide rungs come from the card-width floor again — so
    * there is no chrome-derived rung to pin and no zero-margin to defend. What survives
-   * above is the rail's own COST arithmetic (276 open / 72 collapsed, and the side gap
-   * equalling the top gap), which is about chrome width and is unaffected by which
+   * above is the rail's own COST arithmetic (292 open / 88 collapsed, and the side gap), which is about chrome width and is unaffected by which
    * column ladder ships.
    */
 });

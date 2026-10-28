@@ -47,7 +47,7 @@
   /* 🔴 THE GAP IS ONLY EVER BETWEEN VISIBLE ITEMS. Below the threshold `.rail` is
      `display: none`, which removes it as a flex item — so the row has ONE child and CSS
      emits no gap at all. That is what lets the narrow layout be byte-identical to the
-     pre-rail page rather than starting 16px in. */
+     pre-rail page rather than starting 32px in. */
   gap: 32px;
 }
 

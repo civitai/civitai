@@ -288,11 +288,10 @@ export function AppsPageLayout({
               {/* ⚠️ THE TOGGLE SITS INSIDE THE RAIL, NOT IN THE GUTTER — a deliberate
                   deviation from `CollectionsLayout`, which absolutely-positions its
                   toggle at `right: -32px`. That works there because the gutter it
-                  overhangs is 8px of a card's margin; here the gap is 32px and the
-                  button is 28px, so a gutter toggle would overlap the page body on every
-                  route and would need `overflow: visible` maintained up the whole
-                  ancestor chain (a hazard that file documents at length). An in-rail
-                  toggle cannot be clipped out of existence.
+                  overhangs is 8px of a card's margin; a gutter toggle here
+                  would need `overflow: visible` maintained up the whole ancestor chain (a
+                  hazard that file documents at length). An in-rail toggle cannot be
+                  clipped out of existence.
 
                   🔴 AND IT COSTS NO ROW OF ITS OWN ANY MORE. It used to render in a
                   `<Group mb={4}>` here, ABOVE the nav, while `AppsRailNavView` drew the

@@ -16,7 +16,7 @@ import { APPS_RAIL_COOKIE } from '~/shared/utils/cookies';
  * is provenance recorded in prose, not a code dependency. `appsRailChromeWidth` in fact has
  * no non-test consumers at all today: the layout applies the width inline, the stylesheet
  * only names the function in a comment, and every live call site is a geometry test.
- * Keeping the function is still right — it is the one place "276 open / 72 collapsed" is
+ * Keeping the function is still right — it is the one place "292 open / 88 collapsed" is
  * arithmetic rather than a literal, and the tests that assert the rendered rect read it —
  * but do not reason about this module's dependents from the sentence that was here.
  */
@@ -67,7 +67,7 @@ export const APPS_RAIL_GAP = 32;
  * ladder re-tune shipped alongside the rail moves the four-column rung to 2242 of grid,
  * which no viewport near 1300 reaches with or without a rail — so the ladder no longer
  * discriminates between 1280 and 1300 at all, and 1300 now stands purely on "is there
- * room for 276px of chrome plus a usable body". Do not re-derive the old arithmetic as
+ * room for 292px of chrome plus a usable body". Do not re-derive the old arithmetic as
  * if it still decided this number.
  */
 export const APPS_RAIL_MIN_VIEWPORT = 1300;
@@ -92,7 +92,7 @@ export const APPS_RESERVED_SCROLLBAR = 10;
  * The horizontal chrome the rail costs the page body: the rail itself plus its gap.
  *
  * ONE function, several callers (the layout, the store ladder, every geometry test), so
- * "276 open / 72 collapsed" is arithmetic rather than literals that can drift.
+ * "292 open / 88 collapsed" is arithmetic rather than literals that can drift.
  */
 export function appsRailChromeWidth(collapsed: boolean): number {
   return (collapsed ? APPS_RAIL_COLLAPSED_WIDTH : APPS_RAIL_WIDTH) + APPS_RAIL_GAP;

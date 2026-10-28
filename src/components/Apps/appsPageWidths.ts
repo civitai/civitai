@@ -189,7 +189,7 @@ export function appsMeasureCss(measure: AppsMeasure): number | string {
  * `n × 1100 + (n − 1) × 16` of grid, so two need **2216**):
  *
  *   content 1888 (the OLD 1920 container):      `floor((1888 + 16) / 1116)` = **1 column**
- *   content 1602 (1920 viewport, rail open):    `floor((1602 + 16) / 1116)` = **1 column**
+ *   content 1586 (1920 viewport, rail open):    `floor((1586 + 16) / 1116)` = **1 column**
  *   content 2226 (2560 viewport, rail open):    `floor((2226 + 16) / 1116)` = **2 columns**
  *   content 2528 (the container, no rail):      `floor((2528 + 16) / 1116)` = **2 columns**
  *
@@ -228,7 +228,7 @@ export const APPS_CARD_LIST_GAP = 16;
  *
  * ⚠️ THE WORKED NUMBERS HERE USED TO READ "492.8px at five columns" AND ARE RE-DERIVED:
  * the left-rail re-tune moved the ladder, so the reachable top is FOUR columns — 620px in
- * the 2528 of grid a 2560 container yields with no rail, 548.5px in the 2242 it yields
+ * the 2528 of grid a 2560 container yields with no rail, 544.5px in the 2226 it yields
  * with the rail open. Both still beat the 460px four-up the 1920 container shipped, which
  * is the claim this paragraph exists to make. A FIFTH column is declared at 2840 of grid
  * and is deliberately unreachable here in every rail state; raising this constant past
