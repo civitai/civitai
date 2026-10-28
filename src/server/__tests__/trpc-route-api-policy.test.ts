@@ -2,7 +2,6 @@ import http from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { NextApiHandler, NextApiRequest, NextApiResponse } from 'next';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { instrumentationRegistry } from '@civitai/telemetry/client';
 import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
@@ -90,15 +89,6 @@ async function call(headers: Record<string, string>): Promise<Outcome> {
   };
 }
 
-// Lives on the cross-graph registry `/api/metrics` merges into the scrape. Never registered reads 0.
-const ROUTE_REGION_BLOCKS = 'civitai_app_trpc_route_region_blocks_total';
-async function counterValue(name: string) {
-  const metric = instrumentationRegistry.getSingleMetric(name);
-  if (!metric) return 0;
-  const { values } = await metric.get();
-  return values.reduce((sum, v) => sum + v.value, 0);
-}
-
 type BotData = { bot: string | null };
 // superjson (the default write format) wraps the payload in `json`.
 function botSeen(o: Outcome) {
@@ -114,15 +104,13 @@ describe('/api/trpc applies the API policy with no proxy in front', () => {
     expect(botSeen(o)).toBeNull();
   });
 
-  it('answers a blocked region with 451 before any procedure runs, and counts it', async () => {
-    const before = await counterValue(ROUTE_REGION_BLOCKS);
+  it('answers a blocked region with 451 before any procedure runs', async () => {
     const o = await call({ 'cf-ipcountry': 'GB', 'user-agent': BROWSER });
     expect(o.status).toBe(451);
     expect(JSON.parse(o.body)).toEqual({
       error: 'Access to this service is not available in your region due to legal restrictions.',
       code: 'REGION_BLOCKED',
     });
-    expect((await counterValue(ROUTE_REGION_BLOCKS)) - before).toBe(1);
   });
 
   it('sends the default Cache-Control and X-Handled-By', async () => {

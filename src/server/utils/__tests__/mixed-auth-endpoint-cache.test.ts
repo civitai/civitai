@@ -15,8 +15,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *      form takes the public arm. The `credential presented, session null` case
  *      below is the one that separates them.
  *   2. **The credentialed arm states a header.** It previously stated nothing and
- *      relied on `apiCacheMiddleware`, whose matcher is `/api/trpc/*` and
- *      `/api/v1/*` only. Two of this wrapper's twelve routes sit outside that:
+ *      relied on `apiCacheMiddleware`, whose matcher is `/api/v1/*` only. Two of this wrapper's twelve routes sit outside that:
  *      `/api/auth/freshdesk`, a redirect whose target is caller-specific and
  *      which had no `Cache-Control` at all, and the 404 arms of
  *      `/api/blocks/screenshot/[appBlockId]/[file]` — whose 200 arm sets its own

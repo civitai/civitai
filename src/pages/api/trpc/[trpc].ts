@@ -29,7 +29,6 @@ import {
 import { SITE_ALERTS_VERSION_HEADER } from '~/shared/constants/site-alert.constants';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { applyApiRequestPolicy } from '~/server/middleware/api-request-policy';
-import { recordTrpcRouteRegionBlock } from '~/server/prom/trpc-proxy-skip.metrics';
 import {
   pinResponseWriteToSuperjson,
   responseWritesDevalue,
@@ -298,10 +297,7 @@ export default withAxiom(async (req: NextApiRequest, res: NextApiResponse) => {
   // Region block (451), default response headers and the verified-crawler request header: the
   // API policy the proxy middlewares apply on `/api/v1`. `/api/trpc` is not in the proxy matcher,
   // so this call is the ONLY place tRPC gets it; `trpc-route-api-policy.test.ts` pins that.
-  if (applyApiRequestPolicy(req, res)) {
-    recordTrpcRouteRegionBlock();
-    return;
-  }
+  if (applyApiRequestPolicy(req, res)) return;
 
   // Observe batch width BEFORE delegating, so the histogram sees widths that tRPC is about to
   // reject — those requests resolve zero procedures and would otherwise leave no trace at all.

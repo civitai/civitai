@@ -601,7 +601,7 @@ export function MixedAuthEndpoint(
     //     so it also runs before any session work.
     //  2. **The credentialed arm now states a header.** It previously stated
     //     nothing and left the response to `apiCacheMiddleware`, whose matcher
-    //     covers `/api/v1/*` and `/api/trpc/*` only. Two of the twelve routes on
+    //     covers `/api/v1/*` only. Two of the twelve routes on
     //     this wrapper sit outside that: `/api/auth/freshdesk`, which answered
     //     with no `Cache-Control` at all, and
     //     `/api/blocks/screenshot/[appBlockId]/[file]`, whose 200 arm sets its
