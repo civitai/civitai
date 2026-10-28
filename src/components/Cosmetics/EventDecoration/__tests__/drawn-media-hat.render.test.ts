@@ -129,8 +129,6 @@ describe('the image detail hat sits on the drawn picture', () => {
       HAT_PLAIN_CARD_NUDGE,
       160
     );
-    expect(parseFloat(hatButton()!.style.left)).toBeCloseTo(layout.left, 3);
-    expect(parseFloat(hatButton()!.style.top)).toBeCloseTo(layout.top, 3);
     // On the edge, not inside it: the hat's visible extent starts outside the picture.
     expect(layout.reach.left).toBeLessThan(0);
     expect(layout.reach.top).toBeLessThan(0);

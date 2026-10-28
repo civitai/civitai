@@ -5,7 +5,7 @@ import { ImageMediaHat } from '~/components/Cosmetics/EventDecoration/EventDecor
 import { getHatRoom } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import { MEDIA_OVERLAY_ATTR, useDrawnMediaBox } from '~/components/EdgeMedia/useDrawnMediaBox';
 
-/** The image detail's header leaves 12px free above the slot; the slot's left edge is the window's. */
+/** top: the header row's `p-3` bottom padding in ImageDetail2; left: the carousel starts at the window. */
 const SLOT_BLEED = { left: 0, top: 12 };
 
 /**
