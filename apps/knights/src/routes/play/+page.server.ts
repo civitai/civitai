@@ -37,6 +37,7 @@ export const load: PageServerLoad = async ({ locals }) => {
           trial.kind === 'question'
             ? {
                 kind: 'question' as const,
+                questionKey: trial.questionKey,
                 prompt: trial.prompt,
                 options: trial.options,
                 run: trial.run,
@@ -95,15 +96,20 @@ export const actions: Actions = {
   trial: async ({ request, locals }) => {
     const form = await request.formData();
     const referenceId = Number(form.get('referenceId'));
+    const questionKey = form.get('questionKey');
     const answer = form.get('answer');
-    if (!Number.isInteger(referenceId) || typeof answer !== 'string') {
+    if (
+      !Number.isInteger(referenceId) ||
+      typeof questionKey !== 'string' ||
+      typeof answer !== 'string'
+    ) {
       return fail(400, { message: 'Pick an answer.' });
     }
 
     try {
       const result = await answerTrial(
         db,
-        { userId: locals.user.id, referenceId, answer },
+        { userId: locals.user.id, questionKey, referenceId, answer },
         trialDeps
       );
       if (result.status === 'rejected') {

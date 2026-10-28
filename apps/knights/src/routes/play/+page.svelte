@@ -38,23 +38,27 @@
   </div>
 {/if}
 
-{#if data.mode === 'trials'}
-  {#if showReveal && form?.reveal}
-    <div class="reveal" class:right={form.reveal.correct}>
-      <img src={form.reveal.src} alt="The subject you just judged" />
-      <p class="verdict">{form.reveal.correct ? 'Rightly judged.' : 'Not quite.'}</p>
-      <p>The answer: {form.reveal.correctLabel}</p>
-      {#if form.reveal.explanation}
-        <p class="explanation">{form.reveal.explanation}</p>
-      {/if}
-      {#if form.reveal.finished?.result === 'passed'}
-        <p class="verdict">Your trial is passed. You are a Knight of New Order.</p>
-      {:else if form.reveal.finished}
-        <p class="verdict">Your trial is over, and it was not enough. You may try again later.</p>
-      {/if}
-      <button type="button" onclick={() => (dismissed = form)}>Continue</button>
-    </div>
-  {:else if data.trial.kind === 'question'}
+{#if showReveal && form?.reveal}
+  <div class="reveal" class:right={form.reveal.correct}>
+    <img src={form.reveal.src} alt="The subject you just judged" />
+    <p class="verdict">{form.reveal.correct ? 'Rightly judged.' : 'Not quite.'}</p>
+    <p>The answer: {form.reveal.correctLabel}</p>
+    {#if form.reveal.explanation}
+      <p class="explanation">{form.reveal.explanation}</p>
+    {/if}
+    {#if form.reveal.finished?.result === 'passed'}
+      <p class="verdict">You are now a Knight of New Order.</p>
+    {:else if form.reveal.finished?.result === 'failed'}
+      <p class="verdict">Your trial is over, and it was not enough. You may try again later.</p>
+    {:else if form.reveal.finished}
+      <p class="verdict">
+        Some images of this trial were withdrawn, so it could not be judged. A new trial awaits.
+      </p>
+    {/if}
+    <button type="button" onclick={() => (dismissed = form)}>Continue</button>
+  </div>
+{:else if data.mode === 'trials'}
+  {#if data.trial.kind === 'question'}
     <p class="prompt">{data.trial.prompt}</p>
     {#key data.trial.item.referenceId}
       <img
@@ -66,6 +70,7 @@
     {/key}
 
     <form method="POST" action="?/trial" use:enhance={submit}>
+      <input type="hidden" name="questionKey" value={data.trial.questionKey} />
       <input type="hidden" name="referenceId" value={data.trial.item.referenceId} />
       <div class="options">
         {#each data.trial.options as option (option.value)}
