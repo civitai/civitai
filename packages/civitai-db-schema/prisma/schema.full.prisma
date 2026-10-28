@@ -8155,6 +8155,7 @@ enum NewOrderRankType {
   Acolyte
   Knight
   Templar
+  Paladin
 }
 
 model NewOrderRank {

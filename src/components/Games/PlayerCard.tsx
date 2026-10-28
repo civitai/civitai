@@ -41,6 +41,15 @@ const ranksExplanation: Record<NewOrderRankType, React.ReactElement> = {
       </p>
     </>
   ),
+  [NewOrderRankType.Paladin]: (
+    <>
+      <p>You are a Paladin of New Order and have access to all game features.</p>
+      <p>
+        You&apos;ve reached the highest rank in the game and can now see a special queue of images
+        to rate.
+      </p>
+    </>
+  ),
 };
 
 export function PlayerCard({

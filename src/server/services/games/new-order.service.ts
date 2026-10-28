@@ -165,7 +165,13 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
     getVotingCooldownUntil(playerId),
   ]);
 
-  return { ...playerData, ...user, stats, cooldownUntil };
+  // The queues, vote limits and rated-image cache know no Paladin; the Knights app promotes to it.
+  const rankType =
+    playerData.rankType === NewOrderRankType.Paladin
+      ? NewOrderRankType.Templar
+      : playerData.rankType;
+
+  return { ...playerData, rankType, ...user, stats, cooldownUntil };
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {
