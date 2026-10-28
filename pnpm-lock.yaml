@@ -1276,6 +1276,9 @@ importers:
       kysely:
         specifier: ^0.28.7
         version: 0.28.17
+      pg-connection-string:
+        specifier: 2.9.1
+        version: 2.9.1
     devDependencies:
       '@electric-sql/pglite':
         specifier: ^0.4.6

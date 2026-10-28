@@ -2536,6 +2536,7 @@ export const REDIS_SYS_KEYS = {
       default applies.
      */
     DELETED_USER_IMAGE_PURGE_LIMIT: 'system:deleted-user-image-purge-limit',
+    KNIGHTS_V2_SOURCES: 'system:knights-v2-sources',
     /*
       Set of userIds whose grace-blocked images are waiting on the
       restore-user-images job. `restoreUser` adds an id once its restore

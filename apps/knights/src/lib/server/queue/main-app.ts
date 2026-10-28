@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
-import { NSFW_LEVEL_QUESTION, type ApplyOutcome, type ConsensusApplication } from './queue.service';
+import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
+import { type ApplyOutcome, type ConsensusApplication } from './queue.service';
 
 const trimSlash = (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value);
 
@@ -9,7 +10,7 @@ const SKIP_REASONS = ['missing', 'blocked', 'locked'] as const;
 export async function applyConsensusToMainApp(
   application: ConsensusApplication
 ): Promise<ApplyOutcome> {
-  if (application.questionKey !== NSFW_LEVEL_QUESTION) return { outcome: 'applied' };
+  if (application.questionKey !== KNIGHTS_NSFW_LEVEL_QUESTION) return { outcome: 'applied' };
 
   const token = env.WEBHOOK_TOKEN;
   if (!token) throw new Error('WEBHOOK_TOKEN is not configured');
