@@ -41,9 +41,16 @@ describe('Tracker.imageUploadRequest', () => {
     });
   });
 
+  // The table the tracker writes above and the one the read query names must be this one.
   it('has a table of exactly those columns, whose rows expire after 12 months', () => {
-    const columns = [...migration.matchAll(/^ {2}(\w+) \w+/gm)].map((m) => m[1]);
-    expect(columns).toEqual(['time', 'userId', 'ip', 'key']);
-    expect(migration).toMatch(/^TTL toDateTime\(time\) \+ INTERVAL 12 MONTH;$/m);
+    const ddl = migration
+      .split(/\r?\n/)
+      .filter((line) => !line.startsWith('--'))
+      .join(' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    expect(ddl).toBe(
+      'CREATE TABLE IF NOT EXISTS default.imageUploadRequests ( time DateTime64(3) DEFAULT now64(3), userId UInt32, ip String, key String ) ENGINE = MergeTree ORDER BY (userId, time) TTL toDateTime(time) + INTERVAL 12 MONTH;'
+    );
   });
 });

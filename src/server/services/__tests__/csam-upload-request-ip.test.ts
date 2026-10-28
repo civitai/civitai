@@ -52,6 +52,25 @@ describe.each([
   });
 });
 
+describe('getCsamReportsPaged', () => {
+  it('lists reports without the IP events kept on them', async () => {
+    dbMock.dbRead.csamReport.findMany.mockResolvedValue([
+      {
+        id: 1,
+        userId: 42,
+        reportedById: 10,
+        details: { userActivity: [login], minorDepiction: 'real' },
+      },
+    ] as never);
+    dbMock.dbRead.user.findMany.mockResolvedValue([] as never);
+    dbMock.dbRead.csamReport.count.mockResolvedValue(1);
+
+    const { items } = await csamLegacy.getCsamReportsPaged({ limit: 10, page: 1 });
+
+    expect(items[0].details).toEqual({ minorDepiction: 'real' });
+  });
+});
+
 describe('getReportedUserAdditionalInfo', () => {
   it('explains the upload IPs when the report carries an upload-request event', () => {
     expect(

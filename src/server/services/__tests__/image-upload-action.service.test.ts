@@ -63,7 +63,6 @@ describe('getImageUploadIpEvents', () => {
       expect.objectContaining({ where: { id: { in: [1, 2] } } })
     );
     expect(sql()).toMatch(/FROM imageUploadRequests\s+WHERE userId = 42\s/);
-    // 24 hours before the earliest image, 1 hour after the latest.
     expect(sql()).toContain(
       "time BETWEEN parseDateTimeBestEffort('2026-10-19T12:00:00.000Z') AND parseDateTimeBestEffort('2026-10-20T14:00:00.000Z')"
     );
@@ -71,8 +70,9 @@ describe('getImageUploadIpEvents', () => {
     expect(sql()).toContain("key IN ('key-one','key-\\'two')");
   });
 
-  it('asks nothing when there are no images', async () => {
+  it('asks nothing when there are no images or no user', async () => {
     expect(await getImageUploadIpEvents({ userId: OWNER, imageIds: [] })).toEqual([]);
+    expect(await getImageUploadIpEvents({ userId: 0, imageIds: [1, 2] })).toEqual([]);
     dbMock.dbRead.image.findMany.mockResolvedValue([] as never);
     expect(await getImageUploadIpEvents({ userId: OWNER, imageIds: [9] })).toEqual([]);
 

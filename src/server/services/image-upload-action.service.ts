@@ -41,7 +41,8 @@ export async function getImageUploadIpEvents({
   userId: number;
   imageIds: number[];
 }) {
-  if (!clickhouse || !imageIds.length) return [];
+  // No user, no match: rows a failed session lookup wrote carry userId 0.
+  if (!clickhouse || !userId || !imageIds.length) return [];
   const images = await dbRead.image.findMany({
     where: { id: { in: imageIds } },
     select: { id: true, url: true, createdAt: true },

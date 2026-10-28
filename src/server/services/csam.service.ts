@@ -253,6 +253,13 @@ export async function createCsamReport({
   return report;
 }
 
+function omitUserActivity(details: Prisma.JsonValue) {
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return details;
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  const { userActivity, ...rest } = details;
+  return rest;
+}
+
 export async function getCsamReportsPaged({ limit, page }: PaginationInput) {
   const { take, skip } = getPagination(limit, page);
 
@@ -266,6 +273,8 @@ export async function getCsamReportsPaged({ limit, page }: PaginationInput) {
   });
   const items = reports.map((report) => ({
     ...report,
+    // The report's stored IP events are evidence for the report, not for this list.
+    details: omitUserActivity(report.details),
     user: users.find((x) => x.id === report.userId),
     reportedBy: users.find((x) => x.id === report.reportedById),
   }));
