@@ -25,7 +25,7 @@ const HOUR_MS = 60 * 60 * 1000;
 const gcd = (a: number, b: number): number => (b === 0 ? a : gcd(b, a % b));
 
 /**
- * The section's items in this window's order, the row first and the next window's row behind it.
+ * The section's items in this window's order: the row first, then the rows the walk reaches next.
  * Each window's row is the `visible` items after the last window's on one seeded circle of the
  * section, so neighbouring windows never share a card while the section holds two rows. The circle
  * is reshuffled each time the walk is back at its start, and every circle opens with items from one
@@ -55,7 +55,8 @@ export function rotateShopSectionItems<T>(
   const bucket = Math.floor(now / windowMs);
   const n = items.length;
   const sorted = [...items].sort((a, b) => getId(a) - getId(b));
-  const rowSize = Math.max(1, Math.floor(visible));
+  // `|| n` because a cast metadata maxItems can be NaN, which would never end the gcd below.
+  const rowSize = Math.max(1, Math.floor(visible) || n);
   if (n <= rowSize) return shuffle(sorted, seededRng(Math.imul(bucket, 0x9e3779b1) ^ sectionId));
 
   const lap = n / gcd(n, rowSize);

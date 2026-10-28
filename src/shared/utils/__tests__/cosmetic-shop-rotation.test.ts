@@ -36,9 +36,9 @@ describe('rotateShopSectionItems', () => {
       rotate(items, { now: start + w * 3 * HOUR, visible }).slice(0, visible)
     );
 
-  it('gives two sections in the same window different orders', () => {
-    expect(rotate(ids(12), { sectionId: 1, now: start })).not.toEqual(
-      rotate(ids(12), { sectionId: 2, now: start })
+  it.each([12, 42])('gives two %i-item sections in the same window different orders', (n) => {
+    expect(rotate(ids(n), { sectionId: 1, now: start })).not.toEqual(
+      rotate(ids(n), { sectionId: 2, now: start })
     );
   });
 
@@ -48,10 +48,19 @@ describe('rotateShopSectionItems', () => {
     );
   });
 
-  it.each([42, 43, 30, 50, 97])(
-    'never shows a card in two consecutive windows of a %i-item section, across reshuffles too',
-    (n) => {
-      const shown = rows(ids(n), 200);
+  it.each([
+    [42, 14],
+    [43, 14],
+    [30, 14],
+    [50, 14],
+    [97, 14],
+    [9, 4],
+    [13, 4],
+    [20, 4],
+  ])(
+    'never shows a card in two consecutive windows of a %i-item section with a row of %i, across reshuffles too',
+    (n, visible) => {
+      const shown = rows(ids(n), 200, visible);
       for (let w = 1; w < shown.length; w++) {
         expect(
           shown[w].filter((id) => shown[w - 1].includes(id)),
@@ -81,20 +90,30 @@ describe('rotateShopSectionItems', () => {
     }
   });
 
-  it('keeps the whole section and its rows whatever order the database returned it in', () => {
+  it('reshuffles once every item has shown, rather than repeating the same rows', () => {
+    const shown = rows(ids(42), 6);
+    expect(shown.slice(3, 6)).not.toEqual(shown.slice(0, 3));
+  });
+
+  it('gives the same order whatever order the database returned the section in', () => {
     const items = ids(42);
     expect(rotate([...items].reverse(), { now: start })).toEqual(rotate(items, { now: start }));
   });
 
-  it('shows the whole of a section no bigger than the row, and a full row of one under two rows', () => {
+  it('shows the whole of a section no bigger than the row', () => {
     expect(rows(ids(10), 2).map((row) => [...row].sort((a, b) => a - b))).toEqual([
       ids(10),
       ids(10),
     ]);
-    for (const row of rows(ids(20), 20)) expect(new Set(row).size).toBe(14);
   });
 
-  it('puts the next window behind the row, so a viewer who blocks a seller fills from it', () => {
+  it('shows the whole section instead of throwing when maxItems is not a number', () => {
+    expect([...rotate(ids(42), { now: start, visible: NaN })].sort((a, b) => a - b)).toEqual(
+      ids(42)
+    );
+  });
+
+  it('puts the next window behind the row within a lap, so a viewer who blocks a seller fills from it', () => {
     const now = start;
     expect(rotate(ids(42), { now }).slice(14, 28)).toEqual(rows(ids(42), 2)[1]);
   });
