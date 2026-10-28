@@ -114,10 +114,12 @@
   {/await}
 </section>
 
-{#if data.canReply}
-  <TicketReply ticketId={t.id} view={data.view} currentStatus={t.status} />
-{/if}
+{#key t.id}
+  {#if data.canReply}
+    <TicketReply ticketId={t.id} view={data.view} currentStatus={t.status} />
+  {/if}
 
-{#if data.canEscalate}
-  <TicketEscalate ticketId={t.id} />
-{/if}
+  {#if data.canEscalate}
+    <TicketEscalate ticketId={t.id} />
+  {/if}
+{/key}

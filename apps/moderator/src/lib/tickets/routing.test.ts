@@ -54,10 +54,13 @@ describe('routeTicket', () => {
       ).toBe('support');
     });
 
-    it('routes a "Waiting on Mod Lead" ticket to support', () => {
+    it('routes a "Waiting on Mod Lead" ticket back to moderation (support handing it back)', () => {
       expect(
         routeTicket({ cfFeature: null, status: WAITING_ON_MOD_LEAD, routerTopic: null, tags })
-      ).toBe('support');
+      ).toBe('moderation');
+      expect(
+        routeTicket({ cfFeature: 'Billing', status: WAITING_ON_MOD_LEAD, routerTopic: null, tags })
+      ).toBe('moderation');
     });
 
     it('routes a ticket with a moderation router topic to support', () => {

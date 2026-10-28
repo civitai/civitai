@@ -2,6 +2,7 @@
   import { enhance } from '$app/forms';
   import { invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import { FormState } from '$lib/form-state.svelte';
@@ -15,7 +16,13 @@
     currentStatus,
   }: { ticketId: string; view: TicketView; currentStatus: number } = $props();
 
+  /** Stands for "leave the status as it is"; posted as an empty `statusAfter`. */
+  const LEAVE = 'leave';
+
   let text = $state('');
+  let statusAfter = $state(LEAVE);
+  // svelte-ignore state_referenced_locally
+  let statusOnly = $state(SETTABLE_STATUSES.some((s) => s === currentStatus) ? String(currentStatus) : '');
   let confirming = $state(false);
   /** Set when a status change took the ticket out of this view: the page's own load would now 404. */
   let movedTo = $state<TicketView | null>(null);
@@ -32,17 +39,21 @@
   const reply = new FormState({
     onSuccess: (data) => {
       text = '';
+      statusAfter = LEAVE;
       done('Reply sent', data);
     },
     // The confirm step closes when the write settles, success or refusal; the typed text stays on refusal.
     onSettled: () => (confirming = false),
   });
+  // reset:false — the select is pre-filled from the ticket, so a form reset would snap it to the first option.
   const status = new FormState({
     onSuccess: (data) => done('Status changed', data),
+    reset: false,
   });
 
-  const SELECT_CLASS =
-    'h-9 rounded-md border border-dark-4 bg-dark-7 px-2 text-sm text-white disabled:opacity-50';
+  const afterLabel = $derived(
+    statusAfter === LEAVE ? `Leave as ${statusLabel(currentStatus)}` : statusLabel(Number(statusAfter))
+  );
 </script>
 
 <section class="mt-4 rounded-xl border border-dark-4 bg-dark-6 p-5">
@@ -53,6 +64,8 @@
       Done — this ticket now belongs to the {movedTo} view, so it no longer opens here.
       <a class={LINK_CLASS} href="/tickets/{view}">Back to the {view} list</a>
     </p>
+    {@const warning = reply.warning ?? status.warning}
+    {#if warning}<p class="mt-2 text-sm text-amber-400">{warning}</p>{/if}
   {:else}
     <form method="POST" action="?/reply" use:enhance={reply.enhance} class="flex flex-col gap-2">
       <Textarea
@@ -66,12 +79,16 @@
       <div class="flex flex-wrap items-center gap-2">
         <label class="flex items-center gap-2 text-sm text-dark-2">
           Then set status
-          <select name="statusAfter" class={SELECT_CLASS} disabled={reply.submitting}>
-            <option value="">Leave as {statusLabel(currentStatus)}</option>
-            {#each SETTABLE_STATUSES as s (s)}
-              <option value={s}>{statusLabel(s)}</option>
-            {/each}
-          </select>
+          <input type="hidden" name="statusAfter" value={statusAfter === LEAVE ? '' : statusAfter} />
+          <Select.Root type="single" bind:value={statusAfter} disabled={reply.submitting}>
+            <Select.Trigger class="w-56">{afterLabel}</Select.Trigger>
+            <Select.Content>
+              <Select.Item value={LEAVE}>Leave as {statusLabel(currentStatus)}</Select.Item>
+              {#each SETTABLE_STATUSES as s (s)}
+                <Select.Item value={String(s)}>{statusLabel(s)}</Select.Item>
+              {/each}
+            </Select.Content>
+          </Select.Root>
         </label>
         <!-- The confirm button is the only real submit; it must not unmount itself in its own click
              handler (the submit would never fire) — `confirming` closes from `onSettled` instead. -->
@@ -114,13 +131,28 @@
     >
       <label class="flex items-center gap-2 text-sm text-dark-2">
         Change status only
-        <select name="status" class={SELECT_CLASS} disabled={status.submitting}>
-          {#each SETTABLE_STATUSES as s (s)}
-            <option value={s} selected={s === currentStatus}>{statusLabel(s)}</option>
-          {/each}
-        </select>
+        <Select.Root
+          type="single"
+          name="status"
+          bind:value={statusOnly}
+          disabled={status.submitting}
+        >
+          <Select.Trigger class="w-56">
+            {statusOnly ? statusLabel(Number(statusOnly)) : 'Choose a status'}
+          </Select.Trigger>
+          <Select.Content>
+            {#each SETTABLE_STATUSES as s (s)}
+              <Select.Item value={String(s)}>{statusLabel(s)}</Select.Item>
+            {/each}
+          </Select.Content>
+        </Select.Root>
       </label>
-      <Button type="submit" size="sm" variant="outline" disabled={status.submitting}>
+      <Button
+        type="submit"
+        size="sm"
+        variant="outline"
+        disabled={status.submitting || !statusOnly}
+      >
         Set status
       </Button>
       {#if status.error}<p class="w-full text-sm text-red-400">{status.error}</p>{/if}

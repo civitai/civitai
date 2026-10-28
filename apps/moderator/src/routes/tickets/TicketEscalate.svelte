@@ -8,7 +8,6 @@
 
   let { ticketId }: { ticketId: string } = $props();
 
-  let reason = $state('');
   let confirming = $state(false);
   /** Set once the ticket has left the moderation view: the page's own load would now 404. */
   let sent = $state(false);
@@ -43,7 +42,6 @@
     >
       <Textarea
         name="reason"
-        bind:value={reason}
         rows={2}
         maxlength={500}
         placeholder="Optional reason, shown to support in a private note."

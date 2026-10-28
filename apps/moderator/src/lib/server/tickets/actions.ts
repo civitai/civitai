@@ -10,7 +10,7 @@ import {
 import { getTicketDetail, isFreshdeskId } from '../freshdesk.service';
 import { recordModActivity } from '../mod-activity';
 import { escalationFields } from '$lib/tickets/escalate';
-import { plainTextToHtml } from '$lib/tickets/reply-html';
+import { normalizeNewlines, plainTextToHtml } from '$lib/tickets/reply-html';
 import type { TicketView } from '$lib/tickets/routing';
 import { isSettableStatus } from '$lib/tickets/statuses';
 import { resolveTicketView } from './detail';
@@ -80,7 +80,7 @@ export function ticketActions(view: TicketView): Actions {
     reply: requiresGrant('tickets.reply', async ({ request, params, locals }) => {
       const ticketId = params.ticketId ?? '';
       const form = await request.formData();
-      const text = String(form.get('body') ?? '');
+      const text = normalizeNewlines(String(form.get('body') ?? ''));
       const html = plainTextToHtml(text);
       if (!html) return fail(400, { error: 'Write a reply first.' });
       if (text.length > MAX_REPLY_CHARS)

@@ -1,5 +1,10 @@
 import { env } from '$env/dynamic/private';
-import { freshdeskHost, isFreshdeskId } from './freshdesk.service';
+import {
+  basicAuthHeader,
+  freshdeskApiUrl,
+  isFreshdeskId,
+  rateLimitMessage,
+} from './freshdesk.service';
 
 // Freshdesk WRITES, kept apart from `freshdesk.service.ts` so that module stays GET-only.
 //
@@ -35,25 +40,15 @@ async function freshdeskWrite(
 ): Promise<WriteResult> {
   const key = env.FRESHDESK_WRITE_API_KEY;
   if (!key) return { status: 'not_configured' };
-  const auth = Buffer.from(`${key}:X`).toString('base64');
   try {
-    const res = await fetch(`https://${freshdeskHost()}/api/v2${path}`, {
+    const res = await fetch(freshdeskApiUrl(path), {
       method,
-      headers: { authorization: `Basic ${auth}`, 'content-type': 'application/json' },
+      headers: { authorization: basicAuthHeader(key), 'content-type': 'application/json' },
       body: JSON.stringify(body),
       signal: AbortSignal.timeout(15_000),
     });
     if (res.ok) return { status: 'ok' };
-    if (res.status === 429) {
-      const wait = Number(res.headers.get('retry-after'));
-      return error(
-        429,
-        `Freshdesk's rate limit is reached${
-          Number.isFinite(wait) && wait > 0 ? ` — retry in ${wait}s` : ' — retry shortly'
-        }.`,
-        true
-      );
-    }
+    if (res.status === 429) return error(429, rateLimitMessage(res), true);
     // Only Freshdesk's own one-line description reaches the operator, never the raw body.
     const detail = await res
       .json()

@@ -17,12 +17,17 @@
     $props();
 </script>
 
-{#each result.warnings as warning (warning)}
+{#each result.warnings as warning, i (i)}
   <p class="mb-3 rounded-lg border border-amber-700 bg-dark-6 p-3 text-sm text-amber-300">{warning}</p>
 {/each}
 
 <p class="text-dark-2 mb-3 text-sm">{num(result.rows.length)} live tickets, most recently updated first.</p>
 
+{#if result.rows.length === 0}
+  <p class="text-dark-2 rounded-lg border border-dark-4 bg-dark-6 p-6 text-center text-sm">
+    No live tickets in this view.
+  </p>
+{:else}
 <Table>
   <TableHeader>
     <TableRow>
@@ -98,3 +103,4 @@
     {/each}
   </TableBody>
 </Table>
+{/if}

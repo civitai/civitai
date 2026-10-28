@@ -1,10 +1,8 @@
-import { SENT_TO_SUPPORT_TAG, hasSentToSupportTag } from './routing';
+import { SENT_TO_SUPPORT_TAG, TICKET_ROUTING, hasSentToSupportTag } from './routing';
+import { STATUS } from './statuses';
 
 /** Freshdesk group "Customer Support". */
 export const CUSTOMER_SUPPORT_GROUP_ID = 154000246097;
-
-const WAITING_ON_MOD_LEAD = 8;
-const OPEN = 2;
 
 export type EscalationFields = { tags: string[]; group_id: number; status?: number };
 
@@ -24,6 +22,8 @@ export function escalationFields(
       ? [...currentTags]
       : [...currentTags, SENT_TO_SUPPORT_TAG],
     group_id: CUSTOMER_SUPPORT_GROUP_ID,
-    ...(currentStatus === WAITING_ON_MOD_LEAD ? { status: OPEN } : {}),
+    ...((TICKET_ROUTING.moderationStatuses as readonly number[]).includes(currentStatus)
+      ? { status: STATUS.open }
+      : {}),
   };
 }

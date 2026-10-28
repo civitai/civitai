@@ -5,7 +5,7 @@ import {
   type Unavailable,
 } from '../freshdesk.service';
 import { sentByTickets, type SentBy } from './sent-by';
-import { createLoadCache, readAll, type Budget, type Searched } from './search';
+import { createLoadCache, readAll, shortReadWarning, type Budget, type Searched } from './search';
 import { getRoutedTicketContext, type RoutedTicketContext } from '../decision-sources/support';
 import { moderationQuery, statusQuery, unclassifiedQuery } from '$lib/tickets/queries';
 import { hasSentToSupportTag, routeTicket, type TicketView } from '$lib/tickets/routing';
@@ -93,10 +93,7 @@ export async function listTickets(
         warnings.push(
           `${res.failedRequests} Freshdesk request(s) failed while reading ${label}, so some are missing from this list. Reload to retry.`
         );
-      else if (!res.complete)
-        warnings.push(
-          `Showing ${res.tickets.length} of ${res.total} ${label}; the rest is in Freshdesk.`
-        );
+      else if (!res.complete) warnings.push(shortReadWarning(label, res));
     }
 
     let context = new Map<string, RoutedTicketContext>();

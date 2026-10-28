@@ -6,14 +6,16 @@ const ESCAPES: Record<string, string> = {
   "'": '&#39;',
 };
 
+/** Browsers post a textarea's line breaks as CRLF; length limits count each as one character. */
+export const normalizeNewlines = (text: string): string => text.replace(/\r\n?/g, '\n');
+
 /**
  * A moderator's plain-text reply as the HTML Freshdesk emails. Everything typed is escaped, so markup in
  * a reply can never reach the customer as markup; blank lines become paragraphs, single newlines `<br>`.
  * Null when there is nothing to send.
  */
 export function plainTextToHtml(text: string): string | null {
-  const paragraphs = text
-    .replace(/\r\n?/g, '\n')
+  const paragraphs = normalizeNewlines(text)
     .split(/\n[ \t]*\n/)
     .map((p) => p.trim())
     .filter(Boolean);

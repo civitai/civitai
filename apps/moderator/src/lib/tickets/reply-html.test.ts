@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { plainTextToHtml } from './reply-html';
+import { normalizeNewlines, plainTextToHtml } from './reply-html';
 
 describe('plainTextToHtml', () => {
   it('escapes markup so typed HTML is shown as text, never sent as HTML', () => {
@@ -19,5 +19,13 @@ describe('plainTextToHtml', () => {
   it('is null for an empty or whitespace-only reply', () => {
     expect(plainTextToHtml('')).toBeNull();
     expect(plainTextToHtml(' \n\t \r\n ')).toBeNull();
+  });
+
+  it('counts a browser-submitted CRLF as one character, as the textarea limit does', () => {
+    const typed = 'a\nb\nc';
+    const posted = typed.replace(/\n/g, '\r\n');
+    expect(normalizeNewlines(posted)).toBe(typed);
+    expect(normalizeNewlines(posted).length).toBe(typed.length);
+    expect(normalizeNewlines('a\rb')).toBe('a\nb');
   });
 });

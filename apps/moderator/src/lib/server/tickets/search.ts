@@ -1,9 +1,14 @@
-import type { TicketSearchPage, TicketSummary } from '../freshdesk.service';
+import {
+  SEARCH_MAX_PAGES,
+  SEARCH_PAGE_SIZE,
+  type TicketSearchPage,
+  type TicketSummary,
+} from '../freshdesk.service';
 import { bisectDays, createdWithin, addDays, type DayRange } from '$lib/tickets/queries';
 
-/** Freshdesk's search page size and page ceiling: one expression yields at most 300 tickets. */
-const PAGE_SIZE = 30;
-const MAX_PAGES = 10;
+const PAGE_SIZE = SEARCH_PAGE_SIZE;
+const MAX_PAGES = SEARCH_MAX_PAGES;
+/** One expression yields at most this many tickets. */
 const MAX_RESULTS = PAGE_SIZE * MAX_PAGES;
 
 /** No Freshdesk account here predates this. */
@@ -18,8 +23,8 @@ export type Searched =
   | {
       status: 'ok';
       tickets: TicketSummary[];
-      /** What Freshdesk reported for the whole expression. */
-      total: number;
+      /** What Freshdesk reported for the whole expression; null when it was never asked. */
+      total: number | null;
       /** Whether every ticket the expression matches was read. */
       complete: boolean;
       /** Requests that failed after the first one. */
@@ -42,7 +47,7 @@ export async function readAll(
   today: string
 ): Promise<Searched> {
   if (budget.left < 1)
-    return { status: 'ok', tickets: [], total: 0, complete: false, failedRequests: 0 };
+    return { status: 'ok', tickets: [], total: null, complete: false, failedRequests: 0 };
   budget.left -= 1;
   const first = await fetchPage(expression, 1);
   if (first.status !== 'ok') return first;
@@ -100,6 +105,13 @@ export async function readAll(
     complete,
     failedRequests,
   };
+}
+
+/** What to tell the operator about a read that came back short without a failed request. */
+export function shortReadWarning(label: string, res: Extract<Searched, { status: 'ok' }>): string {
+  return res.total === null
+    ? `${label} were not read (request budget spent); open Freshdesk for these.`
+    : `Showing ${res.tickets.length} of ${res.total} ${label}; the rest is in Freshdesk.`;
 }
 
 /**

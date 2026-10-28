@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import type { TicketSearchPage, TicketSummary } from '../freshdesk.service';
-import { createLoadCache, readAll, type FetchPage } from '../tickets/search';
+import { createLoadCache, readAll, shortReadWarning, type FetchPage } from '../tickets/search';
 
 const TODAY = '2026-10-28';
 const day = (i: number) =>
@@ -63,6 +63,24 @@ describe('readAll', () => {
     expect(calls.length).toBeLessThanOrEqual(10);
     expect(res).toMatchObject({ status: 'ok', complete: false });
     expect(res.status === 'ok' && res.tickets.length).toBeGreaterThan(0);
+  });
+
+  it('reports a search never asked for (budget spent) as not read, not as zero tickets', async () => {
+    const { fetchPage, calls } = fakeFreshdesk(100);
+    const res = await readAll('status:2', fetchPage, { left: 0 }, TODAY);
+    expect(calls).toHaveLength(0);
+    expect(res).toMatchObject({ status: 'ok', tickets: [], total: null, complete: false });
+    if (res.status !== 'ok') throw new Error('expected ok');
+    expect(shortReadWarning('"Open" tickets', res)).toBe(
+      '"Open" tickets were not read (request budget spent); open Freshdesk for these.'
+    );
+  });
+
+  it('says how many of the total were shown when a read is short', async () => {
+    const { fetchPage } = fakeFreshdesk(512);
+    const res = await readAll('status:2', fetchPage, { left: 10 }, TODAY);
+    if (res.status !== 'ok') throw new Error('expected ok');
+    expect(shortReadWarning('"Open" tickets', res)).toMatch(/^Showing \d+ of 512 "Open" tickets/);
   });
 
   it('fails when the first request fails', async () => {

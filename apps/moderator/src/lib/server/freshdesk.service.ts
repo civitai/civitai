@@ -49,6 +49,25 @@ export type Unavailable = { status: 'unavailable'; reason: string };
 const unavailable = (reason: string): Unavailable => ({ status: 'unavailable', reason });
 const NOT_CONFIGURED = unavailable('Freshdesk is not configured.');
 
+/** The v2 API URL of `path` (starting with `/`) on the configured Freshdesk host. */
+export const freshdeskApiUrl = (path: string): string => `https://${freshdeskHost()}/api/v2${path}`;
+
+/** Freshdesk authenticates with the API key as the basic-auth username and any password. */
+export const basicAuthHeader = (key: string): string =>
+  `Basic ${Buffer.from(`${key}:X`).toString('base64')}`;
+
+/** Seconds a 429 asks the caller to wait, or null when it names none. */
+export function retryAfterSeconds(res: Response): number | null {
+  const wait = Number(res.headers.get('retry-after'));
+  return Number.isFinite(wait) && wait > 0 ? wait : null;
+}
+
+/** One sentence for a 429, shared by reads and writes. */
+export const rateLimitMessage = (res: Response): string => {
+  const wait = retryAfterSeconds(res);
+  return `Freshdesk's rate limit is reached${wait ? ` — retry in ${wait}s` : ' — retry shortly'}.`;
+};
+
 /**
  * One authenticated, READ-ONLY GET against the v2 API: the parsed body, or why it could not be had.
  * Every Freshdesk call here goes through it, so "could not ask" is reported one way.
@@ -65,22 +84,13 @@ async function freshdeskGet(
 ): Promise<{ status: 'ok'; body: unknown } | Unavailable> {
   const key = env.FRESHDESK_API_KEY;
   if (!key) return NOT_CONFIGURED;
-  // Freshdesk authenticates with the API key as the basic-auth username and any password.
-  const auth = Buffer.from(`${key}:X`).toString('base64');
   try {
-    const res = await fetch(`https://${freshdeskHost()}/api/v2${path}`, {
-      headers: { authorization: `Basic ${auth}` },
+    const res = await fetch(freshdeskApiUrl(path), {
+      headers: { authorization: basicAuthHeader(key) },
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (res.status === 404 && notFound !== null) return unavailable(notFound);
-    if (res.status === 429) {
-      const wait = Number(res.headers.get('retry-after'));
-      return unavailable(
-        `Freshdesk's rate limit is reached${
-          Number.isFinite(wait) && wait > 0 ? ` — try again in ${wait}s` : ''
-        }.`
-      );
-    }
+    if (res.status === 429) return unavailable(rateLimitMessage(res));
     if (!res.ok) {
       console.error(`[freshdesk] ${label} failed`, res.status);
       return unavailable(`Freshdesk returned ${res.status}.`);
