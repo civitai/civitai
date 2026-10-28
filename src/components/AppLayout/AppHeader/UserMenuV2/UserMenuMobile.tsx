@@ -41,7 +41,6 @@ import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { NextLink } from '~/components/NextLink/NextLink';
 import { SupportChip } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -386,38 +385,34 @@ export function MobileHeaderRows({
         </MenuItemLink>
       </div>
       {features.buzz && (
-        <div className="flex items-stretch gap-2">
-          <NextLink
-            href="/user/buzz-dashboard"
-            className="block min-w-0 flex-1 rounded-lg"
-            onClick={() => {
-              trackHeader('buzz-dashboard');
-              handleClose();
-            }}
-          >
-            <BuzzBalances
-              labelled
-              animated={features.buzzSpendPop}
-              iconSize={16}
-              textSize="md"
-              withAbbreviation={false}
-            />
-          </NextLink>
-          <Button
-            variant="light"
-            radius="md"
-            aria-label="Buy Buzz"
-            title="Buy Buzz"
-            className="!h-auto w-11 shrink-0 !px-0"
-            onClick={() => {
-              // The sheet covers the screen and holds focus, so it closes before the purchase opens.
-              handleClose();
-              onBuyBuzz({});
-            }}
-          >
-            <IconPlus size={18} />
-          </Button>
-        </div>
+        <BuzzBalances
+          labelled
+          animated={features.buzzSpendPop}
+          iconSize={16}
+          textSize="md"
+          href="/user/buzz-dashboard"
+          onOpen={() => {
+            trackHeader('buzz-dashboard');
+            handleClose();
+          }}
+          action={
+            <LegacyActionIcon
+              variant="light"
+              color="blue"
+              radius="md"
+              size={28}
+              aria-label="Buy Buzz"
+              title="Buy Buzz"
+              onClick={() => {
+                // The sheet covers the screen and holds focus, so it closes before the purchase opens.
+                handleClose();
+                onBuyBuzz({});
+              }}
+            >
+              <IconPlus size={18} />
+            </LegacyActionIcon>
+          }
+        />
       )}
     </div>
   );

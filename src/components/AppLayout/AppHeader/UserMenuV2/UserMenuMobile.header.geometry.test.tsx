@@ -144,6 +144,8 @@ afterEach(() => {
   mocks.animated = true;
 });
 
+const stripOf = (card: Element) =>
+  card.querySelector('[data-buzz-balance]')!.parentElement!.parentElement!;
 const profileRow = (card: Element) =>
   card.querySelector('a[href^="/user/"]:not([href$="buzz-dashboard"])')!.parentElement!;
 
@@ -210,19 +212,15 @@ describe('mobile menu account card', () => {
     expect(box(card).right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
   });
 
-  test('lines the avatar up with the balances, and Buy Buzz with the card edge', async () => {
-    const { card, buy, balances } = await renderHeader();
-    // The strip inside the Buzz link, not the link: padding on the link would not show in its box.
-    const strip = balances[0].parentElement!.parentElement!;
-    const avatar = card.querySelector('span.relative')!;
-    const [avatarBox, stripBox, buyBox, nameRow] = [avatar, strip, buy, profileRow(card)].map(box);
+  test('lines the avatar up with the balances strip', async () => {
+    const { card } = await renderHeader();
+    const avatarBox = box(card.querySelector('span.relative')!);
+    const stripBox = box(stripOf(card));
 
     expect(Math.abs(avatarBox.left - stripBox.left)).toBeLessThanOrEqual(1);
-    // Buy Buzz is the plus at the row's right end, flush with the card's content edge.
-    expect(buyBox.left).toBeGreaterThanOrEqual(stripBox.right);
-    expect(Math.abs(buyBox.right - (box(card).right - 9))).toBeLessThanOrEqual(1);
+    expect(Math.abs(stripBox.right - (box(card).right - 9))).toBeLessThanOrEqual(1);
     // The user row sits close above the balances.
-    expect(stripBox.top - nameRow.bottom).toBeLessThanOrEqual(8);
+    expect(stripBox.top - box(profileRow(card)).bottom).toBeLessThanOrEqual(8);
   });
 
   test('offers membership under the name of a non-member, and opens it without opening the profile', async () => {
@@ -300,43 +298,51 @@ describe('mobile menu account card', () => {
     expect(buzz.textContent).not.toContain('1,333,332');
   });
 
-  test('puts the balances side by side when they fit, and stacks them when they do not', async () => {
+  test('keeps both balances on one row, dropping labels and then abbreviating to fit', async () => {
+    // The rolling counter keeps every digit in the DOM; the static one reads as the number.
+    mocks.animated = false;
     mocks.balances = { blue: 0, yellow: 0 };
-    let { balances } = await renderHeader();
+    let { card, balances } = await renderHeader();
+    expect(balances.map((b) => b.textContent)).toEqual(['blue0', 'yellow0']);
     expect(box(balances[1]).top).toBe(box(balances[0]).top);
 
+    // Eight-digit amounts at 360px lose their labels but keep every digit.
+    cleanup();
+    mocks.balances = { blue: 12345678, yellow: 87654321 };
+    ({ card, balances } = await renderHeader(NARROW_PHONE_VIEWPORT));
+    expect(balances.map((b) => b.textContent)).toEqual(['12,345,678', '87,654,321']);
+
+    // Nine digits in 260px abbreviate too; the full value stays in the accessible name.
     cleanup();
     mocks.balances = { blue: 123456789, yellow: 12345678 };
-    ({ balances } = await renderHeader(NARROW_PHONE_VIEWPORT));
-    const [first, second] = balances.map(box);
-    expect(second.top).toBeGreaterThanOrEqual(first.bottom);
-    // Stacked, each balance still shows whole.
-    for (const balance of balances) {
-      expect(balance.scrollWidth).toBeLessThanOrEqual(balance.clientWidth);
-      expect(box(balance).right).toBeLessThanOrEqual(NARROW_PHONE_VIEWPORT.width);
-    }
+    ({ card, balances } = await renderHeader({ width: 260, height: 700 }));
+    expect(balances.map((b) => b.textContent)).toEqual(['123.4m', '12.3m']);
+    expect(balances.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'blue Buzz 123,456,789',
+      'yellow Buzz 12,345,678',
+    ]);
+    expect(box(balances[1]).top).toBe(box(balances[0]).top);
+    const strip = stripOf(card);
+    expect(strip.scrollWidth).toBeLessThanOrEqual(strip.clientWidth);
+    // One row: the plus sits level with the balances, not under them.
+    const buy = card.querySelector('button[aria-label="Buy Buzz"]')!;
+    expect(box(buy).top).toBeLessThan(box(balances[1]).bottom);
+    expect(box(strip).height).toBeLessThanOrEqual(56);
   });
 
-  test('puts Buy Buzz as a plus beside the balances, as tall as they are', async () => {
-    const { buzz, buy, balances } = await renderHeader();
-    const [buzzBox, buyBox] = [buzz, buy].map(box);
+  test('puts Buy Buzz as a square plus inside the strip, after the last balance', async () => {
+    const { card, buy, balances } = await renderHeader();
+    const [stripBox, buyBox, lastBox] = [stripOf(card), buy, balances[1]].map(box);
 
+    expect(stripOf(card).contains(buy)).toBe(true);
     expect(buy.textContent).toBe('');
     expect(buy.getAttribute('title')).toBe('Buy Buzz');
-    expect(buyBox.left).toBeGreaterThanOrEqual(buzzBox.right);
-    expect(Math.abs(buyBox.top - buzzBox.top)).toBeLessThanOrEqual(1);
-    expect(Math.abs(buyBox.height - buzzBox.height)).toBeLessThanOrEqual(1);
-    expect(buyBox.width).toBeGreaterThanOrEqual(40);
-    // Both balances still fit whole beside it, on a narrow phone with big balances.
-    cleanup();
-    mocks.balances = { blue: 123456789, yellow: 12345678 };
-    const narrow = await renderHeader(NARROW_PHONE_VIEWPORT);
-    for (const balance of narrow.balances) {
-      expect(balance.scrollWidth).toBeLessThanOrEqual(balance.clientWidth);
-    }
-    expect(box(narrow.buy).right).toBeLessThanOrEqual(NARROW_PHONE_VIEWPORT.width);
-    expect(Math.abs(box(narrow.buy).height - box(narrow.buzz).height)).toBeLessThanOrEqual(1);
-    expect(balances.length).toBe(2);
+    expect(buyBox.left).toBeGreaterThanOrEqual(lastBox.right);
+    expect(buyBox.right).toBeLessThanOrEqual(stripBox.right);
+    expect(Math.abs(buyBox.width - buyBox.height)).toBeLessThanOrEqual(1);
+    expect(buyBox.width).toBeGreaterThanOrEqual(28);
+    expect(buyBox.top).toBeGreaterThanOrEqual(stripBox.top);
+    expect(buyBox.bottom).toBeLessThanOrEqual(stripBox.bottom);
   });
 
   test('the plus opens the Buy Buzz purchase', async () => {

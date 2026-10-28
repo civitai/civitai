@@ -45,6 +45,9 @@ vi.mock('~/components/NextLink/NextLink', () => ({
 // The header rows' balances, avatar and Buy Buzz modal are not what is under test.
 const buyBuzz = vi.hoisted(() => vi.fn());
 vi.mock('~/components/User/UserBuzz', () => ({ UserBuzz: () => null }));
+vi.mock('~/components/Buzz/useBuzz', () => ({
+  useQueryBuzz: () => ({ data: { accounts: [], total: 0 }, isLoading: false }),
+}));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   UserAvatar: ({ subText }: { subText?: ReactNode }) =>
     createElement('span', null, 'Avatar', subText),
@@ -361,7 +364,7 @@ describe('UserMenu_Click', () => {
       await click(row('Avatar'));
       await click(document.querySelector('a[href="/user/buzz-dashboard"]'));
       await click(
-        [...document.querySelectorAll('.mantine-Button-root')].find(
+        [...document.querySelectorAll('.mantine-Button-root, .mantine-ActionIcon-root')].find(
           (el) => el.textContent === buyLabel || el.getAttribute('aria-label') === buyLabel
         )
       );
