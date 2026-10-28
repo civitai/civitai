@@ -17,8 +17,12 @@ import { executableSchemaSql, pgliteDialect } from './abuse-detection-pglite.har
 
 // TEMPORARY fallback: the app unit tests job sets only the assistant runner's URL to its Postgres
 // service. Remove it once that job sets MODERATOR_TEST_DATABASE_URL too.
-const SERVER_URL =
-  process.env.MODERATOR_TEST_DATABASE_URL ?? process.env.ASSISTANT_RUNNER_TEST_DATABASE_URL;
+const SERVER_ENV = process.env.MODERATOR_TEST_DATABASE_URL
+  ? 'MODERATOR_TEST_DATABASE_URL'
+  : 'ASSISTANT_RUNNER_TEST_DATABASE_URL';
+const SERVER_URL = process.env[SERVER_ENV];
+// Printed so a CI log shows this ran against a server rather than skipping.
+console.info(`[page-access-lock.pg] Postgres from ${SERVER_URL ? SERVER_ENV : 'nowhere: skipped'}`);
 const describePg = SERVER_URL ? describe : describe.skip;
 if (process.env.CI && !SERVER_URL)
   throw new Error('MODERATOR_TEST_DATABASE_URL (or its fallback) is not set in CI');
