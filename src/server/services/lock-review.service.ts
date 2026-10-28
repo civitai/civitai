@@ -88,8 +88,8 @@ const lockReviewKind = {
   context: { path: ['kind'], equals: LOCK_REVIEW_KIND },
 } satisfies Prisma.AppealWhereInput;
 
-/** The owner's in-app appeal on the model of one kind: a pending one, else their latest. A takeover
- *  can leave the pending row older than a resolved one. */
+/** The owner's in-app appeal on the model of one kind: a pending one, else the latest filed. Rows are
+ *  reused, so a row's id says nothing about when it was last filed. */
 export async function latestModelAppealOfKind({
   modelId,
   userId,
@@ -110,7 +110,7 @@ export async function latestModelAppealOfKind({
           ? Prisma.sql`context->>'kind' = ${LOCK_REVIEW_KIND}`
           : Prisma.sql`COALESCE(context->>'kind', '') <> ${LOCK_REVIEW_KIND}`
       }
-    ORDER BY status = 'Pending' DESC, id DESC
+    ORDER BY status = 'Pending' DESC, "createdAt" DESC, id DESC
     LIMIT 1
   `;
   return appeal ?? null;

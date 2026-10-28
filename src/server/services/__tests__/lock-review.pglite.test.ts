@@ -425,7 +425,10 @@ describe("an owner's request", () => {
   it('reopens the earlier row as a lock review once the cooldown is over', async () => {
     ownModel();
     mocks.getLatestAppeal.mockResolvedValue({ id: 9, status: AppealStatus.Rejected });
-    await appealRows([9, 'Rejected', { kind: 'lock-review', locks: ['nsfw'] }]);
+    await appealRows(
+      [9, 'Rejected', { kind: 'lock-review', locks: ['nsfw'] }],
+      [15, 'Rejected', null]
+    );
 
     await createEntityAppealHandler({ input: request(['nsfw']), ctx: owner() });
 
@@ -488,8 +491,24 @@ describe("an owner's request", () => {
       ],
       3,
     ],
+    [
+      'the latest filed, not the highest id',
+      [
+        [12, 'Rejected'],
+        [5, 'Approved'],
+      ],
+      5,
+    ],
   ] as const)('reads %s', async (_, rows, expected) => {
     await appealRows(...rows.map(([id, status]) => [id, status, null] as [number, string, null]));
+    // Not the owner's, not this model's, or a lock review: never the answer, though filed later.
+    await db.query(
+      `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, context, "createdAt") VALUES
+         (90, $1, 'Model', $2, 'Rejected', NULL, now() + interval '1 hour'),
+         (91, $3, 'Model', $4, 'Rejected', NULL, now() + interval '1 hour'),
+         (92, $3, 'Model', $2, 'Rejected', '{"kind":"lock-review","locks":["nsfw"]}', now() + interval '1 hour')`,
+      [NEW_OWNER, MODEL, OWNER, MODEL + 1]
+    );
 
     const appeal = await latestModelAppealOfKind({
       modelId: MODEL,
@@ -525,12 +544,13 @@ describe("an owner's request", () => {
   });
 });
 
-/** The owner's in-app appeal rows on MODEL, as `[id, status, context]`. */
+/** The owner's in-app appeal rows on MODEL, as `[id, status, context]`, filed in the order given. */
 async function appealRows(...rows: [number, string, object | null][]) {
-  for (const [id, status, context] of rows)
+  for (const [i, [id, status, context]] of rows.entries())
     await db.query(
-      `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, context) VALUES ($1, $2, 'Model', $3, $4, $5)`,
-      [id, OWNER, MODEL, status, context]
+      `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, context, "createdAt")
+       VALUES ($1, $2, 'Model', $3, $4, $5, now() + make_interval(secs => $6))`,
+      [id, OWNER, MODEL, status, context, i]
     );
 }
 
