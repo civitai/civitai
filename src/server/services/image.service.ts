@@ -1695,6 +1695,7 @@ export const ingestImage = async ({
       failureType: 'send-fail',
       failureClass,
       responseStatus: submitStatus,
+      error: safeError(submitError),
       imageId: id,
       mediaType: type,
     }).catch(() => null);
