@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import { describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { migrateResourceToCollection } from '~/server/services/model.service';
+import { recordedOwnership } from './model-ownership-db';
 
 /**
  * Splitting a model into a collection creates one model per extra version. Each new model records its
@@ -50,13 +51,20 @@ describe('migrateResourceToCollection', () => {
       () => undefined
     );
 
-    const rows = (txExecuteRaw.mock.calls as unknown as [Prisma.Sql][])
+    const statements = (txExecuteRaw.mock.calls as unknown as [Prisma.Sql][])
       .map(([sql]) => sql)
-      .filter((sql) => sql.text.includes('"ModelOwnership"'))
-      .map((sql) => sql.values);
+      .filter((sql) => sql.text.includes('"ModelOwnership"'));
+    const rows = await recordedOwnership(
+      [
+        [1, OWNER],
+        [101, OWNER],
+        [102, OWNER],
+      ],
+      statements
+    );
     expect(rows).toEqual([
-      [OWNER, 'create', null, 101],
-      [OWNER, 'create', null, 102],
+      { modelId: 101, userId: OWNER, reason: 'create', actorId: null },
+      { modelId: 102, userId: OWNER, reason: 'create', actorId: null },
     ]);
   });
 });

@@ -6660,7 +6660,6 @@ export async function transferModelOwnership({
   const becomesOfficial = targetUserId === constants.system.officialUserId;
 
   const [, ...result] = await dbWrite.$transaction([
-    // Before the move, while the models still name their owner.
     dbWrite.$executeRaw(recordCurrentModelOwnersSql(Prisma.sql`m.id = ANY(${modelIds}::int[])`)),
     dbWrite.model.updateMany({
       where: { id: { in: modelIds } },

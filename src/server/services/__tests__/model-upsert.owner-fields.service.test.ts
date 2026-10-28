@@ -123,6 +123,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/redis.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { recordedOwnership } from './model-ownership-db';
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -498,8 +499,15 @@ describe('availability', () => {
       .map(([sql]) => sql)
       .find((sql) => sql.sql.includes('"ModelOwnership"'));
     expect(ownership, 'no ownership row written in the transaction').toBeDefined();
-    expect(ownership!.text).toMatch(/m\.id = \$4/);
-    expect(ownership!.values).toEqual([OWNER_ID, 'create', OWNER_ID, 4242]);
+    expect(
+      await recordedOwnership(
+        [
+          [4242, OWNER_ID],
+          [4243, OWNER_ID],
+        ],
+        [ownership!]
+      )
+    ).toEqual([{ modelId: 4242, userId: OWNER_ID, reason: 'create', actorId: OWNER_ID }]);
   });
 });
 

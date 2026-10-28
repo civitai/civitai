@@ -5,6 +5,7 @@ import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { recordedOwnership } from './model-ownership-db';
 import type * as AccountDeletionImages from '~/server/services/account-deletion-images';
 import type * as PaidAccessService from '~/server/services/paid-access.service';
 import type * as UserRestrictionService from '~/server/services/user-restriction.service';
@@ -45,6 +46,15 @@ const USER_ID = 7;
 const AUDITED = [31, 52, 83];
 const ORPHANED = [31, 83];
 const OTHER_USER = 8;
+
+/** The Transfer events, of `transferred`, on the models a Transfer query asks about by id. */
+const transfersAmong = (query: string, transferred: number[]) => {
+  const asked = /type = 'Transfer' AND modelId IN \(([\d,]+)\)/
+    .exec(query)?.[1]
+    .split(',')
+    .map(Number);
+  return transferred.filter((modelId) => asked?.includes(modelId)).map((modelId) => ({ modelId }));
+};
 
 const restore = () =>
   restoreUser({ id: USER_ID, username: 'back', email: 'back@x.com', restoreModels: true });
@@ -95,8 +105,9 @@ describe('restoreUser -> model sale badge cache', () => {
 
 describe('restoreUser -> model ownership history', () => {
   it('records the user as an owner of each model it gives back, with the reclaim', async () => {
-    dbMock.dbWrite.$executeRaw.mockImplementation(((sql: { sql: string; values: unknown[] }) => ({
+    dbMock.dbWrite.$executeRaw.mockImplementation(((sql: Prisma.Sql) => ({
       sql: sql.sql,
+      text: sql.text,
       values: sql.values,
     })) as never);
     dbMock.dbWrite.$transaction.mockImplementation((async (ops: unknown) =>
@@ -107,11 +118,21 @@ describe('restoreUser -> model ownership history', () => {
     const reclaim = dbMock.dbWrite.$transaction.mock.calls
       .map(([ops]) => ops)
       .find((ops) => Array.isArray(ops) && ops.length === 2) as
-      | [unknown, { sql: string; values: unknown[] }]
+      | [unknown, { sql: string; text: string; values: unknown[] }]
       | undefined;
     expect(reclaim, 'the reclaim and its ownership rows must commit together').toBeDefined();
-    expect(reclaim![1].sql).toContain('"ModelOwnership"');
-    expect(reclaim![1].values).toEqual([USER_ID, 'restore', null, ORPHANED, USER_ID]);
+    // The reclaim's own owner write, then its ownership statement, against Postgres.
+    const rows = await recordedOwnership(
+      ORPHANED.map((id) => [id, -1]),
+      [
+        (db) =>
+          db.query(`UPDATE "Model" SET "userId" = $1 WHERE id = ANY($2)`, [USER_ID, ORPHANED]),
+        reclaim![1],
+      ]
+    );
+    expect(rows).toEqual(
+      ORPHANED.map((modelId) => ({ modelId, userId: USER_ID, reason: 'restore', actorId: null }))
+    );
   });
 
   it('reads only Create events, whose actor is the creator', async () => {
@@ -157,7 +178,7 @@ describe("restoreUser -> which orphaned models are the account's", () => {
     // was transferred after, so whoever had it last is unknown.
     auditRows.mockImplementation(async (query: string) =>
       query.includes("'Transfer'")
-        ? [{ modelId: 6 }]
+        ? transfersAmong(query, [6])
         : [{ modelId: 2 }, { modelId: 3 }, { modelId: 5 }, { modelId: 6 }]
     );
     dbMock.dbWrite.$queryRaw.mockImplementation((async (

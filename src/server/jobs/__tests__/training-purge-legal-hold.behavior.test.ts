@@ -34,7 +34,12 @@ vi.mock('~/server/flipt/client', () => ({
 
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
 import { processReplacedFiles, purgeReplacedFilesJob } from '~/server/jobs/purge-replaced-files';
-import { heldModelIdsSql, modelDataHeldSql } from '~/server/services/legal-hold.service';
+import {
+  HOLD_MARKER_TABLE,
+  HOLD_MARKER_VIEW,
+  heldModelIdsSql,
+  modelDataHeldSql,
+} from '~/server/services/legal-hold.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -328,19 +333,19 @@ describe('model ownership history', () => {
   });
 
   it('deletes nothing when the hold marker view is missing but its table is there', async () => {
-    await holder.db.exec(`ALTER VIEW "EvidenceHeldUser" RENAME TO "EvidenceHeldUserAside"`);
+    await holder.db.exec(`ALTER VIEW "${HOLD_MARKER_VIEW}" RENAME TO "MarkerViewAside"`);
     try {
       await purgeReplacedFilesJob.run({}).result;
       await deleteOldTrainingData.run({}).result;
     } finally {
-      await holder.db.exec(`ALTER VIEW "EvidenceHeldUserAside" RENAME TO "EvidenceHeldUser"`);
+      await holder.db.exec(`ALTER VIEW "MarkerViewAside" RENAME TO "${HOLD_MARKER_VIEW}"`);
     }
 
     expect(mockDeleteModelFileObject).not.toHaveBeenCalled();
   });
 
   it('holds the same models checked as a set as one at a time', async () => {
-    for (const markerView of [true, false]) {
+    const compare = async (markerView: boolean) => {
       const { rows } = await holder.db.query<{ id: number; one: boolean; many: boolean }>(
         Prisma.sql`
           SELECT m.id, ${modelDataHeldSql(Prisma.raw('m.id'), markerView)} AS one,
@@ -350,11 +355,22 @@ describe('model ownership history', () => {
       );
       expect(rows.length).toBe(OWNERS.length);
       expect(rows.filter((r) => r.one !== r.many)).toEqual([]);
-      if (markerView) {
-        expect(rows.filter((r) => !r.one).map((r) => r.id / 10)).toEqual(
-          [...ELIGIBLE].sort((a, b) => a - b)
-        );
-      }
+      return rows.filter((r) => !r.one).map((r) => r.id / 10);
+    };
+
+    expect(await compare(true)).toEqual([...ELIGIBLE].sort((a, b) => a - b));
+    // With neither marker object, the marker leg holds no one: only the other legs decide.
+    await holder.db.exec(`
+      ALTER VIEW "${HOLD_MARKER_VIEW}" RENAME TO "MarkerViewAside";
+      ALTER TABLE "${HOLD_MARKER_TABLE}" RENAME TO "MarkerTableAside";
+    `);
+    try {
+      expect(await compare(false)).toEqual([...ELIGIBLE, MARKER_HELD].sort((a, b) => a - b));
+    } finally {
+      await holder.db.exec(`
+        ALTER VIEW "MarkerViewAside" RENAME TO "${HOLD_MARKER_VIEW}";
+        ALTER TABLE "MarkerTableAside" RENAME TO "${HOLD_MARKER_TABLE}";
+      `);
     }
   });
 

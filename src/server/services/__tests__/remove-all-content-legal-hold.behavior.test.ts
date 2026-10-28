@@ -187,6 +187,10 @@ beforeAll(async () => {
     );
     ALTER TABLE "CommentV2" ADD COLUMN "threadId" int REFERENCES "Thread"(id) ON DELETE CASCADE;
     CREATE TABLE "Collection" (id serial PRIMARY KEY, "userId" int NOT NULL);
+    ALTER TABLE "Model" ADD COLUMN status text NOT NULL DEFAULT 'Published', ADD COLUMN meta jsonb;
+    CREATE TABLE "ModelVersion" (
+      id serial PRIMARY KEY, "modelId" int NOT NULL, status text NOT NULL DEFAULT 'Published'
+    );
   `);
   await holder.db.exec(
     readFileSync(
@@ -217,7 +221,7 @@ beforeEach(async () => {
   await holder.db.exec(`
     DROP VIEW IF EXISTS "EvidenceHeldUser";
     DROP TABLE IF EXISTS "EvidenceHold";
-    TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Thread", "Collection",
+    TRUNCATE "CsamReport", "Image", "BountyBenefactor", "Thread", "Collection", "ModelVersion",
       ${EVIDENCE.map((t) => `"${t}"`).join(', ')} RESTART IDENTITY;
     ALTER SEQUENCE "Collection_id_seq" RESTART ${COLLECTION};
     ALTER SEQUENCE "Article_id_seq" RESTART ${ARTICLE};
@@ -425,6 +429,11 @@ describe('removeAllContent', () => {
     await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
 
     expect(await remaining(CLEAN)).toEqual(seeded(CLEAN));
+    // Not even hidden: a stopped wipe leaves its models as they were.
+    const statuses = await holder.db.query<{ status: string }>(
+      `SELECT DISTINCT status FROM "Model" WHERE "userId" = ${CLEAN}`
+    );
+    expect(statuses.rows).toEqual([{ status: 'Published' }]);
     // The low-impact rows before the evidence go, and only those leave the index; nothing is purged
     // elsewhere.
     expect(dbMock.dbWrite.imageReaction.deleteMany).toHaveBeenCalled();
@@ -669,12 +678,36 @@ describe('removeAllContent', () => {
 
     const left = await holder.db.query<{ id: number }>(`SELECT id FROM "Model" ORDER BY id`);
     expect(left.rows.map((r) => r.id)).toContain(GIVEN_BY_HELD);
-    // Kept, so it stays in search and the caller is told.
     expect(result.keptModelIds).toEqual([GIVEN_BY_HELD]);
-    expect(dropped().models).not.toContain(GIVEN_BY_HELD);
     expect(dropped().models).toContain(GIVEN_BY_BYSTANDER);
     expect(left.rows.map((r) => r.id)).not.toContain(GIVEN_BY_BYSTANDER);
     expect(left.rows.map((r) => r.id)).not.toContain(MODEL);
+  });
+
+  it('takes a kept model off the site and out of search, keeping its record', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Model" (id, "userId", meta) VALUES
+        (${GIVEN_BY_HELD}, ${CLEAN}, '{"note": 1}'), (${GIVEN_BY_BYSTANDER}, ${CLEAN}, NULL);
+      INSERT INTO "ModelVersion" ("modelId", status) VALUES
+        (${GIVEN_BY_HELD}, 'Published'), (${GIVEN_BY_HELD}, 'Draft');
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    const kept = await holder.db.query<{ status: string; meta: Record<string, unknown> }>(
+      `SELECT status, meta FROM "Model" WHERE id = ${GIVEN_BY_HELD}`
+    );
+    expect(kept.rows).toEqual([
+      { status: 'Unpublished', meta: { note: 1, removedWithOwner: true } },
+    ]);
+    const versions = await holder.db.query<{ status: string }>(
+      `SELECT status FROM "ModelVersion" WHERE "modelId" = ${GIVEN_BY_HELD} ORDER BY id`
+    );
+    expect(versions.rows.map((r) => r.status)).toEqual(['Unpublished', 'Draft']);
+    expect(dropped().models).toContain(GIVEN_BY_HELD);
+    // Control: a model only unheld owners had is deleted, as before.
+    const gone = await holder.db.query(`SELECT 1 FROM "Model" WHERE id = ${GIVEN_BY_BYSTANDER}`);
+    expect(gone.rows).toEqual([]);
   });
 
   it('leaves the bids on a model a hold kept', async () => {

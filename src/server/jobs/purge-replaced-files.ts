@@ -62,13 +62,12 @@ export async function processReplacedFiles(rows: ReplacedRow[]) {
 // The grace period is inlined as a literal: Prisma binds a JS number as int8 and
 // `make_interval` only takes int4, so an interpolated parameter fails to resolve the
 // function (42883) at plan time — the statement throws before any row is examined.
-// A file whose version is gone has no model to check, so its `held` is NULL and it is skipped.
 export function buildReplacedFilesQuery(markerView: boolean): Prisma.Sql {
   return Prisma.sql`
     WITH replaced AS MATERIALIZED (
       SELECT mf.id, mf.url, mv."modelId"
       FROM "ModelFile" mf
-      LEFT JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+      JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
       WHERE mf."replacedAt" < now() - make_interval(days => ${Prisma.raw(String(GRACE_DAYS))})
         AND mf."dataPurged" IS NOT TRUE
     )

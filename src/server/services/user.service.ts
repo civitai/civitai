@@ -6,7 +6,7 @@ import {
   isLegalHoldAbort,
   LegalHoldError,
   LegalHoldStoppedError,
-  modelDataHeldSql,
+  heldModelIdsSql,
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
@@ -112,6 +112,7 @@ import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { chunkIds } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import {
   cancelAllPaddleSubscriptions,
@@ -1075,7 +1076,6 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
       // transaction, so nothing else in it commits. It also clears "subscriptionId", which no Prisma delegate reaches: a second pointer to
       // the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
-      // Before the move, while the models still name their owner.
       ...(removeModels
         ? []
         : [
@@ -1238,15 +1238,16 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
         WHERE userId = ${id} AND type = 'Create'
       `)) ?? [];
     const created = createdRows.map((r) => Number(r.modelId)).filter(Number.isInteger);
-    const transferredRows =
-      created.length > 0
-        ? (await clickhouse?.$query<{ modelId: number }>(`
-            SELECT DISTINCT modelId
-            FROM modelEvents
-            WHERE type = 'Transfer' AND modelId IN (${created.join(',')})
-          `)) ?? []
-        : [];
-    const transferred = new Set(transferredRows.map((r) => Number(r.modelId)));
+    const transferred = new Set<number>();
+    for (const ids of chunkIds(created, 5000)) {
+      const rows =
+        (await clickhouse?.$query<{ modelId: number }>(`
+          SELECT DISTINCT modelId
+          FROM modelEvents
+          WHERE type = 'Transfer' AND modelId IN (${ids.join(',')})
+        `)) ?? [];
+      for (const r of rows) transferred.add(Number(r.modelId));
+    }
     createdIds = created.filter((modelId) => !transferred.has(modelId));
   }
 
@@ -1637,7 +1638,22 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       DELETE FROM "Model"
       WHERE "userId" = ${id} AND ${unlessHeld}
-        AND NOT ${modelDataHeldSql(Prisma.raw('"Model".id'), markerView)}`;
+        AND id NOT IN (${heldModelIdsSql(
+          Prisma.sql`SELECT om.id FROM "Model" om WHERE om."userId" = ${id}`,
+          markerView
+        )})`;
+    // A model kept above still leaves the site; its record and files stay. Status only: the
+    // unpublish flow stamps meta.unpublishedAt, which sends the owner a notification.
+    await dbWrite.$executeRaw`
+      UPDATE "ModelVersion" mv SET status = 'Unpublished'
+      FROM "Model" m
+      WHERE mv."modelId" = m.id AND m."userId" = ${id}
+        AND mv.status IN ('Published', 'Scheduled') AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`
+      UPDATE "Model"
+      SET status = 'Unpublished',
+          meta = ${asJsonbObjectSql('meta')} || jsonb_build_object('removedWithOwner', true)
+      WHERE "userId" = ${id} AND status IN ('Published', 'Scheduled') AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "ChatMessage" WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "ChatMember" WHERE "userId" = ${id} AND ${unlessHeld}`;
     // Rows, storage objects and caches; then any image uploaded since the list was read.
@@ -1710,7 +1726,8 @@ export const removeAllContent = async ({
       )
     );
 
-  // A model an earlier owner of which is held was kept: only the models that went leave search.
+  // A model an earlier owner of which is held was kept, hidden: every model leaves search, and the
+  // caller is told which were kept.
   let keptModelIds: number[] = [];
   await runStep('index-models', async () => {
     const gone = await goneIds(
@@ -1719,9 +1736,9 @@ export const removeAllContent = async ({
     );
     const goneSet = new Set(gone);
     keptModelIds = models.map((m) => m.id).filter((modelId) => !goneSet.has(modelId));
-    if (gone.length)
+    if (models.length)
       await modelsSearchIndex.queueUpdate(
-        gone.map((modelId) => ({ id: modelId, action: SearchIndexUpdateQueueAction.Delete }))
+        models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
       );
   });
   await unindex('index-images', imagesSearchIndex, images);
