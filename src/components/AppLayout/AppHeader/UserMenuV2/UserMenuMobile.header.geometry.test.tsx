@@ -209,6 +209,12 @@ describe('mobile menu account card', () => {
     expect(Math.abs(buyBox.left - buzzBox.left)).toBeLessThanOrEqual(1);
     expect(Math.abs(buyBox.right - buzzBox.right)).toBeLessThanOrEqual(1);
     expect(Math.abs(chipBox.right - buzzBox.right)).toBeLessThanOrEqual(1);
+    // The chip is centred on the avatar, as in the row's other states.
+    expect(
+      Math.abs(chipBox.top + chipBox.height / 2 - (avatarBox.top + avatarBox.height / 2))
+    ).toBeLessThanOrEqual(2);
+    // Where the pin's box meets the chip's, a tap reaches the chip.
+    expect(chip.contains(document.elementFromPoint(chipBox.right - 4, chipBox.top + 3))).toBe(true);
     // The user row sits close above the balances.
     expect(buzzBox.top - nameRow.bottom).toBeLessThanOrEqual(8);
   });

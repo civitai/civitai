@@ -347,7 +347,7 @@ export function MobileHeaderRows({
           size="lg"
           variant="subtle"
           color="gray"
-          className="absolute right-1 top-1 z-[1]"
+          className="absolute -right-0.5 -top-0.5 z-[1]"
           aria-label={`${pinned ? 'Unpin' : 'Pin'} ${PROFILE_PIN.label}`}
           aria-pressed={pinned}
           onClick={onTogglePin}
@@ -380,8 +380,9 @@ export function MobileHeaderRows({
             />
           </div>
         </MenuItemLink>
+        {/* Above the pin: their boxes meet at the corner, and a tap there belongs to the chip. */}
         {!currentUser.tier && (
-          <div className="self-end">
+          <div className="relative z-[2]">
             <SupportChip onClick={handleClose} />
           </div>
         )}
