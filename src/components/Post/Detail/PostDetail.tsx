@@ -173,6 +173,13 @@ export function PostDetailContent({ postId }: Props) {
   const sidebarEnabled = true;
   const [sheetOpen, setSheetOpen] = useState(false);
   const touchStartY = useRef<number | null>(null);
+  const hasPendingInvite = postCollaborators.some(
+    (c) => c.user.id === currentUser?.id && c.status === EntityCollaboratorStatus.Pending
+  );
+  // The accept/reject buttons live in the creator block, which a collapsed phone panel hides.
+  useEffect(() => {
+    if (hasPendingInvite) setSheetOpen(true);
+  }, [hasPendingInvite]);
 
   if (postLoading) return <PageLoader />;
   if (!post || isBlocked) return <NotFound />;
