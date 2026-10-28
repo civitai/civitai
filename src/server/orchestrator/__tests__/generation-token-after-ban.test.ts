@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { envMock } from '~/__tests__/mocks/env.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
@@ -19,11 +19,8 @@ vi.mock('~/server/services/orchestrator/civitai', async (importOriginal) => ({
 }));
 
 const hash = new Map<string, string>();
-vi.mock('~/server/redis/atomic', () => ({
-  hSetWithTTL: vi.fn(async (_client: unknown, _key: string, field: string, value: string) => {
-    hash.set(field, value);
-  }),
-}));
+const { hSetWithTTL } = vi.hoisted(() => ({ hSetWithTTL: vi.fn() }));
+vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL }));
 
 const { getOrchestratorToken } = await import('~/server/orchestrator/get-orchestrator-token');
 const { __testing: perPodCache } = await import('~/server/orchestrator/orchestrator-token-cache');
@@ -47,6 +44,11 @@ beforeEach(() => {
   ] as never);
   dbMock.dbWrite.apiKey.updateMany.mockResolvedValue({ count: 1 } as never);
   getTemporaryUserApiKey.mockResolvedValue('fresh-token');
+  hSetWithTTL.mockImplementation(
+    async (_client: unknown, _key: string, field: string, value: string) => {
+      hash.set(field, value);
+    }
+  );
   hash.set(String(USER), encodeOwnedToken(USER, 'token-from-before-the-ban'));
 });
 
@@ -86,7 +88,7 @@ describe('a per-pod cached token after a ban', () => {
     getTemporaryUserApiKey.mockClear();
   }
 
-  it('after the ban is lifted, the next generation call on that pod gets a fresh token', async () => {
+  it('once the account is in good standing again, the next call on that pod gets a fresh token', async () => {
     await mintOnThisPod();
     await expireUserApiKeys(USER);
 
@@ -111,5 +113,30 @@ describe('a per-pod cached token after a ban', () => {
     await getOrchestratorToken(USER);
     await getOrchestratorToken(USER);
     expect(getTemporaryUserApiKey).not.toHaveBeenCalled();
+  });
+});
+
+describe('while sysRedis takes reads but refuses writes', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('serves the per-pod cache instead of minting on every call', async () => {
+    hash.clear();
+    hSetWithTTL.mockRejectedValue(new Error('OOM command not allowed'));
+    await getOrchestratorToken(USER);
+    await getOrchestratorToken(USER);
+    expect(getTemporaryUserApiKey).toHaveBeenCalledTimes(1);
+  });
+
+  it('goes back to the hash once writes have worked for a minute', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    hash.clear();
+    hSetWithTTL.mockRejectedValueOnce(new Error('OOM command not allowed'));
+    await getOrchestratorToken(USER);
+    vi.setSystemTime(Date.now() + 61_000);
+    // The per-pod entry is still live (its TTL runs on a monotonic clock), but no longer served.
+    await getOrchestratorToken(USER);
+    expect(getTemporaryUserApiKey).toHaveBeenCalledTimes(2);
   });
 });

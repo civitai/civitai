@@ -73,6 +73,16 @@ describe('minting an orchestrator token', () => {
   });
 });
 
+describe('a ban landing mid-mint when the key cannot be expired', () => {
+  it('still refuses with FORBIDDEN', async () => {
+    dbMock.dbWrite.user.findUnique
+      .mockResolvedValueOnce(standing(null))
+      .mockResolvedValueOnce(standing(new Date()));
+    dbMock.dbWrite.apiKey.findMany.mockRejectedValue(new Error('primary unavailable'));
+    await expect(mint()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+  });
+});
+
 describe('an orchestrator token for a banned account', () => {
   // What every caller of getOrchestratorToken reaches once a ban has dropped the cached token,
   // including the routes that authenticate with a block token rather than a session.

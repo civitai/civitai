@@ -1,6 +1,5 @@
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
-import { BANNED_ACCOUNT_MESSAGE } from '~/server/utils/errorHandling';
 import type { ApiKeyType } from '~/shared/utils/prisma/enums';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
@@ -143,8 +142,9 @@ async function isAccountBanned(userId: number) {
   return !!user?.bannedAt;
 }
 
+// Not the session-facing wording: a moderator acting on another account reaches this too.
 const bannedAccountError = () =>
-  new TRPCError({ code: 'FORBIDDEN', message: BANNED_ACCOUNT_MESSAGE });
+  new TRPCError({ code: 'FORBIDDEN', message: 'This account has been banned' });
 
 export async function getTemporaryUserApiKey(
   args: AddAPIKeyInput & { userId: number; maxAge?: number; type?: ApiKeyType }
@@ -155,7 +155,15 @@ export async function getTemporaryUserApiKey(
   // Again after the insert: a ban committing between the check above and the insert expires the
   // keys it can see, which may not include this one yet.
   if (await isAccountBanned(args.userId)) {
-    await expireUserApiKeys(args.userId);
+    // A failure here leaves the key for the ban's own revocation and its job to expire.
+    await expireUserApiKeys(args.userId).catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'mint-banned-account-expire',
+        userId: args.userId,
+        message: (error as Error).message,
+      }).catch(() => null)
+    );
     throw bannedAccountError();
   }
 

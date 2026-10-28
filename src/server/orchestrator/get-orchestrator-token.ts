@@ -21,6 +21,11 @@ type Context = {
   res: NextApiResponse;
 };
 
+// While sysRedis takes reads but refuses writes, the hash never fills and every call would mint, so the
+// per-pod cache is served for this long after a failed writeback, as during a read outage.
+const WRITE_DEGRADED_WINDOW_MS = 60_000;
+let writeDegradedUntil = 0;
+
 type GetOrchestratorTokenOptions = {
   /**
    * Skip the per-pod LRU + in-flight coalescing layer in front of the
@@ -108,7 +113,9 @@ export async function getOrchestratorToken(
     // cache — Round-5 audit H2. See GetOrchestratorTokenOptions.bypassCache.
     token = options.bypassCache
       ? await mint()
-      : await getOrMintCachedToken(userId, mint, { readCache: sysRedisFailed });
+      : await getOrMintCachedToken(userId, mint, {
+          readCache: sysRedisFailed || Date.now() < writeDegradedUntil,
+        });
     // Only a token minted here is written back. A per-pod hit may hold a revoked key, and a caller
     // that joined another request's in-flight mint leaves the write to that request.
     if (!minted) return token;
@@ -138,6 +145,7 @@ export async function getOrchestratorToken(
       encodeOwnedToken(userId, token),
       generationServiceCookie.maxAge * 1000
     ).catch((err) => {
+      writeDegradedUntil = Date.now() + WRITE_DEGRADED_WINDOW_MS;
       logSysRedisFailOpen('write-degraded', 'getOrchestratorToken cache writeback', err, {
         userId,
       });
