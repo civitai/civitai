@@ -127,6 +127,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
+const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+
+/** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
+function StoreWithControls() {
+  return (
+    <>
+      <AppsStoreFeedFilters />
+      <AppListingsMarketplaceBody />
+    </>
+  );
+}
 const { clearRecentlyOpenedApps } = await import('./recentlyOpenedAppsStore');
 
 /**
@@ -174,25 +185,30 @@ beforeEach(() => {
  * a hydration mismatch would actually change.
  */
 function controlRowSignature(): string[] {
-  const row = document.querySelector('[data-testid="apps-store-control-row"]');
-  if (!row) return ['<no control row>'];
-  return Array.from(row.querySelectorAll('input,button,[role="group"]')).map((el) =>
-    [
-      el.tagName,
-      el.getAttribute('role') ?? '',
-      el.getAttribute('aria-label') ?? el.textContent?.trim() ?? '',
-      (el as HTMLInputElement).value ?? '',
-      el.getAttribute('aria-pressed') ?? '',
-      el.getAttribute('placeholder') ?? '',
-    ].join('|')
+  // The controls are split across the store body (search) and the sub-nav (sort, filters).
+  const rows = ['apps-store-control-row', 'apps-store-feed-filters'].map((id) =>
+    document.querySelector(`[data-testid="${id}"]`)
   );
+  if (rows.some((row) => !row)) return ['<no control row>'];
+  return rows
+    .flatMap((row) => Array.from(row!.querySelectorAll('input,button,[role="group"]')))
+    .map((el) =>
+      [
+        el.tagName,
+        el.getAttribute('role') ?? '',
+        el.getAttribute('aria-label') ?? el.textContent?.trim() ?? '',
+        (el as HTMLInputElement).value ?? '',
+        el.getAttribute('aria-pressed') ?? '',
+        el.getAttribute('placeholder') ?? '',
+      ].join('|')
+    );
 }
 
 describe('/apps store — the first client paint already reflects the URL', () => {
   test('🔴 pre-mount, a param-seeded mount drives the LISTING QUERY (no default-then-swap)', async () => {
     router.query = { ...SEEDED };
     mocks.isClient = false; // server + first client paint
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
 
     // If the filters were deferred behind `useIsClient()`, this would be the
@@ -209,10 +225,10 @@ describe('/apps store — the first client paint already reflects the URL', () =
   test('🔴 pre-mount, the CONTROLS themselves show the seeded values', async () => {
     router.query = { ...SEEDED };
     mocks.isClient = false;
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
 
     // The sort control renders the seeded sort, not the default "Top rated".
-    await expect.element(page.getByLabelText('Sort').first()).toHaveValue('Newest');
+    await expect.element(page.getByRole('button', { name: 'Newest' })).toBeInTheDocument();
     // The search box is seeded from `?query=` on its very first render.
     await expect.element(page.getByLabelText('Search')).toHaveValue('matrix');
     // …and so is the collapsed panel's kind toggle. (By testid, not by accessible
@@ -233,12 +249,12 @@ describe('/apps store — the first client paint already reflects the URL', () =
     // (Unmount-and-remount via `cleanup()` was tried and tears down the harness's
     // container, so every later render lands in an empty body.)
     mocks.isClient = false;
-    const { rerender } = await renderWithProviders(<AppListingsMarketplaceBody />);
+    const { rerender } = await renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
     const before = controlRowSignature();
 
     mocks.isClient = true;
-    await rerender(<AppListingsMarketplaceBody />);
+    await rerender(<StoreWithControls />);
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
     const after = controlRowSignature();
 
@@ -254,7 +270,7 @@ describe('/apps store — the first client paint already reflects the URL', () =
     const badge = () => document.querySelector('.mantine-Indicator-indicator')?.textContent ?? null;
 
     mocks.isClient = false;
-    const { rerender } = await renderWithProviders(<AppListingsMarketplaceBody />);
+    const { rerender } = await renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
     // Server + first client paint: the dot renders (its `disabled` prop is driven
     // by the count, which IS server-knowable) but carries NO NUMBER —
@@ -265,7 +281,7 @@ describe('/apps store — the first client paint already reflects the URL', () =
     expect(badge()).toBe('');
 
     mocks.isClient = true;
-    await rerender(<AppListingsMarketplaceBody />);
+    await rerender(<StoreWithControls />);
     await vi.waitFor(() => expect(badge()).toBe('2'));
   });
 });
@@ -276,8 +292,8 @@ describe('/apps store — no client-only source leaks into the first render', ()
     // a divergent (or throwing) first render.
     router.query = { kind: 'sideways', category: 'hats', sort: 'chaos' };
     mocks.isClient = false;
-    renderWithProviders(<AppListingsMarketplaceBody />);
-    await expect.element(page.getByLabelText('Sort').first()).toHaveValue('Top rated');
+    renderWithProviders(<StoreWithControls />);
+    await expect.element(page.getByRole('button', { name: 'Top rated' })).toBeInTheDocument();
     expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'top-rated' });
     expect(mocks.lastArgs?.category).toBeUndefined();
     // …and the grid still renders — never an empty result set.

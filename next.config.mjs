@@ -348,8 +348,9 @@ export default defineNextConfig(
       // derives `dependencyTracking` from it, so the flag governs what turbo-tasks retains in
       // memory and not just what lands on disk.
       turbopackFileSystemCacheForBuild: false,
-      // Defaults on (~4 GB in `.next/dev` per checkout). The dev-server skill turns it off for
-      // worktree sessions, which multiply that across a disk; see its SKILL.md.
+      // Defaults on (~4 GB in `.next/dev` per checkout), and it is what lets Turbopack evict dev
+      // memory after a snapshot, so turning it off makes RSS only climb. The dev-server skill sweeps
+      // idle worktrees' caches to bound the disk; see its SKILL.md.
       turbopackFileSystemCacheForDev: process.env.NEXT_DEV_FS_CACHE !== 'false',
       // NB: `lodash-es`, `@tabler/icons-react` and `@headlessui/react` are already in Next's
       // built-in default list (config.js merges ours into it) — kept here only as intent.

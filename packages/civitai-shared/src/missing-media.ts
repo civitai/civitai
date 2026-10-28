@@ -82,7 +82,7 @@ export type MediaPresence = (typeof MediaPresence)[keyof typeof MediaPresence];
  * 🔴 IT MUST NOT NAME AN ACTION THE SURFACE DOES NOT OFFER. An earlier wording said "Delete it",
  * and no surface this message reaches has a delete: the spoke's ingestion-errors page exposes
  * exactly one action, `resolve` (pinned by that route's own test), and the spoke's
- * `deleteImagesByIds` is wired only into article moderation. A refusal that instructs an impossible
+ * image delete is wired only into article moderation. A refusal that instructs an impossible
  * action is a dead end wearing the costume of a remedy — the moderator re-clicks, which costs
  * another existence probe per click and changes nothing.
  *

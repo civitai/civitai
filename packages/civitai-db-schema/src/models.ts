@@ -2179,6 +2179,8 @@ export interface OauthClient {
   allowedScopes: number;
   isConfidential: boolean;
   accessMode: string;
+  skipConsent: boolean;
+  tokenRateLimit: number | null;
   userId: number;
   user?: User;
   isVerified: boolean;

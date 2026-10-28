@@ -73,7 +73,6 @@ const imageRow = (id: number) => ({
 
 const db = dbMock.dbWrite;
 
-// The account check is the first raw query; the locked post rows are every one after it.
 const accountRow = (over: Record<string, unknown> = {}) => ({
   report: false,
   'image-review': false,
@@ -83,8 +82,36 @@ const accountRow = (over: Record<string, unknown> = {}) => ({
   markerTable: false,
   ...over,
 });
-function mockPosts(...rows: ReturnType<typeof postRow>[]) {
-  db.$queryRaw.mockResolvedValueOnce([accountRow()]).mockResolvedValue(rows);
+// Nested Prisma.sql fragments (the lock clause) are values of the tagged call, so inline them.
+const rawSql = ([strings, ...values]: unknown[]) =>
+  (strings as TemplateStringsArray).reduce((sql, part, i) => {
+    const value = values[i - 1] as { sql?: string } | undefined;
+    return sql + (typeof value?.sql === 'string' ? value.sql : '?') + part;
+  });
+const isPostLock = (sql: string) => sql.includes('FOR UPDATE OF p');
+const isVersionLock = (sql: string) => sql.includes('"ModelVersion"') && sql.includes('AS downed');
+
+// Routed by statement: the account check, the split's version read and takedown lock, the posts.
+function mockPosts(
+  ...rows: (
+    | ReturnType<typeof postRow>
+    | { downed?: boolean; ownsModel?: boolean; readVersionId?: number | null }
+  )[]
+) {
+  const posts = rows.filter((r): r is ReturnType<typeof postRow> => 'id' in r);
+  const options = rows.find((r) => !('id' in r)) ?? {};
+  const { downed = false, ownsModel = true } = options;
+  // The version the split reads before the post lock; the source row's unless a test moves it.
+  const readVersionId =
+    'readVersionId' in options ? options.readVersionId : posts[0]?.modelVersionId;
+  db.$queryRaw.mockImplementation(((strings: TemplateStringsArray) => {
+    const sql = strings.join('?');
+    if (isPostLock(sql)) return Promise.resolve(posts);
+    if (sql.includes('"ownsModel"'))
+      return Promise.resolve(readVersionId ? [{ modelVersionId: readVersionId, ownsModel }] : []);
+    if (sql.includes('AS downed')) return Promise.resolve([{ downed }]);
+    return Promise.resolve([accountRow()]);
+  }) as never);
 }
 
 function expectNothingWritten() {
@@ -202,6 +229,63 @@ describe('moveImagesToPost', () => {
     );
     expect(db.imageResourceNew.deleteMany).not.toHaveBeenCalled();
   });
+
+  it('locks the source version before the posts when it splits', async () => {
+    mockPosts(postRow({ modelVersionId: 55 }));
+
+    await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER });
+
+    const sql = db.$queryRaw.mock.calls.map(rawSql);
+    const versionLock = sql.findIndex((q: string) => isVersionLock(q) && q.includes('FOR SHARE'));
+    expect(versionLock).toBeGreaterThanOrEqual(0);
+    expect(versionLock).toBeLessThan(sql.findIndex(isPostLock));
+  });
+
+  it('refuses to split onto a taken-down version and writes nothing', async () => {
+    mockPosts(postRow({ modelVersionId: 55 }), { downed: true });
+
+    await expect(
+      moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER })
+    ).rejects.toThrow(/taken down/);
+    expectNothingWritten();
+  });
+
+  it('reads the takedown without locking the version when the poster does not own the model', async () => {
+    mockPosts(postRow({ modelVersionId: 55 }), { ownsModel: false });
+
+    await moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER });
+
+    const reads = db.$queryRaw.mock.calls
+      .map(rawSql)
+      .filter((q: string) => q.includes('AS downed'));
+    expect(reads.length).toBeGreaterThan(0);
+    for (const q of reads) expect(q).not.toMatch(/FOR (SHARE|NO KEY UPDATE|UPDATE)/);
+  });
+
+  it("refuses a non-owner's split onto a taken-down version", async () => {
+    mockPosts(postRow({ modelVersionId: 55 }), { ownsModel: false, downed: true });
+
+    await expect(
+      moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER })
+    ).rejects.toThrow(/taken down/);
+    expectNothingWritten();
+  });
+
+  it.each([
+    ['another version', 55, 66],
+    ['a version', null, 66],
+    ['no version', 55, null],
+  ])(
+    'fails the split and writes nothing when the source moves to %s under the post lock',
+    async (_, readVersionId, lockedVersionId) => {
+      mockPosts(postRow({ modelVersionId: lockedVersionId }), { readVersionId });
+
+      await expect(
+        moveImagesToPost({ imageIds: [100, 101], fromPostId: 1, userId: USER })
+      ).rejects.toThrow(/changed while moving/);
+      expectNothingWritten();
+    }
+  );
 
   it.each([
     ['another version', 66],
