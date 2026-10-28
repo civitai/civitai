@@ -79,7 +79,9 @@ const KNIGHTS_LOCK_REASON = 'Knights Vote';
 
 /** Mirrors the main app's block marker: any one of the three means the image is blocked. */
 export const hasBlockMarker = (image: Pick<ImageState, 'nsfwLevel' | 'ingestion' | 'blockedFor'>) =>
-  image.ingestion === 'Blocked' || image.nsfwLevel === NsfwLevel.Blocked || image.blockedFor != null;
+  image.ingestion === 'Blocked' ||
+  image.nsfwLevel === NsfwLevel.Blocked ||
+  image.blockedFor != null;
 
 export type WritebackDecision =
   | { kind: 'apply' }

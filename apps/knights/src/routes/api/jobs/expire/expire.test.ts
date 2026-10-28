@@ -10,7 +10,9 @@ vi.mock('$lib/server/queue/queue.service', () => ({ escalateExpired, applyPendin
 const { POST } = await import('./+server');
 
 const run = () =>
-  POST({ request: new Request('http://knights.test/api/jobs/expire', { method: 'POST' }) } as never);
+  POST({
+    request: new Request('http://knights.test/api/jobs/expire', { method: 'POST' }),
+  } as never);
 
 beforeEach(() => {
   escalateExpired.mockReset();

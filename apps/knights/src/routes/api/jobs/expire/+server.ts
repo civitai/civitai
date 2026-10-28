@@ -18,7 +18,9 @@ export const POST: RequestHandler = async ({ request }) => {
   if (!isJobRequest(request)) return new Response(null, { status: 401 });
 
   const expired = await settle('escalation', () => escalateExpired(db, { now: new Date() }));
-  const writeBacks = await settle('rating write-back', () => applyPendingResolutions(db, queueDeps));
+  const writeBacks = await settle('rating write-back', () =>
+    applyPendingResolutions(db, queueDeps)
+  );
   if (!expired.ok || !writeBacks.ok) {
     return json({ error: 'job failed' }, { status: 500 });
   }

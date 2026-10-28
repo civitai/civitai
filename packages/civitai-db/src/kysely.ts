@@ -18,19 +18,18 @@ export type { Generated, RawBuilder } from 'kysely';
 //   createKyselyClients<DB>({ pool: getClient({ instance: 'primary' }),
 //                             readPool: getClient({ instance: 'primaryRead' }) })
 
-// pg returns NUMERIC/INT8 as strings by default (to preserve precision); for Kysely query results we
-// want JS numbers. setTypeParser mutates pg's PROCESS-GLOBAL parser registry, so we register lazily
-// from inside the factory (not at module load) — a Prisma-only consumer that merely imports
-// `@civitai/db` (which re-exports this module) must not have its global pg parsing flipped without
-// asking. Only callers that actually build a Kysely client opt in. Idempotent.
-let numericParsersRegistered = false;
-
 /**
  * Reads a `timestamp without time zone` value as the UTC instant it was written as. Exported so a
  * test database driver can parse the column exactly as the pg pools do.
  */
 export const parseTimestampAsUtc = (val: string) => new Date(val.replace(' ', 'T') + 'Z');
 
+// pg returns NUMERIC/INT8 as strings by default (to preserve precision); for Kysely query results we
+// want JS numbers. setTypeParser mutates pg's PROCESS-GLOBAL parser registry, so we register lazily
+// from inside the factory (not at module load) — a Prisma-only consumer that merely imports
+// `@civitai/db` (which re-exports this module) must not have its global pg parsing flipped without
+// asking. Only callers that actually build a Kysely client opt in. Idempotent.
+let numericParsersRegistered = false;
 
 function registerNumericTypeParsers() {
   if (numericParsersRegistered) return;
