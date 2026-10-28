@@ -60,13 +60,14 @@
  * Revocation
  * ----------
  * Entries are never invalidated; they age out after `ORCHESTRATOR_TOKEN_CACHE_TTL_MS`.
- * `getOrchestratorToken` serves an entry only when its sysRedis read fails, and never
- * writes one back to the sysRedis hash, so an entry holding a revoked key cannot outlive
- * that TTL or spread to other pods. To revoke a user's orchestrator tokens, call
+ * `getOrchestratorToken` serves an entry in two cases only: when its sysRedis read fails,
+ * and for `WRITE_DEGRADED_WINDOW_MS` after a failed writeback to the sysRedis hash. It never
+ * writes an entry back to the hash, so an entry holding a revoked key cannot outlive that
+ * TTL or spread to other pods. To revoke a user's orchestrator tokens, call
  * `expireUserApiKeys` (`src/server/services/api-key.service.ts`): it expires the rows,
  * evicts them from the bearer-path cache and drops the hash entry, so the next call mints
- * afresh. While sysRedis is down, a pod can still serve an entry cached before the
- * revocation until it ages out.
+ * afresh. In either case above, a pod can still serve an entry cached before the
+ * revocation, for up to the TTL.
  *
  * Cross-user mints (the `moderatorProcedure.queryUserGeneratedImages` path) bypass this
  * cache via the `bypassCache` arg on `getOrchestratorToken`, so a moderator session never
