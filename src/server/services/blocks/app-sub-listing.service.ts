@@ -329,9 +329,15 @@ async function publicImageOwner(imageId: number): Promise<number | null> {
 
 /**
  * The image rule for a card, shared by the in-app publish and the catalog sync: `imageId` must
- * be publicly visible, in a published non-private post, and uploaded by the item's author.
+ * be publicly visible, in a published non-private post, and uploaded by the item's author. The
+ * catalog sync also takes one the parent listing's owner uploaded (`alsoOwnedBy`): the platform
+ * that lists a creator's item may give it a card of its own making, as it does its own items.
  */
-async function assertCardImage(imageId: number | null, authorUserId: number): Promise<void> {
+async function assertCardImage(
+  imageId: number | null,
+  authorUserId: number,
+  alsoOwnedBy?: number
+): Promise<void> {
   if (imageId == null) return;
   const owner = await publicImageOwner(imageId);
   if (owner == null) {
@@ -341,7 +347,7 @@ async function assertCardImage(imageId: number | null, authorUserId: number): Pr
       'The image must be public: in a published post and reviewed'
     );
   }
-  if (owner !== authorUserId) {
+  if (owner !== authorUserId && owner !== alsoOwnedBy) {
     throw new SubListingError(403, 'image_not_yours', 'The image must be one you uploaded');
   }
 }
@@ -871,7 +877,7 @@ export async function upsertCatalogSubListing(args: {
     );
   }
 
-  await assertCardImage(content.imageId, author.id);
+  await assertCardImage(content.imageId, author.id, parent.ownerUserId);
 
   try {
     const safe = await assertSharedTextSafe({

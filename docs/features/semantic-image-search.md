@@ -75,7 +75,9 @@ locally until the orchestration client ships it.
   workflow is sized to the quota it says is left (`RateLimit` `r`). Every call on one process
   shares the budget, so a backfill's concurrent pages draw from one. The consumer and a backfill
   or reconcile are separate processes; the orchestrator's quota is per account and bounds them
-  together. The first response's quota and buzz window are logged at info level
+  together. `VECTOR_EMBED_HONOR_QUOTA=false` ignores `q` and `r` (the cap is then
+  `VECTOR_EMBED_MAX_IN_FLIGHT` and any runtime limit); 429s and `Retry-After` still hold. The
+  first response's quota, buzz window and whether the quota is honoured are logged at info level
   (`vector-sync: orchestrator rate limits`).
 - **429s:** a 429 (the in-flight quota or the buzz window) is retried after exactly its
   `Retry-After` (at least 250 ms, at most an hour), and every submit on that process waits it out too. 429s
