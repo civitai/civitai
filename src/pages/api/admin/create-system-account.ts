@@ -8,7 +8,11 @@ import { usernameInputSchema } from '~/server/schema/user.schema';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { isUsernamePermitted } from '~/server/services/username-permitted';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
-import { isSystemAccountMeta, SYSTEM_ACCOUNT_META } from '@civitai/auth';
+import {
+  isSystemAccountMeta,
+  MODERATION_ACCOUNT_USERNAME,
+  SYSTEM_ACCOUNT_META,
+} from '@civitai/auth';
 import { isPrismaUniqueViolation } from '~/server/utils/errorHandling';
 
 /**
@@ -81,7 +85,9 @@ export default WebhookEndpoint(async function (req: AxiomAPIRequest, res: NextAp
   const existing = await resolve(email, username);
   if (existing.kind !== 'available') return respond(existing);
 
-  if (!(await isUsernamePermitted(username)))
+  // The shared moderation account must carry exactly this reserved name: the apps also recognise it by name.
+  const reserved = username.toLowerCase() === MODERATION_ACCOUNT_USERNAME.toLowerCase();
+  if (!reserved && !(await isUsernamePermitted(username)))
     return res.status(400).json({ error: 'Username is not permitted' });
 
   let userId: number;

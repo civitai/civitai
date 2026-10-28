@@ -218,4 +218,28 @@ describe('POST /api/admin/create-system-account', () => {
     expect(status).toBe(400);
     expect(users).toHaveLength(0);
   });
+
+  it('lets the reserved shared moderation account name past the blocklist', async () => {
+    isUsernamePermitted.mockImplementation(async () => false);
+
+    const { status, body } = await call({
+      email: 'moderation@civitai.com',
+      username: 'CivitaiModeration',
+    });
+
+    expect(status).toBe(201);
+    expect(body).toMatchObject({ username: 'CivitaiModeration', created: true });
+  });
+
+  it.each(['CivitaiModeration2', 'Civitai_Moderation', 'xCivitaiModeration', 'CivitaiModerator'])(
+    'still holds the near-miss %s to the blocklist',
+    async (username) => {
+      isUsernamePermitted.mockImplementation(async () => false);
+
+      const { status } = await call({ email: 'moderation@civitai.com', username });
+
+      expect(status).toBe(400);
+      expect(users).toHaveLength(0);
+    }
+  );
 });
