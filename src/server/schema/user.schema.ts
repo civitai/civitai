@@ -379,6 +379,7 @@ export const userSettingsSchema = z.object({
   // they hold is reading one of the two, not the sum. NOT a filter for earned buzz — yellow and
   // green are `purchasable`, so the remaining balance still mixes earned and bought.
   hideBlueBuzzInHeader: z.boolean().optional(),
+  fitPostImagesToScreen: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
   // Opt-out: leave me out of every "who reacted" / "who collected" list shown to someone else (image and
   // comment reactions, Creator Studio). Counts still include me. Filtered in SQL via HIDE_FROM_REACTION_LISTS_KEY.
@@ -465,6 +466,7 @@ export const setUserSettingsInput = z.object({
   swipeGalleryCards: z.boolean().optional(),
   disableStickerMotion: z.boolean().optional(),
   hideBlueBuzzInHeader: z.boolean().optional(),
+  fitPostImagesToScreen: z.boolean().optional(),
   hideFromCreatorShowcase: z.boolean().optional(),
   hideFromReactionLists: z.boolean().optional(),
   showPreLaunchReactions: z.boolean().optional(),
