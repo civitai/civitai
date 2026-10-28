@@ -1,7 +1,6 @@
-import { Kysely, PostgresDialect } from 'kysely';
-import pg from 'pg';
+import * as dbKysely from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
+import * as knightsConstants from '@civitai/shared/new-order';
 import { servableImage } from '../src/lib/server/servable-image';
 import { assertLocalDatabase } from '../src/lib/dev/local-database';
 
@@ -9,7 +8,10 @@ const DEFAULT_COUNT = 50;
 const MAX_COUNT = 1000;
 const LEVEL_R = 4;
 
-// tsx loads the main app's CommonJS-scoped modules as one `default` object when an ES module imports them.
+// tsx loads CommonJS-scoped workspace modules as one `default` object when an ES module imports them.
+const { KNIGHTS_NSFW_LEVEL_QUESTION } =
+  (knightsConstants as { default?: typeof knightsConstants }).default ?? knightsConstants;
+
 async function loadEnqueue() {
   const service = await import('../../../src/server/services/knights/enqueue.service');
   return ((service as { default?: typeof service }).default ?? service).enqueueKnightsItems;
@@ -19,13 +21,19 @@ async function main() {
   const connectionString = process.env.DATABASE_URL;
   assertLocalDatabase(connectionString);
 
-  const requested = Number(process.argv[2] ?? DEFAULT_COUNT);
+  const args = process.argv.slice(2);
+  const dryRun = args.includes('--dry-run');
+  const requested = Number(args.find((arg) => !arg.startsWith('--')) ?? DEFAULT_COUNT);
   if (!Number.isInteger(requested) || requested < 1 || requested > MAX_COUNT) {
     throw new Error(`Pass a count between 1 and ${MAX_COUNT}.`);
   }
 
-  const db = new Kysely<DB>({
-    dialect: new PostgresDialect({ pool: new pg.Pool({ connectionString, max: 1 }) }),
+  const { createKyselyClients } = (dbKysely as { default?: typeof dbKysely }).default ?? dbKysely;
+  const { db } = createKyselyClients<DB>({
+    connectionString,
+    sslNoVerify: true,
+    singleClient: true,
+    max: 1,
   });
 
   try {
@@ -41,6 +49,10 @@ async function main() {
       .execute();
 
     const enqueueKnightsItems = await loadEnqueue();
+    if (dryRun) {
+      console.log(`Dry run: ${images.length} eligible images, nothing enqueued.`);
+      return;
+    }
     const outcomes = await enqueueKnightsItems(db, {
       source: 'dev-backfill',
       questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,

@@ -1,6 +1,9 @@
 import { sql, type ExpressionBuilder } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { NsfwLevel } from '@civitai/shared';
+import * as shared from '@civitai/shared';
+
+// tsx loads CommonJS-scoped workspace packages as one `default` object when an ES module imports them.
+const { NsfwLevel } = (shared as { default?: typeof shared }).default ?? shared;
 
 type Joined = DB & { img: DB['Image']; p: DB['Post'] };
 
