@@ -9,7 +9,8 @@ export default defineModeratorEndpoint('collection.setItemTag', {
   returns: '{ count }',
   notes: [
     'Every item must already be in the collection, or nothing is changed.',
-    '`tagId` must be one of the collection’s tags; `null` clears it.',
+    '`tagId` must be one of the collection’s category tags; `null` clears it.',
+    'Entries holding a system tag (challenge judging or review state) are refused.',
   ],
   rateLimit: { max: 20, windowSeconds: 60 },
   input: z.object({

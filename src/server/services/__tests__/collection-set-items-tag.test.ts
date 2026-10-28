@@ -18,6 +18,8 @@ const OTHER = 200;
 const CONCEPT_TAG = 195;
 const JUDGED_TAG = 196;
 const OTHER_COLLECTION_TAG = 300;
+// Written to entries by the paid-review flow but never added to the collection's tags.
+const REVIEW_REQUEST_TAG = 400;
 // Distinct from any id count, so a service that reports its own tally instead of the write's fails.
 const WRITE_COUNT = 7;
 
@@ -31,6 +33,7 @@ const rows = [
   { ...entry, id: 5, collectionId: CONTEST, postId: 15 },
   { ...entry, id: 6, collectionId: CONTEST, articleId: 16 },
   { ...entry, id: 8, collectionId: CONTEST, imageId: 18, tagId: JUDGED_TAG },
+  { ...entry, id: 9, collectionId: CONTEST, imageId: 19, tagId: REVIEW_REQUEST_TAG },
 ];
 
 beforeEach(() => {
@@ -80,7 +83,7 @@ describe('setCollectionItemsTag', () => {
 
     expect(result).toEqual({ count: WRITE_COUNT, collectionItemIds: [1, 2] });
     expect(mockDbWrite.collectionItem.updateMany).toHaveBeenCalledWith({
-      where: { collectionId: CONTEST, id: { in: [1, 2] } },
+      where: expect.objectContaining({ collectionId: CONTEST, id: { in: [1, 2] } }),
       data: { tagId: CONCEPT_TAG },
     });
     expect(mockHomeBlockCacheBust).toHaveBeenCalledWith('Collection', CONTEST);
@@ -125,18 +128,29 @@ describe('setCollectionItemsTag', () => {
     expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
   });
 
-  it('refuses to overwrite or clear an entry holding a filterableOnly tag', async () => {
-    await expect(set({ type: 'collectionItem', ids: [1, 8] }, null)).rejects.toThrow(
-      'Carries a system tag, not a category (collectionItem): 8'
+  it.each([
+    ['a filterableOnly tag', 8],
+    ['a tag the collection does not list', 9],
+  ])('refuses to clear an entry holding %s', async (_, itemId) => {
+    await expect(set({ type: 'collectionItem', ids: [1, itemId] }, null)).rejects.toThrow(
+      `Carries a system tag, not a category (collectionItem): ${itemId}`
     );
     expect(mockDbWrite.collectionItem.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('only writes rows still untagged or category-tagged at write time', async () => {
+    await set({ type: 'collectionItem', ids: [1] });
+
+    expect(mockDbWrite.collectionItem.updateMany.mock.calls[0][0]?.where).toMatchObject({
+      OR: [{ tagId: null }, { tagId: { in: [CONCEPT_TAG] } }],
+    });
   });
 
   it('clears the tag with null', async () => {
     await set({ type: 'collectionItem', ids: [1] }, null);
 
     expect(mockDbWrite.collectionItem.updateMany).toHaveBeenCalledWith({
-      where: { collectionId: CONTEST, id: { in: [1] } },
+      where: expect.objectContaining({ collectionId: CONTEST, id: { in: [1] } }),
       data: { tagId: null },
     });
   });

@@ -4167,8 +4167,8 @@ const collectionItemEntityColumn = {
 /**
  * Moderator correction of an entry's category tag. Every item must already be in the collection,
  * so a wrong id fails the whole call instead of silently tagging fewer entries than asked.
- * `filterableOnly` tags are system state, not categories (daily challenges keep their judged
- * marker there, and winner selection reads it), so they can be neither set nor overwritten here.
+ * Only an untagged entry or one holding a category tag may change: challenges keep judging and
+ * paid-review state in `tagId` with tags that are `filterableOnly` or not on the collection at all.
  */
 export async function setCollectionItemsTag({
   collectionId,
@@ -4185,11 +4185,8 @@ export async function setCollectionItemsTag({
   });
   if (!collection) throw throwNotFoundError(`No collection with id ${collectionId}`);
 
-  const systemTagIds = new Set(collection.tags.filter((t) => t.filterableOnly).map((t) => t.tagId));
-  if (
-    tagId !== null &&
-    (!collection.tags.some((t) => t.tagId === tagId) || systemTagIds.has(tagId))
-  )
+  const categoryTagIds = collection.tags.filter((t) => !t.filterableOnly).map((t) => t.tagId);
+  if (tagId !== null && !categoryTagIds.includes(tagId))
     throw throwBadRequestError(`Tag ${tagId} is not one of this collection's category tags`);
 
   const column = items.type === 'collectionItem' ? 'id' : collectionItemEntityColumn[items.type];
@@ -4205,7 +4202,10 @@ export async function setCollectionItemsTag({
       `Not in collection ${collectionId} (${items.type}): ${missing.join(', ')}`
     );
 
-  const systemTagged = found.filter((item) => item.tagId !== null && systemTagIds.has(item.tagId));
+  const changeable = { OR: [{ tagId: null }, { tagId: { in: categoryTagIds } }] };
+  const systemTagged = found.filter(
+    (item) => item.tagId !== null && !categoryTagIds.includes(item.tagId)
+  );
   if (systemTagged.length)
     throw throwBadRequestError(
       `Carries a system tag, not a category (collectionItem): ${systemTagged
@@ -4214,8 +4214,9 @@ export async function setCollectionItemsTag({
     );
 
   const collectionItemIds = found.map((item) => item.id);
+  // `changeable` again in the write: a judging run can tag an entry after the check above.
   const { count } = await dbWrite.collectionItem.updateMany({
-    where: { collectionId, id: { in: collectionItemIds } },
+    where: { collectionId, id: { in: collectionItemIds }, ...changeable },
     data: { tagId },
   });
 
@@ -4226,7 +4227,7 @@ export async function setCollectionItemsTag({
       name: 'collection-set-items-tag-cache-bust',
       message: (error as Error).message,
       collectionId,
-    }).catch()
+    }).catch(() => undefined)
   );
 
   return { count, collectionItemIds };
