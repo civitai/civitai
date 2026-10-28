@@ -10,7 +10,7 @@ import {
   Text,
 } from '@mantine/core';
 import { IconBook2, IconSettings, IconUsers } from '@tabler/icons-react';
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
@@ -41,15 +41,44 @@ export const STORYLINE_FEED_SORTS = [
   { value: 'mostChapters', label: 'Most chapters' },
 ] as const;
 
-type Sort = (typeof STORYLINE_FEED_SORTS)[number]['value'];
+export type StorylineFeedSort = (typeof STORYLINE_FEED_SORTS)[number]['value'];
 
 const gridClass =
   'grid list-none grid-cols-2 gap-2.5 p-0 sm:grid-cols-[repeat(auto-fill,minmax(220px,1fr))] sm:gap-4';
 const cardClass = `flex h-full flex-col overflow-hidden ${storylineCardClass}`;
 
-export function StorylinesFeed() {
-  const [filter, setFilter] = useState<StorylineFeedFilter>('all');
-  const [sort, setSort] = useState<Sort>('newest');
+/** The sort and filter menus, kept beside the page title like any other feed's. */
+export function StorylinesFeedControls({
+  sort,
+  onSort,
+  filter,
+  onFilter,
+}: {
+  sort: StorylineFeedSort;
+  onSort: (sort: StorylineFeedSort) => void;
+  filter: StorylineFeedFilter;
+  onFilter: (filter: StorylineFeedFilter) => void;
+}) {
+  return (
+    <Group gap={8} wrap="nowrap">
+      <SelectMenuV2
+        label={STORYLINE_FEED_SORTS.find((s) => s.value === sort)?.label ?? sort}
+        value={sort}
+        onClick={onSort}
+        options={[...STORYLINE_FEED_SORTS]}
+      />
+      <StorylineFiltersDropdown value={filter} onChange={onFilter} />
+    </Group>
+  );
+}
+
+export function StorylinesFeed({
+  filter,
+  sort,
+}: {
+  filter: StorylineFeedFilter;
+  sort: StorylineFeedSort;
+}) {
   const browsingLevel = useViewerBrowsingLevelDebounced();
   const { data, isLoading, isError, refetch, hasNextPage, fetchNextPage, isFetching } =
     trpc.storyline.getInfinite.useInfiniteQuery(
@@ -60,21 +89,6 @@ export function StorylinesFeed() {
 
   return (
     <div className="flex flex-col gap-4">
-      <Group justify="space-between" align="center" gap="xs">
-        <Text fz={22} fw={800}>
-          Discover storylines
-        </Text>
-        <Group gap={8} wrap="nowrap">
-          <SelectMenuV2
-            label={STORYLINE_FEED_SORTS.find((s) => s.value === sort)?.label ?? sort}
-            value={sort}
-            onClick={setSort}
-            options={[...STORYLINE_FEED_SORTS]}
-          />
-          <StorylineFiltersDropdown value={filter} onChange={setFilter} />
-        </Group>
-      </Group>
-
       {isLoading ? (
         <ul className={gridClass} aria-busy data-testid="storylines-feed-skeleton">
           {Array.from({ length: 6 }, (_, i) => (

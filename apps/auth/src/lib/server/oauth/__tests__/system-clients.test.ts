@@ -48,6 +48,7 @@ import {
   moveClientToSystem,
   parseSystemClientInput,
 } from '../system-clients';
+import { logOAuthEvent } from '$lib/server/oauth/audit-log';
 import { actions } from '../../../../routes/admin/access/+page.server';
 
 const formData = (fields: Record<string, string | string[]>) => {
@@ -62,7 +63,9 @@ beforeEach(() => {
   h.client = {
     isConfidential: true,
     grants: ['authorization_code', 'refresh_token', 'client_credentials'],
+    redirectUris: ['https://app.example/cb'],
   };
+  vi.mocked(logOAuthEvent).mockClear();
 });
 
 describe('parseSystemClientInput', () => {
@@ -155,6 +158,24 @@ describe('moveClientToSystem', () => {
     expect(h.writes).toHaveLength(0);
   });
 
+  it('refuses to move an app that skips consent while it has an http or loopback redirect', async () => {
+    h.client = {
+      isConfidential: true,
+      grants: ['authorization_code'],
+      skipConsent: true,
+      redirectUris: ['https://app.example/cb', 'http://localhost:3000/cb'],
+    };
+    expect(await moveClientToSystem('c1', 1)).toEqual({
+      refusedRedirectUri: 'http://localhost:3000/cb',
+    });
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('moves an app that skips consent when every redirect is https off loopback', async () => {
+    h.client = { ...(h.client as object), skipConsent: true };
+    expect(await moveClientToSystem('c1', 1)).toEqual({ clientSecret: 'the-secret' });
+  });
+
   it('never moves an App-Block client', async () => {
     expect(await moveClientToSystem('appblk-game', 1)).toBeNull();
     expect(h.writes).toHaveLength(0);
@@ -216,5 +237,58 @@ describe('/admin/access actions', () => {
   it('clears the token limit when left blank', async () => {
     await run('setTokenRateLimit', { id: 'c1', tokenRateLimit: '' });
     expect(h.writes[0].values).toEqual({ tokenRateLimit: null });
+  });
+
+  it.each([
+    'http://app.example/cb',
+    'https://localhost/cb',
+    'https://127.0.0.1:8443/cb',
+    'https://[::1]/cb',
+  ])('refuses to turn on skip consent while %s is registered', async (uri) => {
+    h.client = { redirectUris: ['https://app.example/cb', uri] };
+    expect(await run('setSkipConsent', { id: 'c1', skipConsent: 'true' })).toMatchObject({
+      status: 400,
+      data: { error: expect.stringContaining(uri) },
+    });
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('shows which redirect blocks moving an app that skips consent', async () => {
+    h.client = {
+      isConfidential: true,
+      grants: [],
+      skipConsent: true,
+      redirectUris: ['http://a.example/cb'],
+    };
+    expect(await run('moveToSystem', { id: 'c1' })).toMatchObject({
+      status: 400,
+      data: { error: expect.stringContaining('http://a.example/cb') },
+    });
+    expect(h.writes).toHaveLength(0);
+  });
+
+  it('logs who changed skip consent or the token limit, on which app, to what', async () => {
+    await run('setSkipConsent', { id: 'c1', skipConsent: 'true' });
+    await run('setTokenRateLimit', { id: 'c1', tokenRateLimit: '1000' });
+    expect(vi.mocked(logOAuthEvent).mock.calls.map(([e]) => e)).toEqual([
+      {
+        type: 'client.updated',
+        userId: 1,
+        clientId: 'c1',
+        metadata: { owner: 'system', skipConsent: true },
+      },
+      {
+        type: 'client.updated',
+        userId: 1,
+        clientId: 'c1',
+        metadata: { owner: 'system', tokenRateLimit: 1000 },
+      },
+    ]);
+  });
+
+  it('logs nothing when the app is not found', async () => {
+    h.updateResult = undefined;
+    await run('setTokenRateLimit', { id: 'c1', tokenRateLimit: '' });
+    expect(logOAuthEvent).not.toHaveBeenCalled();
   });
 });

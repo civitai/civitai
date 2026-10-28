@@ -4123,7 +4123,7 @@ export const publishModelById = async ({
       versionIds: versionIds ?? [],
       meta,
     });
-    if (hold && (await tryHoldModelForLiteralRules({ modelId: id, ...hold, meta }))) {
+    if (hold && (await tryHoldModelForLiteralRules({ modelId: id, ...hold }))) {
       return dbWrite.model.findUniqueOrThrow({ where: { id }, select: publishedModelSelect });
     }
   }
@@ -4352,11 +4352,15 @@ export const unpublishModelById = async ({
   reason,
   customMessage,
   refundEarlyAccess,
-  meta,
+  metaPatch,
+  metaUnset,
   userId,
   isModerator,
 }: UnpublishModelSchema & {
-  meta?: ModelMeta;
+  /** Meta keys to set. Merged into the stored meta under the transaction's lock, never written over it. */
+  metaPatch?: Partial<ModelMeta>;
+  /** Meta keys to remove from the stored meta. */
+  metaUnset?: (keyof ModelMeta)[];
   userId: number;
   isModerator?: boolean;
 }) => {
@@ -4392,14 +4396,29 @@ export const unpublishModelById = async ({
       // moderator's explanation, timestamp and actor are all left untouched — refreshing
       // `unpublishedAt` alone re-fires the take-down notification, and `customMessage` is the ONLY
       // explanation rendered when the reason is 'other', which is the largest bucket.
-      const existing = await tx.model.findUniqueOrThrow({
-        where: { id },
-        select: { status: true },
-      });
+      //
+      // Locked, and first: the status decided here and the meta merged below must be the row as it is
+      // now. A caller's earlier read of the meta is stale by the time this runs, and writing it back
+      // drops whatever a moderator set in between.
+      const [existing] = await tx.$queryRaw<{ status: ModelStatus; meta: unknown }[]>`
+        SELECT status, meta FROM "Model" WHERE id = ${id} FOR NO KEY UPDATE
+      `;
+      if (!existing) throw throwNotFoundError(`No model with id ${id}`);
       // Any moderator-only status, not UnpublishedViolation alone: Deleted is the other one, and
       // clearing it lets an owner republish a soft-deleted model.
       const preserveModStatus =
         !reason && constants.modPublishOnlyStatuses.includes(existing.status);
+
+      const stored =
+        existing.meta && typeof existing.meta === 'object' && !Array.isArray(existing.meta)
+          ? (existing.meta as Record<string, unknown>)
+          : {};
+      const meta = {
+        ...Object.fromEntries(
+          Object.entries(stored).filter(([key]) => !metaUnset?.includes(key as keyof ModelMeta))
+        ),
+        ...metaPatch,
+      } as ModelMeta;
 
       const unpublishedAt = new Date().toISOString();
       const updatedMeta = preserveModStatus
@@ -6333,22 +6352,10 @@ export const publishPrivateModel = async (
       versionIds,
       meta: model.meta as ModelMeta | null,
     });
-    if (
-      hold &&
-      (await tryHoldModelForLiteralRules({
-        modelId,
-        ...hold,
-        meta: (model.meta ?? {}) as ModelMeta,
-      }))
-    ) {
+    if (hold && (await tryHoldModelForLiteralRules({ modelId, ...hold }))) {
       return { versionIds, held: true };
     }
   }
-
-  // Back to what a moderator had set before the private cycle forced cannotPromote on.
-  const { [RESTORE_CANNOT_PROMOTE_KEY]: restoreCannotPromote, ...storedMeta } = (model.meta ??
-    {}) as ModelMeta & Record<string, unknown>;
-  const publishedMeta = { ...storedMeta, cannotPromote: restoreCannotPromote === true };
 
   await dbWrite.$transaction(async (tx) => {
     // Everything above ran before this transaction, and a takedown can land in between. Re-read
@@ -6356,6 +6363,18 @@ export const publishPrivateModel = async (
     // a model takedown takes them. Filtered on Published, a version taken down meanwhile drops out.
     if ((await readDownedModel(tx, modelId, 'update')) && !isModerator)
       throw throwAuthorizationError('You are not authorized to publish this model');
+    // Re-read under that lock: the meta written back below must be the row as it is now, or a
+    // moderator's change since the read above is overwritten.
+    const current = await tx.model.findUnique({
+      where: { id: modelId },
+      select: { status: true, meta: true },
+    });
+    if (!current) throw throwNotFoundError('Model not found');
+    assertPrivateFlowPublishable({ status: current.status, meta: current.meta, isModerator });
+    // Back to what a moderator had set before the private cycle forced cannotPromote on.
+    const { [RESTORE_CANNOT_PROMOTE_KEY]: restoreCannotPromote, ...storedMeta } = (current.meta ??
+      {}) as ModelMeta & Record<string, unknown>;
+    const publishedMeta = { ...storedMeta, cannotPromote: restoreCannotPromote === true };
     const stillPublished = await tx.$queryRaw<{ id: number }[]>`
       SELECT id FROM "ModelVersion"
       WHERE id IN (${Prisma.join(versionIds)}) AND status = 'Published'

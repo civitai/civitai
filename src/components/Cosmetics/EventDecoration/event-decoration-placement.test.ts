@@ -6,6 +6,7 @@ import {
   getEventDecorationClearLeftCss,
   getHatCardScale,
   getHatLayout,
+  getHatRoom,
   HAT_LOOK,
   HAT_LOOK_CARD_WIDTH,
   HAT_PLAIN_CARD_NUDGE,
@@ -337,6 +338,27 @@ describe('a hat too big for the bleed', () => {
 it.each([0, 8, 24])('fits a container that gives %ipx of room', (allowance) => {
   const { reach } = getHatLayout('corner', ART.civchan, allowance);
   expect(Math.min(reach.left, reach.top)).toBeCloseTo(-allowance, 6);
+});
+
+// A picture letterboxed in a clipping slot has room on one side and none on the other.
+describe('a hat on a picture with its own room on each edge', () => {
+  it('reaches as far past each edge as that edge allows', () => {
+    const { reach } = getHatLayout('corner', ART.civchan, { left: 4, top: 20 });
+    expect(reach.left).toBeCloseTo(-4, 6);
+    expect(reach.top).toBeCloseTo(-20, 6);
+  });
+
+  it('wears one allowance on both edges like a number', () => {
+    expect(getHatLayout('corner', ART.civchan, { left: 8, top: 8 })).toEqual(
+      getHatLayout('corner', ART.civchan, 8)
+    );
+  });
+
+  it('keeps 2px inside an edge the picture meets, a feed card past one it has room for', () => {
+    expect(getHatRoom(0)).toBe(-2);
+    expect(getHatRoom(10)).toBe(8);
+    expect(getHatRoom(500)).toBe(ITEM_BLEED);
+  });
 });
 
 it('outlines its hit area with the art, not the canvas', () => {

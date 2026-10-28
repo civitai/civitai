@@ -53,6 +53,8 @@ const statuses = async (table: string) =>
 
 describe('process-scheduled-publishing on a model a content wipe kept', () => {
   it('leaves the kept model scheduled and publishes the ordinary one', async () => {
+    // The job publishes the versions first; a model goes live only with a published version.
+    await db.exec(`UPDATE "ModelVersion" SET status = 'Published'`);
     await run(scheduledModelsGoLiveSql([KEPT, ORDINARY], NOW));
     expect(await statuses('Model')).toEqual({ [KEPT]: 'Scheduled', [ORDINARY]: 'Published' });
   });

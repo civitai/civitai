@@ -1,0 +1,27 @@
+import { isModerationAccountUser } from '@civitai/auth';
+import { env } from '~/env/server';
+import { logToAxiom } from '~/server/logging/client';
+
+/** The shared "Civitai Moderation" account, or null when the feature is not configured. */
+export function getModerationAccountId(): number | null {
+  const id = env.CIVITAI_MODERATION_USER_ID;
+  return typeof id === 'number' ? id : null;
+}
+
+type Who = number | string | { id: number; username?: string | null } | null | undefined;
+
+/**
+ * True, with an error-level log, when a credential resolves to the shared moderation account, by its
+ * configured id or its username. Nobody signs in as it: messages are sent as it server-side, on behalf of
+ * a named moderator.
+ */
+export function refuseModerationAccountSession(who: Who, source: string): boolean {
+  if (who == null) return false;
+  const user = typeof who === 'object' ? who : { id: Number(who) };
+  if (!isModerationAccountUser(user, env.CIVITAI_MODERATION_USER_ID)) return false;
+  logToAxiom(
+    { name: 'moderation-account-session-refused', type: 'error', source, userId: user.id },
+    'auth'
+  ).catch(() => undefined);
+  return true;
+}

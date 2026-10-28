@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
@@ -125,6 +126,83 @@ export function holdMarkerSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
 export function accountHoldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql {
   const legs = [...Object.values(holdLegsSql(id)), holdMarkerSql(id, markerView)];
   return Prisma.sql`(${Prisma.join(legs, ' OR ')})`;
+}
+
+/** What an owner is told when a delete of their content is refused. Never says why. */
+export const OWNER_CONTENT_KEPT =
+  "This can't be removed right now. Contact support if you need it removed.";
+
+/**
+ * Whether content owned by `owner` (an int SQL expression) must be kept: the hold the purge jobs read,
+ * which includes the placeholder owner, or any account hold. Put it in the DELETE itself, so a hold
+ * placed after an earlier check still stops it. Names the marker view, so it needs its migration.
+ */
+export function ownerHeldSql(owner: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`(${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})`;
+}
+
+/**
+ * Whether the owner of the row `from` selects (aliasing its owner as `m."userId"`) is held: `true`
+ * when held or when that cannot be read, `false` when not held or when there is no such row.
+ */
+export async function ownerHeld(
+  db: Pick<Prisma.TransactionClient, '$queryRaw'>,
+  from: Prisma.Sql
+): Promise<boolean> {
+  const rows = await db.$queryRaw<{ held: unknown }[]>`SELECT ${ownerHeldSql(
+    Prisma.raw('m."userId"')
+  )} AS held ${from}`.catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'content-legal-hold-check-failed',
+      message: (e as Error).message,
+    }).catch(() => undefined);
+    return null;
+  });
+  if (!rows) return true;
+  return rows.some((r) => r.held !== false);
+}
+
+/** The refusal for a delete a hold stopped: never names the hold to an owner. */
+export function contentKeptError(isModerator: boolean | undefined) {
+  return new TRPCError({
+    code: 'FORBIDDEN',
+    message: isModerator ? LEGAL_HOLD_REFUSAL : OWNER_CONTENT_KEPT,
+  });
+}
+
+/**
+ * Runs a DELETE guarded by `ownerHeldSql` that should remove `expected` rows. Throws the hold refusal
+ * when it removed fewer and the owner of the row `ownerFrom` selects is held (see `ownerHeld`), or
+ * when it failed on the marker view. Any other error is rethrown. Either way nothing it is part of
+ * commits. Returns 'short' when it removed fewer for another reason: the rows were already gone.
+ */
+export async function deleteUnlessHeld(
+  statement: Promise<number>,
+  {
+    expected,
+    isModerator,
+    db,
+    ownerFrom,
+  }: {
+    expected: number;
+    isModerator: boolean | undefined;
+    db: Pick<Prisma.TransactionClient, '$queryRaw'>;
+    ownerFrom: Prisma.Sql;
+  }
+): Promise<'deleted' | 'short'> {
+  const removed = await statement.catch((e: unknown) => {
+    if (!isLegalHoldAbort(e)) throw e;
+    logToAxiom({
+      type: 'error',
+      name: 'content-legal-hold-check-failed',
+      message: (e as Error).message,
+    }).catch(() => undefined);
+    throw contentKeptError(isModerator);
+  });
+  if (removed >= expected) return 'deleted';
+  if (await ownerHeld(db, ownerFrom)) throw contentKeptError(isModerator);
+  return 'short';
 }
 
 /**

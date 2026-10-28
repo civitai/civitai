@@ -94,6 +94,23 @@ describe('checkManifest', () => {
       expect.objectContaining({ code: 'bad-manifest' })
     );
   });
+
+  it('keeps a catalog item key', () => {
+    expect(checkManifest(manifest({ item: 'fakeful' }), record, now).item).toBe('fakeful');
+  });
+
+  it.each([
+    ['a path', '../fakeful'],
+    ['a query', 'fakeful?x=1'],
+    ['an over-long key', 'a'.repeat(65)],
+    ['an empty key', ''],
+    ['a number', 42],
+    ['an object', { id: 'fakeful' }],
+  ])('drops %s instead of refusing the share', (_, item) => {
+    const checked = checkManifest(manifest({ item }), record, now);
+    expect(checked.item).toBeUndefined();
+    expect(checked.title).toBe('Pictionary');
+  });
 });
 
 describe('sniffIntentMedia', () => {

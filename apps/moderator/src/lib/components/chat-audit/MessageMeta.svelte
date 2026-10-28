@@ -19,6 +19,7 @@
     reported = false,
     judged = false,
     sender = false,
+    sentBy = null,
   }: {
     userId: number;
     username: string | null;
@@ -36,11 +37,14 @@
     judged?: boolean;
     /** The CSAM holds conversation: this is the member whose messages were held. */
     sender?: boolean;
+    /** Civitai Moderation messages: the moderator who wrote it. */
+    sentBy?: string | null;
   } = $props();
 </script>
 
 <div class="flex flex-wrap items-baseline gap-x-2">
   <a href={userLookupUrl(userId)} class={LINK_CLASS}>{username ?? `#${userId}`}</a>
+  {#if sentBy}<span class="text-xs text-dark-2">sent by {sentBy}</span>{/if}
   {#if sender}<Badge variant="secondary">sender</Badge>{/if}
   {#if judged}<Badge variant="destructive">judged</Badge>{/if}
   {#if reported}<Badge variant="destructive">reported</Badge>{/if}

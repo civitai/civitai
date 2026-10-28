@@ -1045,7 +1045,7 @@ export const unpublishModelVersionHandler = async ({
     if (scope.kind === 'model') {
       const model = await getModel({
         id: scope.modelId,
-        select: { meta: true, nsfw: true },
+        select: { nsfw: true },
       });
       if (!model) throw throwNotFoundError(`No model with id ${scope.modelId}`);
 
@@ -1054,7 +1054,6 @@ export const unpublishModelVersionHandler = async ({
       await unpublishModelById({
         ...input,
         id: scope.modelId,
-        meta: (model.meta as ModelMeta | null) ?? undefined,
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       });

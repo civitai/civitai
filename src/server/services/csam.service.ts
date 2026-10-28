@@ -666,7 +666,7 @@ export async function processCsamReport(report: CsamReportProps) {
             fileDetails: {
               originalFileName: image.name ?? undefined,
               locationOfFile: imageUrl,
-              fileViewedByEsp: true,
+              fileViewedByEsp: false,
               fileAnnotations,
               additionalInfo: additionalInfo.length
                 ? `${additionalInfo.map((info) => `  - ${info}`).join('\n')}`

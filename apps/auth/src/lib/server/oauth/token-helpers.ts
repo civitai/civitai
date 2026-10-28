@@ -1,3 +1,5 @@
+import { error } from '@sveltejs/kit';
+import { isRefusedModerationAccount } from '$lib/server/auth/moderation-account';
 import { generateKey, generateSecretHash } from '@civitai/auth/secret-hash';
 import { TokenScope } from '@civitai/auth/token-scope';
 import { db } from '$lib/server/db/db';
@@ -46,6 +48,8 @@ export async function createOAuthTokenPair(
   clientId: string,
   scope: number
 ): Promise<TokenPair> {
+  if (isRefusedModerationAccount({ id: userId }, 'oauth-token'))
+    error(403, 'This account cannot sign in.');
   const now = new Date();
 
   // UserRead is a mandatory baseline on every OAuth token: an app acting on a user's behalf must always

@@ -68,7 +68,7 @@ describe('checkModelRulesOnEdit', () => {
     await checkModelRulesOnEdit(7);
 
     expect(unpublishModelById).toHaveBeenCalledWith(
-      expect.objectContaining({ id: 7, meta: expect.objectContaining({ needsReview: true }) })
+      expect.objectContaining({ id: 7, metaPatch: expect.objectContaining({ needsReview: true }) })
     );
     expect(syncModelRulesHold).toHaveBeenCalledWith(
       7,

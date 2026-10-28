@@ -22,6 +22,7 @@ vi.mock('$lib/server/auth/session', () => ({
   SESSION_COOKIE: 'civ-token',
   getSigner: () => ({ mintSessionToken: h.mintSessionToken }),
   mintUserSession: h.mintUserSession,
+  refuseModerationAccount: () => undefined,
 }));
 
 import { GET, POST } from '../../../../routes/api/auth/identity/+server';

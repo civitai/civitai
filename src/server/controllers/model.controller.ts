@@ -1005,14 +1005,12 @@ export const unpublishModelHandler = async ({
     const { id } = input;
     const model = await dbRead.model.findUnique({
       where: { id },
-      select: { meta: true, nsfw: true },
+      select: { nsfw: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    const meta = (model.meta as ModelMeta | null) || {};
     const updatedModel = await unpublishModelById({
       ...input,
-      meta,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     });

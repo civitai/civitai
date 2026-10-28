@@ -1,0 +1,35 @@
+import { env } from '$env/dynamic/private';
+import { sql } from '@civitai/db/kysely';
+import { createCache } from './cache';
+import { dbRead } from './db';
+
+/** Threads whose last message is the user's, for the sidebar badge. 0 when the account is not configured. */
+export async function countAwaitingReply(): Promise<number> {
+  const moderationId = Number(env.CIVITAI_MODERATION_USER_ID);
+  if (!(moderationId > 0)) return 0;
+  const { rows } = await sql<{ count: number }>`
+    SELECT count(*)::int AS count
+    FROM "ChatMember" sm
+    JOIN "Chat" c ON c.id = sm."chatId" AND c."isGroup" = false
+    JOIN LATERAL (
+      SELECT m."userId" FROM "ChatMessage" m
+      WHERE m."chatId" = sm."chatId" AND m."deletedAt" IS NULL AND m."userId" <> -1
+      ORDER BY m.id DESC
+      LIMIT 1
+    ) last ON true
+    WHERE sm."userId" = ${moderationId} AND last."userId" <> ${moderationId}
+  `.execute(dbRead);
+  return rows[0]?.count ?? 0;
+}
+
+// Shared and short: the client re-reads at most once a minute per tab, so 15 s costs no freshness, and
+// one fill per window serves every moderator instead of one query per request.
+const awaitingReply = createCache({
+  name: 'civitai-messages-awaiting:v1',
+  fetch: async () => ({ count: await countAwaitingReply() }),
+  ttlSeconds: 15,
+});
+
+export async function getAwaitingReplyBadge(): Promise<number> {
+  return (await awaitingReply.get({})).count;
+}
