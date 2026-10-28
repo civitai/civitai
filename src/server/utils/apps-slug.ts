@@ -61,7 +61,7 @@ export function newBlockIdError(blockId: string): string | null {
   if (RESERVED_BLOCK_IDS.includes(blockId)) {
     return `blockId "${blockId}" is reserved. Choose a different blockId.`;
   }
-  const hit = RESERVED_BLOCK_ID_PREFIXES.find(({ prefix }) => blockId.startsWith(prefix));
+  const hit = RESERVED_BLOCK_ID_PREFIXES.find(({ prefix }) => blockId === prefix);
   if (hit) {
     return `blockId "${blockId}" is reserved: ids starting with "${hit.prefix}" are used for ${hit.usedFor}, so the app's address would never reach it. Choose a different blockId.`;
   }
