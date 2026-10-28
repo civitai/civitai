@@ -42,6 +42,7 @@ const { changePageRoles, GrantConflictError, GrantHistoryUnavailableError } = aw
   '../page-access'
 );
 const { actions } = await import('../../../routes/admin/+page.server');
+const { POST } = await import('../../../routes/api/admin/page-access/+server');
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const read = (rel: string) => readFileSync(join(HERE, rel), 'utf8');
@@ -374,6 +375,47 @@ describe('/admin save', () => {
     const result = await save({ [DISPUTE]: [SYSTEM] }, { [DISPUTE]: [] });
     expect(result).toMatchObject({ status: 400 });
     expect(await stored(DISPUTE)).toBeNull();
+  });
+});
+
+describe('POST /api/admin/page-access', () => {
+  const SYSTEM = 'system:dispute-agent';
+  const ORIGIN = 'https://moderator.example.test';
+  const post = (body: Record<string, unknown>) => {
+    const url = new URL('/api/admin/page-access', ORIGIN);
+    const request = new Request(url, {
+      method: 'POST',
+      headers: { origin: ORIGIN, 'content-type': 'application/json' },
+      body: JSON.stringify({ path: '/blocklists', gateRef: 'hub:request:test', ...body }),
+    });
+    return POST({
+      request,
+      url,
+      locals: { user: { id: 9, roles: ['moderator:admin'] }, grants: {} },
+      params: {},
+    } as never);
+  };
+
+  beforeEach(async () => {
+    await main.exec(
+      `UPDATE "AppPageAccess" SET roles = ARRAY['${HIGH}', '${SYSTEM}'] WHERE path = '/blocklists'`
+    );
+  });
+
+  it('revokes a stored role from outside the catalogue, and records it', async () => {
+    const res = await post({ role: SYSTEM, op: 'revoke', expect: [HIGH, SYSTEM] });
+    expect(res.status).toBe(200);
+    expect(await stored()).toEqual([HIGH]);
+    expect(await historyRows()).toMatchObject([
+      { via: 'api', roles_before: [HIGH, SYSTEM], roles_after: [HIGH], outcome: 'applied' },
+    ]);
+  });
+
+  it('refuses a revoke from a stale read with 409, and records nothing', async () => {
+    const res = await post({ role: SYSTEM, op: 'revoke', expect: [SYSTEM] });
+    expect(res.status).toBe(409);
+    expect(await stored()).toEqual([HIGH, SYSTEM]);
+    expect(await historyRows()).toEqual([]);
   });
 });
 

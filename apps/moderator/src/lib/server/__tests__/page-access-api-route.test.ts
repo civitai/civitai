@@ -192,6 +192,48 @@ describe('POST /api/admin/page-access — the change', () => {
     ]);
   });
 
+  // A role from outside the catalogue (a service account's) has no column on /admin, so this route is
+  // the one way to take it off a grant: it may be revoked once it is stored, never granted.
+  describe('a role the auth hub catalogue does not list', () => {
+    const SYSTEM = 'system:dispute-agent';
+
+    it('is revoked when the grant holds it', async () => {
+      const res = await call({
+        body: {
+          ...BODY,
+          op: 'revoke',
+          role: SYSTEM,
+          expect: ['moderator:mod-high-access', SYSTEM],
+        },
+      });
+      expect(res.status).toBe(200);
+      expect(changePageRoles.mock.calls[0][0]).toMatchObject({
+        entries: [{ path: '/blocklists', roles: ['moderator:mod-high-access'] }],
+        expect: { '/blocklists': ['moderator:mod-high-access', SYSTEM] },
+      });
+    });
+
+    it('is never granted, even when the grant already holds it', async () => {
+      expect(await status(call({ body: { ...BODY, role: SYSTEM } }))).toBe(400);
+      expect(await status(call({ body: { ...BODY, role: SYSTEM, expect: [SYSTEM] } }))).toBe(400);
+      expect(changePageRoles).not.toHaveBeenCalled();
+    });
+
+    it('is revoked while the catalogue cannot be read', async () => {
+      grantableRoles.mockResolvedValueOnce(null);
+      const res = await call({ body: { ...BODY, op: 'revoke', role: SYSTEM, expect: [SYSTEM] } });
+      expect(res.status).toBe(200);
+      expect(changePageRoles.mock.calls[0][0].entries).toEqual([
+        { path: '/blocklists', roles: [] },
+      ]);
+    });
+
+    it('is refused for a revoke when the grant does not hold it', async () => {
+      expect(await status(call({ body: { ...BODY, op: 'revoke', role: SYSTEM } }))).toBe(400);
+      expect(changePageRoles).not.toHaveBeenCalled();
+    });
+  });
+
   it('a moved grant is a 409 carrying the current roles', async () => {
     changePageRoles.mockRejectedValueOnce(
       new GrantConflictError('/blocklists', ['moderator:cm-high-access'])
