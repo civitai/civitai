@@ -5,6 +5,8 @@ describe('assertLocalDatabase', () => {
   it.each([
     'postgresql://u:p@localhost:5432/db',
     'postgres://u:p@127.0.0.1:6546/db?sslmode=disable',
+    'postgresql://u:p@[::1]:5432/db',
+    'postgresql://u:p@db.example.com:5432/db?host=localhost',
   ])('accepts %s', (url) => {
     expect(() => assertLocalDatabase(url)).not.toThrow();
   });
@@ -14,7 +16,12 @@ describe('assertLocalDatabase', () => {
     ['a host that only starts with localhost', 'postgresql://u:p@localhost.example.com:5432/db'],
     ['a localhost user on a remote host', 'postgresql://localhost:p@db.example.com:5432/db'],
     ['a localhost path on a remote host', 'postgresql://u:p@db.example.com:5432/localhost'],
-    ['another loopback spelling', 'postgresql://u:p@[::1]:5432/db'],
+    [
+      'a host query parameter pointing elsewhere',
+      'postgresql://u:p@localhost/db?host=db.example.com',
+    ],
+    ['a socket directory', 'postgresql://u:p@localhost/db?host=/var/run/postgresql'],
+    ['no host at all', 'postgresql:///db'],
   ])('refuses %s', (_label, url) => {
     expect(() => assertLocalDatabase(url)).toThrow(/Refusing to run/);
   });
