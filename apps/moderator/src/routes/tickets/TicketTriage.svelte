@@ -29,8 +29,7 @@
   let { data, form }: { data: Data; form: { error?: string } | null | undefined } = $props();
 
   const SELECTION = 'ticket';
-  // Every filter change drops these: they index the result set being replaced.
-  const DROPPED = ['page', SELECTION];
+  const DROP_ON_CHANGE = ['page', SELECTION];
   const TITLES: Record<TicketView, { title: string; subtitle: string }> = {
     moderation: {
       title: 'Moderation tickets',
@@ -109,7 +108,7 @@
 
 {#snippet listHeader()}
   {#if ok}
-    <TicketFilterBar view={data.view} result={ok} drop={DROPPED} />
+    <TicketFilterBar view={data.view} result={ok} dropOnChange={DROP_ON_CHANGE} />
   {/if}
 {/snippet}
 

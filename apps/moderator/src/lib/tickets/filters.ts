@@ -87,24 +87,24 @@ export function parseSortValue(value: string): { sort: SortKey; dir: SortDir } {
 }
 
 /**
- * The URL with the repeated param `key` set to `values`. Every filter change drops `drop` (the page
- * and the open ticket), which index the result set being replaced.
+ * The URL with the repeated param `key` set to `values`. Every filter change drops the
+ * `dropOnChange` params (the page and the open ticket), which index the result set being replaced.
  */
 export function selectionHref(
   url: URL,
   key: string,
   values: string[],
-  drop: readonly string[]
+  dropOnChange: readonly string[]
 ): string {
   const next = new URL(url);
-  for (const param of drop) next.searchParams.delete(param);
+  for (const param of dropOnChange) next.searchParams.delete(param);
   return urlWithMulti(next, key, values);
 }
 
 /** The URL without any filter, keeping the search and the sort. */
-export function clearFiltersHref(url: URL, drop: readonly string[]): string {
+export function clearFiltersHref(url: URL, dropOnChange: readonly string[]): string {
   const next = new URL(url);
-  for (const param of [...drop, ...TICKET_QUERY_MULTI_KEYS, 'sent'])
+  for (const param of [...dropOnChange, ...TICKET_QUERY_MULTI_KEYS, 'sent'])
     next.searchParams.delete(param);
   return next.pathname + next.search;
 }

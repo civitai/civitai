@@ -5,6 +5,7 @@
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { FormState } from '$lib/form-state.svelte';
   import { denied } from '$lib/permissions';
+  import { cancelUnlessConfirming } from '$lib/tickets/confirm-guard';
   import { SETTABLE_STATUSES, statusLabel } from '$lib/tickets/statuses';
 
   let {
@@ -26,23 +27,19 @@
 
   let text = $state('');
   let statusAfter = $state(LEAVE);
-  // The status-only choice, until the operator picks one it follows the ticket's own status.
-  let picked = $state<string | null>(null);
+  let pickedStatusOnly = $state<string | null>(null);
   const statusOnly = $derived(
-    picked ?? (SETTABLE_STATUSES.some((s) => s === currentStatus) ? String(currentStatus) : '')
+    pickedStatusOnly ?? (SETTABLE_STATUSES.some((s) => s === currentStatus) ? String(currentStatus) : '')
   );
   let confirming = $state(false);
 
   const reply = new FormState({
-    // Enter in a text field must not send an email; only the confirm button's submit goes through.
-    onSubmit: ({ cancel }) => {
-      if (!confirming) cancel();
-    },
+    onSubmit: cancelUnlessConfirming(() => confirming),
     onSuccess: (data) => {
       const set = statusAfter === LEAVE ? null : Number(statusAfter);
       text = '';
       statusAfter = LEAVE;
-      picked = null;
+      pickedStatusOnly = null;
       ondone('Reply sent', data, set);
     },
     onSettled: () => (confirming = false),
@@ -51,7 +48,7 @@
   const status = new FormState({
     onSuccess: (data) => {
       const set = Number(statusOnly);
-      picked = null;
+      pickedStatusOnly = null;
       ondone('Status changed', data, set);
     },
     reset: false,
@@ -89,8 +86,6 @@
         {/each}
       </Select.Content>
     </Select.Root>
-    <!-- The confirm button is the only real submit; it must not unmount itself in its own click
-         handler (the submit would never fire) — `confirming` closes from `onSettled` instead. -->
     {#if confirming}
       <div class="flex flex-wrap items-center gap-1.5">
         <span class="w-full text-xs text-red-300">Email this reply to the customer?</span>
@@ -132,7 +127,7 @@
     <Select.Root
       type="single"
       name="status"
-      bind:value={() => statusOnly, (v) => (picked = v)}
+      bind:value={() => statusOnly, (v) => (pickedStatusOnly = v)}
       disabled={!canReply || busy}
     >
       <Select.Trigger class="h-8 min-w-0 flex-1 text-[13px]" aria-label="Status only" title={why}>

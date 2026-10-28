@@ -32,9 +32,7 @@
     view: TicketView;
     canReply: boolean;
     canEscalate: boolean;
-    /** The `/users` page grant: mutes and restriction rulings need it. */
     canAccountAct: boolean;
-    /** The `user.ban` permission: an unban needs it. */
     canUnban: boolean;
     /** The ticket no longer belongs in this list (another view, or resolved): move to the next one. */
     onleave: (id: string) => void;

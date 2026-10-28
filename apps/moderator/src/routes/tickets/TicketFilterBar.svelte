@@ -24,12 +24,12 @@
   let {
     view,
     result,
-    drop,
+    dropOnChange,
   }: {
     view: TicketView;
     result: Ok;
     /** Params that index the old result set (page, open ticket) and go with any change. */
-    drop: readonly string[];
+    dropOnChange: readonly string[];
   } = $props();
 
   const query = $derived(result.query);
@@ -49,7 +49,7 @@
 
   function pickSent(value: string) {
     const params: Record<string, string | null> = { sent: value || null };
-    for (const key of drop) params[key] = null;
+    for (const key of dropOnChange) params[key] = null;
     go(urlWith(page.url, params));
   }
 
@@ -59,7 +59,7 @@
       sort: sort === 'updated' ? null : sort,
       dir: dir === 'desc' ? null : dir,
     };
-    for (const key of drop) params[key] = null;
+    for (const key of dropOnChange) params[key] = null;
     go(urlWith(page.url, params));
   }
 </script>
@@ -70,7 +70,7 @@
       param="status"
       label="Status"
       options={statusOptions(query.status, result.facets.status)}
-      {drop}
+      {dropOnChange}
     />
   {/if}
   {#if shown.includes('feature')}
@@ -78,7 +78,7 @@
       param="feature"
       label="Feature"
       options={valueOptions(query.feature, result.facets.feature, 'No feature')}
-      {drop}
+      {dropOnChange}
     />
   {/if}
   {#if shown.includes('topic')}
@@ -86,7 +86,7 @@
       param="topic"
       label="Router topic"
       options={valueOptions(query.topic, result.facets.topic, 'No topic')}
-      {drop}
+      {dropOnChange}
     />
   {/if}
   {#if shown.includes('sent')}
@@ -108,7 +108,7 @@
     </Select.Root>
   {/if}
   {#if filtersActive}
-    <Button size="xs" variant="ghost" onclick={() => go(clearFiltersHref(page.url, drop))}>
+    <Button size="xs" variant="ghost" onclick={() => go(clearFiltersHref(page.url, dropOnChange))}>
       Clear
     </Button>
   {/if}

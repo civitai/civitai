@@ -89,8 +89,8 @@
             userId={account.userId}
             action="accountUnban"
             label="Unban"
-            warn="The account is unbanned. Nothing is emailed from here."
-            done="Account unbanned"
+            confirmText="The account is unbanned. Nothing is emailed from here."
+            doneLabel="Account unbanned"
             enabled={canUnban}
             why={unbanWhy}
             {ondone}
@@ -102,8 +102,8 @@
             userId={account.userId}
             action="accountLiftTimedMute"
             label="Lift timed mute"
-            warn="The account can post again straight away."
-            done="Timed mute lifted"
+            confirmText="The account can post again straight away."
+            doneLabel="Timed mute lifted"
             enabled={canAct}
             why={NEEDS_USERS}
             {ondone}
@@ -114,8 +114,8 @@
             userId={account.userId}
             action="accountUnmute"
             label="Unmute"
-            warn="The account can post again straight away."
-            done="Account unmuted"
+            confirmText="The account can post again straight away."
+            doneLabel="Account unmuted"
             enabled={canAct}
             why={NEEDS_USERS}
             {ondone}

@@ -8,8 +8,8 @@
     userId,
     action,
     label,
-    warn,
-    done,
+    confirmText,
+    doneLabel,
     enabled,
     why,
     ondone,
@@ -19,10 +19,8 @@
     /** The form action on the list page, without the `?/`. */
     action: string;
     label: string;
-    /** What the confirm step says will happen. */
-    warn: string;
-    /** What a success is called in the toast. */
-    done: string;
+    confirmText: string;
+    doneLabel: string;
     /** False renders the button disabled, with `why`. */
     enabled: boolean;
     why: string;
@@ -32,7 +30,7 @@
   let confirming = $state(false);
 
   const form = new FormState({
-    onSuccess: (data) => ondone(done, data),
+    onSuccess: (data) => ondone(doneLabel, data),
     onSettled: () => (confirming = false),
   });
   const reason = $derived(enabled ? undefined : why);
@@ -45,7 +43,7 @@
        handler (the submit would never fire) — `confirming` closes from `onSettled` instead. -->
   {#if confirming}
     <div class="flex flex-wrap items-center gap-1.5">
-      <span class="w-full text-xs text-red-300">{warn}</span>
+      <span class="w-full text-xs text-red-300">{confirmText}</span>
       <Button type="submit" size="sm" disabled={form.submitting} data-touch-target>
         Yes, {label.toLowerCase()}
       </Button>

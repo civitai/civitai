@@ -12,14 +12,14 @@
     param,
     label,
     options,
-    drop,
+    dropOnChange,
   }: {
     /** The repeated URL param this menu writes. */
     param: string;
     label: string;
     options: FilterOption[];
     /** Params that index the old result set (page, open ticket) and go with any change. */
-    drop: readonly string[];
+    dropOnChange: readonly string[];
   } = $props();
 
   const uid = $props.id();
@@ -39,7 +39,7 @@
     open = false;
     const changed = draft.length !== selected.length || draft.some((v) => !selected.includes(v));
     if (changed) {
-      void goto(selectionHref(page.url, param, draft, drop), { noScroll: true, keepFocus: true });
+      void goto(selectionHref(page.url, param, draft, dropOnChange), { noScroll: true, keepFocus: true });
     }
   }
 

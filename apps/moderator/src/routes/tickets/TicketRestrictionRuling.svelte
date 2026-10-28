@@ -9,6 +9,7 @@
     resolutionReasonsFor,
   } from '@civitai/shared/resolution-reasons';
   import { FormState } from '$lib/form-state.svelte';
+  import { cancelUnlessConfirming } from '$lib/tickets/confirm-guard';
 
   let {
     ticketId,
@@ -41,10 +42,7 @@
   );
 
   const form = new FormState({
-    // Enter in a text field submits without the confirm button; only that button's submit goes through.
-    onSubmit: ({ cancel }) => {
-      if (!confirming) cancel();
-    },
+    onSubmit: cancelUnlessConfirming(() => confirming),
     onSuccess: (data) => ondone(`Restriction ${verdict.toLowerCase()}`, data),
     onSettled: () => (confirming = false),
     reset: false,

@@ -4,6 +4,7 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { FormState } from '$lib/form-state.svelte';
   import { denied } from '$lib/permissions';
+  import { cancelUnlessConfirming } from '$lib/tickets/confirm-guard';
 
   let {
     ticketId,
@@ -19,10 +20,7 @@
   let confirming = $state(false);
 
   const escalate = new FormState({
-    // Enter in a text field submits without the confirm button; only that button's submit goes through.
-    onSubmit: ({ cancel }) => {
-      if (!confirming) cancel();
-    },
+    onSubmit: cancelUnlessConfirming(() => confirming),
     onSuccess: (data) => ondone('Sent to support', data, null),
     onSettled: () => (confirming = false),
   });
@@ -44,8 +42,6 @@
     title={why}
     class="h-8 text-[13px]"
   />
-  <!-- The confirm button is the only real submit; it must not unmount itself in its own click
-       handler (the submit would never fire) — `confirming` closes from `onSettled` instead. -->
   {#if confirming}
     <div class="flex flex-wrap items-center gap-1.5">
       <span class="w-full text-xs text-red-300">
