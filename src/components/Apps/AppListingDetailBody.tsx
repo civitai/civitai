@@ -20,8 +20,10 @@ import {
   UnstyledButton,
 } from '@mantine/core';
 import {
+  IconAlertTriangle,
   IconApps,
   IconArrowLeft,
+  IconCheck,
   IconClock,
   IconDownload,
   IconEyeOff,
@@ -42,6 +44,12 @@ import {
 } from '~/shared/constants/app-listing-placeholder.constants';
 import { ACTION_GLYPH_ICONS, detailActionGlyph } from '~/components/Apps/appListingActionGlyph';
 import { BlockScopeList } from '~/components/Apps/BlockScopeList';
+import { SensitiveScopeBadge } from '~/components/Apps/SensitiveScopeBadge';
+import {
+  SCOPE_DESCRIPTIONS,
+  SCOPE_PLAIN_TITLES,
+} from '~/server/services/blocks/scope-descriptions.constants';
+import { isSensitiveBlockScope } from '~/shared/constants/block-scope.constants';
 import { buildListingDetailRows } from '~/components/Apps/appListingDetailRows';
 import { LISTING_REVIEWS_ANCHOR_ID } from '~/components/Apps/listingKindLabels';
 import { buildListingStatChips, type ListingStatChip } from '~/components/Apps/appListingStatChips';
@@ -630,6 +638,66 @@ function ScreenshotGallery({
   );
 }
 
+/**
+ * The live page's permission disclosure, in plain language: one sentence per permission, a marker
+ * on the sensitive ones, no scope ids. The moderator preview keeps the id-level `BlockScopeList`
+ * (a moderator is approving the ids themselves).
+ *
+ * A scope with no plain title falls back to its description, then to the id, so a new scope is
+ * never silently dropped from the disclosure.
+ */
+function PermissionsCard({ scopes }: { scopes: string[] }) {
+  return (
+    <Card withBorder data-testid="apps-listing-permissions">
+      <Group gap="xs" mb="sm">
+        <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
+          <IconShieldCheck size={14} />
+        </ThemeIcon>
+        <Title order={4}>This app can…</Title>
+      </Group>
+      <Stack gap="sm">
+        {scopes.map((scope) => {
+          const title = SCOPE_PLAIN_TITLES[scope] ?? SCOPE_DESCRIPTIONS[scope] ?? scope;
+          const detailLine = SCOPE_PLAIN_TITLES[scope] ? SCOPE_DESCRIPTIONS[scope] : undefined;
+          const sensitive = isSensitiveBlockScope(scope);
+          return (
+            <Group
+              key={scope}
+              gap="sm"
+              wrap="nowrap"
+              align="flex-start"
+              data-permission-row={scope}
+            >
+              <ThemeIcon
+                variant="light"
+                color={sensitive ? 'orange' : 'green'}
+                size="sm"
+                radius="xl"
+                mt={2}
+              >
+                {sensitive ? <IconAlertTriangle size={12} /> : <IconCheck size={12} />}
+              </ThemeIcon>
+              <Stack gap={2} style={{ minWidth: 0 }}>
+                <Group gap="xs" wrap="wrap">
+                  <Text size="sm" fw={500}>
+                    {title}
+                  </Text>
+                  {sensitive && <SensitiveScopeBadge size="sm" />}
+                </Group>
+                {detailLine && (
+                  <Text size="xs" c="dimmed">
+                    {detailLine}
+                  </Text>
+                )}
+              </Stack>
+            </Group>
+          );
+        })}
+      </Stack>
+    </Card>
+  );
+}
+
 /** Kind-aware primary action button + (for info/connect stubs) an inline note. */
 function PrimaryAction({ detail, canOpenPage }: { detail: ListingDetail; canOpenPage: boolean }) {
   const action = getDetailPrimaryAction(detail, { canOpenPage });
@@ -1133,6 +1201,7 @@ export function AppListingDetailBody({
         <ContainerGrid2.Col
           span={{ base: 12, sm: 5, md: 4 }}
           order={{ sm: 2 }}
+          className={galleryClasses.railCol}
           data-testid="apps-listing-rail-col"
         >
           <Stack gap="md">
@@ -1166,6 +1235,7 @@ export function AppListingDetailBody({
         <ContainerGrid2.Col
           span={{ base: 12, sm: 7, md: 8 }}
           order={{ sm: 1 }}
+          className={galleryClasses.mainCol}
           data-testid="apps-listing-main-col"
         >
           <Stack gap="lg">
@@ -1367,19 +1437,20 @@ export function AppListingDetailBody({
                 sites" / "the ONLY writer that can emit `onsite`" / "every on-site row is
                 a shadow"; it now points at the same ledger. The two files no longer
                 disagree, so there is nothing left to reconcile by hand. */}
-            {detail.scopes.length > 0 && (
-              <Stack gap="xs" data-testid="apps-listing-permissions">
-                <Group gap="xs">
-                  <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
-                    <IconShieldCheck size={14} />
-                  </ThemeIcon>
-                  <Title order={4}>
-                    {preview ? 'Currently granted permissions' : 'This app can…'}
-                  </Title>
-                </Group>
-                <BlockScopeList scopes={detail.scopes} />
-              </Stack>
-            )}
+            {detail.scopes.length > 0 &&
+              (preview ? (
+                <Stack gap="xs" data-testid="apps-listing-permissions">
+                  <Group gap="xs">
+                    <ThemeIcon variant="light" color="blue" size="sm" radius="xl">
+                      <IconShieldCheck size={14} />
+                    </ThemeIcon>
+                    <Title order={4}>Currently granted permissions</Title>
+                  </Group>
+                  <BlockScopeList scopes={detail.scopes} />
+                </Stack>
+              ) : (
+                <PermissionsCard scopes={detail.scopes} />
+              ))}
           </Stack>
         </ContainerGrid2.Col>
       </ContainerGrid2>
