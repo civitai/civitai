@@ -347,6 +347,35 @@ describe('a detached thread is off the site', () => {
     expect(await isCommentDetached(3)).toBe(false);
   });
 
+  /** 110 reply threads below `root` (past the depth cap), each under the last one's comment; returns the deepest comment. */
+  async function longChain(root: number, linkRoot: boolean) {
+    await db.exec(`
+      DO $$
+      DECLARE th int := ${root}; c int;
+      BEGIN
+        FOR i IN 1..110 LOOP
+          c := ${root} * 1000 + i;
+          INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (c, ${OTHER}, th);
+          INSERT INTO "Thread" (id, "commentId", "rootThreadId")
+            VALUES (c, c, ${linkRoot ? root : 'NULL'}) RETURNING id INTO th;
+        END LOOP;
+        INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (${root} * 1000 + 999, ${OTHER}, th);
+      END $$;`);
+    return root * 1000 + 999;
+  }
+
+  it('reads a comment past the depth cap below a detached root, with no root link, as detached', async () => {
+    expect(await isCommentDetached(await longChain(100, false))).toBe(true);
+  });
+
+  it('reads a deep comment on a live thread that links its root as live (control)', async () => {
+    expect(await isCommentDetached(await longChain(200, true))).toBe(false);
+  });
+
+  it('refuses a comment past the depth cap whose root it cannot reach, even on a live thread', async () => {
+    expect(await isCommentDetached(await longChain(200, false))).toBe(true);
+  });
+
   const ctx = (isModerator: boolean) =>
     ({ user: { id: 9, isModerator }, features: {}, req: {} } as never);
 
@@ -516,6 +545,37 @@ describe('the production delete paths keep held threads', () => {
       expect(await site.parentGone()).toBe(true);
       expect(await commentIds()).toEqual([]);
     });
+  });
+
+  it("keeps a held thread on a deleted bounty entry's image", async () => {
+    await db.exec(`
+      INSERT INTO "Bounty" (id, "userId") VALUES (60, ${OTHER});
+      INSERT INTO "BountyEntry" VALUES (61, ${OWNER}, 60);
+      INSERT INTO "Image" (id, "userId") VALUES (50, ${OWNER});
+      INSERT INTO "ImageConnection" VALUES (50, 61, 'BountyEntry');`);
+    await seedNested('imageId', 50, HELD);
+    vi.mocked(dbMock.dbRead.bountyEntry.findUniqueOrThrow).mockResolvedValue({
+      id: 61,
+      bountyId: 60,
+      userId: OWNER,
+      bounty: { complete: true },
+    } as never);
+    vi.mocked(dbMock.dbWrite.imageConnection.findMany).mockResolvedValue([
+      { imageId: 50 },
+    ] as never);
+    vi.mocked(dbMock.dbWrite.image.deleteMany).mockImplementation((async ({
+      where,
+    }: {
+      where: { id: { in: number[] } };
+    }) => ({
+      count: (await db.query(`DELETE FROM "Image" WHERE id = ANY($1)`, [where.id.in])).affectedRows,
+    })) as never);
+
+    await deleteBountyEntry({ id: 61, isModerator: true });
+
+    expect((await db.query(`SELECT id FROM "Image"`)).rows).toEqual([]);
+    expect(await commentIds()).toEqual([1, 2, 3]);
+    expect(await isCommentDetached(3)).toBe(true);
   });
 
   it('keeps a held thread on an image of a deleted post', async () => {

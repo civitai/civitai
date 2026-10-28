@@ -142,7 +142,8 @@ export function heldLegacyCommentOnModelSql(modelId: Prisma.Sql, markerView: boo
 /**
  * Whether the thread `seed` selects is in a detached tree: it or any thread above it, along the edges
  * the detach walks down (the reply edge, `rootThreadId`, `parentThreadId`), was detached from a
- * deleted parent.
+ * deleted parent. A walk that hits the depth cap before reaching a thread with no edge up counts as
+ * detached: some reply threads lack `rootThreadId`, so a long chain can hide a detached root.
  */
 const detachedAboveSql = (seed: string) => Prisma.sql`
   WITH RECURSIVE up AS (
@@ -160,6 +161,9 @@ const detachedAboveSql = (seed: string) => Prisma.sql`
   )
   SELECT EXISTS (
     SELECT 1 FROM up JOIN "Thread" t ON t.id = up.id WHERE t.metadata -> 'detachedFrom' IS NOT NULL
+  ) OR NOT EXISTS (
+    SELECT 1 FROM up JOIN "Thread" t ON t.id = up.id
+    WHERE t."commentId" IS NULL AND t."rootThreadId" IS NULL AND t."parentThreadId" IS NULL
   ) AS detached`;
 
 export const threadDetachedSql = (threadId: number) => detachedAboveSql(String(Number(threadId)));
