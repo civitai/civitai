@@ -62,6 +62,29 @@ SQL on PGlite.
 - The user guard in `hooks.server.ts` skips exactly the two routes in `JOB_PATHS`; a new job route must be added there.
 - `/play` is the minimal voting page. Acolytes get no feed and cannot vote (Trials is a later slice).
 
+## Sources (queue producers)
+
+The enqueue contract is `{ source, questionKey, items: [{ imageId, priority: 1|2|3, minRank?, votesNeeded?, expiresAt?, prediction? }] }`.
+It is implemented once, in the main app: `src/server/services/knights/enqueue.service.ts` (`enqueueKnightsItems`, one batch insert).
+Per item it answers `enqueued` | `duplicate` | `refused` (`unknown-question`, `inactive-question`, `bad-priority`, `bad-rank`, `bad-votes`,
+`bad-expiry`, `image-not-found`). Defaults and the stage-rank rule match `enqueueItem` here; the stage ranks and TTL live in
+`@civitai/shared/new-order`. A duplicate is an image that already has an Open or Inquisitor item for the question; the partial unique
+index `KnightsQueueItem_open_question_image_key` (migration `20261211120000_knights_v2_sources`, applied by hand, with the `prediction` column) closes the race.
+
+- `POST /api/mod/knights/enqueue` (`src/pages/api/mod/knights/enqueue.ts`): a moderator session or full-access API key that also holds the
+  `knightsEnqueue` grant. Up to 1000 items per call; a 200 does not mean every item was queued, read `results`.
+- The image-scan pipeline (`scan-sample`: safe-looking priority 1, NSFW priority 2) and an owner's own rating (`owner-rating`, priority 1) also enqueue
+  here, beside today's game, which is untouched. Both hooks live in `src/server/services/knights/sources.ts`, never throw into the scan, and are
+  **off unless** the sys Redis key `system:knights-v2-sources` (`REDIS_SYS_KEYS.SYSTEM.KNIGHTS_V2_SOURCES`) holds
+  `{"enabled":true,"sfwRate":1,"nsfwRate":0.3}`; a missing or unreadable key means off, rates are 0-1 samples per pool. Set it in sys Redis; no
+  deploy needed.
+- Later sources, not built: label-store low-confidence items, reports, rating appeals, yes/no producers.
+- Inquisitor queue: moderator app `/knights-of-new-order/inquisitor` (own page grant). A moderator's rating goes through the moderator app's
+  `updateImageNsfwLevel` (activity `setNsfwLevel`), the item closes (`moderator-ruled`) and its pending votes are graded against that level, Blocked included.
+- Dev queue: with the migration applied to your local database, `cd apps/knights && pnpm run dev:enqueue-recent [count]` enqueues the newest eligible
+  images (published, scanned, unlocked, not blocked, level not 0; default 50, max 1000) as source `dev-backfill`. It reads `DATABASE_URL` from
+  `apps/knights/.env`, is safe to repeat, and refuses to run unless the host is `localhost` or `127.0.0.1`.
+
 ## Wired packages
 
 `@civitai/auth` (guard), `@civitai/brand` (favicon), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
