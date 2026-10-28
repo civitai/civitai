@@ -22,7 +22,7 @@
 
   // A changed status can route the ticket elsewhere, so the page is reloaded only while it still
   // belongs here — a reload after it left would replace this page with the 404 for another view's ticket.
-  function done(what: string, data?: Record<string, unknown>) {
+  function done(what: string, data: Record<string, unknown> | undefined) {
     const moved = data?.moved;
     if (moved === 'moderation' || moved === 'support') movedTo = moved;
     else void invalidateAll();
