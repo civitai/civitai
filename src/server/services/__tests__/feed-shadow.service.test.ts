@@ -1,44 +1,14 @@
-import { readFileSync } from 'fs';
-import path from 'path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { context, propagation, trace } from '@opentelemetry/api';
 import { NodeTracerProvider } from '@opentelemetry/sdk-trace-node';
 import {
-  buildFeedShadowRow,
-  compareIds,
-  createFeedShadow,
   encodeFeedCursor,
   mapSearchInputToFeedQuery,
   parseFeedCursor,
-  parseShadowConfig,
-  type FeedShadowConfig,
   fetchFeedAnswer,
 } from '../feed-shadow.service';
-import type { FeedShadowRow } from '~/server/common/feed-shadow.constants';
 
-const T0 = Date.UTC(2026, 8, 9, 12, 0, 0);
-const ALWAYS: FeedShadowConfig = {
-  sampleRate: 1,
-  until: Number.POSITIVE_INFINITY,
-  timeoutMs: 1000,
-  maxInflight: 2,
-};
-const outcome = { source: 'getImagesFromSearch' as const, elapsedMs: 12, resultIds: [3, 1, 2] };
 const base = { sort: 'Most Reactions', period: 'Week', browsingLevel: 31, limit: 100 };
-
-describe('parseShadowConfig', () => {
-  it('is off when missing and clamps the knobs', () => {
-    expect(parseShadowConfig(null).sampleRate).toBe(0);
-    expect(parseShadowConfig({ sampleRate: '0.05', timeoutMs: '99999', maxInflight: '0' })).toEqual(
-      {
-        sampleRate: 0.05,
-        until: Number.POSITIVE_INFINITY,
-        timeoutMs: 10_000,
-        maxInflight: 32,
-      }
-    );
-  });
-});
 
 describe('fetchFeedAnswer', () => {
   afterEach(() => vi.unstubAllGlobals());
@@ -446,120 +416,5 @@ describe('hub feeds', () => {
     expect(q?.get('types')).toBe('video');
     expect(q?.get('excludedTags')).toBe('77');
     expect(reason({ hubSources: sources, remixesOnly: true })).toBe('flag:remixesOnly');
-  });
-});
-
-describe('compareIds', () => {
-  it('measures overlap, top-10 overlap and the first order break', () => {
-    expect(compareIds([1, 2, 3, 4], [1, 2, 4, 9])).toEqual({
-      overlap: 0.75,
-      overlapTop10: 0.75,
-      firstMismatch: 2,
-    });
-    expect(compareIds([1, 2], [1, 2, 3])).toEqual({
-      overlap: 1,
-      overlapTop10: 1,
-      firstMismatch: -1,
-    });
-    expect(compareIds([], [])).toEqual({ overlap: 1, overlapTop10: 1, firstMismatch: -1 });
-    expect(compareIds([], [5]).overlap).toBe(0);
-  });
-});
-
-describe('feedShadow row ↔ DDL parity', () => {
-  it('writes exactly the columns the table declares', () => {
-    const sql = readFileSync(
-      path.resolve(__dirname, '../../clickhouse/migrations/2026-09-09-feed-shadow.sql'),
-      'utf8'
-    );
-    const body = sql.slice(
-      sql.indexOf('feedShadow\n(') + 'feedShadow\n('.length,
-      sql.indexOf('\n)\nENGINE')
-    );
-    const columns = body
-      .split('\n')
-      .map((l) => l.trim())
-      .filter((l) => l && !l.startsWith('--'))
-      .map((l) => l.split(/\s+/)[0]);
-    const row = buildFeedShadowRow({}, outcome, T0, '', { ok: false, reason: 'x' });
-    expect(new Set(Object.keys(row))).toEqual(new Set(columns));
-  });
-});
-
-describe('createFeedShadow', () => {
-  function harness(
-    config: FeedShadowConfig,
-    fetchFeed = async () => ({
-      status: 200,
-      ms: 5,
-      ids: [3, 1, 9],
-      route: 'r',
-      estimate: 1,
-      candidates: 2,
-    })
-  ) {
-    const rows: FeedShadowRow[] = [];
-    const shadow = createFeedShadow({
-      getConfig: async () => config,
-      fetchFeed,
-      record: async (row) => {
-        rows.push(row);
-      },
-      now: () => T0,
-      random: () => 0.5,
-      onError: () => undefined,
-    });
-    return { shadow, rows };
-  }
-
-  it('records the comparison and never throws', async () => {
-    const { shadow, rows } = harness(ALWAYS);
-    await shadow.compare(base, outcome);
-    expect(rows).toHaveLength(1);
-    const row = rows[0];
-    expect(row.skipReason).toBe('');
-    expect(row.feedIds).toEqual([3, 1, 9]);
-    expect(row.overlap).toBeCloseTo(2 / 3);
-    expect(row.firstMismatch).toBe(2);
-    expect(row.error).toBe(0);
-  });
-
-  it('records skipped shapes without calling the feed', async () => {
-    let calls = 0;
-    const { shadow, rows } = harness(ALWAYS, async () => {
-      calls++;
-      return { status: 200, ms: 1, ids: [] };
-    });
-    await shadow.compare({ ...base, currentUserId: 9, followed: true }, outcome);
-    expect(calls).toBe(0);
-    expect(rows[0].skipReason).toBe('flag:followed');
-  });
-
-  it('drops when the inflight cap is reached and counts a timeout as an error row', async () => {
-    let release!: () => void;
-    const gate = new Promise<void>((r) => (release = r));
-    const { shadow, rows } = harness(ALWAYS, async () => {
-      await gate;
-      const err = new Error('t');
-      err.name = 'TimeoutError';
-      throw err;
-    });
-    const a = shadow.compare(base, outcome);
-    const b = shadow.compare(base, outcome);
-    const c = shadow.compare(base, outcome);
-    await new Promise((r) => setTimeout(r, 0));
-    expect(shadow.inflight).toBe(2);
-    release();
-    await Promise.all([a, b, c]);
-    expect(shadow.dropped).toBe(1);
-    expect(rows).toHaveLength(2);
-    expect(rows[0].feedStatus).toBe(504);
-    expect(rows[0].error).toBe(1);
-  });
-
-  it('does nothing when off', async () => {
-    const { shadow, rows } = harness({ ...ALWAYS, sampleRate: 0 });
-    await shadow.compare(base, outcome);
-    expect(rows).toHaveLength(0);
   });
 });

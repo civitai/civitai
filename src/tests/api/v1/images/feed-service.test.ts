@@ -16,16 +16,12 @@ import type * as DbHelpers from '~/server/db/db-helpers';
 import type * as PromClient from '~/server/prom/client';
 
 const h = vi.hoisted(() => ({
-  restFlagOn: vi.fn(() => true),
-  websiteFlagOn: vi.fn(() => false),
-  meiliOffOn: vi.fn(() => false),
   meiliOffCounted: [] as Array<Record<string, string>>,
   flagsAsked: [] as string[],
   available: vi.fn(() => true),
   fetchFeedPrimary: vi.fn(),
   hydrate: vi.fn(),
   mapped: vi.fn(),
-  meiliSearch: vi.fn(),
   record: vi.fn(),
   counted: [] as Array<Record<string, string>>,
   enforce: vi.fn(),
@@ -91,9 +87,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
     ...actual,
     getFliptBoolean: vi.fn(async (flag: string) => {
       h.flagsAsked.push(flag);
-      if (flag === 'feed-service-rest-images') return h.restFlagOn();
-      if (flag === 'feed-service-primary') return h.websiteFlagOn();
-      if (flag === 'feed-service-meili-off') return h.meiliOffOn();
       return false;
     }),
   };
@@ -139,7 +132,6 @@ vi.mock('~/server/services/feed-shadow.service', async (importOriginal) => {
 });
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
-  getImagesFromFeedSearch: (...args: unknown[]) => h.meiliSearch(...args),
   getAllImages: vi.fn(),
 }));
 vi.mock('~/server/services/feed-request-capture.service', async (importOriginal) => ({
@@ -214,7 +206,6 @@ const row = (id: number) => ({
   modelVersionIds: [],
   tags: [],
 });
-const MEILI_PAGE = { items: [row(900)], nextCursor: '100|1788000000000' };
 
 type MockResponse = NextApiResponse & {
   statusCode: number;
@@ -267,14 +258,10 @@ describe('/api/v1/images served by the feed service', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.flagsAsked.length = 0;
-    h.restFlagOn.mockReturnValue(true);
-    h.websiteFlagOn.mockReturnValue(false);
-    h.meiliOffOn.mockReturnValue(false);
     h.meiliOffCounted.length = 0;
     h.available.mockReturnValue(true);
     h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
     h.hydrate.mockImplementation(async (ids: number[]) => ids.map(row));
-    h.meiliSearch.mockResolvedValue(MEILI_PAGE);
     h.enforce.mockImplementation(async () => ({ emptyResult: false }));
     h.realHydrate = false;
     dbMock.dbRead.user.findUnique.mockResolvedValue(null);
@@ -287,7 +274,6 @@ describe('/api/v1/images served by the feed service', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
     expect(res.body.metadata.nextCursor).toBe('feed:17:5');
-    expect(h.meiliSearch).not.toHaveBeenCalled();
   });
 
   it('nextPage carries the feed cursor, and following it continues on the feed service', async () => {
@@ -306,13 +292,11 @@ describe('/api/v1/images served by the feed service', () => {
     expect(feedQuery(1).get('cursor')).toBe('17|5');
     expect(second.body.items.map((i: { id: number }) => i.id)).toEqual([4]);
     expect(second.body.metadata.nextPage).toBeUndefined();
-    expect(h.meiliSearch).not.toHaveBeenCalled();
   });
 
   it('continues a bare numeric cursor from that offset on the feed service', async () => {
     await get({ cursor: '300' });
     expect(feedQuery().get('offset')).toBe('300');
-    expect(h.meiliSearch).not.toHaveBeenCalled();
   });
 
   it('continues an offset|sortAt cursor on the feed service, as the offset inside the frozen set', async () => {
@@ -320,7 +304,6 @@ describe('/api/v1/images served by the feed service', () => {
     expect(res.statusCode).toBe(200);
     expect(feedQuery().get('offset')).toBe('200');
     expect(feedQuery().get('before')).toBe('1788000000000');
-    expect(h.meiliSearch).not.toHaveBeenCalled();
   });
 
   it('ignores ?page= on the feed service, as the search path does, so feed health never decides the page', async () => {
@@ -332,113 +315,11 @@ describe('/api/v1/images served by the feed service', () => {
     expect(feedQuery(1).get('offset')).toBeNull();
   });
 
-  it('[invariant on the pre-change code and the previous head] ignores ?page= on the fallback too: the search path gets no offset', async () => {
-    h.fetchFeedPrimary.mockRejectedValue(
-      Object.assign(new Error('slow'), { name: 'TimeoutError' })
-    );
-    const res = await get({ page: '3', limit: '10' });
-    expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([900]);
-    const meiliInput = h.meiliSearch.mock.calls[0][0];
-    expect(meiliInput).not.toHaveProperty('offset');
-    expect(meiliInput.cursor).toBeUndefined();
-  });
-
-  describe('falls back to the search path, with the request unchanged, when the feed does not serve', () => {
-    const cases: Array<{
-      name: string;
-      query: Record<string, string>;
-      arrange?: () => void;
-      asked: boolean;
-      series: { outcome: string; reason: string };
-    }> = [
-      {
-        name: 'a shape the feed cannot express',
-        query: { requiringMeta: 'true' },
-        asked: false,
-        series: { outcome: 'unmapped', reason: 'flag:requiringMeta' },
-      },
-      {
-        name: 'an offset past the cap',
-        query: { cursor: '25000' },
-        asked: false,
-        series: { outcome: 'rejected', reason: 'offset>20000' },
-      },
-      {
-        name: 'a feed timeout',
-        query: {},
-        arrange: () =>
-          h.fetchFeedPrimary.mockRejectedValue(
-            Object.assign(new Error('slow'), { name: 'TimeoutError' })
-          ),
-        asked: true,
-        series: { outcome: 'timeout', reason: '' },
-      },
-      {
-        name: 'a feed fetch error',
-        query: {},
-        arrange: () => h.fetchFeedPrimary.mockRejectedValue(new Error('refused')),
-        asked: true,
-        series: { outcome: 'error', reason: 'fetch' },
-      },
-      {
-        name: 'a non-200 feed answer',
-        query: {},
-        arrange: () => h.fetchFeedPrimary.mockResolvedValue({ status: 502, ms: 3, ids: [] }),
-        asked: true,
-        series: { outcome: 'error', reason: 'status:502' },
-      },
-    ];
-    it.each(cases)('$name', async ({ query, arrange, asked, series }) => {
-      arrange?.();
-      const res = await get(query);
-      expect(res.statusCode).toBe(200);
-      expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([900]);
-      expect(res.body.metadata.nextCursor).toBe('100|1788000000000');
-      expect(h.mapped).toHaveBeenCalledTimes(1);
-      expect(h.fetchFeedPrimary).toHaveBeenCalledTimes(asked ? 1 : 0);
-      expect(h.meiliSearch).toHaveBeenCalledTimes(1);
-      const meiliInput = h.meiliSearch.mock.calls[0][0];
-      expect(meiliInput.cursor).toBe(query.cursor);
-      expect(meiliInput).not.toHaveProperty('offset');
-      expect(await counted()).toEqual([{ ...series, route: 'rest', value: 1 }]);
-      expect(h.record).not.toHaveBeenCalled();
-    });
-
-    it('a cursor the feed cannot parse (unreachable from the endpoint, which 400s it first)', async () => {
-      const result = await getImagesFromFeedServiceForRest(
-        {
-          sort: 'Most Reactions',
-          period: 'AllTime',
-          browsingLevel: 1,
-          limit: 10,
-          cursor: '12|x',
-        } as unknown as Parameters<typeof getImagesFromFeedServiceForRest>[0],
-        {} as Parameters<typeof getImagesFromFeedServiceForRest>[1]
-      );
-      // Neither half of `12|x` is a number the mapping can read: refused, like the bare one.
-      expect(result).toBeUndefined();
-      const bare = await getImagesFromFeedServiceForRest(
-        {
-          sort: 'Most Reactions',
-          period: 'AllTime',
-          browsingLevel: 1,
-          limit: 10,
-          cursor: 'nope',
-        } as unknown as Parameters<typeof getImagesFromFeedServiceForRest>[0],
-        {} as Parameters<typeof getImagesFromFeedServiceForRest>[1]
-      );
-      expect(bare).toBeUndefined();
-      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-      expect(await counted()).toEqual([
-        { outcome: 'rejected', reason: 'cursor:unparsed', route: 'rest', value: 2 },
-      ]);
-    });
-
+  describe('unreadable cursors', () => {
     it('[invariant on the pre-change code] rejects an unreadable cursor at the endpoint before any branch', async () => {
       const res = await get({ cursor: 'nope' });
       expect(res.statusCode).toBe(400);
       expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
   });
 
@@ -448,32 +329,17 @@ describe('/api/v1/images served by the feed service', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.items).toEqual([]);
     expect(res.body.metadata.nextCursor).toBe('feed:17:5');
-    expect(h.meiliSearch).not.toHaveBeenCalled();
     expect(await counted()).toEqual([
       { outcome: 'error', reason: 'hydrate:empty', route: 'rest', value: 1 },
     ]);
   });
 
-  describe('with Meilisearch off (feed-service-meili-off)', () => {
-    beforeEach(() => {
-      h.meiliOffOn.mockReturnValue(true);
-    });
-
-    it('serves from the feed service with the REST flag off, and never asks for it', async () => {
-      h.restFlagOn.mockReturnValue(false);
-      const res = await get({});
-      expect(res.statusCode).toBe(200);
-      expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
-      expect(h.flagsAsked).not.toContain('feed-service-rest-images');
-      expect(h.meiliSearch).not.toHaveBeenCalled();
-    });
-
+  describe('when the feed does not serve', () => {
     it('answers a shape the feed cannot express with an empty page', async () => {
       const res = await get({ requiringMeta: 'true' });
       expect(res.statusCode).toBe(200);
       expect(res.body.items).toEqual([]);
       expect(res.body.metadata.nextCursor).toBeUndefined();
-      expect(h.meiliSearch).not.toHaveBeenCalled();
       expect(h.meiliOffCounted).toEqual([
         { answer: 'empty', reason: 'flag:requiringMeta', route: 'rest' },
       ]);
@@ -486,7 +352,6 @@ describe('/api/v1/images served by the feed service', () => {
       const res = await get({});
       expect(res.statusCode).toBe(503);
       expect(res.headers['retry-after']).toBe('2');
-      expect(h.meiliSearch).not.toHaveBeenCalled();
       expect(h.meiliOffCounted).toEqual([
         { answer: 'unavailable', reason: 'timeout', route: 'rest' },
       ]);
@@ -496,13 +361,11 @@ describe('/api/v1/images served by the feed service', () => {
       const res = await get({ sort: 'Random' });
       expect(res.statusCode).toBe(400);
       expect(res.body.message).toBe('Sort "Random" is not supported');
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
     it('refuses an offset past the feed cap', async () => {
       const res = await get({ cursor: '25000' });
       expect(res.statusCode).toBe(400);
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
     it('answers limit=0 with an empty page', async () => {
@@ -510,7 +373,6 @@ describe('/api/v1/images served by the feed service', () => {
       expect(res.statusCode).toBe(200);
       expect(res.body.items).toEqual([]);
       expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
     it('takes a caller that does not opt in to the feed service, feed: cursors included', async () => {
@@ -523,25 +385,15 @@ describe('/api/v1/images served by the feed service', () => {
       expect((await search()).items.map((i) => i.id)).toEqual([9, 5]);
       expect((await search('feed:17:5')).items.map((i) => i.id)).toEqual([9, 5]);
       expect(feedQuery(1).get('cursor')).toBe('17|5');
-      expect(h.meiliSearch).not.toHaveBeenCalled();
-    });
-
-    it('is off without a feed service configured, and the search path answers as before', async () => {
-      h.available.mockReturnValue(false);
-      const res = await get({});
-      expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([900]);
-      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
     });
   });
 
   describe('a feed: cursor never restarts the scroll on the search path', () => {
-    it('is served by the feed service with the flag off', async () => {
-      h.restFlagOn.mockReturnValue(false);
+    it('is served by the feed service', async () => {
       const res = await get({ cursor: 'feed:17:5' });
       expect(res.statusCode).toBe(200);
       expect(feedQuery().get('cursor')).toBe('17|5');
       expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([9, 5]);
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
     it('is a 400 when the feed service is not configured [pre-change code 400d every feed: cursor]', async () => {
@@ -552,7 +404,6 @@ describe('/api/v1/images served by the feed service', () => {
         'This cursor can no longer be continued; start again without it'
       );
       expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
     const outage: Array<[string, () => void]> = [
@@ -575,7 +426,6 @@ describe('/api/v1/images served by the feed service', () => {
       const res = await get({ cursor: 'feed:17:5' });
       expect(res.statusCode).toBe(503);
       expect(res.headers['retry-after']).toBe('2');
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
     it.each([400, 404, 499])(
@@ -585,7 +435,6 @@ describe('/api/v1/images served by the feed service', () => {
         const res = await get({ cursor: 'feed:17:5' });
         expect(res.statusCode).toBe(400);
         expect(res.body.message).toBe('This cursor cannot be continued with these filters');
-        expect(h.meiliSearch).not.toHaveBeenCalled();
       }
     );
 
@@ -596,7 +445,6 @@ describe('/api/v1/images served by the feed service', () => {
       expect(res.statusCode).toBe(200);
       expect(res.body.items).toEqual([]);
       expect(res.body.metadata.nextCursor).toBe('feed:18:3');
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
     it('ends the scroll with an empty 200 when that filtered-out page was the last one', async () => {
@@ -607,7 +455,6 @@ describe('/api/v1/images served by the feed service', () => {
       expect(res.body.items).toEqual([]);
       expect(res.body.metadata.nextCursor).toBeUndefined();
       expect(res.body.metadata.nextPage).toBeUndefined();
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
     it('is a retryable 503, never a skipped page, when the hydrate query hits the statement timeout', async () => {
@@ -619,7 +466,6 @@ describe('/api/v1/images served by the feed service', () => {
       expect(h.rawQuery).toHaveBeenCalledTimes(1);
       expect(res.statusCode).toBe(503);
       expect(res.headers['retry-after']).toBe('2');
-      expect(h.meiliSearch).not.toHaveBeenCalled();
       expect(await counted()).toEqual([
         { outcome: 'error', reason: 'hydrate:error', route: 'rest', value: 1 },
       ]);
@@ -629,7 +475,6 @@ describe('/api/v1/images served by the feed service', () => {
       const res = await get({ cursor: 'feed:17:5', requiringMeta: 'true' });
       expect(res.statusCode).toBe(400);
       expect(res.body.message).toBe('This cursor cannot be continued with these filters');
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
   });
 
@@ -641,7 +486,6 @@ describe('/api/v1/images served by the feed service', () => {
       expect(res.body.metadata.nextCursor).toBeUndefined();
       expect(res.body.metadata.nextPage).toBeUndefined();
       expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
     it('scopes the feed to the creator a username names', async () => {
@@ -668,7 +512,6 @@ describe('/api/v1/images served by the feed service', () => {
       expect(res.body.items).toEqual([]);
       expect(res.body.metadata.nextCursor).toBeUndefined();
       expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-      expect(h.meiliSearch).not.toHaveBeenCalled();
     });
 
     it('hydrates with the enforced tags, the maturity filters and the resolved creator', async () => {
@@ -696,15 +539,6 @@ describe('/api/v1/images served by the feed service', () => {
       });
       expect(query).not.toHaveProperty('cursor');
     });
-
-    it('falls back for limit=0, which the feed would serve as a full page', async () => {
-      const res = await get({ limit: '0' });
-      expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([900]);
-      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-      expect(await counted()).toEqual([
-        { outcome: 'unmapped', reason: 'limit:0', route: 'rest', value: 1 },
-      ]);
-    });
   });
 
   it('reports createdAt as the feed time on a feed-served page, as the search path does', async () => {
@@ -713,44 +547,6 @@ describe('/api/v1/images served by the feed service', () => {
       FEED_SORT_AT,
       FEED_SORT_AT,
     ]);
-  });
-
-  describe('flag gating', () => {
-    it('[invariant on the pre-change code] leaves the search path untouched when the flag is off', async () => {
-      h.restFlagOn.mockReturnValue(false);
-      const res = await get({ limit: '7' });
-      expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([900]);
-      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-      expect(h.mapped).not.toHaveBeenCalled();
-      expect(h.meiliSearch).toHaveBeenCalledWith(expect.objectContaining({ limit: 7 }));
-      expect(h.record).not.toHaveBeenCalled();
-    });
-
-    it('asks Flipt for feed-service-rest-images and not for the website flag', async () => {
-      await get({});
-      expect(h.flagsAsked).toContain('feed-service-rest-images');
-      expect(h.flagsAsked).not.toContain('feed-service-primary');
-    });
-
-    it('[invariant on the pre-change code] does not consult the flag when no feed service is configured', async () => {
-      h.available.mockReturnValue(false);
-      const res = await get({});
-      expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([900]);
-      expect(h.flagsAsked).not.toContain('feed-service-rest-images');
-      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-    });
-
-    it('[invariant on the pre-change code] a caller that does not opt in keeps the search path and refuses feed: cursors', async () => {
-      const req = { headers: {} } as unknown as NextApiRequest;
-      const search = (cursor?: string) =>
-        runImageSearch(
-          { limit: 5, cursor, withMeta: false, withTags: false, data: { sort: 'Newest' } },
-          { browsingLevel: 1, req }
-        );
-      expect((await search()).items.map((i) => i.id)).toEqual([900]);
-      await expect(search('feed:17:5')).rejects.toMatchObject({ code: 'BAD_REQUEST' });
-      expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-    });
   });
 });
 
@@ -778,11 +574,8 @@ const rawRow = (id: number) => ({
 describe('per-image caches on a REST feed continuation page read through without writing back', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    h.restFlagOn.mockReturnValue(true);
-    h.websiteFlagOn.mockReturnValue(false);
     h.available.mockReturnValue(true);
     h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
-    h.meiliSearch.mockResolvedValue(MEILI_PAGE);
     h.enforce.mockImplementation(async () => ({ emptyResult: false }));
     h.rawQuery.mockReset();
     h.rawQuery.mockResolvedValue({ rows: [rawRow(9), rawRow(5)] });
@@ -814,18 +607,7 @@ describe('per-image caches on a REST feed continuation page read through without
     }
   });
 
-  it('[invariant on the pre-change code] keeps writing back image-meta when the search path serves', async () => {
-    h.restFlagOn.mockReturnValue(false);
-    const { options } = cacheFetchOptions();
-    const res = await get({ withMeta: 'true' });
-    expect(res.body.items.map((i: { id: number }) => i.id)).toEqual([900]);
-    expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
-    expect(options('imageMeta')).toHaveLength(1);
-    expect(options('imageMeta')[0]?.writeBack).not.toBe(false);
-  });
-
   it('[invariant on the pre-change code] the website feed hydrate keeps writing back', async () => {
-    h.websiteFlagOn.mockReturnValue(true);
     const { options } = cacheFetchOptions();
     const r = await getAllImagesIndex({
       sort: 'Newest',
@@ -845,8 +627,7 @@ describe('per-image caches on a REST feed continuation page read through without
 });
 
 describe('getAllImagesIndex (the website feed) beside the REST branch', () => {
-  it('falls back to the search path, counted as hydrate:error, when the hydrate query times out', async () => {
-    h.websiteFlagOn.mockReturnValue(true);
+  it('is SERVICE_UNAVAILABLE, counted as hydrate:error, when the hydrate query times out', async () => {
     h.available.mockReturnValue(true);
     h.counted.length = 0;
     h.realHydrate = true;
@@ -855,10 +636,11 @@ describe('getAllImagesIndex (the website feed) beside the REST branch', () => {
     h.rawQuery.mockRejectedValue(
       Object.assign(new Error('canceling statement due to statement timeout'), { code: '57014' })
     );
-    const r = await getAllImagesIndex(request(undefined));
+    await expect(getAllImagesIndex(request(undefined))).rejects.toMatchObject({
+      code: 'SERVICE_UNAVAILABLE',
+    });
     h.realHydrate = false;
     expect(h.rawQuery).toHaveBeenCalledTimes(1);
-    expect(r.source).not.toBe('feed');
     expect(await counted()).toEqual([
       { outcome: 'error', reason: 'hydrate:error', route: 'website', value: 1 },
     ]);
@@ -888,7 +670,6 @@ describe('getAllImagesIndex (the website feed) beside the REST branch', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    h.websiteFlagOn.mockReturnValue(true);
     h.available.mockReturnValue(true);
     h.counted.length = 0;
   });
@@ -910,20 +691,11 @@ describe('getAllImagesIndex (the website feed) beside the REST branch', () => {
     expect(h.fetchFeedPrimary).not.toHaveBeenCalled();
   });
 
-  describe('with Meilisearch off (feed-service-meili-off)', () => {
+  describe('when the feed does not serve', () => {
     beforeEach(() => {
-      h.meiliOffOn.mockReturnValue(true);
       h.meiliOffCounted.length = 0;
       h.hydrate.mockImplementation(async (ids: number[]) => ids.map(row));
       h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
-    });
-    afterEach(() => h.meiliOffOn.mockReturnValue(false));
-
-    it('serves from the feed service with the website flag off', async () => {
-      h.websiteFlagOn.mockReturnValue(false);
-      const r = await getAllImagesIndex(request(undefined));
-      expect(r.source).toBe('feed');
-      expect(r.items.map((i) => i.id)).toEqual([9, 5]);
     });
 
     it('drops the remix filters rather than leave the request to the search index', async () => {
@@ -978,7 +750,6 @@ describe('event decorations on a feed-served website page before launch', () => 
     vi.clearAllMocks();
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date(BIRTHDAY_2026_PREVIEW_FROM.getTime() + 24 * 60 * 60 * 1000));
-    h.websiteFlagOn.mockReturnValue(true);
     h.available.mockReturnValue(true);
     h.fetchFeedPrimary.mockResolvedValue({ status: 200, ms: 3, ids: [9, 5], nextCursor: '17|5' });
     h.enforce.mockImplementation(async () => ({ emptyResult: false }));

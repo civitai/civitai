@@ -46,12 +46,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
   enforceBlockedBrowsingTags: vi.fn().mockResolvedValue({ emptyResult: false }),
 }));
 
-import {
-  getAllImages,
-  getImagesForPosts,
-  getImagesFromSearchPostFilter,
-  getImagesFromSearchPreFilter,
-} from '../image.service';
+import { getAllImages, getImagesForPosts } from '../image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const OWNER = 3300;
@@ -117,54 +112,28 @@ async function postImagesMinor(viewer: Viewer) {
   return minorClauseIn(stmt.text, stmt.values, POSTS_MINOR);
 }
 
-async function meiliMinor(
-  fn: typeof getImagesFromSearchPreFilter,
-  viewer: Viewer,
-  profileUserId?: number
-) {
-  await expect(
-    fn({
-      currentUserId: viewer?.id,
-      isModerator: false,
-      limit: 20,
-      period: 'AllTime',
-      sort: 'Newest',
-      browsingLevel: 31,
-      include: [],
-      headers: { src: 'test' },
-      disableMinor: true,
-      userId: profileUserId,
-    } as unknown as Parameters<typeof getImagesFromSearchPreFilter>[0])
-  ).rejects.toThrow('stop here');
-  const [, request] = fetchDocumentsAbortableMock.mock.calls[0];
-  const filter = String((request as { filter: string }).filter);
-  const match = onlyMinorClause(filter, /\(NOT minor = true(?: OR "userId" = (\d+))?\)/);
-  return { clause: match[0], exemptedId: match[1] ? Number(match[1]) : null };
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   queryWithTimeoutMock.mockRejectedValue(new Error('stop here'));
   fetchDocumentsAbortableMock.mockRejectedValue(new Error('stop here'));
 });
 
-describe.each([
-  ['getAllImages', getAllImagesMinor],
-  ['getImagesFromSearchPreFilter', meiliMinor.bind(null, getImagesFromSearchPreFilter)],
-  ['getImagesFromSearchPostFilter', meiliMinor.bind(null, getImagesFromSearchPostFilter)],
-] as const)('%s minor exclusion', (_name, minorFor) => {
-  it('exempts the signed-in viewer by id', async () => {
-    expect((await minorFor({ id: OWNER })).exemptedId).toBe(OWNER);
-  });
+describe.each([['getAllImages', getAllImagesMinor]] as const)(
+  '%s minor exclusion',
+  (_name, minorFor) => {
+    it('exempts the signed-in viewer by id', async () => {
+      expect((await minorFor({ id: OWNER })).exemptedId).toBe(OWNER);
+    });
 
-  it("exempts the viewer, not the profile owner, on someone else's profile", async () => {
-    expect((await minorFor({ id: STRANGER }, OWNER)).exemptedId).toBe(STRANGER);
-  });
+    it("exempts the viewer, not the profile owner, on someone else's profile", async () => {
+      expect((await minorFor({ id: STRANGER }, OWNER)).exemptedId).toBe(STRANGER);
+    });
 
-  it('exempts no one for a signed-out viewer, even on a profile', async () => {
-    expect((await minorFor(undefined, OWNER)).exemptedId).toBeNull();
-  });
-});
+    it('exempts no one for a signed-out viewer, even on a profile', async () => {
+      expect((await minorFor(undefined, OWNER)).exemptedId).toBeNull();
+    });
+  }
+);
 
 describe('getImagesForPosts minor exclusion', () => {
   it('exempts the signed-in viewer by id', async () => {

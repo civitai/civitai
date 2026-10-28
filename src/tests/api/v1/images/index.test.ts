@@ -4,13 +4,13 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // 1. Hoisted mocks for API and Service dependencies
 const {
   mockGetAllImages,
-  mockGetImagesFromFeedSearch,
+  mockGetImagesFromFeed,
   mockImageMetaCacheFetch,
   mockGetServerAuthSession,
   mockGetFeatureFlags,
 } = vi.hoisted(() => ({
   mockGetAllImages: vi.fn(),
-  mockGetImagesFromFeedSearch: vi.fn(),
+  mockGetImagesFromFeed: vi.fn(),
   mockImageMetaCacheFetch: vi.fn(),
   mockGetServerAuthSession: vi.fn(),
   mockGetFeatureFlags: vi.fn(),
@@ -18,9 +18,7 @@ const {
 
 vi.mock('~/server/services/image.service', () => ({
   getAllImages: mockGetAllImages,
-  getImagesFromFeedSearch: mockGetImagesFromFeedSearch,
-  // The feed-service branch declines, so every request here reaches feed search as before.
-  getImagesFromFeedServiceForRest: async () => undefined,
+  getImagesFromFeedServiceForRest: mockGetImagesFromFeed,
 }));
 
 vi.mock('~/server/redis/caches', () => ({
@@ -180,7 +178,7 @@ describe('/api/v1/images API Handler', () => {
     vi.clearAllMocks();
     mockGetServerAuthSession.mockResolvedValue(null);
     mockGetFeatureFlags.mockReturnValue({ datapacketRead: false, canViewNsfw: false });
-    mockGetImagesFromFeedSearch.mockResolvedValue(mockImagesResult);
+    mockGetImagesFromFeed.mockResolvedValue(mockImagesResult);
     mockGetAllImages.mockResolvedValue(mockImagesResult);
     mockImageMetaCacheFetch.mockResolvedValue(mockMetaResult);
   });
@@ -196,10 +194,11 @@ describe('/api/v1/images API Handler', () => {
     expect(mockImageMetaCacheFetch).not.toHaveBeenCalled();
 
     // Verify search service call had withMeta = false to prevent search index filtering
-    expect(mockGetImagesFromFeedSearch).toHaveBeenCalledWith(
+    expect(mockGetImagesFromFeed).toHaveBeenCalledWith(
       expect.objectContaining({
         withMeta: false,
-      })
+      }),
+      expect.anything()
     );
   });
 
@@ -211,10 +210,11 @@ describe('/api/v1/images API Handler', () => {
     expect(res._getStatusCode()).toBe(200);
     const data = res._getJSONData();
     expect(data.items[0].tags).toBeUndefined();
-    expect(mockGetImagesFromFeedSearch).toHaveBeenCalledWith(
+    expect(mockGetImagesFromFeed).toHaveBeenCalledWith(
       expect.objectContaining({
         include: expect.not.arrayContaining(['tags']),
-      })
+      }),
+      expect.anything()
     );
   });
 
@@ -229,10 +229,11 @@ describe('/api/v1/images API Handler', () => {
       { id: 1, name: 'anime' },
       { id: 2, name: 'portrait' },
     ]);
-    expect(mockGetImagesFromFeedSearch).toHaveBeenCalledWith(
+    expect(mockGetImagesFromFeed).toHaveBeenCalledWith(
       expect.objectContaining({
         include: expect.arrayContaining(['tags']),
-      })
+      }),
+      expect.anything()
     );
   });
 
@@ -266,7 +267,7 @@ describe('/api/v1/images API Handler', () => {
       cfgScale: 4,
       prompt: 'masterpiece, best quality',
     });
-    expect(mockGetImagesFromFeedSearch).toHaveBeenCalled();
+    expect(mockGetImagesFromFeed).toHaveBeenCalled();
   });
 
   it('should return nested wrapper shape by default when withMeta=true on legacy query path (e.g. imageId)', async () => {
@@ -360,7 +361,7 @@ describe('/api/v1/images API Handler', () => {
   });
 
   it('should return empty tags array when image has no tags', async () => {
-    mockGetImagesFromFeedSearch.mockResolvedValue({
+    mockGetImagesFromFeed.mockResolvedValue({
       ...mockImagesResult,
       items: [{ ...mockImagesResult.items[0], tags: [] }],
     });
@@ -375,7 +376,7 @@ describe('/api/v1/images API Handler', () => {
 
   it('should return empty tags array when image tags field is absent', async () => {
     const { tags: _, ...itemWithoutTags } = mockImagesResult.items[0];
-    mockGetImagesFromFeedSearch.mockResolvedValue({
+    mockGetImagesFromFeed.mockResolvedValue({
       ...mockImagesResult,
       items: [itemWithoutTags],
     });
@@ -432,7 +433,7 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
   it.each([408, 429, 502, 503, 504])(
     'maps a MeiliSearchCommunicationError(statusCode=%i) to a retryable 503 (no-store + Retry-After)',
     async (status) => {
-      mockGetImagesFromFeedSearch.mockRejectedValue(makeCommunicationError(status));
+      mockGetImagesFromFeed.mockRejectedValue(makeCommunicationError(status));
       const { req, res } = createMocks({ query: { limit: '10' } });
 
       await handler(req, res);
@@ -453,7 +454,7 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
   it.each([502, 503, 504])(
     'maps a MeiliSearchApiError(httpStatus=%i, gateway 5xx) to a retryable 503',
     async (status) => {
-      mockGetImagesFromFeedSearch.mockRejectedValue(makeApiError(status));
+      mockGetImagesFromFeed.mockRejectedValue(makeApiError(status));
       const { req, res } = createMocks({ query: { limit: '10' } });
 
       await handler(req, res);
@@ -467,7 +468,7 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
   it.each([408, 429])(
     'does NOT mask a MeiliSearchApiError(httpStatus=%i, JSON body) as 503 — only the Communication/transport path treats 408/429 as transient',
     async (status) => {
-      mockGetImagesFromFeedSearch.mockRejectedValue(makeApiError(status));
+      mockGetImagesFromFeed.mockRejectedValue(makeApiError(status));
       const { req, res } = createMocks({ query: { limit: '10' } });
 
       await handler(req, res);
@@ -480,7 +481,7 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
   it('maps a MeiliSearchTimeOutError to a retryable 503', async () => {
     const e = new Error('timeout of 5000ms has exceeded ...') as Error & { name: string };
     e.name = 'MeiliSearchTimeOutError';
-    mockGetImagesFromFeedSearch.mockRejectedValue(e);
+    mockGetImagesFromFeed.mockRejectedValue(e);
     const { req, res } = createMocks({ query: { limit: '10' } });
 
     await handler(req, res);
@@ -502,7 +503,7 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
       code: 'SERVICE_UNAVAILABLE',
       message: 'Image search is temporarily overloaded — please retry.',
     });
-    mockGetImagesFromFeedSearch.mockRejectedValue(trpcError);
+    mockGetImagesFromFeed.mockRejectedValue(trpcError);
     const { req, res } = createMocks({ query: { limit: '10' } });
 
     await handler(req, res);
@@ -525,7 +526,7 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
 
   it('does NOT mask a TRPCError NOT_FOUND as 503 — keeps its real 404 (no Retry-After)', async () => {
     const notFound = new TRPCError({ code: 'NOT_FOUND', message: 'Image not found' });
-    mockGetImagesFromFeedSearch.mockRejectedValue(notFound);
+    mockGetImagesFromFeed.mockRejectedValue(notFound);
     const { req, res } = createMocks({ query: { limit: '10' } });
 
     await handler(req, res);
@@ -550,7 +551,7 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
       // hard error, NOT a retryable 503. It isn't a TRPCError, so it falls to the
       // generic mapping → 500 (the correct "genuine failure must still surface"
       // behaviour). The key assertion: it is NOT 503 and carries NO Retry-After.
-      mockGetImagesFromFeedSearch.mockRejectedValue(makeCommunicationError(status));
+      mockGetImagesFromFeed.mockRejectedValue(makeCommunicationError(status));
       const { req, res } = createMocks({ query: { limit: '10' } });
 
       await handler(req, res);
@@ -565,7 +566,7 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
     // transient brownout — it must surface as a hard error, never a retryable
     // 503 (audit 🟡 #1 masking-guard). It isn't a TRPCError, so it falls to the
     // generic mapping → 500.
-    mockGetImagesFromFeedSearch.mockRejectedValue(makeApiError(500));
+    mockGetImagesFromFeed.mockRejectedValue(makeApiError(500));
     const { req, res } = createMocks({ query: { limit: '10' } });
 
     await handler(req, res);
@@ -577,7 +578,7 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
   it('DOES map a transport-layer MeiliSearchCommunicationError(statusCode=500) (empty body) to a retryable 503', async () => {
     // Contrast with the ApiError above: an empty/non-JSON-body 500 is the
     // genuinely-transient transport case → 503 with Retry-After.
-    mockGetImagesFromFeedSearch.mockRejectedValue(makeCommunicationError(500));
+    mockGetImagesFromFeed.mockRejectedValue(makeCommunicationError(500));
     const { req, res } = createMocks({ query: { limit: '10' } });
 
     await handler(req, res);
@@ -588,7 +589,7 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
   });
 
   it('does NOT mask a generic app error (null deref) as 503 — bubbles to 500', async () => {
-    mockGetImagesFromFeedSearch.mockRejectedValue(new Error('cannot read properties of undefined'));
+    mockGetImagesFromFeed.mockRejectedValue(new Error('cannot read properties of undefined'));
     const { req, res } = createMocks({ query: { limit: '10' } });
 
     await handler(req, res);
@@ -598,7 +599,7 @@ describe('/api/v1/images transient-upstream 503 reclassification', () => {
   });
 
   it('happy path is unchanged (200) with no Retry-After header', async () => {
-    mockGetImagesFromFeedSearch.mockResolvedValue(mockImagesResult);
+    mockGetImagesFromFeed.mockResolvedValue(mockImagesResult);
     const { req, res } = createMocks({ query: { limit: '10' } });
 
     await handler(req, res);
@@ -638,7 +639,7 @@ describe('/api/v1/images feed-path offset cursor', () => {
     vi.clearAllMocks();
     mockGetServerAuthSession.mockResolvedValue(null);
     mockGetFeatureFlags.mockReturnValue({ datapacketRead: false, canViewNsfw: false });
-    mockGetImagesFromFeedSearch.mockResolvedValue(feedResult);
+    mockGetImagesFromFeed.mockResolvedValue(feedResult);
     mockGetAllImages.mockResolvedValue(feedResult);
     mockImageMetaCacheFetch.mockResolvedValue({});
   });
@@ -663,7 +664,7 @@ describe('/api/v1/images feed-path offset cursor', () => {
 
     expect(res._getStatusCode()).toBe(400);
     expect(res._getJSONData().message).toContain(`Invalid cursor: ${reason}`);
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+    expect(mockGetImagesFromFeed).not.toHaveBeenCalled();
   });
 
   it.each(['0', '1', '2147483647', '2|1700000000123', '2147483647|1700000000123', ''])(
@@ -672,8 +673,8 @@ describe('/api/v1/images feed-path offset cursor', () => {
       const res = await request({ cursor });
 
       expect(res._getStatusCode()).toBe(200);
-      expect(mockGetImagesFromFeedSearch).toHaveBeenCalledTimes(1);
-      expect(mockGetImagesFromFeedSearch.mock.calls[0][0].cursor).toBe(cursor);
+      expect(mockGetImagesFromFeed).toHaveBeenCalledTimes(1);
+      expect(mockGetImagesFromFeed.mock.calls[0][0].cursor).toBe(cursor);
     }
   );
 
@@ -683,7 +684,7 @@ describe('/api/v1/images feed-path offset cursor', () => {
     expect(res._getStatusCode()).toBe(200);
     expect(mockGetAllImages).toHaveBeenCalledTimes(1);
     expect(mockGetAllImages.mock.calls[0][0].cursor).toBe('-5');
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+    expect(mockGetImagesFromFeed).not.toHaveBeenCalled();
   });
 
   // Round trip through the REAL emitter and parser (event-engine-common feeds/base.ts): a
@@ -726,10 +727,10 @@ describe('/api/v1/images feed-path offset cursor', () => {
     const emittedCursors = [first.nextCursor, last.nextCursor, unsorted.nextCursor] as string[];
     for (const emitted of emittedCursors) {
       vi.clearAllMocks();
-      mockGetImagesFromFeedSearch.mockResolvedValue(feedResult);
+      mockGetImagesFromFeed.mockResolvedValue(feedResult);
       const res = await request({ limit: '2', cursor: emitted });
       expect(res._getStatusCode()).toBe(200);
-      expect(mockGetImagesFromFeedSearch.mock.calls[0][0].cursor).toBe(emitted);
+      expect(mockGetImagesFromFeed.mock.calls[0][0].cursor).toBe(emitted);
     }
 
     await feed.query({ ...(feedInput as object), cursor: first.nextCursor } as never);

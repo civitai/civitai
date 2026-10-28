@@ -8,8 +8,6 @@ import {
   summarizeProbeError,
 } from '@civitai/shared';
 import { randomUUID } from 'crypto';
-import type { ManipulateType } from 'dayjs';
-import dayjs from '~/shared/utils/dayjs';
 import { chunk, isEqual, truncate, uniq, uniqBy } from 'lodash-es';
 import {
   filterViewableModelVersions,
@@ -19,7 +17,6 @@ import {
   clearReviewFlagsOnBlock,
   keepPendingAppealFlags,
 } from '~/server/services/image-appeal-flag';
-import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
@@ -31,28 +28,20 @@ import {
   feedRequestCapture,
   type CapturableSearchInput,
 } from '~/server/services/feed-request-capture.service';
-import { CURSOR_UNPARSED, DEEP_OFFSET, feedShadow } from '~/server/services/feed-shadow.service';
+import { CURSOR_UNPARSED, DEEP_OFFSET } from '~/server/services/feed-shadow.service';
 import { resolveJumpTo } from '~/shared/utils/jump-to-month';
 import {
-  countFeedPrimary,
-  countMeiliOff,
-  feedFliptContext,
+  countUnservedAnswer,
   feedHydrateQuery,
   feedPrimaryAvailable,
   fetchFeedPrimary,
   hydrateWithReadRescue,
-  isMeiliOff,
   serveFromFeed,
   type FeedPrimaryRoute,
 } from '~/server/services/feed-primary.service';
 import { parseFeedCursor } from '~/server/common/feed-cursor';
 import { purgeCache } from '~/server/cloudflare/client';
-import {
-  CacheTTL,
-  constants,
-  METRICS_IMAGES_SEARCH_INDEX,
-  nsfwRestrictedBaseModels,
-} from '~/server/common/constants';
+import { CacheTTL, constants } from '~/server/common/constants';
 import { imageReviewedSql, KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '~/server/common/image-visibility';
 import {
   assertImageVisibleToViewer,
@@ -89,26 +78,9 @@ import { poolCounters } from '~/server/games/new-order/utils';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { withSpan } from '~/server/utils/otel-helpers';
 import { withTimeoutFallback } from '~/server/utils/timeout-helpers';
-import {
-  FETCH_DOCUMENTS_TIMEOUT_MESSAGE,
-  MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
-  MeiliCallTimeoutError,
-  MeilisearchFetchError,
-  SEARCH_ACTOR_HEADER,
-  failfastReasonForStatus,
-  failfastReasonForTransientError,
-  fetchDocumentsAbortable,
-  getMetricsSearchClient,
-  isFailfastStatus,
-  isTransientMeiliError,
-  meiliFetchFailfastTotal,
-  metricsSearchClient,
-  withMeili,
-  wrapMeilisearchClientWithLimiter,
-} from '~/server/meilisearch/client';
+import { getMetricsSearchClient, withMeili } from '~/server/meilisearch/client';
 import { postMetrics } from '~/server/metrics';
 import {
-  clickhouseFailSoftCounter,
   imageScanSubmittedCounter,
   leakingContentCounter,
   registerCounter,
@@ -134,14 +106,7 @@ import {
   userImageVideoCountCaches,
 } from '~/server/redis/caches';
 import type { RedisKeyTemplateSys } from '~/server/redis/client';
-import {
-  redis,
-  REDIS_KEYS,
-  REDIS_SYS_KEYS,
-  sysRedis,
-  withSysReadDeadline,
-} from '~/server/redis/client';
-import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
+import { redis, REDIS_KEYS, REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createCachedObject, queryCacheRaw } from '~/server/utils/cache-helpers';
 import { createLruCache } from '~/server/utils/lru-cache';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -174,11 +139,6 @@ import { imageMetaOutput, ingestImageSchema } from '~/server/schema/image.schema
 import type { ImageStorageDeletePayload } from '~/server/schema/job-queue.schema';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
-import type {
-  ImageMetricsSearchIndexRecord,
-  MetricsImageFilterableAttribute,
-  MetricsImageSortableAttribute,
-} from '~/server/search-index/metrics-images.search-index';
 import type {
   ContentDecorationCosmetic,
   EventDecorationCosmetic,
@@ -244,7 +204,6 @@ import {
   type RetractionGate,
 } from '~/server/services/image-cacher-retraction';
 import {
-  isClickHouseConnectionError,
   throwAuthorizationError,
   throwBadRequestError,
   throwDbError,
@@ -255,13 +214,11 @@ import type { RuleDefinition } from '~/server/utils/mod-rules';
 import { getCursor } from '~/server/utils/pagination-helpers';
 import {
   browsingLevels as selectableBrowsingLevels,
-  nsfwBrowsingLevelsArray,
   nsfwBrowsingLevelsFlag,
   onlySelectableLevels,
   publicBrowsingLevelsFlag,
   sfwBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
-import { Flags } from '~/shared/utils/flags';
 import {
   stripBlockProvenanceMetadata,
   type BlockProvenanceMetadataKey,
@@ -272,7 +229,6 @@ import type {
   ModelType,
   ReportReason,
   ReviewReactions,
-  TagType,
 } from '~/shared/utils/prisma/enums';
 import {
   Availability,
@@ -305,25 +261,17 @@ import {
 } from '~/utils/s3-utils';
 import { resolveMediaLocation } from '~/server/services/storage-resolver';
 import { isDefined, isNumber } from '~/utils/type-guards';
-import { FLIPT_FEATURE_FLAGS, getFliptBoolean, isFlipt } from '../flipt/client';
-import { ensureRegisterFeedImageExistenceCheckMetrics } from '../metrics/feed-image-existence-check.metrics';
-import client from 'prom-client';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '../flipt/client';
 import { getExplainSql, queryWithTimeout } from '~/server/db/db-helpers';
 import { getImageGenerationFields, listImageReactionsMany } from '@civitai/db-queries/image';
 import { kyselyRead } from '~/server/db/kyselyDb';
-import { ImagesFeed } from '../../../event-engine-common/feeds';
 import { MetricService } from '../../../event-engine-common/services/metrics';
 import { cacheKeys } from '../../../event-engine-common/utils/cache-keys';
 import type { ImageMetrics } from '../../../event-engine-common/types/metric-types';
-import { CacheService } from '../../../event-engine-common/services/cache';
-import type { IMeilisearch } from '../../../event-engine-common/types/meilisearch-interface';
 import type {
   IClickhouseClient,
-  IDbClient,
   IRedisClient,
 } from '../../../event-engine-common/types/package-stubs';
-import type { FeedQueryInput } from '../../../event-engine-common/feeds/types';
-import type { ImageQueryInput } from '../../../event-engine-common/types/image-feed-types';
 import {
   createImageIngestionRequest,
   imageIngestionLogName,
@@ -342,17 +290,6 @@ import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
 const model3dService = () => import('~/server/services/model3d.service');
-
-const {
-  cacheHitRequestsTotal,
-  ffRequestsTotal,
-  requestDurationSeconds,
-  requestTotal,
-  droppedIdsTotal,
-  postFilterIterations,
-  postFilterDocsProcessed,
-  postFilterFilterRatio,
-} = ensureRegisterFeedImageExistenceCheckMetrics(client.register);
 
 // no user should have to see images on the site that haven't been scanned or are queued for removal
 
@@ -3127,26 +3064,14 @@ const getMetaForImages = async (imageIds: number[]) => {
   return imageMetaCache.fetch(imageIds);
 };
 
-const getMetadataForImages = async (imageIds: number[]) => {
-  if (imageIds.length === 0) return {};
-  return imageMetadataCache.fetch(imageIds);
-};
-
 const getThumbnailsForImages = async (imageIds: number[]) => {
   if (imageIds.length === 0) return {};
   return thumbnailCache.fetch(imageIds);
 };
 
 type GetAllImagesIndexResult = AsyncReturnType<typeof getAllImages>;
-/**
- * Only this path reports a `source`, so it is added here rather than to the shared
- * alias — `getImagesFromFeedSearch` returns the same alias and never sets one, and
- * widening that would let a caller test it for a value it can never hold. Optional
- * because the blocked-browsing early return and a search reporting none both omit it.
- */
-type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & {
-  source?: 'feed' | AsyncReturnType<typeof getImagesFromSearch>['source'];
-};
+/** The feed-served page names its source; the Postgres branch in the controller says 'db'. */
+type GetAllImagesIndexSourcedResult = GetAllImagesIndexResult & { source?: 'feed' };
 export async function findUserIdByUsername(username: string) {
   const user =
     (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
@@ -3208,8 +3133,7 @@ export async function getPostImageCounts({
 async function serveImagesFromFeedService(
   searchInput: CapturableSearchInput & { domain?: DomainColor; newCreatorsMaxFollowers?: number },
   hydrateInput: Parameters<typeof getAllImagesUncaptured>[0],
-  route: FeedPrimaryRoute,
-  meiliOff = false
+  route: FeedPrimaryRoute
 ) {
   const started = Date.now();
   const { currentUserId } = searchInput;
@@ -3222,7 +3146,7 @@ async function serveImagesFromFeedService(
           maxFollowers: searchInput.newCreatorsMaxFollowers,
         })
       : undefined,
-    searchInput.hubId ? resolveHubForFeed(searchInput, currentUserId, meiliOff) : undefined,
+    searchInput.hubId ? resolveHubForFeed(searchInput) : undefined,
   ]);
   const served = await withSpan('image:feedPrimary', () =>
     serveFromFeed(
@@ -3255,12 +3179,12 @@ const isTransientFeedReason = (reason: string) =>
   ['timeout', 'error', 'hydrate:error'].includes(reason) || /^status:5\d\d$/.test(reason);
 
 /**
- * Filters the feed has no dimension for, dropped when Meilisearch is off rather than sent there.
- * The remix filters were decided against. The resource flags narrow a version's gallery to the
+ * Filters the feed has no dimension for, dropped rather than refused. The remix filters were
+ * decided against. The resource flags narrow a version's gallery to the
  * images posted to it or attributed by hand; the feed's mirror does not split those, so it serves
  * the version's whole gallery.
  */
-const withoutMeiliOnlyFilters = <T extends object>(input: T): T => ({
+const withoutUnservedFilters = <T extends object>(input: T): T => ({
   ...input,
   remixesOnly: undefined,
   nonRemixesOnly: undefined,
@@ -3269,92 +3193,65 @@ const withoutMeiliOnlyFilters = <T extends object>(input: T): T => ({
 });
 
 /**
- * The answer to a request the feed service did not serve, when Meilisearch is off: a transient
- * failure is a retryable 503, a sort the feed does not have and a cursor it cannot continue are a
- * 400, and every other shape it cannot express is an empty page.
+ * The answer to a request the feed service did not serve: a page whose every row was filtered out
+ * at hydrate steps past on the feed's cursor, a transient failure is a retryable 503, a sort the
+ * feed does not have and a cursor it cannot continue are a 400, and every other shape it cannot
+ * express is an empty page.
  */
-function answerWithoutMeili(
+function answerWithoutFeed(
   served: { reason: string; nextCursor?: string },
   route: FeedPrimaryRoute
 ): GetAllImagesIndexResult {
   const { reason } = served;
   if (reason === 'hydrate:empty') return { items: [], nextCursor: served.nextCursor };
   if (isTransientFeedReason(reason)) {
-    countMeiliOff('unavailable', reason, route);
+    countUnservedAnswer('unavailable', reason, route);
     throw new TRPCError({
       code: 'SERVICE_UNAVAILABLE',
       message: 'Image search is temporarily overloaded — please retry.',
     });
   }
   if (reason.startsWith('sort:')) {
-    countMeiliOff('refused', reason, route);
+    countUnservedAnswer('refused', reason, route);
     throw throwBadRequestError(`Sort "${reason.slice('sort:'.length)}" is not supported`);
   }
   if (reason === DEEP_OFFSET) {
-    countMeiliOff('refused', reason, route);
+    countUnservedAnswer('refused', reason, route);
     throw throwBadRequestError('This feed cannot be paged this far; narrow the filters');
   }
   if (reason === CURSOR_UNPARSED) {
-    countMeiliOff('refused', reason, route);
+    countUnservedAnswer('refused', reason, route);
     throw throwBadRequestError('Malformed cursor; pass the nextCursor from the previous page');
   }
-  countMeiliOff('empty', reason, route);
+  countUnservedAnswer('empty', reason, route);
   return { items: [], nextCursor: undefined };
 }
 
 /**
- * The public REST images endpoint's feed-service branch. `undefined` means the feed service did
- * not serve the request and the caller answers it from the search path, unchanged.
- *
- * A `feed:` cursor is answered here or refused, flag or not: the search path would read it as
- * offset 0 and silently restart the scroll at page one.
+ * The public REST images endpoint's image feed: the feed service picks the page, Postgres supplies
+ * the rows.
  */
 export async function getImagesFromFeedServiceForRest(
   searchInput: ImageSearchInput & { headers?: Record<string, string> },
-  hydrateInput: Parameters<typeof getAllImagesUncaptured>[0],
-  opts: { meiliOff?: boolean } = {}
-): Promise<GetAllImagesIndexResult | undefined> {
-  const fallBack = (reason: string) => {
-    countFeedPrimary('unmapped', reason, 'rest');
-    return undefined;
-  };
-
-  const feedCursor = parseFeedCursor(searchInput.cursor) !== undefined;
+  hydrateInput: Parameters<typeof getAllImagesUncaptured>[0]
+): Promise<GetAllImagesIndexResult> {
+  // Without a feed service (local development) the Postgres query answers, which has no hubs.
   if (!feedPrimaryAvailable()) {
-    if (feedCursor)
+    if (parseFeedCursor(searchInput.cursor) !== undefined)
       throw throwBadRequestError('This cursor can no longer be continued; start again without it');
-    return undefined;
+    if (searchInput.hubId) return { items: [], nextCursor: undefined };
+    return getAllImages(hydrateInput);
   }
-  // Under FEED_SERVICE_MEILI_OFF this never returns undefined, which would send the caller to the
-  // search index.
-  const meiliOff = opts.meiliOff ?? (await isMeiliOff(searchInput));
-  if (meiliOff && searchInput.limit < 1) return { items: [], nextCursor: undefined };
-  if (!feedCursor && !meiliOff) {
-    const enabled = await withSpan('image:flipt:feedRestImages', () =>
-      getFliptBoolean(
-        FLIPT_FEATURE_FLAGS.FEED_SERVICE_REST_IMAGES,
-        searchInput.currentUserId?.toString() || 'anonymous',
-        feedFliptContext(searchInput)
-      )
-    );
-    if (!enabled) return undefined;
-    // An `offset|sortAt` cursor is a scroll the search path started. It was left to finish there,
-    // but 4,000 a day never did: clients keep such cursors for weeks. The mapper reads it as the
-    // website does, the offset inside the set frozen at that minute, and the feed answers the
-    // page; the next cursor it hands out is the feed's own. A cursor past the feed's offset cap
-    // is refused by the mapper and finishes on the search path as before.
-    // The feed query turns a zero limit into its default page size.
-    if (searchInput.limit < 1) return fallBack('limit:0');
-  }
+  if (searchInput.limit < 1) return { items: [], nextCursor: undefined };
 
-  const input = meiliOff ? withoutMeiliOnlyFilters(searchInput) : { ...searchInput };
+  const input = withoutUnservedFilters(searchInput);
   const prepared = await prepareImageFeedRequest(input, {
     id: input.currentUserId,
     isModerator: input.isModerator,
   });
   if (prepared.blocked) return { items: [], nextCursor: undefined };
   const { userId } = prepared;
-  // The search path answers an unknown username with an empty page, not a 404.
+  // An unknown username is an empty page, not a 404, as the search index answered it.
   if (input.username && userId === undefined) return { items: [], nextCursor: undefined };
 
   const served = await serveImagesFromFeedService(
@@ -3366,29 +3263,24 @@ export async function getImagesFromFeedServiceForRest(
       tags: input.tags,
       excludedTagIds: input.excludedTagIds,
     },
-    'rest',
-    meiliOff
+    'rest'
   );
   if (served.ok)
     return {
-      // The search path reports createdAt as GREATEST(publishedAt, scannedAt, createdAt), which
+      // The search index reported createdAt as GREATEST(publishedAt, scannedAt, createdAt), which
       // getAllImages selects as sortAt; REST clients keep that meaning.
       items: served.page.data.map((image) => ({ ...image, createdAt: image.sortAt })),
       nextCursor: served.page.nextCursor,
     };
-  // The hydrate filtered out every row of that page; the scroll steps past it, or ends. The search
-  // index cannot return those rows either.
-  if (served.reason === 'hydrate:empty') return { items: [], nextCursor: served.nextCursor };
-  if (feedCursor) {
-    if (isTransientFeedReason(served.reason))
-      throw new TRPCError({
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'Image search is temporarily overloaded — please retry.',
-      });
+  // A `feed:` cursor is a scroll the feed started: one it cannot continue under these filters is
+  // refused rather than answered as an empty end of the feed.
+  if (
+    parseFeedCursor(searchInput.cursor) !== undefined &&
+    served.reason !== 'hydrate:empty' &&
+    !isTransientFeedReason(served.reason)
+  )
     throw throwBadRequestError('This cursor cannot be continued with these filters');
-  }
-  if (meiliOff) return answerWithoutMeili(served, 'rest');
-  return undefined;
+  return answerWithoutFeed(served, 'rest');
 }
 
 export const getAllImagesIndex = async (
@@ -3439,7 +3331,7 @@ export const getAllImagesIndex = async (
   // } = input;
   // const { sort, browsingLevel } = input;
 
-  const { include, user } = input;
+  const { user } = input;
 
   const prepared = await prepareImageFeedRequest(input, {
     id: user?.id,
@@ -3465,329 +3357,21 @@ export const getAllImagesIndex = async (
     offset,
     entry,
   };
-  // The feed service picks and orders the page and Postgres supplies the rows; Meilisearch is
-  // not consulted. What the feed cannot serve (unmapped shape, timeout, error) goes to Meilisearch.
-  // Under FEED_SERVICE_MEILI_OFF nothing goes to Meilisearch; see answerWithoutMeili.
-  if (feedPrimaryAvailable()) {
-    const meiliOff = await isMeiliOff(searchInput);
-    const feedPrimary =
-      meiliOff ||
-      (await withSpan('image:flipt:feedPrimary', () =>
-        getFliptBoolean(
-          FLIPT_FEATURE_FLAGS.FEED_SERVICE_PRIMARY,
-          currentUserId?.toString() || 'anonymous',
-          feedFliptContext(searchInput)
-        )
-      ));
-    if (feedPrimary) {
-      const served = await serveImagesFromFeedService(
-        meiliOff ? withoutMeiliOnlyFilters(searchInput) : searchInput,
-        input,
-        'website',
-        meiliOff
-      );
-      if (served.ok)
-        return { items: served.page.data, nextCursor: served.page.nextCursor, source: 'feed' };
-      if (served.reason === DEEP_OFFSET)
-        throw throwBadRequestError('This feed cannot be paged this far; narrow the filters');
-      if (served.reason === CURSOR_UNPARSED)
-        throw throwBadRequestError('Malformed cursor; pass the nextCursor from the previous page');
-      // Every row of the page was filtered out at hydrate. The search index cannot return those
-      // rows either, so the scroll steps past the page on the feed's cursor.
-      if (served.reason === 'hydrate:empty')
-        return { items: [], nextCursor: served.nextCursor, source: 'feed' };
-      if (meiliOff) return { ...answerWithoutMeili(served, 'website'), source: 'feed' };
-    }
+  // The feed service picks and orders the page and Postgres supplies the rows. What it cannot
+  // serve is answered here (answerWithoutFeed): there is no other index to fall back to.
+  // Without a feed service (local development) the Postgres query answers, which has no hubs.
+  if (!feedPrimaryAvailable()) {
+    if (input.hubId) return { items: [], nextCursor: undefined };
+    return getAllImages({ ...input, userId });
   }
-
-  let searchResults: Awaited<ReturnType<typeof getImagesFromSearch>>['data'];
-  let searchNextCursor: Awaited<ReturnType<typeof getImagesFromSearch>>['nextCursor'];
-  let searchSource: Awaited<ReturnType<typeof getImagesFromSearch>>['source'];
-  try {
-    ({
-      data: searchResults,
-      nextCursor: searchNextCursor,
-      source: searchSource,
-    } = await withSpan('image:getAllImagesIndex:search', () => getImagesFromSearch(searchInput)));
-  } catch (err) {
-    // Meilisearch saturation / timeout on the tRPC hot path (image.getInfinite).
-    // Surface as TRPCError SERVICE_UNAVAILABLE (HTTP 503) so the client gets a
-    // fast, retryable response instead of bleeding until Traefik's 30s router
-    // timeout — which is what backed up the event loop and tipped api-primary
-    // into kubelet SIGKILL on 2026-05-29. 503 is the correct code for a
-    // transient backend brownout (was TIMEOUT/408 as a tRPC-v10 stopgap; v11
-    // has SERVICE_UNAVAILABLE).
-    //
-    // `isTransientMeiliError` covers the civitai wrapper errors
-    // (MeiliCallTimeoutError = local timer / circuit-open; MeilisearchFetchError
-    // with a failfast status = raw-fetch 408/429/5xx) AND the meilisearch-js
-    // SDK's own error types (MeiliSearchCommunicationError /
-    // MeiliSearchApiError / MeiliSearchTimeOutError) thrown by the SDK calls
-    // inside the search index path. 4xx-other (malformed filter / auth) and
-    // any other Error are NOT transient and still bubble as-is.
-    if (isTransientMeiliError(err)) {
-      // Keep a transient Meili outage ATTRIBUTABLE: the reclassified 503 would
-      // otherwise vanish into the unlabeled 503 bucket. Mirror the post-filter
-      // loop's counter usage (route + reason) so an outage is queryable by the
-      // same label vocabulary; `iteration:'0'` (this is the single pre-filter
-      // search, not the post-filter iteration loop).
-      meiliFetchFailfastTotal.inc({
-        route: 'getAllImagesIndex',
-        iteration: '0',
-        reason: failfastReasonForTransientError(err),
-      });
-      throw new TRPCError({
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'Image search is temporarily overloaded — please retry.',
-        cause: err as Error,
-      });
-    }
-    throw err;
-  }
-
-  if (!searchResults.length) {
-    return {
-      nextCursor: undefined,
-      items: [],
-    };
-  }
-
-  const imageIds = searchResults.map((sr) => sr.id);
-  const videoIds = searchResults.filter((sr) => sr.type === MediaType.video).map((sr) => sr.id);
-  const userIds = searchResults.map((sr) => sr.userId);
-
-  const userReactions = currentUserId
-    ? await getUserReactionsForImages({ imageIds, userId: currentUserId })
-    : undefined;
-
-  const [
-    userDatas,
-    profilePictures,
-    userCosmetics,
-    imageCosmetics,
-    imageMeta,
-    imageMetadata,
-    thumbnails,
-    imageMetrics,
-    tagIdsVar,
-    tagsVar,
-    imageEventDecorations,
-  ] = await withSpan('image:getAllImagesIndex:parallelFetch', async () =>
-    Promise.all([
-      // These enrichment fetches are independent (each takes pre-computed
-      // userIds/imageIds/videoIds/searchResults) and are issued WITHOUT awaiting
-      // each element so Promise.all runs them concurrently — node-redis pipelines
-      // the cache GETs queued in the same tick, collapsing ~9 sequential Redis
-      // round-trips into ~1 round-trip-time. The prior version awaited each
-      // element, forcing sequential evaluation (the span name was aspirational).
-      // Mirrors the concurrent block in getAllImages.
-      getBasicDataForUsers(userIds),
-      include?.includes('profilePictures') ? getProfilePicturesForUsers(userIds) : undefined,
-      include?.includes('cosmetics') ? getCosmeticsForUsers(userIds) : undefined,
-      include?.includes('cosmetics')
-        ? getCosmeticsForEntity({
-            ids: imageIds,
-            entity: 'Image',
-          })
-        : undefined,
-      include?.includes('metaSelect') ? getMetaForImages(imageIds) : undefined,
-      getMetadataForImages(videoIds), // Only need this for videos
-      getThumbnailsForImages(videoIds), // Only need this for videos
-      getImageMetricsObject(searchResults),
-      // Fetch tagIds from cache so client-side hidden-tag filtering works.
-      // Search results don't include tagIds (too expensive to store),
-      // and Meilisearch tagIds may be stale, so always fetch from the authoritative cache.
-      include?.includes('tagIds') ? tagIdsForImagesCache.fetch(imageIds) : undefined,
-      include?.includes('tags') ? getImageTagsForImages(imageIds) : undefined,
-      // Unconditional for the same reason as in getAllImages.
-      getEventDecorationsForEntity({
-        ids: imageIds,
-        entity: 'Image',
-        viewer: input.eventDecorationViewer,
-      }),
-    ])
+  const served = await serveImagesFromFeedService(
+    withoutUnservedFilters(searchInput),
+    input,
+    'website'
   );
-
-  const tagsByImageId = tagsVar
-    ? tagsVar.reduce((acc, tag) => {
-        const arr = acc.get(tag.imageId);
-        if (arr) arr.push(tag);
-        else acc.set(tag.imageId, [tag]);
-        return acc;
-      }, new Map<number, typeof tagsVar>())
-    : undefined;
-
-  // Visibility-check the RAW `model3dId` carried on the search docs (indexed
-  // from `Post.model3dId`) before it reaches the client — same no-leak bar as
-  // the raw-SQL feed path and `image.get`. Only the non-null few are resolved,
-  // in ONE batched query (no per-image N+1).
-  const rawIndexModel3dIds = [
-    ...new Set(
-      searchResults
-        .map((sr) => (sr as { model3dId?: number }).model3dId)
-        .filter((id): id is number => typeof id === 'number')
-    ),
-  ];
-  const visibleIndexModel3DIds = rawIndexModel3dIds.length
-    ? await (
-        await model3dService()
-      ).getVisibleModel3DIds({
-        model3dIds: rawIndexModel3dIds,
-        userId: currentUserId,
-        isModerator: user?.isModerator,
-      })
-    : undefined;
-
-  const mergedData = withSpan('image:getAllImagesIndex:transform', () =>
-    searchResults.map(({ publishedAtUnix, ...sr }) => {
-      const thisUser = userDatas[sr.userId] ?? {};
-      const reactions =
-        userReactions?.[sr.id]?.map((r) => ({ userId: currentUserId as number, reaction: r })) ??
-        [];
-      const meta = imageMeta?.[sr.id]?.meta ?? null;
-      const metadata = imageMetadata[sr.id]?.metadata ?? null;
-      const thumbnail = thumbnails[sr.id] ?? null;
-      const nsfwLevel = Math.max(thumbnail?.nsfwLevel ?? 0, sr.nsfwLevel);
-      const metrics = imageMetrics[sr.id];
-
-      // Three-state chip signal on the feed-modal path:
-      //  - linked model3d (any source)  → gated number | null (no leak)
-      //  - Meili doc, no link           → null (resolved-absent → chip renders
-      //                                   nothing AND does NOT fall back, the
-      //                                   durable elimination of getByPostId)
-      // 🔴 That `null` is only correct while ONE backend serves this path. A
-      // second source that does not index `model3dId` needs its own arm
-      // returning `undefined`, or its chips silently stop appearing.
-      const rawModel3dId = (sr as { model3dId?: number }).model3dId;
-      const model3dId =
-        typeof rawModel3dId === 'number'
-          ? visibleIndexModel3DIds?.has(rawModel3dId)
-            ? rawModel3dId
-            : null
-          : null;
-
-      return {
-        ...sr,
-        model3dId,
-        // Override tagIds from authoritative cache when available.
-        // This ensures client-side hidden-tag filtering works even when
-        // the search engine doesn't return tagIds.
-        tagIds: tagIdsVar?.[sr.id]?.tags ?? sr.tagIds,
-        modelVersionId: sr.postedToId,
-        type: sr.type as MediaType,
-        createdAt: sr.sortAt,
-        metadata: { ...metadata, width: sr.width ?? 0, height: sr.height ?? 0 },
-        publishedAt: publishedAtUnix ? sr.sortAt : undefined,
-        //
-        user: {
-          id: sr.userId,
-          username: thisUser.username,
-          image: thisUser.image,
-          deletedAt: thisUser.deletedAt,
-          cosmetics: userCosmetics?.[sr.userId] ?? [],
-          profilePicture: profilePictures?.[sr.userId] ?? null,
-        },
-        stats: toImageV2Stats(metrics),
-        reactions,
-        cosmetic: imageCosmetics?.[sr.id] ?? null,
-        eventDecoration: imageEventDecorations?.[sr.id] ?? null,
-        // TODO fix below
-        availability: Availability.Public,
-        tags: tagsByImageId?.get(sr.id) ?? [],
-        name: null, // leave
-        scannedAt: null, // remove
-        mimeType: null, // need?
-        ingestion:
-          nsfwLevel === NsfwLevel.Blocked
-            ? ImageIngestionStatus.Blocked
-            : nsfwLevel === 0
-            ? ImageIngestionStatus.NotFound
-            : ImageIngestionStatus.Scanned, // add? maybe remove
-        postTitle: null, // remove
-        meta,
-        nsfwLevel,
-        thumbnailUrl: thumbnail?.url,
-      };
-    })
-  );
-
-  // For single-post queries, re-sort by image index to preserve manual ordering.
-  // Search engines sort by sortAt/reactions, but posts need index-based ordering.
-  if (input.postId && !input.modelVersionId && mergedData.length > 1) {
-    const imageIds = mergedData.map((d) => d.id);
-    const indexData = await dbRead.$queryRaw<{ id: number; index: number }[]>`
-      SELECT id, COALESCE(index, 0) as index FROM "Image" WHERE id IN (${Prisma.join(imageIds)})
-    `;
-    const indexMap = new Map(indexData.map((d) => [d.id, d.index]));
-    mergedData.sort((a, b) => (indexMap.get(a.id) ?? 0) - (indexMap.get(b.id) ?? 0));
-  }
-
-  let nextCursor: string | undefined;
-  if (typeof searchNextCursor === 'string') nextCursor = searchNextCursor;
-  else if (searchNextCursor) nextCursor = `${offset + input.limit}|${searchNextCursor}`;
-
-  return {
-    nextCursor,
-    // Always-on wire trim on the DOMINANT tRPC Meili feed path: the item
-    // literal above emits `scannedAt`/`mimeType`/`postTitle` as explicit `null`
-    // props (plus any of IMAGE_INFINITE_DROPPED_FIELDS carried on `...sr`), which
-    // still SERIALIZE even though the return type is narrowed to `Omit<...>` (a
-    // `const` object literal → no excess-property check strips them). Map through
-    // `stripImageForInfiniteWire` so they are actually removed from the payload,
-    // matching the DB `getAllImages` path. See `~/server/utils/image-infinite-wire.ts`.
-    items: mergedData.map(stripImageForInfiniteWire),
-    ...(searchSource && { source: searchSource }),
-  };
-};
-
-const METRICS_SEARCH_INDEX = `${METRICS_IMAGES_SEARCH_INDEX}`;
-
-function strArray(arr: (string | number)[]) {
-  return arr.map((x) => `'${x}'`).join(',');
-}
-
-function snapToInterval(unixTimestamp: number, intervalMillisec = 60000): number {
-  return Math.floor(unixTimestamp / intervalMillisec) * intervalMillisec;
-}
-
-type MeiliImageFilter = `${MetricsImageFilterableAttribute} ${string}`;
-export const makeMeiliImageSearchFilter = (
-  field: MetricsImageFilterableAttribute,
-  criteria: string
-): MeiliImageFilter => {
-  return `${field} ${criteria}`;
-};
-
-/** Applied on every page: a cursor alone would lose the bound when it parses as offset 0. */
-function makeMeiliJumpToFilter(input: { jumpTo?: string; sort?: string; userId?: number }) {
-  const jump = resolveJumpTo(input);
-  if (!jump) return undefined;
-  return jump.direction === 'before'
-    ? makeMeiliImageSearchFilter('sortAtUnix', `< ${jump.endMs}`)
-    : makeMeiliImageSearchFilter('sortAtUnix', `>= ${jump.startMs}`);
-}
-/**
- * Owner carve-out for a `scheduled` request: own content whose publish date is
- * still in the future.
- *
- * The publish predicate is the whole point. A bare `userId = me` admits every
- * unpublished row the caller owns — drafts, bounty entry uploads, orphans — so
- * turning Scheduled on filled a creator's own profile with work they never
- * posted (ClickUp 868kt9y1w). Shared rather than inlined because all three
- * call sites had their own copy and only one of them would have been fixed.
- */
-const makeOwnScheduledMeiliFilter = (currentUserId: number, snappedNow: number) =>
-  `(${makeMeiliImageSearchFilter('userId', `= ${currentUserId}`)} AND ${makeMeiliImageSearchFilter(
-    'publishedAtUnix',
-    `> ${snappedNow}`
-  )})`;
-
-type MeiliImageSort = `${MetricsImageSortableAttribute}:${'asc' | 'desc'}`;
-export const makeMeiliImageSearchSort = (
-  field: MetricsImageSortableAttribute,
-  criteria: 'asc' | 'desc'
-): MeiliImageSort => {
-  return `${field}:${criteria}`;
+  if (served.ok)
+    return { items: served.page.data, nextCursor: served.page.nextCursor, source: 'feed' };
+  return { ...answerWithoutFeed(served, 'website'), source: 'feed' };
 };
 
 type ImageSearchInput = GetInfiniteImagesOutput & {
@@ -3836,1917 +3420,34 @@ export function redactSearchInputForLog<T extends Record<string, unknown>>(input
   return removeEmpty(rest);
 }
 
-/**
- * Per-request tally, created by the caller and threaded through.
- *
- * NOT module-level. This process serves feed requests concurrently and every
- * `await` in the page loop yields to another one, so a module-level counter
- * would be reset and incremented by interleaving requests — request A logging
- * request B's drops. A number whose value cannot be attributed to a request is
- * not a measurement, and this counter exists precisely to attribute something.
- */
-
-export async function getImagesFromSearch(input: ImageSearchInput) {
-  const started = Date.now();
-  try {
-    const result = await searchImages(input);
-    const outcome = {
-      source: 'getImagesFromSearch' as const,
-      filterMode: result.filterMode,
-      elapsedMs: Date.now() - started,
-      resultIds: result.data.map((i: { id: number }) => i.id),
-      nextCursor: result.nextCursor,
-    };
-    void feedRequestCapture().record(input, outcome);
-    void feedShadow().compare(input, outcome);
-    return result;
-  } catch (err) {
-    void feedRequestCapture().record(input, {
-      source: 'getImagesFromSearch',
-      error: true,
-      elapsedMs: Date.now() - started,
-      resultIds: [],
-    });
-    throw err;
-  }
-}
-
-async function searchImages(input: ImageSearchInput) {
-  if (!metricsSearchClient)
-    return {
-      data: [],
-      nextCursor: undefined,
-      source: 'meili' as const,
-      filterMode: 'none' as const,
-    };
-  let searchFn = getImagesFromSearchPreFilter;
-  let filterMode: 'pre' | 'post' = 'pre';
-  // Wrap Flipt feature-flag evaluation so the trace shows whether per-request
-  // flag fetch is contributing to the parent span's latency. Routes through
-  // getFliptBoolean instead of direct per-request wasm evaluateBoolean calls on
-  // this hot feed path — once the Flipt eval cache (PR #2394) lands these become
-  // memoized; today it's a behavior-preserving refactor. getFliptBoolean returns
-  // false on a missing/uninitialized client, matching the prior null-client
-  // fallthrough (flags default off → pre-filter).
-  input = await withSpan('image:flipt:eval', async () => {
-    const entityId = input.currentUserId?.toString() || 'anonymous';
-    const postFilter = await getFliptBoolean(FLIPT_FEATURE_FLAGS.FEED_POST_FILTER, entityId);
-    if (postFilter) {
-      searchFn = getImagesFromSearchPostFilter;
-      filterMode = 'post';
-    }
-    return input;
-  });
-
-  const result = await searchFn(input);
-
-  return { ...result, source: 'meili' as const, filterMode };
-}
-
-// No applyHideChallengesExclusion here: `hideChallenges` cannot reach this function. Its only
-// upstreams are /api/v1/images and /api/v1/blocks/images, whose zod objects declare neither
-// `hideChallenges` nor `excludedTagIds` and strip unknown keys. Adding either key to those
-// schemas would hand the REST API an unfiltered feed — apply the exclusion here first. Note
-// image-search.service.ts spreads the same `data` into both branches (getAllImages / here),
-// so the result wouldn't be uniformly unfiltered: one branch would filter and this one
-// wouldn't, which reads as a caching bug, not a gap.
-export async function getImagesFromFeedSearch(
-  input: ImageSearchInput
-): Promise<GetAllImagesIndexResult> {
-  // The fifth filter builder, and the one with no hub clause. Unreachable today
-  // only because the REST zod for /api/v1/images does not declare `hubId` and
-  // strips unknown keys — the same accident the hideChallenges comment above
-  // describes. Adding the key to that schema without a clause here would serve an
-  // unfiltered feed from one of three branches, so fail loudly instead.
-  if (input.hubId)
-    throw throwInternalServerError(
-      new Error('getImagesFromFeedSearch cannot serve a hub; hub queries must use the index path')
-    );
-
-  try {
-    const blockedEnforcement = await enforceBlockedBrowsingTags(input, {
-      id: input.currentUserId,
-      isModerator: input.isModerator,
-    });
-    if (blockedEnforcement.emptyResult) return { nextCursor: undefined, items: [] };
-
-    // Evaluate feature flags before creating feed. Routed through getFliptBoolean
-    // (memoized once PR #2394's eval cache lands) instead of a direct per-request
-    // wasm eval; it swallows errors and returns false on a missing/uninitialized
-    // client, preserving the prior fail-safe default (existence check off).
-    const enableExistenceCheck = await getFliptBoolean(
-      FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-      input.currentUserId?.toString() || 'anonymous'
-    );
-
-    const feed = new ImagesFeed(
-      ({ apiKey, host }: { apiKey: string; host: string }) => {
-        const client = new MeiliSearch({
-          host,
-          apiKey,
-          requestConfig: input.actor
-            ? { headers: { [SEARCH_ACTOR_HEADER]: input.actor } }
-            : undefined,
-        });
-        // Wrap the returned IMeilisearch so that only the SDK calls inside
-        // event-engine-common's queryDocuments / populate go through
-        // withMeili('search'). Without this narrow scope, the previous wrap
-        // covered ALL of populatedQuery() — including Postgres / ClickHouse /
-        // Redis work in populateDocuments — which (a) falsely attributed
-        // slow DB queries as Meili timeouts and (b) held a Meili semaphore
-        // slot during non-Meili work, starving real Meili callers.
-        //
-        // NOTE: This is defense-in-depth. Verified hot path on 2026-05-29
-        // is getImagesFromSearch (above), not this feed path (REST-only,
-        // 0 errors/15min). Keeping this wrap so a future traffic-shift
-        // doesn't expose us again.
-        return wrapMeilisearchClientWithLimiter(client) as IMeilisearch;
-      },
-      clickhouse as IClickhouseClient,
-      pgDbWrite as IDbClient,
-      new MetricService(clickhouse as IClickhouseClient, redis as unknown as IRedisClient),
-      new CacheService(
-        redis as unknown as IRedisClient,
-        pgDbWrite as IDbClient,
-        clickhouse as IClickhouseClient,
-        undefined,
-        // Back the feed's image→tagIds lookup with civitai's own warm, actively-invalidated
-        // tagIdsForImagesCache (msgpack string) instead of the retired event-engine-common
-        // `image:tagIds` Redis hash. Same {imageId, tags[]} shape + same WD14/Rekognition +
-        // styleTags/subjectTags filter, so it's a drop-in. Relieves next-redis-cluster memory.
-        (ids: number[]) =>
-          tagIdsForImagesCache.fetch(ids) as Promise<
-            Record<number, { imageId: number; tags: number[] }>
-          >
-      )
-    );
-
-    // Convert cursor to string if it's not already, and add feature flag result
-    const feedInput = {
-      ...input,
-      cursor: input.cursor ? String(input.cursor) : undefined,
-      enableExistenceCheck,
-    };
-
-    // No outer withMeili() here — the wrap now lives on the SDK calls inside
-    // the client wrapper above. populatedQuery() does DB+CH+Redis work that
-    // should NOT consume a Meili semaphore slot.
-    const feedResult = await feed.populatedQuery(feedInput as FeedQueryInput<ImageQueryInput>);
-
-    // Transform PopulatedImage to match getAllImagesIndex return type
-    // Remove extra fields that PopulatedImage has but getAllImagesIndex doesn't
-    const transformedItems: ImagesInfiniteModel[] = feedResult.items.map((img) => {
-      // Destructure to remove all extra fields from PopulatedImage/ImageDocument
-      // that aren't in ImagesInfiniteModel
-      const {
-        // Timestamp unix fields (not in ImagesInfiniteModel)
-        sortAtUnix,
-        publishedAtUnix,
-        existedAtUnix,
-        // Array fields handled differently
-        tagIds,
-        toolIds,
-        techniqueIds,
-        // Flags object (not in ImagesInfiniteModel)
-        flags,
-        // Metric counts (stats object has these instead)
-        reactionCount,
-        commentCount,
-        collectedCount,
-        // Other fields not in ImagesInfiniteModel
-        userId,
-        acceptableMinor,
-        // Fields that need type transformation
-        reactions,
-        tags,
-        ...rest
-      } = img;
-
-      // Transform tags to match VotableTagModel (add missing fields with defaults)
-      // Note: tag.type and tag.nsfwLevel need casting because PopulatedImage uses
-      // its own type definitions from event-engine-common, while VotableTagModel
-      // uses types from ~/server/common/enums
-      const transformedTags: VotableTagModel[] = tags.map((tag) => ({
-        id: tag.id,
-        name: tag.name,
-        type: tag.type as unknown as TagType,
-        nsfwLevel: tag.nsfwLevel as unknown as NsfwLevel,
-        score: 0,
-        upVotes: 0,
-        downVotes: 0,
-      }));
-
-      // Transform reactions to use ReviewReactions enum
-      const transformedReactions = reactions.map((r) => ({
-        userId: r.userId,
-        reaction: r.reaction as ReviewReactions,
-      }));
-
-      // Return structure matching getAllImagesIndex
-      return {
-        ...rest,
-        nsfwLevel: img.nsfwLevel as NsfwLevel,
-        type: img.type as MediaType,
-        availability: img.availability ?? Availability.Public,
-        reactions: transformedReactions,
-        tags: transformedTags,
-        // Not derived: this path's stats come from `event-engine-common`'s ImageStats,
-        // which has already collapsed an absent metric row to zero and cannot say which
-        // it was. Type satisfaction only -- `runImageSearch`'s shaper in
-        // image-search.service.ts drops the field on both branches, so neither REST
-        // surface it backs receives it. Carrying the flag properly needs the shape
-        // changed in the submodule first.
-        stats: { ...rest.stats, statsUnknown: false },
-      };
-    });
-
-    return {
-      nextCursor: feedResult.nextCursor,
-      // Mirror the DB path's wire trim so both `image.getInfinite` backends ship the
-      // identical narrowed shape (drops any of IMAGE_INFINITE_DROPPED_FIELDS still
-      // carried on the ImageDocument rest).
-      items: transformedItems.map(stripImageForInfiniteWire),
-    };
-  } catch (err) {
-    console.error('Error in getImagesFromFeedSearch:', err);
-    // Any genuinely-transient upstream failure → fail fast as SERVICE_UNAVAILABLE
-    // (HTTP 503) so the caller gets a fast, retryable response instead of
-    // bleeding 30s while Traefik gives up. 503 is the correct transient-brownout
-    // code (was TIMEOUT/408 under tRPC v10, which lacked SERVICE_UNAVAILABLE).
-    //
-    // `isTransientMeiliError` covers BOTH civitai's own wrapper errors
-    // (MeiliCallTimeoutError / MeilisearchFetchError, from the raw-fetch path)
-    // AND the meilisearch-js SDK's own error types (MeiliSearchCommunicationError /
-    // MeiliSearchApiError / MeiliSearchTimeOutError) that the feed library's
-    // INNER SDK calls throw on a slow/shed backend — the latter were the
-    // dominant remaining HTTP-500 source on /api/v1/images (a 408/503 from the
-    // proxy surfaced as a bare {"error":"Request Timeout"} / {"error":"Service
-    // Unavailable"} 500 because they're not TRPCErrors and fell through the
-    // generic 500 mapping). 4xx-other (malformed filter / auth) and any other
-    // Error are NOT transient and still bubble as-is (→ their real status).
-    const transient = isTransientMeiliError(err);
-    if (transient) {
-      // Keep a transient Meili outage ATTRIBUTABLE (see getAllImagesIndex). The
-      // reclassified 503 would otherwise land in the unlabeled 503 bucket;
-      // mirror the post-filter loop's {route, reason} so a Meili brownout is
-      // queryable. `iteration:'0'` — this is the single feed-search call.
-      meiliFetchFailfastTotal.inc({
-        route: 'getImagesFromFeedSearch',
-        iteration: '0',
-        reason: failfastReasonForTransientError(err),
-      });
-      throw new TRPCError({
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'Image search is temporarily overloaded — please retry.',
-        cause: err as Error,
-      });
-    }
-    // TRANSIENT ClickHouse transport blip in the metric-enrichment leg of
-    // populatedQuery (the event-engine-common MetricService read). The feed items
-    // come from Meili+Postgres; only the display-only engagement metrics are
-    // ClickHouse-backed, and they ALREADY fail-open to zero elsewhere
-    // (getImageMetricsObject serves the cached counts, or omits the id). But this
-    // feed path runs the metric read INSIDE
-    // populatedQuery, so a CH connection error (socket hang up / Code 279 / Code
-    // 210) thrown there isn't a Meili error → it would fall through to `throw err`
-    // → the handler's generic 500. Re-map it to the same retryable 503 as a Meili
-    // brownout: a CH transport flap is a transient upstream brownout, not a server
-    // bug, and 503+Retry-After lets the client/CF retry the (seconds-long) blip
-    // instead of surfacing a hard 500. A CH QUERY/SCHEMA error (UNKNOWN_TABLE etc.)
-    // is NOT matched by isClickHouseConnectionError and still throws → 500 → visible
-    // + alertable, exactly as the missing-table incident was. No money/entitlement
-    // is on this path — image metrics are display-only.
-    if (isClickHouseConnectionError(err)) {
-      clickhouseFailSoftCounter.inc({ path: 'image-feed' });
-      logToAxiom(
-        {
-          type: 'warning',
-          name: 'clickhouse-failsoft',
-          message: 'ClickHouse transport error in image feed metric enrichment — served 503',
-          path: 'image-feed',
-          error: err instanceof Error ? err.message : String(err),
-        },
-        'clickhouse'
-      ).catch();
-      throw new TRPCError({
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'Image feed is temporarily overloaded — please retry.',
-        cause: err as Error,
-      });
-    }
-    throw err;
-  }
-}
-
-import type { ResolvedHubSources } from '~/server/services/user-hub.service';
 import { hubBrowsingLevel, resolveHubSources } from '~/server/services/user-hub.service';
 import { HUB_COLLECTION_SOURCES_ENABLED } from '~/server/schema/user-hub.schema';
 
-// The OR-group a hub's sources become. Mirrors the single-`modelVersionId`
-// branch below, including its two gates: a hub must honour hideAutoResources /
-// hideManualResources or it silently ignores two filters the user set.
-//
-// Returns null when the hub resolved to nothing. Callers must return an empty
-// page for null — never fall through unfiltered, which would serve the global
-// feed to someone who asked for their hub.
-// The two filter builders are mutually exclusive per request and each calls this
-// once, so nothing here needs memoizing. Kept as a helper so both spell the hubId
-// short-circuit and the argument set identically.
-async function resolvedHubSources(input: ImageSearchInput) {
-  if (!input.hubId) return null;
-  return resolveHubSources({
+/**
+ * A hub as the feed service is asked for it: its sources, and the browsing level under the hub's
+ * own cap. `hubSources: null` serves an empty page: no such hub for this viewer, no source left,
+ * or a cap that leaves the viewer nothing. Never an unfiltered feed, which would hand the viewer
+ * the global feed labelled as their hub.
+ */
+async function resolveHubForFeed(searchInput: CapturableSearchInput) {
+  const input = searchInput as ImageSearchInput;
+  if (!input.hubId) return undefined;
+  const sources = await resolveHubSources({
     hubId: input.hubId,
     userId: input.currentUserId,
     isModerator: input.isModerator,
     excludedSources: input.hubExcludedSources,
   });
-}
-
-/**
- * A hub as the feed service is asked for it: its sources, and the browsing level under the hub's
- * own cap. `hubSources: null` wherever the index path would return an empty page (no such hub
- * for this viewer, no source left, a cap that leaves the viewer nothing), so the same requests
- * are empty on both paths. Undefined while hubs are not switched over (and Meilisearch is on): the
- * hub is then not servable by the feed and the request takes the index path.
- */
-async function resolveHubForFeed(
-  searchInput: CapturableSearchInput,
-  viewerId: number | undefined,
-  meiliOff = false
-) {
-  const enabled =
-    meiliOff ||
-    (await getFliptBoolean(
-      FLIPT_FEATURE_FLAGS.FEED_SERVICE_HUBS,
-      viewerId?.toString() || 'anonymous',
-      feedFliptContext(searchInput)
-    ));
-  if (!enabled) return undefined;
-  const input = searchInput as ImageSearchInput;
-  const sources = await resolvedHubSources(input);
-  if (!sources || !hubFilterArms(sources, input)) return { hubSources: null };
+  const hasSource =
+    !!sources &&
+    (sources.userIds.length > 0 ||
+      sources.modelVersionIds.length > 0 ||
+      sources.tagGroups.length > 0 ||
+      (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length > 0));
+  if (!sources || !hasSource) return { hubSources: null };
   const browsingLevel = hubBrowsingLevel(input.browsingLevel, sources);
   if (browsingLevel !== undefined && !browsingLevel) return { hubSources: null };
   return { hubSources: sources, browsingLevel };
-}
-
-type HubFilterClause = { field: MetricsImageFilterableAttribute; ids: number[] };
-/**
- * One arm of the OR a hub's sources become. Its clauses are ANDed, which only a tag
- * GROUP ever uses — every other arm is a single clause.
- */
-type HubFilterArm = HubFilterClause[];
-
-/**
- * 🔴 The brackets are load-bearing. Arms are joined with ` OR ` and AND binds tighter,
- * so a multi-clause arm emitted bare re-associates the whole filter — silently ANDing
- * one tag onto every other arm. A single clause needs none, and gets none, so a hub
- * without groups emits exactly the filter it emitted before groups existed.
- */
-function renderHubArm(arm: HubFilterArm) {
-  const clauses = arm.map((clause) =>
-    makeMeiliImageSearchFilter(clause.field, `IN [${clause.ids.join(',')}]`)
-  );
-  // No producer can emit an empty arm today. If one ever does, `clauses[0]` is
-  // `undefined`, that literal text lands in the filter string, and Meilisearch rejects
-  // the whole query — a 503 on the hub feed, far from the mistake that caused it.
-  if (!clauses.length) throw new Error('hub filter arm has no clauses');
-  return clauses.length > 1 ? `(${clauses.join(' AND ')})` : clauses[0];
-}
-
-/**
- * Tag groups as arms. Single-tag groups are folded into ONE `IN [...]` clause rather
- * than an arm each — identical to OR-ing them, and it keeps a hub built before
- * `groupKey` existed on the same one-clause shape it always had.
- */
-function tagGroupArms(tagGroups: number[][]): HubFilterArm[] {
-  const arms: HubFilterArm[] = [];
-  const singles = tagGroups.filter((group) => group.length === 1).map(([id]) => id);
-  if (singles.length) arms.push([{ field: 'tagIds', ids: singles }]);
-  for (const group of tagGroups) {
-    if (group.length > 1) arms.push(group.map((id) => ({ field: 'tagIds' as const, ids: [id] })));
-  }
-  return arms;
-}
-
-// The single enumeration of the arms a hub ORs together. One builder consumes it
-// today (`buildHubFilter`); the split survives so a second clause syntax cannot be
-// given a different set of arms.
-// Returns null for "no arm", which callers must treat as "serve nothing"; treating
-// it as "no filter" hands the caller the global feed as their hub.
-function hubFilterArms(
-  sources: ResolvedHubSources,
-  {
-    hideAutoResources,
-    hideManualResources,
-  }: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
-): HubFilterArm[] | null {
-  const arms: HubFilterArm[] = [];
-  if (sources.userIds.length) arms.push([{ field: 'userId', ids: sources.userIds }]);
-  if (sources.modelVersionIds.length) {
-    arms.push([{ field: 'postedToId', ids: sources.modelVersionIds }]);
-    if (!hideAutoResources) arms.push([{ field: 'modelVersionIds', ids: sources.modelVersionIds }]);
-    if (!hideManualResources)
-      arms.push([{ field: 'modelVersionIdsManual', ids: sources.modelVersionIds }]);
-  }
-  // No guard, unlike `collectionIds` below: `tagIds` has been a live filterable
-  // attribute on the metrics index since 2024, and the ids are denormalised onto the
-  // documents at index time. Verified against the prod index rather than assumed —
-  // a tag filter returns hits where `collectionIds IN [...]` is rejected outright.
-  arms.push(...tagGroupArms(sources.tagGroups));
-  // Guarded, not merely unused: filtering on an attribute the index has not been
-  // rebuilt with makes Meilisearch reject the entire query, which surfaces as a 503.
-  if (HUB_COLLECTION_SOURCES_ENABLED && sources.collectionIds.length)
-    arms.push([{ field: 'collectionIds', ids: sources.collectionIds }]);
-
-  return arms.length ? arms : null;
-}
-
-/**
- * The hub's keep-out group: a creator, model or version whose content the owner
- * said must not appear. ANDed as a `NOT` against everything else rather than ORed
- * into the source group — an exclusion that joins the OR is not an exclusion, it is
- * a fifth way to be included.
- *
- * Returns null for "this hub excludes nothing", which is the only safe reading of
- * an empty set: unlike `hubFilterArms`, a null here must NOT empty the page.
- *
- * The three resource arms are emitted unconditionally, where the positive builder
- * gates two of them on hideAutoResources / hideManualResources. Those gates say
- * which attributions the viewer wants to be COLLECTED by; they do not say the
- * viewer is willing to see a model the owner refused, arriving under a different
- * attribution.
- */
-function buildHubExclusionFilter(sources: ResolvedHubSources): string | null {
-  const { userIds, modelVersionIds, tagGroups } = sources.excluded;
-  const arms: HubFilterArm[] = [];
-  if (userIds.length) arms.push([{ field: 'userId', ids: userIds }]);
-  // A grouped exclusion removes LESS than an ungrouped one: `NOT (x AND y)` keeps an
-  // image carrying only x. The UI states that where the group is built; it is not
-  // something the filter can compensate for.
-  arms.push(...tagGroupArms(tagGroups));
-  if (modelVersionIds.length) {
-    arms.push([{ field: 'postedToId', ids: modelVersionIds }]);
-    arms.push([{ field: 'modelVersionIds', ids: modelVersionIds }]);
-    arms.push([{ field: 'modelVersionIdsManual', ids: modelVersionIds }]);
-  }
-  if (!arms.length) return null;
-
-  // Verified against the prod metrics index rather than assumed: a document whose
-  // `tagIds` is empty survives `NOT tagIds IN [x]`, and `NOT field IN [unused-id]`
-  // returns the whole set. So a NOT arm removes matches only — it does not also
-  // drop documents that lack the field.
-  return `NOT (${arms.map(renderHubArm).join(' OR ')})`;
-}
-
-function buildHubFilter(
-  sources: ResolvedHubSources,
-  input: Pick<ImageSearchInput, 'hideAutoResources' | 'hideManualResources'>
-): string | null {
-  const arms = hubFilterArms(sources, input);
-  if (!arms) return null;
-  return `(${arms.map(renderHubArm).join(' OR ')})`;
-}
-
-export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
-  if (!metricsSearchClient) return { data: [], nextCursor: undefined };
-  let { postIds = [] } = input;
-
-  const {
-    sort,
-    modelVersionId,
-    model3dId,
-    types,
-    withMeta,
-    fromPlatform,
-    notPublished,
-    scheduled,
-    publishedOnly,
-    username,
-    tags,
-    tools,
-    techniques,
-    baseModels,
-    period,
-    jumpTo,
-    isModerator,
-    currentUserId,
-    excludedUserIds,
-    hideAutoResources,
-    hideManualResources,
-    hidden,
-    followed,
-    limit = 100,
-    offset,
-    entry,
-    postId,
-    reviewId,
-    modelId,
-    prioritizedUserIds,
-    remixOfId,
-    remixesOnly,
-    nonRemixesOnly,
-    excludedTagIds,
-    disablePoi,
-    disableMinor,
-    requiringMeta,
-    poiOnly,
-    minorOnly,
-    blockedFor,
-    newCreators,
-    newCreatorsMaxFollowers,
-    hubId,
-    domain,
-    // TODO check the unused stuff in here
-  } = input;
-  let { browsingLevel, userId } = input;
-
-  const sorts: MeiliImageSort[] = [];
-  const filters: string[] = [];
-
-  // Only show images that belong to a post
-  filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
-
-  const ownCarveOut = currentUserId ? ` OR "userId" = ${currentUserId}` : '';
-  if (!isModerator) {
-    filters.push(
-      // Avoids exposing private resources to the public
-      `((NOT availability = ${Availability.Private})${ownCarveOut})`
-    );
-
-    filters.push(
-      // Avoids blocked resources to the public
-      `(("blockedFor" IS NULL OR "blockedFor" NOT EXISTS)${ownCarveOut})`
-    );
-  }
-
-  if (postId) {
-    postIds = [...(postIds ?? []), postId];
-  }
-
-  if (disablePoi) {
-    filters.push(`(NOT poi = true${ownCarveOut})`);
-  }
-  if (disableMinor) {
-    filters.push(`(NOT minor = true${ownCarveOut})`);
-  }
-
-  if (isModerator) {
-    if (poiOnly) {
-      filters.push(`poi = true`);
-    }
-    if (minorOnly) {
-      filters.push(`minor = true`);
-    }
-    if (blockedFor?.length) {
-      filters.push(`blockedFor IN [${strArray(blockedFor)}]`);
-    }
-  }
-
-  // Filter
-  //------------------------
-  if (hidden) {
-    if (!currentUserId) throw throwAuthorizationError();
-    const hiddenImages = await dbRead.imageEngagement.findMany({
-      where: { userId: currentUserId, type: 'Hide' },
-      select: { imageId: true },
-    });
-    const imageIds = hiddenImages.map((x) => x.imageId);
-    if (imageIds.length) {
-      filters.push(makeMeiliImageSearchFilter('id', `IN [${imageIds.join(',')}]`));
-    } else {
-      return { data: [], nextCursor: undefined };
-    }
-  }
-
-  if (username && !userId) {
-    const targetUser =
-      (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
-      (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
-    if (!targetUser) throw throwNotFoundError('User not found');
-    userId = targetUser.id;
-
-    logToAxiom(
-      { type: 'info', message: 'Using username instead of userId' },
-      'temp-search'
-    ).catch();
-  }
-
-  // could throw authorization error here
-  if (currentUserId && followed) {
-    const followedUsers = await dbRead.userEngagement.findMany({
-      where: { userId: currentUserId, type: 'Follow' },
-      select: { targetUserId: true },
-    });
-    const userIds = followedUsers.map((x) => x.targetUserId);
-    if (userIds.length) {
-      filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
-    } else {
-      return { data: [], nextCursor: undefined };
-    }
-  }
-
-  // Creators on the "new & upcoming" board. Same shape as `followed` above, but the
-  // set is global per domain rather than per viewer. An unpopulated board returns
-  // nothing rather than degrading to the unfiltered feed.
-  if (newCreators) {
-    const newCreatorIds = await getNewCreatorUserIds({
-      entity: 'images',
-      domain,
-      maxFollowers: newCreatorsMaxFollowers,
-    });
-    if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
-    filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
-  }
-
-  if (hubId) {
-    const sources = await resolvedHubSources(input);
-    const hubFilter = sources && buildHubFilter(sources, input);
-    if (!hubFilter) return { data: [], nextCursor: undefined };
-    filters.push(hubFilter);
-
-    // Pushed as its own AND term, and only when there is something to exclude: an
-    // empty keep-out set must leave the feed alone, not empty it.
-    const hubExclusionFilter = buildHubExclusionFilter(sources);
-    if (hubExclusionFilter) filters.push(hubExclusionFilter);
-
-    // The hub's own content cap, applied before the browsing-level block below
-    // reads `browsingLevel`. An empty intersection is served as an empty page, not
-    // as the uncapped feed the block's `if (!browsingLevel)` fallback would give it.
-    const capped = hubBrowsingLevel(browsingLevel, sources);
-    if (capped !== undefined) {
-      if (!capped) return { data: [], nextCursor: undefined };
-      browsingLevel = capped;
-    }
-  }
-
-  // nb: commenting this out while we try checking existence in the db
-  // const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
-  // if (lastExistedAt) {
-  //   filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
-  // }
-
-  // NSFW Level
-  if (!browsingLevel) browsingLevel = NsfwLevel.PG;
-  else browsingLevel = onlySelectableLevels(browsingLevel);
-  const browsingLevels = Flags.instanceToArray(browsingLevel);
-  const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
-
-  if (isModerator && includesNsfwContent) browsingLevels.push(0);
-
-  const nsfwLevelField: MetricsImageFilterableAttribute = 'nsfwLevel';
-  const nsfwFilters = [
-    makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
-  ];
-  // The caller's own unscanned uploads. Added only when there IS a caller: with no
-  // `userId` clause to pair it with, this arm is every unscanned image on the site,
-  // ORed past the browsing level, for anyone logged out. Signed-in behaviour is
-  // unchanged.
-  if (currentUserId) {
-    const nsfwUserFilters = [
-      makeMeiliImageSearchFilter(nsfwLevelField, `= 0`),
-      makeMeiliImageSearchFilter('userId', `= ${currentUserId}`),
-    ];
-    nsfwFilters.push(`(${nsfwUserFilters.join(' AND ')})`);
-  }
-  filters.push(`(${nsfwFilters.join(' OR ')})`);
-
-  // NSFW License Restrictions Filter
-  // Filter out images with R/X/XXX NSFW levels that use restricted base models.
-  if (nsfwRestrictedBaseModels.length > 0) {
-    const restrictedBaseModelsQuoted = nsfwRestrictedBaseModels.map((bm) => `'${bm}'`);
-
-    // Exclude images that have BOTH restricted NSFW levels AND restricted base models
-    filters.push(
-      `NOT (${nsfwLevelField} IN [${nsfwBrowsingLevelsArray.join(
-        ','
-      )}] AND baseModel IN [${restrictedBaseModelsQuoted.join(',')}])`
-    );
-  }
-
-  if (modelVersionId) {
-    const versionFilters = [makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)];
-
-    if (!hideAutoResources) {
-      versionFilters.push(makeMeiliImageSearchFilter('modelVersionIds', `IN [${modelVersionId}]`));
-    }
-    if (!hideManualResources) {
-      versionFilters.push(
-        makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${modelVersionId}]`)
-      );
-    }
-
-    filters.push(`(${versionFilters.join(' OR ')})`);
-  }
-
-  // Model3D gallery filter — `model3dId` is the index analog of `postedToId`
-  // (set at index time from `Post.model3dId`). Lets the 3D-model detail page
-  // serve its gallery from Meilisearch instead of the DB feed path, which
-  // was tripping the 20s ceiling on `getAllImages` for model3d queries.
-  if (model3dId) {
-    filters.push(makeMeiliImageSearchFilter('model3dId', `= ${model3dId}`));
-  }
-
-  if (remixOfId) {
-    filters.push(makeMeiliImageSearchFilter('remixOfId', `= ${remixOfId}`));
-  }
-
-  if (remixesOnly && !nonRemixesOnly) {
-    filters.push(makeMeiliImageSearchFilter('remixOfId', '>= 0'));
-  }
-
-  if (nonRemixesOnly) {
-    filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
-  }
-
-  if (excludedTagIds?.length) {
-    // Needed support for this in order to properly support multiple domains.
-    filters.push(makeMeiliImageSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
-  }
-
-  /*
-  // TODO this won't work, can't do custom sort
-  if (prioritizedUserIds?.length) {
-    // why do this?
-    // if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
-
-    // If system user, show community images
-    if (prioritizedUserIds.length === 1 && prioritizedUserIds[0] === -1) {
-      sorts.push(makeMeiliImageSearchSort('index', 'asc'))
-      // orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`
-    } else {
-      // For everyone else, only show their images.
-      filters.push(makeMeiliImageSearchFilter('userId', `IN [${prioritizedUserIds.join(',')}]`));
-      sorts.push(makeMeiliImageSearchSort('postedToId', 'asc'));
-      sorts.push(makeMeiliImageSearchSort('index', 'asc'));
-      // orderBy = `(i."postId" * 100) + i."index"`; // Order by oldest post first
-    }
-  }
-  */
-
-  if (withMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
-  if (requiringMeta) {
-    filters.push(`("blockedFor" = ${BlockedReason.AiNotVerified})`);
-  }
-  if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
-
-  const snappedNow = snapToInterval(Math.round(Date.now()));
-  // Hoisted above the moderator branch so a creator browsing their OWN profile
-  // reaches it too. `canRequestUnpublished` is what keeps that safe: it refuses
-  // unless the request is already scoped to the caller, so a non-moderator
-  // cannot ask this question about the site at large. Moderator behaviour is
-  // unchanged — they still answer true for any creator.
-  if (notPublished && canRequestUnpublished({ isModerator, currentUserId, targetUserId: userId })) {
-    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
-  } else if (isModerator) {
-    if (scheduled) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
-    else {
-      const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-      // `publishedOnly` is the caller saying it cannot use an unpublished row at
-      // all, so the moderator's own-content carve-out is lifted too. Without
-      // this a moderator got their own drafts in a picker whose mutation
-      // refuses them, and no other caller could opt out of that.
-      if (currentUserId && !publishedOnly) {
-        publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
-      }
-      filters.push(`(${publishedFilters.join(' OR ')})`);
-    }
-  } else {
-    // Non-mod path. By default, strict published-only — owners no longer see
-    // their own scheduled/unpublished content pinned to feeds. The `scheduled`
-    // flag is opt-in: when set, OR-in the owner carve-out so the user-own
-    // second pass surfaces own scheduled hits.
-    const publishedFilters: string[] = [
-      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`),
-    ];
-    if (currentUserId && scheduled) {
-      publishedFilters.push(makeOwnScheduledMeiliFilter(currentUserId, snappedNow));
-    }
-    filters.push(`(${publishedFilters.join(' OR ')})`);
-  }
-
-  if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
-  if (tags?.length) filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));
-  if (tools?.length) filters.push(makeMeiliImageSearchFilter('toolIds', `IN [${tools.join(',')}]`));
-  if (techniques?.length)
-    filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
-  if (postIds?.length)
-    filters.push(makeMeiliImageSearchFilter('postId', `IN [${postIds.join(',')}]`));
-  if (baseModels?.length)
-    filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
-
-  // TODO why were we doing this at all?
-  // if (userIds) {
-  //   userIds = Array.isArray(userIds) ? userIds : [userIds];
-  //   filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
-  // }
-
-  if (userId) filters.push(makeMeiliImageSearchFilter('userId', `= ${userId}`));
-  else if (excludedUserIds)
-    filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
-
-  // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
-  //  how?
-  // if (reviewId) {}
-
-  // Handle period filter
-  let afterDate: Date | undefined;
-  if (period && period !== 'AllTime') {
-    const now = dayjs();
-    afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
-  }
-  if (afterDate) {
-    // convert to minutes for better caching
-    filters.push(
-      makeMeiliImageSearchFilter(
-        'sortAtUnix',
-        `> ${snapToInterval(Math.round(afterDate.getTime()))}`
-      )
-    );
-  }
-  const jumpToFilter = makeMeiliJumpToFilter({ jumpTo, sort, userId });
-  if (jumpToFilter) filters.push(jumpToFilter);
-
-  // nb: this is for dev 08-19
-  // if (!isProd) {
-  // filters.push(makeMeiliImageSearchFilter('id', '<= 25147444'));
-  // }
-
-  // TODO log more of these
-  // Log properties we don't support yet
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cantProcess: Record<string, any> = {
-    reviewId,
-    modelId,
-    prioritizedUserIds,
-  };
-  if (reviewId || modelId || prioritizedUserIds) {
-    const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
-    logToAxiom({ type: 'info', input: JSON.stringify(missingKeys) }, 'temp-search').catch();
-  }
-
-  // Sort
-  //------------------------
-
-  let searchSort: MeiliImageSort;
-  if (sort === ImageSort.MostComments) {
-    searchSort = makeMeiliImageSearchSort('commentCount', 'desc');
-  } else if (sort === ImageSort.MostReactions) {
-    searchSort = makeMeiliImageSearchSort('reactionCount', 'desc');
-  } else if (sort === ImageSort.MostCollected) {
-    searchSort = makeMeiliImageSearchSort('collectedCount', 'desc');
-  } else if (sort === ImageSort.Oldest) {
-    searchSort = makeMeiliImageSearchSort('sortAt', 'asc');
-  } else {
-    searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
-    // - to avoid dupes (for any ascending query), we need to filter on that attribute
-    if (entry) {
-      // Note: this could cause posts to be missed/included in multiple pages due to the minute rounding
-      filters.push(
-        makeMeiliImageSearchFilter('sortAtUnix', `<= ${snapToInterval(Math.round(entry))}`)
-      );
-    }
-  }
-  sorts.push(searchSort);
-  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
-
-  const request: SearchParams = {
-    filter: filters.join(' AND '),
-    sort: sorts,
-    limit: limit + 1,
-    offset,
-  };
-
-  const route = 'getImagesFromSearch';
-  const endTimer = requestDurationSeconds.startTimer({ route });
-  requestTotal.inc({ route }); // count every request up front
-
-  try {
-    const actor = input.actor;
-
-    // Always use the abortable raw fetch path. Two reasons:
-    //   1. Client disconnect: a caller-supplied `input.signal` still cancels
-    //      the underlying request as before.
-    //   2. Hard local deadline: fetchDocumentsAbortable() now races against a
-    //      5s default timer (FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS). Before this,
-    //      the non-signal branch fell through to the SDK getDocuments, which
-    //      meilisearch-js 0.33/0.34 does NOT cancel — the only protection was
-    //      withMeili()'s 2.5s wrapper timer, with the orphan SDK promise still
-    //      running. Routing everything through fetchDocumentsAbortable gives
-    //      us one code path with a real abort, regardless of whether the
-    //      caller passed a signal.
-    //
-    // This is the hot tRPC path
-    // (image.getInfinite → getInfiniteImagesHandler → getAllImagesIndex →
-    //  this prefilter). Verification on 2026-05-29 showed this is where the
-    // 374-error/15min Meili bleed lives, NOT in getImagesFromFeedSearch.
-    const mainResult = await withSpan('image:meili:getDocuments', () =>
-      fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(METRICS_SEARCH_INDEX, request, {
-        host: env.METRICS_SEARCH_HOST as string,
-        apiKey: env.METRICS_SEARCH_API_KEY,
-        signal: input.signal,
-        actor,
-      })
-    );
-    let results = mainResult.results;
-
-    let nextCursor: number | undefined;
-    if (results.length > limit) {
-      results.pop();
-      // - if we have no entrypoint, it's the first request, and set one for the future
-      //   else keep it the same
-      nextCursor = !entry ? results[0]?.sortAtUnix : entry;
-    }
-
-    const filteredHits = results.filter((hit) => {
-      if (!hit.url)
-        // check for good data
-        return false;
-      // filter out items flagged with minor unless it's the owner or moderator
-      if (hit.acceptableMinor) return hit.userId === currentUserId || isModerator;
-      // filter out non-scanned unless it's the owner or moderator
-      if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
-
-      return hit.userId === currentUserId || (isModerator && includesNsfwContent);
-    });
-
-    // Get all image IDs from search results
-    const searchImageIds = filteredHits.map((hit) => hit.id);
-    const filteredHitIds = [...new Set(searchImageIds)];
-
-    // Routed through getFliptBoolean (memoized once PR #2394's eval cache lands)
-    // instead of a direct per-request wasm eval; returns false on a missing/
-    // uninitialized client (existence check off), matching the prior default.
-    const cacheExistenceEnabled = await getFliptBoolean(
-      FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-      currentUserId?.toString() || 'anonymous'
-    );
-    ffRequestsTotal.inc({ route, enabled: String(cacheExistenceEnabled) });
-
-    if (!cacheExistenceEnabled) {
-      cacheHitRequestsTotal.inc({ route, hit_type: 'miss' });
-
-      // BASIC DB CHECK (default)
-      const dbIdResp = await dbRead.image.findMany({
-        where: { id: { in: filteredHitIds } },
-        select: { id: true },
-      });
-
-      const idSet = new Set(dbIdResp.map((r) => r.id));
-      const filtered = results.filter((h) => idSet.has(h.id));
-
-      const droppedCount = results.length - filtered.length;
-      droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
-
-      const imageMetrics = await getImageMetricsObject(filtered);
-      const fullData = filtered.map((h) => {
-        const match = imageMetrics[h.id];
-        return {
-          ...h,
-          stats: toImageV2Stats(match),
-        };
-      });
-
-      endTimer();
-
-      return { data: fullData, nextCursor };
-    }
-
-    // ===== SMART CACHE EXISTENCE CHECK (feature-flagged) =====
-    const checkImageExistence = async (imageIds: number[]) => {
-      // Preserve original order and remove duplicates
-      const uniqueIds = [...new Set(imageIds)];
-      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`;
-      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as RedisKeyTemplateSys);
-
-      // Check cached results first (10 minute TTL — see EX: 600 below). Fail open: image feed
-      // is the highest-traffic endpoint, a sysRedis outage shouldn't 500
-      // it. Treat a throw as full cache miss (everything falls through
-      // to DB — slower but correct).
-      let cachedResults: (string | null)[];
-      try {
-        // Wall-clock deadline so a silent sysRedis half-open can't park this
-        // highest-traffic read ~11min (a fast DOWN already rejects into catch).
-        cachedResults = await withSysReadDeadline(sysRedis.packed.mGet(cacheKeys));
-      } catch (err) {
-        logSysRedisFailOpen('read-degraded', 'checkImageExistence mGet', err);
-        cachedResults = new Array(uniqueIds.length).fill(null);
-      }
-
-      // Separate cached and uncached IDs
-      const uncachedIds: number[] = [];
-      const cachedMap = new Map<number, boolean>();
-      let cacheMiss = 0;
-
-      for (let i = 0; i < uniqueIds.length; i++) {
-        const id = uniqueIds[i];
-        const cachedResult = cachedResults[i];
-
-        if (cachedResult === 'true') {
-          cachedMap.set(id, true);
-        } else if (cachedResult === 'false') {
-          cachedMap.set(id, false);
-        } else {
-          uncachedIds.push(id);
-          cacheMiss++;
-        }
-      }
-
-      let hitType: 'full' | 'partial' | 'miss';
-      if (cacheMiss === 0) {
-        hitType = 'full';
-      } else if (cacheMiss === uniqueIds.length) {
-        hitType = 'miss';
-      } else {
-        hitType = 'partial';
-      }
-
-      cacheHitRequestsTotal.inc({ route, hit_type: hitType });
-
-      // Query DB for uncached IDs
-      if (uncachedIds.length > 0) {
-        const dbResults = await dbRead.image.findMany({
-          where: { id: { in: uncachedIds } },
-          select: { id: true },
-        });
-
-        const dbIdSet = new Set(dbResults.map((r) => r.id));
-
-        // Update cache with DB results (10-minute TTL, EX: 600)
-        const cacheUpdates: Record<string, string> = {};
-        for (const id of uncachedIds) {
-          const exists = dbIdSet.has(id);
-          cacheUpdates[`${cachePrefix}${id}`] = exists ? 'true' : 'false';
-          cachedMap.set(id, exists);
-        }
-
-        // Best-effort cache populate. Without this catch, the read-side
-        // fail-open above is defeated: every partial-cache-miss request
-        // during a sysRedis outage would still 500 here.
-        await Promise.all(
-          Object.entries(cacheUpdates).map(([key, value]) =>
-            sysRedis.packed.set(key as RedisKeyTemplateSys, value, { EX: 600 })
-          )
-        ).catch((err) => {
-          logSysRedisFailOpen('write-degraded', 'checkImageExistence cache populate', err);
-        });
-      }
-
-      // Filter hits based on existence check while preserving order
-      let dropped = 0;
-      const filteredHits = results.filter((hit) => {
-        const exists = cachedMap.get(hit.id);
-        const keep = exists !== false; // treat undefined as exists=true
-        if (!keep) dropped++;
-
-        return keep;
-      });
-
-      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
-
-      return filteredHits.filter((x) => imageIds.includes(x.id));
-    };
-
-    // Apply the (flagged) existence check
-    const filtered = await checkImageExistence(filteredHitIds);
-
-    const imageMetrics = await getImageMetricsObject(filtered);
-
-    const fullData = filtered.map((h) => {
-      const match = imageMetrics[h.id];
-      return {
-        ...h,
-        stats: toImageV2Stats(match),
-      };
-    });
-
-    endTimer();
-
-    return {
-      data: fullData,
-      nextCursor,
-    };
-  } catch (error) {
-    const err = error as Error;
-    logToAxiom(
-      {
-        type: 'search-error',
-        error: err.message,
-        cause: err.cause,
-        input: redactSearchInputForLog(input),
-        request,
-      },
-      'temp-search'
-    ).catch();
-
-    endTimer();
-    // Let the error bubble up to tRPC. The client detects isError on the
-    // infinite query and renders the retry banner — same path that handles any
-    // other backend failure (API down, network blip, etc.).
-    throw err;
-  }
-}
-
-export async function getImagesFromSearchPostFilter(input: ImageSearchInput) {
-  if (!metricsSearchClient) return { data: [], nextCursor: undefined };
-  let { postIds = [] } = input;
-
-  const {
-    sort,
-    modelVersionId,
-    model3dId,
-    types,
-    withMeta,
-    fromPlatform,
-    notPublished,
-    scheduled,
-    publishedOnly,
-    username,
-    tags,
-    tools,
-    techniques,
-    baseModels,
-    period,
-    jumpTo,
-    isModerator,
-    currentUserId,
-    excludedUserIds,
-    hideAutoResources,
-    hideManualResources,
-    hidden,
-    followed,
-    limit = 100,
-    offset,
-    entry,
-    postId,
-    reviewId,
-    modelId,
-    prioritizedUserIds,
-    remixOfId,
-    remixesOnly,
-    nonRemixesOnly,
-    excludedTagIds,
-    disablePoi,
-    disableMinor,
-    requiringMeta,
-    poiOnly,
-    minorOnly,
-    blockedFor,
-    // TODO check the unused stuff in here
-    newCreators,
-    newCreatorsMaxFollowers,
-    hubId,
-    domain,
-  } = input;
-  let { browsingLevel, userId } = input;
-
-  const sorts: MeiliImageSort[] = [];
-  const filters: string[] = [];
-
-  // Only show images that belong to a post
-  filters.push(makeMeiliImageSearchFilter('postId', 'IS NOT NULL'));
-
-  if (postId) {
-    postIds = [...(postIds ?? []), postId];
-  }
-
-  // Past POI cut-off, don't even return for owners
-  if (disablePoi) {
-    filters.push(`(NOT poi = true)`);
-  }
-  if (disableMinor) {
-    const ownCarveOut = currentUserId ? ` OR "userId" = ${currentUserId}` : '';
-    filters.push(`(NOT minor = true${ownCarveOut})`);
-  }
-
-  if (isModerator) {
-    if (poiOnly) {
-      filters.push(`poi = true`);
-    }
-    if (minorOnly) {
-      filters.push(`minor = true`);
-    }
-    if (blockedFor?.length) {
-      filters.push(`blockedFor IN [${strArray(blockedFor)}]`);
-    }
-  }
-
-  // Filter
-  //------------------------
-  if (hidden) {
-    if (!currentUserId) throw throwAuthorizationError();
-    const hiddenImages = await dbRead.imageEngagement.findMany({
-      where: { userId: currentUserId, type: 'Hide' },
-      select: { imageId: true },
-    });
-    const imageIds = hiddenImages.map((x) => x.imageId);
-    if (imageIds.length) {
-      filters.push(makeMeiliImageSearchFilter('id', `IN [${imageIds.join(',')}]`));
-    } else {
-      return { data: [], nextCursor: undefined };
-    }
-  }
-
-  if (username && !userId) {
-    const targetUser =
-      (await dbRead.user.findUnique({ where: { username }, select: { id: true } })) ??
-      (await dbWrite.user.findUnique({ where: { username }, select: { id: true } }));
-    if (!targetUser) throw throwNotFoundError('User not found');
-    userId = targetUser.id;
-
-    logToAxiom(
-      { type: 'info', message: 'Using username instead of userId' },
-      'temp-search'
-    ).catch();
-  }
-
-  // could throw authorization error here
-  if (currentUserId && followed) {
-    const followedUsers = await dbRead.userEngagement.findMany({
-      where: { userId: currentUserId, type: 'Follow' },
-      select: { targetUserId: true },
-    });
-    const userIds = followedUsers.map((x) => x.targetUserId);
-    if (userIds.length) {
-      filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
-    } else {
-      return { data: [], nextCursor: undefined };
-    }
-  }
-
-  if (newCreators) {
-    const newCreatorIds = await getNewCreatorUserIds({
-      entity: 'images',
-      domain,
-      maxFollowers: newCreatorsMaxFollowers,
-    });
-    if (!newCreatorIds.length) return { data: [], nextCursor: undefined };
-    filters.push(makeMeiliImageSearchFilter('userId', `IN [${newCreatorIds.join(',')}]`));
-  }
-
-  if (hubId) {
-    const sources = await resolvedHubSources(input);
-    const hubFilter = sources && buildHubFilter(sources, input);
-    if (!hubFilter) return { data: [], nextCursor: undefined };
-    filters.push(hubFilter);
-
-    // Pushed as its own AND term, and only when there is something to exclude: an
-    // empty keep-out set must leave the feed alone, not empty it.
-    const hubExclusionFilter = buildHubExclusionFilter(sources);
-    if (hubExclusionFilter) filters.push(hubExclusionFilter);
-
-    // The hub's own content cap, applied before the browsing-level block below
-    // reads `browsingLevel`. An empty intersection is served as an empty page, not
-    // as the uncapped feed the block's `if (!browsingLevel)` fallback would give it.
-    const capped = hubBrowsingLevel(browsingLevel, sources);
-    if (capped !== undefined) {
-      if (!capped) return { data: [], nextCursor: undefined };
-      browsingLevel = capped;
-    }
-  }
-
-  // nb: commenting this out while we try checking existence in the db
-  // const lastExistedAt = await redis.get(REDIS_KEYS.INDEX_UPDATES.IMAGE_METRIC);
-  // if (lastExistedAt) {
-  //   filters.push(makeMeiliImageSearchFilter('existedAtUnix', `>= ${lastExistedAt}`));
-  // }
-
-  // NSFW Level
-  if (!browsingLevel) browsingLevel = NsfwLevel.PG;
-  else browsingLevel = onlySelectableLevels(browsingLevel);
-  const browsingLevels = Flags.instanceToArray(browsingLevel);
-  const includesNsfwContent = Flags.intersects(browsingLevel, nsfwBrowsingLevelsFlag);
-
-  if (isModerator && includesNsfwContent) browsingLevels.push(0);
-
-  const nsfwLevelField: MetricsImageFilterableAttribute = 'nsfwLevel';
-  const nsfwFilters = [
-    makeMeiliImageSearchFilter(nsfwLevelField, `IN [${browsingLevels.join(',')}]`) as string,
-  ];
-  // Allow users to see their own unscanned content on their user page.
-  if (currentUserId && userId === currentUserId)
-    nsfwFilters.push(makeMeiliImageSearchFilter(nsfwLevelField, `= 0`));
-
-  filters.push(`(${nsfwFilters.join(' OR ')})`);
-
-  // NSFW License Restrictions Filter
-  if (nsfwRestrictedBaseModels.length > 0) {
-    const restrictedBaseModelsQuoted = nsfwRestrictedBaseModels.map((bm) => `'${bm}'`);
-
-    // Exclude images that have BOTH restricted NSFW levels AND restricted base models
-    filters.push(
-      `NOT (${nsfwLevelField} IN [${nsfwBrowsingLevelsArray.join(
-        ','
-      )}] AND baseModel IN [${restrictedBaseModelsQuoted.join(',')}])`
-    );
-  }
-
-  if (modelVersionId) {
-    const versionFilters = [makeMeiliImageSearchFilter('postedToId', `= ${modelVersionId}`)];
-
-    if (!hideAutoResources) {
-      versionFilters.push(makeMeiliImageSearchFilter('modelVersionIds', `IN [${modelVersionId}]`));
-    }
-    if (!hideManualResources) {
-      versionFilters.push(
-        makeMeiliImageSearchFilter('modelVersionIdsManual', `IN [${modelVersionId}]`)
-      );
-    }
-
-    filters.push(`(${versionFilters.join(' OR ')})`);
-  }
-
-  // Model3D gallery filter — `model3dId` is the index analog of `postedToId`
-  // (set at index time from `Post.model3dId`). Lets the 3D-model detail page
-  // serve its gallery from Meilisearch instead of the DB feed path, which
-  // was tripping the 20s ceiling on `getAllImages` for model3d queries.
-  if (model3dId) {
-    filters.push(makeMeiliImageSearchFilter('model3dId', `= ${model3dId}`));
-  }
-
-  if (remixOfId) {
-    filters.push(makeMeiliImageSearchFilter('remixOfId', `= ${remixOfId}`));
-  }
-
-  if (remixesOnly && !nonRemixesOnly) {
-    filters.push(makeMeiliImageSearchFilter('remixOfId', '>= 0'));
-  }
-
-  if (nonRemixesOnly) {
-    filters.push(makeMeiliImageSearchFilter('remixOfId', 'NOT EXISTS'));
-  }
-
-  if (excludedTagIds?.length) {
-    // Needed support for this in order to properly support multiple domains.
-    filters.push(makeMeiliImageSearchFilter('tagIds', `NOT IN [${excludedTagIds.join(',')}]`));
-  }
-
-  /*
-  // TODO this won't work, can't do custom sort
-  if (prioritizedUserIds?.length) {
-    // why do this?
-    // if (cursor) throw new Error('Cannot use cursor with prioritizedUserIds');
-
-    // If system user, show community images
-    if (prioritizedUserIds.length === 1 && prioritizedUserIds[0] === -1) {
-      sorts.push(makeMeiliImageSearchSort('index', 'asc'))
-      // orderBy = `IIF(i."userId" IN (${prioritizedUserIds.join(',')}), i.index, 1000),  ${orderBy}`
-    } else {
-      // For everyone else, only show their images.
-      filters.push(makeMeiliImageSearchFilter('userId', `IN [${prioritizedUserIds.join(',')}]`));
-      sorts.push(makeMeiliImageSearchSort('postedToId', 'asc'));
-      sorts.push(makeMeiliImageSearchSort('index', 'asc'));
-      // orderBy = `(i."postId" * 100) + i."index"`; // Order by oldest post first
-    }
-  }
-  */
-
-  if (withMeta) filters.push(makeMeiliImageSearchFilter('hasMeta', '= true'));
-  if (requiringMeta) {
-    filters.push(`("blockedFor" = ${BlockedReason.AiNotVerified})`);
-  }
-  if (fromPlatform) filters.push(makeMeiliImageSearchFilter('onSite', '= true'));
-
-  // Publish Date Filtering.
-  const snappedNow = snapToInterval(Date.now());
-  // Hoisted above the moderator branch so a creator browsing their OWN profile
-  // reaches it too — see the matching block in getImagesFromSearchPreFilter.
-  if (notPublished && canRequestUnpublished({ isModerator, currentUserId, targetUserId: userId })) {
-    filters.push(makeMeiliImageSearchFilter('publishedAtUnix', 'NOT EXISTS'));
-  } else if (isModerator) {
-    if (scheduled) filters.push(makeMeiliImageSearchFilter('publishedAtUnix', `> ${snappedNow}`));
-    else {
-      const publishedFilters = [makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`)];
-      // `publishedOnly` is the caller saying it cannot use an unpublished row at
-      // all, so the moderator's own-content carve-out is lifted too. Without
-      // this a moderator got their own drafts in a picker whose mutation
-      // refuses them, and no other caller could opt out of that.
-      if (currentUserId && !publishedOnly) {
-        publishedFilters.push(makeMeiliImageSearchFilter('userId', `= ${currentUserId}`));
-      }
-      filters.push(`(${publishedFilters.join(' OR ')})`);
-    }
-  } else if (userId) {
-    const publishedFilters: string[] = [
-      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`),
-    ];
-    // For own user's profile view, only surface own scheduled content when the
-    // caller explicitly opted in via the `scheduled` flag. Without opt-in, the
-    // strict published filter applies even to own profile.
-    if (currentUserId && userId === currentUserId && scheduled) {
-      publishedFilters.push(makeOwnScheduledMeiliFilter(currentUserId, snappedNow));
-    }
-    filters.push(`(${publishedFilters.join(' OR ')})`);
-  } else {
-    // General feed queries - strict published filter for caching by default.
-    // When `scheduled` is opt-in, OR-in the owner carve-out so own scheduled
-    // hits surface in the main feed.
-    const publishedFilters: string[] = [
-      makeMeiliImageSearchFilter('publishedAtUnix', `<= ${snappedNow}`),
-    ];
-    if (currentUserId && scheduled) {
-      publishedFilters.push(makeOwnScheduledMeiliFilter(currentUserId, snappedNow));
-    }
-    filters.push(`(${publishedFilters.join(' OR ')})`);
-  }
-
-  if (types?.length) filters.push(makeMeiliImageSearchFilter('type', `IN [${types.join(',')}]`));
-  if (tags?.length) filters.push(makeMeiliImageSearchFilter('tagIds', `IN [${tags.join(',')}]`));
-  if (tools?.length) filters.push(makeMeiliImageSearchFilter('toolIds', `IN [${tools.join(',')}]`));
-  if (techniques?.length)
-    filters.push(makeMeiliImageSearchFilter('techniqueIds', `IN [${techniques.join(',')}]`));
-  if (postIds?.length)
-    filters.push(makeMeiliImageSearchFilter('postId', `IN [${postIds.join(',')}]`));
-  if (baseModels?.length)
-    filters.push(makeMeiliImageSearchFilter('baseModel', `IN [${strArray(baseModels)}]`));
-
-  // TODO why were we doing this at all?
-  // if (userIds) {
-  //   userIds = Array.isArray(userIds) ? userIds : [userIds];
-  //   filters.push(makeMeiliImageSearchFilter('userId', `IN [${userIds.join(',')}]`));
-  // }
-
-  if (userId) filters.push(makeMeiliImageSearchFilter('userId', `= ${userId}`));
-  else if (excludedUserIds)
-    filters.push(makeMeiliImageSearchFilter('userId', `NOT IN [${excludedUserIds.join(',')}]`));
-
-  // TODO.metricSearch if reviewId, get corresponding userId instead and add to userIds before making this request
-  //  how?
-  // if (reviewId) {}
-
-  // Handle period filter
-  let afterDate: Date | undefined;
-  if (period && period !== 'AllTime') {
-    const now = dayjs();
-    afterDate = now.subtract(1, period.toLowerCase() as ManipulateType).toDate();
-  }
-  if (afterDate) {
-    // convert to minutes for better caching
-    filters.push(
-      makeMeiliImageSearchFilter('sortAtUnix', `> ${snapToInterval(afterDate.getTime())}`)
-    );
-  }
-  const jumpToFilter = makeMeiliJumpToFilter({ jumpTo, sort, userId });
-  if (jumpToFilter) filters.push(jumpToFilter);
-
-  // nb: this is for dev 08-19
-  // if (!isProd) {
-  // filters.push(makeMeiliImageSearchFilter('id', '<= 25147444'));
-  // }
-
-  // TODO log more of these
-  // Log properties we don't support yet
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const cantProcess: Record<string, any> = {
-    reviewId,
-    modelId,
-    prioritizedUserIds,
-  };
-  if (reviewId || modelId || prioritizedUserIds) {
-    const missingKeys = Object.keys(cantProcess).filter((key) => cantProcess[key] !== undefined);
-    logToAxiom({ type: 'info', input: JSON.stringify(missingKeys) }, 'temp-search').catch();
-  }
-
-  // Sort
-  //------------------------
-
-  let searchSort: MeiliImageSort;
-  if (sort === ImageSort.MostComments) {
-    searchSort = makeMeiliImageSearchSort('commentCount', 'desc');
-  } else if (sort === ImageSort.MostReactions) {
-    searchSort = makeMeiliImageSearchSort('reactionCount', 'desc');
-  } else if (sort === ImageSort.MostCollected) {
-    searchSort = makeMeiliImageSearchSort('collectedCount', 'desc');
-  } else if (sort === ImageSort.Oldest) {
-    searchSort = makeMeiliImageSearchSort('sortAt', 'asc');
-  } else {
-    searchSort = makeMeiliImageSearchSort('sortAt', 'desc');
-  }
-  sorts.push(searchSort);
-  //sorts.push(makeMeiliImageSearchSort('id', 'desc')); // secondary sort for consistency
-
-  const route = 'getImagesFromSearch';
-  const endTimer = requestDurationSeconds.startTimer({ route });
-  requestTotal.inc({ route }); // count every request up front
-
-  // Iterative fetching with adaptive batch sizing to handle post-filtering
-  const MAX_ITERATIONS = 5;
-  const MAX_TOTAL_PROCESSED = limit * 20; // Safety limit to prevent excessive processing
-  const MIN_BATCH_SIZE = limit * 2;
-  const MAX_BATCH_SIZE = limit * 10;
-
-  const accumulatedHits: ImageMetricsSearchIndexRecord[] = [];
-  let currentOffset = offset || 0;
-  let batchSize = MIN_BATCH_SIZE;
-  let iteration = 0;
-  let totalProcessed = 0;
-  let consecutiveEmptyBatches = 0;
-  let nextCursor: number | undefined;
-  // Set true when the iteration loop breaks because the upstream signalled
-  // unavailability (local deadline, 408/5xx, or circuit-open). Used after the
-  // loop to distinguish "feed is genuinely empty" from "we returned nothing
-  // because Meili was unhealthy" — the latter must surface as a retryable
-  // TIMEOUT, not a silent empty 200 the client renders as end-of-feed.
-  let brokeOnUpstreamFailure = false;
-  const request: SearchParams = {
-    filter: filters.join(' AND '),
-    sort: sorts,
-  };
-
-  const actor = input.actor;
-  // (No actorClient pinning needed here: the iteration loop now runs through
-  // fetchDocumentsAbortable, which propagates `actor` via the X-Search-Actor
-  // header on every request directly.)
-
-  try {
-    while (accumulatedHits.length < limit + 1 && iteration < MAX_ITERATIONS) {
-      // Safety check for total processed results
-      if (totalProcessed >= MAX_TOTAL_PROCESSED) {
-        break;
-      }
-
-      const requestLimit = Math.min(batchSize, MAX_TOTAL_PROCESSED - totalProcessed);
-      request.limit = requestLimit;
-      request.offset = currentOffset;
-
-      // Always use the abortable raw fetch path so every iteration races
-      // against the same 5s hard deadline (FETCH_DOCUMENTS_DEFAULT_TIMEOUT_MS).
-      // See PreFilter path for the rationale — meilisearch-js 0.33/0.34
-      // getDocuments() can't be cancelled, so signal-less requests used to
-      // hang the event loop on a slow backend.
-      //
-      // Graceful break-on-fast-fail: if a single iteration hits the local
-      // deadline OR the upstream signals unavailability (408/5xx), return
-      // whatever's already accumulated rather than failing the whole request.
-      // iteration 1 → empty page; iteration ≥ 2 → degraded (partial) page
-      // with nextCursor cleared further below. Downstream handles either
-      // shape fine; the alternative (throwing) would hand the user a 5xx
-      // instead of a usable feed, and clients would retry → load amplifies
-      // → cascade sustains.
-      //
-      // Status-code rationale:
-      //   - 408 (upstream-timeout)  → Meilisearch backend page-cache thrash
-      //   - 503 (upstream-overload) → the feeds proxy shed (MEILI_MAX_CONCURRENT)
-      //   - other 5xx               → upstream brownout / Traefik 504 / etc.
-      //   - 4xx-other (400/401/403) → real client error, MUST bubble up
-      let results: ImageMetricsSearchIndexRecord[];
-      try {
-        const fetchResult = await fetchDocumentsAbortable<ImageMetricsSearchIndexRecord>(
-          METRICS_SEARCH_INDEX,
-          request,
-          {
-            host: env.METRICS_SEARCH_HOST as string,
-            apiKey: env.METRICS_SEARCH_API_KEY,
-            signal: input.signal,
-            actor,
-          }
-        );
-        results = fetchResult.results;
-      } catch (e) {
-        const err = e as Error & { name?: string; message?: string };
-        const isLocalTimeout =
-          err?.message === FETCH_DOCUMENTS_TIMEOUT_MESSAGE ||
-          (err?.name === 'AbortError' &&
-            (err as { cause?: { message?: string } })?.cause?.message ===
-              FETCH_DOCUMENTS_TIMEOUT_MESSAGE);
-        if (isLocalTimeout) {
-          meiliFetchFailfastTotal.inc({
-            route: 'getImagesFromSearchPostFilter',
-            iteration: String(iteration),
-            reason: 'local-timeout',
-          });
-          // Fall out of the iteration loop with whatever's already in
-          // accumulatedHits. The nextCursor / merge logic below handles the
-          // partial case; the empty case is converted to a retryable TIMEOUT
-          // after the loop (brokeOnUpstreamFailure) so the client shows its
-          // retry banner instead of a silent end-of-feed.
-          brokeOnUpstreamFailure = true;
-          break;
-        }
-        // Upstream-side fast-fail: 408 (proxy/backend timeout) or 5xx
-        // (overload / brownout / bad gateway). Same graceful-break shape
-        // as the local-timeout path; 4xx-other re-throws below.
-        if (e instanceof MeilisearchFetchError && isFailfastStatus(e.status)) {
-          meiliFetchFailfastTotal.inc({
-            route: 'getImagesFromSearchPostFilter',
-            iteration: String(iteration),
-            reason: failfastReasonForStatus(e.status),
-          });
-          brokeOnUpstreamFailure = true;
-          break;
-        }
-        // Wrapper-side fail-fast: runWithLimiter said no before the request
-        // touched the network — either the per-backend circuit breaker is
-        // OPEN / HALF_OPEN-busy or the wrapper's MEILI_CALL_TIMEOUT_MS timer
-        // fired on an SDK call. Both surface as MeiliCallTimeoutError and
-        // both indicate the same operational signal: "upstream is unhealthy,
-        // stop iterating". Without this branch the error re-throws and the
-        // user gets a 5xx → retries → the 900/day api-primary restart wave
-        // that remained after PR #2371 closed the HTTP-status paths.
-        //
-        // Branch order matters: this comes AFTER the local-timeout and
-        // MeilisearchFetchError checks (which are sibling failure modes
-        // surfaced through fetchDocumentsAbortable) and BEFORE the generic
-        // re-throw, so unrelated Errors still bubble up unchanged.
-        if (e instanceof MeiliCallTimeoutError) {
-          meiliFetchFailfastTotal.inc({
-            route: 'getImagesFromSearchPostFilter',
-            iteration: String(iteration),
-            reason: MEILI_FETCH_FAILFAST_REASON_CIRCUIT_OPEN,
-          });
-          brokeOnUpstreamFailure = true;
-          break;
-        }
-        throw e;
-      }
-
-      // If no more results, break the loop
-      if (results.length === 0) {
-        break;
-      }
-
-      // Apply post-query user-specific filtering
-      const batchFilteredHits = results.filter((hit) => {
-        if (!hit.url)
-          // check for good data
-          return false;
-
-        const isOwnContent = (currentUserId && hit.userId === currentUserId) || isModerator;
-
-        // User can see their own private content
-        if (hit.availability === Availability.Private && !isOwnContent) return false;
-
-        // User can see their own blocked content
-        if (hit.blockedFor && !isOwnContent) return false;
-
-        // Own scheduled/unpublished content only passes when the caller opted
-        // in via `scheduled` or `notPublished`. Without opt-in, even owners
-        // get the strict published filter applied.
-        if (
-          (!hit.publishedAtUnix || hit.publishedAtUnix > snappedNow) &&
-          !(isOwnContent && (input.scheduled || input.notPublished))
-        )
-          return false;
-
-        // User can see their own unscanned content
-        if (hit.nsfwLevel === 0 && !isOwnContent) return false;
-
-        // filter out items flagged with minor unless it's the owner or moderator
-        if (hit.acceptableMinor) return isOwnContent;
-        // filter out non-scanned unless it's the owner or moderator
-        if (![0, NsfwLevel.Blocked].includes(hit.nsfwLevel) && !hit.needsReview) return true;
-
-        return isOwnContent || (isModerator && includesNsfwContent);
-      });
-
-      // Add filtered results to accumulated results
-      accumulatedHits.push(...batchFilteredHits);
-
-      // Calculate filter ratio and adjust batch size for next iteration
-      const filterRatio = results.length > 0 ? 1 - batchFilteredHits.length / results.length : 0;
-
-      // Track consecutive batches where everything was filtered out.
-      // If this happens 3 times in a row, the filter likely has too few qualifying
-      // results — bail out to avoid hammering Meilisearch.
-      if (batchFilteredHits.length === 0) {
-        consecutiveEmptyBatches++;
-        if (consecutiveEmptyBatches >= 3) break;
-      } else {
-        consecutiveEmptyBatches = 0;
-      }
-
-      // If more than 80% of results are filtered out, increase batch size
-      if (filterRatio > 0.8 && batchSize < MAX_BATCH_SIZE) {
-        batchSize = Math.min(Math.ceil(batchSize * 1.5), MAX_BATCH_SIZE);
-      }
-
-      // Update tracking variables
-      currentOffset += results.length;
-      totalProcessed += results.length;
-      iteration++;
-
-      // If we got fewer results than what we actually requested, we've likely hit the end
-      if (results.length < requestLimit) {
-        break;
-      }
-    }
-
-    // If the loop bailed because Meili was unhealthy AND we accumulated
-    // nothing, we have no usable page to serve. Returning an empty 200 here
-    // makes the client treat it as end-of-feed (nextCursor undefined →
-    // hasNextPage false → no retry), and during a brownout every feed does
-    // the same, so switching feeds also shows "no results". Surface a
-    // retryable 503 instead so the existing SearchRetryBanner kicks in.
-    // (A non-empty partial page still serves normally — degraded, not broken.)
-    if (brokeOnUpstreamFailure && accumulatedHits.length === 0) {
-      throw new TRPCError({
-        code: 'SERVICE_UNAVAILABLE',
-        message: 'Image search is temporarily overloaded — please retry.',
-      });
-    }
-
-    // Record PostFilter metrics
-    const overallFilterRatio = totalProcessed > 0 ? 1 - accumulatedHits.length / totalProcessed : 0;
-    postFilterIterations.observe({ route }, iteration);
-    postFilterDocsProcessed.inc({ route }, totalProcessed);
-    postFilterFilterRatio.observe({ route }, overallFilterRatio);
-
-    const mergedHits = accumulatedHits;
-
-    // Update nextCursor based on whether we have more results than requested
-    if (mergedHits.length > limit) {
-      // We have more results, so there's a next page
-      const lastResult = mergedHits[limit];
-      nextCursor = lastResult?.sortAtUnix || nextCursor;
-    } else {
-      // We don't have more results than requested, so no next page
-      nextCursor = undefined;
-    }
-
-    // Trim results back to requested limit after filtering
-    const limitedHits = mergedHits.slice(0, limit + 1);
-
-    // Get all image IDs from limited results
-    const searchImageIds = limitedHits.map((hit) => hit.id);
-    const filteredHitIds = [...new Set(searchImageIds)];
-
-    // Routed through getFliptBoolean (memoized once PR #2394's eval cache lands)
-    // instead of a direct per-request wasm eval; returns false on a missing/
-    // uninitialized client (existence check off), matching the prior default.
-    const cacheExistenceEnabled = await getFliptBoolean(
-      FLIPT_FEATURE_FLAGS.FEED_IMAGE_EXISTENCE,
-      currentUserId?.toString() || 'anonymous'
-    );
-    ffRequestsTotal.inc({ route, enabled: String(cacheExistenceEnabled) });
-
-    if (!cacheExistenceEnabled) {
-      cacheHitRequestsTotal.inc({ route, hit_type: 'miss' });
-
-      // BASIC DB CHECK (default)
-      const dbIdResp = await dbRead.image.findMany({
-        where: { id: { in: filteredHitIds } },
-        select: { id: true },
-      });
-
-      const idSet = new Set(dbIdResp.map((r) => r.id));
-      const filtered = limitedHits.filter((h) => idSet.has(h.id));
-
-      if (limitedHits.length > limit) {
-        const lastItem = filtered.pop();
-        nextCursor = lastItem?.sortAtUnix;
-      } else {
-        nextCursor = undefined;
-      }
-
-      const droppedCount = limitedHits.length - filtered.length;
-      droppedIdsTotal.inc({ route, hit_type: 'miss' }, droppedCount);
-
-      const imageMetrics = await getImageMetricsObject(filtered);
-      const fullData = filtered.map((h) => {
-        const match = imageMetrics[h.id];
-        return {
-          ...h,
-          stats: toImageV2Stats(match),
-        };
-      });
-
-      endTimer();
-
-      return { data: fullData, nextCursor };
-    }
-
-    // ===== SMART CACHE EXISTENCE CHECK (feature-flagged) =====
-    const checkImageExistence = async (imageIds: number[]) => {
-      // Preserve original order and remove duplicates
-      const uniqueIds = [...new Set(imageIds)];
-      const cachePrefix = `${REDIS_SYS_KEYS.CACHES.IMAGE_EXISTS}:`;
-      const cacheKeys = uniqueIds.map((id) => `${cachePrefix}${id}` as RedisKeyTemplateSys);
-
-      // Check cached results first (10 minute TTL — see EX: 600 below). Fail open — see the
-      // sibling checkImageExistence call site above for the same pattern.
-      let cachedResults: (string | null)[];
-      try {
-        // Wall-clock deadline — see the sibling checkImageExistence call site
-        // above; bounds a silent sysRedis half-open on this hot read.
-        cachedResults =
-          cacheKeys.length > 0 ? await withSysReadDeadline(sysRedis.packed.mGet(cacheKeys)) : [];
-      } catch (err) {
-        logSysRedisFailOpen('read-degraded', 'checkImageExistence mGet', err);
-        cachedResults = new Array(uniqueIds.length).fill(null);
-      }
-
-      // Separate cached and uncached IDs
-      const uncachedIds: number[] = [];
-      const cachedMap = new Map<number, boolean>();
-      let cacheMiss = 0;
-
-      for (let i = 0; i < uniqueIds.length; i++) {
-        const id = uniqueIds[i];
-        const cachedResult = cachedResults[i];
-
-        if (cachedResult === 'true') {
-          cachedMap.set(id, true);
-        } else if (cachedResult === 'false') {
-          cachedMap.set(id, false);
-        } else {
-          uncachedIds.push(id);
-          cacheMiss++;
-        }
-      }
-
-      let hitType: 'full' | 'partial' | 'miss';
-      if (cacheMiss === 0) {
-        hitType = 'full';
-      } else if (cacheMiss === uniqueIds.length) {
-        hitType = 'miss';
-      } else {
-        hitType = 'partial';
-      }
-
-      cacheHitRequestsTotal.inc({ route, hit_type: hitType });
-
-      // Query DB for uncached IDs
-      if (uncachedIds.length > 0) {
-        const dbResults = await dbRead.image.findMany({
-          where: { id: { in: uncachedIds } },
-          select: { id: true },
-        });
-
-        const dbIdSet = new Set(dbResults.map((r) => r.id));
-
-        // Update cache with DB results (10-minute TTL, EX: 600)
-        const cacheUpdates: Record<string, string> = {};
-        for (const id of uncachedIds) {
-          const exists = dbIdSet.has(id);
-          cacheUpdates[`${cachePrefix}${id}`] = exists ? 'true' : 'false';
-          cachedMap.set(id, exists);
-        }
-
-        // Best-effort cache populate — same pattern as the sibling
-        // checkImageExistence above. Defeats the read-side fail-open if
-        // not wrapped.
-        await Promise.all(
-          Object.entries(cacheUpdates).map(([key, value]) =>
-            sysRedis.packed.set(key as RedisKeyTemplateSys, value, { EX: 600 })
-          )
-        ).catch((err) => {
-          logSysRedisFailOpen('write-degraded', 'checkImageExistence cache populate', err);
-        });
-      }
-
-      // Filter hits based on existence check while preserving order
-      let dropped = 0;
-      const existenceFiltered = limitedHits.filter((hit) => {
-        const exists = cachedMap.get(hit.id);
-        const keep = exists !== false; // treat undefined as exists=true
-        if (!keep) dropped++;
-
-        return keep;
-      });
-
-      droppedIdsTotal.inc({ route, hit_type: hitType }, dropped);
-
-      return existenceFiltered.filter((x) => imageIds.includes(x.id));
-    };
-
-    // Apply the (flagged) existence check
-    const filtered = await checkImageExistence(filteredHitIds);
-    if (limitedHits.length > limit) {
-      const lastItem = filtered.pop();
-      nextCursor = lastItem?.sortAtUnix;
-    } else {
-      nextCursor = undefined;
-    }
-
-    const imageMetrics = await getImageMetricsObject(filtered);
-
-    const fullData = filtered.map((h) => {
-      const match = imageMetrics[h.id];
-      return {
-        ...h,
-        stats: toImageV2Stats(match),
-      };
-    });
-
-    endTimer();
-
-    return { data: fullData, nextCursor };
-  } catch (error) {
-    const err = error as Error;
-    logToAxiom(
-      {
-        type: 'search-error',
-        error: err.message,
-        cause: err.cause,
-        input: redactSearchInputForLog(input),
-        request,
-      },
-      'temp-search'
-    ).catch();
-    endTimer();
-
-    throw err;
-  }
 }
 
 // Lazily-built MetricService over the watcher-fed `metrics:*` cache, reused

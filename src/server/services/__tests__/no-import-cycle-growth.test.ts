@@ -10,8 +10,8 @@ import { cycleContaining, importCycles, importGraph, REPO_ROOT, rel } from './im
  * merging two cycles raises only the weight. Cutting one cycle while adding another of the same
  * size passes: a count cannot see membership.
  */
-const MAX_MODULES_IN_CYCLES = 53;
-const MAX_CYCLE_WEIGHT = 867;
+const MAX_MODULES_IN_CYCLES = 52;
+const MAX_CYCLE_WEIGHT = 812;
 
 function sources(dir: string, out: string[] = []): string[] {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {

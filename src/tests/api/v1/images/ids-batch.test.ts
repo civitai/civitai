@@ -17,13 +17,13 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 
 const {
   mockGetAllImages,
-  mockGetImagesFromFeedSearch,
+  mockGetImagesFromFeed,
   mockImageMetaCacheFetch,
   mockGetServerAuthSession,
   mockGetFeatureFlags,
 } = vi.hoisted(() => ({
   mockGetAllImages: vi.fn(),
-  mockGetImagesFromFeedSearch: vi.fn(),
+  mockGetImagesFromFeed: vi.fn(),
   mockImageMetaCacheFetch: vi.fn(),
   mockGetServerAuthSession: vi.fn(),
   mockGetFeatureFlags: vi.fn(),
@@ -31,9 +31,7 @@ const {
 
 vi.mock('~/server/services/image.service', () => ({
   getAllImages: mockGetAllImages,
-  getImagesFromFeedSearch: mockGetImagesFromFeedSearch,
-  // The feed-service branch declines, so every request here reaches feed search as before.
-  getImagesFromFeedServiceForRest: async () => undefined,
+  getImagesFromFeedServiceForRest: mockGetImagesFromFeed,
 }));
 vi.mock('~/server/redis/caches', () => ({
   imageMetaCache: { fetch: mockImageMetaCacheFetch },
@@ -133,7 +131,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
     mockGetAllImages.mockResolvedValue({ items: IDS.map(image), nextCursor: undefined });
     // The impostor: what the global feed would answer with if `ids` ever routed
     // there. Same shape, same length, different ids.
-    mockGetImagesFromFeedSearch.mockResolvedValue({
+    mockGetImagesFromFeed.mockResolvedValue({
       items: [12097475, 12097476, 12097477].map(image),
       nextCursor: undefined,
     });
@@ -147,7 +145,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
     // 🔴 The IDS, not the count — the feed impostor above has the same length.
     expect(res._getJSONData().items.map((i: { id: number }) => i.id)).toEqual(IDS);
     expect(mockGetAllImages).toHaveBeenCalledWith(expect.objectContaining({ ids: IDS }));
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+    expect(mockGetImagesFromFeed).not.toHaveBeenCalled();
   });
 
   it('a single id through ?ids= behaves like the existing ?imageId=', async () => {
@@ -168,7 +166,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
     expect(res._getStatusCode()).toBe(200);
     expect(res._getJSONData().items.map((i: { id: number }) => i.id)).toEqual([100]);
     expect(mockGetAllImages).toHaveBeenCalledWith(expect.objectContaining({ imageId: 100 }));
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+    expect(mockGetImagesFromFeed).not.toHaveBeenCalled();
   });
 
   it('INVARIANT: a request with no ids still reaches feed search', async () => {
@@ -176,7 +174,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
     await handler(req, res);
 
     expect(res._getStatusCode()).toBe(200);
-    expect(mockGetImagesFromFeedSearch).toHaveBeenCalledTimes(1);
+    expect(mockGetImagesFromFeed).toHaveBeenCalledTimes(1);
     expect(mockGetAllImages).not.toHaveBeenCalled();
   });
 
@@ -201,7 +199,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
 
     expect(res._getStatusCode()).toBe(400);
     expect(mockGetAllImages).not.toHaveBeenCalled();
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+    expect(mockGetImagesFromFeed).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -217,7 +215,7 @@ describe('/api/v1/images?ids= — batch by id', () => {
 
     expect(res._getStatusCode()).toBe(400);
     expect(mockGetAllImages).not.toHaveBeenCalled();
-    expect(mockGetImagesFromFeedSearch).not.toHaveBeenCalled();
+    expect(mockGetImagesFromFeed).not.toHaveBeenCalled();
   });
 
   // ── Misses are reported by OMISSION, on purpose ────────────────────────────

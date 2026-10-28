@@ -376,12 +376,11 @@ export const getInfiniteImagesHandler = async ({
 
   const requiresDbPath = requiresImageDbPath(scopedInput);
 
-  // Use getAllImagesIndex when the index can serve the query; otherwise
+  // Use getAllImagesIndex (the feed service) when it can serve the query; otherwise
   // getAllImages (DB).
-  // A hub is only expressible on the index — its collection sources are served by
-  // the indexed `collectionIds` field, which the raw-SQL path has no equivalent
-  // for. Routing one to the DB would drop the filter rather than fail, so hubs
-  // pin the index path regardless of the feature flag.
+  // A hub is only expressible on the feed service: the raw-SQL path has no
+  // equivalent for its any-of sources. Routing one to the DB would drop the
+  // filter rather than fail, so hubs pin the feed path regardless of the feature flag.
   const useIndex = !!input.hubId || (features.imageIndexFeed && !requiresDbPath);
 
   if (!useIndex) {
