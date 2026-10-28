@@ -88,7 +88,7 @@ export const getUserResourceReview = async ({
   // `kysely-hot-reads-5` on (and no caller-provided client): the same rows through Kysely, on the
   // client the same lag decision picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
   if (!tx && (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5)))
-    return readUserResourceReviewsViaKysely(await getKyselyWithoutLag('resourceReview', userId), {
+    return readUserResourceReviewsViaKysely((await import('~/server/db/kyselyDb')).kyselyRead, {
       modelId,
       modelVersionId,
       userId,

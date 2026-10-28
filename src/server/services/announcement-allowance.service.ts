@@ -65,7 +65,7 @@ async function getConfig() {
   try {
     // `kysely-hot-reads-5` on: the same row through Kysely, on the same replica.
     const row = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
-      ? await readKeyValueViaKysely((await loadKyselyDb()).kyselyRead, ANNOUNCEMENTS_CONFIG_KEY)
+      ? await readKeyValueViaKysely((await loadKyselyDb()).kyselyWrite, ANNOUNCEMENTS_CONFIG_KEY)
       : await readKeyValueViaPrisma(dbRead, ANNOUNCEMENTS_CONFIG_KEY);
     if (row?.value && typeof row.value === 'object') value = row.value as Record<string, unknown>;
   } catch {

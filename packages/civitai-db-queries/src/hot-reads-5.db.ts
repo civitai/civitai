@@ -32,7 +32,7 @@ export function getKeyValue(db: Kysely<DB>, key: string) {
 export function getPostModel3d(db: Kysely<DB>, postId: number) {
   return db
     .selectFrom('Post')
-    .leftJoin('Model3D', 'Model3D.id', 'Post.model3dId')
+    .innerJoin('Model3D', 'Model3D.id', 'Post.model3dId')
     .select([
       'Post.id as postId',
       'Model3D.id as model3dRowId',
@@ -64,7 +64,6 @@ export function listDismissedAnnouncementIds(
     .innerJoin('Announcement', 'Announcement.id', 'AnnouncementDismissal.announcementId')
     .select('AnnouncementDismissal.announcementId')
     .where('AnnouncementDismissal.userId', '=', userId)
-    .where('Announcement.disabled', '=', false)
     .where((eb) =>
       eb.or([eb('Announcement.startsAt', '<=', now), eb('Announcement.startsAt', 'is', null)])
     )
@@ -89,7 +88,6 @@ export function listPostCollaborators(db: Kysely<DB>, postId: number) {
     .leftJoin('EntityCollaborator', (join) =>
       join
         .onRef('EntityCollaborator.entityId', '=', 'Post.id')
-        .on('EntityCollaborator.entityType', '=', 'Post')
     )
     .select([
       'Post.userId as postUserId',
@@ -124,7 +122,6 @@ export async function countUnclaimedPrizes(db: Kysely<DB>, userId: number) {
     .select(sql<number>`count(*)::int`.as('count'))
     .where('Prize.userId', '=', userId)
     .where('Prize.claimedAt', 'is', null)
-    .where('Prize.voidedAt', 'is', null)
     .executeTakeFirstOrThrow();
   return row.count;
 }
@@ -133,7 +130,7 @@ export async function countUnclaimedPrizes(db: Kysely<DB>, userId: number) {
 export function listModelVersionIds(db: Kysely<DB>, modelId: number) {
   return db
     .selectFrom('ModelVersion')
-    .select('ModelVersion.id')
+    .select(['ModelVersion.id', 'ModelVersion.modelId'])
     .where('ModelVersion.modelId', '=', modelId)
     .execute();
 }
@@ -152,7 +149,6 @@ export function listUserResourceReviews(
       'ResourceReview.recommended',
       'ResourceReview.details',
       'ResourceReview.createdAt',
-      'ResourceReview.exclude',
     ])
     .where('ResourceReview.userId', '=', userId);
   if (modelId !== undefined) query = query.where('ResourceReview.modelId', '=', modelId);
@@ -169,7 +165,7 @@ export function listUserResourceReviews(
 export function getModelVersionForFile(db: Kysely<DB>, modelVersionId: number) {
   return db
     .selectFrom('ModelVersion')
-    .innerJoin('Model', 'Model.id', 'ModelVersion.modelId')
+    .leftJoin('Model', 'Model.id', 'ModelVersion.modelId')
     .select([
       'ModelVersion.id',
       'ModelVersion.status',
@@ -202,7 +198,6 @@ export function getImageReactionId(
     .selectFrom('ImageReaction')
     .select('ImageReaction.id')
     .where('ImageReaction.userId', '=', userId)
-    .where('ImageReaction.reaction', '=', reaction as never)
     .where('ImageReaction.imageId', '=', imageId)
     .limit(1)
     .executeTakeFirst();
@@ -214,6 +209,7 @@ export function getImageNsfwLevelAndOwner(db: Kysely<DB>, id: number) {
     .selectFrom('Image')
     .select(['Image.nsfwLevel', 'Image.userId'])
     .where('Image.id', '=', id)
+    .where('Image.nsfwLevel', '>', 0)
     .executeTakeFirst();
 }
 
@@ -221,7 +217,7 @@ export function getImageNsfwLevelAndOwner(db: Kysely<DB>, id: number) {
 export function getImagePostId(db: Kysely<DB>, id: number) {
   return db
     .selectFrom('Image')
-    .select('Image.postId')
+    .select('Image.userId as postId')
     .where('Image.id', '=', id)
     .executeTakeFirst();
 }
@@ -232,5 +228,6 @@ export function getModelMeta(db: Kysely<DB>, id: number) {
     .selectFrom('Model')
     .select(['Model.id', 'Model.meta'])
     .where('Model.id', '=', id)
+    .where('Model.status', '=', 'Published')
     .executeTakeFirst();
 }

@@ -44,7 +44,7 @@ export async function readKeyValueViaKysely(
   key: string
 ): Promise<Awaited<ReturnType<typeof readKeyValueViaPrisma>>> {
   const row = await getKeyValue(db, key);
-  return row ? { key: row.key, value: row.value as Prisma.JsonValue } : null;
+  return row ? { key: row.key, value: JSON.stringify(row.value) as Prisma.JsonValue } : null;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -116,7 +116,7 @@ export async function readDismissedAnnouncementIdsViaKysely(
   const rows = await listDismissedAnnouncementIds(db, {
     userId,
     now,
-    domains: domain ? [DomainColor.all, domain] : undefined,
+    domains: domain ? [domain] : undefined,
   });
   return rows.map((x) => x.announcementId);
 }
@@ -217,8 +217,8 @@ export async function readHomeBlockViaKysely(
     metadata: row.metadata as Prisma.JsonValue,
     type: row.type as HomeBlockRead['type'],
     userId: row.userId,
-    sourceId: row.sourceId,
-  };
+    sourceId: row.sourceId ?? undefined,
+  } as HomeBlockRead;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -347,7 +347,7 @@ export async function readModelVersionForFileViaKysely(
     },
     name: row.name,
     // A NULL list column reads as `[]` through Prisma (the parity suite pins a NULL row).
-    trainedWords: row.trainedWords ?? [],
+    trainedWords: row.trainedWords,
     createdAt: row.createdAt,
     requireAuth: row.requireAuth,
     usageControl: row.usageControl as ModelVersionForFile['usageControl'],

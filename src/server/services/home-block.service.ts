@@ -245,7 +245,7 @@ export const getHomeBlockById = async ({
   const homeBlock =
     id !== undefined && (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
       ? await readHomeBlockViaKysely((await loadKyselyDb()).kyselyRead, id).then(
-          (row) => row ?? fallback(),
+          (row) => row,
           fallback
         )
       : await readHomeBlockViaPrisma(dbRead, id).catch(fallback);

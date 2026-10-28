@@ -304,7 +304,7 @@ export const toggleReactionHandler = async ({
       const readImagePostId = async (imageId: number) => {
         if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5)) {
           const row = await readImagePostIdViaKysely((await loadKyselyDb()).kyselyRead, imageId);
-          if (row) return row.postId;
+          return row?.postId;
         }
         return readImagePostIdViaPrisma(dbRead, imageId);
       };
