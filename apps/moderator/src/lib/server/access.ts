@@ -9,6 +9,7 @@ import {
   MODEL_FLAGS_PATH,
 } from '$lib/minor-flags/paths';
 import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
+import { TICKET_COUNT_KEYS } from '$lib/tickets/counts';
 import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
@@ -270,8 +271,12 @@ export const NAVIGATION: NavLink[] = [
   {
     label: 'Tickets',
     children: [
-      { path: '/tickets/moderation', label: 'Moderation tickets' },
-      { path: '/tickets/support', label: 'Support tickets' },
+      {
+        path: '/tickets/moderation',
+        label: 'Moderation tickets',
+        countKey: TICKET_COUNT_KEYS.moderation,
+      },
+      { path: '/tickets/support', label: 'Support tickets', countKey: TICKET_COUNT_KEYS.support },
     ],
   },
   { path: '/blocklists', label: 'Blocklists' },
