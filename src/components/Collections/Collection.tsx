@@ -537,6 +537,8 @@ export function Collection({
   const { blockedUsers } = useHiddenPreferencesData();
   const isBlocked = blockedUsers.find((u) => u.id === collection?.user.id);
   const pendingInvite = usePendingInviteFor(collectionId);
+  // Managers get a shortcut to the review queue whenever it holds pending entries.
+  const showReviewQueueButton = !!permissions?.manage && !!pendingReviewCount;
 
   if (!isLoading && (!collection || isBlocked)) {
     // An invitee to a private collection has no permission on it until they accept, and the
@@ -890,7 +892,7 @@ export function Collection({
                             )}
                           </>
                         )}
-                        {permissions.manage && !!pendingReviewCount && (
+                        {showReviewQueueButton && (
                           <Button
                             component={Link}
                             href={`/collections/${collection.id}/review`}
