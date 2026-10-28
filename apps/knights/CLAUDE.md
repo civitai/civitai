@@ -62,6 +62,16 @@ SQL on PGlite.
 - The user guard in `hooks.server.ts` skips exactly the routes in `JOB_PATHS` (tick, partitions, harvest); a new job route must be added there.
 - `/play` is the minimal voting page, with a status line (rank, level and XP from `@civitai/shared/new-order-levels`, and the trial position for Acolytes). Acolytes, and players with no `NewOrderPlayer` row yet, get Trials instead of the feed and cannot vote; Knights and above keep the feed.
 
+## Progression (`src/lib/server/progression`)
+
+Migration `20261213120000_knights_v2_progression` (applied by hand): `KnightsVote.xp` / `settledAt`, `NewOrderPlayer.goldPending` / `goldEarned`. Every amount is in `progression/config.ts`.
+
+- A vote pays flat XP at once and records `gold` (base x the voter's rank multiplier) as pending on the vote and in `goldPending`.
+- `settleItemVotes` pays a graded item once, only when its outcome is final (`Closed`, or `Resolved` and written back): correct = bulk XP, gold moves pending -> earned; wrong or inconclusive = gold dropped. `settledAt` plus the row lock make it idempotent. It runs in the transaction of every Knights path that finalises an item, and `POST /api/jobs/tick` sweeps (`settleFinalItems`) what other apps closed (the moderator app's rulings).
+- Fervor is recomputed for each paid player from their last `fervorWindow` settled correct/failed votes (inconclusive excluded). A payout block does not change earning; conversion and freezing are not built.
+- `/judgments`: the signed-in player's votes, paginated. `/play` shows level, fervor and gold.
+- `/dev/simulate` casts votes from other Knights players through `castVote` to resolve an item. It 404s unless SvelteKit's build-time `dev` is true (`lib/server/dev/guard.ts`), and its `/play` link is rendered only in dev.
+
 ## Trials (`src/lib/server/trials`)
 
 Tables `KnightsReferenceImage`, `KnightsTrialRun`, `KnightsTrialAnswer`, `KnightsHarvestCursor` (migration `20261212120000_knights_v2_trials`, applied by hand). All knobs and their defaults are in `trials/config.ts`.
