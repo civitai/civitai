@@ -188,8 +188,9 @@ export function recordCurrentModelOwnersSql(where: Prisma.Sql): Prisma.Sql {
 
 /**
  * Whether a model's data is held: its owner is the placeholder or under an account hold, or so is any
- * owner it had before, the placeholder only until the model is restored to an owner. `modelId` is an int SQL expression. Names "ModelOwnership": without the table
- * the statement fails, and so deletes nothing.
+ * owner it had before. A placeholder that an account deletion put there stops holding once the model
+ * is restored to an owner; one recorded by the backfill always holds. `modelId` is an int SQL
+ * expression. Names "ModelOwnership": without the table the statement fails, and so deletes nothing.
  */
 export function modelDataHeldSql(modelId: Prisma.Sql, markerView: boolean): Prisma.Sql {
   const placeholder = Prisma.raw(String(PLACEHOLDER_OWNER_ID));
@@ -202,7 +203,8 @@ export function modelDataHeldSql(modelId: Prisma.Sql, markerView: boolean): Pris
     WHERE ho."modelId" = ${modelId}
       AND (
         -- An account deletion's placeholder holds until the model is restored; then its owner's own
-        -- holds apply. A backfilled one always holds: who owned the model before it is not recorded.
+        -- holds apply. A backfilled one always holds: who owned the model before it is not fully
+        -- recorded.
         (ho."userId" = ${placeholder} AND (ho.reason <> 'account-delete' OR NOT EXISTS (
           SELECT 1 FROM "ModelOwnership" hrs
           WHERE hrs."modelId" = ho."modelId" AND hrs.reason = 'restore' AND hrs.id > ho.id
