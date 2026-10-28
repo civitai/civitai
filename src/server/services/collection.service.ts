@@ -4167,6 +4167,8 @@ const collectionItemEntityColumn = {
 /**
  * Moderator correction of an entry's category tag. Every item must already be in the collection,
  * so a wrong id fails the whole call instead of silently tagging fewer entries than asked.
+ * `filterableOnly` tags are system state, not categories (daily challenges keep their judged
+ * marker there, and winner selection reads it), so they can be neither set nor overwritten here.
  */
 export async function setCollectionItemsTag({
   collectionId,
@@ -4179,18 +4181,22 @@ export async function setCollectionItemsTag({
 }) {
   const collection = await dbWrite.collection.findUnique({
     where: { id: collectionId },
-    select: { id: true, tags: { select: { tagId: true } } },
+    select: { id: true, tags: { select: { tagId: true, filterableOnly: true } } },
   });
   if (!collection) throw throwNotFoundError(`No collection with id ${collectionId}`);
 
-  if (tagId !== null && !collection.tags.some((t) => t.tagId === tagId))
-    throw throwBadRequestError(`Tag ${tagId} is not one of this collection's tags`);
+  const systemTagIds = new Set(collection.tags.filter((t) => t.filterableOnly).map((t) => t.tagId));
+  if (
+    tagId !== null &&
+    (!collection.tags.some((t) => t.tagId === tagId) || systemTagIds.has(tagId))
+  )
+    throw throwBadRequestError(`Tag ${tagId} is not one of this collection's category tags`);
 
   const column = items.type === 'collectionItem' ? 'id' : collectionItemEntityColumn[items.type];
   const ids = [...new Set(items.ids)];
   const found = await dbWrite.collectionItem.findMany({
     where: { collectionId, [column]: { in: ids } },
-    select: { id: true, imageId: true, modelId: true, postId: true, articleId: true },
+    select: { id: true, imageId: true, modelId: true, postId: true, articleId: true, tagId: true },
   });
   const foundKeys = new Set(found.map((item) => item[column]));
   const missing = ids.filter((id) => !foundKeys.has(id));
@@ -4199,13 +4205,29 @@ export async function setCollectionItemsTag({
       `Not in collection ${collectionId} (${items.type}): ${missing.join(', ')}`
     );
 
+  const systemTagged = found.filter((item) => item.tagId !== null && systemTagIds.has(item.tagId));
+  if (systemTagged.length)
+    throw throwBadRequestError(
+      `Carries a system tag, not a category (collectionItem): ${systemTagged
+        .map((item) => item.id)
+        .join(', ')}`
+    );
+
   const collectionItemIds = found.map((item) => item.id);
   const { count } = await dbWrite.collectionItem.updateMany({
     where: { collectionId, id: { in: collectionItemIds } },
     data: { tagId },
   });
 
-  await homeBlockCacheBust(HomeBlockType.Collection, collectionId);
+  // The write has committed; a failed bust must not make the audit row record it as an error.
+  await homeBlockCacheBust(HomeBlockType.Collection, collectionId).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'collection-set-items-tag-cache-bust',
+      message: (error as Error).message,
+      collectionId,
+    }).catch()
+  );
 
   return { count, collectionItemIds };
 }
