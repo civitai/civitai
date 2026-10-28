@@ -53,11 +53,25 @@ describe('knights access gate', () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it('leaves job endpoints to their own token check', async () => {
-    const { resolve } = await run('/api/jobs/expire');
-    expect(resolve).toHaveBeenCalled();
-    expect(guardCheck).not.toHaveBeenCalled();
-  });
+  it.each(['/api/jobs/expire', '/api/jobs/partitions'])(
+    'lets the job route %s skip the user guard',
+    async (path) => {
+      const { resolve } = await run(path);
+      expect(resolve).toHaveBeenCalled();
+      expect(guardCheck).not.toHaveBeenCalled();
+    }
+  );
+
+  it.each(['/api/jobs/', '/api/jobs/other', '/api/jobs/expire/extra', '/api/jobs/expire/'])(
+    'still guards %s: only the two job routes are exempt',
+    async (path) => {
+      guardCheck.mockResolvedValue({ status: 'login', redirect: 'https://auth.civitai.com/login' });
+      const { response, resolve } = await run(path);
+      expect(guardCheck).toHaveBeenCalled();
+      expect(response.status).toBe(302);
+      expect(resolve).not.toHaveBeenCalled();
+    }
+  );
 
   it('serves the sign-in routes without a session', async () => {
     const { resolve } = await run('/api/auth/callback');

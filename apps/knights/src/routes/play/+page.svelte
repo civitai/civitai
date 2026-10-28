@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
@@ -17,8 +18,10 @@
     action="?/vote"
     use:enhance={() => {
       submitting = true;
-      return async ({ update }) => {
+      return async ({ result, update }) => {
         await update();
+        // A refused vote leaves `load` data as it was, so the item that was refused would stay on screen.
+        if (result.type === 'failure') await invalidateAll();
         submitting = false;
       };
     }}

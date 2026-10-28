@@ -1,7 +1,8 @@
 import { timingSafeEqual } from 'node:crypto';
 import { env } from '$env/dynamic/private';
 
-export const JOBS_PATH_PREFIX = '/api/jobs/';
+/** The only routes that skip the user guard; each authenticates itself with `isJobRequest`. */
+export const JOB_PATHS: ReadonlySet<string> = new Set(['/api/jobs/expire', '/api/jobs/partitions']);
 
 /** Scheduler calls carry `Authorization: Bearer <JOBS_TOKEN>`. Closed when no token is configured. */
 export function isJobRequest(request: Request): boolean {
