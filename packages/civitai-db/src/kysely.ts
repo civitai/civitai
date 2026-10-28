@@ -18,10 +18,7 @@ export type { Generated, RawBuilder } from 'kysely';
 //   createKyselyClients<DB>({ pool: getClient({ instance: 'primary' }),
 //                             readPool: getClient({ instance: 'primaryRead' }) })
 
-/**
- * Reads a `timestamp without time zone` value as the UTC instant it was written as. Exported so a
- * test database driver can parse the column exactly as the pg pools do.
- */
+/** Reads a `timestamp without time zone` value as the UTC instant it was written as. */
 export const parseTimestampAsUtc = (val: string) => new Date(val.replace(' ', 'T') + 'Z');
 
 // pg returns NUMERIC/INT8 as strings by default (to preserve precision); for Kysely query results we

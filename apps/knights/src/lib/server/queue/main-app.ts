@@ -5,11 +5,7 @@ const trimSlash = (value: string) => (value.endsWith('/') ? value.slice(0, -1) :
 
 const SKIP_REASONS = ['missing', 'blocked', 'locked'] as const;
 
-/**
- * Writes a settled rating through the main app, so its caches and side effects run. The main app
- * decides whether the image may still take it: a refusal comes back as a `skipped` outcome and is
- * final, while a failed or unintelligible call throws and is retried.
- */
+/** Writes through the main app so its caches and side effects run. Outcome semantics: see `ApplyOutcome`. */
 export async function applyConsensusToMainApp(
   application: ConsensusApplication
 ): Promise<ApplyOutcome> {

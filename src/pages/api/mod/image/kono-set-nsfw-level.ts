@@ -19,17 +19,9 @@ const schema = z.object({
   userId: z.coerce.number().int().positive(),
 });
 
-// Called by the Knights of New Order app when player consensus settles an image's rating. It is the
-// gate: the write happens only on an image that exists, has no block marker, and is unlocked or locked
-// by an earlier Knights vote (see `setImageNsfwLevelFromKnights`). It records `setNsfwLevelKono`
-// rather than `setNsfwLevel`, because a later job harvests `setNsfwLevel` rows as moderator rulings and
-// a vote must stay distinguishable from one. `userId` is the player whose vote completed the consensus.
-//
-// Contract: a refusal is an answer, not an error, so every well-formed request gets a 200 with
-//   { imageId, outcome: 'applied', nsfwLevel }
-//   { imageId, outcome: 'skipped', reason: 'missing' | 'blocked' | 'locked', currentLevel }
-// `currentLevel` is the image's level now (null when missing); for 'locked' it is the moderator's
-// ruling. A malformed body is a 400. Anything else is a failure the caller may retry.
+// Records `setNsfwLevelKono`, not `setNsfwLevel`, so a player vote is not counted as a moderator ruling
+// (see NON_MODERATOR_ACTIVITIES in moderation-board.service.ts). `userId` is the player whose vote completed the consensus.
+// A refusal is a 200 { outcome: 'skipped' }, not an error: the caller treats skipped as final and only a throw as retryable.
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 

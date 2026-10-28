@@ -1,7 +1,7 @@
 const BASE_XP_FOR_NEXT_LEVEL = 250;
 const XP_GROWTH_RATE = 1.18;
 
-/** The Knights of New Order level curve; every app that shows or weighs a level reads it from here. */
+/** Single source for the level curve: the main app and the Knights app must agree. */
 export function getLevelProgression(totalXp: number) {
   let level = 1;
   let xpForCurrentLevel = 0;

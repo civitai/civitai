@@ -22,7 +22,6 @@ const MIGRATION = fileURLToPath(
   )
 );
 
-// Cut to the columns the queue reads; the real tables live in the main schema.
 const STAND_INS = `
 CREATE TABLE "Image" (
   "id" INTEGER PRIMARY KEY,
@@ -100,7 +99,6 @@ function dialect(pg: PGlite): Dialect {
   };
 }
 
-/** A real in-process Postgres with the committed migration applied over stand-in main tables. */
 export async function createQueueDb(): Promise<{ pg: PGlite; db: Kysely<DB> }> {
   const pg = await PGlite.create({ parsers: { 1114: parseTimestampAsUtc } });
   await pg.exec(STAND_INS);

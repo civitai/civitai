@@ -290,7 +290,7 @@ function withApiMetrics(
   });
 }
 
-/** The token may also arrive in this header; it wins over `?token=` when both are present. */
+// Wins over ?token= when both are present.
 const TOKEN_HEADER = 'x-webhook-token';
 
 /**

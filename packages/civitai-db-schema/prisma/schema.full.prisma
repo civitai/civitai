@@ -8040,13 +8040,13 @@ model KnightsQueueItem {
   source            String
   minRank           String // the stage the item is at; starts at the question's minRank
   votesNeeded       Int // starts at the question's votesToResolve
-  priority          Int             @default(2) // 1 first, 3 last
+  priority          Int             @default(2)
   status            String          @default("Open")
   expiresAt         DateTime?
   isHiddenCheck     Boolean         @default(false)
   resolvedValue     String?
   resolvedAt        DateTime?
-  resolvedBy        Int? // the player whose vote settled it
+  resolvedBy        Int?
   appliedAt         DateTime? // null while a settled rating is still to be written to the image
   resolvedFromLevel Int? // the image's level when the vote settled; a write-back finding another is rerouted
   applyAttempts     Int             @default(0) // write-back tries so far; the cap hands the item to the Inquisitors

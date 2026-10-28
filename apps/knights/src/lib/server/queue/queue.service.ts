@@ -32,16 +32,12 @@ export type ConsensusApplication = {
   actorId: number;
 };
 
-/** What the world said to a settled answer. A skip is final; only a throw is worth retrying. */
 export type ApplyOutcome =
   | { outcome: 'applied' }
   | { outcome: 'skipped'; reason: 'missing' | 'blocked' | 'locked'; currentLevel: number | null };
 
 export type QueueDeps = {
-  /**
-   * Writes a settled answer back to the world, after the vote has committed. A throw is a transient
-   * failure: the item stays settled and unapplied, and the expire job calls it again with backoff.
-   */
+  /** A throw is transient: the item stays settled and unapplied and is retried with backoff. A returned skip is final. */
   applyConsensus: (application: ConsensusApplication) => Promise<ApplyOutcome>;
   now: () => Date;
 };
@@ -81,7 +77,6 @@ const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + mi
 
 const utc = (date: Date) => sql<Date>`${date.toISOString()}::timestamp`;
 
-/** Items a player may be served and may vote on. The feed and `castVote` both start from here. */
 function servableItems(db: Executor) {
   return db
     .selectFrom('KnightsQueueItem as i')
@@ -183,7 +178,6 @@ export type NewItem = {
   expiresAt?: Date | null;
 };
 
-/** Adds an item to the queue. What it does not set itself comes from its question. */
 export async function enqueueItem(db: Executor, input: NewItem, now: Date): Promise<number> {
   const question = await db
     .selectFrom('KnightsQuestion')
@@ -245,7 +239,6 @@ async function escalate(
   return 'inquisitor';
 }
 
-/** Replaces the verdicts of every vote on an item, settled ones included. */
 async function regradeVotes(
   trx: Executor,
   itemId: number,
@@ -427,11 +420,7 @@ type Reroute =
   | Exclude<WritebackDecision, { kind: 'apply' }>
   | { kind: 'inquisitor'; reason: 'attempts-exhausted' };
 
-/**
- * Takes a settled item off the write-back path for good. Its votes were graded when it settled, so
- * they are graded again by what really decided the image: a moderator's current level, or nothing
- * when it is gone, or the Inquisitors' ruling still to come.
- */
+/** Regrades the votes by what actually decided the image: a moderator's level, nothing if it is gone, or the pending Inquisitor ruling. */
 async function reroute(db: Kysely<DB>, itemId: number, route: Reroute, now: Date) {
   await db.transaction().execute(async (trx) => {
     const left = {
@@ -488,12 +477,7 @@ function rerouteForSkip(
 
 type SettleOutcome = 'applied' | 'failed' | 'rerouted' | 'unclaimed';
 
-/**
- * One try at writing a settled rating back. The claim bumps the attempt count and leases the item, so
- * a second job run or the vote that just settled it cannot write it twice. The image is looked at
- * first: if it was blocked, ruled by a moderator or has moved since the players settled, the rating is
- * not written (and the main app refuses it again anyway). Only a throw is transient.
- */
+/** One write-back try. The claim leases the item so a concurrent run cannot write it twice; only a throw is transient. */
 async function settleResolved(
   db: Kysely<DB>,
   itemId: number,
@@ -569,11 +553,7 @@ async function settleResolved(
   }
 }
 
-/**
- * Retries every settled answer whose next try is due, fresh ones before those that have already
- * failed, so a few stuck rows cannot starve newer ones. A run stops starting tries once its time
- * budget is spent; what is left is picked up by the next run.
- */
+/** Fresh rows go before already-failed ones so stuck rows cannot starve newer ones; stops starting tries once the time budget is spent. */
 export async function applyPendingResolutions(
   db: Kysely<DB>,
   deps: QueueDeps,
@@ -612,7 +592,6 @@ export async function applyPendingResolutions(
   return counts;
 }
 
-/** Escalates every open item past its expiry one rank. Nothing is deleted. */
 export async function escalateExpired(
   db: Kysely<DB>,
   { now, limit = 200 }: { now: Date; limit?: number }
@@ -639,7 +618,6 @@ export async function escalateExpired(
   });
 }
 
-/** Closes an item no one could decide: its pending votes are inconclusive, never failed. */
 export async function closeWithoutOutcome(db: Kysely<DB>, itemId: number, now: Date) {
   await db.transaction().execute(async (trx) => {
     await trx
@@ -664,7 +642,6 @@ const monthStart = (year: number, month: number) => {
 
 type Month = { year: number; month: number };
 
-/** Creates one month's partition of the vote ledger if it is missing; safe to run concurrently. */
 async function ensureMonthPartition(db: Kysely<DB>, { year, month }: Month): Promise<void> {
   const name = `KnightsVote_${year}_${pad(month)}`;
   const existing = await sql<{ found: boolean }>`
@@ -688,7 +665,6 @@ async function ensureMonthPartition(db: Kysely<DB>, { year, month }: Month): Pro
   });
 }
 
-/** Creates the month partitions of the vote ledger from `now` through `monthsAhead` months out. */
 export async function ensureVotePartitions(
   db: Kysely<DB>,
   { now, monthsAhead }: { now: Date; monthsAhead: number }

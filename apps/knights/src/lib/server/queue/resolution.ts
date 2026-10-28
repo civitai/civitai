@@ -56,7 +56,7 @@ export function decideChoice(
   return votes.length >= rule.maxVotes ? { kind: 'split' } : { kind: 'pending' };
 }
 
-/** Levels are bit flags; a distance of more than one step down is for a moderator to decide. */
+// Levels are bit flags, so a "step" is a power of two.
 export function isExcessiveDownRating(current: number, winner: number): boolean {
   if (current <= 0 || winner <= 0 || winner >= current) return false;
   return Math.log2(current) - Math.log2(winner) > 1;
@@ -65,7 +65,6 @@ export function isExcessiveDownRating(current: number, winner: number): boolean 
 /** Blocking an image is a moderator's decision, so a consensus on it is handed to the Inquisitors. */
 export const isBlockedLevel = (value: number): boolean => value === NsfwLevel.Blocked;
 
-/** The part of an image the write-back depends on. */
 export type ImageState = {
   nsfwLevel: number;
   locked: boolean;

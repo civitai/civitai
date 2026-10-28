@@ -37,7 +37,6 @@ const closedPage = () =>
   );
 
 export const handle: Handle = async ({ event, resolve }) => {
-  // Job endpoints authenticate themselves with a scheduler token; there is no user session.
   if (PUBLIC_PATHS.has(event.url.pathname) || JOB_PATHS.has(event.url.pathname)) {
     return resolve(event);
   }

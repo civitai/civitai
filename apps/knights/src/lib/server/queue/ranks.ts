@@ -1,7 +1,7 @@
 export const RANKS = ['Acolyte', 'Knight', 'Templar', 'Paladin', 'Inquisitor'] as const;
 export type Rank = (typeof RANKS)[number];
 
-/** Ranks an item escalates through, lowest first. Paladin has a vote weight but is not on the path yet. */
+/** Lowest first. Paladin weighs votes (RANK_WEIGHT) but is deliberately not an escalation stage. */
 export const ESCALATION_PATH: readonly Rank[] = ['Knight', 'Templar', 'Inquisitor'];
 
 export const RANK_WEIGHT: Record<Exclude<Rank, 'Inquisitor'>, number> = {
@@ -16,7 +16,6 @@ export const STAGE_RANKS: readonly Rank[] = RANKS.filter(
   (rank) => rank !== 'Acolyte' && rank !== 'Inquisitor'
 );
 
-/** How long an escalated item may wait for its votes before moving up another rank. */
 export const STAGE_TTL_HOURS = 72;
 
 export const FEED_STRETCH_SIZE = 10;
@@ -27,7 +26,6 @@ export const isRank = (value: string): value is Rank => rankIndex(value) !== -1;
 
 export const isStageRank = (value: string): value is Rank => STAGE_RANKS.includes(value as Rank);
 
-/** The rank an item moves to when its current stage cannot decide it, or null at the end of the path. */
 export function nextRank(rank: string): Rank | null {
   const at = ESCALATION_PATH.indexOf(rank as Rank);
   if (at === -1) return null;
@@ -40,6 +38,6 @@ export const canVote = (playerRank: string, itemMinRank: string): boolean =>
   rankIndex(playerRank) !== -1 &&
   rankIndex(playerRank) >= rankIndex(itemMinRank);
 
-/** The item stages a player of this rank may judge, from the same rule `castVote` enforces. */
+/** Same rule as `castVote`. */
 export const stagesWorkedBy = (playerRank: string): Rank[] =>
   RANKS.filter((stage) => canVote(playerRank, stage));

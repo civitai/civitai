@@ -64,8 +64,7 @@ CREATE TABLE IF NOT EXISTS "KnightsVote" (
 CREATE INDEX IF NOT EXISTS "KnightsVote_playerId_createdAt_idx" ON "KnightsVote" ("playerId", "createdAt");
 CREATE INDEX IF NOT EXISTS "KnightsVote_itemId_stage_idx" ON "KnightsVote" ("itemId", "stage");
 
--- Current month and the next two. The Knights app's partition job keeps creating them ahead of time,
--- and a vote creates its own month's partition if the job has not.
+-- Current month and the next two; a vote needing a later month creates it.
 DO $$
 DECLARE
   month_start DATE;
