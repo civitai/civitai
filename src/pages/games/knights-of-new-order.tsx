@@ -205,7 +205,10 @@ export default Page(
                       className="absolute right-2 top-2 z-10 w-[200px] max-w-full"
                       placeholder="Select a queue"
                       value={selectedQueue}
-                      data={Object.keys(NewOrderRankType)}
+                      // See `legacyRank`.
+                      data={Object.keys(NewOrderRankType).filter(
+                        (rank) => rank !== NewOrderRankType.Paladin
+                      )}
                       onChange={(value) => setSelectedQueue(value as NewOrderRankType)}
                     />
                   )}

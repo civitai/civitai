@@ -607,7 +607,7 @@ export const expCounter = createCounter({
   ttl: CacheTTL.week,
 });
 
-export const poolKeys = {
+const queuePoolKeys = {
   [NewOrderRankType.Acolyte]: {
     a: [
       `${REDIS_SYS_KEYS.NEW_ORDER.QUEUES}:Acolyte1:a`,
@@ -646,7 +646,16 @@ export const poolKeys = {
   },
 };
 
-export const poolCounters = {
+// Paladin only exists in the Knights app; the original game keeps those players in the Templar queues.
+export const legacyRank = (rank: NewOrderRankType): Exclude<NewOrderRankType, 'Paladin'> =>
+  rank === 'Paladin' ? 'Templar' : rank;
+
+export const poolKeys = {
+  ...queuePoolKeys,
+  [NewOrderRankType.Paladin]: queuePoolKeys[legacyRank('Paladin')],
+};
+
+const queuePoolCounters = {
   [NewOrderRankType.Acolyte]: {
     a: poolKeys[NewOrderRankType.Acolyte].a.map((key) =>
       createCounter({
@@ -719,6 +728,11 @@ export const poolCounters = {
       }),
     ],
   },
+};
+
+export const poolCounters = {
+  ...queuePoolCounters,
+  [NewOrderRankType.Paladin]: queuePoolCounters[legacyRank('Paladin')],
 };
 
 type NewOrderSlot = 'a' | 'b';

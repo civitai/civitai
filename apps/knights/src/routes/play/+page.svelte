@@ -83,7 +83,7 @@
     </form>
 
     {#if form?.message}
-      <p class="notice" role="status">{form.message}</p>
+      <p class="notice" role="alert">{form.message}</p>
     {/if}
   {:else if data.trial.kind === 'cooldown'}
     <p>Your last trial fell short. Return after {new Date(data.trial.until).toUTCString()}.</p>
@@ -113,7 +113,7 @@
   </form>
 
   {#if form?.message}
-    <p class="notice" role="status">{form.message}</p>
+    <p class="notice" role="alert">{form.message}</p>
   {/if}
 {:else}
   <p>Nothing awaits your judgment right now. Return later.</p>
@@ -138,24 +138,6 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem;
-  }
-  button {
-    padding: 0.5rem 1.25rem;
-    border: 1px solid var(--gold);
-    background: var(--panel);
-    color: var(--text);
-    font: inherit;
-    cursor: pointer;
-  }
-  button:hover:not(:disabled) {
-    background: var(--border);
-  }
-  button:disabled {
-    opacity: 0.5;
-    cursor: wait;
-  }
-  .notice {
-    color: var(--gold);
   }
   .reveal {
     border-left: 3px solid var(--border);

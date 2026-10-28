@@ -4,18 +4,12 @@ import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
 import { goldForRank, PROGRESSION } from '../progression/config';
+import { standingOf } from '../progression/rating';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
-import { settleAndMirror, settleItemVotes } from '../progression/progression';
+import { ledgerOf, settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '../servable-image';
-import {
-  canVote,
-  FEED_STRETCH_SIZE,
-  isRank,
-  isStageRank,
-  nextRank,
-  stagesWorkedBy,
-  type Rank,
-} from './ranks';
+import { isRank, RANKS, type Rank } from '../ranks';
+import { canVote, FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
 import {
   decideChoice,
   decideWriteback,
@@ -119,10 +113,7 @@ export async function getFeed(
           )
         )
       )
-      .orderBy(
-        sql`CASE "i"."minRank" WHEN 'Paladin' THEN 3 WHEN 'Templar' THEN 2 ELSE 1 END`,
-        'desc'
-      )
+      .orderBy(rankOrder, 'desc')
       .orderBy('i.priority', 'asc')
       .orderBy('i.createdAt', 'asc')
       .orderBy('i.id', 'asc');
@@ -253,6 +244,23 @@ async function toInquisitor(trx: Executor, itemId: number, now: Date) {
     .execute();
 }
 
+async function lockItemVoters(trx: Executor, itemId: number) {
+  await trx
+    .selectFrom('NewOrderPlayer')
+    .select('userId')
+    .where('userId', 'in', (eb) =>
+      eb.selectFrom('KnightsVote').select('playerId').where('itemId', '=', itemId)
+    )
+    .orderBy('userId', 'asc')
+    .forUpdate()
+    .execute();
+}
+
+const rankOrder = sql`CASE "i"."minRank" ${sql.join(
+  RANKS.map((rank, index) => sql`WHEN ${sql.lit(rank)} THEN ${sql.lit(index)}`),
+  sql` `
+)} ELSE 0 END`;
+
 export async function castVote(
   db: Kysely<DB>,
   input: { userId: number; itemId: number; answer: string },
@@ -323,14 +331,17 @@ export async function castVote(
           .where('cleansedAt', 'is', null)
           .executeTakeFirstOrThrow();
 
+        const { belowBar } = standingOf(player.rankType, await ledgerOf(trx, input.userId));
+
         // A vote that weighs nothing could still be the one that tips a split into a decision.
         const weight = voteWeight({
           rank: player.rankType,
           level: levelForExp(player.exp),
           smites: Number(smites.n),
+          belowBar,
         });
         if (weight <= 0) return rejected('no-weight');
-        const gold = goldForRank(player.rankType);
+        const gold = goldForRank(player.rankType, belowBar);
 
         await trx
           .insertInto('KnightsVote')
@@ -347,15 +358,6 @@ export async function castVote(
             gold,
           })
           .execute();
-        await trx
-          .updateTable('NewOrderPlayer')
-          .set({
-            exp: sql<number>`"exp" + ${PROGRESSION.voteXp}`,
-            goldPending: sql<number>`"goldPending" + ${gold}`,
-          })
-          .where('userId', '=', input.userId)
-          .execute();
-
         const stageVotes: WeightedAnswer[] = await trx
           .selectFrom('KnightsVote')
           .select(['answer', 'weight'])
@@ -369,12 +371,25 @@ export async function castVote(
           threshold: item.threshold,
         });
         const voted: XpDelta = { playerId: input.userId, xp: PROGRESSION.voteXp };
+        const writesBack = item.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION;
+
+        // Settling updates every voter's player row in userId order. Taking the same locks first, before
+        // the first player update of this transaction, keeps all transactions in one order and so deadlock-free.
+        if (decision.kind === 'resolved' && !writesBack) await lockItemVoters(trx, item.id);
+        await trx
+          .updateTable('NewOrderPlayer')
+          .set({
+            exp: sql<number>`"exp" + ${PROGRESSION.voteXp}`,
+            goldPending: sql<number>`"goldPending" + ${gold}`,
+          })
+          .where('userId', '=', input.userId)
+          .execute();
+
         if (decision.kind === 'pending') return { result: { status: 'recorded' }, xp: [voted] };
         if (decision.kind === 'split') {
           return { result: { status: await escalate(trx, item, now) }, xp: [voted] };
         }
 
-        const writesBack = item.questionKey === KNIGHTS_NSFW_LEVEL_QUESTION;
         if (writesBack) {
           const winner = Number(decision.value);
           if (isBlockedLevel(winner) || isExcessiveDownRating(item.imageLevel, winner)) {

@@ -1,11 +1,14 @@
 import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { getLevelProgression } from '@civitai/shared/new-order-levels';
 import { finalItem } from '../queue/item-state';
 import { PROGRESSION } from './config';
+import { accuracyOf, earnedRank, type Ledger } from './rating';
 import { mirrorXp, type XpDelta, type XpMirror } from './legacy-exp';
 
 type Executor = Kysely<DB> | Transaction<DB>;
+type RankType = DB['NewOrderPlayer']['rankType'];
 
 /** Accuracy is floored so a poor streak does not zero fervor. */
 export function calculateFervor({ correct, graded }: { correct: number; graded: number }): number {
@@ -14,9 +17,9 @@ export function calculateFervor({ correct, graded }: { correct: number; graded: 
   return Math.floor(correct * PROGRESSION.fervorPerCorrect * accuracy);
 }
 
-/** Inconclusive and still-pending votes are not in the window, nor are votes cast before the career reset. */
-export async function fervorOf(db: Executor, playerId: number): Promise<number> {
-  const window = await db
+/** Shared by fervor and accuracy. Excludes inconclusive and unsettled votes, and votes cast before the `startAt` reset. */
+export async function ledgerOf(db: Executor, playerId: number): Promise<Ledger> {
+  const window = db
     .selectFrom('KnightsVote as v')
     .select('v.verdict')
     .where('v.playerId', '=', playerId)
@@ -27,11 +30,37 @@ export async function fervorOf(db: Executor, playerId: number): Promise<number> 
     )
     .orderBy('v.createdAt', 'desc')
     .limit(PROGRESSION.fervorWindow)
+    .as('w');
+  const totals = await db
+    .selectFrom(window)
+    .select([
+      sql<string>`count(*)`.as('graded'),
+      sql<string>`count(*) filter (where w.verdict = 'correct')`.as('correct'),
+    ])
+    .executeTakeFirstOrThrow();
+  return { correct: Number(totals.correct), graded: Number(totals.graded) };
+}
+
+const rankEarnedBy = (player: { rankType: string; exp: number }, ledger: Ledger) =>
+  earnedRank(player.rankType, getLevelProgression(player.exp).level, accuracyOf(ledger));
+
+/** Dev tools only: runs the settle-time rank-up on demand. */
+export async function applyRankUp(trx: Executor, playerId: number): Promise<string | null> {
+  const player = await trx
+    .selectFrom('NewOrderPlayer')
+    .select(['rankType', 'exp'])
+    .where('userId', '=', playerId)
+    .forUpdate()
+    .executeTakeFirst();
+  if (!player) return null;
+  const earned = rankEarnedBy(player, await ledgerOf(trx, playerId));
+  if (!earned) return null;
+  await trx
+    .updateTable('NewOrderPlayer')
+    .set({ rankType: earned as RankType })
+    .where('userId', '=', playerId)
     .execute();
-  return calculateFervor({
-    correct: window.filter((v) => v.verdict === 'correct').length,
-    graded: window.length,
-  });
+  return earned;
 }
 
 export type SettleResult = { votes: number; xp: XpDelta[] };
@@ -96,13 +125,24 @@ export async function settleItemVotes(
   const xp: XpDelta[] = [];
   // Votes were read in player order, so concurrent settlements lock player rows in the same order.
   for (const [playerId, total] of perPlayer) {
-    await trx
+    const locked = await trx
       .updateTable('NewOrderPlayer')
       .set({
         exp: sql<number>`"exp" + ${total.xp}`,
         goldPending: sql<number>`GREATEST(0, "goldPending" - ${total.pending})`,
         goldEarned: sql<number>`"goldEarned" + ${total.earned}`,
-        fervor: await fervorOf(trx, playerId),
+      })
+      .where('userId', '=', playerId)
+      .returning(['rankType', 'exp'])
+      .executeTakeFirst();
+    // Read only now: the update above took the row lock, so a settlement that committed first is in the ledger.
+    const ledger = await ledgerOf(trx, playerId);
+    const earned = locked ? rankEarnedBy(locked, ledger) : null;
+    await trx
+      .updateTable('NewOrderPlayer')
+      .set({
+        fervor: calculateFervor(ledger),
+        ...(earned ? { rankType: earned as RankType } : {}),
       })
       .where('userId', '=', playerId)
       .execute();

@@ -1041,6 +1041,7 @@ export const NewOrderRankType = {
   Acolyte: 'Acolyte',
   Knight: 'Knight',
   Templar: 'Templar',
+  Paladin: 'Paladin',
 } as const;
 
 export type NewOrderRankType = (typeof NewOrderRankType)[keyof typeof NewOrderRankType];

@@ -204,7 +204,7 @@ export type ModerationRuleAction = "Approve" | "Block" | "Hold";
 
 export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update" | "Incident";
 
-export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
+export type NewOrderRankType = "Acolyte" | "Knight" | "Templar" | "Paladin";
 
 export type ChallengeSource = "System" | "Mod" | "User";
 

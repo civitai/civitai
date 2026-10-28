@@ -30,6 +30,15 @@ export function legacyExpMirror(client: () => EvalClient): XpMirror {
   };
 }
 
+const DELETE_FIELD = `return redis.call('HDEL', KEYS[1], ARGV[1])`;
+
+/** The original game then re-reads the player's exp from Postgres instead of trusting a stale counter. */
+export const legacyExpForget =
+  (client: () => EvalClient) =>
+  async (playerId: number): Promise<void> => {
+    await client().eval(DELETE_FIELD, { keys: [LEGACY_EXP_KEY], arguments: [String(playerId)] });
+  };
+
 /** Runs after the Postgres commit; a Redis failure is logged and never fails the caller. */
 export async function mirrorXp(mirror: XpMirror | undefined, deltas: XpDelta[]): Promise<void> {
   if (!mirror || deltas.length === 0) return;

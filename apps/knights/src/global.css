@@ -31,3 +31,29 @@ h2 {
 a {
   color: var(--gold);
 }
+
+.muted {
+  color: var(--muted);
+}
+
+.notice {
+  color: var(--gold);
+}
+
+button {
+  padding: 0.5rem 1.25rem;
+  border: 1px solid var(--gold);
+  background: var(--panel);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--border);
+}
+
+button:disabled {
+  opacity: 0.5;
+  cursor: wait;
+}

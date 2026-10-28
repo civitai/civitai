@@ -66,10 +66,13 @@ SQL on PGlite.
 
 Migration `20261213120000_knights_v2_progression` (applied by hand): `KnightsVote.xp` / `settledAt`, `NewOrderPlayer.goldPending` / `goldEarned`. Every amount is in `progression/config.ts`.
 
-- A vote pays flat XP at once and records `gold` (base x the voter's rank multiplier) as pending on the vote and in `goldPending`.
+- A vote pays flat XP at once and records `gold` (base x the voter's rank multiplier x `RATING.belowBarFactor` while below the bar) as pending on the vote and in `goldPending`.
 - `settleItemVotes` pays a graded item once, only when its outcome is final (`Closed`, or `Resolved` and written back): correct = bulk XP, gold moves pending -> earned; wrong or inconclusive = gold dropped. `settledAt` plus the row lock make it idempotent. It runs in the transaction of every Knights path that finalises an item, and `POST /api/jobs/tick` sweeps (`settleFinalItems`) what other apps closed (the moderator app's rulings).
 - Fervor is computed from the ledger (the player's last `fervorWindow` settled correct/failed votes since `startAt`, inconclusive excluded); the status line reads it from there and settle also writes the `fervor` column. A vote cast before a `startAt` reset settles without paying.
-- `/dev/simulate` 404s unless SvelteKit's build-time `dev` is true.
+- Ranks: `progression/rating.ts`, knobs in `config.ts` (`RANK_LADDER`, `RATING`). Accuracy shares fervor's `ledgerOf` window and is "not yet rated" below `RATING.minGraded`.
+- Rank-up runs in `settleItemVotes` after XP is added; it can skip ranks and never demotes, and never touches Acolyte or Inquisitor.
+- Migration `20261214120000_knights_v2_paladin_rank` (by hand, after the client with `Paladin` is deployed everywhere, dev included: an old client throws on the Paladin `NewOrderRank` row): enum value plus `NewOrderRank` row.
+- `/dev/simulate` 404s unless SvelteKit's build-time `dev` is true; it also has "Set level" (`dev/set-level.ts`) and shows accuracy.
 - XP is also added to the original game's Redis exp counter (`new-order:exp`, only when that player's field is present) after the commit, while both games run: its nightly reset overwrites `NewOrderPlayer.exp` from that counter, and an absent field is re-read from Postgres, which already holds the XP.
 
 ## Trials (`src/lib/server/trials`)
@@ -81,7 +84,7 @@ Tables `KnightsReferenceImage`, `KnightsTrialRun`, `KnightsTrialAnswer`, `Knight
 - A run is per question key (`TRIAL_MODULES`; only `knights.image.nsfwLevel`), seeded per player: `seed` and the planned `itemIds` are stored on the run. It opens with core items, then fresh ones, which never repeat for that player. One open run per player and module.
 - After each answer the page shows right or wrong, the correct level and, for core items, the explanation.
 - The score counts fresh items only, and only when at least `minFresh` were answered. `score >= passMark` passes; passing every module since the player's last `NewOrderPlayer.startAt` (a reset moves it) sets `rankType` to Knight. Failing sets `cooldownUntil`; the next run gets a new seed. A run with too few answered fresh items (images became unservable) closes `void`: no score, no cooldown, and a new run starts.
-- The Knight badge award (and the rank-up signal) the v1 promotion sends is not wired yet.
+- The Knight badge award (and the rank-up signal) the v1 promotion sends is not wired yet, for Trials promotion and for the Progression rank-ups alike.
 - `answers` and `failures` are per-item counters.
 
 ## Sources (queue producers)
