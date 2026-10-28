@@ -127,7 +127,7 @@ describe('getTrial', () => {
     await player(1, 'Knight');
     await standardPool();
     expect((await getTrial(db, 1, deps)).kind).toBe('not-acolyte');
-    expect((await getTrial(db, 99, deps)).kind).toBe('not-acolyte');
+    expect((await getTrial(db, 99, deps)).kind).toBe('question');
   });
 
   it('has nothing to serve without enough fresh items, and starts no run', async () => {
@@ -347,6 +347,14 @@ describe('graduation', () => {
     expect(run.result).toBe('passed');
     expect(run.finishedAt).not.toBeNull();
     expect((await getTrial(db, 1, deps)).kind).toBe('not-acolyte');
+  });
+
+  it('promotes a player who passes before they have a player row', async () => {
+    await standardPool();
+    const result = await playOut(7);
+
+    expect(result).toMatchObject({ status: 'recorded', finished: { result: 'passed' } });
+    expect(await rank(7)).toBe('Knight');
   });
 
   it('keeps a player who misses the mark an Acolyte and holds a cooldown', async () => {

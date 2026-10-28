@@ -81,12 +81,17 @@ export async function promoteToKnight(db: Executor, userId: number) {
 async function passedModules(db: Executor, userId: number): Promise<Set<string>> {
   const rows = await db
     .selectFrom('KnightsTrialRun as run')
-    .innerJoin('NewOrderPlayer as player', 'player.userId', 'run.playerId')
+    .leftJoin('NewOrderPlayer as player', 'player.userId', 'run.playerId')
     .select('run.questionKey')
     .distinct()
     .where('run.playerId', '=', userId)
     .where('run.result', '=', 'passed')
-    .whereRef('run.finishedAt', '>=', 'player.startAt')
+    .where((eb) =>
+      eb.or([
+        eb('player.startAt', 'is', null),
+        eb('run.finishedAt', '>=', eb.ref('player.startAt')),
+      ])
+    )
     .execute();
   return new Set(rows.map((r) => r.questionKey));
 }
@@ -233,7 +238,7 @@ async function resolveTrial(
     .select('rankType')
     .where('userId', '=', userId)
     .executeTakeFirst();
-  if (player?.rankType !== 'Acolyte') return { kind: 'not-acolyte' };
+  if (player && player.rankType !== 'Acolyte') return { kind: 'not-acolyte' };
 
   const done = await passedModules(db, userId);
   const questionKey = TRIAL_MODULES.find((key) => !done.has(key));
