@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { isJobRequest } from './jobs-auth';
 
 const req = (authorization?: string) =>
-  new Request('https://knights.civitai.com/api/jobs/expire', {
+  new Request('https://knights.civitai.com/api/jobs/tick', {
     method: 'POST',
     headers: authorization ? { authorization } : {},
   });

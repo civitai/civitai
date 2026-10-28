@@ -1,7 +1,7 @@
 import { timingSafeEqual } from 'node:crypto';
 import { env } from '$env/dynamic/private';
 
-export const JOB_PATHS: ReadonlySet<string> = new Set(['/api/jobs/expire', '/api/jobs/partitions']);
+export const JOB_PATHS: ReadonlySet<string> = new Set(['/api/jobs/tick', '/api/jobs/partitions']);
 
 export function isJobRequest(request: Request): boolean {
   const expected = env.JOBS_TOKEN;

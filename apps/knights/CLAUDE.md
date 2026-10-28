@@ -44,15 +44,20 @@ SQL on PGlite.
   `setNsfwLevelKono`; authenticated with `WEBHOOK_TOKEN` in the `x-webhook-token` header, env in `.env.example`) after the vote commits, with no lock held. That endpoint is the gate: it writes only onto an image
   that exists, has no block marker and is unlocked or Knights-locked, and answers 200 `applied` or `skipped`
   (`missing` | `blocked` | `locked`, with the image's current level). Until then the item is `Resolved` with `appliedAt`
-  null and `resolvedFromLevel` set; `POST /api/jobs/expire` retries every due one, so schedule it every few minutes.
+  null and `resolvedFromLevel` set; `POST /api/jobs/tick` retries every due one (and escalates expired items), so schedule it every few minutes.
   - Each try claims the item first (attempt count + two-minute lease). A throw (5xx, network, unintelligible answer) is
     transient: backoff 5, 10, 20 ... up to 6h, and after 8 tries the item goes to the Inquisitors (`attempts-exhausted`).
     Untried rows run before those that already failed; a run does 4 at a time within a 45s budget.
+  - A retry that finds the image at the settled level under the Knights lock (`KNIGHTS_VOTE_NSFW_LEVEL_REASON`, in
+    `@civitai/shared/new-order`) counts as written: an earlier try's answer was lost after the main app applied it.
   - A skip, or an image that is blocked, moderator-locked or at another level than `resolvedFromLevel`, is final and is
-    never retried. Blocked or moved: Inquisitor, votes pending again. Moderator-locked: `Closed`, votes graded against the
-    moderator's current level (as v1 does when a moderator finalizes). Gone: `Closed`, votes inconclusive. `reason` says which.
+    never retried. Blocked or moved: Inquisitor, votes pending again. Moderator-locked: `Closed` with votes graded against the
+    moderator's current level (as v1 does when a moderator finalizes), or Inquisitor (`moderator-locked`) when that level
+    is unknown. Gone: `Closed`, votes inconclusive. `reason` says which.
+  - Once a vote commits, a failure settling it is logged and the player still gets the accepted answer; the item stays
+    `Resolved` and the job retries it.
 - The vote ledger is partitioned by month. `POST /api/jobs/partitions` creates the next months and a vote creates its
-  own month if missing; `POST /api/jobs/expire` escalates items past `expiresAt`. Both need
+  own month if missing; `POST /api/jobs/tick` also escalates items past `expiresAt`. Both need
   `Authorization: Bearer $JOBS_TOKEN`.
 - The user guard in `hooks.server.ts` skips exactly the two routes in `JOB_PATHS`; a new job route must be added there.
 - `/play` is the minimal voting page. Acolytes get no feed and cannot vote (Trials is a later slice).

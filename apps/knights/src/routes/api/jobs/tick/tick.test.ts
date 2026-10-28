@@ -11,7 +11,7 @@ const { POST } = await import('./+server');
 
 const run = () =>
   POST({
-    request: new Request('http://knights.test/api/jobs/expire', { method: 'POST' }),
+    request: new Request('http://knights.test/api/jobs/tick', { method: 'POST' }),
   } as never);
 
 beforeEach(() => {
@@ -20,7 +20,7 @@ beforeEach(() => {
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
-describe('POST /api/jobs/expire', () => {
+describe('POST /api/jobs/tick', () => {
   it('reports both steps when both succeed', async () => {
     escalateExpired.mockResolvedValue({ escalated: 2 });
     applyPendingResolutions.mockResolvedValue({ applied: 1 });

@@ -20,6 +20,7 @@ const NOW = new Date('2026-12-15T12:00:00Z');
 
 let pg: PGlite;
 let db: Kysely<DB>;
+let transactions: { open: () => number };
 const APPLIED = { outcome: 'applied' } as const;
 const applyConsensus = vi.fn<QueueDeps['applyConsensus']>(async () => APPLIED);
 const depsAt = (now: Date): QueueDeps => ({ applyConsensus, now: () => now });
@@ -82,7 +83,7 @@ const verdicts = async (id: number) =>
   ).rows;
 
 beforeAll(async () => {
-  ({ pg, db } = await createQueueDb());
+  ({ pg, db, transactions } = await createQueueDb());
   await ensureVotePartitions(db, { now: NOW, monthsAhead: 1 });
   await pg.exec(`INSERT INTO "KnightsQuestion" ("key","kind","prompt","options")
     VALUES ('knights.test.bool','bool','Is there a hat?','[{"value":"yes","label":"Yes"},{"value":"no","label":"No"}]')`);
@@ -451,21 +452,46 @@ describe('resolution', () => {
     const id = await item(10);
     for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
 
-    let lockedDuringCall: boolean | undefined;
+    let openDuringCall: number | undefined;
     applyConsensus.mockImplementationOnce(async () => {
-      const row = await pg
-        .query<{ id: number }>(`SELECT id FROM "KnightsQueueItem" WHERE id=$1 FOR UPDATE NOWAIT`, [
-          id,
-        ])
-        .then(
-          () => false,
-          () => true
-        );
-      lockedDuringCall = row;
+      openDuringCall = transactions.open();
       return APPLIED;
     });
     await vote(5, id, '4');
-    expect(lockedDuringCall).toBe(false);
+    expect(applyConsensus).toHaveBeenCalledTimes(1);
+    expect(openDuringCall).toBe(0);
+  });
+
+  it('accepts the vote when settling it throws after the commit, and the job applies it later', async () => {
+    await fiveKnights();
+    await image(10, 4);
+    const id = await item(10);
+    for (const u of [1, 2, 3, 4]) await vote(u, id, '4');
+
+    vi.spyOn(console, 'error').mockImplementationOnce(() => undefined);
+    const now = vi
+      .fn<() => Date>()
+      .mockReturnValueOnce(NOW)
+      .mockImplementationOnce(() => {
+        throw new Error('db hiccup while settling');
+      });
+    const result = await castVote(
+      db,
+      { userId: 5, itemId: id, answer: '4' },
+      { applyConsensus, now }
+    );
+
+    expect(result.status).toBe('resolved');
+    expect(applyConsensus).not.toHaveBeenCalled();
+    expect(await itemRow(id)).toMatchObject({ status: 'Resolved', appliedAt: null });
+    expect((await verdicts(id)).every((v) => v.verdict === 'correct')).toBe(true);
+
+    expect(await applyPendingResolutions(db, deps())).toEqual({
+      applied: 1,
+      failed: 0,
+      rerouted: 0,
+    });
+    expect((await itemRow(id)).appliedAt).toEqual(NOW);
   });
 
   it('weights votes by rank and smites', async () => {
@@ -647,12 +673,50 @@ describe('writing a settled rating back', () => {
       expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', reason: 'level-moved' });
     });
 
-    it('still writes to an image an earlier Knights vote locked at the same level', async () => {
+    it('counts an image already at the settled level and Knights-locked as written, without calling the main app', async () => {
       const id = await settledItem();
       await lock(10, 'Knights Vote', 4);
-      applyConsensus.mockResolvedValue(APPLIED);
+      applyConsensus.mockClear();
       expect(await pendingRun(10)).toEqual({ applied: 1, failed: 0, rerouted: 0 });
+      expect(applyConsensus).not.toHaveBeenCalled();
       expect((await itemRow(id)).appliedAt).not.toBeNull();
+    });
+
+    it('treats a retry after a write that landed but timed out as applied, not as a moved level', async () => {
+      await fiveKnights();
+      await image(10, 8);
+      const id = await item(10);
+      applyConsensus.mockImplementationOnce(async () => {
+        await lock(10, 'Knights Vote', 4);
+        throw new Error('timed out after the main app wrote');
+      });
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      for (const u of [1, 2, 3, 4, 5]) await vote(u, id, '4');
+      expect(await itemRow(id)).toMatchObject({ status: 'Resolved', appliedAt: null });
+
+      applyConsensus.mockClear();
+      expect(await pendingRun(6)).toEqual({ applied: 1, failed: 0, rerouted: 0 });
+      expect(applyConsensus).not.toHaveBeenCalled();
+      expect(await itemRow(id)).toMatchObject({ status: 'Resolved', appliedAt: afterMinutes(6) });
+      expect((await verdicts(id)).every((v) => v.verdict === 'correct')).toBe(true);
+    });
+
+    it('hands a moderator-locked image with no usable level to the Inquisitors as moderator-locked', async () => {
+      const id = await settledItem();
+      await lock(10, 'Moderator review', 0);
+      expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
+      expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', reason: 'moderator-locked' });
+    });
+
+    it('does the same when the main app reports a lock without a level', async () => {
+      const id = await settledItem();
+      applyConsensus.mockResolvedValue({
+        outcome: 'skipped',
+        reason: 'locked',
+        currentLevel: null,
+      });
+      expect(await pendingRun(10)).toEqual({ applied: 0, failed: 0, rerouted: 1 });
+      expect(await itemRow(id)).toMatchObject({ status: 'Inquisitor', reason: 'moderator-locked' });
     });
 
     it('closes an item whose image is gone, with the votes inconclusive', async () => {

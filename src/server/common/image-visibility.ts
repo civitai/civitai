@@ -1,9 +1,9 @@
 import { Prisma } from '@prisma/client';
 import { NsfwLevel } from '~/server/common/enums';
 import { ImageIngestionStatus } from '~/shared/utils/prisma/enums';
+import { KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '@civitai/shared/new-order';
 
-// The only lock a moderator didn't set: Knights consensus locks through the moderator path.
-export const KNIGHTS_VOTE_NSFW_LEVEL_REASON = 'Knights Vote';
+export { KNIGHTS_VOTE_NSFW_LEVEL_REASON };
 const PERMANENT_SCAN_FAILURE = 'permanent';
 
 /**

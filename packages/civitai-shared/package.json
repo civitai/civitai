@@ -39,7 +39,8 @@
     "./service-offering-takedown": "./src/service-offering-takedown.ts",
     "./held-media": "./src/held-media.ts",
     "./report-reward": "./src/report-reward.ts",
-    "./new-order-levels": "./src/new-order-levels.ts"
+    "./new-order-levels": "./src/new-order-levels.ts",
+    "./new-order": "./src/new-order.ts"
   },
   "scripts": {
     "test": "vitest run",

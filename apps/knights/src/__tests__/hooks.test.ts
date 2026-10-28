@@ -53,7 +53,7 @@ describe('knights access gate', () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it.each(['/api/jobs/expire', '/api/jobs/partitions'])(
+  it.each(['/api/jobs/tick', '/api/jobs/partitions'])(
     'lets the job route %s skip the user guard',
     async (path) => {
       const { resolve } = await run(path);
@@ -62,7 +62,7 @@ describe('knights access gate', () => {
     }
   );
 
-  it.each(['/api/jobs/', '/api/jobs/other', '/api/jobs/expire/extra', '/api/jobs/expire/'])(
+  it.each(['/api/jobs/', '/api/jobs/other', '/api/jobs/tick/extra', '/api/jobs/tick/'])(
     'still guards %s: only the two job routes are exempt',
     async (path) => {
       guardCheck.mockResolvedValue({ status: 'login', redirect: 'https://auth.civitai.com/login' });

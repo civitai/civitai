@@ -69,7 +69,7 @@ function asNodePgParameter(value: unknown): unknown {
   );
 }
 
-function dialect(pg: PGlite): Dialect {
+function dialect(pg: PGlite, transactions: { open: number }): Dialect {
   const connection: DatabaseConnection = {
     async executeQuery<R>(compiled: CompiledQuery): Promise<QueryResult<R>> {
       const result = await pg.query(compiled.sql, compiled.parameters.map(asNodePgParameter));
@@ -84,10 +84,18 @@ function dialect(pg: PGlite): Dialect {
   const driver: Driver = {
     init: noop,
     acquireConnection: async () => connection,
-    beginTransaction: async (conn) => void (await conn.executeQuery(CompiledQuery.raw('begin'))),
-    commitTransaction: async (conn) => void (await conn.executeQuery(CompiledQuery.raw('commit'))),
-    rollbackTransaction: async (conn) =>
-      void (await conn.executeQuery(CompiledQuery.raw('rollback'))),
+    beginTransaction: async (conn) => {
+      await conn.executeQuery(CompiledQuery.raw('begin'));
+      transactions.open++;
+    },
+    commitTransaction: async (conn) => {
+      await conn.executeQuery(CompiledQuery.raw('commit'));
+      transactions.open--;
+    },
+    rollbackTransaction: async (conn) => {
+      await conn.executeQuery(CompiledQuery.raw('rollback'));
+      transactions.open--;
+    },
     releaseConnection: noop,
     destroy: noop,
   };
@@ -99,9 +107,18 @@ function dialect(pg: PGlite): Dialect {
   };
 }
 
-export async function createQueueDb(): Promise<{ pg: PGlite; db: Kysely<DB> }> {
+export async function createQueueDb(): Promise<{
+  pg: PGlite;
+  db: Kysely<DB>;
+  transactions: { open: () => number };
+}> {
   const pg = await PGlite.create({ parsers: { 1114: parseTimestampAsUtc } });
   await pg.exec(STAND_INS);
   await pg.exec(readFileSync(MIGRATION, 'utf8'));
-  return { pg, db: new Kysely<DB>({ dialect: dialect(pg) }) };
+  const state = { open: 0 };
+  return {
+    pg,
+    db: new Kysely<DB>({ dialect: dialect(pg, state) }),
+    transactions: { open: () => state.open },
+  };
 }

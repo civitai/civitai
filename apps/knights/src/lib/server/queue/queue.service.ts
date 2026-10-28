@@ -1,4 +1,4 @@
-import { sql, type Kysely, type Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { NsfwLevel } from '@civitai/shared';
 import {
@@ -397,7 +397,15 @@ export async function castVote(
       return { result: { status: 'resolved' }, settledItemId: writesBack ? item.id : undefined };
     });
 
-  if (settledItemId !== undefined) await settleResolved(db, settledItemId, deps);
+  if (settledItemId !== undefined) {
+    // The vote is committed: a failure settling it must not tell the player it was lost. The item stays Resolved and unwritten, so the job retries it.
+    await settleResolved(db, settledItemId, deps).catch((error) =>
+      console.error('knights: could not settle a committed vote, the job will retry it', {
+        itemId: settledItemId,
+        error,
+      })
+    );
+  }
   return result;
 }
 
@@ -469,13 +477,31 @@ function rerouteForSkip(
   outcome: Extract<ApplyOutcome, { outcome: 'skipped' }>
 ): Exclude<WritebackDecision, { kind: 'apply' }> {
   if (outcome.reason === 'missing') return { kind: 'missing' };
-  if (outcome.reason === 'locked' && outcome.currentLevel && outcome.currentLevel > 0) {
-    return { kind: 'moderator', level: outcome.currentLevel };
-  }
-  return { kind: 'inquisitor', reason: outcome.reason === 'blocked' ? 'blocked' : 'level-moved' };
+  if (outcome.reason === 'blocked') return { kind: 'inquisitor', reason: 'blocked' };
+  return outcome.currentLevel && outcome.currentLevel > 0
+    ? { kind: 'moderator', level: outcome.currentLevel }
+    : { kind: 'inquisitor', reason: 'moderator-locked' };
 }
 
+/** Resolved, unwritten, and not backing off or leased by another run. */
+const dueForWriteback = (eb: ExpressionBuilder<DB, 'KnightsQueueItem'>, now: Date) =>
+  eb.and([
+    eb('status', '=', 'Resolved'),
+    eb('appliedAt', 'is', null),
+    eb('resolvedValue', 'is not', null),
+    eb('resolvedBy', 'is not', null),
+    eb.or([eb('nextAttemptAt', 'is', null), eb('nextAttemptAt', '<=', utc(now))]),
+  ]);
+
 type SettleOutcome = 'applied' | 'failed' | 'rerouted' | 'unclaimed';
+
+async function markApplied(db: Executor, itemId: number, now: Date) {
+  await db
+    .updateTable('KnightsQueueItem')
+    .set({ appliedAt: utc(now), nextAttemptAt: null })
+    .where('id', '=', itemId)
+    .execute();
+}
 
 /** One write-back try. The claim leases the item so a concurrent run cannot write it twice; only a throw is transient. */
 async function settleResolved(
@@ -492,11 +518,7 @@ async function settleResolved(
       updatedAt: utc(now),
     })
     .where('id', '=', itemId)
-    .where('status', '=', 'Resolved')
-    .where('appliedAt', 'is', null)
-    .where('resolvedValue', 'is not', null)
-    .where('resolvedBy', 'is not', null)
-    .where((eb) => eb.or([eb('nextAttemptAt', 'is', null), eb('nextAttemptAt', '<=', utc(now))]))
+    .where((eb) => dueForWriteback(eb, now))
     .returning([
       'questionKey',
       'imageId',
@@ -508,10 +530,14 @@ async function settleResolved(
     .executeTakeFirst();
   if (!claimed) return 'unclaimed';
 
-  const decision = decideWriteback(
-    await readImageState(db, claimed.imageId),
-    claimed.resolvedFromLevel
-  );
+  const decision = decideWriteback(await readImageState(db, claimed.imageId), {
+    resolvedFromLevel: claimed.resolvedFromLevel,
+    resolvedValue: claimed.resolvedValue as string,
+  });
+  if (decision.kind === 'already-applied') {
+    await markApplied(db, itemId, deps.now());
+    return 'applied';
+  }
   if (decision.kind !== 'apply') {
     await reroute(db, itemId, decision, now);
     return 'rerouted';
@@ -528,22 +554,19 @@ async function settleResolved(
       await reroute(db, itemId, rerouteForSkip(outcome), now);
       return 'rerouted';
     }
-    await db
-      .updateTable('KnightsQueueItem')
-      .set({ appliedAt: utc(deps.now()), nextAttemptAt: null })
-      .where('id', '=', itemId)
-      .execute();
+    await markApplied(db, itemId, deps.now());
     return 'applied';
   } catch (error) {
-    console.error('knights: could not write a settled answer back, it will be retried', {
-      itemId,
-      attempt: claimed.applyAttempts,
-      error,
-    });
+    const log = { itemId, attempt: claimed.applyAttempts, error };
     if (claimed.applyAttempts >= MAX_APPLY_ATTEMPTS) {
+      console.error(
+        'knights: could not write a settled answer back, handing it to the Inquisitors',
+        log
+      );
       await reroute(db, itemId, { kind: 'inquisitor', reason: 'attempts-exhausted' }, now);
       return 'rerouted';
     }
+    console.error('knights: could not write a settled answer back, it will be retried', log);
     await db
       .updateTable('KnightsQueueItem')
       .set({ nextAttemptAt: utc(addMinutes(now, backoffMinutes(claimed.applyAttempts))) })
@@ -566,13 +589,7 @@ export async function applyPendingResolutions(
   const due = await db
     .selectFrom('KnightsQueueItem')
     .select('id')
-    .where('status', '=', 'Resolved')
-    .where('appliedAt', 'is', null)
-    .where('resolvedValue', 'is not', null)
-    .where('resolvedBy', 'is not', null)
-    .where((eb) =>
-      eb.or([eb('nextAttemptAt', 'is', null), eb('nextAttemptAt', '<=', utc(deps.now()))])
-    )
+    .where((eb) => dueForWriteback(eb, deps.now()))
     .orderBy('applyAttempts', 'asc')
     .orderBy('resolvedAt', 'asc')
     .orderBy('id', 'asc')
