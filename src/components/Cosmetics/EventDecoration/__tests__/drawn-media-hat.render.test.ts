@@ -122,16 +122,11 @@ describe('the image detail hat sits on the drawn picture', () => {
   it('reaches past the picture by what the slot and the header leave free', async () => {
     // 12px of slot left of the box, 30px above it (and 12px of free header space above that).
     await render(hat);
-    const layout = getHatLayout(
-      'corner',
-      undefined,
-      { left: getHatRoom(12), top: getHatRoom(30 + 12) },
-      HAT_PLAIN_CARD_NUDGE,
-      160
-    );
-    // On the edge, not inside it: the hat's visible extent starts outside the picture.
-    expect(layout.reach.left).toBeLessThan(0);
-    expect(layout.reach.top).toBeLessThan(0);
+    const button = hatButton()!;
+    // Rendered box offsets (about 4px and -18px here); tucked inside the picture they would be
+    // about 16px and 2px.
+    expect(parseFloat(button.style.left)).toBeLessThan(8);
+    expect(parseFloat(button.style.top)).toBeLessThan(-10);
   });
 
   it('on a picture flush with the slot, reaches only into the header gap, not the window', async () => {
