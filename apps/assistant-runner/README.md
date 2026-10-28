@@ -161,7 +161,8 @@ makes, which `WORKFLOW_VERSION` protects.
        civitai keeps the grant's user's tunnel at that host, never another user's; a sandbox with
        no tunnel running (paused, disconnected) keeps nothing alive. A `NOT_FOUND` is asked again
        at the next tick; a refusal or dead grant stops it, and so does `stop_preview` until the
-       next start. When the run ends it stops keeping the tunnel alive and civitai's normal idle expiry
+       next start. Each tick's `tunnel_status` request is activity for the app too, so a live run
+       also keeps its app from pausing as idle. When the run ends it stops keeping the tunnel alive and civitai's normal idle expiry
        applies, so the user keeps the preview for a while. The 8-hour cap never moves.
     4. `stop_preview` closes the run's own tunnel at civitai (`stop`) and the sandbox's side
        (`tunnel_disconnect`); a preview an earlier reply started is closed from the sandbox's side

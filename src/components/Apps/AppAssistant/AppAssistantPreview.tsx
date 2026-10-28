@@ -97,8 +97,12 @@ export function AppAssistantPreview({
   // The frame reached its host's terminal fallback (never ready, its token failed, a fatal error).
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [frame.data]);
-  // The tab came back into view since the sandbox was last asked (see `live`).
-  const askSandbox = useRef(false);
+  // Whether the next check asks the sandbox too (see `live`): on the first check of a page, after
+  // the tab comes back into view, and after the user works in the pane (whose keep-awake already
+  // sends the sandbox a request then, so asking adds nothing to its idle clock).
+  const askSandbox = useRef(true);
+  // The preview (`view`) the sandbox said was down: that answer stands for it, whatever civitai says.
+  const sandboxDownView = useRef<string | null>(null);
   useEffect(() => {
     const onVisibility = () => {
       if (document.visibilityState === 'visible') askSandbox.current = true;
@@ -109,13 +113,14 @@ export function AppAssistantPreview({
   }, []);
   // On the server runner, while the frame is up: whether the preview is still live. Down when civitai
   // has no live tunnel for it (`PreviewGoneError`), or when the app's sandbox says its tunnel is not
-  // running, or runs to another host than civitai's. civitai is asked every `liveCheckMs` and when
-  // the tab comes back into view; the sandbox only when the tab comes back into view, because every
-  // request to it counts as activity and a visible tab nobody works in must still let the app pause.
-  // Any other failure, and a sandbox that does not answer (`null`: a timeout, an error status), leaves
-  // the preview shown: an unreachable sandbox says nothing about the tunnel, and showing a live
-  // preview as stopped would be the worse mistake. Each preview (`view`) is checked afresh, so an old
-  // answer never ends a new one.
+  // running, or runs to another host than civitai's; a sandbox's "down" stands for that preview, as
+  // civitai lists a tunnel until its idle expiry. civitai is asked every `liveCheckMs` and when the
+  // tab comes back into view; the sandbox only on the occasions above, because every request to it
+  // counts as activity and a visible tab nobody works in must still let the app pause. Any other
+  // failure, and a sandbox that does not answer (`null`: a timeout, an error status), leaves the
+  // preview shown: an unreachable sandbox says nothing about the tunnel, and showing a live preview
+  // as stopped would be the worse mistake. Each preview (`view`) is checked afresh, so an old answer
+  // never ends a new one.
   const live = useQuery({
     queryKey: [
       'app-assistant',
@@ -125,6 +130,9 @@ export function AppAssistantPreview({
       session?.view,
     ],
     queryFn: async () => {
+      const { blockId, sessionId, view: shownView } = session as PreviewSession;
+      const view = `${blockId}\n${sessionId}\n${shownView}`;
+      if (sandboxDownView.current === view) return false;
       let shown;
       try {
         shown = await fetchPreviewFrame((session as PreviewSession).blockId);
@@ -136,9 +144,10 @@ export function AppAssistantPreview({
       askSandbox.current = false;
       const sandbox = await tunnelStatus().catch(() => null);
       if (!sandbox) return true;
-      if (!sandbox.running) return false;
       const host = 'host' in shown ? shown.host : null;
-      return !(host && sandbox.host && sandbox.host !== host);
+      if (sandbox.running && !(host && sandbox.host && sandbox.host !== host)) return true;
+      sandboxDownView.current = view;
+      return false;
     },
     enabled: !!session && !!restart && !!frame.data,
     // The frame's own fetch just said it is live.
@@ -172,7 +181,11 @@ export function AppAssistantPreview({
     );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      className="flex h-full min-h-0 flex-col"
+      onPointerDownCapture={() => (askSandbox.current = true)}
+      onFocusCapture={() => (askSandbox.current = true)}
+    >
       <Group justify="space-between" px="sm" py={6} wrap="nowrap" className="shrink-0">
         <Stack gap={0} className="min-w-0">
           <Text size="xs" c="dimmed" truncate>

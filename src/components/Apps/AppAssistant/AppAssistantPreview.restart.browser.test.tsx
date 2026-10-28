@@ -210,19 +210,25 @@ describe('AppAssistantPreview — asking the app’s sandbox when the tab comes 
     return restart;
   };
 
-  test('turns into “The live preview isn’t running.” when civitai lists the tunnel but the sandbox’s is down', async () => {
-    const tunnelStatus = vi.fn(async () => ({ running: false, host: null }));
+  test('asks the sandbox on the first check, then only when the tab comes back; its “down” stands', async () => {
+    let answer: SandboxTunnelStatus = { running: true, host: HOST };
+    const tunnelStatus = vi.fn(async () => answer);
     const restart = await renderShown(tunnelStatus);
     await settle();
-    // Control: civitai alone says live; the sandbox is not asked on the interval (every ask counts
-    // as activity for the app's idle clock), only when the tab comes back.
-    expect(m.fetchFrame.mock.calls.length).toBeGreaterThan(1);
-    expect(tunnelStatus).not.toHaveBeenCalled();
+    // Control: asked once (the first check after load), and not again on the interval — every ask
+    // counts as activity for the app's idle clock — while civitai is checked on.
+    expect(m.fetchFrame.mock.calls.length).toBeGreaterThan(2);
+    expect(tunnelStatus).toHaveBeenCalledTimes(1);
     expect(page.getByTestId('frame').elements()).toHaveLength(1);
 
+    answer = { running: false, host: null };
     await tabComesBack();
     await expect.element(page.getByText('The live preview isn’t running.')).toBeInTheDocument();
-    expect(tunnelStatus).toHaveBeenCalled();
+    expect(tunnelStatus).toHaveBeenCalledTimes(2);
+    // civitai still lists the tunnel on every later check: the sandbox's answer stands.
+    await settle();
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(1);
+    expect(page.getByTestId('frame').elements()).toHaveLength(0);
     await restartButton().click();
     expect(restart.onRestart).toHaveBeenCalledTimes(1);
   });
@@ -233,8 +239,10 @@ describe('AppAssistantPreview — asking the app’s sandbox when the tab comes 
       host: 'dev-0f0f0f0f0f0f0f0f.apps.example',
     }));
     await renderShown(tunnelStatus);
-    await tabComesBack();
+    // Asked on the first check after load, with no need for the tab to come back.
     await expect.element(page.getByText('The live preview isn’t running.')).toBeInTheDocument();
+    await settle();
+    expect(page.getByText('The live preview isn’t running.').elements()).toHaveLength(1);
   });
 
   test('stays shown when the sandbox runs to the same host', async () => {
