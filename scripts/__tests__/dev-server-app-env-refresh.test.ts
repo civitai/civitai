@@ -116,6 +116,50 @@ describe('wt env --refresh', () => {
     expect(read(tree, '.env')).toBe(`${ROOT_ENV}SOME_DUMMY_KEY=2\n`);
   });
 
+  it('a tree file edited to match the primary is unedited from then on', () => {
+    syncAppEnv(primary, tree);
+    write(primary, AUTH, 'AUTH_INTERNAL_TOKEN=new-dummy\n');
+    write(tree, AUTH, 'AUTH_INTERNAL_TOKEN=new-dummy\n');
+
+    const r = syncAppEnv(primary, tree, { refresh: true });
+    expect(r.edited).toEqual([]);
+
+    write(primary, AUTH, 'AUTH_INTERNAL_TOKEN=newer-dummy\n');
+    syncAppEnv(primary, tree, { refresh: true });
+    expect(read(tree, AUTH)).toBe('AUTH_INTERNAL_TOKEN=newer-dummy\n');
+  });
+
+  it('an in-place DB repair keeps the file unedited for the next refresh', () => {
+    write(
+      primary,
+      AUTH,
+      'AUTH_INTERNAL_TOKEN=old-dummy\nDATABASE_URL=postgresql://x@elsewhere/db\n'
+    );
+    syncAppEnv(primary, tree);
+    write(primary, '.env', ROOT_ENV.replace('dummy', 'dummy2'));
+
+    expect(syncAppEnv(primary, tree).dbRouted).toContain(AUTH);
+    write(
+      primary,
+      AUTH,
+      'AUTH_INTERNAL_TOKEN=new-dummy\nDATABASE_URL=postgresql://x@elsewhere/db\n'
+    );
+
+    const r = syncAppEnv(primary, tree, { refresh: true });
+    expect(r.edited).toEqual([]);
+    expect(read(tree, AUTH)).toContain('AUTH_INTERNAL_TOKEN=new-dummy\n');
+  });
+
+  it('with no record, a file that differs only by what the repair empties is refreshed, not skipped', () => {
+    write(primary, AUTH, 'AUTH_INTERNAL_TOKEN=dummy\nCSAM_DUMMY=\n');
+    write(tree, AUTH, 'AUTH_INTERNAL_TOKEN=dummy\nCSAM_DUMMY=planted\n');
+
+    const r = syncAppEnv(primary, tree, { refresh: true });
+
+    expect(r.unrecorded).toEqual([]);
+    expect(read(tree, AUTH)).toBe('AUTH_INTERNAL_TOKEN=dummy\nCSAM_DUMMY=\n');
+  });
+
   it('without --refresh, an existing tree file is left alone', () => {
     syncAppEnv(primary, tree);
     write(primary, AUTH, 'AUTH_INTERNAL_TOKEN=new-dummy\n');

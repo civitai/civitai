@@ -284,9 +284,12 @@ function syncApp(primary, target, refresh, force) {
   for (const p of r.blanked) console.log(`  emptied   ${p} (CSAM_*)`);
   for (const p of r.noDir) console.log(`  skipped   ${p} (its app is not on this branch)`);
   for (const line of appEnvSkipLines(r)) console.log(line);
+  const skipped = r.edited.length + r.unrecorded.length;
   const stale = refresh || force ? '' : ' Pass --refresh to re-copy any the primary has edited since.';
   console.log(
-    `\nEnv files: ${r.copied.length} copied, ${r.refreshed.length} refreshed, ${r.kept.length} left as they were.${
+    `\nEnv files: ${r.copied.length} copied, ${r.refreshed.length} refreshed, ${r.kept.length} left as they were${
+      skipped ? `, ${skipped} skipped` : ''
+    }.${
       r.kept.length ? stale : ''
     }\n`
   );

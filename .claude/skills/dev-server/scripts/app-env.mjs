@@ -92,7 +92,10 @@ function readRecord(path) {
   if (!path || !existsSync(path)) return {};
   try {
     const parsed = JSON.parse(readFileSync(path, 'utf8'));
-    return parsed && typeof parsed === 'object' ? parsed : {};
+    if (!parsed || typeof parsed !== 'object') return {};
+    return Object.fromEntries(
+      Object.entries(parsed).filter(([, hash]) => typeof hash === 'string' && /^[0-9a-f]{64}$/.test(hash))
+    );
   } catch {
     return {};
   }
@@ -134,8 +137,8 @@ export function syncAppEnv(primary, target, { refresh = false, force = false } =
   const recorded = { ...record };
   const writes = [];
   const missing = [];
-  const copyOf = (from) => {
-    const blanked = blankEnvText(routeEnvTextToCatcher(readFileSync(from, 'utf8')));
+  const repaired = (text) => {
+    const blanked = blankEnvText(text);
     const routed = routeEnvTextToDevDb(blanked.text, devDb);
     return {
       text: routed.text,
@@ -144,6 +147,7 @@ export function syncAppEnv(primary, target, { refresh = false, force = false } =
       blanked: blanked.changed,
     };
   };
+  const copyOf = (from) => repaired(routeEnvTextToCatcher(readFileSync(from, 'utf8')));
   for (const rel of findAppEnvFiles(primary)) {
     const from = join(primary, rel);
     const to = join(target, rel);
@@ -154,11 +158,14 @@ export function syncAppEnv(primary, target, { refresh = false, force = false } =
     const fresh = !existsSync(to);
     const have = fresh ? null : readFileSync(to, 'utf8');
     const copy = copyOf(from);
-    const local = fresh
-      ? false
-      : record[rel]
-        ? sha256(have) !== record[rel]
-        : copy.missing || have !== copy.text;
+    // With no record, judge the file as this run would leave it: a tree copied before the CSAM_* /
+    // DB repair existed differs from the primary's copy only by what the repair is about to fix.
+    const local =
+      fresh || (!copy.missing && have === copy.text)
+        ? false
+        : record[rel]
+          ? sha256(have) !== record[rel]
+          : copy.missing || repaired(have).text !== copy.text;
     if (fresh || (refresh && (!local || force))) {
       if (copy.missing) missing.push(rel);
       recorded[rel] = sha256(copy.text);
@@ -172,18 +179,17 @@ export function syncAppEnv(primary, target, { refresh = false, force = false } =
       (fresh ? result.copied : result.refreshed).push(rel);
       continue;
     }
-    if (refresh) (record[rel] ? result.edited : result.unrecorded).push(rel);
     if (!local) recorded[rel] = sha256(have);
-    const blanked = blankEnvText(have);
-    const routed = routeEnvTextToDevDb(blanked.text, devDb);
-    if (routed.missing) missing.push(rel);
-    else if (routed.changed || blanked.changed) {
-      writes.push({ to, text: routed.text, stat: statSync(to) });
-      if (routed.changed) result.dbRouted.push(rel);
-      if (blanked.changed) result.blanked.push(rel);
-      if (!local) recorded[rel] = sha256(routed.text);
+    const fixed = repaired(have);
+    if (fixed.missing) missing.push(rel);
+    else if (fixed.dbRouted || fixed.blanked) {
+      writes.push({ to, text: fixed.text, stat: statSync(to) });
+      if (fixed.dbRouted) result.dbRouted.push(rel);
+      if (fixed.blanked) result.blanked.push(rel);
+      if (!local) recorded[rel] = sha256(fixed.text);
     }
-    result.kept.push(rel);
+    if (!refresh) result.kept.push(rel);
+    else (record[rel] ? result.edited : result.unrecorded).push(rel);
   }
   // A file only the tree has (a hand-made `.env.local`, say) is the tree's own edit: its database
   // stays as written, but its blanked keys are emptied like every other.
@@ -191,6 +197,8 @@ export function syncAppEnv(primary, target, { refresh = false, force = false } =
     ...result.copied,
     ...result.refreshed,
     ...result.kept,
+    ...result.edited,
+    ...result.unrecorded,
     ...result.noDir,
   ]);
   const own = existsSync(join(target, '.git')) ? findAppEnvFiles(target) : [];
