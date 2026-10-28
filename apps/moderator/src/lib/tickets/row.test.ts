@@ -2,10 +2,10 @@ import { describe, expect, it } from 'vitest';
 import { requesterLabel, rowChip, sentByText } from './row';
 
 describe('requesterLabel', () => {
-  it('prefers the requester name, then the linked account, then says none', () => {
+  it('prefers the requester name, then the linked account, then says unknown', () => {
     expect(requesterLabel({ requesterName: 'Ann', civitaiUserId: 5 })).toBe('Ann');
     expect(requesterLabel({ requesterName: null, civitaiUserId: 5 })).toBe('User #5');
-    expect(requesterLabel({ requesterName: '  ', civitaiUserId: null })).toBe('No requester');
+    expect(requesterLabel({ requesterName: '  ', civitaiUserId: null })).toBe('Unknown');
   });
 });
 

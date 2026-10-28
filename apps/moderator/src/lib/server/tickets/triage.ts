@@ -13,11 +13,10 @@ export async function ticketTriageLoad(
   { url, locals }: { url: URL; locals: App.Locals }
 ) {
   requireAccess(locals.user, url.pathname);
-  const canSeeEmail = !!locals.grants['decisions.support.pii'];
   const asked = url.searchParams.get('ticket');
   const pinnedId = asked && isFreshdeskId(asked) ? asked : undefined;
 
-  const result = await loadTicketPage(view, parseTicketQuery(url), { canSeeEmail, pinnedId });
+  const result = await loadTicketPage(view, parseTicketQuery(url), { pinnedId });
   const selectedMissing =
     pinnedId &&
     result.status === 'ok' &&
@@ -30,7 +29,6 @@ export async function ticketTriageLoad(
     view,
     result,
     selectedMissing,
-    canSeeEmail,
     canReply: !!locals.grants['tickets.reply'],
     canEscalate: view === 'moderation' && !!locals.grants['tickets.escalate'],
     fullBleed: true,

@@ -1,13 +1,18 @@
 import { prefixCacheKey, type RedisKeyTemplateCache } from '@civitai/redis';
 import type { Snapshot } from '$lib/tickets/snapshot';
-import type { SnapshotStore } from './snapshot-service';
+import type { BuildFailure, SnapshotStore } from './snapshot-service';
 
 /** Outlives the full-rebuild interval, so a snapshot only expires once every server has stopped refreshing it. */
 export const SNAPSHOT_TTL_SECONDS = 24 * 60 * 60;
+/** Long enough to outlive the retry interval, short enough that a fixed outage is not remembered. */
+export const BUILD_FAILURE_TTL_SECONDS = 15 * 60;
 /** Longer than a full rebuild takes (about 12s, bounded by its call budget), so a live refresh never loses its lock. */
 export const LOCK_TTL_SECONDS = 90;
 
-const SNAPSHOT_KEY = prefixCacheKey('mod:tickets:snapshot:v1') as RedisKeyTemplateCache;
+const SNAPSHOT_KEY = prefixCacheKey('mod:tickets:snapshot:v2') as RedisKeyTemplateCache;
+const FAILURE_KEY = prefixCacheKey(
+  'mod:tickets:snapshot:build-failure:v1'
+) as RedisKeyTemplateCache;
 const LOCK_KEY = prefixCacheKey('mod:tickets:snapshot:lock:v1') as RedisKeyTemplateCache;
 
 type Client = {
@@ -19,6 +24,12 @@ type Client = {
   ): Promise<unknown>;
   del(key: RedisKeyTemplateCache): Promise<unknown>;
 };
+
+const isFailure = (v: unknown): v is BuildFailure =>
+  typeof v === 'object' &&
+  v !== null &&
+  typeof (v as BuildFailure).at === 'number' &&
+  typeof (v as BuildFailure).reason === 'string';
 
 const isSnapshot = (v: unknown): v is Snapshot =>
   typeof v === 'object' &&
@@ -44,6 +55,21 @@ export function createRedisSnapshotStore(client: () => Client): SnapshotStore {
 
     async write(snapshot) {
       await client().set(SNAPSHOT_KEY, JSON.stringify(snapshot), { EX: SNAPSHOT_TTL_SECONDS });
+    },
+
+    async readBuildFailure() {
+      const raw = await client().get(FAILURE_KEY);
+      if (!raw) return null;
+      try {
+        const parsed: unknown = JSON.parse(raw);
+        return isFailure(parsed) ? parsed : null;
+      } catch {
+        return null;
+      }
+    },
+
+    async writeBuildFailure(failure) {
+      await client().set(FAILURE_KEY, JSON.stringify(failure), { EX: BUILD_FAILURE_TTL_SECONDS });
     },
 
     async lock(token) {

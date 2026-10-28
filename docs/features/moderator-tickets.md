@@ -28,17 +28,22 @@ is its own page grant. Acting on a ticket is a separate permission:
 - Each reply, status change and escalation writes a ModActivity row (`ticketReply`, `ticketStatus`,
   `ticketEscalate`, entity type `ticket`).
 - Both views read one shared Redis snapshot of every live ticket (subject, status, Feature, tags, dates,
-  requester name; never a body), not Freshdesk, so a page load costs no Freshdesk calls. The snapshot
+  requester name; never a body or an email address), not Freshdesk, so a page load costs no Freshdesk calls. The snapshot
   is rebuilt in full from the status searches when missing or six hours old (Freshdesk search returns at most
   300 results per query, so a larger status is read in creation-day windows within an 80-call budget; a short
-  read is shown as a warning, never silently dropped) and is otherwise kept current by `updated_since`
+  read is shown as a warning, and a ticket that three short reads in a row did not list is dropped, so a
+  closed ticket cannot linger) and is otherwise kept current by `updated_since`
   deltas, at most one a minute, which also drop tickets that were resolved or closed. A refresh runs behind
   the response under a Redis lock, so one process refreshes at a time and the rest serve the stored copy;
   only the first build is waited on. A refresh that fails keeps the old tickets and shows a staleness
-  warning. Replies, status changes and escalations patch that one ticket in the snapshot.
+  warning. If the very first build fails, the failure is recorded in Redis and nothing retries it for five
+  minutes, however many requests arrive. Replies, status changes and escalations patch that one ticket in the
+  snapshot, under the same lock; if a refresh holds it for more than two seconds the patch is skipped and the
+  next delta reads the ticket.
 - A ticket deleted or marked spam in Freshdesk leaves the snapshot at the next full rebuild, not the next
   delta, because the changed-since list omits such tickets.
-- Requester name and address come from the delta reads and from opening a ticket; a ticket the snapshot has
-  not seen change since the last full rebuild has none, so searching by name or address finds only the
-  tickets whose requester is known. The address is stored in the snapshot, returned and searched only for
-  a caller with `decisions.support.pii`.
+- The requester's name comes from the delta reads and from opening a ticket; a ticket the snapshot has not
+  seen change since the last full rebuild has none, so searching by name finds only the tickets whose
+  requester is known. The email address is never stored in the snapshot, listed or searched: personal data
+  does not belong in a shared cache for a search nobody needs yet. The open ticket's detail reads it live from
+  Freshdesk, uncached, for a caller with `decisions.support.pii`.

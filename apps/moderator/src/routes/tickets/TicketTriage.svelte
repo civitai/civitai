@@ -188,7 +188,7 @@
       {/if}
     </p>
     {#if query?.q}
-      <p class="m-0 text-xs text-dark-2">Search matches a ticket number, subject or requester.</p>
+      <p class="m-0 text-xs text-dark-2">Search matches a ticket number, subject or requester name.</p>
     {/if}
     {#if filtersActive}
       <a href={clearHref} class="text-xs {LINK_CLASS}">Clear filters</a>
@@ -201,7 +201,7 @@
   <TriagePageHeader
     title={TITLES[data.view].title}
     subtitle={TITLES[data.view].subtitle}
-    placeholder="Ticket #, subject or requester"
+    placeholder="Ticket #, subject or requester name"
     searchLabel="Search tickets"
     {meta}
   />
@@ -267,7 +267,7 @@
                 {/if}
               </div>
               <p class="m-0 mt-1 truncate text-xs text-dark-2">
-                {requesterLabel(row)}{#if sent} · {sent}{/if}
+                {sent ? `${requesterLabel(row)} · ${sent}` : requesterLabel(row)}
               </p>
             </a>
           </li>

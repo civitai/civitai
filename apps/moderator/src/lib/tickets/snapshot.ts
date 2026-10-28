@@ -9,15 +9,18 @@ export type TicketRecord = {
   tags: string[];
   createdAt: string | null;
   updatedAt: string | null;
-  /** Only tickets that came through a delta or a detail read carry the requester. */
+  /**
+   * Only tickets that came through a delta or a detail read carry the requester's name. The address is
+   * deliberately absent: personal data does not belong in a shared cache for a search nobody uses yet.
+   */
   requesterName?: string | null;
-  /** 🔴 The customer's address. The query layer strips it unless the caller holds the PII grant. */
-  requesterEmail?: string | null;
   /** Router topic; `undefined` until the router was asked, `null` when it had none. */
   routerTopic?: string | null;
   civitaiUserId?: number | null;
   /** Epoch ms of the router lookup that set `routerTopic`. */
   enrichedAt?: number;
+  /** Consecutive short full reads that did not list this ticket; at `maxMissedFulls` it is dropped. */
+  missedFulls?: number;
 };
 
 /** A ticket from the changed-since list. `gone`: deleted or spam, which a live view never shows. */
@@ -51,6 +54,8 @@ export const SNAPSHOT_TIMING = {
   /** Past this a delta would read a long tail of changes, and a full rebuild is the cheaper way back. */
   deltaMaxAgeMs: 12 * HOUR,
   fullRetryMs: 5 * MIN,
+  /** A ticket that this many consecutive short full reads did not list is taken to have closed. */
+  maxMissedFulls: 3,
   enrichRetryMs: 10 * MIN,
   staleWarnMs: 5 * MIN,
 } as const;
@@ -73,18 +78,33 @@ export function decideRefresh(snapshot: Snapshot | null, now: number): RefreshKi
 export const deltaSince = (syncedAt: number): string =>
   new Date(syncedAt - SNAPSHOT_TIMING.deltaOverlapMs).toISOString();
 
-const REMEMBERED = [
-  'requesterName',
-  'requesterEmail',
-  'routerTopic',
-  'civitaiUserId',
-  'enrichedAt',
-] as const;
+const REMEMBERED = ['requesterName', 'routerTopic', 'civitaiUserId', 'enrichedAt'] as const;
+
+/**
+ * A ticket as the snapshot keeps it: exactly the record's fields, so anything else a read carried (the
+ * requester's address on the changed-since list) never reaches the cache.
+ */
+function pickRecord(t: TicketRecord): TicketRecord {
+  const out: TicketRecord = {
+    id: t.id,
+    subject: t.subject,
+    status: t.status,
+    cfFeature: t.cfFeature,
+    tags: t.tags,
+    createdAt: t.createdAt,
+    updatedAt: t.updatedAt,
+  };
+  for (const key of REMEMBERED) {
+    if (t[key] !== undefined) Object.assign(out, { [key]: t[key] });
+  }
+  return out;
+}
 
 /** `fresh` with whatever `previous` knew that a fresh read does not carry. */
-function withMemory(previous: TicketRecord | undefined, fresh: TicketRecord): TicketRecord {
+function withMemory(previous: TicketRecord | undefined, read: TicketRecord): TicketRecord {
+  const fresh = pickRecord(read);
   if (!previous) return fresh;
-  const out: TicketRecord = { ...fresh };
+  const out: TicketRecord = fresh;
   for (const key of REMEMBERED) {
     if (out[key] === undefined && previous[key] !== undefined)
       Object.assign(out, { [key]: previous[key] });
@@ -108,6 +128,24 @@ export function mergeDelta(
     else byId.set(id, withMemory(byId.get(id), ticket));
   }
   return [...byId.values()];
+}
+
+/**
+ * A full read that came back short: it updates and adds what it lists but cannot say what closed, so a
+ * ticket it did not list is kept until `maxMissedFulls` reads in a row have missed it.
+ */
+export function mergeShortRead(
+  current: readonly TicketRecord[],
+  read: readonly TicketRecord[]
+): TicketRecord[] {
+  const listed = new Set(read.map((t) => t.id));
+  const kept = current.flatMap((t) => {
+    if (listed.has(t.id)) return [];
+    const missedFulls = (t.missedFulls ?? 0) + 1;
+    return missedFulls >= SNAPSHOT_TIMING.maxMissedFulls ? [] : [{ ...t, missedFulls }];
+  });
+  const before = new Map(current.map((t) => [t.id, t]));
+  return [...kept, ...read.map((t) => withMemory(before.get(t.id), t))];
 }
 
 /** A fresh full read with the enrichment of the previous snapshot, so a rebuild does not re-ask the router. */

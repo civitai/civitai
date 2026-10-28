@@ -1,5 +1,4 @@
 import { freshdeskTicketUrl, type Unavailable } from '../freshdesk.service';
-import { getRoutedTicketContext } from '../decision-sources/support';
 import { parseQuery } from '../query';
 import { sentByTickets, type SentBy } from './sent-by';
 import { ticketSnapshot } from './snapshot';
@@ -25,28 +24,30 @@ export const parseTicketQuery = (url: URL): TicketListQuery =>
   parseQuery(url, ticketListQuerySchema, TICKET_QUERY_MULTI_KEYS);
 
 /**
- * Adds what is not in the snapshot: the Freshdesk link, who sent a ticket to support, and, for a caller
- * with the PII grant, the address of a ticket whose requester the snapshot has not read. Best-effort:
- * a failed lookup leaves the field empty rather than failing the list.
+ * Adds what is not in the snapshot: the Freshdesk link and who sent a ticket to support. The lookup is
+ * best-effort: when it fails the rows show no "Sent by" and the page says so, instead of failing the list.
+ * The requester's address is never part of a row; the open ticket's detail carries it for those who may see it.
  */
-async function decorate(items: TicketItem[], canSeeEmail: boolean): Promise<TicketRow[]> {
-  const sentBy = await sentByTickets(items.filter((t) => t.sentToSupport).map((t) => t.id));
-  const emails = new Map<string, string | null>();
-  const missing = canSeeEmail ? items.filter((t) => !t.requesterEmail).map((t) => t.id) : [];
-  if (missing.length > 0) {
+async function decorator(items: TicketItem[]) {
+  let sentBy = new Map<string, SentBy>();
+  const tagged = items.filter((t) => t.sentToSupport).map((t) => t.id);
+  let warning: string | null = null;
+  if (tagged.length > 0) {
     try {
-      for (const [id, c] of await getRoutedTicketContext(missing, true))
-        emails.set(id, c.requesterEmail ?? null);
+      sentBy = await sentByTickets(tagged);
     } catch (e) {
-      console.error('[tickets] requester address lookup failed', e);
+      console.error('[tickets] sent-by lookup failed', e);
+      warning = 'Who sent tickets to support could not be read, so "Sent by" is not shown.';
     }
   }
-  return items.map((t) => ({
-    ...t,
-    ...(canSeeEmail ? { requesterEmail: t.requesterEmail || (emails.get(t.id) ?? null) } : {}),
-    freshdeskUrl: freshdeskTicketUrl(t.id),
-    sentBy: sentBy.get(t.id) ?? null,
-  }));
+  return {
+    warning,
+    row: (t: TicketItem): TicketRow => ({
+      ...t,
+      freshdeskUrl: freshdeskTicketUrl(t.id),
+      sentBy: sentBy.get(t.id) ?? null,
+    }),
+  };
 }
 
 export type TicketPageResult =
@@ -77,25 +78,25 @@ export type TicketPageResult =
 export async function loadTicketPage(
   view: TicketView,
   query: TicketListQuery,
-  { canSeeEmail, pinnedId }: { canSeeEmail: boolean; pinnedId?: string }
+  { pinnedId }: { pinnedId?: string }
 ): Promise<TicketPageResult> {
   try {
     const read = await ticketSnapshot.get();
     if (read.status !== 'ok') return read;
-    const context = { view, canSeeEmail };
+    const context = { view };
     const page = queryTickets(read.snapshot.tickets, query, context);
     const offPage =
       pinnedId && !page.items.some((t) => t.id === pinnedId)
         ? findTicket(read.snapshot.tickets, pinnedId, context)
         : null;
-    const rows = await decorate(offPage ? [...page.items, offPage] : page.items, canSeeEmail);
+    const { row, warning } = await decorator(offPage ? [...page.items, offPage] : page.items);
     return {
       status: 'ok',
       ...page,
-      items: offPage ? rows.slice(0, -1) : rows,
-      pinned: offPage ? rows[rows.length - 1] : null,
+      items: page.items.map(row),
+      pinned: offPage ? row(offPage) : null,
       query,
-      warnings: read.warnings,
+      warnings: warning ? [...read.warnings, warning] : read.warnings,
       syncedAt: read.snapshot.syncedAt,
     };
   } catch (e) {

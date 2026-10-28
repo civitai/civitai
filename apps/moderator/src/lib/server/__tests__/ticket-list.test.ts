@@ -59,9 +59,11 @@ describe('loadTicketPage', () => {
       snapshot: snapshot([rec(1), rec(2)]),
       warnings: ['careful'],
     });
-    const res = await loadTicketPage('moderation', parseTicketQuery(new URL('https://x.test/')), {
-      canSeeEmail: false,
-    });
+    const res = await loadTicketPage(
+      'moderation',
+      parseTicketQuery(new URL('https://x.test/')),
+      {}
+    );
     expect(res).toMatchObject({
       status: 'ok',
       total: 2,
@@ -77,48 +79,62 @@ describe('loadTicketPage', () => {
   it('is unavailable when there is no snapshot, and when anything throws', async () => {
     const q = parseTicketQuery(new URL('https://x.test/'));
     get.mockResolvedValueOnce({ status: 'unavailable', reason: 'nope' });
-    expect(await loadTicketPage('moderation', q, { canSeeEmail: false })).toEqual({
+    expect(await loadTicketPage('moderation', q, {})).toEqual({
       status: 'unavailable',
       reason: 'nope',
     });
     get.mockRejectedValueOnce(new Error('boom'));
     vi.spyOn(console, 'error').mockImplementation(() => {});
-    expect((await loadTicketPage('moderation', q, { canSeeEmail: false })).status).toBe(
-      'unavailable'
-    );
+    expect((await loadTicketPage('moderation', q, {})).status).toBe('unavailable');
   });
 
-  it('asks the router for addresses only for a caller with the PII grant, and only for tickets lacking one', async () => {
+  it('never asks the router for, or returns, a requester address', async () => {
     get.mockResolvedValue({
       status: 'ok',
-      snapshot: snapshot([rec(1, { requesterEmail: 'known@example.test' }), rec(2)]),
+      snapshot: snapshot([
+        rec(1, { requesterName: 'Ann' }),
+        { ...rec(2), requesterEmail: 'stale@example.test' } as TicketRecord,
+      ]),
       warnings: [],
     });
-    routed.mockResolvedValue(
-      new Map([['2', { topic: null, civitaiUserId: null, requesterEmail: 'router@example.test' }]])
+    const res = await loadTicketPage(
+      'moderation',
+      parseTicketQuery(new URL('https://x.test/')),
+      {}
     );
-    const q = parseTicketQuery(new URL('https://x.test/'));
-
-    const without = await loadTicketPage('moderation', q, { canSeeEmail: false });
     expect(routed).not.toHaveBeenCalled();
-    expect(JSON.stringify(without)).not.toContain('example.test');
-
-    const withGrant = await loadTicketPage('moderation', q, { canSeeEmail: true });
-    expect(routed).toHaveBeenCalledWith(['2'], true);
-    expect(withGrant.status === 'ok' && withGrant.items.map((i) => i.requesterEmail)).toEqual([
-      'router@example.test',
-      'known@example.test',
-    ]);
+    expect(JSON.stringify(res)).not.toContain('example.test');
+    expect(res.status === 'ok' && res.items.map((i) => i.requesterName)).toEqual([null, 'Ann']);
   });
 
-  it('keeps the list when the address lookup fails', async () => {
-    get.mockResolvedValue({ status: 'ok', snapshot: snapshot([rec(1)]), warnings: [] });
-    routed.mockRejectedValue(new Error('clickhouse'));
-    vi.spyOn(console, 'error').mockImplementation(() => {});
-    const res = await loadTicketPage('moderation', parseTicketQuery(new URL('https://x.test/')), {
-      canSeeEmail: true,
+  it('does not match a search on an address', async () => {
+    get.mockResolvedValue({
+      status: 'ok',
+      snapshot: snapshot([{ ...rec(1), requesterEmail: 'ann@example.test' } as TicketRecord]),
+      warnings: [],
     });
-    expect(res.status === 'ok' && res.items).toHaveLength(1);
+    const res = await loadTicketPage(
+      'moderation',
+      parseTicketQuery(new URL('https://x.test/?q=ann@example.test')),
+      {}
+    );
+    expect(res.status === 'ok' && res.total).toBe(0);
+  });
+
+  it('still lists tickets, with a warning, when the "Sent by" lookup fails', async () => {
+    get.mockResolvedValue({
+      status: 'ok',
+      snapshot: snapshot([rec(1, { tags: ['sent-to-support'] }), rec(2)]),
+      warnings: ['careful'],
+    });
+    sentBy.mockRejectedValue(new Error('moderator db down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await loadTicketPage('support', parseTicketQuery(new URL('https://x.test/')), {});
+    expect(res.status === 'ok' && res.items.map((i) => [i.id, i.sentBy])).toEqual([['1', null]]);
+    expect(res.status === 'ok' && res.warnings).toEqual([
+      'careful',
+      expect.stringMatching(/who sent/i),
+    ]);
   });
 
   it('names who sent a ticket to support', async () => {
@@ -128,9 +144,7 @@ describe('loadTicketPage', () => {
       warnings: [],
     });
     sentBy.mockResolvedValue(new Map([['1', { moderatorId: 4, username: 'alice', at: 'x' }]]));
-    const res = await loadTicketPage('support', parseTicketQuery(new URL('https://x.test/')), {
-      canSeeEmail: false,
-    });
+    const res = await loadTicketPage('support', parseTicketQuery(new URL('https://x.test/')), {});
     expect(sentBy).toHaveBeenCalledWith(['1']);
     expect(res.status === 'ok' && res.items[0].sentBy?.username).toBe('alice');
   });
@@ -145,10 +159,36 @@ describe('loadTicketPage pinned ticket', () => {
       snapshot: snapshot([rec(1, { status: 3 }), rec(2, { status: 2 })]),
       warnings: [],
     });
-    const res = await loadTicketPage('moderation', q, { canSeeEmail: false, pinnedId: '2' });
+    const res = await loadTicketPage('moderation', q, { pinnedId: '2' });
     expect(res.status === 'ok' && res.items.map((i) => i.id)).toEqual(['1']);
     expect(res.status === 'ok' && res.pinned?.id).toBe('2');
     expect(res.status === 'ok' && res.pinned?.freshdeskUrl).toContain('/a/tickets/2');
+  });
+
+  it('decorates the pinned ticket like a listed one', async () => {
+    get.mockResolvedValue({
+      status: 'ok',
+      snapshot: snapshot([
+        rec(1, { status: 3, tags: ['sent-to-support'] }),
+        rec(2, { status: 2, tags: ['sent-to-support'] }),
+      ]),
+      warnings: [],
+    });
+    sentBy.mockResolvedValue(
+      new Map([
+        ['1', { moderatorId: 4, username: 'alice', at: 'x' }],
+        ['2', { moderatorId: 5, username: 'bob', at: 'y' }],
+      ])
+    );
+    const res = await loadTicketPage('support', q, { pinnedId: '2' });
+    expect(res.status === 'ok' && res.items.map((i) => [i.id, i.sentBy?.username])).toEqual([
+      ['1', 'alice'],
+    ]);
+    expect(res.status === 'ok' && [res.pinned?.id, res.pinned?.sentBy?.username]).toEqual([
+      '2',
+      'bob',
+    ]);
+    expect(sentBy).toHaveBeenCalledTimes(1);
   });
 
   it('pins nothing when the ticket is already on the page, is unknown, or belongs to the other view', async () => {
@@ -158,7 +198,7 @@ describe('loadTicketPage pinned ticket', () => {
       warnings: [],
     });
     for (const pinnedId of ['1', '99', '2']) {
-      const res = await loadTicketPage('moderation', q, { canSeeEmail: false, pinnedId });
+      const res = await loadTicketPage('moderation', q, { pinnedId });
       expect(res.status === 'ok' && res.pinned).toBeNull();
       expect(res.status === 'ok' && res.items.map((i) => i.id)).toEqual(['1']);
     }

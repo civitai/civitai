@@ -33,11 +33,14 @@
 
   // Bumped by a write, so the conversation is read again to show what was just sent.
   let version = $state(0);
+  // The list is read again after every write and hands over a new `row` object for the same ticket;
+  // a derived of the id alone passes on only a real change, so the detail is fetched once per (ticket, version).
+  const id = $derived(row.id);
   // Fetched when a ticket opens, not with the list: it is a Freshdesk call per ticket. The server half
   // is `SSR_PENDING`, never null, or the browser's content would land outside its {#await} block.
   const payload = $derived.by(() => {
     void version;
-    return browser ? fetchTicketPayload(row.id, view) : SSR_PENDING;
+    return browser ? fetchTicketPayload(id, view) : SSR_PENDING;
   });
 
   function done(what: string, data: Record<string, unknown> | undefined, status: number | null) {
@@ -133,32 +136,40 @@
   {/await}
 {/snippet}
 
-<!-- The row already has everything but the tags, so the cards do not wait on the conversation. A linked
-     account the detail read resolved from the address replaces the row's, once it arrives. -->
+<!-- The row already has everything but the tags, so the cards do not wait on the conversation. What the
+     detail read knows better (the linked account, the requester) replaces the row's, once it arrives. -->
 {#snippet info()}
   {#await payload}
-    {@render cards(row.civitaiUserId, row.sentBy, null)}
+    {@render cards(row.civitaiUserId, row.sentBy, null, row.requesterName, undefined)}
   {:then p}
-    {@render cards(p.ticket.civitaiUserId, p.ticket.sentBy, p.ticket.tags)}
+    {@render cards(
+      p.ticket.civitaiUserId,
+      p.ticket.sentBy,
+      p.ticket.tags,
+      p.ticket.requesterName || row.requesterName,
+      p.ticket.requesterEmail
+    )}
   {:catch}
-    {@render cards(row.civitaiUserId, row.sentBy, null)}
+    {@render cards(row.civitaiUserId, row.sentBy, null, row.requesterName, undefined)}
   {/await}
 {/snippet}
 
 {#snippet cards(
   civitaiUserId: number | null,
   sent: TicketRow['sentBy'],
-  tags: string[] | null
+  tags: string[] | null,
+  requesterName: string | null,
+  requesterEmail: string | null | undefined
 )}
   {@const sentText = sentByText({ sentToSupport: row.sentToSupport, sentBy: sent })}
   <TriageCard title="Requester" dense>
     <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">
       <dt class="text-dark-2">Name</dt>
-      <dd class="m-0 min-w-0 break-words text-white">{requesterLabel({ requesterName: row.requesterName, civitaiUserId })}</dd>
-      <!-- Present only for a viewer with the PII grant: the server omits the field otherwise. -->
-      {#if row.requesterEmail !== undefined}
+      <dd class="m-0 min-w-0 break-words text-white">{requesterLabel({ requesterName, civitaiUserId })}</dd>
+      <!-- Read live with the ticket, never from the list or a cache; present only for a viewer with the PII grant. -->
+      {#if requesterEmail !== undefined}
         <dt class="text-dark-2">Email</dt>
-        <dd class="m-0 min-w-0 break-all text-white">{row.requesterEmail ?? '—'}</dd>
+        <dd class="m-0 min-w-0 break-all text-white">{requesterEmail ?? '—'}</dd>
       {/if}
       <dt class="text-dark-2">Account</dt>
       <dd class="m-0">

@@ -1,0 +1,122 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+const replyToTicket = vi.fn();
+const addPrivateNote = vi.fn();
+const setTicketStatus = vi.fn();
+const updateTicket = vi.fn();
+const getTicketDetail = vi.fn();
+const resolveTicketView = vi.fn();
+const patch = vi.fn();
+
+vi.mock('$lib/server/access', () => ({
+  requiresGrant: (_id: string, handler: unknown) => handler,
+}));
+vi.mock('../freshdesk-write.service', () => ({
+  replyToTicket: (...a: unknown[]) => replyToTicket(...a),
+  addPrivateNote: (...a: unknown[]) => addPrivateNote(...a),
+  setTicketStatus: (...a: unknown[]) => setTicketStatus(...a),
+  updateTicket: (...a: unknown[]) => updateTicket(...a),
+}));
+vi.mock('../freshdesk.service', () => ({
+  getTicketDetail: (...a: unknown[]) => getTicketDetail(...a),
+  isFreshdeskId: (v: string) => /^\d+$/.test(v),
+}));
+vi.mock('../mod-activity', () => ({ recordModActivity: async () => {} }));
+vi.mock('../tickets/detail', () => ({
+  resolveTicketView: (...a: unknown[]) => resolveTicketView(...a),
+}));
+vi.mock('../tickets/snapshot', () => ({
+  ticketSnapshot: { patch: (...a: unknown[]) => patch(...a) },
+  toRecord: (t: unknown) => t,
+}));
+
+const { ticketActions } = await import('../tickets/actions');
+
+const ticket = { id: '5', status: 2, cfFeature: 'Moderation Decision', tags: [] as string[] };
+
+const run = async (
+  view: 'moderation' | 'support',
+  action: 'reply' | 'status' | 'escalate',
+  fields: Record<string, string>
+) => {
+  const form = new FormData();
+  for (const [k, v] of Object.entries(fields)) form.set(k, v);
+  const event = {
+    request: new Request('https://x.test/tickets', { method: 'POST', body: form }),
+    locals: { user: { id: 4, username: 'alice' }, grants: {} },
+  };
+  const handler = ticketActions(view)[action] as unknown as (e: typeof event) => Promise<unknown>;
+  return handler(event);
+};
+
+const writes = () =>
+  [replyToTicket, addPrivateNote, setTicketStatus, updateTicket].flatMap((f) => f.mock.calls);
+
+beforeEach(() => {
+  for (const f of [replyToTicket, addPrivateNote, setTicketStatus, updateTicket])
+    f.mockReset().mockResolvedValue({ status: 'ok' });
+  getTicketDetail.mockReset().mockResolvedValue({ status: 'found', ticket });
+  resolveTicketView.mockReset().mockResolvedValue({ routesTo: 'moderation', routed: undefined });
+  patch.mockReset().mockResolvedValue(undefined);
+});
+
+const BODY = { body: 'hello' };
+const CASES = [
+  ['reply', BODY],
+  ['status', { status: '3' }],
+  ['escalate', {}],
+] as const;
+
+describe.each(CASES)('the %s action and its ticketId field', (action, fields) => {
+  it.each([
+    ['missing', undefined],
+    ['empty', ''],
+    ['not a number', 'abc'],
+    ['carrying more than digits', '5; DROP'],
+  ])('refuses a %s id with 404 and writes nothing', async (_name, id) => {
+    const res = await run(
+      'moderation',
+      action,
+      id === undefined ? fields : { ...fields, ticketId: id }
+    );
+    expect(res).toMatchObject({ status: 404 });
+    expect(getTicketDetail).not.toHaveBeenCalled();
+    expect(writes()).toEqual([]);
+  });
+
+  it('refuses a ticket that belongs to the other view with 409 and writes nothing', async () => {
+    resolveTicketView.mockResolvedValue({ routesTo: 'support', routed: undefined });
+    const res = await run('moderation', action, { ...fields, ticketId: '5' });
+    expect(res).toMatchObject({ status: 409 });
+    expect(writes()).toEqual([]);
+  });
+
+  it('refuses with 503 and writes nothing when the ticket cannot be read', async () => {
+    getTicketDetail.mockResolvedValue({ status: 'unavailable', reason: 'rate limited' });
+    const res = await run('moderation', action, { ...fields, ticketId: '5' });
+    expect(res).toMatchObject({ status: 503 });
+    expect(writes()).toEqual([]);
+  });
+
+  it('acts on the ticket named in the form when it belongs to the view', async () => {
+    const res = await run('moderation', action, { ...fields, ticketId: '5' });
+    expect(res).toMatchObject({ success: true });
+    expect(getTicketDetail).toHaveBeenCalledWith('5');
+    expect(writes().length).toBeGreaterThan(0);
+    expect(writes().every(([id]) => id === '5')).toBe(true);
+  });
+});
+
+describe('the actions of the support view', () => {
+  it('has no escalate action', () => {
+    expect(ticketActions('support').escalate).toBeUndefined();
+  });
+
+  it('refuses a ticket that now routes to the moderation view', async () => {
+    resolveTicketView.mockResolvedValue({ routesTo: 'moderation', routed: undefined });
+    expect(await run('support', 'reply', { ...BODY, ticketId: '5' })).toMatchObject({
+      status: 409,
+    });
+    expect(writes()).toEqual([]);
+  });
+});

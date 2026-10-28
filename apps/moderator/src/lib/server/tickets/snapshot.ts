@@ -24,10 +24,8 @@ export const ticketSnapshot = createSnapshotService({
   },
 });
 
-/** A ticket read from Freshdesk, as the snapshot holds it. */
-export const toRecord = (
-  t: TicketSummary & { requesterName?: string | null; requesterEmail?: string | null }
-): TicketRecord => ({
+/** A ticket read from Freshdesk, as the snapshot holds it: never with the requester's address. */
+export const toRecord = (t: TicketSummary & { requesterName?: string | null }): TicketRecord => ({
   id: t.id,
   subject: t.subject,
   status: t.status,
@@ -36,5 +34,4 @@ export const toRecord = (
   createdAt: t.createdAt,
   updatedAt: t.updatedAt,
   requesterName: t.requesterName,
-  requesterEmail: t.requesterEmail,
 });

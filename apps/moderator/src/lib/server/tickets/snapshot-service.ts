@@ -1,9 +1,11 @@
 import {
   applyEnrichment,
   carryOver,
+  SNAPSHOT_TIMING,
   decideRefresh,
   deltaSince,
   mergeDelta,
+  mergeShortRead,
   needsEnrichment,
   snapshotWarnings,
   type ChangedTicket,
@@ -19,7 +21,12 @@ export type SnapshotStore = {
   lock(token: string): Promise<boolean>;
   /** Releases the lock only if `token` still holds it. */
   unlock(token: string): Promise<void>;
+  /** The newest failed attempt to build the first snapshot, so that attempts are spaced out across requests and processes. */
+  readBuildFailure(): Promise<BuildFailure | null>;
+  writeBuildFailure(failure: BuildFailure): Promise<void>;
 };
+
+export type BuildFailure = { at: number; reason: string };
 
 type Unavailable = { status: 'unavailable'; reason: string };
 
@@ -54,6 +61,9 @@ type Refreshed =
 /** How long a reader with no snapshot waits for another process that is building the first one. */
 export const WAIT_FOR_BUILD_MS = 20_000;
 const WAIT_POLL_MS = 500;
+/** How long a patch waits for a refresh to release the lock before leaving the ticket to the next delta. */
+export const PATCH_WAIT_MS = 2_000;
+const PATCH_POLL_MS = 200;
 
 const errorMessage = (e: unknown) => (e instanceof Error ? e.message : String(e));
 const unavailable = (reason: string): Unavailable => ({ status: 'unavailable', reason });
@@ -111,11 +121,12 @@ export function createSnapshotService(deps: SnapshotDeps) {
         snapshot: { ...current, attemptedAt: startedAt, lastError: res.reason },
       };
     }
-    // A short read must not drop the tickets it missed: it can only add and update.
+    // A short read cannot say what closed: it adds and updates, and drops a ticket only after several
+    // short reads in a row have missed it.
     const read =
       res.complete || !current
         ? carryOver(current?.tickets ?? [], res.tickets)
-        : mergeDelta(current.tickets, res.tickets);
+        : mergeShortRead(current.tickets, res.tickets);
     const { tickets, routerFailed } = await enrichAll(read, startedAt);
     return {
       status: 'ok',
@@ -169,9 +180,36 @@ export function createSnapshotService(deps: SnapshotDeps) {
     };
   }
 
+  /** Takes the refresh lock, trying again until `waitMs` has passed. Throws when the store cannot be reached. */
+  async function acquire(token: string, waitMs: number, pollMs: number): Promise<boolean> {
+    const deadline = now() + waitMs;
+    while (!(await store.lock(token))) {
+      if (now() >= deadline) return false;
+      await sleep(pollMs);
+    }
+    return true;
+  }
+
+  const newToken = () => `${now()}-${Math.random().toString(36).slice(2)}`;
+
+  const releaseLock = (token: string) =>
+    store.unlock(token).catch((e) => console.error('[tickets] snapshot unlock failed', e));
+
+  /** The recorded failure of the first build while it is recent enough that Freshdesk should be left alone. */
+  async function recentBuildFailure(): Promise<Unavailable | null> {
+    const failure = await store.readBuildFailure().catch(() => null);
+    if (!failure) return null;
+    const waitMs = SNAPSHOT_TIMING.fullRetryMs - (now() - failure.at);
+    if (waitMs <= 0) return null;
+    const minutes = Math.max(1, Math.ceil(waitMs / 60_000));
+    return unavailable(
+      `Freshdesk could not be read (${failure.reason}). The next attempt is in about ${minutes} min.`
+    );
+  }
+
   /** One refresh under the lock; `busy` when another process holds it. Always releases the lock. */
   async function refresh(): Promise<Refreshed> {
-    const token = `${now()}-${Math.random().toString(36).slice(2)}`;
+    const token = newToken();
     let held: boolean;
     try {
       held = await store.lock(token);
@@ -185,15 +223,29 @@ export function createSnapshotService(deps: SnapshotDeps) {
       const current = await store.read();
       const kind = decideRefresh(current, now());
       if (kind === 'none' && current) return { status: 'ok', snapshot: current };
+      // With no snapshot, a build that just failed is not repeated by every request.
+      if (!current) {
+        const recent = await recentBuildFailure();
+        if (recent) return recent;
+      }
       const next = kind === 'delta' && current ? await runDelta(current) : await runFull(current);
       if (next.status === 'ok') await store.write(next.snapshot);
+      else if (next.status === 'unavailable' && !current) await recordBuildFailure(next.reason);
       return next;
     } catch (e) {
       console.error('[tickets] snapshot refresh failed', e);
-      return unavailable(errorMessage(e));
+      const reason = errorMessage(e);
+      await recordBuildFailure(reason);
+      return unavailable(reason);
     } finally {
-      await store.unlock(token).catch((e) => console.error('[tickets] snapshot unlock failed', e));
+      await releaseLock(token);
     }
+  }
+
+  async function recordBuildFailure(reason: string) {
+    await store
+      .writeBuildFailure({ at: now(), reason })
+      .catch((e) => console.error('[tickets] build failure not recorded', e));
   }
 
   const answer = (snapshot: Snapshot): SnapshotRead => ({
@@ -205,6 +257,8 @@ export function createSnapshotService(deps: SnapshotDeps) {
   async function waitForFirstBuild(): Promise<SnapshotRead> {
     const deadline = now() + WAIT_FOR_BUILD_MS;
     while (now() < deadline) {
+      const failed = await recentBuildFailure();
+      if (failed) return failed;
       await sleep(WAIT_POLL_MS);
       try {
         const snapshot = await store.read();
@@ -253,18 +307,26 @@ export function createSnapshotService(deps: SnapshotDeps) {
 
     /**
      * Brings one ticket up to date after the app changed or read it, or drops it once it is no longer
-     * live. Returns what the snapshot held for it before. Best-effort and not locked: a refresh that
-     * races it re-reads the ticket on the next delta.
+     * live. Returns what the snapshot held for it before. Best-effort: the write happens under the refresh
+     * lock, so it cannot overwrite a refresh that landed in between. When the lock stays busy the patch is
+     * skipped, since the next delta reads the ticket again (it changed after that refresh started).
      */
     async patch(ticket: TicketRecord): Promise<TicketRecord | undefined> {
+      const token = newToken();
+      let held = false;
       try {
+        held = await acquire(token, PATCH_WAIT_MS, PATCH_POLL_MS);
         const snapshot = await store.read();
         if (!snapshot) return undefined;
+        const before = snapshot.tickets.find((t) => t.id === ticket.id);
+        if (!held) return before;
         await store.write({ ...snapshot, tickets: mergeDelta(snapshot.tickets, [ticket]) });
-        return snapshot.tickets.find((t) => t.id === ticket.id);
+        return before;
       } catch (e) {
         console.error('[tickets] snapshot patch failed', e);
         return undefined;
+      } finally {
+        if (held) await releaseLock(token);
       }
     },
   };

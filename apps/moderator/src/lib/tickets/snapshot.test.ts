@@ -6,6 +6,7 @@ import {
   decideRefresh,
   deltaSince,
   mergeDelta,
+  mergeShortRead,
   needsEnrichment,
   snapshotWarnings,
   type Snapshot,
@@ -122,7 +123,6 @@ describe('mergeDelta', () => {
       civitaiUserId: 42,
       enrichedAt: 5,
       requesterName: 'Ann',
-      requesterEmail: 'a@x.test',
     });
     const [after] = mergeDelta([before], [rec(1, { status: 3 })]);
     expect(after).toMatchObject({
@@ -130,8 +130,18 @@ describe('mergeDelta', () => {
       routerTopic: 'nsfw-moderation',
       civitaiUserId: 42,
       requesterName: 'Ann',
-      requesterEmail: 'a@x.test',
     });
+  });
+
+  it('never keeps a requester address, whichever read carried it', () => {
+    const withEmail = { ...rec(1, { requesterName: 'Ann' }), requesterEmail: 'a@x.test' };
+    expect(JSON.stringify(mergeDelta([], [withEmail]))).not.toContain('a@x.test');
+    expect(JSON.stringify(mergeDelta([withEmail], [rec(1, { status: 3 })]))).not.toContain(
+      'a@x.test'
+    );
+    expect(JSON.stringify(carryOver([withEmail], [rec(1)]))).not.toContain('a@x.test');
+    expect(JSON.stringify(carryOver([], [withEmail]))).not.toContain('a@x.test');
+    expect(mergeDelta([], [withEmail])[0].requesterName).toBe('Ann');
   });
 
   it('prefers requester details the delta does carry', () => {
@@ -237,5 +247,42 @@ describe('snapshotWarnings', () => {
 
   it('does not call old data stale when nothing failed', () => {
     expect(snapshotWarnings(snap({ syncedAt: NOW - 3_600_000 }), NOW)).toEqual([]);
+  });
+});
+
+describe('mergeShortRead', () => {
+  const MAX = T.maxMissedFulls;
+
+  it('updates and adds what the read lists, and keeps what it does not for now', () => {
+    const out = mergeShortRead([rec(1), rec(2)], [rec(2, { status: 3 }), rec(5)]);
+    expect(out.map((t) => t.id).sort()).toEqual(['1', '2', '5']);
+    expect(out.find((t) => t.id === '2')?.status).toBe(3);
+  });
+
+  it('drops a ticket that MAX consecutive short reads did not list, so a closed ticket cannot linger', () => {
+    let tickets = [rec(1), rec(2)];
+    for (let i = 1; i < MAX; i++) {
+      tickets = mergeShortRead(tickets, [rec(2)]);
+      expect(tickets.map((t) => t.id).sort()).toEqual(['1', '2']);
+    }
+    tickets = mergeShortRead(tickets, [rec(2)]);
+    expect(tickets.map((t) => t.id)).toEqual(['2']);
+  });
+
+  it('forgets the misses of a ticket a later read lists again', () => {
+    let tickets = [rec(1)];
+    for (let i = 1; i < MAX; i++) tickets = mergeShortRead(tickets, []);
+    tickets = mergeShortRead(tickets, [rec(1)]);
+    expect(tickets[0].missedFulls).toBeUndefined();
+    for (let i = 1; i < MAX; i++) tickets = mergeShortRead(tickets, []);
+    expect(tickets.map((t) => t.id)).toEqual(['1']);
+  });
+
+  it('keeps the router answer of a ticket it lists again', () => {
+    const before = rec(1, { routerTopic: 't', civitaiUserId: 3, enrichedAt: 9 });
+    expect(mergeShortRead([before], [rec(1)])[0]).toMatchObject({
+      routerTopic: 't',
+      enrichedAt: 9,
+    });
   });
 });

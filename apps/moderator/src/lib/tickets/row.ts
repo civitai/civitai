@@ -1,10 +1,10 @@
 type Requester = { requesterName: string | null; civitaiUserId: number | null };
 
-/** Who wrote in: the requester's name, else the linked account, else a plain "none". */
+/** Who wrote in: the requester's name, else the linked account, else "Unknown". */
 export function requesterLabel({ requesterName, civitaiUserId }: Requester): string {
   const name = requesterName?.trim();
   if (name) return name;
-  return civitaiUserId ? `User #${civitaiUserId}` : 'No requester';
+  return civitaiUserId ? `User #${civitaiUserId}` : 'Unknown';
 }
 
 /** The label a list row shows: the ticket's feature, else the router's topic (`inferred`). */

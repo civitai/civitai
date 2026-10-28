@@ -42,7 +42,7 @@ export const ticketListQuerySchema = z.object({
 
 export type TicketListQuery = z.infer<typeof ticketListQuerySchema>;
 
-/** One row of a view. The address is present only when the caller holds the PII grant. */
+/** One row of a view. */
 export type TicketItem = {
   id: string;
   subject: string;
@@ -52,7 +52,6 @@ export type TicketItem = {
   routerTopic: string | null;
   civitaiUserId: number | null;
   requesterName: string | null;
-  requesterEmail?: string | null;
   createdAt: string | null;
   updatedAt: string | null;
   sentToSupport: boolean;
@@ -66,7 +65,7 @@ export type TicketFacets = {
   sent: { only: number; exclude: number };
 };
 
-export type QueryContext = { view: TicketView; canSeeEmail: boolean };
+export type QueryContext = { view: TicketView };
 
 type Predicates = {
   status: (t: TicketRecord) => boolean;
@@ -82,7 +81,7 @@ const topicKey = (t: TicketRecord) => t.routerTopic ?? NONE;
 const oneOf = (selected: readonly string[], key: (t: TicketRecord) => string) =>
   selected.length === 0 ? () => true : (t: TicketRecord) => selected.includes(key(t));
 
-function predicates(query: TicketListQuery, canSeeEmail: boolean): Predicates {
+function predicates(query: TicketListQuery): Predicates {
   const needle = query.q.toLowerCase();
   const id = query.q.replace(/^#/, '');
   const has = (value: string | null | undefined) => !!value && value.toLowerCase().includes(needle);
@@ -92,12 +91,7 @@ function predicates(query: TicketListQuery, canSeeEmail: boolean): Predicates {
     topic: oneOf(query.topic, topicKey),
     sent: (t) =>
       query.sent === undefined || hasSentToSupportTag(t.tags) === (query.sent === 'only'),
-    q: (t) =>
-      needle === '' ||
-      t.id === id ||
-      has(t.subject) ||
-      has(t.requesterName) ||
-      (canSeeEmail && has(t.requesterEmail)),
+    q: (t) => needle === '' || t.id === id || has(t.subject) || has(t.requesterName),
   };
 }
 
@@ -141,7 +135,7 @@ function compare(query: TicketListQuery) {
   };
 }
 
-function toItem(t: TicketRecord, canSeeEmail: boolean): TicketItem {
+function toItem(t: TicketRecord): TicketItem {
   return {
     id: t.id,
     subject: t.subject,
@@ -151,7 +145,6 @@ function toItem(t: TicketRecord, canSeeEmail: boolean): TicketItem {
     routerTopic: t.routerTopic ?? null,
     civitaiUserId: t.civitaiUserId ?? null,
     requesterName: t.requesterName ?? null,
-    ...(canSeeEmail ? { requesterEmail: t.requesterEmail ?? null } : {}),
     createdAt: t.createdAt,
     updatedAt: t.updatedAt,
     sentToSupport: hasSentToSupportTag(t.tags),
@@ -162,7 +155,7 @@ function toItem(t: TicketRecord, canSeeEmail: boolean): TicketItem {
 export function selectTickets(
   records: readonly TicketRecord[],
   query: TicketListQuery,
-  { view, canSeeEmail }: QueryContext
+  { view }: QueryContext
 ): { items: TicketItem[]; facets: TicketFacets } {
   const inView = records.filter(
     (t) =>
@@ -173,10 +166,10 @@ export function selectTickets(
         tags: t.tags,
       }) === view
   );
-  const p = predicates(query, canSeeEmail);
+  const p = predicates(query);
   const matching = inView.filter((t) => Object.values(p).every((keep) => keep(t)));
   return {
-    items: matching.sort(compare(query)).map((t) => toItem(t, canSeeEmail)),
+    items: matching.sort(compare(query)).map((t) => toItem(t)),
     facets: facetsOf(inView, p),
   };
 }
@@ -185,7 +178,7 @@ export function selectTickets(
 export function findTicket(
   records: readonly TicketRecord[],
   id: string,
-  { view, canSeeEmail }: QueryContext
+  { view }: QueryContext
 ): TicketItem | null {
   const t = records.find((r) => r.id === id);
   if (!t) return null;
@@ -195,7 +188,7 @@ export function findTicket(
     routerTopic: t.routerTopic,
     tags: t.tags,
   });
-  return routesTo === view ? toItem(t, canSeeEmail) : null;
+  return routesTo === view ? toItem(t) : null;
 }
 
 export type Page<T> = {

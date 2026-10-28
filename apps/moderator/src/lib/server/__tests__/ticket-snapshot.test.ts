@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  PATCH_WAIT_MS,
   createSnapshotService,
   type DeltaRead,
   type FullRead,
@@ -38,7 +39,12 @@ const snapshotOf = (over: Partial<Snapshot> = {}): Snapshot => ({
 
 /** An in-memory store whose lock can be held by "another process". */
 function fakeStore(initial: Snapshot | null = null) {
-  const state = { snapshot: initial, lockedBy: null as string | null, writes: 0 };
+  const state = {
+    snapshot: initial,
+    lockedBy: null as string | null,
+    writes: 0,
+    failure: null as { at: number; reason: string } | null,
+  };
   const store: SnapshotStore = {
     read: vi.fn(async () => state.snapshot),
     write: vi.fn(async (s) => {
@@ -52,6 +58,10 @@ function fakeStore(initial: Snapshot | null = null) {
     }),
     unlock: vi.fn(async (token) => {
       if (state.lockedBy === token) state.lockedBy = null;
+    }),
+    readBuildFailure: vi.fn(async () => state.failure),
+    writeBuildFailure: vi.fn(async (f) => {
+      state.failure = f;
     }),
   };
   return { store, state };
@@ -310,6 +320,94 @@ describe('a refresh that cannot complete', () => {
   });
 });
 
+describe('a requester address', () => {
+  it('never reaches the store, whichever read carried it', async () => {
+    const withEmail = (id: number) => ({ ...rec(id), requesterEmail: `u${id}@example.test` });
+    const { service, state, fullRead, deltaRead, settle } = setup(null);
+    fullRead.mockResolvedValueOnce({
+      status: 'ok',
+      tickets: [withEmail(1), withEmail(2)],
+      complete: true,
+      warnings: [],
+    });
+    await service.get();
+    expect(JSON.stringify(state.snapshot)).not.toContain('example.test');
+
+    state.snapshot = snapshotOf();
+    deltaRead.mockResolvedValueOnce({ status: 'ok', complete: true, changed: [withEmail(7)] });
+    await service.get();
+    await settle();
+    expect(state.snapshot?.tickets.map((t) => t.id)).toContain('7');
+    await service.patch(withEmail(8));
+    expect(JSON.stringify(state.snapshot)).not.toContain('example.test');
+  });
+});
+
+describe('the first build failing', () => {
+  it('is not retried by every request: the failure is recorded and the retry interval respected', async () => {
+    const { service, state, clock, fullRead } = setup(null);
+    fullRead.mockResolvedValue({ status: 'unavailable', reason: 'Freshdesk returned 429.' });
+    const first = await service.get();
+    expect(first).toMatchObject({ status: 'unavailable' });
+    expect(state.failure).toMatchObject({ at: NOW, reason: 'Freshdesk returned 429.' });
+
+    clock.now += T.fullRetryMs - 1000;
+    const second = await service.get();
+    expect(fullRead).toHaveBeenCalledTimes(1);
+    expect(second.status === 'unavailable' && second.reason).toMatch(/429/);
+    expect(state.lockedBy).toBeNull();
+  });
+
+  it('builds again once the retry interval has passed, and a success is stored', async () => {
+    const { service, state, clock, fullRead } = setup(null);
+    fullRead.mockResolvedValueOnce({ status: 'unavailable', reason: 'down' });
+    await service.get();
+    clock.now += T.fullRetryMs;
+    const res = await service.get();
+    expect(fullRead).toHaveBeenCalledTimes(2);
+    expect(res.status).toBe('ok');
+    expect(state.snapshot).not.toBeNull();
+  });
+
+  it('records a build that threw as well', async () => {
+    const { service, state, fullRead } = setup(null);
+    fullRead.mockRejectedValueOnce(new Error('boom'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    await service.get();
+    expect(state.failure).toMatchObject({ reason: 'boom' });
+  });
+
+  it('tells a reader waiting on another process about the failure it left, instead of waiting it out', async () => {
+    const { service, state, clock } = setup(null);
+    state.lockedBy = 'builder';
+    state.failure = { at: clock.now, reason: 'Freshdesk returned 429.' };
+    const res = await service.get();
+    expect(res.status === 'unavailable' && res.reason).toMatch(/429/);
+    expect(clock.now).toBe(NOW);
+  });
+});
+
+describe('full reads that keep coming back short', () => {
+  it('lets a ticket that closed leave once enough short reads have not listed it', async () => {
+    const { service, state, clock, fullRead } = setup(
+      snapshotOf({ fullAt: NOW - T.fullRebuildMs })
+    );
+    fullRead.mockResolvedValue({
+      status: 'ok',
+      tickets: [rec(2)],
+      complete: false,
+      warnings: ['short'],
+    });
+    for (let i = 0; i < T.maxMissedFulls; i++) {
+      expect(state.snapshot?.tickets.map((t) => t.id).sort()).toEqual(['1', '2']);
+      await service.refresh();
+      clock.now += T.fullRetryMs;
+    }
+    expect(state.snapshot?.tickets.map((t) => t.id)).toEqual(['2']);
+    expect(state.snapshot?.needsFull).toBe(true);
+  });
+});
+
 describe('enrichment', () => {
   it('never fails the refresh, and says the router was not read', async () => {
     const { service, state, enrich } = setup(null);
@@ -375,6 +473,70 @@ describe('patching one ticket after a write', () => {
     const { service, state } = setup(snapshotOf());
     await service.patch(rec(9));
     expect(state.snapshot?.tickets.map((t) => t.id)).toContain('9');
+  });
+
+  it('takes the lock for the write and releases it', async () => {
+    const { service, state, store } = setup(snapshotOf());
+    await service.patch(rec(2, { status: 3 }));
+    expect(store.lock).toHaveBeenCalledTimes(1);
+    expect(state.lockedBy).toBeNull();
+  });
+
+  it('waits briefly for a refresh holding the lock, then applies the patch', async () => {
+    let onSleep: () => void = () => {};
+    const { service, state } = setup(snapshotOf(), {
+      sleep: async () => onSleep(),
+    });
+    state.lockedBy = 'refresh';
+    let sleeps = 0;
+    onSleep = () => {
+      sleeps += 1;
+      if (sleeps === 2) state.lockedBy = null;
+    };
+    await service.patch(rec(2, { status: 3 }));
+    expect(state.snapshot?.tickets.find((t) => t.id === '2')?.status).toBe(3);
+  });
+
+  it('gives up without writing when the lock stays busy: the next delta covers the ticket', async () => {
+    const clock = { now: NOW };
+    const { service, state } = setup(snapshotOf(), {
+      now: () => clock.now,
+      sleep: async (ms) => {
+        clock.now += ms;
+      },
+    });
+    state.lockedBy = 'refresh';
+    const before = state.snapshot;
+    await expect(service.patch(rec(2, { status: 3 }))).resolves.toMatchObject({ id: '2' });
+    expect(state.writes).toBe(0);
+    expect(state.snapshot).toBe(before);
+    expect(clock.now - NOW).toBeGreaterThanOrEqual(PATCH_WAIT_MS);
+    expect(clock.now - NOW).toBeLessThanOrEqual(PATCH_WAIT_MS + 1000);
+  });
+
+  it('does not overwrite a refresh that lands while it waits', async () => {
+    let onSleep: () => Promise<void> = async () => {};
+    const { service, state, deltaRead } = setup(snapshotOf(), {
+      sleep: () => onSleep(),
+    });
+    let release!: () => void;
+    deltaRead.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          release = () => resolve({ status: 'ok', complete: true, changed: [rec(7)] });
+        })
+    );
+    const refreshing = service.refresh();
+    await vi.waitFor(() => expect(deltaRead).toHaveBeenCalled());
+    // The refresh finishes while the patch waits for its lock.
+    onSleep = async () => {
+      release();
+      await refreshing;
+    };
+    await service.patch(rec(2, { status: 3 }));
+    expect(state.snapshot?.tickets.map((t) => t.id).sort()).toEqual(['1', '2', '7']);
+    expect(state.snapshot?.tickets.find((t) => t.id === '2')?.status).toBe(3);
+    expect(state.snapshot?.syncedAt).toBe(NOW);
   });
 
   it('does nothing without a snapshot, and never throws when the store fails', async () => {

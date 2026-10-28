@@ -33,12 +33,10 @@ describe('ticketTriageLoad', () => {
   it('asks for the ticket in the URL to be pinned, and only a valid id', async () => {
     await load('?ticket=77');
     expect(loadTicketPage).toHaveBeenLastCalledWith('moderation', expect.anything(), {
-      canSeeEmail: false,
       pinnedId: '77',
     });
     await load('?ticket=abc');
     expect(loadTicketPage).toHaveBeenLastCalledWith('moderation', expect.anything(), {
-      canSeeEmail: false,
       pinnedId: undefined,
     });
   });
@@ -53,15 +51,10 @@ describe('ticketTriageLoad', () => {
   });
 
   it('derives the viewer grants; escalation exists on the moderation view only', async () => {
-    const grants = {
-      'tickets.reply': true,
-      'tickets.escalate': true,
-      'decisions.support.pii': true,
-    };
+    const grants = { 'tickets.reply': true, 'tickets.escalate': true };
     expect(await load('', grants)).toMatchObject({
       canReply: true,
       canEscalate: true,
-      canSeeEmail: true,
       fullBleed: true,
       headerInline: true,
     });

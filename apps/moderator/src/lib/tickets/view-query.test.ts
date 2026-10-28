@@ -32,10 +32,7 @@ const query = (over: Partial<TicketListQuery> = {}): TicketListQuery => ({
   ...ticketListQuerySchema.parse({}),
   ...over,
 });
-const ctx = (canSeeEmail = false, view: 'moderation' | 'support' = 'moderation') => ({
-  view,
-  canSeeEmail,
-});
+const ctx = (view: 'moderation' | 'support' = 'moderation') => ({ view });
 const ids = (r: { items: { id: string }[] }) => r.items.map((i) => i.id);
 
 describe('ticketListQuerySchema', () => {
@@ -89,8 +86,8 @@ describe('routing into the view', () => {
   it('keeps only the tickets that route to the view', () => {
     const mod = rec({ cfFeature: MOD });
     const sup = rec({ cfFeature: 'Billing' });
-    expect(ids(queryTickets([mod, sup], query(), ctx(false, 'moderation')))).toEqual([mod.id]);
-    expect(ids(queryTickets([mod, sup], query(), ctx(false, 'support')))).toEqual([sup.id]);
+    expect(ids(queryTickets([mod, sup], query(), ctx('moderation')))).toEqual([mod.id]);
+    expect(ids(queryTickets([mod, sup], query(), ctx('support')))).toEqual([sup.id]);
   });
 
   it('uses the router topic of a ticket with no feature', () => {
@@ -147,9 +144,9 @@ describe('filters', () => {
   it('finds sent-to-support tickets in the support view', () => {
     const sent = rec({ cfFeature: MOD, tags: ['Sent-To-Support'] });
     const other = rec({ cfFeature: 'Billing' });
-    expect(
-      ids(queryTickets([sent, other], query({ sent: 'only' }), ctx(false, 'support')))
-    ).toEqual([sent.id]);
+    expect(ids(queryTickets([sent, other], query({ sent: 'only' }), ctx('support')))).toEqual([
+      sent.id,
+    ]);
   });
 
   it('an empty filter list means no filter', () => {
@@ -213,13 +210,13 @@ describe('search', () => {
     subject: 'I was Banned unfairly',
     requesterName: 'Ann Lee',
     requesterEmail: 'ann@example.test',
-  });
+  } as Partial<TicketRecord>);
   const t2 = rec({
     id: '74925',
     subject: 'Refund please',
     requesterName: 'Bob Roe',
     requesterEmail: 'bob@example.test',
-  });
+  } as Partial<TicketRecord>);
   const all = [t1, t2];
 
   it('finds a ticket by id with or without a #', () => {
@@ -239,17 +236,11 @@ describe('search', () => {
     expect(ids(queryTickets(all, query({ q: 'lee' }), ctx()))).toEqual(['74924']);
   });
 
-  it('matches the email only for a caller with the PII grant', () => {
-    expect(queryTickets(all, query({ q: 'bob@example' }), ctx(false)).total).toBe(0);
-    expect(ids(queryTickets(all, query({ q: 'bob@example' }), ctx(true)))).toEqual(['74925']);
-  });
-
-  it('never puts an email in an item without the PII grant', () => {
-    const [item] = queryTickets(all, query({ q: '74924' }), ctx(false)).items;
+  it('does not search by address, and never puts one in an item', () => {
+    expect(queryTickets(all, query({ q: 'bob@example' }), ctx()).total).toBe(0);
+    const [item] = queryTickets(all, query({ q: '74924' }), ctx()).items;
     expect('requesterEmail' in item).toBe(false);
-    expect(JSON.stringify(queryTickets(all, query(), ctx(false)))).not.toContain('example.test');
-    const [withGrant] = queryTickets(all, query({ q: '74924' }), ctx(true)).items;
-    expect(withGrant.requesterEmail).toBe('ann@example.test');
+    expect(JSON.stringify(queryTickets(all, query(), ctx()))).not.toContain('example.test');
   });
 
   it('applies the search together with the filters', () => {
@@ -384,13 +375,12 @@ describe('findTicket', () => {
   it('is null for a ticket of the other view, or one the snapshot does not hold', () => {
     const support = rec({ cfFeature: 'Billing' });
     expect(findTicket([support], support.id, ctx())).toBeNull();
-    expect(findTicket([support], support.id, ctx(false, 'support'))?.id).toBe(support.id);
-    expect(findTicket([support], '1', ctx(false, 'support'))).toBeNull();
+    expect(findTicket([support], support.id, ctx('support'))?.id).toBe(support.id);
+    expect(findTicket([support], '1', ctx('support'))).toBeNull();
   });
 
-  it('keeps the address behind the PII grant', () => {
-    const t = rec({ requesterEmail: 'a@example.test' });
-    expect(findTicket([t], t.id, ctx(false))).not.toHaveProperty('requesterEmail');
-    expect(findTicket([t], t.id, ctx(true))?.requesterEmail).toBe('a@example.test');
+  it('never carries an address', () => {
+    const t = rec({ requesterEmail: 'a@example.test' } as Partial<TicketRecord>);
+    expect(findTicket([t], t.id, ctx())).not.toHaveProperty('requesterEmail');
   });
 });

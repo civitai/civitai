@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { prefixCacheKey } from '@civitai/redis';
 import {
+  BUILD_FAILURE_TTL_SECONDS,
   LOCK_TTL_SECONDS,
   SNAPSHOT_TTL_SECONDS,
   createRedisSnapshotStore,
@@ -69,6 +71,20 @@ describe('snapshot store', () => {
     expect(await store.read()).toBeNull();
     data.set(key, JSON.stringify({ tickets: 'nope' }));
     expect(await store.read()).toBeNull();
+  });
+
+  it('ignores a snapshot written under the previous key, which may hold requester addresses', async () => {
+    const { store, data } = make();
+    data.set(prefixCacheKey('mod:tickets:snapshot:v1'), JSON.stringify(snapshot));
+    expect(await store.read()).toBeNull();
+  });
+
+  it('round-trips the failure of a first build, with an expiry', async () => {
+    const { store, ttl } = make();
+    expect(await store.readBuildFailure()).toBeNull();
+    await store.writeBuildFailure({ at: 5, reason: 'Freshdesk returned 429.' });
+    expect(await store.readBuildFailure()).toEqual({ at: 5, reason: 'Freshdesk returned 429.' });
+    expect([...ttl.values()]).toEqual([BUILD_FAILURE_TTL_SECONDS]);
   });
 
   it('lets one holder take the lock at a time, with an expiry', async () => {
