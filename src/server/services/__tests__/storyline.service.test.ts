@@ -100,6 +100,7 @@ import {
   updateStoryline,
   writeChapterEdgeForPlacement,
 } from '~/server/services/storyline.service';
+import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/cover-image.service';
 
 const OWNER = 1;
 const COLLABORATOR = 2;
@@ -2993,7 +2994,7 @@ describe('covers and cast', () => {
       w.image.findFirst.mockResolvedValueOnce({ id: 5 } as never);
       await expect(
         updateStoryline({ id: 10, userId: OWNER, coverUpload: { url: UPLOAD_URL, type: 'image' } })
-      ).rejects.toThrow(/cannot be used as a cover or banner/);
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: COVER_IMAGE_UNAVAILABLE_MESSAGE });
       expect(w.image.findFirst.mock.calls[0][0]).toMatchObject({ where: { url: UPLOAD_URL } });
       expect(w.image.findFirst.mock.calls[0][0].where).not.toHaveProperty('userId');
       expect(resolveCoverImageId).not.toHaveBeenCalled();

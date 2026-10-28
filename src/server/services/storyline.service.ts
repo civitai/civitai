@@ -1,6 +1,10 @@
 import { uniqBy } from 'lodash-es';
 import type { ImageInput } from '~/server/schema/image.schema';
-import { resolveCoverImageId } from '~/server/services/cover-image.service';
+import { TRPCError } from '@trpc/server';
+import {
+  COVER_IMAGE_UNAVAILABLE_MESSAGE,
+  resolveCoverImageId,
+} from '~/server/services/cover-image.service';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
@@ -815,7 +819,7 @@ export async function updateStoryline({
       upload &&
       (await dbWrite.image.findFirst({ where: { url: upload.url }, select: { id: true } }))
     )
-      throw throwBadRequestError(STORYLINE_PICK_REFUSALS.cannotUse);
+      throw new TRPCError({ code: 'BAD_REQUEST', message: COVER_IMAGE_UNAVAILABLE_MESSAGE });
   if (coverUpload) coverImageId = await resolveCoverImageId({ coverImage: coverUpload, userId });
   if (heroUpload) heroImageId = await resolveCoverImageId({ coverImage: heroUpload, userId });
   const uploadedIds = [coverUpload && coverImageId, heroUpload && heroImageId].filter(

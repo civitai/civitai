@@ -35,6 +35,7 @@ export const createStorylineSchema = z.object({
 });
 export type CreateStorylineInput = z.infer<typeof createStorylineSchema>;
 
+// Must not accept an image id: an upload is always a new image.
 const storylineUploadSchema = imageInputSchema.extend({
   type: z.literal('image').default('image'),
 });
