@@ -11,17 +11,16 @@ import { resolveUserId } from '../user-lookup.service';
 import { routeTicket, type TicketView } from '$lib/tickets/routing';
 import { statusLabel } from '$lib/tickets/statuses';
 
-/** The one ticket page behind both views' routes. */
-export async function loadTicketDetail(view: TicketView, ticketId: string, locals: App.Locals) {
-  if (!isFreshdeskId(ticketId)) throw error(404, 'No such ticket.');
-  const canSeeEmail = !!locals.grants['decisions.support.pii'];
-
-  const res = await getTicketDetail(ticketId);
-  if (res.status !== 'found') throw error(503, res.reason);
-  const { ticket } = res;
-
-  // The router's topic decides only a ticket with no feature, but its linked account helps any ticket.
-  // Its failure leaves the topic unknown, which routes a feature-less ticket to support.
+/**
+ * The view a ticket belongs to now, with the router context that decided it.
+ *
+ * The router's topic decides only a ticket with no feature, but its linked account helps any ticket.
+ * Its failure leaves the topic unknown, which routes a feature-less ticket to support.
+ */
+export async function resolveTicketView(
+  ticketId: string,
+  ticket: { cfFeature: string | null; status: number }
+) {
   const routed = await getRoutedTicketContext([ticketId], false).then(
     (m) => m.get(ticketId),
     (e) => {
@@ -34,6 +33,19 @@ export async function loadTicketDetail(view: TicketView, ticketId: string, local
     status: ticket.status,
     routerTopic: routed?.topic,
   });
+  return { routesTo, routed };
+}
+
+/** The one ticket page behind both views' routes. */
+export async function loadTicketDetail(view: TicketView, ticketId: string, locals: App.Locals) {
+  if (!isFreshdeskId(ticketId)) throw error(404, 'No such ticket.');
+  const canSeeEmail = !!locals.grants['decisions.support.pii'];
+
+  const res = await getTicketDetail(ticketId);
+  if (res.status !== 'found') throw error(503, res.reason);
+  const { ticket } = res;
+
+  const { routesTo, routed } = await resolveTicketView(ticketId, ticket);
   // 🔴 The page grant is per view, so a ticket opened under the wrong view would show it to a role that
   // may not open that view at all.
   if (routesTo !== view)
@@ -73,6 +85,7 @@ export async function loadTicketDetail(view: TicketView, ticketId: string, local
       civitaiUserId,
     },
     view,
+    canReply: !!locals.grants['tickets.reply'],
     // Not awaited: SvelteKit streams it, so a slow conversation read delays that panel, not the page.
     conversation,
   };

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
+  import TicketReply from './TicketReply.svelte';
   import type { loadTicketDetail } from '$lib/server/tickets/detail';
 
   let { data }: { data: Awaited<ReturnType<typeof loadTicketDetail>> } = $props();
@@ -100,3 +101,7 @@
     <p class="text-red-400">Could not read the conversation.</p>
   {/await}
 </section>
+
+{#if data.canReply}
+  <TicketReply ticketId={t.id} view={data.view} currentStatus={t.status} />
+{/if}

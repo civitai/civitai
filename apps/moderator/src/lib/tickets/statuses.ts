@@ -15,3 +15,9 @@ export const STATUS_LABEL: Record<number, string> = {
 export const LIVE_STATUSES = [2, 3, 6, 7, 8, 9, 9000] as const;
 
 export const statusLabel = (status: number): string => STATUS_LABEL[status] ?? `Status ${status}`;
+
+/** The statuses a moderator may set from the app: Pending, Waiting on Customer, Resolved, Closed. */
+export const SETTABLE_STATUSES = [3, 6, 4, 5] as const;
+
+export const isSettableStatus = (v: number): v is (typeof SETTABLE_STATUSES)[number] =>
+  (SETTABLE_STATUSES as readonly number[]).includes(v);
