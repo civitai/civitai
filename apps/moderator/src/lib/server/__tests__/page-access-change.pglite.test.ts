@@ -288,6 +288,60 @@ describe('/admin save', () => {
     expect(result).toEqual({ success: true, count: 1 });
     expect(await stored()).toEqual([]);
   });
+
+  // A role outside the app's prefix (a service account's) is never a column on /admin, so the page
+  // cannot send it back: the save has to keep it from the stored row.
+  const SYSTEM = 'system:dispute-agent';
+  const DISPUTE = 'grant:creatorServices.reviewDispute';
+
+  it('keeps a role from outside the catalogue when the row is saved', async () => {
+    await main.exec(
+      `INSERT INTO "AppPageAccess" (app, path, roles) VALUES ('moderator', '${DISPUTE}', ARRAY['${HIGH}', '${SYSTEM}'])`
+    );
+    const result = await save({ [DISPUTE]: [HIGH, CM] }, { [DISPUTE]: [HIGH] });
+    expect(result).toEqual({ success: true, count: 1 });
+    expect(new Set(await stored(DISPUTE))).toEqual(new Set([HIGH, CM, SYSTEM]));
+  });
+
+  it('keeps it when every role the page shows is unticked', async () => {
+    await main.exec(
+      `INSERT INTO "AppPageAccess" (app, path, roles) VALUES ('moderator', '${DISPUTE}', ARRAY['${HIGH}', '${SYSTEM}'])`
+    );
+    const result = await save({ [DISPUTE]: [] }, { [DISPUTE]: [HIGH] });
+    expect(result).toEqual({ success: true, count: 1 });
+    expect(await stored(DISPUTE)).toEqual([SYSTEM]);
+  });
+
+  it('refuses, rather than reverts, a role outside the catalogue that moved mid-save', async () => {
+    await main.exec(
+      `INSERT INTO "AppPageAccess" (app, path, roles) VALUES ('moderator', '${DISPUTE}', ARRAY['${HIGH}'])`
+    );
+    race.next = () =>
+      main.exec(
+        `UPDATE "AppPageAccess" SET roles = ARRAY['${HIGH}', '${SYSTEM}'] WHERE path = '${DISPUTE}'`
+      );
+    const result = await save({ [DISPUTE]: [HIGH, CM] }, { [DISPUTE]: [HIGH] });
+    expect(result).toMatchObject({ status: 409 });
+    expect(await stored(DISPUTE)).toEqual([HIGH, SYSTEM]);
+  });
+
+  it('records what it kept and what it dropped apart from what the operator changed', async () => {
+    await main.exec(
+      `INSERT INTO "AppPageAccess" (app, path, roles) VALUES ('moderator', '${DISPUTE}', ARRAY['${HIGH}', '${SYSTEM}', 'moderator:retired'])`
+    );
+    await save({ [DISPUTE]: [CM] }, { [DISPUTE]: [HIGH] });
+    expect(new Set(await stored(DISPUTE))).toEqual(new Set([CM, SYSTEM]));
+    const rows = await history.query<{ roles_carried: string[]; roles_dropped: string[] }>(
+      'SELECT roles_carried, roles_dropped FROM page_access_change'
+    );
+    expect(rows.rows).toEqual([{ roles_carried: [SYSTEM], roles_dropped: ['moderator:retired'] }]);
+  });
+
+  it('still refuses a role outside the catalogue sent by the page', async () => {
+    const result = await save({ [DISPUTE]: [SYSTEM] }, { [DISPUTE]: [] });
+    expect(result).toMatchObject({ status: 400 });
+    expect(await stored(DISPUTE)).toBeNull();
+  });
 });
 
 describe('page-access/schema.sql', () => {

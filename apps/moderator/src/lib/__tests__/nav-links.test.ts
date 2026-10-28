@@ -430,3 +430,22 @@ describe('Model rule matches', () => {
     expect(canAccess(reviewer, '/models/rule-matches')).toBe(false);
   });
 });
+
+describe('pageAccessState for the editor', () => {
+  const HIGH = 'moderator:mod-high-access';
+  const KEY = 'grant:creatorServices.reviewDispute';
+
+  it('shows only catalogue roles as editable, and every other stored role read-only', () => {
+    const { granted, outside } = pageAccessState({
+      grants: {
+        [KEY]: [HIGH, 'system:dispute-agent', 'moderator:retired', 'moderator:admin'],
+        '/blocklists': [HIGH],
+      },
+      roles: [HIGH],
+    });
+    expect(granted[KEY]).toEqual([HIGH]);
+    expect(outside).toEqual({
+      [KEY]: { kept: ['system:dispute-agent'], retired: ['moderator:retired'] },
+    });
+  });
+});
