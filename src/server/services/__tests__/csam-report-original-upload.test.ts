@@ -131,6 +131,19 @@ const stamps = () =>
     .map(([args]) => args.data)
     .filter((data) => data.reportSentAt);
 const sentUpdate = () => stamps()[0];
+/** The IP events the send wrote to the report on their own, apart from the sent stamp. */
+const storedActivity = () =>
+  dbMock.dbWrite.csamReport.updateMany.mock.calls
+    .map(([args]) => args.data)
+    .find((data) => Object.keys(data).join() === 'details' && data.details.userActivity)?.details
+    .userActivity;
+const uploadRow = { ip: '203.0.113.5', key: 'stored-key-501', time: '2025-12-31 23:59:00' };
+const uploadEvent = {
+  ip: uploadRow.ip,
+  time: uploadRow.time,
+  type: 'Upload',
+  details: { type: 'image-upload-request', id: 501 },
+};
 const claimId = () => dbMock.dbWrite.csamReport.updateMany.mock.calls[0]?.[0]?.data.sendClaimId;
 const lines = (subType: string) =>
   vi
@@ -183,10 +196,7 @@ describe('NCMEC image upload', () => {
 
   it("sends the image's upload-request IP, with the note that explains it", async () => {
     ch.client = {
-      $query: async (sql: string) =>
-        sql.includes('FROM actions')
-          ? [{ ip: '203.0.113.5', key: 'stored-key-501', time: '2025-12-31 23:59:00' }]
-          : [],
+      $query: async (sql: string) => (sql.includes('FROM imageUploadRequests') ? [uploadRow] : []),
     };
 
     await processCsamReport(report);
@@ -196,6 +206,31 @@ describe('NCMEC image upload', () => {
       expect.objectContaining({ ipAddress: '203.0.113.5', eventName: 'Upload' }),
     ]);
     expect(reported.additionalInfo).toBe(`Email: user@example.invalid\n${UPLOAD_REQUEST_IP_NOTE}`);
+  });
+
+  // The upload-request rows expire; the report's own copy is the evidence that outlives them.
+  it('keeps the IP events on the report before it is sent', async () => {
+    ch.client = {
+      $query: async (sql: string) => (sql.includes('FROM imageUploadRequests') ? [uploadRow] : []),
+    };
+    submitReport.mockRejectedValue(new Error('NCMEC down'));
+
+    await processCsamReport(report).catch(() => undefined);
+
+    expect(submitReport).toHaveBeenCalledTimes(1);
+    expect(storedActivity()).toEqual([uploadEvent]);
+  });
+
+  it('still sends the IP events the report kept once the rows have expired', async () => {
+    ch.client = { $query: async () => [] };
+
+    await processCsamReport({ ...report, details: { userActivity: [uploadEvent] } } as never);
+
+    expect(submitReport.mock.calls[0][0].personOrUserReported.ipCaptureEvent).toEqual([
+      expect.objectContaining({ ipAddress: '203.0.113.5', eventName: 'Upload' }),
+    ]);
+    // Nothing new to keep, so nothing is written.
+    expect(storedActivity()).toBeUndefined();
   });
 
   it('records the sha256 in the same update that marks the report sent', async () => {

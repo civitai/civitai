@@ -318,10 +318,6 @@ export const ActionType = [
   // Same Enum16 hazard as above (migrations/2026-10-21-user-menu-click-action.sql, plus the
   // tracker restart in migrations/README.md); the item, group and section ride in `details`.
   'UserMenu_Click',
-  // One row per image upload key the server mints, with the requesting user and IP; `details.key`
-  // is the key that becomes `Image.url`. Server-only, like `App_Open`. Same Enum16 hazard
-  // (migrations/2026-10-28-image-upload-action.sql, plus the tracker restart).
-  'ImageUpload',
 ] as const;
 export type ActionType = (typeof ActionType)[number];
 
@@ -1021,6 +1017,17 @@ export class Tracker {
       { ...values, time: new Date() },
       { skipActorMeta: true, ...options }
     );
+  }
+
+  // Exactly these four columns, in their own table with a 12-month TTL (not `actions`, which has
+  // none): migrations/2026-10-28-image-upload-requests.sql.
+  public imageUploadRequest(key: string) {
+    return this.send('imageUploadRequests', ({ actor }) => ({
+      userId: actor.userId,
+      ip: actor.ip,
+      key,
+      time: new Date(),
+    }));
   }
 
   public search(values: { query: string; index: string; filters?: any }) {

@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const ch = vi.hoisted(() => ({ query: vi.fn(), action: vi.fn() }));
+const ch = vi.hoisted(() => ({ query: vi.fn(), request: vi.fn() }));
 vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   clickhouse: { $query: ch.query },
   Tracker: vi.fn(function () {
-    return { action: ch.action };
+    return { imageUploadRequest: ch.request };
   }),
 }));
 
@@ -23,7 +23,7 @@ const sql = () => ch.query.mock.calls[0]?.[0] as string;
 
 beforeEach(() => {
   vi.clearAllMocks();
-  ch.action.mockResolvedValue(undefined);
+  ch.request.mockResolvedValue(undefined);
   dbMock.dbRead.image.findMany.mockResolvedValue([
     { id: 1, url: 'key-one', createdAt: CREATED },
     { id: 2, url: "key-'two", createdAt: new Date(CREATED.getTime() + 3_600_000) },
@@ -62,8 +62,7 @@ describe('getImageUploadIpEvents', () => {
     expect(dbMock.dbRead.image.findMany).toHaveBeenCalledWith(
       expect.objectContaining({ where: { id: { in: [1, 2] } } })
     );
-    expect(sql()).toMatch(/FROM actions/);
-    expect(sql()).toMatch(/type = 'ImageUpload' AND userId = 42/);
+    expect(sql()).toMatch(/FROM imageUploadRequests\s+WHERE userId = 42\s/);
     // 24 hours before the earliest image, 1 hour after the latest.
     expect(sql()).toContain(
       "time BETWEEN parseDateTimeBestEffort('2026-10-19T12:00:00.000Z') AND parseDateTimeBestEffort('2026-10-20T14:00:00.000Z')"
@@ -85,14 +84,14 @@ describe('trackImageUpload', () => {
   const req = {} as NextApiRequest;
   const res = {} as NextApiResponse;
 
-  it('records the minted key as an ImageUpload action', () => {
+  it('records the minted key as an upload request', () => {
     trackImageUpload(req, res, 'minted-key');
 
-    expect(ch.action).toHaveBeenCalledWith({ type: 'ImageUpload', details: { key: 'minted-key' } });
+    expect(ch.request).toHaveBeenCalledExactlyOnceWith('minted-key');
   });
 
   it('never throws when tracking fails, and logs it', async () => {
-    ch.action.mockRejectedValue(new Error('tracker down'));
+    ch.request.mockRejectedValue(new Error('tracker down'));
 
     expect(() => trackImageUpload(req, res, 'minted-key')).not.toThrow();
     await vi.waitFor(() =>

@@ -14,7 +14,7 @@ const UPLOAD_SKEW_HOURS = 1;
  * Fire-and-forget: a tracking failure never fails the upload.
  */
 export function trackImageUpload(req: NextApiRequest, res: NextApiResponse, key: string) {
-  new Tracker(req, res).action({ type: 'ImageUpload', details: { key } }).catch((e) =>
+  new Tracker(req, res).imageUploadRequest(key).catch((e) =>
     logToAxiom({
       type: 'error',
       name: 'image-upload-action',
@@ -26,7 +26,7 @@ export function trackImageUpload(req: NextApiRequest, res: NextApiResponse, key:
 
 /** Shown with a report's IP events: post-creation and upload-request IPs share the Upload event. */
 export const UPLOAD_REQUEST_IP_NOTE =
-  'Upload IPs are either the address that created the post containing the image or the address that requested the image upload.';
+  "Upload IP addresses are either the address that created the post containing the image or the address that requested the image's upload.";
 
 const chTime = (d: Date) => `parseDateTimeBestEffort('${d.toISOString()}')`;
 
@@ -55,9 +55,9 @@ export async function getImageUploadIpEvents({
   const keys = [...idByKey.keys()].map((k) => `'${escapeClickhouseString(k)}'`).join(',');
 
   const rows = await clickhouse.$query<{ ip: string; key: string; time: string }>(`
-    SELECT ip, JSONExtractString(details, 'key') AS key, time
-    FROM actions
-    WHERE type = 'ImageUpload' AND userId = ${Number(userId)}
+    SELECT ip, key, time
+    FROM imageUploadRequests
+    WHERE userId = ${Number(userId)}
       AND time BETWEEN ${chTime(from)} AND ${chTime(to)}
       AND key IN (${keys})
   `);

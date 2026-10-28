@@ -585,6 +585,33 @@ export function getReportedUserAdditionalInfo(
   );
 }
 
+const activityKey = (a: CsamReportUserActivity) =>
+  [a.type, a.ip, a.time, a.details?.type, a.details?.id].join('|');
+
+function mergeUserActivity(stored: CsamReportUserActivity[], live: CsamReportUserActivity[]) {
+  const seen = new Set(stored.map(activityKey));
+  return stored.concat(live.filter((a) => !seen.has(activityKey(a))));
+}
+
+/**
+ * The report's IP events: those stored on it plus any ClickHouse still holds, written back to the
+ * report before it is sent. Every unsent report passes here on each send run, so its IPs are kept
+ * on the report from its first run on, though the ClickHouse rows expire (upload requests after 12
+ * months). Undefined when the claim was lost.
+ */
+async function snapshotUserActivity(claim: SendClaim) {
+  const stored = claim.report.details?.userActivity ?? [];
+  const merged = mergeUserActivity(stored, await getUserIpInfo(claim.report));
+  if (isProd && merged.length > stored.length) {
+    const written = await updateUnderClaim(claim, 'ip-snapshot', {}, (current) => ({
+      ...current,
+      userActivity: mergeUserActivity(current.userActivity ?? [], merged),
+    }));
+    if (!written) return;
+  }
+  return merged;
+}
+
 async function getInitialReportData(claim: SendClaim) {
   const { report } = claim;
   const reportingUser = await getReportingUser(report.reportedById);
@@ -592,7 +619,8 @@ async function getInitialReportData(claim: SendClaim) {
   if (!reportingUser || !reportedUser)
     return await deleteUnderClaim(claim, 'no reporting or reported user');
 
-  const userActivity = await getUserIpInfo(report);
+  const userActivity = await snapshotUserActivity(claim);
+  if (!userActivity) return;
 
   return {
     incidentSummary: {
