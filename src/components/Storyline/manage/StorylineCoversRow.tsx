@@ -2,7 +2,7 @@ import { Alert, Button, FileButton, Group, Modal, Skeleton, Stack, Text } from '
 import { useDebouncedCallback } from '@mantine/hooks';
 import { IconCheck, IconPhoto } from '@tabler/icons-react';
 import clsx from 'clsx';
-import { useId, useState } from 'react';
+import { useEffect, useId, useRef, useState } from 'react';
 import { HeroPositionPicker } from '~/components/Comics/HeroPositionPicker';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
@@ -25,6 +25,9 @@ type Storyline = RouterOutput['storyline']['getById'];
 type Slot = CoverSlot;
 
 const PICKER_IMAGE_LIMIT = 200;
+/** How long Manage re-reads a pick that is not showing, so a scan that clears appears here. */
+const HIDDEN_PICK_POLL_MS = 3 * 60_000;
+const HIDDEN_PICK_POLL_EVERY_MS = 10_000;
 
 /**
  * Each pick is saved as soon as it is made; the server decides which images may be used and its
@@ -32,20 +35,32 @@ const PICKER_IMAGE_LIMIT = 200;
  */
 export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
   const utils = trpc.useUtils();
-  const { data: storyline } = trpc.storyline.getById.useQuery({ id: storylineId });
+  // For a fixed time after a pick that is not showing, whatever becomes of it, so the polling says
+  // nothing about why it is not showing.
+  const [pollUntil, setPollUntil] = useState(0);
+  const { data: storyline } = trpc.storyline.getById.useQuery(
+    { id: storylineId },
+    { refetchInterval: () => (Date.now() < pollUntil ? HIDDEN_PICK_POLL_EVERY_MS : false) }
+  );
+  const pickHidden = !!(storyline?.coverPickHidden || storyline?.heroPickHidden);
+  useEffect(() => {
+    if (pickHidden) setPollUntil((until) => until || Date.now() + HIDDEN_PICK_POLL_MS);
+  }, [pickHidden]);
   const [error, setError] = useState<string | null>(null);
   const [position, setPosition] = useState<number | null>(null);
 
   const update = trpc.storyline.update.useMutation({
     onMutate: () => setError(null),
-    onSuccess: (_data, input) =>
-      Promise.all([
+    onSuccess: (_data, input) => {
+      setPollUntil(Date.now() + HIDDEN_PICK_POLL_MS);
+      return Promise.all([
         utils.storyline.getById.invalidate({ id: storylineId }),
         // The feed's cards show the cover, and nothing else this row sets.
         'coverImageId' in input || 'coverUpload' in input
           ? utils.storyline.getInfinite.invalidate()
           : undefined,
-      ]),
+      ]);
+    },
     onError: (e) => setError(e.message),
   });
   const savePosition = useDebouncedCallback(
@@ -244,6 +259,7 @@ function CoverSlot({
   disabled?: boolean;
   children: React.ReactNode;
 }) {
+  const resetRef = useRef<() => void>(null);
   return (
     <div className="flex flex-col gap-2" role="group" aria-label={label}>
       <Text size="xs" fw={700} c="dimmed">
@@ -252,14 +268,23 @@ function CoverSlot({
       {children}
       {pending && (
         <Text size="xs" c="dimmed" className="max-w-[240px]">
-          Processing: your pick shows here and on the storyline once its scan clears it.
+          Your pick isn&apos;t showing yet. It may still be processing, or it may not fit this
+          storyline&apos;s rating. You can pick another.
         </Text>
       )}
       <Group gap="xs">
         <Button size="compact-sm" variant="default" onClick={onChange} disabled={disabled}>
           Change
         </Button>
-        <FileButton onChange={onUpload} accept="image/png,image/jpeg,image/webp">
+        <FileButton
+          resetRef={resetRef}
+          onChange={(file) => {
+            onUpload(file);
+            // Clears the input, so the same file can be chosen again after a failed upload.
+            resetRef.current?.();
+          }}
+          accept="image/png,image/jpeg,image/webp"
+        >
           {(props) => (
             <Button
               {...props}

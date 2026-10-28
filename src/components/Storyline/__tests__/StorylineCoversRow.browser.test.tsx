@@ -77,6 +77,7 @@ const mocks = vi.hoisted(() => ({
   invalidateById: vi.fn(async () => undefined),
   invalidateInfinite: vi.fn(async () => undefined),
   upload: vi.fn(),
+  refetchInterval: undefined as (() => number | false) | undefined,
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -85,7 +86,12 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
     ...(await importOriginal<typeof TrpcMod>()),
     trpc: makeTrpcProxy(
       {
-        'storyline.getById': { useQuery: () => ({ data: mocks.storyline, isLoading: false }) },
+        'storyline.getById': {
+          useQuery: (_input: unknown, options?: { refetchInterval?: () => number | false }) => {
+            mocks.refetchInterval = options?.refetchInterval;
+            return { data: mocks.storyline, isLoading: false };
+          },
+        },
         'storyline.update': {
           useMutation: (options: MutationOptions) => ({
             isPending: mocks.pending,
@@ -443,10 +449,17 @@ describe('StorylineCoversRow', () => {
     expect(mocks.mutate).not.toHaveBeenCalled();
   });
 
-  test('a pick that is not showing yet says it is processing, in its own slot', async () => {
+  test('a pick that is not showing yet says so in its own slot, and Manage re-reads it for a while', async () => {
     mocks.storyline = { ...STORYLINE, coverImageId: 30, coverPickHidden: true };
     renderWithProviders(<Row />);
-    await expect.element(slot('Card cover')).toHaveTextContent('Processing');
-    expect(slot('Banner').element().textContent).not.toContain('Processing');
+    await expect.element(slot('Card cover')).toHaveTextContent("Your pick isn't showing yet");
+    expect(slot('Banner').element().textContent).not.toContain("isn't showing yet");
+    await expect.poll(() => mocks.refetchInterval?.()).toBe(10_000);
+  });
+
+  test('with every pick showing, Manage does not re-read', async () => {
+    renderWithProviders(<Row />);
+    await expect.element(slot('Card cover')).toBeVisible();
+    expect(mocks.refetchInterval?.()).toBe(false);
   });
 });

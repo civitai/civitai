@@ -1389,6 +1389,10 @@ async function assertStorylinePicks(
     const uploaded = !!image && image.postId == null && image.userId === callerId;
     if (!image || (!fromChapter && !uploaded))
       throw throwBadRequestError(STORYLINE_PICK_REFUSALS.notAllowed);
+    // The caller's own upload is taken whatever its scan says: a refusal here would tell them the
+    // verdict. The read gate shows it only once the scan has cleared and rated it, within the
+    // ceiling, and the owner sees the same note for any pick that is not showing.
+    if (uploaded) continue;
     // Never shown as a cover or banner (see storylineImageVisible), so refused rather than kept.
     if (
       image.minor ||
@@ -1399,9 +1403,6 @@ async function assertStorylinePicks(
       image.ingestion === 'NotFound'
     )
       throw throwBadRequestError(STORYLINE_PICK_REFUSALS.cannotUse);
-    // A fresh upload is kept while its scan runs: the read gate shows it only once the scan has
-    // cleared and rated it, and the owner is told it is processing until then.
-    if (uploaded && (image.ingestion !== 'Scanned' || !image.nsfwLevel)) continue;
     if (!image.nsfwLevel) throw throwBadRequestError(STORYLINE_PICK_REFUSALS.unrated);
     if (!storylineLevelAllowed({ postLevel: image.nsfwLevel, maxNsfwLevel }))
       throw throwBadRequestError("This image is rated above the storyline's maximum rating");

@@ -2890,10 +2890,6 @@ describe('covers and cast', () => {
       ["someone else's upload", 21, /own chapters, an endorsed collaborator's, or one you upload/],
       ["a moderator's upload, picked by the owner", 22, /or one you upload/],
       ['a post of the owner that is no chapter', 28, /or one you upload/],
-      ['an upload above the ceiling', 24, /above the storyline's maximum rating/],
-      ['an upload taken down', 25, /cannot be used as a cover or banner/],
-      ['an upload its scan blocked', 26, /cannot be used as a cover or banner/],
-      ['an upload of a minor', 27, /cannot be used as a cover or banner/],
       ['above the ceiling', 6, /above the storyline's maximum rating/],
       ['not rated yet', 7, /not been rated yet/],
       ['a minor', 8, /cannot be used as a cover or banner/],
@@ -2932,7 +2928,18 @@ describe('covers and cast', () => {
       expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 22 } });
     });
 
-    // Saved while the scan runs; the read gate shows it only once the scan clears and rates it.
+    // A refusal would tell the uploader their scan's verdict; the read gate keeps it hidden instead.
+    it.each([
+      ['still being scanned', 23],
+      ['rated above the ceiling', 24],
+      ['taken down', 25],
+      ['blocked by its scan', 26],
+      ['of a minor', 27],
+    ])("takes its owner's own upload %s, without a word", async (_n, id) => {
+      await updateStoryline({ id: 10, userId: OWNER, coverImageId: id });
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: id } });
+    });
+
     it('keeps an upload whose scan has not finished, unlike an unrated chapter image', async () => {
       await updateStoryline({ id: 10, userId: OWNER, coverImageId: 23 });
       expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 23 } });

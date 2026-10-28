@@ -31,6 +31,7 @@ vi.mock('~/server/services/placement.service', async (importOriginal) => ({
 }));
 
 const { getStorylinesInfinite } = await import('~/server/services/storyline.service');
+const { getBlockedPairIds } = await import('~/server/services/user-preferences.service');
 
 const migration = (name: string) =>
   readFileSync(
@@ -96,7 +97,9 @@ beforeAll(async () => {
       (53, 'owner-upload-too-hot', ${NsfwLevel.X}, ${OWNER}, NULL, 'Scanned'),
       (54, 'mod-upload', 1, ${MODERATOR}, NULL, 'Scanned'),
       (55, 'owner-upload-minor', 1, ${OWNER}, NULL, 'Scanned'),
-      (56, 'owner-upload-rescanning', 1, ${OWNER}, NULL, 'Rescan');
+      (56, 'owner-upload-rescanning', 1, ${OWNER}, NULL, 'Rescan'),
+      (57, 'owner-upload-taken-down', 1, ${OWNER}, NULL, 'Scanned');
+    UPDATE "Image" SET "tosViolation" = true WHERE id = 57;
     UPDATE "Image" SET minor = true WHERE id = 55;
   `);
 
@@ -156,5 +159,24 @@ describe('an uploaded card cover, read by the feed', () => {
 
   it('never shows an upload of a minor', async () => {
     await expect(coverFor(55)).resolves.toBeNull();
+  });
+
+  it('shows nothing for an upload taken down after it was picked', async () => {
+    await expect(coverFor(57)).resolves.toBeNull();
+  });
+
+  it('shows nothing once the uploader is banned', async () => {
+    await db.pg.exec(`UPDATE "User" SET "bannedAt" = now() WHERE id = ${MODERATOR}`);
+    try {
+      await expect(coverFor(54)).resolves.toBeNull();
+    } finally {
+      await db.pg.exec(`UPDATE "User" SET "bannedAt" = NULL WHERE id = ${MODERATOR}`);
+    }
+  });
+
+  it('shows nothing to a reader who blocked the uploader', async () => {
+    vi.mocked(getBlockedPairIds).mockResolvedValueOnce([MODERATOR]);
+    await expect(coverFor(54)).resolves.toBeNull();
+    await expect(coverFor(54)).resolves.toBe(54);
   });
 });
