@@ -199,6 +199,26 @@ describe('changePageRoles', () => {
     expect(await historyRows()).toEqual([]);
   });
 
+  // Without `manages` the caller states every role, as the API does: nothing is carried, so a revoke
+  // removes exactly the role it names.
+  it('without `manages`, writes the entry as given and records nothing carried or dropped', async () => {
+    await main.exec(
+      `UPDATE "AppPageAccess" SET roles = ARRAY['${HIGH}', 'system:dispute-agent'] WHERE path = '/blocklists'`
+    );
+    await changePageRoles({
+      entries: [{ path: '/blocklists', roles: [HIGH] }],
+      userId: 42,
+      via: 'api',
+      gateRef: 'g',
+      expect: { '/blocklists': [HIGH, 'system:dispute-agent'] },
+    });
+    expect(await stored()).toEqual([HIGH]);
+    const rows = await history.query<{ roles_carried: string[]; roles_dropped: string[] }>(
+      'SELECT roles_carried, roles_dropped FROM page_access_change'
+    );
+    expect(rows.rows).toEqual([{ roles_carried: [], roles_dropped: [] }]);
+  });
+
   it('treats a path with no row as granting nobody', async () => {
     await changePageRoles({
       entries: [{ path: '/decisions', roles: [CM] }],
@@ -323,6 +343,7 @@ describe('/admin save', () => {
     const result = await save({ [DISPUTE]: [HIGH, CM] }, { [DISPUTE]: [HIGH] });
     expect(result).toMatchObject({ status: 409 });
     expect(await stored(DISPUTE)).toEqual([HIGH, SYSTEM]);
+    expect(await historyRows()).toMatchObject([{ path: DISPUTE, outcome: 'refused' }]);
   });
 
   it('records what it kept and what it dropped apart from what the operator changed', async () => {

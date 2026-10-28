@@ -272,9 +272,9 @@
           {#each retired as role (role)}
             <span
               class="rounded border border-yellow-500/30 px-1.5 py-0.5 text-yellow-300"
-              title="No longer in the auth hub. The next save of this row removes it."
+              title="Not a role this page grants. The next save of this row removes it."
             >
-              {role} · retired, removed on save
+              {role} · removed on save
             </span>
           {/each}
         </div>

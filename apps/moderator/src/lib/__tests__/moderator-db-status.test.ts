@@ -4,6 +4,7 @@ import { moderatorDbStatus, storeUnavailableMessage } from '../moderator-db-stat
 describe('moderatorDbStatus', () => {
   it.each([
     [{ code: '42P01' }, 'no-schema'],
+    [{ code: '42703' }, 'no-schema'],
     [{ code: '42501' }, 'no-grant'],
     [new Error('MODERATOR_DATABASE_URL is not configured'), 'not-configured'],
     [{ code: '08006' }, 'unreachable'],

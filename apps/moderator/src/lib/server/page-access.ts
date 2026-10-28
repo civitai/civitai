@@ -152,7 +152,8 @@ export async function changePageRoles(input: {
   const stored = await getPageAccessGrants(dbWrite, APP);
   const before = (path: string) => stored[path] ?? [];
   const { manages } = input;
-  const unmanaged = (roles: string[]) => (manages ? roles.filter((r) => !manages.includes(r)) : []);
+  const unmanaged = (roles: string[]) =>
+    manages ? [...new Set(roles)].filter((r) => !manages.includes(r)) : [];
   const carried = (path: string) => unmanaged(before(path)).filter((r) => !isAppRole(r));
   const dropped = (path: string) => unmanaged(before(path)).filter(isAppRole);
   const comparable = (roles: string[]) =>

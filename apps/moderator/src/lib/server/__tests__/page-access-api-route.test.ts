@@ -192,20 +192,6 @@ describe('POST /api/admin/page-access — the change', () => {
     ]);
   });
 
-  it('carries a role from outside the catalogue when the last catalogue role is revoked', async () => {
-    await call({
-      body: {
-        ...BODY,
-        op: 'revoke',
-        role: 'moderator:mod-high-access',
-        expect: ['moderator:mod-high-access', 'system:dispute-agent'],
-      },
-    });
-    expect(changePageRoles.mock.calls[0][0].entries).toEqual([
-      { path: '/blocklists', roles: ['system:dispute-agent'] },
-    ]);
-  });
-
   it('a moved grant is a 409 carrying the current roles', async () => {
     changePageRoles.mockRejectedValueOnce(
       new GrantConflictError('/blocklists', ['moderator:cm-high-access'])

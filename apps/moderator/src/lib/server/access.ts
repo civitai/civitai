@@ -535,8 +535,9 @@ export function pageAccessState(edit?: {
   /** Every routable path in the tree, groups included — what `whoami` reports verdicts for. */
   paths: string[];
   /**
-   * Stored roles the editor has no column for, by key: `kept` is carried through a save, `retired` is
-   * dropped by it. Shown read-only so neither changes unannounced.
+   * Stored roles the editor has no column for, by key: `kept` is carried through a save, `retired` (this
+   * app's own roles missing from the catalogue, the super role included) is dropped by it. Shown read-only
+   * so neither changes unannounced.
    */
   outside: Record<string, { kept: Role[]; retired: Role[] }>;
 } {
@@ -550,7 +551,8 @@ export function pageAccessState(edit?: {
     : { ...stored, ...storedPermissions };
   const outside: Record<string, { kept: Role[]; retired: Role[] }> = {};
   for (const [key, roles] of Object.entries(edit?.grants ?? {})) {
-    const unlisted = roles.filter((role) => isStorableRole(role) && !edit?.roles.includes(role));
+    // Deduped: the row renders these as keyed chips, and a stored array can repeat a role.
+    const unlisted = [...new Set(roles)].filter((role) => !edit?.roles.includes(role));
     if (unlisted.length)
       outside[key] = {
         kept: unlisted.filter((role) => !isAppRole(role)),

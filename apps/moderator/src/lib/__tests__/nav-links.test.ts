@@ -435,17 +435,23 @@ describe('pageAccessState for the editor', () => {
   const HIGH = 'moderator:mod-high-access';
   const KEY = 'grant:creatorServices.reviewDispute';
 
-  it('shows only catalogue roles as editable, and every other stored role read-only', () => {
+  it('shows only catalogue roles as editable, and every other stored role once, read-only', () => {
     const { granted, outside } = pageAccessState({
       grants: {
-        [KEY]: [HIGH, 'system:dispute-agent', 'moderator:retired', 'moderator:admin'],
+        [KEY]: [
+          HIGH,
+          'system:dispute-agent',
+          'moderator:retired',
+          'moderator:admin',
+          'system:dispute-agent',
+        ],
         '/blocklists': [HIGH],
       },
       roles: [HIGH],
     });
     expect(granted[KEY]).toEqual([HIGH]);
     expect(outside).toEqual({
-      [KEY]: { kept: ['system:dispute-agent'], retired: ['moderator:retired'] },
+      [KEY]: { kept: ['system:dispute-agent'], retired: ['moderator:retired', 'moderator:admin'] },
     });
   });
 });
