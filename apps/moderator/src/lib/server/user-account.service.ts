@@ -21,6 +21,11 @@ import { withModerators } from './mod-activity';
 import { MIN_FLAGGED } from '$lib/reactions';
 import type { BuzzTransaction } from '../../routes/retool/user-lookup/buzz-history';
 import { USER_ACCOUNT_TYPES as USER_ACCOUNT_TYPE_LIST } from './buzz-accounts';
+import {
+  getPlacementParties,
+  placementIdOf,
+  type PlacementParties,
+} from './placement-flows.service';
 
 // Everything behind `/api/user-account`, plus the two endpoints that exist only because their query is
 // slow enough to need its own: `/api/user-mod-activity` and `/api/user-buzz-history`.
@@ -1579,6 +1584,21 @@ const buzzTypesQuery = (userId: number, direction: 'in' | 'out', days: number) =
   ORDER BY type
 `;
 
+const placementOf = (
+  p: PlacementParties | undefined,
+  users: Map<number, { username: string | null }>
+): BuzzTransaction['placement'] =>
+  p
+    ? {
+        id: p.placementId,
+        surface: p.surface,
+        placerId: p.placerId,
+        placerName: users.get(p.placerId)?.username ?? null,
+        ownerId: p.ownerId,
+        ownerName: users.get(p.ownerId)?.username ?? null,
+      }
+    : null;
+
 /**
  * ONE side of the ledger — payments (money out) or receipts (money in).
  *
@@ -1627,7 +1647,15 @@ export async function getBuzzLedgerSide(
   // those are real, unrelated user ids (`vvendeta`, `sirnofish`) — resolving them would name an innocent
   // creator as the counterparty of every Creator Program transfer.
   const resolvable = page.filter((r) => USER_ACCOUNT_TYPES.has(r.counterpartyType));
-  const ids = [...new Set(resolvable.map((r) => Number(r.counterpartyId)))].filter((id) => id > 0);
+  // A placement's legs run through the escrow account, so the counterparty on the row is account 0;
+  // the placement itself names who paid and who was paid.
+  const placements = await getPlacementParties(page.map((r) => r.externalTransactionId));
+  const ids = [
+    ...new Set([
+      ...resolvable.map((r) => Number(r.counterpartyId)),
+      ...[...placements.values()].flatMap((p) => [p.placerId, p.ownerId]),
+    ]),
+  ].filter((id) => id > 0);
   const byId = await usersByIds(ids);
 
   const mapped: BuzzTransaction[] = page.map((r) => {
@@ -1648,6 +1676,7 @@ export async function getBuzzLedgerSide(
       counterpartyName: isUser ? byId.get(id)?.username ?? null : null,
       counterpartyLabel: isUser ? null : counterpartyLabel(r.counterpartyType, id),
       externalTransactionId: r.externalTransactionId || null,
+      placement: placementOf(placements.get(placementIdOf(r.externalTransactionId) ?? 0), byId),
     };
   });
 
