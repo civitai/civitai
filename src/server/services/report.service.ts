@@ -1205,6 +1205,28 @@ function closeOrphans(ids: number[], reason: string | null) {
   `;
 }
 
+/** How long an appeal routed for review waits for a moderator before it is closed and refunded. */
+export const ROUTED_APPEAL_REVIEW_DAYS = 30;
+
+function closeUnreviewedAppeals(limit: number) {
+  return dbWrite.$queryRaw<ClaimedOrphan[]>`
+    UPDATE "Appeal"
+    SET status = 'Void'::"AppealStatus", "resolvedReason" = ${
+      OrphanedAppealReason.RemovedBeforeReview
+    },
+      "resolvedAt" = now(), "updatedAt" = now()
+    WHERE id IN (
+      SELECT id FROM "Appeal"
+      WHERE status = 'Pending'::"AppealStatus"
+        AND "entityRemovedAt" <= now() - make_interval(days => ${Prisma.raw(
+          String(ROUTED_APPEAL_REVIEW_DAYS)
+        )})
+      LIMIT ${limit}
+    ) AND status = 'Pending'::"AppealStatus"
+    RETURNING id, "userId", "entityType", "entityId", "buzzTransactionId"
+  `;
+}
+
 function routeOrphansForReview(ids: number[]) {
   if (!ids.length) return Promise.resolve([] as ClaimedOrphan[]);
   return dbWrite.$queryRaw<ClaimedOrphan[]>`
@@ -1338,7 +1360,8 @@ export async function closeAppealsOnDeletedModel({ modelId }: { modelId: number 
  * Sorts appeals whose entity has been deleted; the moderator queue is driven from the entity row,
  * so it never shows them. An owner who deleted their own content gets the appeal closed and
  * refunded, and is told. Any other deleted model closes quietly; a removed image stays Pending,
- * stamped `entityRemovedAt`, for review, and its owner is told. A deleted account's appeals close
+ * stamped `entityRemovedAt`, for review, and its owner is told; one still unreviewed
+ * `ROUTED_APPEAL_REVIEW_DAYS` later is closed, refunded and told. A deleted account's appeals close
  * quietly.
  */
 export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } = {}) {
@@ -1359,7 +1382,7 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
     LIMIT ${limit}
   `;
 
-  // Every owner who can still read a notice is treated alike, whatever else is on their account.
+  // Only a deleted account's appeals close without a notice.
   const isQuiet = (a: OrphanCandidate) => a.userDeleted;
   const quiet = candidates.filter(isQuiet);
   const rest = candidates.filter((a) => !isQuiet(a));
@@ -1405,10 +1428,17 @@ export async function voidOrphanedAppeals({ limit = 1000 }: { limit?: number } =
   }
   for (const appeal of routed) await notifyOrphanedAppeal(appeal, 'under-review');
 
+  const closedUnreviewed = await closeUnreviewedAppeals(limit);
+  for (const appeal of closedUnreviewed) {
+    const wasRefunded = await refund(appeal);
+    await notifyOrphanedAppeal(appeal, 'closed-unreviewed', wasRefunded);
+  }
+
   return {
     closedQuietly: closedQuietly.length,
     closedOwnerDeleted: closedOwnerDeleted.length,
     routedForReview: routed.length,
+    closedUnreviewed: closedUnreviewed.length,
     refunded,
     refundFailed,
   };

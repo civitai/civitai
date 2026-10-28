@@ -121,7 +121,9 @@ const rawCalls = () =>
   }));
 const pick = () => rawCalls().find(({ sql }) => /FROM "Appeal" a/.test(sql))!;
 const updates = () => rawCalls().filter(({ sql }) => /UPDATE "Appeal"/.test(sql));
-const voidUpdates = () => updates().filter(({ sql }) => /'Void'::"AppealStatus"/.test(sql));
+// Every claim but the review-deadline close, which picks its own rows.
+const claims = () => updates().filter(({ sql }) => !/"entityRemovedAt" <= now\(\)/.test(sql));
+const voidUpdates = () => claims().filter(({ sql }) => /'Void'::"AppealStatus"/.test(sql));
 const removedUpdate = () => updates().find(({ sql }) => /"entityRemovedAt" = now\(\)/.test(sql));
 const idsIn = (values: unknown[]) => values.find((v) => Array.isArray(v)) as number[] | undefined;
 const closeContaining = (id: number) =>
@@ -214,8 +216,8 @@ describe('voidOrphanedAppeals', () => {
   it('claims every group by id and only while still Pending and unstamped', async () => {
     await voidOrphanedAppeals();
 
-    expect(updates()).toHaveLength(3);
-    for (const { sql, values } of updates()) {
+    expect(claims()).toHaveLength(3);
+    for (const { sql, values } of claims()) {
       expect(sql).toMatch(/WHERE id = ANY\(\?\)/);
       expect(sql).toMatch(/status = 'Pending'::"AppealStatus" AND "entityRemovedAt" IS NULL/);
       expect(sql).toMatch(/RETURNING/);
@@ -448,7 +450,7 @@ describe('voidOrphanedAppeals', () => {
 
     const result = await voidOrphanedAppeals();
 
-    expect(updates()).toEqual([]);
+    expect(claims()).toEqual([]);
     expect(mockCreateNotification).not.toHaveBeenCalled();
     expect(result).toMatchObject({ closedOwnerDeleted: 0, routedForReview: 0 });
   });

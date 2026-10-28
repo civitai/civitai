@@ -19,7 +19,7 @@ const OUTCOME = {
 const DELETED_BY_OWNER = 'deleted-by-owner';
 
 // The owners and images the main app's getAppealExcludedIds (src/server/services/report.service.ts)
-// excludes from appeals; keep the two in step. Their appeals wait like anyone else's, unlisted here.
+// excludes from appeals are left out here, listed or decided; keep the two in step.
 const appealExcluded = sql<boolean>`(
   EXISTS (SELECT 1 FROM "CsamReport" cr WHERE cr."userId" = a."userId")
   OR EXISTS (
@@ -110,7 +110,7 @@ export async function resolveRemovedAppeal({
   moderatorId: number;
 }): Promise<{ refunded: boolean; refundFailed: boolean } | null> {
   const appeal = await dbWrite
-    .updateTable('Appeal')
+    .updateTable('Appeal as a')
     .set({
       status: decision === 'OwnerDeleted' ? 'Void' : decision,
       resolvedBy: moderatorId,
@@ -119,9 +119,10 @@ export async function resolveRemovedAppeal({
       resolvedReason: decision === 'OwnerDeleted' ? DELETED_BY_OWNER : resolvedReason ?? null,
       internalNotes: internalNotes ?? null,
     })
-    .where('id', '=', appealId)
-    .where('status', '=', 'Pending')
-    .where('entityRemovedAt', 'is not', null)
+    .where('a.id', '=', appealId)
+    .where('a.status', '=', 'Pending')
+    .where('a.entityRemovedAt', 'is not', null)
+    .where(sql<boolean>`NOT ${appealExcluded}`)
     .returning(['id', 'userId', 'entityType', 'entityId', 'buzzTransactionId'])
     .executeTakeFirst();
   if (!appeal) return null;

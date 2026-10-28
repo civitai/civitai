@@ -175,6 +175,22 @@ describe('getRemovedAppeals', () => {
 });
 
 describe('resolveRemovedAppeal', () => {
+  // The same answer as an appeal another moderator decided, so an id posted by hand learns nothing.
+  it('decides nothing on an appeal the list leaves out', async () => {
+    await db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (1)`);
+
+    const closed = await resolveRemovedAppeal({
+      appealId: 11,
+      decision: 'Approved',
+      moderatorId: MOD,
+    });
+
+    expect(closed).toBeNull();
+    expect(await appeal(11)).toMatchObject({ status: 'Pending', resolvedBy: null });
+    expect(refundAppealFee).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
   it('approves: records the ruling, refunds, and tells the user the removal was a mistake', async () => {
     const closed = await resolveRemovedAppeal({
       appealId: 11,
