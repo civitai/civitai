@@ -2458,8 +2458,7 @@ export const permaDeleteModelById = async ({
 
       // A held owner's model is refused, and the rollback restores its posts and images. The hold is
       // checked in the DELETE itself, so one placed during this transaction still stops it. It is the
-      // account hold too: its image legs cover the images this deletes. So is a model a held author
-      // left a legacy comment on: those cascade with it and have no thread to detach.
+      // account hold too: its image legs cover the images this deletes.
       const owner = Prisma.raw('m."userId"');
       const [deletedModel] = await tx.$queryRaw<
         { id: number; userId: number; nsfwLevel: number }[]

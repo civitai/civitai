@@ -61,13 +61,20 @@ beforeAll(async () => {
       "modelVersionId" int, "collectionId" int, metadata jsonb
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
-      CREATE TABLE "Thread" (
-        id serial PRIMARY KEY, "modelId" int, "reviewId" int, "postId" int, "imageId" int,
-        "parentThreadId" int, "rootThreadId" int, "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
-      );
-      CREATE TABLE "CommentV2" (id serial PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL);
-      CREATE TABLE "Comment" (id serial PRIMARY KEY, "userId" int NOT NULL, "modelId" int, "parentId" int);
-      CREATE TABLE "ResourceReview" (id serial PRIMARY KEY, "modelId" int);
+    CREATE TABLE "Thread" (
+      id serial PRIMARY KEY, "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "reviewId" int,
+      "postId" int, "imageId" int, "parentThreadId" int, "rootThreadId" int, "commentId" int,
+      metadata jsonb NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE "CommentV2" (
+      id serial PRIMARY KEY, "userId" int NOT NULL,
+      "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE
+    );
+    CREATE TABLE "Comment" (
+      id serial PRIMARY KEY, "userId" int NOT NULL,
+      "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "parentId" int
+    );
+    CREATE TABLE "ResourceReview" (id serial PRIMARY KEY, "modelId" int);
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int NOT NULL REFERENCES "Model"(id) ON DELETE CASCADE,
       "createdAt" timestamp(3) NOT NULL, "updatedAt" timestamp(3) NOT NULL
@@ -134,5 +141,52 @@ describe('remove-old-drafts under a legal hold', () => {
     expect(axiomEvents('Kept old draft models of owners under a legal hold')).toEqual([
       expect.objectContaining({ modelIds: KEPT_MODELS }),
     ]);
+  });
+});
+
+describe("remove-old-drafts and a held author's comments on a free owner's model", () => {
+  const LEGACY_MODEL = 60; // a held author left a legacy comment: it cascades and has no thread
+  const THREAD_MODEL = 70; // a held author commented in its thread
+  const CONTROL_MODEL = 80; // only its free owner commented
+
+  beforeEach(async () => {
+    const extra = [LEGACY_MODEL, THREAD_MODEL, CONTROL_MODEL];
+    await db.exec(`
+      DELETE FROM "Thread"; DELETE FROM "Comment";
+      INSERT INTO "Model" (id, "userId") VALUES ${extra
+        .map((id) => `(${id}, ${FREE_OWNER})`)
+        .join(', ')};
+      INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES ${extra
+        .map((id) => `(${id}0, ${id}, now() - interval '200 days', now() - interval '200 days')`)
+        .join(', ')};
+      INSERT INTO "Comment" ("userId", "modelId") VALUES (${MARKED_OWNER}, ${LEGACY_MODEL});
+      INSERT INTO "Thread" (id, "modelId") VALUES (700, ${THREAD_MODEL}), (800, ${CONTROL_MODEL});
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES
+        (7001, ${MARKED_OWNER}, 700), (7002, ${FREE_OWNER}, 700), (8001, ${FREE_OWNER}, 800);
+    `);
+    dbMock.dbRead.$queryRaw.mockResolvedValue(extra.map((id) => ({ id, userId: FREE_OWNER })));
+  });
+
+  it('keeps a model a held author left a legacy comment on, and the comment', async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+
+    expect(await remainingModels()).toContain(LEGACY_MODEL);
+    const legacy = await db.query(`SELECT 1 FROM "Comment" WHERE "modelId" = ${LEGACY_MODEL}`);
+    expect(legacy.rows).toHaveLength(1);
+  });
+
+  it("detaches the held author's thread before the delete, so the model goes and its comments stay", async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+
+    const remaining = await remainingModels();
+    expect(remaining).not.toContain(THREAD_MODEL);
+    // The control proves the foreign keys cascade: without the detach, thread 700 would go too.
+    expect(remaining).not.toContain(CONTROL_MODEL);
+    const comments = await db.query<{ id: number }>(`SELECT id FROM "CommentV2" ORDER BY id`);
+    expect(comments.rows.map((r) => r.id)).toEqual([7001, 7002]);
+    const thread = await db.query<{ modelId: number | null; detachedFrom: unknown }>(
+      `SELECT "modelId", metadata -> 'detachedFrom' AS "detachedFrom" FROM "Thread" WHERE id = 700`
+    );
+    expect(thread.rows).toEqual([{ modelId: null, detachedFrom: { modelId: THREAD_MODEL } }]);
   });
 });

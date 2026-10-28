@@ -44,7 +44,7 @@ vi.mock('~/server/rewards', async (importOriginal) => ({
   reportAcceptedReward: { apply: reward },
 }));
 
-import { bulkDeleteComments } from '~/server/services/comment.service';
+import { bulkDeleteComments, deleteCommentById } from '~/server/services/comment.service';
 import { isLegalHoldAbort, logHoldRetained } from '~/server/services/legal-hold.service';
 
 const CLEAN = 1;
@@ -437,6 +437,44 @@ describe('a legacy comment with replies', () => {
         FROM generate_series(0, 29) g;
     `);
     expect(await mostHoldChecksPerStatement('Comment', [11])).toBe(3);
+  });
+});
+
+describe('a member deleting their own legacy comment', () => {
+  beforeEach(async () => {
+    vi.mocked(dbMock.dbWrite.comment.findUnique).mockResolvedValue({
+      modelId: 100,
+      model: { userId: CLEAN + 50 },
+    } as never);
+    // What the delete was before it learned about holds: a plain row delete, cascading its replies.
+    vi.mocked(dbMock.dbWrite.comment.delete).mockImplementation(
+      (async (args: { where: { id: number } }) =>
+        (await holder.db.query(`DELETE FROM "Comment" WHERE id = $1 RETURNING *`, [args.where.id]))
+          .rows[0]) as never
+    );
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId", content, "parentId") VALUES
+        (41, ${HELD}, 100, 'zzfixture', 11);
+    `);
+  });
+
+  it('is kept, hidden, with the held reply under it', async () => {
+    await expect(deleteCommentById({ id: 11 })).resolves.toEqual({ id: 11 });
+    expect(await state('Comment')).toMatchObject({ 11: 'hidden', 41: 'public' });
+  });
+
+  it('is kept, hidden, when its author is held', async () => {
+    await expect(deleteCommentById({ id: 21 })).resolves.toEqual({ id: 21 });
+    expect(await state('Comment')).toMatchObject({ 21: 'hidden' });
+  });
+
+  it('goes when nothing under it is held (control)', async () => {
+    await expect(deleteCommentById({ id: 12 })).resolves.toEqual({ id: 12 });
+    expect(await state('Comment')).not.toHaveProperty('12');
+  });
+
+  it('is not found when it does not exist', async () => {
+    await expect(deleteCommentById({ id: 999 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
 

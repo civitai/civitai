@@ -47,6 +47,9 @@ import {
 } from '~/server/services/resourceReview.service';
 import { deleteImageById, deleteImages } from '~/server/services/image.service';
 import { deletePost } from '~/server/services/post.service';
+import { deleteBountyById } from '~/server/services/bounty.service';
+import { deleteBountyEntry } from '~/server/services/bountyEntry.service';
+import { deleteArticleById } from '~/server/services/article.service';
 import { toggleReview } from '~/server/services/user.service';
 import {
   assertCommentEntityVisible,
@@ -98,6 +101,18 @@ beforeAll(async () => {
       id int PRIMARY KEY, "userId" int NOT NULL,
       "questionId" int REFERENCES "Question"(id) ON DELETE CASCADE
     );
+    CREATE TABLE "Bounty" (
+      id int PRIMARY KEY, "userId" int, complete boolean NOT NULL DEFAULT true,
+      refunded boolean NOT NULL DEFAULT true, poi boolean NOT NULL DEFAULT false,
+      availability text NOT NULL DEFAULT 'Public', meta jsonb, "payoutRecordedAt" timestamp(3),
+      "payoutSettledAt" timestamp(3), "payoutWinnerUserId" int
+    );
+    CREATE TABLE "BountyEntry" (
+      id int PRIMARY KEY, "userId" int NOT NULL,
+      "bountyId" int NOT NULL REFERENCES "Bounty"(id) ON DELETE CASCADE
+    );
+    CREATE TABLE "Article" (id int PRIMARY KEY, "userId" int NOT NULL, "coverId" int);
+    CREATE TABLE "ImageConnection" ("imageId" int, "entityId" int, "entityType" text);
     CREATE TABLE "Thread" (
       id int PRIMARY KEY,
       "postId" int UNIQUE REFERENCES "Post"(id) ON DELETE CASCADE,
@@ -106,6 +121,9 @@ beforeAll(async () => {
       "questionId" int UNIQUE REFERENCES "Question"(id) ON DELETE CASCADE,
       "answerId" int UNIQUE REFERENCES "Answer"(id) ON DELETE CASCADE,
       "imageId" int UNIQUE REFERENCES "Image"(id) ON DELETE CASCADE,
+      "bountyId" int UNIQUE REFERENCES "Bounty"(id) ON DELETE CASCADE,
+      "bountyEntryId" int UNIQUE REFERENCES "BountyEntry"(id) ON DELETE CASCADE,
+      "articleId" int UNIQUE REFERENCES "Article"(id) ON DELETE CASCADE,
       "parentThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
       "rootThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
       "commentId" int,
@@ -133,7 +151,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`
     TRUNCATE "CommentV2", "Thread", "Answer", "Question", "ResourceReview", "Model", "Post",
-      "Image", "CsamReport", "EvidenceHold";
+      "Image", "CsamReport", "EvidenceHold", "BountyEntry", "Bounty", "Article";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
@@ -156,6 +174,10 @@ beforeEach(async () => {
   vi.mocked(dbMock.dbWrite.answer.delete).mockImplementation(deleteRow('Answer'));
   vi.mocked(dbMock.dbWrite.resourceReview.delete).mockImplementation(deleteRow('ResourceReview'));
   vi.mocked(dbMock.dbWrite.resourceReview.findMany).mockResolvedValue([]);
+  vi.mocked(dbMock.dbWrite.bounty.delete).mockImplementation(deleteRow('Bounty'));
+  vi.mocked(dbMock.dbWrite.bountyEntry.delete).mockImplementation(deleteRow('BountyEntry'));
+  vi.mocked(dbMock.dbWrite.article.delete).mockImplementation(deleteRow('Article'));
+  vi.mocked(dbMock.dbWrite.imageConnection.findMany).mockResolvedValue([]);
   vi.mocked(dbMock.dbWrite.resourceReview.deleteMany).mockImplementation((async ({
     where,
   }: {
@@ -413,6 +435,46 @@ describe('the production delete paths keep held threads', () => {
       seedParent: () => db.exec(`INSERT INTO "Image" (id, "userId") VALUES (50, ${OWNER})`),
       run: () => deleteImages([50], false).catch(() => undefined),
       parentGone: async () => (await db.query(`SELECT id FROM "Image"`)).rows.length === 0,
+    },
+    deleteBountyById: {
+      column: 'bountyId',
+      parentId: 60,
+      seedParent: async () => {
+        await db.exec(`INSERT INTO "Bounty" (id, "userId") VALUES (60, ${OWNER})`);
+        vi.mocked(dbMock.dbRead.bounty.findUnique).mockResolvedValue({
+          userId: OWNER,
+          expiresAt: new Date(),
+        } as never);
+      },
+      run: () => deleteBountyById({ id: 60, isModerator: true }),
+      parentGone: async () => (await db.query(`SELECT id FROM "Bounty"`)).rows.length === 0,
+    },
+    deleteBountyEntry: {
+      column: 'bountyEntryId',
+      parentId: 61,
+      seedParent: async () => {
+        await db.exec(`
+          INSERT INTO "Bounty" (id, "userId") VALUES (60, ${OTHER});
+          INSERT INTO "BountyEntry" VALUES (61, ${OWNER}, 60);`);
+        vi.mocked(dbMock.dbRead.bountyEntry.findUniqueOrThrow).mockResolvedValue({
+          id: 61,
+          bountyId: 60,
+          userId: OWNER,
+          bounty: { complete: true },
+        } as never);
+      },
+      run: () => deleteBountyEntry({ id: 61, isModerator: true }),
+      parentGone: async () => (await db.query(`SELECT id FROM "BountyEntry"`)).rows.length === 0,
+    },
+    deleteArticleById: {
+      column: 'articleId',
+      parentId: 70,
+      seedParent: async () => {
+        await db.exec(`INSERT INTO "Article" (id, "userId") VALUES (70, ${OWNER})`);
+        vi.mocked(dbMock.dbWrite.article.findUnique).mockResolvedValue({ userId: OWNER } as never);
+      },
+      run: () => deleteArticleById({ id: 70, userId: OWNER }),
+      parentGone: async () => (await db.query(`SELECT id FROM "Article"`)).rows.length === 0,
     },
     deletePost: {
       column: 'postId',

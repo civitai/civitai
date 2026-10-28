@@ -1649,8 +1649,7 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       WITH ${detach({ postId: owned('Post') })}
       DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
-    // The legacy comments cascade with the model and cannot be detached, so a model a held author
-    // commented on is soft-deleted instead, as a moderator's delete does.
+    // Soft-deleted instead, as a moderator's delete does.
     const commentHeld = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT m.id FROM "Model" m
       WHERE m."userId" = ${id} AND ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), markerView)}`;

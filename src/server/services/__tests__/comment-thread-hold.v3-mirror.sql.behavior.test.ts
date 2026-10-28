@@ -39,6 +39,7 @@ const { getCommentPermalinkRow } = await import('~/server/utils/comment-permalin
 const { commentDetailFetcher } = await import(
   '~/server/notifications/detail-fetchers/comment.detail-fetcher'
 );
+const { copyV2Comments } = await import('~/server/services/comment-v3-backfill.service');
 
 const OWNER = 1;
 const HELD = 2; // named on a pending report
@@ -191,6 +192,16 @@ describe('a detached thread leaves the CommentV3 mirror', () => {
     expect(detached).toBeUndefined();
     expect(detached).toEqual(await getCommentPermalinkRow(4));
     expect(await getCommentPermalinkRow(5)).toBeUndefined();
+  });
+
+  it('is not copied back into the mirror by the backfill', async () => {
+    await deleteImages();
+    // A mirrored comment that went missing, which the backfill does restore (control).
+    await db.pg.exec(`DELETE FROM "CommentV3" WHERE id = 6`);
+
+    await copyV2Comments(db.pg, { start: 1, end: 10 });
+
+    expect(await ids('CommentV3')).toEqual([6]);
   });
 
   it('no longer previews a detached comment in a notification', async () => {
