@@ -678,13 +678,18 @@ export const getHomeBlockData = async ({
         return null;
       }
 
-      // This body is shared by every viewer, so the creatorShop flag is resolved as it is for a
-      // signed-out one: on while the flag is public, off when it is pulled or Flipt can't answer.
-      // The per-viewer block filter the shop page applies can't live in a shared body either; the
-      // block applies it on the client.
+      // This body is shared by every viewer, so the creatorShop and stickers flags are resolved as
+      // they are for a signed-out one: on while the flag is public, off when it is pulled or Flipt
+      // can't answer. The per-viewer block filter the shop page applies can't live in a shared body
+      // either; the block applies it on the client.
+      const [creatorShopEnabled, stickersEnabled] = await Promise.all([
+        isFliptPublic('creator-shop'),
+        isFliptPublic('stickers'),
+      ]);
       const data = await getShopSectionsWithItems({
         sectionId: cosmeticShopSectionMeta.id,
-        creatorShopEnabled: await isFliptPublic('creator-shop'),
+        creatorShopEnabled,
+        stickersEnabled,
       });
 
       const [cosmeticShopSection] = data;
