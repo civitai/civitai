@@ -80,6 +80,8 @@ export type UserMenuItem = {
    * that costs a request is a request on every page.
    */
   badge?: number;
+  /** What the badge counts, shown on hover. */
+  badgeTooltip?: string;
 };
 
 type UserMenuItemGroup = {
@@ -139,6 +141,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Inventory',
           badge: unopenedBoxes,
+          badgeTooltip: 'Unopened mystery boxes',
         },
         {
           id: 'my-shop',
@@ -147,7 +150,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: myShopNavVisible(features),
           icon: IconShoppingBag,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Shop',
+          label: 'Shop',
         },
         {
           id: 'service-requests',
@@ -157,7 +160,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: !!currentUser && features.creatorServices,
           icon: IconBriefcase,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My service requests',
+          label: 'Service Requests',
         },
         {
           id: 'placements',
@@ -179,6 +182,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Placements',
           badge: pendingPlacements,
+          badgeTooltip: 'Placements waiting for your review',
           newUntil: new Date('2026-09-20'),
         },
         {
@@ -197,8 +201,9 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           href: `/collections`,
           icon: IconBookmark,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Collections',
+          label: 'Collections',
           badge: pendingCollectionReviews,
+          badgeTooltip: 'Items awaiting review in your collections',
         },
         {
           id: 'liked-models',
@@ -222,7 +227,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: features.bounties,
           icon: IconMoneybag,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Bounties',
+          label: 'Bounties',
         },
         {
           id: 'challenges',
@@ -230,7 +235,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: features.challengePlatform && features.userChallenges,
           icon: IconTrophy,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Your Challenges',
+          label: 'Challenges',
           newUntil: new Date('2026-08-15'),
         },
         {
@@ -267,7 +272,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           visible: features.vault,
           icon: IconCloudLock,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Vault',
+          label: 'Vault',
         },
         {
           id: 'referrals',

@@ -124,6 +124,17 @@ vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
 
 // Import AFTER mocks (vi.mock is hoisted, static imports are not).
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
+const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+
+/** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
+function StoreWithControls() {
+  return (
+    <>
+      <AppsStoreFeedFilters />
+      <AppListingsMarketplaceBody />
+    </>
+  );
+}
 const { clearRecentlyOpenedApps, recordRecentlyOpenedApp } = await import(
   './recentlyOpenedAppsStore'
 );
@@ -235,7 +246,7 @@ async function openFilters() {
 
 describe('AppListingsMarketplaceBody', () => {
   test('renders the returned listings as cards + the inline search/sort controls', async () => {
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
     await expect.element(page.getByText('Bravo App')).toBeInTheDocument();
     // Search + sort stay INLINE (not behind the Filters button), and both still
@@ -244,7 +255,7 @@ describe('AppListingsMarketplaceBody', () => {
     // (Mantine's `Select` mirrors `aria-label` onto BOTH the input and its
     // listbox, hence `.first()`: the input is the control under test.)
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
-    await expect.element(page.getByLabelText('Sort').first()).toHaveValue('Top rated');
+    await expect.element(page.getByRole('button', { name: 'Top rated' })).toBeInTheDocument();
     // Kind filter is now inside the dropdown, defaulting to All.
     await openFilters();
     await expect
@@ -261,7 +272,7 @@ describe('AppListingsMarketplaceBody', () => {
   });
 
   test('clicking a kind toggle WRITES kind to the URL (shallow, no scroll)', async () => {
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     await openFilters();
     await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
 
@@ -275,7 +286,7 @@ describe('AppListingsMarketplaceBody', () => {
 
   test('a param-seeded mount drives the tRPC query from the URL (the shareable-link path)', async () => {
     router.query = { kind: 'offsite', category: 'generation', sort: 'newest' };
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
     expect(mocks.lastArgs).toMatchObject({
       kind: 'offsite',
@@ -320,7 +331,7 @@ describe('AppListingsMarketplaceBody', () => {
      */
     useVirtualClock();
 
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     const search = page.getByLabelText('Search');
 
     // TWO fills, because two is what distinguishes the regression: a box wired
@@ -356,7 +367,7 @@ describe('AppListingsMarketplaceBody', () => {
 
   test('a `?query=` param seeds the search box and filters the grid', async () => {
     router.query = { query: 'Alpha' };
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByLabelText('Search')).toHaveValue('Alpha');
     await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
     // Bravo is filtered out client-side by the seeded query.
@@ -364,15 +375,15 @@ describe('AppListingsMarketplaceBody', () => {
   });
 
   test('sorting writes the sort param', async () => {
-    renderWithProviders(<AppListingsMarketplaceBody />);
-    await userEvent.click(page.getByLabelText('Sort').first());
-    await userEvent.click(page.getByRole('option', { name: 'Newest' }));
+    renderWithProviders(<StoreWithControls />);
+    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
     expect(replacedQueries().at(-1)).toMatchObject({ sort: 'newest' });
   });
 
   test('a DEFAULT value is stripped from the URL rather than written as noise', async () => {
     router.query = { kind: 'offsite' };
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     await openFilters();
     await userEvent.click(page.getByRole('button', { name: 'All apps' }));
     // `?kind=all` is the default view — a nav that lands on
@@ -382,7 +393,7 @@ describe('AppListingsMarketplaceBody', () => {
 
   test('empty result → "No apps yet"', async () => {
     mocks.items = [];
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByText('No apps yet')).toBeInTheDocument();
   });
 
@@ -403,7 +414,7 @@ describe('AppListingsMarketplaceBody', () => {
   // the structure those two both assume: one cell per card, each carrying the testid,
   // inside the grid, inside the query container.
   test('the grid renders one testid-carrying cell per card, nested inside the query container', async () => {
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
 
     const cols = page.getByTestId('apps-listing-grid-col').elements();
@@ -429,7 +440,7 @@ describe('AppListingsMarketplaceBody', () => {
   // for a viewer with no recents.
 
   test('a viewer with NO recents sees no rail at all (no heading, no reserved space)', async () => {
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByText('Alpha App')).toBeInTheDocument();
     expect(page.getByTestId('apps-recent-rail').elements()).toHaveLength(0);
     expect(page.getByText('Recently opened').elements()).toHaveLength(0);
@@ -447,7 +458,7 @@ describe('AppListingsMarketplaceBody', () => {
       },
       SESSION_OWNER_ID
     );
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
 
     const rail = page.getByTestId('apps-recent-rail');
     await expect.element(rail).toBeInTheDocument();
@@ -475,7 +486,7 @@ describe('AppListingsMarketplaceBody', () => {
 
   test('a LEGACY {id, blockId} recents entry still renders (resolved, not dropped)', async () => {
     recordRecentlyOpenedApp({ id: 'ab_legacy', blockId: 'legacy-app' }, SESSION_OWNER_ID);
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     const item = page.getByTestId('apps-recent-rail-item');
     await expect.element(item).toBeInTheDocument();
     // hasPage unknown for a legacy entry → the always-valid detail link.

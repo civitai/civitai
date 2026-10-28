@@ -105,6 +105,10 @@ const DEPOSIT_COMPLETED_STATUSES = new Set(['finished', 'partially_paid']);
  */
 export const UNVERIFIED_DEPOSIT_STATUSES = ['unverified', 'unverified_exhausted'];
 
+/** NOWPayments statuses of a payment still in flight: nothing credited yet, and nothing final. */
+export const OPEN_DEPOSIT_STATUSES = ['waiting', 'confirming', 'confirmed', 'sending'];
+export const OPEN_DEPOSIT_DIGEST_AFTER_DAYS = 3;
+
 /** Check if a deposit status means buzz has been credited. */
 export function isDepositComplete(status: string): boolean {
   return DEPOSIT_COMPLETED_STATUSES.has(status);

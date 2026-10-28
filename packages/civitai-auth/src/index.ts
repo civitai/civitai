@@ -125,3 +125,4 @@ export { hubLoginUrl, hubLogoutUrl, type ProviderId, type HubLoginUrlOptions } f
 export { appRole, appRoles, hasAppRole, APP_ROLE_SEPARATOR } from './roles'; // app-namespaced role helpers (read SessionUser.roles by prefix)
 export type { SessionUser, SessionClaims } from './types';
 export * from './app-token';
+export { isSystemAccountMeta, SYSTEM_ACCOUNT_META } from './system-account'; // User.meta marker for API-key-only accounts (hub refuses sign-in, no onboarding bonus)

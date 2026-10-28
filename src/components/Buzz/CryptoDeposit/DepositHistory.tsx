@@ -554,7 +554,7 @@ function CheckDepositsNotice({ reconcile }: { reconcile: Reconcile }) {
   );
 }
 
-function DepositStatusBadge({ status }: { status: string }) {
+export function DepositStatusBadge({ status }: { status: string }) {
   if (status === 'finished') {
     return (
       <Badge color="green" variant="light" size="sm" leftSection={<IconCheck size={12} />}>
@@ -565,6 +565,8 @@ function DepositStatusBadge({ status }: { status: string }) {
 
   switch (status) {
     case 'confirming':
+    case 'confirmed':
+    case 'sending':
       return (
         <Badge color="yellow" variant="light" size="sm" leftSection={<IconLoader size={12} />}>
           Confirming

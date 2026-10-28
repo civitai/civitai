@@ -68,6 +68,7 @@ export function AppsPageLayout({
   subtitle,
   actions,
   measure,
+  railFooter,
   children,
 }: {
   /** Page heading (omit for a header with just the chrome, e.g. the marketplace). */
@@ -110,6 +111,8 @@ export function AppsPageLayout({
    * `margin-inline: auto`.
    */
   measure?: AppsMeasure;
+  /** Rendered at the foot of the rail (and of the mobile drawer); told whether the rail is collapsed. */
+  railFooter?: (state: { collapsed: boolean }) => ReactNode;
   children: ReactNode;
 }) {
   const router = useRouter();
@@ -330,6 +333,7 @@ export function AppsPageLayout({
                   </Tooltip>
                 }
               />
+              {railFooter?.({ collapsed })}
             </div>
           </aside>
         )}
@@ -438,6 +442,7 @@ export function AppsPageLayout({
             currentPath={router.pathname}
             onNavigate={drawer.close}
           />
+          {railFooter?.({ collapsed: false })}
         </Drawer>
       )}
     </Container>

@@ -9,11 +9,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * changed row.
  */
 
-const { captured, devTunnelEnabled, runnerConfigured, serverEnv } = vi.hoisted(() => ({
+const { captured, devTunnelEnabled, runnerConfigured, serverEnv, setHeader } = vi.hoisted(() => ({
   serverEnv: { APP_ASSISTANT_SANDBOX_URL: undefined as string | undefined },
   captured: { fn: null as null | ((c: unknown) => Promise<unknown>) },
   devTunnelEnabled: vi.fn(async () => true),
   runnerConfigured: vi.fn(() => true),
+  setHeader: vi.fn(),
 }));
 
 vi.mock('~/server/utils/server-side-helpers', () => ({
@@ -59,10 +60,11 @@ const ASSISTANT_PROPS = {
 };
 
 async function resolve(features: Record<string, boolean>, user: User | null) {
-  return captured.fn!({ features, session: user ? { user } : null, ctx: {} });
+  return captured.fn!({ features, session: user ? { user } : null, ctx: { res: { setHeader } } });
 }
 
 beforeEach(() => {
+  setHeader.mockClear();
   devTunnelEnabled.mockResolvedValue(true);
   runnerConfigured.mockReturnValue(true);
   serverEnv.APP_ASSISTANT_SANDBOX_URL = undefined;
@@ -116,6 +118,17 @@ describe('/apps/build — the page each viewer gets', () => {
 });
 
 describe('/apps/build — the assistant view’s props', () => {
+  /**
+   * No route CSP: a header CSP persists across the tab's client-side navigations and would block
+   * payment and captcha frames on later pages.
+   */
+  it('sets no response header for the assistant view', async () => {
+    const remote = { ...ASSISTANT, appAssistantRemoteRunner: true, appBlocksAuthor: true };
+    serverEnv.APP_ASSISTANT_SANDBOX_URL = 'https://sandbox.example';
+    expect(await resolve(remote, MEMBER)).toMatchObject({ props: { mode: 'assistant' } });
+    expect(setHeader).not.toHaveBeenCalled();
+  });
+
   it('offers the preview only to an author with dev tunnels', async () => {
     expect(await resolve({ ...ASSISTANT, appBlocksAuthor: true }, MEMBER)).toMatchObject({
       props: { canPreview: true },

@@ -39,7 +39,7 @@ export function resolveBuildPageAccess(args: {
 }): BuildPageAccessResult {
   const mode = resolveAppsBuildPageMode(args.user, args.features);
   if (mode === 'assistant') {
-    // A banned account keeps no way into the assistant; `/apps/assistant` sent it home.
+    // A banned account has no way into the assistant: it is sent home.
     if (args.user?.bannedAt) return { redirect: { destination: '/', permanent: false } };
     return { assistant: true };
   }

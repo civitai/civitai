@@ -29,10 +29,10 @@
   const scans = $derived(
     shown && canView
       ? browser
-        ? fetchJson<{ items: PromptScan[] }>(
+        ? fetchJson<{ items: PromptScan[]; truncated: boolean }>(
             `/api/user-prompt-scans/${userId}?days=${days}&limit=${limit}`
           )
-        : (SSR_PENDING as Promise<{ items: PromptScan[] }>)
+        : (SSR_PENDING as Promise<{ items: PromptScan[]; truncated: boolean }>)
       : null
   );
 
@@ -92,9 +92,8 @@
       <p class="mt-3 text-sm text-dark-2">Loading prompt scans…</p>
     {:then result}
       {@const rows = visibleScans(result.items, { sort, minScore })}
-      {@const capped = result.items.length >= limit}
       <p class="mt-3 text-xs text-dark-2">
-        {num(rows.length)} of {num(result.items.length)} scanned prompts in the last {days} days{capped
+        {num(rows.length)} of {num(result.items.length)} scanned prompts in the last {days} days{result.truncated
           ? ` (capped at ${limit})`
           : ''}.
         {#if rows.length}

@@ -1,6 +1,7 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { REDIS_KEYS } from '@civitai/redis';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -57,7 +58,11 @@ vi.mock('../storage', () => ({
 
 const { blockImage, acceptImage } = await import('../image-moderation.service');
 const { updateImageNsfwLevel } = await import('../image-nsfw-level');
-const { deleteImagesByIds } = await import('../image-deletion');
+const { deleteImageRows, finishImageDeletes } = await import('../image-deletion');
+const deleteImages = async (ids: number[]) =>
+  finishImageDeletes(
+    await (dbHandle.current as Kysely<DB>).transaction().execute((trx) => deleteImageRows(trx, ids))
+  );
 
 const SCHEMA = `
 CREATE TABLE "Image" (
@@ -87,7 +92,10 @@ CREATE TABLE "Model3D" (
   "lockedProperties" TEXT[] NOT NULL DEFAULT '{}'
 );
 CREATE TABLE "Model3DMetric" ("model3dId" INTEGER, "nsfwLevel" INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE "User" ("id" INTEGER PRIMARY KEY, "profilePictureId" INTEGER);
+CREATE TABLE "User" (
+  "id" INTEGER PRIMARY KEY,
+  "profilePictureId" INTEGER REFERENCES "Image"(id) ON DELETE SET NULL
+);
 CREATE FUNCTION update_nsfw_levels_new(ids INTEGER[]) RETURNS VOID LANGUAGE SQL AS $$ SELECT $$;
 `;
 
@@ -136,8 +144,8 @@ describe('moderator writes to an image that is a profile picture', () => {
     expect(bustedKeys()).toContain(avatarKey);
   });
 
-  it('deleteImagesByIds evicts it, though the row naming the avatar is gone', async () => {
-    await deleteImagesByIds([AVATAR_ID]);
+  it('an image delete evicts it, though the row naming the avatar is gone', async () => {
+    await deleteImages([AVATAR_ID]);
 
     expect(bustedKeys()).toContain(avatarKey);
   });
