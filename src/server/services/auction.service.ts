@@ -859,15 +859,19 @@ export const deleteBid = async ({ userId, bidId }: DeleteBidInput & { userId: nu
   if (!isActive) throw throwBadRequestError('Cannot delete a bid from a different day.');
 
   // Loaded here so the refund helper stays out of this service's import cycle.
-  const { refundTransactionOnce } = await import('~/server/services/buzz-prefix-refund');
+  const { refundAllLegsByPrefix, refundTransactionOnce } = await import(
+    '~/server/services/buzz-prefix-refund'
+  );
   for (const transactionId of bid.transactionIds) {
     await withRetries(async () => {
       if (isAuctionTransactionPrefix(transactionId)) {
-        await refundMultiAccountTransaction({
+        const refund = await refundAllLegsByPrefix({
           externalTransactionIdPrefix: transactionId,
           description: 'Deleted bid.',
         });
-
+        // A bid holds this id only after its charge went through, so no legs is a fault.
+        if (!refund.refundedLegs && !refund.alreadyRefundedLegs)
+          throw new Error(`No transactions found under ${transactionId}`);
         return;
       } else {
         await refundTransactionOnce(transactionId, 'Deleted bid.');
