@@ -5106,6 +5106,56 @@ export interface KnightsVote {
   converted: boolean;
 }
 
+export interface KnightsReferenceImage {
+  id: number;
+  imageId: number;
+  questionKey: string;
+  pool: string;
+  answer: string;
+  source: string;
+  explanation: string | null;
+  status: string;
+  modActivityId: number | null;
+  harvestedAt: Date;
+  answers: number;
+  failures: number;
+  createdAt: Date;
+  updatedAt: Date;
+  trialAnswers?: KnightsTrialAnswer[];
+}
+
+export interface KnightsTrialRun {
+  id: number;
+  playerId: number;
+  questionKey: string;
+  seed: number;
+  itemIds: JsonValue;
+  startedAt: Date;
+  finishedAt: Date | null;
+  result: string | null;
+  score: number | null;
+  cooldownUntil: Date | null;
+  trialAnswers?: KnightsTrialAnswer[];
+}
+
+export interface KnightsTrialAnswer {
+  id: number;
+  runId: number;
+  run?: KnightsTrialRun;
+  playerId: number;
+  referenceId: number;
+  reference?: KnightsReferenceImage;
+  answer: string;
+  correct: boolean;
+  createdAt: Date;
+}
+
+export interface KnightsHarvestCursor {
+  name: string;
+  lastActivityId: number;
+  updatedAt: Date;
+}
+
 export interface NewOrderRank {
   type: NewOrderRankType;
   name: string;

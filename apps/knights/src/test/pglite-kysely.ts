@@ -15,11 +15,14 @@ import {
 import { parseTimestampAsUtc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
-const MIGRATION = fileURLToPath(
-  new URL(
-    '../../../../packages/civitai-db-schema/prisma/migrations/20261210120000_knights_v2_queue/migration.sql',
-    import.meta.url
-  )
+const MIGRATIONS = ['20261210120000_knights_v2_queue', '20261212120000_knights_v2_trials'].map(
+  (name) =>
+    fileURLToPath(
+      new URL(
+        `../../../../packages/civitai-db-schema/prisma/migrations/${name}/migration.sql`,
+        import.meta.url
+      )
+    )
 );
 
 const STAND_INS = `
@@ -45,7 +48,16 @@ CREATE TABLE "Post" (
 CREATE TABLE "NewOrderPlayer" (
   "userId" INTEGER PRIMARY KEY,
   "rankType" TEXT NOT NULL,
-  "exp" INTEGER NOT NULL DEFAULT 0
+  "exp" INTEGER NOT NULL DEFAULT 0,
+  "startAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+CREATE TABLE "ModActivity" (
+  "id" SERIAL PRIMARY KEY,
+  "userId" INTEGER,
+  "activity" TEXT NOT NULL,
+  "entityType" TEXT,
+  "entityId" INTEGER,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 CREATE TABLE "NewOrderSmite" (
   "id" SERIAL PRIMARY KEY,
@@ -116,7 +128,7 @@ export async function createQueueDb(): Promise<{
 }> {
   const pg = await PGlite.create({ parsers: { 1114: parseTimestampAsUtc } });
   await pg.exec(STAND_INS);
-  await pg.exec(readFileSync(MIGRATION, 'utf8'));
+  for (const migration of MIGRATIONS) await pg.exec(readFileSync(migration, 'utf8'));
   const state = { open: 0 };
   return {
     pg,

@@ -8083,6 +8083,68 @@ model KnightsVote {
   @@index([itemId, stage])
 }
 
+/// An image with a known answer for Acolyte Trials or hidden checks. `answer` is the option value of `questionKey`.
+model KnightsReferenceImage {
+  id            Int                  @id @default(autoincrement())
+  imageId       Int                  @unique
+  questionKey   String               @default("knights.image.nsfwLevel")
+  pool          String // trials | hiddenCheck
+  answer        String
+  source        String // core | harvested | agreement
+  explanation   String? // required for core
+  status        String               @default("active") // active | retired
+  modActivityId Int? // the moderator ruling a harvested item came from
+  harvestedAt   DateTime             @default(now())
+  answers       Int                  @default(0)
+  failures      Int                  @default(0)
+  createdAt     DateTime             @default(now())
+  updatedAt     DateTime             @updatedAt
+  trialAnswers  KnightsTrialAnswer[]
+
+  @@index([pool, status, source])
+  @@index([modActivityId])
+}
+
+/// One Acolyte attempt at a question module. `itemIds` is the order planned from `seed` when the run started.
+model KnightsTrialRun {
+  id            Int                  @id @default(autoincrement())
+  playerId      Int
+  questionKey   String
+  seed          Int
+  itemIds       Json
+  startedAt     DateTime             @default(now())
+  finishedAt    DateTime?
+  result        String? // passed | failed | void
+  score         Float?
+  cooldownUntil DateTime?
+  trialAnswers  KnightsTrialAnswer[]
+
+  @@index([playerId, questionKey, startedAt])
+}
+
+model KnightsTrialAnswer {
+  id          Int                   @id @default(autoincrement())
+  runId       Int
+  run         KnightsTrialRun       @relation(fields: [runId], references: [id], onDelete: Cascade)
+  playerId    Int
+  referenceId Int
+  reference   KnightsReferenceImage @relation(fields: [referenceId], references: [id], onDelete: Cascade)
+  answer      String
+  correct     Boolean
+  createdAt   DateTime              @default(now())
+
+  @@unique([runId, referenceId])
+  @@index([playerId, createdAt])
+  @@index([referenceId])
+}
+
+/// Where a harvest job stopped reading `ModActivity`.
+model KnightsHarvestCursor {
+  name           String   @id
+  lastActivityId Int      @default(0)
+  updatedAt      DateTime @updatedAt
+}
+
 enum NewOrderRankType {
   Acolyte
   Knight

@@ -34,7 +34,7 @@ SQL on PGlite.
 - `getFeed`: open items the player's rank may judge, higher stages first, then priority and age, from the first
   question in that order. Which ranks may judge a stage is `canVote` in `ranks.ts`, shared with `castVote`; Inquisitors
   and Acolytes get no feed. It never selects the image's rating. Hidden checks are not served yet (no grader).
-  Only images the public feeds would show are served (`servableImage`, `src/lib/server/servable-image.ts`, shared with `getFeed`, `castVote` and the dev script): an image-type, published post, level not 0 or Blocked, no block marker, no review hold.
+  Only images the public feeds would show are served (`servableImage`, `src/lib/server/servable-image.ts`, shared with `getFeed`, `castVote`, Trials, the harvest and the dev script): an image-type, published post, level not 0 or Blocked, no block marker, no review hold.
 - `castVote`: refuses what the feed would not serve, then one transaction that locks the item row, refuses a vote
   that would weigh 0 (`no-weight`), writes the ledger row with its weight, and decides the stage's votes (`resolution.ts`): 5 votes
   and a 60% weighted share resolves; a split stays open to 10, then moves up Knight -> Templar -> Inquisitor (Paladin has
@@ -59,8 +59,20 @@ SQL on PGlite.
 - The vote ledger is partitioned by month. `POST /api/jobs/partitions` creates the next months and a vote creates its
   own month if missing; `POST /api/jobs/tick` also escalates items past `expiresAt`. Both need
   `Authorization: Bearer $JOBS_TOKEN`.
-- The user guard in `hooks.server.ts` skips exactly the two routes in `JOB_PATHS`; a new job route must be added there.
-- `/play` is the minimal voting page. Acolytes get no feed and cannot vote (Trials is a later slice).
+- The user guard in `hooks.server.ts` skips exactly the routes in `JOB_PATHS` (tick, partitions, harvest); a new job route must be added there.
+- `/play` is the minimal voting page, with a status line (rank, level and XP from `@civitai/shared/new-order-levels`, and the trial position for Acolytes). Acolytes, and players with no `NewOrderPlayer` row yet, get Trials instead of the feed and cannot vote; Knights and above keep the feed.
+
+## Trials (`src/lib/server/trials`)
+
+Tables `KnightsReferenceImage`, `KnightsTrialRun`, `KnightsTrialAnswer`, `KnightsHarvestCursor` (migration `20261212120000_knights_v2_trials`, applied by hand). All knobs and their defaults are in `trials/config.ts`.
+
+- A reference image has a known `answer`, a `source` (`core` | `harvested`; `agreement`, from Templar/Paladin agreement, is a later source) and a `pool`. `imageId` is unique across modules on purpose: one known answer per image, and an image sits in `trials` or in `hiddenCheck`, never both. Hidden checks are not served yet. Core rows are curated elsewhere (moderator app, later) and need an `explanation`.
+- `POST /api/jobs/harvest` (`Authorization: Bearer $JOBS_TOKEN`) reads `ModActivity` rows `setNsfwLevel` on images past a cursor, no older than `maxRulingAgeDays`. It keeps an image only while the moderator ruling still stands and its image is still servable (`servableImage`; see `harvest.service.ts`). Images already present are skipped. It also retires fresh items older than `freshMaxAgeDays` or whose image moved. Safe to run repeatedly; schedule it daily.
+- A run is per question key (`TRIAL_MODULES`; only `knights.image.nsfwLevel`), seeded per player: `seed` and the planned `itemIds` are stored on the run. It opens with core items, then fresh ones, which never repeat for that player. One open run per player and module.
+- After each answer the page shows right or wrong, the correct level and, for core items, the explanation.
+- The score counts fresh items only, and only when at least `minFresh` were answered. `score >= passMark` passes; passing every module since the player's last `NewOrderPlayer.startAt` (a reset moves it) sets `rankType` to Knight. Failing sets `cooldownUntil`; the next run gets a new seed. A run with too few answered fresh items (images became unservable) closes `void`: no score, no cooldown, and a new run starts.
+- The Knight badge award (and the rank-up signal) the v1 promotion sends is not wired yet.
+- `answers` and `failures` are per-item counters.
 
 ## Sources (queue producers)
 
