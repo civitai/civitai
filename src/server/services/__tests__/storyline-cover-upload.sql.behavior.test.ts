@@ -116,7 +116,7 @@ beforeAll(async () => {
       (60, 'chapter-1-image', 1, ${OWNER}, 100, 'Scanned'),
       (61, 'removed-chapter-image', 1, ${OWNER}, 101, 'Scanned'),
       (62, 'other-storyline-image', 1, ${OWNER}, 102, 'Scanned'),
-      -- In no post like an upload, but left behind by a deleted post: never uploaded here.
+      -- In no post, and not listed as uploaded for this storyline.
       (58, 'left-by-a-deleted-post', 1, ${OWNER}, NULL, 'Scanned'),
       (59, 'uploaded-for-another-storyline', 1, ${OWNER}, NULL, 'Scanned');
     INSERT INTO "StorylineCoverUpload" ("storylineId", "imageId") VALUES

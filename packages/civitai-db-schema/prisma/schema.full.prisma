@@ -10524,8 +10524,8 @@ model StorylineEarlyAccessSignup {
   @@index([createdAt])
 }
 
-/// An image uploaded through a storyline's Manage as its card cover or banner. An image in no post
-/// is used as a pick only when it is listed here, which no image a deleted post left behind is.
+/// An image uploaded through a storyline's Manage as its card cover or banner. A no-chapter cover
+/// must be listed here as uploaded for its storyline.
 model StorylineCoverUpload {
   storylineId Int
   storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)

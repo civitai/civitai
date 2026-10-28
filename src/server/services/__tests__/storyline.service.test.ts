@@ -2948,8 +2948,7 @@ describe('covers and cast', () => {
       expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 22 } });
     });
 
-    // Only an image uploaded in this request: an image in no post can also be one a deleted post
-    // left behind, kept for a reason that must not bring it back as a cover.
+    // An image in no post is taken only when this request uploaded it.
     it("refuses its owner's image in no post picked by id, and records nothing", async () => {
       await expect(updateStoryline({ id: 10, userId: OWNER, coverImageId: 20 })).rejects.toThrow(
         /or one you upload/
@@ -2989,7 +2988,7 @@ describe('covers and cast', () => {
       );
     });
 
-    // A fresh upload's key is behind no image yet; one that is may be a deleted post's leftover.
+    // A fresh upload's key is behind no image yet.
     it('refuses an upload whose file is already an image, even its own, and makes nothing', async () => {
       w.image.findFirst.mockResolvedValueOnce({ id: 5 } as never);
       await expect(
@@ -3390,7 +3389,7 @@ describe('covers and cast', () => {
 
     it.each([
       ['by a moderator', { userId: MODERATOR, uploaderIsModerator: true }, 30],
-      ['by someone else (an image a deleted post left behind)', { userId: STRANGER }, 1101],
+      ['by someone else', { userId: STRANGER }, 1101],
       ['by its owner, now banned', { uploaderBannedAt: new Date() }, 1101],
       ['by its owner, now deleted', { uploaderDeletedAt: new Date() }, 1101],
     ])('an image in no post %s is shown as the pick: %s', async (_n, extra, heroId) => {

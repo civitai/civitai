@@ -809,8 +809,7 @@ export async function updateStoryline({
   isModerator?: boolean;
 }) {
   const current = await getOwnedStoryline({ storylineId: id, userId, isModerator });
-  // An upload is a file the caller just put up, so its key is behind no image yet. One that is
-  // could be an image left behind by a deleted post, which must not come back as a cover.
+  // An upload is a file the caller just put up, so its key is behind no image yet.
   for (const upload of [coverUpload, heroUpload])
     if (
       upload &&
@@ -3415,9 +3414,8 @@ async function getChosenStorylineImages(
       WHERE ${storylineImageVisible(resolved)}
     `;
     for (const row of rows) {
-      // An image in no post: only one uploaded as this storyline's pick (an image a deleted post
-      // left behind never is), by its owner or a moderator whose account still stands and whom
-      // this reader has not blocked.
+      // A no-chapter cover must be listed as uploaded for this storyline, by its owner or a
+      // moderator whose account still stands and whom this reader has not blocked.
       if (row.chapterId == null) {
         if (
           !row.postId &&
