@@ -38,10 +38,10 @@ SQL on PGlite.
 - `castVote`: refuses what the feed would not serve, then one transaction that locks the item row, refuses a vote
   that would weigh 0 (`no-weight`), writes the ledger row with its weight, and decides the stage's votes (`resolution.ts`): 5 votes
   and a 60% weighted share resolves; a split stays open to 10, then moves up Knight -> Templar -> Inquisitor (Paladin has
-  a vote weight but is not on `ESCALATION_PATH` yet). A rating more than one level below the image's current one, or a
+  a vote weight but is not on `ESCALATION_PATH` yet). A rating far below the image's current one, or a
   Blocked consensus, goes to Inquisitor. Votes stay `pending` across escalations and are graded by the final value.
 - A settled rating is written by `main-app.ts` via the main app's `/api/mod/image/kono-set-nsfw-level` (activity
-  `setNsfwLevelKono`) after the vote commits, with no lock held. That endpoint is the gate: it writes only onto an image
+  `setNsfwLevelKono`; authenticated with `WEBHOOK_TOKEN` in the `x-webhook-token` header, env in `.env.example`) after the vote commits, with no lock held. That endpoint is the gate: it writes only onto an image
   that exists, has no block marker and is unlocked or Knights-locked, and answers 200 `applied` or `skipped`
   (`missing` | `blocked` | `locked`, with the image's current level). Until then the item is `Resolved` with `appliedAt`
   null and `resolvedFromLevel` set; `POST /api/jobs/expire` retries every due one, so schedule it every few minutes.
@@ -53,13 +53,15 @@ SQL on PGlite.
     moderator's current level (as v1 does when a moderator finalizes). Gone: `Closed`, votes inconclusive. `reason` says which.
 - The vote ledger is partitioned by month. `POST /api/jobs/partitions` creates the next months and a vote creates its
   own month if missing; `POST /api/jobs/expire` escalates items past `expiresAt`. Both need
-  `Authorization: Bearer $JOBS_TOKEN`; the user guard in `hooks.server.ts` skips exactly the two routes in `JOB_PATHS`; a new job route must be added there.
+  `Authorization: Bearer $JOBS_TOKEN`.
+- The user guard in `hooks.server.ts` skips exactly the two routes in `JOB_PATHS`; a new job route must be added there.
 - `/play` is the minimal voting page. Acolytes get no feed and cannot vote (Trials is a later slice).
 
 ## Wired packages
 
 `@civitai/auth` (guard), `@civitai/brand` (favicon), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
-`@civitai/flipt` (access flag), `@civitai/redis` (sys client, only for the guard's session revocation check). Add others when a task needs them.
+`@civitai/flipt` (access flag), `@civitai/redis` (sys client, only for the guard's session revocation check),
+`@civitai/shared` (`NsfwLevel`; `new-order-levels` is the level curve, also used by the main app's `game-helpers.ts`). Add others when a task needs them.
 
 ## Tests
 
