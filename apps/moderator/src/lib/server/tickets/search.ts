@@ -111,26 +111,3 @@ export function shortReadWarning(label: string, res: Extract<Searched, { status:
     ? `${label} were not read (request budget spent); open Freshdesk for these.`
     : `Showing ${res.tickets.length} of ${res.total} ${label}; the rest is in Freshdesk.`;
 }
-
-/**
- * A short-lived memo of in-flight and finished loads. A rejected or incomplete load is dropped, so the
- * next call retries instead of being served the failure.
- */
-export function createLoadCache<T>(
-  ttlMs: number,
-  isKeepable: (value: T) => boolean,
-  now: () => number = Date.now
-) {
-  const entries = new Map<string, { at: number; value: Promise<T> }>();
-  return (key: string, load: () => Promise<T>): Promise<T> => {
-    const hit = entries.get(key);
-    if (hit && now() - hit.at < ttlMs) return hit.value;
-    const entry = { at: now(), value: load() };
-    entries.set(key, entry);
-    const evict = () => {
-      if (entries.get(key) === entry) entries.delete(key);
-    };
-    entry.value.then((v) => isKeepable(v) || evict(), evict);
-    return entry.value;
-  };
-}

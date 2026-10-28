@@ -14,6 +14,7 @@ import { normalizeNewlines, plainTextToHtml } from '$lib/tickets/reply-html';
 import type { TicketView } from '$lib/tickets/routing';
 import { isSettableStatus } from '$lib/tickets/statuses';
 import { resolveTicketView } from './detail';
+import { ticketSnapshot, toRecord } from './snapshot';
 import { createTicketWriter, type WriteOutcome } from './write';
 
 const MAX_REPLY_CHARS = 10_000;
@@ -56,13 +57,17 @@ async function checkTicket(view: TicketView, ticketId: string) {
   return (await readTicketForWrite(view, ticketId)).refused ?? null;
 }
 
-/** After a write: the success payload, noting if the change moved the ticket out of this view. */
+/**
+ * After a write: the success payload, noting if the change moved the ticket out of this view. The ticket
+ * is re-read once, so the snapshot shows what the moderator just did instead of waiting for the next delta.
+ */
 async function settled(view: TicketView, ticketId: string, outcome: WriteOutcome) {
   if (!outcome.ok) return fail(outcome.notConfigured ? 503 : 502, { error: outcome.message });
   let moved: TicketView | null = outcome.movedTo ?? null;
-  if (!moved && outcome.statusChanged) {
-    const res = await getTicketDetail(ticketId);
-    if (res.status === 'found') {
+  const res = await getTicketDetail(ticketId);
+  if (res.status === 'found') {
+    await ticketSnapshot.patch(toRecord(res.ticket));
+    if (!moved && outcome.statusChanged) {
       const { routesTo } = await resolveTicketView(ticketId, res.ticket);
       if (routesTo !== view) moved = routesTo;
     }

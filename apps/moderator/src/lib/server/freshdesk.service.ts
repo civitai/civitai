@@ -291,6 +291,8 @@ type RawTicket = {
   tags?: unknown;
   description?: string | null;
   requester?: { name?: string | null; email?: string | null } | null;
+  deleted?: boolean;
+  spam?: boolean;
 };
 
 function summarise(t: RawTicket): TicketSummary | null {
@@ -329,6 +331,62 @@ export async function searchTickets(expression: string, page: number): Promise<T
     status: 'ok',
     tickets: (body.results as RawTicket[]).flatMap((t) => summarise(t) ?? []),
     total: body.total,
+  };
+}
+
+/** Tickets per page of the changed-since list: Freshdesk's maximum. */
+export const CHANGED_PAGE_SIZE = 100;
+
+/** A ticket of any status from the changed-since list. `gone`: deleted or spam. */
+export type ChangedTicket = TicketSummary & {
+  requesterName: string | null;
+  requesterEmail: string | null;
+  gone: boolean;
+};
+
+export type ChangedPage =
+  | { status: 'ok'; tickets: ChangedTicket[]; hasMore: boolean }
+  | Unavailable;
+
+/**
+ * One page of `GET /tickets?updated_since=`, newest change first, of every status, with each requester.
+ * Two or three calls a minute keep a snapshot current; it is too heavy to list everything with.
+ */
+export async function listTicketsUpdatedSince(
+  sinceIso: string,
+  page: number
+): Promise<ChangedPage> {
+  const params = new URLSearchParams({
+    updated_since: sinceIso,
+    per_page: String(CHANGED_PAGE_SIZE),
+    page: String(page),
+    order_by: 'updated_at',
+    order_type: 'desc',
+    include: 'requester',
+  });
+  const res = await freshdeskGet(`/tickets?${params}`, 'ticket list');
+  if (res.status !== 'ok') return res;
+  if (!Array.isArray(res.body)) {
+    console.error('[freshdesk] ticket list: unexpected body');
+    return unavailable('Freshdesk returned an unexpected response.');
+  }
+  const raw = res.body as RawTicket[];
+  return {
+    status: 'ok',
+    tickets: raw.flatMap((t) => {
+      const summary = summarise(t);
+      return summary
+        ? [
+            {
+              ...summary,
+              requesterName: t.requester?.name ?? null,
+              requesterEmail: t.requester?.email ?? null,
+              gone: t.deleted === true || t.spam === true,
+            },
+          ]
+        : [];
+    }),
+    hasMore: raw.length >= CHANGED_PAGE_SIZE,
   };
 }
 

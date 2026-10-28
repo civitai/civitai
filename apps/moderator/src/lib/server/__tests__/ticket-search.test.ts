@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from 'vitest';
+import { describe, expect, it } from 'vitest';
 import type { TicketSearchPage, TicketSummary } from '../freshdesk.service';
-import { createLoadCache, readAll, shortReadWarning, type FetchPage } from '../tickets/search';
+import { readAll, shortReadWarning, type FetchPage } from '../tickets/search';
 
 const TODAY = '2026-10-28';
 const day = (i: number) =>
@@ -110,43 +110,5 @@ describe('readAll', () => {
     expect(res).toMatchObject({ status: 'ok', complete: false });
     expect(res.status === 'ok' && res.failedRequests).toBeGreaterThan(0);
     expect(res.status === 'ok' && res.tickets.length).toBeGreaterThan(0);
-  });
-});
-
-describe('createLoadCache', () => {
-  it('serves a finished load until it expires', async () => {
-    let t = 0;
-    const cache = createLoadCache<number>(
-      1000,
-      () => true,
-      () => t
-    );
-    const load = vi.fn(async () => 1);
-    await cache('k', load);
-    await cache('k', load);
-    expect(load).toHaveBeenCalledTimes(1);
-    t = 1001;
-    await cache('k', load);
-    expect(load).toHaveBeenCalledTimes(2);
-  });
-
-  it('does not keep a rejected load', async () => {
-    const cache = createLoadCache<number>(
-      1000,
-      () => true,
-      () => 0
-    );
-    await expect(cache('k', () => Promise.reject(new Error('x')))).rejects.toThrow('x');
-    await expect(cache('k', async () => 2)).resolves.toBe(2);
-  });
-
-  it('does not keep a load the caller marks unkeepable', async () => {
-    const cache = createLoadCache<number>(
-      1000,
-      (v) => v > 0,
-      () => 0
-    );
-    await cache('k', async () => 0);
-    await expect(cache('k', async () => 5)).resolves.toBe(5);
   });
 });
