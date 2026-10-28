@@ -100,7 +100,7 @@ export function StorylineEndOfChapter({
   const ended = !children?.length && !isLoading;
 
   // With one way on, → takes it. Desktop only: the reader's overlay, never a narrow stage or a touch screen.
-  const stageIsNarrow = useIsMobile({ breakpoint: 'md' });
+  const stageIsNarrow = useIsMobile({ breakpoint: 'md', type: 'media' });
   const touchScreen = useHasCoarsePointer();
   const arrowContinues =
     layout === 'overlay' &&

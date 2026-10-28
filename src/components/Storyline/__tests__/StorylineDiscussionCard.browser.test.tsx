@@ -131,7 +131,9 @@ describe('the discussion card', () => {
     const radius = (el: Element | null) => getComputedStyle(el!).borderTopLeftRadius;
     const content = editor.closest('.mantine-RichTextEditor-content');
     const root = editor.closest('.mantine-RichTextEditor-root');
-    expect(radius(content)).toBe('24px');
-    expect(radius(root)).toBe(radius(content));
+    await vi.waitFor(() => {
+      expect(radius(content)).toBe('24px');
+      expect(radius(root)).toBe(radius(content));
+    });
   });
 });
