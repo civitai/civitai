@@ -1,4 +1,4 @@
-import { Indicator } from '@mantine/core';
+import { CountIndicator } from '~/components/AppLayout/AppHeader/CountIndicator';
 import { IconMessage2 } from '@tabler/icons-react';
 import { useChatStore } from '~/components/Chat/ChatProvider';
 import { useChatEnabled } from '~/components/Chat/useChatEnabled';
@@ -23,16 +23,9 @@ export function ChatButton() {
 
   return (
     <>
-      <Indicator
-        color="red"
+      <CountIndicator
         disabled={unreadLoading || !totalUnread}
-        // processing={unreadLoading} (this doesn't work)
         label={totalUnread > 99 ? '99+' : totalUnread}
-        size={16}
-        offset={4}
-        className="flex items-center text-sm font-bold"
-        classNames={{ indicator: 'cursor-pointer h-5' }}
-        withBorder
       >
         <LegacyActionIcon
           variant={open ? 'filled' : 'subtle'}
@@ -43,7 +36,7 @@ export function ChatButton() {
         >
           <IconMessage2 />
         </LegacyActionIcon>
-      </Indicator>
+      </CountIndicator>
     </>
   );
 }

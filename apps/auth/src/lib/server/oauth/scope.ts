@@ -82,9 +82,10 @@ export interface ScopeRequest {
  * `TokenScope` name (`ModelsRead`), an OIDC scope (`openid`, `profile`, `email`, `offline_access`) or a
  * decimal bitmask (`5`, the original form, which a bare number still is). Tokens are ORed together.
  * Missing or blank is no permissions; the caller adds the UserRead baseline. Returns null for an
- * unknown token or a value outside ALL_SCOPES.
+ * unknown token, a value outside ALL_SCOPES, or a non-string (a JSON body can carry an array or number).
  */
-export function parseScopeRequest(raw: string | null | undefined): ScopeRequest | null {
+export function parseScopeRequest(raw: unknown): ScopeRequest | null {
+  if (raw != null && typeof raw !== 'string') return null;
   let scope = 0;
   let openid = false;
   for (const token of (raw ?? '').split(/\s+/).filter(Boolean)) {
