@@ -870,16 +870,14 @@ export const deleteImageById = async ({
     // says whose avatar this was. Non-throwing for the same reason as the resolver above.
     const profilePictureUserIds = await getProfilePictureUserIds([id]).catch(() => []);
 
-    const image = await dbWrite.image
-      .delete({
-        where: { id },
-        select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
-      })
-      .catch((error) => {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
-          return null;
-        throw error;
-      });
+    const markerView = await holdMarkerViewExists();
+    const [image = null] = await dbWrite.$queryRaw<
+      { url: string; postId: number | null; nsfwLevel: number; userId: number; metadata: unknown }[]
+    >`
+      WITH ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT ${id}::int` }, markerView)}
+      DELETE FROM "Image" WHERE id = ${id}
+      RETURNING url, "postId", "nsfwLevel", "userId", metadata
+    `;
     // No row came back: it was already gone, or a hold marker kept it (the delete trigger takes it
     // off the site instead). Either way it leaves search like any deleted image.
     if (!image) {

@@ -219,6 +219,9 @@ export const deleteCommentV2Handler = async ({
   input: GetByIdInput;
 }) => {
   try {
+    // A detached comment is kept content: only a moderator removes it.
+    if (!ctx.user.isModerator && (await isCommentDetached(input.id)))
+      throw throwNotFoundError(`No comment with id ${input.id}`);
     const deleted = await deleteComment(input);
     if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
 
@@ -300,6 +303,8 @@ export const toggleThreadMuteHandler = async ({
   input: ToggleThreadMuteInput;
 }) => {
   try {
+    if (!ctx.user.isModerator && (await isCommentDetached(input.commentId)))
+      throw throwNotFoundError();
     return await toggleThreadMute({ ...input, userId: ctx.user.id });
   } catch (error) {
     if (error instanceof TRPCError) throw error;

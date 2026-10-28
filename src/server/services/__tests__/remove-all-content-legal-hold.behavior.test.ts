@@ -83,6 +83,12 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
     }
   ),
 }));
+// Its own suites cover the soft delete; here it marks the model Deleted, as it does.
+const { deleteModelById } = vi.hoisted(() => ({ deleteModelById: vi.fn(async () => null) }));
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  deleteModelById,
+}));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   refundBidsForVersions: vi.fn(async () => ({
@@ -840,11 +846,23 @@ describe('removeAllContent keeps other people’s comments a held author is part
       INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
     `);
 
-    await removeAllContent({ id: CLEAN });
+    await removeAllContent({ id: CLEAN, actorUserId: 77 });
 
-    expect(await rows(`SELECT status FROM "Model" WHERE id = ${MODEL}`)).toEqual([
-      { status: 'Deleted' },
-    ]);
+    expect(deleteModelById).toHaveBeenCalledTimes(1);
+    expect(deleteModelById).toHaveBeenCalledWith({ id: MODEL, userId: 77, isModerator: true });
+    expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([{ id: MODEL }]);
+    expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
+  });
+
+  it('still finishes the wipe when that soft delete fails, and names it incomplete', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
+    `);
+    deleteModelById.mockRejectedValueOnce(new Error('cache down'));
+
+    const result = await removeAllContent({ id: CLEAN });
+
+    expect(result).toMatchObject({ incomplete: expect.arrayContaining(['model-soft-delete']) });
     expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
   });
 
@@ -855,6 +873,7 @@ describe('removeAllContent keeps other people’s comments a held author is part
 
     await removeAllContent({ id: CLEAN });
 
+    expect(deleteModelById).not.toHaveBeenCalled();
     expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([]);
     expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([]);
   });

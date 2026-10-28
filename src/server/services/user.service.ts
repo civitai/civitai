@@ -3,6 +3,7 @@ import {
   accountHoldSql,
   assertAccountNotUnderLegalHold,
   guardedAccountScrubSql,
+  holdMarkerViewExists,
   isLegalHoldAbort,
   LegalHoldError,
   LegalHoldStoppedError,
@@ -1573,6 +1574,7 @@ export const removeAllContent = async ({
   // here. The rows above stay deleted in that case; they are not evidence. Bounties, entries,
   // answers, questions and reviews are here because each cascades its comment thread.
   const unlessHeld = Prisma.sql`NOT ${held}`;
+  const softDeleteFailed: { modelId: number; message: string }[] = [];
   let stopped: boolean;
   try {
     // A parent's delete cascades into its comment threads, other people's comments included; a
@@ -1619,11 +1621,17 @@ export const removeAllContent = async ({
       WITH ${detach({ postId: owned('Post') })}
       DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
     // The legacy comments cascade with the model and cannot be detached, so a model a held author
-    // commented on is taken off the site instead.
-    await dbWrite.$executeRaw`
-      UPDATE "Model" m
-      SET status = 'Deleted'::"ModelStatus", "deletedAt" = now(), "updatedAt" = now()
+    // commented on is soft-deleted instead, as a moderator's delete does.
+    const commentHeld = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT m.id FROM "Model" m
       WHERE m."userId" = ${id} AND ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), markerView)}`;
+    if (commentHeld.length) {
+      const { deleteModelById } = await import('~/server/services/model.service');
+      for (const { id: modelId } of commentHeld)
+        await deleteModelById({ id: modelId, userId: actorUserId ?? id, isModerator: true }).catch(
+          (e: unknown) => softDeleteFailed.push({ modelId, message: (e as Error)?.message })
+        );
+    }
     const doomedModels = Prisma.sql`${owned('Model')}
       AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('o.id'), markerView)}`;
     await dbWrite.$executeRaw`
@@ -1689,6 +1697,8 @@ export const removeAllContent = async ({
       ...details,
     }).catch(() => undefined);
   };
+  for (const { modelId, message } of softDeleteFailed)
+    failed('model-soft-delete', message, { modelId });
   const runStep = async (step: string, fn: () => Promise<unknown>) => {
     try {
       await fn();
@@ -3035,7 +3045,17 @@ export async function toggleReview({
   setTo ??= review ? false : true;
 
   if (setTo === false) {
-    await dbWrite.resourceReview.deleteMany({ where: { modelId, modelVersionId, userId } });
+    const doomed = Prisma.sql`SELECT r.id FROM "ResourceReview" r
+      WHERE r."modelId" = ${modelId} AND r."userId" = ${userId}
+      ${
+        modelVersionId !== undefined
+          ? Prisma.sql`AND r."modelVersionId" = ${modelVersionId}`
+          : Prisma.empty
+      }`;
+    const markerView = await holdMarkerViewExists();
+    await dbWrite.$executeRaw`
+      WITH ${detachHeldThreadsCte({ reviewId: doomed }, markerView)}
+      DELETE FROM "ResourceReview" WHERE id IN (${doomed})`;
     modelMetrics.queueUpdate(modelId);
     // Use the actual modelVersionId from the existing review row when input was
     // undefined. If the user had reviews on multiple versions (rare — typically

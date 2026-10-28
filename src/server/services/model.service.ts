@@ -2342,6 +2342,12 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
 
 /** What a moderator is told when a hold keeps a model: kept on purpose, not a failure. Never which hold. */
 export const MODEL_KEPT_FOR_HOLD = 'Kept: account under legal hold.';
+/** The same, for a model kept only for another account's comments on it: its owner is not held. */
+export const MODEL_KEPT_FOR_HELD_COMMENT = 'Kept: retained content; contact Legal.';
+
+const holdUnconfirmed = (e: unknown): never => {
+  throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
+};
 
 export const permaDeleteModelById = async ({
   id,
@@ -2403,26 +2409,30 @@ export const permaDeleteModelById = async ({
           select: { id: true },
         });
 
-        await tx.$executeRaw(
-          detachHeldThreadsSql(
-            { imageId: Prisma.sql`SELECT unnest(${imagesToDelete.map((i) => i.id)}::int[])` },
-            true
+        await tx
+          .$executeRaw(
+            detachHeldThreadsSql(
+              { imageId: Prisma.sql`SELECT unnest(${imagesToDelete.map((i) => i.id)}::int[])` },
+              true
+            )
           )
-        );
+          .catch(holdUnconfirmed);
         await tx.image.deleteMany({
           where: { postId: { in: postIds } },
         });
       }
 
-      await tx.$executeRaw(
-        detachHeldThreadsSql(
-          {
-            postId: Prisma.sql`SELECT p.id FROM "Post" p
+      await tx
+        .$executeRaw(
+          detachHeldThreadsSql(
+            {
+              postId: Prisma.sql`SELECT p.id FROM "Post" p
               WHERE p."userId" = ${model.userId} AND p."modelVersionId" = ANY(${versionIds}::int[])`,
-          },
-          true
+            },
+            true
+          )
         )
-      );
+        .catch(holdUnconfirmed);
       await tx.post.deleteMany({
         where: {
           userId: model.userId,
@@ -2444,16 +2454,21 @@ export const permaDeleteModelById = async ({
           AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
           AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), true)}
         RETURNING m.id, m."userId", m."nsfwLevel"
-      `.catch((e: unknown) => {
-        throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
-      });
+      `.catch(holdUnconfirmed);
       if (!deletedModel) {
         // Gone already, by a concurrent delete, is not a hold. Thrown either way: nothing this
         // transaction deleted passed a hold check, so it must not commit.
         const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
         if (!stillThere)
           throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
-        throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
+        const [owner] = await tx.$queryRaw<{ ownerHeld: boolean }[]>`
+          SELECT (${userUnderLegalHoldSql(Prisma.sql`${model.userId}::int`)}
+            OR ${accountHoldSql(Prisma.sql`${model.userId}::int`, true)}) AS "ownerHeld"
+        `.catch(holdUnconfirmed);
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: owner?.ownerHeld === false ? MODEL_KEPT_FOR_HELD_COMMENT : MODEL_KEPT_FOR_HOLD,
+        });
       }
       return { deletedModel, imagesToDelete };
     },

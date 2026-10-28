@@ -76,6 +76,12 @@ vi.mock('~/server/metrics', async (importOriginal) => {
   const m = { queueUpdate: vi.fn(async () => undefined) };
   return { ...actual, userMetrics: m, articleMetrics: m };
 });
+// The mocked raw reads answer every query, so the wipe finds models to soft-delete; that path is
+// not this suite's.
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  deleteModelById: vi.fn(async () => null),
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   deleteImages: vi.fn(async () => []),

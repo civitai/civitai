@@ -134,9 +134,11 @@ vi.mock('~/utils/storage-resolver', () => ({ deregisterFileLocationsBatch: vi.fn
 
 import {
   deleteModelById,
+  MODEL_KEPT_FOR_HELD_COMMENT,
   MODEL_KEPT_FOR_HOLD,
   permaDeleteModelById,
 } from '~/server/services/model.service';
+import { HOLD_UNCONFIRMED } from '~/server/services/legal-hold.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
@@ -380,8 +382,26 @@ describe('permaDeleteModelById — legal hold', () => {
   afterAll(() => db.close());
 
   /** Runs the permanent delete of a model owned by `userId`; `exists: false` leaves no row to delete. */
-  async function permaDeleteOwnedBy(userId: number, { exists = true, deleteFails = false } = {}) {
-    await db.exec(`DELETE FROM "Model";`);
+  async function permaDeleteOwnedBy(
+    userId: number,
+    {
+      exists = true,
+      deleteFails = false,
+      detachFails = false as boolean | 'post',
+      heldCommenter = null as number | null,
+    } = {}
+  ) {
+    mockDbWrite.$executeRaw.mockImplementation((async (sql: Prisma.Sql) => {
+      const post = sql.text.includes('p."modelVersionId"');
+      if (detachFails === true || (detachFails === 'post' && post))
+        throw new Error('relation "EvidenceHeldUser" does not exist');
+      return 0;
+    }) as never);
+    await db.exec(`DELETE FROM "Model"; DELETE FROM "Comment";`);
+    if (heldCommenter)
+      await db.exec(
+        `INSERT INTO "Comment" ("userId", "modelId") VALUES (${heldCommenter}, ${MODEL_ID})`
+      );
     if (exists) await db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${MODEL_ID}, ${userId})`);
     mockDbWrite.modelFile.findMany.mockResolvedValue([{ url: 'models/held.safetensors' }]);
     mockDbWrite.post.findMany.mockResolvedValue([{ id: POST_ID }]);
@@ -399,6 +419,8 @@ describe('permaDeleteModelById — legal hold', () => {
       ...values: unknown[]
     ) => {
       const flat = Prisma.sql(strings, ...(values as never[]));
+      if (flat.text.includes('"ownerHeld"'))
+        return (await db.query(flat.text, flat.values as unknown[])).rows;
       if (!isModelDelete(flat.text)) return [];
       if (deleteFails) throw new Error('relation "EvidenceHeldUser" does not exist');
       return (await db.query(flat.text, flat.values as unknown[])).rows;
@@ -443,6 +465,21 @@ describe('permaDeleteModelById — legal hold', () => {
     }
   );
 
+  // Only another account's legacy comment keeps it: its owner is not held, and is told so.
+  it('refuses a model a held author left a legacy comment on, with its own message', async () => {
+    expect(await permaDeleteOwnedBy(OWNER_ID, { heldCommenter: REPORTED_OWNER })).toEqual({
+      result: 'FORBIDDEN',
+      left: 1,
+      rolledBack: true,
+    });
+    expect(refusal).toBe(MODEL_KEPT_FOR_HELD_COMMENT);
+  });
+
+  it("keeps the owner's message when the owner is held too", async () => {
+    await permaDeleteOwnedBy(MARKED_OWNER, { heldCommenter: REPORTED_OWNER });
+    expect(refusal).toBe(MODEL_KEPT_FOR_HOLD);
+  });
+
   it('deletes a model whose owner is not held, and its files', async () => {
     expect(await permaDeleteOwnedBy(OWNER_ID)).toEqual({
       result: 'deleted',
@@ -459,6 +496,24 @@ describe('permaDeleteModelById — legal hold', () => {
       left: 0,
       rolledBack: true,
     });
+  });
+
+  it('refuses, and rolls back, when the post and image detaches cannot check their holds', async () => {
+    expect(await permaDeleteOwnedBy(OWNER_ID, { detachFails: true })).toEqual({
+      result: 'FORBIDDEN',
+      left: 1,
+      rolledBack: true,
+    });
+    expect(refusal).toBe(HOLD_UNCONFIRMED);
+  });
+
+  it('refuses, and rolls back, when only the post detach cannot check its holds', async () => {
+    expect(await permaDeleteOwnedBy(OWNER_ID, { detachFails: 'post' })).toEqual({
+      result: 'FORBIDDEN',
+      left: 1,
+      rolledBack: true,
+    });
+    expect(refusal).toBe(HOLD_UNCONFIRMED);
   });
 
   it('refuses, and rolls back, when the hold cannot be checked', async () => {

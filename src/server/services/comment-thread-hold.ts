@@ -18,32 +18,55 @@ export type ThreadParentColumn =
 export type ThreadParents = Partial<Record<ThreadParentColumn, Prisma.Sql>>;
 
 /**
+ * `WITH RECURSIVE tree`: the threads `seeds` selects and every thread below them, along every edge a
+ * delete cascades along (`parentThreadId`, `rootThreadId`) and the reply edge (`commentId`). Each
+ * edge is joined from the thread alone: joined per comment, a root with C comments and R replies
+ * walks C × R rows.
+ */
+const threadTreeSql = (seeds: Prisma.Sql) => Prisma.sql`WITH RECURSIVE tree AS (
+    ${seeds}
+    UNION
+    SELECT n.id
+    FROM tree
+    CROSS JOIN LATERAL (
+      SELECT c.id FROM "Thread" c WHERE c."parentThreadId" = tree.id OR c."rootThreadId" = tree.id
+      UNION ALL
+      SELECT c.id
+      FROM "CommentV2" k
+      JOIN "Thread" c ON c."commentId" = k.id
+      WHERE k."threadId" = tree.id
+    ) n
+  )`;
+
+/**
  * Whether a held author wrote a comment anywhere in the thread `rootId` (an int SQL expression) or
- * below it. Walks every edge a delete cascades along (`parentThreadId`, `rootThreadId`) and the
- * reply edge (`commentId`), so the unheld replies between a held one and the root are kept with it.
+ * below it, so the unheld replies between a held one and the root are kept with it.
  */
 export function heldCommentInTreeSql(rootId: Prisma.Sql, markerView: boolean): Prisma.Sql {
   return Prisma.sql`EXISTS (
-    WITH RECURSIVE tree AS (
-      SELECT (${rootId})::int AS id
-      UNION
-      SELECT c.id
-      FROM tree
-      LEFT JOIN "CommentV2" k ON k."threadId" = tree.id
-      JOIN "Thread" c
-        ON c."parentThreadId" = tree.id OR c."rootThreadId" = tree.id OR c."commentId" = k.id
-    )
-    SELECT 1 FROM tree
-    JOIN "CommentV2" hc ON hc."threadId" = tree.id
-    WHERE ${accountHoldSql(Prisma.raw('hc."userId"'), markerView)}
+    ${threadTreeSql(Prisma.sql`SELECT (${rootId})::int AS id`)}
+    SELECT 1
+    FROM (SELECT DISTINCT hc."userId" FROM tree JOIN "CommentV2" hc ON hc."threadId" = tree.id) a
+    WHERE ${accountHoldSql(Prisma.raw('a."userId"'), markerView)}
   )`;
 }
+
+/** Not an image the hold marker's delete trigger keeps: it stays, blocked, and its threads with it. */
+const notKeptByTriggerSql = (markerView: boolean) =>
+  markerView
+    ? Prisma.sql`AND NOT EXISTS (
+        SELECT 1 FROM "Image" ki JOIN "EvidenceHeldUser" kh ON kh."userId" = ki."userId"
+        WHERE ki.id = t."imageId"
+      )`
+    : Prisma.empty;
 
 /**
  * CTE entries, for a `WITH` list ahead of a parent DELETE, that take every thread of those parents
  * holding a held author's comment off its parent, so the DELETE no longer cascades into it. They run
  * in the DELETE's own statement, so they detach exactly what it deletes. A detached thread keeps
  * where it came from in `metadata.detachedFrom`, for moderators, and is unreachable from the site.
+ * Its comments leave the CommentV3 mirror, which the site reads, with the parent: each topic cascades
+ * from its entity row. The CommentV2 rows stay.
  */
 export function detachHeldThreadsCte(parents: ThreadParents, markerView: boolean): Prisma.Sql {
   const entries = Object.entries(parents).map(([column, ids], i) => {
@@ -56,6 +79,7 @@ export function detachHeldThreadsCte(parents: ThreadParents, markerView: boolean
             'detachedAt', now()
           )
       WHERE t.${col} IN (${ids}) AND ${heldCommentInTreeSql(Prisma.raw('t.id'), markerView)}
+        ${column === 'imageId' ? notKeptByTriggerSql(markerView) : Prisma.empty}
       RETURNING t.id
     )`;
   });
@@ -64,43 +88,10 @@ export function detachHeldThreadsCte(parents: ThreadParents, markerView: boolean
 
 /**
  * The detach of `detachHeldThreadsCte` as a statement of its own, for an ORM delete run right after
- * it in the same transaction. A hold placed between the two statements is not seen, so a raw delete
- * should use `deleteKeepingHeldThreadsSql` instead.
+ * it in the same transaction.
  */
 export function detachHeldThreadsSql(parents: ThreadParents, markerView: boolean): Prisma.Sql {
   return Prisma.sql`WITH ${detachHeldThreadsCte(parents, markerView)} SELECT NULL`;
-}
-
-/**
- * `DELETE FROM table` for the rows `where` matches (over `alias`, by default `d`), with every thread of theirs that
- * holds a held author's comment detached first, in the same statement. `parents` maps the ids being
- * deleted (a query) to the threads that would cascade with them, its own and those of rows it
- * cascades to.
- */
-export function deleteKeepingHeldThreadsSql({
-  table,
-  alias = 'd',
-  where,
-  parents,
-  markerView,
-  returning = Prisma.empty,
-}: {
-  table: string;
-  /** Quoted when it is a table name, as `'"Image"'` for a condition written against the table. */
-  alias?: string;
-  where: Prisma.Sql;
-  parents: (doomed: Prisma.Sql) => ThreadParents;
-  markerView: boolean;
-  returning?: Prisma.Sql;
-}): Prisma.Sql {
-  const name = Prisma.raw(`"${table}"`);
-  const doomed = Prisma.sql`SELECT id FROM doomed`;
-  return Prisma.sql`
-    WITH doomed AS (SELECT ${Prisma.raw(alias)}.id FROM ${name} ${Prisma.raw(
-    alias
-  )} WHERE ${where}),
-      ${detachHeldThreadsCte(parents(doomed), markerView)}
-    DELETE FROM ${name} WHERE id IN (${doomed}) ${returning}`;
 }
 
 /** The threads that cascade with a model: its own, and its reviews'. */

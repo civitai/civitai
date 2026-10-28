@@ -2,6 +2,10 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as CommentsV2Service from '~/server/services/commentsv2.service';
+import type * as ReactionService from '~/server/services/reaction.service';
+import type * as ReportService from '~/server/services/report.service';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 
 /**
  * Deleting a parent row (a post, a model, a question...) cascades into its comment threads and every
@@ -12,15 +16,45 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
+// What the handlers do once let through is their own suites'; here, whether they are let through.
+const { deleteComment, toggleThreadMute, toggleReaction, createReport } = vi.hoisted(() => ({
+  deleteComment: vi.fn(async ({ id }: { id: number }) => ({ id })),
+  toggleThreadMute: vi.fn(async () => true),
+  toggleReaction: vi.fn(async () => 'created'),
+  createReport: vi.fn(async () => ({ status: 'Pending' })),
+}));
+vi.mock('~/server/services/commentsv2.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CommentsV2Service>()),
+  deleteComment,
+  toggleThreadMute,
+}));
+vi.mock('~/server/services/reaction.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReactionService>()),
+  toggleReaction,
+}));
+vi.mock('~/server/services/report.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ReportService>()),
+  createReport,
+}));
+
 import { detachHeldThreadsCte, modelThreadParents } from '~/server/services/comment-thread-hold';
 import { isCommentDetached, isThreadDetached } from '~/server/services/commentsv2.service';
 import { deleteQuestion } from '~/server/services/question.service';
 import { deleteAnswer } from '~/server/services/answer.service';
-import { deleteResourceReview } from '~/server/services/resourceReview.service';
+import {
+  deleteResourceReview,
+  deleteResourceReviews,
+} from '~/server/services/resourceReview.service';
+import { deleteImageById } from '~/server/services/image.service';
+import { toggleReview } from '~/server/services/user.service';
 import {
   assertCommentEntityVisible,
+  deleteCommentV2Handler,
   getCommentHandler,
+  toggleThreadMuteHandler,
 } from '~/server/controllers/commentv2.controller';
+import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
+import { createReportHandler } from '~/server/controllers/report.controller';
 
 const OWNER = 1;
 const HELD = 2; // named on a pending report
@@ -43,14 +77,20 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
       details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]'
     );
-    CREATE TABLE "Image" (id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text);
+    CREATE TABLE "Image" (
+      id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text,
+      url text NOT NULL DEFAULT 'u', "postId" int, "nsfwLevel" int NOT NULL DEFAULT 1, metadata jsonb
+    );
+    CREATE TYPE "UserEngagementType" AS ENUM ('Follow', 'Hide', 'Block');
+    CREATE TABLE "User" (id int PRIMARY KEY, username text);
+    CREATE TABLE "UserEngagement" ("userId" int, "targetUserId" int, type "UserEngagementType");
     CREATE TABLE "EvidenceHold" ("userId" int NOT NULL);
     CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold";
     CREATE TABLE "Post" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "ResourceReview" (
       id int PRIMARY KEY, "userId" int NOT NULL,
-      "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE
+      "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "modelVersionId" int
     );
     CREATE TABLE "Question" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TABLE "Answer" (
@@ -64,6 +104,7 @@ beforeAll(async () => {
       "reviewId" int UNIQUE REFERENCES "ResourceReview"(id) ON DELETE CASCADE,
       "questionId" int UNIQUE REFERENCES "Question"(id) ON DELETE CASCADE,
       "answerId" int UNIQUE REFERENCES "Answer"(id) ON DELETE CASCADE,
+      "imageId" int UNIQUE REFERENCES "Image"(id) ON DELETE CASCADE,
       "parentThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
       "rootThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
       "commentId" int,
@@ -75,6 +116,14 @@ beforeAll(async () => {
       "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE,
       "tosViolation" boolean NOT NULL DEFAULT false
     );
+    -- Stands in for the hold marker's delete trigger: a marked owner's image row is kept.
+    CREATE FUNCTION keep_marked_image() RETURNS trigger LANGUAGE plpgsql AS $$
+    BEGIN
+      IF EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = OLD."userId") THEN RETURN NULL; END IF;
+      RETURN OLD;
+    END $$;
+    CREATE TRIGGER keep_marked_image BEFORE DELETE ON "Image"
+      FOR EACH ROW EXECUTE FUNCTION keep_marked_image();
   `);
 });
 afterAll(() => db.close());
@@ -83,7 +132,7 @@ beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`
     TRUNCATE "CommentV2", "Thread", "Answer", "Question", "ResourceReview", "Model", "Post",
-      "CsamReport", "EvidenceHold";
+      "Image", "CsamReport", "EvidenceHold";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
@@ -105,6 +154,15 @@ beforeEach(async () => {
   vi.mocked(dbMock.dbWrite.question.delete).mockImplementation(deleteRow('Question'));
   vi.mocked(dbMock.dbWrite.answer.delete).mockImplementation(deleteRow('Answer'));
   vi.mocked(dbMock.dbWrite.resourceReview.delete).mockImplementation(deleteRow('ResourceReview'));
+  vi.mocked(dbMock.dbWrite.resourceReview.findMany).mockResolvedValue([]);
+  vi.mocked(dbMock.dbWrite.resourceReview.deleteMany).mockImplementation((async ({
+    where,
+  }: {
+    where: { id: { in: number[] } };
+  }) => ({
+    count: (await db.query(`DELETE FROM "ResourceReview" WHERE id = ANY($1)`, [where.id.in]))
+      .affectedRows,
+  })) as never);
 });
 
 /** A thread on `column` = `parentId`: OTHER comments, and `replier` answers in a reply thread. */
@@ -154,6 +212,20 @@ describe('detaching held threads in the parent delete', () => {
       INSERT INTO "Thread" (id, "postId") VALUES (100, 10);
       INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (1, ${OTHER}, 100);
       INSERT INTO "Thread" (id, "commentId") VALUES (101, 1);
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (2, ${HELD}, 101);
+    `);
+
+    await deletePost();
+
+    expect(await commentIds()).toEqual([1, 2]);
+  });
+
+  it('keeps a held reply in a thread linked to its parent thread only', async () => {
+    await db.exec(`
+      INSERT INTO "Post" VALUES (10, ${OWNER});
+      INSERT INTO "Thread" (id, "postId") VALUES (100, 10);
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (1, ${OTHER}, 100);
+      INSERT INTO "Thread" (id, "parentThreadId") VALUES (101, 100);
       INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (2, ${HELD}, 101);
     `);
 
@@ -271,5 +343,176 @@ describe('a detached thread is off the site', () => {
     await expect(
       assertCommentEntityVisible({ entityType: 'comment', entityId: 3 }, ctx(false))
     ).resolves.toBeUndefined();
+  });
+});
+
+/**
+ * A tree on `column` = `parentId`: comment 1 by OTHER in the root thread, 2 by OTHER replying to it,
+ * and 3 by `deepest` replying to 2, in a thread whose parent (the thread on 2) is not its root.
+ */
+async function seedNested(column: string, parentId: number, deepest: number) {
+  await db.exec(`
+    INSERT INTO "Thread" (id, "${column}") VALUES (100, ${parentId});
+    INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (1, ${OTHER}, 100);
+    INSERT INTO "Thread" (id, "rootThreadId", "parentThreadId", "commentId") VALUES (101, 100, 100, 1);
+    INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (2, ${OTHER}, 101);
+    INSERT INTO "Thread" (id, "rootThreadId", "parentThreadId", "commentId") VALUES (102, 100, 101, 2);
+    INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (3, ${deepest}, 102);
+  `);
+}
+/** A root thread with one comment, by `author`, and no replies. */
+async function seedRootOnly(column: string, parentId: number, author: number) {
+  await db.exec(`
+    INSERT INTO "Thread" (id, "${column}") VALUES (100, ${parentId});
+    INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (1, ${author}, 100);
+  `);
+}
+
+describe('the production delete paths keep held threads', () => {
+  const sites = {
+    deleteImageById: {
+      column: 'imageId',
+      seedParent: () => db.exec(`INSERT INTO "Image" (id, "userId") VALUES (50, ${OWNER})`),
+      run: () => deleteImageById({ id: 50, updatePost: false }),
+      parentGone: async () => (await db.query(`SELECT id FROM "Image"`)).rows.length === 0,
+    },
+    toggleReview: {
+      column: 'reviewId',
+      seedParent: () =>
+        db.exec(`
+          INSERT INTO "Model" VALUES (20, ${OTHER});
+          INSERT INTO "ResourceReview" VALUES (30, ${OWNER}, 20, 21);`),
+      run: () => toggleReview({ modelId: 20, userId: OWNER, setTo: false }).catch(() => undefined),
+      parentGone: async () => (await db.query(`SELECT id FROM "ResourceReview"`)).rows.length === 0,
+    },
+    deleteResourceReviews: {
+      column: 'reviewId',
+      seedParent: () =>
+        db.exec(`
+          INSERT INTO "Model" VALUES (20, ${OTHER});
+          INSERT INTO "ResourceReview" VALUES (30, ${OWNER}, 20, 21);`),
+      run: () => deleteResourceReviews({ ids: [30] }).catch(() => undefined),
+      parentGone: async () => (await db.query(`SELECT id FROM "ResourceReview"`)).rows.length === 0,
+    },
+  };
+
+  describe.each(Object.entries(sites))('%s', (_name, site) => {
+    it('keeps a held reply nested below unheld ones, with the comments it answers', async () => {
+      await site.seedParent();
+      await seedNested(site.column, site.column === 'imageId' ? 50 : 30, HELD);
+
+      await site.run();
+
+      expect(await site.parentGone()).toBe(true);
+      expect(await commentIds()).toEqual([1, 2, 3]);
+      expect(await isCommentDetached(3)).toBe(true);
+    });
+
+    it('keeps a held comment alone in a root thread', async () => {
+      await site.seedParent();
+      await seedRootOnly(site.column, site.column === 'imageId' ? 50 : 30, HELD);
+
+      await site.run();
+
+      expect(await site.parentGone()).toBe(true);
+      expect(await commentIds()).toEqual([1]);
+    });
+
+    it('takes an unheld tree with the parent (control)', async () => {
+      await site.seedParent();
+      await seedNested(site.column, site.column === 'imageId' ? 50 : 30, OTHER);
+
+      await site.run();
+
+      expect(await site.parentGone()).toBe(true);
+      expect(await commentIds()).toEqual([]);
+    });
+  });
+
+  it('leaves an image the hold marker trigger keeps with its thread on it', async () => {
+    await db.exec(`INSERT INTO "Image" (id, "userId") VALUES (50, ${MARKED})`);
+    await seedNested('imageId', 50, HELD);
+
+    await deleteImageById({ id: 50, updatePost: false });
+
+    expect((await db.query(`SELECT id FROM "Image"`)).rows).toEqual([{ id: 50 }]);
+    expect(
+      (await db.query(`SELECT "imageId", metadata FROM "Thread" WHERE id = 100`)).rows
+    ).toEqual([{ imageId: 50, metadata: {} }]);
+  });
+});
+
+describe('a member cannot act on a detached comment', () => {
+  beforeEach(async () => {
+    await db.exec(`INSERT INTO "Post" VALUES (10, ${OWNER}), (11, ${OWNER})`);
+    await seedThread('postId', 10, HELD);
+    await db.exec(`
+      INSERT INTO "Thread" (id, "postId") VALUES (200, 11);
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (3, ${OTHER}, 200);
+    `);
+    await run(Prisma.sql`
+      WITH ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT 10` }, true)}
+      DELETE FROM "Post" WHERE id = 10`);
+  });
+
+  const track = new Proxy({}, { get: () => async () => undefined });
+  const ctx = (isModerator: boolean) =>
+    ({ user: { id: 9, isModerator }, track, features: {}, req: {} } as never);
+  const acts = {
+    delete: {
+      handler: (id: number, mod: boolean) =>
+        deleteCommentV2Handler({ ctx: ctx(mod), input: { id } }),
+      service: deleteComment,
+    },
+    'thread mute': {
+      handler: (id: number, mod: boolean) =>
+        toggleThreadMuteHandler({ ctx: ctx(mod), input: { commentId: id } }),
+      service: toggleThreadMute,
+    },
+    reaction: {
+      handler: (id: number, mod: boolean) =>
+        toggleReactionHandler({
+          ctx: ctx(mod),
+          input: { entityType: 'comment', entityId: id, reaction: 'Like' } as never,
+        }),
+      service: toggleReaction,
+    },
+    report: {
+      handler: (id: number, mod: boolean) =>
+        createReportHandler({
+          ctx: ctx(mod),
+          input: { type: ReportEntity.CommentV2, id, reason: 'TOSViolation', details: {} } as never,
+        }),
+      service: createReport,
+    },
+  };
+
+  describe.each(Object.entries(acts))('%s', (_name, act) => {
+    it('refuses a member a detached comment, as if it were gone', async () => {
+      await expect(act.handler(2, false)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      expect(act.service).not.toHaveBeenCalled();
+    });
+
+    it('lets a moderator act on it', async () => {
+      await act.handler(2, true).catch(() => undefined);
+      expect(act.service).toHaveBeenCalled();
+    });
+
+    it('lets a member act on a live comment (control)', async () => {
+      await act.handler(3, false).catch(() => undefined);
+      expect(act.service).toHaveBeenCalled();
+    });
+  });
+
+  it('shows a member a live comment by id (control)', async () => {
+    vi.mocked(dbMock.dbRead.commentV2.findFirst).mockResolvedValue({
+      id: 3,
+      threadId: 200,
+      user: { id: OTHER },
+    } as never);
+
+    await expect(getCommentHandler({ ctx: ctx(false), input: { id: 3 } })).resolves.toMatchObject({
+      id: 3,
+    });
   });
 });
