@@ -144,6 +144,16 @@ describe('getFeed', () => {
     expect(await getFeed(db, 2)).toBeNull();
   });
 
+  it('serves only as many items as asked for', async () => {
+    await player(1, 'Knight');
+    for (const id of [10, 11, 12]) await image(id);
+    const first = await item(10, { priority: 1 });
+    await item(11, { priority: 2 });
+    await item(12, { priority: 3 });
+
+    expect((await getFeed(db, 1, { limit: 1 }))?.items.map((i) => i.id)).toEqual([first]);
+  });
+
   it('fills the stretch from the chosen question even when another question has more items', async () => {
     await player(1, 'Knight');
     for (let i = 0; i < 12; i++) await image(100 + i);

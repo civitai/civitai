@@ -99,7 +99,11 @@ function servableItems(db: Executor) {
     .where('p.publishedAt', '<', sql<Date>`(now() AT TIME ZONE 'utc')`);
 }
 
-export async function getFeed(db: Executor, userId: number): Promise<Feed | null> {
+export async function getFeed(
+  db: Executor,
+  userId: number,
+  { limit = FEED_STRETCH_SIZE }: { limit?: number } = {}
+): Promise<Feed | null> {
   const player = await db
     .selectFrom('NewOrderPlayer')
     .select('rankType')
@@ -145,7 +149,7 @@ export async function getFeed(db: Executor, userId: number): Promise<Feed | null
       'img.width',
       'img.height',
     ])
-    .limit(FEED_STRETCH_SIZE)
+    .limit(limit)
     .execute();
 
   const first = rows[0];

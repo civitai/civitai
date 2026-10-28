@@ -37,6 +37,11 @@ describe('vote action', () => {
     expect(log).toHaveBeenCalled();
   });
 
+  it('acknowledges a counted vote', async () => {
+    castVote.mockResolvedValue({ status: 'recorded' });
+    expect(await submit({ itemId: '3', answer: '4' })).toEqual({ success: true });
+  });
+
   it('reports a rejected vote with its own message', async () => {
     castVote.mockResolvedValue({ status: 'rejected', reason: 'already-voted' });
     expect(await submit({ itemId: '3', answer: '4' })).toMatchObject({

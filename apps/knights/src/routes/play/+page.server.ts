@@ -16,14 +16,18 @@ const REJECTION_TEXT: Record<RejectReason, string> = {
 };
 
 export const load: PageServerLoad = async ({ locals }) => {
-  const feed = await getFeed(db, locals.user.id);
-  if (!feed) return { question: null, item: null, remaining: 0 };
+  const feed = await getFeed(db, locals.user.id, { limit: 1 });
+  if (!feed) return { question: null, item: null };
 
   const [item] = feed.items;
   return {
     question: feed.question,
-    item: { id: item.id, src: imageUrl(item.imageKey) },
-    remaining: feed.items.length,
+    item: {
+      id: item.id,
+      src: imageUrl(item.imageKey),
+      width: item.width,
+      height: item.height,
+    },
   };
 };
 
@@ -41,7 +45,7 @@ export const actions: Actions = {
       if (result.status === 'rejected') {
         return fail(409, { message: REJECTION_TEXT[result.reason] });
       }
-      return { voted: itemId };
+      return { success: true };
     } catch (error) {
       console.error('knights: vote failed', { itemId, error });
       return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });

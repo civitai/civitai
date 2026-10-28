@@ -11,7 +11,14 @@
 
 {#if data.item && data.question}
   <p class="prompt">{data.question.prompt}</p>
-  <img src={data.item.src} alt="The subject of this judgment" />
+  {#key data.item.id}
+    <img
+      src={data.item.src}
+      width={data.item.width ?? undefined}
+      height={data.item.height ?? undefined}
+      alt="The subject of this judgment"
+    />
+  {/key}
 
   <form
     method="POST"
@@ -19,10 +26,13 @@
     use:enhance={() => {
       submitting = true;
       return async ({ result, update }) => {
-        await update();
-        // A refused vote leaves `load` data as it was, so the item that was refused would stay on screen.
-        if (result.type === 'failure') await invalidateAll();
-        submitting = false;
+        try {
+          await update();
+          // A refused vote leaves `load` data as it was, so the item that was refused would stay on screen.
+          if (result.type === 'failure') await invalidateAll();
+        } finally {
+          submitting = false;
+        }
       };
     }}
   >
@@ -39,7 +49,6 @@
   {#if form?.message}
     <p class="notice">{form.message}</p>
   {/if}
-  <p class="muted">{data.remaining} left in this stretch</p>
 {:else}
   <p>Nothing awaits your judgment right now. Return later.</p>
 {/if}
@@ -54,6 +63,8 @@
     display: block;
     max-width: 100%;
     max-height: 70vh;
+    height: auto;
+    object-fit: contain;
     margin: 1rem 0;
     border: 1px solid var(--border);
   }
@@ -79,8 +90,5 @@
   }
   .notice {
     color: var(--gold);
-  }
-  .muted {
-    color: var(--muted);
   }
 </style>
