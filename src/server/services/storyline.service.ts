@@ -13,7 +13,11 @@ import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
 import { HOLD_KINDS, PAYOUT_KINDS } from '~/server/services/placement-escrow.service';
-import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import {
+  accountHoldSql,
+  contentKeptError,
+  holdMarkerViewExists,
+} from '~/server/services/legal-hold.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
@@ -853,7 +857,6 @@ export const STORYLINE_DELETE_REFUSALS = {
   paidContinuations:
     "This storyline has paid continuations that haven't settled yet. Try again once they have",
   openReport: 'This storyline has an open report. A moderator can delete it',
-  held: "This storyline is under an evidence hold and can't be deleted",
   paidChapters: 'This storyline has paid continuations. A moderator can delete it',
 } as const;
 
@@ -973,7 +976,8 @@ export async function deleteStoryline({
           SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
         ) AS held
     `;
-    if (held) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.held);
+    // Never names the hold to the owner (`contentKeptError`).
+    if (held) throw contentKeptError(asModerator);
     // An owner paid for approved continuations cannot then delete the chapters they were paid for
     // (a refunded one does not count), nor delete what is under report. A moderator can.
     if (!asModerator) {

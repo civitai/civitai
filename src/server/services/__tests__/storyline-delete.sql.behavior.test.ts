@@ -29,6 +29,9 @@ vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
  * a concurrent chapter add was checked once against a real Postgres (see the PR).
  */
 
+const { LEGAL_HOLD_REFUSAL, OWNER_CONTENT_KEPT } = await import(
+  '~/server/services/legal-hold.service'
+);
 const { deleteStoryline, STORYLINE_DELETE_REFUSALS } = await import(
   '~/server/services/storyline.service'
 );
@@ -433,7 +436,11 @@ describe('deleteStoryline', () => {
           deleteStoryline(
             asModerator ? { id: 1, userId: MODERATOR, isModerator: true } : { id: 1, userId: OWNER }
           )
-        ).rejects.toThrow(STORYLINE_DELETE_REFUSALS.held);
+        ).rejects.toMatchObject({
+          code: 'FORBIDDEN',
+          // The owner is never told why.
+          message: asModerator ? LEGAL_HOLD_REFUSAL : OWNER_CONTENT_KEPT,
+        });
         expect(await storylineIds()).toEqual([1, 2]);
         expect(await rows(`SELECT id FROM "CommentV2" ORDER BY id`)).toEqual([
           { id: 1 },
@@ -448,7 +455,7 @@ describe('deleteStoryline', () => {
       await held(9);
       await expect(
         deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true })
-      ).rejects.toThrow(STORYLINE_DELETE_REFUSALS.held);
+      ).rejects.toMatchObject({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
       expect(await storylineIds()).toEqual([1, 2]);
     });
   });
