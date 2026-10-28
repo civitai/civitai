@@ -51,7 +51,7 @@ const schema = z.object({
     .default(MAX_EXPIRY_DAYS),
   actorUserId: z.preprocess(
     (v) => (v === null || v === '' ? undefined : v),
-    z.coerce.number().int().positive().optional()
+    z.coerce.number().int().positive()
   ),
 });
 
@@ -130,7 +130,7 @@ export default HeaderTokenSecuredEndpoint(
       {
         type: 'error',
         name: 'system-account-api-key-minted',
-        details: { userId, keyId, name, tokenScope, asserted_actor: actorUserId ?? null },
+        details: { userId, keyId, name, tokenScope, asserted_actor: actorUserId },
       },
       'moderation'
     ).catch(() => null);

@@ -146,7 +146,7 @@ function call(
   const headers = token === null ? {} : { 'x-admin-token': token };
   const search = rawQuery || new URLSearchParams(query).toString();
   const url = `/api/admin/system-account-api-key${search ? `?${search}` : ''}`;
-  const req = { method, query, body, headers, url };
+  const req = { method, query, body: { actorUserId: 9, ...body }, headers, url };
   return send(req as unknown as NextApiRequest);
 }
 
@@ -293,14 +293,13 @@ describe('POST /api/admin/system-account-api-key', () => {
   });
 
   it.each([
+    ['missing', undefined],
     ['empty', ''],
     ['null', null],
-  ])('treats an %s actorUserId as absent', async (_label, actorUserId) => {
-    expect((await call({ userId: SYSTEM_ID, actorUserId })).status).toBe(201);
-    const alert = logToAxiom.mock.calls.find(
-      ([data]) => (data as { name?: string }).name === 'system-account-api-key-minted'
-    );
-    expect(alert?.[0]).toMatchObject({ details: { asserted_actor: null } });
+    ['not a positive integer', 0],
+  ])('refuses a mint whose actorUserId is %s', async (_label, actorUserId) => {
+    expect((await call({ userId: SYSTEM_ID, actorUserId })).status).toBe(400);
+    expect(apiKeys).toHaveLength(0);
   });
 
   it('refuses an expiry past 365 days and accepts a shorter one', async () => {
@@ -573,7 +572,9 @@ describe('POST /api/admin/system-account-api-key', () => {
     );
     expect(alerts).toHaveLength(2);
     expect(alerts.every(([data]) => (data as { type: string }).type === 'error')).toBe(true);
-    expect(alerts[0][0]).toMatchObject({ details: { asserted_actor: 9 } });
+    expect(alerts[0][0]).toMatchObject({
+      details: { asserted_actor: 9, userId: SYSTEM_ID, name: 'system' },
+    });
     expect(JSON.stringify(alerts)).not.toContain('actorUserId');
 
     const recorded = JSON.stringify([trackModActivity.mock.calls, logToAxiom.mock.calls]);
