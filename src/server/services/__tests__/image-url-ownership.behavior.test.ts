@@ -120,7 +120,18 @@ describe('assertClientImageUrlsUsable', () => {
     expect(await refused([`x/../${OWN_KEY}`, `\t${FRESH_KEY}`])).toBeNull();
   });
 
+  it('refuses a url carrying more keys than any image url does', async () => {
+    const many = Array.from(
+      { length: 70 },
+      (_, i) => `0a0b0c0d-0000-4000-8000-${String(i).padStart(12, '0')}`
+    ).join('/');
+
+    expect(await refused([many])).toBeInstanceOf(TRPCError);
+    expect(await refused([`${FRESH_KEY}/${OWN_KEY}`])).toBeNull();
+  });
+
   // Known gap: a row stored as a full url is matched only by that same url, not by its bare key.
+  // If this starts refusing, the gap is closed: delete this test.
   it("does not see another user's row stored as a full url when given the bare key", async () => {
     const full = `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${FRESH_KEY}/width=450/a.jpeg`;
     await holder.db.exec(`INSERT INTO "Image" ("userId", url) VALUES (${OTHER}, '${full}')`);

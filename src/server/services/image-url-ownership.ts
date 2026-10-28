@@ -11,6 +11,7 @@ export const imageUrlUnavailableError = () =>
 
 type Db = Prisma.TransactionClient | typeof dbWrite;
 
+const MAX_KEYS = 64;
 const UUIDS = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 
 function decoded(value: string) {
@@ -51,6 +52,8 @@ export async function assertClientImageUrlsUsable({
 }) {
   const keys = [...new Set(urls.flatMap(storedUrlsFor))];
   if (!keys.length) return;
+  // Bounds the lookup; no real image url carries more than a couple of keys.
+  if (keys.length > MAX_KEYS) throw imageUrlUnavailableError();
   // Whatever the other row's state.
   const owned = await db.$queryRaw<unknown[]>`
     SELECT 1 FROM "Image" WHERE url = ANY(${keys}::text[]) AND "userId" <> ${userId} LIMIT 1

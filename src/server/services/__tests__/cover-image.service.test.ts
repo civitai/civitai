@@ -131,6 +131,7 @@ describe('resolveCoverImageId — no id (a raw upload key)', () => {
     const error = await resolveCoverImageId({ coverImage, userId: 7 }, deps).catch((e) => e);
 
     expect(error).toBe(refusal);
+    expect(deps.assertUrlUsable).toHaveBeenCalledWith({ url: coverImage.url, userId: 7 });
     expect(deps.createImage).not.toHaveBeenCalled();
   });
 
