@@ -463,13 +463,15 @@ describe('insertStorylineChapter on a first-parent edge', () => {
   });
 
   it("writes the owner's chapter when a moderator inserts the owner's post", async () => {
+    trackModActivity.mockClear();
     const { chapterId: X } = await insert(await post(), { userId: 4, isModerator: true });
     expect(await rows(`SELECT "userId" FROM "StorylineChapter" WHERE id = $1`, [X])).toEqual([
       { userId: OWNER },
     ]);
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
     expect(trackModActivity).toHaveBeenCalledWith(4, {
       entityType: 'storyline',
-      entityId: expect.any(Number),
+      entityId: STORY,
       activity: 'insertChapter',
     });
   });

@@ -735,6 +735,7 @@ describe('authorization', () => {
       await updateStoryline({ id: 10, title: 'x', userId: OWNER });
       expect(trackModActivity).not.toHaveBeenCalled();
       await updateStoryline({ id: 10, title: 'x', userId: MODERATOR, isModerator: true });
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
       expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
         entityType: 'storyline',
         entityId: 10,
@@ -812,6 +813,19 @@ describe('authorization', () => {
       ]);
     });
 
+    it("logs a moderator's canon choice as a mod action, and not the owner's", async () => {
+      trackModActivity.mockReset();
+      await setCanonChapter({ chapterId: 31, userId: OWNER });
+      expect(trackModActivity).not.toHaveBeenCalled();
+      await setCanonChapter({ chapterId: 31, userId: MODERATOR, isModerator: true });
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
+      expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+        entityType: 'storyline',
+        entityId: 10,
+        activity: 'setCanon',
+      });
+    });
+
     it.each([
       ['an endorsed collaborator', COLLABORATOR],
       ['a stranger', STRANGER],
@@ -862,6 +876,7 @@ describe('authorization', () => {
         isModerator: true,
       });
       expect(w.storylineCollaborator.deleteMany).toHaveBeenCalledTimes(1);
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
       expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
         entityType: 'storyline',
         entityId: 10,

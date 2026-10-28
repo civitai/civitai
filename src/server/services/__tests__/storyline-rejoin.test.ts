@@ -148,11 +148,13 @@ describe('linkStorylineChapter', () => {
     expect((error as { code?: string }).code).toBe('UNAUTHORIZED');
     expect(edgesInto(R)).toHaveLength(1);
 
+    trackModActivity.mockClear();
     await link(24, R, MODERATOR, true);
     expect(edgesInto(R)).toHaveLength(2);
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
     expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
       entityType: 'storyline',
-      entityId: expect.any(Number),
+      entityId: STORYLINE,
       activity: 'linkChapter',
     });
   });

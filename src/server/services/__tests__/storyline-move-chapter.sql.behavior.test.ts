@@ -318,9 +318,11 @@ describe('moveStorylineChapter within the run', () => {
   });
 
   it("lets a moderator move the owner's chapters", async () => {
+    trackModActivity.mockClear();
     expect(await move(5, 2, { userId: 4, isModerator: true })).toEqual({
       chapterIds: [1, 2, 5, 3, 4, 6],
     });
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
     expect(trackModActivity).toHaveBeenCalledWith(4, {
       entityType: 'storyline',
       entityId: 1,
