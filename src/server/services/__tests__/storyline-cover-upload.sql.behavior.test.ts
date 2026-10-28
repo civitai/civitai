@@ -119,14 +119,18 @@ afterAll(async () => {
   await db.pg.close();
 });
 
-const coverFor = async (imageId: number, viewer = { id: READER }) => {
+const coverFor = async (
+  imageId: number,
+  viewer = { id: READER },
+  browsingLevel: number = NsfwLevel.PG
+) => {
   await db.pg.exec(`UPDATE "Storyline" SET "coverImageId" = ${imageId} WHERE id = 1`);
   const { items } = await getStorylinesInfinite({
     filter: 'all',
     sort: 'newest',
     limit: 20,
     viewer,
-    browsingLevel: NsfwLevel.PG,
+    browsingLevel,
   });
   return items.find((item) => item.id === 1)?.coverImage?.id ?? null;
 };
@@ -153,8 +157,11 @@ describe('an uploaded card cover, read by the feed', () => {
     await expect(coverFor(52)).resolves.toBeNull();
   });
 
-  it("never shows an upload rated above the storyline's ceiling", async () => {
-    await expect(coverFor(53)).resolves.toBeNull();
+  // Read by someone who browses X, so only the storyline's own ceiling (PG) can hide it.
+  it("never shows an upload rated above the storyline's ceiling, even to a reader who browses it", async () => {
+    const everything = NsfwLevel.PG | NsfwLevel.PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;
+    await expect(coverFor(50, { id: READER }, everything)).resolves.toBe(50);
+    await expect(coverFor(53, { id: READER }, everything)).resolves.toBeNull();
   });
 
   it('never shows an upload of a minor', async () => {

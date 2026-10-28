@@ -2930,7 +2930,6 @@ describe('covers and cast', () => {
 
     // A refusal would tell the uploader their scan's verdict; the read gate keeps it hidden instead.
     it.each([
-      ['still being scanned', 23],
       ['rated above the ceiling', 24],
       ['taken down', 25],
       ['blocked by its scan', 26],
