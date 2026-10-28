@@ -176,7 +176,10 @@ describe('revoke-user-tokens job', () => {
     await seed(1, 2, null, confirmedLater);
     await seed(2, 3, null, confirmedLater);
     expireUserApiKeys.mockRejectedValueOnce(new Error('primary unavailable'));
-    await revokeRecentlyBannedUserTokens();
+    await expect(revokeRecentlyBannedUserTokens()).resolves.toEqual({
+      accounts: 2,
+      unconfirmed: 1,
+    });
     expect(expireUserApiKeys).toHaveBeenCalledTimes(2);
   });
 
