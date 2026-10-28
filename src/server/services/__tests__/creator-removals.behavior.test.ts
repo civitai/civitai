@@ -144,25 +144,35 @@ describe('the removed-images list', () => {
     expect(result).toEqual({ total: 0, truncated: false, items: [] });
   });
 
-  it('offers an appeal on a removed image no hold kept', async () => {
-    const result = await getMyRemovedImages(OWNER);
-
-    expect(result.items.find((i) => i.imageId === STILL_REMOVED)?.canAppeal).toBe(true);
-  });
-
   // Once the hold ends the owner is no longer left out above, but the image it kept stays refused
-  // by the appeal endpoint until it is purged or released. The case above is the control.
+  // by the appeal endpoint until it is purged or released. Another removed image in the same list,
+  // which no hold kept, keeps its appeal.
   it('lists an image a hold kept, after the hold ended, with no appeal', async () => {
-    const before = await getMyRemovedImages(OWNER);
+    const ALSO_REMOVED = 9;
+    holder.chQuery.mockResolvedValue({
+      json: async () => [
+        ...ownRemovals,
+        { ownerId: OWNER, imageId: ALSO_REMOVED, removedAt: REMOVED_AT },
+      ],
+    });
+    await holder.db.exec(
+      `INSERT INTO "Image" (id, "userId", "blockedFor") VALUES (${ALSO_REMOVED}, ${OWNER}, 'moderated')`
+    );
+    const canAppeal = async () =>
+      Object.fromEntries(
+        (await getMyRemovedImages(OWNER)).items.map((i) => [i.imageId, i.canAppeal])
+      );
+
+    const before = await canAppeal();
+    expect(before[STILL_REMOVED]).toBe(true);
+    expect(before[ALSO_REMOVED]).toBe(true);
+
     await holder.db.exec(
       `INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (${STILL_REMOVED}, ${OWNER})`
     );
 
-    const result = await getMyRemovedImages(OWNER);
-
-    expect(result.items.map((i) => [i.imageId, i.canAppeal])).toEqual(
-      before.items.map((i) => [i.imageId, i.imageId === STILL_REMOVED ? false : i.canAppeal])
-    );
+    // Only the kept image changes.
+    expect(await canAppeal()).toEqual({ ...before, [STILL_REMOVED]: false });
   });
 
   it('still says it stopped at the limit when an appeal reversed one of those rows', async () => {
