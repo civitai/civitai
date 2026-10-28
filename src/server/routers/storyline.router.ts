@@ -234,7 +234,9 @@ export const storylineRouter = router({
 
   delete: storylineWriteProcedure
     .input(storylineIdSchema)
-    .mutation(({ input, ctx }) => deleteStoryline({ id: input.id, userId: ctx.user.id })),
+    .mutation(({ input, ctx }) =>
+      deleteStoryline({ id: input.id, userId: ctx.user.id, isModerator: ctx.user.isModerator })
+    ),
 
   setImageCaption: storylineWriteProcedure
     .input(setStorylineImageCaptionSchema)

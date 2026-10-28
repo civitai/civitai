@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import path from 'node:path';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
 import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 
 /**
@@ -291,6 +292,38 @@ describe('user.delete — confirming which account', () => {
     const { status } = await call({ userId: TARGET });
     expect(status).toBe(200);
     expect(deleteUser).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('user.delete — the shared moderation account', () => {
+  it('refuses deleting it, found by its name', async () => {
+    liveTarget('CivitaiModeration');
+    const { status } = await call({ userId: TARGET, username: 'CivitaiModeration' });
+    expect(status).toBe(400);
+    expect(deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('deletes another account holding the name while the shared id is configured', async () => {
+    liveTarget('CivitaiModeration');
+    setEnv({ CIVITAI_MODERATION_USER_ID: TARGET + 1 });
+    try {
+      const { status } = await call({ userId: TARGET, username: 'CivitaiModeration' });
+      expect(status).toBe(200);
+      expect(deleteUser).toHaveBeenCalledTimes(1);
+    } finally {
+      setEnv({ CIVITAI_MODERATION_USER_ID: '' });
+    }
+  });
+
+  it('refuses deleting it, found by its id', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: TARGET });
+    try {
+      const { status } = await call({ userId: TARGET, username: NAME });
+      expect(status).toBe(400);
+      expect(deleteUser).not.toHaveBeenCalled();
+    } finally {
+      setEnv({ CIVITAI_MODERATION_USER_ID: '' });
+    }
   });
 });
 

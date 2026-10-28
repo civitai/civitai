@@ -12,6 +12,13 @@ import {
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { placementMoneyInFlightSql } from '~/server/services/placement-escrow.service';
+import {
+  accountHoldSql,
+  contentKeptError,
+  holdMarkerViewExists,
+  ownerHeldSql,
+} from '~/server/services/legal-hold.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
@@ -64,7 +71,7 @@ import {
   toStorylineForkShares,
 } from '~/shared/utils/storyline';
 import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
-import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { AppealStatus, EntityType, ReportStatus } from '~/shared/utils/prisma/enums';
 import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { createStorylineLinkJudge, STORYLINE_LINK_REFUSALS } from '~/shared/utils/storyline-graph';
 import {
@@ -846,42 +853,168 @@ export async function updateStoryline({
 }
 
 /**
- * Deletes a storyline that has never had a chapter, for its owner only. Chapter rows are never
- * deleted (a removed or post-deleted chapter stays as a tombstone), so "no rows" means no chapter
- * in any state, and with it no continuation placement or Buzz: every placement targets a chapter's
- * post. A chapter-1 draft is unlinked by the cascade and stays an ordinary draft.
+ * Whether deleting storyline `id` would delete anything of a held account: its owner's, or a
+ * comment its cascade takes. The `commentId` arm reaches threads the cascade does not delete, so it
+ * can only refuse more than needed.
  */
-export async function deleteStoryline({ id, userId }: { id: number; userId: number }) {
+function storylineHeldSql({
+  id,
+  ownerId,
+  markerView,
+}: {
+  id: number;
+  ownerId: number;
+  markerView: boolean;
+}) {
+  return Prisma.sql`(${ownerHeldSql(Prisma.sql`${ownerId}::int`)} OR EXISTS (
+    WITH RECURSIVE below AS (
+      SELECT t.id FROM "Thread" t WHERE t."storylineId" = ${id}
+      UNION
+      -- One indexed lookup per link: an OR across them scans the whole Thread table every step.
+      SELECT x.id FROM below b CROSS JOIN LATERAL (
+        SELECT t.id FROM "Thread" t WHERE t."parentThreadId" = b.id
+        UNION ALL
+        SELECT t.id FROM "Thread" t WHERE t."rootThreadId" = b.id
+        UNION ALL
+        SELECT t.id FROM "CommentV2" k JOIN "Thread" t ON t."commentId" = k.id
+        WHERE k."threadId" = b.id
+      ) x
+    ),
+    authors AS MATERIALIZED (
+      SELECT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
+      UNION
+      SELECT c."userId" FROM "CommentV3" c
+      WHERE c."entityType" = 'storyline' AND c."entityId" = ${id}
+    )
+    SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
+  ))`;
+}
+
+export const STORYLINE_DELETE_REFUSALS = {
+  /** Every reason an owner may not delete, in one text, so no one reason can be told apart. */
+  owner:
+    "You can't delete this storyline yourself. A moderator can delete it for you; contact support.",
+  appealOpen: 'This storyline has an open appeal. Rule on it before deleting',
+  paidContinuations:
+    "This storyline has paid continuations that haven't settled yet. Try again once they have",
+} as const;
+
+/**
+ * Deletes a storyline for its owner or a moderator. Its posts stay as they are: the chapter rows
+ * that tie them to the storyline go with it (by cascade, as do its edges, branch choices, create
+ * clicks, collaborators and comment thread), and a chapter-1 draft is unlinked and stays a draft.
+ *
+ * Refused while any paid continuation on it is pending or its Buzz has not finished moving, so no
+ * escrow is left pointing at a chapter that no longer exists. A taken-down storyline is kept for
+ * moderation: its owner cannot delete it, and a moderator cannot while the owner's appeal is open.
+ */
+export async function deleteStoryline({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  // Read outside the transaction, as `bulkDeleteComments` does: what `accountHoldSql` needs.
+  const markerView = await holdMarkerViewExists();
   await dbWrite.$transaction(async (tx) => {
     // Ownership first, unlocked (the owner never changes), so no one else's call takes a lock.
     const [owned] = await tx.$queryRaw<{ userId: number }[]>`
       SELECT "userId" FROM "Storyline" WHERE id = ${id}
     `;
     if (!owned) throw throwNotFoundError('Storyline not found');
-    if (owned.userId !== userId)
+    const asModerator = owned.userId !== userId;
+    if (asModerator && !isModerator)
       throw throwAuthorizationError('Only the owner can delete this storyline');
     // Drafts before the storyline, the order `promotePendingChapter` locks them in: the cascade
     // below would otherwise deadlock against a chapter-1 draft going live.
     await tx.$queryRaw`SELECT 1 FROM "StorylinePendingChapter" WHERE "storylineId" = ${id} FOR UPDATE`;
-    // FOR UPDATE waits out and then blocks every chapter writer: adds share this row
-    // (`lockStorylineForAdd`), inserts and moves hold it NO KEY, and a chapter-1 insert's foreign
-    // key takes KEY SHARE. Whatever committed first, the count below sees it.
+    // FOR UPDATE waits out and then blocks every chapter writer and continuation submit: adds and
+    // submits share this row (`lockStorylineForAdd`, `createStorylinePlacement`), inserts and
+    // moves hold it NO KEY, and a chapter-1 insert's foreign key takes KEY SHARE. Whatever
+    // committed first, the reads below see it.
     const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
       SELECT "tosViolation" FROM "Storyline" WHERE id = ${id} FOR UPDATE
     `;
     if (!storyline) throw throwNotFoundError('Storyline not found');
-    // Kept for moderation: deleting would drop the takedown and any appeal with it.
-    if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
-    const [{ hasChapter }] = await tx.$queryRaw<{ hasChapter: boolean }[]>`
-      SELECT EXISTS (SELECT 1 FROM "StorylineChapter" WHERE "storylineId" = ${id}) AS "hasChapter"
+    if (storyline.tosViolation) {
+      // The owner never, moderator or not: the takedown is against them.
+      if (!asModerator) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
+      const [{ appealOpen }] = await tx.$queryRaw<{ appealOpen: boolean }[]>`
+        SELECT EXISTS (
+          SELECT 1 FROM "Appeal"
+          WHERE "entityType" = ${EntityType.Storyline}::"EntityType" AND "entityId" = ${id}
+            AND status = ${AppealStatus.Pending}::"AppealStatus" AND "entityRemovedAt" IS NULL
+        ) AS "appealOpen"
+      `;
+      if (appealOpen) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.appealOpen);
+    }
+    // A paid continuation targets a chapter's post, and an approved one is its chapter's
+    // placement.
+    const [{ unsettled, approved }] = await tx.$queryRaw<
+      { unsettled: boolean; approved: boolean }[]
+    >`
+      WITH paid AS (
+        SELECT p.id, p.status FROM "Placement" p
+        WHERE p.surface = 'storyline' AND NOT p.free AND p.amount > 0
+          AND (
+            (p."targetType" = 'post' AND p."targetId" IN (
+              SELECT "postId" FROM "StorylineChapter" WHERE "storylineId" = ${id} AND "postId" IS NOT NULL
+            ))
+            OR p.id IN (
+              SELECT "placementId" FROM "StorylineChapter" WHERE "storylineId" = ${id} AND "placementId" IS NOT NULL
+            )
+          )
+      )
+      SELECT EXISTS (SELECT 1 FROM paid WHERE status = 'approved') AS approved, EXISTS (
+        SELECT 1 FROM paid p WHERE ${placementMoneyInFlightSql(Prisma.raw('p'))}
+      ) AS unsettled
     `;
-    if (hasChapter) throw throwBadRequestError('Only a storyline with no chapters can be deleted');
+    if (unsettled) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidContinuations);
+    const held = storylineHeldSql({ id, ownerId: owned.userId, markerView });
+    const holdRefusal = () =>
+      asModerator ? contentKeptError(true) : throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
+    const [{ isHeld }] = await tx.$queryRaw<{ isHeld: boolean }[]>`SELECT ${held} AS "isHeld"`;
+    if (isHeld) throw holdRefusal();
+    // An owner paid for approved continuations cannot then delete the chapters they were paid for
+    // (a refunded one does not count), nor delete what is under report. A moderator can.
+    if (!asModerator) {
+      if (approved) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
+      const [{ reported }] = await tx.$queryRaw<{ reported: boolean }[]>`
+        SELECT EXISTS (
+          SELECT 1 FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
+          WHERE sr."storylineId" = ${id}
+            AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+        ) AS reported
+      `;
+      if (reported) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
+    }
     // No foreign key: the owner's continuation price for this storyline would outlive it.
     await tx.$executeRaw`
       DELETE FROM "PlacementSpace"
       WHERE surface = 'storyline' AND "entityType" = 'storyline' AND "entityId" = ${id}
     `;
-    await tx.$executeRaw`DELETE FROM "Storyline" WHERE id = ${id}`;
+    // A moderator's delete answers the open reports on it, which would otherwise sit in the queue
+    // with nothing to point at once the cascade takes their links.
+    if (asModerator)
+      await tx.$executeRaw`
+        UPDATE "Report" r SET status = ${ReportStatus.Actioned}::"ReportStatus"
+        FROM "StorylineReport" sr
+        WHERE sr."reportId" = r.id AND sr."storylineId" = ${id}
+          AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+      `;
+    // The hold is in the DELETE itself too, so one placed after the check above still stops it.
+    const deleted = await tx.$executeRaw`DELETE FROM "Storyline" WHERE id = ${id} AND NOT ${held}`;
+    if (!deleted) throw holdRefusal();
+    // In the transaction, unlike `trackStorylineModEdit`: nothing else records what was deleted.
+    if (asModerator)
+      await trackModActivity(
+        userId,
+        { entityType: 'storyline', entityId: id, activity: 'delete' },
+        tx
+      );
   });
   return { id };
 }
