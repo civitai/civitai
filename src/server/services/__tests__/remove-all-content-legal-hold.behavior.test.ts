@@ -929,6 +929,25 @@ describe('removeAllContent keeps other people’s comments a held author is part
     );
   });
 
+  it('names the soft-deleted model’s failed refund when a hold stops the wipe', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
+    `);
+    deleteModelById.mockImplementationOnce((async (args: {
+      onBidRefundFailed?: (f: { versionIds: number[]; transactionIds: string[] }) => void;
+    }) => {
+      args.onBidRefundFailed?.({ versionIds: [41], transactionIds: ['tx-1'] });
+      return null;
+    }) as never);
+    landsBefore = 'ChatMessage';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+    const stopped = await removeAllContent({ id: CLEAN, actorUserId: 77 }).catch((e) => e);
+
+    expect(stopped).toBeInstanceOf(LegalHoldStoppedError);
+    expect((stopped as LegalHoldStoppedError).incomplete).toContain('bid-refunds');
+  });
+
   it('still finishes the wipe when that soft delete fails, and names it incomplete', async () => {
     await holder.db.exec(`
       INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
