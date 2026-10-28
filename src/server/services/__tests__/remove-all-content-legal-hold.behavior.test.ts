@@ -155,6 +155,8 @@ let landsBefore = EVIDENCE[0];
 let failLookups = false;
 /** Fails the wipe's read of which of its models are gone. */
 let failGoneModels = false;
+/** Rows the primary has and the replica does not yet: made inside replication lag. */
+let notYetOnReplica: number[] = [];
 /** Replaces what the wipe's re-check after its evidence deletes reads back. */
 let afterHeld: unknown = undefined;
 
@@ -194,6 +196,7 @@ beforeEach(async () => {
   holder.beforeImages = null;
   failLookups = false;
   failGoneModels = false;
+  notYetOnReplica = [];
   afterHeld = undefined;
   session.user = { id: 9, isModerator: true, bannedAt: null };
   await holder.db.exec(`
@@ -240,35 +243,41 @@ beforeEach(async () => {
     }
     return (await run(sql)).affectedRows ?? 0;
   }) as never);
-  const rowsOf = (table: string, columns: string) =>
+  const rowsOf = (table: string, columns: string, replica = false) =>
     (async (args: { where: { userId: number } }) =>
       (
-        await holder.db.query(`SELECT ${columns} FROM "${table}" WHERE "userId" = $1`, [
-          args.where.userId,
-        ])
+        await holder.db.query(
+          `SELECT ${columns} FROM "${table}" WHERE "userId" = $1 AND id <> ALL($2::int[])`,
+          [args.where.userId, replica ? notYetOnReplica : []]
+        )
       ).rows) as never;
-  vi.mocked(dbMock.dbRead.image.findMany).mockImplementation(rowsOf('Image', 'id, "postId"'));
+  for (const [db, replica] of [
+    [dbMock.dbRead, true],
+    [dbMock.dbWrite, false],
+  ] as const) {
+    vi.mocked(db.image.findMany).mockImplementation(rowsOf('Image', 'id, "postId"', replica));
+    vi.mocked(db.article.findMany).mockImplementation(rowsOf('Article', 'id', replica));
+    vi.mocked(db.collection.findMany).mockImplementation(rowsOf('Collection', 'id', replica));
+  }
   // Each model has one version, MODEL_VERSION(id). Only the selected fields come back, as from
   // Prisma, so a select that drops one is visible.
-  vi.mocked(dbMock.dbRead.model.findMany).mockImplementation((async (args: {
-    where: { userId: number };
-    select: Record<string, unknown>;
-  }) =>
-    (
-      await holder.db.query<{ id: number }>(
-        `SELECT id FROM "Model" WHERE "userId" = $1 ORDER BY id`,
-        [args.where.userId]
-      )
-    ).rows.map(({ id }) => {
-      const row: Record<string, unknown> = {
-        id,
-        name: 'zzfixture',
-        modelVersions: [{ id: MODEL_VERSION(id) }],
-      };
-      return Object.fromEntries(Object.entries(row).filter(([k]) => args.select?.[k]));
-    })) as never);
-  vi.mocked(dbMock.dbRead.article.findMany).mockImplementation(rowsOf('Article', 'id'));
-  vi.mocked(dbMock.dbRead.collection.findMany).mockImplementation(rowsOf('Collection', 'id'));
+  const modelsOf = (replica: boolean) =>
+    (async (args: { where: { userId: number }; select: Record<string, unknown> }) =>
+      (
+        await holder.db.query<{ id: number }>(
+          `SELECT id FROM "Model" WHERE "userId" = $1 AND id <> ALL($2::int[]) ORDER BY id`,
+          [args.where.userId, replica ? notYetOnReplica : []]
+        )
+      ).rows.map(({ id }) => {
+        const row: Record<string, unknown> = {
+          id,
+          name: 'zzfixture',
+          modelVersions: [{ id: MODEL_VERSION(id) }],
+        };
+        return Object.fromEntries(Object.entries(row).filter(([k]) => args.select?.[k]));
+      })) as never;
+  vi.mocked(dbMock.dbRead.model.findMany).mockImplementation(modelsOf(true));
+  vi.mocked(dbMock.dbWrite.model.findMany).mockImplementation(modelsOf(false));
   vi.mocked(dbMock.dbWrite.collection.deleteMany).mockImplementation((async (args: {
     where: { userId: number };
   }) => ({
@@ -565,6 +574,41 @@ describe('removeAllContent', () => {
     failGoneModels = true;
     expect(await removeAllContent({ id: CLEAN })).toEqual({ incomplete: ['bid-refunds'] });
     expect(refundBidsForVersions).not.toHaveBeenCalled();
+  });
+
+  it('names the versions to check, and none to refund, when it cannot tell which models went', async () => {
+    failGoneModels = true;
+    await removeAllContent({ id: CLEAN, actorUserId: 9 });
+    const alerts = refundAlerts();
+    expect(alerts).toEqual([
+      expect.objectContaining({ modelIds: [MODEL], candidateVersionIds: [MODEL_VERSION(MODEL)] }),
+    ]);
+    // A model a hold kept may be among them, and its bids still stand.
+    expect(alerts[0]).not.toHaveProperty('versionIds');
+    expect(alerts[0].message).not.toMatch(/refund them/);
+  });
+
+  it('drops from storage and the indexes the rows the replica does not have yet', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (${CLEAN * 100 + 2}, ${CLEAN}, 1);
+      INSERT INTO "Article" (id, "userId") VALUES (${ARTICLE + 60}, ${CLEAN});
+      INSERT INTO "Collection" (id, "userId") VALUES (${COLLECTION + 60}, ${CLEAN});
+    `);
+    notYetOnReplica = [CLEAN * 100 + 2, ARTICLE + 60, COLLECTION + 60];
+    await removeAllContent({ id: CLEAN });
+    expect(vi.mocked(deleteImages).mock.calls[0][0]).toContain(CLEAN * 100 + 2);
+    expect(dropped().articles).toContain(ARTICLE + 60);
+    expect(dropped().collections).toContain(COLLECTION + 60);
+  });
+
+  it('refunds the bids on a model the replica does not have yet', async () => {
+    await holder.db.exec(`INSERT INTO "Model" (id, "userId") VALUES (${MODEL + 60}, ${CLEAN})`);
+    notYetOnReplica = [MODEL + 60];
+    await removeAllContent({ id: CLEAN });
+    expect((await remaining(CLEAN)).Model).toBe(0);
+    expect(refundBidsForVersions).toHaveBeenCalledWith(
+      expect.objectContaining({ versionIds: [MODEL_VERSION(MODEL + 60)] })
+    );
   });
 
   it('still reports a stopped wipe when its bid refunds fail', async () => {

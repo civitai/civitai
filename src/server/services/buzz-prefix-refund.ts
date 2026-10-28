@@ -56,11 +56,14 @@ export async function refundTransactionOnce(
   try {
     return await refundTransaction(transactionId, description, details);
   } catch (error) {
-    if (getBuzzApiStatus(error) !== 409) throw error;
-    const refund = await getTransactionByExternalId(`refund-${transactionId}`);
-    if (!refund) throw error;
+    if (!(await isConflictWithRefundOnLedger(error, transactionId))) throw error;
     return { transactionId };
   }
+}
+
+async function isConflictWithRefundOnLedger(error: unknown, transactionId: string) {
+  if (getBuzzApiStatus(error) !== 409) return false;
+  return !!(await getTransactionByExternalId(`refund-${transactionId}`));
 }
 
 type PrefixLeg = Awaited<ReturnType<typeof getMultiAccountTransactionsByPrefix>>[number];
@@ -114,15 +117,20 @@ async function refundMissingLegs({
       result.refundedLegs++;
       result.refundedAmount += leg.amount;
     } catch (error) {
-      // Single-transaction refunds key on `refund-<transactionId>`, so a 409 here means another
-      // attempt reversed this leg between the lookup and the refund.
-      if (getBuzzApiStatus(error) === 409) {
-        result.alreadyRefundedLegs++;
+      let settled: boolean;
+      try {
+        // Another attempt reversed this leg between the lookup and the refund.
+        settled = await isConflictWithRefundOnLedger(error, leg.transactionId);
+      } catch (lookupError) {
+        failures.push(
+          `${leg.transactionId}: ${messageOf(error)}, and its refund lookup failed: ${messageOf(
+            lookupError
+          )}`
+        );
         continue;
       }
-      failures.push(
-        `${leg.transactionId}: ${error instanceof Error ? error.message : String(error)}`
-      );
+      if (settled) result.alreadyRefundedLegs++;
+      else failures.push(`${leg.transactionId}: ${messageOf(error)}`);
     }
   }
 
@@ -134,3 +142,5 @@ async function refundMissingLegs({
     );
   return result;
 }
+
+const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
