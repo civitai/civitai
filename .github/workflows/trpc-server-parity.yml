@@ -1,6 +1,8 @@
 name: tRPC server parity
 
-# Boots ONE production image twice, with ONE environment: once as Next (`server.js`, the default
+# Boots ONE production image — the one the PR-preview pipeline already built and pushed for this
+# PR's head commit, not a rebuild (a production `next build` does not fit a hosted runner) — with
+# ONE environment: once as Next (`server.js`, the default
 # CMD) and once as the standalone tRPC server (`node -- trpc-server/server.cjs`). Then it sends the
 # same requests to both and fails on any response difference that is not declared in
 # `scripts/trpc-server/parity/cases.mjs`. It also:
@@ -37,9 +39,17 @@ on:
       - 'src/instrumentation.node.ts'
       - '.github/workflows/trpc-server-parity.yml'
   workflow_dispatch:
+    inputs:
+      image:
+        description: Full image reference to test (a dispatch has no PR to derive it from).
+        required: true
+        type: string
 
+# `packages: read` lets the job's token pull the preview image, if the package grants this
+# repository read access.
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: trpc-server-parity-${{ github.ref }}
@@ -49,7 +59,7 @@ jobs:
   parity:
     name: Next vs standalone tRPC server
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 75
     services:
       # Throwaway stores, empty. DB-backed procedures therefore fail — on both servers alike,
       # which is still compared.
@@ -68,7 +78,9 @@ jobs:
         options: >-
           --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
     env:
-      IMAGE: civitai-web:parity
+      # The tag the PR-preview pipeline pushes for a PR head: pr-<number>-<first 7 of the sha>.
+      IMAGE: ${{ inputs.image || format('ghcr.io/civitai/civitai-web:pr-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
+      MUTANT_IMAGE: trpc-server-parity:mutant
     steps:
       # The `runner` context is not available in job-level env, so the work dir is set here.
       - name: Work directory
@@ -82,23 +94,31 @@ jobs:
         with:
           node-version-file: .nvmrc
 
-      # The image build needs more disk and memory than a stock runner leaves free.
-      - name: Free disk and add swap
-        run: |
-          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
-          sudo docker image prune --all --force > /dev/null
-          sudo swapoff -a || true
-          sudo fallocate -l 8G /swapfile && sudo chmod 600 /swapfile && sudo mkswap /swapfile > /dev/null && sudo swapon /swapfile
-          df -h / && free -h
-
-      # The production image, exactly as the Dockerfile builds it — including the boot-graph gate,
-      # which now also loads the standalone server's requires from the shipped tree. The type
-      # check is skipped here only because the Lint workflow runs it on every PR.
-      - name: Build the image
+      # The preview pipeline builds and pushes the image for every PR head; it is usually there
+      # before this job starts and is waited for (up to 40 minutes) otherwise. Its build runs the
+      # Dockerfile's boot-graph gate, which now also loads the standalone server's requires.
+      - name: Pull the preview image for this head commit
         env:
-          DOCKER_BUILDKIT: '1'
+          GH_TOKEN: ${{ github.token }}
         run: |
-          docker build --target runner --build-arg CIVITAI_SKIP_BUILD_TYPECHECK=1 -t "$IMAGE" .
+          # The template above puts the full sha in the tag; the pipeline uses the first 7.
+          case "$IMAGE" in
+            *:pr-*-*) IMAGE="${IMAGE%-*}-$(cut -c1-7 <<< "${IMAGE##*-}")" ;;
+          esac
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "image: $IMAGE"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for _ in $(seq 1 80); do
+            if out=$(docker pull "$IMAGE" 2>&1); then echo "$out" | tail -3; exit 0; fi
+            echo "$out" | tail -1
+            if grep -qiE 'denied|unauthorized|forbidden' <<< "$out"; then
+              echo "::error::this workflow's token may not read the image package; it must grant this repository read access"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::$IMAGE did not appear within 40 minutes"
+          exit 1
 
       - name: Write the shared environment
         run: |
@@ -115,7 +135,7 @@ jobs:
       # The negative control: the standalone server with ONE line removed — the strip of
       # client-sent internal headers. The anchor must match exactly once, or the control would
       # be testing nothing.
-      - name: Build the mutant server file
+      - name: Build the mutant image
         run: |
           mkdir -p "$WORK/mutant"
           cp scripts/trpc-server/server.cjs "$WORK/mutant/server.cjs"
@@ -125,14 +145,19 @@ jobs:
           sed -i "s|$anchor|    // MUTANT: internal-header strip removed|" "$WORK/mutant/server.cjs"
           diff scripts/trpc-server/server.cjs "$WORK/mutant/server.cjs" || true
           if cmp -s scripts/trpc-server/server.cjs "$WORK/mutant/server.cjs"; then echo "mutant is identical"; exit 2; fi
+          # The same image with only that file replaced: no app rebuild.
+          printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/mutant/Dockerfile"
+          docker build -q -t "$MUTANT_IMAGE" "$WORK/mutant"
+          # The image's own copy must be the PR's file, or the "candidate" is not this commit.
+          docker run --rm --entrypoint cat "$IMAGE" /app/trpc-server/server.cjs | cmp - scripts/trpc-server/server.cjs
+          docker run --rm --entrypoint cat "$MUTANT_IMAGE" /app/trpc-server/server.cjs | cmp - "$WORK/mutant/server.cjs"
 
       - name: Start the servers
         run: |
           common=(--detach --add-host host.docker.internal:host-gateway --env-file "$WORK/parity.env")
           docker run "${common[@]}" --name next -p 3000:3000 "$IMAGE"
           docker run "${common[@]}" --name trpc -p 3001:3000 "$IMAGE" node -- trpc-server/server.cjs
-          docker run "${common[@]}" --name mutant -p 3002:3000 \
-            -v "$WORK/mutant/server.cjs:/app/trpc-server/server.cjs:ro" "$IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" --name mutant -p 3002:3000 "$MUTANT_IMAGE" node -- trpc-server/server.cjs
 
       # Before ANY request reaches it: the standalone server must have run instrumentation at boot.
       # The heartbeat file is written by instrumentation's liveness heartbeat every 2s.
