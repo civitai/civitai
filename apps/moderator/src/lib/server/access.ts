@@ -265,6 +265,15 @@ export const NAVIGATION: NavLink[] = [
   // `/decisions/support/ticket/<id>`), resolved here by prefix like `/abuse`. Recording a ruling is a
   // separate permission (`decisions.rule`), checked in the action.
   { path: '/decisions', label: 'Decisions' },
+  // No path of its own, so each view is granted on its own: whoever works moderation tickets need not
+  // see the support queue. Acting on a ticket is separate (`tickets.reply`, `tickets.escalate`).
+  {
+    label: 'Tickets',
+    children: [
+      { path: '/tickets/moderation', label: 'Moderation tickets' },
+      { path: '/tickets/support', label: 'Support tickets' },
+    ],
+  },
   { path: '/blocklists', label: 'Blocklists' },
   // No path of its own, so each child carries its own grant (like Users). `/assistant` covers the
   // moderator's own chats, the playbooks and the tool requests by prefix; the audit reads every
