@@ -1,14 +1,8 @@
 // Every rank a player can hold must resolve to a queue.
 import { describe, expect, it, vi } from 'vitest';
 
-vi.mock('~/server/redis/client', async () => ({
-  ...(await import('@civitai/redis/client')),
-  redis: {},
-  sysRedis: {},
-}));
 vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: vi.fn(), zAddWithTTL: vi.fn() }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/clickhouse/client', () => ({ clickhouse: null }));
 vi.mock('~/server/utils/errorHandling', () => ({ handleLogError: vi.fn() }));
 
 import { legacyRank, poolCounters, poolKeys } from '~/server/games/new-order/utils';
