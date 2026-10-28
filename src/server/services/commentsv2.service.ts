@@ -22,6 +22,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { Prisma } from '@prisma/client';
+import { logToAxiom } from '~/server/logging/client';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -1315,10 +1316,14 @@ export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] })
   // caller reports a restore that restored nothing.
   let count = 0;
   const retained: number[] = [];
+  let retainedHidden = 0;
 
   for (const id of ids) {
-    const outcome = await clearTosUnlessHeld('CommentV2', id, markerView);
-    if (outcome?.held) retained.push(outcome.userId);
+    const outcome = await clearTosOrKeep('CommentV2', id, markerView);
+    if (outcome?.held) {
+      retainedHidden += 1;
+      if (outcome.userId !== null) retained.push(outcome.userId);
+    }
     if (!outcome?.cleared) continue;
     count += 1;
 
@@ -1337,12 +1342,39 @@ export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] })
   }
 
   if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
-  return { count, reopenedReports, retainedHidden: retained.length };
+  return { count, reopenedReports, retainedHidden };
 }
 
 /**
- * Clears the ToS flag on the comment `id` unless its author is held: a held author's comment a
- * moderator's delete kept, hidden, stays hidden. The hold is read in the same statement as the write.
+ * Whether a held author replied anywhere below the comment aliased `c`: a moderator's delete keeps
+ * such a comment, hidden, as it keeps a held author's own.
+ */
+const heldReplyBelowSql = (table: 'Comment' | 'CommentV2', markerView: boolean) =>
+  table === 'Comment'
+    ? Prisma.sql`EXISTS (
+        WITH RECURSIVE below AS (
+          SELECT r.id, r."userId" FROM "Comment" r WHERE r."parentId" = c.id
+          UNION
+          SELECT r.id, r."userId" FROM "Comment" r JOIN below b ON r."parentId" = b.id
+        )
+        SELECT 1 FROM below WHERE ${accountHoldSql(Prisma.sql`below."userId"`, markerView)}
+      )`
+    : Prisma.sql`EXISTS (
+        WITH RECURSIVE below AS (
+          SELECT t.id FROM "Thread" t WHERE t."commentId" = c.id
+          UNION
+          SELECT t.id FROM "Thread" t
+          JOIN "CommentV2" k ON t."commentId" = k.id
+          JOIN below b ON k."threadId" = b.id
+        )
+        SELECT 1 FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
+        WHERE ${accountHoldSql(Prisma.sql`r."userId"`, markerView)}
+      )`;
+
+/**
+ * Clears the ToS flag on the flagged comment `id` unless a moderator's delete would keep it: its
+ * author, or anyone who replied below it, is held. Such a comment stays hidden. The hold is read in
+ * the same statement as the write. Null when there is no such flagged comment.
  */
 export async function clearTosUnlessHeld(
   table: 'Comment' | 'CommentV2',
@@ -1351,8 +1383,10 @@ export async function clearTosUnlessHeld(
 ) {
   const [row] = await dbWrite.$queryRaw<{ userId: number; held: boolean; cleared: boolean }[]>`
     WITH target AS (
-      SELECT c.id, c."userId", ${accountHoldSql(Prisma.raw('c."userId"'), markerView)} AS held
-      FROM ${Prisma.raw(`"${table}"`)} c WHERE c.id = ${id}
+      SELECT c.id, c."userId",
+        (${accountHoldSql(Prisma.raw('c."userId"'), markerView)}
+          OR ${heldReplyBelowSql(table, markerView)}) AS held
+      FROM ${Prisma.raw(`"${table}"`)} c WHERE c.id = ${id} AND c."tosViolation"
     ), cleared AS (
       UPDATE ${Prisma.raw(`"${table}"`)} c SET "tosViolation" = false, "updatedAt" = now()
       FROM target t WHERE c.id = t.id AND t.held IS FALSE
@@ -1362,4 +1396,26 @@ export async function clearTosUnlessHeld(
     FROM target t
   `;
   return row ?? null;
+}
+
+/**
+ * `clearTosUnlessHeld`, where a statement that fails leaves the comment hidden, as a hold would: the
+ * rest of the batch still runs and reports what it did.
+ */
+export async function clearTosOrKeep(
+  table: 'Comment' | 'CommentV2',
+  id: number,
+  markerView: boolean
+) {
+  try {
+    return await clearTosUnlessHeld(table, id, markerView);
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'comment-tos-restore',
+      message: 'Clearing a ToS flag failed; the comment stays hidden',
+      details: { table, id, error: (e as Error)?.message },
+    }).catch(() => undefined);
+    return { userId: null, held: true, cleared: false };
+  }
 }

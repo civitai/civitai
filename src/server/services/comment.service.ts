@@ -656,16 +656,20 @@ export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) =
 
   const ReportReason = (await import('~/shared/utils/prisma/enums')).ReportReason;
   const ReportStatus = (await import('~/shared/utils/prisma/enums')).ReportStatus;
-  const { clearTosUnlessHeld } = await import('~/server/services/commentsv2.service');
+  const { clearTosOrKeep } = await import('~/server/services/commentsv2.service');
   const markerView = await holdMarkerViewExists();
 
   let reopenedReports = 0;
   let count = 0;
   const retained: number[] = [];
+  let retainedHidden = 0;
 
   for (const id of ids) {
-    const outcome = await clearTosUnlessHeld('Comment', id, markerView);
-    if (outcome?.held) retained.push(outcome.userId);
+    const outcome = await clearTosOrKeep('Comment', id, markerView);
+    if (outcome?.held) {
+      retainedHidden += 1;
+      if (outcome.userId !== null) retained.push(outcome.userId);
+    }
     if (!outcome?.cleared) continue;
     count += 1;
 
@@ -682,5 +686,5 @@ export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) =
   }
 
   if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
-  return { count, reopenedReports, retainedHidden: retained.length };
+  return { count, reopenedReports, retainedHidden };
 };

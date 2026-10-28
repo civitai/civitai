@@ -534,6 +534,47 @@ describe.each(CLEARS)('restoring %s from a ToS flag', (table, clear, reportTable
     expect(await state(table)).toMatchObject({ 11: 'hidden', 12: 'hidden' });
   });
 
+  it('leaves hidden a comment a held author replied below, as the delete keeps it', async () => {
+    await holder.db.exec(
+      table === 'Comment'
+        ? `INSERT INTO "Comment" (id, "userId", "modelId", content, "parentId") VALUES (61, ${HELD}, 100, 'zzfixture', 11)`
+        : `INSERT INTO "Thread" (id, "commentId") VALUES (900, 11);
+           INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (61, ${HELD}, 900, 'zzfixture');`
+    );
+
+    await expect(clear({ ids: ids(CLEAN) })).resolves.toMatchObject({
+      count: 1,
+      retainedHidden: 1,
+    });
+    expect(await state(table)).toMatchObject({ 11: 'hidden', 12: 'public' });
+  });
+
+  it('counts a comment that is not flagged as neither cleared nor kept', async () => {
+    await holder.db.exec(`UPDATE "${table}" SET "tosViolation" = false WHERE id IN (11, 21)`);
+
+    await expect(clear({ ids: [11, 21] })).resolves.toEqual({
+      count: 0,
+      reopenedReports: 0,
+      retainedHidden: 0,
+    });
+    expect(await reports()).toMatchObject({ 11: 'Actioned', 21: 'Actioned' });
+  });
+
+  it('keeps a comment hidden when its statement fails, and clears the rest', async () => {
+    hook = {
+      on: 'WITH target AS',
+      run: async () => {
+        throw new Error('canceling statement due to statement timeout');
+      },
+    };
+
+    await expect(clear({ ids: ids(CLEAN) })).resolves.toMatchObject({
+      count: 1,
+      retainedHidden: 1,
+    });
+    expect(await state(table)).toMatchObject({ 11: 'hidden', 12: 'public' });
+  });
+
   it('counts a missing comment as neither cleared nor kept', async () => {
     await expect(clear({ ids: [999] })).resolves.toEqual({
       count: 0,

@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
 
 /**
  * Setting `tosViolation` was a one-way door: nothing in the main app or the moderator spoke cleared it,
@@ -107,5 +108,19 @@ describe('clearing a comment ToS flag', () => {
     expect(sql).toContain('"CommentReport"');
     expect(sql).toContain('c."commentId"');
     expect(sql).not.toMatch(/r\.status <> /);
+  });
+});
+
+// Clearing the flag is restoreFromTos's alone, which leaves retained comments hidden.
+describe('editing a comment', () => {
+  it('cannot carry the ToS flag', () => {
+    const input = upsertCommentv2Schema.parse({
+      id: 7,
+      entityType: 'image',
+      entityId: 1,
+      content: 'edited',
+      tosViolation: false,
+    });
+    expect(input).not.toHaveProperty('tosViolation');
   });
 });
