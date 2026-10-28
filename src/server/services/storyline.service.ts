@@ -809,6 +809,16 @@ export async function updateStoryline({
   isModerator?: boolean;
 }) {
   const current = await getOwnedStoryline({ storylineId: id, userId, isModerator });
+  // An upload is a file the caller put up: a key already behind another account's image is not.
+  for (const upload of [coverUpload, heroUpload])
+    if (
+      upload &&
+      (await dbWrite.image.findFirst({
+        where: { url: upload.url, userId: { not: userId } },
+        select: { id: true },
+      }))
+    )
+      throw throwBadRequestError(STORYLINE_PICK_REFUSALS.cannotUse);
   if (coverUpload) coverImageId = await resolveCoverImageId({ coverImage: coverUpload, userId });
   if (heroUpload) heroImageId = await resolveCoverImageId({ coverImage: heroUpload, userId });
   if (maxNsfwLevel !== undefined) {
@@ -3352,6 +3362,10 @@ async function getChosenStorylineImages(
         storylineId: number;
         postId: number | null;
         chapterId: number | null;
+        storylineUserId: number;
+        uploaderIsModerator: boolean | null;
+        uploaderBannedAt: Date | null;
+        uploaderDeletedAt: Date | null;
         postUserId: number;
         postNsfwLevel: number;
         publishedAt: Date | null;
@@ -3366,7 +3380,9 @@ async function getChosenStorylineImages(
       SELECT ${storylineImageColumns}, st.id AS "storylineId", i."postId", c.id AS "chapterId",
         p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt",
         p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt",
-        st."maxNsfwLevel", st."minorByScan"
+        st."maxNsfwLevel", st."minorByScan", st."userId" AS "storylineUserId",
+        iu."isModerator" AS "uploaderIsModerator", iu."bannedAt" AS "uploaderBannedAt",
+        iu."deletedAt" AS "uploaderDeletedAt"
       FROM unnest(${pairs.map((pair) => pair.storylineId)}::int[], ${pairs.map(
       (pair) => pair.imageId
     )}::int[]) AS pick("storylineId", "imageId")
@@ -3375,13 +3391,22 @@ async function getChosenStorylineImages(
       LEFT JOIN "StorylineChapter" c ON c."postId" = i."postId" AND c."storylineId" = st.id
       LEFT JOIN "Post" p ON p.id = i."postId"
       LEFT JOIN "User" pu ON pu.id = p."userId"
+      JOIN "User" iu ON iu.id = i."userId"
       WHERE ${storylineImageVisible(resolved)}
     `;
     for (const row of rows) {
-      // An image picked from outside the chapters (an upload) was checked when it was picked; the
-      // gate above still judges it on every read.
+      // An upload, in no post: only one by the storyline's owner or a moderator, as it was picked,
+      // whose account still stands and whom this reader has not blocked. A post-less image can
+      // also be one left behind by a deleted post, which this keeps out.
       if (row.chapterId == null) {
-        if (!row.postId) found.set(key(row.storylineId, row.id), toStorylineImage(row));
+        if (
+          !row.postId &&
+          (row.userId === row.storylineUserId || row.uploaderIsModerator) &&
+          !row.uploaderBannedAt &&
+          !row.uploaderDeletedAt &&
+          !resolved.blockedUserIds.has(row.userId)
+        )
+          found.set(key(row.storylineId, row.id), toStorylineImage(row));
         continue;
       }
       const tombstone = getStorylineChapterTombstone({

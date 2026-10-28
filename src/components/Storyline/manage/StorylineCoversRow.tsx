@@ -175,7 +175,9 @@ export function StorylineCoversRow({ storylineId }: { storylineId: number }) {
           ) : (
             <div className="flex aspect-[16/6] w-[240px] max-w-full items-center justify-center rounded-lg border border-dashed border-gray-4 p-3 text-center dark:border-dark-3">
               <Text size="xs" c="dimmed">
-                No banner: the page shows the card cover, blurred.
+                {storyline.heroPickHidden
+                  ? 'Until it shows, the page uses the card cover, blurred.'
+                  : 'No banner: the page shows the card cover, blurred.'}
               </Text>
             </div>
           )}

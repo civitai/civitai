@@ -2732,6 +2732,10 @@ describe('covers and cast', () => {
     storylineId: 10,
     postId: 500 + id,
     chapterId: id,
+    storylineUserId: OWNER,
+    uploaderIsModerator: false,
+    uploaderBannedAt: null,
+    uploaderDeletedAt: null,
     postUserId: OWNER,
     postNsfwLevel: PG,
     publishedAt: new Date('2026-10-01'),
@@ -2935,6 +2939,18 @@ describe('covers and cast', () => {
       await expect(updateStoryline({ id: 10, userId: OWNER, coverImageId: 7 })).rejects.toThrow(
         /not been rated yet/
       );
+    });
+
+    it("refuses an upload whose file is another account's image, and makes nothing", async () => {
+      w.image.findFirst.mockResolvedValueOnce({ id: 5 } as never);
+      await expect(
+        updateStoryline({ id: 10, userId: OWNER, coverUpload: { url: UPLOAD_URL, type: 'image' } })
+      ).rejects.toThrow(/cannot be used as a cover or banner/);
+      expect(w.image.findFirst.mock.calls[0][0]).toMatchObject({
+        where: { url: UPLOAD_URL, userId: { not: OWNER } },
+      });
+      expect(resolveCoverImageId).not.toHaveBeenCalled();
+      expect(w.storyline.update).not.toHaveBeenCalled();
     });
 
     it('makes an uploaded file an image of the uploader, then picks it', async () => {
@@ -3329,6 +3345,20 @@ describe('covers and cast', () => {
       expect(storyline.coverImage?.id).toBe(30);
     });
 
+    it.each([
+      ['by a moderator', { userId: MODERATOR, uploaderIsModerator: true }, 30],
+      ['by someone else (an image a deleted post left behind)', { userId: STRANGER }, 1101],
+      ['by its owner, now banned', { uploaderBannedAt: new Date() }, 1101],
+      ['by its owner, now deleted', { uploaderDeletedAt: new Date() }, 1101],
+    ])('an image in no post %s is shown as the pick: %s', async (_n, extra, heroId) => {
+      withPicks({ heroImageId: 30 });
+      answerRaw(
+        [{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }],
+        [picked(30, { chapterId: null, postId: null, ...extra })]
+      );
+      expect((await page({ id: 99 })).heroImage?.id).toBe(heroId);
+    });
+
     it('never shows a pick from a post that is no chapter of it', async () => {
       withPicks({ heroImageId: 31 });
       answerRaw(
@@ -3366,7 +3396,7 @@ describe('covers and cast', () => {
       await page({ id: 99 });
       const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
       expect(read.text).toContain(
-        'st.id AS "storylineId", i."postId", c.id AS "chapterId", p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt", p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt", st."maxNsfwLevel", st."minorByScan" FROM unnest('
+        'st.id AS "storylineId", i."postId", c.id AS "chapterId", p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt", p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt", st."maxNsfwLevel", st."minorByScan", st."userId" AS "storylineUserId", iu."isModerator" AS "uploaderIsModerator", iu."bannedAt" AS "uploaderBannedAt", iu."deletedAt" AS "uploaderDeletedAt" FROM unnest('
       );
     });
 
