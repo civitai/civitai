@@ -31,7 +31,7 @@ export function reservedAppSlugReason(slug: string): string | null {
   if (RESERVED_NAMES.includes(slug)) {
     return `blockId "${slug}" is reserved. Choose a different blockId.`;
   }
-  const hit = RESERVED_PREFIXES.find(({ prefix }) => slug === prefix);
+  const hit = RESERVED_PREFIXES.find(({ prefix }) => slug.startsWith(prefix));
   if (hit) {
     return `blockId "${slug}" is reserved: ids starting with "${hit.prefix}" are used for ${hit.usedFor}, so the app's address would never reach it. Choose a different blockId.`;
   }
