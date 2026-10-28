@@ -1429,7 +1429,8 @@ type BidRefundFailure =
 /**
  * A model a hold kept keeps its bids; versions are passed by id because the model row is gone. Never
  * throws: a re-run of the wipe finds no models to refund, so each failure is logged as its own
- * `bid-refund-failed` line (alerted on) with the ids a manual refund needs, and returned.
+ * `bid-refund-failed` line (alerted on) with the ids a manual refund needs, or the candidates to check
+ * when it could not tell which models went, and returned.
  */
 async function refundBidsForDeletedModels(
   models: { id: number; name: string; modelVersions: { id: number }[] }[],
