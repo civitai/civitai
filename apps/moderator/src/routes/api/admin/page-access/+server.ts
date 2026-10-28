@@ -36,7 +36,7 @@ export const POST = defineEndpoint({
   returns: '{ changed, path, before, after }. 409 carries `current`, the roles stored now.',
   notes: [
     'Send JSON in the body from this app’s own origin; query parameters are refused.',
-    'Admin-only paths and the admin role are refused. A role the auth hub does not list can be revoked once the grant holds it, never granted.',
+    'Admin-only paths are refused, and the admin role is never granted. A role the auth hub does not list can be revoked once the grant holds it, never granted.',
     'Revoking a service account’s role (e.g. `system:dispute-agent`) breaks the service that uses it at once.',
   ],
   handler: async ({ path, role, op, expect, gateRef, reason }, event) => {
@@ -57,7 +57,15 @@ export const POST = defineEndpoint({
       if (!grantable) return json({ error: NO_ROLE_CATALOGUE }, { status: 503 });
       // The super role is never in this list (`isStorableRole`), so it cannot be granted from here.
       if (!grantable.includes(role))
-        return json({ error: `${role} is not a role that can be granted.` }, { status: 400 });
+        return json(
+          {
+            error:
+              op === 'grant'
+                ? `${role} is not a role that can be granted.`
+                : `${role} is not held by ${path} and is not a role this app grants.`,
+          },
+          { status: 400 }
+        );
     }
 
     // Only the named role moves; every other stored role, retired or not, is carried as it was.

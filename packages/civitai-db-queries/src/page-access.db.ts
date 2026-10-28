@@ -41,8 +41,9 @@ export async function getPageAccessGrants(db: Kysely<DB>, app: string): Promise<
  * both pass a compare-and-set against "absent".
  *
  * The rows are read `FOR UPDATE` as well, for a writer that does not take that lock (an UPDATE run by
- * hand): it waits for this transaction rather than being overwritten by it. A hand INSERT of a row that
- * does not exist yet is still not covered.
+ * hand): it waits for this transaction rather than being overwritten by it. In path order, so two
+ * multi-row writers lock in the same order. A hand INSERT of a row that does not exist yet is still not
+ * covered.
  */
 export async function lockPageAccessGrants(
   trx: Transaction<DB>,
@@ -56,6 +57,7 @@ export async function lockPageAccessGrants(
     .select(['path', 'roles'])
     .where('app', '=', app)
     .where('path', 'in', paths)
+    .orderBy('path')
     .forUpdate()
     .execute();
   return Object.fromEntries(rows.map((r) => [r.path, r.roles]));

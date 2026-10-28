@@ -59,11 +59,15 @@ const race: {
   reads: number;
   at: QueryId | null;
   landed: Promise<unknown> | null;
-} = { run: null, reads: 0, at: null, landed: null };
+  /** Whether the hook had fired when the grant was written: if not, it raced nothing. */
+  beforeWrite: boolean | null;
+} = { run: null, reads: 0, at: null, landed: null, beforeWrite: null };
 
 const afterLockedRead: KyselyPlugin = {
   transformQuery(args) {
     const { node } = args;
+    if (node.kind === 'InsertQueryNode' && JSON.stringify(node.into).includes('"AppPageAccess"'))
+      race.beforeWrite ??= race.landed !== null;
     if (
       race.run &&
       node.kind === 'SelectQueryNode' &&
@@ -77,7 +81,8 @@ const afterLockedRead: KyselyPlugin = {
     if (race.run && race.at === args.queryId) {
       race.landed = race.run();
       race.run = null;
-      // Time for it to land. Held by a row lock it cannot, and the save goes on without it.
+      // Time for it to land. Held by a row lock it cannot, and the save goes on without it. A slow
+      // runner can only make this miss a regression (the edit lands after the save), never fail falsely.
       await Promise.race([race.landed, new Promise((r) => setTimeout(r, 500))]);
     }
     return args.result;
@@ -123,11 +128,11 @@ describePg('changePageRoles against a hand edit in another session', () => {
       `INSERT INTO "AppPageAccess" (app, path, roles) VALUES ('moderator', '/blocklists', $1)`,
       [[HIGH, SYSTEM]]
     );
-    Object.assign(race, { run: null, reads: 0, at: null, landed: null });
+    Object.assign(race, { run: null, reads: 0, at: null, landed: null, beforeWrite: null });
   });
 
   afterEach(async () => {
-    await history.close();
+    await history?.close();
   });
 
   const stored = async () =>
@@ -151,7 +156,8 @@ describePg('changePageRoles against a hand edit in another session', () => {
       gateRef: 'g',
       expect: { '/blocklists': [HIGH, SYSTEM] },
     });
-    expect(race.landed).not.toBeNull(); // the hook fired: otherwise this test proves nothing
+    // The hand edit went in between the locked read and the write: otherwise this proves nothing.
+    expect(race.beforeWrite).toBe(true);
     await race.landed;
     expect(await stored()).toEqual([HIGH]);
   });
