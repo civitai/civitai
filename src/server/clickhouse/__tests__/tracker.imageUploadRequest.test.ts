@@ -41,16 +41,24 @@ describe('Tracker.imageUploadRequest', () => {
     });
   });
 
-  // The table the tracker writes above and the one the read query names must be this one.
-  it('has a table of exactly those columns, whose rows expire after 12 months', () => {
-    const ddl = migration
-      .split(/\r?\n/)
-      .filter((line) => !line.startsWith('--'))
-      .join(' ')
-      .replace(/\s+/g, ' ')
-      .trim();
-    expect(ddl).toBe(
-      'CREATE TABLE IF NOT EXISTS default.imageUploadRequests ( time DateTime64(3) DEFAULT now64(3), userId UInt32, ip String, key String ) ENGINE = MergeTree ORDER BY (userId, time) TTL toDateTime(time) + INTERVAL 12 MONTH;'
-    );
+  // A payload column the table lacks is dropped on insert; one the table has but the payload
+  // lacks is written as its default.
+  it('sends exactly the columns of the table it names, which keeps rows for 12 months', async () => {
+    const req = { headers: { 'cf-connecting-ip': '203.0.113.9' }, socket: {} };
+    const tracker = new Tracker(req as never, {} as never, { user: { id: 42 } } as never);
+    await tracker.imageUploadRequest('minted-key');
+    await new Promise((r) => setImmediate(r));
+    const [url, init] = fetchMock.mock.calls[0] as [string, { body: string }];
+
+    const [, table, body] =
+      migration.match(/CREATE TABLE IF NOT EXISTS default\.(\w+)\s*\(([\s\S]*?)\)\s*ENGINE/) ?? [];
+    const columns = (body ?? '')
+      .split(',')
+      .map((column) => column.trim().split(/\s+/)[0])
+      .filter(Boolean);
+
+    expect(url.endsWith(`/track/${table}`)).toBe(true);
+    expect(Object.keys(JSON.parse(init.body)).sort()).toEqual([...columns].sort());
+    expect(migration).toMatch(/TTL\s+toDateTime\(time\)\s*\+\s*INTERVAL\s+12\s+MONTH/);
   });
 });
