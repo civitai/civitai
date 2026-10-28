@@ -17,6 +17,8 @@ vi.mock('~/server/services/legal-hold.service', async (importOriginal) => {
     holdMarkerViewExists: vi.fn().mockResolvedValue(true),
     accountHoldSql: (id: Prisma.Sql) =>
       Prisma.sql`EXISTS (SELECT 1 FROM "HeldAccount" h WHERE h."userId" = ${id})`,
+    ownerHeldSql: (id: Prisma.Sql) =>
+      Prisma.sql`EXISTS (SELECT 1 FROM "HeldAccount" h WHERE h."userId" = ${id})`,
   };
 });
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -110,14 +112,23 @@ beforeAll(async () => {
   await db.pg.exec(`
     INSERT INTO "User" (id) VALUES (1), (2), (3);
     CREATE TABLE "HeldAccount" ("userId" integer PRIMARY KEY);
+    -- As production: a reply thread goes with its parent and root threads; a comment's delete
+    -- only unlinks its reply thread.
     CREATE TABLE "Thread" ("id" serial PRIMARY KEY,
-      "storylineId" integer REFERENCES "Storyline"("id") ON DELETE CASCADE, "commentId" integer);
+      "storylineId" integer REFERENCES "Storyline"("id") ON DELETE CASCADE, "commentId" integer,
+      "parentThreadId" integer REFERENCES "Thread"("id") ON DELETE CASCADE,
+      "rootThreadId" integer REFERENCES "Thread"("id") ON DELETE CASCADE);
     CREATE TABLE "CommentV2" ("id" serial PRIMARY KEY,
       "threadId" integer NOT NULL REFERENCES "Thread"("id") ON DELETE CASCADE,
       "userId" integer NOT NULL);
-    ALTER TABLE "Thread" ADD FOREIGN KEY ("commentId") REFERENCES "CommentV2"("id") ON DELETE CASCADE;
+    ALTER TABLE "Thread" ADD FOREIGN KEY ("commentId") REFERENCES "CommentV2"("id") ON DELETE SET NULL;
+    CREATE TABLE "CommentTopic" ("entityType" text NOT NULL,
+      "entityId" integer NOT NULL REFERENCES "Storyline"("id") ON DELETE CASCADE,
+      PRIMARY KEY ("entityId", "entityType"));
     CREATE TABLE "CommentV3" ("id" serial PRIMARY KEY, "entityType" text NOT NULL,
-      "entityId" integer NOT NULL, "userId" integer NOT NULL);
+      "entityId" integer NOT NULL, "userId" integer NOT NULL,
+      FOREIGN KEY ("entityId", "entityType") REFERENCES "CommentTopic" ("entityId", "entityType")
+        ON DELETE CASCADE);
   `);
 });
 
@@ -130,6 +141,7 @@ beforeEach(async () => {
     DELETE FROM "Appeal";
     DELETE FROM "HeldAccount";
     DELETE FROM "CommentV3";
+    DELETE FROM "CommentTopic";
     DELETE FROM "CommentV2";
     DELETE FROM "Thread";
     DELETE FROM "StorylineReport";
@@ -409,7 +421,7 @@ describe('deleteStoryline', () => {
       await db.pg.exec(`
         INSERT INTO "Thread" (id, "storylineId") VALUES (1, 1);
         INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (1, 1, ${CONTRIBUTOR});
-        INSERT INTO "Thread" (id, "commentId") VALUES (2, 1);
+        INSERT INTO "Thread" (id, "commentId", "parentThreadId", "rootThreadId") VALUES (2, 1, 1, 1);
         INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (2, 2, 4);
       `);
     });
@@ -449,6 +461,7 @@ describe('deleteStoryline', () => {
 
     it('is refused when an author of a comment on its topic is held', async () => {
       await db.pg.exec(`
+        INSERT INTO "CommentTopic" ("entityType", "entityId") VALUES ('storyline', 1);
         INSERT INTO "CommentV3" ("entityType", "entityId", "userId") VALUES ('storyline', 1, 9);
       `);
       await held(9);

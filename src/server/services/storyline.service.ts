@@ -17,6 +17,7 @@ import {
   accountHoldSql,
   contentKeptError,
   holdMarkerViewExists,
+  ownerHeldSql,
 } from '~/server/services/legal-hold.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
@@ -851,6 +852,41 @@ export async function updateStoryline({
   return updated;
 }
 
+/**
+ * Whether deleting storyline `id` would delete anything of a held account: its owner's, or a
+ * comment the cascade takes. That is its thread and every thread below it, reached the ways the
+ * cascade reaches them (a reply thread's parent and root threads, which cascade) and through a
+ * comment's reply thread (which does not cascade, so it can only over-refuse), plus its comment
+ * topic. The owner is judged as other content deletes judge an owner (`ownerHeldSql`), comment
+ * authors as `deleteCommentsV2UnlessHeld` judges them.
+ */
+function storylineHeldSql({
+  id,
+  ownerId,
+  markerView,
+}: {
+  id: number;
+  ownerId: number;
+  markerView: boolean;
+}) {
+  return Prisma.sql`(${ownerHeldSql(Prisma.sql`${ownerId}::int`)} OR EXISTS (
+    WITH RECURSIVE below AS (
+      SELECT t.id FROM "Thread" t WHERE t."storylineId" = ${id}
+      UNION
+      SELECT t.id FROM below b
+      JOIN "Thread" t ON t."parentThreadId" = b.id OR t."rootThreadId" = b.id
+        OR t."commentId" IN (SELECT k.id FROM "CommentV2" k WHERE k."threadId" = b.id)
+    ),
+    authors AS MATERIALIZED (
+      SELECT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
+      UNION
+      SELECT c."userId" FROM "CommentV3" c
+      WHERE c."entityType" = 'storyline' AND c."entityId" = ${id}
+    )
+    SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
+  ))`;
+}
+
 export const STORYLINE_DELETE_REFUSALS = {
   /** Every reason an owner may not delete, in one text, so no one reason can be told apart. */
   owner:
@@ -955,31 +991,11 @@ export async function deleteStoryline({
       ) AS unsettled
     `;
     if (unsettled) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidContinuations);
-    // The cascade deletes the storyline's comments (its thread, every reply thread below it, and
-    // its comment topic), so nothing goes while its owner or any of those authors is held.
-    const [{ held }] = await tx.$queryRaw<{ held: boolean }[]>`
-      WITH RECURSIVE below AS (
-        SELECT t.id FROM "Thread" t WHERE t."storylineId" = ${id}
-        UNION
-        SELECT t.id FROM "Thread" t
-        JOIN "CommentV2" k ON t."commentId" = k.id
-        JOIN below b ON k."threadId" = b.id
-      ),
-      authors AS MATERIALIZED (
-        SELECT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
-        UNION
-        SELECT c."userId" FROM "CommentV3" c
-        WHERE c."entityType" = 'storyline' AND c."entityId" = ${id}
-      )
-      SELECT ${accountHoldSql(Prisma.sql`${owned.userId}::int`, markerView)}
-        OR EXISTS (
-          SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
-        ) AS held
-    `;
-    if (held)
-      throw asModerator
-        ? contentKeptError(true)
-        : throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
+    const held = storylineHeldSql({ id, ownerId: owned.userId, markerView });
+    const holdRefusal = () =>
+      asModerator ? contentKeptError(true) : throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
+    const [{ isHeld }] = await tx.$queryRaw<{ isHeld: boolean }[]>`SELECT ${held} AS "isHeld"`;
+    if (isHeld) throw holdRefusal();
     // An owner paid for approved continuations cannot then delete the chapters they were paid for
     // (a refunded one does not count), nor delete what is under report. A moderator can.
     if (!asModerator) {
@@ -1007,7 +1023,9 @@ export async function deleteStoryline({
         WHERE sr."reportId" = r.id AND sr."storylineId" = ${id}
           AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
       `;
-    await tx.$executeRaw`DELETE FROM "Storyline" WHERE id = ${id}`;
+    // The hold is in the DELETE itself too, so one placed after the check above still stops it.
+    const deleted = await tx.$executeRaw`DELETE FROM "Storyline" WHERE id = ${id} AND NOT ${held}`;
+    if (!deleted) throw holdRefusal();
     // In the transaction, unlike `trackStorylineModEdit`: nothing else records what was deleted.
     if (asModerator)
       await trackModActivity(

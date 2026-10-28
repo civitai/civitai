@@ -104,14 +104,23 @@ beforeAll(async () => {
     CREATE TABLE "EvidenceHold" ("userId" int NOT NULL, "releasedAt" timestamp(3));
     CREATE VIEW "EvidenceHeldUser" AS
       SELECT "userId" FROM "EvidenceHold" WHERE "releasedAt" IS NULL GROUP BY "userId";
+    -- As production: a reply thread goes with its parent and root threads; a comment's delete
+    -- only unlinks its reply thread.
     CREATE TABLE "Thread" ("id" serial PRIMARY KEY,
-      "storylineId" integer REFERENCES "Storyline"("id") ON DELETE CASCADE, "commentId" integer);
+      "storylineId" integer REFERENCES "Storyline"("id") ON DELETE CASCADE, "commentId" integer,
+      "parentThreadId" integer REFERENCES "Thread"("id") ON DELETE CASCADE,
+      "rootThreadId" integer REFERENCES "Thread"("id") ON DELETE CASCADE);
     CREATE TABLE "CommentV2" ("id" serial PRIMARY KEY,
       "threadId" integer NOT NULL REFERENCES "Thread"("id") ON DELETE CASCADE,
       "userId" integer NOT NULL);
-    ALTER TABLE "Thread" ADD FOREIGN KEY ("commentId") REFERENCES "CommentV2"("id") ON DELETE CASCADE;
+    ALTER TABLE "Thread" ADD FOREIGN KEY ("commentId") REFERENCES "CommentV2"("id") ON DELETE SET NULL;
+    CREATE TABLE "CommentTopic" ("entityType" text NOT NULL,
+      "entityId" integer NOT NULL REFERENCES "Storyline"("id") ON DELETE CASCADE,
+      PRIMARY KEY ("entityId", "entityType"));
     CREATE TABLE "CommentV3" ("id" serial PRIMARY KEY, "entityType" text NOT NULL,
-      "entityId" integer NOT NULL, "userId" integer NOT NULL);
+      "entityId" integer NOT NULL, "userId" integer NOT NULL,
+      FOREIGN KEY ("entityId", "entityType") REFERENCES "CommentTopic" ("entityId", "entityType")
+        ON DELETE CASCADE);
   `);
 });
 
@@ -124,6 +133,7 @@ beforeEach(async () => {
     DELETE FROM "Appeal";
     DELETE FROM "EvidenceHold";
     DELETE FROM "CommentV3";
+    DELETE FROM "CommentTopic";
     DELETE FROM "CommentV2";
     DELETE FROM "Thread";
     DELETE FROM "StorylineReport";
@@ -155,7 +165,7 @@ describe('deleteStoryline under a real account hold', () => {
     await db.pg.exec(`
       INSERT INTO "Thread" (id, "storylineId") VALUES (1, 1);
       INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (1, 1, ${CONTRIBUTOR});
-      INSERT INTO "Thread" (id, "commentId") VALUES (2, 1);
+      INSERT INTO "Thread" (id, "commentId", "parentThreadId", "rootThreadId") VALUES (2, 1, 1, 1);
       INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (2, 2, ${REPLIER});
     `);
   });
@@ -173,6 +183,39 @@ describe('deleteStoryline under a real account hold', () => {
     );
     await deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true });
     expect(await storylineIds()).toEqual([2]);
+  });
+
+  // A reply thread whose comment was deleted keeps its parent and root links, which cascade.
+  it('refuses a moderator when the held author is in a reply thread its comment no longer links', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Thread" (id, "commentId", "parentThreadId", "rootThreadId") VALUES (3, NULL, 1, 1);
+      INSERT INTO "CommentV2" (id, "threadId", "userId") VALUES (3, 3, 5);
+    `);
+    await hold(5);
+    await expect(
+      deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+    expect(await rows(`SELECT id FROM "CommentV2" ORDER BY id`)).toEqual([
+      { id: 1 },
+      { id: 2 },
+      { id: 3 },
+    ]);
+  });
+
+  it('is stopped by a hold placed after its check, by the delete itself', async () => {
+    const raw = pgliteRaw(db.pg);
+    w.$executeRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      if (strings.join('?').includes('DELETE FROM "Storyline"')) await hold(REPLIER);
+      return raw.executeRaw(strings, ...values);
+    }) as never);
+    await expect(
+      deleteStoryline({ id: 1, userId: MODERATOR, isModerator: true })
+    ).rejects.toMatchObject({ code: 'FORBIDDEN', message: LEGAL_HOLD_REFUSAL });
+    expect(await storylineIds()).toEqual([1, 2]);
+    expect(await rows(`SELECT id FROM "CommentV2" ORDER BY id`)).toEqual([{ id: 1 }, { id: 2 }]);
   });
 
   it('refuses a moderator, naming the hold, when a reply author is held', async () => {
