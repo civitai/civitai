@@ -12,6 +12,7 @@ import {
   type Driver,
   type QueryResult,
 } from 'kysely';
+import { parseTimestampAsUtc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
 const MIGRATION = fileURLToPath(
@@ -101,10 +102,7 @@ function dialect(pg: PGlite): Dialect {
 
 /** A real in-process Postgres with the committed migration applied over stand-in main tables. */
 export async function createQueueDb(): Promise<{ pg: PGlite; db: Kysely<DB> }> {
-  // The same reading as @civitai/db: `timestamp without time zone` holds UTC instants.
-  const pg = await PGlite.create({
-    parsers: { 1114: (value: string) => new Date(`${value.replace(' ', 'T')}Z`) },
-  });
+  const pg = await PGlite.create({ parsers: { 1114: parseTimestampAsUtc } });
   await pg.exec(STAND_INS);
   await pg.exec(readFileSync(MIGRATION, 'utf8'));
   return { pg, db: new Kysely<DB>({ dialect: dialect(pg) }) };

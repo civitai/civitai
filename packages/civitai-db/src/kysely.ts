@@ -24,6 +24,14 @@ export type { Generated, RawBuilder } from 'kysely';
 // `@civitai/db` (which re-exports this module) must not have its global pg parsing flipped without
 // asking. Only callers that actually build a Kysely client opt in. Idempotent.
 let numericParsersRegistered = false;
+
+/**
+ * Reads a `timestamp without time zone` value as the UTC instant it was written as. Exported so a
+ * test database driver can parse the column exactly as the pg pools do.
+ */
+export const parseTimestampAsUtc = (val: string) => new Date(val.replace(' ', 'T') + 'Z');
+
+
 function registerNumericTypeParsers() {
   if (numericParsersRegistered) return;
   types.setTypeParser(types.builtins.NUMERIC, (val) => parseFloat(val));
@@ -35,7 +43,7 @@ function registerNumericTypeParsers() {
   // them that way everywhere.
   // Byte-identical to db-helpers.ts's parser on purpose: two near-copies of a date transform is how
   // the two apps disagreed in the first place.
-  types.setTypeParser(types.builtins.TIMESTAMP, (val) => new Date(val.replace(' ', 'T') + 'Z'));
+  types.setTypeParser(types.builtins.TIMESTAMP, parseTimestampAsUtc);
   numericParsersRegistered = true;
 }
 
