@@ -15,7 +15,7 @@
 </header>
 
 {#if data.items.length === 0}
-  <p class="text-sm text-dark-2">Nothing here.</p>
+  <p class="text-sm text-dark-2">No images are waiting for an Inquisitor ruling.</p>
 {:else}
   <div class="flex flex-col gap-3">
     {#each data.items as item (item.id)}

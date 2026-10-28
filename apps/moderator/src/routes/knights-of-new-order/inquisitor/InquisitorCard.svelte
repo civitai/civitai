@@ -1,9 +1,17 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { getBrowsingLevelLabel } from '@civitai/shared';
+  import { browsingLevels, getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
+  import {
+    Table,
+    TableBody,
+    TableCell,
+    TableHead,
+    TableHeader,
+    TableRow,
+  } from '@civitai/ui/components/ui/table/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import { imageLookupUrl } from '$lib/entity-url';
   import { FormState } from '$lib/form-state.svelte';
@@ -11,9 +19,6 @@
   import type { InquisitorItem } from '$lib/server/knights/inquisitor.service';
 
   let { item }: { item: InquisitorItem } = $props();
-
-  const RATINGS = [1, 2, 4, 8, 16] as const;
-  const BLOCKED = 32;
 
   const rule = new FormState({
     reload: true,
@@ -52,24 +57,26 @@
     {#if item.votes.length === 0}
       <p class="text-sm text-dark-2">No votes were cast.</p>
     {:else}
-      <table class="w-full max-w-sm text-sm">
-        <thead>
-          <tr class="text-left text-xs text-dark-2">
-            <th class="font-normal">Knights voted</th>
-            <th class="text-right font-normal">Votes</th>
-            <th class="text-right font-normal">Weight</th>
-          </tr>
-        </thead>
-        <tbody>
+      <Table class="max-w-sm">
+        <TableHeader>
+          <TableRow>
+            <TableHead>Knights voted</TableHead>
+            <TableHead class="text-right">Votes</TableHead>
+            <TableHead class="text-right">Weight</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {#each item.votes as vote (vote.answer)}
-            <tr>
-              <td>{vote.label}</td>
-              <td class="text-right">{num(vote.votes)}</td>
-              <td class="text-right">{vote.weight.toLocaleString(undefined, { maximumFractionDigits: 1 })}</td>
-            </tr>
+            <TableRow>
+              <TableCell>{vote.label}</TableCell>
+              <TableCell class="text-right">{num(vote.votes)}</TableCell>
+              <TableCell class="text-right"
+                >{vote.weight.toLocaleString(undefined, { maximumFractionDigits: 1 })}</TableCell
+              >
+            </TableRow>
           {/each}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     {/if}
 
     {#if item.blocked}
@@ -86,7 +93,7 @@
     <form method="POST" action="?/rule" use:enhance={rule.enhance} class="flex flex-wrap items-center gap-2">
       <input type="hidden" name="itemId" value={item.id} />
       <span class="text-sm text-dark-2">Final rating</span>
-      {#each RATINGS as level (level)}
+      {#each browsingLevels as level (level)}
         <Button
           type="submit"
           name="level"
@@ -100,7 +107,7 @@
         <Button
           type="submit"
           name="level"
-          value={BLOCKED}
+          value={NsfwLevel.Blocked}
           size="sm"
           variant="destructive"
           disabled={rule.submitting}>Confirm Blocked</Button
