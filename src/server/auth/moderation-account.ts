@@ -1,4 +1,4 @@
-import { isModerationAccountUser } from '@civitai/auth';
+import { isModerationAccountUser, MODERATION_ACCOUNT_USERNAME } from '@civitai/auth';
 import { env } from '~/env/server';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -6,6 +6,11 @@ import { logToAxiom } from '~/server/logging/client';
 export function getModerationAccountId(): number | null {
   const id = env.CIVITAI_MODERATION_USER_ID;
   return typeof id === 'number' ? id : null;
+}
+
+/** Whether a username is the shared account's reserved one, in any casing. */
+export function isReservedModerationUsername(username: string): boolean {
+  return username.toLowerCase() === MODERATION_ACCOUNT_USERNAME.toLowerCase();
 }
 
 /**
