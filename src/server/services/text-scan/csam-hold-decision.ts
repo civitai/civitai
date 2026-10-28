@@ -8,7 +8,6 @@ import { logToAxiom } from '~/server/logging/client';
 import { lockCsamHold } from '~/server/services/text-scan/actions/csam-hold';
 import { dataForModelsCache } from '~/server/redis/caches';
 import type { ArticleMetadata } from '~/server/schema/article.schema';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import { unpublishArticleById } from '~/server/services/article.service';
 import { deleteChatMessage } from '~/server/services/chat.service';
 import { bulkSetCommentTosViolation } from '~/server/services/comment.service';
@@ -140,13 +139,12 @@ async function removeContent(hold: HeldRow, { actor, tracker }: DecideArgs) {
     case 'Model': {
       const model = await dbWrite.model.findUnique({
         where: { id: entityId },
-        select: { meta: true, nsfw: true },
+        select: { nsfw: true },
       });
       if (!model) return;
       await unpublishModelById({
         id: entityId,
         reason: MODEL_UNPUBLISH_REASON,
-        meta: (model.meta as ModelMeta | null) || {},
         userId: actor.id,
         isModerator: true,
       });

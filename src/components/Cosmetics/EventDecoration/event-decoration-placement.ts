@@ -51,6 +51,17 @@ export const HAT_PLAIN_CARD_NUDGE = 4;
  */
 export const HAT_ALLOWANCE: Record<HatPlacement, number> = { corner: ITEM_BLEED, inside: -2 };
 
+/** One allowance for both edges, or one per edge where the container has more room on one side. */
+export type HatAllowance = number | { left: number; top: number };
+
+/**
+ * The allowance on a picture drawn `edge` px from the clipping edge of its slot (the letterbox
+ * space beside it): as far past the picture as the slot shows, never past a feed card's, and
+ * where the picture meets the slot's edge, kept inside it like an `inside` hat.
+ */
+export const getHatRoom = (edge: number) =>
+  Math.min(HAT_ALLOWANCE.corner, edge + HAT_ALLOWANCE.inside);
+
 // The art convention when a cosmetic says nothing about its own fit: a 128x160 canvas, hat drawn
 // upright, nothing below y=156.
 const DEFAULT_CANVAS: [number, number] = [128, 160];
@@ -106,10 +117,11 @@ export function getHatPreviewBox(fit?: EventDecorationFit) {
 export function getHatLayout(
   placement: HatPlacement,
   fit?: EventDecorationFit,
-  allowance = HAT_ALLOWANCE[placement],
+  allowance: HatAllowance = HAT_ALLOWANCE[placement],
   nudge = 0,
   cardWidth?: number
 ) {
+  const room = typeof allowance === 'number' ? { left: allowance, top: allowance } : allowance;
   const cardScale = getHatCardScale(cardWidth);
   const [canvasW, canvasH] = isNumbers(fit?.canvas, 2) ? fit.canvas : DEFAULT_CANVAS;
   const [left, top, right, bottom] = getArtBounds(fit) ?? DEFAULT_BOUNDS;
@@ -159,8 +171,8 @@ export function getHatLayout(
   const maxX = Math.max(...points.map((p) => p.x));
   const maxY = Math.max(...points.map((p) => p.y));
 
-  const pivotX = Math.max(-sin * inset - cardNudge + offsetX, -allowance - minX);
-  const pivotY = Math.max(cos * inset - cardNudge + offsetY, -allowance - minY);
+  const pivotX = Math.max(-sin * inset - cardNudge + offsetX, -room.left - minX);
+  const pivotY = Math.max(cos * inset - cardNudge + offsetY, -room.top - minY);
 
   return {
     width: canvasW * scale,
