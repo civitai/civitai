@@ -1011,7 +1011,7 @@ export async function completeStripeBuzzTransaction({
       : paymentIntent.amount * 10 !== parsed.data.buzzAmount
       ? 'charge mismatch'
       : null;
-    if (rejection) {
+    if (rejection || !parsed.success) {
       rejected = true;
       logToAxiom(
         {
