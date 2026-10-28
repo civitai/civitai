@@ -76,3 +76,40 @@ describe('the generation token after a ban', () => {
     await expect(expireUserApiKeys(USER)).resolves.toMatchObject({ expired: 1 });
   });
 });
+
+describe('a per-pod cached token after a ban', () => {
+  // This pod minted the user's token shortly before the ban, so its per-pod cache still holds it.
+  async function mintOnThisPod() {
+    hash.clear();
+    getTemporaryUserApiKey.mockResolvedValueOnce('token-from-before-the-ban');
+    await expect(getOrchestratorToken(USER)).resolves.toBe('token-from-before-the-ban');
+    getTemporaryUserApiKey.mockClear();
+  }
+
+  it('after the ban is lifted, the next generation call on that pod gets a fresh token', async () => {
+    await mintOnThisPod();
+    await expireUserApiKeys(USER);
+
+    await expect(getOrchestratorToken(USER)).resolves.toBe('fresh-token');
+    expect(getTemporaryUserApiKey).toHaveBeenCalledTimes(1);
+    expect(hash.get(String(USER))).toBe(encodeOwnedToken(USER, 'fresh-token'));
+  });
+
+  it('is never written back to the cross-pod cache', async () => {
+    await mintOnThisPod();
+    await expireUserApiKeys(USER);
+    // sysRedis cannot answer the read but takes the write: the per-pod entry is served...
+    redisMock.sysRedis.hGet.mockRejectedValueOnce(new Error('sysRedis read failed') as never);
+    await expect(getOrchestratorToken(USER)).resolves.toBe('token-from-before-the-ban');
+    // ...and every other pod still finds nothing, so it mints.
+    expect(hash.has(String(USER))).toBe(false);
+  });
+
+  it('still spares the database while sysRedis is down', async () => {
+    await mintOnThisPod();
+    redisMock.sysRedis.hGet.mockRejectedValue(new Error('sysRedis down') as never);
+    await getOrchestratorToken(USER);
+    await getOrchestratorToken(USER);
+    expect(getTemporaryUserApiKey).not.toHaveBeenCalled();
+  });
+});
