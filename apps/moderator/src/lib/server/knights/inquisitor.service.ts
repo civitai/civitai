@@ -1,4 +1,5 @@
-import { sql } from '@civitai/db/kysely';
+import { sql, utc } from '@civitai/db/kysely';
+import { gradeKnightsVotes } from '@civitai/db/knights';
 import { NsfwLevel } from '@civitai/shared';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
 import { isRatingLevel } from '$lib/nsfw-levels';
@@ -108,13 +109,13 @@ export type RulingOutcome = { ok: true } | { ok: false; error: string };
 
 const GONE = 'This item has already been decided. Reload the page.';
 const IN_PROGRESS = 'Another moderator is deciding this item right now. Reload the page.';
+const TAKEN_OVER =
+  'The rating was applied, but the item is now being decided by another moderator. Reload the page.';
 const NOT_CLOSED =
   'The rating was applied but the item was not closed; reload and rule again with the same level.';
 
-/** How long a claim holds the item; a ruling that dies mid-way can be retried once it lapses. */
-export const RULING_LEASE_MS = 2 * 60_000;
-
-const utc = (date: Date) => sql<Date>`${date.toISOString()}::timestamp`;
+/** How long a claim holds the item. Well beyond the slowest rating write, so only a dead ruling lapses. */
+export const RULING_LEASE_MS = 10 * 60_000;
 
 /** A 'Ruling' item reuses `resolvedBy` as the holder and `nextAttemptAt` as the lease end. */
 async function claim(itemId: number, moderatorId: number, now: Date) {
@@ -209,19 +210,16 @@ export async function ruleOnInquisitorItem(
         .executeTakeFirst();
       if (!row) return false;
 
-      await tx
-        .updateTable('KnightsVote')
-        .set({
-          verdict: sql<string>`CASE WHEN "answer" = ${String(
-            level
-          )} THEN 'correct' ELSE 'failed' END`,
-        })
-        .where('itemId', '=', itemId)
-        .where('verdict', '=', 'pending')
-        .execute();
+      await gradeKnightsVotes(tx, itemId, String(level));
       return true;
     });
-    return closed ? { ok: true } : { ok: false, error: GONE };
+    if (closed) return { ok: true };
+    const current = await dbWrite
+      .selectFrom('KnightsQueueItem')
+      .select('status')
+      .where('id', '=', itemId)
+      .executeTakeFirst();
+    return { ok: false, error: current?.status === 'Ruling' ? TAKEN_OVER : GONE };
   } catch (error) {
     console.error('knights inquisitor: the rating was set but the item could not be closed', {
       itemId,

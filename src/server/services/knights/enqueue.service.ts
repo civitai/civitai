@@ -1,4 +1,5 @@
 import { sql, type Kysely } from 'kysely';
+import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_STAGE_RANKS, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
 
@@ -35,7 +36,6 @@ export type EnqueueOutcome = { imageId: number } & (
 );
 
 const isStageRank = (rank: string) => (KNIGHTS_STAGE_RANKS as readonly string[]).includes(rank);
-const utc = (date: Date) => sql<Date>`${date.toISOString()}::timestamp`;
 
 type Planned = {
   imageId: number;

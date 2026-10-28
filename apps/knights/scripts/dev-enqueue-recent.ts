@@ -2,12 +2,12 @@ import { Kysely, PostgresDialect } from 'kysely';
 import pg from 'pg';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION } from '@civitai/shared/new-order';
+import { servableImage } from '../src/lib/server/servable-image';
 import { assertLocalDatabase } from '../src/lib/dev/local-database';
 
 const DEFAULT_COUNT = 50;
 const MAX_COUNT = 1000;
 const LEVEL_R = 4;
-const LEVEL_BLOCKED = 32;
 
 // tsx loads the main app's CommonJS-scoped modules as one `default` object when an ES module imports them.
 async function loadEnqueue() {
@@ -33,14 +33,9 @@ async function main() {
       .selectFrom('Image as img')
       .innerJoin('Post as p', 'p.id', 'img.postId')
       .select(['img.id', 'img.nsfwLevel'])
-      .where('img.type', '=', 'image')
+      .where(servableImage)
       .where('img.ingestion', '=', 'Scanned')
       .where('img.nsfwLevelLocked', '=', false)
-      .where('img.blockedFor', 'is', null)
-      .where('img.needsReview', 'is', null)
-      .where('img.acceptableMinor', '=', false)
-      .where('img.nsfwLevel', 'not in', [0, LEVEL_BLOCKED])
-      .where('p.publishedAt', 'is not', null)
       .orderBy('img.id', 'desc')
       .limit(requested)
       .execute();

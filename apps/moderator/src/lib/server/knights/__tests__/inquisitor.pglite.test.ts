@@ -272,6 +272,52 @@ describe('ruleOnInquisitorItem', () => {
     expect(await item(1)).toMatchObject({ status: 'Closed', resolvedBy: MOD });
   });
 
+  it('closes for the claim holder even after its lease lapsed, while nobody else has re-claimed', async () => {
+    await insertItem(1, 1, 'Inquisitor');
+    await insertVote(1, 11, '8', 1);
+    const claimedAt = new Date('2030-01-01T00:00:00Z');
+    setLevel.mockImplementationOnce(async () => {
+      await db.query(`UPDATE "KnightsQueueItem" SET "nextAttemptAt" = $1::timestamp WHERE id = 1`, [
+        new Date(claimedAt.getTime() - 1).toISOString(),
+      ]);
+    });
+
+    expect(await ruleOnInquisitorItem(1, 8, MOD, claimedAt)).toEqual({ ok: true });
+
+    expect(await item(1)).toMatchObject({ status: 'Closed', resolvedBy: MOD });
+    expect((await verdicts(1))[0].verdict).toBe('correct');
+  });
+
+  it('tells the first moderator the rating was applied when a lapsed claim was re-claimed meanwhile', async () => {
+    await insertItem(1, 1, 'Inquisitor');
+    await insertVote(1, 11, '8', 1);
+    const finish: Array<() => void> = [];
+    const hang = () => new Promise<void>((resolve) => finish.push(resolve));
+    setLevel.mockImplementationOnce(hang).mockImplementationOnce(hang);
+    const claimedAt = new Date('2030-01-01T00:00:00Z');
+
+    const first = ruleOnInquisitorItem(1, 8, MOD, claimedAt);
+    await vi.waitFor(() => expect(finish).toHaveLength(1));
+    const second = ruleOnInquisitorItem(
+      1,
+      2,
+      MOD + 1,
+      new Date(claimedAt.getTime() + RULING_LEASE_MS + 1)
+    );
+    await vi.waitFor(() => expect(finish).toHaveLength(2));
+
+    finish[0]();
+    expect(await first).toEqual({
+      ok: false,
+      error: expect.stringContaining('now being decided by another moderator'),
+    });
+    expect(await item(1)).toMatchObject({ status: 'Ruling', resolvedBy: MOD + 1 });
+
+    finish[1]();
+    expect(await second).toEqual({ ok: true });
+    expect(await item(1)).toMatchObject({ status: 'Closed', resolvedValue: '2' });
+  });
+
   it('releases the claim when the rating cannot be set, so another moderator can rule', async () => {
     await insertItem(1, 1, 'Inquisitor');
     setLevel.mockRejectedValueOnce(new Error('Image not found'));
@@ -323,5 +369,20 @@ describe('ruleOnInquisitorItem', () => {
     expect(await item(1)).toMatchObject({ status: 'Inquisitor', resolvedBy: null });
 
     expect(await ruleOnInquisitorItem(1, 32, MOD)).toEqual({ ok: true });
+    expect(setLevel).toHaveBeenCalledWith({ id: 1, nsfwLevel: 32, userId: MOD });
+    expect(await item(1)).toMatchObject({ status: 'Closed', resolvedValue: '32' });
+  });
+
+  it.each([
+    ['ingestion is Blocked', `"ingestion"='Blocked'`],
+    ['it carries a block reason', `"blockedFor"='tos'`],
+  ])('closes a Blocked ruling on a block-marked image whose %s', async (_name, assignment) => {
+    await db.query(`UPDATE "Image" SET ${assignment} WHERE id=1`);
+    await insertItem(1, 1, 'Inquisitor');
+    await insertVote(1, 11, '32', 1);
+
+    expect(await ruleOnInquisitorItem(1, 32, MOD)).toEqual({ ok: true });
+
+    expect((await verdicts(1))[0].verdict).toBe('correct');
   });
 });

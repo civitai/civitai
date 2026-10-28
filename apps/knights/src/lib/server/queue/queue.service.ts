@@ -1,7 +1,9 @@
 import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
+import { utc } from '@civitai/db/kysely';
+import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
-import { NsfwLevel } from '@civitai/shared';
 import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
+import { servableImage } from '../servable-image';
 import {
   canVote,
   FEED_STRETCH_SIZE,
@@ -73,8 +75,6 @@ export type CastVoteResult =
 const addHours = (date: Date, hours: number) => new Date(date.getTime() + hours * 3_600_000);
 const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
 
-const utc = (date: Date) => sql<Date>`${date.toISOString()}::timestamp`;
-
 /** Only images the public feeds would show: the same review-hold conditions as the image feed queries. */
 function servableItems(db: Executor) {
   return db
@@ -85,14 +85,7 @@ function servableItems(db: Executor) {
     .where('i.status', '=', 'Open')
     .where('i.isHiddenCheck', '=', false)
     .where('q.active', '=', true)
-    .where('img.type', '=', 'image')
-    .where('img.nsfwLevel', 'not in', [0, NsfwLevel.Blocked])
-    .where('img.ingestion', '!=', 'Blocked')
-    .where('img.blockedFor', 'is', null)
-    .where('img.needsReview', 'is', null)
-    .where('img.acceptableMinor', '=', false)
-    .where('p.publishedAt', 'is not', null)
-    .where('p.publishedAt', '<', sql<Date>`(now() AT TIME ZONE 'utc')`);
+    .where(servableImage);
 }
 
 export async function getFeed(
@@ -207,15 +200,6 @@ export async function enqueueItem(db: Executor, input: NewItem, now: Date): Prom
     .returning('id')
     .executeTakeFirstOrThrow();
   return row.id;
-}
-
-async function gradeVotes(trx: Executor, itemId: number, value: string) {
-  await trx
-    .updateTable('KnightsVote')
-    .set({ verdict: sql<string>`CASE WHEN "answer" = ${value} THEN 'correct' ELSE 'failed' END` })
-    .where('itemId', '=', itemId)
-    .where('verdict', '=', 'pending')
-    .execute();
 }
 
 async function escalate(
@@ -393,7 +377,7 @@ export async function castVote(
         })
         .where('id', '=', item.id)
         .execute();
-      await gradeVotes(trx, item.id, decision.value);
+      await gradeKnightsVotes(trx, item.id, decision.value);
 
       return { result: { status: 'resolved' }, settledItemId: writesBack ? item.id : undefined };
     });

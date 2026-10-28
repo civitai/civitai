@@ -6,7 +6,8 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
-    "./kysely": "./src/kysely.ts"
+    "./kysely": "./src/kysely.ts",
+    "./knights": "./src/knights.ts"
   },
   "scripts": {
     "test": "vitest run",

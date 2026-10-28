@@ -1,4 +1,4 @@
-import { Kysely, PostgresDialect, type KyselyPlugin } from 'kysely';
+import { Kysely, PostgresDialect, sql, type KyselyPlugin } from 'kysely';
 import { Pool, types, type PoolConfig } from 'pg';
 import { guardPool } from './pool-guard';
 
@@ -17,6 +17,9 @@ export type { Generated, RawBuilder } from 'kysely';
 // For replica routing in the main app, hand it getClient() pools at the call site:
 //   createKyselyClients<DB>({ pool: getClient({ instance: 'primary' }),
 //                             readPool: getClient({ instance: 'primaryRead' }) })
+
+/** Binds a Date as a UTC `timestamp`; node-postgres would otherwise send it in the host's timezone. */
+export const utc = (date: Date) => sql<Date>`${date.toISOString()}::timestamp`;
 
 /** Reads a `timestamp without time zone` value as the UTC instant it was written as. */
 export const parseTimestampAsUtc = (val: string) => new Date(val.replace(' ', 'T') + 'Z');
