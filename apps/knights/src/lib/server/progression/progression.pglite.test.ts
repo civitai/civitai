@@ -279,6 +279,19 @@ describe('career reset (startAt)', () => {
     expect(await who(2)).toMatchObject({ goldEarned: PROGRESSION.baseGold });
   });
 
+  it('does not take a pre-reset vote out of the pending gold earned since the reset', async () => {
+    for (let i = 1; i <= 5; i++) await player(i);
+    await image(10);
+    const id = await item(10);
+    for (let i = 1; i <= 4; i++) await castVote(db, { userId: i, itemId: id, answer: '4' }, deps);
+    await pg.exec(
+      `UPDATE "NewOrderPlayer" SET "startAt"='2026-12-16', "goldPending"=70 WHERE "userId"=1`
+    );
+    await castVote(db, { userId: 5, itemId: id, answer: '4' }, deps);
+
+    expect(await who(1)).toMatchObject({ goldPending: 70, goldEarned: 0 });
+  });
+
   it('counts only votes cast since the reset towards fervor', async () => {
     for (let i = 1; i <= 5; i++) await player(i);
     await image(10);

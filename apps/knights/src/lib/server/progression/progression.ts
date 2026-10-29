@@ -117,7 +117,7 @@ export async function settleItemVotes(
 
     const total = perPlayer.get(vote.playerId) ?? { xp: 0, pending: 0, earned: 0 };
     total.xp += bulk;
-    total.pending += gold;
+    total.pending += reset ? 0 : gold;
     total.earned += paid ? gold : 0;
     perPlayer.set(vote.playerId, total);
   }

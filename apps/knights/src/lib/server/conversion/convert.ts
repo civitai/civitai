@@ -93,9 +93,15 @@ export async function markConversionPaid(
     .execute();
 }
 
-/** Marks a pending conversion failed and gives its gold back, in one transaction. */
+/** Marks a pending conversion failed and gives its gold back, in one transaction. Gold reserved before a career reset was forfeited by it, so it is forfeited here too rather than given back. */
 async function failConversion(db: Kysely<DB>, conversion: Conversion) {
   await db.transaction().execute(async (trx) => {
+    const player = await trx
+      .selectFrom('NewOrderPlayer')
+      .select('startAt')
+      .where('userId', '=', conversion.playerId)
+      .forUpdate()
+      .executeTakeFirst();
     const failed = await trx
       .updateTable('KnightsGoldConversion')
       .set({ status: 'failed' })
@@ -103,9 +109,19 @@ async function failConversion(db: Kysely<DB>, conversion: Conversion) {
       .where('status', '=', 'pending')
       .executeTakeFirst();
     if (Number(failed.numUpdatedRows) === 0) return;
+    const forfeited = player !== undefined && conversion.createdAt < player.startAt;
+    const gold = conversion.gold;
     await trx
       .updateTable('NewOrderPlayer')
-      .set({ goldConverted: sql<number>`"goldConverted" - ${conversion.gold}` })
+      .set({
+        goldConverted: sql<number>`GREATEST(0, "goldConverted" - ${gold})`,
+        ...(forfeited
+          ? {
+              goldEarned: sql<number>`GREATEST(0, "goldEarned" - ${gold})`,
+              goldCleared: sql<number>`GREATEST(0, "goldCleared" - ${gold})`,
+            }
+          : {}),
+      })
       .where('userId', '=', conversion.playerId)
       .execute();
   });
@@ -176,9 +192,19 @@ export async function retryPendingConversions(
   for (const conversion of due) {
     if (Date.now() >= deadline) break;
     retried++;
-    const { status } = await settleConversion(db, buzz, conversion, { now, log });
-    if (status === 'converted') paid++;
-    if (status === 'failed') failed++;
+    try {
+      const { status } = await settleConversion(db, buzz, conversion, { now, log });
+      if (status === 'converted') paid++;
+      if (status === 'failed') failed++;
+    } catch (error) {
+      // one row's database error must not stop the rest; it stays pending for the next tick
+      await log?.({
+        type: 'error',
+        name: 'knights-gold-conversion-retry-error',
+        details: { conversionId: conversion.id, error: String(error) },
+        message: 'A pending gold conversion could not be settled',
+      });
+    }
   }
   return { retried, paid, failed };
 }

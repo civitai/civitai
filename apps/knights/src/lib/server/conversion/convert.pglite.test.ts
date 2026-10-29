@@ -334,6 +334,65 @@ describe('a definitive Buzz rejection', () => {
   });
 });
 
+describe('a career reset', () => {
+  // mirrors the statement resetPlayer runs in the main app
+  const reset = (userId: number) =>
+    pg.exec(`
+      UPDATE "NewOrderPlayer" SET "startAt" = '2026-12-25', "goldPending" = 0,
+        "goldEarned" = "goldConverted", "goldCleared" = "goldConverted" WHERE "userId" = ${userId}`);
+  const gold = async (userId: number) =>
+    (
+      await pg.query(
+        `SELECT "goldPending","goldEarned","goldCleared","goldConverted" FROM "NewOrderPlayer" WHERE "userId"=$1`,
+        [userId]
+      )
+    ).rows[0];
+
+  it('forfeits unconverted gold, keeps what was paid, and lets a reserved conversion finish', async () => {
+    const buzz = fakeBuzz();
+    await seedPlayer(pg, 1);
+    await setGold(pg, 1, { pending: 400, earned: 30_000, cleared: 25_000, converted: 10_000 });
+    await pg.exec(
+      `INSERT INTO "KnightsGoldConversion" ("playerId","gold","buzz","status","externalTransactionId") VALUES (1,10000,10,'pending','k1')`
+    );
+
+    await reset(1);
+
+    expect(await gold(1)).toEqual({
+      goldPending: 0,
+      goldEarned: 10_000,
+      goldCleared: 10_000,
+      goldConverted: 10_000,
+    });
+    expect(await getGoldBalance(db, 1)).toMatchObject({ convertible: 0, awaitingDetection: 0 });
+    expect(
+      await retryPendingConversions(db, buzz.port, { now: new Date(Date.now() + 3_600_000) })
+    ).toMatchObject({ retried: 1, paid: 1 });
+    expect(await gold(1)).toMatchObject({ goldEarned: 10_000, goldConverted: 10_000 });
+    expect(await conversions()).toEqual([expect.objectContaining({ status: 'paid' })]);
+  });
+
+  it('does not give back a before-reset conversion that Buzz later refuses', async () => {
+    await seedPlayer(pg, 1);
+    await setGold(pg, 1, { earned: 10_000, cleared: 10_000 });
+    await convertGold(db, fakeBuzz({ failFirst: true }).port, { playerId: 1, now: NOW });
+    await pg.exec(`UPDATE "KnightsGoldConversion" SET "createdAt" = '2026-12-24'`);
+    await reset(1);
+
+    await retryPendingConversions(db, fakeBuzz({ reject: true }).port, {
+      now: new Date('2027-01-01'),
+    });
+
+    expect(await gold(1)).toEqual({
+      goldPending: 0,
+      goldEarned: 0,
+      goldCleared: 0,
+      goldConverted: 0,
+    });
+    expect(await conversions()).toEqual([expect.objectContaining({ status: 'failed' })]);
+  });
+});
+
 describe('markConversionPaid', () => {
   it('never overwrites a stored Buzz transaction id, and fills in a missing one', async () => {
     await pg.exec(
@@ -370,6 +429,30 @@ describe('retryPendingConversions', () => {
       retried: 1,
       paid: 1,
     });
+  });
+
+  it('goes on to the next conversion when one cannot be settled', async () => {
+    const log = vi.fn();
+    await seedPlayer(pg, 1);
+    for (const key of ['k1', 'k2'])
+      await pg.exec(
+        `INSERT INTO "KnightsGoldConversion" ("playerId","gold","buzz","status","externalTransactionId","createdAt") VALUES (1,5000,5,'pending','${key}','2026-12-20 12:00:00')`
+      );
+    await pg.exec(
+      `CREATE OR REPLACE FUNCTION boom() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'boom'; END $$ LANGUAGE plpgsql;
+       CREATE TRIGGER boom BEFORE UPDATE ON "KnightsGoldConversion" FOR EACH ROW WHEN (OLD."externalTransactionId" = 'k1') EXECUTE FUNCTION boom()`
+    );
+
+    const result = await retryPendingConversions(db, fakeBuzz().port, {
+      now: new Date(Date.UTC(2026, 11, 20, 13)),
+      log,
+    });
+    await pg.exec(`DROP TRIGGER boom ON "KnightsGoldConversion"`);
+
+    expect(result).toEqual({ retried: 2, paid: 1, failed: 0 });
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'knights-gold-conversion-retry-error' })
+    );
   });
 
   it('stops at the limit and when its time budget is spent', async () => {

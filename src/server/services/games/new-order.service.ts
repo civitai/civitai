@@ -1404,6 +1404,12 @@ export async function resetPlayer({
       where: { userId: playerId },
       data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0, startAt: new Date() },
     }),
+    // Knights v2 gold: unconverted gold is forfeited like the counters below; paid and reserved gold stays
+    dbWrite.$executeRaw`
+      UPDATE "NewOrderPlayer"
+      SET "goldPending" = 0, "goldEarned" = "goldConverted", "goldCleared" = "goldConverted"
+      WHERE "userId" = ${playerId}
+    `,
     // Cleanse all smites
     dbWrite.newOrderSmite.updateMany({
       where: { targetPlayerId: playerId, cleansedAt: null },
