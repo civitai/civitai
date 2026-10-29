@@ -35,8 +35,7 @@ export function MasonryCarousel<TData>({
   return data.length ? (
     <Embla
       key={id}
-      // The viewport clips at the first slide's edge, so the hats are drawn into a layer over the
-      // carousel: past a card's corner by the page's gutter on the left and the full bleed above.
+      // Allowance matches the page gutter (left) and full bleed (top); the layer hangs hats into it.
       hatLayer
       className={clsx(
         '[--event-decoration-allowance-top:36px] [--event-decoration-allowance:16px] [--event-decoration-grow:1] md:[--event-decoration-allowance:36px]',

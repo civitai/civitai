@@ -119,6 +119,10 @@ vi.mock('~/components/TrackView/useTrackImpression', () => ({
 }));
 
 const { ImagesAsPostsCard } = await import('~/components/Image/AsPosts/ImagesAsPostsCard');
+const { getEventDecorationClearLeftCss, HAT_PLAIN_CARD_NUDGE } = await import(
+  '~/components/Cosmetics/EventDecoration/event-decoration-placement'
+);
+const hatData = { type: 'hat', event: 'birthday2026', url: 'hat.png' };
 
 type Image = ReturnType<typeof h.image>;
 const images = (n: number, hattedId?: number) =>
@@ -164,7 +168,7 @@ const clickNext = () =>
     next.click();
   });
 
-// happy-dom has no layout; the hat layer draws a card's hat only where the card's corner is in view.
+// happy-dom has no layout, so the hat layer draws nothing without this.
 const rectOf = { x: 0, y: 0, left: 0, top: 0, right: 400, bottom: 300, width: 400, height: 300 };
 
 beforeEach(() => {
@@ -187,14 +191,18 @@ describe('a gallery post card wears a hat only on the image that wears it', () =
     await renderCard(images(1, 1));
     expect(shownId()).toBe('1');
     expect(hatOn()).toBe('1');
-    expect(badgeClearance()).toMatch(/^calc\(/);
+    expect(badgeClearance()).toBe(
+      getEventDecorationClearLeftCss(hatData, 'corner', HAT_PLAIN_CARD_NUDGE)
+    );
   });
 
   it('hat on the cover: shown on the cover, gone when another slide shows', async () => {
     await renderCard(images(3, 1));
     expect(shownId()).toBe('1');
     expect(hatOn()).toBe('1');
-    expect(badgeClearance()).toMatch(/^calc\(/);
+    expect(badgeClearance()).toBe(
+      getEventDecorationClearLeftCss(hatData, 'corner', HAT_PLAIN_CARD_NUDGE)
+    );
 
     await clickNext();
     expect(shownId()).toBe('2');

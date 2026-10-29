@@ -124,7 +124,7 @@ const badgeGroup = (imageId: number) =>
 const badgeClearance = (imageId: number) =>
   badgeGroup(imageId)?.style.getPropertyValue('--event-decoration-clear-left');
 
-// happy-dom has no layout; the hat layer draws a card's hat only where the card's corner is in view.
+// happy-dom has no layout, so the hat layer draws nothing without this.
 const rectOf = { x: 0, y: 0, left: 0, top: 0, right: 400, bottom: 300, width: 400, height: 300 };
 
 beforeEach(() => {
@@ -149,12 +149,10 @@ describe('the post page wears each image hat on that image, as the cards do', ()
     expect(hats()).toHaveLength(1);
     const hat = hats()[0];
     expect(hat.closest('[data-worn-on]')?.getAttribute('data-worn-on')).toBe('2');
-    // Drawn into the layer around the image's rounded clip, so it hangs past the corner.
     const layer = hat.closest('[data-testid="hat-layer"]');
     expect(layer).not.toBeNull();
     expect(layer?.parentElement?.contains(frameOf(2) ?? null)).toBe(true);
     expect(frameOf(2)?.contains(hat)).toBe(false);
-    // On the corner, so the badges step clear of where a feed card's hat reaches.
     const hatData = h.image(2, true).eventDecoration!.data;
     expect(badgeClearance(2)).toBe(
       getEventDecorationClearLeftCss(hatData, 'corner', HAT_PLAIN_CARD_NUDGE)

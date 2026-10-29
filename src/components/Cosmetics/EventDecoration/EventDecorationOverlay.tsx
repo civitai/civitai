@@ -60,10 +60,9 @@ export function EventDecorationOverlay({
       wornOn={wornOn}
     />
   );
-  // Where the card's container clips, an ancestor's hat layer carries the hat past its corner.
   if (hatLayer?.layer && placement === 'corner' && allowance === undefined)
     return (
-      <LayeredHat layer={hatLayer.layer} hidden={hatLayer.moving}>
+      <LayeredHat layer={hatLayer.layer} hidden={hatLayer.moving} version={hatLayer.version}>
         {({ width }) => hat(width)}
       </LayeredHat>
     );
@@ -73,10 +72,9 @@ export function EventDecorationOverlay({
 export type WornDecoration = { data: EventDecorationData } | null | undefined;
 
 /**
- * One image's own hat, in its media's corner. The media clips at its edge, so the hat stays inside
- * it, unless the caller gives the `allowance` its slot can show, or an ancestor's hat layer carries
- * it: then it sits on the corner as in the feed. For views that show one image's media (a gallery post's slides, the post page, the
- * image detail).
+ * One image's own hat, in its media's corner. The media clips at its edge, so the hat stays
+ * inside it unless the caller passes an `allowance` or an ancestor's hat layer carries it past
+ * the corner.
  */
 export function ImageMediaHat({
   imageId,

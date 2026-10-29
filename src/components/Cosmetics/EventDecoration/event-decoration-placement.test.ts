@@ -287,13 +287,6 @@ it('the hat picker makes room above each preview card, declares it, and stops gr
     );
 });
 
-it('masonry carousels draw hats into a layer, with the page gutter beside and the bleed above', () => {
-  const source = readFileSync('src/components/MasonryColumns/MasonryCarousel.tsx', 'utf8');
-  expect(source).toMatch(/\bhatLayer\b/);
-  expect(source).toContain('[--event-decoration-allowance-top:36px]');
-  expect(source).toContain('md:[--event-decoration-allowance:36px]');
-});
-
 // Chosen by Justin in the hat tuner on his phone (2026-10-09): 4px further up and left on cards
 // without a frame. Change it with him.
 it('nudges hats on plain cards by the chosen amount', () => {

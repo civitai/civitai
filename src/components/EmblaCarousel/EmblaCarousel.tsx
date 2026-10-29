@@ -46,18 +46,19 @@ type EmblaCarouselWrapperProps = {
   controlSize?: number;
   withIndicators?: boolean;
   withControls?: boolean;
-  /** Draws the hats worn by its slides into an unclipped layer over the carousel. */
   hatLayer?: boolean;
 };
 
-// A hat layer cannot ride a moving slide, so its hats wait out the scroll.
-const HAT_SETTLE_FALLBACK_MS = 800;
+// Fallback for when no settle event arrives; hats stay hidden at most this long.
+export const HAT_SETTLE_FALLBACK_MS = 800;
 
 function EmblaHatMotion() {
   const emblaApi = useEmblaStore((state) => state.emblaApi);
-  const setMoving = useHatLayer()?.setMoving;
+  const hatLayer = useHatLayer();
+  const setMoving = hatLayer?.setMoving;
+  const remeasure = hatLayer?.remeasure;
   useEffect(() => {
-    if (!emblaApi || !setMoving) return;
+    if (!emblaApi || !setMoving || !remeasure) return;
     let fallback: ReturnType<typeof setTimeout> | undefined;
     const settle = () => {
       clearTimeout(fallback);
@@ -68,12 +69,17 @@ function EmblaHatMotion() {
       clearTimeout(fallback);
       fallback = setTimeout(settle, HAT_SETTLE_FALLBACK_MS);
     };
-    emblaApi.on('scroll', scroll).on('settle', settle).on('reInit', settle);
+    // A re-init moves the slides without resizing them, so the hats measure again.
+    const reInit = () => {
+      settle();
+      remeasure();
+    };
+    emblaApi.on('scroll', scroll).on('settle', settle).on('reInit', reInit);
     return () => {
       clearTimeout(fallback);
-      emblaApi.off('scroll', scroll).off('settle', settle).off('reInit', settle);
+      emblaApi.off('scroll', scroll).off('settle', settle).off('reInit', reInit);
     };
-  }, [emblaApi, setMoving]);
+  }, [emblaApi, setMoving, remeasure]);
   return null;
 }
 
@@ -91,6 +97,8 @@ function EmblaCarouselWrapper({
   const withKeyboardEvents = useEmblaStore((state) => state.withKeyboardEvents);
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
+      // A hat drawn into the carousel's layer bubbles its keys here; its focus must not scroll away.
+      if ((event.target as Element).closest?.('[data-event-decoration="hat"]')) return;
       if (withKeyboardEvents) {
         if (event.key === 'ArrowRight') {
           event.preventDefault();

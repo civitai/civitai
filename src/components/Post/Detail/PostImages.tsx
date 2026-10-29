@@ -121,7 +121,7 @@ export function PostImages({
                       : maxWidth,
                 }}
               >
-                {/* The rounded clip is inside the Paper, so the hat layer around it can hang a hat past the corner. */}
+                {/* Host sits outside the clip so hats can overhang the rounded corner. */}
                 <HatLayerHost>
                   <div className="overflow-hidden" style={{ borderRadius: 'inherit' }}>
                     <ImageGuard2 image={image} connectType="post" connectId={postId}>

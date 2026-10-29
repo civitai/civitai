@@ -1,9 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
 
-// A masonry carousel's viewport clips at its first slide, so a worn hat is drawn into a layer over
-// the carousel: past the card's corner, only for the slides in view, and not while they move.
-// Drives the real MasonryCarousel, Embla and hat overlay. Browser mode only: needs a real layout.
+// Browser mode only: needs a real layout.
 
 const HAT_URL =
   'data:image/svg+xml,' +
@@ -21,6 +19,7 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
 import '~/styles/globals.css';
 import { renderWithProviders } from '../../../test/component-setup';
 import { MasonryCarousel } from '~/components/MasonryColumns/MasonryCarousel';
+import { HAT_SETTLE_FALLBACK_MS } from '~/components/EmblaCarousel/EmblaCarousel';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 
@@ -51,8 +50,6 @@ async function carousel() {
     </div>
   );
   await vi.waitFor(() => expect(hats().length).toBeGreaterThan(0));
-  // Settled: Embla's first scroll event is its own initial position.
-  await new Promise((r) => setTimeout(r, 1200));
 }
 
 describe('a hat on a masonry carousel card', () => {
@@ -61,11 +58,14 @@ describe('a hat on a masonry carousel card', () => {
     const root = document.querySelector('[data-testid="root"]')!;
     const cards = [...document.querySelectorAll('[data-testid="card"]')];
     const first = cards.reduce((a, b) => (rect(b).left < rect(a).left ? b : a));
-    const h = hats().find((el) => {
+    let h!: Element;
+    await vi.waitFor(() => {
       const c = rect(first);
-      return Math.abs(rect(el).left - c.left) < 80 && Math.abs(rect(el).top - c.top) < 80;
-    })!;
-    expect(h).toBeTruthy();
+      h = hats().find(
+        (el) => Math.abs(rect(el).left - c.left) < 80 && Math.abs(rect(el).top - c.top) < 80
+      )!;
+      expect(h).toBeTruthy();
+    });
     expect(rect(first).top - rect(h).top).toBeGreaterThanOrEqual(34);
     expect(rect(first).left - rect(h).left).toBeGreaterThanOrEqual(24);
     expect(rect(h).left).toBeGreaterThanOrEqual(rect(root).left - 40);
@@ -78,9 +78,24 @@ describe('a hat on a masonry carousel card', () => {
       expect(rect(h).left).toBeGreaterThanOrEqual(rect(root).left - 40);
       expect(rect(h).right).toBeLessThanOrEqual(rect(root).right + 40);
     }
-    await userEvent.click(document.querySelector<HTMLElement>('button.right-3')!);
-    await vi.waitFor(() => expect(hats()).toHaveLength(0));
-    await vi.waitFor(() => expect(hats().length).toBeGreaterThan(0), { timeout: 4000 });
+    // Sampled every frame, so the hidden stretch is recorded rather than polled for.
+    let fewest = Infinity;
+    let sampling = true;
+    const sample = () => {
+      fewest = Math.min(fewest, hats().length);
+      if (sampling) requestAnimationFrame(sample);
+    };
+    sample();
+    try {
+      await userEvent.click(document.querySelector<HTMLElement>('button.right-3')!);
+      await vi.waitFor(() => expect(fewest).toBe(0));
+      await vi.waitFor(() => expect(hats().length).toBeGreaterThan(0), {
+        timeout: HAT_SETTLE_FALLBACK_MS + 1000,
+      });
+    } finally {
+      sampling = false;
+    }
+    expect(hats().length).toBeLessThan(items.length);
     for (const h of hats()) {
       expect(rect(h).left).toBeGreaterThanOrEqual(rect(root).left - 40);
       expect(rect(h).right).toBeLessThanOrEqual(rect(root).right + 40);

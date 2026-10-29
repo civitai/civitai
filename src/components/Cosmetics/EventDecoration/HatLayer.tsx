@@ -7,6 +7,9 @@ type HatLayerState = {
   /** A carousel inside is moving its slides, so a hat drawn here would be left behind. */
   moving: boolean;
   setMoving: (moving: boolean) => void;
+  /** Bumped when the carousel re-initialises: its slides moved without a resize, so hats re-measure. */
+  version: number;
+  remeasure: () => void;
 };
 
 const HatLayerContext = createContext<HatLayerState | null>(null);
@@ -15,16 +18,17 @@ const HatLayerContext = createContext<HatLayerState | null>(null);
 export const useHatLayer = () => useContext(HatLayerContext);
 
 /**
- * An unclipped layer over the nearest positioned ancestor, for hats whose card sits inside a
- * clipping container (a carousel viewport, a rounded `overflow-hidden` card). Put it OUTSIDE the
- * element that clips. Hats under it draw into the layer instead of beside their card, so they
- * hang past the card's corner as in the feed. The room past the layer's edge is the container's
- * `--event-decoration-allowance`, as everywhere else.
+ * An unclipped layer over the nearest positioned ancestor that worn hats draw into. Put it
+ * OUTSIDE the element that clips, or the hats are clipped with it.
  */
 export function HatLayerHost({ children }: { children: ReactNode }) {
   const [layer, setLayer] = useState<HTMLDivElement | null>(null);
   const [moving, setMoving] = useState(false);
-  const value = useMemo(() => ({ layer, moving, setMoving }), [layer, moving]);
+  const [version, setVersion] = useState(0);
+  const value = useMemo(
+    () => ({ layer, moving, setMoving, version, remeasure: () => setVersion((v) => v + 1) }),
+    [layer, moving, version]
+  );
   return (
     <HatLayerContext.Provider value={value}>
       {children}
@@ -40,17 +44,21 @@ export function HatLayerHost({ children }: { children: ReactNode }) {
 type Box = { left: number; top: number; width: number; height: number };
 
 /**
- * Draws `children` into the hat layer over the card this is placed in (a positioned parent), at
- * the card's size. Nothing is drawn while the layer's carousel moves, or for a card whose corner
- * or middle is outside the layer (a slide out of view).
+ * Draws `children` into the hat layer at the size of the positioned parent this is placed in.
+ * DrawnMediaHat (the image detail) has its own layer and portal because it differs where it
+ * counts: it measures the picture drawn inside a letterboxed slot, sizes its own room per edge
+ * (an `allowance`, not the container's CSS variable) and holds still on the slide it is given;
+ * this one measures the card, reads the CSS variable, and also hides slides out of view.
  */
 export function LayeredHat({
   layer,
   hidden,
+  version,
   children,
 }: {
   layer: HTMLElement;
   hidden: boolean;
+  version: number;
   children: (box: Box) => ReactNode;
 }) {
   const hostRef = useRef<HTMLSpanElement | null>(null);
@@ -65,7 +73,7 @@ export function LayeredHat({
     const measure = () => {
       const at = host.getBoundingClientRect();
       const around = layer.getBoundingClientRect();
-      // Its corner is in view and most of it: a slide peeking in from the side wears no hat yet.
+      // A slide peeking in from the side wears no hat until its middle is in view.
       const inView =
         at.left >= around.left - 1 &&
         at.left + at.width / 2 < around.right &&
@@ -95,7 +103,7 @@ export function LayeredHat({
     observer.observe(layer);
     observer.observe(host);
     return () => observer.disconnect();
-  }, [layer, hidden]);
+  }, [layer, hidden, version]);
 
   return (
     <>

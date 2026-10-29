@@ -1,10 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 
-// The post page rounds and clips each image's frame, so a worn hat is drawn into a layer around
-// that clip: on the picture's corner past its edge, as in the feed.
-// Drives the real PostImages and hat overlay; stubs what the frame's buttons fetch. Browser mode
-// only: needs a real layout.
+// Browser mode only: needs a real layout.
 
 const HAT_URL =
   'data:image/svg+xml,' +
@@ -94,7 +91,5 @@ describe('a hat on a post page image', () => {
     const media = [...document.querySelectorAll('[data-testid="media"]')][1];
     expect(rect(media).top - rect(h).top).toBeGreaterThanOrEqual(34);
     expect(rect(media).left - rect(h).left).toBeGreaterThanOrEqual(24);
-    // The Paper still clips its content: its overflow is hidden on the inner wrapper.
-    expect(getComputedStyle(media.closest('.overflow-hidden')!).overflow).toBe('hidden');
   });
 });

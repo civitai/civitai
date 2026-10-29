@@ -1,10 +1,7 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 
-// The model page's carousel clips at each slide's edge, so a worn hat is drawn into a layer over
-// the carousel: on the picture's corner past its edge, as in the feed.
-// Drives the real ModelCarousel, Embla and hat overlay; stubs what the slide fetches and its
-// buttons. Browser mode only: needs a real layout.
+// Browser mode only: needs a real layout.
 
 const HAT_URL =
   'data:image/svg+xml,' +
@@ -106,18 +103,20 @@ describe('a hat on a model page carousel picture', () => {
       </div>
     );
     await vi.waitFor(() => expect(hats().length).toBeGreaterThan(0));
-    await new Promise((r) => setTimeout(r, 1200));
     const root = rect(document.querySelector('[data-testid="root"]'));
     const slides = [...document.querySelectorAll('.relative.w-full')].filter(
       (el) => el.querySelector('[data-testid="blur-toggle"]') && rect(el).width > 100
     );
     const first = slides.reduce((a, b) => (rect(b).left < rect(a).left ? b : a));
-    const h = hats().find((el) => Math.abs(rect(el).left - rect(first).left) < 80)!;
-    expect(h).toBeTruthy();
+    let h!: Element;
+    await vi.waitFor(() => {
+      h = hats().find((el) => Math.abs(rect(el).left - rect(first).left) < 80)!;
+      expect(h).toBeTruthy();
+    });
     expect(rect(first).top - rect(h).top).toBeGreaterThanOrEqual(34);
     expect(rect(first).left - rect(h).left).toBeGreaterThanOrEqual(24);
     expect(rect(h).left).toBeGreaterThanOrEqual(root.left - 40);
-    // The third image wears one too, further along; the middle one wears none.
-    expect(hats().length).toBeLessThanOrEqual(2);
+    // Two pictures are in view and only the first wears a hat; the third, out of view, has none drawn.
+    expect(hats()).toHaveLength(1);
   });
 });

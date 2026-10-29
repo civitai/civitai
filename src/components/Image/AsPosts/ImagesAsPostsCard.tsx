@@ -143,8 +143,7 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
     </TwCosmeticWrapper>
   );
 
-  // The card clips its media, so a worn hat is drawn into a layer around the card, past its corner:
-  // for a post that has one, or may bring one with its lazily fetched tail.
+  // imageCount > images.length: the lazily fetched tail may bring a hat the first page lacks.
   const mayWearHat =
     data.images.some((i) => i.eventDecoration) || (data.imageCount ?? 0) > data.images.length;
   return mayWearHat ? (

@@ -134,7 +134,6 @@ function ModelCarouselContent({ modelId, modelVersionId, modelUserId, limit = 10
                     <ImpressionSentinel
                       impressions={[{ entityType: 'Image', entityId: image.id }]}
                     />
-                    {/* The viewport clips at the slide's edge: the carousel's hat layer draws the hat. */}
                     {image.eventDecoration && (
                       <EventDecorationOverlay
                         decoration={image.eventDecoration.data}

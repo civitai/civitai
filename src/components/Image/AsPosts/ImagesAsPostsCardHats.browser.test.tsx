@@ -142,6 +142,7 @@ vi.mock('~/components/TrackView/track.utils', () => ({
 import '~/styles/globals.css';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { ImagesAsPostsCard } from '~/components/Image/AsPosts/ImagesAsPostsCard';
+import { HAT_SETTLE_FALLBACK_MS } from '~/components/EmblaCarousel/EmblaCarousel';
 
 const images = (n: number, hattedId?: number, from = 1) =>
   Array.from({ length: n }, (_, i) => mocks.image(from + i, from + i === hattedId)) as any[];
@@ -166,8 +167,6 @@ const hatOn = () => {
   const id = hat.closest('[data-worn-on]')?.getAttribute('data-worn-on') ?? '?';
   return hat.closest('[data-testid="hat-layer"]') ? id : `outside:${id}`;
 };
-// The images whose hats are drawn: the layer draws only the slide whose corner is in view, so the
-// neighbours embla mounts beside it have none.
 const hatsDrawn = () =>
   Array.from(document.querySelectorAll('button[data-event-decoration="hat"]')).map((hat) =>
     hat.closest('[data-worn-on]')?.getAttribute('data-worn-on')
@@ -197,7 +196,6 @@ describe('a gallery post card wears a hat only on the slide that wears it', () =
     const hat = document
       .querySelector('button[data-event-decoration="hat"]')!
       .getBoundingClientRect();
-    // The card's media clips at its edge; the hat is above and left of it as on a feed card.
     expect(media.top - hat.top).toBeGreaterThanOrEqual(24);
     expect(media.left - hat.left).toBeGreaterThanOrEqual(12);
   });
@@ -249,9 +247,20 @@ describe('a gallery post card wears a hat only on the slide that wears it', () =
     await vi.waitFor(() => expect(hatsDrawn()).toEqual([]));
 
     await clickNext();
-    await vi.waitFor(() => expect(hatsDrawn()).toEqual(['2']), { timeout: 3000 });
+    await vi.waitFor(() => expect(hatsDrawn()).toEqual(['2']), {
+      timeout: HAT_SETTLE_FALLBACK_MS + 1000,
+    });
 
     await clickNext();
-    await vi.waitFor(() => expect(hatsDrawn()).toEqual([]));
+    // Settled on the third slide: `[]` mid-scroll would also hold.
+    await vi.waitFor(
+      () => {
+        const slides = [...document.querySelectorAll('.transform-3d')];
+        const media = document.querySelector('.flex-1.overflow-hidden')!.getBoundingClientRect();
+        expect(Math.abs(slides[2].getBoundingClientRect().left - media.left)).toBeLessThan(2);
+      },
+      { timeout: HAT_SETTLE_FALLBACK_MS + 1000 }
+    );
+    expect(hatsDrawn()).toEqual([]);
   });
 });
