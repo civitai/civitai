@@ -23,7 +23,6 @@ import {
 } from '~/server/services/legal-hold.service';
 import {
   detachHeldThreadsCte,
-  detachHeldThreadsSql,
   heldLegacyCommentOnModelSql,
   modelThreadParents,
 } from '~/server/services/comment-thread-hold';
@@ -2427,42 +2426,25 @@ export const permaDeleteModelById = async ({
 
       // Get images to delete and queue search index updates
       let imagesToDelete: { id: number }[] = [];
+      // Each delete detaches its held threads in the same statement, so a hold placed between the
+      // two still keeps them.
       if (postIds.length > 0) {
         imagesToDelete = await tx.image.findMany({
           where: { postId: { in: postIds } },
           select: { id: true },
         });
 
-        await tx
-          .$executeRaw(
-            detachHeldThreadsSql(
-              { imageId: Prisma.sql`SELECT unnest(${imagesToDelete.map((i) => i.id)}::int[])` },
-              true
-            )
-          )
-          .catch(holdUnconfirmed);
-        await tx.image.deleteMany({
-          where: { postId: { in: postIds } },
-        });
+        const doomedImages = Prisma.sql`SELECT i.id FROM "Image" i WHERE i."postId" = ANY(${postIds}::int[])`;
+        await tx.$executeRaw`
+            WITH ${detachHeldThreadsCte({ imageId: doomedImages }, true)}
+            DELETE FROM "Image" WHERE id IN (${doomedImages})`.catch(holdUnconfirmed);
       }
 
-      await tx
-        .$executeRaw(
-          detachHeldThreadsSql(
-            {
-              postId: Prisma.sql`SELECT p.id FROM "Post" p
-              WHERE p."userId" = ${model.userId} AND p."modelVersionId" = ANY(${versionIds}::int[])`,
-            },
-            true
-          )
-        )
-        .catch(holdUnconfirmed);
-      await tx.post.deleteMany({
-        where: {
-          userId: model.userId,
-          modelVersionId: { in: versionIds },
-        },
-      });
+      const doomedPosts = Prisma.sql`SELECT p.id FROM "Post" p
+        WHERE p."userId" = ${model.userId} AND p."modelVersionId" = ANY(${versionIds}::int[])`;
+      await tx.$executeRaw`
+          WITH ${detachHeldThreadsCte({ postId: doomedPosts }, true)}
+          DELETE FROM "Post" WHERE id IN (${doomedPosts})`.catch(holdUnconfirmed);
 
       // Checked in the DELETE itself, so a hold placed during this transaction still stops it, and
       // the rollback restores the posts and images.

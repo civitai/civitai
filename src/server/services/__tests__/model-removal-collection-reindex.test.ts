@@ -459,6 +459,7 @@ describe('permaDeleteModelById — legal hold', () => {
   );
   let db: PGlite;
   let refusal: string | undefined;
+  let executed: string[] = [];
 
   beforeAll(async () => {
     db = new PGlite();
@@ -512,12 +513,19 @@ describe('permaDeleteModelById — legal hold', () => {
       threadCommenter = null as number | null,
     } = {}
   ) {
-    mockDbWrite.$executeRaw.mockImplementation((async (sql: Prisma.Sql) => {
+    // The post and image deletes run for real, each with its thread detach in the same statement.
+    mockDbWrite.$executeRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...(values as never[]));
+      executed.push(sql.text);
       const post = sql.text.includes('p."modelVersionId"');
       if (detachFails === true || (detachFails === 'post' && post))
         throw new Error('relation "EvidenceHeldUser" does not exist');
-      return 0;
+      return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
     }) as never);
+    executed = [];
     await db.exec(`DELETE FROM "Thread"; DELETE FROM "Model"; DELETE FROM "Comment";`);
     if (heldCommenter)
       await db.exec(
@@ -670,6 +678,46 @@ describe('permaDeleteModelById — legal hold', () => {
       rolledBack: false,
     });
     expect(vi.mocked(deleteModelFileObjects)).toHaveBeenCalledWith(['models/held.safetensors']);
+  });
+
+  it("deletes the model's post and image, and keeps a held author's threads off them", async () => {
+    await db.exec(`
+      DELETE FROM "Post"; DELETE FROM "Image" WHERE id = ${IMAGE_ID};
+      INSERT INTO "Post" (id, "userId", "modelVersionId") VALUES (${POST_ID}, ${OWNER_ID}, ${VERSION_ID});
+      INSERT INTO "Image" (id, "userId", "postId") VALUES (${IMAGE_ID}, ${OWNER_ID}, ${POST_ID});
+    `);
+    // Seeded after the harness clears the threads: a held author's and an unheld one's on each.
+    const seedThreads = () =>
+      db.exec(`
+        INSERT INTO "Thread" (id, "postId") VALUES (800, ${POST_ID}), (802, ${POST_ID});
+        INSERT INTO "Thread" (id, "imageId") VALUES (801, ${IMAGE_ID}), (803, ${IMAGE_ID});
+        INSERT INTO "CommentV2" ("userId", "threadId") VALUES
+          (${REPORTED_OWNER}, 800), (${REPORTED_OWNER}, 801), (${OWNER_ID}, 802), (${OWNER_ID}, 803);
+      `);
+    mockDbWrite.post.findMany.mockImplementationOnce((async () => {
+      await seedThreads();
+      return [{ id: POST_ID }];
+    }) as never);
+
+    expect(await permaDeleteOwnedBy(OWNER_ID)).toMatchObject({ result: 'deleted', left: 0 });
+
+    expect((await db.query(`SELECT id FROM "Post" WHERE id = ${POST_ID}`)).rows).toEqual([]);
+    expect((await db.query(`SELECT id FROM "Image" WHERE id = ${IMAGE_ID}`)).rows).toEqual([]);
+    const threads = await db.query<{ id: number; postId: number | null; imageId: number | null }>(
+      `SELECT id, "postId", "imageId" FROM "Thread" WHERE id >= 800 ORDER BY id`
+    );
+    expect(threads.rows).toEqual([
+      { id: 800, postId: null, imageId: null },
+      { id: 801, postId: null, imageId: null },
+      { id: 802, postId: POST_ID, imageId: null },
+      { id: 803, postId: null, imageId: IMAGE_ID },
+    ]);
+    // In the statement that deletes them: a hold placed between two statements would be missed.
+    for (const table of ['Image', 'Post'])
+      expect(
+        executed.find((text) => text.includes(`DELETE FROM "${table}"`)),
+        table
+      ).toMatch(/detachedFrom[\s\S]*DELETE FROM/);
   });
 
   it("deletes the model, and keeps a held author's comment thread off it", async () => {
