@@ -1492,6 +1492,6 @@ export async function clearTosOrKeep(
       message: 'Clearing a ToS flag failed; the comment stays hidden',
       details: { table, id, error: (e as Error)?.message },
     }).catch(() => undefined);
-    return { userId: null, held: false, cleared: false, failed: true };
+    return { userId: null, held: false, cleared: false, reopened: 0, failed: true };
   }
 }
