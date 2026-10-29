@@ -101,6 +101,14 @@ export function normalizeChecklist(raw: unknown): ChecklistItem[] | null {
   return items;
 }
 
+/**
+ * Whether a checklist still waits on the user's Build it: one whose items are all done does not, since
+ * there is nothing left to build (the list the assistant shows once the app is finished).
+ */
+export function checklistAwaitsBuild(items: readonly ChecklistItem[]): boolean {
+  return items.some((item) => !item.done);
+}
+
 interface Verification {
   /** The last preview check's verdict since the last file change or other command; null when none ran. */
   preview: string | null;
@@ -288,13 +296,16 @@ export function createGateCore({
     if (name !== REPORT_READY) running = Math.max(0, running - 1);
     verify(result);
     // A checklist a server runner showed: its Build it is the one waiting (the page shows the card).
+    // One with every item done never is, whatever a runner without that rule said.
     const shown = output as { awaitsUser?: unknown; checklist?: unknown } | null | undefined;
+    const items = normalizeChecklist((result.input as { items?: unknown } | null)?.items);
     if (
       name === SET_CHECKLIST &&
       !isError &&
       subagent === undefined &&
       shown?.awaitsUser === true &&
-      typeof shown.checklist === 'string'
+      typeof shown.checklist === 'string' &&
+      !(items && !checklistAwaitsBuild(items))
     )
       awaiting = { id: shown.checklist, app: currentApp?.() ?? null };
   };
@@ -307,7 +318,7 @@ export function createGateCore({
 
   const set_checklist: AssistantTool = {
     description:
-      'Show the user the list of features they asked for, as a checklist with a Build it button. Call it before you scaffold, with every requested feature and nothing they did not ask for, and in the same message, before the call, write one short sentence asking the user to tap Build it or say what to change. Call it again with done: true on an item once it works and has a passing test. Changing the labels shows the user the new list and ends your reply.',
+      'Show the user the list of features they asked for, as a checklist with a Build it button. Call it before you scaffold, with every requested feature and nothing they did not ask for, and in the same message, before the call, write one short sentence asking the user to tap Build it or say what to change. Call it again with done: true on an item once it works and has a passing test. Changing the labels while an item is still open shows the user the new list and ends your reply.',
     activity: 'Writing the feature checklist…',
     inputSchema: {
       properties: {
@@ -333,13 +344,16 @@ export function createGateCore({
         throw new Error(
           `items must be an array of 1-${CHECKLIST_MAX_ITEMS} { label, done } objects, each label 1-${CHECKLIST_LABEL_MAX} characters.`
         );
+      // Against the last checklist this gate knows: on the runner, `restore` seeds it from the
+      // conversation's earlier replies; the page knows only this page load's. Marking items done is
+      // progress, not a new list.
       const changed =
         !checklist ||
         checklist.length !== items.length ||
         checklist.some((item, i) => item.label !== items[i].label);
       checklist = items;
       const tag = checklistApp ? { app: checklistApp() } : {};
-      if (changed) {
+      if (changed && checklistAwaitsBuild(items)) {
         awaiting = { id: `${checklistPrefix}-${++checklistCalls}`, app: currentApp?.() ?? null };
         return {
           shown: true,

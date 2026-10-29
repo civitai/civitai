@@ -456,6 +456,65 @@ describe('App Assistant’s gate on the runner', () => {
   });
 });
 
+describe('Build it on the runner', () => {
+  const LABELS = ['Split the bill', 'Round up the tip'];
+  const items = (...done: boolean[]) => LABELS.map((label, i) => ({ label, done: done[i] }));
+  /** The reply that showed the list and waited for Build it, as the conversation saved it. */
+  const shownEarlier = () =>
+    messagesOf([
+      [
+        'set_checklist',
+        { items: items(false, false) },
+        { shown: true, awaitsUser: true, checklist: 'run1-1', note: 'shown', app: 'my-app' },
+      ],
+    ]);
+  const checklistsReported = (reported: ChatToolResult[]) =>
+    reported.filter((result) => result.name === 'set_checklist').map((result) => result.output);
+
+  it('the reply after Build it ticks the list off without offering Build it again', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open({
+      history: { earlier: shownEarlier(), current: [] },
+    });
+    expect(await call(tools.tools, 'set_checklist', { items: items(true, false) })).toEqual({
+      updated: true,
+      open: 1,
+      app: 'my-app',
+    });
+    expect(await call(tools.tools, 'set_checklist', { items: items(true, true) })).toEqual({
+      updated: true,
+      open: 0,
+      app: 'my-app',
+    });
+    // What the page is told, which decides its Build it.
+    expect(checklistsReported(reported)).toEqual([
+      { updated: true, open: 1, app: 'my-app' },
+      { updated: true, open: 0, app: 'my-app' },
+    ]);
+  });
+
+  it('a list with every item done offers no Build it, with no earlier list', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open();
+    expect(await call(tools.tools, 'set_checklist', { items: items(true, true) })).toEqual({
+      updated: true,
+      open: 0,
+      app: 'my-app',
+    });
+    expect(checklistsReported(reported)).toEqual([{ updated: true, open: 0, app: 'my-app' }]);
+  });
+
+  it('a new list, with other labels, still waits for Build it', async () => {
+    fake.add('my-app');
+    const { tools } = await open({ history: { earlier: shownEarlier(), current: [] } });
+    expect(
+      await call(tools.tools, 'set_checklist', {
+        items: [{ label: 'Split the bill' }, { label: 'Pick a currency' }],
+      })
+    ).toMatchObject({ shown: true, awaitsUser: true, app: 'my-app' });
+  });
+});
+
 describe('the gate follows the app', () => {
   it('within a reply: checks passed on one app do not make another ready', async () => {
     fake.add('my-app');
