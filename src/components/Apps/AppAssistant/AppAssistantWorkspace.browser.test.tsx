@@ -2228,11 +2228,15 @@ describe('AppAssistantWorkspace tool gate', () => {
     await openFirst();
     m.chat!.beforeToolCall!('sandbox__list_dir', {}, conv);
     await checkEverything();
-    expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toEqual({ allow: true });
+    expect(m.chat!.beforeToolCall!('report_ready', { data: 'civitai' }, conv)).toEqual({
+      allow: true,
+    });
 
     await openFromSwitcher('app-bbbb');
     await vi.waitFor(() =>
-      expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse')
+      expect(m.chat!.beforeToolCall!('report_ready', { data: 'civitai' }, conv)).toHaveProperty(
+        'refuse'
+      )
     );
   });
 

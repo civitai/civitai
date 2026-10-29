@@ -55,6 +55,10 @@ export function assistantRules(runner: AssistantRunner = 'browser'): string {
   ].join('\n');
 }
 
+/** Where real Civitai data comes from, and what to do when the app needs data Civitai cannot give. */
+export const DATA_RULE =
+  "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.";
+
 const RULES_AFTER_SETUP = [
   '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Your reply ends there so they can confirm or change the list.',
   '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
@@ -64,6 +68,8 @@ const RULES_AFTER_SETUP = [
   // A model left to guess required status 'succeeded' and read every priced estimate as unpriced.
   // Spelled out as well as named, so it holds on an @civitai/sdk without the helper.
   "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'.",
+  // A run grepped the SDK README for "models(", found nothing, and shipped invented models as real ones.
+  DATA_RULE,
   '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
 ];
 

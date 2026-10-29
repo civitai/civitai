@@ -102,6 +102,8 @@ function call(tools: ToolSet, name: string, input: Record<string, unknown> = {})
 }
 
 const run = (command: string) => ({ command });
+/** A real-data app's report_ready, as every test not about the data declares it. */
+const CIVITAI = { data: 'civitai' };
 /** Every check report_ready asks for, passing, by the parent. */
 async function passAll(tools: ToolSet) {
   await call(tools, 'set_checklist', { items: [{ label: 'Tip calculator', done: true }] });
@@ -317,7 +319,7 @@ describe('App Assistant’s tools on the runner', () => {
     fake.add('my-app');
     const { tools, reported } = await open();
     await call(tools.tools, 'sandbox__read_file', { path: 'a' });
-    await call(tools.tools, 'report_ready');
+    await call(tools.tools, 'report_ready', CIVITAI);
     expect(reported.map((r) => r.name)).toEqual(['sandbox__read_file', 'report_ready']);
     expect(reported[0]).toMatchObject({ output: 'export {}', isError: false });
     expect(reported[1]).toMatchObject({
@@ -331,12 +333,12 @@ describe('App Assistant’s gate on the runner', () => {
   it('refuses report_ready until the parent ran the checks, and a file change undoes them', async () => {
     fake.add('my-app');
     const { tools } = await open();
-    const notReady = (await call(tools.tools, 'report_ready')) as { error: string };
+    const notReady = (await call(tools.tools, 'report_ready', CIVITAI)) as { error: string };
     expect(notReady.error).toMatch(/^Not ready yet\./);
     await passAll(tools.tools);
-    expect(await call(tools.tools, 'report_ready')).toMatchObject({ ready: true });
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({ ready: true });
     await call(tools.tools, 'sandbox__write_file', { path: 'a', content: 'x' });
-    expect(((await call(tools.tools, 'report_ready')) as { error: string }).error).toMatch(
+    expect(((await call(tools.tools, 'report_ready', CIVITAI)) as { error: string }).error).toMatch(
       /sandbox__preview_check: it has not run/
     );
   });
@@ -346,15 +348,17 @@ describe('App Assistant’s gate on the runner', () => {
     const { tools } = await open();
     await passAll(tools.tools);
     await call(tools.tools, 'sandbox__read_file', { path: 'a' });
-    expect(await call(tools.tools, 'report_ready')).toMatchObject({ ready: true });
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({ ready: true });
     await call(tools.tools, 'sandbox__run_command', run('npm install'));
-    expect(await call(tools.tools, 'report_ready')).toMatchObject({ error: expect.any(String) });
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({
+      error: expect.any(String),
+    });
   });
 
   it('ends the reply at its 151st parent call', async () => {
     fake.add('my-app');
     const { tools, reported } = await open();
-    for (let i = 0; i < 150; i++) await call(tools.tools, 'report_ready');
+    for (let i = 0; i < 150; i++) await call(tools.tools, 'report_ready', CIVITAI);
     const ended = (await call(tools.tools, 'sandbox__read_file', { path: 'a' })) as {
       error: string;
     };
@@ -395,7 +399,7 @@ describe('App Assistant’s gate on the runner', () => {
         : { text: 'Found it.' }
     );
     const { tools, reported } = await open({ subagents: true, model: () => child });
-    for (let i = 0; i < 148; i++) await call(tools.tools, 'report_ready');
+    for (let i = 0; i < 148; i++) await call(tools.tools, 'report_ready', CIVITAI);
     const dispatched = (await call(tools.tools, 'dispatch_agent', {
       task: 'Read a and say what it exports.',
       mode: 'read',
@@ -434,7 +438,7 @@ describe('App Assistant’s gate on the runner', () => {
       ['sandbox__run_command', run('cd my-app && npx tsc --noEmit'), 'exit_code: 0'],
     ]);
     const { tools } = await open({ history: { earlier: [], current } });
-    expect(await call(tools.tools, 'report_ready')).toMatchObject({ ready: true });
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({ ready: true });
 
     const many = messagesOf(
       Array.from({ length: 150 }, () => ['sandbox__list_dir', {}, 'src/'] as const)
@@ -458,9 +462,50 @@ describe('App Assistant’s gate on the runner', () => {
       ['sandbox__run_command', run('cd my-app && npx tsc --noEmit'), 'exit_code: 0'],
     ]);
     const { tools } = await open({ history: { earlier, current: [] } });
-    const refusal = ((await call(tools.tools, 'report_ready')) as { error: string }).error;
+    const refusal = ((await call(tools.tools, 'report_ready', CIVITAI)) as { error: string }).error;
     expect(refusal).toMatch(/sandbox__preview_check: it has not run/);
     expect(refusal).not.toMatch(/Call set_checklist/);
+  });
+});
+
+describe('the app’s data on the runner', () => {
+  // A checklist the user agreed to in an earlier reply carries their agreement to sample data over.
+  const sampleChecklist = (data?: string) =>
+    messagesOf([
+      [
+        'set_checklist',
+        { items: [{ label: 'Search models', done: true }], ...(data ? { data } : {}) },
+        { shown: true, awaitsUser: true, checklist: 'c-1', app: 'my-app' },
+      ],
+    ]);
+  const checked = (visible: string) =>
+    messagesOf([
+      ['sandbox__preview_check', {}, `render: ok\n## visible text (#root)\n${visible}`],
+      ['sandbox__run_command', run('cd my-app && npm test'), 'exit_code: 0'],
+      ['sandbox__run_command', run('cd my-app && npx tsc --noEmit'), 'exit_code: 0'],
+    ]);
+
+  it('says ready for sample data the user agreed to in an earlier reply, with the label shown', async () => {
+    fake.add('my-app');
+    const { tools } = await open({
+      history: { earlier: sampleChecklist('sample'), current: checked('Sample data') },
+    });
+    expect(await call(tools.tools, 'report_ready', { data: 'sample' })).toMatchObject({
+      ready: true,
+      data: 'sample',
+    });
+  });
+
+  it('refuses sample data when the earlier checklist never said so', async () => {
+    fake.add('my-app');
+    const { tools } = await open({
+      history: { earlier: sampleChecklist(), current: checked('Sample data') },
+    });
+    expect(
+      ((await call(tools.tools, 'report_ready', { data: 'sample' })) as { error: string }).error
+    ).toMatch(/^Not ready yet\. The user has not agreed to sample data\./);
+    // Control: the same app, declared as real data, is ready.
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({ ready: true });
   });
 });
 
@@ -552,6 +597,23 @@ describe('Build it on the runner', () => {
       })
     ).toMatchObject({ shown: true, awaitsUser: true, app: 'my-app' });
   });
+
+  // An all-done list newly saying sample data still waits: the user must agree to sample data. A data
+  // change that needs no agreement (to 'civitai') on a finished list is progress, as #7153 has it.
+  it('a finished list that newly says sample data waits for the user; one saying civitai does not', async () => {
+    fake.add('my-app');
+    const sample = await open({ history: { earlier: shownEarlier(), current: [] } });
+    expect(
+      await call(sample.tools.tools, 'set_checklist', { items: items(true, true), data: 'sample' })
+    ).toMatchObject({ shown: true, awaitsUser: true, app: 'my-app' });
+    const civitai = await open({ history: { earlier: shownEarlier(), current: [] } });
+    expect(
+      await call(civitai.tools.tools, 'set_checklist', {
+        items: items(true, true),
+        data: 'civitai',
+      })
+    ).toEqual({ updated: true, open: 0, app: 'my-app' });
+  });
 });
 
 describe('the gate follows the app', () => {
@@ -560,11 +622,11 @@ describe('the gate follows the app', () => {
     const { tools } = await open();
     await passAll(tools.tools);
     // Control: ready on the app the checks ran on.
-    expect(await call(tools.tools, 'report_ready')).toMatchObject({ ready: true });
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({ ready: true });
     expect(await call(tools.tools, 'create_app', { name: 'Tip calculator' })).toMatchObject({
       app: 'tip-calculator',
     });
-    const refusal = ((await call(tools.tools, 'report_ready')) as { error: string }).error;
+    const refusal = ((await call(tools.tools, 'report_ready', CIVITAI)) as { error: string }).error;
     expect(refusal).toMatch(/sandbox__preview_check: it has not run/);
     expect(refusal).toMatch(/Call set_checklist/);
   });
@@ -580,14 +642,14 @@ describe('the gate follows the app', () => {
       ],
     ]);
     const other = await open({ page: { app: 'other-app' }, history: { earlier, current: [] } });
-    expect(((await call(other.tools.tools, 'report_ready')) as { error: string }).error).toMatch(
-      /Call set_checklist/
-    );
+    expect(
+      ((await call(other.tools.tools, 'report_ready', CIVITAI)) as { error: string }).error
+    ).toMatch(/Call set_checklist/);
     // Control: the app it was made for still has it.
     const mine = await open({ history: { earlier, current: [] } });
-    expect(((await call(mine.tools.tools, 'report_ready')) as { error: string }).error).not.toMatch(
-      /Call set_checklist/
-    );
+    expect(
+      ((await call(mine.tools.tools, 'report_ready', CIVITAI)) as { error: string }).error
+    ).not.toMatch(/Call set_checklist/);
   });
 
   it('tags each checklist the runner shows with its app', async () => {

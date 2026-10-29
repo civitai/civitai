@@ -25,6 +25,21 @@ describe('the set_checklist card', () => {
     ).toBeUndefined();
   });
 
+  test('tells the user a list planned on sample data is not real Civitai data, and only then', () => {
+    const items = [{ label: 'Search models' }];
+    const card = (data?: string) =>
+      renderChecklist({
+        name: 'set_checklist',
+        input: { items, ...(data ? { data } : {}) },
+        state: 'done',
+      });
+    expect(card('sample')?.textContent).toBe(
+      'Feature checklist☐ Search models⚠ Sample data: this app will show made-up examples, not real Civitai data.'
+    );
+    for (const data of [undefined, 'civitai', 'none'])
+      expect(card(data)?.textContent).toBe('Feature checklist☐ Search models');
+  });
+
   test('is the view the tool carries', () => {
     const call = {
       name: 'set_checklist',
@@ -189,6 +204,18 @@ describe('the report_ready card', () => {
     expect(card?.getAttribute('role')).toBe('status');
     expect(card?.textContent).toBe(
       '✓ Checked: the app renders in a test browser, the tests and the typecheck pass, and every checklist item is done.'
+    );
+  });
+
+  test('says so when the app shows sample data', () => {
+    const card = renderReady({
+      name: 'report_ready',
+      input: { data: 'sample' },
+      state: 'done',
+      output: { ready: true, data: 'sample', note: 'x' },
+    });
+    expect(card?.textContent).toBe(
+      '✓ Checked: the app renders in a test browser, the tests and the typecheck pass, and every checklist item is done. ⚠ This app shows sample data, not real Civitai data.'
     );
   });
 
