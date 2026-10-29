@@ -21,6 +21,22 @@ const schema = z.union([
   z.object({ triggerWord: z.string().max(1000) }).strict(),
 ]);
 
+function auditEditPrompt(input: {
+  prompt: string;
+  inputImages?: string[];
+  userId: number;
+  isGreen: boolean;
+  isModerator?: boolean;
+}) {
+  return auditPromptServer({
+    prompt: input.prompt,
+    inputImages: input.inputImages,
+    userId: input.userId,
+    isGreen: input.isGreen,
+    isModerator: input.isModerator,
+  });
+}
+
 /**
  * The text checks for the Training Studio, which submits to the orchestrator itself: both of its
  * surfaces call this before submitting. POST { triggerWord } runs the training trigger word check
@@ -36,12 +52,12 @@ export default AuthedEndpoint(
 
     try {
       if ('editPrompt' in input.data)
-        await auditPromptServer({
+        await auditEditPrompt({
           prompt: input.data.editPrompt,
+          inputImages: input.data.inputImages,
           userId: user.id,
           isGreen: getRequestDomainColor(req) === 'green',
           isModerator: user.isModerator,
-          inputImages: input.data.inputImages,
         });
       else
         await assertTrainingTriggerWordAllowed({
