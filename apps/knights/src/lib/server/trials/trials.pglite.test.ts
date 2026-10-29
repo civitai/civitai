@@ -148,6 +148,29 @@ describe('getTrial', () => {
     expect((await getTrial(db, 1, deps)).kind).toBe('unavailable');
   });
 
+  it('never serves items still waiting for a spot-check', async () => {
+    await player(1);
+    await standardPool();
+    const pending: number[] = [];
+    for (const id of [21, 22, 23, 24]) {
+      pending.push(await reference(id, { status: 'pending' }));
+    }
+
+    const view = await current(1);
+    const run = (await pg.query<{ itemIds: number[] }>(`SELECT "itemIds" FROM "KnightsTrialRun"`))
+      .rows[0];
+
+    expect(run.itemIds.some((id) => pending.includes(id))).toBe(false);
+    expect(view.run.total).toBe(run.itemIds.length);
+  });
+
+  it('has nothing to serve when every fresh item is still pending', async () => {
+    await player(1);
+    await reference(1, { source: 'core' });
+    for (const id of [21, 22, 23, 24]) await reference(id, { status: 'pending' });
+    expect((await getTrial(db, 1, deps)).kind).toBe('unavailable');
+  });
+
   it('opens with core and holds the seeded plan, without handing out any answer', async () => {
     await player(1);
     await standardPool();

@@ -6,7 +6,12 @@ import {
   KNIGHTS_NSFW_LEVEL_QUESTION,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
 } from '@civitai/shared/new-order';
-import { servableImage } from '../servable-image';
+import {
+  REFERENCE_POOL,
+  REFERENCE_SOURCE,
+  REFERENCE_STATUS,
+  servableImage,
+} from '@civitai/db/knights';
 import { HARVEST, type HarvestConfig } from './config';
 import { poolFor } from './plan';
 
@@ -86,9 +91,12 @@ export async function harvestRulings(
               imageId: row.imageId,
               questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
               pool,
-              status: config.spotCheck && pool === 'trials' ? 'pending' : 'active',
+              status:
+                config.spotCheck && pool === REFERENCE_POOL.trials
+                  ? REFERENCE_STATUS.pending
+                  : REFERENCE_STATUS.active,
               answer: String(row.level),
-              source: 'harvested',
+              source: REFERENCE_SOURCE.harvested,
               modActivityId: row.activityId,
               harvestedAt: utc(now),
               updatedAt: utc(now),
@@ -121,9 +129,9 @@ async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Pr
   const agedOut = new Date(now.getTime() - config.freshMaxAgeDays * DAY_MS);
   const result = await db
     .updateTable('KnightsReferenceImage as r')
-    .set({ status: 'retired', updatedAt: utc(now) })
-    .where('r.status', 'in', ['active', 'pending'])
-    .where('r.source', '!=', 'core')
+    .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
+    .where('r.status', 'in', [REFERENCE_STATUS.active, REFERENCE_STATUS.pending])
+    .where('r.source', '!=', REFERENCE_SOURCE.core)
     .where((eb) =>
       eb.or([
         eb('r.harvestedAt', '<', utc(agedOut)),

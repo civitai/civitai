@@ -1,6 +1,11 @@
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { servableImage } from '../servable-image';
+import {
+  REFERENCE_POOL,
+  REFERENCE_SOURCE,
+  REFERENCE_STATUS,
+  servableImage,
+} from '@civitai/db/knights';
 import { TRIAL_MODULES, TRIALS } from './config';
 import { planRun, scoreRun } from './plan';
 import { utc } from '@civitai/db/kysely';
@@ -57,8 +62,8 @@ function servableReferences(db: Executor, questionKey: string) {
     .innerJoin('Image as img', 'img.id', 'r.imageId')
     .innerJoin('Post as p', 'p.id', 'img.postId')
     .where('r.questionKey', '=', questionKey)
-    .where('r.pool', '=', 'trials')
-    .where('r.status', '=', 'active')
+    .where('r.pool', '=', REFERENCE_POOL.trials)
+    .where('r.status', '=', REFERENCE_STATUS.active)
     .where(servableImage);
 }
 
@@ -130,13 +135,13 @@ async function startRun(
       .execute(),
   ]);
   const seen = new Set(met.map((m) => m.referenceId));
-  const freshUnseen = pool.filter((r) => r.source !== 'core' && !seen.has(r.id));
+  const freshUnseen = pool.filter((r) => r.source !== REFERENCE_SOURCE.core && !seen.has(r.id));
   if (freshUnseen.length < TRIALS.minFresh) return null;
 
   const seed = deps.newSeed();
   const plan = planRun({
     seed,
-    core: pool.filter((r) => r.source === 'core').map((r) => r.id),
+    core: pool.filter((r) => r.source === REFERENCE_SOURCE.core).map((r) => r.id),
     freshUnseen: freshUnseen.map((r) => r.id),
     length: TRIALS.runLength,
     freshCount: TRIALS.freshCount,
@@ -197,7 +202,7 @@ async function finishRun(db: Executor, run: Run, userId: number, now: Date) {
     .where('a.runId', '=', run.id)
     .execute();
   const { result, score } = scoreRun(
-    answers.map((a) => ({ fresh: a.source !== 'core', correct: a.correct })),
+    answers.map((a) => ({ fresh: a.source !== REFERENCE_SOURCE.core, correct: a.correct })),
     TRIALS
   );
   const cooldownUntil = new Date(now.getTime() + TRIALS.cooldownHours * 3_600_000);
@@ -341,7 +346,7 @@ export async function answerTrial(
       correct,
       correctAnswer: reference.answer,
       correctLabel: options.find((o) => o.value === reference.answer)?.label ?? reference.answer,
-      explanation: reference.source === 'core' ? reference.explanation : null,
+      explanation: reference.source === REFERENCE_SOURCE.core ? reference.explanation : null,
       imageKey: next.item.imageKey,
       finished,
     };
