@@ -136,8 +136,11 @@ import {
   getDonationGoals,
   getOwnerDonationGoals,
 } from '~/server/services/donation-goal.service';
-import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
-import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
+import {
+  imagesForModelVersionsCache,
+  isTrainingSampleUrlUsable,
+  uploadImageFromUrl,
+} from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -3204,7 +3207,7 @@ export const createModelVersionPostFromTraining = async ({
       imageUrls.map(async (data) => {
         const imageUrl = typeof data === 'string' ? data : data.image_url;
         // '' is a failed sample's slot; uploading it throws and fails the whole publish.
-        if (!imageUrl || !isTrustedOrchestratorUrl(imageUrl)) return undefined;
+        if (!imageUrl || !isTrainingSampleUrlUsable(imageUrl)) return undefined;
         return uploadImageFromUrl({ imageUrl });
       })
     )

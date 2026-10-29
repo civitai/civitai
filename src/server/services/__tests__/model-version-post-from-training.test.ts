@@ -26,6 +26,7 @@ vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { createModelVersionPostFromTraining } from '~/server/services/model-version.service';
 
 const USER = { id: 5, isModerator: false } as never;
@@ -90,5 +91,18 @@ describe('createModelVersionPostFromTraining', () => {
 
     expect(uploadImageFromUrlMock).toHaveBeenCalledTimes(1);
     expect(uploadImageFromUrlMock).toHaveBeenCalledWith({ imageUrl: SAMPLE });
+  });
+
+  it('logs only the host of a skipped sample url', async () => {
+    givenSamples(['https://image-generation.civitai.com/abc/123/sample.png?token=t', SAMPLE]);
+
+    await createModelVersionPostFromTraining({ modelVersionId: 7, user: USER });
+
+    const skipped = loggingMock.logToAxiom.mock.calls
+      .map(([entry]) => entry)
+      .filter((entry) => entry?.name === 'training-sample-skipped');
+    expect(skipped).toEqual([
+      { type: 'info', name: 'training-sample-skipped', host: 'image-generation.civitai.com' },
+    ]);
   });
 });
