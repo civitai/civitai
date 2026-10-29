@@ -54,7 +54,6 @@ import { Meta } from '~/components/Meta/Meta';
 import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';
 import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { APP_ACCESS_LIST_LIMIT_MAX } from '~/server/schema/app-access-request.schema';
 import { isAppReviewer } from '~/shared/utils/app-blocks-access';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -268,23 +267,19 @@ export function AppFeedbackFlaggedBadge() {
 }
 
 /**
- * Pending "Request access" submissions, shown on the tab label. There is no count proc, so this
- * reads ONE page of the existing pending list at its ceiling and shows `N+` when there is more —
- * a page past 100 pending requests says "100+" rather than a wrong exact number. The queue's
- * decide mutation invalidates `appAccessRequest.list`, which covers this query too, so the badge
- * moves as soon as a moderator decides.
+ * Pending "Request access" submissions, shown on the tab label. Backed by its own count proc, like
+ * the sibling badges, so the poll fetches a number rather than rows. The queue's decide mutation
+ * invalidates `appAccessRequest.countPending`, so the badge moves as soon as a moderator decides.
  */
 export function AppAccessRequestsPendingBadge() {
-  const { data } = trpc.appAccessRequest.list.useQuery(
-    { status: 'pending', limit: APP_ACCESS_LIST_LIMIT_MAX },
-    { refetchInterval: APPS_REVIEW_POLL_MS, retry: false }
-  );
-  const count = data?.items.length ?? 0;
-  if (!count) return null;
+  const { data } = trpc.appAccessRequest.countPending.useQuery(undefined, {
+    refetchInterval: APPS_REVIEW_POLL_MS,
+    retry: false,
+  });
+  if (!data) return null;
   return (
     <Badge size="xs" color="yellow" variant="filled" data-testid="app-access-request-pending-count">
-      {count}
-      {data?.nextCursor != null ? '+' : ''}
+      {data}
     </Badge>
   );
 }

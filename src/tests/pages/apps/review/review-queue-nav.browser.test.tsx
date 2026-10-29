@@ -25,10 +25,11 @@ const state = vi.hoisted(() => ({
   flags: { appBlocks: true, appReviewPage: true } as Record<string, boolean>,
   subListingCount: 0,
   flaggedCount: 0,
-  // The Access requests tab: the badge's `list` page (useQuery) and the queue's (useInfiniteQuery).
+  // The Access requests tab: the badge's count proc, and the queue's `list` (useInfiniteQuery).
+  accessPendingCount: 0,
   accessPending: [] as unknown[],
-  accessPendingNext: null as number | null,
-  accessBadgeInputs: [] as unknown[],
+  // Every plain `list.useQuery` call. The badge must not make one: it reads the count proc.
+  accessListQueryInputs: [] as unknown[],
 }));
 
 // Page's getServerSideProps calls createServerSideProps at module top — stub so
@@ -163,13 +164,16 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
         useQuery: () => ({ data: { count: state.subListingCount } }),
       },
       'appFeedback.modCountFlagged': { useQuery: () => ({ data: state.flaggedCount }) },
-      // The Access requests tab label's pending count reads ONE page of the pending list…
+      // The Access requests tab label's pending count has its own count proc…
+      'appAccessRequest.countPending': {
+        useQuery: () => ({ data: state.accessPendingCount }),
+      },
       'appAccessRequest.list': {
         useQuery: (input: unknown) => {
-          state.accessBadgeInputs.push(input);
-          return { data: { items: state.accessPending, nextCursor: state.accessPendingNext } };
+          state.accessListQueryInputs.push(input);
+          return { data: { items: state.accessPending, nextCursor: null } };
         },
-        // …and the tab's panel is the real `AppAccessRequestsQueue`, which pages it.
+        // …and the tab's panel is the real `AppAccessRequestsQueue`, which pages `list`.
         useInfiniteQuery: () => ({
           data: { pages: [{ items: state.accessPending, nextCursor: null }] },
           isLoading: false,
@@ -214,9 +218,9 @@ beforeEach(() => {
   state.flags = { appBlocks: true, appReviewPage: true };
   state.subListingCount = 0;
   state.flaggedCount = 0;
+  state.accessPendingCount = 0;
   state.accessPending = [];
-  state.accessPendingNext = null;
-  state.accessBadgeInputs = [];
+  state.accessListQueryInputs = [];
   routerState().query = {};
   routerPush().mockClear();
 });
@@ -278,23 +282,24 @@ describe('ReviewQueuePage — Access requests tab', () => {
     expect(page.getByTestId('app-access-request-41').elements()).toHaveLength(0);
   });
 
-  test('the tab label shows how many requests are pending', async () => {
-    state.accessPending = [accessRequest(1), accessRequest(2), accessRequest(3)];
+  test('the tab label shows the pending count from the count proc, exactly', async () => {
+    // 137: past the list proc's 100-row page, so only the count proc can produce it.
+    state.accessPendingCount = 137;
     renderWithProviders(<ReviewQueuePage />);
     await expect
       .element(page.getByTestId('app-access-request-pending-count'))
-      .toHaveTextContent(/^3$/);
-    // The count is read from the PENDING filter, at the proc's page ceiling.
-    expect(state.accessBadgeInputs).toContainEqual({ status: 'pending', limit: 100 });
+      .toHaveTextContent(/^137$/);
   });
 
-  test('a pending backlog past one page reads as "N+", not as exactly N', async () => {
+  test('the badge fetches no request rows: it never reads the list proc', async () => {
+    // The queue is not mounted on the default tab, so any `list.useQuery` call here is the badge's.
+    state.accessPendingCount = 2;
     state.accessPending = [accessRequest(1), accessRequest(2)];
-    state.accessPendingNext = 2;
     renderWithProviders(<ReviewQueuePage />);
     await expect
       .element(page.getByTestId('app-access-request-pending-count'))
-      .toHaveTextContent(/^2\+$/);
+      .toHaveTextContent(/^2$/);
+    expect(state.accessListQueryInputs).toEqual([]);
   });
 
   test('no badge when nothing is pending', async () => {
