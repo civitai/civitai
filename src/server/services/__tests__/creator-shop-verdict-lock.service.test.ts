@@ -360,8 +360,11 @@ describe('a bundle pack edited while it is being reviewed', () => {
     ]);
   });
 
-  it('does not re-check a cover the edit resends unchanged', async () => {
-    const cover = '0a0b0c0d-0000-4000-8000-0000000000aa';
+  it.each([
+    '0a0b0c0d-0000-4000-8000-0000000000aa',
+    // A legacy stored value that is not the bare key: the bare-key rule must not lock it out.
+    'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/0A0B0C0D-0000-4000-8000-0000000000AA/a.jpeg',
+  ])('does not re-check a cover the edit resends unchanged (%s)', async (cover) => {
     const loaded = pack('PendingReview', { coverUrl: cover, history: [submitted] });
     rows(loaded, loaded);
     const probes: unknown[][] = [];
