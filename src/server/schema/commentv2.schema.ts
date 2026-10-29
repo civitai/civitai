@@ -48,7 +48,6 @@ export const upsertCommentv2Schema = commentConnectorSchema.extend({
     }, 'Cannot be empty')
     .refine((data) => data.length <= constants.comments.maxLength, 'Comment content too long'),
   nsfw: z.boolean().optional(),
-  tosViolation: z.boolean().optional(),
 });
 
 export type ToggleHideCommentInput = z.infer<typeof toggleHideCommentSchema>;
