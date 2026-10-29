@@ -142,7 +142,9 @@ locally until the orchestration client ships it.
   - Until every kind seen so far has passed, only one workflow is out at a time, so a refusal
     wastes one wide workflow. A refusal is fail-closed for the whole process: a video mismatch also
     stops image embedding, and the consumer stops embedding until it restarts. A succeeded step at
-    a width other than the one asked for refuses the same way, after one workflow.
+    a width other than the one asked for refuses the same way, after one workflow. Video embedding is off
+    (`VECTOR_EMBED_VIDEO`), so a video mismatch can't happen today; revisit per-kind failure
+    when it is turned on.
   - A check that can't be made (no image embedded both ways, or the 256 embed failing) is tried
     3 times, spaced out. Then wide embeds are refused for 10 minutes without submitting anything,
     and checked again (`PrefixCheckUnavailableError`, which the consumer retries; the backfill
