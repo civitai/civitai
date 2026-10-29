@@ -25,6 +25,8 @@ vi.mock('~/env/server', () => ({
       S3_IMAGE_B2_SECRET_KEY: 'image-b2-secret',
       S3_IMAGE_B2_BUCKET: 'civitai-media-uploads-test',
       S3_IMAGE_B2_REGION: 'us-west-004',
+      // Read at module load by s3-utils (`new URL(...)`), so it must parse.
+      S3_UPLOAD_ENDPOINT: 'https://uploads.example.test',
     } as Record<string, unknown>,
     {
       get(target, prop: string) {

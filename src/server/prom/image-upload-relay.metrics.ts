@@ -175,8 +175,9 @@ const HELP =
   'the media-location registry records the same backend for relayed and direct uploads. ' +
   'Exactly one increment per handler invocation. ' +
   'outcome: success = bytes stored and a key returned (for the chunked relay, its complete ' +
-  'step); chunk_started / chunk_stored / chunk_aborted = a chunked-relay session opened, one ' +
-  'piece stored, a session abandoned (none of them is a rescue); session_invalid = ' +
+  'step); chunk_started = a chunked-relay session opened; chunk_stored = one chunked-relay ' +
+  'piece stored; chunk_aborted = a chunked-relay session abandoned (none of these three is a ' +
+  'rescue); session_invalid = ' +
   'chunked-relay session unknown, expired or not the caller (404); bad_request = malformed ' +
   'chunked-relay step (400); method_not_allowed = not a POST; ' +
   'forbidden_origin = production cross-origin guard; unauthorized = no session or banned; ' +
