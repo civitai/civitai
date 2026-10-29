@@ -1,9 +1,11 @@
+import { Menu } from '@mantine/core';
 import { IconMessage2 } from '@tabler/icons-react';
 import { createElement } from 'react';
 import { afterEach, describe, expect, test, vi } from 'vitest';
 import { cleanup } from 'vitest-browser-react';
 import {
   box,
+  nextLayout,
   NARROW_PHONE_VIEWPORT,
   PHONE_VIEWPORT,
   renderAtViewport,
@@ -23,6 +25,8 @@ import type * as FeatureFlags from '~/providers/FeatureFlagsProvider';
  */
 const mocks = vi.hoisted(() => ({
   username: 'tester',
+  tier: undefined as string | undefined,
+  buyBuzz: vi.fn(),
   decorated: false,
   signedIn: true,
   animated: true,
@@ -31,7 +35,8 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/hooks/useCurrentUser', async (importOriginal) => ({
   ...(await importOriginal<object>()),
-  useCurrentUser: () => (mocks.signedIn ? { id: 1, username: mocks.username } : null),
+  useCurrentUser: () =>
+    mocks.signedIn ? { id: 1, username: mocks.username, tier: mocks.tier } : null,
 }));
 vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
   ...(await importOriginal<typeof FeatureFlags>()),
@@ -59,7 +64,7 @@ vi.mock('~/components/Buzz/useBuzz', async (importOriginal) => ({
 vi.mock('~/components/Buzz/BuzzDeltaPop', () => ({ BuzzDeltaPop: () => null }));
 vi.mock('~/components/Buzz/buzz.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof BuzzUtils>()),
-  useBuyBuzz: () => vi.fn(),
+  useBuyBuzz: () => mocks.buyBuzz,
 }));
 vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
   ...(await importOriginal<typeof TrackUtils>()),
@@ -70,22 +75,33 @@ vi.mock('~/components/TrackView/track.utils', async (importOriginal) => ({
 vi.mock('~/components/UserAvatar/UserAvatar', async () => {
   const { decorationFrameStyle } = await import('~/components/UserAvatar/decoration-frame.util');
   return {
-    UserAvatar: ({ user }: { user: { username: string } | null }) =>
+    UserAvatar: ({
+      user,
+      subText,
+    }: {
+      user: { username: string } | null;
+      subText?: React.ReactNode;
+    }) =>
       createElement(
         'div',
         { className: 'flex flex-nowrap items-center gap-2' },
         createElement(
           'span',
-          { className: 'relative size-8 shrink-0' },
+          { className: 'relative size-14 shrink-0' },
           mocks.decorated &&
             createElement('span', {
               'data-frame': true,
               className: 'bg-red-6',
               style: { ...decorationFrameStyle({ offset: '16px' }), zIndex: 1 },
             }),
-          createElement('span', { className: 'block size-8 rounded-full bg-gray-5' })
+          createElement('span', { className: 'block size-14 rounded-full bg-gray-5' })
         ),
-        createElement('span', { className: 'text-sm font-semibold' }, user?.username)
+        createElement(
+          'div',
+          { className: 'flex min-w-0 flex-col' },
+          createElement('span', { className: 'text-sm font-semibold' }, user?.username),
+          subText
+        )
       ),
   };
 });
@@ -108,9 +124,12 @@ vi.mock('~/components/AppLayout/AppHeader/hooks', async (importOriginal) => ({
   useGetCreator: () => undefined,
 }));
 
+// The harness replaces next/router with one shared router object.
+const { default: router } = await import('next/router');
 const { UserMenuCtx, UserMenuTrigger } = await import('~/components/AppLayout/AppHeader/UserMenu');
 const { LegacyActionIcon } = await import('~/components/LegacyActionIcon/LegacyActionIcon');
 const { MobileHeaderRows, UserMenuMobile } = await import('./UserMenuMobile');
+const { DesktopHeaderRows } = await import('./UserMenuDesktop');
 const { ContainerProvider } = await import('~/components/ContainerProvider/ContainerProvider');
 
 afterEach(() => {
@@ -118,9 +137,17 @@ afterEach(() => {
   mocks.decorated = false;
   mocks.signedIn = true;
   mocks.username = 'tester';
+  mocks.tier = undefined;
+  vi.mocked(router.push).mockClear();
+  mocks.buyBuzz.mockClear();
   mocks.balances = { blue: 1234, yellow: 209500 };
   mocks.animated = true;
 });
+
+const stripOf = (card: Element) =>
+  card.querySelector('[data-buzz-balance]')!.parentElement!.parentElement!;
+const profileRow = (card: Element) =>
+  card.querySelector('a[href^="/user/"]:not([href$="buzz-dashboard"])')!.parentElement!;
 
 async function renderHeader(viewport: Viewport = PHONE_VIEWPORT) {
   await renderAtViewport(
@@ -137,7 +164,7 @@ async function renderHeader(viewport: Viewport = PHONE_VIEWPORT) {
   const profile = card.querySelector('a[href^="/user/"]:not([href$="buzz-dashboard"])')!;
   const buzz = card.querySelector('a[href="/user/buzz-dashboard"]')!;
   const pin = card.querySelector('[aria-label="Pin Your Profile"]')!;
-  const buy = [...card.querySelectorAll('button')].find((b) => b.textContent === 'Buy Buzz')!;
+  const buy = card.querySelector<HTMLElement>('button[aria-label="Buy Buzz"]')!;
   const balances = [...buzz.querySelectorAll<HTMLElement>('[data-buzz-balance]')];
   return { card, profile, buzz, pin, buy, balances };
 }
@@ -172,17 +199,93 @@ describe('mobile menu account card', () => {
       }
     }
 
-    const [name, toggle] = [profile, pin].map(box);
-    expect(
-      Math.abs(name.top + name.height / 2 - (toggle.top + toggle.height / 2))
-    ).toBeLessThanOrEqual(1);
+    const [name, toggle, cardBox] = [profile, pin, card].map(box);
+    // The pin sits in the card's top-right corner, clear of the name.
+    expect(toggle.top - cardBox.top).toBeLessThanOrEqual(8);
+    expect(cardBox.right - toggle.right).toBeLessThanOrEqual(8);
     // The name keeps room: the avatar and part of the name, not a sliver.
     expect(name.width).toBeGreaterThanOrEqual(100);
-    expect(toggle.left - name.right).toBeGreaterThanOrEqual(4);
+    const nameText = [...profile.querySelectorAll('span')].find((s) => s.textContent === username)!;
+    expect(toggle.left - box(nameText).right).toBeGreaterThanOrEqual(4);
     // The profile pin keeps its full touch target, inside the card.
     expect(toggle.width).toBeGreaterThanOrEqual(30);
-    expect(toggle.right).toBeLessThanOrEqual(box(card).right);
     expect(box(card).right).toBeLessThanOrEqual(PHONE_VIEWPORT.width);
+  });
+
+  test('lines the avatar up with the balances strip', async () => {
+    const { card } = await renderHeader();
+    const avatarBox = box(card.querySelector('span.relative')!);
+    const stripBox = box(stripOf(card));
+
+    expect(Math.abs(avatarBox.left - stripBox.left)).toBeLessThanOrEqual(1);
+    expect(Math.abs(stripBox.right - (box(card).right - 9))).toBeLessThanOrEqual(1);
+    // The user row sits close above the balances.
+    expect(stripBox.top - box(profileRow(card)).bottom).toBeLessThanOrEqual(8);
+  });
+
+  test('offers membership under the name of a non-member, and opens it without opening the profile', async () => {
+    const { card, profile } = await renderHeader();
+    const chip = [...card.querySelectorAll<HTMLElement>('[role="link"]')].find(
+      (el) => el.textContent === 'Become a member'
+    )!;
+    const nameText = [...profile.querySelectorAll('span')].find((s) => s.textContent === 'tester')!;
+
+    expect(card.textContent).not.toContain('Pro');
+    expect(box(chip).top).toBeGreaterThanOrEqual(box(nameText).bottom - 2);
+    expect(Math.abs(box(chip).left - box(nameText).left)).toBeLessThanOrEqual(1);
+
+    let profileClickPrevented = false;
+    // React handles clicks at its root container: a listener there runs after React's and sees the outcome.
+    const root = card.closest('body > div')!;
+    const seen = (event: Event) => {
+      profileClickPrevented = event.defaultPrevented;
+    };
+    root.addEventListener('click', seen);
+    chip.click();
+    root.removeEventListener('click', seen);
+    expect(router.push).toHaveBeenCalledExactlyOnceWith('/purchase/buzz');
+    expect(profileClickPrevented).toBe(true);
+  });
+
+  test('the offer opens from the keyboard, and in a new tab on a modified click', async () => {
+    const { card } = await renderHeader();
+    const chip = card.querySelector<HTMLElement>('[role="link"]')!;
+    const open = vi.spyOn(window, 'open').mockReturnValue(null);
+
+    chip.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(router.push).toHaveBeenCalledExactlyOnceWith('/purchase/buzz');
+
+    chip.dispatchEvent(new MouseEvent('click', { bubbles: true, ctrlKey: true }));
+    expect(open).toHaveBeenCalledExactlyOnceWith('/purchase/buzz', '_blank', 'noopener');
+    expect(router.push).toHaveBeenCalledTimes(1);
+    open.mockRestore();
+  });
+
+  test('a member sees the tier badge and no offer', async () => {
+    mocks.tier = 'gold';
+    const { card } = await renderHeader();
+    expect(card.querySelector('[role="link"]')).toBeNull();
+    expect(card.textContent).not.toContain('Become a member');
+  });
+
+  test('keeps a long name clear of the pin when a tier badge replaces the chip', async () => {
+    mocks.tier = 'gold';
+    mocks.username = 'abcdefghijklmnopqrstuvwxy';
+    const { card, profile, pin } = await renderHeader(NARROW_PHONE_VIEWPORT);
+    const nameText = [...profile.querySelectorAll('span')].find(
+      (s) => s.textContent === mocks.username
+    )!;
+
+    expect(card.querySelector('[role="link"]')).toBeNull();
+    expect(box(pin).left - box(nameText).right).toBeGreaterThanOrEqual(4);
+  });
+
+  test('curves the top-left corner around the avatar', async () => {
+    const { card } = await renderHeader();
+    const style = getComputedStyle(card);
+    expect(parseFloat(style.borderTopLeftRadius)).toBeGreaterThan(
+      parseFloat(style.borderTopRightRadius)
+    );
   });
 
   test('shows Blue and Yellow as separate balances, not one total', async () => {
@@ -195,30 +298,60 @@ describe('mobile menu account card', () => {
     expect(buzz.textContent).not.toContain('1,333,332');
   });
 
-  test('puts the balances side by side when they fit, and stacks them when they do not', async () => {
+  test('keeps both balances on one row, dropping labels and then abbreviating to fit', async () => {
+    // The rolling counter keeps every digit in the DOM; the static one reads as the number.
+    mocks.animated = false;
     mocks.balances = { blue: 0, yellow: 0 };
-    let { balances } = await renderHeader();
+    let { card, balances } = await renderHeader();
+    expect(balances.map((b) => b.textContent)).toEqual(['blue0', 'yellow0']);
     expect(box(balances[1]).top).toBe(box(balances[0]).top);
 
+    // Eight-digit amounts at 360px lose their labels but keep every digit.
+    cleanup();
+    mocks.balances = { blue: 12345678, yellow: 87654321 };
+    ({ card, balances } = await renderHeader(NARROW_PHONE_VIEWPORT));
+    expect(balances.map((b) => b.textContent)).toEqual(['12,345,678', '87,654,321']);
+
+    // Nine digits in 260px abbreviate too; the full value stays in the accessible name.
     cleanup();
     mocks.balances = { blue: 123456789, yellow: 12345678 };
-    ({ balances } = await renderHeader(NARROW_PHONE_VIEWPORT));
-    const [first, second] = balances.map(box);
-    expect(second.top).toBeGreaterThanOrEqual(first.bottom);
-    // Stacked, each balance still shows whole.
-    for (const balance of balances) {
-      expect(balance.scrollWidth).toBeLessThanOrEqual(balance.clientWidth);
-      expect(box(balance).right).toBeLessThanOrEqual(NARROW_PHONE_VIEWPORT.width);
-    }
+    ({ card, balances } = await renderHeader({ width: 260, height: 700 }));
+    expect(balances.map((b) => b.textContent)).toEqual(['123.4m', '12.3m']);
+    expect(balances.map((b) => b.getAttribute('aria-label'))).toEqual([
+      'blue Buzz 123,456,789',
+      'yellow Buzz 12,345,678',
+    ]);
+    expect(box(balances[1]).top).toBe(box(balances[0]).top);
+    const strip = stripOf(card);
+    expect(strip.scrollWidth).toBeLessThanOrEqual(strip.clientWidth);
+    // One row: the plus sits level with the balances, not under them.
+    const buy = card.querySelector<HTMLElement>('button[aria-label="Buy Buzz"]')!;
+    expect(box(buy).top).toBeLessThan(box(balances[1]).bottom);
+    expect(box(strip).height).toBeLessThanOrEqual(56);
   });
 
-  test('ends the card with Buy Buzz across its width, under the balances', async () => {
-    const { card, buzz, buy } = await renderHeader();
-    const [cardBox, buzzBox, buyBox] = [card, buzz, buy].map(box);
+  test('puts Buy Buzz as a square plus inside the strip, after the last balance', async () => {
+    const { card, buy, balances } = await renderHeader();
+    const [stripBox, buyBox, lastBox] = [stripOf(card), buy, balances[1]].map(box);
 
-    expect(buyBox.top).toBeGreaterThanOrEqual(buzzBox.bottom);
-    expect(buyBox.bottom).toBeLessThanOrEqual(cardBox.bottom);
-    expect(buyBox.width).toBeGreaterThanOrEqual(cardBox.width - 32);
+    expect(stripOf(card).contains(buy)).toBe(true);
+    expect(buy.textContent).toBe('');
+    expect(buy.getAttribute('title')).toBe('Buy Buzz');
+    expect(buyBox.left).toBeGreaterThanOrEqual(lastBox.right);
+    expect(buyBox.right).toBeLessThanOrEqual(stripBox.right);
+    expect(Math.abs(buyBox.width - buyBox.height)).toBeLessThanOrEqual(1);
+    expect(buyBox.width).toBeGreaterThanOrEqual(24);
+    expect(buyBox.width).toBeLessThanOrEqual(24);
+    // No divider between the last balance and the plus.
+    expect(getComputedStyle(buy.parentElement!).borderLeftWidth).toBe('0px');
+    expect(buyBox.top).toBeGreaterThanOrEqual(stripBox.top);
+    expect(buyBox.bottom).toBeLessThanOrEqual(stripBox.bottom);
+  });
+
+  test('the plus opens the Buy Buzz purchase', async () => {
+    const { buy } = await renderHeader();
+    buy.click();
+    expect(mocks.buyBuzz).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -301,5 +434,79 @@ describe('mobile menu sheet', () => {
       root.style.removeProperty('--safe-area-inset-top');
       root.style.removeProperty('--safe-area-inset-bottom');
     }
+  });
+});
+
+describe('account card frame', () => {
+  const frameOf = (el: HTMLElement) => {
+    const style = getComputedStyle(el);
+    return {
+      border: style.borderTopWidth,
+      borderColor: style.borderTopColor,
+      image: style.backgroundImage,
+    };
+  };
+
+  afterEach(() => document.documentElement.removeAttribute('data-mantine-color-scheme'));
+
+  test('the phone card has a border and a gradient, restyled for dark mode', async () => {
+    await renderHeader();
+    const card = document.querySelector('#panel > div') as HTMLElement;
+    const light = frameOf(card);
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+    await nextLayout();
+    const dark = frameOf(card);
+
+    for (const frame of [light, dark]) {
+      expect(frame.border).toBe('1px');
+      expect(frame.borderColor).not.toBe('rgba(0, 0, 0, 0)');
+      expect(frame.image).toContain('linear-gradient');
+    }
+    // Dropping the dark: classes would leave the light frame on a dark sheet.
+    expect(dark.borderColor).not.toBe(light.borderColor);
+    expect(dark.image).not.toBe(light.image);
+  });
+
+  test('the Buzz strip is a grey fill in light mode and stays translucent in dark', async () => {
+    const { card } = await renderHeader();
+    const strip = stripOf(card);
+    const read = () => {
+      const style = getComputedStyle(strip);
+      return { background: style.backgroundColor, border: style.borderTopWidth };
+    };
+    const light = read();
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+    await nextLayout();
+    const dark = read();
+
+    // Opaque in light, so it fills in against the pale gradient rather than washing into it.
+    expect(light.background).toMatch(/^rgb\(/);
+    expect(light.background).not.toBe('rgb(254, 254, 254)');
+    expect(dark.background).not.toBe(light.background);
+    expect([light.border, dark.border]).toEqual(['0px', '0px']);
+  });
+
+  test('the desktop account card carries the same frame as the phone card', async () => {
+    await renderAtViewport(
+      <UserMenuCtx.Provider value={{ handleClose: () => undefined }}>
+        <Menu opened withinPortal={false} width={260}>
+          <Menu.Target>
+            <button>open</button>
+          </Menu.Target>
+          <Menu.Dropdown>
+            <DesktopHeaderRows />
+          </Menu.Dropdown>
+        </Menu>
+      </UserMenuCtx.Provider>
+    );
+    const card = document.querySelector('[data-account-card]') as HTMLElement;
+    const frame = frameOf(card);
+    expect(frame.border).toBe('1px');
+    expect(frame.image).toContain('linear-gradient');
+    // The desktop strip carries the same plus as the phone card, not a text pill.
+    const strip = document.querySelector('[data-account-card] a[href="/user/buzz-dashboard"]')!;
+    const buy = strip.querySelector<HTMLElement>('[aria-label="Buy Buzz"]')!;
+    expect(buy.getAttribute('role')).toBe('button');
+    expect(buy.textContent).toBe('');
   });
 });

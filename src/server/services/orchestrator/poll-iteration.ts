@@ -5,6 +5,7 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { sanitizeStepErrors } from './provider-errors';
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
@@ -62,6 +63,7 @@ async function downloadAndUploadImage(
       })
     );
     registerMediaLocation(s3Key, backend, imageBuffer.length);
+    await recordUploadKeyOwner(s3Key, userId);
 
     const image = await createImage({
       url: s3Key,

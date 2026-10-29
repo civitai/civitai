@@ -14,7 +14,13 @@ import {
  */
 
 const { service } = vi.hoisted(() => ({
-  service: { submit: vi.fn(), getMine: vi.fn(), list: vi.fn(), decide: vi.fn() },
+  service: {
+    submit: vi.fn(),
+    getMine: vi.fn(),
+    list: vi.fn(),
+    countPending: vi.fn(),
+    decide: vi.fn(),
+  },
 }));
 
 vi.mock('~/server/services/app-access-request.service', async (importOriginal) => ({
@@ -22,6 +28,7 @@ vi.mock('~/server/services/app-access-request.service', async (importOriginal) =
   submitAppAccessRequest: service.submit,
   getMyAppAccessRequest: service.getMine,
   listAppAccessRequests: service.list,
+  countPendingAppAccessRequests: service.countPending,
   decideAppAccessRequest: service.decide,
 }));
 
@@ -58,6 +65,7 @@ beforeEach(() => {
   service.submit.mockResolvedValue({ id: 31, status: 'pending' });
   service.getMine.mockResolvedValue(null);
   service.list.mockResolvedValue({ items: [], nextCursor: null });
+  service.countPending.mockResolvedValue(0);
   service.decide.mockResolvedValue({ id: 31, status: 'approved' });
 });
 
@@ -161,5 +169,25 @@ describe('only moderators can list and decide', () => {
       asModerator().decide({ id: 31, decision: 'pending' } as never)
     ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
     expect(service.decide).not.toHaveBeenCalled();
+  });
+});
+
+describe('countPending — the /apps/review tab badge', () => {
+  it('answers a moderator with the service’s pending count', async () => {
+    // 137: past the list proc's 100-row page ceiling, so a badge still reading one list page
+    // could not produce it.
+    service.countPending.mockResolvedValueOnce(137);
+    expect(await asModerator().countPending()).toBe(137);
+    expect(service.countPending).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a signed-in non-moderator, before the service is reached', async () => {
+    await expect(asRequester().countPending()).rejects.toMatchObject({ code: 'FORBIDDEN' });
+    expect(service.countPending).not.toHaveBeenCalled();
+  });
+
+  it('refuses anyone signed out, before the service is reached', async () => {
+    await expect(asAnon().countPending()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(service.countPending).not.toHaveBeenCalled();
   });
 });
