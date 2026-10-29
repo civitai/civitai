@@ -180,7 +180,7 @@ describe('resolveBountyPoiAppeal', () => {
     );
   });
 
-  // The write itself, on Postgres: a bounty a content wipe kept stays hidden until its payout settles.
+  // Runs the real UPDATE on PGlite; the tests above only match SQL text.
   it.each([
     ['keeps a bounty a content wipe kept hidden', { removedWithOwner: true }, 'Private'],
     ['restores any other (control)', {}, 'Unsearchable'],

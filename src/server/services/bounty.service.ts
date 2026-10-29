@@ -1371,25 +1371,29 @@ export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
 }
 
 /**
- * Deletes each bounty a content wipe kept for its unsettled payout, now settled, unless its owner is
- * held: such a bounty stays hidden and is deleted on the first run after the hold ends.
+ * Only a complete bounty settled after its last recorded payout: an open one, or one whose award was
+ * recorded again after an earlier one settled, still owes supporters. Held owners' bounties are
+ * skipped and picked up on the first run after the hold ends.
  */
 export async function deleteSettledKeptBounties() {
   const markerView = await holdMarkerViewExists();
   const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b
-    WHERE b.meta ->> 'removedWithOwner' = 'true' AND b."payoutSettledAt" IS NOT NULL
+    WHERE b.meta ->> 'removedWithOwner' = 'true' AND b.complete
+      AND b."payoutSettledAt" >= b."payoutRecordedAt"
       AND NOT ${ownerHeldSql(Prisma.raw('b."userId"'))}`;
   const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
-    WITH ${detachHeldThreadsCte(bountyThreadParents(doomed), markerView)}
-    DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id`;
+    WITH ${detachHeldThreadsCte(bountyThreadParents(doomed), markerView)},
+    gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),
+    files AS (
+      DELETE FROM "File" WHERE "entityType" = 'Bounty' AND "entityId" IN (SELECT id FROM gone)
+    )
+    SELECT id FROM gone`;
   if (!deleted.length) return 0;
-  const ids = deleted.map((b) => b.id);
-  await dbWrite.file.deleteMany({ where: { entityType: 'Bounty', entityId: { in: ids } } });
   await SearchIndexUpdate.queueUpdate({
     indexName: BOUNTIES_SEARCH_INDEX,
-    items: ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete })),
+    items: deleted.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Delete })),
   });
-  return ids.length;
+  return deleted.length;
 }
 
 export const refundBounty = async ({

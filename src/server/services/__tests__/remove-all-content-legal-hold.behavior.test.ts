@@ -42,7 +42,6 @@ const { holder, indexes, metrics, session, pictures, tracked, docStore } = vi.ho
   },
 }));
 
-// The payout paths are the payout lock's tests; here, only whether a bounty's payout settles.
 const { payout, searchQueue } = vi.hoisted(() => ({
   payout: { unsettled: [] as number[], settles: false },
   searchQueue: vi.fn(async (_args: { indexName: string; items: unknown[] }) => undefined),
@@ -229,7 +228,10 @@ beforeAll(async () => {
     ALTER TABLE "Model" ADD COLUMN "deletedAt" timestamp(3), ADD COLUMN "updatedAt" timestamp(3);
     CREATE DOMAIN "Availability" AS text;
     ALTER TABLE "Bounty" ADD COLUMN availability "Availability" NOT NULL DEFAULT 'Public',
-      ADD COLUMN meta jsonb, ADD COLUMN "payoutSettledAt" timestamp(3);
+      ADD COLUMN meta jsonb, ADD COLUMN "payoutSettledAt" timestamp(3),
+      ADD COLUMN "payoutRecordedAt" timestamp(3) NOT NULL DEFAULT now() - interval '1 hour',
+      ADD COLUMN complete boolean NOT NULL DEFAULT false;
+    CREATE TABLE "File" (id serial PRIMARY KEY, "entityType" text, "entityId" int);
     ALTER TABLE "Comment" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
       ADD COLUMN "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
       ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3),
@@ -381,7 +383,7 @@ beforeEach(async () => {
       await holder.db.query(`DELETE FROM "Collection" WHERE "userId" = $1`, [args.where.userId])
     ).affectedRows,
   })) as never);
-  // The account's bounties, less any kept; a payout is pending only where a test says so.
+  // The account's bounties, less any kept.
   payout.unsettled = [];
   payout.settles = false;
   vi.mocked(dbMock.dbWrite.bounty.findMany).mockImplementation((async (args: {
@@ -1724,8 +1726,10 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
       )
     ).rows[0];
   const RECORD = { removedWithOwner: true, availabilityBeforeRemoval: 'Public' };
-  const settle = () =>
-    holder.db.exec(`UPDATE "Bounty" SET "payoutSettledAt" = now() WHERE id = ${BOUNTY}`);
+  const settle = (complete = true) =>
+    holder.db.exec(
+      `UPDATE "Bounty" SET "payoutSettledAt" = now(), complete = ${complete} WHERE id = ${BOUNTY}`
+    );
   const searchDeletes = () => [
     ...indexes.bounties.queueUpdate.mock.calls.flatMap(([rows]) => rows),
     ...searchQueue.mock.calls.flatMap(([{ items }]) => items),
@@ -1775,12 +1779,40 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
       vi.clearAllMocks();
     });
 
-    it('deletes it once its payout settles, and drops it from search', async () => {
+    it('deletes it once its payout settles, with its files, and drops it from search', async () => {
+      await holder.db.exec(`
+        TRUNCATE "File";
+        INSERT INTO "File" ("entityType", "entityId") VALUES
+          ('Bounty', ${BOUNTY}), ('BountyEntry', ${BOUNTY}), ('Bounty', ${BOUNTY + 3});
+      `);
       await settle();
 
       expect(await deleteSettledKeptBounties()).toBe(1);
       expect(await bounty()).toBeUndefined();
       expect(searchDeletes()).toEqual([{ id: BOUNTY, action: 'Delete' }]);
+      expect(
+        (await holder.db.query(`SELECT "entityType", "entityId" FROM "File" ORDER BY id`)).rows
+      ).toEqual([
+        { entityType: 'BountyEntry', entityId: BOUNTY },
+        { entityType: 'Bounty', entityId: BOUNTY + 3 },
+      ]);
+    });
+
+    it('leaves it hidden while it is open: a settled award does not settle its other supporters', async () => {
+      await settle(false);
+
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
+    });
+
+    it('leaves it hidden when a payout was recorded after the one that settled', async () => {
+      await settle();
+      await holder.db.exec(
+        `UPDATE "Bounty" SET "payoutRecordedAt" = now() + interval '1 minute' WHERE id = ${BOUNTY}`
+      );
+
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(await bounty()).toEqual({ availability: 'Private', meta: RECORD });
     });
 
     it('leaves it hidden while its payout is still pending', async () => {
@@ -1816,7 +1848,7 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
 
     it('leaves a settled bounty no wipe kept alone (control)', async () => {
       await holder.db.exec(`
-        UPDATE "Bounty" SET "payoutSettledAt" = now() WHERE "userId" = ${BYSTANDER};
+        UPDATE "Bounty" SET "payoutSettledAt" = now(), complete = true WHERE "userId" = ${BYSTANDER};
       `);
 
       expect(await deleteSettledKeptBounties()).toBe(0);

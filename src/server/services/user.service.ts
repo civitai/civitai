@@ -1746,8 +1746,7 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       WITH ${detach(bountyThreadParents(doomedBounties))}
       DELETE FROM "Bounty" WHERE id IN (${doomedBounties})`;
-    // Hidden until its payout settles, when `bounty-payout-retry` deletes it. A second wipe keeps the
-    // first one's record.
+    // Keep the first record: a second wipe must not overwrite availabilityBeforeRemoval with Private.
     if (keptBountyIds.length)
       await dbWrite.$executeRaw`
         UPDATE "Bounty" b

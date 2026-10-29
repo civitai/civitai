@@ -53,8 +53,7 @@ describe('bountyVisibilityWhere', () => {
   });
 });
 
-// Only a moderator path may change a bounty's availability: a bounty a content wipe kept stays
-// private until its payout settles.
+// Only a moderator path may change availability; an owner could otherwise republish a wiped bounty.
 describe('an owner create or edit', () => {
   it.each([
     ['create', createBountyInputSchema],

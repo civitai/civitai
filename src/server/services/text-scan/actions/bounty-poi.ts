@@ -133,7 +133,7 @@ export async function resolveBountyPoiAppeal({
     const restored = await dbWrite.$executeRaw`
       UPDATE "Bounty" b
       SET poi = FALSE,
-          -- A bounty a content wipe kept stays hidden until its payout settles.
+          -- Don't republish a bounty a content wipe is holding for its payout.
           availability = CASE WHEN ${notRemovedWithOwnerSql('b.meta')}
             THEN COALESCE((b.meta->${TEXT_SCAN_FLAGS_KEY}->'poi'->'prev'->>'availability')::"Availability", 'Public'::"Availability")
             ELSE b.availability END,

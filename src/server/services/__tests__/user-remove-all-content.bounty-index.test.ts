@@ -113,7 +113,7 @@ const flatten = ([strings, ...values]: unknown[]) =>
 beforeEach(() => {
   vi.clearAllMocks();
   unsettled = [];
-  // The wipe's re-check after its evidence deletes: still unheld. Every kept bounty was hidden.
+  // The wipe's re-check after its evidence deletes: still unheld.
   vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (...args: unknown[]) => {
     const sql = flatten(args);
     if (!sql.text.includes(`'removedWithOwner' = 'true'`)) return [{ held: false }];
