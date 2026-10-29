@@ -70,10 +70,13 @@ const FOREIGN_IMAGE = { id: 2, url: 'foreign-url', userId: FOREIGN_USER_ID, dele
 const sqlTextOf = (strings: TemplateStringsArray | string[]) => Array.from(strings).join('?');
 
 /** The moderation state the DELETE returns for every deleted image. */
-const deletedState: { ingestion: string; needsReview: string | null } = {
-  ingestion: 'Scanned',
-  needsReview: null,
-};
+const SCANNED = { ingestion: 'Scanned', needsReview: null, nsfwLevel: 1, blockedFor: null };
+const deletedState: {
+  ingestion: string;
+  needsReview: string | null;
+  nsfwLevel: number;
+  blockedFor: string | null;
+} = { ...SCANNED };
 
 /** `kept`: deletable images the DELETE does not return, as when a hold marker keeps the row. */
 function primeQueries(images: (typeof OWNER_IMAGE)[], kept: number[] = []) {
@@ -87,8 +90,7 @@ function primeQueries(images: (typeof OWNER_IMAGE)[], kept: number[] = []) {
         id,
         url,
         userId,
-        ingestion: deletedState.ingestion,
-        needsReview: deletedState.needsReview,
+        ...deletedState,
       }));
     if (sql.includes('DELETE FROM "Post"')) return [{ id: POST_ID, nsfwLevel: 1 }];
     if (sql.includes('AS deletable')) return images;
@@ -204,14 +206,16 @@ describe('deletePost orphan de-indexing', () => {
 
   // Only then may the storage delete keep an object that shop artwork still uses.
   it.each([
-    ['the poster deletes it', POSTER_ID, 'Scanned', null, true],
-    ['someone else deletes it', 99, 'Scanned', null, false],
-    ['it is blocked', POSTER_ID, 'Blocked', null, false],
-    ['it is held for review', POSTER_ID, 'Scanned', 'csam', false],
+    ['the poster deletes it', POSTER_ID, {}, true],
+    ['someone else deletes it', 99, {}, false],
+    ['it is blocked', POSTER_ID, { ingestion: 'Blocked' }, false],
+    ['it keeps a block reason', POSTER_ID, { ingestion: 'Error', blockedFor: 'tos' }, false],
+    ['it is not scanned yet', POSTER_ID, { ingestion: 'Pending' }, false],
+    ['it is held for review', POSTER_ID, { needsReview: 'csam' }, false],
   ] as const)(
     'asks to keep shop artwork only for a plain owner delete: %s',
-    async (_case, deletedById, ingestion, needsReview, keep) => {
-      Object.assign(deletedState, { ingestion, needsReview });
+    async (_case, deletedById, state, keep) => {
+      Object.assign(deletedState, SCANNED, state);
       primeQueries([OWNER_IMAGE]);
 
       await deletePost({ id: POST_ID, deletedById });
@@ -219,7 +223,7 @@ describe('deletePost orphan de-indexing', () => {
       expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
         expect.objectContaining({ id: OWNER_IMAGE.id, keepShopArtwork: keep })
       );
-      Object.assign(deletedState, { ingestion: 'Scanned', needsReview: null });
+      Object.assign(deletedState, SCANNED);
     }
   );
 

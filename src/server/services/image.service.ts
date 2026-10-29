@@ -57,7 +57,11 @@ import {
   METRICS_IMAGES_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { imageReviewedSql, KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  imageReviewedSql,
+  KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+} from '~/server/common/image-visibility';
 import {
   assertImageVisibleToViewer,
   imageVisibilityConditions,
@@ -592,18 +596,26 @@ type DeleteImageFromS3Args = {
 } & PurgeResizeCacheRetraction;
 
 /**
- * An owner deleting their own image that is not blocked or held for review. Only then may a delete
- * leave behind an object that shop artwork still uses: a block, takedown or moderator delete always
- * removes it, since a non-persisted CDN deny lapses and the bytes would be served again.
+ * An owner deleting their own scanned image that carries no block and is not held for review. Only
+ * then may a delete leave behind an object that shop artwork still uses: a block, takedown or
+ * moderator delete always removes it, since a non-persisted CDN deny lapses and the bytes would be
+ * served again. Scanned, so a delete cannot outrun a verdict still on its way.
  */
 export function isPlainOwnerDelete(
-  image: { userId: number; ingestion: string | null; needsReview: string | null },
+  image: {
+    userId: number;
+    ingestion: string;
+    needsReview: string | null;
+    nsfwLevel: number;
+    blockedFor: string | null;
+  },
   deletedById: number | undefined
 ) {
   return (
     image.userId === deletedById &&
-    image.ingestion !== ImageIngestionStatus.Blocked &&
-    !image.needsReview
+    image.ingestion === ImageIngestionStatus.Scanned &&
+    !image.needsReview &&
+    !hasBlockMarker(image)
   );
 }
 
@@ -906,6 +918,7 @@ export const deleteImageById = async ({
           metadata: true,
           ingestion: true,
           needsReview: true,
+          blockedFor: true,
         },
       })
       .catch((error) => {

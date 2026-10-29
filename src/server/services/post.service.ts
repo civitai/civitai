@@ -63,7 +63,6 @@ import {
   createImage,
   createImageResources,
   deleteImageFromS3,
-  isPlainOwnerDelete,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
   imagesForModelVersionsCache,
@@ -71,6 +70,7 @@ import {
   invalidateManyImageExistence,
   purgeImageGenerationDataCache,
   queueImageSearchIndexUpdate,
+  isPlainOwnerDelete,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
@@ -1239,15 +1239,17 @@ export const deletePost = async ({
         id: number;
         url: string;
         userId: number;
-        ingestion: string | null;
+        ingestion: string;
         needsReview: string | null;
+        nsfwLevel: number;
+        blockedFor: string | null;
       };
       let deletedImages: DeletedImage[] = [];
       if (deletableImages.length) {
         deletedImages = await tx.$queryRaw<DeletedImage[]>`
           DELETE FROM "Image"
           WHERE id IN (${Prisma.join(deletableImages.map((i) => i.id))})
-          RETURNING id, url, "userId", ingestion::text, "needsReview"::text
+          RETURNING id, url, "userId", ingestion::text, "needsReview", "nsfwLevel", "blockedFor"
         `;
       }
 

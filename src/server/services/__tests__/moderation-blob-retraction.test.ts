@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import { NsfwLevel } from '~/server/common/enums';
 import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 
 const mockLogToAxiom = loggingMock.logToAxiom;
@@ -526,6 +527,7 @@ describe('an image whose key shop artwork uses', () => {
       userId: OWNER,
       ingestion: 'Scanned',
       needsReview: null,
+      blockedFor: null,
       ...over,
     } as never);
   beforeEach(() => mockShopArtworkUrls.mockResolvedValue(new Set([KEY])));
@@ -543,6 +545,10 @@ describe('an image whose key shop artwork uses', () => {
     ['a moderator deletes it', { deletedById: 99 }, {}],
     ['the deleter is unknown', {}, {}],
     ['it is blocked', { deletedById: OWNER }, { ingestion: 'Blocked' }],
+    // A scan error or rescan moves ingestion off Blocked but keeps the other block markers.
+    ['it keeps a block reason', { deletedById: OWNER }, { ingestion: 'Error', blockedFor: 'tos' }],
+    ['it keeps the Blocked level', { deletedById: OWNER }, { nsfwLevel: NsfwLevel.Blocked }],
+    ['it is not scanned yet', { deletedById: OWNER }, { ingestion: 'Pending' }],
     ['it is held for review', { deletedById: OWNER }, { needsReview: 'csam' }],
   ])('deletes and purges its object when %s', async (_case, args, over) => {
     deleted(over);
