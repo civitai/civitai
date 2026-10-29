@@ -930,7 +930,10 @@ export const deleteImageById = async ({
     // says whose avatar this was. Non-throwing for the same reason as the resolver above.
     const profilePictureUserIds = await getProfilePictureUserIds([id]).catch(() => []);
     // Only an owner delete can keep an object; every other delete purges without asking.
-    const openReport = deletedById !== undefined && (await imagesWithOpenReports([id])).has(id);
+    // A failed read counts as reported, so the delete still goes ahead and purges.
+    const openReport =
+      deletedById !== undefined &&
+      (await imagesWithOpenReports([id]).catch(() => new Set([id]))).has(id);
 
     const image = await dbWrite.image
       .delete({
