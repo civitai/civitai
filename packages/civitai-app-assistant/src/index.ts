@@ -3,6 +3,7 @@ export * from './sandbox-client';
 export * from './app-key';
 export * from './app-tools';
 export * from './gate';
+export * from './submit';
 export * from './instructions';
 export * from './subagents';
 export * from './preview';

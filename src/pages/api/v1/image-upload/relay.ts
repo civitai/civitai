@@ -285,8 +285,9 @@ async function runRelay(
   // ⚠ NOT cookie-only, and the distinction matters. `getServerAuthSession` also
   // accepts `Authorization: Bearer <api key>` and `?token=`, and this route lives
   // under the public `/api/v1/` namespace. `blocks/submit-version.ts` uses the same
-  // expression but IS cookie-only (`ModEndpoint`), which is why its comment says no
-  // bearer exemption is needed — that justification does NOT transfer here.
+  // expression and is not cookie-only either (a signed-in session or a full-access
+  // personal key, `requireFullScopeSession`); it too 403s a prod bearer client that
+  // sends no Origin, rather than exempting it.
   // 🔴 FULL PATH, because there are two: `src/pages/api/blocks/submit-version.ts` is
   // the one meant. Its `/api/v1/` sibling is BEARER-only and deliberately OMITS the
   // origin guard entirely (it would break the headless CLI, which sends no Origin) —

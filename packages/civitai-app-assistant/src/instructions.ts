@@ -55,6 +55,13 @@ export function assistantRules(runner: AssistantRunner = 'browser'): string {
   ].join('\n');
 }
 
+/**
+ * How an app reaches the App Store from here. The user has no CLI and cannot reach the sandbox's files,
+ * so the only way is the page's Submit for review button, which `submit_for_review` offers.
+ */
+export const SUBMIT_RULE =
+  '- When the user asks to submit or publish the app (for review, or for the App Store), call submit_for_review on its own in its step, once the app is ready; it is refused until it is, so do what a refusal says, then call it again. The user then sees the app’s name and version with a Submit for review button, and pressing it sends the app to moderator review as them; a moderator approves it before it goes live. Never submit it any other way: do not run civitai app submit, app package or any other CLI submit or sign-in, and never tell the user to use the Civitai CLI, to sign in to it, to download or upload a zip, or to go to /apps/submit.';
+
 /** Where real Civitai data comes from, and what to do when the app needs data Civitai cannot give. */
 export const DATA_RULE =
   "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.";
@@ -71,6 +78,7 @@ const RULES_AFTER_SETUP = [
   // A run grepped the SDK README for "models(", found nothing, and shipped invented models as real ones.
   DATA_RULE,
   '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
+  SUBMIT_RULE,
 ];
 
 /** In the system prompt, not the per-reply instructions, which the chat cuts at 4,000 characters. */
