@@ -29,6 +29,7 @@ import { applyTagRules } from '~/server/jobs/apply-tag-rules';
 import { applyVotedTags } from '~/server/jobs/apply-voted-tags';
 import { cacheCleanup } from '~/server/jobs/cache-cleanup';
 import { checkProcessingResourceTrainingV2 } from '~/server/jobs/check-processing-resource-training-v2';
+import { trainingCanaryJob } from '~/server/jobs/training-canary';
 import { cleanImageResources } from '~/server/jobs/clean-image-resources';
 import { clearVaultItems } from '~/server/jobs/clear-vault-items';
 import { reconcileRestrictedImages } from '~/server/jobs/reconcile-restricted-images';
@@ -271,6 +272,7 @@ export const jobs: Job[] = [
   collectionGameProcessing,
   sendCollectionNotifications,
   checkProcessingResourceTrainingV2,
+  trainingCanaryJob,
   ...dailyChallengeJobs,
   challengeActivationJob,
   challengeCompletionJob,
