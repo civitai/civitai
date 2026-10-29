@@ -288,7 +288,6 @@ export async function getPrize({
 }
 
 export async function countUnclaimedPrizes(userId: number) {
-  // `kysely-hot-reads-5` on: the same count through Kysely, on the same replica.
   if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
     return countUnclaimedPrizesViaKysely((await loadKyselyDb()).kyselyRead, userId);
   return countUnclaimedPrizesViaPrisma(dbRead, userId);

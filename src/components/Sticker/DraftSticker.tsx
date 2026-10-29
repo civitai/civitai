@@ -21,14 +21,10 @@ import clsx from 'clsx';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
 import type { Gesture, StartGesture } from '~/components/Sticker/draft-gesture';
 import { KNOB_OFFSET, rotate } from '~/components/Sticker/draft-gesture';
-import {
-  candidateDistance,
-  chromeClearance,
-  placeButtonBoxes,
-  shouldFlipPlaceButton,
-} from '~/components/Sticker/place-button-position';
+import { placeButtonPosition } from '~/components/Sticker/place-button-position';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import {
   FREE_REVIEW_CAVEAT,
@@ -79,6 +75,15 @@ const BUY_BUTTON_GAP = 8;
 const HANDLE_OUTSET = 6;
 
 /**
+ * The dots stay small so they do not cover the artwork, but a finger needs about
+ * 40px to land on one: an invisible ring around each takes the press. 12px
+ * corners become 40px targets, the 16px knob a 44px one. Each ring is pushed
+ * outward, away from the sticker, so on a small sticker the rings do not cover
+ * the body and it can still be dragged.
+ */
+const HANDLE_HIT_AREA = "before:absolute before:-inset-3.5 before:content-['']";
+
+/**
  * The nearest ancestor that clips — the carousel's viewport on the image detail
  * page, whose bottom edge is the bottom of the media box.
  *
@@ -97,10 +102,30 @@ function nearestClipElement(element: HTMLElement): HTMLElement | null {
 }
 
 const CORNERS = [
-  { sx: -1, sy: -1, className: '-left-1.5 -top-1.5 cursor-nwse-resize' },
-  { sx: 1, sy: -1, className: '-right-1.5 -top-1.5 cursor-nesw-resize' },
-  { sx: -1, sy: 1, className: '-bottom-1.5 -left-1.5 cursor-nesw-resize' },
-  { sx: 1, sy: 1, className: '-bottom-1.5 -right-1.5 cursor-nwse-resize' },
+  {
+    sx: -1,
+    sy: -1,
+    className:
+      '-left-1.5 -top-1.5 cursor-nwse-resize before:-translate-x-2.5 before:-translate-y-2.5',
+  },
+  {
+    sx: 1,
+    sy: -1,
+    className:
+      '-right-1.5 -top-1.5 cursor-nesw-resize before:translate-x-2.5 before:-translate-y-2.5',
+  },
+  {
+    sx: -1,
+    sy: 1,
+    className:
+      '-bottom-1.5 -left-1.5 cursor-nesw-resize before:-translate-x-2.5 before:translate-y-2.5',
+  },
+  {
+    sx: 1,
+    sy: 1,
+    className:
+      '-bottom-1.5 -right-1.5 cursor-nwse-resize before:translate-x-2.5 before:translate-y-2.5',
+  },
 ];
 
 /**
@@ -340,55 +365,24 @@ export function DraftSticker({
 
     const { flipped, rotation } = frame.current;
     const tray = useStickerPlacementDraftStore.getState().tray;
-    // Layout size, not the bounding box. This element no longer rotates — the
-    // artwork inside it does — so its own box is the sticker's unrotated one,
-    // which is what the chrome is laid out against and what the clearance turns
-    // into the rotated extent.
-    const height = element.offsetHeight;
-    const width = element.offsetWidth;
-    // 🔴 AN UNMEASURED STICKER DECIDES NOTHING. `EdgeImage` has no intrinsic
-    // size until it loads, so a draft dragged in from the tray measures 0 tall
-    // for its first frames. Every number below is derived from that box, and a
-    // flip decided from a zero-height sticker puts the two candidate positions
-    // close enough together that each one argues for the other. Keeping the
-    // current side until the sticker has a size is the same rule
-    // `placementControlPosition` states for the same reason.
-    if (!(height > 0) || !(width > 0)) return;
-    const clearance = chromeClearance({
-      width,
-      height,
-      rotation,
-      knobOffset: KNOB_OFFSET,
-      outset: HANDLE_OUTSET,
-      gap: BUY_BUTTON_GAP,
-    });
-    // From the cluster's own measured rect, both times: the pair that comes out
-    // is the same whichever side it is currently on, which is what stops a flip
-    // from removing its own cause and oscillating.
-    const boxes = placeButtonBoxes({
-      current: button.getBoundingClientRect(),
-      flipped,
-      distance: candidateDistance({
-        height,
-        clusterHeight: button.offsetHeight,
-        below: clearance.below,
-        above: clearance.above,
-      }),
-    });
-
-    const willFlip = shouldFlipPlaceButton({
-      below: boxes.below,
-      above: boxes.above,
-      tray: tray?.getBoundingClientRect() ?? null,
-      clip: clip.current?.getBoundingClientRect() ?? null,
-    });
     // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
     // to the node while the class comes from state splits them across a render:
     // the element then carries the standoff for the side it just left, and the
     // real distance between the two candidate positions is off by `below +
     // above` against the model `candidateDistance` builds. A flip decision feeds
     // on that mismatch.
-    const next = { flipped: willFlip, below: clearance.below, above: clearance.above };
+    const next = placeButtonPosition({
+      sticker: element,
+      cluster: button,
+      tray: tray?.getBoundingClientRect() ?? null,
+      clip: clip.current?.getBoundingClientRect() ?? null,
+      flipped,
+      rotation,
+      knobOffset: KNOB_OFFSET,
+      outset: HANDLE_OUTSET,
+      gap: BUY_BUTTON_GAP,
+    });
+    if (!next) return;
 
     // Every pointer move re-measures, so bail on an unchanged result rather
     // than handing React a new object to re-render for.
@@ -719,6 +713,8 @@ export function DraftSticker({
      */
     <div
       ref={rootRef}
+      // A finger on the draft is editing it, not swiping the carousel.
+      {...{ [STICKER_EDITOR_ATTR]: '' }}
       className="pointer-events-none absolute"
       style={{
         left: `${draft.x * 100}%`,
@@ -771,13 +767,13 @@ export function DraftSticker({
             <span
               key={corner.className}
               onPointerDown={begin('resize', corner)}
-              className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${corner.className}`}
+              className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${HANDLE_HIT_AREA} ${corner.className}`}
             />
           ))}
 
           <span
             onPointerDown={begin('rotate')}
-            className="absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5"
+            className={`absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5 ${HANDLE_HIT_AREA} before:-translate-y-2.5`}
             style={{ top: `-${KNOB_OFFSET * 100}%` }}
           />
         </div>

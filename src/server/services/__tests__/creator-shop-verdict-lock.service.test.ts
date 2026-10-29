@@ -38,6 +38,8 @@ import {
 } from '../creator-shop.service';
 import { updateCreatorShopPack } from '../creator-shop-pack.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
+import { takenImageKeyFake } from './image-url-ownership.fake';
 
 const submitted = {
   at: '2026-10-01T00:00:00.000Z',
@@ -326,6 +328,54 @@ describe('a bundle pack edited while it is being reviewed', () => {
       /changed while you were editing/
     );
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("refuses a cover key already in use, checked as the pack owner's and excluding the pack", async () => {
+    const loaded = pack('PendingReview', { history: [submitted] });
+    rows(loaded, loaded);
+    const probes: unknown[][] = [];
+    const original = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation(takenImageKeyFake(probes));
+    try {
+      await expect(
+        updateCreatorShopPack({
+          id: 42,
+          userId: 99,
+          isModerator: true,
+          imageUrl: '0a0b0c0d-0000-4000-8000-0000000000aa',
+        })
+      ).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+    } finally {
+      dbMock.dbWrite.$queryRaw.mockImplementation(original as never);
+    }
+    expect(update).not.toHaveBeenCalled();
+    expect(probes).toHaveLength(1);
+    // Bound as: keys, shop write, owner, keys, own cosmetic, keys, own pack, keys, own box.
+    expect([probes[0][1], probes[0][4], probes[0][6], probes[0][8]]).toEqual([
+      true,
+      null,
+      42,
+      null,
+    ]);
+  });
+
+  it.each([
+    '0a0b0c0d-0000-4000-8000-0000000000aa',
+    // A legacy stored value that is not the bare key: the bare-key rule must not lock it out.
+    'https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/0A0B0C0D-0000-4000-8000-0000000000AA/a.jpeg',
+  ])('does not re-check a cover the edit resends unchanged (%s)', async (cover) => {
+    const loaded = pack('PendingReview', { coverUrl: cover, history: [submitted] });
+    rows(loaded, loaded);
+    const probes: unknown[][] = [];
+    const original = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation(takenImageKeyFake(probes));
+    try {
+      await updateCreatorShopPack({ id: 42, userId: 11, name: 'New title', imageUrl: cover });
+    } finally {
+      dbMock.dbWrite.$queryRaw.mockImplementation(original as never);
+    }
+    expect(probes).toHaveLength(0);
+    expect(update).toHaveBeenCalled();
   });
 
   it('carries a sale counted since it was read', async () => {

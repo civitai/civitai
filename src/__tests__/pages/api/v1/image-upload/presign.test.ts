@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as HttpErrors from '~/server/prom/http-errors';
@@ -85,6 +86,11 @@ describe('image upload presign routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.id).toEqual(expect.any(String));
     expect(m.track).toHaveBeenCalledExactlyOnceWith(req, res, res.body.id);
+    expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
+      `system:upload-key-owner:${res.body.id}`,
+      '7',
+      { EX: 30 * 24 * 60 * 60 }
+    );
   });
 
   it('/api/v1/image-upload/multipart records the key it hands back', async () => {
@@ -96,6 +102,11 @@ describe('image upload presign routes', () => {
     expect(res.statusCode).toBe(200);
     expect(res.body.key).toEqual(expect.any(String));
     expect(m.track).toHaveBeenCalledExactlyOnceWith(req, res, res.body.key);
+    expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
+      `system:upload-key-owner:${res.body.key}`,
+      '7',
+      { EX: 30 * 24 * 60 * 60 }
+    );
   });
 
   it('records nothing for a caller it refuses', async () => {
@@ -105,5 +116,6 @@ describe('image upload presign routes', () => {
     await imageUploadMultipart({ body: {} } as NextApiRequest, makeRes());
 
     expect(m.track).not.toHaveBeenCalled();
+    expect(redisMock.sysRedis.set).not.toHaveBeenCalled();
   });
 });
