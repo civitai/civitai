@@ -444,7 +444,6 @@ export const deleteBountyEntry = async ({
 const PAYOUT_PENDING = Symbol('payout-pending');
 
 async function deleteEntryRows(tx: Prisma.TransactionClient, id: number) {
-  // The entry's images go below, and their comment threads with them.
   const entryImageIds = Prisma.sql`SELECT ic."imageId" FROM "ImageConnection" ic
     WHERE ic."entityId" = ${id} AND ic."entityType" = 'BountyEntry'`;
   await tx.$executeRaw(

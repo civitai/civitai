@@ -6,7 +6,7 @@ import { threadUrlMap } from '~/server/notifications/comment.notifications';
  * entity id. A comic chapter is addressed by its project, and an app listing by its slug
  * (`entityId` is `app_listings.serial_id`, an integer that appears nowhere in the URL). A deleted
  * comment has no permalink: a placeholder in a section is reached through its replies. Nor, but for
- * a moderator, does one hidden for ToS, which is also how an author's delete keeps a comment for a hold.
+ * a moderator, does one hidden for ToS.
  */
 export const getCommentPermalinkRow = (commentId: number, { includeHidden = false } = {}) =>
   kyselyRead

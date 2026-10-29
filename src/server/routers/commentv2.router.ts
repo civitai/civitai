@@ -54,7 +54,6 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   const userId = ctx.user.id;
   const isModerator = ctx?.user?.isModerator;
   if (!isModerator && !!id) {
-    // A comment hidden for ToS answers as a missing one does: an author's own delete hides it.
     const row = await dbRead.commentV2.findUnique({
       where: { id },
       select: { userId: true, tosViolation: true },

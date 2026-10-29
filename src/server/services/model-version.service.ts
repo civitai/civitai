@@ -1600,7 +1600,6 @@ export const deleteVersionById = async ({
     // The caller returns the whole row, so it is read here, under the lock taken above.
     const deleted = await tx.modelVersion.findUniqueOrThrow({ where: { id } });
     // A held owner's version is refused, and the throw rolls back the access rows removed above.
-    // Its reviews cascade with it, and their comment threads with them.
     const reviews = Prisma.sql`SELECT r.id FROM "ResourceReview" r WHERE r."modelVersionId" = ${id}`;
     const outcome = await deleteUnlessHeld(
       tx.$executeRaw`

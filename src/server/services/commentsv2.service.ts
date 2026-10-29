@@ -755,8 +755,8 @@ export const isThreadDetached = (threadId: number) => isDetached(threadDetachedS
 export const isCommentDetached = (commentId: number) => isDetached(commentDetachedSql(commentId));
 
 /**
- * Whether a member gets the comment as missing: gone, hidden for ToS, which is also how an author's
- * delete keeps one for a hold, or detached. Read on the primary, so a delete just made counts.
+ * Whether a member gets the comment as missing: gone, hidden for ToS, or detached. Read on the
+ * primary, so a delete just made counts.
  */
 export const isCommentGoneForMembers = async (commentId: number) => {
   const row = await dbWrite.commentV2.findUnique({
@@ -773,8 +773,8 @@ export const getCommentStorylineId = (commentId: number) =>
   firstStorylineId(storylineOfCommentSql(commentId));
 
 /**
- * A comment kept for a hold is hidden instead, which its author cannot tell from a delete: it goes
- * from every read they get, and its points with it.
+ * A comment kept for a hold is hidden for ToS instead, which its author cannot tell from a delete:
+ * it goes from every read they get, and its points with it.
  */
 export const deleteComment = async ({
   id,

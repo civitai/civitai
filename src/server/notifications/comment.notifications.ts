@@ -15,7 +15,7 @@ import { withDefiniteArticle } from '~/utils/string-helpers';
 
 /**
  * A live CommentV3 row written since the cursor. Tombstones keep their row and must not notify, and
- * neither does a row hidden for ToS: an author's delete keeps a comment for a hold that way.
+ * neither does a row hidden for ToS.
  */
 export const liveV3Since = (lastSent: string) =>
   `c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '${lastSent}'`;

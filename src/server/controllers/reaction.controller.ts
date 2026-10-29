@@ -285,7 +285,6 @@ export const toggleReactionHandler = async ({
       !ctx.user.isModerator &&
       (await isCommentGoneForMembers(input.entityId))
     )
-      // The same answer a missing comment gets from the block check.
       throw throwNotFoundError(`No comment with id ${input.entityId}`);
 
     if (input.entityType === 'image') {
