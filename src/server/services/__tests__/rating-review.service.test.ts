@@ -484,6 +484,46 @@ describe('getRatingReviewForOwner', () => {
     expect(staleSignal).not.toHaveBeenCalled();
   });
 
+  describe('a model the text scan locked NSFW, cleaned by its owner and re-scanned clean', () => {
+    const cleanRescan = () => scan({ raised: false, level: null, reason: null, textHash: 'h-clean' });
+
+    it('still offers the dispute while the system lock stands', async () => {
+      getScan.mockResolvedValue(cleanRescan());
+      loadSubject.mockResolvedValue(subject({ systemNsfwLock: true }));
+      const res = await getRatingReviewForOwner({ entityType: 'Model', entityId: 7, userId: OWNER });
+      expect(res.canDispute).toBe(true);
+    });
+
+    it('accepts the dispute', async () => {
+      getScan.mockResolvedValue(cleanRescan());
+      loadSubject.mockResolvedValue(subject({ systemNsfwLock: true }));
+      await expect(file({ entityType: 'Model', suggestedLevel: 1 })).resolves.toMatchObject({
+        entityType: 'Model',
+        suggestedLevel: 1,
+      });
+    });
+
+    it('offers and accepts nothing when the lock is not the system\'s', async () => {
+      getScan.mockResolvedValue(cleanRescan());
+      loadSubject.mockResolvedValue(subject({ systemNsfwLock: false }));
+      const res = await getRatingReviewForOwner({ entityType: 'Model', entityId: 7, userId: OWNER });
+      expect(res.canDispute).toBe(false);
+      await expect(file({ entityType: 'Model', suggestedLevel: 1 })).rejects.toThrow(
+        'Only a rating raised by our text scan can be disputed.'
+      );
+    });
+
+    it('offers nothing on a flag-restricted model even with a system lock', async () => {
+      getScan.mockResolvedValue(cleanRescan());
+      loadSubject.mockResolvedValue(
+        subject({ systemNsfwLock: true, disputeRestriction: 'flag stands' })
+      );
+      const res = await getRatingReviewForOwner({ entityType: 'Model', entityId: 7, userId: OWNER });
+      expect(res.canDispute).toBe(false);
+      await expect(file({ entityType: 'Model', suggestedLevel: 1 })).rejects.toThrow('flag stands');
+    });
+  });
+
   it('hides the control on a non-Article nobody scanned up and nobody disputed', async () => {
     getScan.mockResolvedValue(null);
     const res = await getRatingReviewForOwner({ entityType: 'Bounty', entityId: 7, userId: OWNER });

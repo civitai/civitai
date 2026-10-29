@@ -82,6 +82,12 @@ describe('stripMinorHashMeta', () => {
     expect(input.minorHashCleared).toBeDefined();
   });
 
+  it('hides which system check locked the rating', () => {
+    expect(
+      stripMinorHashMeta({ systemNsfwLock: { source: 'text-scan', at: '2026-09-05T00:00:00Z' } })
+    ).toEqual({});
+  });
+
   it('passes null through', () => {
     expect(stripMinorHashMeta(null)).toBeNull();
   });

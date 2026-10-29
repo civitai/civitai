@@ -135,7 +135,8 @@ describe('modelModerationAdapter.applyResult', () => {
     const flip = flipCall();
     expect(flip).toBeDefined();
     expect(flip?.sql).toContain('array_append');
-    expect(flip?.values).toEqual([1]);
+    expect(flip?.sql).toContain("'systemNsfwLock'");
+    expect(flip?.values).toEqual(['xguard-text-moderation', 1]);
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
   });
 
