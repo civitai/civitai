@@ -1631,10 +1631,6 @@ export const unusedAuthorImage = (ownerId: number) =>
   } satisfies Prisma.ImageWhereInput);
 
 /**
- * Drops images used as a service offering's cover. That column has no Prisma relation, so
- * `unusedAuthorImage` cannot see it; a new plain image-id column needs the same treatment.
- */
-/**
  * Deleting an orphaned image deletes its object, so one whose key shop artwork uses stays: an
  * article saved before shop keys were refused can hold one.
  */
@@ -1650,6 +1646,10 @@ async function withoutShopArtwork(
   return images.filter((image) => !shopUrls.has(image.url)).map((image) => image.id);
 }
 
+/**
+ * Drops images used as a service offering's cover. That column has no Prisma relation, so
+ * `unusedAuthorImage` cannot see it; a new plain image-id column needs the same treatment.
+ */
 async function withoutOfferingCovers(
   db: Pick<Prisma.TransactionClient, 'serviceOffering'>,
   imageIds: number[]

@@ -257,7 +257,6 @@ describe('artwork key already in use', () => {
       })
     ).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
     expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
-    // Bound as: keys, owner, keys, own cosmetic, keys, own pack, keys, own box.
     expect(probes).toHaveLength(1);
     // Bound as: keys, shop write, owner, keys, own cosmetic, keys, own pack, keys, own box.
     expect([probes[0][1], probes[0][4], probes[0][6], probes[0][8]]).toEqual([true, 7, null, null]);
