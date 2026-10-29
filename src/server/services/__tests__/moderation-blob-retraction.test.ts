@@ -559,6 +559,17 @@ describe('an image whose key shop artwork uses', () => {
     expect(invalidateCalls()).toHaveLength(1);
   });
 
+  it('deletes and purges its object when the owner deletes it under an open report', async () => {
+    deleted();
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
+      strings.join('').includes('"ImageReport"') ? [{ imageId: 4242 }] : []) as never);
+
+    await deleteImageById({ id: 4242, deletedById: OWNER });
+
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    expect(invalidateCalls()).toHaveLength(1);
+  });
+
   // A hold marker keeps the row, so nothing reaches storage, whoever deletes it.
   it('leaves a held image to its hold', async () => {
     dbMock.dbWrite.image.delete.mockResolvedValue(null as never);

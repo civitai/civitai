@@ -79,11 +79,16 @@ const deletedState: {
 } = { ...SCANNED };
 
 /** `kept`: deletable images the DELETE does not return, as when a hold marker keeps the row. */
-function primeQueries(images: (typeof OWNER_IMAGE)[], kept: number[] = []) {
+function primeQueries(
+  images: (typeof OWNER_IMAGE)[],
+  kept: number[] = [],
+  reported: number[] = []
+) {
   const deletable = images.filter((i) => i.deletable && !kept.includes(i.id));
   dbMock.dbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
     const sql = sqlTextOf(strings);
     if (sql.includes('pg_class')) return [{ present: false }];
+    if (sql.includes('"ImageReport"')) return reported.map((imageId) => ({ imageId }));
     if (sql.includes('"collectionId"')) return [];
     if (sql.includes('DELETE FROM "Image"'))
       return deletable.map(({ id, url, userId }) => ({
@@ -226,6 +231,16 @@ describe('deletePost orphan de-indexing', () => {
       Object.assign(deletedState, SCANNED);
     }
   );
+
+  it('does not ask to keep shop artwork for an image under an open report', async () => {
+    primeQueries([OWNER_IMAGE], [], [OWNER_IMAGE.id]);
+
+    await deletePost({ id: POST_ID, deletedById: POSTER_ID });
+
+    expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
+      expect.objectContaining({ id: OWNER_IMAGE.id, keepShopArtwork: false })
+    );
+  });
 
   it('de-indexes without deleting when every image is someone else’s', async () => {
     primeQueries([FOREIGN_IMAGE]);
