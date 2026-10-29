@@ -96,15 +96,22 @@ let hashes: Map<string, Record<string, string>>;
 let currentUser: number;
 
 type ReqOpts = {
+  method?: string;
   query: Record<string, string>;
   body?: Buffer[];
   contentLength?: number;
   contentType?: string;
 };
 
-function makeReq({ query, body = [], contentLength, contentType }: ReqOpts): NextApiRequest {
+function makeReq({
+  method = 'POST',
+  query,
+  body = [],
+  contentLength,
+  contentType,
+}: ReqOpts): NextApiRequest {
   const req = Readable.from(body) as unknown as NextApiRequest;
-  req.method = 'POST';
+  req.method = method;
   req.query = query;
   req.headers = {
     [IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]: 'multipart',
@@ -211,6 +218,52 @@ beforeEach(() => {
 });
 
 describe('chunked image-upload relay', () => {
+  /**
+   * The route's own call to the shared `authorizeRelayRequest`. Every other case runs as a
+   * signed-in user, so without these the call could be dropped with the file still green.
+   * Each asks for `start`, the step that opens a multipart upload, so a missing guard shows as a
+   * storage call rather than only as a status.
+   */
+  describe('request guard', () => {
+    it('refuses a caller with no session', async () => {
+      mockGetServerAuthSession.mockResolvedValueOnce(null);
+      const { res } = await start();
+      expect(res.statusCode).toBe(401);
+      expect(mockStart).not.toHaveBeenCalled();
+      expect(await outcomes()).toEqual({ unauthorized: 1 });
+    });
+
+    it('refuses a banned user', async () => {
+      mockGetServerAuthSession.mockResolvedValueOnce({
+        user: { id: OWNER, bannedAt: new Date('2026-01-01') },
+      });
+      const { res } = await start();
+      expect(res.statusCode).toBe(401);
+      expect(mockStart).not.toHaveBeenCalled();
+    });
+
+    it('refuses a non-POST method', async () => {
+      const res = await call({
+        method: 'GET',
+        query: { action: 'start', size: String(FILE_SIZE) },
+        contentType: 'image/png',
+      });
+      expect(res.statusCode).toBe(405);
+      expect(res.headers.Allow).toBe('POST');
+      expect(mockStart).not.toHaveBeenCalled();
+    });
+
+    it('refuses an unknown step without touching storage', async () => {
+      const res = await call({ query: { action: 'finish', size: String(FILE_SIZE) } });
+      expect(res.statusCode).toBe(400);
+      expect(res.body).toEqual({ error: 'Unknown relay step' });
+      expect(mockStart).not.toHaveBeenCalled();
+      expect(mockUploadPart).not.toHaveBeenCalled();
+      expect(mockComplete).not.toHaveBeenCalled();
+      expect(mockAbort).not.toHaveBeenCalled();
+    });
+  });
+
   it('stores a file in pieces and completes it with the server-minted key', async () => {
     const { res: started, session } = await start();
     expect(started.statusCode).toBe(200);
