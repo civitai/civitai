@@ -19,7 +19,7 @@ const act = (React as unknown as { act: ActFn }).act;
 /**
  * THE SEAM, not the predicate.
  *
- * `shouldRelayOnPartFailure` is correct in isolation and thoroughly unit-tested in
+ * `selectRelayFallback` is correct in isolation and thoroughly unit-tested in
  * `src/utils/__tests__/upload-retry.test.ts` — with a fixture the only production caller
  * could never produce. The relay fallback it gates was therefore INERT from the day it
  * merged: the worker cancels the upload's abort signal before the gate is reached, so the
@@ -39,6 +39,9 @@ const SLOW_BODY_STEPS = 30;
 /** Mirrors `PART_RESPONSE_TIMEOUT_MS` in the hook, which is not exported. */
 const RESPONSE_WINDOW_MS = 5 * 60_000;
 const RELAY_ENDPOINT = '/api/v1/image-upload/relay';
+const RELAY_CHUNKED_ENDPOINT = '/api/v1/image-upload/relay-chunked';
+/** The piece size the scripted chunked relay hands back; deliberately not a power of two. */
+const CHUNKED_PIECE = 4_000_037;
 /** The key the relay mints server-side. Deliberately unlike the presigned key. */
 const RELAY_KEY = 'relayed/9f1c2d-4a.png';
 
@@ -140,6 +143,8 @@ let relayStarted: boolean;
  */
 let relayRequestHeaders: Record<string, string>[];
 let abortCalls: AbortBody[];
+/** `action` of each chunked-relay request, in order. */
+let chunkedActions: string[];
 
 class FakeXHR {
   readyState = 0;
@@ -371,6 +376,22 @@ function makeFetch(partCount: number) {
         }),
       };
     }
+    if (url.startsWith(`${RELAY_CHUNKED_ENDPOINT}?`)) {
+      const params = new URL(url, 'https://origin.test').searchParams;
+      const action = params.get('action') ?? '';
+      chunkedActions.push(action);
+      const body =
+        action === 'start'
+          ? {
+              session: 'chunked-session',
+              pieceSize: CHUNKED_PIECE,
+              partCount: Math.ceil(Number(params.get('size')) / CHUNKED_PIECE),
+            }
+          : action === 'complete'
+          ? { id: RELAY_KEY }
+          : {};
+      return { ok: true, status: 200, headers: { get: () => null }, json: async () => body };
+    }
     if (url === RELAY_ENDPOINT) {
       relayTimes.push(Date.now());
       relayRequestHeaders.push((init?.headers ?? {}) as Record<string, string>);
@@ -574,6 +595,7 @@ beforeEach(() => {
   relayStarted = false;
   relayRequestHeaders = [];
   abortCalls = [];
+  chunkedActions = [];
   partHandler = () => ({ status: 200, etag: 'etag' });
   vi.stubGlobal('XMLHttpRequest', FakeXHR);
 });
@@ -611,7 +633,7 @@ describe('FakeXHR conformance', () => {
 
 describe('useS3Upload relay fallback', () => {
   it('relays the file through our own origin when a part dies at the network layer', async () => {
-    // 🔴 THE DEFECT. Every gate in `shouldRelayOnPartFailure` is satisfied here — image
+    // 🔴 THE DEFECT. Every gate in `selectRelayFallback` is satisfied here — image
     // type, image backend, a file well under the relay cap, a network-layer failure — and
     // before this fix the relay was still never attempted, because the worker's own
     // teardown had already tripped the signal the gate read as "the caller cancelled".
@@ -644,6 +666,39 @@ describe('useS3Upload relay fallback', () => {
     // why the direct path was abandoned.
     expect(abortCalls.map((c) => c.failure)).toEqual([{ kind: 'network-error', partNumber: 1 }]);
     expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['rescued']);
+  });
+
+  it('🔴 relays an image over the single-shot cap through the CHUNKED relay', async () => {
+    // Regression: the gate used to refuse every file over 10 MiB, so a user who could not reach
+    // the storage host could not upload a large image at all — this case reported
+    // `not_attempted` and `url: null`. 10 MiB + 12,345 bytes: just over the single-shot cap.
+    vi.stubGlobal('fetch', makeFetch(1));
+    partHandler = () => ({ status: 0, networkError: true });
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(10 * 1024 * 1024 + 12_345), UploadType.Image);
+
+    expect(chunkedActions).toEqual(['start', 'part', 'part', 'part', 'complete']);
+    // Never the single-shot route, which would silently truncate this body at 10 MiB.
+    expect(relayCalls).toBe(0);
+    expect(result).toMatchObject({ url: RELAY_KEY, key: RELAY_KEY });
+    expect(h.statuses()).toEqual(['success']);
+    expect(h.progresses()).toEqual([100]);
+    expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['rescued']);
+  });
+
+  it('does not relay an image over the image size cap by either route (invariant)', async () => {
+    // Invariant guard, not a regression test: this was already refused before the chunked relay.
+    vi.stubGlobal('fetch', makeFetch(1));
+    partHandler = () => ({ status: 0, networkError: true });
+    const h = await mountHook();
+
+    const result = await runUpload(h, makeFile(50 * 1024 * 1024 + 1), UploadType.Image);
+
+    expect(chunkedActions).toEqual([]);
+    expect(relayCalls).toBe(0);
+    expect(result).toMatchObject({ url: null });
+    expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['not_attempted']);
   });
 
   it('🔴 identifies itself as the MULTIPART producer on the relay POST', async () => {
@@ -888,7 +943,7 @@ describe('useS3Upload relay fallback', () => {
  * half-open fires neither `error` nor `load`: the row froze at its last progress value, the
  * fatal slot was never written, the relay could not run and NOTHING was logged. A test that
  * only asserts the watchdog's timer fired would also pass against a watchdog whose abort
- * records the user-cancel shape, which `shouldRelayOnPartFailure` refuses on `err.aborted` —
+ * records the user-cancel shape, which `selectRelayFallback` refuses on `err.aborted` —
  * the inert-gate defect this code has shipped twice. So these assert the relay POST.
  */
 describe('useS3Upload part stall watchdog', () => {
@@ -898,7 +953,7 @@ describe('useS3Upload part stall watchdog', () => {
   it('relays a part that sent some bytes and then went silent', async () => {
     // 🔴 THE DECISIVE CASE. Before the watchdog this upload never settles at all: the PUT
     // hangs forever, so `runUpload` exhausts its clock budget and throws rather than failing
-    // an assertion. Every gate in `shouldRelayOnPartFailure` is satisfied — image type, image
+    // an assertion. Every gate in `selectRelayFallback` is satisfied — image type, image
     // backend, a file far under the cap, a network-layer failure that nobody cancelled.
     vi.stubGlobal('fetch', makeFetch(1));
     hangPartNumbers = [1];

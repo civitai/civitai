@@ -1,6 +1,7 @@
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ShellStatus } from '~/components/Shell/shell-bootstrap-context';
 
 /**
  * Wiring test for `FaroProvider`'s session-attributes seam: the `region` prop threaded in
@@ -92,19 +93,40 @@ const setWindow = (present: boolean) => {
  * Render the provider with a FRESH module generation (`vi.resetModules` + re-import) —
  * `initFaro`'s module guard makes init one-shot per module instance, so each render that
  * should reach `initializeFaro` needs new module state. MUST be awaited: the dynamic import
- * defers the whole render past the current microtask.
+ * defers the whole render past the current microtask. With `shellStatus` it renders inside
+ * `ShellBootstrapProvider` as `_app` does on a shell boot; without, outside it.
  */
 const renderProvider = async (
   region: string | null | undefined,
   hardLoad: { shell: boolean; signedIn: boolean } = { shell: false, signedIn: false },
-  viewerFlagsReady = true
+  shellStatus?: ShellStatus
 ) => {
   vi.resetModules();
-  const { FaroProvider } = await import('~/components/Faro/FaroProvider');
-  return renderToStaticMarkup(
-    createElement(FaroProvider, { region, ...hardLoad, viewerFlagsReady })
-  );
+  const { render } = await freshModules();
+  return render({ region, ...hardLoad }, shellStatus);
 };
+
+/**
+ * `FaroProvider` and `ShellBootstrapProvider` from ONE fresh module generation (the context
+ * instance must be the one the provider reads), and a static render of the first inside the
+ * second when given a shell status.
+ */
+async function freshModules() {
+  const { FaroProvider } = await import('~/components/Faro/FaroProvider');
+  const { ShellBootstrapProvider } = await import('~/components/Shell/shell-bootstrap-context');
+  const render = (
+    props: { region: string | null | undefined; shell: boolean; signedIn: boolean },
+    shellStatus?: ShellStatus
+  ) => {
+    const provider = createElement(FaroProvider, props);
+    return renderToStaticMarkup(
+      shellStatus
+        ? createElement(ShellBootstrapProvider, { status: shellStatus }, provider)
+        : provider
+    );
+  };
+  return { render };
+}
 
 const initOptions = () =>
   initializeFaro.mock.calls[0][0] as {
@@ -177,7 +199,7 @@ describe('FaroProvider — session-attributes wiring', () => {
     const { FaroProvider } = await import('~/components/Faro/FaroProvider');
     // TWO renders against the SAME module instance — StrictMode double-mount and
     // Fast-Refresh re-mounts must not re-initialize (module + window guards).
-    const props = { region: 'US', shell: false, signedIn: false, viewerFlagsReady: true };
+    const props = { region: 'US', shell: false, signedIn: false };
     renderToStaticMarkup(createElement(FaroProvider, props));
     renderToStaticMarkup(createElement(FaroProvider, props));
     expect(initializeFaro).toHaveBeenCalledTimes(1);
@@ -211,7 +233,7 @@ describe('FaroProvider — page attributes wiring', () => {
 
 /**
  * The resource_timing cohort is a per-user flag. A static shell boots on user-less flags and
- * gets the viewer's with its page data (`viewerFlagsReady`), so on a shell the cohort must be read
+ * gets the viewer's with its page data (`useShellReady`), so on a shell the cohort must be read
  * from those, never from the boot flags — in either direction.
  */
 describe('FaroProvider — resource_timing cohort on a shell boot', () => {
@@ -234,7 +256,7 @@ describe('FaroProvider — resource_timing cohort on a shell boot', () => {
 
   it('a shell whose boot flags say "in the cohort" does not attach it before the viewer’s arrive', async () => {
     featuresValue.faroResourceTiming = true;
-    await renderProvider('US', { shell: true, signedIn: true }, false);
+    await renderProvider('US', { shell: true, signedIn: true }, 'pending');
     expect(initializeFaro).toHaveBeenCalledTimes(1);
     expect(resourceTimingAtInit()).toBe(0);
     expect(faro.instrumentations.add).not.toHaveBeenCalled();
@@ -242,17 +264,17 @@ describe('FaroProvider — resource_timing cohort on a shell boot', () => {
 
   it('a shell viewer in the cohort gets it attached once the viewer’s flags arrive', async () => {
     vi.resetModules();
-    const { FaroProvider } = await import('~/components/Faro/FaroProvider');
+    const { render } = await freshModules();
     const props = { region: 'US', shell: true, signedIn: true };
     // Boot: user-less flags, not in the cohort.
-    renderToStaticMarkup(createElement(FaroProvider, { ...props, viewerFlagsReady: false }));
+    render(props, 'pending');
     expect(initializeFaro).toHaveBeenCalledTimes(1);
     expect(resourceTimingAtInit()).toBe(0);
     expect(faro.instrumentations.add).not.toHaveBeenCalled();
     // Page data adopted: the viewer's own flags put them in it.
     featuresValue.faroResourceTiming = true;
-    renderToStaticMarkup(createElement(FaroProvider, { ...props, viewerFlagsReady: true }));
-    renderToStaticMarkup(createElement(FaroProvider, { ...props, viewerFlagsReady: true }));
+    render(props, 'ready');
+    render(props, 'ready');
     expect(initializeFaro).toHaveBeenCalledTimes(1);
     expect(faro.instrumentations.add).toHaveBeenCalledTimes(1);
     expect(faro.instrumentations.add).toHaveBeenCalledWith({ name: 'resource-timing-stub' });
@@ -260,10 +282,10 @@ describe('FaroProvider — resource_timing cohort on a shell boot', () => {
 
   it('a shell viewer outside the cohort never gets it', async () => {
     vi.resetModules();
-    const { FaroProvider } = await import('~/components/Faro/FaroProvider');
+    const { render } = await freshModules();
     const props = { region: 'US', shell: true, signedIn: true };
-    renderToStaticMarkup(createElement(FaroProvider, { ...props, viewerFlagsReady: false }));
-    renderToStaticMarkup(createElement(FaroProvider, { ...props, viewerFlagsReady: true }));
+    render(props, 'pending');
+    render(props, 'ready');
     expect(resourceTimingAtInit()).toBe(0);
     expect(faro.instrumentations.add).not.toHaveBeenCalled();
   });

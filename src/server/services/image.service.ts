@@ -601,10 +601,10 @@ type DeleteImageFromS3Args = {
 } & PurgeResizeCacheRetraction;
 
 /**
- * An owner deleting their own scanned image that carries no block and is not held for review. Only
- * then may a delete leave behind an object that shop artwork still uses: a block, takedown or
- * moderator delete always removes it, since a non-persisted CDN deny lapses and the bytes would be
- * served again. Scanned, so a delete cannot outrun a verdict still on its way.
+ * An owner deleting their own scanned image that carries no block, is not held for review and has no
+ * open report. Only then may a delete leave behind an object that shop artwork still uses: a block,
+ * takedown or moderator delete always removes it, since a non-persisted CDN deny lapses and the
+ * bytes would be served again. Scanned and unreported, so a delete cannot outrun a verdict.
  */
 export function isPlainOwnerDelete(
   image: {
@@ -613,6 +613,7 @@ export function isPlainOwnerDelete(
     needsReview: string | null;
     nsfwLevel: number;
     blockedFor: string | null;
+    openReport: boolean;
   },
   deletedById: number | undefined
 ) {
@@ -620,8 +621,31 @@ export function isPlainOwnerDelete(
     image.userId === deletedById &&
     image.ingestion === ImageIngestionStatus.Scanned &&
     !image.needsReview &&
+    !image.openReport &&
     !hasBlockMarker(image)
   );
+}
+
+/**
+ * The images among `ids` with a report still Pending or Processing, on the image or on its post.
+ * Read before the delete: `ImageReport` and `PostReport` cascade with what they report.
+ */
+export async function imagesWithOpenReports(
+  ids: number[],
+  db: Pick<Prisma.TransactionClient, '$queryRaw'> = dbWrite
+): Promise<Set<number>> {
+  if (!ids.length) return new Set();
+  const rows = await db.$queryRaw<{ imageId: number }[]>`
+    SELECT ir."imageId" FROM "ImageReport" ir
+    JOIN "Report" r ON r.id = ir."reportId"
+    WHERE ir."imageId" = ANY(${ids}::int[]) AND r.status IN ('Pending', 'Processing')
+    UNION
+    SELECT i.id FROM "Image" i
+    JOIN "PostReport" pr ON pr."postId" = i."postId"
+    JOIN "Report" r ON r.id = pr."reportId"
+    WHERE i.id = ANY(${ids}::int[]) AND r.status IN ('Pending', 'Processing')
+  `;
+  return new Set(rows.map((row) => row.imageId));
 }
 
 export async function deleteImageFromS3(
@@ -911,6 +935,11 @@ export const deleteImageById = async ({
     // Also before the delete: `User.profilePictureId` is `onDelete: SetNull`, so afterwards nothing
     // says whose avatar this was. Non-throwing for the same reason as the resolver above.
     const profilePictureUserIds = await getProfilePictureUserIds([id]).catch(() => []);
+    // Only an owner delete can keep an object; every other delete purges without asking.
+    // A failed read counts as reported, so the delete still goes ahead and purges.
+    const openReport =
+      deletedById !== undefined &&
+      (await imagesWithOpenReports([id]).catch(() => new Set([id]))).has(id);
 
     const markerView = await holdMarkerViewExists();
     const [image = null] = await dbWrite.$queryRaw<
@@ -950,7 +979,7 @@ export const deleteImageById = async ({
       deleteImageFromS3({
         id,
         url: image.url,
-        keepShopArtwork: isPlainOwnerDelete(image, deletedById),
+        keepShopArtwork: isPlainOwnerDelete({ ...image, openReport }, deletedById),
       }),
       queueImageSearchIndexUpdate({
         ids: [id],

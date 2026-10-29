@@ -103,38 +103,34 @@ describe('_app → FaroProvider page attributes', () => {
 });
 
 /**
- * `viewerFlagsReady` tells FaroProvider whether the flags are the viewer's own yet, which decides
- * the per-user resource_timing cohort. `useShellBootstrap`'s `status` is `undefined` off a shell
- * boot and `pending` / `ready` / `failed` on one; only `ready` means the page data — and with it
- * the viewer's flags — was adopted. A `failed` shell is leaving for a full render on the boot's
- * user-less flags, so it must not decide the cohort. This evaluates the prop's own expression,
- * as written in `_app`, for each status.
+ * FaroProvider reads the shell boot's readiness from `useShellReady`, which answers "ready" when no
+ * `ShellBootstrapProvider` is above it. So on a shell boot it must render inside the tree `_app`
+ * wraps in that provider, or a pending shell would decide the per-user resource_timing cohort on
+ * its user-less boot flags. The hook's behaviour is pinned by
+ * src/components/Faro/__tests__/faroProviderShellCohort.test.ts.
  */
-describe('_app → FaroProvider viewerFlagsReady', () => {
-  const expression = () => {
-    const attr = faroProviderElement().attributes.properties.find(
-      (p): p is ts.JsxAttribute =>
-        ts.isJsxAttribute(p) && ts.isIdentifier(p.name) && p.name.text === 'viewerFlagsReady'
-    );
-    const init = attr?.initializer;
-    if (!init || !ts.isJsxExpression(init) || !init.expression) {
-      throw new Error('<FaroProvider viewerFlagsReady={…}> has no expression initializer');
+describe('_app → FaroProvider shell readiness', () => {
+  it('renders FaroProvider inside the tree ShellBootstrapProvider wraps', () => {
+    let decl: ts.Node | undefined = faroProviderElement();
+    while (decl && !ts.isVariableDeclaration(decl)) decl = decl.parent;
+    if (!decl || !ts.isVariableDeclaration(decl) || !ts.isIdentifier(decl.name)) {
+      throw new Error('<FaroProvider> is not inside a variable declaration in MyApp');
     }
-    return init.expression.getText();
-  };
+    const tree = decl.name.text;
 
-  it('reads the shell boot status', () => {
-    expect(squash(expression())).toBe("!shellStatus || shellStatus === 'ready'");
-  });
-
-  it.each([
-    ['not a shell boot', undefined, true],
-    ['a shell still waiting for its page data', 'pending', false],
-    ['a shell whose page data was adopted', 'ready', true],
-    ['a shell whose page data failed', 'failed', false],
-  ] as const)('%s → %s', (_, shellStatus, expected) => {
-    // eslint-disable-next-line @typescript-eslint/no-implied-eval
-    const evaluate = new Function('shellStatus', `return (${expression()});`);
-    expect(evaluate(shellStatus)).toBe(expected);
+    const wrapped = (
+      collect(
+        myAppBody(),
+        (n) =>
+          ts.isJsxElement(n) &&
+          ts.isIdentifier(n.openingElement.tagName) &&
+          n.openingElement.tagName.text === 'ShellBootstrapProvider'
+      ) as ts.JsxElement[]
+    ).map((el) =>
+      el.children
+        .filter((c): c is ts.JsxExpression => ts.isJsxExpression(c) && !!c.expression)
+        .map((c) => c.expression?.getText())
+    );
+    expect(wrapped).toEqual([[tree]]);
   });
 });

@@ -5,7 +5,8 @@ import profileClasses from '~/components/Profile/ProfileSection.module.css';
 
 // A shelf clips at its box, so it holds the hat's room itself: padding above and left of the first
 // card, undone by an equal negative margin so no card moves, plus the matching
-// `--event-decoration-allowance`. Browser mode only: placement needs a real layout.
+// `--event-decoration-allowance`. On the profile the page's own scroller clips 20px left of the
+// first card, so the hat gets that much there and the full room above. Browser mode only: placement needs a real layout.
 
 const HAT_URL =
   'data:image/svg+xml,' +
@@ -92,12 +93,38 @@ describe('a hat on a shelf card sits on its corner', () => {
     );
     const root = document.querySelector('[data-testid="root"]')!;
     const grid = root.firstElementChild!;
-    expectOnCorner(grid, { left: 24 });
+    expectOnCorner(grid, { left: 20 });
 
     expect(rect(cards()[0]).left - rect(root).left).toBeCloseTo(8, 0);
     expect(rect(cards()[0]).top - rect(root).top).toBeCloseTo(0, 0);
     // The grid's children are the cards' wrappers; a collapsed row is zero tall.
     expect(cards().filter((c) => rect(c.parentElement).height > 0)).toHaveLength(6);
+  });
+
+  test('profile showcase beside the page scroller: the first hat is whole inside the scroller, no card moved', async () => {
+    // ProfileLayout2: a scroller that clips, a 12px gutter, then a section that bleeds 16px past it.
+    await shelf(
+      900,
+      <div data-testid="scroller" style={{ overflow: 'hidden' }}>
+        <div style={{ height: 60 }} />
+        <div className="px-3">
+          <div className={profileClasses.profileSection}>
+            <ShowcaseGrid itemCount={items.length} rows={2} minWidth={280}>
+              {items.map((i) => (
+                <Card key={i} i={i} />
+              ))}
+            </ShowcaseGrid>
+          </div>
+        </div>
+      </div>
+    );
+    const scroller = document.querySelector('[data-testid="scroller"]')!;
+    expectOnCorner(scroller, { left: 12 });
+    // Bounding rects ignore clipping: the topmost thing inside the hat is the hat itself.
+    const r = rect(hats()[0]);
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height * 0.7);
+    expect(hit?.closest('button[data-event-decoration="hat"]')).toBe(hats()[0]);
+    expect(rect(cards()[0]).left - rect(scroller).left).toBeCloseTo(20, 0);
   });
 
   test('profile showcase scroller on a phone: full room above, what the page leaves beside', async () => {

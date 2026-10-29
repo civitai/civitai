@@ -79,6 +79,7 @@ import {
   purgeImageGenerationDataCache,
   queueImageSearchIndexUpdate,
   isPlainOwnerDelete,
+  imagesWithOpenReports,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
@@ -1234,12 +1235,13 @@ export const deletePost = async ({
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
   const markerView = await holdMarkerViewExists();
 
-  const { post, deletedImages, orphanedImageIds, imageOwnerIds } = await dbWrite.$transaction(
-    async (tx) => {
-      // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
-      const images = await tx.$queryRaw<
-        { id: number; url: string; userId: number; deletable: boolean }[]
-      >`
+  const { post, deletedImages, orphanedImageIds, imageOwnerIds, reported } =
+    await dbWrite.$transaction(
+      async (tx) => {
+        // `deletable` is projected, not filtered: the skipped rows are the orphan list below.
+        const images = await tx.$queryRaw<
+          { id: number; url: string; userId: number; deletable: boolean }[]
+        >`
         SELECT i.id, i.url, i."userId", ${Prisma.raw(
           isModerator ? 'TRUE' : 'i."userId" = p."userId"'
         )} AS deletable
@@ -1248,21 +1250,29 @@ export const deletePost = async ({
         WHERE i."postId" = ${id}
       `;
 
-      const deletableImages = images.filter((image) => image.deletable);
+        const deletableImages = images.filter((image) => image.deletable);
+        // Before the delete: `ImageReport` cascades with the image.
+        const reported =
+          deletedById === undefined
+            ? new Set<number>()
+            : await imagesWithOpenReports(
+                deletableImages.map((image) => image.id),
+                tx
+              );
 
-      type DeletedImage = {
-        id: number;
-        url: string;
-        userId: number;
-        ingestion: string;
-        needsReview: string | null;
-        nsfwLevel: number;
-        blockedFor: string | null;
-      };
-      let deletedImages: DeletedImage[] = [];
-      if (deletableImages.length) {
-        const imageIds = deletableImages.map((i) => i.id);
-        deletedImages = await tx.$queryRaw<DeletedImage[]>`
+        type DeletedImage = {
+          id: number;
+          url: string;
+          userId: number;
+          ingestion: string;
+          needsReview: string | null;
+          nsfwLevel: number;
+          blockedFor: string | null;
+        };
+        let deletedImages: DeletedImage[] = [];
+        if (deletableImages.length) {
+          const imageIds = deletableImages.map((i) => i.id);
+          deletedImages = await tx.$queryRaw<DeletedImage[]>`
           WITH ${detachHeldThreadsCte(
             { imageId: Prisma.sql`SELECT unnest(${imageIds}::int[])` },
             markerView
@@ -1271,46 +1281,46 @@ export const deletePost = async ({
           WHERE id IN (${Prisma.join(imageIds)})
           RETURNING id, url, "userId", ingestion::text, "needsReview", "nsfwLevel", "blockedFor"
         `;
-      }
+        }
 
-      const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
+        const [post] = await tx.$queryRaw<{ id: number; nsfwLevel: number }[]>`
         WITH ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT ${id}::int` }, markerView)}
         DELETE FROM "Post"
         WHERE id = ${id}
         RETURNING id, "nsfwLevel"
       `;
 
-      // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
-      // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
-      // never revisits them — their docs must be dropped here.
-      const deletedIds = new Set(deletedImages.map(({ id }) => id));
-      const orphanedImageIds = images.filter(({ id }) => !deletedIds.has(id)).map(({ id }) => id);
+        // Images left behind (not this caller's to delete, or kept by a hold marker) keep their row with
+        // `postId` nulled (ON DELETE SET NULL). The index sync only selects `postId IS NOT NULL`, so it
+        // never revisits them — their docs must be dropped here.
+        const deletedIds = new Set(deletedImages.map(({ id }) => id));
+        const orphanedImageIds = images.filter(({ id }) => !deletedIds.has(id)).map(({ id }) => id);
 
-      const imageOwnerIds = uniq(images.map((image) => image.userId));
+        const imageOwnerIds = uniq(images.map((image) => image.userId));
 
-      return { post, deletedImages, orphanedImageIds, imageOwnerIds };
-    },
-    // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
-    // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
-    // said to revert once the slowness was root-caused, and it now has been.
-    //
-    // The cause was NOT this budget. `UserProfile.sfwCoverImageId` is a foreign key to
-    // `Image` with ON DELETE SET NULL and no index, on a ~1.5 GB / 3.44M row table, so
-    // Postgres's referential-integrity trigger full-scanned it ONCE PER DELETED IMAGE:
-    // 1.74M calls at a 634 ms mean, ~290 hours of scan time, to null 12 rows. That made
-    // this DELETE cost ~634 ms per image, which is why ~100 images took ~63 s and why
-    // the failure was deterministic by post size rather than random.
-    //
-    // Fixed by the index in #4284, applied 2026-08-22 21:01:26Z. Measured after, on
-    // production traffic: the RI trigger went 634 ms -> 0.003 ms over 2,613 calls, and
-    // the plan went from ~193,719 buffers to 3. Slow (>5s) executions of this statement:
-    // 11 in the six minutes before the index, ZERO in the fifteen minutes after.
-    //
-    // So 10s is no longer a tight budget — at 0.003 ms/image even a 1000-image post
-    // spends ~3 ms in that trigger. Keeping 30s would only mean a genuinely stuck delete
-    // takes three times as long to surface.
-    { timeout: 10000 }
-  );
+        return { post, deletedImages, orphanedImageIds, imageOwnerIds, reported };
+      },
+      // Back to 10s (2026-08-22). This was temporarily raised to 30s in #4276 while post
+      // deletion was failing with Prisma P2028 "Transaction already closed"; that comment
+      // said to revert once the slowness was root-caused, and it now has been.
+      //
+      // The cause was NOT this budget. `UserProfile.sfwCoverImageId` is a foreign key to
+      // `Image` with ON DELETE SET NULL and no index, on a ~1.5 GB / 3.44M row table, so
+      // Postgres's referential-integrity trigger full-scanned it ONCE PER DELETED IMAGE:
+      // 1.74M calls at a 634 ms mean, ~290 hours of scan time, to null 12 rows. That made
+      // this DELETE cost ~634 ms per image, which is why ~100 images took ~63 s and why
+      // the failure was deterministic by post size rather than random.
+      //
+      // Fixed by the index in #4284, applied 2026-08-22 21:01:26Z. Measured after, on
+      // production traffic: the RI trigger went 634 ms -> 0.003 ms over 2,613 calls, and
+      // the plan went from ~193,719 buffers to 3. Slow (>5s) executions of this statement:
+      // 11 in the six minutes before the index, ZERO in the fifteen minutes after.
+      //
+      // So 10s is no longer a tight budget — at 0.003 ms/image even a 1000-image post
+      // spends ~3 ms in that trigger. Keeping 30s would only mean a genuinely stuck delete
+      // takes three times as long to surface.
+      { timeout: 10000 }
+    );
 
   // Immediately after the commit, ahead of the de-index/S3/cache steps below. Those can
   // reject, and by this point the rows are gone — the pre-delete snapshot is the only
@@ -1336,7 +1346,10 @@ export const deletePost = async ({
           deleteImageFromS3({
             id: image.id,
             url: image.url,
-            keepShopArtwork: isPlainOwnerDelete(image, deletedById),
+            keepShopArtwork: isPlainOwnerDelete(
+              { ...image, openReport: reported.has(image.id) },
+              deletedById
+            ),
           })
         )
       )

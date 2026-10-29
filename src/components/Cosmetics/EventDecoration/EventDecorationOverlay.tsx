@@ -62,7 +62,7 @@ export function EventDecorationOverlay({
   );
   if (hatLayer?.layer && placement === 'corner' && allowance === undefined)
     return (
-      <LayeredHat layer={hatLayer.layer} hidden={hatLayer.moving} version={hatLayer.version}>
+      <LayeredHat layer={hatLayer.layer} version={hatLayer.version}>
         {({ width }) => hat(width)}
       </LayeredHat>
     );

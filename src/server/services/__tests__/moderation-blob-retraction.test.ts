@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { NsfwLevel } from '~/server/common/enums';
@@ -96,9 +98,13 @@ vi.mock('~/server/services/image-url-ownership', async (importOriginal) => ({
   shopArtworkUrls: mockShopArtworkUrls,
 }));
 
-const { purgeResizeCache, deleteImageFromS3, deleteImages, deleteImageById } = await import(
-  '../image.service'
-);
+const {
+  purgeResizeCache,
+  deleteImageFromS3,
+  deleteImages,
+  deleteImageById,
+  imagesWithOpenReports,
+} = await import('../image.service');
 const { callCdnAccess } = await import('../cdn-access.service');
 
 const invalidateCalls = () =>
@@ -520,9 +526,16 @@ describe('retraction load on the image-cache service', () => {
 describe('an image whose key shop artwork uses', () => {
   const OWNER = 7;
   // The delete is one raw statement; the other raw reads around it find nothing.
-  const deleted = (over: Record<string, unknown> | null = {}) =>
-    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
-      strings.join('').includes('DELETE FROM "Image"') && over
+  // The delete is one raw statement; `reports` answers the open-report read before it, and the
+  // other raw reads around it find nothing.
+  const deleted = (
+    over: Record<string, unknown> | null = {},
+    reports: () => unknown[] = () => []
+  ) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+      const text = strings.join('');
+      if (text.includes('"ImageReport"')) return reports();
+      return text.includes('DELETE FROM "Image"') && over
         ? [
             {
               url: KEY,
@@ -536,7 +549,8 @@ describe('an image whose key shop artwork uses', () => {
               ...over,
             },
           ]
-        : []) as never);
+        : [];
+    }) as never);
   beforeEach(() => mockShopArtworkUrls.mockResolvedValue(new Set([KEY])));
 
   it('keeps its object when the owner deletes it', async () => {
@@ -566,6 +580,25 @@ describe('an image whose key shop artwork uses', () => {
     expect(invalidateCalls()).toHaveLength(1);
   });
 
+  it('deletes and purges its object when the owner deletes it under an open report', async () => {
+    deleted({}, () => [{ imageId: 4242 }]);
+
+    await deleteImageById({ id: 4242, deletedById: OWNER });
+
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    expect(invalidateCalls()).toHaveLength(1);
+  });
+
+  it('deletes and purges its object when the report lookup fails', async () => {
+    deleted({}, () => {
+      throw new Error('lookup failed');
+    });
+
+    await deleteImageById({ id: 4242, deletedById: OWNER });
+
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+  });
+
   // A hold marker keeps the row, so nothing reaches storage, whoever deletes it.
   it('leaves a held image to its hold', async () => {
     deleted(null);
@@ -579,5 +612,38 @@ describe('an image whose key shop artwork uses', () => {
     await deleteImageFromS3({ id: 4242, url: KEY });
 
     expect(mockB2Send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('imagesWithOpenReports', () => {
+  // Image 1 is reported itself; images 2 and 3 share post 20, which is reported; image 4's post
+  // has only a closed report; image 5's own report is closed.
+  const run = async (reports: string) => {
+    const pg = new PGlite();
+    await pg.exec(`
+      CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int);
+      CREATE TABLE "Report" (id int PRIMARY KEY, status text NOT NULL);
+      CREATE TABLE "ImageReport" ("imageId" int, "reportId" int);
+      CREATE TABLE "PostReport" ("postId" int, "reportId" int);
+      INSERT INTO "Image" VALUES (1, 10), (2, 20), (3, 20), (4, 40), (5, 50);
+      ${reports}
+    `);
+    try {
+      return await imagesWithOpenReports([1, 2, 3, 4, 5], {
+        $queryRaw: pgliteRaw(pg).queryRaw,
+      } as never);
+    } finally {
+      await pg.close();
+    }
+  };
+
+  it('finds images reported themselves or through their post, open reports only', async () => {
+    const reported = await run(`
+      INSERT INTO "Report" VALUES (1, 'Pending'), (2, 'Processing'), (3, 'Actioned'), (4, 'Unactioned');
+      INSERT INTO "ImageReport" VALUES (1, 1), (5, 4);
+      INSERT INTO "PostReport" VALUES (20, 2), (40, 3);
+    `);
+
+    expect([...reported].sort()).toEqual([1, 2, 3]);
   });
 });

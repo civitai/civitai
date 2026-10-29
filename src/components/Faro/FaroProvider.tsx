@@ -10,6 +10,7 @@ import {
   ViewInstrumentation,
   WebVitalsInstrumentation,
 } from '@grafana/faro-web-sdk';
+import { useShellReady } from '~/components/Shell/shell-bootstrap-context';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { type ClassifiableException, classifyException } from '~/utils/faro/classifyException';
@@ -57,10 +58,9 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  * `features.faro` gate on the whole SDK) — a flag change applies on the next page load. The one
  * exception is a static shell boot, whose flags are user-less until its page data arrives: there
  * the cohort is undecided until then, and the instrumentation is attached late if the viewer is in
- * it (`viewerFlagsReady`, `attachResourceTiming`). That exception covers resource_timing ONLY:
- * the `exp_*` session attributes (`experimentAttributes`) are still built from the flags at init,
- * so on a shell boot they come from the user-less boot flags and stay so for the session — an
- * open, older bug this does not fix.
+ * it (`useShellReady`, `attachResourceTiming`). The `exp_*` session attributes
+ * (`experimentAttributes`) are built once at init, so on a shell boot they use the user-less boot
+ * flags for the session.
  * See ResourceTimingInstrumentation.
  *
  * SAMPLING (two decoupled layers):
@@ -82,7 +82,8 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  * ~75% non-actionable noise.
  *
  * Must live inside `FeatureFlagsProvider` (for the flag) which is inside
- * `IsClientProvider` (client-only, high in the tree).
+ * `IsClientProvider` (client-only, high in the tree), and on a shell boot inside
+ * `ShellBootstrapProvider` (for `useShellReady`).
  */
 
 // Module + window guards make init idempotent across React StrictMode double-mount
@@ -256,12 +257,7 @@ function initFaro({
     }
   }
 
-  const resourceTimingInstrumentations = buildResourceTimingInstrumentations({
-    buildArgEnabled: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
-    cohortEnabled: resourceTimingCohort,
-    sampleRateEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
-    maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
-  });
+  const resourceTimingInstrumentations = resourceTimingFor(resourceTimingCohort);
   resourceTimingAttached = resourceTimingInstrumentations.length > 0;
 
   initializeFaro({
@@ -349,6 +345,16 @@ function initFaro({
   });
 }
 
+/** The resource-timing instrumentations under the build-arg and env knobs, for this cohort. */
+function resourceTimingFor(cohortEnabled: boolean) {
+  return buildResourceTimingInstrumentations({
+    buildArgEnabled: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
+    cohortEnabled,
+    sampleRateEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
+    maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
+  });
+}
+
 /**
  * Adds `ResourceTimingInstrumentation` to an already-initialised Faro, for a viewer whose cohort
  * only became known after init (a shell boot; see `FaroProvider`). A no-op when Faro is not ours
@@ -358,12 +364,7 @@ function initFaro({
  */
 function attachResourceTiming() {
   if (!faroInitStarted || resourceTimingAttached) return;
-  const instrumentations = buildResourceTimingInstrumentations({
-    buildArgEnabled: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
-    cohortEnabled: true,
-    sampleRateEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
-    maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
-  });
+  const instrumentations = resourceTimingFor(true);
   if (!instrumentations.length || !faro?.instrumentations) return;
   resourceTimingAttached = true;
   faro.instrumentations.add(...instrumentations);
@@ -373,25 +374,17 @@ export function FaroProvider({
   region,
   shell,
   signedIn,
-  viewerFlagsReady,
 }: {
   region?: string | null;
   /** The hard load's render mode and viewer, frozen by `_app`; see pageAttributes.ts. */
   shell: boolean;
   signedIn: boolean;
-  /**
-   * False while the feature flags are not yet the viewer's own: a static shell boots on the
-   * user-less evaluation and gets the viewer's with its page data. True everywhere else.
-   */
-  viewerFlagsReady: boolean;
 }) {
   const features = useFeatureFlags();
+  const viewerFlagsReady = useShellReady();
   const enabled = env.NEXT_PUBLIC_FARO_ENABLED && !!features.faro;
-  // The cohort is a per-USER Flipt rollout, so the user-less flags a shell boots on cannot answer
-  // it: read that way, a signed-in viewer in the cohort was never in it on a shell page, and one
-  // outside it could be put in. Undecided until the flags are the viewer's, then decided exactly
-  // as a server render decides it for the same viewer — at init when they already are, else by
-  // attaching the instrumentation to the running SDK once they arrive.
+  // Per-user Flipt cohort: user-less shell boot flags can't decide it; stays false until ready,
+  // then attached late.
   const resourceTimingCohort = viewerFlagsReady && !!features.faroResourceTiming;
 
   useEffect(() => {
