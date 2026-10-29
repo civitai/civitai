@@ -27,6 +27,12 @@ patchedDependencies:
   '@prisma/client@6.13.0':
     hash: 572e223e8f8b304a4fa7c80b6ad62ea636488e4304ea2e144c573973737c391d
     path: patches/@prisma__client@6.13.0.patch
+  '@prisma/generator-helper@5.22.0':
+    hash: 56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353
+    path: patches/@prisma__generator-helper@5.22.0.patch
+  '@prisma/generator-helper@6.19.3':
+    hash: 56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353
+    path: patches/@prisma__generator-helper@6.19.3.patch
   next@16.4.3:
     hash: 516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2
     path: patches/next@16.4.3.patch
@@ -292,7 +298,7 @@ importers:
         version: 3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))(@tiptap/pm@3.16.0)
       '@tiptap/html':
         specifier: 3.16.0
-        version: 3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))(@tiptap/pm@3.16.0)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))
+        version: 3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))(@tiptap/pm@3.16.0)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))
       '@tiptap/pm':
         specifier: 3.16.0
         version: 3.16.0
@@ -408,8 +414,8 @@ importers:
         specifier: ^4.0.3
         version: 4.0.3
       happy-dom:
-        specifier: ^20.0.2
-        version: 20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+        specifier: ^20.14.6
+        version: 20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       he:
         specifier: ^1.2.0
         version: 1.2.0
@@ -692,7 +698,7 @@ importers:
         version: 1.57.0
       '@prisma/generator-helper':
         specifier: ^5.22.0
-        version: 5.22.0
+        version: 5.22.0(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)
       '@types/archiver':
         specifier: ^6.0.2
         version: 6.0.3
@@ -878,7 +884,7 @@ importers:
         version: 5.9.2
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
       vitest-browser-react:
         specifier: ^2.2.0
         version: 2.2.0(@types/react-dom@18.0.5)(@types/react@18.0.14)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(vitest@4.1.11)
@@ -939,7 +945,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   apps/auth:
     dependencies:
@@ -1018,7 +1024,7 @@ importers:
         version: 6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   apps/creator-studio:
     dependencies:
@@ -1197,7 +1203,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   apps/moderator:
     dependencies:
@@ -1315,7 +1321,7 @@ importers:
         version: 6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   apps/notifications:
     dependencies:
@@ -1382,7 +1388,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   apps/orchestrator-gateway:
     dependencies:
@@ -1428,7 +1434,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   apps/storage:
     dependencies:
@@ -1465,7 +1471,7 @@ importers:
         version: 5.9.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   apps/training-studio:
     dependencies:
@@ -1580,7 +1586,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-axiom:
     dependencies:
@@ -1593,7 +1599,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-brand: {}
 
@@ -1644,7 +1650,7 @@ importers:
         version: 8.15.5
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-db-queries:
     dependencies:
@@ -1660,7 +1666,7 @@ importers:
         version: link:../civitai-db
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-db-schema:
     dependencies:
@@ -1679,7 +1685,7 @@ importers:
         version: 4.20.3
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-email:
     dependencies:
@@ -1692,7 +1698,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-flipt:
     dependencies:
@@ -1705,7 +1711,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-mod-utils: {}
 
@@ -1717,7 +1723,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-notifications:
     dependencies:
@@ -1727,7 +1733,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-post-planner:
     dependencies:
@@ -1752,7 +1758,7 @@ importers:
         version: 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))(vitest@4.1.11)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-redis:
     dependencies:
@@ -1783,7 +1789,7 @@ importers:
         version: 4.17.12
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-shared:
     dependencies:
@@ -1802,7 +1808,7 @@ importers:
         version: 7.7.1
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-storage:
     dependencies:
@@ -1812,7 +1818,7 @@ importers:
     devDependencies:
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-telemetry:
     dependencies:
@@ -1840,7 +1846,7 @@ importers:
         version: 2.9.0(@opentelemetry/api@1.9.0)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
   packages/civitai-ui:
     dependencies:
@@ -1877,7 +1883,7 @@ importers:
         version: 5.56.3(@typescript-eslint/types@8.60.1)
       vitest:
         specifier: ^4.1.11
-        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+        version: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
 
 packages:
 
@@ -5821,6 +5827,9 @@ packages:
   '@types/ws@8.18.1':
     resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
+  '@types/ws@8.18.2':
+    resolution: {integrity: sha512-67MQl+fpWKVTT1NYdnmo3U4sc/xPo/zQBncVnI74qmQa0z/b+1g6iYqNmGCPbxO+zz2aklb08a0oHfegiVd0/w==}
+
   '@types/xml2js@0.4.14':
     resolution: {integrity: sha512-4YnrRemBShWRO2QjvUin8ESA41rH+9nQGLUGZV/1IDhi3SL9OhdpNC/MrulTWuptXKwhx/aDxE7toV0f/ypIXQ==}
 
@@ -6593,6 +6602,10 @@ packages:
 
   buffer-from@1.1.2:
     resolution: {integrity: sha512-E+XQCRwSbaaiChtv6k6Dwgc+bx+Bs6vuKJHHl5kox/BaKbhiXzqQOwK4cO22yElGp2OCmjwVhT3HmxgyPGnJfQ==}
+
+  buffer-image-size@0.6.4:
+    resolution: {integrity: sha512-nEh+kZOPY1w+gcCMobZ6ETUp9WfibndnosbpwB1iJk/8Gt5ZF2bhS6+B6bPYz424KtwsR6Rflc3tCz1/ghX2dQ==}
+    engines: {node: '>=4.0'}
 
   buffer-indexof-polyfill@1.0.2:
     resolution: {integrity: sha512-I7wzHwA3t1/lwXQh+A5PbNvJxgfo5r3xulgpYDB5zckTu/Z9oUK9biouBKQUjEqzaz3HnAT6TYoovmE+GqSf7A==}
@@ -8196,8 +8209,8 @@ packages:
     resolution: {integrity: sha512-ax7ZYomf6jqPTQ4+XCpUGyXKHk5WweS+e05MBO4/y3WJ5RkmPXNKvX+bx1behVILVwr6JSQvZAku021CHPXG3Q==}
     engines: {node: '>=10'}
 
-  happy-dom@20.9.0:
-    resolution: {integrity: sha512-GZZ9mKe8r646NUAf/zemnGbjYh4Bt8/MqASJY+pSm5ZDtc3YQox+4gsLI7yi1hba6o+eCsGxpHn5+iEVn31/FQ==}
+  happy-dom@20.14.6:
+    resolution: {integrity: sha512-5DDsf4QmEIlRL6NkCv/fxSjYHHkZceL/IaYQdJc2h3G7DRTEai++VTjbfL0LB9geW2VrA3+vrjF3Efx+OTtX0Q==}
     engines: {node: '>=20.0.0'}
 
   has-bigints@1.1.0:
@@ -12577,8 +12590,8 @@ packages:
       utf-8-validate:
         optional: true
 
-  ws@8.20.0:
-    resolution: {integrity: sha512-sAt8BhgNbzCtgGbt2OxmpuryO63ZoDk/sqaB/znQm94T4fCEsy/yV+7CdC1kJhOU9lboAEU7R3kquuycDoibVA==}
+  ws@8.21.0:
+    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -12589,8 +12602,8 @@ packages:
       utf-8-validate:
         optional: true
 
-  ws@8.21.0:
-    resolution: {integrity: sha512-Vsp28b7DRcimFQvrqu2Wek3z1iYxDCWqHYB8Qsnk/S4RfaCQzPGPyBNuVjJV3cd6UiKtUtp6sNM77gWvzcCH+g==}
+  ws@8.22.0:
+    resolution: {integrity: sha512-Ydggc987+RO0AnWtZ/7Wq9FtNvcrL1b/RO0ud9mWjUPgDrsAAwQSF51sm2hm1XofbU/4jkpGEsLFsZZxU+1DOg==}
     engines: {node: '>=10.0.0'}
     peerDependencies:
       bufferutil: ^4.0.1
@@ -15510,11 +15523,11 @@ snapshots:
       '@prisma/engines-version': 7.1.1-3.c2990dca591cba766e3b7ef5d9e8a84796e47ab7
       '@prisma/get-platform': 6.19.3
 
-  '@prisma/generator-helper@5.22.0':
+  '@prisma/generator-helper@5.22.0(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)':
     dependencies:
       '@prisma/debug': 5.22.0
 
-  '@prisma/generator-helper@6.19.3':
+  '@prisma/generator-helper@6.19.3(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)':
     dependencies:
       '@prisma/debug': 6.19.3
       '@prisma/dmmf': 6.19.3
@@ -15546,7 +15559,7 @@ snapshots:
       '@prisma/engines': 6.19.3
       '@prisma/fetch-engine': 6.19.3
       '@prisma/generator': 6.19.3
-      '@prisma/generator-helper': 6.19.3
+      '@prisma/generator-helper': 6.19.3(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)
       '@prisma/get-platform': 6.19.3
       '@prisma/prisma-schema-wasm': 7.1.1-3.c2990dca591cba766e3b7ef5d9e8a84796e47ab7
       '@prisma/schema-engine-wasm': 7.1.1-3.c2990dca591cba766e3b7ef5d9e8a84796e47ab7
@@ -16974,11 +16987,11 @@ snapshots:
       '@tiptap/core': 3.16.0(@tiptap/pm@3.16.0)
       '@tiptap/pm': 3.16.0
 
-  '@tiptap/html@3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))(@tiptap/pm@3.16.0)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))':
+  '@tiptap/html@3.16.0(@tiptap/core@3.16.0(@tiptap/pm@3.16.0))(@tiptap/pm@3.16.0)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))':
     dependencies:
       '@tiptap/core': 3.16.0(@tiptap/pm@3.16.0)
       '@tiptap/pm': 3.16.0
-      happy-dom: 20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      happy-dom: 20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10)
 
   '@tiptap/pm@3.16.0':
     dependencies:
@@ -17391,6 +17404,10 @@ snapshots:
     dependencies:
       '@types/node': 20.19.9
 
+  '@types/ws@8.18.2':
+    dependencies:
+      '@types/node': 24.13.3
+
   '@types/xml2js@0.4.14':
     dependencies:
       '@types/node': 20.19.9
@@ -17765,7 +17782,7 @@ snapshots:
       '@vitest/mocker': 4.1.11(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
       playwright: 1.57.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
     transitivePeerDependencies:
       - bufferutil
       - msw
@@ -17779,7 +17796,7 @@ snapshots:
       '@vitest/mocker': 4.1.11(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
       playwright: 1.57.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
     transitivePeerDependencies:
       - bufferutil
       - msw
@@ -17793,7 +17810,7 @@ snapshots:
       '@vitest/mocker': 4.1.11(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
       playwright: 1.57.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
     transitivePeerDependencies:
       - bufferutil
       - msw
@@ -17806,7 +17823,7 @@ snapshots:
       '@vitest/mocker': 4.1.11(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
       playwright: 1.57.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
     transitivePeerDependencies:
       - bufferutil
       - msw
@@ -17822,7 +17839,7 @@ snapshots:
       pngjs: 7.0.0
       sirv: 3.0.2
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
       ws: 8.21.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - bufferutil
@@ -17840,7 +17857,7 @@ snapshots:
       pngjs: 7.0.0
       sirv: 3.0.2
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
       ws: 8.21.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - bufferutil
@@ -17858,7 +17875,7 @@ snapshots:
       pngjs: 7.0.0
       sirv: 3.0.2
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
       ws: 8.21.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - bufferutil
@@ -17875,7 +17892,7 @@ snapshots:
       pngjs: 7.0.0
       sirv: 3.0.2
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
       ws: 8.21.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - bufferutil
@@ -17895,9 +17912,9 @@ snapshots:
       obug: 2.1.1
       std-env: 4.2.0
       tinyrainbow: 3.1.0
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
     optionalDependencies:
-      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))(vitest@4.1.11)
+      '@vitest/browser': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.1.11)
 
   '@vitest/expect@4.1.11':
     dependencies:
@@ -18519,6 +18536,10 @@ snapshots:
 
   buffer-from@1.1.2:
     optional: true
+
+  buffer-image-size@0.6.4:
+    dependencies:
+      '@types/node': 24.13.3
 
   buffer-indexof-polyfill@1.0.2: {}
 
@@ -20472,14 +20493,15 @@ snapshots:
     dependencies:
       duplexer: 0.1.2
 
-  happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10):
+  happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10):
     dependencies:
-      '@types/node': 20.19.9
+      '@types/node': 24.13.3
       '@types/whatwg-mimetype': 3.0.2
-      '@types/ws': 8.18.1
+      '@types/ws': 8.18.2
+      buffer-image-size: 0.6.4
       entities: 7.0.1
       whatwg-mimetype: 3.0.0
-      ws: 8.20.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      ws: 8.22.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - bufferutil
       - utf-8-validate
@@ -23181,12 +23203,12 @@ snapshots:
 
   prisma-generator-typescript-interfaces@1.7.0:
     dependencies:
-      '@prisma/generator-helper': 5.22.0
+      '@prisma/generator-helper': 5.22.0(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)
 
   prisma-kysely@2.3.0(prisma@6.13.0(typescript@5.9.2)):
     dependencies:
       '@mrleebo/prisma-ast': 0.13.1
-      '@prisma/generator-helper': 6.19.3
+      '@prisma/generator-helper': 6.19.3(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)
       '@prisma/internals': 6.19.3(typescript@5.9.3)
       prisma: 6.13.0(typescript@5.9.2)
       typescript: 5.9.3
@@ -25648,12 +25670,12 @@ snapshots:
     dependencies:
       react: 18.3.1
       react-dom: 18.3.1(react@18.3.1)
-      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
+      vitest: 4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
     optionalDependencies:
       '@types/react': 18.0.14
       '@types/react-dom': 18.0.5
 
-  vitest@4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1)):
+  vitest@4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1)):
     dependencies:
       '@vitest/expect': 4.1.11
       '@vitest/mocker': 4.1.11(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
@@ -25680,12 +25702,12 @@ snapshots:
       '@types/node': 20.19.9
       '@vitest/browser-playwright': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.2))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))(vitest@4.1.11)
       '@vitest/coverage-v8': 4.1.11(@vitest/browser@4.1.11)(vitest@4.1.11)
-      happy-dom: 20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      happy-dom: 20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       jsdom: 27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - msw
 
-  vitest@4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1)):
+  vitest@4.1.11(@opentelemetry/api@1.9.0)(@types/node@20.19.9)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1)):
     dependencies:
       '@vitest/expect': 4.1.11
       '@vitest/mocker': 4.1.11(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
@@ -25712,12 +25734,12 @@ snapshots:
       '@types/node': 20.19.9
       '@vitest/browser-playwright': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@20.19.9)(typescript@5.9.3))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@20.19.9)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))(vitest@4.1.11)
       '@vitest/coverage-v8': 4.1.11(@vitest/browser@4.1.11)(vitest@4.1.11)
-      happy-dom: 20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      happy-dom: 20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       jsdom: 27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - msw
 
-  vitest@4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1)):
+  vitest@4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1)):
     dependencies:
       '@vitest/expect': 4.1.11
       '@vitest/mocker': 4.1.11(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))
@@ -25744,12 +25766,12 @@ snapshots:
       '@types/node': 24.13.3
       '@vitest/browser-playwright': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.1.11)
       '@vitest/coverage-v8': 4.1.11(@vitest/browser@4.1.11)(vitest@4.1.11)
-      happy-dom: 20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      happy-dom: 20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       jsdom: 27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - msw
 
-  vitest@4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1)):
+  vitest@4.1.11(@opentelemetry/api@1.9.0)(@types/node@24.13.3)(@vitest/browser-playwright@4.1.11)(@vitest/coverage-v8@4.1.11)(happy-dom@20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10))(jsdom@27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10))(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1)):
     dependencies:
       '@vitest/expect': 4.1.11
       '@vitest/mocker': 4.1.11(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))
@@ -25776,7 +25798,7 @@ snapshots:
       '@types/node': 24.13.3
       '@vitest/browser-playwright': 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.3))(playwright@1.57.0)(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.23))(terser@5.51.2)(tsx@4.20.3)(yaml@2.9.1))(vitest@4.1.11)
       '@vitest/coverage-v8': 4.1.11(@vitest/browser@4.1.11)(vitest@4.1.11)
-      happy-dom: 20.9.0(bufferutil@4.0.9)(utf-8-validate@5.0.10)
+      happy-dom: 20.14.6(bufferutil@4.0.9)(utf-8-validate@5.0.10)
       jsdom: 27.4.0(@noble/hashes@1.8.0)(bufferutil@4.0.9)(utf-8-validate@5.0.10)
     transitivePeerDependencies:
       - msw
@@ -25958,12 +25980,12 @@ snapshots:
       bufferutil: 4.0.9
       utf-8-validate: 5.0.10
 
-  ws@8.20.0(bufferutil@4.0.9)(utf-8-validate@5.0.10):
+  ws@8.21.0(bufferutil@4.0.9)(utf-8-validate@5.0.10):
     optionalDependencies:
       bufferutil: 4.0.9
       utf-8-validate: 5.0.10
 
-  ws@8.21.0(bufferutil@4.0.9)(utf-8-validate@5.0.10):
+  ws@8.22.0(bufferutil@4.0.9)(utf-8-validate@5.0.10):
     optionalDependencies:
       bufferutil: 4.0.9
       utf-8-validate: 5.0.10

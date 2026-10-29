@@ -9,6 +9,11 @@ import {
   readUserResourceReviewsViaKysely,
   readUserResourceReviewsViaPrisma,
 } from '~/server/services/hot-reads-5.reads';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  readUserReviewsViaKysely,
+  readUserReviewsViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdInput } from '~/server/schema/base.schema';
@@ -85,8 +90,6 @@ export const getUserResourceReview = async ({
   tx,
 }: GetUserResourceReviewInput & { userId: number; tx?: Prisma.TransactionClient }) => {
   if (!userId) throw throwAuthorizationError();
-  // `kysely-hot-reads-5` on (and no caller-provided client): the same rows through Kysely, on the
-  // client the same lag decision picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
   if (!tx && (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5)))
     return readUserResourceReviewsViaKysely(await getKyselyWithoutLag('resourceReview', userId), {
       modelId,
@@ -104,7 +107,7 @@ export const getUserResourceReview = async ({
   return results;
 };
 
-export const getResourceReviewsByUserId = ({
+export const getResourceReviewsByUserId = async ({
   userId,
   recommended,
   modelIds,
@@ -115,10 +118,13 @@ export const getResourceReviewsByUserId = ({
   // unfiltered = existing behavior for the current whole-history callers.
   modelIds?: number[];
 }) => {
-  return dbRead.resourceReview.findMany({
-    where: { userId, recommended, ...(modelIds ? { modelId: { in: modelIds } } : {}) },
-    select: { modelId: true, modelVersionId: true },
-  });
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+    return readUserReviewsViaKysely((await loadKyselyDb()).kyselyRead, {
+      userId,
+      recommended,
+      modelIds,
+    });
+  return readUserReviewsViaPrisma(dbRead, { userId, recommended, modelIds });
 };
 
 export const getResourceReviews = async ({ resourceIds }: GetResourceReviewsInput) => {

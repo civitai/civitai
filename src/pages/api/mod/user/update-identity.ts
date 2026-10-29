@@ -7,7 +7,7 @@ import {
 import { forceUpdateUserIdentity } from '~/server/services/user.service';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
-import { userId } from '~/server/schema/moderator/user';
+import { displayName, userId } from '~/server/schema/moderator/user';
 
 export default defineModeratorEndpoint('user.updateIdentity', {
   summary: "Change an account's username, email or display name.",
@@ -21,7 +21,7 @@ export default defineModeratorEndpoint('user.updateIdentity', {
     userId,
     username: z.string().trim().min(1).max(64).optional().describe('New username.'),
     email: z.string().email().optional().describe('New email address.'),
-    name: z.string().trim().max(128).optional().describe('New display name.'),
+    name: displayName.optional().describe('New display name.'),
   }),
   async handler(input) {
     if (input.username === undefined && input.email === undefined && input.name === undefined) {

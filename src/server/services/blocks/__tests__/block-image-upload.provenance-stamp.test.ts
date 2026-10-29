@@ -32,6 +32,7 @@ vi.mock('~/server/services/blocks/measure-uploaded-image', async (importOriginal
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { persistBlockUploadImage } from '~/server/services/blocks/block-image-upload.service';
 import { createImage } from '~/server/services/image.service';
 import {
@@ -61,10 +62,20 @@ function storedMeta(): unknown {
 beforeEach(async () => {
   vi.clearAllMocks();
   dbMock.dbWrite.image.create.mockResolvedValue({ id: IMAGE_ID } as never);
+  redisMock.sysRedis.mGet.mockResolvedValue([String(CALLER)] as never);
   h.storedBytes = await pngWithTextChunks({ parameters: A1111_PARAMETERS });
 });
 
 describe('persistBlockUploadImage → real createImage', () => {
+  it('refuses a key issued to another user before writing', async () => {
+    redisMock.sysRedis.mGet.mockResolvedValue([String(CALLER + 1)] as never);
+
+    await expect(
+      persistBlockUploadImage({ input: { url: KEY } as never, userId: CALLER })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.image.create).not.toHaveBeenCalled();
+  });
+
   it('an app bytes upload stores blockUploadedAppId = the verified appId', async () => {
     const result = await persistBlockUploadImage({
       input: { url: KEY } as never,

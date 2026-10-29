@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.390",
+  "version": "5.1.392",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -255,7 +255,7 @@
     "google-auth-library": "^9.15.0",
     "googleapis": "^144.0.0",
     "gray-matter": "^4.0.3",
-    "happy-dom": "^20.0.2",
+    "happy-dom": "^20.14.6",
     "he": "^1.2.0",
     "html-to-text": "^9.0.5",
     "html2canvas-pro": "2.3.8",
@@ -458,7 +458,9 @@
     "patchedDependencies": {
       "@mantine/hooks": "patches/@mantine__hooks.patch",
       "@prisma/client@6.13.0": "patches/@prisma__client@6.13.0.patch",
-      "next@16.4.3": "patches/next@16.4.3.patch"
+      "next@16.4.3": "patches/next@16.4.3.patch",
+      "@prisma/generator-helper@6.19.3": "patches/@prisma__generator-helper@6.19.3.patch",
+      "@prisma/generator-helper@5.22.0": "patches/@prisma__generator-helper@5.22.0.patch"
     }
   }
 }
