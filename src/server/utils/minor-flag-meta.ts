@@ -50,7 +50,7 @@ export function resolveMinorAppeal<T>({
 
 // Written by the minor-hash service and never safe to expose: the snapshot carries
 // prevMinorImageIds, the dismissal/clear stamps describe moderator decisions, and
-// textModeration forensics are for moderator review only.
+// textModeration forensics and the systemNsfwLock source are for moderator review only.
 // The single definition of which meta keys are secret — everything that hands a
 // Model.meta back to a client must go through this.
 export function stripMinorHashMeta(meta: ModelMeta): ModelMeta;
@@ -70,6 +70,7 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
     textScanFlags: _textScanFlags,
     modelRules: _modelRules,
     modelRulesCleared: _modelRulesCleared,
+    systemNsfwLock: _systemNsfwLock,
     ...rest
   } = meta;
 
@@ -171,13 +172,27 @@ export function withPrivateCannotPromote<T extends object>(meta: T, banned: bool
  * Meta keys only server code may write, for everyone including moderators: no moderator flow writes
  * them through client meta. `trainingStudioWorkflowId` links a model to its training workflow and
  * `trainingStudioModerationApproved` records that the run passed the moderation check; the publish
- * paths read both. Client meta that carries them is ignored, so on update the stored values survive
- * the `{ ...prevMeta, ...meta }` merge.
+ * paths read both. `systemNsfwLock` marks an nsfw lock a system check added, which the owner may
+ * dispute. Client meta that carries them is ignored, so on update the stored values survive the
+ * `{ ...prevMeta, ...meta }` merge.
  */
 export const SERVER_OWNED_META_KEYS = [
   'trainingStudioWorkflowId',
   'trainingStudioModerationApproved',
+  'systemNsfwLock',
 ] as const satisfies readonly (keyof ModelMeta)[];
+
+export function systemNsfwLockMarker(source: string): ModelMeta['systemNsfwLock'] {
+  return { source, at: new Date().toISOString() };
+}
+
+/** When a system check added the nsfw lock, or null when the stored marker is missing or malformed. */
+export function readSystemNsfwLockAt(meta: unknown): Date | null {
+  const marker = (meta as ModelMeta | null)?.systemNsfwLock;
+  if (!marker || typeof marker.at !== 'string') return null;
+  const at = new Date(marker.at);
+  return Number.isNaN(at.getTime()) ? null : at;
+}
 
 // A content wipe's removal record is written and cleared by server code only: a moderator's edit
 // form sends stored meta back, and must not put a stale record onto a live model.

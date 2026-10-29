@@ -1,6 +1,5 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
-import { v4 as uuidv4 } from 'uuid';
 import { negate } from 'lodash-es';
 import { Queue } from '~/utils/queue';
 
@@ -77,7 +76,7 @@ export const useCFUploadStore = create<StoreProps>()(
         item.abort();
       },
       upload: (file, cb) => {
-        const uuid = uuidv4();
+        const uuid = crypto.randomUUID();
 
         const task = async () => {
           const filename = encodeURIComponent(file.name);

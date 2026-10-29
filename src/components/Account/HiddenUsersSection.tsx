@@ -14,7 +14,7 @@ import { IconSearch, IconX } from '@tabler/icons-react';
 import { useMemo, useRef, useState } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { toHideableOptions } from '~/components/Account/hidden-users-options';
-import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
+import { VirtualGrid } from '~/components/VirtualGrid/VirtualGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { SettingsSection } from '~/components/Account/SettingsLayout';
 
@@ -34,14 +34,10 @@ export function HiddenUsersSection({ flat }: { flat?: boolean } = {}) {
 
     const users = [...hiddenUsers];
     if (sort === 'alphaAsc') {
-      return users.sort((a, b) =>
-        (a.username ?? '').localeCompare(b.username ?? '', undefined, { sensitivity: 'base' })
-      );
+      return users.sort((a, b) => byUsername.compare(a.username ?? '', b.username ?? ''));
     }
     if (sort === 'alphaDesc') {
-      return users.sort((a, b) =>
-        (b.username ?? '').localeCompare(a.username ?? '', undefined, { sensitivity: 'base' })
-      );
+      return users.sort((a, b) => byUsername.compare(b.username ?? '', a.username ?? ''));
     }
 
     return users;
@@ -108,12 +104,15 @@ export function HiddenUsersSection({ flat }: { flat?: boolean } = {}) {
       >
         <div className="flex flex-col gap-3">
           {searchField}
-          <BasicMasonryGrid
+          <VirtualGrid
             items={sortedHiddenUsers}
             render={UserBadge}
+            getKey={getId}
             maxHeight={250}
-            columnGutter={4}
+            gap={4}
             columnWidth={140}
+            maxColumnCount={4}
+            estimateRowHeight={20}
           />
         </div>
       </SettingsSection>
@@ -158,12 +157,15 @@ export function HiddenUsersSection({ flat }: { flat?: boolean } = {}) {
       </Card.Section>
       <Card.Section inheritPadding py="md">
         <Stack gap={5}>
-          <BasicMasonryGrid
+          <VirtualGrid
             items={sortedHiddenUsers}
             render={UserBadge}
+            getKey={getId}
             maxHeight={250}
-            columnGutter={4}
+            gap={4}
             columnWidth={140}
+            maxColumnCount={4}
+            estimateRowHeight={20}
           />
           <Text c="dimmed" size="xs">
             {`We'll hide content from these users throughout the site.`}
@@ -214,3 +216,7 @@ function UserBadge({
     </Badge>
   );
 }
+
+const getId = ({ id }: { id: number }) => id;
+
+const byUsername = new Intl.Collator(undefined, { sensitivity: 'base' });
