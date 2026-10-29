@@ -192,6 +192,9 @@ import type {
   EventDecorationCosmetic,
 } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { getSfwModelNames } from '~/server/services/model-sfw-face.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { showsSfwFace, withSfwModelNames } from '~/shared/utils/model-sfw-face';
 import {
   imageSelect,
   publishedImageWhere,
@@ -6264,7 +6267,9 @@ export const getImage = async ({
 };
 
 export const getImageResources = async ({ id }: GetByIdInput) => {
-  const resources = await dbRead.$queryRaw<ImageResourceHelperModel[]>`
+  const resources = await dbRead.$queryRaw<
+    (ImageResourceHelperModel & { sfwName: string | null })[]
+  >`
     SELECT
       irh."imageId",
       irh."reviewId",
@@ -6283,7 +6288,8 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
       irh."modelCommentCount",
       irh."modelType",
       irh."modelVersionBaseModel",
-      irh."detected"
+      irh."detected",
+      m."sfwName"
     FROM
       "ImageResourceHelper" irh
     JOIN "Model" m ON m.id = irh."modelId" AND m."status" = 'Published'
@@ -8603,8 +8609,13 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
   const tools = image.tools.map(({ notes, tool }) => ({ ...tool, notes }));
   const techniques = image.techniques.map(({ notes, technique }) => ({ ...technique, notes }));
 
-  const cachedResources = await imageResourcesCache.fetch([id]);
-  const resources = (cachedResources[id]?.resources ?? []).map((r) => ({
+  const cachedResources = (await imageResourcesCache.fetch([id]))[id]?.resources ?? [];
+  // The cache is per image, so a model's .com face is looked up here rather than stored in it.
+  const sfwModelNames = await getSfwModelNames(
+    cachedResources.map((r) => r.modelId),
+    showsSfwFace(getRequestBrowsingLevel(viewer))
+  );
+  const resources = withSfwModelNames(cachedResources, sfwModelNames).map((r) => ({
     imageId: r.imageId,
     modelVersionId: r.modelVersionId,
     strength: r.strength,

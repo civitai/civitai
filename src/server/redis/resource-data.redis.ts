@@ -40,6 +40,7 @@ export const resourceDataCache = createCachedArray({
             SELECT
               m."id",
               m."name",
+              m."sfwName",
               m."type",
               m."nsfw",
               m."poi",
@@ -94,6 +95,8 @@ export type GenerationResourceDataModel = {
   model: {
     id: number;
     name: string;
+    /** The .com title; resolved per viewer in `getResourceData` and never sent on. */
+    sfwName?: string | null;
     type: ModelType;
     nsfw: boolean;
     poi: boolean;
