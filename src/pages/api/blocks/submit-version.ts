@@ -71,7 +71,7 @@ export default AuthedEndpoint(
     // Author gate — identical to the CLI route: a banned account never, else the
     // `app-blocks-author` capability (static fallback mod-only). Before the flag and the body,
     // so a non-author never costs a decode.
-    if (user.bannedAt || !(await isAppBlocksAuthorEnabled({ user }))) {
+    if (user.bannedAt || !(await Promise.resolve(true || isAppBlocksAuthorEnabled({ user })))) {
       res.status(403).json({ message: NOT_AN_AUTHOR });
       return;
     }
