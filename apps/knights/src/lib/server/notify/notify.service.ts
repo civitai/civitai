@@ -7,12 +7,11 @@ import { liveStreak, shieldCoversToday, streakAfterReset } from '../daily/streak
 import { servableItems } from '../queue/queue.service';
 import { stagesWorkedBy } from '../queue/ranks';
 import { RANKS } from '../ranks';
+import { optOutTypesBeforeKnights } from '@civitai/notifications';
 import { NOTIFY, NOTIFY_KINDS, typeOf, type NotifyKind } from './config';
 
 const dateOf = (day: Day) => sql<Date>`${day}::date`;
 const CLAIM_CHUNK = 1000;
-/** What `claim` stores in `KnightsNotificationSend.type`: the kind, not the notification type. */
-const VERDICTS_KIND: NotifyKind = 'verdicts';
 
 export type NotificationBatch = { kind: NotifyKind; type: string; key: string; userIds: number[] };
 export type SendBatch = (batch: NotificationBatch) => Promise<void>;
@@ -47,6 +46,12 @@ const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day) =>
         kind
       )})`
     )
+    // Turning everything off writes rows only for the types that existed then, so a newer type has no row for them.
+    .where(
+      sql<boolean>`(select count(*) from "UserNotificationSettings" o where o."userId" = pl."userId" and o."type" in (${sql.join(
+        optOutTypesBeforeKnights
+      )})) < ${optOutTypesBeforeKnights.length}`
+    )
     .where(
       sql<boolean>`not exists (select 1 from "KnightsNotificationSend" n where n."playerId" = pl."userId" and n."day" = ${dateOf(
         day
@@ -67,7 +72,9 @@ async function withNewVerdicts(db: Kysely<DB>, day: Day, now: Date): Promise<num
     .groupBy('pl.userId')
     .having(
       sql<boolean>`max(v."settledAt") > greatest(
-        coalesce((select max(n."sentAt") from "KnightsNotificationSend" n where n."playerId" = pl."userId" and n."kind" = ${VERDICTS_KIND} and n."confirmedAt" is not null), '-infinity'::timestamp),
+        coalesce((select max(n."confirmedAt") from "KnightsNotificationSend" n where n."playerId" = pl."userId" and n."kind" = ${
+          'verdicts' satisfies NotifyKind
+        } and n."confirmedAt" is not null), '-infinity'::timestamp),
         coalesce((select max(w."createdAt") from "KnightsVote" w where w."playerId" = pl."userId" and w."createdAt" >= ${utc(
           searchFrom
         )}), '-infinity'::timestamp)
@@ -203,18 +210,25 @@ const release = (db: Kysely<DB>, kind: NotifyKind, day: Day, ids: number[]) =>
     .where('playerId', 'in', ids)
     .execute();
 
-/** Marks the claims as accepted by the notifications app; only confirmed claims count as having told the player. */
-async function confirm(db: Kysely<DB>, kind: NotifyKind, day: Day, ids: number[], now: Date) {
-  try {
-    await db
-      .updateTable('KnightsNotificationSend')
-      .set({ confirmedAt: utc(now) })
-      .where('day', '=', dateOf(day))
-      .where('kind', '=', kind)
-      .where('playerId', 'in', ids)
-      .execute();
-  } catch (error) {
-    console.error(`knights: could not confirm ${kind} claims`, error);
+/**
+ * Marks the claims as accepted by the notifications app, at the time it was sent. Only confirmed
+ * claims count as having told the player, and that time is the point later verdicts are compared to.
+ * Tried twice: a missed confirmation would announce the same verdicts again tomorrow.
+ */
+async function confirm(db: Kysely<DB>, kind: NotifyKind, day: Day, ids: number[], sentAt: Date) {
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      await db
+        .updateTable('KnightsNotificationSend')
+        .set({ sentAt: utc(sentAt), confirmedAt: utc(sentAt) })
+        .where('day', '=', dateOf(day))
+        .where('kind', '=', kind)
+        .where('playerId', 'in', ids)
+        .execute();
+      return;
+    } catch (error) {
+      console.error(`knights: could not confirm ${kind} claims (attempt ${attempt})`, error);
+    }
   }
 }
 
@@ -233,11 +247,14 @@ export async function sendNotifications(
     now,
     send,
     accessible,
+    clock = () => new Date(),
   }: {
     now: Date;
     send: SendBatch;
     /** The ids among those given who can open the app today. */
     accessible: (ids: number[]) => Promise<number[]>;
+    /** When a batch was actually sent; `now` is when the run started. */
+    clock?: () => Date;
   }
 ): Promise<NotifyResult> {
   const day = utcDay(now);
@@ -273,8 +290,15 @@ export async function sendNotifications(
       } catch (error) {
         console.error(`knights: ${kind} notification batch failed`, error);
         if (error instanceof BatchRejected) {
-          result.failed += claimed.length;
-          await release(db, kind, day, claimed);
+          try {
+            await release(db, kind, day, claimed);
+            result.failed += claimed.length;
+          } catch (releaseError) {
+            // The slots stay taken, which is the safe side; the database is unwell, so go no further.
+            console.error(`knights: could not release ${kind} claims`, releaseError);
+            result.unconfirmed += claimed.length;
+            result.halted = true;
+          }
         } else {
           // Further batches would likely fail the same way, each taking its players' slots.
           result.unconfirmed += claimed.length;
@@ -283,7 +307,7 @@ export async function sendNotifications(
         continue;
       }
       result.sent[kind] += claimed.length;
-      await confirm(db, kind, day, claimed, now);
+      await confirm(db, kind, day, claimed, clock());
     }
   }
   return result;

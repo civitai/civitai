@@ -5,6 +5,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { enqueueItem, ensureVotePartitions } from '../queue/queue.service';
+import { optOutTypesBeforeKnights } from '@civitai/notifications';
 import { typeOf, type NotifyKind } from './config';
 import { BatchRejected, sendNotifications, type NotificationBatch } from './notify.service';
 
@@ -65,13 +66,17 @@ const seedSettledVote = (playerId: number, settledAt = '2026-12-16 10:00:00') =>
 
 const everyone = async (ids: number[]) => ids;
 
-function runner({ blocked = [] as number[] } = {}) {
+function runner({
+  blocked = [] as number[],
+  clock,
+}: { blocked?: number[]; clock?: () => Date } = {}) {
   const batches: NotificationBatch[] = [];
   const send = vi.fn(async (batch: NotificationBatch) => {
     batches.push(batch);
   });
   const accessible = async (ids: number[]) => ids.filter((id) => !blocked.includes(id));
-  const run = (now: Date) => sendNotifications(db, { now, send, accessible });
+  const run = (now: Date) =>
+    sendNotifications(db, { now, send, accessible, clock: clock ?? (() => now) });
   const received = () => {
     const out = new Map<number, NotifyKind[]>();
     for (const b of batches)
@@ -338,5 +343,87 @@ describe('sendNotifications', () => {
     await run(at(12));
 
     expect([...received().keys()]).toEqual([1]);
+  });
+
+  it('sends nothing to a player who turned everything off, but still reaches one who muted a few types', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await enqueueImage();
+    for (const type of optOutTypesBeforeKnights) {
+      await pg.query(`INSERT INTO "UserNotificationSettings" ("userId","type") VALUES (1,$1)`, [
+        type,
+      ]);
+    }
+    for (const type of optOutTypesBeforeKnights.slice(1)) {
+      await pg.query(`INSERT INTO "UserNotificationSettings" ("userId","type") VALUES (2,$1)`, [
+        type,
+      ]);
+    }
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect([...received().keys()]).toEqual([2]);
+  });
+
+  it('does not re-announce verdicts that settled while the run was sending them', async () => {
+    await seedPlayer(pg, 1);
+    await seedSettledVote(1, '2026-12-17 12:45:00');
+    const { run, received } = runner({ clock: () => new Date('2026-12-17T13:00:00Z') });
+
+    await run(at(12));
+    await run(new Date('2026-12-18T09:30:00Z'));
+
+    expect(received().get(1)).toEqual(['verdicts']);
+  });
+
+  it('retries a failed confirmation once, so the player still counts as told', async () => {
+    await seedPlayer(pg, 1);
+    await seedSettledVote(1);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(db, 'updateTable').mockImplementationOnce(() => {
+      throw new Error('db blip');
+    });
+    const { run, received } = runner();
+
+    await run(at(12));
+    await run(new Date('2026-12-18T09:30:00Z'));
+
+    expect(received().get(1)).toEqual(['verdicts']);
+  });
+
+  it('logs and carries on when a confirmation fails twice', async () => {
+    await seedPlayer(pg, 1);
+    await seedSettledVote(1);
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(db, 'updateTable').mockImplementation(() => {
+      throw new Error('db down');
+    });
+    const { run } = runner();
+
+    await expect(run(at(12))).resolves.toMatchObject({ sent: { verdicts: 1 } });
+    expect(logged).toHaveBeenCalled();
+  });
+
+  it('stops the run, without throwing, when giving a refused batch its slots back fails', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await seedSettledVote(1);
+    await optOut(2, 'verdicts');
+    await enqueueImage();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(db, 'deleteFrom').mockImplementationOnce(() => {
+      throw new Error('db down');
+    });
+    const refusing = vi.fn().mockRejectedValue(new BatchRejected('bad request'));
+
+    const result = await sendNotifications(db, {
+      now: at(12),
+      send: refusing,
+      accessible: everyone,
+    });
+
+    expect(refusing).toHaveBeenCalledTimes(1);
+    expect(result).toMatchObject({ halted: true, unconfirmed: 1 });
   });
 });

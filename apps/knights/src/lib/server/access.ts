@@ -36,9 +36,10 @@ export async function accessFor(user: SessionUser): Promise<Access> {
 
 /**
  * The ids among `users` that `accessFor` would let in, without a session. Flipt evaluates locally, so a
- * batch costs no network call per user. The context carries only the id and moderator status, so a
- * segment that matches on tier or early-adopter status does not see those users here: they are skipped,
- * never notified by mistake.
+ * batch costs no network call per user. The context carries the id and moderator status only; tier is
+ * `free`, membership `false` and early-adopter `false` for everyone. A rule that matches a positive
+ * value (a tier, a member, a listed id) never admits someone by mistake, but skips those users here; a
+ * rule that matches those defaults (free, not a member) could admit a different set than at sign-in.
  */
 export async function accessibleIds(
   users: { id: number; isModerator: boolean }[]
