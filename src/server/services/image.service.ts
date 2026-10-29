@@ -9100,18 +9100,16 @@ export const MAX_TRAINING_SAMPLE_REDIRECTS = 3;
 /** Fetches a training sample, following redirects only between orchestrator urls. */
 async function fetchTrainingSample(url: string) {
   let current = url;
+  const signal = AbortSignal.timeout(120_000);
   for (let hop = 0; hop <= MAX_TRAINING_SAMPLE_REDIRECTS; hop++) {
     if (!isTrustedOrchestratorUrl(current)) {
       trainingSampleFetchCounter.inc({ outcome: hop ? 'redirect_refused' : 'url_refused' });
       throw new Error('Unsupported image url');
     }
-    const response = await fetch(current, {
-      redirect: 'manual',
-      credentials: 'omit',
-      signal: AbortSignal.timeout(120_000),
-    });
+    const response = await fetch(current, { redirect: 'manual', credentials: 'omit', signal });
     const location = response.headers.get('location');
     if (response.status >= 300 && response.status < 400 && location) {
+      await response.body?.cancel().catch(() => null);
       current = new URL(location, current).toString();
       continue;
     }
