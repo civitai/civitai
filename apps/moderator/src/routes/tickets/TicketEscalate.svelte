@@ -30,7 +30,7 @@
   method="POST"
   action="?/escalate"
   use:enhance={escalate.enhance}
-  class="flex flex-col gap-1.5 border-t border-dark-4 pt-2.5"
+  class="flex flex-col gap-1.5"
 >
   <input type="hidden" name="ticketId" value={ticketId} />
   <Input

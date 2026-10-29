@@ -242,6 +242,8 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     await handler(req as never, res as never);
     expect(res._getStatusCode()).toBe(200);
     expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
+    // Not a moderator: the service's owner gate applies to them.
+    expect(mockSubmitVersion.mock.calls[0][0].submitterIsModerator).toBe(false);
   });
 
   it('403 when the resolved user is banned even if isModerator', async () => {
@@ -417,6 +419,7 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
     expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
     const callArg = mockSubmitVersion.mock.calls[0][0];
     expect(callArg.submittedByUserId).toBe(7);
+    expect(callArg.submitterIsModerator).toBe(true);
     expect(Buffer.isBuffer(callArg.bundleBuffer)).toBe(true);
     // Stable CLI response contract.
     expect(res._getJSONData()).toEqual({

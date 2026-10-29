@@ -17,7 +17,7 @@ import { bustPublicModelResponseCache } from '~/server/services/model-version.se
 import { trackModActivity } from '~/server/services/moderator.service';
 import { updateModelNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { asJsonbObjectSql, withoutSystemNsfwLockSql } from '~/server/utils/jsonb-object';
 import { TEXT_SCAN_FLAGS_KEY } from '~/server/services/text-scan/flag-snapshot';
 
 const SYSTEM_USER_ID = constants.system.user.id;
@@ -419,7 +419,10 @@ export async function revertPoiHashAutoFlag({
   ]);
   if (snapshot.minor)
     await dbWrite.$executeRaw`
-      UPDATE "Model" SET "lockedProperties" = ${lockedProperties}::text[] WHERE id = ${modelId}
+      UPDATE "Model"
+      SET "lockedProperties" = ${lockedProperties}::text[],
+          meta = ${withoutSystemNsfwLockSql('meta')}
+      WHERE id = ${modelId}
     `;
   else
     await dbWrite.$executeRaw`
@@ -432,7 +435,8 @@ export async function revertPoiHashAutoFlag({
             ELSE COALESCE("gallerySettings", '{}'::jsonb)
               || jsonb_build_object('level', ${snapshot.prevGalleryLevel}::int)
           END,
-          "lockedProperties" = ${lockedProperties}::text[]
+          "lockedProperties" = ${lockedProperties}::text[],
+          meta = ${withoutSystemNsfwLockSql('meta')}
       WHERE id = ${modelId}
     `;
   await updateModelNsfwLevels([modelId]);

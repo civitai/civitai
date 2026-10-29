@@ -72,3 +72,33 @@ describe('bulk comment delete with comments kept hidden', () => {
     expect(activities()).toEqual([]);
   });
 });
+
+describe('a ToS restore with comments kept hidden', () => {
+  const restore = () =>
+    bulkCommentAction({
+      action: 'restoreFromTos',
+      commentIds: [1, 2],
+      commentV2Ids: [3],
+      userId: 8,
+      moderatorId: 9,
+    });
+
+  it('is a success when every comment stayed hidden, and logs only that', async () => {
+    body = {
+      comment: { count: 0, reopenedReports: 0, retainedHidden: 2 },
+      commentV2: { count: 0, reopenedReports: 0, retainedHidden: 1 },
+    };
+
+    await expect(restore()).resolves.toEqual({ ok: true, affected: 0, retainedHidden: 3 });
+    expect(activities()).toEqual(['comments:restoreFromTos:retainedHidden:3']);
+  });
+
+  it('reports the restored and kept counts apart', async () => {
+    body = {
+      comment: { count: 1, reopenedReports: 0, retainedHidden: 1 },
+      commentV2: { count: 1, reopenedReports: 1, retainedHidden: 0 },
+    };
+
+    await expect(restore()).resolves.toEqual({ ok: true, affected: 2, retainedHidden: 1 });
+  });
+});

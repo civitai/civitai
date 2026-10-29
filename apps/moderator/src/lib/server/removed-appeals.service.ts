@@ -1,9 +1,12 @@
 import { NotificationCategory } from '@civitai/notifications';
 import { sql } from 'kysely';
+import { z } from 'zod';
 import { dbRead, dbWrite } from './db';
 import { refundAppealFee } from './image-moderation-effects';
 import { recordModActivity } from './mod-activity';
 import { getNotifications } from './notifications';
+import { parseForm } from './query';
+import { checkedResolutionReason, resolutionReasonFields } from './resolution-reason';
 
 /** Pending appeals whose entity was deleted before review; no entity-driven queue shows them. */
 
@@ -17,6 +20,32 @@ const OUTCOME = {
   OwnerDeleted: 'closed-owner-deleted',
 } as const satisfies Record<RemovedAppealDecision, string>;
 const DELETED_BY_OWNER = 'deleted-by-owner';
+
+const MESSAGE_MAX = 1000;
+const reasonFields = z.object(resolutionReasonFields);
+
+/**
+ * The verdict, reason, note and message to the user of a removed-appeal ruling form: one rule for the
+ * queue and for the ticket, or the message to show instead. Any verdict but Approved is a rejection.
+ */
+export function parseRemovedAppealRuling(form: FormData):
+  | {
+      status: 'Approved' | 'Rejected';
+      resolvedReason: string;
+      internalNotes: string | undefined;
+      resolvedMessage: string | undefined;
+    }
+  | string {
+  const status = form.get('status') === 'Approved' ? 'Approved' : 'Rejected';
+  const resolvedMessage =
+    String(form.get('resolvedMessage') ?? '')
+      .trim()
+      .slice(0, MESSAGE_MAX) || undefined;
+  const input = parseForm(reasonFields, form);
+  const reason =
+    typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
+  return typeof reason === 'string' ? reason : { status, resolvedMessage, ...reason };
+}
 
 // The owners and images the main app's getAppealExcludedIds (src/server/services/report.service.ts)
 // excludes from appeals are left out here, listed or decided; keep the two in step.

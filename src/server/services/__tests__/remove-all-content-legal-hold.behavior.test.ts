@@ -93,6 +93,18 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
     }
   ),
 }));
+// The soft delete is model-removal-collection-reindex's; here, only which models get it, and how.
+// It commits the Deleted status, as the real one does before its refunds and cache steps.
+const { deleteModelById } = vi.hoisted(() => ({
+  deleteModelById: vi.fn(async ({ id }: { id: number }) => {
+    await holder.db.exec(`UPDATE "Model" SET status = 'Deleted' WHERE id = ${id}`);
+    return null;
+  }),
+}));
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  deleteModelById,
+}));
 vi.mock('~/server/services/auction.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   refundBidsForVersions: vi.fn(async () => ({
@@ -127,6 +139,7 @@ import {
   LegalHoldUnconfirmedError,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
+import { bulkClearCommentTosViolation } from '~/server/services/comment.service';
 import { deleteImages } from '~/server/services/image.service';
 import { refundBidsForVersions } from '~/server/services/auction.service';
 import { KEPT_MODEL_STATUS } from '~/server/utils/legal-hold';
@@ -195,9 +208,36 @@ beforeAll(async () => {
       (t) => `CREATE TABLE "${t}" (id serial PRIMARY KEY, "userId" int NOT NULL);`
     ).join('\n')}
     CREATE TABLE "BountyBenefactor" ("awardedToId" int REFERENCES "BountyEntry"(id) ON DELETE SET NULL);
-    -- A review's comment thread, and the comments on it, go with the review.
+    ALTER TABLE "BountyEntry" ADD COLUMN "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE;
+    ALTER TABLE "Answer" ADD COLUMN "questionId" int REFERENCES "Question"(id) ON DELETE CASCADE;
+    ALTER TABLE "ResourceReview" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE;
+    ALTER TABLE "Model" ADD COLUMN "deletedAt" timestamp(3), ADD COLUMN "updatedAt" timestamp(3);
+    ALTER TABLE "Comment" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
+      ADD COLUMN "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
+      ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3),
+      ADD COLUMN "removedByAuthor" boolean NOT NULL DEFAULT false;
+    -- What a ToS restore reopens; no reports here, so only the flag moves.
+    CREATE DOMAIN "ReportStatus" AS text;
+    CREATE DOMAIN "ReportReason" AS text;
+    CREATE TABLE "Report" (id int PRIMARY KEY, status text, reason text);
+    CREATE TABLE "CommentReport" ("reportId" int, "commentId" int);
+    -- A parent's comment thread, and the comments on it, go with the parent; reply threads with
+    -- their root.
     CREATE TABLE "Thread" (
-      id serial PRIMARY KEY, "reviewId" int REFERENCES "ResourceReview"(id) ON DELETE CASCADE
+      id serial PRIMARY KEY,
+      "reviewId" int REFERENCES "ResourceReview"(id) ON DELETE CASCADE,
+      "postId" int REFERENCES "Post"(id) ON DELETE CASCADE,
+      "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
+      "imageId" int REFERENCES "Image"(id) ON DELETE CASCADE,
+      "articleId" int REFERENCES "Article"(id) ON DELETE CASCADE,
+      "bountyId" int REFERENCES "Bounty"(id) ON DELETE CASCADE,
+      "bountyEntryId" int REFERENCES "BountyEntry"(id) ON DELETE CASCADE,
+      "questionId" int REFERENCES "Question"(id) ON DELETE CASCADE,
+      "answerId" int REFERENCES "Answer"(id) ON DELETE CASCADE,
+      "parentThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
+      "rootThreadId" int REFERENCES "Thread"(id) ON DELETE CASCADE,
+      "commentId" int,
+      metadata jsonb NOT NULL DEFAULT '{}'
     );
     ALTER TABLE "CommentV2" ADD COLUMN "threadId" int REFERENCES "Thread"(id) ON DELETE CASCADE;
     CREATE TABLE "Collection" (id serial PRIMARY KEY, "userId" int NOT NULL);
@@ -1187,6 +1227,235 @@ function fakeRes() {
   return res;
 }
 
+describe('removeAllContent keeps other people’s comments a held author is part of', () => {
+  const rows = async (sql: string) => (await holder.db.query<Record<string, unknown>>(sql)).rows;
+  const commentIds = async () =>
+    (await rows(`SELECT id FROM "CommentV2" WHERE id >= 5000 ORDER BY id`)).map((r) => r.id);
+
+  /**
+   * A thread on CLEAN's post: BYSTANDER comments, and `replier` answers in a reply thread. The reply
+   * thread hangs off the root thread (both cascade edges) and off BYSTANDER's comment.
+   */
+  async function seedPostThread(replier: number) {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "postId") VALUES (5000, 1);
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${BYSTANDER}, 5000);
+      INSERT INTO "Thread" (id, "rootThreadId", "parentThreadId", "commentId")
+        VALUES (5001, 5000, 5000, 5000);
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5001, ${replier}, 5001);
+    `);
+  }
+
+  it('keeps the thread, and the unheld reply above the held one, off the deleted post', async () => {
+    await seedPostThread(HELD);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(await rows(`SELECT id FROM "Post" WHERE "userId" = ${CLEAN}`)).toEqual([]);
+    expect(await commentIds()).toEqual([5000, 5001]);
+    expect(await rows(`SELECT "postId", metadata FROM "Thread" WHERE id = 5000`)).toEqual([
+      { postId: null, metadata: expect.objectContaining({ detachedFrom: { postId: 1 } }) },
+    ]);
+  });
+
+  it('takes the whole thread with the post when no held author is in it (control)', async () => {
+    await seedPostThread(BYSTANDER);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(await commentIds()).toEqual([]);
+  });
+
+  it('keeps a held comment on another user’s review of the deleted model', async () => {
+    await holder.db.exec(`
+      UPDATE "ResourceReview" SET "modelId" = ${MODEL} WHERE "userId" = ${BYSTANDER};
+      INSERT INTO "Thread" (id, "reviewId")
+        SELECT 5000, id FROM "ResourceReview" WHERE "userId" = ${BYSTANDER};
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${HELD}, 5000);
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([]);
+    expect(await commentIds()).toEqual([5000]);
+  });
+
+  it('keeps a held comment on another user’s entry to the deleted bounty', async () => {
+    await holder.db.exec(`
+      UPDATE "BountyEntry" SET "bountyId" = ${BOUNTY} WHERE "userId" = ${BYSTANDER};
+      INSERT INTO "Thread" (id, "bountyEntryId")
+        SELECT 5000, id FROM "BountyEntry" WHERE "userId" = ${BYSTANDER};
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${HELD}, 5000);
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(await rows(`SELECT id FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([]);
+    expect(await commentIds()).toEqual([5000]);
+  });
+
+  it('takes a model a held author left a legacy comment on off the site instead of deleting it', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
+    `);
+
+    await removeAllContent({ id: CLEAN, actorUserId: 77 });
+
+    expect(deleteModelById).toHaveBeenCalledTimes(1);
+    expect(deleteModelById).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MODEL, userId: 77, isModerator: true })
+    );
+    // The legacy comment cascades with the model, so a hard delete would take it. Not hidden as
+    // well: the end-of-wipe refund would then refund its bids a second time.
+    expect(
+      await rows(`SELECT id, status, meta ->> 'removedWithOwner' AS removed
+        FROM "Model" WHERE id = ${MODEL}`)
+    ).toEqual([{ id: MODEL, status: 'Deleted', removed: null }]);
+    expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
+  });
+
+  it('hides, with its record, a model with a held legacy comment that an earlier owner’s hold keeps', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Model" (id, "userId", status) VALUES (${GIVEN_BY_HELD}, ${CLEAN}, 'Published');
+      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${GIVEN_BY_HELD});
+    `);
+
+    await removeAllContent({ id: CLEAN, actorUserId: 77 });
+
+    expect(deleteModelById).not.toHaveBeenCalledWith(
+      expect.objectContaining({ id: GIVEN_BY_HELD })
+    );
+    expect(
+      await rows(`SELECT status, meta ->> 'removedWithOwner' AS removed
+        FROM "Model" WHERE id = ${GIVEN_BY_HELD}`)
+    ).toEqual([{ status: KEPT_MODEL_STATUS, removed: 'true' }]);
+    expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
+  });
+
+  // The same alerted line as a hard-deleted model's failed refund, which the bids need by hand.
+  it('alerts on a bid refund that fails for the model it soft-deletes', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
+    `);
+    deleteModelById.mockImplementationOnce((async (args: {
+      onBidRefundFailed?: (f: { versionIds: number[]; transactionIds: string[] }) => void;
+    }) => {
+      args.onBidRefundFailed?.({ versionIds: [41], transactionIds: ['tx-1'] });
+      return null;
+    }) as never);
+
+    const result = await removeAllContent({ id: CLEAN, actorUserId: 77 });
+
+    expect(result).toMatchObject({ incomplete: expect.arrayContaining(['bid-refunds']) });
+    expect(refundAlerts()).toContainEqual(
+      expect.objectContaining({
+        source: 'remove-all-content',
+        userId: CLEAN,
+        moderatorId: 77,
+        versionIds: [41],
+        transactionIds: ['tx-1'],
+      })
+    );
+  });
+
+  it('names the soft-deleted model’s failed refund when a hold stops the wipe', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
+    `);
+    deleteModelById.mockImplementationOnce((async (args: {
+      onBidRefundFailed?: (f: { versionIds: number[]; transactionIds: string[] }) => void;
+    }) => {
+      args.onBidRefundFailed?.({ versionIds: [41], transactionIds: ['tx-1'] });
+      return null;
+    }) as never);
+    landsBefore = 'ChatMessage';
+    beforeEvidence = () => holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+    const stopped = await removeAllContent({ id: CLEAN, actorUserId: 77 }).catch((e) => e);
+
+    expect(stopped).toBeInstanceOf(LegalHoldStoppedError);
+    expect((stopped as LegalHoldStoppedError).incomplete).toContain('bid-refunds');
+  });
+
+  it('still finishes the wipe when that soft delete fails, and names it incomplete', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${HELD}, ${MODEL});
+    `);
+    deleteModelById.mockRejectedValueOnce(new Error('cache down'));
+
+    const result = await removeAllContent({ id: CLEAN });
+
+    // No moderator named: the wipe is no one's delete, so none is recorded as the deleter.
+    expect(deleteModelById).toHaveBeenCalledWith(
+      expect.objectContaining({ id: MODEL, userId: null, isModerator: true })
+    );
+    expect(result).toMatchObject({ incomplete: expect.arrayContaining(['model-soft-delete']) });
+    expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
+  });
+
+  it('deletes a model whose legacy comments no held author wrote (control)', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId") VALUES (5000, ${BYSTANDER}, ${MODEL});
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(deleteModelById).not.toHaveBeenCalled();
+    expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([]);
+    expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([]);
+  });
+
+  it('keeps, hidden, its own legacy comment a held author replied to', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId", "parentId") VALUES
+        (5000, ${CLEAN}, NULL, NULL), (5001, ${HELD}, NULL, 5000), (5002, ${CLEAN}, NULL, NULL);
+    `);
+
+    await removeAllContent({ id: CLEAN });
+
+    expect(
+      await rows(`SELECT id, "tosViolation" FROM "Comment" WHERE id >= 5000 ORDER BY id`)
+    ).toEqual([
+      { id: 5000, tosViolation: true },
+      { id: 5001, tosViolation: false },
+    ]);
+  });
+
+  it("leaves the legacy comment it kept hidden through a moderator's ToS restore", async () => {
+    // Prisma's update, as one UPDATE whose WHERE carries every field the call names.
+    vi.mocked(dbMock.dbWrite.comment.update).mockImplementation((async (args: {
+      where: { id: number; removedByAuthor?: boolean };
+      data: { tosViolation: boolean };
+    }) => {
+      const { rows: updated } = await holder.db.query(
+        `UPDATE "Comment" SET "tosViolation" = $2 WHERE id = $1
+           AND ($3::boolean IS NULL OR "removedByAuthor" = $3) RETURNING id`,
+        [args.where.id, args.data.tosViolation, args.where.removedByAuthor ?? null]
+      );
+      if (!updated.length) throw Object.assign(new Error('not found'), { code: 'P2025' });
+      return updated[0];
+    }) as never);
+    // 5003 is a bystander's comment a moderator hid: the control a restore brings back.
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId", "parentId") VALUES
+        (5000, ${CLEAN}, NULL, NULL), (5001, ${HELD}, NULL, 5000);
+      INSERT INTO "Comment" (id, "userId", "tosViolation") VALUES (5003, ${BYSTANDER}, true);
+    `);
+
+    await removeAllContent({ id: CLEAN });
+    await expect(bulkClearCommentTosViolation({ ids: [5000, 5003] })).resolves.toMatchObject({
+      count: 1,
+    });
+
+    expect(
+      await rows(`SELECT id, "tosViolation" FROM "Comment" WHERE id IN (5000, 5003) ORDER BY id`)
+    ).toEqual([
+      { id: 5000, tosViolation: true },
+      { id: 5003, tosViolation: false },
+    ]);
+  });
+});
+
 describe('/api/mod/remove-all-content', () => {
   const call = async (userId: number, extra: Record<string, string> = {}) => {
     const res = fakeRes();
@@ -1340,6 +1609,24 @@ describe('/api/mod/delete-user-images', () => {
     expect((await remaining(CLEAN)).Post).toBe(0);
     expect((await remaining(BYSTANDER)).Image).toBe(1);
     expect((await remaining(BYSTANDER)).Post).toBe(1);
+  });
+
+  it.each([
+    ['keeps', HELD, [5000]],
+    ['takes, as a control,', BYSTANDER, []],
+  ])("%s a comment on the deleted post's thread by an author", async (_, author, left) => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "postId") VALUES (5000, 1);
+      INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (5000, ${author}, 5000);
+    `);
+
+    expect((await call(CLEAN)).statusCode).toBe(200);
+
+    expect((await remaining(CLEAN)).Post).toBe(0);
+    const { rows } = await holder.db.query<{ id: number }>(
+      `SELECT id FROM "CommentV2" WHERE id >= 5000`
+    );
+    expect(rows.map((r) => r.id)).toEqual(left);
   });
 
   it('deletes an unheld account’s images while the marker view exists', async () => {

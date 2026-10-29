@@ -2,6 +2,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
@@ -21,7 +22,14 @@ vi.mock('~/server/clickhouse/client', () => ({
       holder.sql.push(sql);
       if (holder.logHangs) return new Promise(() => undefined);
       if (holder.logDown) throw new Error('unavailable');
-      return holder.issued.filter(({ key }) => sql.includes(`'${key}'`));
+      // As ClickHouse does: a WHERE name matching a SELECT alias resolves to that aggregate.
+      const alias = sql.match(/any\(userId\) AS (\w+)/)?.[1];
+      const at = sql.indexOf('WHERE');
+      if (!alias || at < 0 || new RegExp(`\\b${alias}\\b`).test(sql.slice(at)))
+        throw new Error('Aggregate function any(userId) is found in WHERE');
+      return holder.issued
+        .filter(({ key }) => sql.includes(`'${key}'`))
+        .map(({ key, userId }) => ({ key, [alias]: userId }));
     },
   },
 }));
@@ -177,6 +185,17 @@ describe('assertClientKeysIssuedToCaller', () => {
     expect(await outcome(KEY, BEFORE)).toBe('refused');
     redisMock.sysRedis.mGet.mockRejectedValue(new Error('down'));
     expect(await outcome(KEY, BEFORE)).toBe('refused');
+  });
+
+  it('logs why the upload request log could not be read', async () => {
+    holder.logDown = true;
+    loggingMock.logToAxiom.mockClear();
+
+    await outcome(KEY, BEFORE);
+
+    expect(loggingMock.logToAxiom).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ type: 'error', name: 'upload-key-owner', error: 'unavailable' })
+    );
   });
 
   it('refuses a key with no record when the upload request log does not answer in 2s', async () => {

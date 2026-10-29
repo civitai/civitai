@@ -29,7 +29,11 @@ export type TicketAccount =
       muted: boolean;
       timedMute: { until: string; source: string; reason: string | null } | null;
       restrictions: TicketRestriction[];
+      /** The user's latest pending Account site appeal; present only for a viewer who may open `/appeals/account`. */
+      pendingAppeal?: TicketAccountAppeal | null;
     };
+
+export type TicketAccountAppeal = { id: number; createdAt: string; message: string };
 
 type RestrictionRow = { id: number; type: string; status: string; createdAt: Date };
 
@@ -37,6 +41,10 @@ export type AccountReads = {
   identity: typeof getIdentity;
   timedMute: typeof getTimedMute;
   restrictions: (userId: number) => Promise<RestrictionRow[]>;
+  /** The user's latest pending Account appeal: one bounded row off the userId index. */
+  pendingAppeal: (
+    userId: number
+  ) => Promise<{ id: number; createdAt: Date; appealMessage: string } | null>;
 };
 
 const liveReads: AccountReads = {
@@ -51,7 +59,33 @@ const liveReads: AccountReads = {
       .orderBy('id', 'desc')
       .limit(RESTRICTION_ROWS)
       .execute(),
+  pendingAppeal: async (userId) =>
+    (await dbRead
+      .selectFrom('Appeal')
+      .select(['id', 'createdAt', 'appealMessage'])
+      .where('userId', '=', userId)
+      .where('category', '=', 'Account')
+      .where('status', '=', 'Pending')
+      .orderBy('id', 'desc')
+      .limit(1)
+      .executeTakeFirst()) ?? null,
 };
+
+/** A failed appeal read costs only the appeal, never the account status beside it. */
+async function pendingAppealOf(
+  reads: AccountReads,
+  userId: number
+): Promise<TicketAccountAppeal | null> {
+  try {
+    const found = await reads.pendingAppeal(userId);
+    return found
+      ? { id: found.id, createdAt: iso(found.createdAt)!, message: found.appealMessage }
+      : null;
+  } catch (e) {
+    console.error('[tickets] account appeal read failed', e);
+    return null;
+  }
+}
 
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
 
@@ -67,6 +101,8 @@ export async function accountSectionFor(
     routerTopic: string | null;
     civitaiUserId: number | null;
     canView: boolean;
+    /** The viewer may open `/appeals/account`, so a pending Account appeal is read and ruled here. */
+    canAppeal?: boolean;
   },
   reads: AccountReads = liveReads
 ): Promise<TicketAccount | undefined> {
@@ -77,10 +113,11 @@ export async function accountSectionFor(
 
   const userId = ticket.civitaiUserId;
   try {
-    const [identity, timed, restrictions] = await Promise.all([
+    const [identity, timed, restrictions, appeal] = await Promise.all([
       reads.identity(userId),
       reads.timedMute(userId),
       reads.restrictions(userId),
+      ticket.canAppeal ? pendingAppealOf(reads, userId) : undefined,
     ]);
     if (!identity) return { status: 'unavailable', userId };
     return {
@@ -101,6 +138,7 @@ export async function accountSectionFor(
         createdAt: iso(r.createdAt)!,
         rulable: r.status === 'Pending' && unwiredRulingReason(r.type) === null,
       })),
+      ...(appeal === undefined ? {} : { pendingAppeal: appeal }),
     };
   } catch (e) {
     console.error('[tickets] account status failed', e);

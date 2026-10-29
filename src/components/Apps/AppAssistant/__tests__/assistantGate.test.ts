@@ -321,7 +321,7 @@ describe('report_ready and the app’s data', () => {
     ).resolves.toEqual({
       ready: true,
       data: 'sample',
-      note: 'Tell the user the app is ready for review, that it shows sample data, not real Civitai data, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed and that the data is sample data.',
+      note: 'Tell the user the app is ready for review, that it shows sample data, not real Civitai data, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed and that the data is sample data. If they want it in the App Store, call submit_for_review when they ask.',
     });
   });
 
@@ -346,7 +346,7 @@ describe('report_ready and the app’s data', () => {
     ).resolves.toEqual({
       ready: true,
       data,
-      note: 'Tell the user the app is ready for review, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed.',
+      note: 'Tell the user the app is ready for review, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed. If they want it in the App Store, call submit_for_review when they ask.',
     });
   });
 

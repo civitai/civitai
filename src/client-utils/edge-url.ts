@@ -306,8 +306,7 @@ export function resolveEdgeUrl(
   }
 
   if (!anim) type = 'image';
-  // Decided here so anything that has to reproduce this outside React (the announcement banner
-  // health monitor) cannot drift from it.
+  // Single source for `optimized`; do not re-derive it elsewhere.
   const optimized = resolveOptimized({
     width: options?.width,
     height: options?.height,

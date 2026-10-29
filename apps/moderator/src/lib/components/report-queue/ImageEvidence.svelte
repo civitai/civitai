@@ -11,7 +11,10 @@
   import ImageActionBar from '$lib/components/ImageActionBar.svelte';
   import ErrorAlert from '$lib/components/ErrorAlert.svelte';
   import { FormState } from '$lib/form-state.svelte';
-  import { dateTime } from '$lib/format';
+  import { enhance } from '$app/forms';
+  import TipButton from '$lib/components/TipButton.svelte';
+  import { imageFlagValue } from '$lib/image-flags';
+  import { dateTime, num } from '$lib/format';
   import type { BulkImage } from '$lib/server/bulk-image.service';
   import type { ReportActionGrants } from '$lib/report-queue';
 
@@ -98,6 +101,7 @@
     });
   });
   const selectedOwners = $derived(owners.of(selected));
+  const minorIds = $derived(images.filter((i) => i.minor).map((i) => i.id));
 </script>
 
 {#if form.error}
@@ -107,6 +111,22 @@
     {result}
     {#if held}<a href="/images/re-removals" class="link ml-1">Open Re-removals</a>{/if}
   </p>
+{/if}
+{#if can.images && minorIds.length}
+  <form method="POST" action="?/setFlag" use:enhance={form.enhance} class="mb-3">
+    <input type="hidden" name="imageIds" value={minorIds.join(',')} />
+    <TipButton
+      type="submit"
+      name="flagValue"
+      value={imageFlagValue('minor', false)}
+      size="sm"
+      variant="outline"
+      disabled={form.submitting}
+      tip="Clear the minor flag on every minor-flagged image shown here. Selection is ignored."
+    >
+      Clear minor on {minorIds.length === 1 ? 'the flagged image' : `all ${num(minorIds.length)} flagged images`}{paging || truncated ? ' shown' : ''}
+    </TipButton>
+  </form>
 {/if}
 {#if can.images && images.length}
   <div class="mb-3">

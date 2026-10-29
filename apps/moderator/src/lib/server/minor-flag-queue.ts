@@ -49,7 +49,6 @@ import {
 import { denied, type PermissionSet } from '$lib/permissions';
 import { canAccess } from '$lib/server/access';
 import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
-import { appealVerdict } from '$lib/minor-flags/appeal-split';
 import type { FlaggedLabel, FlaggedSource } from '$lib/minor-flags/flagged-decision';
 import {
   APPEAL_FLAGS,
@@ -66,6 +65,7 @@ import {
   FLAGGED_SOURCES,
   type FlaggedFilters,
 } from '$lib/minor-flags/flagged-filters';
+import { ruleFlagAppeal, type FlagAppealDecision } from '$lib/server/minor-flag-appeal-ruling';
 import { MAX_INT4 } from '$lib/server/users.service';
 import { bounded } from '$lib/server/bounded';
 import {
@@ -614,20 +614,27 @@ export const needsReviewActions: Actions = {
   }),
 };
 
+const reasonFields = z.object(resolutionReasonFields);
+
+/** Rules the appeal for the posted model and answers as the Appeals queue does. */
+async function ruleAppealFrom(form: FormData, modelId: number, decision: FlagAppealDecision) {
+  const fields = parseForm(reasonFields, form);
+  const ruling =
+    typeof fields === 'string'
+      ? ({ ok: false, error: fields } as const)
+      : await ruleFlagAppeal({ modelId, decision, reason: fields });
+  if (!ruling.ok)
+    return fail(400, { error: ruling.error, modelId, subject: modelSubject(modelId) });
+  return { success: true, modelId, rescanQueued: ruling.rescanQueued };
+}
+
 const wholeAppealAction =
   (uphold: boolean): Actions[string] =>
   async (event) => {
     const form = await event.request.formData();
     const modelId = Number(form.get('modelId'));
     if (!(modelId > 0)) return fail(400, { error: 'Missing model id.' });
-    const reason = rulingReasonFromForm('flagAppeal', uphold ? 'Rejected' : 'Approved', form);
-    if (typeof reason === 'string')
-      return fail(400, { error: reason, modelId, subject: modelSubject(modelId) });
-
-    const result = await resolveMinorFlagAppeal(modelId, uphold, reason);
-    if (!result.ok)
-      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
-    return { success: true, modelId, rescanQueued: result.rescanQueued === true };
+    return ruleAppealFrom(form, modelId, uphold ? 'uphold' : 'overturn');
   };
 
 export const appealActions: Actions = {
@@ -641,23 +648,6 @@ export const appealActions: Actions = {
     const poi = decision.safeParse(form.get('poi'));
     if (!(modelId > 0) || !minor.success || !poi.success)
       return fail(400, { error: 'Missing model id or decision.' });
-    const { verdict, lifted } = appealVerdict({ minor: minor.data, poi: poi.data });
-    const reason = rulingReasonFromForm(
-      'flagAppeal',
-      verdict,
-      form,
-      lifted.length ? lifted : undefined
-    );
-    if (typeof reason === 'string')
-      return fail(400, { error: reason, modelId, subject: modelSubject(modelId) });
-
-    const result = await resolveMinorFlagAppealPerLabel(
-      modelId,
-      { minor: minor.data, poi: poi.data },
-      reason
-    );
-    if (!result.ok)
-      return fail(400, { error: result.error, modelId, subject: modelSubject(modelId) });
-    return { success: true, modelId, rescanQueued: result.rescanQueued };
+    return ruleAppealFrom(form, modelId, { minor: minor.data, poi: poi.data });
   },
 };

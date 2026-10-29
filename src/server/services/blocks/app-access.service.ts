@@ -489,6 +489,15 @@ export async function resolveAppAccess(
 }
 
 /**
+ * Whether `userId` may queue a new version of the existing app `appBlockId` (`submitVersion`):
+ * its owner (`AppBlock.app.userId`) or an ACCEPTED editor, as the version-commit path allows.
+ * Moderators are decided by the caller.
+ */
+export async function mayShipAppVersion(appBlockId: string, userId: number): Promise<boolean> {
+  return !!(await resolveAppAccess(appBlockId, userId))?.role;
+}
+
+/**
  * Resolve the caller's role on an App LISTING. 🔴 THE primary resolver — every
  * listing-shaped gate in the feature goes through here.
  *

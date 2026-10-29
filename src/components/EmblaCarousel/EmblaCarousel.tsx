@@ -49,23 +49,24 @@ type EmblaCarouselWrapperProps = {
   hatLayer?: boolean;
 };
 
-// Fallback for when no settle event arrives; hats stay hidden at most this long.
+// Fallback for when no settle event arrives; the hats settle on their slides at most this long after.
 export const HAT_SETTLE_FALLBACK_MS = 800;
 
 function EmblaHatMotion() {
   const emblaApi = useEmblaStore((state) => state.emblaApi);
   const hatLayer = useHatLayer();
-  const setMoving = hatLayer?.setMoving;
+  const moved = hatLayer?.moved;
   const remeasure = hatLayer?.remeasure;
   useEffect(() => {
-    if (!emblaApi || !setMoving || !remeasure) return;
+    if (!emblaApi || !moved || !remeasure) return;
     let fallback: ReturnType<typeof setTimeout> | undefined;
     const settle = () => {
       clearTimeout(fallback);
-      setMoving(false);
+      moved(true);
     };
+    // Embla moves the slides before it emits `scroll`, so the hats read them where they are drawn.
     const scroll = () => {
-      setMoving(true);
+      moved(false);
       clearTimeout(fallback);
       fallback = setTimeout(settle, HAT_SETTLE_FALLBACK_MS);
     };
@@ -79,7 +80,7 @@ function EmblaHatMotion() {
       clearTimeout(fallback);
       emblaApi.off('scroll', scroll).off('settle', settle).off('reInit', reInit);
     };
-  }, [emblaApi, setMoving, remeasure]);
+  }, [emblaApi, moved, remeasure]);
   return null;
 }
 

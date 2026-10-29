@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
 import {
@@ -21,7 +23,6 @@ import {
 } from '~/server/services/image-appeal-flag';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
-import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server';
 import {
@@ -193,6 +194,9 @@ import type {
   EventDecorationCosmetic,
 } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { getSfwModelNames } from '~/server/services/model-sfw-face.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { showsSfwFace, withSfwModelNames } from '~/shared/utils/model-sfw-face';
 import {
   imageSelect,
   publishedImageWhere,
@@ -282,12 +286,12 @@ import type {
   ReportReason,
   ReviewReactions,
   TagType,
+  CollectionItemStatus,
 } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   BlockImageReason,
   CosmeticEntity,
-  CollectionItemStatus,
   CollectionMode,
   AppealStatus,
   EntityType,
@@ -600,10 +604,10 @@ type DeleteImageFromS3Args = {
 } & PurgeResizeCacheRetraction;
 
 /**
- * An owner deleting their own scanned image that carries no block and is not held for review. Only
- * then may a delete leave behind an object that shop artwork still uses: a block, takedown or
- * moderator delete always removes it, since a non-persisted CDN deny lapses and the bytes would be
- * served again. Scanned, so a delete cannot outrun a verdict still on its way.
+ * An owner deleting their own scanned image that carries no block, is not held for review and has no
+ * open report. Only then may a delete leave behind an object that shop artwork still uses: a block,
+ * takedown or moderator delete always removes it, since a non-persisted CDN deny lapses and the
+ * bytes would be served again. Scanned and unreported, so a delete cannot outrun a verdict.
  */
 export function isPlainOwnerDelete(
   image: {
@@ -612,6 +616,7 @@ export function isPlainOwnerDelete(
     needsReview: string | null;
     nsfwLevel: number;
     blockedFor: string | null;
+    openReport: boolean;
   },
   deletedById: number | undefined
 ) {
@@ -619,8 +624,31 @@ export function isPlainOwnerDelete(
     image.userId === deletedById &&
     image.ingestion === ImageIngestionStatus.Scanned &&
     !image.needsReview &&
+    !image.openReport &&
     !hasBlockMarker(image)
   );
+}
+
+/**
+ * The images among `ids` with a report still Pending or Processing, on the image or on its post.
+ * Read before the delete: `ImageReport` and `PostReport` cascade with what they report.
+ */
+export async function imagesWithOpenReports(
+  ids: number[],
+  db: Pick<Prisma.TransactionClient, '$queryRaw'> = dbWrite
+): Promise<Set<number>> {
+  if (!ids.length) return new Set();
+  const rows = await db.$queryRaw<{ imageId: number }[]>`
+    SELECT ir."imageId" FROM "ImageReport" ir
+    JOIN "Report" r ON r.id = ir."reportId"
+    WHERE ir."imageId" = ANY(${ids}::int[]) AND r.status IN ('Pending', 'Processing')
+    UNION
+    SELECT i.id FROM "Image" i
+    JOIN "PostReport" pr ON pr."postId" = i."postId"
+    JOIN "Report" r ON r.id = pr."reportId"
+    WHERE i.id = ANY(${ids}::int[]) AND r.status IN ('Pending', 'Processing')
+  `;
+  return new Set(rows.map((row) => row.imageId));
 }
 
 export async function deleteImageFromS3(
@@ -910,26 +938,29 @@ export const deleteImageById = async ({
     // Also before the delete: `User.profilePictureId` is `onDelete: SetNull`, so afterwards nothing
     // says whose avatar this was. Non-throwing for the same reason as the resolver above.
     const profilePictureUserIds = await getProfilePictureUserIds([id]).catch(() => []);
+    // Only an owner delete can keep an object; every other delete purges without asking.
+    // A failed read counts as reported, so the delete still goes ahead and purges.
+    const openReport =
+      deletedById !== undefined &&
+      (await imagesWithOpenReports([id]).catch(() => new Set([id]))).has(id);
 
-    const image = await dbWrite.image
-      .delete({
-        where: { id },
-        select: {
-          url: true,
-          postId: true,
-          nsfwLevel: true,
-          userId: true,
-          metadata: true,
-          ingestion: true,
-          needsReview: true,
-          blockedFor: true,
-        },
-      })
-      .catch((error) => {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
-          return null;
-        throw error;
-      });
+    const markerView = await holdMarkerViewExists();
+    const [image = null] = await dbWrite.$queryRaw<
+      {
+        url: string;
+        postId: number | null;
+        nsfwLevel: number;
+        userId: number;
+        metadata: unknown;
+        ingestion: string;
+        needsReview: string | null;
+        blockedFor: string | null;
+      }[]
+    >`
+      WITH ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT ${id}::int` }, markerView)}
+      DELETE FROM "Image" WHERE id = ${id}
+      RETURNING url, "postId", "nsfwLevel", "userId", metadata, ingestion::text, "needsReview", "blockedFor"
+    `;
     // No row came back: it was already gone, or a hold marker kept it (the delete trigger takes it
     // off the site instead). Either way it leaves search like any deleted image.
     if (!image) {
@@ -951,7 +982,7 @@ export const deleteImageById = async ({
       deleteImageFromS3({
         id,
         url: image.url,
-        keepShopArtwork: isPlainOwnerDelete(image, deletedById),
+        keepShopArtwork: isPlainOwnerDelete({ ...image, openReport }, deletedById),
       }),
       queueImageSearchIndexUpdate({
         ids: [id],
@@ -1070,6 +1101,7 @@ export async function deleteImages(
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
+  const markerView = await holdMarkerViewExists();
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     // Resolved before the DELETE for the same reason as deleteImageById: the
     // membership rows cascade away with the images, taking with them the only record
@@ -1089,9 +1121,14 @@ export async function deleteImages(
         parentId: number | null;
       }[]
     >`
+      WITH doomed AS (
+        SELECT id FROM "Image"
+        WHERE id IN (${Prisma.join(ids)})
+          ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
+      ),
+      ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
       DELETE FROM "Image"
-      WHERE id IN (${Prisma.join(ids)})
-        ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
+      WHERE id IN (SELECT id FROM doomed)
       RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
@@ -1400,7 +1437,7 @@ export async function handleBlockImages({
             userId: img.userId,
             type: 'tos-violation',
             category: NotificationCategory.System,
-            key: `tos-violation:image:${uuid()}`,
+            key: `tos-violation:image:${crypto.randomUUID()}`,
             details: {
               modelName: img.postId ? `post #${img.postId}` : 'a post',
               entity: 'image',
@@ -4826,7 +4863,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         actor,
       })
     );
-    let results = mainResult.results;
+    const results = mainResult.results;
 
     let nextCursor: number | undefined;
     if (results.length > limit) {
@@ -6236,7 +6273,9 @@ export const getImage = async ({
 };
 
 export const getImageResources = async ({ id }: GetByIdInput) => {
-  const resources = await dbRead.$queryRaw<ImageResourceHelperModel[]>`
+  const resources = await dbRead.$queryRaw<
+    (ImageResourceHelperModel & { sfwName: string | null })[]
+  >`
     SELECT
       irh."imageId",
       irh."reviewId",
@@ -6255,7 +6294,8 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
       irh."modelCommentCount",
       irh."modelType",
       irh."modelVersionBaseModel",
-      irh."detected"
+      irh."detected",
+      m."sfwName"
     FROM
       "ImageResourceHelper" irh
     JOIN "Model" m ON m.id = irh."modelId" AND m."status" = 'Published'
@@ -6495,6 +6535,7 @@ type CachedImagesForModelVersions = {
   modelVersionId: number;
   images: ImagesForModelVersions[];
 };
+// eslint-disable-next-line local-rules/no-module-scope-cache -- exported and used by many callers; making it lazy is out of scope here
 export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
@@ -8575,8 +8616,13 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
   const tools = image.tools.map(({ notes, tool }) => ({ ...tool, notes }));
   const techniques = image.techniques.map(({ notes, technique }) => ({ ...technique, notes }));
 
-  const cachedResources = await imageResourcesCache.fetch([id]);
-  const resources = (cachedResources[id]?.resources ?? []).map((r) => ({
+  const cachedResources = (await imageResourcesCache.fetch([id]))[id]?.resources ?? [];
+  // The cache is per image, so a model's .com face is looked up here rather than stored in it.
+  const sfwModelNames = await getSfwModelNames(
+    cachedResources.map((r) => r.modelId),
+    showsSfwFace(getRequestBrowsingLevel(viewer))
+  );
+  const resources = withSfwModelNames(cachedResources, sfwModelNames).map((r) => ({
     imageId: r.imageId,
     modelVersionId: r.modelVersionId,
     strength: r.strength,

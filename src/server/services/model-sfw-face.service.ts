@@ -13,6 +13,21 @@ import { removeTags } from '~/utils/string-helpers';
 
 const SFW_FACE_CHECK_WAIT_SECONDS = 10;
 
+/**
+ * The .com titles of the given models that have a face on, for a viewer `showsSfwFace` admits.
+ * Read at request time because the rows that name these models (image resources, notifications)
+ * are cached or stored per image and per recipient, where a face change can't reach them.
+ */
+export async function getSfwModelNames(modelIds: number[], showSfwFace: boolean) {
+  const ids = [...new Set(modelIds)];
+  if (!showSfwFace || !ids.length) return new Map<number, string>();
+  const models = await dbRead.model.findMany({
+    where: { id: { in: ids }, sfwName: { not: null } },
+    select: { id: true, sfwName: true },
+  });
+  return new Map(models.map((model) => [model.id, model.sfwName as string]));
+}
+
 export type SfwFaceVerdict =
   | { status: 'clean' }
   | { status: 'flagged'; level: string; reason: string }

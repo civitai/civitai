@@ -1,8 +1,10 @@
 import {
   CREATE_APP,
   NO_APP_REFUSAL,
+  REPORT_READY,
   SET_CHECKLIST,
   START_PREVIEW,
+  SUBMIT_FOR_REVIEW,
   USE_OPEN_APP,
   appAssistantSubagents,
   assistantSystemPrompt,
@@ -89,8 +91,10 @@ const REPORTED_OUTPUT_CHARS = 200;
 const RUNNER_PAGE_TOOLS = [
   CREATE_APP,
   USE_OPEN_APP,
-  'set_checklist',
-  'report_ready',
+  SET_CHECKLIST,
+  REPORT_READY,
+  // Offers the user the page's Submit for review button; the page, not the runner, submits.
+  SUBMIT_FOR_REVIEW,
   'start_preview',
   'stop_preview',
 ] as const;

@@ -21,9 +21,14 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
+import {
+  detachHeldThreadsCte,
+  heldLegacyCommentOnModelSql,
+  modelThreadParents,
+} from '~/server/services/comment-thread-hold';
 import { isRemovedWithOwner, withoutRemovedWithOwner } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
-import { isEmpty, uniq } from 'lodash-es';
+import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
 import { publishedRangeBounds, publishedRangeError } from '~/shared/utils/published-range';
 import type { SearchParams, SearchResponse } from 'meilisearch';
@@ -127,7 +132,7 @@ import {
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
+import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -239,6 +244,7 @@ import {
   stripServerOwnedMeta,
   systemNsfwLockMarker,
   withPrivateCannotPromote,
+  withStoredPublishKeys,
 } from '~/server/utils/minor-flag-meta';
 import {
   buildGetAllModelImages,
@@ -303,6 +309,7 @@ import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { pgDbRead } from '~/server/db/pgDb';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -2061,14 +2068,25 @@ function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
 export const updateModelById = async ({
   id,
   data,
+  meta,
 }: {
   id: number;
   data: Prisma.ModelUpdateInput;
+  /**
+   * Builds the meta to write from the stored row, re-read under a lock held for the write; it may
+   * throw to refuse the write on what that row says.
+   */
+  meta?: (stored: ModelMeta | null, row: Awaited<ReturnType<typeof lockModelRow>>) => ModelMeta;
 }) => {
-  const model = await dbWrite.model.update({
-    where: { id },
-    data,
-  });
+  const model = meta
+    ? await dbWrite.$transaction(async (tx) => {
+        const row = await lockModelRow(tx, id);
+        return tx.model.update({
+          where: { id },
+          data: { ...data, meta: meta(row?.meta ?? null, row) as Prisma.JsonObject },
+        });
+      })
+    : await dbWrite.model.update({ where: { id }, data });
 
   await userModelCountCache.refresh(model.userId);
   // Flag replica-lag on the model BEFORE busting so a concurrent edge-miss read
@@ -2104,9 +2122,18 @@ export const deleteModelById = async ({
   id,
   userId,
   isModerator,
+  onBidRefundFailed,
 }: GetByIdInput & {
-  userId: number;
+  /** Who deletes it; null when no person ordered it (a system-run account wipe). */
+  userId: number | null;
   isModerator?: boolean;
+  /**
+   * Called with the refunds that failed, or the error that stopped them, when its bids are refunded;
+   * the delete then still returns. Without it, a failure is only logged, or thrown.
+   */
+  onBidRefundFailed?: (
+    failure: { versionIds: number[] } & ({ transactionIds: string[] } | { error: string })
+  ) => void;
 }) => {
   if (!isModerator) {
     const versions = await dbRead.modelVersion.findMany({
@@ -2161,7 +2188,7 @@ export const deleteModelById = async ({
         UPDATE "Post"
         SET "metadata" = "metadata" || jsonb_build_object(
           'unpublishedAt', ${new Date().toISOString()},
-          'unpublishedBy', ${userId},
+          'unpublishedBy', ${userId}::int,
           'prevPublishedAt', "publishedAt"
                                        ),
             "publishedAt" = NULL
@@ -2177,6 +2204,20 @@ export const deleteModelById = async ({
     return model;
   });
 
+  const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
+  // Refunded before the cache and index steps below: the delete has committed, and a failure in one
+  // of them must not leave the bids standing. Without `onBidRefundFailed` its error is thrown last.
+  let refundError: unknown;
+  try {
+    const { refundFailed } = await deleteBidsForModel({ modelId: id });
+    if (refundFailed.length)
+      onBidRefundFailed?.({ versionIds: deletedVersionIds, transactionIds: refundFailed });
+  } catch (e) {
+    if (onBidRefundFailed)
+      onBidRefundFailed({ versionIds: deletedVersionIds, error: (e as Error)?.message });
+    else refundError = e;
+  }
+
   if (deletedModel) {
     await userModelCountCache.refresh(deletedModel.userId);
   }
@@ -2188,7 +2229,6 @@ export const deleteModelById = async ({
   // scope caveat as updateModelById: the getModelsRaw base row is not lag-aware —
   // but for a delete the model row is gone, so a fresh read rebuilds to null→404,
   // never cached, so the base-row gap is benign on this path.)
-  const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
   await preventModelVersionLagBatch(id, deletedVersionIds);
   // Drop the deleted model's post images from the image search index — parity
   // with unpublishModelById / permaDeleteModelById. The image index doesn't
@@ -2226,7 +2266,7 @@ export const deleteModelById = async ({
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
   // deleted model stops serving a stale 200 (it would 404 on rebuild).
   await bustPublicModelResponseCache(id);
-  await deleteBidsForModel({ modelId: id });
+  if (refundError) throw refundError;
 
   return deletedModel;
 };
@@ -2339,6 +2379,12 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
 
 /** What a moderator is told when a hold keeps a model: kept on purpose, not a failure. Never which hold. */
 export const MODEL_KEPT_FOR_HOLD = 'Kept: account under legal hold.';
+/** The same, for a model kept only for another account's comments on it: its owner is not held. */
+export const MODEL_KEPT_FOR_HELD_COMMENT = 'Kept: retained content; contact Legal.';
+
+const holdUnconfirmed = (e: unknown): never => {
+  throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
+};
 
 export const permaDeleteModelById = async ({
   id,
@@ -2394,43 +2440,51 @@ export const permaDeleteModelById = async ({
 
       // Get images to delete and queue search index updates
       let imagesToDelete: { id: number }[] = [];
+      // Each delete detaches its held threads in the same statement, so a hold placed between the
+      // two still keeps them.
       if (postIds.length > 0) {
         imagesToDelete = await tx.image.findMany({
           where: { postId: { in: postIds } },
           select: { id: true },
         });
 
-        await tx.image.deleteMany({
-          where: { postId: { in: postIds } },
-        });
+        const doomedImages = Prisma.sql`SELECT i.id FROM "Image" i WHERE i."postId" = ANY(${postIds}::int[])`;
+        await tx.$executeRaw`
+            WITH ${detachHeldThreadsCte({ imageId: doomedImages }, true)}
+            DELETE FROM "Image" WHERE id IN (${doomedImages})`.catch(holdUnconfirmed);
       }
 
-      await tx.post.deleteMany({
-        where: {
-          userId: model.userId,
-          modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
-        },
-      });
+      const doomedPosts = Prisma.sql`SELECT p.id FROM "Post" p
+        WHERE p."userId" = ${model.userId} AND p."modelVersionId" = ANY(${versionIds}::int[])`;
+      await tx.$executeRaw`
+          WITH ${detachHeldThreadsCte({ postId: doomedPosts }, true)}
+          DELETE FROM "Post" WHERE id IN (${doomedPosts})`.catch(holdUnconfirmed);
 
       // Checked in the DELETE itself, so a hold placed during this transaction still stops it, and
       // the rollback restores the posts and images.
       const [deletedModel] = await tx.$queryRaw<
         { id: number; userId: number; nsfwLevel: number }[]
       >`
+        WITH ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT ${id}::int`), true)}
         DELETE FROM "Model" m
         WHERE m.id = ${id}
           AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
+          AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), true)}
         RETURNING m.id, m."userId", m."nsfwLevel"
-      `.catch((e: unknown) => {
-        throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
-      });
+      `.catch(holdUnconfirmed);
       if (!deletedModel) {
         // Gone already, by a concurrent delete, is not a hold. Thrown either way: nothing this
         // transaction deleted passed a hold check, so it must not commit.
         const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
         if (!stillThere)
           throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
-        throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
+        const [owner] = await tx.$queryRaw<{ ownerHeld: boolean }[]>`
+          SELECT ${modelDataHeldSql(Prisma.sql`${id}::int`, true)} AS "ownerHeld"
+        `.catch(holdUnconfirmed);
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: owner?.ownerHeld === false ? MODEL_KEPT_FOR_HELD_COMMENT : MODEL_KEPT_FOR_HOLD,
+        });
       }
       return { deletedModel, imagesToDelete };
     },
@@ -3250,6 +3304,50 @@ function moderatorFlagActivities(
 // the version caches themselves.
 const coverageModelFields = ['allowCommercialUse', 'availability', 'type', 'uploadType'] as const;
 
+/** The model's row, re-read under a lock held for the write that follows in the same transaction. */
+async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
+  await tx.$queryRaw`SELECT id FROM "Model" WHERE id = ${id} FOR NO KEY UPDATE`;
+  const row = await tx.model.findUnique({
+    where: { id },
+    select: {
+      status: true,
+      availability: true,
+      mode: true,
+      meta: true,
+      lockedProperties: true,
+      nsfw: true,
+      gallerySettings: true,
+    },
+  });
+  return row && { ...row, meta: row.meta as ModelMeta | null };
+}
+
+/**
+ * Whether a moderator's save rules on the nsfw rating: adds or removes the nsfw lock, or changes
+ * nsfw itself. Such a save makes the rating the moderator's, so it drops the `systemNsfwLock`
+ * marker that lets an owner dispute a system-set lock.
+ */
+function rulesOnNsfw(
+  stored: { nsfw: boolean; lockedProperties: string[] | null } | null | undefined,
+  next: { nsfw?: boolean; lockedProperties?: string[] }
+) {
+  const lockChanged =
+    next.lockedProperties !== undefined &&
+    (stored?.lockedProperties ?? []).includes('nsfw') !== next.lockedProperties.includes('nsfw');
+  return lockChanged || (next.nsfw !== undefined && next.nsfw !== stored?.nsfw);
+}
+
+function withoutSystemNsfwLock(meta: ModelMeta): ModelMeta {
+  const { [SYSTEM_NSFW_LOCK_META_KEY]: _marker, ...rest } = meta;
+  return rest;
+}
+
+export const removedWithOwnerEditError = () =>
+  throwAuthorizationError('You are not authorized to edit this model');
+
+const cannotPublishError = () =>
+  throwBadRequestError('This model cannot be published due to moderation restrictions.');
+
 export const upsertModel = async (
   input: ModelUpsertInput & {
     userId: number;
@@ -3547,6 +3645,7 @@ export const upsertModel = async (
 
     const isOwner = beforeUpdate.userId === userId || isModerator;
     if (!isOwner) return null;
+    if (!isModerator && isRemovedWithOwner(beforeUpdate.meta)) throw removedWithOwnerEditError();
 
     // Going public skips `publishPrivateModel`'s checks and going private skips the
     // `maxPrivateModels` cap, so availability only changes through those flows.
@@ -3572,24 +3671,54 @@ export const upsertModel = async (
     }
 
     const prevGallerySettings = beforeUpdate.gallerySettings as ModelGallerySettingsSchema;
-    const prevMeta = beforeUpdate.meta as ModelMeta | null;
-    let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
-    if (beforeUpdate.availability === Availability.Private) {
-      // `meta` only carries `cannotPromote` for a moderator. While private it is forced on, so the
-      // moderator's decision is what publish restores.
-      const sent = (meta as ModelMeta | undefined)?.cannotPromote;
-      const banned =
-        typeof sent === 'boolean'
-          ? sent
-          : (prevMeta as Record<string, unknown> | null)?.[RESTORE_CANNOT_PROMOTE_KEY] === true;
-      mergedMeta = withPrivateCannotPromote(mergedMeta, banned);
-    }
 
     let clearedLicensingSources: { id: number; licensingSourceVersionId: number }[] = [];
     let typeBeforeUpdate: ModelType | undefined;
+    // The locks as the transaction found them, for the change history's "before".
+    let lockedBeforeUpdate: string[] | undefined;
 
     const result = await dbWrite.$transaction(
       async (tx) => {
+        // Merged over the row as it is now: a wipe, a moderator or a scan may have written its meta
+        // since the read above, and a merge over that read would write it back.
+        const locked = await lockModelRow(tx, id);
+        const prevMeta = locked?.meta ?? null;
+        if (!isModerator && isRemovedWithOwner(prevMeta)) throw removedWithOwnerEditError();
+        // Locks are enforced again against this locked row: the enforcement above read the row
+        // before the transaction, and a lock set since then wins over the owner's value. The
+        // profanity lock is built from this row too, so it keeps every lock the row has now.
+        lockedBeforeUpdate = locked?.lockedProperties;
+        const lockedGallerySettings =
+          (locked?.gallerySettings as ModelGallerySettingsSchema | undefined) ??
+          prevGallerySettings;
+        if (!isModerator && locked) {
+          enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
+          if (profanityAutoNsfw && locked.lockedProperties.includes('nsfw')) {
+            profanityAutoNsfw = false;
+            meta = withoutSystemNsfwLock(meta ?? {});
+          } else if (profanityAutoNsfw) {
+            data.nsfw = true;
+            data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
+          }
+        }
+        if (
+          !isModerator &&
+          locked &&
+          data.availability &&
+          data.availability !== locked.availability
+        )
+          throw throwBadRequestError('A model’s availability changes only through its own flows.');
+        let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
+        if ((locked?.availability ?? beforeUpdate.availability) === Availability.Private) {
+          // `meta` only carries `cannotPromote` for a moderator. While private it is forced on, so the
+          // moderator's decision is what publish restores.
+          const sent = (meta as ModelMeta | undefined)?.cannotPromote;
+          const banned =
+            typeof sent === 'boolean'
+              ? sent
+              : (prevMeta as Record<string, unknown> | null)?.[RESTORE_CANNOT_PROMOTE_KEY] === true;
+          mergedMeta = withPrivateCannotPromote(mergedMeta, banned);
+        }
         // Not `beforeUpdate.type` — that is a `dbRead` read, and a stale replica reads as "type
         // unchanged", skipping the repair below on exactly the save that needed it. The flags are
         // read here for the same reason: the moderation log records what this save replaced.
@@ -3598,6 +3727,8 @@ export const upsertModel = async (
           select: { type: true, poi: true, minor: true, sfwOnly: true, lockedProperties: true },
         });
         typeBeforeUpdate = replaced?.type;
+        if (isModerator && rulesOnNsfw(locked, data))
+          mergedMeta = withoutSystemNsfwLock(mergedMeta);
         // Read here rather than off `beforeUpdate` so the recorded "before" is the row this
         // transaction replaces. Only for a save that sends permissions at all.
         const storedPermissions = writesPermissions(data)
@@ -3633,10 +3764,11 @@ export const upsertModel = async (
           data: {
             ...data,
             meta: mergedMeta,
+            // From the locked row, like meta: a flag set since the first read also set the level.
             gallerySettings: {
-              ...prevGallerySettings,
+              ...lockedGallerySettings,
               level:
-                input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
+                input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : lockedGallerySettings?.level,
             },
             tagsOnModels: tagsOnModels
               ? {
@@ -3764,7 +3896,11 @@ export const upsertModel = async (
         // `type` off the transaction's own read, not the `dbRead` one beside it: a stale replica
         // reads as "type unchanged" and emits no row, on exactly the save whose fee clears need
         // explaining. Same reason the repair above does not use `beforeUpdate.type`.
-        before: { ...beforeUpdate, type: typeBeforeUpdate ?? beforeUpdate.type },
+        before: {
+          ...beforeUpdate,
+          type: typeBeforeUpdate ?? beforeUpdate.type,
+          lockedProperties: lockedBeforeUpdate ?? beforeUpdate.lockedProperties,
+        },
         after: data as Record<string, unknown>,
         actorRole: resolveActorRole({
           actorUserId: userId,
@@ -3832,6 +3968,15 @@ export const upsertModel = async (
     if (sfwFaceChanged || coverChanged) {
       await updateModelNsfwLevels([result.id]);
       await bustPublicModelResponseCache(result.id);
+    }
+    // The generator's cached version rows carry the .com title.
+    if (sfwFaceChanged) {
+      const versions = await dbWrite.modelVersion.findMany({
+        where: { modelId: result.id },
+        select: { id: true },
+      });
+      const { resourceDataCache } = await import('~/server/redis/resource-data.redis');
+      await resourceDataCache.bust(versions.map((version) => version.id));
     }
 
     // A lift is the moderator's only when their input set the flag false: a sweep clearing it
@@ -4008,22 +4153,7 @@ export async function applyModelContentChange({
           lockedProperties: stored.lockedProperties,
         })
       : null;
-    if (flagged) {
-      const meta = {
-        ...((stored.meta as MixedObject | null) ?? {}),
-        ...flagged.metaPatch,
-        ...(flagged.lock && { systemNsfwLock: systemNsfwLockMarker('profanity-filter') }),
-      } as Prisma.InputJsonObject;
-      // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-
-      // rolling the jsonb + text[] binds is where that trade stops being worth it. The
-      // `updatedAt` bump it carries is honest — the model's rating actually changed.
-      await dbWrite.model.update({
-        where: { id },
-        data: flagged.lock
-          ? { nsfw: true, lockedProperties: uniq([...stored.lockedProperties, 'nsfw']), meta }
-          : { meta },
-      });
-    }
+    if (flagged) await writeAutoNsfw(dbWrite, { id, ...flagged });
   }
 
   // The description is carried in the cached public GET /api/v1/models/[id] body, so without
@@ -4095,15 +4225,29 @@ export const publishModelById = async ({
   meta,
   republishing,
   enforceModelRules,
+  refuseRemovedWithOwner,
 }: PublishModelSchema & {
-  meta?: ModelMeta;
+  /**
+   * The meta to write. A builder gets the stored meta as it is under the publish's lock; plain meta
+   * has the keys no publish may set or clear replaced by the stored ones.
+   */
+  meta?: ModelMeta | ((stored: ModelMeta | null) => ModelMeta);
   republishing?: boolean;
   /** Hold the model for review instead of publishing it when its text literally matches a Model rule. */
   enforceModelRules?: boolean;
+  /** Refuse a model a content wipe kept: only a moderator may publish it. */
+  refuseRemovedWithOwner?: boolean;
 }) => {
-  if (meta?.cannotPublish) {
-    throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
-  }
+  // The literal-rules check below may write, so a blocked model is refused before it.
+  const snapshot =
+    typeof meta === 'function'
+      ? ((await dbWrite.model.findUnique({ where: { id }, select: { meta: true } }))
+          ?.meta as ModelMeta | null)
+      : meta;
+  if (snapshot?.cannotPublish) throw cannotPublishError();
+  // Plain meta is the caller's, not the row's, so only a builder's snapshot says the model was kept.
+  if (refuseRemovedWithOwner && typeof meta === 'function' && isRemovedWithOwner(snapshot))
+    throw throwAuthorizationError('You are not authorized to publish this model');
   // Publish only touches this model's own versions; ids of versions on any other model are ignored.
   const ownVersions = requestedVersionIds?.length
     ? await dbWrite.modelVersion.findMany({
@@ -4124,7 +4268,7 @@ export const publishModelById = async ({
       modelId: id,
       // Publishing without versions makes none public; the loader adds the already-public ones.
       versionIds: versionIds ?? [],
-      meta,
+      meta: snapshot,
     });
     if (hold && (await tryHoldModelForLiteralRules({ modelId: id, ...hold }))) {
       return dbWrite.model.findUniqueOrThrow({ where: { id }, select: publishedModelSelect });
@@ -4137,15 +4281,14 @@ export const publishModelById = async ({
 
   const model = await dbWrite.$transaction(
     async (tx) => {
-      // The caller's removal check read the replica before this; a content wipe that hid the model
-      // since then must still refuse an owner's publish, and its record must not be written over.
-      if (enforceModelRules) {
-        const [locked] = await tx.$queryRaw<{ meta: unknown }[]>`
-          SELECT meta FROM "Model" WHERE id = ${id} FOR UPDATE
-        `;
-        if (isRemovedWithOwner(locked?.meta))
-          throw throwAuthorizationError('You are not authorized to publish this model');
-      }
+      // The caller read the meta before this: a wipe, a moderator or a scan may have written the
+      // model since, and what they wrote must be refused on or kept, not written over.
+      const stored = (await lockModelRow(tx, id))?.meta ?? null;
+      if (refuseRemovedWithOwner && isRemovedWithOwner(stored))
+        throw throwAuthorizationError('You are not authorized to publish this model');
+      if (stored?.cannotPublish) throw cannotPublishError();
+      const writtenMeta =
+        typeof meta === 'function' ? meta(stored) : withStoredPublishKeys(meta ?? {}, stored);
       // A held model must not be overwritten by a publish that raced the hold. Moderators and
       // internal callers don't enforce rules and may republish a held model.
       const model = await tx.model
@@ -4156,7 +4299,7 @@ export const publishModelById = async ({
           },
           data: {
             status,
-            meta: isEmpty(meta) ? {} : meta,
+            meta: writtenMeta,
             deletedAt: null,
           },
           select: publishedModelSelect,
@@ -5662,19 +5805,18 @@ export async function setModelShowcaseCollection({
   userId: number;
   isModerator?: boolean;
 }) {
-  const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
+  const model = await getModel({ id, select: { id: true, userId: true } });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
   if (model.userId !== userId && !isModerator)
     throw throwAuthorizationError('You are not allowed to set this model collection showcase');
 
-  const modelMeta = model.meta as ModelMeta | null;
-
   const updated = await updateModelById({
     id,
-    data: {
-      meta: modelMeta
-        ? { ...modelMeta, showcaseCollectionId: collectionId }
-        : { showcaseCollectionId: collectionId },
+    data: {},
+    meta: (stored) => {
+      if (!isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
+      // A null collectionId clears the showcase.
+      return { ...stored, showcaseCollectionId: collectionId } as ModelMeta;
     },
   });
 
@@ -5798,6 +5940,7 @@ export async function migrateResourceToCollection({
     collectionId: collection.id,
     id: modelId,
     userId: model.userId,
+    isModerator,
   });
 
   // Bust caches
@@ -6092,7 +6235,7 @@ export const privateModelFromTraining = async ({
     ...data
   } = input;
 
-  // Primary: the stored meta feeds a wholesale meta rewrite and the restore marker below.
+  // Primary: the gates below fail fast on it; the transaction re-checks them on the locked row.
   const model = await dbWrite.model.findUnique({
     where: { id },
     select: {
@@ -6118,11 +6261,6 @@ export const privateModelFromTraining = async ({
   // its own moderator action.
   if (constants.modPublishOnlyStatuses.includes(model.status))
     throw throwAuthorizationError('You are not authorized to publish this model');
-
-  const storedMeta = model.meta as ModelMeta | null;
-  // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
-  const restoreCannotPromote =
-    model.availability !== Availability.Private && storedMeta?.cannotPromote === true;
 
   enforceLockedProperties({
     data,
@@ -6156,7 +6294,8 @@ export const privateModelFromTraining = async ({
   const keepDowned = { status: { notIn: constants.modPublishOnlyStatuses } };
   const isPublishable = (v: { status: ModelStatus }) =>
     !constants.modPublishOnlyStatuses.includes(v.status);
-  // Set when a take-down reached the model first: nothing was written, so there is nothing to roll back.
+  // Set when the flow is refused before it wrote anything (a take-down first, or a gate on the locked
+  // row), so there is nothing to roll back.
   let takenDown = false;
 
   try {
@@ -6164,6 +6303,27 @@ export const privateModelFromTraining = async ({
     // take-down waits, and its own cascade then takes these versions down with it.
     const result = await dbWrite.$transaction(
       async (tx) => {
+        // The meta below is built from the row as it is now: a wipe, a moderator or a scan may have
+        // written it since the read above. Refused before any write, so nothing is rolled back.
+        const locked = await lockModelRow(tx, id);
+        try {
+          if (!locked) throw throwNotFoundError(`No model with id ${id}`);
+          assertPrivateFlowPublishable({ ...locked, isModerator: user.isModerator });
+        } catch (error) {
+          takenDown = true;
+          throw error;
+        }
+        // Against this locked row as well as the read above: a lock set since then wins.
+        enforceLockedProperties({
+          data,
+          storedLockedProperties: locked.lockedProperties,
+          isModerator: user.isModerator,
+        });
+        const storedMeta = locked.meta;
+        const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
+        // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
+        const restoreCannotPromote =
+          locked.availability !== Availability.Private && storedMeta?.cannotPromote === true;
         const result = await tx.model
           .update({
             select: {
@@ -6206,7 +6366,9 @@ export const privateModelFromTraining = async ({
                   stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)
                 ) ?? {}),
                 // Only a moderator gets here with a wipe's record; their publish ends it.
-                ...withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)),
+                ...(moderatorChangesNsfwLock
+                  ? withoutSystemNsfwLock(withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)))
+                  : withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta))),
                 ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
                 // Makes it so these models cannot go into auctions or be promoted
                 cannotPromote: true,
@@ -6222,6 +6384,14 @@ export const privateModelFromTraining = async ({
             takenDown = true;
             throw throwAuthorizationError('You are not authorized to publish this model');
           });
+
+        // In the transaction, like upsertModel's, so a moderator's lock change cannot commit unlogged.
+        if (user.isModerator && data.lockedProperties)
+          for (const activity of moderatorFlagActivities(
+            { poi: false, minor: false, sfwOnly: false, lockedProperties: locked.lockedProperties },
+            { lockedProperties: data.lockedProperties }
+          ))
+            await trackModActivity(user.id, { entityType: 'model', entityId: id, activity }, tx);
 
         if (result.modelVersions.length > 0) {
           const now = new Date();

@@ -48,13 +48,22 @@ vi.mock('~/server/db/pgDb', async (importOriginal) => ({
     }),
   },
 }));
+vi.mock('~/server/services/nsfwLevels.service', () => ({ updateModelNsfwLevels: vi.fn() }));
+vi.mock('~/server/services/model-version.service', () => ({
+  bustPublicModelResponseCache: vi.fn(),
+}));
 vi.mock('~/server/services/moderator.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ModeratorService>()),
   trackModActivity: vi.fn(async () => undefined),
 }));
 
-const { checkPoiHashOnScan, dismissPoiHashMatch, findPoiHashSeeds, sweepPoiHashMatches } =
-  await import('~/server/services/poi-hash.service');
+const {
+  checkPoiHashOnScan,
+  dismissPoiHashMatch,
+  findPoiHashSeeds,
+  revertPoiHashAutoFlag,
+  sweepPoiHashMatches,
+} = await import('~/server/services/poi-hash.service');
 
 const MOD_SEED = 10; // owner 1, set by a moderator: no text-scan entry, no setPoi row
 const SCAN_SEED = 20; // owner 2, an unruled text-scan verdict
@@ -71,6 +80,8 @@ beforeAll(async () => {
   holder.db = pg;
   await pg.exec(`
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int, poi bool NOT NULL DEFAULT false,
+      minor bool NOT NULL DEFAULT false, nsfw bool NOT NULL DEFAULT false,
+      "sfwOnly" bool NOT NULL DEFAULT false, "gallerySettings" jsonb,
       "lockedProperties" text[] NOT NULL DEFAULT '{}', status text NOT NULL DEFAULT 'Published',
       meta jsonb);
     CREATE TABLE "ModelVersion" (id int PRIMARY KEY, "modelId" int);
@@ -374,5 +385,48 @@ describe('sweepPoiHashMatches — the read', () => {
       expect.objectContaining({ type: 'error', name: 'poi-hash-sweep' }),
       'webhooks'
     );
+  });
+});
+
+describe('revertPoiHashAutoFlag — the system nsfw lock marker', () => {
+  const REVERTED = 60;
+  const snapshotMeta = (extra: Record<string, unknown>) =>
+    JSON.stringify({
+      poiFlagSnapshot: {
+        source: 'auto',
+        prevNsfw: true,
+        prevSfwOnly: false,
+        prevLockedProperties: ['nsfw'],
+      },
+      systemNsfwLock: { source: 'text-scan', at: '2026-09-01T00:00:00Z' },
+      ...extra,
+    });
+
+  it('drops the marker when it restores the prior locks, and keeps the other keys', async () => {
+    await addModel(
+      REVERTED,
+      6,
+      `poi = true, nsfw = false, "lockedProperties" = ${LOCKED}, meta = '${snapshotMeta({
+        cannotPromote: true,
+      })}'`
+    );
+
+    await revertPoiHashAutoFlag({ modelId: REVERTED, userId: 99 });
+
+    const m = await meta(REVERTED);
+    expect(m).not.toHaveProperty('systemNsfwLock');
+    expect(m).toHaveProperty('cannotPromote', true);
+  });
+
+  it('drops the marker on a model that keeps its minor restrictions', async () => {
+    await addModel(
+      REVERTED,
+      6,
+      `poi = true, minor = true, "lockedProperties" = ${LOCKED}, meta = '${snapshotMeta({})}'`
+    );
+
+    await revertPoiHashAutoFlag({ modelId: REVERTED, userId: 99 });
+
+    expect(await meta(REVERTED)).not.toHaveProperty('systemNsfwLock');
   });
 });

@@ -7,8 +7,8 @@ import { isTicketView } from '$lib/tickets/routing';
 /**
  * The open ticket's description and conversation, fetched when a ticket is selected. 🔴 `/api/*` is exempt
  * from the global route gate, so this checks the grant of the page the ticket is opened under, and the
- * loader refuses (404) a ticket that routes to the other view: the page grants are per view. The `account`
- * section of an account ticket is left out unless the viewer may also open User Lookup.
+ * loader refuses (404) a ticket that routes to the other view: the page grants are per view. Each context
+ * panel (`$lib/tickets/panels`) is left out unless the viewer holds one of its read grants.
  */
 export const GET: RequestHandler = async ({ params, url, locals }) => {
   const view = url.searchParams.get('view');
@@ -16,9 +16,10 @@ export const GET: RequestHandler = async ({ params, url, locals }) => {
   if (!locals.user) error(403, 'Not signed in.');
   requireAccess(locals.user, `/tickets/${view}`);
 
+  const { user } = locals;
   const res = await loadTicketPayload(view, params.id, {
     canSeeEmail: !!locals.grants['decisions.support.pii'],
-    canViewAccount: canAccess(locals.user, '/retool/user-lookup'),
+    canRead: (path) => canAccess(user, path),
   });
   if (res.status === 'refused') error(res.code, res.message);
   return json(res, { headers: { 'cache-control': 'private, no-store' } });

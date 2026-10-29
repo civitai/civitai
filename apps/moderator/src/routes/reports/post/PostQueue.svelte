@@ -3,7 +3,7 @@
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { Badge } from '@civitai/ui/components/ui/badge/index.js';
-  import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import TipButton from '$lib/components/TipButton.svelte';
   import ReportQueueColumn from '$lib/components/report-queue/ReportQueueColumn.svelte';
   import ReportRowMeta from '$lib/components/report-queue/ReportRowMeta.svelte';
   import { FormState } from '$lib/form-state.svelte';
@@ -11,6 +11,9 @@
   import { dateTime, num } from '$lib/format';
   import { postReportUrl, userLookupUrl } from '$lib/entity-url';
   import { itemHref, QUEUE_NAV } from '$lib/report-queue';
+  import { clearPaging } from '$lib/paging';
+  import * as Select from '@civitai/ui/components/ui/select/index.js';
+  import { modelUnpublishReasonLabel } from '$lib/model-unpublish-reasons';
 
   let { data }: { data: LayoutData } = $props();
 
@@ -26,6 +29,22 @@
     if (postId == null) return;
     goto(itemHref(postReportUrl(postId, page.params.tab), page.url.search), QUEUE_NAV);
   }
+
+  const ANY_SOURCE = 'any';
+  const unpublishedChips = $derived(
+    Object.entries(data.unpublishedCounts).sort(([, a], [, b]) => b - a)
+  );
+  function unpublishedHref(reason: string | null) {
+    const params = new URLSearchParams(page.url.search);
+    clearPaging(params);
+    if (reason) params.set('unpublished', reason);
+    else params.delete('unpublished');
+    return `${page.url.pathname}${params.size ? `?${params}` : ''}`;
+  }
+  const unpublishedReasonOf = (details: unknown) => {
+    const reason = (details as { unpublishedReason?: unknown } | null)?.unpublishedReason;
+    return typeof reason === 'string' ? reason : null;
+  };
 
   // A bulk action that reports nothing is indistinguishable from one that did nothing, so the sweep
   // says what it changed — the server's count, not the number of ids it found.
@@ -47,6 +66,7 @@
   isOpen={(r) => r.entityId != null && r.entityId === openPost}
   onOpen={(r) => open(r.entityId)}
   dates
+  compactFilters
 >
   {#snippet toolbar()}
     <!-- Retool's `ActionAllPostReports`: the query keys on every image in the post already being
@@ -58,18 +78,46 @@
       use:enhance={sweepForm.enhance}
       class="flex flex-col gap-1"
     >
-      <Button type="submit" size="sm" variant="outline" class="self-start" disabled={sweepForm.submitting}>
-        Action reports already resolved by content
-      </Button>
-      <span class="text-xs text-muted-foreground">
-        Pending reports whose post is entirely blocked already.
-      </span>
+      <TipButton
+        type="submit"
+        size="sm"
+        variant="outline"
+        class="self-start"
+        disabled={sweepForm.submitting}
+        tip="Action every pending report whose post is already entirely blocked."
+      >
+        Action resolved posts
+      </TipButton>
       {#if sweepForm.error}
         <p class="m-0 text-xs text-red-300" role="alert">{sweepForm.error}</p>
       {:else if swept}
         <p class="m-0 text-xs text-green-300" role="status">{swept}</p>
       {/if}
     </form>
+  {/snippet}
+
+  {#snippet extraFilters()}
+    {#if unpublishedChips.length || data.unpublishedReason}
+      <Select.Root
+        type="single"
+        bind:value={() => data.unpublishedReason ?? ANY_SOURCE,
+        (v) => goto(unpublishedHref(v && v !== ANY_SOURCE ? v : null), { noScroll: true, keepFocus: true })}
+      >
+        <Select.Trigger size="sm" aria-label="Source" class="w-full">
+          {data.unpublishedReason
+            ? `Source: unpublished model, ${modelUnpublishReasonLabel(data.unpublishedReason)}`
+            : 'Source: any'}
+        </Select.Trigger>
+        <Select.Content>
+          <Select.Item value={ANY_SOURCE}>Any source</Select.Item>
+          {#each unpublishedChips as [reason, count] (reason)}
+            <Select.Item value={reason}>
+              Unpublished model: {modelUnpublishReasonLabel(reason)} · {num(count)} open
+            </Select.Item>
+          {/each}
+        </Select.Content>
+      </Select.Root>
+    {/if}
   {/snippet}
 
   {#snippet row(r)}
@@ -89,6 +137,10 @@
       </span>
     </div>
     <ReportRowMeta report={r}>
+      {@const unpublishedReason = unpublishedReasonOf(r.details)}
+      {#if unpublishedReason}
+        <Badge variant="secondary">{modelUnpublishReasonLabel(unpublishedReason)}</Badge>
+      {/if}
       {#if p == null}
         <!-- A report survives its post's deletion. Saying so is what stops a moderator reading the
              empty panel as a broken page. -->

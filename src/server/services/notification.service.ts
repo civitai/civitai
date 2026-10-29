@@ -76,13 +76,15 @@ export async function getUserNotifications({
   category,
   count = false,
   unread = false,
+  showSfwFace,
 }: Partial<GetUserNotificationsSchema> & {
   userId: number;
   count?: boolean;
+  showSfwFace: boolean;
 }) {
   // Base rows come from the app (notif DB); enrichment reads the MAIN db, so it stays here.
   const items = await notifications.queryNotifications({ userId, limit, cursor, category, unread });
-  await populateNotificationDetails(items);
+  await populateNotificationDetails(items, { showSfwFace });
 
   if (count) return { items, count: await getUserNotificationCount({ userId, unread }) };
 

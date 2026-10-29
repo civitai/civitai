@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from 'uuid';
 import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
 import type { BaseModelAttestation } from '~/shared/constants/base-model-attestation.constants';
 import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
@@ -49,7 +48,7 @@ export const recipeModelSchema = z.object({
 
 export type RecipeInput = z.infer<typeof recipeSchema>;
 export const recipeSchema = z.object({
-  id: z.string().default(uuidv4()),
+  id: z.string().default(() => crypto.randomUUID()),
   type: z.enum(['sum', 'diff']),
   modelA: recipeModelSchema,
   modelB: recipeModelSchema,

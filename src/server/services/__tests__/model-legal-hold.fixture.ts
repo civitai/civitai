@@ -89,6 +89,18 @@ const BASE_SCHEMA = `
     url text NOT NULL,
     type text NOT NULL DEFAULT 'Model'
   );
+  CREATE TABLE "ResourceReview" (
+    id int PRIMARY KEY, "userId" int NOT NULL,
+    "modelVersionId" int NOT NULL REFERENCES "ModelVersion"(id) ON DELETE CASCADE
+  );
+  CREATE TABLE "Thread" (
+    id int PRIMARY KEY, "reviewId" int UNIQUE REFERENCES "ResourceReview"(id) ON DELETE CASCADE,
+    "parentThreadId" int, "rootThreadId" int, "commentId" int, metadata jsonb NOT NULL DEFAULT '{}'
+  );
+  CREATE TABLE "CommentV2" (
+    id int PRIMARY KEY, "userId" int NOT NULL,
+    "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE
+  );
   -- Polymorphic, so no foreign key: the services remove these themselves.
   CREATE TABLE "EntityAccess" ("accessToId" int NOT NULL, "accessToType" text NOT NULL);
   CREATE TABLE "PaidAccess" ("entityType" text NOT NULL, "entityId" int NOT NULL);
@@ -111,7 +123,7 @@ export async function seedModelHoldDb(db: PGlite) {
     -- The hold tables refuse TRUNCATE, so the reset runs with triggers off.
     SET session_replication_role = replica;
     TRUNCATE "CsamReport", "Image", "Model", "EntityAccess", "PaidAccess", "EvidenceHold",
-      "EvidenceHoldImage", "EvidenceHoldPost", "ModelOwnership" CASCADE;
+      "EvidenceHoldImage", "EvidenceHoldPost", "Thread", "ModelOwnership" CASCADE;
     SET session_replication_role = DEFAULT;
     INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED}, 'manual', 'review');
     INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});
@@ -158,7 +170,8 @@ export const accessRowsOf = async (db: PGlite) =>
 
 // The statements that decide what is deleted, run as written. Anything else the services issue
 // touches tables this stand-in does not have, and gets the db mock's empty answer.
-const ON_DB = /DELETE FROM "Model(Version|File)"|AS held\b|FOR UPDATE/;
+const ON_DB =
+  /DELETE FROM "(Model(Version|File)|ResourceReview)"|UPDATE "Thread"|AS held\b|FOR UPDATE/;
 
 const toSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
   Array.isArray(first)
@@ -256,6 +269,26 @@ export function realTransactions(db: PGlite) {
     ).affectedRows,
   })) as never);
 }
+
+/** A review of `versionId` by `reviewer`, with a thread on it that `commenter` commented in. */
+export const seedReviewThread = (
+  db: PGlite,
+  { reviewId, versionId, reviewer, commenter }: Record<string, number>
+) =>
+  db.exec(`
+    INSERT INTO "ResourceReview" VALUES (${reviewId}, ${reviewer}, ${versionId});
+    INSERT INTO "Thread" (id, "reviewId") VALUES (${reviewId}, ${reviewId});
+    INSERT INTO "CommentV2" VALUES (${reviewId}, ${commenter}, ${reviewId});
+  `);
+
+/** Each remaining comment with whether its thread still hangs off a review. */
+export const commentsLeft = async (db: PGlite) =>
+  (
+    await db.query<{ id: number; onReview: boolean }>(
+      `SELECT c.id, t."reviewId" IS NOT NULL AS "onReview"
+       FROM "CommentV2" c JOIN "Thread" t ON t.id = c."threadId" ORDER BY c.id`
+    )
+  ).rows;
 
 /** An account that owns nothing here and no hold covers: an unheld earlier owner. */
 export const FORMER_CLEAN = 4;
