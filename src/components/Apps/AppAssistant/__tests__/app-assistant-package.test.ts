@@ -97,7 +97,7 @@ describe('the shared gate and subagents’ calls', () => {
     core.beforeToolCall('sandbox__list_dir', {}, ctx);
     await core.tools.set_checklist.execute({ items: [{ label: 'Tips', done: true }] });
     for (const result of results) core.onToolResult(result);
-    return core.beforeToolCall(shared.REPORT_READY, {}, ctx);
+    return core.beforeToolCall(shared.REPORT_READY, { data: 'civitai' }, ctx);
   }
 
   it('the parent’s checks make report_ready pass (the control)', async () => {

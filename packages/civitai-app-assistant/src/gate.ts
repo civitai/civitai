@@ -16,6 +16,16 @@ export const SET_CHECKLIST = 'set_checklist';
 const CHECKLIST_MAX_ITEMS = 30;
 const CHECKLIST_LABEL_MAX = 200;
 
+/** report_ready's refusals about the app's data (see `DataSource`). */
+export const DATA_REQUIRED =
+  "Say where what the app shows comes from: call report_ready with data: 'civitai' (from Civitai), 'sample' (made-up sample data) or 'none' (no Civitai data).";
+export const SAMPLE_NOT_AGREED =
+  "The user has not agreed to sample data. Tell them plainly the app would show made-up sample data, not real Civitai data, and why; offer to label it as sample data or to change the app to what Civitai provides. Only once they agree, call set_checklist with data: 'sample'.";
+export const SAMPLE_LABEL_MISSING =
+  'An app showing sample data must say so: add a visible "Sample data" label at the top of the app, then run sandbox__preview_check, whose visible text must show it.';
+export const DATA_NOT_AS_PROMISED =
+  'The checklist told the user the app shows Civitai data, but report_ready says it shows none. Make it show the Civitai data the user asked for, or tell them why it cannot and agree a change through set_checklist.';
+
 /** What the assistant reads as the refused call's error, in the reply after. */
 export const TURN_LIMIT_REFUSAL = `This reply made ${APP_ASSISTANT_TURN_TOOL_CALL_LIMIT} tool calls, the most one reply may make, so it ended before this call ran.`;
 /** What the user reads under the reply the limit ended. */
@@ -101,14 +111,42 @@ export function normalizeChecklist(raw: unknown): ChecklistItem[] | null {
   return items;
 }
 
+/**
+ * Where what the app shows comes from, as `report_ready` must declare it: `civitai` (from Civitai,
+ * through @civitai/sdk), `sample` (made-up data in place of Civitai's) or `none` (no Civitai data).
+ */
+export type DataSource = 'civitai' | 'sample' | 'none';
+export const DATA_SOURCES: readonly DataSource[] = ['civitai', 'sample', 'none'];
+
+export function dataSourceOf(raw: unknown): DataSource | null {
+  return DATA_SOURCES.includes(raw as DataSource) ? (raw as DataSource) : null;
+}
+
+/** The label an app showing sample data must show, as the preview check's visible text has it. */
+export const SAMPLE_DATA_LABEL = 'Sample data';
+
+/** Whether a `sandbox__preview_check` report's visible text shows {@link SAMPLE_DATA_LABEL}. */
+export function showsSampleDataLabel(output: unknown): boolean {
+  if (typeof output !== 'string') return false;
+  const at = output.indexOf('\n## visible text');
+  return at >= 0 && output.slice(at).toLowerCase().includes(SAMPLE_DATA_LABEL.toLowerCase());
+}
+
 interface Verification {
   /** The last preview check's verdict since the last file change or other command; null when none ran. */
   preview: string | null;
+  /** Whether that preview check's visible text showed the sample-data label. */
+  sampleLabel: boolean;
   tests: boolean | null;
   typecheck: boolean | null;
 }
 
-const unverified = (): Verification => ({ preview: null, tests: null, typecheck: null });
+const unverified = (): Verification => ({
+  preview: null,
+  sampleLabel: false,
+  tests: null,
+  typecheck: null,
+});
 
 /** What Build it sends as the user. */
 export const BUILD_IT_MESSAGE = 'Looks good — build it.';
@@ -190,6 +228,8 @@ export function createGateCore({
   let carriedCalls = 0;
   let verification = unverified();
   let checklist: ChecklistItem[] | null = null;
+  // What the checklist the user was shown said the app's data would be; null when it said nothing.
+  let checklistData: DataSource | null = null;
   // Calls other than report_ready that were allowed and have not returned. The chat starts every call of
   // a step together, so a write in the same step as report_ready could land after it said ready. A
   // dispatch_agent counts until its subagent returns.
@@ -200,9 +240,10 @@ export function createGateCore({
   const reset = () => {
     verification = unverified();
     checklist = null;
+    checklistData = null;
   };
 
-  const missing = (): string[] => {
+  const missing = (declared: unknown): string[] => {
     const out: string[] = [];
     if (verification.preview === null)
       out.push(
@@ -231,17 +272,30 @@ export function createGateCore({
       const open = checklist.filter((item) => !item.done).map((item) => item.label);
       if (open.length) out.push(`These checklist items are not done: ${open.join('; ')}.`);
     }
+    out.push(...dataProblems(declared));
     return out;
   };
 
-  const notReady = (): string | null => {
-    const reasons = missing();
+  // The app must not stand invented data in for the real data the user asked for without their OK.
+  const dataProblems = (declared: unknown): string[] => {
+    const data = dataSourceOf(declared);
+    if (!data) return [DATA_REQUIRED];
+    if (data === 'sample') {
+      if (checklistData !== 'sample') return [SAMPLE_NOT_AGREED];
+      if (!verification.sampleLabel) return [SAMPLE_LABEL_MISSING];
+    }
+    if (data === 'none' && checklistData === 'civitai') return [DATA_NOT_AS_PROMISED];
+    return [];
+  };
+
+  const notReady = (declared: unknown): string | null => {
+    const reasons = missing(declared);
     return reasons.length
       ? `Not ready yet. ${reasons.join(' ')} Then call report_ready again.`
       : null;
   };
 
-  const beforeToolCall: ToolGate = (name, _input, context) => {
+  const beforeToolCall: ToolGate = (name, input, context) => {
     if (context.conversationId !== conversationId) {
       conversationId = context.conversationId;
       reset();
@@ -262,7 +316,7 @@ export function createGateCore({
     const refused = refuse?.(name);
     if (refused) return { refuse: refused };
     if (name === REPORT_READY) {
-      const refusal = notReady();
+      const refusal = notReady((input as { data?: unknown } | null)?.data);
       if (refusal) return { refuse: refusal };
     } else running++;
     return { allow: true };
@@ -270,9 +324,10 @@ export function createGateCore({
 
   /** What a finished call says about the checks; the checklist is set by `set_checklist` itself. */
   const verify = ({ name, input, output, isError }: ToolResult) => {
-    if (name === PREVIEW_CHECK)
+    if (name === PREVIEW_CHECK) {
       verification.preview = isError ? 'error' : previewVerdictOf(output) ?? 'unreadable';
-    else if (name === RUN_COMMAND) {
+      verification.sampleLabel = !isError && showsSampleDataLabel(output);
+    } else if (name === RUN_COMMAND) {
       const kind = checkKindOf((input as { command?: unknown } | null)?.command);
       // Any other command may have changed files (sed, a scaffold, npm install).
       if (kind) verification[kind] = !isError && exitCodeOf(output) === 0;
@@ -305,9 +360,18 @@ export function createGateCore({
       ? normalizeChecklist((input as { items?: unknown } | null)?.items)
       : null;
 
+  /** Takes up the checklist, and what it said about the data, a successful `set_checklist` left. */
+  const adoptChecklist = (result: ToolResult) => {
+    const items = checklistOf(result);
+    if (!items) return;
+    checklist = items;
+    const data = (result.input as { data?: unknown } | null)?.data;
+    if (data !== undefined) checklistData = dataSourceOf(data);
+  };
+
   const set_checklist: AssistantTool = {
     description:
-      'Show the user the list of features they asked for, as a checklist with a Build it button. Call it before you scaffold, with every requested feature and nothing they did not ask for, and in the same message, before the call, write one short sentence asking the user to tap Build it or say what to change. Call it again with done: true on an item once it works and has a passing test. Changing the labels shows the user the new list and ends your reply.',
+      "Show the user the list of features they asked for, as a checklist with a Build it button. Call it before you scaffold, with every requested feature and nothing they did not ask for, and in the same message, before the call, write one short sentence asking the user to tap Build it or say what to change. Call it again with done: true on an item once it works and has a passing test. Changing the labels or data shows the user the new list and ends your reply. Set data: 'civitai' when the app shows Civitai data, and 'sample' only once the user agreed to sample data: the card then tells them it is not real Civitai data.",
     activity: 'Writing the feature checklist…',
     inputSchema: {
       properties: {
@@ -324,6 +388,7 @@ export function createGateCore({
             required: ['label'],
           },
         },
+        data: { type: 'string', enum: [...DATA_SOURCES] },
       },
       required: ['items'],
     },
@@ -333,11 +398,17 @@ export function createGateCore({
         throw new Error(
           `items must be an array of 1-${CHECKLIST_MAX_ITEMS} { label, done } objects, each label 1-${CHECKLIST_LABEL_MAX} characters.`
         );
+      // Left out, it stays what the list last said, so ticking items off does not show the list again.
+      const data = input.data === undefined ? checklistData : dataSourceOf(input.data);
+      if (input.data !== undefined && !data)
+        throw new Error(`data must be one of ${DATA_SOURCES.join(', ')}.`);
       const changed =
         !checklist ||
         checklist.length !== items.length ||
-        checklist.some((item, i) => item.label !== items[i].label);
+        checklist.some((item, i) => item.label !== items[i].label) ||
+        data !== checklistData;
       checklist = items;
+      checklistData = data;
       const tag = checklistApp ? { app: checklistApp() } : {};
       if (changed) {
         awaiting = { id: `${checklistPrefix}-${++checklistCalls}`, app: currentApp?.() ?? null };
@@ -355,21 +426,29 @@ export function createGateCore({
 
   const report_ready: AssistantTool = {
     description:
-      'Call this on its own, before you tell the user the app is ready, every time. It is refused until, since your last file change or other command (including dev_server_start or dev_server_restart), sandbox__preview_check said render: ok, cd <blockId> && npm test and cd <blockId> && npx tsc --noEmit each exited 0 (run on their own, unpiped), and every set_checklist item is done. When it is refused, do what it says; never tell the user the app is ready without it.',
+      "Call this on its own, before you tell the user the app is ready, every time. It is refused until, since your last file change or other command (including dev_server_start or dev_server_restart), sandbox__preview_check said render: ok, cd <blockId> && npm test and cd <blockId> && npx tsc --noEmit each exited 0 (run on their own, unpiped), and every set_checklist item is done. data says where what the app shows comes from: 'civitai', 'sample' (made-up data, only once the user agreed through set_checklist and the app shows a visible \"Sample data\" label) or 'none'. When it is refused, do what it says; never tell the user the app is ready without it.",
     activity: 'Checking the app is ready…',
-    inputSchema: { properties: {} },
-    async execute() {
+    inputSchema: {
+      properties: { data: { type: 'string', enum: [...DATA_SOURCES] } },
+      required: ['data'],
+    },
+    async execute(input) {
       // Let the rest of this step's calls reach the gate first.
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (running > 0)
         throw new Error(
           'Call report_ready on its own, once your other tool calls have returned: they can still change the app.'
         );
-      const refusal = notReady();
+      const refusal = notReady(input.data);
       if (refusal) throw new Error(refusal);
+      const data = dataSourceOf(input.data);
       return {
         ready: true,
-        note: 'Tell the user the app is ready for review, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed.',
+        data,
+        note:
+          data === 'sample'
+            ? 'Tell the user the app is ready for review, that it shows sample data, not real Civitai data, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed and that the data is sample data.'
+            : 'Tell the user the app is ready for review, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed.',
       };
     },
   };
@@ -389,14 +468,13 @@ export function createGateCore({
       // Without app tags (the page), every checklist counts, as it did before.
       const forThisApp = (result: ToolResult) =>
         !checklistApp || (result.output as { app?: unknown } | null)?.app === app;
-      for (const result of earlier)
-        if (forThisApp(result)) checklist = checklistOf(result) ?? checklist;
+      for (const result of earlier) if (forThisApp(result)) adoptChecklist(result);
       for (const result of current) {
         if (opensOtherApp(result, app)) {
           reset();
           continue;
         }
-        if (forThisApp(result)) checklist = checklistOf(result) ?? checklist;
+        if (forThisApp(result)) adoptChecklist(result);
         if (result.refused === undefined && !result.stopped) verify(result);
       }
       carriedCalls = current.filter((result) => result.subagent === undefined).length;
