@@ -27,6 +27,12 @@ patchedDependencies:
   '@prisma/client@6.13.0':
     hash: 572e223e8f8b304a4fa7c80b6ad62ea636488e4304ea2e144c573973737c391d
     path: patches/@prisma__client@6.13.0.patch
+  '@prisma/generator-helper@5.22.0':
+    hash: 56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353
+    path: patches/@prisma__generator-helper@5.22.0.patch
+  '@prisma/generator-helper@6.19.3':
+    hash: 56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353
+    path: patches/@prisma__generator-helper@6.19.3.patch
   next@16.4.3:
     hash: 516f8706e5faff87f0ce8fd56946f40e7f5b96a86c0c3a717e872dfc72f57aa2
     path: patches/next@16.4.3.patch
@@ -692,7 +698,7 @@ importers:
         version: 1.57.0
       '@prisma/generator-helper':
         specifier: ^5.22.0
-        version: 5.22.0
+        version: 5.22.0(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)
       '@types/archiver':
         specifier: ^6.0.2
         version: 6.0.3
@@ -15517,11 +15523,11 @@ snapshots:
       '@prisma/engines-version': 7.1.1-3.c2990dca591cba766e3b7ef5d9e8a84796e47ab7
       '@prisma/get-platform': 6.19.3
 
-  '@prisma/generator-helper@5.22.0':
+  '@prisma/generator-helper@5.22.0(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)':
     dependencies:
       '@prisma/debug': 5.22.0
 
-  '@prisma/generator-helper@6.19.3':
+  '@prisma/generator-helper@6.19.3(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)':
     dependencies:
       '@prisma/debug': 6.19.3
       '@prisma/dmmf': 6.19.3
@@ -15553,7 +15559,7 @@ snapshots:
       '@prisma/engines': 6.19.3
       '@prisma/fetch-engine': 6.19.3
       '@prisma/generator': 6.19.3
-      '@prisma/generator-helper': 6.19.3
+      '@prisma/generator-helper': 6.19.3(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)
       '@prisma/get-platform': 6.19.3
       '@prisma/prisma-schema-wasm': 7.1.1-3.c2990dca591cba766e3b7ef5d9e8a84796e47ab7
       '@prisma/schema-engine-wasm': 7.1.1-3.c2990dca591cba766e3b7ef5d9e8a84796e47ab7
@@ -23197,12 +23203,12 @@ snapshots:
 
   prisma-generator-typescript-interfaces@1.7.0:
     dependencies:
-      '@prisma/generator-helper': 5.22.0
+      '@prisma/generator-helper': 5.22.0(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)
 
   prisma-kysely@2.3.0(prisma@6.13.0(typescript@5.9.2)):
     dependencies:
       '@mrleebo/prisma-ast': 0.13.1
-      '@prisma/generator-helper': 6.19.3
+      '@prisma/generator-helper': 6.19.3(patch_hash=56ee43346a98febaacbc89ba60ec06264d83c9f890cfe834e828d78deb539353)
       '@prisma/internals': 6.19.3(typescript@5.9.3)
       prisma: 6.13.0(typescript@5.9.2)
       typescript: 5.9.3
