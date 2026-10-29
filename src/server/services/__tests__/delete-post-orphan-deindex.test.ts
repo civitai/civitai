@@ -232,6 +232,29 @@ describe('deletePost orphan de-indexing', () => {
     }
   );
 
+  // The report links cascade with the rows, so the lookup must see every deletable image before the delete.
+  it('looks up reports for the deletable images before deleting them, and keeps per image', async () => {
+    const SECOND = { id: 9, url: 'second-url', userId: POSTER_ID, deletable: true };
+    primeQueries([OWNER_IMAGE, SECOND, FOREIGN_IMAGE], [], [SECOND.id]);
+
+    await deletePost({ id: POST_ID, deletedById: POSTER_ID });
+
+    const calls = dbMock.dbWrite.$queryRaw.mock.calls as [string[], ...unknown[]][];
+    const order = dbMock.dbWrite.$queryRaw.mock.invocationCallOrder;
+    const at = (needle: string) =>
+      calls.findIndex(([strings]) => sqlTextOf(strings).includes(needle));
+    const reportCall = at('"ImageReport"');
+    expect(reportCall).toBeGreaterThanOrEqual(0);
+    expect(calls[reportCall].slice(1)).toContainEqual([OWNER_IMAGE.id, SECOND.id]);
+    expect(order[reportCall]).toBeLessThan(order[at('DELETE FROM "Image"')]);
+    expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
+      expect.objectContaining({ id: OWNER_IMAGE.id, keepShopArtwork: true })
+    );
+    expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
+      expect.objectContaining({ id: SECOND.id, keepShopArtwork: false })
+    );
+  });
+
   it('does not ask to keep shop artwork for an image under an open report', async () => {
     primeQueries([OWNER_IMAGE], [], [OWNER_IMAGE.id]);
 
