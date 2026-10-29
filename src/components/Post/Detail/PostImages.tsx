@@ -105,7 +105,7 @@ export function PostImages({
               <Paper
                 key={image.id}
                 radius="md"
-                className="relative"
+                className="relative [--event-decoration-allowance:12px] md:[--event-decoration-allowance:36px]"
                 shadow="md"
                 mx="auto"
                 style={{
