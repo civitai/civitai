@@ -11,7 +11,9 @@ export default defineConfig(({ mode }) => {
     ssr: {
       noExternal: [
         '@civitai/auth',
+        '@civitai/axiom',
         '@civitai/brand',
+        '@civitai/buzz',
         '@civitai/db',
         '@civitai/db-schema',
         '@civitai/flipt',
