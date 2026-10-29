@@ -2,12 +2,15 @@
 export const RANKS = ['Acolyte', 'Knight', 'Templar', 'Paladin', 'Inquisitor'] as const;
 export type Rank = (typeof RANKS)[number];
 
-export const RANK_RULES: Record<Rank, { voteWeight: number; goldMultiplier: number }> = {
-  Acolyte: { voteWeight: 0, goldMultiplier: 0 },
-  Knight: { voteWeight: 1, goldMultiplier: 1 },
-  Templar: { voteWeight: 1.5, goldMultiplier: 1.25 },
-  Paladin: { voteWeight: 2, goldMultiplier: 1.5 },
-  Inquisitor: { voteWeight: 0, goldMultiplier: 0 },
+export const RANK_RULES: Record<
+  Rank,
+  { voteWeight: number; goldMultiplier: number; dailyGoldCap: number }
+> = {
+  Acolyte: { voteWeight: 0, goldMultiplier: 0, dailyGoldCap: 0 },
+  Knight: { voteWeight: 1, goldMultiplier: 1, dailyGoldCap: 5000 },
+  Templar: { voteWeight: 1.5, goldMultiplier: 1.25, dailyGoldCap: 7500 },
+  Paladin: { voteWeight: 2, goldMultiplier: 1.5, dailyGoldCap: 10000 },
+  Inquisitor: { voteWeight: 0, goldMultiplier: 0, dailyGoldCap: 0 },
 };
 
 export const rankIndex = (rank: string): number => RANKS.indexOf(rank as Rank);

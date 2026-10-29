@@ -4,6 +4,7 @@ const castVote = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: {} }));
+vi.mock('$lib/server/daily/daily.service', () => ({}));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote, getFeed: vi.fn() }));
 
 const { actions } = await import('./+page.server');

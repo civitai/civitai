@@ -3,6 +3,7 @@ import { utc } from '@civitai/db/kysely';
 import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
+import { recordVoteDay } from '../daily/daily.service';
 import { goldForRank, PROGRESSION } from '../progression/config';
 import { standingOf } from '../progression/rating';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
@@ -305,7 +306,7 @@ export async function castVote(
 
         const player = await trx
           .selectFrom('NewOrderPlayer')
-          .select(['rankType', 'exp'])
+          .select(['rankType', 'exp', 'startAt'])
           .where('userId', '=', input.userId)
           .executeTakeFirst();
         if (!player) return rejected('no-player');
@@ -378,12 +379,37 @@ export async function castVote(
         if (decision.kind === 'resolved' && !writesBack) await lockItemVoters(trx, item.id);
         await trx
           .updateTable('NewOrderPlayer')
-          .set({
-            exp: sql<number>`"exp" + ${PROGRESSION.voteXp}`,
-            goldPending: sql<number>`"goldPending" + ${gold}`,
-          })
+          .set({ exp: sql<number>`"exp" + ${PROGRESSION.voteXp}` })
           .where('userId', '=', input.userId)
           .execute();
+
+        // Must stay after the player row lock: recordVoteDay relies on it (see its doc).
+        const day = await recordVoteDay(trx, {
+          playerId: input.userId,
+          rank: player.rankType,
+          gold,
+          now,
+          startAt: player.startAt,
+        });
+        if (day.gold !== gold) {
+          await trx
+            .updateTable('KnightsVote')
+            .set({ gold: day.gold })
+            .where('itemId', '=', item.id)
+            .where('playerId', '=', input.userId)
+            .where('createdAt', '=', utc(now))
+            .execute();
+        }
+        if (day.gold > 0 || day.bonus > 0) {
+          await trx
+            .updateTable('NewOrderPlayer')
+            .set({
+              goldPending: sql<number>`"goldPending" + ${day.gold}`,
+              goldEarned: sql<number>`"goldEarned" + ${day.bonus}`,
+            })
+            .where('userId', '=', input.userId)
+            .execute();
+        }
 
         if (decision.kind === 'pending') return { result: { status: 'recorded' }, xp: [voted] };
         if (decision.kind === 'split') {

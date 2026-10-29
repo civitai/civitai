@@ -3,6 +3,8 @@
   import { dev } from '$app/environment';
   import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import DailyPanel from './DailyPanel.svelte';
+  import { recapLines } from './recap-text';
   import StatusBar from '$lib/StatusBar.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -38,6 +40,25 @@
     {#if dev}· <a href="/dev/simulate">Simulate other voters</a>{/if}
   {/snippet}
 </StatusBar>
+
+{#if data.mode === 'queue'}
+  {#if data.recap}
+    <section class="recap" aria-label="Recap of your last play day">
+      <div>
+        {#each recapLines(data.recap) as line (line)}
+          <p>{line}</p>
+        {/each}
+        {#if form?.recapFailed}
+          <p class="notice" role="alert">{form.message}</p>
+        {/if}
+      </div>
+      <form method="POST" action="?/dismissRecap" use:enhance={submit}>
+        <button type="submit" disabled={submitting}>Dismiss</button>
+      </form>
+    </section>
+  {/if}
+  <DailyPanel daily={data.daily} />
+{/if}
 
 {#if showReveal && form?.reveal}
   <div class="reveal" role="status" class:right={form.reveal.correct}>
@@ -82,7 +103,7 @@
       </div>
     </form>
 
-    {#if form?.message}
+    {#if form?.message && !form.recapFailed}
       <p class="notice" role="alert">{form.message}</p>
     {/if}
   {:else if data.trial.kind === 'cooldown'}
@@ -112,7 +133,7 @@
     </div>
   </form>
 
-  {#if form?.message}
+  {#if form?.message && !form.recapFailed}
     <p class="notice" role="alert">{form.message}</p>
   {/if}
 {:else}
@@ -122,6 +143,18 @@
 <p><a href="/">Back</a></p>
 
 <style>
+  .recap {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    margin-bottom: 1rem;
+    padding-left: 1rem;
+    border-left: 3px solid var(--gold);
+  }
+  .recap p {
+    margin: 0;
+  }
   .prompt {
     font-size: 1.15rem;
   }

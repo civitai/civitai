@@ -19,6 +19,7 @@ const MIGRATIONS = [
   '20261210120000_knights_v2_queue',
   '20261212120000_knights_v2_trials',
   '20261213120000_knights_v2_progression',
+  '20261215120000_knights_v2_daily',
 ].map((name) =>
   fileURLToPath(
     new URL(

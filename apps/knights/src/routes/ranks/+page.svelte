@@ -18,6 +18,7 @@
       <th>Accuracy bar</th>
       <th>Vote weight</th>
       <th>Gold</th>
+      <th>Daily gold cap</th>
     </tr>
   </thead>
   <tbody>
@@ -28,6 +29,7 @@
         <td>{percent(rank.accuracyBar)}</td>
         <td>{rank.voteWeight}x</td>
         <td>{rank.goldMultiplier}x</td>
+        <td>{rank.dailyGoldCap.toLocaleString('en-US')}</td>
       </tr>
     {/each}
   </tbody>
