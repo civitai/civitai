@@ -22,7 +22,7 @@
   import TicketHistory from './TicketHistory.svelte';
   import TicketRatingDisputes from './TicketRatingDisputes.svelte';
   import TicketReply from './TicketReply.svelte';
-  import TicketStatusBadge from './TicketStatusBadge.svelte';
+  import TicketStatusMenu from './TicketStatusMenu.svelte';
 
   let {
     row,
@@ -96,7 +96,7 @@
   <div class="min-w-0 space-y-1.5">
     <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
       <h2 class="m-0 text-lg font-semibold break-words text-white">{title}</h2>
-      <TicketStatusBadge status={row.status} label={row.statusLabel} />
+      <TicketStatusMenu ticketId={row.id} status={row.status} label={row.statusLabel} {canReply} ondone={done} />
       {#if kind}
         <Badge variant="outline" class="border-dark-4 bg-transparent text-dark-1">{kind}</Badge>
       {/if}
@@ -134,19 +134,24 @@
 
 <!-- 🔴 TEXT, NEVER `{@html}`: the description and every message are customer-written. -->
 {#snippet evidence()}
-  {#if read}
-    {#if read.stale}
-      <p class="m-0 mb-3 text-xs text-amber-300" role="status">
-        Showing the last read of this ticket: {read.stale}
-      </p>
-    {/if}
-    {@render ticketBody(read.payload)}
-    {@render composer()}
-  {:else if failure}
-    <p class="m-0 text-sm text-red-300" role="alert">Could not read the ticket: {failure}</p>
-  {:else}
-    <p class="m-0 text-sm text-dark-2">Loading the ticket from Freshdesk…</p>
-  {/if}
+  <!-- The middle column scrolls as one box; the composer sticks to its bottom edge on wide screens and flows on narrow ones. -->
+  <div class="flex min-h-full flex-col">
+    <div class="flex-1">
+      {#if read}
+        {#if read.stale}
+          <p class="m-0 mb-3 text-xs text-amber-300" role="status">
+            Showing the last read of this ticket: {read.stale}
+          </p>
+        {/if}
+        {@render ticketBody(read.payload)}
+      {:else if failure}
+        <p class="m-0 text-sm text-red-300" role="alert">Could not read the ticket: {failure}</p>
+      {:else}
+        <p class="m-0 text-sm text-dark-2">Loading the ticket from Freshdesk…</p>
+      {/if}
+    </div>
+    {#if read}{@render composer()}{/if}
+  </div>
 {/snippet}
 
 {#snippet ticketBody(p: TicketPayload)}
@@ -197,8 +202,9 @@
 {/snippet}
 
 {#snippet composer()}
-  <section class="mt-6 border-t border-dark-4 pt-4">
-    <h3 class="m-0 mb-2 text-[11px] font-semibold tracking-[0.5px] text-dark-2 uppercase">Reply</h3>
+  <section
+    class="-mx-5 mt-5 -mb-5 border-t border-dark-4 bg-dark-8 px-5 py-3 xl:sticky xl:bottom-0 xl:z-10"
+  >
     <TicketReply ticketId={row.id} currentStatus={row.status} {canReply} ondone={done} />
   </section>
 {/snippet}

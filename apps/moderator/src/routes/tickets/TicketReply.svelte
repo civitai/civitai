@@ -26,10 +26,6 @@
 
   let text = $state('');
   let statusAfter = $state(LEAVE);
-  let pickedStatusOnly = $state<string | null>(null);
-  const statusOnly = $derived(
-    pickedStatusOnly ?? (SETTABLE_STATUSES.some((s) => s === currentStatus) ? String(currentStatus) : '')
-  );
   let confirming = $state(false);
 
   const reply = new FormState({
@@ -38,44 +34,35 @@
       const set = statusAfter === LEAVE ? null : Number(statusAfter);
       text = '';
       statusAfter = LEAVE;
-      pickedStatusOnly = null;
       ondone('Reply sent', data, set);
     },
     onSettled: () => (confirming = false),
-  });
-  // reset: false, because a form reset would snap the pre-filled select to its first option.
-  const status = new FormState({
-    onSuccess: (data) => {
-      const set = Number(statusOnly);
-      pickedStatusOnly = null;
-      ondone('Status changed', data, set);
-    },
-    reset: false,
   });
 
   const afterLabel = $derived(
     statusAfter === LEAVE ? `Leave as ${statusLabel(currentStatus)}` : statusLabel(Number(statusAfter))
   );
   const why = $derived(canReply ? undefined : denied('tickets.reply'));
-  const busy = $derived(reply.submitting || status.submitting);
+  const busy = $derived(reply.submitting);
 </script>
 
-<div class="flex flex-col gap-2.5">
-  <form method="POST" action="?/reply" use:enhance={reply.enhance} class="flex flex-col gap-1.5">
-    <input type="hidden" name="ticketId" value={ticketId} />
-    <Textarea
-      name="body"
-      bind:value={text}
-      rows={3}
-      maxlength={10000}
-      placeholder="Plain text. This is emailed to the customer."
-      disabled={!canReply || busy}
-      title={why}
-      class="min-h-0 text-[13px]"
-    />
-    <input type="hidden" name="statusAfter" value={statusAfter === LEAVE ? '' : statusAfter} />
+<form method="POST" action="?/reply" use:enhance={reply.enhance} class="flex flex-col gap-2">
+  <input type="hidden" name="ticketId" value={ticketId} />
+  <Textarea
+    name="body"
+    bind:value={text}
+    rows={2}
+    maxlength={10000}
+    aria-label="Reply to the customer"
+    placeholder="Plain text. This is emailed to the customer."
+    disabled={!canReply || busy}
+    title={why}
+    class="max-h-40 min-h-[3.25rem] resize-none text-[13px]"
+  />
+  <input type="hidden" name="statusAfter" value={statusAfter === LEAVE ? '' : statusAfter} />
+  <div class="flex flex-wrap items-center justify-between gap-2">
     <Select.Root type="single" bind:value={statusAfter} disabled={!canReply || busy}>
-      <Select.Trigger class="h-8 w-full text-[13px]" aria-label="Status after the reply" title={why}>
+      <Select.Trigger class="h-7 w-auto text-xs" size="sm" aria-label="Status after the reply" title={why}>
         Then: {afterLabel}
       </Select.Trigger>
       <Select.Content>
@@ -87,7 +74,7 @@
     </Select.Root>
     {#if confirming}
       <div class="flex flex-wrap items-center gap-1.5">
-        <span class="w-full text-xs text-red-300">Email this reply to the customer?</span>
+        <span class="text-xs text-red-300">Email this reply to the customer?</span>
         <Button type="submit" size="sm" disabled={busy} data-touch-target>Yes, send</Button>
         <Button
           type="button"
@@ -112,43 +99,8 @@
         Send reply
       </Button>
     {/if}
-    {#if reply.error}<p class="m-0 text-xs text-red-300">{reply.error}</p>{/if}
-    {#if reply.warning}<p class="m-0 text-xs text-amber-300">{reply.warning}</p>{/if}
-  </form>
-
-  <form
-    method="POST"
-    action="?/status"
-    use:enhance={status.enhance}
-    class="flex items-center gap-1.5 border-t border-dark-4 pt-2.5"
-  >
-    <input type="hidden" name="ticketId" value={ticketId} />
-    <Select.Root
-      type="single"
-      name="status"
-      bind:value={() => statusOnly, (v) => (pickedStatusOnly = v)}
-      disabled={!canReply || busy}
-    >
-      <Select.Trigger class="h-8 min-w-0 flex-1 text-[13px]" aria-label="Status only" title={why}>
-        {statusOnly ? statusLabel(Number(statusOnly)) : 'Change status only'}
-      </Select.Trigger>
-      <Select.Content>
-        {#each SETTABLE_STATUSES as s (s)}
-          <Select.Item value={String(s)}>{statusLabel(s)}</Select.Item>
-        {/each}
-      </Select.Content>
-    </Select.Root>
-    <Button
-      type="submit"
-      size="sm"
-      variant="outline"
-      disabled={!canReply || busy || !statusOnly}
-      title={why}
-    >
-      Set status
-    </Button>
-  </form>
-  {#if status.error}<p class="m-0 text-xs text-red-300">{status.error}</p>{/if}
-  {#if status.warning}<p class="m-0 text-xs text-amber-300">{status.warning}</p>{/if}
+  </div>
+  {#if reply.error}<p class="m-0 text-xs text-red-300">{reply.error}</p>{/if}
+  {#if reply.warning}<p class="m-0 text-xs text-amber-300">{reply.warning}</p>{/if}
   {#if why}<p class="m-0 text-[11px] text-amber-300">{why}</p>{/if}
-</div>
+</form>

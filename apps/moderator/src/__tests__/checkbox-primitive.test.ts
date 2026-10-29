@@ -213,6 +213,7 @@ describe('destructive surfaces carry the touch-target marker', () => {
     'routes/tickets/TicketRatingRuling.svelte',
     'routes/tickets/TicketReply.svelte',
     'routes/tickets/TicketRestrictionRuling.svelte',
+    'routes/tickets/TicketStatusMenu.svelte',
   ];
 
   it('is exactly the declared set of files', () => {

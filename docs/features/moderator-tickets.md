@@ -16,10 +16,11 @@ is its own page grant. Acting on a ticket is a separate permission:
   the other view. Reply, status and "Send to support" post a `ticketId` field to the page's own actions;
   a ticket that leaves the list afterwards (other view, resolved or closed) moves the selection on.
   Without the grant a form stays on screen, disabled, with the reason.
-- The open ticket has three parts. The middle column's header holds the subject, status badge, Feature (or, with
+- The open ticket has three parts. The middle column's header holds the subject, status badge (a menu: choosing a status sets it on its own, without a reply), Feature (or, with
   none, the router topic) badge, the ticket number (the link to the ticket in Freshdesk), dates and any other
-  tags; under the description and conversation sits the reply box with the "Then:" status choice and the
-  status-only change. The right column starts with the Requester card (name, email, account, and the membership
+  tags; the description and conversation scroll beneath it, and the reply box stays pinned to the bottom of the
+  column on wide screens (it flows after the conversation on narrow ones): a textarea that grows to about
+  eight lines, then the "Then:" status choice and "Send reply". The right column starts with the Requester card (name, email, account, and the membership
   tier, the tag `$lib/tickets/tags.ts` recognises as one), then the context cards below, and, in the moderation
   view, "Send to support".
 - Routing lives in one constant, `TICKET_ROUTING` (`apps/moderator/src/lib/tickets/routing.ts`). Precedence:
