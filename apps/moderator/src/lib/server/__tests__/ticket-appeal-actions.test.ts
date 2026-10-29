@@ -164,13 +164,13 @@ describe('appealResolveImage', () => {
     expect(resolve).not.toHaveBeenCalled();
   });
 
-  it('refuses, and writes no note, when the appeal closed is not the one posted', async () => {
+  it('reports success with a warning, and notes the appeal actually closed, when it is not the one posted', async () => {
     resolve.mockResolvedValue({ id: 13 });
-    expect(await run()).toMatchObject({
-      status: 409,
-      data: { error: expect.stringContaining('#13') },
-    });
-    expect(note).not.toHaveBeenCalled();
+    const res = await run();
+    expect(res).toMatchObject({ success: true, warning: expect.stringContaining('#13') });
+    expect(note).toHaveBeenCalledTimes(1);
+    expect(note).toHaveBeenCalledWith('5', expect.stringContaining('appeal #13'));
+    expect(note).toHaveBeenCalledWith('5', expect.stringContaining('by '));
   });
 
   it('reads the image flag from the appeal row image, before resolving', async () => {

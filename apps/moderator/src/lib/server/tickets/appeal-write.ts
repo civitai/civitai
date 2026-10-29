@@ -84,16 +84,20 @@ export function createTicketAppealActions(deps: AppealWriteDeps) {
       });
       if (!closed) return fail(409, { error: DECIDED });
       // `resolve` closes whichever appeal is pending on the image, which may not be the one posted.
-      if (closed.id !== input.appealId)
-        return fail(409, {
-          error: `Appeal #${closed.id} on that image was decided instead of #${input.appealId}; no note was left on the ticket.`,
-        });
-      return addTicketNote(
+      // The change is made either way, so it is reported and noted, never failed.
+      const swapped = closed.id !== input.appealId;
+      const res = await addTicketNote(
         deps.note,
         event,
         ok.ticketId,
-        `${input.status} appeal #${input.appealId} (image ${appeal.entityId}) of user ${ok.userId}`
+        `${input.status} appeal #${closed.id} (image ${appeal.entityId}) of user ${ok.userId}`
       );
+      if (!swapped) return res;
+      const warning = `Appeal #${closed.id} on that image was decided instead of #${input.appealId}.`;
+      return {
+        success: true as const,
+        warning: 'warning' in res ? `${warning} ${res.warning}` : warning,
+      };
     },
   };
 }
