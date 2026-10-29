@@ -10,12 +10,12 @@ import { describe, expect, it } from 'vitest';
  * replay, append, preset apply — lands another family's value verbatim and `validate()`
  * refuses it, and the submit is blocked. The footer DOES report this — it shows "Check your
  * settings" naming the field (`getMissingFieldMessage`, added 2026-09-25) — so the failure is
- * not silent. What makes it unactionable is that only 15 inputs render `error={error?.message}`
+ * not silent. What makes it unactionable is that only a few inputs render `error={error?.message}`
  * at the control itself (prompt, images, controlNets, styleReferences, controlVideo, lyrics,
- * musicDescription, yue2Abc, hunyuanPrompt). For every other field the user is told WHICH
+ * musicDescription, yue2Abc). For every other field the user is told WHICH
  * field is wrong and shown nothing at it — and when the stored value is not among the
- * control's options, there is no way to clear it. Measured in prod 2026-10-01: 4.4% of
- * media-carrying remixes blocked, against 0.06% on the lane that preceded them. Persisted state is NOT affected — storage rehydrates through `input` and falls back
+ * control's options, there is no way to clear it. In prod this blocked
+ * media-carrying remixes far more often than the lane that preceded it. Persisted state is NOT affected — storage rehydrates through `input` and falls back
  * to the default when that fails — which is why the class is invisible to any test that
  * drives the form the way a user does.
  *
@@ -137,6 +137,8 @@ const COMPLETE_OVERRIDES: Record<string, string> = {
     'truncates over its own max (v1.x allows 7, a v2 switch narrows to 3)',
   'model3d/polygen.graph.ts images imagesDef':
     "truncates over its own max (v7's multi-image staging on a v6 switch)",
+  'model3d/tripo.graph.ts images imagesDef':
+    "truncates over its own max (H3.1's views on a v2.5 switch)",
   'video/wan.graph.ts duration sliderDef':
     'clamps duration to [2, max] itself, where max is workflow-dependent',
 };
@@ -145,17 +147,16 @@ const COMPLETE_OVERRIDES: Record<string, string> = {
  * Fields declared INLINE in a graph rather than built from a def, where the constrained
  * output provably cannot refuse a trusted write — each with the reason.
  *
- * This started as a 24-entry list of known holes and is now two, because the other 22 were
- * fixed: 13 enums took `optionFallback`, 3 numerics took `clampCorrect`, 5 permissive-input
- * fields took the `coerce` pair, and krea2's style references slice like `controlNetsDef`.
- *
  * An entry here is a claim that no hook is needed, which is harder to make than adding one.
  * Prefer the hook.
  */
 const GRAPH_SITE_EXEMPT: Record<string, string> = {
-  'model3d/polygen.graph.ts polygenVersion':
+  'model3d/polygen.graph.ts polygenVersionDef':
     'its output is `z.enum(...).transform(clamp)` — clamp maps anything unrunnable to v6, so ' +
     'the schema normalises instead of refusing and there is nothing for a hook to heal',
+  'model3d/tripo.graph.ts tripoVersionDef':
+    'its output is `z.enum(...).transform(clamp)` — clamp maps anything unrunnable to H3.1, ' +
+    'so the schema normalises instead of refusing and there is nothing for a hook to heal',
 
   'workflows/video-enhance.graph.ts scaleFactor':
     'deliberately scope-not-correct, stated at the site: the field is scoped per source ' +

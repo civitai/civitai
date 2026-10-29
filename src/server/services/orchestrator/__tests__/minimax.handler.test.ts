@@ -185,6 +185,22 @@ describe('createMiniMaxInput — hosted API variant', () => {
     expect(result.width).toBeUndefined();
     expect(result.height).toBeUndefined();
   });
+
+  it('sends the chosen tier and resolution', async () => {
+    const result = await input({
+      ecosystem: 'MiniMaxH3',
+      workflow: 'txt2vid',
+      model: { id: minimaxVersionIds['v1.0'] },
+      minimaxVariant: 'api',
+      mode: 'lite',
+      resolution: '480P',
+      prompt: 'a cat wanders off',
+      duration: 6,
+      aspectRatio: entry(MINIMAX_DEFAULT_ASPECT_RATIO),
+    });
+
+    expect(result).toMatchObject({ engine: 'minimax-h3', model: 'lite', resolution: '480P' });
+  });
 });
 
 const CONTROL_VIDEO_URL = 'https://x/source.mp4';
