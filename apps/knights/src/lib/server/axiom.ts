@@ -1,7 +1,5 @@
-// Axiom logger for the Knights app via @civitai/axiom, mirroring the moderator app's shim.
-//
-// `app` is stamped here because it is the only thing separating this app's events from the main app's,
-// which share the `civitai-prod` datastream. Spread first so a caller can still override it.
+// `app` is the only field separating Knights events from the main app's in the shared `civitai-prod` datastream.
+// Spread first so a caller can still override it.
 import { createAxiomLogger } from '@civitai/axiom';
 
 const logger = createAxiomLogger();

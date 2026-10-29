@@ -46,6 +46,15 @@ describe('gold page', () => {
     });
   });
 
+  it('tells the player Buzz refused it, with their gold untouched', async () => {
+    convertGold.mockResolvedValue({ status: 'failed', gold: 6000, buzz: 6 });
+
+    expect(await actions.convert({ locals } as never)).toMatchObject({
+      status: 502,
+      data: { message: expect.stringContaining('untouched') },
+    });
+  });
+
   it('says a conversion Buzz has not confirmed is on its way', async () => {
     convertGold.mockResolvedValue({ status: 'pending', gold: 6000, buzz: 6 });
 

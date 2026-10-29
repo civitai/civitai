@@ -143,7 +143,7 @@ CREATE TABLE "AppealDecisionRecord" (
 );
 `;
 
-/** Installs the real label store, for the tests that write labels. Slower than the rest of the setup. */
+/** Installs the real label store, for the tests that write labels. */
 export async function bootLabelStore(pg: PGlite) {
   await pg.exec(LABEL_STORE_SOURCES);
   await pg.exec(readFileSync(LABEL_STORE_MIGRATION, 'utf8'));

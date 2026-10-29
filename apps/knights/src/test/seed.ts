@@ -49,7 +49,6 @@ export async function seedGradedVotes(
   await insert('failed', failed, correct);
 }
 
-/** A player's gold counters, as the vote and settle paths leave them. */
 export async function setGold(
   pg: PGlite,
   userId: number,

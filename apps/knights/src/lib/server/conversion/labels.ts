@@ -1,6 +1,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { heldSql } from './balance';
+import { utc } from '@civitai/db/kysely';
+import { heldSql } from './held';
 
 export type LabelCursor = { settledAt: Date; itemId: number; playerId: number };
 export type LabelBatch = {
@@ -12,11 +13,7 @@ export type LabelBatch = {
   cursor: LabelCursor | null;
 };
 
-/**
- * Gives every choice question a `rule` row in the label store, so its judgements can become trainable. The
- * rule asks for as many humans as the question needs to resolve, with no unanimity (the game resolves on a
- * weighted share). Yes/no questions get theirs with the task that writes their labels. Idempotent.
- */
+/** Gives every choice question a label-store `rule` row (`minHuman` = votes to resolve, not unanimous). Idempotent. */
 export async function ensureQuestionRules(db: Kysely<DB>): Promise<void> {
   await sql`
     INSERT INTO label_store.rule ("question", "questionVersion", "minHuman", "requireUnanimous")
@@ -27,23 +24,16 @@ export async function ensureQuestionRules(db: Kysely<DB>): Promise<void> {
   `.execute(db);
 }
 
-const ts = (date: Date) => sql`${date.toISOString()}::timestamp`;
-
 /**
- * Writes one `knight` label per settled vote, for votes settled at or before `settledBefore` (a completed
- * detection run) whose player is not held. The label store never retracts a label, so a held player's votes
- * stay unwritten, and unmarked, until the player is released.
- *
- * Idempotent twice over: the source ref is unique per vote (the player appears only as the store's own hash,
- * never as a user id), and `labelled` is set in the same statement. A vote whose image is gone has no subject
- * to write and is only marked. Only choice questions are written; yes/no questions are a later task.
+ * One `knight` label per settled vote at or before `settledBefore`, for players not held. The store never retracts a label, so a held player's votes stay unwritten and unmarked until released.
+ * The player appears in the source ref only as the store's own hash, never as a user id. A vote whose image is gone is only marked.
  */
 export async function writeLabelBatch(
   db: Kysely<DB>,
   { settledBefore, after, limit }: { settledBefore: Date; after: LabelCursor | null; limit: number }
 ): Promise<LabelBatch> {
   const afterClause = after
-    ? sql`AND (v."settledAt", v."itemId", v."playerId") > (${ts(after.settledAt)}, ${
+    ? sql`AND (v."settledAt", v."itemId", v."playerId") > (${utc(after.settledAt)}, ${
         after.itemId
       }, ${after.playerId})`
     : sql``;
@@ -58,38 +48,40 @@ export async function writeLabelBatch(
       SELECT v."itemId", v."playerId", v."createdAt", v."settledAt", v."questionKey", v."imageId", v."answer"
       FROM "KnightsVote" v
       WHERE v."settledAt" IS NOT NULL AND NOT v."labelled"
-        AND v."settledAt" <= ${ts(settledBefore)}
+        AND v."settledAt" <= ${utc(settledBefore)}
         ${afterClause}
         AND EXISTS (SELECT 1 FROM "KnightsQuestion" kq WHERE kq."key" = v."questionKey" AND kq."kind" = 'choice')
         AND NOT ${heldSql('v.playerId')}
       ORDER BY v."settledAt", v."itemId", v."playerId"
       LIMIT ${limit}
-    ), rec AS MATERIALIZED (
-      SELECT b."itemId", b."playerId", b."createdAt", b."settledAt", b."imageId", b."questionKey",
+    ), base AS (
+      SELECT b.*, i."url", i."pHash", q."version",
         i."id" IS NOT NULL AND q."key" IS NOT NULL AS "hasSubject",
-        CASE WHEN i."id" IS NOT NULL AND q."key" IS NOT NULL THEN
-          'KnightsVote:' || b."itemId" || ':' || label_store.person_hash('labeller', b."playerId")
-        END AS "ref",
-        CASE WHEN i."id" IS NOT NULL AND q."key" IS NOT NULL THEN
-          label_store.record_label(
-            p_subject_type => 'image',
-            p_subject_id => b."imageId"::text,
-            p_content_hash => label_store.text_hash(i."url"),
-            p_family => 'knights',
-            p_question => q."key",
-            p_value => b."answer",
-            p_labeller_kind => 'knight',
-            p_source_ref => 'KnightsVote:' || b."itemId" || ':' || label_store.person_hash('labeller', b."playerId"),
-            p_labelled_at => b."createdAt" AT TIME ZONE 'UTC',
-            p_labeller_user_id => b."playerId",
-            p_question_version => q."version",
-            p_snapshot => jsonb_build_object('url', i."url"),
-            p_phash => i."pHash"
-          )
-        END AS "labelId"
+        'KnightsVote:' || b."itemId" || ':' || label_store.person_hash('labeller', b."playerId") AS "ref"
       FROM batch b
       LEFT JOIN "Image" i ON i."id" = b."imageId"
       LEFT JOIN "KnightsQuestion" q ON q."key" = b."questionKey"
+    ), rec AS MATERIALIZED (
+      SELECT b."itemId", b."playerId", b."createdAt", b."settledAt", b."hasSubject",
+        CASE WHEN b."hasSubject" THEN b."ref" END AS "ref",
+        CASE WHEN b."hasSubject" THEN
+          label_store.record_label(
+            p_subject_type => 'image',
+            p_subject_id => b."imageId"::text,
+            p_content_hash => label_store.text_hash(b."url"),
+            p_family => 'knights',
+            p_question => b."questionKey",
+            p_value => b."answer",
+            p_labeller_kind => 'knight',
+            p_source_ref => b."ref",
+            p_labelled_at => b."createdAt" AT TIME ZONE 'UTC',
+            p_labeller_user_id => b."playerId",
+            p_question_version => b."version",
+            p_snapshot => jsonb_build_object('url', b."url"),
+            p_phash => b."pHash"
+          )
+        END AS "labelId"
+      FROM base b
     ), outcome AS (
       SELECT r.*,
         (NOT r."hasSubject" OR r."labelId" IS NOT NULL OR EXISTS (

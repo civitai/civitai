@@ -2,30 +2,29 @@ import { randomUUID } from 'node:crypto';
 import { sql, type Kysely, type Selectable } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { heldSql } from './balance';
-import type { BuzzPort } from './buzz';
+import { BuzzRejectedError, type BuzzPort } from './buzz';
 import { CONVERSION, PENDING_CONVERSION_RETRY_AFTER_MS } from './config';
+import { heldSql } from './held';
 
 type Conversion = Selectable<DB['KnightsGoldConversion']>;
+type Log = (event: Record<string, unknown>) => unknown;
 
 export type ConvertResult =
   | { status: 'converted'; gold: number; buzz: number; transactionId: string | null }
-  /** Buzz did not confirm. The gold stays reserved and a retry sends the same key, so it is paid once. */
+  /** Buzz did not confirm; the gold stays reserved and a retry sends the same key. */
   | { status: 'pending'; gold: number; buzz: number }
+  /** Buzz refused it for good: the reservation is released and the gold is convertible again. */
+  | { status: 'failed'; gold: number; buzz: number }
   | { status: 'refused'; reason: 'no-player' | 'held' | 'below-minimum' };
 
 type Refusal = Extract<ConvertResult, { status: 'refused' }>['reason'];
 type Reserved = { refused: Refusal } | { conversion: Conversion };
 
-/**
- * Converts all of a player's convertible gold, in whole Buzz, in two steps: reserve the gold under the
- * player's row lock, then ask Buzz with the reservation's own key. A try that cannot tell whether Buzz paid
- * leaves the reservation pending, and the next try (the player's, or the tick's) sends the same key.
- */
+/** Two steps: reserve the gold under the player's row lock, then ask Buzz with the reservation's own key. An unknown outcome leaves it pending, and every retry sends the same key; a definitive rejection marks it failed and releases the gold. */
 export async function convertGold(
   db: Kysely<DB>,
   buzz: BuzzPort,
-  { playerId, now }: { playerId: number; now: Date }
+  { playerId, now, log }: { playerId: number; now: Date; log?: Log }
 ): Promise<ConvertResult> {
   const reserved: Reserved = await db.transaction().execute(async (trx): Promise<Reserved> => {
     const player = await trx
@@ -34,8 +33,8 @@ export async function convertGold(
       .where('p.userId', '=', playerId)
       .forUpdate()
       .executeTakeFirst();
-    if (!player) return { refused: 'no-player' as const };
-    if (player.held) return { refused: 'held' as const };
+    if (!player) return { refused: 'no-player' };
+    if (player.held) return { refused: 'held' };
 
     const open = await trx
       .selectFrom('KnightsGoldConversion')
@@ -49,7 +48,7 @@ export async function convertGold(
     const buzzAmount = Math.floor(
       Math.max(0, player.goldCleared - player.goldConverted) / CONVERSION.goldPerBuzz
     );
-    if (buzzAmount < CONVERSION.minBuzz) return { refused: 'below-minimum' as const };
+    if (buzzAmount < CONVERSION.minBuzz) return { refused: 'below-minimum' };
     const gold = buzzAmount * CONVERSION.goldPerBuzz;
 
     const conversion = await trx
@@ -72,46 +71,95 @@ export async function convertGold(
   });
 
   if ('refused' in reserved) return { status: 'refused', reason: reserved.refused };
-  return settleConversion(db, buzz, reserved.conversion, now);
+  return settleConversion(db, buzz, reserved.conversion, { now, log });
 }
 
-/** Asks Buzz to pay a reserved conversion with its own key, then marks it paid. Safe to repeat. */
+/** Marks a conversion paid. Never overwrites a Buzz transaction id already stored, and fills in one a duplicate answer left empty. */
+export async function markConversionPaid(
+  db: Kysely<DB>,
+  conversionId: number,
+  transactionId: string | null,
+  now: Date
+) {
+  await db
+    .updateTable('KnightsGoldConversion')
+    .set({
+      status: 'paid',
+      buzzTransactionId: sql<string | null>`COALESCE("buzzTransactionId", ${transactionId})`,
+      paidAt: sql<Date>`COALESCE("paidAt", ${utc(now)})`,
+    })
+    .where('id', '=', conversionId)
+    .where('status', 'in', ['pending', 'paid'])
+    .execute();
+}
+
+/** Marks a pending conversion failed and gives its gold back, in one transaction. */
+async function failConversion(db: Kysely<DB>, conversion: Conversion) {
+  await db.transaction().execute(async (trx) => {
+    const failed = await trx
+      .updateTable('KnightsGoldConversion')
+      .set({ status: 'failed' })
+      .where('id', '=', conversion.id)
+      .where('status', '=', 'pending')
+      .executeTakeFirst();
+    if (Number(failed.numUpdatedRows) === 0) return;
+    await trx
+      .updateTable('NewOrderPlayer')
+      .set({ goldConverted: sql<number>`"goldConverted" - ${conversion.gold}` })
+      .where('userId', '=', conversion.playerId)
+      .execute();
+  });
+}
+
 async function settleConversion(
   db: Kysely<DB>,
   buzz: BuzzPort,
   conversion: Conversion,
-  now: Date
+  { now, log }: { now: Date; log?: Log }
 ): Promise<ConvertResult> {
+  const { gold, buzz: amount } = conversion;
   let transactionId: string | null;
   try {
     ({ transactionId } = await buzz.grantYellow({
       userId: conversion.playerId,
-      amount: conversion.buzz,
+      amount,
       externalTransactionId: conversion.externalTransactionId,
       description: 'Knights of New Order gold conversion',
     }));
   } catch (error) {
-    console.error('knights: Buzz did not confirm a gold conversion, it will be retried', {
-      conversionId: conversion.id,
-      error,
+    if (error instanceof BuzzRejectedError) {
+      await failConversion(db, conversion);
+      await log?.({
+        type: 'error',
+        name: 'knights-gold-conversion-rejected',
+        details: { conversionId: conversion.id, status: error.status },
+        message: 'Buzz rejected a gold conversion; the gold was released',
+      });
+      return { status: 'failed', gold, buzz: amount };
+    }
+    await log?.({
+      type: 'warning',
+      name: 'knights-gold-conversion-unconfirmed',
+      details: { conversionId: conversion.id, error: String(error) },
+      message: 'Buzz did not confirm a gold conversion; it will be retried',
     });
-    return { status: 'pending', gold: conversion.gold, buzz: conversion.buzz };
+    return { status: 'pending', gold, buzz: amount };
   }
-  await db
-    .updateTable('KnightsGoldConversion')
-    .set({ status: 'paid', buzzTransactionId: transactionId, paidAt: utc(now) })
-    .where('id', '=', conversion.id)
-    .where('status', '=', 'pending')
-    .execute();
-  return { status: 'converted', gold: conversion.gold, buzz: conversion.buzz, transactionId };
+  await markConversionPaid(db, conversion.id, transactionId, now);
+  return { status: 'converted', gold, buzz: amount, transactionId };
 }
 
 /** Retries reserved conversions Buzz never confirmed. A held player's stay pending until released. */
 export async function retryPendingConversions(
   db: Kysely<DB>,
   buzz: BuzzPort,
-  { now, limit = 50 }: { now: Date; limit?: number }
-): Promise<{ retried: number; paid: number }> {
+  {
+    now,
+    limit = 50,
+    budgetMs = Infinity,
+    log,
+  }: { now: Date; limit?: number; budgetMs?: number; log?: Log }
+): Promise<{ retried: number; paid: number; failed: number }> {
   const due = await db
     .selectFrom('KnightsGoldConversion as c')
     .selectAll('c')
@@ -121,9 +169,16 @@ export async function retryPendingConversions(
     .orderBy('c.id', 'asc')
     .limit(limit)
     .execute();
+  const deadline = Date.now() + budgetMs;
+  let retried = 0;
   let paid = 0;
+  let failed = 0;
   for (const conversion of due) {
-    if ((await settleConversion(db, buzz, conversion, now)).status === 'converted') paid++;
+    if (Date.now() >= deadline) break;
+    retried++;
+    const { status } = await settleConversion(db, buzz, conversion, { now, log });
+    if (status === 'converted') paid++;
+    if (status === 'failed') failed++;
   }
-  return { retried: due.length, paid };
+  return { retried, paid, failed };
 }

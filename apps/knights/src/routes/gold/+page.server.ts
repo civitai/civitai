@@ -2,6 +2,7 @@ import { fail } from '@sveltejs/kit';
 import { getGoldBalance } from '$lib/server/conversion/balance';
 import { convertGold, type ConvertResult } from '$lib/server/conversion/convert';
 import { getBuzzPort } from '$lib/server/conversion/runtime';
+import { logToAxiom } from '$lib/server/axiom';
 import { db } from '$lib/server/db';
 import { getPlayerStatusOrNew } from '$lib/server/player-status';
 import type { Actions, PageServerLoad } from './$types';
@@ -24,19 +25,30 @@ export const actions: Actions = {
   convert: async ({ locals }) => {
     let result: ConvertResult;
     try {
-      result = await convertGold(db, getBuzzPort(), { playerId: locals.user.id, now: new Date() });
+      result = await convertGold(db, getBuzzPort(), {
+        playerId: locals.user.id,
+        now: new Date(),
+        log: logToAxiom,
+      });
     } catch (error) {
       console.error('knights: gold conversion failed', { error });
       return fail(500, { message: 'Your gold could not be converted. Try again in a moment.' });
     }
     if (result.status === 'refused') return fail(409, { message: REFUSAL_TEXT[result.reason] });
+    if (result.status === 'failed') {
+      return fail(502, {
+        message: 'Buzz could not take this conversion. Your gold is untouched; try again later.',
+      });
+    }
     if (result.status === 'pending') {
       return {
+        ok: true,
         pending: true,
         message: `Your ${result.buzz} Buzz is on its way. It is paid within a few minutes, and the gold is not spent twice.`,
       };
     }
     return {
+      ok: true,
       converted: result.buzz,
       message: `Converted ${result.gold.toLocaleString('en-US')} gold into ${result.buzz} Buzz.`,
     };

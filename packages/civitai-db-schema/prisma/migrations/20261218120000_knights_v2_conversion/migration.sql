@@ -36,17 +36,14 @@ CREATE UNIQUE INDEX IF NOT EXISTS "KnightsGoldConversion_externalTransactionId_k
 CREATE INDEX IF NOT EXISTS "KnightsGoldConversion_playerId_createdAt_idx" ON "KnightsGoldConversion" ("playerId", "createdAt");
 CREATE INDEX IF NOT EXISTS "KnightsGoldConversion_status_createdAt_idx" ON "KnightsGoldConversion" ("status", "createdAt");
 
--- Detection runs the pass has not processed yet.
 CREATE INDEX IF NOT EXISTS "KnightsDetectionRun_unpassed_idx" ON "KnightsDetectionRun" ("id") WHERE "passedAt" IS NULL;
 
--- Players holding earned gold no detection run has cleared yet: the clearing pass reads only these.
+-- Players with earned gold not yet cleared.
 CREATE INDEX IF NOT EXISTS "NewOrderPlayer_uncleared_gold_idx" ON "NewOrderPlayer" ("userId")
   WHERE "goldEarned" > "goldCleared";
 
--- Settled votes whose label is still to be written: the labelling pass reads only these.
 CREATE INDEX IF NOT EXISTS "KnightsVote_unlabelled_idx" ON "KnightsVote" ("settledAt")
   WHERE "settledAt" IS NOT NULL AND NOT "labelled";
 
--- Gold settled after a detection run, per player: what the clearing pass subtracts.
 CREATE INDEX IF NOT EXISTS "KnightsVote_player_settled_gold_idx" ON "KnightsVote" ("playerId", "settledAt")
   WHERE "gold" > 0;

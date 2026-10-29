@@ -8134,13 +8134,13 @@ model KnightsGoldClearing {
   @@unique([playerId, runId])
 }
 
-/// One conversion of cleared gold to Yellow Buzz. The gold is reserved (`NewOrderPlayer.goldConverted`) when the row is written as `pending`; `paid` once Buzz confirmed it. `externalTransactionId` is the idempotency key sent to Buzz, so a retry of a pending row never pays twice.
+/// One conversion of cleared gold to Yellow Buzz. The row is written `pending` with the gold reserved in `NewOrderPlayer.goldConverted`; `paid` once Buzz confirms, `failed` when Buzz refuses it for good (the reservation is released). `externalTransactionId` is the idempotency key sent to Buzz.
 model KnightsGoldConversion {
   id                    Int       @id @default(autoincrement())
   playerId              Int
   gold                  Int
   buzz                  Int
-  status                String    @default("pending") // pending | paid
+  status                String    @default("pending") // pending | paid | failed
   externalTransactionId String    @unique
   buzzTransactionId     String?
   createdAt             DateTime  @default(now())

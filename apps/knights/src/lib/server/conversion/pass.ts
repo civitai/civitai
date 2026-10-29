@@ -11,7 +11,7 @@ export type PassResult =
   | {
       ran: true;
       runId: number;
-      /** False when the time budget ran out: the next tick picks the pass up where the data says it stopped. */
+      /** False when the time budget ran out; the next tick resumes from the data. */
       done: boolean;
       clearedPlayers: number;
       clearedGold: number;
@@ -21,13 +21,7 @@ export type PassResult =
 
 const DEFAULTS = { budgetMs: 30_000, batchSize: 200 };
 
-/**
- * The step after a link-detection run: earned gold the run covered becomes convertible and the settled
- * votes it covered get their labels, for every player the run left unheld. Runs only while a detection run
- * has finished that no pass has handled yet, so the tick can call it every time. Everything it writes is
- * keyed on the data (gold still uncleared, votes still unlabelled), so a pass that stopped early, or ran
- * twice, loses nothing and repeats nothing.
- */
+/** Clears gold and writes labels for the newest detection run no pass has handled, so the tick can call it every time. Writes are keyed on the data (uncleared gold, unlabelled votes), so a cut-short or repeated pass loses and duplicates nothing. */
 export async function runPostDetectionPass(
   db: Kysely<DB>,
   {
@@ -89,7 +83,6 @@ export async function runPostDetectionPass(
   return { ran: true, runId: run.id, done, ...totals };
 }
 
-/** Total Buzz converted per UTC day, for today and yesterday, so rates can be tuned. */
 export async function convertedPerDay(
   db: Kysely<DB>,
   now: Date
@@ -99,7 +92,7 @@ export async function convertedPerDay(
     SELECT to_char("paidAt"::date, 'YYYY-MM-DD') AS "day",
       sum("buzz")::int AS "buzz", count(*)::int AS "conversions"
     FROM "KnightsGoldConversion"
-    WHERE "status" = 'paid' AND "paidAt" >= ${from.toISOString()}::timestamp
+    WHERE "status" = 'paid' AND "paidAt" >= ${utc(from)}
     GROUP BY 1
     ORDER BY 1
   `.execute(db);

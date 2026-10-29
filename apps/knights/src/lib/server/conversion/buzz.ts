@@ -1,8 +1,9 @@
-import { BuzzApiError, isSafeToRetry, type BuzzClient } from '@civitai/buzz';
+import { BUZZ_TRANSACTION_TYPE, BuzzApiError, isSafeToRetry, type BuzzClient } from '@civitai/buzz';
 
-/** The Buzz transaction type "Reward"; the buzz service takes the numeric value. */
-const REWARD_TRANSACTION_TYPE = 5;
 const WRITE_TIMEOUT_MS = 15_000;
+
+/** 408 and 429 say "try later", not "no". */
+const TRANSIENT_CLIENT_ERRORS = new Set([408, 429]);
 
 export type BuzzGrant = {
   userId: number;
@@ -12,7 +13,14 @@ export type BuzzGrant = {
   description: string;
 };
 
-/** What conversion needs from Buzz; the real client is wired in `runtime.ts`, tests pass a fake. */
+/** Buzz definitively refused the grant (a 4xx other than a duplicate key): it was not paid and a retry would be refused again. */
+export class BuzzRejectedError extends Error {
+  constructor(readonly status: number) {
+    super(`Buzz rejected the grant: ${status}`);
+    this.name = 'BuzzRejectedError';
+  }
+}
+
 export type BuzzPort = {
   /** `transactionId` is null when the key was already paid and the service did not say which transaction. */
   grantYellow(grant: BuzzGrant): Promise<{ transactionId: string | null }>;
@@ -29,7 +37,7 @@ export function buzzPort(client: Pick<BuzzClient, 'createTransaction'>): BuzzPor
             toAccountId: grant.userId,
             toAccountType: 'yellow',
             amount: grant.amount,
-            type: REWARD_TRANSACTION_TYPE,
+            type: BUZZ_TRANSACTION_TYPE.Reward,
             description: grant.description,
             externalTransactionId: grant.externalTransactionId,
           },
@@ -38,8 +46,17 @@ export function buzzPort(client: Pick<BuzzClient, 'createTransaction'>): BuzzPor
         );
         return { transactionId: result.transactionId };
       } catch (error) {
-        // The key was already paid by an earlier try whose answer was lost.
-        if (error instanceof BuzzApiError && error.status === 409) return { transactionId: null };
+        if (error instanceof BuzzApiError) {
+          // The key was already paid by an earlier try whose answer was lost.
+          if (error.status === 409) return { transactionId: null };
+          if (
+            error.status >= 400 &&
+            error.status < 500 &&
+            !TRANSIENT_CLIENT_ERRORS.has(error.status)
+          ) {
+            throw new BuzzRejectedError(error.status);
+          }
+        }
         throw error;
       }
     },

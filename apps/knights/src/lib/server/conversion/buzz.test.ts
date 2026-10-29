@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BuzzApiError } from '@civitai/buzz';
-import { buzzPort } from './buzz';
+import { BuzzRejectedError, buzzPort } from './buzz';
 
 const grant = { userId: 7, amount: 12, externalTransactionId: 'key-1', description: 'd' };
 
@@ -34,9 +34,28 @@ describe('buzzPort', () => {
     });
   });
 
-  it('lets any other failure through', async () => {
-    const createTransaction = vi.fn().mockRejectedValue(new BuzzApiError(500, 'Server Error'));
+  it('reports a 4xx refusal as definitive', async () => {
+    const createTransaction = vi.fn().mockRejectedValue(new BuzzApiError(400, 'Bad Request'));
 
-    await expect(buzzPort({ createTransaction }).grantYellow(grant)).rejects.toThrow('500');
+    await expect(buzzPort({ createTransaction }).grantYellow(grant)).rejects.toBeInstanceOf(
+      BuzzRejectedError
+    );
+  });
+
+  it.each([408, 429, 500, 503])('leaves a %i as an unknown outcome', async (status) => {
+    const createTransaction = vi.fn().mockRejectedValue(new BuzzApiError(status, 'x'));
+
+    const outcome = buzzPort({ createTransaction }).grantYellow(grant);
+
+    await expect(outcome).rejects.toThrow(String(status));
+    await expect(outcome).rejects.not.toBeInstanceOf(BuzzRejectedError);
+  });
+
+  it('lets any other failure through', async () => {
+    const createTransaction = vi.fn().mockRejectedValue(new TypeError('fetch failed'));
+
+    await expect(buzzPort({ createTransaction }).grantYellow(grant)).rejects.toThrow(
+      'fetch failed'
+    );
   });
 });

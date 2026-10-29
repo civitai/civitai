@@ -6,7 +6,8 @@ import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedPlayer, setGold } from '../../../test/seed';
 import { getGoldBalance } from './balance';
 import type { BuzzGrant, BuzzPort } from './buzz';
-import { convertGold, retryPendingConversions } from './convert';
+import { BuzzRejectedError } from './buzz';
+import { convertGold, markConversionPaid, retryPendingConversions } from './convert';
 
 const NOW = new Date('2026-12-20T12:00:00Z');
 
@@ -14,11 +15,12 @@ let pg: PGlite;
 let db: Kysely<DB>;
 
 /** Buzz as the service behaves: one transaction per external id, however often it is asked. */
-function fakeBuzz({ failFirst = false, lostAnswer = false } = {}) {
+function fakeBuzz({ failFirst = false, lostAnswer = false, reject = false } = {}) {
   const paid = new Map<string, { userId: number; amount: number; transactionId: string }>();
   let calls = 0;
   const grantYellow = vi.fn<BuzzPort['grantYellow']>(async (grant: BuzzGrant) => {
     calls++;
+    if (reject) throw new BuzzRejectedError(400);
     if (failFirst && calls === 1) throw new Error('buzz down');
     const existing = paid.get(grant.externalTransactionId);
     if (!existing) {
@@ -68,8 +70,32 @@ describe('gold balance', () => {
       convertible: 10_000,
       frozen: 0,
       converted: 2_000,
+      onItsWay: 0,
       held: false,
       buzzOnConvert: 10,
+    });
+  });
+
+  it('counts a reservation Buzz has not confirmed as on its way, not converted, held or not', async () => {
+    await seedPlayer(pg, 1);
+    await setGold(pg, 1, { earned: 20_000, cleared: 20_000, converted: 7_000 });
+    await pg.exec(
+      `INSERT INTO "KnightsGoldConversion" ("playerId","gold","buzz","status","externalTransactionId") VALUES (1,5000,5,'pending','k1')`
+    );
+
+    expect(await getGoldBalance(db, 1)).toMatchObject({
+      converted: 2_000,
+      onItsWay: 5_000,
+      convertible: 13_000,
+      awaitingDetection: 0,
+    });
+
+    await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt"='2026-12-19' WHERE "userId"=1`);
+    expect(await getGoldBalance(db, 1)).toMatchObject({
+      converted: 2_000,
+      onItsWay: 5_000,
+      convertible: 0,
+      frozen: 13_000,
     });
   });
 
@@ -203,7 +229,6 @@ describe('convertGold', () => {
     const [pending] = await conversions();
     expect(pending).toMatchObject({ status: 'pending', gold: 10_000, buzzTransactionId: null });
 
-    // the player pressing Convert again resumes the same conversion; it does not start a second
     expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW })).toMatchObject({
       status: 'converted',
       buzz: 10,
@@ -229,13 +254,146 @@ describe('convertGold', () => {
       now: new Date(NOW.getTime() + 120_000),
     });
 
-    expect(retried).toEqual({ retried: 1, paid: 1 });
+    expect(retried).toEqual({ retried: 1, paid: 1, failed: 0 });
     expect(buzz.paid.size).toBe(1);
     expect(await conversions()).toEqual([expect.objectContaining({ status: 'paid' })]);
   });
 });
 
+describe('a definitive Buzz rejection', () => {
+  it('fails the conversion, gives the gold back and logs it', async () => {
+    const buzz = fakeBuzz({ reject: true });
+    const log = vi.fn();
+    await seedPlayer(pg, 1);
+    await setGold(pg, 1, { earned: 10_000, cleared: 10_000 });
+
+    expect(await convertGold(db, buzz.port, { playerId: 1, now: NOW, log })).toEqual({
+      status: 'failed',
+      gold: 10_000,
+      buzz: 10,
+    });
+
+    expect(await row(1)).toEqual({ goldConverted: 0 });
+    expect(await conversions()).toEqual([expect.objectContaining({ status: 'failed' })]);
+    expect(await getGoldBalance(db, 1)).toMatchObject({ convertible: 10_000, onItsWay: 0 });
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'knights-gold-conversion-rejected' })
+    );
+  });
+
+  it('does not block the next conversion', async () => {
+    const buzz = fakeBuzz({ reject: true });
+    await seedPlayer(pg, 1);
+    await setGold(pg, 1, { earned: 10_000, cleared: 10_000 });
+    await convertGold(db, buzz.port, { playerId: 1, now: NOW });
+
+    const next = await convertGold(db, fakeBuzz().port, { playerId: 1, now: NOW });
+
+    expect(next).toMatchObject({ status: 'converted', buzz: 10 });
+    expect(await row(1)).toEqual({ goldConverted: 10_000 });
+  });
+
+  it('is released by the tick retry too, once', async () => {
+    await seedPlayer(pg, 1);
+    await setGold(pg, 1, { earned: 10_000, cleared: 10_000 });
+    await convertGold(db, fakeBuzz({ failFirst: true }).port, { playerId: 1, now: NOW });
+    const later = new Date(Date.now() + 3_600_000);
+
+    expect(
+      await retryPendingConversions(db, fakeBuzz({ reject: true }).port, { now: later })
+    ).toEqual({
+      retried: 1,
+      paid: 0,
+      failed: 1,
+    });
+    expect(
+      await retryPendingConversions(db, fakeBuzz({ reject: true }).port, { now: later })
+    ).toEqual({
+      retried: 0,
+      paid: 0,
+      failed: 0,
+    });
+    expect(await row(1)).toEqual({ goldConverted: 0 });
+  });
+
+  it('leaves an unknown outcome pending and logs a warning', async () => {
+    const log = vi.fn();
+    await seedPlayer(pg, 1);
+    await setGold(pg, 1, { earned: 10_000, cleared: 10_000 });
+
+    const result = await convertGold(db, fakeBuzz({ failFirst: true }).port, {
+      playerId: 1,
+      now: NOW,
+      log,
+    });
+
+    expect(result.status).toBe('pending');
+    expect(log).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'knights-gold-conversion-unconfirmed' })
+    );
+  });
+});
+
+describe('markConversionPaid', () => {
+  it('never overwrites a stored Buzz transaction id, and fills in a missing one', async () => {
+    await pg.exec(
+      `INSERT INTO "KnightsGoldConversion" ("playerId","gold","buzz","status","externalTransactionId") VALUES (1,5000,5,'pending','k1')`
+    );
+
+    await markConversionPaid(db, 1, null, NOW);
+    expect(await conversions()).toEqual([
+      expect.objectContaining({ status: 'paid', buzzTransactionId: null }),
+    ]);
+    await markConversionPaid(db, 1, 'tx-real', NOW);
+    await markConversionPaid(db, 1, null, NOW);
+    await markConversionPaid(db, 1, 'tx-other', NOW);
+
+    expect(await conversions()).toEqual([
+      expect.objectContaining({ status: 'paid', buzzTransactionId: 'tx-real' }),
+    ]);
+  });
+});
+
 describe('retryPendingConversions', () => {
+  it('retries a conversion only once it is a minute old', async () => {
+    const buzz = fakeBuzz();
+    await pg.exec(
+      `INSERT INTO "KnightsGoldConversion" ("playerId","gold","buzz","status","externalTransactionId","createdAt") VALUES (1,5000,5,'pending','k1','2026-12-20 12:00:00')`
+    );
+    await seedPlayer(pg, 1);
+
+    const at = (seconds: number) => new Date(Date.UTC(2026, 11, 20, 12, 0, seconds));
+    expect(await retryPendingConversions(db, buzz.port, { now: at(59) })).toMatchObject({
+      retried: 0,
+    });
+    expect(await retryPendingConversions(db, buzz.port, { now: at(60) })).toMatchObject({
+      retried: 1,
+      paid: 1,
+    });
+  });
+
+  it('stops at the limit and when its time budget is spent', async () => {
+    const buzz = fakeBuzz();
+    await seedPlayer(pg, 1);
+    for (const key of ['k1', 'k2', 'k3'])
+      await pg.exec(
+        `INSERT INTO "KnightsGoldConversion" ("playerId","gold","buzz","status","externalTransactionId","createdAt") VALUES (1,5000,5,'pending','${key}','2026-12-20 12:00:00')`
+      );
+    const later = new Date(Date.UTC(2026, 11, 20, 13));
+
+    expect(await retryPendingConversions(db, buzz.port, { now: later, budgetMs: 0 })).toMatchObject(
+      { retried: 0 }
+    );
+    expect(await retryPendingConversions(db, buzz.port, { now: later, limit: 2 })).toMatchObject({
+      retried: 2,
+      paid: 2,
+    });
+    expect(await retryPendingConversions(db, buzz.port, { now: later, limit: 2 })).toMatchObject({
+      retried: 1,
+      paid: 1,
+    });
+  });
+
   it('leaves a recent attempt alone, and a held player pending until released', async () => {
     const buzz = fakeBuzz({ failFirst: true });
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -244,19 +402,17 @@ describe('retryPendingConversions', () => {
     await convertGold(db, buzz.port, { playerId: 1, now: NOW });
     const later = new Date(Date.now() + 3_600_000);
 
-    expect(await retryPendingConversions(db, buzz.port, { now: new Date(0) })).toEqual({
-      retried: 0,
-      paid: 0,
-    });
     await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt"='2026-12-19' WHERE "userId"=1`);
     expect(await retryPendingConversions(db, buzz.port, { now: later })).toEqual({
       retried: 0,
       paid: 0,
+      failed: 0,
     });
     await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt"=NULL WHERE "userId"=1`);
     expect(await retryPendingConversions(db, buzz.port, { now: later })).toEqual({
       retried: 1,
       paid: 1,
+      failed: 0,
     });
   });
 });

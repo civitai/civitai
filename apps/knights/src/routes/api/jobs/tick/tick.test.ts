@@ -6,8 +6,10 @@ const settleFinalItems = vi.hoisted(() => vi.fn());
 const retryPendingConversions = vi.hoisted(() => vi.fn());
 const runPostDetectionPass = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
-vi.mock('$lib/server/axiom', () => ({ logToAxiom: vi.fn() }));
-vi.mock('$lib/server/conversion/runtime', () => ({ getBuzzPort: () => ({}) }));
+const logToAxiom = vi.hoisted(() => vi.fn());
+const buzzConfigured = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
+vi.mock('$lib/server/conversion/runtime', () => ({ getBuzzPort: () => ({}), buzzConfigured }));
 vi.mock('$lib/server/conversion/convert', () => ({ retryPendingConversions }));
 vi.mock('$lib/server/conversion/pass', () => ({ runPostDetectionPass }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
@@ -27,8 +29,11 @@ beforeEach(() => {
   applyPendingResolutions.mockReset();
   settleFinalItems.mockReset();
   settleFinalItems.mockResolvedValue({ items: 0, votes: 0, failed: 0 });
+  logToAxiom.mockReset();
+  buzzConfigured.mockReset();
+  buzzConfigured.mockReturnValue(true);
   retryPendingConversions.mockReset();
-  retryPendingConversions.mockResolvedValue({ retried: 0, paid: 0 });
+  retryPendingConversions.mockResolvedValue({ retried: 0, paid: 0, failed: 0 });
   runPostDetectionPass.mockReset();
   runPostDetectionPass.mockResolvedValue({ ran: false });
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -60,6 +65,34 @@ describe('POST /api/jobs/tick', () => {
     expect(retryPendingConversions).toHaveBeenCalled();
     expect(runPostDetectionPass).toHaveBeenCalled();
     expect(response.status).toBe(500);
+  });
+
+  it('bounds the conversion retries by count and time', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+
+    await run();
+
+    expect(retryPendingConversions).toHaveBeenCalledWith(
+      {},
+      {},
+      expect.objectContaining({ limit: expect.any(Number), budgetMs: expect.any(Number) })
+    );
+  });
+
+  it('skips the conversion retries with a warning when Buzz is not configured, and still answers 200', async () => {
+    buzzConfigured.mockReturnValue(false);
+    escalateExpired.mockResolvedValue({ escalated: 1 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+
+    const response = await run();
+
+    expect(response.status).toBe(200);
+    expect(retryPendingConversions).not.toHaveBeenCalled();
+    expect(runPostDetectionPass).toHaveBeenCalled();
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'warning', name: 'knights-conversion-retries-skipped' })
+    );
   });
 
   it('answers 500 when the post-detection pass fails', async () => {

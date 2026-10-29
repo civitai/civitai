@@ -229,7 +229,6 @@ describe('labels', () => {
     expect(written.map((l) => l.value).sort()).toEqual(['4', '4', '8']);
     expect(written.every((l) => l.labellerKind === 'knight')).toBe(true);
     expect(written.every((l) => l.question === 'knights.image.nsfwLevel')).toBe(true);
-    // a label names the voter only through the store's own hash
     expect(written.every((l) => /^KnightsVote:\d+:[0-9a-f]{64}$/.test(l.sourceRef))).toBe(true);
     expect(await labelled(1)).toEqual([true, true]);
   });

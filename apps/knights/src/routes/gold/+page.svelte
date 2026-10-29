@@ -38,10 +38,17 @@
         <td class="muted">kept safe while your account is under review</td>
       </tr>
     {/if}
+    {#if balance.onItsWay > 0}
+      <tr>
+        <th scope="row">On its way</th>
+        <td>{gold(balance.onItsWay)}</td>
+        <td class="muted">a conversion Buzz has not confirmed yet; it is paid once</td>
+      </tr>
+    {/if}
     <tr>
       <th scope="row">Converted so far</th>
       <td>{gold(balance.converted)}</td>
-      <td></td>
+      <td class="muted">paid to you as Yellow Buzz</td>
     </tr>
   </tbody>
 </table>
@@ -56,13 +63,18 @@
   use:enhance={() => {
     converting = true;
     return async ({ update }) => {
-      await update();
-      converting = false;
+      try {
+        await update();
+      } finally {
+        converting = false;
+      }
     };
   }}
 >
   <button type="submit" disabled={!canConvert || converting}>
-    {#if canConvert}
+    {#if converting}
+      Converting…
+    {:else if canConvert}
       Convert to {balance.buzzOnConvert} Buzz
     {:else}
       Convert
@@ -70,7 +82,11 @@
   </button>
 </form>
 {#if form?.message}
-  <p role="status">{form.message}</p>
+  {#if form.ok}
+    <p role="status" class="ok">{form.message}</p>
+  {:else}
+    <p role="alert" class="problem">{form.message}</p>
+  {/if}
 {/if}
 
 <p><a href="/play">Back</a></p>
@@ -91,5 +107,12 @@
   }
   .frozen {
     color: var(--gold);
+  }
+  .ok {
+    color: var(--gold);
+  }
+  .problem {
+    color: #e5766a;
+    font-weight: bold;
   }
 </style>
