@@ -220,4 +220,17 @@ describe('video-enhance: scale factor remembered per source size', () => {
     expect(Number(val(store, 'scaleFactor')) * 1000).toBeLessThanOrEqual(2560);
     expectValid(store, 'larger video');
   });
+
+  it('refuses a factor that would exceed the ceiling for this source', () => {
+    const store = makeStore();
+    store.set({ workflow: 'vid2vid:upscale' });
+    store.set({
+      video: {
+        url: 'https://example.com/a.mp4',
+        metadata: { width: 1000, height: 562, fps: 30, duration: 5 },
+      },
+    });
+    store.set({ scaleFactor: 3 });
+    expect(store.validate().success).toBe(false);
+  });
 });

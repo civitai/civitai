@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { defineGraph } from 'form-graph';
+import { cachedFactory, defineGraph } from 'form-graph';
 import type { GenerationCtx } from '~/shared/generation/context';
 import { clampCorrect, optionFallback, VIDEO, sliderDef } from '../defs';
 import {
@@ -8,6 +8,10 @@ import {
 } from '~/shared/generation/preprocess-specs';
 
 const videoKindParamsSchema = z.record(z.string(), z.unknown());
+const videoKindParamsInput = videoKindParamsSchema.optional();
+
+const interpolationFactorInput = z.coerce.number().int().min(2).max(4).optional();
+const interpolationFactorOutput = z.number().int().min(2).max(4);
 
 /**
  * The video enhancement workflows. Standalone — no ecosystem; they operate on an
@@ -35,6 +39,27 @@ export type ScaleFactorOption = {
   targetHeight: number;
 };
 
+const SCALE_FACTOR_MIN = Math.min(...UPSCALE_MULTIPLIERS);
+const SCALE_FACTOR_MAX = Math.max(...UPSCALE_MULTIPLIERS);
+const SCALE_FACTOR_INPUT = z.coerce
+  .number()
+  .int()
+  .min(SCALE_FACTOR_MIN)
+  .max(SCALE_FACTOR_MAX)
+  .optional();
+// Keyed on the largest factor the source allows, not its raw size: the size is
+// request-supplied, and a cache keyed on it would grow without bound on the server.
+const scaleFactorOutput = cachedFactory((ceiling: number | null) =>
+  z
+    .number()
+    .int()
+    .min(SCALE_FACTOR_MIN)
+    .max(SCALE_FACTOR_MAX)
+    .refine((val) => ceiling == null || val <= ceiling, {
+      message: `Scale factor would exceed maximum output resolution of ${MAX_OUTPUT_RESOLUTION}px`,
+    })
+);
+
 export const videoUpscale = defineGraph<GenerationCtx>()
   .field('video', VIDEO)
   .field('scaleFactor', ({ video }) => {
@@ -54,18 +79,13 @@ export const videoUpscale = defineGraph<GenerationCtx>()
       ? maxDimension * Math.min(...UPSCALE_MULTIPLIERS) <= MAX_OUTPUT_RESOLUTION
       : true;
 
-    const min = Math.min(...UPSCALE_MULTIPLIERS);
-    const max = Math.max(...UPSCALE_MULTIPLIERS);
     return {
-      input: z.coerce.number().int().min(min).max(max).optional(),
-      output: z
-        .number()
-        .int()
-        .min(min)
-        .max(max)
-        .refine((val) => !maxDimension || val * maxDimension <= MAX_OUTPUT_RESOLUTION, {
-          message: `Scale factor would exceed maximum output resolution of ${MAX_OUTPUT_RESOLUTION}px`,
-        }),
+      input: SCALE_FACTOR_INPUT,
+      output: scaleFactorOutput(
+        maxDimension && maxDimension > 0
+          ? Math.min(Math.floor(MAX_OUTPUT_RESOLUTION / maxDimension), SCALE_FACTOR_MAX)
+          : null
+      ),
       default: defaultValue,
       // remembered per source size: a factor picked for a smaller video would
       // otherwise stick as a trusted value on a larger one and fail the
@@ -105,8 +125,8 @@ export const videoInterpolation = defineGraph<GenerationCtx>()
       : true;
 
     return {
-      input: z.coerce.number().int().min(2).max(4).optional(),
-      output: z.number().int().min(2).max(4),
+      input: interpolationFactorInput,
+      output: interpolationFactorOutput,
       default: defaultValue,
       // Unlike `scaleFactor` above, the fps ceiling is advisory here — it disables an
       // option in meta but the output does not refuse on it. So the only refusal is an
@@ -138,7 +158,7 @@ export const videoPreprocess = defineGraph<GenerationCtx>()
   })
   .field('preprocessResolution', sliderDef({ min: 64, max: 2048, step: 8, default: 512 }))
   .field('kindParams', ({ preprocessKind }) => ({
-    input: videoKindParamsSchema.optional(),
+    input: videoKindParamsInput,
     output: videoKindParamsSchema,
     default: {} as Record<string, unknown>,
     meta: {
