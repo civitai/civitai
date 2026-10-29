@@ -14,6 +14,8 @@ import {
   type Fixture,
 } from '~/server/page-data/__tests__/image-detail.fixtures';
 import { SHELL_PAGE_DATA_REQUIRED_KEYS } from '~/components/Shell/shell-page-data';
+import { imageDetailMainImageUrl } from '~/components/Image/DetailV2/image-detail-main-media';
+import { env } from '~/env/client';
 
 /**
  * `GET /api/page-data/images/[imageId]` is what a static shell of `/images/[imageId]` will fetch
@@ -136,7 +138,11 @@ function renderPage({ user, imageId, host }: Fixture) {
 
 async function fetchPageData(
   { user, imageId, host }: Fixture,
-  { method = 'GET', cookies = {} }: { method?: string; cookies?: Record<string, string> } = {}
+  {
+    method = 'GET',
+    cookies = {},
+    query = {},
+  }: { method?: string; cookies?: Record<string, string>; query?: Record<string, string> } = {}
 ) {
   const token = user ? `viewer-${user.id}` : undefined;
   if (user && token) h.tokens.set(token, user);
@@ -146,7 +152,7 @@ async function fetchPageData(
     headers: { host },
     // The session cookie first: the session stub reads the first cookie value.
     cookies: { ...(token ? { [sessionCookieName()]: token } : {}), ...cookies },
-    query: { imageId: String(imageId) },
+    query: { imageId: String(imageId), ...query },
   };
   const res = fakeResponse();
   await handler(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
@@ -187,6 +193,7 @@ describe('page-data parity with getServerSideProps', () => {
         'flags',
         'following',
         'liveNow',
+        'mainImageUrl',
         'navBanners',
         'region',
         'session',
@@ -328,5 +335,145 @@ describe('page-data keeps the shell route cookie in step with shell-images', () 
     );
     expect(res.statusCode).toBe(200);
     expect(routeCookies(res)).toEqual([CLEAR]);
+  });
+});
+
+/**
+ * The page data names the URL of the page's main `<img>` for THIS viewer, for the shell's head
+ * script to preload — and nothing when the page will not request one on its first render.
+ * Expected URLs are written out, not computed: the chain that builds them (`EdgeMedia` →
+ * `EdgeImage` → `useEdgeUrl`) is what is under test. That the rendered `<img>` requests the same
+ * URL is pinned by `ImageDetailCarousel.mainImageUrl.browser.test.tsx`.
+ */
+describe('page-data main image preload URL', () => {
+  const edge = (...segments: string[]) =>
+    [env.NEXT_PUBLIC_IMAGE_LOCATION, ...segments].filter(Boolean).join('/');
+  it('a PG image: the URL of its original, under its own name, as the `<img>` asks for it', async () => {
+    const { res, body } = await fetchPageData({
+      user: USERS.viewer,
+      imageId: 106,
+      host: 'civitai.com',
+    });
+    expect(res.statusCode).toBe(200);
+    expect(body?.mainImageUrl).toBe(edge('media-106', 'original=true', 'Sunset Over Hills.jpeg'));
+    // And it is what the page's own builder gives that image (the fixture's `image.get` answer).
+    expect(body?.mainImageUrl).toBe(
+      imageDetailMainImageUrl({
+        id: 106,
+        url: 'media-106',
+        name: 'Sunset Over Hills.png',
+        type: 'image',
+      })
+    );
+  });
+
+  it('a PG image with no name is named by its id', async () => {
+    const { body } = await fetchPageData({ user: USERS.viewer, imageId: 103, host: 'civitai.com' });
+    expect(body?.mainImageUrl).toBe(edge('media-103', 'original=true', '103.jpeg'));
+  });
+
+  it('a PG image for a signed-out viewer (the gate shows PG to everyone)', async () => {
+    const { body } = await fetchPageData({ user: null, imageId: 106, host: 'civitai.com' });
+    expect(body?.mainImageUrl).toBe(edge('media-106', 'original=true', 'Sunset Over Hills.jpeg'));
+  });
+
+  it('a video: no URL, as the page renders a <video> and no <img>', async () => {
+    const { res, body } = await fetchPageData({
+      user: USERS.viewer,
+      imageId: 107,
+      host: 'civitai.com',
+    });
+    expect(res.statusCode).toBe(200);
+    // The same rating as 106, which has a URL: only the media type differs.
+    expect(body?.mainImageUrl).toBeUndefined();
+    expect(jsonRoundTrip(body)).not.toHaveProperty('mainImageUrl');
+  });
+
+  it.each([
+    ['an R image on .com (the gate redirects)', { user: USERS.viewer, imageId: 101 }],
+    ['an R image on .com, to its owner', { user: USERS.owner, imageId: 101 }],
+    ['a POI image to a viewer (NotFound)', { user: USERS.viewer, imageId: 102 }],
+    ['a PG13 image to a signed-out viewer (login gate)', { user: null, imageId: 109 }],
+    ['an image the viewer cannot get (blocked)', { user: USERS.blockedByOwner, imageId: 103 }],
+    ['a PG image a contest forces to R, signed in', { user: USERS.viewer, imageId: 108 }],
+  ] as const)('none for %s', async (_, fixture) => {
+    const { res, body } = await fetchPageData({ ...fixture, host: 'civitai.com' });
+    expect(res.statusCode).toBe(200);
+    expect(body?.mainImageUrl).toBeUndefined();
+  });
+
+  it('none for an R image on .red: the viewer’s blur settings decide, and they are not known', async () => {
+    const { body } = await fetchPageData({ user: USERS.viewer, imageId: 101, host: 'civitai.red' });
+    expect(body?.mainImageUrl).toBeUndefined();
+    // Control: on .red a safe image does get one.
+    const safe = await fetchPageData({ user: USERS.viewer, imageId: 106, host: 'civitai.red' });
+    expect(safe.body?.mainImageUrl).toBe(
+      edge('media-106', 'original=true', 'Sunset Over Hills.jpeg')
+    );
+  });
+
+  it.each([
+    ['a POI image, to its owner', { user: USERS.owner, imageId: 102 }, '102.jpeg', 'media-102'],
+    [
+      'a POI image, to a moderator',
+      { user: USERS.moderator, imageId: 102 },
+      '102.jpeg',
+      'media-102',
+    ],
+    ['a PG13 image, signed in', { user: USERS.viewer, imageId: 109 }, '109.jpeg', 'media-109'],
+    // Signed out, the contest details are not prefetched, so the page's first render gates on
+    // the image's own rating, and requests it.
+    [
+      'a PG image a contest forces to R, signed out',
+      { user: null, imageId: 108 },
+      '108.jpeg',
+      'media-108',
+    ],
+  ] as const)('a URL for %s', async (_, fixture, name, key) => {
+    const { body } = await fetchPageData({ ...fixture, host: 'civitai.com' });
+    expect(body?.mainImageUrl).toBe(edge(key, 'original=true', name));
+  });
+});
+
+/**
+ * With feed filters in its query the page shows its image from `image.getInfinite`, whose rows
+ * (from the index) carry no `name` — so their URL is not the one built from `image.get`, and a
+ * preload of it would be a second full download. The endpoint withholds the URL on the page's own
+ * rule (`hasImageDetailQueryFilters`), and in storyline mode.
+ */
+describe('page-data main image preload URL and the page query', () => {
+  const viewer106 = { user: USERS.viewer, imageId: 106, host: 'civitai.com' } as const;
+  const URL_106 = [
+    env.NEXT_PUBLIC_IMAGE_LOCATION,
+    'media-106',
+    'original=true',
+    'Sunset Over Hills.jpeg',
+  ]
+    .filter(Boolean)
+    .join('/');
+
+  it('control: no query, a URL', async () => {
+    const { body } = await fetchPageData(viewer106);
+    expect(body?.mainImageUrl).toBe(URL_106);
+  });
+
+  it.each([
+    ['a feed filter (?modelVersionId=1)', { modelVersionId: '1' }],
+    ['a post (?postId=5)', { postId: '5' }],
+    ['a sort (?sort=Newest)', { sort: 'Newest' }],
+    ['storyline mode (?storylineChapter=3)', { storylineChapter: '3' }],
+  ])('none for %s', async (_, query) => {
+    const { res, body } = await fetchPageData(viewer106, { query });
+    expect(res.statusCode).toBe(200);
+    expect(body?.mainImageUrl).toBeUndefined();
+  });
+
+  it.each([
+    // The page's parse drops a query it cannot read whole, so the page shows `image.get`'s image.
+    ['a junk postId (?postId=null)', { postId: 'null' }],
+    ['a param the feed does not read (?active=true)', { active: 'true' }],
+  ])('a URL for %s, as the page shows the image.get row', async (_, query) => {
+    const { body } = await fetchPageData(viewer106, { query });
+    expect(body?.mainImageUrl).toBe(URL_106);
   });
 });
