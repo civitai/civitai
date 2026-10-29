@@ -1,5 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { invalidateAll } from '$app/navigation';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
@@ -27,9 +28,9 @@
 
   let level = $state<number | null>(null);
   const add = new FormState({
-    reload: true,
     onSuccess: () => {
       level = null;
+      void invalidateAll();
       toast.success('Added to the core set');
     },
   });

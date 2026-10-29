@@ -260,6 +260,20 @@ describe('updateCoreItem answer record', () => {
   });
 });
 
+describe('retireReference scope', () => {
+  it.each([
+    ['a hidden check', { pool: 'hiddenCheck' }],
+    ['a pending item, which would skip the spot-check', { status: 'pending' }],
+  ])('leaves %s alone', async (_label, o) => {
+    await seedImage(1);
+    const id = await seedRef(1, o);
+    const before = await row(id);
+
+    expect(await retireReference(id)).toMatchObject({ ok: false });
+    expect(await row(id)).toEqual(before);
+  });
+});
+
 describe('retireReference', () => {
   it('retires a core or fresh item and takes it out of the Trials pool', async () => {
     await seedImage(1);

@@ -181,7 +181,7 @@ export async function addCoreImage(input: {
   const answer = String(input.level);
   const existing = await dbWrite
     .selectFrom('KnightsReferenceImage')
-    .select(['id', 'pool', 'source', 'status'])
+    .select(['id', 'pool', 'source', 'status', 'answer'])
     .where('imageId', '=', input.imageId)
     .executeTakeFirst();
   if (existing?.pool === REFERENCE_POOL.hiddenCheck) {
@@ -192,7 +192,8 @@ export async function addCoreImage(input: {
   }
 
   if (existing) {
-    await dbWrite
+    // Guarded by the state just read, so a ruling or edit that landed since is not overwritten.
+    const converted = await dbWrite
       .updateTable('KnightsReferenceImage')
       .set({
         source: REFERENCE_SOURCE.core,
@@ -203,8 +204,14 @@ export async function addCoreImage(input: {
         ...keepCountsIf(answer),
       })
       .where('id', '=', existing.id)
-      .execute();
-    return { ok: true };
+      .where('pool', '=', REFERENCE_POOL.trials)
+      .where('source', '=', existing.source)
+      .where('status', '=', existing.status)
+      .where('answer', '=', existing.answer)
+      .executeTakeFirst();
+    return Number(converted.numUpdatedRows) > 0
+      ? { ok: true }
+      : { ok: false, error: 'This image was changed by another moderator. Reload the page.' };
   }
   const inserted = await dbWrite
     .insertInto('KnightsReferenceImage')
@@ -223,7 +230,11 @@ export async function addCoreImage(input: {
     .executeTakeFirst();
   return inserted
     ? { ok: true }
-    : { ok: false, error: 'Another moderator just added this image. Reload the page.' };
+    : {
+        ok: false,
+        error:
+          'This image was just added elsewhere, by another moderator or the harvest. Reload the page.',
+      };
 }
 
 export async function updateCoreItem(input: {
@@ -251,7 +262,8 @@ export async function retireReference(id: number): Promise<Outcome> {
     .updateTable('KnightsReferenceImage')
     .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(new Date()) })
     .where('id', '=', id)
-    .where('status', '!=', REFERENCE_STATUS.retired)
+    .where('pool', '=', REFERENCE_POOL.trials)
+    .where('status', '=', REFERENCE_STATUS.active)
     .executeTakeFirst();
   return Number(updated.numUpdatedRows) > 0 ? { ok: true } : { ok: false, error: GONE };
 }
