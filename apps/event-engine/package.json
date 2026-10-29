@@ -52,6 +52,7 @@
     "tsconfig-paths": "^4.2.0"
   },
   "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "^0.2.6",
     "@faker-js/faker": "^8.4.1",
     "@types/node": "^20.10.6",
     "@types/pg": "^8.10.9",

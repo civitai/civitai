@@ -23,8 +23,6 @@ export const EdgeImage = forwardRef<HTMLImageElement, EdgeImageProps>(
     forwardedRef
   ) => {
     // const ref = useRef<HTMLImageElement>(null);
-    // `resolveEdgeImageUrl` (`edge-url`) is this line outside React: `useEdgeUrl` is a pure
-    // delegate, so a caller that must know this `<img>`'s request ahead of it gets the same URL.
     const { url, srcSet } = useEdgeUrl(src, edgeImageUrlOptions(options), hiDpi);
 
     // useImperativeHandle(forwardedRef, () => ref.current as HTMLImageElement);

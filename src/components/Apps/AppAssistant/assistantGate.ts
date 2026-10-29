@@ -8,10 +8,13 @@ import {
   CREATE_APP,
   REPORT_READY,
   SET_CHECKLIST,
+  SUBMIT_FOR_REVIEW,
   USE_OPEN_APP,
   createGateCore,
   normalizeChecklist,
 } from '@civitai/app-assistant';
+import type { SubmitCardsDeps } from '~/components/Apps/AppAssistant/assistantSubmit';
+import { createSubmitCards } from '~/components/Apps/AppAssistant/assistantSubmit';
 
 // The gate's rules live in `@civitai/app-assistant`, so the server runner applies the same ones; the
 // page adds what only it can do: the checklist and ready cards, and Build it.
@@ -21,6 +24,7 @@ export {
   REPORT_READY,
   SANDBOX_SERVER_ID,
   SET_CHECKLIST,
+  SUBMIT_FOR_REVIEW,
   TURN_LIMIT_MESSAGE,
   TURN_LIMIT_REFUSAL,
   checkKindOf,
@@ -60,6 +64,7 @@ export function createAssistantGate({
   onReply,
   onBuild,
   currentApp,
+  submit,
   openApp,
 }: {
   /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
@@ -70,9 +75,12 @@ export function createAssistantGate({
   onBuild?: () => void;
   /** The app open now; a checklist belongs to the app it was shown for. */
   currentApp?: () => string | null;
+  /** What the Submit for review button does; without it, a submit_for_review call shows no button. */
+  submit?: SubmitCardsDeps;
   /** The open app's key: a chat may change it only once it made or chose it (`createGateCore`). */
   openApp?: () => string | null;
 } = {}): AssistantGate {
+  const submitCards = submit ? createSubmitCards(submit) : null;
   let buildButtons: HTMLButtonElement[] = [];
   const removeButtons = () => {
     for (const button of buildButtons) button.remove();
@@ -83,6 +91,7 @@ export function createAssistantGate({
     refuse,
     onReply: () => {
       removeButtons();
+      submitCards?.withdraw();
       onReply?.();
     },
     currentApp,
@@ -92,6 +101,7 @@ export function createAssistantGate({
   const answered = () => {
     core.clearAwaiting();
     removeButtons();
+    submitCards?.withdraw();
   };
 
   const set_checklist: ChatTool = {
@@ -115,6 +125,10 @@ export function createAssistantGate({
   };
 
   const report_ready: ChatTool = { ...core.tools[REPORT_READY], render: renderReady };
+  const submit_for_review: ChatTool = {
+    ...core.tools[SUBMIT_FOR_REVIEW],
+    ...(submitCards ? { render: submitCards.render } : {}),
+  };
 
   return {
     reset: core.reset,
@@ -122,10 +136,18 @@ export function createAssistantGate({
     appChanged: (app) => {
       const awaiting = core.awaiting();
       if (awaiting && app !== awaiting.app) answered();
+      submitCards?.appChanged(app);
     },
     beforeToolCall: core.beforeToolCall,
-    onToolResult: core.onToolResult,
-    tools: { [SET_CHECKLIST]: set_checklist, [REPORT_READY]: report_ready },
+    onToolResult: (result) => {
+      core.onToolResult(result);
+      submitCards?.onToolResult(result, currentApp?.() ?? null);
+    },
+    tools: {
+      [SET_CHECKLIST]: set_checklist,
+      [REPORT_READY]: report_ready,
+      [SUBMIT_FOR_REVIEW]: submit_for_review,
+    },
     restoringChoices: (tools, chatId) => {
       const out = { ...tools };
       for (const name of [CREATE_APP, USE_OPEN_APP]) {

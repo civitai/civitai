@@ -2,17 +2,12 @@
 import { act, createElement } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ShellStatus } from '~/components/Shell/shell-bootstrap-context';
 
 /**
- * `FaroProvider`'s late resource_timing attach, under REAL React effects. Its sibling
- * `faroProviderSession.test.ts` replaces `useEffect` with a synchronous call, which runs every
- * effect on every render and so cannot see an effect's dependency array — and the dependency
- * array is the fix: the attach has to re-run when `viewerFlagsReady` turns true, which happens on
- * a RE-render of an already-mounted provider. This mounts it with `react-dom/client`, then
- * re-renders it, exactly as `_app` does when a shell's page data is adopted.
- *
- * Mocked around the component, as in the sibling: the Faro SDK, the env module, the flags hook and
- * the two instrumentation modules.
+ * Real React effects, not the sibling suite's synchronous `useEffect` stub: that stub runs every
+ * effect on every render, so it cannot see the attach effect's dependency array, which must re-run
+ * it when the mounted provider re-renders with the shell status turned `ready`.
  */
 
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -82,20 +77,27 @@ afterEach(() => {
   container?.remove();
 });
 
-/** A fresh module generation (init is one-shot per module) and a mounted root. */
+/**
+ * A fresh module generation (init is one-shot per module) and a mounted root. Each render puts the
+ * provider inside `ShellBootstrapProvider` with the given status, as `_app` does on a shell boot,
+ * or with none outside it, as on every other render.
+ */
 async function mountProvider() {
   vi.resetModules();
   const { FaroProvider } = await import('~/components/Faro/FaroProvider');
+  const { ShellBootstrapProvider } = await import('~/components/Shell/shell-bootstrap-context');
   root = createRoot(container as HTMLElement);
-  return (viewerFlagsReady: boolean) =>
+  return (shellStatus?: ShellStatus) =>
     act(() => {
+      const provider = createElement(FaroProvider, {
+        region: 'US',
+        shell: !!shellStatus,
+        signedIn: true,
+      });
       root?.render(
-        createElement(FaroProvider, {
-          region: 'US',
-          shell: true,
-          signedIn: true,
-          viewerFlagsReady,
-        })
+        shellStatus
+          ? createElement(ShellBootstrapProvider, { status: shellStatus }, provider)
+          : provider
       );
     });
 }
@@ -105,28 +107,47 @@ describe('FaroProvider — a shell boot’s resource_timing attach, with real ef
     const render = await mountProvider();
 
     // Boot: the flags are not the viewer's yet, so the cohort is undecided.
-    render(false);
+    render('pending');
     expect(initializeFaro).toHaveBeenCalledTimes(1);
     expect(resourceTimingAtInit()).toBe(0);
     expect(faro.instrumentations.add).not.toHaveBeenCalled();
 
     // Page data adopted: the same mounted provider re-renders with the viewer's flags.
-    render(true);
+    render('ready');
     expect(faro.instrumentations.add).toHaveBeenCalledTimes(1);
     expect(faro.instrumentations.add).toHaveBeenCalledWith(RESOURCE_TIMING);
 
     // Later renders (client navigation) neither re-init nor add it again.
-    render(true);
-    render(true);
+    render('ready');
+    render('ready');
     expect(initializeFaro).toHaveBeenCalledTimes(1);
     expect(faro.instrumentations.add).toHaveBeenCalledTimes(1);
   });
 
-  it('control: flags that are the viewer’s from the start attach it at init, not late', async () => {
+  it('a shell whose page data failed never gets it', async () => {
     const render = await mountProvider();
-    render(true);
-    expect(resourceTimingAtInit()).toBe(1);
-    render(true);
+    render('pending');
+    render('failed');
+    render('failed');
+    expect(initializeFaro).toHaveBeenCalledTimes(1);
+    expect(resourceTimingAtInit()).toBe(0);
     expect(faro.instrumentations.add).not.toHaveBeenCalled();
   });
+
+  it.each([
+    ['not a shell boot', undefined, 1],
+    ['a shell whose page data was adopted', 'ready', 1],
+    ['a shell still waiting for its page data', 'pending', 0],
+    ['a shell whose page data failed', 'failed', 0],
+  ] as const)(
+    'mounted as %s (status %s): %i resource_timing at init',
+    async (_, shellStatus, atInit) => {
+      const render = await mountProvider();
+      render(shellStatus);
+      render(shellStatus);
+      expect(initializeFaro).toHaveBeenCalledTimes(1);
+      expect(resourceTimingAtInit()).toBe(atInit);
+      expect(faro.instrumentations.add).not.toHaveBeenCalled();
+    }
+  );
 });

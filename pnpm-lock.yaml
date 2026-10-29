@@ -323,9 +323,6 @@ importers:
       '@trpc/server':
         specifier: ^11.17.0
         version: 11.17.0(typescript@5.9.2)
-      '@typescript/analyze-trace':
-        specifier: ^0.10.1
-        version: 0.10.1
       algoliasearch:
         specifier: ^4.23.3
         version: 4.25.2
@@ -654,9 +651,6 @@ importers:
         specifier: ^4.3.7
         version: 4.5.7(@types/react@18.0.14)(immer@9.0.21)(react@18.3.1)
     devDependencies:
-      '@anthropic-ai/claude-agent-sdk':
-        specifier: ^0.2.6
-        version: 0.2.6(zod@4.0.17)
       '@electric-sql/pglite':
         specifier: ^0.4.6
         version: 0.4.6
@@ -753,6 +747,9 @@ importers:
       '@typescript-eslint/parser':
         specifier: ^5.33.0
         version: 5.62.0(eslint@8.57.1)(typescript@5.9.2)
+      '@typescript/analyze-trace':
+        specifier: ^0.10.1
+        version: 0.10.1
       '@vitest/browser':
         specifier: ^4.1.11
         version: 4.1.11(bufferutil@4.0.9)(msw@2.12.10(@types/node@24.13.3)(typescript@5.9.2))(utf-8-validate@5.0.10)(vite@6.4.3(@types/node@24.13.3)(jiti@2.7.0)(lightningcss@1.32.0)(sass@1.90.0)(sugarss@5.0.1(postcss@8.5.6))(terser@5.51.2)(tsx@4.20.3)(yaml@2.8.1))(vitest@4.1.11)
@@ -831,9 +828,6 @@ importers:
       tailwindcss:
         specifier: ^3.4.3
         version: 3.4.17(ts-node@10.9.2(@swc/core@1.15.11(@swc/helpers@0.5.23))(@types/node@24.13.3)(typescript@5.9.2))
-      ts-node:
-        specifier: ^10.9.1
-        version: 10.9.2(@swc/core@1.15.11(@swc/helpers@0.5.23))(@types/node@24.13.3)(typescript@5.9.2)
       tsx:
         specifier: ^4.19.2
         version: 4.20.3
@@ -1135,6 +1129,9 @@ importers:
         specifier: ^4.2.0
         version: 4.2.0
     devDependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: ^0.2.6
+        version: 0.2.6(zod@4.6.7)
       '@faker-js/faker':
         specifier: ^8.4.1
         version: 8.4.1
@@ -12718,9 +12715,9 @@ snapshots:
 
   '@alloc/quick-lru@5.2.0': {}
 
-  '@anthropic-ai/claude-agent-sdk@0.2.6(zod@4.0.17)':
+  '@anthropic-ai/claude-agent-sdk@0.2.6(zod@4.6.7)':
     dependencies:
-      zod: 4.0.17
+      zod: 4.6.7
     optionalDependencies:
       '@img/sharp-darwin-arm64': 0.33.5
       '@img/sharp-darwin-x64': 0.33.5
@@ -13583,6 +13580,7 @@ snapshots:
   '@cspotcode/source-map-support@0.8.1':
     dependencies:
       '@jridgewell/trace-mapping': 0.3.9
+    optional: true
 
   '@csstools/color-helpers@6.0.2': {}
 
@@ -14391,6 +14389,7 @@ snapshots:
     dependencies:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
+    optional: true
 
   '@js-sdsl/ordered-map@4.4.2': {}
 
@@ -16878,13 +16877,17 @@ snapshots:
     dependencies:
       typescript: 5.9.3
 
-  '@tsconfig/node10@1.0.11': {}
+  '@tsconfig/node10@1.0.11':
+    optional: true
 
-  '@tsconfig/node12@1.0.11': {}
+  '@tsconfig/node12@1.0.11':
+    optional: true
 
-  '@tsconfig/node14@1.0.3': {}
+  '@tsconfig/node14@1.0.3':
+    optional: true
 
-  '@tsconfig/node16@1.0.4': {}
+  '@tsconfig/node16@1.0.4':
+    optional: true
 
   '@turbo/darwin-64@2.9.18':
     optional: true
@@ -17964,7 +17967,8 @@ snapshots:
       tar-stream: 3.1.7
       zip-stream: 5.0.2
 
-  arg@4.1.3: {}
+  arg@4.1.3:
+    optional: true
 
   arg@5.0.2: {}
 
@@ -18670,7 +18674,8 @@ snapshots:
     dependencies:
       capture-stack-trace: 1.0.2
 
-  create-require@1.1.1: {}
+  create-require@1.1.1:
+    optional: true
 
   crelt@1.0.6: {}
 
@@ -21347,7 +21352,8 @@ snapshots:
     dependencies:
       semver: 7.8.5
 
-  make-error@1.3.6: {}
+  make-error@1.3.6:
+    optional: true
 
   mantine-react-table@2.0.0-beta.9(@mantine/core@7.17.8(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(@types/react@18.0.14)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@mantine/dates@7.17.8(@mantine/core@7.17.8(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(@types/react@18.0.14)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(dayjs@1.11.13)(react-dom@18.3.1(react@18.3.1))(react@18.3.1))(@mantine/hooks@7.17.8(patch_hash=b45a85bd4d007c796b93eb90a75d3234b81cce13964921b25721734c7ed79f64)(react@18.3.1))(@tabler/icons-react@3.34.1(react@18.3.1))(clsx@2.1.1)(dayjs@1.11.13)(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
@@ -24745,7 +24751,7 @@ snapshots:
       '@tsconfig/node14': 1.0.3
       '@tsconfig/node16': 1.0.4
       '@types/node': 20.19.9
-      acorn: 8.15.0
+      acorn: 8.18.0
       acorn-walk: 8.3.4
       arg: 4.1.3
       create-require: 1.1.1
@@ -24766,7 +24772,7 @@ snapshots:
       '@tsconfig/node14': 1.0.3
       '@tsconfig/node16': 1.0.4
       '@types/node': 20.19.9
-      acorn: 8.15.0
+      acorn: 8.18.0
       acorn-walk: 8.3.4
       arg: 4.1.3
       create-require: 1.1.1
@@ -24787,7 +24793,7 @@ snapshots:
       '@tsconfig/node14': 1.0.3
       '@tsconfig/node16': 1.0.4
       '@types/node': 24.13.3
-      acorn: 8.15.0
+      acorn: 8.18.0
       acorn-walk: 8.3.4
       arg: 4.1.3
       create-require: 1.1.1
@@ -24798,6 +24804,7 @@ snapshots:
       yn: 3.1.1
     optionalDependencies:
       '@swc/core': 1.15.11(@swc/helpers@0.5.23)
+    optional: true
 
   tsc-alias@1.9.1:
     dependencies:
@@ -25205,7 +25212,8 @@ snapshots:
 
   uuid@9.0.1: {}
 
-  v8-compile-cache-lib@3.0.1: {}
+  v8-compile-cache-lib@3.0.1:
+    optional: true
 
   validate-npm-package-license@3.0.4:
     dependencies:
@@ -25735,7 +25743,8 @@ snapshots:
 
   ylru@1.4.0: {}
 
-  yn@3.1.1: {}
+  yn@3.1.1:
+    optional: true
 
   yocto-queue@0.1.0: {}
 

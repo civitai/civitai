@@ -21,8 +21,6 @@ import { isDefined } from '~/utils/type-guards';
 import { isViewer, isViewerUsername } from '~/utils/is-viewer';
 import { imagesQueryParamSchema } from '~/components/Image/image-query-params';
 
-// Moved to `image-query-params` (React-free, so a server module can parse a page's query the
-// way the page does); re-exported so every existing consumer is unaffected.
 export {
   imagesQueryParamSchema,
   parseImageQueryParams,

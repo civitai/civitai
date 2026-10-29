@@ -28,8 +28,32 @@ const pageData = (extra: Record<string, unknown> = {}) => ({
   ...extra,
 });
 
+// Every promise the script can be waiting on: each fetch answer, and each body read off a
+// response (or a clone of it). `settle` waits for all of them.
+let pending: Promise<unknown>[] = [];
+
+function track(response: Response): Response {
+  const { clone, json, text } = response;
+  response.clone = () => track(clone.call(response));
+  response.json = () => {
+    const read = json.call(response);
+    pending.push(read);
+    return read;
+  };
+  response.text = () => {
+    const read = text.call(response);
+    pending.push(read);
+    return read;
+  };
+  return response;
+}
+
 function stubFetch(respond: () => Promise<Response>) {
-  const fetchMock = vi.fn(respond);
+  const fetchMock = vi.fn(() => {
+    const answer = respond().then(track);
+    pending.push(answer);
+    return answer;
+  });
   vi.stubGlobal('fetch', fetchMock);
   return fetchMock;
 }
@@ -39,14 +63,26 @@ const json = (body: unknown, status = 200) =>
 
 const preloads = () => Array.from(document.head.querySelectorAll('link[rel="preload"]'));
 
-/** Lets the script's promise chain (fetch → clone → json → append) run out. */
-const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+/**
+ * Waits until the script's chain (fetch → clone → json → append) has run out, however slow the
+ * box. The script attaches its reactions to each tracked promise before `settle` does, so once
+ * `allSettled` over them resolves the script's callbacks have run; a callback that starts a
+ * further read adds to `pending`, so loop until a pass adds none.
+ */
+async function settle() {
+  let seen = 0;
+  while (seen < pending.length) {
+    seen = pending.length;
+    await Promise.allSettled(pending);
+  }
+}
 
 function runScript() {
   new Function(shellPageDataPrefetchScript())();
 }
 
 beforeEach(() => {
+  pending = [];
   window.history.replaceState(null, '', '/images/123');
 });
 

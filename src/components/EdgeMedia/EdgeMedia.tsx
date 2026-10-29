@@ -86,7 +86,6 @@ export function EdgeMedia({
 
   const inferredType = getInferredMediaType(src, { name, type });
 
-  // Pure, in `edge-url`, so a caller outside React can build the request this element makes.
   const options = edgeMediaOptions({
     name,
     width,

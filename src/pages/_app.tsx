@@ -367,13 +367,10 @@ function MyApp(props: CustomAppProps) {
                         by design; pinned by
                         src/tests/pages/app-region-optional-chain.test.ts. */}
                     {/* RUM page attributes: see src/utils/faro/pageAttributes.ts. */}
-                    {/* `viewerFlagsReady`: a shell boot's flags are user-less until its page
-                        data is adopted, and the resource_timing cohort is per user. */}
                     <FaroProvider
                       region={region?.countryCode}
                       shell={bootedShell}
                       signedIn={bootedSignedIn}
-                      viewerFlagsReady={!shellStatus || shellStatus === 'ready'}
                     />
                     <GoogleAnalytics />
                     <AccountProvider>
@@ -765,6 +762,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     // jose decode per request. Deleting safely needs the endpoint to signal a degraded
     // lookup distinctly from "no session".
     hasAuthCookie = false;
+  }
+
+  // Skipped when degraded: the viewer is unknown, so the cookie must stay as it is.
+  if (typeof window === 'undefined') {
+    const { res } = appContext.ctx;
+    if (res && !settingsDegraded) {
+      const { syncTrpcPoolCookie } = await import('~/server/trpc/trpc-pool-cookie');
+      syncTrpcPoolCookie(request, res, !!session?.user && flags.trpcPoolRoute === true);
+    }
   }
 
   // Auth route guards, moved off the edge middleware (the thin hub civ-token can't resolve the full user in the
