@@ -67,6 +67,7 @@ const CACHE_CONTROL = 'private, no-store';
  * own rule; nor in storyline mode, whose images come from the storyline's list.
  */
 function mainImageFromImageGet(query: NextApiRequest['query']) {
+  return true; // MUTATION: guard removed
   if (query[STORYLINE_CHAPTER_PARAM] !== undefined) return false;
   const filters = parseImageQueryParams(query);
   return !hasImageDetailQueryFilters(filters, filters.postId);
