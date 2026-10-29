@@ -4,6 +4,7 @@ import { ModalsProvider } from '@mantine/modals';
 import type { ReactNode } from 'react';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import { gateToolSet } from '@civitai/components-chat/core';
+import { openAppNotChosen } from '@civitai/app-assistant';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
 import type * as NotificationsMod from '~/utils/notifications';
@@ -2197,6 +2198,7 @@ describe('AppAssistantWorkspace tool gate', () => {
       'set_checklist',
       'start_preview',
       'stop_preview',
+      'use_open_app',
     ]);
     expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse');
   });
@@ -2231,6 +2233,30 @@ describe('AppAssistantWorkspace tool gate', () => {
     await openFromSwitcher('app-bbbb');
     await vi.waitFor(() =>
       expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse')
+    );
+  });
+
+  test('a new chat beside the open app may not change it until it chooses it, and another app is not chosen', async () => {
+    await mount();
+    await openFirst();
+    const write = (chat: typeof conv) =>
+      m.chat!.beforeToolCall!('sandbox__write_file', { path: 'app-aaaa/src/block.ts' }, chat);
+    // The page hands the gate the open app: the change is refused, naming it.
+    expect(write(conv)).toEqual({ refuse: openAppNotChosen('app-aaaa') });
+    // Choosing it (the user asked to change it) lets the chat change it.
+    const chosen = await m.chat!.tools.use_open_app.execute({ app: 'app-aaaa' }, ctx);
+    m.chat!.onToolResult!({ name: 'use_open_app', input: {}, output: chosen, isError: false });
+    expect(write(conv)).toEqual({ allow: true });
+    // Another chat (New chat) chose nothing.
+    expect(write({ conversationId: 'c-new', reply: 1 })).toEqual({
+      refuse: openAppNotChosen('app-aaaa'),
+    });
+    // The user switches app: this chat chose the first one, not this one.
+    await openFromSwitcher('app-bbbb');
+    await vi.waitFor(() =>
+      expect(m.chat!.beforeToolCall!('sandbox__write_file', {}, { ...conv, reply: 2 })).toEqual({
+        refuse: openAppNotChosen('app-bbbb'),
+      })
     );
   });
 
@@ -2402,6 +2428,7 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
       'set_checklist',
       'start_preview',
       'stop_preview',
+      'use_open_app',
     ]);
   });
 

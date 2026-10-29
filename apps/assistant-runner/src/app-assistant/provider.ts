@@ -86,6 +86,7 @@ const REPORTED_OUTPUT_CHARS = 200;
  */
 const RUNNER_PAGE_TOOLS = [
   'create_app',
+  'use_open_app',
   'set_checklist',
   'report_ready',
   'start_preview',
@@ -210,6 +211,8 @@ export class AppAssistantTools implements ToolProvider {
         currentApp: () => sandbox.active?.name ?? null,
         // Each checklist says which app it was for, so a later reply carries only this app's.
         checklistApp: () => sandbox.active?.app ?? null,
+        // A chat changes only the app it made or chose: a new chat never builds over the open one.
+        openApp: () => sandbox.active?.app ?? null,
       });
       core.restore({
         conversationId,

@@ -49,6 +49,7 @@ export function createAssistantGate({
   onReply,
   onBuild,
   currentApp,
+  openApp,
 }: {
   /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
   refuse?: (name: string) => string | null;
@@ -58,6 +59,8 @@ export function createAssistantGate({
   onBuild?: () => void;
   /** The app open now; a checklist belongs to the app it was shown for. */
   currentApp?: () => string | null;
+  /** The open app's key: a chat may change it only once it made or chose it (`createGateCore`). */
+  openApp?: () => string | null;
 } = {}): AssistantGate {
   let buildButtons: HTMLButtonElement[] = [];
   const removeButtons = () => {
@@ -72,6 +75,7 @@ export function createAssistantGate({
       onReply?.();
     },
     currentApp,
+    openApp,
   });
 
   const answered = () => {

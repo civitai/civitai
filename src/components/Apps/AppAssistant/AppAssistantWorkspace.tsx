@@ -405,6 +405,8 @@ export function AppAssistantWorkspace({
         onReply: appTools.newReply,
         onBuild: () => void buildRef.current(),
         currentApp: () => live.current.active?.name ?? null,
+        // A chat changes only the app it made or chose: a new chat never builds over the open one.
+        openApp: () => live.current.active?.app ?? null,
       }),
     [appTools]
   );
