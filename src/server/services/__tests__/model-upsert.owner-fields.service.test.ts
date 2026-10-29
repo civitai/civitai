@@ -123,6 +123,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/redis.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { recordedOwnership } from './model-ownership-db';
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -318,6 +319,41 @@ describe('moderation-flow meta keys', () => {
   });
 });
 
+// A content wipe's removal record: client meta can neither set nor change it, a moderator's included
+// (their edit form sends stored meta back, which could put a stale record onto a live model).
+describe('removal record keys', () => {
+  const RECORD = {
+    removedWithOwner: true,
+    statusBeforeRemoval: 'Published',
+    versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
+  };
+
+  it.each([
+    ['an owner', OWNER_ID, false],
+    ['a moderator', MODERATOR_ID, true],
+  ])('drops them from %s’s meta on a model without them', async (_, userId, isModerator) => {
+    mockStored({ meta: {} });
+    await upsert({
+      id: MODEL_ID,
+      userId,
+      isModerator,
+      meta: { ...RECORD, hideBuzz: true } as ModelUpsertInput['meta'],
+    });
+    expect(updateData().meta).toEqual({ hideBuzz: true });
+  });
+
+  it('keeps the stored record when a moderator saves different values', async () => {
+    mockStored({ meta: RECORD });
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      meta: { removedWithOwner: false, statusBeforeRemoval: 'Draft' } as ModelUpsertInput['meta'],
+    });
+    expect(updateData().meta).toEqual(RECORD);
+  });
+});
+
 describe('stored snapshot', () => {
   it('reads the stored row from the primary, never the replica', async () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID });
@@ -472,6 +508,41 @@ describe('availability', () => {
     await upsert({ userId: OWNER_ID, availability: Availability.Public });
 
     expect(createData().availability).toBe(Availability.Public);
+  });
+
+  it('records the creator as the first owner of the new model, in the create transaction', async () => {
+    mockGetHighestTierSubscription.mockResolvedValue(null);
+    mockDbWrite.model.create.mockResolvedValueOnce({
+      id: 4242,
+      nsfwLevel: 0,
+      meta: null,
+      availability: Availability.Public,
+    } as never);
+    // A distinct client with its own raw writer, so a write on dbWrite would not pass for one on it.
+    const txExecuteRaw = vi.fn(async () => 1);
+    const tx = new Proxy(mockDbWrite, {
+      get: (target, key) =>
+        key === '$executeRaw' ? txExecuteRaw : (target as Record<string | symbol, unknown>)[key],
+    });
+    mockDbWrite.$transaction.mockImplementationOnce(async (fn: (client: unknown) => unknown) =>
+      fn(tx)
+    );
+
+    await upsert({ userId: OWNER_ID, availability: Availability.Public });
+
+    const ownership = (txExecuteRaw.mock.calls as unknown as [Prisma.Sql][])
+      .map(([sql]) => sql)
+      .find((sql) => sql.sql.includes('"ModelOwnership"'));
+    expect(ownership, 'no ownership row written in the transaction').toBeDefined();
+    expect(
+      await recordedOwnership(
+        [
+          [4242, OWNER_ID],
+          [4243, OWNER_ID],
+        ],
+        [ownership!]
+      )
+    ).toEqual([{ modelId: 4242, userId: OWNER_ID, reason: 'create', actorId: OWNER_ID }]);
   });
 });
 

@@ -1,6 +1,7 @@
 import { filterSensitiveProfanityData } from '~/libs/profanity-simple/helpers';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { hasOpenTextScanFlag } from '~/server/services/text-scan/flag-snapshot';
+import { REMOVED_WITH_OWNER_META_KEYS } from '~/server/utils/legal-hold';
 
 export function isMinorAutoFlagged(meta: ModelMeta | null | undefined): boolean {
   const snapshot = meta?.minorFlagSnapshot;
@@ -178,9 +179,12 @@ export const SERVER_OWNED_META_KEYS = [
   'trainingStudioModerationApproved',
 ] as const satisfies readonly (keyof ModelMeta)[];
 
+// A content wipe's removal record is written and cleared by server code only: a moderator's edit
+// form sends stored meta back, and must not put a stale record onto a live model.
 const SERVER_ONLY_META_KEYS: readonly string[] = [
   ...SERVER_OWNED_META_KEYS,
   RESTORE_CANNOT_PROMOTE_KEY,
+  ...REMOVED_WITH_OWNER_META_KEYS,
 ];
 
 export function stripServerOwnedMeta<T extends ModelMeta | null | undefined>(meta: T): T {

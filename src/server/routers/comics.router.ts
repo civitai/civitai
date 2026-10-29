@@ -124,6 +124,11 @@ import { trackModActivity } from '~/server/services/moderator.service';
 import { PutObjectCommand } from '@aws-sdk/client-s3';
 import { getImageUploadBackend } from '~/utils/s3-utils';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+  recordUploadKeyOwner,
+} from '~/server/services/image-url-ownership';
 import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -2322,6 +2327,7 @@ export const comicsRouter = router({
         const image = await createImage({
           url: input.coverUrl,
           type: 'image',
+          clientUrl: true,
           userId: ctx.user.id,
         });
         await dbWrite.comicProject.update({
@@ -2335,6 +2341,7 @@ export const comicsRouter = router({
         const image = await createImage({
           url: input.heroUrl,
           type: 'image',
+          clientUrl: true,
           userId: ctx.user.id,
         });
         await dbWrite.comicProject.update({
@@ -2411,6 +2418,7 @@ export const comicsRouter = router({
           const image = await createImage({
             url: input.coverUrl,
             type: 'image',
+            clientUrl: true,
             userId: ctx.user.id,
           });
           data.coverImageId = image.id;
@@ -2430,6 +2438,7 @@ export const comicsRouter = router({
           const image = await createImage({
             url: input.heroUrl,
             type: 'image',
+            clientUrl: true,
             userId: ctx.user.id,
           });
           data.heroImageId = image.id;
@@ -2861,6 +2870,7 @@ export const comicsRouter = router({
         const image = await createImage({
           url: img.url,
           type: 'image',
+          clientUrl: true,
           userId: ctx.user!.id,
           width: img.width,
           height: img.height,
@@ -3226,6 +3236,10 @@ export const comicsRouter = router({
       if (!panel || panel.chapter.project.userId !== ctx.user.id) {
         throw throwAuthorizationError();
       }
+      if (input.imageUrl && input.imageUrl !== panel.imageUrl) {
+        await assertClientImageUrlsUsable({ urls: [input.imageUrl], userId: ctx.user.id });
+        await assertClientKeysIssuedToCaller({ urls: [input.imageUrl], userId: ctx.user.id });
+      }
 
       const updated = await dbWrite.comicPanel.update({
         where: { id: input.panelId },
@@ -3255,6 +3269,7 @@ export const comicsRouter = router({
       const image = await createImage({
         url: input.imageUrl,
         type: 'image',
+        clientUrl: true,
         userId: ctx.user.id,
       });
 
@@ -3642,6 +3657,7 @@ export const comicsRouter = router({
                 })
               );
               registerMediaLocation(s3Key, multiBackend, buf.length);
+              await recordUploadKeyOwner(s3Key, ctx.user!.id);
               newCandidates.push({
                 key: s3Key,
                 ...(nsfwLevel != null ? { nsfwLevel } : {}),
@@ -3800,6 +3816,7 @@ export const comicsRouter = router({
               })
             );
             registerMediaLocation(s3ImageKey, singleBackend, imageBuffer.length);
+            await recordUploadKeyOwner(s3ImageKey, ctx.user!.id);
           } catch (e) {
             console.error(`Failed to upload panel ${panel.id} image to S3:`, e);
             await dbWrite.comicPanel.update({
@@ -4068,6 +4085,7 @@ export const comicsRouter = router({
             })
           );
           registerMediaLocation(s3Key, backend, buf.length);
+          await recordUploadKeyOwner(s3Key, ctx.user!.id);
         } catch (e) {
           console.error(`Failed to download unlocked panel ${panel.id}:`, e);
           throw throwBadRequestError('Unlock succeeded but image download failed. Please retry.');
@@ -4189,6 +4207,7 @@ export const comicsRouter = router({
             })
           );
           registerMediaLocation(s3Key, multiBackend, buf.length);
+          await recordUploadKeyOwner(s3Key, ctx.user!.id);
           newCandidates.push({
             key: s3Key,
             ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),
@@ -5516,6 +5535,7 @@ export const comicsRouter = router({
         const image = await createImage({
           url: input.sourceImageUrl,
           type: 'image',
+          clientUrl: true,
           userId: ctx.user!.id,
           width: input.sourceImageWidth,
           height: input.sourceImageHeight,
@@ -5873,6 +5893,7 @@ export const comicsRouter = router({
           const image = await createImage({
             url: panelDef.sourceImageUrl,
             type: 'image',
+            clientUrl: true,
             userId: ctx.user!.id,
             width: panelDef.sourceImageWidth ?? 512,
             height: panelDef.sourceImageHeight ?? 512,

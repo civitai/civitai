@@ -150,6 +150,7 @@ export const TEST_ENV_DEFAULTS: Record<string, unknown> = {
   NEXTAUTH_SECRET: 'test-secret',
   WEBHOOK_TOKEN: 'test-webhook-token',
   SYSTEM_ACCOUNT_KEY_TOKEN: 'test-system-account-key-token-00000',
+  SYSTEM_ACCOUNT_PROFILE_TOKEN: 'test-system-account-profile-token-0',
   JOB_TOKEN: 'test-job-token',
   S3_UPLOAD_ENDPOINT: 'http://localhost:9000',
   S3_IMAGE_UPLOAD_ENDPOINT: 'http://localhost:9000',

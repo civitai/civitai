@@ -2551,6 +2551,8 @@ export const REDIS_SYS_KEYS = {
       the reversal is unrecoverable.
      */
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
+    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days).
+    UPLOAD_KEY_OWNER: 'system:upload-key-owner',
     // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
     FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
     // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed
@@ -2658,6 +2660,12 @@ export const REDIS_SYS_KEYS = {
     // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
     // and only new volume after that is filed again. No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
+    // String. How many other users the review follows Buzz through before it reaches the creator
+    // again; the review clamps it to what it supports (`runCounterpartyReview`).
+    COUNTERPARTY_REVIEW_MAX_HOPS: 'creator-program:counterparty-review-max-hops',
+    // Hash: field = creator userId, value = JSON { [path joined by '>']: amount when last filed }.
+    // Indirect transfers already filed, so only new paths or new volume are filed again. No TTL.
+    COUNTERPARTY_REVIEW_INDIRECT: 'creator-program:counterparty-review-indirect',
     // JSON `PrepayoutLimits`. Ops-owned; deliberately no default in code.
     PREPAYOUT_LIMITS: 'creator-program:prepayout-limits',
   },

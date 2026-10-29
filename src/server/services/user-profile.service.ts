@@ -18,7 +18,10 @@ import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
-import { assertClientImageUrlsUsable } from '~/server/services/image-url-ownership';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+} from '~/server/services/image-url-ownership';
 import {
   throwAuthorizationError,
   throwBadRequestError,
@@ -363,9 +366,14 @@ export const updateUserProfile = async ({
   }
 
   // A cover with no `id` is created from its client url below.
-  await assertClientImageUrlsUsable({
-    urls: [coverImage, sfwCoverImage].map((image) => (image && !image.id ? image.url : null)),
+  const newCoverUrls = [coverImage, sfwCoverImage].map((image) =>
+    image && !image.id ? image.url : null
+  );
+  await assertClientImageUrlsUsable({ urls: newCoverUrls, userId });
+  await assertClientKeysIssuedToCaller({
+    urls: newCoverUrls,
     userId,
+    alsoIssuedTo: sessionUserId,
   });
   const buildCoverImageUpdate = (image: UserProfileUpdateSchema['coverImage']) =>
     image !== undefined && !image?.id

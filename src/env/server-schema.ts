@@ -397,6 +397,7 @@ export const serverSchema = z
     WEBHOOK_URL: z.url().optional(),
     WEBHOOK_TOKEN: z.string(),
     SYSTEM_ACCOUNT_KEY_TOKEN: z.string().optional(),
+    SYSTEM_ACCOUNT_PROFILE_TOKEN: z.string().optional(),
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),

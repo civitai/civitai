@@ -55,6 +55,7 @@ type PartResponse = { status: number; etag?: string; networkError?: boolean };
 type AbortBody = {
   failure?: { kind: string; partNumber?: number; status?: number };
   relayOutcome?: string;
+  fileSize?: number;
 };
 
 let partHandler: (partNumber: number) => PartResponse;
@@ -743,6 +744,24 @@ describe('useS3Upload relay fallback', () => {
     // are different populations, and one failure value put them on one row.
     expect(abortCalls.map((c) => c.relayOutcome)).toEqual(['not_attempted']);
   });
+
+  // Two sizes, so a body that sent a constant (or the chunk size) instead of the file's
+  // own byte count cannot pass both.
+  it.each([[CHUNK], [CHUNK - 17]])(
+    'sends the file size (%i bytes) in the abort body',
+    async (bytes) => {
+      // The abort event is where failed uploads get counted, and the size is what tells an
+      // upload over the relay's cap apart from one the relay could have rescued.
+      vi.stubGlobal('fetch', makeFetch(1));
+      backend = 'b2';
+      partHandler = () => ({ status: 0, networkError: true });
+      const h = await mountHook();
+
+      await runUpload(h, makeFile(bytes), UploadType.Model);
+
+      expect(abortCalls.map((c) => c.fileSize)).toEqual([bytes]);
+    }
+  );
 
   it('does not relay when the storage host answered with an HTTP status, and reports error', async () => {
     // Reaching the backend and being refused is a real fault; replaying the bytes through

@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Readable } from 'stream';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as EnvOther from '~/env/other';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as S3Utils from '~/utils/s3-utils';
@@ -254,6 +255,11 @@ describe('image-upload relay', () => {
     expect(opts).toEqual({ contentType: 'image/png' });
     // The upload-request IP is recorded against the key the store minted.
     expect(mockTrackImageUpload).toHaveBeenCalledExactlyOnceWith(req, res, 'server-minted-uuid');
+    expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
+      'system:upload-key-owner:server-minted-uuid',
+      '7',
+      { EX: 30 * 24 * 60 * 60 }
+    );
   });
 
   it('reassembles a MULTI-CHUNK body in order', async () => {

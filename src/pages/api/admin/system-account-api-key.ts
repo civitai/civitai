@@ -1,10 +1,13 @@
 import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import * as z from 'zod';
-import { isModerationAccountUser, isSystemAccountMeta } from '@civitai/auth';
 import { TokenScope, TokenScopePresets } from '@civitai/auth/token-scope';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import {
+  systemAccountRefusal,
+  systemAccountSelect,
+} from '~/server/auth/system-account-eligibility';
 import { logToAxiom } from '~/server/logging/client';
 import { addApiKey, deleteApiKeys } from '~/server/services/api-key.service';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -55,40 +58,20 @@ const schema = z.object({
   ),
 });
 
-async function refusal(userId: number): Promise<{ status: number; error: string } | null> {
-  const user = await dbWrite.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      username: true,
-      meta: true,
-      deletedAt: true,
-      bannedAt: true,
-      isModerator: true,
-      roles: { select: { role: true } },
-    },
-  });
-  if (!user) return { status: 404, error: 'User not found' };
-  if (!isSystemAccountMeta(user.meta)) return { status: 403, error: 'Not a system account' };
-  if (user.deletedAt || user.bannedAt) return { status: 403, error: 'Account is not active' };
-  if (isModerationAccountUser(user, env.CIVITAI_MODERATION_USER_ID) || user.isModerator)
-    return { status: 403, error: 'Account has moderator access' };
+async function refusal(userId: number) {
+  return systemAccountRefusal(
+    await dbWrite.user.findUnique({ where: { id: userId }, select: systemAccountSelect })
+  );
+}
 
-  const roles = user.roles.map(({ role }) => role);
-  if (roles.includes('moderator:admin'))
-    return { status: 403, error: 'Account has moderator access' };
-  if (roles.length) {
-    const held = await dbWrite.appPageAccess.findFirst({
-      where: { app: 'moderator', roles: { hasSome: roles } },
-      select: { path: true },
-    });
-    if (held) return { status: 403, error: 'Account has moderator access' };
-  }
-  return null;
+// Unconfigured while it repeats another admin token.
+function keyToken() {
+  const token = env.SYSTEM_ACCOUNT_KEY_TOKEN;
+  return token && [env.WEBHOOK_TOKEN, env.JOB_TOKEN].includes(token) ? undefined : token;
 }
 
 export default HeaderTokenSecuredEndpoint(
-  () => env.SYSTEM_ACCOUNT_KEY_TOKEN,
+  keyToken,
   async function (req: AxiomAPIRequest, res: NextApiResponse) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
     res.setHeader('Cache-Control', 'no-store');
