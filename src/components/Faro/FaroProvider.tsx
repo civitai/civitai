@@ -57,7 +57,10 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  * `features.faro` gate on the whole SDK) — a flag change applies on the next page load. The one
  * exception is a static shell boot, whose flags are user-less until its page data arrives: there
  * the cohort is undecided until then, and the instrumentation is attached late if the viewer is in
- * it (`viewerFlagsReady`, `attachResourceTiming`).
+ * it (`viewerFlagsReady`, `attachResourceTiming`). That exception covers resource_timing ONLY:
+ * the `exp_*` session attributes (`experimentAttributes`) are still built from the flags at init,
+ * so on a shell boot they come from the user-less boot flags and stay so for the session — an
+ * open, older bug this does not fix.
  * See ResourceTimingInstrumentation.
  *
  * SAMPLING (two decoupled layers):
