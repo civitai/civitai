@@ -169,6 +169,7 @@ export function matchZipPairs(paths: string[]): ZipPairMatch | null {
     const side = BEFORE_DIRS.has(dir) ? 'before' : AFTER_DIRS.has(dir) ? 'after' : null;
     if (side) sawSide = true;
     if (ext === 'txt') {
+      if (!side) continue;
       const existing = captions.get(base);
       // The after side's caption wins: it is where AI-Toolkit reads it from.
       if (!existing || (side === 'after' && !existing.afterSide))

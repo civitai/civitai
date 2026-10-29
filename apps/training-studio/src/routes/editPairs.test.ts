@@ -75,6 +75,16 @@ describe('matchZipPairs', () => {
     expect(match?.ignored).toEqual(['control_2/logo.png']);
   });
 
+  it('takes captions only from the before and after folders, not stray .txt files', () => {
+    const match = matchZipPairs([
+      'before/tote.png',
+      'after/tote.png',
+      'tote.txt',
+      'notes/tote.txt',
+    ]);
+    expect(match?.pairs[0]?.captionPath).toBeUndefined();
+  });
+
   it('is null for a plain dataset zip, so it is not imported as pairs', () => {
     expect(matchZipPairs(['img_1.png', 'img_1.txt'])).toBeNull();
   });

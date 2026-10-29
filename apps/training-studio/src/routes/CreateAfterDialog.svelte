@@ -38,6 +38,7 @@
       options = [];
       picked = null;
       failure = '';
+      runId = '';
     });
     return () => {
       controller?.abort();

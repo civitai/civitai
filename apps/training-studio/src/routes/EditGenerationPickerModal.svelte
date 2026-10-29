@@ -21,7 +21,9 @@
   // the workflow's authorisation instead.
   const brokenSources = new SvelteSet<string>();
   $effect(() => {
-    if (open) selected.clear();
+    if (!open) return;
+    selected.clear();
+    brokenSources.clear();
   });
 
   function toggle(id: string) {

@@ -18,14 +18,18 @@ export async function pool<T>(
 /** Resolve after `ms`, or reject with an AbortError as soon as `signal` aborts. */
 export function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
-    signal.addEventListener(
-      'abort',
-      () => {
-        clearTimeout(timer);
-        reject(new DOMException('Aborted', 'AbortError'));
-      },
-      { once: true }
-    );
+    const aborted = () => new DOMException('Aborted', 'AbortError');
+    if (signal.aborted) return reject(aborted());
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(aborted());
+    };
+    // A poll loop calls this once per interval on the same signal, so a listener left behind on
+    // every timeout would pile up for the life of the poll.
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal.addEventListener('abort', onAbort, { once: true });
   });
 }
