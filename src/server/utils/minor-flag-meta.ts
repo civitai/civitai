@@ -50,7 +50,7 @@ export function resolveMinorAppeal<T>({
 
 // Written by the minor-hash service and never safe to expose: the snapshot carries
 // prevMinorImageIds, the dismissal/clear stamps describe moderator decisions, and
-// textModeration forensics are for moderator review only.
+// textModeration forensics and the systemNsfwLock source are for moderator review only.
 // The single definition of which meta keys are secret — everything that hands a
 // Model.meta back to a client must go through this.
 export function stripMinorHashMeta(meta: ModelMeta): ModelMeta;
@@ -70,6 +70,7 @@ export function stripMinorHashMeta(meta: ModelMeta | null): ModelMeta | null {
     textScanFlags: _textScanFlags,
     modelRules: _modelRules,
     modelRulesCleared: _modelRulesCleared,
+    systemNsfwLock: _systemNsfwLock,
     ...rest
   } = meta;
 
