@@ -142,10 +142,7 @@ export function VideoGenerationForm({ store }: { store: GenerationStore }) {
         name="mode"
         render={({ value, meta, onChange }) => (
           <div className="flex flex-col gap-1">
-            <ControllerLabel
-              label="Mode"
-              info="Standard mode is faster to generate and more cost-effective. Professional takes longer to generate and has higher quality output."
-            />
+            <ControllerLabel label="Mode" info={meta?.info} />
             <SegmentedControlWrapper
               value={value}
               onChange={(v) => onChange(v as typeof value)}

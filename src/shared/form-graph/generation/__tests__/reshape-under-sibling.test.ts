@@ -60,6 +60,20 @@ describe('seedance: model switch reshapes resolution options and duration range'
   });
 });
 
+describe('kling: v4 duration range vs v3', () => {
+  it('a 30s duration on v4 does not ride onto v3', () => {
+    const store = makeStore();
+    store.set({ workflow: 'txt2vid', ecosystem: 'Kling', prompt: 'x' });
+    store.set({ model: { id: klingVersionIds.v4, model: { type: 'Checkpoint' } } });
+    store.set({ duration: 30 });
+    expectValid(store, 'kling v4');
+
+    store.set({ model: { id: klingVersionIds.v3, model: { type: 'Checkpoint' } } });
+    expect(val(store, 'duration')).toBeLessThanOrEqual(15);
+    expectValid(store, 'kling v3');
+  });
+});
+
 describe('kling: legacy string-enum duration vs v3 number range', () => {
   it('a version switch never leaves the other arm type stranded', () => {
     const store = makeStore();

@@ -689,10 +689,10 @@ const featureFlags = createFeatureFlags({
   // Both mod-only at launch; Flipt key allows broadening without a code change.
   model3dFeed: { availability: ['mod'], fliptKey: 'model3d-feed' },
   model3dGenerator: { availability: ['mod'], fliptKey: 'model3d-generator' },
-  // Gates PolyGen's v7 build, which is a `polygenVersion` option rather than a
+  // Gates PolyGen's v7 build, which is a `version` option rather than a
   // model version, so generation gate rules cannot target it: off ⇒ v7 is
   // dropped from the version options, which both hides it and makes a submitted
-  // `polygenVersion: 'v7'` fail the node's schema (see `model3d/polygen.graph.ts`).
+  // `version: 'v7'` fail the node's schema (see `model3d/polygen.graph.ts`).
   meshyV7Generator: { availability: ['mod'], fliptKey: 'meshy-v7-generator' },
   // Gates Krea 3's Ultra thinking mode the same way: it is a `thinkingMode`
   // option, not a model version, so it ships dark and opens with the partner's
