@@ -80,8 +80,11 @@ export async function assertCommentEntityVisible(
   const { user } = ctx;
   if (input.entityType === 'storyline') return assertStorylineThreadVisible(input.entityId, ctx);
   if (input.entityType === 'comment') {
-    if (!user?.isModerator && (await isCommentDetached(input.entityId))) throw throwNotFoundError();
-    const storylineId = await getCommentStorylineId(input.entityId);
+    const [detached, storylineId] = await Promise.all([
+      !user?.isModerator && isCommentDetached(input.entityId),
+      getCommentStorylineId(input.entityId),
+    ]);
+    if (detached) throw throwNotFoundError();
     if (storylineId) return assertStorylineThreadVisible(storylineId, ctx);
   }
   if (input.entityType === 'bounty') await assertBountyVisible({ bountyId: input.entityId }, user);
@@ -102,14 +105,16 @@ export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: G
     if (!comment) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     if (!ctx.user?.isModerator) {
-      if (await isThreadDetached(comment.threadId))
-        throw throwNotFoundError(`No comment with id ${input.id}`);
-      const bounty = await getCommentThreadBounty(comment.threadId);
+      const [detached, bounty, crucibleId, storylineId] = await Promise.all([
+        isThreadDetached(comment.threadId),
+        getCommentThreadBounty(comment.threadId),
+        getCommentThreadCrucibleId(comment.threadId),
+        getCommentThreadStorylineId(comment.threadId),
+      ]);
+      if (detached) throw throwNotFoundError(`No comment with id ${input.id}`);
       if (bounty) await assertBountyVisible(bounty, ctx.user);
-      const crucibleId = await getCommentThreadCrucibleId(comment.threadId);
       if (crucibleId)
         await assertCommentEntityVisible({ entityType: 'crucible', entityId: crucibleId }, ctx);
-      const storylineId = await getCommentThreadStorylineId(comment.threadId);
       if (storylineId)
         await assertCommentEntityVisible({ entityType: 'storyline', entityId: storylineId }, ctx);
     }
