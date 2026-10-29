@@ -69,7 +69,7 @@ export function canonicalFlag(arg) {
  * 🔴 WHAT THIS COSTS, STATED PLAINLY: an arg-ful run does not get the floor or the on-disk
  * ledger, even when the argument was only `--max-workers 4` and the run really was full. That
  * is affordable for exactly one reason, and it is a measured one rather than an assumption —
- * `pr-preview-pipeline.yaml` and the `Component tests` job in `.github/workflows/lint.yml` both
+ * `pr-preview-pipeline.yaml` and the `Component tests` step in `.github/workflows/lint.yml` both
  * invoke `pnpm run test:component` with NO arguments, so CI is the `argv.length === 0` path and
  * always gets both checks. What is given up is enforcing a floor on an ad-hoc local run, which
  * nobody needs.

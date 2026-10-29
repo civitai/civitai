@@ -1,6 +1,7 @@
 /**
- * Component test files held OUT of the blocking `component` run and run by the non-blocking
- * `component-quarantine` job (`.github/workflows/lint.yml`) instead.
+ * Component test files held OUT of the blocking `component` run and run instead by the
+ * `Quarantined component tests` step of the `component` job (`.github/workflows/lint.yml`), on
+ * pushes to `main` and on dispatch only — not on pull requests.
  *
  * Read by `vitest.config.mts` (the `component` project excludes them, the `component-quarantine`
  * project includes exactly them) and by `assert-component-suite-ran.mjs` (its on-disk ledger does
