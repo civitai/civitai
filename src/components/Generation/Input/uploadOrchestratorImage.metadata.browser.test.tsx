@@ -4,7 +4,7 @@ import { embedMetadata } from '@civitai/generation-metadata';
 import type * as ConsumerBlobUpload from '~/utils/consumer-blob-upload';
 
 /**
- * A generated image's EXIF stamp (Software, Artist) must survive the resize/re-encode before upload.
+ * A generated image's embedded generation metadata must survive the resize/re-encode before upload.
  * The upload still succeeds without it, so only a test on the bytes notices.
  */
 
