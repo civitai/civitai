@@ -626,8 +626,8 @@ export function isPlainOwnerDelete(
 }
 
 /**
- * The images among `ids` with a report still Pending or Processing. Read before the delete:
- * `ImageReport` cascades with the image.
+ * The images among `ids` with a report still Pending or Processing, on the image or on its post.
+ * Read before the delete: `ImageReport` and `PostReport` cascade with what they report.
  */
 export async function imagesWithOpenReports(
   ids: number[],
@@ -638,6 +638,11 @@ export async function imagesWithOpenReports(
     SELECT ir."imageId" FROM "ImageReport" ir
     JOIN "Report" r ON r.id = ir."reportId"
     WHERE ir."imageId" = ANY(${ids}::int[]) AND r.status IN ('Pending', 'Processing')
+    UNION
+    SELECT i.id FROM "Image" i
+    JOIN "PostReport" pr ON pr."postId" = i."postId"
+    JOIN "Report" r ON r.id = pr."reportId"
+    WHERE i.id = ANY(${ids}::int[]) AND r.status IN ('Pending', 'Processing')
   `;
   return new Set(rows.map((row) => row.imageId));
 }

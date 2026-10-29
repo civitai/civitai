@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { PGlite } from '@electric-sql/pglite';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
 import { NsfwLevel } from '~/server/common/enums';
@@ -96,9 +98,13 @@ vi.mock('~/server/services/image-url-ownership', async (importOriginal) => ({
   shopArtworkUrls: mockShopArtworkUrls,
 }));
 
-const { purgeResizeCache, deleteImageFromS3, deleteImages, deleteImageById } = await import(
-  '../image.service'
-);
+const {
+  purgeResizeCache,
+  deleteImageFromS3,
+  deleteImages,
+  deleteImageById,
+  imagesWithOpenReports,
+} = await import('../image.service');
 const { callCdnAccess } = await import('../cdn-access.service');
 
 const invalidateCalls = () =>
@@ -595,5 +601,38 @@ describe('an image whose key shop artwork uses', () => {
     await deleteImageFromS3({ id: 4242, url: KEY });
 
     expect(mockB2Send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('imagesWithOpenReports', () => {
+  // Image 1 is reported itself; images 2 and 3 share post 20, which is reported; image 4's post
+  // has only a closed report; image 5's own report is closed.
+  const run = async (reports: string) => {
+    const pg = new PGlite();
+    await pg.exec(`
+      CREATE TABLE "Image" (id int PRIMARY KEY, "postId" int);
+      CREATE TABLE "Report" (id int PRIMARY KEY, status text NOT NULL);
+      CREATE TABLE "ImageReport" ("imageId" int, "reportId" int);
+      CREATE TABLE "PostReport" ("postId" int, "reportId" int);
+      INSERT INTO "Image" VALUES (1, 10), (2, 20), (3, 20), (4, 40), (5, 50);
+      ${reports}
+    `);
+    try {
+      return await imagesWithOpenReports([1, 2, 3, 4, 5], {
+        $queryRaw: pgliteRaw(pg).queryRaw,
+      } as never);
+    } finally {
+      await pg.close();
+    }
+  };
+
+  it('finds images reported themselves or through their post, open reports only', async () => {
+    const reported = await run(`
+      INSERT INTO "Report" VALUES (1, 'Pending'), (2, 'Processing'), (3, 'Actioned'), (4, 'Unactioned');
+      INSERT INTO "ImageReport" VALUES (1, 1), (5, 4);
+      INSERT INTO "PostReport" VALUES (20, 2), (40, 3);
+    `);
+
+    expect([...reported].sort()).toEqual([1, 2, 3]);
   });
 });
