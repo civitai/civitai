@@ -84,6 +84,18 @@ Tables `KnightsPlayer` (streak, shields, recap dismissal) and `KnightsPlayerDay`
 - The recap (`getRecap`) is read from the vote ledger for the last play day before today, so it keeps changing as votes settle; dismissal is stored per day on `KnightsPlayer`.
 - A career reset moves `NewOrderPlayer.startAt`: a streak whose last Watch was completed before it is treated as 0 (shields kept), only votes cast since it count toward the Watch, and the recap ignores earlier votes. The gold cap still counts the whole UTC day.
 
+## Conversion (`src/lib/server/conversion`)
+
+Migration `20261218120000_knights_v2_conversion` (applied by hand, before deploying either app): `NewOrderPlayer.goldCleared` / `goldConverted`, `KnightsDetectionRun`, `KnightsGoldClearing`, `KnightsGoldConversion`. Rate and minimum are `CONVERSION` in `config.ts` (1,000 gold = 1 Yellow Buzz, whole Buzz only, at least `minBuzz` per conversion).
+
+- Balances (`balance.ts`): pending (`goldPending`), awaiting detection (earned, not cleared), convertible (`goldCleared - goldConverted`), frozen. A held player (payout block set, or banned) has every unconverted gold frozen and none convertible; nothing is lost, and a released player's gold shows as convertible again.
+- Detection hook: the main app's `runLinkDetection` inserts a `KnightsDetectionRun` row after a run completes (a run that did not run or threw records nothing, so nothing is released). `POST /api/jobs/tick` then runs `runPostDetectionPass` (`pass.ts`) for the newest run no pass has handled. Everything it writes is keyed on the data, so a pass cut short by its time budget resumes on the next tick and a repeat writes nothing.
+- Clearing (`clearing.ts`): gold earned at or before the run's `completedAt` (a vote's `settledAt`, a Watch's `watchCompletedAt`) is added to `goldCleared`; gold earned after the run waits for the next one. Held players are skipped and cleared by a pass that finds them released. `KnightsGoldClearing` records the run and amount per player.
+- Labels (`labels.ts`): one `knight` label per settled vote at or before the run, for players not held, through `label_store.record_label` (subject `image`, family `knights`, the question key and version as asked, source ref `KnightsVote:<itemId>:<labeller hash>`). `KnightsVote.labelled` marks done; a held player's votes stay unlabelled because the store never retracts a label. The pass also gives each choice question a `rule` row (`minHuman` = `votesToResolve`, not unanimous). Yes/no questions are not labelled yet. A vote the store refused stays unlabelled and is retried by the next pass (`labelFailures` in the result; `label_store.record_failure` has the reason). The rating write-back (`setNsfwLevelKono`) is unchanged and does not wait for this.
+- Converting (`convert.ts`, `/gold`): one transaction locks the player row, checks not held and the minimum, writes a `pending` `KnightsGoldConversion` with its own `externalTransactionId` and adds the gold to `goldConverted`. Then Buzz is asked (`buzz.ts`, through `@civitai/buzz`) outside the transaction with that key; success marks the row `paid` with the Buzz transaction id. A failure or lost answer leaves the row pending with the gold reserved; the player's next Convert, or the tick (`retryPendingConversions`, rows older than a minute, not held), sends the same key, which Buzz pays once (a 409 is read as already paid).
+- Axiom: `src/lib/server/axiom.ts` (default datastream `civitai-prod`, listed as a forwarding file in the datastream ledger test). The pass logs `knights-post-detection-pass` with the Buzz converted per UTC day (today and yesterday). Needs `BUZZ_ENDPOINT` (and the Axiom env) in the app's environment.
+- Tests: `convert.pglite.test.ts`, `pass.pglite.test.ts` (the pass test boots the real label store migration via `bootLabelStore`).
+
 ## Trials (`src/lib/server/trials`)
 
 Tables `KnightsReferenceImage`, `KnightsTrialRun`, `KnightsTrialAnswer`, `KnightsHarvestCursor` (migration `20261212120000_knights_v2_trials`, applied by hand). All knobs and their defaults are in `trials/config.ts`.
@@ -119,7 +131,7 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261211120000_knig
 
 ## Wired packages
 
-`@civitai/auth` (guard), `@civitai/brand` (favicon), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
+`@civitai/auth` (guard), `@civitai/axiom` (logging), `@civitai/brand` (favicon), `@civitai/buzz` (gold conversion), `@civitai/db` + `@civitai/db-schema` (Kysely, one client),
 `@civitai/flipt` (access flag), `@civitai/redis` (sys client, only for the guard's session revocation check),
 `@civitai/shared` (`NsfwLevel`; `new-order-levels` is the level curve, also used by the main app's `game-helpers.ts`). Add others when a task needs them.
 

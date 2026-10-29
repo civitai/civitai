@@ -83,6 +83,12 @@ existed get one label inferred from their status, ref `CreatorShopReviewInferred
 in the snapshot; filter them out by ref prefix. A deleted listing is excluded as `removed`; a takedown is
 not excluded. No `rule` rows yet.
 
+Also wired from site code: Knights of New Order rating votes (`apps/knights/src/lib/server/conversion/labels.ts`), written
+by the post-detection pass, never before and never for a held player. One `knight` label per vote: subject `image`
+(`contentHash` = hash of the image url), family `knights`, the Knights question key and version (`knights.image.nsfwLevel`),
+the chosen option as the value, ref `KnightsVote:<itemId>:<labeller hash>`. Each choice question gets a `rule` row
+(`minHuman` = its `votesToResolve`, not unanimous). Yes/no questions are not written yet.
+
 Pipelines submit predictions to `POST /api/mod/label-store/predictions` as a moderator holding the
 moderator-app permission `labelStore.submitPrediction`. Images only, up to 500 per call; each comes back
 recorded, a duplicate, or rejected with a reason. The ref is stored as `pipeline:<sourceRef>` under family

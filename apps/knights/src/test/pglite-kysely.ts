@@ -20,6 +20,7 @@ const MIGRATIONS = [
   '20261212120000_knights_v2_trials',
   '20261213120000_knights_v2_progression',
   '20261215120000_knights_v2_daily',
+  '20261218120000_knights_v2_conversion',
 ].map((name) =>
   fileURLToPath(
     new URL(
@@ -39,6 +40,9 @@ CREATE TABLE "Image" (
   "nsfwLevel" INTEGER NOT NULL DEFAULT 0,
   "nsfwLevelLocked" BOOLEAN NOT NULL DEFAULT false,
   "metadata" JSONB NOT NULL DEFAULT '{}',
+  "userId" INTEGER,
+  "pHash" BIGINT,
+  "meta" JSONB,
   "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
   "blockedFor" TEXT,
   "needsReview" TEXT,
@@ -58,6 +62,10 @@ CREATE TABLE "NewOrderPlayer" (
   "payoutBlockReason" TEXT,
   "startAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
+CREATE TABLE "User" (
+  "id" INTEGER PRIMARY KEY,
+  "bannedAt" TIMESTAMP(3)
+);
 CREATE TABLE "ModActivity" (
   "id" SERIAL PRIMARY KEY,
   "userId" INTEGER,
@@ -72,6 +80,74 @@ CREATE TABLE "NewOrderSmite" (
   "cleansedAt" TIMESTAMP(3)
 );
 `;
+
+const LABEL_STORE_MIGRATION = fileURLToPath(
+  new URL(
+    '../../../../packages/civitai-db-schema/prisma/migrations/20261103120000_label_store/migration.sql',
+    import.meta.url
+  )
+);
+
+/** The site tables the label store's migration hooks into; `Image` is already a stand-in above. */
+const LABEL_STORE_SOURCES = `
+CREATE TABLE "CsamReport" ("id" serial PRIMARY KEY, "userId" integer, "images" jsonb NOT NULL DEFAULT '[]');
+CREATE TABLE "Appeal" ("id" serial PRIMARY KEY, "userId" integer NOT NULL);
+CREATE TABLE "ScanLabelItem" (
+  "id" serial PRIMARY KEY,
+  "imageId" integer NOT NULL REFERENCES "Image"("id") ON DELETE CASCADE,
+  "copyState" text,
+  "copyKey" text,
+  "copiedAt" timestamptz(3)
+);
+CREATE TABLE "ScanLabelFlag" (
+  "id" serial PRIMARY KEY,
+  "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
+  "source" text NOT NULL,
+  "flaggerVersion" text NOT NULL,
+  "reason" text,
+  "workflowId" text NOT NULL UNIQUE,
+  "flaggedAt" timestamptz(3) NOT NULL,
+  "snapshot" jsonb,
+  "createdAt" timestamptz(3) NOT NULL DEFAULT now()
+);
+CREATE TABLE "ScanLabelVote" (
+  "itemId" integer NOT NULL REFERENCES "ScanLabelItem"("id") ON DELETE CASCADE,
+  "userId" integer NOT NULL,
+  "block" boolean NOT NULL,
+  "reason" text,
+  "reasonComment" text,
+  "msOnItem" integer,
+  "createdAt" timestamptz(3) NOT NULL DEFAULT now(),
+  PRIMARY KEY ("itemId", "userId")
+);
+CREATE TABLE "ScanLabelCopyObject" (
+  "key" text PRIMARY KEY,
+  "itemId" integer NOT NULL,
+  "imageId" integer NOT NULL,
+  "createdAt" timestamptz(3) NOT NULL DEFAULT now(),
+  "withdrawnAt" timestamptz(3),
+  "withdrawReason" text
+);
+CREATE TABLE "AppealDecisionRecord" (
+  "id" bigserial PRIMARY KEY,
+  "appealId" integer NOT NULL UNIQUE,
+  "imageId" integer NOT NULL,
+  "imageUrl" text NOT NULL,
+  "pHash" bigint,
+  "nsfwLevel" integer NOT NULL,
+  "nsfwLevelReason" text,
+  "aiNsfwLevel" integer,
+  "blockedFor" text,
+  "decision" text NOT NULL,
+  "decidedAt" timestamptz(3) NOT NULL
+);
+`;
+
+/** Installs the real label store, for the tests that write labels. Slower than the rest of the setup. */
+export async function bootLabelStore(pg: PGlite) {
+  await pg.exec(LABEL_STORE_SOURCES);
+  await pg.exec(readFileSync(LABEL_STORE_MIGRATION, 'utf8'));
+}
 
 const pad = (n: number, width = 2) => String(n).padStart(width, '0');
 
