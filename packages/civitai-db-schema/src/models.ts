@@ -5128,6 +5128,13 @@ export interface KnightsPlayerDay {
   bonusGold: number;
 }
 
+export interface KnightsNotificationSend {
+  playerId: number;
+  day: Date;
+  type: string;
+  sentAt: Date;
+}
+
 export interface KnightsReferenceImage {
   id: number;
   imageId: number;

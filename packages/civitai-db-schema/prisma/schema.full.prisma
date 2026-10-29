@@ -8113,6 +8113,18 @@ model KnightsPlayerDay {
   @@id([playerId, day])
 }
 
+/// The one daily-loop notification a player was sent on a UTC day. The primary key is what caps it at one a
+/// day; a send claims its row first, so a rerun the same day finds it taken.
+model KnightsNotificationSend {
+  playerId Int
+  day      DateTime @db.Date
+  type     String // verdicts | streak | new-images
+  sentAt   DateTime @default(now())
+
+  @@id([playerId, day])
+  @@index([playerId, type, sentAt])
+}
+
 /// An image with a known answer for Acolyte Trials or hidden checks. `answer` is the option value of `questionKey`.
 model KnightsReferenceImage {
   id            Int                  @id @default(autoincrement())

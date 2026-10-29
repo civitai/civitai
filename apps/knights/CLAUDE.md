@@ -59,7 +59,7 @@ SQL on PGlite.
 - The vote ledger is partitioned by month. `POST /api/jobs/partitions` creates the next months and a vote creates its
   own month if missing; `POST /api/jobs/tick` also escalates items past `expiresAt` and settles votes on final items (`settledVotes` in its response; any failing step, or an item that could not be settled, returns 500). Both need
   `Authorization: Bearer $JOBS_TOKEN`.
-- The user guard in `hooks.server.ts` skips exactly the routes in `JOB_PATHS` (tick, partitions, harvest); a new job route must be added there.
+- The user guard in `hooks.server.ts` skips exactly the routes in `JOB_PATHS` (tick, partitions, harvest, notify); a new job route must be added there.
 - `/play` is the minimal voting page, with a status line (rank, level and XP from `@civitai/shared/new-order-levels`, the trial position for Acolytes, and the progression standing described under Progression). Acolytes, and players with no `NewOrderPlayer` row yet, get Trials instead of the feed and cannot vote; Knights and above keep the feed. It also shows the Daily Watch panel and the dismissable recap (see Daily loop); `/ranks` lists each rank's daily gold cap.
 
 ## Progression (`src/lib/server/progression`)
@@ -83,6 +83,15 @@ Tables `KnightsPlayer` (streak, shields, recap dismissal) and `KnightsPlayerDay`
 - Streak and shields are pure (`streak.ts`). A shield is granted lazily per ISO week and spent when the next Watch completes, covering exactly one missed day. `liveStreak` shows what that completion would find.
 - The recap (`getRecap`) is read from the vote ledger for the last play day before today, so it keeps changing as votes settle; dismissal is stored per day on `KnightsPlayer`.
 - A career reset moves `NewOrderPlayer.startAt`: a streak whose last Watch was completed before it is treated as 0 (shields kept), only votes cast since it count toward the Watch, and the recap ignores earlier votes. The gold cap still counts the whole UTC day.
+
+## Notifications (`src/lib/server/notify`)
+
+Table `KnightsNotificationSend` (migration `20261217120000_knights_v2_notify`, applied by hand, before the job first runs). `POST /api/jobs/notify` (`Authorization: Bearer $JOBS_TOKEN`; schedule it hourly, so the 21:00 UTC warning goes out within the hour) sends through `@civitai/notifications`; env `NOTIFICATIONS_ENDPOINT` / `NOTIFICATIONS_TOKEN`.
+
+- Three opt-in types, registered in the main app (`src/server/notifications/new-order.notifications.ts`, section "Knights of New Order"): `knights-verdicts-in` > `knights-streak-ends-soon` > `knights-new-images`. A player gets the best one they are eligible for and subscribed to, at most one per UTC day.
+- Opt-in means a `UserNotificationSettings` row for the type. The job joins that table itself and sends through the client's bulk path, which does no settings lookup (the event path would drop exactly the subscribers). The three processors are `externalProducer` for that reason.
+- Verdicts: votes settled (correct or failed) within `verdictLookbackDays`, after the player's newest vote and after their last verdicts notification. Streak: a live streak after the career-reset rule, no Watch yet today, and no shield covering the miss (the `streak.ts` functions the status line uses); sent from `streakWarningHourUtc`. New images: a voting rank with a servable queue item the player has not voted on. Before the warning hour a player with a streak at risk is held back from new images, so the warning keeps the day's slot.
+- A send claims the player's `(playerId, day)` row first (primary key), then sends; a batch that fails gives its claims back, so a rerun the same day neither double-sends nor loses it. Messages are the same for everyone in a batch, so they carry no per-player numbers.
 
 ## Trials (`src/lib/server/trials`)
 

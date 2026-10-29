@@ -1,5 +1,5 @@
 import { DAILY } from './config';
-import { daysBetween, isoWeekStart, type Day } from './days';
+import { daysBetween, isoWeekStart, utcDay, type Day } from './days';
 
 export type StreakState = {
   streak: number;
@@ -69,6 +69,22 @@ export const voidStreak = (state: StreakState): StreakState => ({
   streak: 0,
   lastWatchDay: null,
 });
+
+/**
+ * The streak a career reset has not ended: the last Watch must have been completed at or after
+ * `startAt`. `lastWatchCompletedAt` is only read when that Watch fell on the reset's own day.
+ */
+export function streakAfterReset(
+  state: StreakState,
+  startAt: Date,
+  lastWatchCompletedAt: Date | null
+): StreakState {
+  if (!state.lastWatchDay) return state;
+  const startDay = utcDay(startAt);
+  if (state.lastWatchDay > startDay) return state;
+  if (state.lastWatchDay < startDay) return voidStreak(state);
+  return lastWatchCompletedAt && lastWatchCompletedAt < startAt ? voidStreak(state) : state;
+}
 
 /** Whether a shield would keep the streak alive if today's Watch is missed. */
 export function shieldCoversToday(state: StreakState, today: Day): boolean {

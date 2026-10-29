@@ -9,7 +9,7 @@ import {
   liveStreak,
   newPlayerState,
   shieldCoversToday,
-  voidStreak,
+  streakAfterReset,
   type StreakState,
 } from './streak';
 
@@ -59,18 +59,16 @@ async function readStreakState(
 ): Promise<StreakState | null> {
   const state = await readKeeper(db, playerId, lock);
   if (!state?.lastWatchDay) return state;
-  const startDay = utcDay(startAt);
-  if (state.lastWatchDay > startDay) return state;
-  if (state.lastWatchDay < startDay) return voidStreak(state);
-  const last = await db
-    .selectFrom('KnightsPlayerDay')
-    .select('watchCompletedAt')
-    .where('playerId', '=', playerId)
-    .where('day', '=', dateOf(state.lastWatchDay))
-    .executeTakeFirst();
-  return last?.watchCompletedAt && !watchStands(last.watchCompletedAt, startAt)
-    ? voidStreak(state)
-    : state;
+  const onResetDay = state.lastWatchDay === utcDay(startAt);
+  const last = onResetDay
+    ? await db
+        .selectFrom('KnightsPlayerDay')
+        .select('watchCompletedAt')
+        .where('playerId', '=', playerId)
+        .where('day', '=', dateOf(state.lastWatchDay))
+        .executeTakeFirst()
+    : undefined;
+  return streakAfterReset(state, startAt, last?.watchCompletedAt ?? null);
 }
 
 /**
