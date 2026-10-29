@@ -17,7 +17,13 @@ import { bustProfilePictures } from './profile-picture-cache';
 import { NsfwLevel } from '@civitai/shared';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
 import { holdRemovals, type HeldRemoval } from './removal-hold';
-import { imagesVersion, imageVersion, setAsideCounts, setAsideState } from './csam-queue-set-aside';
+import {
+  imagesVersion,
+  imageVersion,
+  removedNotDismissed,
+  setAsideCounts,
+  setAsideState,
+} from './csam-queue-set-aside';
 import type { Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
@@ -352,12 +358,7 @@ export async function dismissUserFromCsamQueue({
     return await dbWrite.transaction().execute(async (tx) => {
       const state = await setAsideState(tx);
       if (!state.writable) return { ok: false, reason: 'unavailable' } as const;
-      const live = tx
-        .selectFrom('Image as i')
-        .where('i.userId', '=', userId)
-        .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
-        .where('i.ingestion', '=', 'Blocked')
-        .where(sql<boolean>`not ${setAsideCounts('i', state)}`);
+      const live = removedNotDismissed(tx, state).where('i.userId', '=', userId);
       const images = await live.select('i.id').orderBy('i.id').forUpdate().execute();
       if (images.length !== expectedCount) throw new QueueChanged();
       // Under the row locks just taken, so no write lands between this and the inserts.

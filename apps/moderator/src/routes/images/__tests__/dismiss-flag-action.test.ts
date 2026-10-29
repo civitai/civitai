@@ -55,6 +55,13 @@ describe('dismissFlag', () => {
     expect(dismissFromCsamQueue).not.toHaveBeenCalled();
   });
 
+  it('refuses an image id that is not one', async () => {
+    expect(await dismiss('csam', { imageId: '1.5', version: '901' })).toMatchObject({
+      status: 400,
+    });
+    expect(dismissFromCsamQueue).not.toHaveBeenCalled();
+  });
+
   it('dismisses from its own queue, as the acting moderator, at the version shown', async () => {
     const result = await dismiss('csam');
 

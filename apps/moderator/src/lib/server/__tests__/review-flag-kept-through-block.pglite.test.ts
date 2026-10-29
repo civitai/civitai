@@ -1,10 +1,9 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
-import { sql } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { imagesVersion, imageVersion, setAsideCounts } from '../csam-queue-set-aside';
+import { imagesVersion, imageVersion, removedNotDismissed } from '../csam-queue-set-aside';
 import type * as ModActivity from '../mod-activity';
 import type * as ThumbnailCache from '../thumbnail-cache';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -176,13 +175,9 @@ const versionOf = async (imageId: number) =>
 /** The version the by-user queue would show for user 8's removed images not yet dismissed. */
 const userVersion = async () =>
   (
-    await kysely()
-      .selectFrom('Image as i')
+    await removedNotDismissed(kysely(), { table: true, writable: true })
       .select(imagesVersion('i').as('v'))
       .where('i.userId', '=', 8)
-      .where('i.needsReview', '=', 'csam')
-      .where('i.ingestion', '=', 'Blocked')
-      .where(sql<boolean>`not ${setAsideCounts('i', { table: true, writable: true })}`)
       .executeTakeFirstOrThrow()
   ).v;
 const dismiss = async (imageId: number, userId: number, version?: string) =>

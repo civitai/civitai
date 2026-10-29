@@ -6,6 +6,7 @@ import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csa
 import {
   imagesVersion,
   imageVersion,
+  removedNotDismissed,
   setAsideCounts,
   setAsideState,
   type SetAsideState,
@@ -298,17 +299,13 @@ export async function getCsamQueueByUser({
       .where('userId', 'in', userIds)
       .groupBy('userId')
       .execute(),
-    dbRead
-      .selectFrom('Image as i')
+    removedNotDismissed(dbRead, setAside)
       .select([
         'i.userId',
         sql<number>`count(*)::int`.as('count'),
         imagesVersion('i').as('version'),
       ])
-      .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
-      .where('i.ingestion', '=', 'Blocked')
       .where('i.userId', 'in', userIds)
-      .where(sql<boolean>`not ${setAsideCounts('i', setAside)}`)
       .groupBy('i.userId')
       .execute(),
     getFlagClearHolds(userIds),

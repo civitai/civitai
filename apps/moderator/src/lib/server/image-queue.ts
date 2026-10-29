@@ -271,12 +271,13 @@ export const imageQueueActions = {
   // Only from the flag's own queue: the page gate is per path, and every `/images/<view>` queue posts to the one `/images/[slug]` route (`params.slug`); `/reports/image` does not export this verb.
   dismissFlag: async ({ request, locals, params }) => {
     if (params.slug !== FLAG_KEPT_THROUGH_BLOCK) return fail(403, { error: 'Not available here.' });
-    const form = await request.formData();
-    const imageId = Number(form.get('imageId'));
-    const version = form.get('version');
-    if (!imageId || typeof version !== 'string' || !version)
-      return fail(400, { error: 'Missing image id or version.' });
-    const result = await dismissFromCsamQueue({ imageId, version, userId: locals.user.id });
+    const input = parseForm(
+      z.object({ imageId: int4Id, version: z.string().min(1) }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return fail(400, { error: input });
+    const { imageId } = input;
+    const result = await dismissFromCsamQueue({ ...input, userId: locals.user.id });
     if (!result.ok)
       return fail(result.reason === 'unavailable' ? 503 : 409, {
         error:
