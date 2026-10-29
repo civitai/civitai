@@ -1372,7 +1372,7 @@ export async function getCommentsInfinite({
  *    moment it is being restored.
  */
 export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0 };
+  if (ids.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0, failed: 0 };
 
   const enums = await import('~/shared/utils/prisma/enums');
   const markerView = await holdMarkerViewExists();
@@ -1383,9 +1383,11 @@ export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] })
   let count = 0;
   const retained: number[] = [];
   let retainedHidden = 0;
+  let failed = 0;
 
   for (const id of ids) {
     const outcome = await clearTosOrKeep('CommentV2', id, markerView);
+    if (outcome?.failed) failed += 1;
     if (outcome?.held) {
       retainedHidden += 1;
       if (outcome.userId !== null) retained.push(outcome.userId);
@@ -1408,7 +1410,7 @@ export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] })
   }
 
   if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
-  return { count, reopenedReports, retainedHidden };
+  return { count, reopenedReports, retainedHidden, failed };
 }
 
 /**
@@ -1465,8 +1467,8 @@ export async function clearTosUnlessHeld(
 }
 
 /**
- * `clearTosUnlessHeld`, where a statement that fails leaves the comment hidden, as a hold would: the
- * rest of the batch still runs and reports what it did.
+ * `clearTosUnlessHeld`, where a statement that fails leaves the comment hidden and is reported as
+ * `failed`, not as held: the rest of the batch still runs and reports what it did.
  */
 export async function clearTosOrKeep(
   table: 'Comment' | 'CommentV2',
@@ -1474,7 +1476,8 @@ export async function clearTosOrKeep(
   markerView: boolean
 ) {
   try {
-    return await clearTosUnlessHeld(table, id, markerView);
+    const row = await clearTosUnlessHeld(table, id, markerView);
+    return row && { ...row, failed: false };
   } catch (e) {
     logToAxiom({
       type: 'error',
@@ -1482,6 +1485,6 @@ export async function clearTosOrKeep(
       message: 'Clearing a ToS flag failed; the comment stays hidden',
       details: { table, id, error: (e as Error)?.message },
     }).catch(() => undefined);
-    return { userId: null, held: true, cleared: false };
+    return { userId: null, held: false, cleared: false, failed: true };
   }
 }

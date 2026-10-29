@@ -95,7 +95,7 @@ describe('clearing a comment ToS flag', () => {
     // Not a formality: an unguarded loop would emit a bare UPDATE with no id bound.
     const result = await bulkClearCommentV2TosViolation({ ids: [] });
 
-    expect(result).toEqual({ count: 0, reopenedReports: 0, retainedHidden: 0 });
+    expect(result).toEqual({ count: 0, reopenedReports: 0, retainedHidden: 0, failed: 0 });
     expect(statements).toHaveLength(0);
   });
 
