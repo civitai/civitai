@@ -342,6 +342,7 @@ import {
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
+import { assertClientImageUrlsUsable } from '~/server/services/image-url-ownership';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
 const model3dService = () => import('~/server/services/model3d.service');
@@ -7039,6 +7040,7 @@ export async function createImage({
    * making these two routers probe concurrently — not removing the bound.
    */
   const mediaVerdict = await probeCreatedImageMedia(image.url);
+  await assertClientImageUrlsUsable({ urls: [image.url], userId: image.userId });
 
   /**
    * Logged on EVERY call, whatever the verdict, so the `absent` rate has a denominator:
@@ -7233,6 +7235,7 @@ export const createEntityImages = async ({
     return [];
   }
 
+  await assertClientImageUrlsUsable({ urls: images.map((i) => i.url), userId, db: dbClient });
   await dbClient.image.createMany({
     data: images.map((image) => ({
       ...pickClientImageColumns(image),
@@ -7712,6 +7715,7 @@ export const updateEntityImages = async ({
   }[] = [];
 
   if (newImages.length > 0) {
+    await assertClientImageUrlsUsable({ urls: newImages.map((i) => i.url), userId, db: dbClient });
     await dbClient.image.createMany({
       data: newImages.map((image) => ({
         ...pickClientImageColumns(image),
