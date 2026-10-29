@@ -9,6 +9,7 @@ import { standingOf } from '../progression/rating';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { ledgerOf, settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '../servable-image';
+import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { isRank, RANKS, type Rank } from '../ranks';
 import { canVote, FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
 import {
@@ -40,6 +41,8 @@ export type QueueDeps = {
   now: () => Date;
   /** Keeps the original game's exp counter in step; called after the Postgres commit, a failure is only logged. */
   mirrorXp?: XpMirror;
+  /** Pacing for non-moderators; absent means unpaced. */
+  voteLimits?: readonly VoteLimit[];
 };
 
 /** A write-back that keeps failing is handed to the Inquisitors after this many tries. */
@@ -70,6 +73,7 @@ export type RejectReason =
 
 export type CastVoteResult =
   | { status: 'rejected'; reason: RejectReason }
+  | { status: 'limited'; until: Date }
   | { status: 'recorded' | 'resolved' | 'escalated' | 'inquisitor' };
 
 const addHours = (date: Date, hours: number) => new Date(date.getTime() + hours * 3_600_000);
@@ -264,10 +268,14 @@ const rankOrder = sql`CASE "i"."minRank" ${sql.join(
 
 export async function castVote(
   db: Kysely<DB>,
-  input: { userId: number; itemId: number; answer: string },
+  input: { userId: number; itemId: number; answer: string; isModerator?: boolean },
   deps: QueueDeps
 ): Promise<CastVoteResult> {
   const now = deps.now();
+  if (deps.voteLimits && !input.isModerator) {
+    const until = await voteLockUntil(db, input.userId, now, deps.voteLimits);
+    if (until) return { status: 'limited', until };
+  }
   await ensureMonthPartition(db, { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 });
 
   const { result, settledItemId, xp } = await db

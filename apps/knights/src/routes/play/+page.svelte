@@ -4,6 +4,7 @@
   import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import DailyPanel from './DailyPanel.svelte';
+  import VoteLockout from './VoteLockout.svelte';
   import { recapLines } from './recap-text';
   import StatusBar from '$lib/StatusBar.svelte';
   import type { ActionData, PageData } from './$types';
@@ -111,6 +112,8 @@
   {:else}
     <p>The trials are not set out yet. Return later.</p>
   {/if}
+{:else if data.mode === 'queue' && data.lockout}
+  <VoteLockout until={data.lockout} />
 {:else if data.item && data.question}
   <p class="prompt">{data.question.prompt}</p>
   {#key data.item.id}

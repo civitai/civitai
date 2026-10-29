@@ -4,6 +4,7 @@ import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.
 import { imageUrl } from '$lib/server/image-url';
 import { getPlayerStatusOrNew } from '$lib/server/player-status';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
+import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { trialDeps } from '$lib/server/trials/runtime';
 import { answerTrial, getTrial } from '$lib/server/trials/trials.service';
@@ -57,12 +58,19 @@ export const load: PageServerLoad = async ({ locals }) => {
   }
 
   const now = queueDeps.now();
+  const lockedUntil =
+    queueDeps.voteLimits && !locals.user.isModerator
+      ? await voteLockUntil(db, locals.user.id, now, queueDeps.voteLimits)
+      : null;
   const [feed, daily, recap] = await Promise.all([
-    getFeed(db, locals.user.id, { limit: 1 }),
+    lockedUntil ? null : getFeed(db, locals.user.id, { limit: 1 }),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
   ]);
-  if (!feed) return { mode: 'queue' as const, status, daily, recap, question: null, item: null };
+  const lockout = lockedUntil?.toISOString() ?? null;
+  if (!feed) {
+    return { mode: 'queue' as const, status, daily, recap, question: null, item: null, lockout };
+  }
 
   const [item] = feed.items;
   return {
@@ -70,6 +78,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     status,
     daily,
     recap,
+    lockout,
     question: feed.question,
     item: {
       id: item.id,
@@ -90,7 +99,14 @@ export const actions: Actions = {
     }
 
     try {
-      const result = await castVote(db, { userId: locals.user.id, itemId, answer }, queueDeps);
+      const result = await castVote(
+        db,
+        { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
+        queueDeps
+      );
+      if (result.status === 'limited') {
+        return fail(429, { message: 'You are judging too quickly. Rest a little.' });
+      }
       if (result.status === 'rejected') {
         return fail(409, { message: REJECTION_TEXT[result.reason] });
       }

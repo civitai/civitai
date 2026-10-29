@@ -56,6 +56,7 @@ SQL on PGlite.
     is unknown. Gone: `Closed`, votes inconclusive. `reason` says which.
   - Once a vote commits, a failure settling it is logged and the player still gets the accepted answer; the item stays
     `Resolved` and the job retries it.
+- Vote pacing (`queue/vote-rate.ts`): `castVote` refuses a player's vote with `{ status: 'limited', until }` while the trailing windows in `VOTE_LIMITS` are full, counted from `KnightsVote` itself (no Redis, no state of its own). It runs before the vote transaction without a lock, so parallel requests can overshoot by a few. Moderators (`isModerator`) are exempt, and a `QueueDeps` without `voteLimits` is unpaced (tests, the dev simulator). The vote action answers 429; `/play` `load` carries `lockout` and shows `VoteLockout.svelte`, a countdown that reloads when it ends.
 - The vote ledger is partitioned by month. `POST /api/jobs/partitions` creates the next months and a vote creates its
   own month if missing; `POST /api/jobs/tick` also escalates items past `expiresAt` and settles votes on final items (`settledVotes` in its response; any failing step, or an item that could not be settled, returns 500). Both need
   `Authorization: Bearer $JOBS_TOKEN`.
