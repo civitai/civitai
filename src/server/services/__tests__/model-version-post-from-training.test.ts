@@ -29,6 +29,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import { createModelVersionPostFromTraining } from '~/server/services/model-version.service';
 
 const USER = { id: 5, isModerator: false } as never;
+const SAMPLE = 'https://orchestration-new.civitai.com/v2/consumer/blobs/SAMPLE1.png';
 
 function givenSamples(sampleImages: string[]) {
   dbMock.dbWrite.modelFile.findMany.mockResolvedValue([
@@ -56,12 +57,12 @@ beforeEach(() => {
 
 describe('createModelVersionPostFromTraining', () => {
   it("skips a failed sample's empty slot and posts the real ones", async () => {
-    givenSamples(['', 'https://x/1.png']);
+    givenSamples(['', SAMPLE]);
 
     await createModelVersionPostFromTraining({ modelVersionId: 7, user: USER });
 
     expect(uploadImageFromUrlMock).toHaveBeenCalledTimes(1);
-    expect(uploadImageFromUrlMock).toHaveBeenCalledWith({ imageUrl: 'https://x/1.png' });
+    expect(uploadImageFromUrlMock).toHaveBeenCalledWith({ imageUrl: SAMPLE });
     expect(addPostImageMock).toHaveBeenCalledTimes(1);
   });
 
@@ -73,5 +74,21 @@ describe('createModelVersionPostFromTraining', () => {
     ).toBeUndefined();
     expect(uploadImageFromUrlMock).not.toHaveBeenCalled();
     expect(createPostMock).not.toHaveBeenCalled();
+  });
+
+  it('fetches only orchestrator sample urls', async () => {
+    givenSamples([
+      'https://image.civitai.com/abc/3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33/original=true/a.jpeg',
+      'http://orchestration-new.civitai.com/v2/consumer/blobs/x.png',
+      'https://169.254.169.254/latest/meta-data/',
+      'https://orchestration-new.civitai.com.example.com/x.png',
+      'https://orchestration-new.civitai.com:6379/x.png',
+      SAMPLE,
+    ]);
+
+    await createModelVersionPostFromTraining({ modelVersionId: 7, user: USER });
+
+    expect(uploadImageFromUrlMock).toHaveBeenCalledTimes(1);
+    expect(uploadImageFromUrlMock).toHaveBeenCalledWith({ imageUrl: SAMPLE });
   });
 });

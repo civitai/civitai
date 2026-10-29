@@ -24,6 +24,7 @@ import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server';
+import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
@@ -9076,7 +9077,9 @@ export const getMyImages = async ({
   }
 };
 
+/** Copies a training sample image into image storage. Only orchestrator urls are fetched. */
 export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => {
+  if (!isTrustedOrchestratorUrl(imageUrl)) throw new Error('Unsupported image url');
   const blob = await fetchBlob(imageUrl);
 
   if (!blob) {
