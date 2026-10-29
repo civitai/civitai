@@ -49,6 +49,9 @@ export function TemplateSelect({ username, onSelect }: Props) {
         filters={`user.username = ${quoteMeiliValue(username)}`}
         dropdownItemLimit={10}
         placeholder="Search your models..."
+        // Portaled options sit outside the surrounding Popover, so pressing one counts as an
+        // outside click: the Popover unmounts this picker before a held press is released.
+        comboboxProps={{ withinPortal: false }}
       />
     </Stack>
   );

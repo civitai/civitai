@@ -10,7 +10,7 @@ import {
 } from '@mantine/core';
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -106,11 +106,21 @@ const CreateSteps = ({
   const modelVersionId = result.success ? result.data.modelVersionId : undefined;
   const src = result.success ? result.data.src : undefined;
 
-  const { data: templateFields, isInitialLoading: isTemplateLoading } =
-    trpc.model.getTemplateFields.useQuery(
-      { id: templateId as number, omit: parseTemplateOmit(templateOmit) },
-      { enabled: !!templateId }
-    );
+  const {
+    data: templateFields,
+    isInitialLoading: isTemplateLoading,
+    error: templateError,
+  } = trpc.model.getTemplateFields.useQuery(
+    { id: templateId as number, omit: parseTemplateOmit(templateOmit) },
+    { enabled: !!templateId }
+  );
+  useEffect(() => {
+    if (templateError)
+      showErrorNotification({
+        title: 'Could not load the template',
+        error: new Error(templateError.message),
+      });
+  }, [templateError]);
   const { data: bountyFields, isInitialLoading: isBountyLoading } =
     trpc.model.getModelTemplateFieldsFromBounty.useQuery(
       { id: bountyId as number },
