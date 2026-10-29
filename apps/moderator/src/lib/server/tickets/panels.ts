@@ -57,9 +57,9 @@ export async function loadPanels(
   canRead: CanRead,
   loaders: Loaders = liveLoaders
 ): Promise<Partial<PanelSections>> {
-  const [account, appeals] = await Promise.all([
-    sectionFor('account', ticket, canRead, loaders),
-    sectionFor('appeals', ticket, canRead, loaders),
-  ]);
-  return { ...(account ? { account } : {}), ...(appeals ? { appeals } : {}) };
+  const keys = Object.keys(PANELS) as PanelKey[];
+  const sections = await Promise.all(keys.map((key) => sectionFor(key, ticket, canRead, loaders)));
+  return Object.fromEntries(
+    keys.flatMap((key, i) => (sections[i] ? [[key, sections[i]]] : []))
+  ) as Partial<PanelSections>;
 }

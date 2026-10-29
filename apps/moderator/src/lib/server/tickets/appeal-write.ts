@@ -2,9 +2,9 @@ import { fail, type RequestEvent } from '@sveltejs/kit';
 import { z } from 'zod';
 import { int4Id, parseForm } from '../query';
 import { classifyAppeal } from '$lib/tickets/appeals';
-import { addTicketNote, checkTicketTarget, type AccountWriteDeps } from './account-write';
+import { addTicketNote, checkTicketTarget, type TicketActionDeps } from './panel-write';
 
-export type AppealRow = {
+export type AppealWriteRow = {
   userId: number;
   status: string;
   entityType: string;
@@ -15,11 +15,10 @@ export type AppealRow = {
 
 export type AppealVerdict = 'Approved' | 'Rejected';
 
-export type AppealWriteDeps = {
-  linkedUser: AccountWriteDeps['linkedUser'];
+export type AppealWriteDeps = TicketActionDeps & {
   /** The `/images/appeals` page grant: the queue this ruling would otherwise be made in. */
   canAct: (user: App.Locals['user']) => boolean;
-  appealOf: (id: number) => Promise<AppealRow | null>;
+  appealOf: (id: number) => Promise<AppealWriteRow | null>;
   /** The image's `needsReview` flag, read from the database. */
   needsReviewOf: (imageId: number) => Promise<string | null>;
   /** The image queue's own reason rules, so a ruling from a ticket records what the queue would. */
@@ -35,7 +34,6 @@ export type AppealWriteDeps = {
     internalNotes: string | undefined;
     userId: number;
   }) => Promise<{ id: number } | undefined>;
-  note: AccountWriteDeps['note'];
 };
 
 const ruling = z.object({ appealId: int4Id, status: z.enum(['Approved', 'Rejected']) });

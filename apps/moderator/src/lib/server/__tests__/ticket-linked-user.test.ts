@@ -22,7 +22,7 @@ vi.mock('../user-actions.service', () => ({
 vi.mock('../tickets/detail', () => ({ resolveTicketView, linkedCivitaiUserId }));
 
 const { linkedUser, linkedUserFor } = await import('../tickets/account-actions');
-const { appealsPanelFor } = await import('$lib/tickets/panels');
+const { appealsPanelFor } = await import('$lib/tickets/appeals-panel');
 
 const ticket = { cfFeature: ACCOUNT_RESTRICTION_FEATURE };
 

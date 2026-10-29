@@ -58,7 +58,7 @@
               {/if}{#if a.resolvedMessage}“{a.resolvedMessage}”{/if}
             </div>
           {/if}
-          {#if a.rulable && appeals.status === 'ok'}
+          {#if a.rulable}
             <TicketAppealRuling {ticketId} userId={appeals.userId} appealId={a.id} {ondone} />
           {/if}
         </li>

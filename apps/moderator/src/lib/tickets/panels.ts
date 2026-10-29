@@ -1,6 +1,7 @@
-import { accountPanelFor, type AccountPanel } from './account-panel';
+import { accountPanelFor, type PanelVisibility } from './account-panel';
 import { APPEAL_QUEUE_PATHS } from './appeals';
-import { ACCOUNT_RESTRICTION_FEATURE, type TicketView } from './routing';
+import { appealsPanelFor } from './appeals-panel';
+import type { TicketView } from './routing';
 
 /** What decides whether a panel applies to a ticket. */
 export type PanelContext = {
@@ -12,25 +13,11 @@ export type PanelContext = {
   text?: string;
 };
 
-export type PanelVisibility = AccountPanel;
-
 export type PanelSpec = {
   /** The viewer needs at least one of these page grants to read the panel; none held hides it. */
   readGrants: readonly string[];
   visibility: (ticket: PanelContext) => PanelVisibility;
 };
-
-/** Features whose tickets are about the sender's moderation history, so their appeals are listed. */
-export const APPEAL_FEATURES: readonly string[] = [
-  'Moderation Decision',
-  ACCOUNT_RESTRICTION_FEATURE,
-];
-
-export function appealsPanelFor(ticket: PanelContext): PanelVisibility {
-  if (ticket.view !== 'moderation' || !APPEAL_FEATURES.includes(ticket.cfFeature?.trim() ?? ''))
-    return 'hidden';
-  return ticket.civitaiUserId === null ? 'unlinked' : 'panel';
-}
 
 /**
  * The context panels of a ticket, keyed by the key of the payload section they fill. A panel is shown

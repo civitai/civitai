@@ -1,12 +1,12 @@
 import { dbRead } from '../db';
 import { canAccess } from '../access';
-import { addPrivateNote } from '../freshdesk-write.service';
 import { resolveImageAppeal } from '../image-moderation.service';
 import { parseResolutionReason } from '../image-queue';
-import { appealsPanelFor } from '$lib/tickets/panels';
-import { plainTextToHtml } from '$lib/tickets/reply-html';
+import { IMAGE_APPEALS_PATH } from '$lib/tickets/appeals';
+import { appealsPanelFor } from '$lib/tickets/appeals-panel';
 import { linkedUserFor } from './account-actions';
 import { createTicketAppealActions } from './appeal-write';
+import { ticketNote } from './ticket-note';
 
 /** Image appeals only; removed-content, site-form and model-flag appeals are decided in their queues. */
 export const ticketAppealActions = createTicketAppealActions({
@@ -14,7 +14,7 @@ export const ticketAppealActions = createTicketAppealActions({
     appealsPanelFor,
     'This ticket no longer lists appeals — nothing was changed.'
   ),
-  canAct: (user) => canAccess(user, '/images/appeals'),
+  canAct: (user) => canAccess(user, IMAGE_APPEALS_PATH),
   appealOf: async (id) =>
     (await dbRead
       .selectFrom('Appeal')
@@ -32,5 +32,5 @@ export const ticketAppealActions = createTicketAppealActions({
   parseReason: (form, verdict) => parseResolutionReason(form, verdict),
   resolve: ({ imageId, status, resolvedReason, internalNotes, userId }) =>
     resolveImageAppeal({ imageId, status, resolvedReason, internalNotes, userId }),
-  note: (id, text) => addPrivateNote(id, plainTextToHtml(text) ?? ''),
+  note: ticketNote,
 });

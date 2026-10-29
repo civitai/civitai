@@ -1,14 +1,15 @@
 import { dbRead } from '../db';
 import { canAccess } from '../access';
 import { accountEnforcementActions } from '../account-actions';
-import { addPrivateNote } from '../freshdesk-write.service';
 import { getTicketDetail, isFreshdeskId } from '../freshdesk.service';
 import { revokeTimedMute, resolveRestriction } from '../user-actions.service';
 import { accountPanelFor } from '$lib/tickets/account-panel';
-import type { PanelContext, PanelVisibility } from '$lib/tickets/panels';
-import { plainTextToHtml } from '$lib/tickets/reply-html';
+import type { PanelContext } from '$lib/tickets/panels';
+import type { PanelVisibility } from '$lib/tickets/account-panel';
 import { linkedCivitaiUserId, resolveTicketView } from './detail';
-import { createTicketAccountActions, type LinkedUser } from './account-write';
+import { createTicketAccountActions } from './account-write';
+import type { LinkedUser } from './panel-write';
+import { ticketNote } from './ticket-note';
 
 /**
  * The user a ticket links to, read live right before a write. The ticket must still be one the panel
@@ -71,5 +72,5 @@ export const ticketAccountActions = createTicketAccountActions({
       .select(['userId', 'type', 'status'])
       .where('id', '=', id)
       .executeTakeFirst()) ?? null,
-  note: (id, text) => addPrivateNote(id, plainTextToHtml(text) ?? ''),
+  note: ticketNote,
 });

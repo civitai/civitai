@@ -16,8 +16,8 @@ export const APPEAL_WINDOW_DAYS = 30;
 /** Rows shown. */
 export const APPEAL_ROWS = 25;
 
-const IMAGE_APPEALS_PATH = '/images/appeals';
-const REMOVED_APPEALS_PATH = '/images/removed-appeals';
+export const IMAGE_APPEALS_PATH = '/images/appeals';
+export const REMOVED_APPEALS_PATH = '/images/removed-appeals';
 
 /**
  * Each row in exactly one kind, first match wins: a removed-content appeal can also carry a form
