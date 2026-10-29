@@ -988,6 +988,24 @@ describe.each(CLEARS)('restoring %s from a ToS flag', (table, clear, reportTable
     expect(await state(table)).toMatchObject({ 11: 'hidden', 12: 'public' });
   });
 
+  it('leaves the comment hidden and its report as it was, reporting it failed, when the reopen fails', async () => {
+    await holder.db.exec(
+      `ALTER TABLE "Report" ADD CONSTRAINT no_reopen CHECK (status <> 'Pending') NOT VALID`
+    );
+    try {
+      await expect(clear({ ids: [11] })).resolves.toEqual({
+        count: 0,
+        reopenedReports: 0,
+        retainedHidden: 0,
+        failed: 1,
+      });
+      expect(await state(table)).toMatchObject({ 11: 'hidden' });
+      expect(await reports()).toMatchObject({ 11: 'Actioned' });
+    } finally {
+      await holder.db.exec(`ALTER TABLE "Report" DROP CONSTRAINT no_reopen`);
+    }
+  });
+
   it('counts a missing comment as neither cleared nor kept', async () => {
     await expect(clear({ ids: [999] })).resolves.toEqual({
       count: 0,

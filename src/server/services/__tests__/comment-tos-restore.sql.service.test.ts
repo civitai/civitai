@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
@@ -22,16 +23,13 @@ const statements: string[] = [];
 const missing = new Set<number>();
 
 const record = (first: unknown, rest: unknown[]) => {
-  const text =
-    Array.isArray(first) && Array.isArray((first as unknown as TemplateStringsArray).raw)
-      ? (first as string[]).reduce((acc, chunk, i) => acc + (i ? `$${i}` : '') + chunk, '')
-      : String(first);
+  const { text, values } = Prisma.sql(first as TemplateStringsArray, ...(rest as never[]));
   statements.push(text);
   // The clear: an unheld author's comment, cleared.
   if (text.includes('WITH target AS'))
-    return rest.some((v) => typeof v === 'number' && missing.has(v))
+    return values.some((v) => typeof v === 'number' && missing.has(v))
       ? []
-      : [{ userId: 1, held: false, cleared: true }];
+      : [{ userId: 1, held: false, cleared: true, reopened: 0 }];
   return [] as unknown[];
 };
 /** The statement that reopens reports. */
@@ -78,7 +76,7 @@ describe('clearing a comment ToS flag', () => {
 
     const sql = reopen();
     expect(sql).toContain('"CommentV2Report"');
-    expect(sql).toContain('c."commentV2Id"');
+    expect(sql).toContain('link."commentV2Id"');
     expect(sql).toContain('r.reason =');
   });
 
@@ -106,7 +104,7 @@ describe('clearing a comment ToS flag', () => {
 
     const sql = reopen();
     expect(sql).toContain('"CommentReport"');
-    expect(sql).toContain('c."commentId"');
+    expect(sql).toContain('link."commentId"');
     expect(sql).not.toMatch(/r\.status <> /);
   });
 });
