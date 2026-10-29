@@ -40,31 +40,22 @@ export class SubmitError extends Error {
 
 export const SUBMIT_UNREACHABLE = 'Civitai could not be reached. Try again in a moment.';
 
-/** Dotenv files the CLI's packager keeps, and only at the project root (`pkgzip.keptEnvFiles`). */
-const KEPT_ROOT_ENV_FILES = new Set(['.env.example', '.env.sample', '.env.production']);
-
 /**
- * Whether `civitai app submit` leaves `rel` (a path inside the app) out of its package, for the
- * rules an export can still let through (`pkgzip`): the root `scratch/` folder, any `*.zip`, a
- * dotenv-shaped folder (`.env` or `.env.*`), and every file named `.env*` or `*.env`, except
- * `.env.example`, `.env.sample` and `.env.production` at the root. Case is ignored, as there.
+ * Whether `civitai app submit` leaves `rel` (a path inside the app) out of its package, for what the
+ * export lets through: the root `scratch/` folder (throwaway probes) and any `*.zip` (a package an
+ * earlier `app submit` wrote), as the CLI's packager (`pkgzip`) drops them.
  */
 export function cliLeavesOut(rel: string): boolean {
-  const parts = rel.split('/');
-  const name = parts[parts.length - 1].toLowerCase();
-  if (parts.length > 1 && parts[0] === 'scratch') return true;
-  if (parts.slice(0, -1).some((dir) => /^\.env(\.|$)/i.test(dir))) return true;
-  if (name.endsWith('.zip')) return true;
-  if (parts.length === 1 && KEPT_ROOT_ENV_FILES.has(parts[0])) return false;
-  return name.startsWith('.env') || name.endsWith('.env');
+  return rel.startsWith('scratch/') || rel.toLowerCase().endsWith('.zip');
 }
 
 /**
  * The bundle `civitai app submit` would send, from the app's export: the export holds the app folder
- * (`<app>/…`), and a submission holds its contents at the root, less what the CLI leaves out
- * (`cliLeavesOut`). The export itself already drops dependencies, build output, caches, logs and
- * keys; it also drops every `.env*` file but `.env.example`, so a root `.env.production` the CLI
- * would keep reaches the bundle only once the export sends it.
+ * (`<app>/…`), and a submission holds its contents at the root, less what `cliLeavesOut` drops.
+ *
+ * 🔴 The sandbox export drops every `.env*` file except `.env.example` upstream (with dependencies,
+ * build output, caches, logs and keys), so the bundle never carries one. That includes a root
+ * `.env.production`, which the CLI would keep; nothing here adds dotenv files back.
  */
 export async function submitBundleFromExport(exported: Blob, app: string): Promise<PreparedSubmit> {
   const { default: JSZip } = await import('jszip');
@@ -121,8 +112,19 @@ async function base64Of(blob: Blob): Promise<string> {
   return url.slice(url.indexOf(',') + 1);
 }
 
+/** The user's own submission for this app still waits for review (`submitVersion`'s refusal). */
+const OWN_PENDING = /^you already have a pending submission for slug /;
+export const PENDING_SUBMISSION =
+  'Not submitted: this app already has a submission waiting for review. Withdraw it on the Build page (/apps/build), then submit again.';
+/** A refusal whose words name a CLI command, which the user has no way to run. */
+export const REFUSED_PLAINLY =
+  'Not submitted: the submission was refused. Ask App Assistant to check the app, then submit again.';
+
 /** What the user reads when the route refused: its own message, and what to do about it. */
 function refusalMessage(status: number, message: string | null): string {
+  if (message && OWN_PENDING.test(message)) return PENDING_SUBMISSION;
+  // The service's messages are written for the CLI too; the card never shows a command to run.
+  if (message && /\bcivitai app\b/.test(message)) return REFUSED_PLAINLY;
   if (status === 401) return 'You are signed out. Sign in again, then press Submit for review.';
   if (status === 403)
     return `Not submitted: ${

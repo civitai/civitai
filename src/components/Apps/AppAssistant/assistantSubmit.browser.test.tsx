@@ -227,12 +227,59 @@ describe('Submit for review', () => {
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
+  test('a pending submission is named in plain words with the web way to withdraw it, never a CLI command', async () => {
+    // `submitVersion`'s own refusal, as the route sends it (400).
+    const refusal =
+      'you already have a pending submission for slug prompt-randomizer (pubreq_01ABC); withdraw it first with `civitai app withdraw pubreq_01ABC` before resubmitting';
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () => new Response(JSON.stringify({ message: refusal }), { status: 400 })
+    );
+    const { gate } = setup({
+      send: vi.fn((prepared: PreparedSubmit) => sendForReview(prepared, fetchImpl)),
+    });
+    await passChecks(gate);
+    const card = render(gate, (await offer(gate)).output)!;
+    await expect.poll(() => submitButton(card)).not.toBeNull();
+    submitButton(card)!.click();
+    await expect
+      .poll(() => card.querySelector('[role="alert"]')?.textContent)
+      .toBe(
+        'Not submitted: this app already has a submission waiting for review. Withdraw it on the Build page (/apps/build), then submit again.'
+      );
+    expect(card.textContent).not.toMatch(/civitai app|pubreq_/);
+  });
+
+  test('any other refusal that names a CLI command is told in plain words', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ message: 'run `civitai app doctor` and try again' }), {
+          status: 400,
+        })
+    );
+    await expect(
+      sendForReview({ bundle: new Blob(['x']), manifest: MANIFEST }, fetchImpl)
+    ).rejects.toThrow(
+      'Not submitted: the submission was refused. Ask App Assistant to check the app, then submit again.'
+    );
+    // Control: a refusal without a command is passed on with what to do.
+    fetchImpl.mockResolvedValueOnce(
+      new Response(JSON.stringify({ message: 'manifest.name must be a non-empty string' }), {
+        status: 400,
+      })
+    );
+    await expect(
+      sendForReview({ bundle: new Blob(['x']), manifest: MANIFEST }, fetchImpl)
+    ).rejects.toThrow(
+      'Not submitted: manifest.name must be a non-empty string. Ask App Assistant to fix this, then submit again.'
+    );
+  });
+
   test('a failed submit says what went wrong and leaves the button to try again', async () => {
     const send = vi
       .fn<Send>()
       .mockRejectedValueOnce(
         new SubmitError(
-          'Not submitted: you already have a pending submission for slug prompt-randomizer. Ask App Assistant to fix this, then submit again.',
+          'Not submitted: slug prompt-randomizer already has a pending submission from another user; wait for it to be reviewed before submitting a different bundle. Ask App Assistant to fix this, then submit again.',
           400
         )
       )
@@ -244,7 +291,7 @@ describe('Submit for review', () => {
     submitButton(card)!.click();
     await expect
       .poll(() => card.querySelector('[role="alert"]')?.textContent)
-      .toMatch(/^Not submitted: you already have a pending submission/);
+      .toMatch(/^Not submitted: slug prompt-randomizer already has a pending submission/);
     expect(submitButton(card)).not.toBeNull();
     submitButton(card)!.click();
     await expect
@@ -305,45 +352,6 @@ describe('the bundle a press sends', () => {
     await expect(submitBundleFromExport(await exportOf(rest), APP)).rejects.toThrow(
       'Your app has no block.manifest.json, so it cannot be submitted. Ask App Assistant to add it.'
     );
-  });
-
-  test('leaves out exactly what civitai app submit leaves out: a root .env.production stays', async () => {
-    // As the CLI's packager (pkgzip) decides each name; the export may send any of them.
-    const { bundle } = await submitBundleFromExport(
-      await exportOf({
-        ...APP_FILES,
-        '.env.production': 'VITE_MODE=production',
-        '.env.example': 'VITE_KEY=',
-        '.env.sample': 'VITE_KEY=',
-        'src/scratch/util.ts': 'x',
-        // Left out:
-        'scratch/probe.ts': 'probe',
-        'prompt-randomizer-0.1.0.zip': 'an earlier package',
-        'assets/old.ZIP': 'zip at depth',
-        '.env': 'SECRET=1',
-        '.env.local': 'SECRET=1',
-        '.env.production.local': 'SECRET=1',
-        'db.env': 'SECRET=1',
-        'src/.env.production': 'only kept at the root',
-        '.env.d/notes.txt': 'in a dotenv-shaped folder',
-      }),
-      APP
-    );
-    const zip = await JSZip.loadAsync(bundle);
-    expect(
-      Object.keys(zip.files)
-        .filter((path) => !zip.files[path].dir)
-        .sort()
-    ).toEqual([
-      '.env.example',
-      '.env.production',
-      '.env.sample',
-      'block.manifest.json',
-      'package.json',
-      'src/main.ts',
-      'src/scratch/util.ts',
-    ]);
-    expect(await zip.file('.env.production')!.async('string')).toBe('VITE_MODE=production');
   });
 
   test('keeps a nested scratch folder, which is the app’s own source', async () => {

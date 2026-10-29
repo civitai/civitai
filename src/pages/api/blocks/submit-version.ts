@@ -51,8 +51,10 @@ const NOT_AN_AUTHOR = 'Apps are restricted to the Civitai team';
 
 export default AuthedEndpoint(
   async (req, res: NextApiResponse, user) => {
-    // CSRF guard. This raw route is cookie-authed and bypasses the tRPC
-    // pipeline, so it never gets createContext's same-origin check. With the
+    // CSRF guard. This raw route takes the session cookie (or a full-access
+    // personal key) and bypasses the tRPC pipeline, so it never gets
+    // createContext's same-origin check; in prod a bearer caller without an
+    // allowed Origin is refused too (no exemption, unlike createContext). With the
     // prod session cookie set to sameSite:'none', a cross-site HTML form POST
     // in a logged-in author's browser would otherwise submit a bundle with
     // their cookie. Mirror createContext's posture: in prod, require the

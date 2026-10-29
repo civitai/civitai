@@ -17,10 +17,12 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
 /**
  * TOKEN-AUTHENTICATED bundle-submit route for the `civitai` CLI's `app submit`.
  *
- * This is a SECOND auth front-door to the SAME publish flow as the session/cookie
- * route at `src/pages/api/blocks/submit-version.ts`. The session route is
- * `ModEndpoint` (cookie + moderator) — usable from a logged-in browser but not
- * from a headless CLI, which has only an API key. This route accepts
+ * This is a SECOND auth front-door to the SAME publish flow as the session
+ * route at `src/pages/api/blocks/submit-version.ts`. The session route takes a
+ * signed-in session or a full-access personal key (`requireFullScopeSession`),
+ * the same author capability as this route, and a prod Origin check — usable
+ * from a logged-in browser (App Assistant's Submit for review) but not from a
+ * headless CLI, which sends no Origin and may hold a scoped OAuth token. This route accepts
  * `Authorization: Bearer <civitai API key>` instead, resolves the key → user via
  * the EXISTING API-key infrastructure (`getSessionFromBearerToken`, the same
  * helper that backs `/api/v1/*` REST auth and the retool bearer endpoint), then
