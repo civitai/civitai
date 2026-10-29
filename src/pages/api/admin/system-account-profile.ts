@@ -53,7 +53,7 @@ const asObject = (value: unknown): Record<string, unknown> =>
 // Unconfigured while it repeats another admin token.
 function profileToken() {
   const token = env.SYSTEM_ACCOUNT_PROFILE_TOKEN;
-  return token && (token === env.SYSTEM_ACCOUNT_KEY_TOKEN || token === env.WEBHOOK_TOKEN)
+  return token && [env.SYSTEM_ACCOUNT_KEY_TOKEN, env.WEBHOOK_TOKEN, env.JOB_TOKEN].includes(token)
     ? undefined
     : token;
 }

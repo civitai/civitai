@@ -115,18 +115,18 @@ describe('POST /api/admin/system-account-profile', () => {
     expect((await call({ userId: SYSTEM_ID, name: 'Agent' })).status).toBe(200);
   });
 
-  it.each([
-    ['the key token', KEY_TOKEN],
-    ['the webhook token', 'w'.repeat(40)],
-  ])('is closed while its token repeats %s', async (_, shared) => {
-    setEnv({
-      SYSTEM_ACCOUNT_PROFILE_TOKEN: shared,
-      SYSTEM_ACCOUNT_KEY_TOKEN: KEY_TOKEN,
-      WEBHOOK_TOKEN: shared === KEY_TOKEN ? 'test-webhook-token' : shared,
-    });
-    expect((await call({ userId: SYSTEM_ID, name: 'Agent' }, { token: shared })).status).toBe(503);
-    expect(wrote()).toBe(0);
-  });
+  it.each(['SYSTEM_ACCOUNT_KEY_TOKEN', 'WEBHOOK_TOKEN', 'JOB_TOKEN'])(
+    'is closed while its token repeats %s',
+    async (other) => {
+      // Distinct per row: env overrides persist across tests in a file.
+      const shared = `shared-${other}`.padEnd(40, 's');
+      setEnv({ SYSTEM_ACCOUNT_PROFILE_TOKEN: shared, [other]: shared });
+      expect((await call({ userId: SYSTEM_ID, name: 'Agent' }, { token: shared })).status).toBe(
+        503
+      );
+      expect(wrote()).toBe(0);
+    }
+  );
 
   it('is closed while its token is unset', async () => {
     setEnv({ SYSTEM_ACCOUNT_PROFILE_TOKEN: undefined });
