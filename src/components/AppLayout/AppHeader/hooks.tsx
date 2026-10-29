@@ -1,3 +1,4 @@
+// narrowed-path proof (throwaway)
 import { useMantineTheme, getPrimaryShade, useComputedColorScheme } from '@mantine/core';
 import {
   type Icon,
