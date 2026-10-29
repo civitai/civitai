@@ -7854,6 +7854,14 @@ export async function reportCsamImages({
       SELECT has_table_privilege(to_regclass('"CsamQueueSetAside"'), 'DELETE') AS deletable`;
     if (setAside?.deletable)
       await tx.$executeRaw`DELETE FROM "CsamQueueSetAside" WHERE "imageId" = ANY(${imageIds}::int[])`;
+    else if (setAside?.deletable === false)
+      logToAxiom({
+        type: 'warning',
+        name: 'csam-queue-set-aside-not-deletable',
+        message: 'the table exists but this role may not delete from it; grant DELETE',
+      }).catch(() => {
+        // swallow — best effort logging
+      });
     // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and
     // the uploader is not told.
     await tx.appeal.updateMany({

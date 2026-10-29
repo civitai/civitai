@@ -12,7 +12,9 @@
 -- and check each with has_table_privilege('<role>', '"CsamQueueSetAside"', '<privilege>'). The
 -- moderator app dismisses (insert) and reads the queue; the main app removes the rows of images it
 -- reports. A role that cannot read the table sees the queue as if the table were missing. The
--- trigger runs as its owner, so it needs no grant.
+-- trigger runs as its owner, so it needs no grant. Then check that only the owner and superusers
+-- may execute the function (default privileges can grant it to a role):
+--   SELECT rolname FROM pg_roles WHERE has_function_privilege(oid, 'csam_queue_set_aside_end()', 'EXECUTE');
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
