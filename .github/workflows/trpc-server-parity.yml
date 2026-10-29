@@ -109,12 +109,15 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # Whether the preview pipeline will build an image for this PR at all, decided the way that
-      # pipeline's own authorization step decides it: the author must have write access to this
-      # repository (MEMBER/OWNER/COLLABORATOR; a fork PR never qualifies), AND the PR must carry the
-      # `preview` label or its author be on the auto-deploy list. The list is the repository
-      # variable PREVIEW_AUTO_DEPLOY_USERS (space-separated logins), kept out of this file. Read
-      # live from the API, so a label added after the push counts.
+      # Whether the preview pipeline will build an image for this PR at all: the head branch is in
+      # this repository (pushing one needs write access, so a fork PR is the only no-write path)
+      # AND the PR carries the `preview` label or its author is on the auto-deploy list. The list
+      # is the repository variable PREVIEW_AUTO_DEPLOY_USERS (space-separated logins), kept out of
+      # this file. Read live from the API, so a label added after the push counts.
+      #
+      # `author_association` is deliberately NOT used, unlike the pipeline's own check: Actions
+      # sees CONTRIBUTOR for a private org member (in the API and in the event payload alike), so
+      # it would fail PRs that do get an image.
       - name: Will a preview image be built for this PR?
         id: gate
         if: github.event_name == 'pull_request'
@@ -122,12 +125,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           AUTO_DEPLOY_USERS: ${{ vars.PREVIEW_AUTO_DEPLOY_USERS }}
-          # From the event payload, as the preview pipeline reads it: this job's token cannot see
-          # a private org membership, so the API answers CONTRIBUTOR for a member.
-          ASSOC: ${{ github.event.pull_request.author_association }}
         run: |
           pr=$(gh api "repos/${{ github.repository }}/pulls/$PR")
-          assoc=$ASSOC
           login=$(jq -r '.user.login | ascii_downcase' <<< "$pr")
           head_repo=$(jq -r .head.repo.full_name <<< "$pr")
           labelled=$(jq -r '[.labels[].name] | index("preview") != null' <<< "$pr")
@@ -135,10 +134,10 @@ jobs:
           for u in $(tr '[:upper:],' '[:lower:] ' <<< "$AUTO_DEPLOY_USERS"); do
             [ "$u" = "$login" ] && auto=true
           done
-          echo "association=$assoc same-repo=$([ "$head_repo" = "${{ github.repository }}" ] && echo yes || echo no) preview-label=$labelled auto-deploy=$auto"
-          member=false
-          case "$assoc" in MEMBER|OWNER|COLLABORATOR) member=true ;; esac
-          if [ "$head_repo" != "${{ github.repository }}" ] || [ "$member" != true ] || { [ "$labelled" != true ] && [ "$auto" != true ]; }; then
+          same_repo=false
+          [ "$head_repo" = "${{ github.repository }}" ] && same_repo=true
+          echo "same-repo=$same_repo preview-label=$labelled auto-deploy=$auto"
+          if [ "$same_repo" != true ] || { [ "$labelled" != true ] && [ "$auto" != true ]; }; then
             echo "::error::No preview image will be built for this PR. Add the \`preview\` label to run the Mode R parity check."
             exit 1
           fi
