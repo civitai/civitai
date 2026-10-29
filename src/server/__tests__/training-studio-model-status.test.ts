@@ -22,6 +22,7 @@ const MODELS: Row[] = [
   { id: 78, userId: 1, status: ModelStatus.Deleted, deletedBy: 1 },
   { id: 79, userId: 2, status: ModelStatus.Draft, deletedBy: null },
   { id: 80, userId: 1, status: ModelStatus.Deleted, deletedBy: 999 },
+  { id: 81, userId: 1, status: ModelStatus.Deleted, deletedBy: null },
 ];
 
 type Row = { id: number; userId: number; status: ModelStatus; deletedBy: number | null };
@@ -78,8 +79,11 @@ describe('GET /api/training-studio/model-status', () => {
 
   // Publish reopens a moderator-deleted draft rather than make a fresh one; reporting it not live
   // would offer a Publish that lands back on it, forever.
-  it('reports a moderator-deleted draft live, matching Publish', async () => {
-    expect(await status('80')).toEqual({ code: 200, body: { live: true } });
+  it.each([
+    ['a moderator', '80'],
+    ['no recorded actor', '81'],
+  ])('reports a draft deleted by %s live, matching Publish', async (_label, id) => {
+    expect(await status(id)).toEqual({ code: 200, body: { live: true } });
   });
 
   it("reports someone else's model not live", async () => {

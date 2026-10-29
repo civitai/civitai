@@ -1,4 +1,5 @@
-/** The host half of the element's `modelLive`: whether the run's model still exists for the caller. */
+/** The host half of the element's `modelLive`: whether the run's model still counts for the caller
+ *  (not missing, not deleted by its owner). */
 export async function checkStudioModelLive(
   modelId: number,
   fetchImpl: typeof fetch = fetch
