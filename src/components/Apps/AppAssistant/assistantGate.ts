@@ -32,7 +32,7 @@ export {
   normalizeChecklist,
   previewVerdictOf,
 } from '@civitai/app-assistant';
-export type { CheckKind, ChecklistItem } from '@civitai/app-assistant';
+export type { CheckKind, ChecklistItem, DataSource } from '@civitai/app-assistant';
 
 export interface AssistantGate {
   /** Forget what was verified, e.g. when another sandbox opens. */
@@ -193,8 +193,18 @@ export function renderChecklist(call: ChatToolCall): HTMLElement | undefined {
     list.append(row);
   }
   card.append(title, list);
+  if ((call.input as { data?: unknown } | null)?.data === 'sample') {
+    const note = document.createElement('div');
+    note.textContent = CHECKLIST_SAMPLE_DATA_TEXT;
+    note.style.cssText = 'margin-top:4px;font-weight:600';
+    card.append(note);
+  }
   return card;
 }
+
+/** What a checklist that plans sample data tells the user, so Build it is their agreement to it. */
+export const CHECKLIST_SAMPLE_DATA_TEXT =
+  '⚠ Sample data: this app will show made-up examples, not real Civitai data.';
 
 /**
  * What a passing report_ready's card says was checked. `sandbox__preview_check` loads the app in a
@@ -202,6 +212,8 @@ export function renderChecklist(call: ChatToolCall): HTMLElement | undefined {
  */
 export const READY_CARD_TEXT =
   '✓ Checked: the app renders in a test browser, the tests and the typecheck pass, and every checklist item is done.';
+/** Added to {@link READY_CARD_TEXT} when the app shows sample data. */
+export const READY_CARD_SAMPLE_DATA_TEXT = ' ⚠ This app shows sample data, not real Civitai data.';
 
 /** The card a passing report_ready shows: the user's sign that the checks ran. The default card otherwise. */
 export function renderReady(call: ChatToolCall): HTMLElement | undefined {
@@ -211,6 +223,9 @@ export function renderReady(call: ChatToolCall): HTMLElement | undefined {
   card.setAttribute('role', 'status');
   card.style.cssText =
     'border:1px solid var(--civitai-color-border, #8884);border-radius:8px;padding:8px 12px;margin:4px 0';
-  card.textContent = READY_CARD_TEXT;
+  card.textContent =
+    (call.output as { data?: unknown }).data === 'sample'
+      ? READY_CARD_TEXT + READY_CARD_SAMPLE_DATA_TEXT
+      : READY_CARD_TEXT;
   return card;
 }

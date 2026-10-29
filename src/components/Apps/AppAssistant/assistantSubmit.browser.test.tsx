@@ -3,7 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import type { ChatToolResult } from '@civitai/components-chat/civitai-chat';
 import { createAssistantGate } from '~/components/Apps/AppAssistant/assistantGate';
 import type { PreparedSubmit, SubmitReceipt } from '~/components/Apps/AppAssistant/assistantSubmit';
-import { submitNotChosen } from '@civitai/app-assistant';
+import { SAMPLE_NOT_AGREED, SUBMIT_NEEDS_READY, submitNotChosen } from '@civitai/app-assistant';
 import {
   SubmitError,
   sendForReview,
@@ -39,8 +39,17 @@ const result = (name: string, output: unknown, extra: Partial<ChatToolResult> = 
   ...extra,
 });
 
-/** Every check report_ready asks for, passed, as the page's gate hears of them. */
+/** Every check report_ready asks for, passed, then report_ready itself, as the page's gate hears of them. */
 async function passChecks(gate: ReturnType<typeof createAssistantGate>) {
+  await passChecksOnly(gate);
+  const input = { data: 'civitai' };
+  await gate.beforeToolCall('report_ready', input, conv);
+  const ready = await gate.tools.report_ready.execute(input, ctx);
+  gate.onToolResult(result('report_ready', ready, { input }));
+}
+
+/** The checks alone: report_ready not yet called. */
+async function passChecksOnly(gate: ReturnType<typeof createAssistantGate>) {
   const items = [{ label: 'Randomize a prompt', done: true }];
   gate.beforeToolCall('set_checklist', { items }, conv);
   const shown = await gate.tools.set_checklist.execute({ items }, ctx);
@@ -133,6 +142,16 @@ describe('Submit for review', () => {
       })
     ).toBeUndefined();
     expect(send).not.toHaveBeenCalled();
+  });
+
+  test('waits on report_ready: every check passed is not enough, and a refused report_ready (sample data never agreed) leaves it refused', async () => {
+    const { gate } = setup();
+    await passChecksOnly(gate);
+    expect((await offer(gate)).refused).toBe(SUBMIT_NEEDS_READY);
+    const sample = { data: 'sample' };
+    const decision = await gate.beforeToolCall('report_ready', sample, conv);
+    expect(decision).toMatchObject({ refuse: expect.stringContaining(SAMPLE_NOT_AGREED) });
+    expect((await offer(gate)).refused).toBe(SUBMIT_NEEDS_READY);
   });
 
   test('a file change after the checks refuses it again', async () => {

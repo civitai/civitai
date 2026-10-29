@@ -2230,11 +2230,15 @@ describe('AppAssistantWorkspace tool gate', () => {
     await openFirst();
     m.chat!.beforeToolCall!('sandbox__list_dir', {}, conv);
     await checkEverything();
-    expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toEqual({ allow: true });
+    expect(m.chat!.beforeToolCall!('report_ready', { data: 'civitai' }, conv)).toEqual({
+      allow: true,
+    });
 
     await openFromSwitcher('app-bbbb');
     await vi.waitFor(() =>
-      expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse')
+      expect(m.chat!.beforeToolCall!('report_ready', { data: 'civitai' }, conv)).toHaveProperty(
+        'refuse'
+      )
     );
   });
 
@@ -3383,6 +3387,15 @@ describe('AppAssistantWorkspace Submit for review', () => {
       ['sandbox__run_command', { command: 'cd app-aaaa && npx tsc --noEmit' }, 'exit_code: 0'],
     ] as const)
       m.chat!.onToolResult!({ name, input, output, isError: false });
+    // Every check passed, but readiness is report_ready's to say.
+    expect(m.chat!.beforeToolCall!('submit_for_review', {}, conv)).toHaveProperty('refuse');
+    const ready = await m.chat!.tools.report_ready.execute({ data: 'civitai' }, ctx);
+    m.chat!.onToolResult!({
+      name: 'report_ready',
+      input: { data: 'civitai' },
+      output: ready,
+      isError: false,
+    });
     expect(m.chat!.beforeToolCall!('submit_for_review', {}, conv)).toEqual({ allow: true });
     const output = await m.chat!.tools.submit_for_review.execute({}, ctx);
     m.chat!.onToolResult!({ name: 'submit_for_review', input: {}, output, isError: false });

@@ -159,6 +159,7 @@ describe('buildAssistantSystemPrompt', () => {
         '- The user knows each sandbox as one of their apps: say "your app", never "sandbox".',
         '- If create_app fails, do not call it again in the same reply: tell the user what its message says to do.',
         "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'.",
+        "- Civitai data (models, images, creators, their stats) comes from the public API through app.site from @civitai/sdk, for example app.site.get('models', { query: { query, types: 'LORA', sort: 'Most Downloaded', limit: 24 } }); its routes are listed at https://developer.civitai.com/site.md. Never invent data in place of real data the user asked for. If they need data neither gives, tell them before you build and let them choose: an app using what is available, or clearly labelled sample data (then set_checklist with data: 'sample', and a visible \"Sample data\" label at the top of the app). The preview check has no internet, so a real-data app shows its loading or error state there: that is expected, not a reason to use sample data.",
         '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
         SUBMIT_RULE_TEXT,
       ].join('\n')
@@ -197,6 +198,26 @@ describe('pricing an estimate', () => {
     (runner, subagents) => {
       const lines = assistantSystemPrompt(runner, subagents)('BUILT-IN RULES').split('\n');
       expect(lines.filter((line) => line.includes('estimate'))).toEqual([ESTIMATE_RULE]);
+    }
+  );
+});
+
+describe('real Civitai data', () => {
+  // A run told to build a LoRA explorer grepped the SDK README for "models(", found nothing, and
+  // shipped eight invented models as real ones. On both runners, with or without subagents.
+  it.each([
+    ['browser', false],
+    ['browser', true],
+    ['remote', false],
+    ['remote', true],
+  ] as const)(
+    'the %s system prompt (subagents: %s) names the API and forbids invented data',
+    (runner, subagents) => {
+      const lines = assistantSystemPrompt(runner, subagents)('BUILT-IN RULES').split('\n');
+      const rule = lines.filter((line) => line.includes("app.site.get('models'"));
+      expect(rule).toHaveLength(1);
+      expect(rule[0]).toContain('Never invent data in place of real data the user asked for.');
+      expect(rule[0]).toContain("set_checklist with data: 'sample'");
     }
   );
 });

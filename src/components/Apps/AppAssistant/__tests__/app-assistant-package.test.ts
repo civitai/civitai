@@ -97,7 +97,7 @@ describe('the shared gate and subagents’ calls', () => {
     core.beforeToolCall('sandbox__list_dir', {}, ctx);
     await core.tools.set_checklist.execute({ items: [{ label: 'Tips', done: true }] });
     for (const result of results) core.onToolResult(result);
-    return core.beforeToolCall(shared.REPORT_READY, {}, ctx);
+    return core.beforeToolCall(shared.REPORT_READY, { data: 'civitai' }, ctx);
   }
 
   it('the parent’s checks make report_ready pass (the control)', async () => {
@@ -248,5 +248,51 @@ describe('which checklists wait for Build it', () => {
       isError: false,
     });
     expect(core.awaiting()).toEqual({ id: 'runner-8', app: 'sb-tip' });
+  });
+
+  // A finished list that newly says sample data still waits: the user must agree to sample data
+  // before report_ready takes it. A data change needing no agreement on a finished list is progress.
+  it('a finished list that newly says sample data waits for the user', async () => {
+    const core = runnerGate([shownEarlier]);
+    expect(
+      await core.tools.set_checklist.execute({ items: items([true, true]), data: 'sample' })
+    ).toMatchObject({ shown: true, awaitsUser: true, checklist: 'run2-1', app: 'tip-calc' });
+    expect(core.awaiting()).toEqual({ id: 'run2-1', app: 'sb-tip' });
+    // Once it says sample data, ticking the same list again does not wait.
+    expect(
+      await core.tools.set_checklist.execute({ items: items([true, true]), data: 'sample' })
+    ).toEqual({ updated: true, open: 0, app: 'tip-calc' });
+  });
+
+  it('a finished list that newly says civitai or none does not wait', async () => {
+    for (const data of ['civitai', 'none']) {
+      const core = runnerGate([shownEarlier]);
+      expect(await core.tools.set_checklist.execute({ items: items([true, true]), data })).toEqual({
+        updated: true,
+        open: 0,
+        app: 'tip-calc',
+      });
+      expect(core.awaiting()).toBeNull();
+    }
+  });
+
+  it('the page takes a runner’s Build it for a finished list that asks to agree to sample data', () => {
+    const core = shared.createGateCore({ currentApp: () => 'sb-tip' });
+    core.onToolResult({
+      name: shared.SET_CHECKLIST,
+      input: { items: items([true, true]), data: 'sample' },
+      output: { shown: true, awaitsUser: true, checklist: 'runner-9' },
+      isError: false,
+    });
+    expect(core.awaiting()).toEqual({ id: 'runner-9', app: 'sb-tip' });
+    // Control: the same report saying civitai takes none, as #7153 has it.
+    const other = shared.createGateCore({ currentApp: () => 'sb-tip' });
+    other.onToolResult({
+      name: shared.SET_CHECKLIST,
+      input: { items: items([true, true]), data: 'civitai' },
+      output: { shown: true, awaitsUser: true, checklist: 'runner-10' },
+      isError: false,
+    });
+    expect(other.awaiting()).toBeNull();
   });
 });
