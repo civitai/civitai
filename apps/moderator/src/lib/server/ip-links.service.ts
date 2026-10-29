@@ -181,7 +181,11 @@ export async function getAccountsOnAddresses(
   const own: OwnAddress[] = [];
   const invalid: string[] = [];
   for (const address of addresses) {
-    const cluster = isClusterKey(address) ? address : ipCluster(address);
+    // A zero-padded IPv4 octet (`01.2.3.4`) is how no stored address is written, so as a key it would
+    // match nothing and read as an address with no accounts. `ipCluster` stays lenient: redaction uses
+    // it to find addresses in text, padded or not.
+    const padded = /(^|\.)0\d/.test(address.trim()) && !address.includes(':');
+    const cluster = padded ? null : isClusterKey(address) ? address : ipCluster(address);
     if (!cluster) {
       invalid.push(address);
       continue;

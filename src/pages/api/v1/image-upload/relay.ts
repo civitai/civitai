@@ -10,6 +10,7 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
+import { trackImageUpload } from '~/server/services/image-upload-action.service';
 import {
   IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
   sanitizeImageUploadRelayProducer,
@@ -76,9 +77,12 @@ export const config = {
  * `Request body exceeded 10MB for <path>` line:
  *
  *     /api/v1/image-upload/relay       matched     -> truncation warning
- *     /api/trpc/audit.probe            matched     -> truncation warning
+ *     /api/trpc/audit.probe            matched     -> truncation warning (*)
  *     /api/blocks/submit-version       NOT matched -> none
  *     /api/mod/clavata-image-process   NOT matched -> none
+ *
+ * (*) Matched when measured. `/api/trpc` has since left the matcher (#7128), so it is no
+ * longer truncated at 10 MiB; its own 17mb `sizeLimit` is its only body limit now.
  *
  * Both matched arms fired in the same run, so the two absences are real, not a probe
  * wired to nothing. ⚠ An earlier version of this comment asserted the cap as a
@@ -361,6 +365,7 @@ async function runRelay(
       // `uploadImageBufferToStore` returns { key, backend }; the direct presign route
       // calls the same value `id` in its response, so keep the wire shape identical.
       const { key } = await uploadImageBufferToStore(body, { contentType });
+      trackImageUpload(req, res, key);
       res.status(200).json({ id: key });
       // One event per relayed upload. The usage counter (below) says THAT relays
       // happen; this says WHO — the only signal that can size the population of

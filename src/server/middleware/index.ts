@@ -28,8 +28,6 @@ const middlewares: Middleware[] = [
   botDetectionMiddleware,
 ];
 
-export const middlewareMatcher = middlewares.flatMap((middleware) => middleware.matcher);
-
 // `NextResponse.next()` sets this internal header to mark the response as a
 // "passthrough" (continue to handler) rather than a terminal redirect/rewrite.
 const NEXT_PASSTHROUGH_HEADER = 'x-middleware-next';

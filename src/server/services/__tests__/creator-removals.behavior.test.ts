@@ -94,11 +94,14 @@ beforeAll(async () => {
     -- Stands in for the hold-marker view; its definition is pinned against the real migration in
     -- remove-blocked-images-hold-guard.behavior.test.ts.
     CREATE TABLE "EvidenceHeldUser" ("userId" integer PRIMARY KEY, "heldUntil" timestamp(3));
+    CREATE TABLE "EvidenceHoldImage" ("imageId" integer PRIMARY KEY, "userId" integer NOT NULL);
   `);
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image", "Appeal", "RemovalScoreExemption", "EvidenceHeldUser"`);
+  await holder.db.exec(
+    `TRUNCATE "Image", "Appeal", "RemovalScoreExemption", "EvidenceHeldUser", "EvidenceHoldImage"`
+  );
   await holder.db.exec(`
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
       (${RESTORED}, ${OWNER}, NULL),
@@ -139,6 +142,37 @@ describe('the removed-images list', () => {
     const result = await getMyRemovedImages(OWNER);
 
     expect(result).toEqual({ total: 0, truncated: false, items: [] });
+  });
+
+  // Once the hold ends the owner is no longer left out above, but the image it kept stays refused
+  // by the appeal endpoint until it is purged or released. Another removed image in the same list,
+  // which no hold kept, keeps its appeal.
+  it('lists an image a hold kept, after the hold ended, with no appeal', async () => {
+    const ALSO_REMOVED = 9;
+    holder.chQuery.mockResolvedValue({
+      json: async () => [
+        ...ownRemovals,
+        { ownerId: OWNER, imageId: ALSO_REMOVED, removedAt: REMOVED_AT },
+      ],
+    });
+    await holder.db.exec(
+      `INSERT INTO "Image" (id, "userId", "blockedFor") VALUES (${ALSO_REMOVED}, ${OWNER}, 'moderated')`
+    );
+    const canAppeal = async () =>
+      Object.fromEntries(
+        (await getMyRemovedImages(OWNER)).items.map((i) => [i.imageId, i.canAppeal])
+      );
+
+    const before = await canAppeal();
+    expect(before[STILL_REMOVED]).toBe(true);
+    expect(before[ALSO_REMOVED]).toBe(true);
+
+    await holder.db.exec(
+      `INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (${STILL_REMOVED}, ${OWNER})`
+    );
+
+    // Only the kept image changes.
+    expect(await canAppeal()).toEqual({ ...before, [STILL_REMOVED]: false });
   });
 
   it('still says it stopped at the limit when an appeal reversed one of those rows', async () => {

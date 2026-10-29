@@ -573,8 +573,8 @@ export function PublicEndpoint(
     // claim instead of asserting it unconditionally.
     //
     // The fallback is the platform default rather than nothing. `apiCacheMiddleware`
-    // already sets exactly this string, but its matcher covers only `/api/trpc/*`,
-    // `/api/v1/*` and `/api/testing/*` (verified in `src/proxy.ts`) — and this
+    // already sets exactly this string, but it covers only `/api/v1/*` (`/api/trpc/*`
+    // is outside the proxy matcher in `src/proxy.ts`; that route sets it itself) — and this
     // wrapper is used well outside those prefixes (`/api/user/*`, `/api/generation/*`,
     // `/api/track/*`, `/api/download/*`, `/api/internal/*`). Relying on the proxy
     // would leave those with no `Cache-Control` at all, which is a weaker
@@ -634,7 +634,7 @@ export function MixedAuthEndpoint(
     //     so it also runs before any session work.
     //  2. **The credentialed arm now states a header.** It previously stated
     //     nothing and left the response to `apiCacheMiddleware`, whose matcher
-    //     covers `/api/v1/*` and `/api/trpc/*` only. Two of the twelve routes on
+    //     covers `/api/v1/*` only. Two of the twelve routes on
     //     this wrapper sit outside that: `/api/auth/freshdesk`, which answered
     //     with no `Cache-Control` at all, and
     //     `/api/blocks/screenshot/[appBlockId]/[file]`, whose 200 arm sets its
