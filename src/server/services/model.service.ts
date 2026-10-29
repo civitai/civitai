@@ -4134,6 +4134,15 @@ export const publishModelById = async ({
 
   const model = await dbWrite.$transaction(
     async (tx) => {
+      // The caller's removal check read the replica before this; a content wipe that hid the model
+      // since then must still refuse an owner's publish, and its record must not be written over.
+      if (enforceModelRules) {
+        const [locked] = await tx.$queryRaw<{ meta: unknown }[]>`
+          SELECT meta FROM "Model" WHERE id = ${id} FOR UPDATE
+        `;
+        if (isRemovedWithOwner(locked?.meta))
+          throw throwAuthorizationError('You are not authorized to publish this model');
+      }
       // A held model must not be overwritten by a publish that raced the hold. Moderators and
       // internal callers don't enforce rules and may republish a held model.
       const model = await tx.model
