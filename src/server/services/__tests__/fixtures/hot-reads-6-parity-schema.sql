@@ -132,12 +132,6 @@ CREATE TABLE "hot_reads_6_parity"."DonationGoal" (
   "active"      BOOLEAN                                      NOT NULL DEFAULT false
 );
 
-CREATE TABLE "hot_reads_6_parity"."Donation" (
-  "id"             INTEGER NOT NULL PRIMARY KEY,
-  "donationGoalId" INTEGER NOT NULL,
-  "amount"         INTEGER NOT NULL
-);
-
 CREATE TABLE "hot_reads_6_parity"."ModelVersionEngagement" (
   "userId"         INTEGER                                            NOT NULL,
   "modelVersionId" INTEGER                                            NOT NULL,

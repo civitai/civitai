@@ -11,8 +11,6 @@ import {
   downloadFilesWhere,
   readActiveDonationGoalsViaKysely,
   readActiveDonationGoalsViaPrisma,
-  readDonationGoalTotalsViaKysely,
-  readDonationGoalTotalsViaPrisma,
   readDownloadFilesViaKysely,
   readDownloadFilesViaPrisma,
   readExistingModelVersionIdsViaKysely,
@@ -242,10 +240,6 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
           '2026-04-03 00:00:00.000', true),
         (${G_ACTIVE_POI}, ${DANGLING}, 'Poi goal', 'desc', 8000, 'ModelVersion', ${MV_POI},
           '2026-04-04 00:00:00.000', true)
-    `);
-    await exec(`
-      INSERT INTO ${t('Donation')} (id, "donationGoalId", amount) VALUES
-        (7301, ${G_ACTIVE}, 100), (7302, ${G_ACTIVE}, 250), (7303, ${G_INACTIVE}, 7)
     `);
     await exec(`
       INSERT INTO ${t('ModelVersionEngagement')} ("userId", "modelVersionId", type) VALUES
@@ -549,17 +543,7 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
       );
     });
 
-    it.each([
-      ['with and without donations', [G_ACTIVE, G_ACTIVE_POI, G_INACTIVE]],
-      ['none', [G_ACTIVE_POI]],
-    ])('totals: %s', async (_, ids) => {
-      const byGoal = sortBy((row: { donationGoalId: number }) => row.donationGoalId);
-      expect(byGoal(await readDonationGoalTotalsViaKysely(kysely, ids))).toStrictEqual(
-        byGoal(await readDonationGoalTotalsViaPrisma(prisma, ids))
-      );
-    });
-
-    it('control: only active ModelVersion goals, with their columns, and summed totals', async () => {
+    it('control: only active ModelVersion goals, with their columns', async () => {
       expect(
         byIdRows(await readActiveDonationGoalsViaKysely(kysely, [MV_A, MV_POI]))
       ).toStrictEqual([
@@ -584,9 +568,6 @@ describe.skipIf(!parityUrl)('hot reads 6: Kysely returns exactly what Prisma ret
           entityId: MV_POI,
         },
       ]);
-      expect(await readDonationGoalTotalsViaKysely(kysely, [G_ACTIVE, G_ACTIVE_POI])).toStrictEqual(
-        [{ donationGoalId: G_ACTIVE, total: 350 }]
-      );
     });
   });
 
@@ -834,7 +815,6 @@ describe('hot reads 6: no statement reads a view', () => {
     'Collection',
     'CollectionContributor',
     'DonationGoal',
-    'Donation',
     'ModelVersionEngagement',
     'ModelAssociations',
     'ResourceReview',
@@ -882,7 +862,6 @@ describe('hot reads 6: no statement reads a view', () => {
       (db) => readActiveDonationGoalsViaKysely(db, [1]),
       [['DonationGoal']],
     ],
-    ['donation totals', (db) => readDonationGoalTotalsViaKysely(db, [1]), [['Donation']]],
     [
       'version engagements',
       (db) => readModelVersionEngagementsViaKysely(db, { userId: 1, modelVersionIds: [2] }),

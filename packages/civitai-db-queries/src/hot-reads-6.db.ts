@@ -243,17 +243,6 @@ export async function listActiveModelVersionDonationGoals(db: Kysely<DB>, versio
     .execute();
 }
 
-/** The summed donations of each goal that has any, as JS numbers. An empty list reads nothing. */
-export async function listDonationGoalTotals(db: Kysely<DB>, goalIds: number[]) {
-  if (!goalIds.length) return [];
-  return db
-    .selectFrom('Donation')
-    .select(['Donation.donationGoalId', sql<number>`SUM("Donation"."amount")::int`.as('total')])
-    .where('Donation.donationGoalId', 'in', goalIds)
-    .groupBy('Donation.donationGoalId')
-    .execute();
-}
-
 /** A user's engagements with these model versions, unordered. An empty list reads nothing. */
 export async function listModelVersionEngagements(
   db: Kysely<DB>,

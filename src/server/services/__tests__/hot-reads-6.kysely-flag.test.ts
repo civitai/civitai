@@ -367,22 +367,24 @@ describe('publicDonationGoalsLookupFn', () => {
     expectNoKyselyRead();
   });
 
-  it('ON: the three replica reads through Kysely', async () => {
+  it('ON: the version and goal reads through Kysely, the totals through Prisma, on the replica', async () => {
     flag.mockResolvedValue(true);
     q.listExistingModelVersionIds.mockResolvedValue([{ id: ID }] as never);
-    q.listActiveModelVersionDonationGoals.mockResolvedValue([goalRow] as never);
-    q.listDonationGoalTotals.mockResolvedValue([{ donationGoalId: 8908, total: 4321 }] as never);
+    q.listActiveModelVersionDonationGoals.mockResolvedValue([
+      { ...goalRow, title: 'kysely goal' },
+    ] as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ donationGoalId: 8908, total: 4321 }]);
     const { entityId: _e, ...expected } = goal(4321);
     await expect((await load())([ID])).resolves.toStrictEqual({
-      [ID]: { modelVersionId: ID, goal: expected },
+      [ID]: { modelVersionId: ID, goal: { ...expected, title: 'kysely goal' } },
     });
     expect(q.listExistingModelVersionIds.mock.calls).toEqual([[kyselyRead, [ID]]]);
     expect(q.listActiveModelVersionDonationGoals.mock.calls).toEqual([[kyselyRead, [ID]]]);
-    expect(q.listDonationGoalTotals.mock.calls).toEqual([[kyselyRead, [8908]]]);
     expect(q.listExistingModelVersionIds.mock.calls[0][0]).toBe(kyselyRead);
+    expect(q.listActiveModelVersionDonationGoals.mock.calls[0][0]).toBe(kyselyRead);
     expect(dbMock.dbRead.modelVersion.findMany).not.toHaveBeenCalled();
     expect(dbMock.dbRead.donationGoal.findMany).not.toHaveBeenCalled();
-    expect(dbMock.dbRead.$queryRaw).not.toHaveBeenCalled();
+    expect(dbMock.dbRead.$queryRaw).toHaveBeenCalledTimes(1);
   });
 
   it('ON: a version missing on the replica is still looked up on the primary through Prisma', async () => {

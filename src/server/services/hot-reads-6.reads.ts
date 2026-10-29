@@ -1,4 +1,4 @@
-import { Prisma, type PrismaClient } from '@prisma/client';
+import type { Prisma, PrismaClient } from '@prisma/client';
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
@@ -9,7 +9,6 @@ import {
   getUserIdByUsername,
   getUserWithCosmetics,
   listActiveModelVersionDonationGoals,
-  listDonationGoalTotals,
   listDownloadFiles,
   listExistingModelVersionIds,
   listModelAssociationTargets,
@@ -222,25 +221,6 @@ export function readActiveDonationGoalsViaKysely(
   versionIds: number[]
 ): Promise<Awaited<ReturnType<typeof readActiveDonationGoalsViaPrisma>>> {
   return listActiveModelVersionDonationGoals(db, versionIds);
-}
-
-/** The raw totals query, unchanged (it is called with a non-empty list). */
-export function readDonationGoalTotalsViaPrisma(db: PrismaClient, goalIds: number[]) {
-  return db.$queryRaw<{ donationGoalId: number; total: number }[]>`
-      SELECT
-        "donationGoalId",
-        SUM("amount")::int as total
-      FROM "Donation"
-      WHERE "donationGoalId" IN (${Prisma.join(goalIds)})
-      GROUP BY "donationGoalId"
-    `;
-}
-
-export function readDonationGoalTotalsViaKysely(
-  db: Kysely<DB>,
-  goalIds: number[]
-): Promise<{ donationGoalId: number; total: number }[]> {
-  return listDonationGoalTotals(db, goalIds);
 }
 
 // A user's engagements with model versions (`getUserEngagedModelVersions`, user.service.ts).

@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
 import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
@@ -5,8 +6,6 @@ import { dbReadFallbackCounter } from '~/server/prom/client';
 import {
   readActiveDonationGoalsViaKysely,
   readActiveDonationGoalsViaPrisma,
-  readDonationGoalTotalsViaKysely,
-  readDonationGoalTotalsViaPrisma,
   readExistingModelVersionIdsViaKysely,
   readExistingModelVersionIdsViaPrisma,
 } from '~/server/services/hot-reads-6.reads';
@@ -90,9 +89,14 @@ export const publicDonationGoalsLookupFn = async (
   const totalByGoalId = new Map<number, number>();
   const goalIds = goals.map((g) => g.id);
   if (goalIds.length > 0) {
-    const totals = replica
-      ? await readDonationGoalTotalsViaKysely(replica, goalIds)
-      : await readDonationGoalTotalsViaPrisma(db, goalIds);
+    const totals = await db.$queryRaw<{ donationGoalId: number; total: number }[]>`
+      SELECT
+        "donationGoalId",
+        SUM("amount")::int as total
+      FROM "Donation"
+      WHERE "donationGoalId" IN (${Prisma.join(goalIds)})
+      GROUP BY "donationGoalId"
+    `;
     for (const t of totals) totalByGoalId.set(t.donationGoalId, t.total);
   }
 
