@@ -1,0 +1,33 @@
+diff --git a/dist/chunk-EOPVK4AE.js b/dist/chunk-EOPVK4AE.js
+index 73d5f33d331d8440926dc2895ef3fd786d7818e8..f26204098a87753c8215ed638781649748935ee9 100644
+--- a/dist/chunk-EOPVK4AE.js
++++ b/dist/chunk-EOPVK4AE.js
+@@ -76,12 +76,10 @@ import_util.default.inherits(LineStream, import_stream.default.Transform);
+ LineStream.prototype._transform = function(chunk, encoding, done) {
+   encoding = encoding || "utf8";
+   if (Buffer.isBuffer(chunk)) {
+-    if (encoding == "buffer") {
+-      chunk = chunk.toString();
+-      encoding = "utf8";
+-    } else {
+-      chunk = chunk.toString(encoding);
+-    }
++    if (encoding == "buffer") encoding = "utf8";
++    // One decoder per stream: a multi-byte character split across two chunks decodes whole.
++    if (!this._decoder) this._decoder = new (require("string_decoder").StringDecoder)(encoding);
++    chunk = this._decoder.write(chunk);
+   }
+   this._chunkEncoding = encoding;
+   const lines = chunk.split(/\r\n|\r|\n/g);
+@@ -112,6 +110,11 @@ LineStream.prototype._pushBuffer = function(encoding, keep, done) {
+   done();
+ };
+ LineStream.prototype._flush = function(done) {
++  const rest = this._decoder ? this._decoder.end() : "";
++  if (rest) {
++    if (this._lineBuffer.length > 0) this._lineBuffer[this._lineBuffer.length - 1] += rest;
++    else this._lineBuffer.push(rest);
++  }
+   this._pushBuffer(this._chunkEncoding, 0, done);
+ };
+ LineStream.prototype._reencode = function(line, chunkEncoding) {
