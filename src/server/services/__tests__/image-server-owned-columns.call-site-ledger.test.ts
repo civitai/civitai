@@ -10,6 +10,7 @@ import {
   createCrucibleInputBaseSchema,
   updateCrucibleSchema,
 } from '~/server/schema/crucible.schema';
+import { updateStorylineSchema } from '~/server/schema/storyline.schema';
 
 /**
  * Seam guard for the server-owned `Image` columns `id`, `postId` and `index`.
@@ -80,6 +81,8 @@ const SCHEMA_REFERENCE_LEDGER: Record<string, Partial<Record<SchemaName, number>
   'src/server/schema/announcement.schema.ts': { imageReferenceInputSchema: 2 },
   'src/server/schema/challenge.schema.ts': { imageReferenceInputSchema: 4 },
   'src/server/schema/user-profile.schema.ts': { imageReferenceInputSchema: 3 },
+  // storyline.update's cover and banner uploads: no `id`, so always a new image of the caller's.
+  'src/server/schema/storyline.schema.ts': { imageInputSchema: 2 },
   // collection.upsert cover (a reference any collection manager may set; see
   // CONNECT_EXISTING_LEDGER) and collection.addSimpleImagePost (no id).
   'src/server/schema/collection.schema.ts': { imageInputSchema: 2, imageReferenceInputSchema: 2 },
@@ -311,6 +314,11 @@ const COVER_RESOLVER_CALLER_LEDGER: Record<
     decision: 'input-has-no-id',
   },
   'src/server/services/crucible.service.ts#updateCrucible': {
+    calls: 2,
+    decision: 'input-has-no-id',
+  },
+  // The storyline cover and banner upload schemas have no `id`.
+  'src/server/services/storyline.service.ts#updateStoryline': {
     calls: 2,
     decision: 'input-has-no-id',
   },
@@ -647,12 +655,14 @@ const IMAGE_FK_WRITE_LEDGER: Record<
     decision: 'owner-checked',
     guards: { imageId: 'if (image.post.userId !== userId)' },
   },
-  // The owner's cover and banner picks: from this storyline's own chapters by the owner or an
-  // endorsed collaborator, refused otherwise. A pick sent back unchanged is not judged again.
+  // The cover and banner picks: from this storyline's own chapters by the owner or an endorsed
+  // collaborator, or an image this request uploaded, refused otherwise. A pick sent back unchanged
+  // is not judged again. `imageId` records an upload: only ids `resolveCoverImageId` just returned.
   'src/server/services/storyline.service.ts#updateStoryline': {
-    writes: ['coverImageId', 'heroImageId'],
+    writes: ['imageId', 'coverImageId', 'heroImageId'],
     decision: 'owner-checked',
     guards: {
+      imageId: 'await assertStorylinePicks(dbWrite, {',
       coverImageId: 'await assertStorylinePicks(dbWrite, {',
       heroImageId: 'await assertStorylinePicks(dbWrite, {',
     },
@@ -1094,12 +1104,15 @@ describe('existing-image references', () => {
     ).toEqual([
       'src/server/services/crucible.service.ts',
       'src/server/services/crucible.service.ts',
+      'src/server/services/storyline.service.ts',
     ]);
     for (const [name, schema] of [
       ['create coverImage', createCrucibleInputBaseSchema.shape.coverImage],
       ['create heroImage', createCrucibleInputBaseSchema.shape.heroImage],
       ['update coverImage', updateCrucibleSchema.shape.coverImage],
       ['update heroImage', updateCrucibleSchema.shape.heroImage],
+      ['storyline coverUpload', updateStorylineSchema.shape.coverUpload],
+      ['storyline heroUpload', updateStorylineSchema.shape.heroUpload],
     ] as const) {
       const parsed = (schema as z.ZodType).parse({ url: URL_UUID, width: 1, height: 2, id: 7 });
       expect(parsed, name).not.toHaveProperty('id');

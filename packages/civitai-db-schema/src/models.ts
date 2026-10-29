@@ -1742,6 +1742,7 @@ export interface Image {
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
+  storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
 }
 
@@ -6610,6 +6611,7 @@ export interface Storyline {
   pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
   reports?: StorylineReport[];
+  coverUploads?: StorylineCoverUpload[];
   thread?: Thread | null;
 }
 
@@ -6695,6 +6697,14 @@ export interface StorylineEarlyAccessSignup {
   userId: number;
   user?: User;
   storylineId: number | null;
+  createdAt: Date;
+}
+
+export interface StorylineCoverUpload {
+  storylineId: number;
+  storyline?: Storyline;
+  imageId: number;
+  image?: Image;
   createdAt: Date;
 }
 

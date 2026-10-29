@@ -7,7 +7,10 @@ import {
   removalsQuery,
   withoutReversed,
 } from '~/server/services/creator-removals.service';
-import { getAppealExcludedIds } from '~/server/services/report.service';
+import {
+  getAppealExcludedIds,
+  getHoldMarkerBlockedImageIds,
+} from '~/server/services/report.service';
 import { getAppealRefusal, isAppealableImage } from '~/shared/utils/appeal';
 import { type AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 
@@ -110,7 +113,11 @@ export async function getMyRemovedImages(userId: number) {
   });
 
   const existing = listed.filter((e) => e.state.owned).map((e) => e.id);
-  const appeals = await getLatestAppeals(userId, existing);
+  // A hold that has ended no longer excludes the owner above, but the images it kept stay refused.
+  const [appeals, holdBlocked] = await Promise.all([
+    getLatestAppeals(userId, existing),
+    getHoldMarkerBlockedImageIds({ imageIds: existing, userId }),
+  ]);
 
   const items: RemovedImage[] = listed.map(({ id, removedAt, state }) => ({
     removedAt: new Date(Number(removedAt) * 1000),
@@ -119,6 +126,7 @@ export async function getMyRemovedImages(userId: number) {
     canAppeal:
       state.owned &&
       isAppealableImage(state) &&
+      !holdBlocked.has(id) &&
       !getAppealRefusal(EntityType.Image, appeals.get(id)),
   }));
   return { total: items.length, truncated: fetched.length >= REMOVED_IMAGES_LIMIT, items };
