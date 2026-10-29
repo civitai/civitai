@@ -27,6 +27,7 @@ import {
 } from '../cover-image.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
 const dbWriteMock = dbMock.dbWrite;
 const logToAxiomMock = loggingMock.logToAxiom;
@@ -365,5 +366,37 @@ describe('resolveCoverImageId with its production deps', () => {
     expect(createImageMock).not.toHaveBeenCalled();
 
     await expect(resolveCoverImageId({ coverImage, userId: OTHER })).resolves.toBe(31);
+  });
+
+  describe('a key issued to another user', () => {
+    const MODERATOR = 9;
+    beforeEach(() => {
+      dbWriteMock.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
+      redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+    });
+    afterEach(() => redisMock.sysRedis.mGet.mockReset());
+
+    it('is refused before a row is created', async () => {
+      await expect(resolveCoverImageId({ coverImage, userId: 7 })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: COVER_IMAGE_UNAVAILABLE_MESSAGE,
+      });
+      expect(createImageMock).not.toHaveBeenCalled();
+    });
+
+    it('is refused when someone else uploaded it for the owner', async () => {
+      await expect(
+        resolveCoverImageId({ coverImage, userId: 7, uploaderId: MODERATOR })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(createImageMock).not.toHaveBeenCalled();
+    });
+
+    it('is accepted when that user uploaded it for the owner', async () => {
+      redisMock.sysRedis.mGet.mockResolvedValue([String(MODERATOR)] as never);
+
+      await expect(
+        resolveCoverImageId({ coverImage, userId: 7, uploaderId: MODERATOR })
+      ).resolves.toBe(31);
+    });
   });
 });

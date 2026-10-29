@@ -69,6 +69,7 @@ import {
   type OutputAction,
 } from '~/components/ImageGeneration/workflow-display';
 import { imageGenerationDrawerZIndex } from '~/shared/constants/app-layout.constants';
+import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useBuzzTransaction } from '~/components/Buzz/buzz.utils';
@@ -849,8 +850,7 @@ const imageBlockedReasonMap: Record<string, string | React.ComponentType<any>> =
   NsfwLevel: 'Mature content restriction.',
   NSFWLevel:
     'One or more resources used in this generation cannot be used to generate mature content',
-  NSFWLevelSourceImageRestricted:
-    'If your input image lacks valid metadata, generation is restricted to PG or PG-13 outputs only.',
+  NSFWLevelSourceImageRestricted: UNMARKED_SOURCE_IMAGE_MESSAGE,
   // the following keys are managed in generationRequestHooks.ts
   privateGen: 'Private Generation is limited to PG and PG-13 content.',
   [NSFW_CAPPED]:
