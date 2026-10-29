@@ -424,7 +424,7 @@ export function FaroProvider({
     } catch {
       // Never let RUM bootstrap break the app.
     }
-  }, [enabled, resourceTimingCohort]);
+  }, [enabled]); // MUTATION
 
   return null;
 }
