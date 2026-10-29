@@ -1,15 +1,10 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
-// The Knights app is its own site, so these open in a new tab.
 const KNIGHTS_APP_URL = 'https://knights.civitai.com';
 const KNIGHTS_SECTION = 'Knights of New Order';
 
-/**
- * The three `knights-*` types are sent by the Knights app (`apps/knights`, `/api/jobs/notify`), at
- * most one a player a day. All are opt-in: the app reads who subscribed and sends through the bulk
- * path, which skips the opt-out filter, so a settings row here means subscribed.
- */
+/** Sent by `apps/knights` (`/api/jobs/notify`), not by a query here. */
 export const knightsNewOrderNotifications = createNotificationProcessor({
   'new-order-sanity-warning': {
     displayName: 'Knights of New Order: Performance Check Failed',

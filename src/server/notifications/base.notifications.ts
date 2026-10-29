@@ -76,17 +76,9 @@ export type NotificationProcessor = {
    * meant as "off" would subscribe the user instead.
    */
   optIn?: boolean;
-  /**
-   * An opt-in type that another app sends through the notifications client's bulk path, which does
-   * no settings lookup. That sender reads the subscribers (the `UserNotificationSettings` rows) and
-   * is the only thing that decides who gets it, so the processor has no `prepareQuery`: the event
-   * path's `createNotification` would drop exactly the users who subscribed. Only valid with `optIn`.
-   */
+  /** Opt-in type sent by another app through the notifications client's bulk path, which does no settings lookup. The processor has no `prepareQuery`: the event path would drop exactly the subscribers. Requires `optIn`. */
   externalProducer?: boolean;
-  /**
-   * Groups this type under its own heading in the notification settings instead of its category's,
-   * e.g. a game's notifications together. The notification itself keeps `category`.
-   */
+  /** Groups this type under its own heading in notification settings. The notification itself keeps `category`. */
   section?: string;
   showCategory?: boolean;
   /** Push on for a user who never chose; see DEFAULT_PUSH_TYPES. */

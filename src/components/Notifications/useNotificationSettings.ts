@@ -21,10 +21,7 @@ export function deriveNotificationSettings(userNotificationSettings: SettingRow[
       // A row means opted-out normally, but subscribed for an opt-in type.
       const isEnabled = optIn ? hasRow : !hasRow;
       notificationSettings[type] = isEnabled;
-      // Opt-in types don't feed the aggregates: they aren't part of the baseline every user
-      // starts with, so a promo subscription shouldn't make the master switch read as "on".
-      // Turning everything off therefore hides their checkbox — which is why `toggleAll`/
-      // `toggleCategory` unsubscribe them on the way down rather than stranding the user.
+      // Opt-in types don't feed the aggregates: a subscription shouldn't make the master switch read as "on".
       if (optIn) continue;
       if (!hasCategory[category] && isEnabled) hasCategory[category] = true;
       if (!hasNotifications && isEnabled) hasNotifications = true;

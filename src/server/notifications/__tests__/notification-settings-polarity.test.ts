@@ -39,8 +39,6 @@ describe('notification settings polarity', () => {
       const query = await queryFor(type);
 
       if (def.externalProducer) {
-        // Another app sends it to the subscribers it reads itself; a query here would run a second,
-        // competing recipient derivation in this app's job.
         expect(def.optIn, `${type} is externalProducer, so it must be optIn`).toBe(true);
         expect(query, `${type} is externalProducer, so it must not have a query`).toBeUndefined();
       } else if (def.optIn) {
