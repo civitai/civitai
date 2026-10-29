@@ -150,8 +150,11 @@ on:
   # `only` runs one suite (or one unit shard) instead of the whole fan-out, for
   # dispatches that care about a single suite. Every job's `if` reads it, and so
   # does every suite step in a job that hosts several (`packages` hosts
-  # apps-typecheck; `component` hosts geometry and the quarantine run); on
-  # pull_request and push `inputs.only` is empty and everything runs as before.
+  # apps-typecheck; `component` hosts geometry and the quarantine run). On
+  # pull_request and push `inputs.only` is empty, so it narrows nothing: what runs
+  # there is decided by each job's or step's own event gate (`unit` and the
+  # quarantine step skip pull requests; ESLint is PR-only; typecheck runs where
+  # Tekton does not).
   # The ESLint job is PR-only and never runs on a dispatch, so it is not listed.
   workflow_dispatch:
     inputs:
@@ -767,17 +770,17 @@ jobs:
     # and two of them had been RED on `main` since #3592 corrected the schema out from under
     # their assertions, with nothing to say so.
     #
-    # NOT `continue-on-error`, unlike `unit`. Be precise about what that does and does not
-    # buy: `main` has branch protection but NO required_status_checks, so a red check here
-    # does not prevent a merge. The difference from `unit` is that this renders RED rather
-    # than red-but-ignored — a signal someone has to look at and dismiss, not one the UI
-    # hides. Making it an actual interlock means adding "Package unit tests" to the required
-    # checks, which is a repo-settings change, not a workflow one.
+    # NOT `continue-on-error`, and it runs on pull requests. Be precise about what that does
+    # and does not buy: `main` has branch protection but NO required_status_checks, so a red
+    # check here does not prevent a merge. What it buys is that a red renders RED on the PR —
+    # a signal someone has to look at and dismiss, not one the UI hides. Making it an actual
+    # interlock means adding "Package unit tests" to the required checks, which is a
+    # repo-settings change, not a workflow one.
     #
-    # The reasoning that made `unit` report-only still does not transfer, which is why this
-    # one is not marked ignorable: `unit` is ~12,000 tests whose cost is a ~33s
-    # import/transform phase per file, and it timed out five tests under load. This is 616
-    # tests with no browser, no database and no Next module graph — ~15s locally.
+    # Why this one runs on PRs when `unit` does not: `unit` is ~12,000+ tests whose cost is a
+    # ~33s import/transform phase per file, four shards and most of this workflow's
+    # job-minutes (see its comment). This is 616 tests with no browser, no database and no
+    # Next module graph — ~15s locally.
     #
     # DB-backed tiers self-skip: `@civitai/db-queries` sources DATABASE_URL from the root
     # `.env`, which does not exist on a runner, so its DB-backed tests (the `*.explain.test.ts`
@@ -832,8 +835,8 @@ jobs:
       # What it guards: `/api/og` returned 500 on every request for two days because Next
       # 16.3.0 leaves the libvips SVG loader blocked and `next/og` rasterizes through it. We
       # carry the upstream one-line fix as a pnpm patch. The behavioural regression test for
-      # that outage lives in the `unit` job above — which is `continue-on-error`, so it cannot
-      # stop the same breakage reaching production a second time. This runs the structural
+      # that outage lives in the `unit` job above — which does not run on pull requests, so it
+      # cannot stop the same breakage reaching production a second time. This runs the structural
       # half of it, against the INSTALLED node_modules rather than the patch file, so a patch
       # that exists but did not apply is caught. ~50ms, no test runner.
       - name: Next SVG loader patch applied
@@ -878,7 +881,7 @@ jobs:
           pnpm run db:check-generated
 
       # Same reasons as the step above: a TRACKED generated file must match its generator, and
-      # the unit test that also checks this runs in `unit`, which is continue-on-error on PRs. The
+      # the unit test that also checks this runs in `unit`, which does not run on PRs. The
       # tag-index decode worker runs from this bundle, so a stale one is the decoder that ships.
       # `--check` regenerates in memory and compares, so it writes nothing, and a missing file
       # counts as out of date (exit 1), not as a pass. Like every check here it shows red but does
@@ -1088,8 +1091,8 @@ jobs:
       # phone viewport. See `test/geometry-setup.tsx` for what it loads and why it is a separate
       # project from `component`.
       #
-      # `continue-on-error` is the same expression `unit` uses, and NOT a literal `true`. Both
-      # halves matter:
+      # `continue-on-error` is `${{ github.event_name == 'pull_request' }}` (the split
+      # windows-dev-env.yml also makes), and NOT a literal `true`. Both halves matter:
       #
       #   PR side: blocking on a brand-new tier from day one would red unrelated PRs and the
       #   step would be switched off within a week. `main` has NO required_status_checks, so
