@@ -46,6 +46,19 @@ describe('matureSpend', () => {
     });
   });
 
+  it('needs no acknowledgement when Blue exactly covers a mature member run', () => {
+    expect(matureSpend({ ...base, price: 384, mature: true })).toBeNull();
+  });
+
+  it('charges a non-member in full even when the balance cannot be read', () => {
+    expect(matureSpend({ ...base, blue: undefined, mature: true, member: false })).toEqual({
+      amount: 1400,
+      currency: 'yellow',
+      uncertain: false,
+      matureYellow: true,
+    });
+  });
+
   it('returns nothing without a price', () => {
     expect(matureSpend({ ...base, price: null, mature: true })).toBeNull();
     expect(matureSpend({ ...base, price: 0, mature: true })).toBeNull();
@@ -59,6 +72,7 @@ describe('mature acknowledgement', () => {
   it('requires no tick when no Yellow is charged because of mature images', () => {
     expect(matureAckKey(matureSpend(base), 0)).toBeNull();
     expect(matureAckMissing(null, null)).toBe(false);
+    expect(matureAckMissing('1016:3', null)).toBe(false);
   });
 
   it('blocks start until the current charge is ticked', () => {

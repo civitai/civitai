@@ -45,7 +45,7 @@ export function nonBlueSpend(
     blue: balances?.blue,
     mode,
     mature: opts.mature ?? false,
-    member: opts.member ?? true,
+    member: opts.member ?? false,
   });
 }
 
