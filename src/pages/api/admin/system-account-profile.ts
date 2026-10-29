@@ -1,8 +1,10 @@
 import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import * as z from 'zod';
-import { isSystemAccountMeta } from '@civitai/auth';
+import { isModerationAccountUser, isSystemAccountMeta } from '@civitai/auth';
 import { env } from '~/env/server';
+import { isReservedModerationUsername } from '~/server/auth/moderation-account';
+import { holdsModeratorAccess } from '~/server/auth/moderator-access';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { chatDmPolicy } from '~/server/schema/chat.schema';
@@ -21,7 +23,17 @@ const SYSTEM_ACTOR_ID = -1;
 const schema = z
   .object({
     userId: z.coerce.number().int().positive(),
-    name: displayName.optional(),
+    name: displayName
+      .min(1)
+      .refine(
+        (value) => !/[\p{Cc}\p{Cf}]/u.test(value),
+        'name may not hold control or format characters'
+      )
+      .refine(
+        (value) => !isReservedModerationUsername(value.replace(/[^\p{L}\p{N}]/gu, '')),
+        'name is reserved'
+      )
+      .optional(),
     settings: z
       .object({ chat: z.object({ dmPolicy: chatDmPolicy }).strict() })
       .strict()
@@ -38,8 +50,16 @@ const asObject = (value: unknown): Record<string, unknown> =>
     ? (value as Record<string, unknown>)
     : {};
 
+// Unconfigured while it repeats another admin token.
+function profileToken() {
+  const token = env.SYSTEM_ACCOUNT_PROFILE_TOKEN;
+  return token && (token === env.SYSTEM_ACCOUNT_KEY_TOKEN || token === env.WEBHOOK_TOKEN)
+    ? undefined
+    : token;
+}
+
 export default HeaderTokenSecuredEndpoint(
-  () => env.SYSTEM_ACCOUNT_PROFILE_TOKEN,
+  profileToken,
   async function (req: AxiomAPIRequest, res: NextApiResponse) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
     res.setHeader('Cache-Control', 'no-store');
@@ -53,33 +73,64 @@ export default HeaderTokenSecuredEndpoint(
 
     const user = await dbWrite.user.findUnique({
       where: { id: userId },
-      select: { id: true, meta: true, deletedAt: true, bannedAt: true, name: true, settings: true },
+      select: {
+        id: true,
+        username: true,
+        meta: true,
+        deletedAt: true,
+        bannedAt: true,
+        isModerator: true,
+        roles: { select: { role: true } },
+        name: true,
+        settings: true,
+      },
     });
     if (!user) return res.status(404).json({ error: 'User not found' });
     if (!isSystemAccountMeta(user.meta))
       return res.status(403).json({ error: 'Not a system account' });
     if (user.deletedAt || user.bannedAt)
       return res.status(403).json({ error: 'Account is not active' });
+    if (
+      isModerationAccountUser(user, env.CIVITAI_MODERATION_USER_ID) ||
+      (await holdsModeratorAccess({
+        isModerator: user.isModerator,
+        roles: user.roles.map(({ role }) => role),
+      }))
+    )
+      return res.status(403).json({ error: 'Account has moderator access' });
 
+    const writes: [field: string, write: () => Promise<unknown>][] = [];
+    if (name !== undefined && name !== user.name)
+      writes.push(['name', () => forceUpdateUserIdentity({ userId, name })]);
+    if (dmPolicy !== undefined && asObject(asObject(user.settings).chat).dmPolicy !== dmPolicy)
+      writes.push([
+        'settings.chat.dmPolicy',
+        () =>
+          patchUserSettings(userId, {
+            mergeInto: { chat: { dmPolicy } },
+            location: 'admin/system-account-profile',
+          }),
+      ]);
+    if (!writes.length) return res.status(200).json({ userId, changed: [], auditRecorded: false });
+
+    // A failed write may still have committed, so it is audited with the ones that succeeded.
     const changed: string[] = [];
-    if (name !== undefined && name !== user.name) {
-      await forceUpdateUserIdentity({ userId, name });
-      changed.push('name');
+    let failed: { field: string; error: string } | undefined;
+    for (const [field, write] of writes) {
+      try {
+        await write();
+        changed.push(field);
+      } catch (error) {
+        failed = { field, error: (error as Error).name };
+        break;
+      }
     }
-    if (dmPolicy !== undefined && asObject(asObject(user.settings).chat).dmPolicy !== dmPolicy) {
-      await patchUserSettings(userId, {
-        mergeInto: { chat: { dmPolicy } },
-        location: 'admin/system-account-profile',
-      });
-      changed.push('settings.chat.dmPolicy');
-    }
-    if (!changed.length) return res.status(200).json({ userId, changed, auditRecorded: false });
 
     logToAxiom(
       {
         type: 'error',
-        name: 'system-account-profile-set',
-        details: { userId, changed, asserted_actor: actorUserId },
+        name: failed ? 'system-account-profile-set-failed' : 'system-account-profile-set',
+        details: { userId, changed, failed, asserted_actor: actorUserId },
       },
       'moderation'
     ).catch(() => null);
@@ -91,6 +142,8 @@ export default HeaderTokenSecuredEndpoint(
       .then(() => true)
       .catch(() => false);
 
+    if (failed)
+      return res.status(500).json({ userId, changed, failed: failed.field, auditRecorded });
     return res.status(200).json({ userId, changed, auditRecorded });
   }
 );

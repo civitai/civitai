@@ -42,6 +42,7 @@ type UserRow = {
   deletedAt: Date | null;
   bannedAt: Date | null;
   isModerator: boolean;
+  roles: { role: string }[];
 };
 let users: UserRow[];
 
@@ -54,6 +55,7 @@ const systemUser = (overrides: Partial<UserRow> = {}): UserRow => ({
   deletedAt: null,
   bannedAt: null,
   isModerator: false,
+  roles: [],
   ...overrides,
 });
 
@@ -113,6 +115,19 @@ describe('POST /api/admin/system-account-profile', () => {
     expect((await call({ userId: SYSTEM_ID, name: 'Agent' })).status).toBe(200);
   });
 
+  it.each([
+    ['the key token', KEY_TOKEN],
+    ['the webhook token', 'w'.repeat(40)],
+  ])('is closed while its token repeats %s', async (_, shared) => {
+    setEnv({
+      SYSTEM_ACCOUNT_PROFILE_TOKEN: shared,
+      SYSTEM_ACCOUNT_KEY_TOKEN: KEY_TOKEN,
+      WEBHOOK_TOKEN: shared === KEY_TOKEN ? 'test-webhook-token' : shared,
+    });
+    expect((await call({ userId: SYSTEM_ID, name: 'Agent' }, { token: shared })).status).toBe(503);
+    expect(wrote()).toBe(0);
+  });
+
   it('is closed while its token is unset', async () => {
     setEnv({ SYSTEM_ACCOUNT_PROFILE_TOKEN: undefined });
     expect((await call({ userId: SYSTEM_ID, name: 'Agent' }, { token: '' })).status).toBe(503);
@@ -133,6 +148,10 @@ describe('POST /api/admin/system-account-profile', () => {
     ['another chat key', { settings: { chat: { dmPolicy: 'nobody', holdNewAccounts: true } } }],
     ['an unknown DM policy', { settings: { chat: { dmPolicy: 'friends' } } }],
     ['a name over 128 characters', { name: 'x'.repeat(129) }],
+    ['a blank name', { name: '   ' }],
+    ['a name with a bidi override', { name: 'Agent\u202Eevil' }],
+    ['a name with a zero-width space', { name: 'Ag\u200Bent' }],
+    ['the reserved moderation name', { name: 'civitai moderation' }],
   ])('refuses %s with no write', async (_, extra) => {
     const { status } = await call({ userId: SYSTEM_ID, name: 'Agent', ...extra });
     expect(status).toBe(400);
@@ -155,9 +174,16 @@ describe('POST /api/admin/system-account-profile', () => {
     ['an ordinary account', systemUser({ meta: {} }), 403],
     ['a deleted system account', systemUser({ deletedAt: new Date() }), 403],
     ['a banned system account', systemUser({ bannedAt: new Date() }), 403],
+    ['the shared moderation account', systemUser({ id: MODERATION_ID }), 403],
+    ['a moderator system account', systemUser({ isModerator: true }), 403],
+    [
+      'a system account with moderator:admin',
+      systemUser({ roles: [{ role: 'moderator:admin' }] }),
+      403,
+    ],
   ])('refuses %s with no write', async (_, row, code) => {
     users = [row];
-    expect((await call({ userId: SYSTEM_ID, name: 'Agent' })).status).toBe(code);
+    expect((await call({ userId: row.id, name: 'Agent' })).status).toBe(code);
     expect(wrote()).toBe(0);
   });
 
@@ -173,14 +199,14 @@ describe('POST /api/admin/system-account-profile', () => {
     expect(dbMock.dbRead.user.findUnique).not.toHaveBeenCalled();
   });
 
-  it('sets the display name only, never the username, on the shared account', async () => {
-    users = [systemUser({ id: MODERATION_ID, username: 'CivitaiModeration', name: null })];
-    const { status, body } = await call({ userId: MODERATION_ID, name: '  Other Name  ' });
+  it('sets the display name only, never the username', async () => {
+    users = [systemUser({ name: null })];
+    const { status, body } = await call({ userId: SYSTEM_ID, name: '  Other Name  ' });
     expect(status).toBe(200);
     expect(body.changed).toEqual(['name']);
     expect(forceUpdateUserIdentity).toHaveBeenCalledTimes(1);
     expect(forceUpdateUserIdentity.mock.calls[0][0]).toStrictEqual({
-      userId: MODERATION_ID,
+      userId: SYSTEM_ID,
       name: 'Other Name',
     });
   });
@@ -189,6 +215,7 @@ describe('POST /api/admin/system-account-profile', () => {
     ['settings with no chat key', {}],
     ['chat holding other keys', { chat: { holdNewAccounts: true } }],
     ['no settings at all', null],
+    ['chat stored as a non-object', { chat: 7 }],
   ])('merges the DM policy into %s', async (_, stored) => {
     users = [systemUser({ settings: stored })];
     const { status, body } = await call({
@@ -248,5 +275,48 @@ describe('POST /api/admin/system-account-profile', () => {
     expect(body.changed).toEqual(['settings.chat.dmPolicy']);
     expect(forceUpdateUserIdentity).not.toHaveBeenCalled();
     expect(patchUserSettings).toHaveBeenCalledTimes(1);
+  });
+  it('still answers 200 when the audit row cannot be written', async () => {
+    trackModActivity.mockRejectedValueOnce(new Error('db down'));
+    const { status, body } = await call({ userId: SYSTEM_ID, name: 'Agent' });
+    expect(status).toBe(200);
+    expect(body).toEqual({ userId: SYSTEM_ID, changed: ['name'], auditRecorded: false });
+  });
+
+  it('audits a write that succeeded before a later one failed', async () => {
+    patchUserSettings.mockRejectedValueOnce(new Error('boom'));
+    const { status, body } = await call({
+      userId: SYSTEM_ID,
+      name: 'Agent',
+      settings: { chat: { dmPolicy: 'nobody' } },
+    });
+    expect(status).toBe(500);
+    expect(body).toMatchObject({ changed: ['name'], failed: 'settings.chat.dmPolicy' });
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'system-account-profile-set-failed',
+        details: {
+          userId: SYSTEM_ID,
+          changed: ['name'],
+          failed: { field: 'settings.chat.dmPolicy', error: 'Error' },
+          asserted_actor: 9,
+        },
+      }),
+      'moderation'
+    );
+  });
+
+  it('audits a write that threw, since it may have committed', async () => {
+    forceUpdateUserIdentity.mockRejectedValueOnce(new Error('after update'));
+    const { status, body } = await call({
+      userId: SYSTEM_ID,
+      name: 'Agent',
+      settings: { chat: { dmPolicy: 'nobody' } },
+    });
+    expect(status).toBe(500);
+    expect(body).toMatchObject({ changed: [], failed: 'name' });
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+    expect(patchUserSettings).not.toHaveBeenCalled();
   });
 });

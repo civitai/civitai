@@ -188,6 +188,8 @@ const OUTSIDE_WRAPPERS: Record<string, string> = {
   'testing/model3d-seed': FULL_CREDENTIAL,
   'admin/system-account-api-key':
     'reads the target account’s moderator status to refuse it; not a caller gate',
+  'admin/system-account-profile':
+    'reads the target account’s moderator status to refuse it; not a caller gate',
   'download/[...key]': 'key scoped to the caller’s own upload prefix; moderators may fetch any key',
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
   'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
