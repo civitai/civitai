@@ -1,4 +1,5 @@
 <script lang="ts">
+  import type { Snippet } from 'svelte';
   import { page } from '$app/state';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -25,6 +26,8 @@
     statusCounts,
     dates,
     navigate,
+    compact = false,
+    extra,
   }: {
     statuses: string[];
     /** The reasons the URL names. Empty while the default is applied — eight pre-ticked chips read as a
@@ -39,7 +42,14 @@
     /** Shown only for a queue whose `load` filters on the reported date. */
     dates?: { from: string; to: string };
     navigate: (href: string) => void;
+    /** For a sidebar: status and reason only, the reporter and dates behind "Additional filters". */
+    compact?: boolean;
+    /** The caller's own filters, under Reason in the compact layout. */
+    extra?: Snippet;
   } = $props();
+
+  let showMore = $state(false);
+  const activeMore = $derived([reportedBy, dates?.from, dates?.to].filter(Boolean).length);
 
   const statusOptions = $derived(
     // Counted statuses only — the open ones (see `getReportStatusCounts`). Resolved ones go unnumbered
@@ -83,6 +93,58 @@
   }
 </script>
 
+{#if compact}
+  <div class="flex flex-col gap-1.5">
+    <MultiCombobox
+      options={statusOptions}
+      value={statuses}
+      onValueChange={(vals) => applyMulti('status', vals)}
+      placeholder="Status…"
+    />
+    <MultiCombobox
+      options={reasonOptions}
+      value={reasons}
+      onValueChange={(vals) => applyMulti('reason', vals)}
+      placeholder="Reason…"
+    />
+    {#if extra}{@render extra()}{/if}
+    <div class="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
+      <button
+        type="button"
+        class="underline-offset-2 hover:underline"
+        aria-expanded={showMore}
+        onclick={() => (showMore = !showMore)}
+      >
+        {showMore ? '▾' : '▸'} Additional filters{activeMore ? ` · ${activeMore}` : ''}
+      </button>
+      {#if hidingAutomated}
+        <span title="This queue and its badge both count only reports people filed.">
+          Automated hidden ·
+          <button type="button" class="underline" onclick={() => applyMulti('reason', [])}>show</button>
+        </span>
+      {/if}
+    </div>
+    {#if showMore}
+      <form class="flex flex-col gap-1.5" onsubmit={applyText}>
+        <Input
+          name="reportedBy"
+          value={reportedBy}
+          placeholder="Reported by (username)"
+          aria-label="Reported by"
+          class="h-8 w-full"
+        />
+        <div class="flex items-center gap-1.5">
+          {#if dates}
+            <Input type="date" name="reportedFrom" value={dates.from} aria-label="Reported from" class="h-8 min-w-0 flex-1" />
+            <span class="text-xs text-muted-foreground">to</span>
+            <Input type="date" name="reportedTo" value={dates.to} aria-label="Reported to" class="h-8 min-w-0 flex-1" />
+          {/if}
+          <Button type="submit" size="sm" variant="outline" class="shrink-0">Search</Button>
+        </div>
+      </form>
+    {/if}
+  </div>
+{:else}
 <div class="flex flex-wrap items-end gap-x-6 gap-y-3">
   <div class="flex flex-col gap-1">
     <span class="text-xs font-medium text-muted-foreground">Status</span>
@@ -131,4 +193,5 @@
       Show automated reports
     </button>
   </p>
+{/if}
 {/if}

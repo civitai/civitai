@@ -184,6 +184,7 @@ export type PostDetail = {
   userId: number;
   username: string | null;
   userBannedAt: Date | null;
+  userCreatedAt: Date | null;
   createdAt: Date;
   publishedAt: Date | null;
   nsfwLevel: number;
@@ -218,6 +219,7 @@ export async function getPostLookup(postId: number, limit = 200): Promise<PostLo
       'p.modelVersionId',
       'u.username',
       'u.bannedAt as userBannedAt',
+      'u.createdAt as userCreatedAt',
     ])
     .where('p.id', '=', postId)
     .executeTakeFirst();
@@ -236,6 +238,19 @@ export async function getPostLookup(postId: number, limit = 200): Promise<PostLo
     truncated: batch.truncated,
     total: batch.total,
   };
+}
+
+/** An account's newest images outside one post. Not `getImagesForUser`: its count walks every image
+ *  the account has. */
+export async function getRecentImagesOutsidePost(userId: number, postId: number, limit = 12) {
+  return dbRead
+    .selectFrom('Image as i')
+    .where('i.userId', '=', userId)
+    .where((eb) => eb.or([eb('i.postId', 'is', null), eb('i.postId', '!=', postId)]))
+    .select(['i.id', 'i.url', 'i.type', 'i.createdAt'])
+    .orderBy('i.id', 'desc')
+    .limit(limit)
+    .execute();
 }
 
 export type PostSummary = {

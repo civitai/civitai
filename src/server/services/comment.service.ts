@@ -666,24 +666,25 @@ async function afterLegacyCommentsDeleted({
  * puts them back in the queue. Reopening is only ever correct for the ones this flag actioned.
  */
 export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) => {
-  if (ids.length === 0) return { count: 0, reopenedReports: 0 };
+  if (ids.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0 };
 
   const ReportReason = (await import('~/shared/utils/prisma/enums')).ReportReason;
   const ReportStatus = (await import('~/shared/utils/prisma/enums')).ReportStatus;
+  const { clearTosOrKeep } = await import('~/server/services/commentsv2.service');
+  const markerView = await holdMarkerViewExists();
 
   let reopenedReports = 0;
   let count = 0;
+  const retained: number[] = [];
+  let retainedHidden = 0;
 
   for (const id of ids) {
-    // One its author deleted, kept for a hold, stays down: restoring it would republish it.
-    const updated = await dbWrite.comment
-      .update({
-        where: { id, removedByAuthor: false },
-        data: { tosViolation: false },
-        select: { id: true },
-      })
-      .catch(() => null);
-    if (!updated) continue;
+    const outcome = await clearTosOrKeep('Comment', id, markerView);
+    if (outcome?.held) {
+      retainedHidden += 1;
+      if (outcome.userId !== null) retained.push(outcome.userId);
+    }
+    if (!outcome?.cleared) continue;
     count += 1;
 
     const reports = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -698,5 +699,6 @@ export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) =
     reopenedReports += reports.length;
   }
 
-  return { count, reopenedReports };
+  if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
+  return { count, reopenedReports, retainedHidden };
 };

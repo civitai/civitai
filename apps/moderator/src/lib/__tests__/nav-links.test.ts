@@ -17,6 +17,7 @@ import {
   PERMISSIONS,
   permissionKey,
 } from '$lib/server/access';
+import { reportCountKey } from '$lib/reports';
 
 const at = (href: string) => new URL(href, 'https://mod.test');
 
@@ -236,6 +237,33 @@ describe('CSAM text holds', () => {
   it('is grantable on /admin', () => {
     const textScan = pageAccessState().tree.find((n) => n.key === '/text-scan');
     expect(textScan?.children.map((c) => c.key)).toContain('/csam/text-holds');
+  });
+});
+
+describe('Image Reports under Images', () => {
+  const IMAGE_REPORTS = '/reports/image';
+  const imagesGroup = () => navForUser(reviewer).find((l) => l.label === 'Images');
+
+  it('is listed under Images for whoever holds Reports, and only for them', () => {
+    applyGrants({ '/reports': ['moderator:reviewer'], '/images/minor': ['moderator:reviewer'] });
+    expect(imagesGroup()?.children?.map((c) => c.path)).toContain(IMAGE_REPORTS);
+
+    applyGrants({ '/images/minor': ['moderator:reviewer'] });
+    expect(imagesGroup()?.children?.map((c) => c.path)).not.toContain(IMAGE_REPORTS);
+  });
+
+  it('does not open Images, or count toward its badge, on its own', () => {
+    applyGrants({ '/reports': ['moderator:reviewer'] });
+    expect(imagesGroup()).toBeUndefined();
+
+    applyGrants({ '/reports': ['moderator:reviewer'], '/images/minor': ['moderator:reviewer'] });
+    const counts: Record<string, number> = { minor: 2, [reportCountKey('image')]: 5 };
+    expect(navCount(imagesGroup()!, (k) => (k ? counts[k] ?? null : null))).toBe(2);
+  });
+
+  it('is granted where it lives, not as a page of Images', () => {
+    const images = pageAccessState().tree.find((n) => n.key === '/images');
+    expect(images?.children.map((c) => c.key)).not.toContain(IMAGE_REPORTS);
   });
 });
 

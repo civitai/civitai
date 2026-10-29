@@ -111,6 +111,7 @@ import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -434,6 +435,124 @@ describe('upsertModel — system nsfw lock marker', () => {
   });
 });
 
+describe('upsertModel — profanity lock against a lock that landed after the read', () => {
+  it("neither rewrites the lock nor marks it the system's", async () => {
+    mockDbWrite.model.findUnique
+      .mockResolvedValueOnce({ ...storedModel, lockedProperties: [] })
+      .mockResolvedValue({ ...storedModel, nsfw: true, lockedProperties: ['nsfw', 'poi'] });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+
+    const data = updateData();
+    expect(data).not.toHaveProperty('lockedProperties');
+    expect(data).not.toHaveProperty('nsfw');
+    expect(data.meta).toEqual(expect.objectContaining({ profanityMatches: ['badword'] }));
+    expect(data.meta).not.toHaveProperty('systemNsfwLock');
+  });
+});
+
+// The first read is the one before the transaction; every later read is the row the transaction
+// locked, after a lock landed in between.
+function lockLandsMidSave(before: Partial<typeof storedModel>, after: Partial<typeof storedModel>) {
+  mockDbWrite.model.findUnique
+    .mockResolvedValueOnce({ ...storedModel, ...before })
+    .mockResolvedValue({ ...storedModel, ...after });
+}
+
+describe('owner saves enforce locks against the row they lock', () => {
+  it("refuses the owner's nsfw under an nsfw lock set after the first read", async () => {
+    lockLandsMidSave({ lockedProperties: [] }, { nsfw: true, lockedProperties: ['nsfw'] });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, nsfw: false });
+    expect(updateData()).not.toHaveProperty('nsfw');
+  });
+
+  it("refuses the owner's minor under a minor lock set after the first read", async () => {
+    lockLandsMidSave({ lockedProperties: [] }, { minor: true, lockedProperties: ['minor'] });
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: false });
+    expect(updateData()).not.toHaveProperty('minor');
+  });
+
+  it("refuses the owner's value in the private flow under a lock set after the first read", async () => {
+    lockLandsMidSave({ lockedProperties: [] }, { nsfw: true, lockedProperties: ['nsfw'] });
+    await privateFromTraining({ user: { id: OWNER_ID, isModerator: false }, nsfw: false });
+    expect(updateData()).not.toHaveProperty('nsfw');
+  });
+
+  it('keeps a poi lock set after the first read when the profanity lock is added', async () => {
+    lockLandsMidSave({ lockedProperties: [] }, { poi: true, lockedProperties: ['poi'] });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+    const data = updateData();
+    expect(data.nsfw).toBe(true);
+    expect(data.lockedProperties).toEqual(['poi', 'nsfw']);
+  });
+
+  it('does not bring back a lock a moderator lifted after the first read', async () => {
+    lockLandsMidSave({ lockedProperties: ['sfwOnly'] }, { lockedProperties: [] });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+    expect(updateData().lockedProperties).toEqual(['nsfw']);
+  });
+
+  it('writes no locks when an nsfw lock and another lock both landed after the first read', async () => {
+    lockLandsMidSave({ lockedProperties: [] }, { nsfw: true, lockedProperties: ['nsfw', 'poi'] });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Renamed Model' });
+    const data = updateData();
+    expect(data).not.toHaveProperty('lockedProperties');
+    expect(data).not.toHaveProperty('nsfw');
+    expect(data.meta).toEqual(expect.objectContaining({ profanityMatches: ['badword'] }));
+    expect(data.meta).not.toHaveProperty('systemNsfwLock');
+  });
+
+  it('builds the gallery settings from the locked row, keeping the SFW level a flag set', async () => {
+    lockLandsMidSave(
+      { lockedProperties: [], gallerySettings: { level: 31, users: [], tags: [] } },
+      {
+        minor: true,
+        sfwOnly: true,
+        lockedProperties: ['minor', 'nsfw', 'sfwOnly'],
+        gallerySettings: { level: 1, users: [], tags: [9] },
+      }
+    );
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwOnly: false });
+    const data = updateData();
+    expect(data).not.toHaveProperty('sfwOnly');
+    expect(data.gallerySettings).toEqual(expect.objectContaining({ level: 1, tags: [9] }));
+  });
+
+  it('records the profanity lock against the locks the row had, not the first read', async () => {
+    lockLandsMidSave({ lockedProperties: [] }, { poi: true, lockedProperties: ['poi'] });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+    const entityChanges = vi.fn().mockResolvedValue(undefined);
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      name: 'Renamed Model',
+      tracker: { entityChanges } as never,
+    });
+    const rows = entityChanges.mock.calls[0][0] as { field: string; oldValue: string }[];
+    const lockRows = rows.filter((r) => r.field.startsWith('lockedProperties'));
+    expect(lockRows.length).toBeGreaterThan(0);
+    for (const row of lockRows) expect(row.oldValue).not.toBe('[]');
+  });
+
+  it('lets a moderator write under a lock set after the first read', async () => {
+    lockLandsMidSave({ lockedProperties: [] }, { nsfw: true, lockedProperties: ['nsfw'] });
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      nsfw: false,
+      lockedProperties: ['nsfw'],
+    });
+    expect(updateData()).toEqual(
+      expect.objectContaining({ nsfw: false, lockedProperties: ['nsfw'] })
+    );
+  });
+});
+
 describe('upsertModel — profanity auto-NSFW yields to an active text scan', () => {
   it('does not run once Model text scan is active for this model', async () => {
     vi.mocked(getTextScanMode).mockResolvedValue('active');
@@ -529,6 +648,73 @@ describe('privateModelFromTraining — lock enforcement', () => {
 
     expect(result).toBeNull();
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+});
+
+const systemMarker = { source: 'text-scan', at: '2026-09-05T00:00:00.000Z' };
+
+describe('system nsfw lock marker on a moderator save', () => {
+  const locked = { nsfw: true, lockedProperties: ['nsfw'], meta: { systemNsfwLock: systemMarker } };
+
+  it('drops the marker when a moderator removes the nsfw lock', async () => {
+    mockStored(locked);
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, lockedProperties: [] });
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+  });
+
+  it('drops the marker when a moderator adds the nsfw lock over a stale one', async () => {
+    mockStored({ ...locked, lockedProperties: [] });
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: ['nsfw'],
+    });
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+  });
+
+  it('keeps the marker on a moderator save that leaves the nsfw lock alone', async () => {
+    mockStored(locked);
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: ['nsfw', 'poi'],
+    });
+    expect(updateData().meta).toEqual(expect.objectContaining({ systemNsfwLock: systemMarker }));
+  });
+
+  it('drops the marker when a moderator changes nsfw under the same lock', async () => {
+    mockStored(locked);
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      nsfw: false,
+      lockedProperties: ['nsfw'],
+    });
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+  });
+
+  it('drops the marker and logs the unlock when a moderator unlocks nsfw in the private flow', async () => {
+    mockStored(locked);
+    await privateFromTraining({
+      user: { id: MODERATOR_ID, isModerator: true },
+      lockedProperties: [],
+    });
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+    expect(trackModActivity).toHaveBeenCalledWith(
+      MODERATOR_ID,
+      { entityType: 'model', entityId: MODEL_ID, activity: 'unlockProperty:nsfw' },
+      expect.anything()
+    );
+  });
+
+  it("keeps the marker and logs nothing on an owner's private-flow publish", async () => {
+    mockStored(locked);
+    await privateFromTraining({ user: { id: OWNER_ID, isModerator: false }, lockedProperties: [] });
+    expect(updateData().meta).toEqual(expect.objectContaining({ systemNsfwLock: systemMarker }));
+    expect(trackModActivity).not.toHaveBeenCalled();
   });
 });
 

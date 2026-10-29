@@ -27,6 +27,7 @@ import {
   TEXT_SCAN_FLAGS_KEY,
   type TextScanFlags,
 } from '~/server/services/text-scan/flag-snapshot';
+import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
 
@@ -1117,7 +1118,7 @@ export async function rollbackMinorHashAutoFlags({
             "lockedProperties" = ${row.prevLockedProperties}::text[],
             -- The snapshot goes, so the clear stamp is the only surviving record
             -- that a human said "not minor" — see notMinorHashClearedPredicate.
-            meta = (COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY})
+            meta = (COALESCE(meta, '{}'::jsonb) - ${MINOR_FLAG_SNAPSHOT_KEY} - ${SYSTEM_NSFW_LOCK_META_KEY}::text)
               || jsonb_build_object(
                    ${MINOR_HASH_CLEARED_KEY}, jsonb_build_object('at', now())
                  )

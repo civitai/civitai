@@ -61,12 +61,10 @@ const notKeptByTriggerSql = (markerView: boolean) =>
     : Prisma.empty;
 
 /**
- * CTE entries, for a `WITH` list ahead of a parent DELETE, that take every thread of those parents
- * holding a held author's comment off its parent, so the DELETE no longer cascades into it. They run
- * in the DELETE's own statement, so they detach exactly what it deletes. A detached thread keeps
- * where it came from in `metadata.detachedFrom`, for moderators, and is unreachable from the site.
- * Its comments leave the CommentV3 mirror, which the site reads, with the parent: each topic cascades
- * from its entity row. The CommentV2 rows stay.
+ * `WITH` entries for a parent DELETE that detach each thread holding a held author's comment, so the
+ * DELETE does not cascade into it. Same statement, so they detach exactly what it deletes.
+ * `metadata.detachedFrom` keeps the old parent for moderators. The thread's comments leave the
+ * CommentV3 mirror with the parent; the CommentV2 rows stay.
  */
 export function detachHeldThreadsCte(parents: ThreadParents, markerView: boolean): Prisma.Sql {
   const entries = Object.entries(parents).map(([column, ids], i) => {
