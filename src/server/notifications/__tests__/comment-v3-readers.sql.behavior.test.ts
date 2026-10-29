@@ -356,6 +356,22 @@ describe('notification queries on CommentV3', () => {
       }
     );
   });
+  it('opens a clamped reply under its parent on a surface that reads v3, and under the comment it answers elsewhere', async () => {
+    await temporarily(
+      `INSERT INTO "CommentV3"(id, "entityType", "entityId", "parentId", "replyToId", "userId", content) VALUES
+         (1061, 'article', 10, 106, NULL, 2, 'article reply'),
+         (1062, 'article', 10, 106, 1061, 3, 'clamped article reply')`,
+      `DELETE FROM "CommentV3" WHERE id IN (1062, 1061)`,
+      async () => {
+        const out = await emitted('new-comment-reply');
+        const reply = out.find((r) => r.details.commentId === 1062)!;
+        // The v3 article section shows 106's replies, which is where 1062 sits.
+        expect(reply.details).toMatchObject({ commentParentId: 106, commentParentType: 'comment' });
+        // Images still read v2, where the clamped reply sits in the answered comment's thread.
+        expect(out.find((r) => r.details.commentId === 103)!.details.commentParentId).toBe(102);
+      }
+    );
+  });
 });
 
 describe('dedupe keys', () => {

@@ -56,13 +56,13 @@
 
   &::after {
     position: absolute;
-    height: 100%;
-    width: 100%;
-    top: 0;
-    left: 0;
+    /* A shelf's hat room is padding the overlay stays out of, so it does not dim the header above. */
+    inset: var(--loading-inset-top, 0px) 0 0 var(--loading-inset-left, 0px);
     content: '';
     background: rgba(0, 0, 0, 0.3);
     z-index: 100;
+    /* Catches clicks on the cards below even where the shelf lets them through. */
+    pointer-events: auto;
     /* Uncomment if needed */
     /* backdrop-filter: blur(8px); */
   }

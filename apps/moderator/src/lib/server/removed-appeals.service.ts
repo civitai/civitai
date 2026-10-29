@@ -1,4 +1,5 @@
 import { NotificationCategory } from '@civitai/notifications';
+import { sql } from 'kysely';
 import { dbRead, dbWrite } from './db';
 import { refundAppealFee } from './image-moderation-effects';
 import { recordModActivity } from './mod-activity';
@@ -17,11 +18,28 @@ const OUTCOME = {
 } as const satisfies Record<RemovedAppealDecision, string>;
 const DELETED_BY_OWNER = 'deleted-by-owner';
 
+// The owners and images the main app's getAppealExcludedIds (src/server/services/report.service.ts)
+// excludes from appeals are left out here, listed or decided; keep the two in step.
+const appealExcluded = sql<boolean>`(
+  EXISTS (SELECT 1 FROM "CsamReport" cr WHERE cr."userId" = a."userId")
+  OR EXISTS (
+    SELECT 1 FROM "UserReport" ur JOIN "Report" r ON r.id = ur."reportId"
+    WHERE ur."userId" = a."userId" AND r.reason = 'CSAM'
+  )
+  OR EXISTS (SELECT 1 FROM "Image" o WHERE o."userId" = a."userId" AND o."blockedFor" = 'CSAM')
+  OR EXISTS (SELECT 1 FROM "EvidenceHeldUser" h WHERE h."userId" = a."userId")
+  OR (a."entityType" = 'Image' AND a."entityId"::text IN (
+    SELECT CASE jsonb_typeof(e) WHEN 'object' THEN e->>'id' ELSE e#>>'{}' END
+    FROM "CsamReport" cr, jsonb_array_elements(cr.images) e
+  ))
+)`;
+
 const pendingRemoved = () =>
   dbRead
     .selectFrom('Appeal as a')
     .where('a.status', '=', 'Pending')
-    .where('a.entityRemovedAt', 'is not', null);
+    .where('a.entityRemovedAt', 'is not', null)
+    .where(sql<boolean>`NOT ${appealExcluded}`);
 
 export async function countRemovedAppeals(): Promise<number> {
   const row = await pendingRemoved()
@@ -92,7 +110,7 @@ export async function resolveRemovedAppeal({
   moderatorId: number;
 }): Promise<{ refunded: boolean; refundFailed: boolean } | null> {
   const appeal = await dbWrite
-    .updateTable('Appeal')
+    .updateTable('Appeal as a')
     .set({
       status: decision === 'OwnerDeleted' ? 'Void' : decision,
       resolvedBy: moderatorId,
@@ -101,9 +119,10 @@ export async function resolveRemovedAppeal({
       resolvedReason: decision === 'OwnerDeleted' ? DELETED_BY_OWNER : resolvedReason ?? null,
       internalNotes: internalNotes ?? null,
     })
-    .where('id', '=', appealId)
-    .where('status', '=', 'Pending')
-    .where('entityRemovedAt', 'is not', null)
+    .where('a.id', '=', appealId)
+    .where('a.status', '=', 'Pending')
+    .where('a.entityRemovedAt', 'is not', null)
+    .where(sql<boolean>`NOT ${appealExcluded}`)
     .returning(['id', 'userId', 'entityType', 'entityId', 'buzzTransactionId'])
     .executeTakeFirst();
   if (!appeal) return null;
