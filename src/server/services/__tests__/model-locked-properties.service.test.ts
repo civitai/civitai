@@ -506,6 +506,38 @@ describe('owner saves enforce locks against the row they lock', () => {
     expect(data.meta).not.toHaveProperty('systemNsfwLock');
   });
 
+  it('builds the gallery settings from the locked row, keeping the SFW level a flag set', async () => {
+    lockLandsMidSave(
+      { lockedProperties: [], gallerySettings: { level: 31, users: [], tags: [] } },
+      {
+        minor: true,
+        sfwOnly: true,
+        lockedProperties: ['minor', 'nsfw', 'sfwOnly'],
+        gallerySettings: { level: 1, users: [], tags: [9] },
+      }
+    );
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, sfwOnly: false });
+    const data = updateData();
+    expect(data).not.toHaveProperty('sfwOnly');
+    expect(data.gallerySettings).toEqual(expect.objectContaining({ level: 1, tags: [9] }));
+  });
+
+  it('records the profanity lock against the locks the row had, not the first read', async () => {
+    lockLandsMidSave({ lockedProperties: [] }, { poi: true, lockedProperties: ['poi'] });
+    mockEvaluateContent.mockReturnValue(profaneEvaluation);
+    const entityChanges = vi.fn().mockResolvedValue(undefined);
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      name: 'Renamed Model',
+      tracker: { entityChanges } as never,
+    });
+    const rows = entityChanges.mock.calls[0][0] as { field: string; oldValue: string }[];
+    const lockRows = rows.filter((r) => r.field.startsWith('lockedProperties'));
+    expect(lockRows.length).toBeGreaterThan(0);
+    for (const row of lockRows) expect(row.oldValue).not.toBe('[]');
+  });
+
   it('lets a moderator write under a lock set after the first read', async () => {
     lockLandsMidSave({ lockedProperties: [] }, { nsfw: true, lockedProperties: ['nsfw'] });
     await upsert({

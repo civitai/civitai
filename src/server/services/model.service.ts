@@ -3316,6 +3316,7 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
       meta: true,
       lockedProperties: true,
       nsfw: true,
+      gallerySettings: true,
     },
   });
   return row && { ...row, meta: row.meta as ModelMeta | null };
@@ -3673,6 +3674,8 @@ export const upsertModel = async (
 
     let clearedLicensingSources: { id: number; licensingSourceVersionId: number }[] = [];
     let typeBeforeUpdate: ModelType | undefined;
+    // The locks as the transaction found them, for the change history's "before".
+    let lockedBeforeUpdate: string[] | undefined;
 
     const result = await dbWrite.$transaction(
       async (tx) => {
@@ -3684,6 +3687,10 @@ export const upsertModel = async (
         // Locks are enforced again against this locked row: the enforcement above read the row
         // before the transaction, and a lock set since then wins over the owner's value. The
         // profanity lock is built from this row too, so it keeps every lock the row has now.
+        lockedBeforeUpdate = locked?.lockedProperties;
+        const lockedGallerySettings =
+          (locked?.gallerySettings as ModelGallerySettingsSchema | undefined) ??
+          prevGallerySettings;
         if (!isModerator && locked) {
           enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
           if (profanityAutoNsfw && locked.lockedProperties.includes('nsfw')) {
@@ -3757,10 +3764,11 @@ export const upsertModel = async (
           data: {
             ...data,
             meta: mergedMeta,
+            // From the locked row, like meta: a flag set since the first read also set the level.
             gallerySettings: {
-              ...prevGallerySettings,
+              ...lockedGallerySettings,
               level:
-                input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : prevGallerySettings?.level,
+                input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : lockedGallerySettings?.level,
             },
             tagsOnModels: tagsOnModels
               ? {
@@ -3888,7 +3896,11 @@ export const upsertModel = async (
         // `type` off the transaction's own read, not the `dbRead` one beside it: a stale replica
         // reads as "type unchanged" and emits no row, on exactly the save whose fee clears need
         // explaining. Same reason the repair above does not use `beforeUpdate.type`.
-        before: { ...beforeUpdate, type: typeBeforeUpdate ?? beforeUpdate.type },
+        before: {
+          ...beforeUpdate,
+          type: typeBeforeUpdate ?? beforeUpdate.type,
+          lockedProperties: lockedBeforeUpdate ?? beforeUpdate.lockedProperties,
+        },
         after: data as Record<string, unknown>,
         actorRole: resolveActorRole({
           actorUserId: userId,
