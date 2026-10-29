@@ -6,6 +6,7 @@ import type * as PlacementUtil from '~/components/Sticker/placement.util';
 import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as Trpc from '~/utils/trpc';
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 
@@ -84,13 +85,11 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }))
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
-  trpc: {
-    cosmetic: {
-      getStickerBalances: { useQuery: () => ({ data: [] }) },
-      getStickerRecentUse: { useQuery: () => ({ data: [] }) },
-      getStickerOffers: { useQuery: () => ({ data: [] }) },
-    },
-  },
+  trpc: makeTrpcProxy({
+    'cosmetic.getStickerBalances': { useQuery: () => ({ data: [] }) },
+    'cosmetic.getStickerRecentUse': { useQuery: () => ({ data: [] }) },
+    'cosmetic.getStickerOffers': { useQuery: () => ({ data: [] }) },
+  }),
 }));
 
 const renderTray = async () => {
