@@ -116,14 +116,18 @@ jobs:
       # variable PREVIEW_AUTO_DEPLOY_USERS (space-separated logins), kept out of this file. Read
       # live from the API, so a label added after the push counts.
       - name: Will a preview image be built for this PR?
+        id: gate
         if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR: ${{ github.event.pull_request.number }}
           AUTO_DEPLOY_USERS: ${{ vars.PREVIEW_AUTO_DEPLOY_USERS }}
+          # From the event payload, as the preview pipeline reads it: this job's token cannot see
+          # a private org membership, so the API answers CONTRIBUTOR for a member.
+          ASSOC: ${{ github.event.pull_request.author_association }}
         run: |
           pr=$(gh api "repos/${{ github.repository }}/pulls/$PR")
-          assoc=$(jq -r .author_association <<< "$pr")
+          assoc=$ASSOC
           login=$(jq -r '.user.login | ascii_downcase' <<< "$pr")
           head_repo=$(jq -r .head.repo.full_name <<< "$pr")
           labelled=$(jq -r '[.labels[].name] | index("preview") != null' <<< "$pr")
@@ -271,14 +275,14 @@ jobs:
             --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/parity.json"
 
       - name: Negative control (Next vs mutant must be red)
-        if: always()
+        if: always() && steps.gate.outcome != 'failure'
         run: |
           node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3002 \
             --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/mutant.json" \
             --expect-red client-sent-internal-headers
 
       - name: The alerted span is still emitted
-        if: always()
+        if: always() && steps.gate.outcome != 'failure'
         run: |
           # The batch span processor flushes every 500ms here; give it a few cycles.
           sleep 5
