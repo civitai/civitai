@@ -8,7 +8,7 @@ import { goldForRank, PROGRESSION } from '../progression/config';
 import { standingOf } from '../progression/rating';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { ledgerOf, settleAndMirror, settleItemVotes } from '../progression/progression';
-import { servableImage } from '../servable-image';
+import { servableImage } from '@civitai/db/knights';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { isRank, RANKS, type Rank } from '../ranks';
 import { canVote, FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';

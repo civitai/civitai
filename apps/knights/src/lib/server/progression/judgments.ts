@@ -1,6 +1,6 @@
 import type { Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { servableImage } from '../servable-image';
+import { servableImage } from '@civitai/db/knights';
 
 export const JUDGMENTS_PAGE_SIZE = 20;
 
