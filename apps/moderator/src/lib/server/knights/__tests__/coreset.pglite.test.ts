@@ -40,15 +40,15 @@ let db: PGlite;
 
 async function seedImage(
   id: number,
-  o: { level?: number; published?: boolean; ingestion?: string } = {}
+  o: { level?: number; published?: boolean; ingestion?: string; needsReview?: string } = {}
 ) {
   await db.query(`INSERT INTO "Post" ("id","publishedAt") VALUES ($1,$2)`, [
     id,
     o.published === false ? null : '2020-01-01',
   ]);
   await db.query(
-    `INSERT INTO "Image" ("id","url","type","nsfwLevel","ingestion","postId") VALUES ($1,$2,'image',$3,$4,$1)`,
-    [id, `key-${id}`, o.level ?? 4, o.ingestion ?? 'Scanned']
+    `INSERT INTO "Image" ("id","url","type","nsfwLevel","ingestion","needsReview","postId") VALUES ($1,$2,'image',$3,$4,$5,$1)`,
+    [id, `key-${id}`, o.level ?? 4, o.ingestion ?? 'Scanned', o.needsReview ?? null]
   );
 }
 
@@ -62,11 +62,12 @@ async function seedRef(
     explanation: string | null;
     answers: number;
     failures: number;
+    daysOld: number;
   }> = {}
 ) {
   const { rows } = await db.query<{ id: number }>(
-    `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","explanation","status","answers","failures")
-     VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING "id"`,
+    `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","explanation","status","answers","failures","harvestedAt")
+     VALUES ($1,$2,$3,$4,$5,$6,$7,$8, now() - ($9::int * interval '1 day')) RETURNING "id"`,
     [
       imageId,
       o.pool ?? 'trials',
@@ -76,6 +77,7 @@ async function seedRef(
       o.status ?? 'active',
       o.answers ?? 0,
       o.failures ?? 0,
+      o.daysOld ?? 0,
     ]
   );
   return rows[0].id;
@@ -89,8 +91,10 @@ const row = async (id: number) =>
       answer: string;
       explanation: string | null;
       pool: string;
+      answers: number;
+      failures: number;
     }>(
-      `SELECT "source","status","answer","explanation","pool" FROM "KnightsReferenceImage" WHERE "id"=$1`,
+      `SELECT "source","status","answer","explanation","pool","answers","failures" FROM "KnightsReferenceImage" WHERE "id"=$1`,
       [id]
     )
   ).rows[0];
@@ -101,7 +105,7 @@ beforeAll(async () => {
     CREATE TABLE "Image" (
       "id" INTEGER PRIMARY KEY, "url" TEXT NOT NULL, "name" TEXT, "type" TEXT NOT NULL DEFAULT 'image',
       "nsfwLevel" INTEGER NOT NULL DEFAULT 0, "ingestion" TEXT NOT NULL DEFAULT 'Scanned',
-      "blockedFor" TEXT, "postId" INTEGER
+      "blockedFor" TEXT, "needsReview" TEXT, "acceptableMinor" BOOLEAN NOT NULL DEFAULT false, "postId" INTEGER
     );`);
   await db.exec(
     readFileSync(path.join(MIGRATIONS, '20261212120000_knights_v2_trials', 'migration.sql'), 'utf8')
@@ -170,7 +174,7 @@ describe('addCoreImage', () => {
     });
   });
 
-  it('turns a fresh or retired item of that image into core, keeping its history', async () => {
+  it('turns a fresh or retired item of that image into core', async () => {
     await seedImage(1);
     await seedImage(2);
     const fresh = await seedRef(1, { answer: '4', answers: 5, failures: 1 });
@@ -190,14 +194,27 @@ describe('addCoreImage', () => {
       explanation: 'new why',
     });
     expect(await row(retired)).toMatchObject({ status: 'active', explanation: 'again' });
-    expect(
-      (
-        await db.query<{ answers: number }>(
-          `SELECT "answers" FROM "KnightsReferenceImage" WHERE "id"=$1`,
-          [fresh]
-        )
-      ).rows[0].answers
-    ).toBe(5);
+  });
+
+  it('refuses an image Acolytes would not be shown, such as one under review', async () => {
+    await seedImage(1, { needsReview: 'minor' });
+    expect(await addCoreImage({ imageId: 1, level: 4, explanation: 'why' })).toMatchObject({
+      ok: false,
+      error: expect.stringContaining('review hold'),
+    });
+  });
+
+  it('starts the answer record over when converting to a different answer, and keeps it for the same one', async () => {
+    await seedImage(1);
+    await seedImage(2);
+    const changed = await seedRef(1, { answer: '4', answers: 9, failures: 5 });
+    const same = await seedRef(2, { answer: '4', answers: 9, failures: 5 });
+
+    await addCoreImage({ imageId: 1, level: 8, explanation: 'why' });
+    await addCoreImage({ imageId: 2, level: 4, explanation: 'why' });
+
+    expect(await row(changed)).toMatchObject({ answers: 0, failures: 0 });
+    expect(await row(same)).toMatchObject({ answers: 9, failures: 5 });
   });
 
   it('requires a why and a rating level', async () => {
@@ -227,6 +244,19 @@ describe('updateCoreItem', () => {
 
     expect(await row(core)).toMatchObject({ answer: '16', explanation: 'better' });
     expect(await row(fresh)).toMatchObject({ answer: '4', explanation: null });
+  });
+});
+
+describe('updateCoreItem answer record', () => {
+  it('resets the counts when the answer changes, not when only the why does', async () => {
+    await seedImage(1);
+    const id = await seedRef(1, { source: 'core', explanation: 'old', answers: 12, failures: 7 });
+
+    await updateCoreItem({ id, level: 4, explanation: 'reworded' });
+    expect(await row(id)).toMatchObject({ answers: 12, failures: 7 });
+
+    await updateCoreItem({ id, level: 8, explanation: 'reworded' });
+    expect(await row(id)).toMatchObject({ answers: 0, failures: 0 });
   });
 });
 
@@ -289,11 +319,11 @@ describe('lists', () => {
     await seedRef(2, { source: 'core', explanation: null });
     await seedRef(3);
     await seedRef(4, { pool: 'hiddenCheck' });
-    await seedRef(5, { status: 'pending' });
+    const pendingId = await seedRef(5, { status: 'pending' });
 
     expect((await getCoreItems()).map((i) => i.imageId).sort()).toEqual([1, 2]);
     expect((await getFreshItems()).map((i) => i.imageId)).toEqual([3]);
-    expect((await getSpotCheckItems()).map((i) => i.imageId)).toEqual([5]);
+    expect((await getSpotCheckItems()).map((i) => i.id)).toEqual([pendingId]);
   });
 
   it('flags an item players fail far more than expected, once it has enough answers', async () => {
@@ -312,12 +342,33 @@ describe('lists', () => {
     expect((await getFreshItems(config))[0].imageId).toBe(1);
   });
 
-  it('never shows the stored rating of a pending item', async () => {
+  it('gives the spot-check only the media, never the image id, name or stored rating', async () => {
     await seedImage(1);
-    await seedRef(1, { status: 'pending', answer: '16' });
-    const [item] = await getSpotCheckItems();
-    expect(JSON.stringify(item)).not.toContain('16');
-    expect(item).not.toHaveProperty('answer');
+    const id = await seedRef(1, { status: 'pending', answer: '16' });
+    expect(await getSpotCheckItems()).toEqual([{ id, imageKey: 'key-1' }]);
+  });
+
+  it('keeps a flagged item inside the limit even when it is the oldest', async () => {
+    for (let n = 1; n <= 6; n++) await seedImage(n);
+    await seedRef(1, { answers: 40, failures: 38, daysOld: 50 });
+    for (let n = 2; n <= 6; n++) await seedRef(n, { daysOld: n });
+
+    const shown = await getFreshItems({ flagMinAnswers: 20, flagFailureRate: 0.6, listLimit: 3 });
+
+    expect(shown.map((i) => i.imageId)).toEqual([1, 2, 3]);
+    expect(shown[0].flagged).toBe(true);
+  });
+
+  it('marks core items whose image Acolytes would no longer be shown', async () => {
+    await seedImage(1);
+    await seedImage(2, { ingestion: 'Blocked' });
+    await seedImage(3, { needsReview: 'minor' });
+    await seedImage(4, { published: false });
+    for (const n of [1, 2, 3, 4]) await seedRef(n, { source: 'core', explanation: 'x' });
+
+    const shown = Object.fromEntries((await getCoreItems()).map((i) => [i.imageId, i.servable]));
+
+    expect(shown).toEqual({ 1: true, 2: false, 3: false, 4: false });
   });
 });
 

@@ -1,24 +1,38 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { browsingLevels, getBrowsingLevelLabel } from '@civitai/shared';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
+  import { Input } from '@civitai/ui/components/ui/input/index.js';
   import { Textarea } from '@civitai/ui/components/ui/textarea/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
+  import ErrorAlert from '$lib/components/ErrorAlert.svelte';
+  import LinkTabs from '$lib/components/LinkTabs.svelte';
   import { FormState } from '$lib/form-state.svelte';
   import CoreItemCard from './CoreItemCard.svelte';
+  import LevelPicker from './LevelPicker.svelte';
   import SpotCheckCard from './SpotCheckCard.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
 
   const tabs = $derived([
-    { tab: 'core', label: `Core set (${data.counts.core})` },
-    { tab: 'fresh', label: `Fresh (${data.counts.fresh})` },
-    { tab: 'spot-check', label: `Spot-check (${data.counts.spotCheck})` },
+    { value: 'core', label: `Core set (${data.counts.core})`, href: '?tab=core' },
+    { value: 'fresh', label: `Fresh (${data.counts.fresh})`, href: '?tab=fresh' },
+    { value: 'spot-check', label: `Spot-check (${data.counts.spotCheck})`, href: '?tab=spot-check' },
   ]);
+  const empty = {
+    core: 'The core set is empty. Add an image above, or promote one from the Fresh tab.',
+    fresh: 'No fresh images are in Trials right now. They arrive with the next harvest of moderator rulings.',
+    'spot-check': 'Nothing is waiting for a spot-check.',
+  } as const;
 
-  const add = new FormState({ reload: true, onSuccess: () => toast.success('Added to the core set') });
   let level = $state<number | null>(null);
+  const add = new FormState({
+    reload: true,
+    onSuccess: () => {
+      level = null;
+      toast.success('Added to the core set');
+    },
+  });
 </script>
 
 <header class="page-header">
@@ -31,37 +45,30 @@
   </p>
 </header>
 
-<nav class="mb-4 flex gap-2" aria-label="Trials view">
-  {#each tabs as t (t.tab)}
-    <a
-      href="?tab={t.tab}"
-      class="rounded-md border border-dark-4 px-3 py-1 text-sm {data.tab === t.tab
-        ? 'bg-dark-5 text-white'
-        : 'text-dark-2 hover:text-white'}">{t.label}</a
-    >
-  {/each}
-</nav>
+<LinkTabs class="mb-4" items={tabs} active={data.tab} />
 
 {#if data.tab === 'core'}
   <section class="mb-6 rounded-xl border border-dark-4 bg-dark-6 p-5">
     <h2 class="mb-2 font-medium">Add a core image</h2>
-    {#if add.error}<p class="mb-2 text-sm text-red-300">{add.error}</p>{/if}
+    {#if add.error}<ErrorAlert class="mb-2" message={add.error} />{/if}
     <form method="POST" action="?/add" use:enhance={add.enhance} class="flex flex-col gap-2">
-      <input type="hidden" name="level" value={level ?? ''} />
       <label class="flex items-center gap-2 text-sm text-dark-2">
         Image id
-        <input name="imageId" inputmode="numeric" required class="w-40 rounded-md border border-dark-4 bg-dark-7 px-2 py-1 text-white" />
+        <Input name="imageId" inputmode="numeric" required class="w-40" />
       </label>
       <div class="flex flex-wrap items-center gap-2">
         <span class="text-sm text-dark-2">Answer</span>
-        {#each browsingLevels as option (option)}
-          <Button type="button" size="sm" variant={option === level ? 'secondary' : 'outline'} onclick={() => (level = option)}
-            >{getBrowsingLevelLabel(option)}</Button
-          >
-        {/each}
+        <LevelPicker bind:value={level} />
       </div>
-      <Textarea name="explanation" rows={2} required placeholder="Why this rating, shown to Acolytes after they answer" />
-      <div><Button type="submit" size="sm" disabled={add.submitting || level === null}>Add</Button></div>
+      <Textarea
+        name="explanation"
+        rows={2}
+        required
+        placeholder="Why this rating, shown to Acolytes after they answer"
+      />
+      <div>
+        <Button type="submit" size="sm" disabled={add.submitting || level === null}>Add</Button>
+      </div>
     </form>
   </section>
 {/if}
@@ -72,7 +79,7 @@
     different rating keeps it out.
   </p>
   {#if data.spotCheck.length === 0}
-    <p class="text-sm text-dark-2">Nothing is waiting for a spot-check.</p>
+    <p class="text-sm text-dark-2">{empty['spot-check']}</p>
   {:else}
     <div class="flex flex-col gap-3">
       {#each data.spotCheck as item (item.id)}
@@ -81,7 +88,7 @@
     </div>
   {/if}
 {:else if data.items.length === 0}
-  <p class="text-sm text-dark-2">Nothing here.</p>
+  <p class="text-sm text-dark-2">{empty[data.tab]}</p>
 {:else}
   {#if data.tab === 'fresh'}
     <p class="mb-3 text-sm text-dark-2">
