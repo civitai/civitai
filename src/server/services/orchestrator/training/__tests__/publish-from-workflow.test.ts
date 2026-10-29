@@ -54,6 +54,7 @@ import { trainingModelInfo } from '~/utils/training';
 import { trainingDetailsObj } from '~/server/schema/model-version.schema';
 import { modelFileMetadataSchema } from '~/server/schema/model-file.schema';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
 const mockFindFirst = dbMock.dbWrite.model.findFirst;
 
 const USER = { id: 5 } as SessionUser;
@@ -310,6 +311,23 @@ describe('createDraftModelFromWorkflow', () => {
     expect(mockUpsertModel).not.toHaveBeenCalled();
     expect(mockUpsertModelVersion).not.toHaveBeenCalled();
     expect(mockCreateFile).not.toHaveBeenCalled();
+  });
+
+  // Decision: deleting the draft and pressing Publish again must start over, not reopen the deleted
+  // model. Don't drop the status clause from the lookup to make "returns the existing draft" simpler.
+  it('creates a fresh draft when the only draft for the run is Deleted', async () => {
+    mockFindFirst.mockImplementation(async ({ where }: { where: { status?: { not?: string } } }) =>
+      where.status?.not === ModelStatus.Deleted
+        ? null
+        : { id: 77, status: ModelStatus.Deleted, modelVersions: [{ id: 88 }] }
+    );
+    const result = await createDraftModelFromWorkflow({
+      user: USER,
+      workflow: studioWorkflow(),
+      selectedEpochNumber: 1,
+    });
+    expect(result.modelId).toBe(100);
+    expect(mockUpsertModel).toHaveBeenCalledTimes(1);
   });
 
   it('re-entry on an existing draft whose blobs expired resolves the ids with a null epoch instead of throwing', async () => {

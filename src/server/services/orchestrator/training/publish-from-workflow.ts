@@ -310,6 +310,9 @@ export async function createDraftModelFromWorkflow({
       userId: user.id,
       uploadType: ModelUploadType.Trained,
       meta: { path: ['trainingStudioWorkflowId'], equals: workflow.id },
+      // A deleted draft must not be reopened: Publish after a delete makes a fresh one, and the
+      // re-stamp below points the run at it.
+      status: { not: ModelStatus.Deleted },
     },
     select: {
       id: true,

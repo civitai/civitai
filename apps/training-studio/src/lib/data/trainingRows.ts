@@ -509,6 +509,22 @@ export interface TrainingDetail {
   settings: TrainingSettingsExport;
 }
 
+/** The run keeps `modelId` after its model is deleted; drop it when the host reports the model gone so
+ *  the page offers Publish (a fresh draft) instead of a dead link. A check that can't run keeps the
+ *  link: hiding a real draft is worse than a stale one. */
+export async function withoutDeletedModel(
+  detail: TrainingDetail,
+  modelLive: ((modelId: number) => Promise<boolean>) | undefined
+): Promise<TrainingDetail> {
+  if (detail.modelId == null || !modelLive) return detail;
+  try {
+    if (await modelLive(detail.modelId)) return detail;
+  } catch {
+    return detail;
+  }
+  return { ...detail, modelId: undefined };
+}
+
 /** Map one workflow (fetched by id) to the detail screen's shape. Null if we can't place it. */
 export function workflowToDetail(w: Workflow): TrainingDetail | null {
   if (!w.id || w.tags?.includes(AUTO_LABEL_TAG)) return null;

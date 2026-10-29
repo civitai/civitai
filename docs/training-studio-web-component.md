@@ -109,6 +109,11 @@ interface TrainingStudioHost {
    *  the affordance. Same URL semantics as `generateUrl`. */
   modelPageUrl?(req: { modelId: number }): string;
 
+  /** Whether that model still exists for this user (`GET /api/training-studio/model-status`):
+   *  the stamped modelId outlives a deleted draft. False drops the link, so the run offers Publish,
+   *  which makes a fresh draft; a rejection keeps it. Optional — omit and the link is unchecked. */
+  modelLive?(modelId: number): Promise<boolean>;
+
   /** Open the host's own model picker for the Custom training base (the main app's
    *  resource-select modal). The component passes the run's orchestrator ecosystem so a host
    *  that can map it pre-filters to compatible checkpoints. Resolves the picked model's
