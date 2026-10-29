@@ -20,7 +20,13 @@ type Loaders = {
 
 export const liveLoaders: Loaders = {
   account: ({ view, cfFeature, routerTopic, civitaiUserId }) =>
-    accountSectionFor({ view, cfFeature, routerTopic, civitaiUserId, canView: true }),
+    accountSectionFor({
+      view,
+      cfFeature: cfFeature ?? null,
+      routerTopic: routerTopic ?? null,
+      civitaiUserId,
+      canView: true,
+    }),
   appeals: (ticket, canRead) =>
     appealsSectionFor({ userId: ticket.civitaiUserId, text: ticket.text ?? '', canRead }),
 };
