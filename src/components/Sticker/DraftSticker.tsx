@@ -21,6 +21,7 @@ import clsx from 'clsx';
 import { useCallback, useLayoutEffect, useRef, useState } from 'react';
 import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
 import type { Gesture, StartGesture } from '~/components/Sticker/draft-gesture';
 import { KNOB_OFFSET, rotate } from '~/components/Sticker/draft-gesture';
 import { placeButtonPosition } from '~/components/Sticker/place-button-position';
@@ -74,6 +75,15 @@ const BUY_BUTTON_GAP = 8;
 const HANDLE_OUTSET = 6;
 
 /**
+ * The dots stay small so they do not cover the artwork, but a finger needs about
+ * 40px to land on one: an invisible ring around each takes the press. 12px
+ * corners become 40px targets, the 16px knob a 44px one. Each ring is pushed
+ * outward, away from the sticker, so on a small sticker the rings do not cover
+ * the body and it can still be dragged.
+ */
+const HANDLE_HIT_AREA = "before:absolute before:-inset-3.5 before:content-['']";
+
+/**
  * The nearest ancestor that clips — the carousel's viewport on the image detail
  * page, whose bottom edge is the bottom of the media box.
  *
@@ -92,10 +102,30 @@ function nearestClipElement(element: HTMLElement): HTMLElement | null {
 }
 
 const CORNERS = [
-  { sx: -1, sy: -1, className: '-left-1.5 -top-1.5 cursor-nwse-resize' },
-  { sx: 1, sy: -1, className: '-right-1.5 -top-1.5 cursor-nesw-resize' },
-  { sx: -1, sy: 1, className: '-bottom-1.5 -left-1.5 cursor-nesw-resize' },
-  { sx: 1, sy: 1, className: '-bottom-1.5 -right-1.5 cursor-nwse-resize' },
+  {
+    sx: -1,
+    sy: -1,
+    className:
+      '-left-1.5 -top-1.5 cursor-nwse-resize before:-translate-x-2.5 before:-translate-y-2.5',
+  },
+  {
+    sx: 1,
+    sy: -1,
+    className:
+      '-right-1.5 -top-1.5 cursor-nesw-resize before:translate-x-2.5 before:-translate-y-2.5',
+  },
+  {
+    sx: -1,
+    sy: 1,
+    className:
+      '-bottom-1.5 -left-1.5 cursor-nesw-resize before:-translate-x-2.5 before:translate-y-2.5',
+  },
+  {
+    sx: 1,
+    sy: 1,
+    className:
+      '-bottom-1.5 -right-1.5 cursor-nwse-resize before:translate-x-2.5 before:translate-y-2.5',
+  },
 ];
 
 /**
@@ -683,6 +713,8 @@ export function DraftSticker({
      */
     <div
       ref={rootRef}
+      // A finger on the draft is editing it, not swiping the carousel.
+      {...{ [STICKER_EDITOR_ATTR]: '' }}
       className="pointer-events-none absolute"
       style={{
         left: `${draft.x * 100}%`,
@@ -735,13 +767,13 @@ export function DraftSticker({
             <span
               key={corner.className}
               onPointerDown={begin('resize', corner)}
-              className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${corner.className}`}
+              className={`absolute size-3 rounded-full border-2 border-white bg-blue-5 ${HANDLE_HIT_AREA} ${corner.className}`}
             />
           ))}
 
           <span
             onPointerDown={begin('rotate')}
-            className="absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5"
+            className={`absolute left-1/2 size-4 -translate-x-1/2 cursor-grab rounded-full border-2 border-white bg-blue-5 ${HANDLE_HIT_AREA} before:-translate-y-2.5`}
             style={{ top: `-${KNOB_OFFSET * 100}%` }}
           />
         </div>

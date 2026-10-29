@@ -6,6 +6,7 @@ import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as Trpc from '~/utils/trpc';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 
@@ -104,13 +105,11 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }))
 // hooks are mocked per test.
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
-  trpc: {
-    cosmetic: {
-      getStickerBalances: { useQuery: () => ({ data: [] }) },
-      getStickerRecentUse: { useQuery: () => ({ data: [] }) },
-      getStickerOffers: { useQuery: () => ({ data: [] }) },
-    },
-  },
+  trpc: makeTrpcProxy({
+    'cosmetic.getStickerBalances': { useQuery: () => ({ data: [] }) },
+    'cosmetic.getStickerRecentUse': { useQuery: () => ({ data: [] }) },
+    'cosmetic.getStickerOffers': { useQuery: () => ({ data: [] }) },
+  }),
 }));
 
 const renderTray = async () => {
@@ -124,7 +123,7 @@ const renderTray = async () => {
       <StickerPlacementTray imageId={IMAGE_ID} imageNsfwLevel={NsfwLevel.PG} />
     </IsClientProvider>
   );
-  await expect.element(page.getByText(/Drag a sticker onto the image/)).toBeInTheDocument();
+  await expect.element(page.getByText(/Tap or drag a sticker onto the image/)).toBeInTheDocument();
 };
 
 describe('StickerPlacementTray — the reason free is unavailable', () => {
