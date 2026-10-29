@@ -289,7 +289,8 @@ describe('runCounterpartyReview, indirect transfers', () => {
       expect.objectContaining({ userId: creator.id, confidence: 0.7, actioned: false }),
     ]);
     expect(report.findings[0]).not.toHaveProperty('action');
-    expect(report.findings[0].reason).toContain('through accounts 22 → 33: 3,000 Buzz came back');
+    expect(report.findings[0].reason).toContain('through accounts 22 → 33: 3,000 Buzz');
+    expect(report.findings[0].reason.startsWith('No warning message was sent')).toBe(true);
     expect(report.counters).toMatchObject({ indirect: 1 });
     expect(w.indirectStore.get(creator.id)).toEqual({ '22>33': 3_000 });
   });
@@ -334,6 +335,55 @@ describe('runCounterpartyReview, indirect transfers', () => {
     expect(await runCounterpartyReview(w.deps)).toMatchObject({ indirect: 1 });
     expect(w.indirectStore.get(creator.id)).toEqual({ '22>33': 4_000, '44>55': 1_000 });
     expect(w.sendWarning).not.toHaveBeenCalled();
+  });
+
+  it('still warns and files direct exchanges when the indirect search fails', async () => {
+    const w = world({ rows: [pair(22, 5_000, 4_000)] });
+    w.ch.$query.mockImplementation(async (sql: string) => {
+      if (sql.includes('AS path')) throw new Error('timeout');
+      return [pair(22, 5_000, 4_000)] as never[];
+    });
+
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 1, indirect: 0 });
+    expect(w.reports[0].findings).toEqual([
+      expect.objectContaining({ userId: creator.id, action: WARNED_ACTION }),
+    ]);
+    expect(w.logs).toContainEqual({
+      name: 'creator-program-counterparty-review-indirect-failed',
+      data: { error: 'timeout' },
+    });
+  });
+
+  it('searches before any warning is sent', async () => {
+    const order: string[] = [];
+    const w = world({
+      rows: [pair(22, 5_000, 4_000)],
+      sendWarning: vi.fn(async () => {
+        order.push('warning');
+        return { chatId: 500 };
+      }),
+    });
+    w.ch.$query.mockImplementation(async (sql: string) => {
+      order.push(sql.includes('AS path') ? 'indirect' : 'pairs');
+      return (sql.includes('AS path') ? [] : [pair(22, 5_000, 4_000)]) as never[];
+    });
+
+    await runCounterpartyReview(w.deps);
+
+    expect(order).toEqual(['pairs', 'indirect', 'warning']);
+  });
+
+  it('lists the largest paths and counts the rest, keeping the reason within its limit', async () => {
+    const rows = Array.from({ length: 400 }, (_, i) => loop([1_000 + i, 2_000 + i], 9_000 - i));
+    const w = world({ indirectRows: rows });
+
+    await runCounterpartyReview(w.deps);
+
+    const reason = w.reports[0].findings[0].reason;
+    expect(reason).toContain('through accounts 1000 → 2000: 9,000 Buzz');
+    expect(reason).toContain('and 395 more');
+    expect(reason).not.toContain('1005 → 2005');
+    expect(reason.startsWith('No warning message was sent')).toBe(true);
   });
 
   it('files only current Creator Program members', async () => {
@@ -389,6 +439,18 @@ describe('indirectTransfersSql', () => {
     expect(three).toContain('AS r ON r.rc = e1.s1 AND r.rp = e3.p3');
     expect(three).toContain('e3.p3 != e1.s1 AND e3.p3 != e1.p1 AND e3.p3 != e2.p2');
     expect(three).toContain(`LIMIT ${PAIR_CEILING}`);
+  });
+
+  it('never builds a query with fewer than two legs, more than three, or no minimum', () => {
+    const legsOf = (n: number) =>
+      squash(indirectTransfersSql({ since: BANKABLE_CUTOVER, min: 0.5, intermediaries: n })).match(
+        /AS e\d+\b/g
+      )?.length;
+    expect([0, 1, NaN, 2].map(legsOf)).toEqual([2, 2, 2, 2]);
+    expect([3, 9].map(legsOf)).toEqual([3, 3]);
+    expect(
+      squash(indirectTransfersSql({ since: BANKABLE_CUTOVER, min: 0.5, intermediaries: 2 }))
+    ).toContain('WHERE amount >= 1 ');
   });
 });
 

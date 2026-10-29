@@ -80,6 +80,34 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
   const pairs = await findCounterpartyPairs(deps.ch, { since: BANKABLE_CUTOVER, min });
   if (pairs.length >= PAIR_CEILING)
     deps.log?.('creator-program-counterparty-review-ceiling', { pairs: pairs.length });
+  // Read before any warning goes out: a failure after that would leave warned members unfiled.
+  // A failed search costs only the indirect findings; the direct ones are still filed.
+  const maxIntermediaries = Math.min(
+    MAX_INTERMEDIARIES,
+    Math.max(DEFAULT_MAX_INTERMEDIARIES, Math.trunc(await deps.readMaxIntermediaries()) || 0)
+  );
+  const transfers: IndirectTransfer[] = [];
+  try {
+    for (let n = DEFAULT_MAX_INTERMEDIARIES; n <= maxIntermediaries; n++) {
+      const found = await findIndirectTransfers(deps.ch, {
+        since: BANKABLE_CUTOVER,
+        min,
+        intermediaries: n,
+      });
+      if (found.length >= PAIR_CEILING)
+        deps.log?.('creator-program-counterparty-review-ceiling', {
+          intermediaries: n,
+          transfers: found.length,
+        });
+      transfers.push(...found);
+    }
+  } catch (e) {
+    transfers.length = 0;
+    deps.log?.('creator-program-counterparty-review-indirect-failed', {
+      error: (e as Error).message,
+    });
+  }
+
   const byUser = new Map<number, CounterpartyPair[]>();
   for (const pair of pairs) byUser.set(pair.userId, [...(byUser.get(pair.userId) ?? []), pair]);
   const members = await deps.findMembers([...byUser.keys()]);
@@ -154,25 +182,6 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
   }
 
   // Filed for a moderator only: no warning message, since more innocent patterns look like this.
-  const maxIntermediaries = Math.min(
-    MAX_INTERMEDIARIES,
-    Math.max(DEFAULT_MAX_INTERMEDIARIES, Math.trunc(await deps.readMaxIntermediaries()) || 0)
-  );
-  const ch = deps.ch;
-  const transfers: IndirectTransfer[] = [];
-  for (let n = DEFAULT_MAX_INTERMEDIARIES; n <= maxIntermediaries; n++) {
-    const found = await findIndirectTransfers(ch, {
-      since: BANKABLE_CUTOVER,
-      min,
-      intermediaries: n,
-    });
-    if (found.length >= PAIR_CEILING)
-      deps.log?.('creator-program-counterparty-review-ceiling', {
-        intermediaries: n,
-        transfers: found.length,
-      });
-    transfers.push(...found);
-  }
   const transfersByUser = new Map<number, IndirectTransfer[]>();
   for (const t of transfers)
     transfersByUser.set(t.userId, [...(transfersByUser.get(t.userId) ?? []), t]);

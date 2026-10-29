@@ -2655,8 +2655,8 @@ export const REDIS_SYS_KEYS = {
     // two-way amount when last filed } }. The record of who was warned, so a creator is warned once
     // and only new volume after that is filed again. No TTL.
     COUNTERPARTY_REVIEW_WARNINGS: 'creator-program:counterparty-review-warnings',
-    // String, 2 or 3. How many other users the review follows Buzz through before it reaches the
-    // creator again; anything else reads as `DEFAULT_MAX_INTERMEDIARIES` (`readMaxIntermediaries`).
+    // String. How many other users the review follows Buzz through before it reaches the creator
+    // again; the review clamps it to what it supports (`runCounterpartyReview`).
     COUNTERPARTY_REVIEW_MAX_HOPS: 'creator-program:counterparty-review-max-hops',
     // Hash: field = creator userId, value = JSON { [path joined by '>']: amount when last filed }.
     // Indirect transfers already filed, so only new paths or new volume are filed again. No TTL.

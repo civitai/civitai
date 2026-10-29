@@ -94,6 +94,8 @@ export async function findCounterpartyPairs(
 /** How many other users Buzz passes through before it reaches the creator again. */
 export const DEFAULT_MAX_INTERMEDIARIES = 2;
 export const MAX_INTERMEDIARIES = 3;
+/** Inside the job's lock, so a slow search fails on its own instead of overlapping the next run. */
+const INDIRECT_QUERY_SECONDS = 120;
 
 export type IndirectTransfer = {
   userId: number;
@@ -117,11 +119,12 @@ export function indirectTransfersSql({
   min: number;
   intermediaries: number;
 }) {
-  const floor = Math.trunc(min);
-  const legs = Array.from({ length: intermediaries }, (_, i) => i + 1);
+  const floor = Math.max(1, Math.trunc(min));
+  const hops = Math.min(MAX_INTERMEDIARIES, Math.max(2, Math.trunc(intermediaries) || 2));
+  const legs = Array.from({ length: hops }, (_, i) => i + 1);
   const users = ['e1.s1', ...legs.map((i) => `e${i}.p${i}`)];
   const distinct = users.flatMap((a, i) => users.slice(0, i).map((b) => `${a} != ${b}`));
-  const last = `e${intermediaries}.p${intermediaries}`;
+  const last = `e${hops}.p${hops}`;
 
   return `
     SELECT e1.s1 AS userId, [${legs.map((i) => `e${i}.p${i}`).join(', ')}] AS path,
@@ -143,6 +146,7 @@ export function indirectTransfersSql({
     WHERE ${distinct.join(' AND ')}
     ORDER BY amount DESC
     LIMIT ${PAIR_CEILING}
+    SETTINGS max_execution_time = ${INDIRECT_QUERY_SECONDS}
   `;
 }
 

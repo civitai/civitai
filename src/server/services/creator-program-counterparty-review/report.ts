@@ -99,19 +99,20 @@ export function toFinding(
 /** Below a direct exchange: more innocent patterns look like this, so a moderator decides. */
 export const INDIRECT_CONFIDENCE = 0.7;
 
+/** Enough for a moderator to start from; the rest are counted, not listed. */
+const INDIRECT_PATHS_SHOWN = 5;
+
 export function renderIndirectReason(transfers: IndirectTransfer[], since: Date): string {
-  const paths = transfers
-    .map(
-      (t) => `through accounts ${t.path.join(' → ')}: ${t.amount.toLocaleString()} Buzz came back`
-    )
+  const shown = transfers
+    .slice(0, INDIRECT_PATHS_SHOWN)
+    .map((t) => `through accounts ${t.path.join(' → ')}: ${t.amount.toLocaleString()} Buzz`)
     .join('; ');
+  const more = transfers.length - INDIRECT_PATHS_SHOWN;
   return truncateReason(
-    `Buzz this creator sent came back to them as bankable earnings through other accounts since ${since
-      .toISOString()
-      .slice(
-        0,
-        10
-      )} (${paths}). Every leg is at least the review amount; the smallest leg is shown. No warning message was sent: whether this is abuse is a moderator decision. ${NO_ACTION_TAKEN}`
+    `No warning message was sent: whether this is abuse is a moderator decision. ${NO_ACTION_TAKEN} ` +
+      `Buzz this creator sent came back to them as bankable earnings through other accounts since ${since
+        .toISOString()
+        .slice(0, 10)} (${shown}${more > 0 ? `; and ${more} more` : ''}).`
   );
 }
 
