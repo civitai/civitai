@@ -1884,18 +1884,6 @@ export async function unpublishArticleById({
 // --- Article Image Scanning Functions ---
 
 /**
- * Link article content images to article entity
- * Creates Image entities and ImageConnections for all embedded images
- *
- * Uses batch queries to prevent N+1 performance issues
- *
- * @param articleId - Article ID to link images to
- * @param content - Article HTML content
- * @param userId - User ID for image ownership
- * @param ownerId - The article's author: only their own images, used nowhere else, are returned
- *   as orphans to delete.
- */
-/**
  * Content images become `Image` rows, and deleting one removes its object, so an article may not
  * embed a key that shop artwork uses. Checked before the write: linking runs after it, and must
  * create and scan a row for every image the content holds.
@@ -1909,6 +1897,18 @@ async function assertNoShopArtworkInContent(content: string | null | undefined) 
     );
 }
 
+/**
+ * Link article content images to article entity
+ * Creates Image entities and ImageConnections for all embedded images
+ *
+ * Uses batch queries to prevent N+1 performance issues
+ *
+ * @param articleId - Article ID to link images to
+ * @param content - Article HTML content
+ * @param userId - User ID for image ownership
+ * @param ownerId - The article's author: only their own images, used nowhere else, are returned
+ *   as orphans to delete.
+ */
 export async function linkArticleContentImages({
   articleId,
   content,
