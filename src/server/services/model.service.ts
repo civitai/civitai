@@ -2062,14 +2062,22 @@ function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
 export const updateModelById = async ({
   id,
   data,
+  meta,
 }: {
   id: number;
   data: Prisma.ModelUpdateInput;
+  /** Builds the meta to write from the stored meta, re-read under a lock held for the write. */
+  meta?: (stored: ModelMeta | null) => ModelMeta;
 }) => {
-  const model = await dbWrite.model.update({
-    where: { id },
-    data,
-  });
+  const model = meta
+    ? await dbWrite.$transaction(async (tx) => {
+        const stored = (await lockModelRow(tx, id))?.meta ?? null;
+        return tx.model.update({
+          where: { id },
+          data: { ...data, meta: meta(stored) as Prisma.JsonObject },
+        });
+      })
+    : await dbWrite.model.update({ where: { id }, data });
 
   await userModelCountCache.refresh(model.userId);
   // Flag replica-lag on the model BEFORE busting so a concurrent edge-miss read
@@ -5704,20 +5712,16 @@ export async function setModelShowcaseCollection({
   userId: number;
   isModerator?: boolean;
 }) {
-  const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
+  const model = await getModel({ id, select: { id: true, userId: true } });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
   if (model.userId !== userId && !isModerator)
     throw throwAuthorizationError('You are not allowed to set this model collection showcase');
 
-  const modelMeta = model.meta as ModelMeta | null;
-
   const updated = await updateModelById({
     id,
-    data: {
-      meta: modelMeta
-        ? { ...modelMeta, showcaseCollectionId: collectionId }
-        : { showcaseCollectionId: collectionId },
-    },
+    data: {},
+    // A null collectionId clears the showcase.
+    meta: (stored) => ({ ...stored, showcaseCollectionId: collectionId } as ModelMeta),
   });
 
   await dataForModelsCache.refresh(updated.id);

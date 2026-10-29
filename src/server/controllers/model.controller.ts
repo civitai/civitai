@@ -1735,7 +1735,6 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
         status: true,
         type: true,
         uploadType: true,
-        meta: true,
         userId: true,
       },
     });
@@ -1745,12 +1744,12 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
         'Cannot request a review for this model because it is not in the correct status'
       );
 
-    const meta = (model.meta as ModelMeta | null) || {};
     // Deliberately not upsertModel: this only sets meta, and routing it through the full
     // upsert ran the non-moderator profanity filter over the model name.
     const updatedModel = await updateModelById({
       id: model.id,
-      data: { meta: { ...meta, needsReview: true } as Prisma.JsonObject },
+      data: {},
+      meta: (stored) => ({ ...stored, needsReview: true }),
     });
 
     return updatedModel;
@@ -1826,29 +1825,24 @@ export const changeModelModifierHandler = async ({
     // If changing to takenDown, only moderators can do it
     if (mode === ModelModifier.TakenDown && !ctx.user.isModerator) throw throwAuthorizationError();
 
-    const model = await getModel({ id, select: { id: true, meta: true, mode: true } });
+    const model = await getModel({ id, select: { id: true, mode: true } });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
     if (model.mode === mode) throw throwBadRequestError(`Model is already ${String(mode)}`);
     // If removing mode, but model is taken down, only moderators can do it
     if (model.mode === ModelModifier.TakenDown && mode === null && !ctx.user.isModerator)
       throw throwAuthorizationError();
 
-    const { archivedAt, takenDownAt, archivedBy, takenDownBy, ...restMeta } =
-      (model.meta as ModelMeta | null) || {};
-    let updatedMeta: ModelMeta = {};
-    if (mode === ModelModifier.Archived)
-      updatedMeta = { ...restMeta, archivedAt: new Date().toISOString(), archivedBy: ctx.user.id };
-    else if (mode === ModelModifier.TakenDown)
-      updatedMeta = {
-        ...restMeta,
-        takenDownAt: new Date().toISOString(),
-        takenDownBy: ctx.user.id,
-      };
-    else updatedMeta = restMeta;
-
     const updatedModel = await updateModelById({
       id,
-      data: { mode, meta: { ...updatedMeta } },
+      data: { mode },
+      meta: (stored) => {
+        const { archivedAt, takenDownAt, archivedBy, takenDownBy, ...restMeta } = stored || {};
+        if (mode === ModelModifier.Archived)
+          return { ...restMeta, archivedAt: new Date().toISOString(), archivedBy: ctx.user.id };
+        if (mode === ModelModifier.TakenDown)
+          return { ...restMeta, takenDownAt: new Date().toISOString(), takenDownBy: ctx.user.id };
+        return restMeta;
+      },
     });
 
     if (mode === ModelModifier.Archived || mode === ModelModifier.TakenDown) {
