@@ -110,7 +110,7 @@ describe('scamEligibleAuthors', () => {
     expect(dbMock.dbWrite.user.findMany.mock.calls[0][0].where.createdAt).toBeUndefined();
   });
 
-  it('drops system accounts before submit, but not a lookalike of the shared account', async () => {
+  it('drops system accounts before submit, but not a lookalike or another holder of the name', async () => {
     setEnv({ CIVITAI_MODERATION_USER_ID: 20 });
     dbMock.dbWrite.user.findMany.mockResolvedValue([
       account(5),
@@ -122,11 +122,25 @@ describe('scamEligibleAuthors', () => {
     dbMock.dbWrite.challengeJudge.findMany.mockResolvedValue([]);
     try {
       const ids = await scamEligibleAuthors([5, 20, 21, 22, 23]);
-      expect([...ids].sort((a, b) => a - b)).toEqual([5, 23]);
+      expect([...ids].sort((a, b) => a - b)).toEqual([5, 21, 23]);
       expect(dbMock.dbWrite.user.findMany.mock.calls[0][0].select).toMatchObject({
         username: true,
         meta: true,
       });
+    } finally {
+      resetEnv();
+    }
+  });
+
+  it('drops the reserved name only when no moderation account id is configured', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: undefined });
+    dbMock.dbWrite.user.findMany.mockResolvedValue([
+      account(5),
+      account(21, { username: 'civitaimoderation' }),
+    ]);
+    dbMock.dbWrite.challengeJudge.findMany.mockResolvedValue([]);
+    try {
+      expect([...(await scamEligibleAuthors([5, 21]))]).toEqual([5]);
     } finally {
       resetEnv();
     }

@@ -304,7 +304,7 @@ describe('autoMuteScamAccount', () => {
 
     it.each([
       ['its configured id', 42, { username: 'Renamed' }],
-      ['the reserved name', 99, { username: 'civitaimoderation' }],
+      ['the reserved name, with no id configured', undefined, { username: 'civitaimoderation' }],
       ['the system-account marker', 99, { username: 'svc-bot', meta: { systemAccount: true } }],
     ])(
       'never strikes or mutes one recognised by %s, even with the age rule waived',
@@ -322,6 +322,13 @@ describe('autoMuteScamAccount', () => {
         nothingActed();
       }
     );
+
+    it('still strikes another account holding the reserved name once an id is configured', async () => {
+      setEnv({ CIVITAI_MODERATION_USER_ID: 99 });
+      dbMock.dbWrite.user.findUnique.mockResolvedValue(user({ username: 'CivitaiModeration' }));
+      expect(await autoMuteScamAccount(base)).toMatchObject({ muted: true });
+      expect(m.createStrike).toHaveBeenCalledOnce();
+    });
 
     it('still strikes a lookalike of the shared account', async () => {
       setEnv({ CIVITAI_MODERATION_USER_ID: 99 });
