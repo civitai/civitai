@@ -462,9 +462,39 @@ describe('submitVersion', () => {
     expect(putCalls).toHaveLength(1);
   });
 
+  /** The existing app for the slug, owned (its OauthClient's userId) by `ownerUserId`. */
+  const existingAppOwnedBy = (ownerUserId: number) => {
+    mockDbRead.appBlock.findFirst.mockResolvedValue({ id: 'apb_existing', appId: 'oc_existing' });
+    mockDbRead.appBlock.findUnique.mockResolvedValue({
+      id: 'apb_existing',
+      app: { userId: ownerUserId },
+      appListing: null,
+    });
+  };
+
+  it('🔴 refuses a version of an existing app from a non-owner, inserting nothing and saying nothing of pending state', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    existingAppOwnedBy(7);
+    const buf = await makeValidBundle();
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+    ).rejects.toThrow('app hello is owned by another user; choose a different blockId');
+    expect(mockDbRead.appBlockPublishRequest.findFirst).not.toHaveBeenCalled();
+    expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator queue a version of an app someone else owns', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    existingAppOwnedBy(7);
+    const buf = await makeValidBundle();
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: true });
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+  });
+
   it('happy path — subsequent version links to existing AppBlock', async () => {
     const { submitVersion } = await import('../publish-request.service');
-    mockDbRead.appBlock.findFirst.mockResolvedValue({ id: 'apb_existing', appId: 'oc_existing' });
+    // The submitter owns the app.
+    existingAppOwnedBy(42);
     // Pretend prior approved publish_request exists with a stored file map.
     const priorFiles = [
       { path: 'Dockerfile', sha256: 'oldhash', sizeBytes: 100 },
