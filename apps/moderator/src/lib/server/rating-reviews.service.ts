@@ -14,6 +14,7 @@ import {
   isRatingReviewEntityType,
   ratingReviewEntityPath,
   ratingReviewModeratorLevels,
+  SYSTEM_NSFW_LOCK_META_KEY,
   textScanNsfwReason,
   textScanResultTextHash,
   type RatingReviewEntityType,
@@ -750,6 +751,11 @@ const addLock = (prop: string) =>
   sql<string[]>`CASE WHEN ${prop} = ANY("lockedProperties") THEN "lockedProperties"
     ELSE array_append("lockedProperties", ${prop}) END`;
 
+// A moderator's ruling makes the nsfw lock the moderator's, so the marker that let the owner dispute
+// a system-set lock goes with it.
+const withoutSystemNsfwLock = sql<unknown>`CASE WHEN jsonb_typeof("meta") = 'object'
+    THEN "meta" - ${SYSTEM_NSFW_LOCK_META_KEY}::text ELSE "meta" END`;
+
 const gone = (entityType: RatingReviewEntityType) =>
   new RatingReviewResolveError(`That ${entityType} no longer exists; reload the queue.`);
 
@@ -794,7 +800,7 @@ async function applyOverride(
       const nsfw = appliedLevel >= 4;
       const updated = await trx
         .updateTable('Model')
-        .set({ nsfw, lockedProperties: addLock('nsfw') })
+        .set({ nsfw, lockedProperties: addLock('nsfw'), meta: withoutSystemNsfwLock })
         .where('id', '=', entityId)
         .where('deletedAt', 'is', null)
         .$if(nsfw, (qb) =>

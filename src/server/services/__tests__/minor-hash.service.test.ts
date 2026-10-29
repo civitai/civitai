@@ -1199,6 +1199,23 @@ describe('rollbackMinorHashAutoFlags', () => {
     expect(report).toMatchObject({ candidates: 1, rolledBack: 1, skipped: 0, failed: 0 });
   });
 
+  it('drops the system nsfw lock marker in the restore write', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 200 })]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    const restoreCall = mockDbWrite.$executeRaw.mock.calls.find((call) =>
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('SET nsfw')
+    );
+    const [strings, ...values] = restoreCall!;
+    expect(Array.from(strings as TemplateStringsArray).join('?')).toContain(
+      `meta = (COALESCE(meta, '{}'::jsonb) - ? - ?::text)`
+    );
+    expect(values).toContain('systemNsfwLock');
+  });
+
   // Deleting the snapshot is what made a rollback forgettable: the model became an
   // ordinary candidate again and the next unattended run re-flagged it.
   it('stamps the model as cleared in the same write that drops the snapshot', async () => {

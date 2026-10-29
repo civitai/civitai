@@ -132,7 +132,7 @@ import {
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
+import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -309,6 +309,7 @@ import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { pgDbRead } from '~/server/db/pgDb';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -3308,9 +3309,36 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
   await tx.$queryRaw`SELECT id FROM "Model" WHERE id = ${id} FOR NO KEY UPDATE`;
   const row = await tx.model.findUnique({
     where: { id },
-    select: { status: true, availability: true, mode: true, meta: true },
+    select: {
+      status: true,
+      availability: true,
+      mode: true,
+      meta: true,
+      lockedProperties: true,
+      nsfw: true,
+    },
   });
   return row && { ...row, meta: row.meta as ModelMeta | null };
+}
+
+/**
+ * Whether a moderator's save rules on the nsfw rating: adds or removes the nsfw lock, or changes
+ * nsfw itself. Such a save makes the rating the moderator's, so it drops the `systemNsfwLock`
+ * marker that lets an owner dispute a system-set lock.
+ */
+function rulesOnNsfw(
+  stored: { nsfw: boolean; lockedProperties: string[] | null } | null | undefined,
+  next: { nsfw?: boolean; lockedProperties?: string[] }
+) {
+  const lockChanged =
+    next.lockedProperties !== undefined &&
+    (stored?.lockedProperties ?? []).includes('nsfw') !== next.lockedProperties.includes('nsfw');
+  return lockChanged || (next.nsfw !== undefined && next.nsfw !== stored?.nsfw);
+}
+
+function withoutSystemNsfwLock(meta: ModelMeta): ModelMeta {
+  const { [SYSTEM_NSFW_LOCK_META_KEY]: _marker, ...rest } = meta;
+  return rest;
 }
 
 export const removedWithOwnerEditError = () =>
@@ -3653,6 +3681,13 @@ export const upsertModel = async (
         const locked = await lockModelRow(tx, id);
         const prevMeta = locked?.meta ?? null;
         if (!isModerator && isRemovedWithOwner(prevMeta)) throw removedWithOwnerEditError();
+        // The profanity lock was decided off the read before this transaction. A lock that landed
+        // since (a moderator's) wins: this save neither rewrites it nor claims it as the system's.
+        if (profanityAutoNsfw && locked?.lockedProperties.includes('nsfw')) {
+          delete data.nsfw;
+          delete data.lockedProperties;
+          meta = withoutSystemNsfwLock(meta ?? {});
+        }
         if (
           !isModerator &&
           locked &&
@@ -3679,6 +3714,8 @@ export const upsertModel = async (
           select: { type: true, poi: true, minor: true, sfwOnly: true, lockedProperties: true },
         });
         typeBeforeUpdate = replaced?.type;
+        if (isModerator && rulesOnNsfw(locked, data))
+          mergedMeta = withoutSystemNsfwLock(mergedMeta);
         // Read here rather than off `beforeUpdate` so the recorded "before" is the row this
         // transaction replaces. Only for a save that sends permissions at all.
         const storedPermissions = writesPermissions(data)
@@ -4098,22 +4135,7 @@ export async function applyModelContentChange({
           lockedProperties: stored.lockedProperties,
         })
       : null;
-    if (flagged) {
-      const meta = {
-        ...((stored.meta as MixedObject | null) ?? {}),
-        ...flagged.metaPatch,
-        ...(flagged.lock && { systemNsfwLock: systemNsfwLockMarker('profanity-filter') }),
-      } as Prisma.InputJsonObject;
-      // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-
-      // rolling the jsonb + text[] binds is where that trade stops being worth it. The
-      // `updatedAt` bump it carries is honest — the model's rating actually changed.
-      await dbWrite.model.update({
-        where: { id },
-        data: flagged.lock
-          ? { nsfw: true, lockedProperties: uniq([...stored.lockedProperties, 'nsfw']), meta }
-          : { meta },
-      });
-    }
+    if (flagged) await writeAutoNsfw(dbWrite, { id, ...flagged });
   }
 
   // The description is carried in the cached public GET /api/v1/models/[id] body, so without
@@ -6274,6 +6296,7 @@ export const privateModelFromTraining = async ({
           throw error;
         }
         const storedMeta = locked.meta;
+        const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
         // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
         const restoreCannotPromote =
           locked.availability !== Availability.Private && storedMeta?.cannotPromote === true;
@@ -6319,7 +6342,9 @@ export const privateModelFromTraining = async ({
                   stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)
                 ) ?? {}),
                 // Only a moderator gets here with a wipe's record; their publish ends it.
-                ...withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)),
+                ...(moderatorChangesNsfwLock
+                  ? withoutSystemNsfwLock(withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)))
+                  : withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta))),
                 ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
                 // Makes it so these models cannot go into auctions or be promoted
                 cannotPromote: true,
@@ -6335,6 +6360,14 @@ export const privateModelFromTraining = async ({
             takenDown = true;
             throw throwAuthorizationError('You are not authorized to publish this model');
           });
+
+        // In the transaction, like upsertModel's, so a moderator's lock change cannot commit unlogged.
+        if (user.isModerator && data.lockedProperties)
+          for (const activity of moderatorFlagActivities(
+            { poi: false, minor: false, sfwOnly: false, lockedProperties: locked.lockedProperties },
+            { lockedProperties: data.lockedProperties }
+          ))
+            await trackModActivity(user.id, { entityType: 'model', entityId: id, activity }, tx);
 
         if (result.modelVersions.length > 0) {
           const now = new Date();
