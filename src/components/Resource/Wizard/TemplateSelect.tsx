@@ -1,6 +1,6 @@
 import { useRouter } from 'next/router';
 import { useState } from 'react';
-import { Checkbox, Stack, Text } from '@mantine/core';
+import { Button, Checkbox, Popover, Stack, Text } from '@mantine/core';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
 import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import type { TemplateOmittableField } from '~/server/schema/model.schema';
@@ -14,7 +14,30 @@ type Props = {
   onSelect: () => void;
 };
 
-export function TemplateSelect({ username, onSelect }: Props) {
+export function TemplatePicker({
+  username,
+  hasTemplate,
+}: {
+  username: string;
+  hasTemplate: boolean;
+}) {
+  const [opened, setOpened] = useState(false);
+
+  return (
+    <Popover opened={opened} width={400} position="bottom-end" onChange={setOpened} withArrow>
+      <Popover.Target>
+        <Button variant="subtle" onClick={() => setOpened(true)}>
+          {hasTemplate ? 'Swap template' : 'Use a template'}
+        </Button>
+      </Popover.Target>
+      <Popover.Dropdown p={4}>
+        <TemplateSelect username={username} onSelect={() => setOpened(false)} />
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+function TemplateSelect({ username, onSelect }: Props) {
   const router = useRouter();
   const [settingsOnly, setSettingsOnly] = useState(
     typeof router.query.templateOmit === 'string' && router.query.templateOmit.length > 0
@@ -49,8 +72,7 @@ export function TemplateSelect({ username, onSelect }: Props) {
         filters={`user.username = ${quoteMeiliValue(username)}`}
         dropdownItemLimit={10}
         placeholder="Search your models..."
-        // Portaled options sit outside the surrounding Popover, so pressing one counts as an
-        // outside click: the Popover unmounts this picker before a held press is released.
+        // Inline: a portaled option is outside the enclosing Popover, so pressing it closes the Popover.
         comboboxProps={{ withinPortal: false }}
       />
     </Stack>

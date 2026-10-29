@@ -1,5 +1,4 @@
-import { useState } from 'react';
-import { Button, MantineProvider, Popover } from '@mantine/core';
+import { MantineProvider } from '@mantine/core';
 import router from 'next/router';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
@@ -57,29 +56,15 @@ vi.mock('~/components/HiddenPreferences/useApplyHiddenPreferences', () => ({
   useApplyHiddenPreferences: ({ data }: { data: unknown[] }) => ({ items: data }),
 }));
 
-const { TemplateSelect } = await import('~/components/Resource/Wizard/TemplateSelect');
-
-// The same Popover wiring as ModelWizard's "Use a template" button, under the app theme, whose
-// Popover default (`withinPortal: false`) is part of the trap.
-function TemplatePopover() {
-  const [opened, setOpened] = useState(false);
-  return (
-    <MantineProvider theme={theme}>
-      <Popover opened={opened} onChange={setOpened} width={400} position="bottom-end">
-        <Popover.Target>
-          <Button onClick={() => setOpened(true)}>Use a template</Button>
-        </Popover.Target>
-        <Popover.Dropdown p={4}>
-          <TemplateSelect username="creator" onSelect={() => setOpened(false)} />
-        </Popover.Dropdown>
-      </Popover>
-    </MantineProvider>
-  );
-}
-
+const { TemplatePicker } = await import('~/components/Resource/Wizard/TemplateSelect');
 
 async function openResults() {
-  renderWithProviders(<TemplatePopover />);
+  // Under the app theme: its Popover default (`withinPortal: false`) is part of the trap.
+  renderWithProviders(
+    <MantineProvider theme={theme}>
+      <TemplatePicker username="creator" hasTemplate={false} />
+    </MantineProvider>
+  );
   await userEvent.click(page.getByRole('button', { name: 'Use a template' }));
   await userEvent.click(page.getByPlaceholder('Search your models...'));
   const option = page.getByRole('option', { name: 'My template model' });
@@ -117,7 +102,7 @@ describe('TemplateSelect inside the template popover', () => {
       new TouchEvent('touchstart', { bubbles: true, cancelable: true, touches: touch() })
     );
     await new Promise((resolve) => setTimeout(resolve, 400));
-    expect(option.isConnected).toBe(true);
+    expect(option.isConnected, 'option unmounted during the held touch').toBe(true);
     option.dispatchEvent(
       new TouchEvent('touchend', { bubbles: true, cancelable: true, changedTouches: touch() })
     );

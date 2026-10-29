@@ -1,13 +1,4 @@
-import {
-  Button,
-  Group,
-  LoadingOverlay,
-  Popover,
-  Stack,
-  Text,
-  TextInput,
-  Title,
-} from '@mantine/core';
+import { Button, Group, LoadingOverlay, Stack, Text, TextInput, Title } from '@mantine/core';
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
 import { useEffect, useState } from 'react';
@@ -35,7 +26,7 @@ import { QS } from '~/utils/qs';
 import { sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { TemplateSelect } from './TemplateSelect';
+import { TemplatePicker } from './TemplateSelect';
 import { useWizardAutoResume } from './useWizardAutoResume';
 import { useWizardStepSave } from './useWizardStepSave';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
@@ -508,7 +499,6 @@ export function ModelWizard() {
   const step = isNumber(routeStep) && routeStep >= 1 && routeStep <= MAX_STEPS ? routeStep : 1;
 
   const isNew = router.pathname.includes('/create');
-  const [opened, setOpened] = useState(false);
   const isTransitioning = useIsChangingLocation();
 
   const {
@@ -627,25 +617,7 @@ export function ModelWizard() {
                 />
               </Group>
               {isNew && !isTraining && currentUser?.username && (
-                <Popover
-                  opened={opened}
-                  width={400}
-                  position="bottom-end"
-                  onChange={setOpened}
-                  withArrow
-                >
-                  <Popover.Target>
-                    <Button variant="subtle" onClick={() => setOpened(true)}>
-                      {templateId ? 'Swap template' : 'Use a template'}
-                    </Button>
-                  </Popover.Target>
-                  <Popover.Dropdown p={4}>
-                    <TemplateSelect
-                      username={currentUser.username}
-                      onSelect={() => setOpened(false)}
-                    />
-                  </Popover.Dropdown>
-                </Popover>
+                <TemplatePicker username={currentUser.username} hasTemplate={!!templateId} />
               )}
             </Group>
           </Stack>
