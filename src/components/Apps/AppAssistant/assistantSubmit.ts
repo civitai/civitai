@@ -40,11 +40,31 @@ export class SubmitError extends Error {
 
 export const SUBMIT_UNREACHABLE = 'Civitai could not be reached. Try again in a moment.';
 
+/** Dotenv files the CLI's packager keeps, and only at the project root (`pkgzip.keptEnvFiles`). */
+const KEPT_ROOT_ENV_FILES = new Set(['.env.example', '.env.sample', '.env.production']);
+
+/**
+ * Whether `civitai app submit` leaves `rel` (a path inside the app) out of its package, for the
+ * rules an export can still let through (`pkgzip`): the root `scratch/` folder, any `*.zip`, a
+ * dotenv-shaped folder (`.env` or `.env.*`), and every file named `.env*` or `*.env`, except
+ * `.env.example`, `.env.sample` and `.env.production` at the root. Case is ignored, as there.
+ */
+export function cliLeavesOut(rel: string): boolean {
+  const parts = rel.split('/');
+  const name = parts[parts.length - 1].toLowerCase();
+  if (parts.length > 1 && parts[0] === 'scratch') return true;
+  if (parts.slice(0, -1).some((dir) => /^\.env(\.|$)/i.test(dir))) return true;
+  if (name.endsWith('.zip')) return true;
+  if (parts.length === 1 && KEPT_ROOT_ENV_FILES.has(parts[0])) return false;
+  return name.startsWith('.env') || name.endsWith('.env');
+}
+
 /**
  * The bundle `civitai app submit` would send, from the app's export: the export holds the app folder
- * (`<app>/…`, already without dependencies, build output, caches, logs, keys and .env files), and a
- * submission holds its contents at the root. Also left out, as the CLI's package leaves them: the
- * root `scratch/` folder (throwaway probes) and any `.zip` (a package an earlier `app submit` wrote).
+ * (`<app>/…`), and a submission holds its contents at the root, less what the CLI leaves out
+ * (`cliLeavesOut`). The export itself already drops dependencies, build output, caches, logs and
+ * keys; it also drops every `.env*` file but `.env.example`, so a root `.env.production` the CLI
+ * would keep reaches the bundle only once the export sends it.
  */
 export async function submitBundleFromExport(exported: Blob, app: string): Promise<PreparedSubmit> {
   const { default: JSZip } = await import('jszip');
@@ -55,7 +75,7 @@ export async function submitBundleFromExport(exported: Blob, app: string): Promi
   for (const [path, entry] of Object.entries(source.files)) {
     if (entry.dir || !path.startsWith(prefix)) continue;
     const rel = path.slice(prefix.length);
-    if (!rel || rel.startsWith('scratch/') || rel.toLowerCase().endsWith('.zip')) continue;
+    if (!rel || cliLeavesOut(rel)) continue;
     const bytes = await entry.async('uint8array');
     if (rel === MANIFEST_FILE) manifestText = new TextDecoder().decode(bytes);
     out.file(rel, bytes);

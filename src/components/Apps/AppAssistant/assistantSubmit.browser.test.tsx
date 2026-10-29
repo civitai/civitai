@@ -307,6 +307,45 @@ describe('the bundle a press sends', () => {
     );
   });
 
+  test('leaves out exactly what civitai app submit leaves out: a root .env.production stays', async () => {
+    // As the CLI's packager (pkgzip) decides each name; the export may send any of them.
+    const { bundle } = await submitBundleFromExport(
+      await exportOf({
+        ...APP_FILES,
+        '.env.production': 'VITE_MODE=production',
+        '.env.example': 'VITE_KEY=',
+        '.env.sample': 'VITE_KEY=',
+        'src/scratch/util.ts': 'x',
+        // Left out:
+        'scratch/probe.ts': 'probe',
+        'prompt-randomizer-0.1.0.zip': 'an earlier package',
+        'assets/old.ZIP': 'zip at depth',
+        '.env': 'SECRET=1',
+        '.env.local': 'SECRET=1',
+        '.env.production.local': 'SECRET=1',
+        'db.env': 'SECRET=1',
+        'src/.env.production': 'only kept at the root',
+        '.env.d/notes.txt': 'in a dotenv-shaped folder',
+      }),
+      APP
+    );
+    const zip = await JSZip.loadAsync(bundle);
+    expect(
+      Object.keys(zip.files)
+        .filter((path) => !zip.files[path].dir)
+        .sort()
+    ).toEqual([
+      '.env.example',
+      '.env.production',
+      '.env.sample',
+      'block.manifest.json',
+      'package.json',
+      'src/main.ts',
+      'src/scratch/util.ts',
+    ]);
+    expect(await zip.file('.env.production')!.async('string')).toBe('VITE_MODE=production');
+  });
+
   test('keeps a nested scratch folder, which is the app’s own source', async () => {
     const { bundle } = await submitBundleFromExport(
       await exportOf({ ...APP_FILES, 'src/scratch/util.ts': 'x' }),
