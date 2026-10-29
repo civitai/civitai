@@ -1,9 +1,10 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { dev } from '$app/environment';
-  import { invalidateAll } from '$app/navigation';
+  import { invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import DailyPanel from './DailyPanel.svelte';
+  import Countdown from '$lib/Countdown.svelte';
   import { recapLines } from './recap-text';
   import StatusBar from '$lib/StatusBar.svelte';
   import type { ActionData, PageData } from './$types';
@@ -19,7 +20,7 @@
       try {
         await update();
         // A refused answer doesn't re-run `load`; refetch or the refused item stays on screen.
-        if (result.type === 'failure') await invalidateAll();
+        if (result.type === 'failure') await invalidate('app:play');
       } finally {
         submitting = false;
       }
@@ -37,9 +38,45 @@
   {/snippet}
   {#snippet links()}
     · <a href="/judgments">Your judgments</a>
+    {#if data.conversionOpen}· <a href="/gold">Convert gold</a>{/if}
     {#if dev}· <a href="/dev/simulate">Simulate other voters</a>{/if}
   {/snippet}
 </StatusBar>
+
+{#if data.resetNotice}
+  <section class="recap" role="status" aria-label="Career reset">
+    <div>
+      <p class="verdict">Your career has been reset.</p>
+      <p>
+        {data.status.maxSmites} smites were more than the Order would bear. You are an Acolyte again at level 1,
+        and the Trials await.
+      </p>
+      {#if form?.resetNoticeFailed}
+        <p>{form.message}</p>
+      {/if}
+    </div>
+    <form method="POST" action="?/dismissResetNotice" use:enhance={submit}>
+      <button type="submit" disabled={submitting}>Understood</button>
+    </form>
+  </section>
+{:else if data.mode === 'queue' && data.resetPending}
+  <p class="notice" role="alert">Your career is being reset. Return in a moment.</p>
+{/if}
+{#if data.notices.length > 0}
+  <section class="recap" role="status" aria-label="Sanity check">
+    <div>
+      {#each data.notices as notice (notice.title)}
+        <p><strong>{notice.title}</strong> {notice.message}</p>
+      {/each}
+      {#if form?.noticeFailed}
+        <p>{form.message}</p>
+      {/if}
+    </div>
+    <form method="POST" action="?/dismissNotices" use:enhance={submit}>
+      <button type="submit" disabled={submitting}>Understood</button>
+    </form>
+  </section>
+{/if}
 
 {#if data.mode === 'queue'}
   {#if data.recap}
@@ -103,7 +140,7 @@
       </div>
     </form>
 
-    {#if form?.message && !form.recapFailed}
+    {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed}
       <p class="notice" role="alert">{form.message}</p>
     {/if}
   {:else if data.trial.kind === 'cooldown'}
@@ -111,6 +148,13 @@
   {:else}
     <p>The trials are not set out yet. Return later.</p>
   {/if}
+{:else if data.mode === 'queue' && data.lockoutSeconds}
+  <section class="lockout" role="status" aria-label="Judging paused">
+    <h2>A moment of rest</h2>
+    <p>You have been judging faster than the Order can trust. Rest a little; the queue will wait.</p>
+    <Countdown seconds={data.lockoutSeconds} label="Time until judging resumes" />
+    <p class="muted">Judging resumes by itself.</p>
+  </section>
 {:else if data.item && data.question}
   <p class="prompt">{data.question.prompt}</p>
   {#key data.item.id}
@@ -123,7 +167,7 @@
   {/key}
 
   <form method="POST" action="?/vote" use:enhance={submit}>
-    <input type="hidden" name="itemId" value={data.item.id} />
+    <input type="hidden" name="item" value={data.item.id} />
     <div class="options">
       {#each data.question.options as option (option.value)}
         <button type="submit" name="answer" value={option.value} disabled={submitting}>
@@ -133,16 +177,22 @@
     </div>
   </form>
 
-  {#if form?.message && !form.recapFailed}
+  {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed}
     <p class="notice" role="alert">{form.message}</p>
   {/if}
-{:else}
+{:else if !data.resetPending}
   <p>Nothing awaits your judgment right now. Return later.</p>
 {/if}
 
 <p><a href="/">Back</a></p>
 
 <style>
+  .lockout {
+    padding: 1rem 1.5rem;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    text-align: center;
+  }
   .recap {
     display: flex;
     flex-wrap: wrap;

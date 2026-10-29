@@ -287,6 +287,8 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'NewOrderPlayer.payoutReleaseFrom',
       'NewOrderPlayer.goldPending',
       'NewOrderPlayer.goldEarned',
+      'NewOrderPlayer.goldCleared',
+      'NewOrderPlayer.goldConverted',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

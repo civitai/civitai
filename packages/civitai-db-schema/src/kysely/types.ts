@@ -3680,6 +3680,30 @@ export type KeyValue = {
   key: string;
   value: unknown;
 };
+export type KnightsDetectionRun = {
+  id: Generated<number>;
+  completedAt: Generated<Timestamp>;
+  passedAt: Timestamp | null;
+};
+export type KnightsGoldClearing = {
+  id: Generated<number>;
+  playerId: number;
+  runId: number;
+  gold: number;
+  clearedAt: Generated<Timestamp>;
+};
+export type KnightsGoldConversion = {
+  id: Generated<number>;
+  playerId: number;
+  gold: number;
+  buzz: number;
+  status: Generated<string>;
+  externalTransactionId: string;
+  buzzTransactionId: string | null;
+  createdAt: Generated<Timestamp>;
+  lastAttemptAt: Timestamp | null;
+  paidAt: Timestamp | null;
+};
 export type KnightsHarvestCursor = {
   name: string;
   lastActivityId: Generated<number>;
@@ -3699,6 +3723,10 @@ export type KnightsPlayer = {
   shields: Generated<number>;
   shieldWeek: Timestamp;
   recapDismissedFor: Timestamp | null;
+  /**
+   * The `NewOrderPlayer.startAt` the player has been told about; a later one is a career reset they have not seen yet.
+   */
+  startAtSeen: Timestamp | null;
 };
 export type KnightsPlayerDay = {
   playerId: number;
@@ -3796,6 +3824,8 @@ export type KnightsVote = {
   settledAt: Timestamp | null;
   labelled: Generated<boolean>;
   converted: Generated<boolean>;
+  consequence: string | null;
+  noticedAt: Timestamp | null;
 };
 export type Leaderboard = {
   id: string;
@@ -4375,6 +4405,11 @@ export type NewOrderPlayer = {
    */
   goldPending: Generated<number>;
   goldEarned: Generated<number>;
+  /**
+   * Earned gold a detection run has cleared (a running total), and gold already converted to Buzz. Convertible = cleared - converted.
+   */
+  goldCleared: Generated<number>;
+  goldConverted: Generated<number>;
 };
 export type NewOrderRank = {
   type: NewOrderRankType;
@@ -6610,6 +6645,9 @@ export type DB = {
   ItemDefinition: ItemDefinition;
   JobQueue: JobQueue;
   KeyValue: KeyValue;
+  KnightsDetectionRun: KnightsDetectionRun;
+  KnightsGoldClearing: KnightsGoldClearing;
+  KnightsGoldConversion: KnightsGoldConversion;
   KnightsHarvestCursor: KnightsHarvestCursor;
   KnightsNotificationSend: KnightsNotificationSend;
   KnightsPlayer: KnightsPlayer;

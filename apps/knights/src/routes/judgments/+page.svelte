@@ -45,7 +45,7 @@
   {/if}
 </nav>
 
-<p><a href="/play">Back to judging</a></p>
+<p><a href="/play" data-sveltekit-preload-data="off">Back to judging</a></p>
 
 <style>
   .judgment {

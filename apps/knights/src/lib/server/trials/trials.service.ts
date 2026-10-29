@@ -1,6 +1,8 @@
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { servableImage } from '../servable-image';
+import { REFERENCE_POOL, REFERENCE_SOURCE } from '@civitai/db/knights';
+import type { QuestionOption } from '../queue/queue.service';
+import { servableReferences } from '../reference';
 import { TRIAL_MODULES, TRIALS } from './config';
 import { planRun, scoreRun } from './plan';
 import { utc } from '@civitai/db/kysely';
@@ -8,8 +10,6 @@ import { utc } from '@civitai/db/kysely';
 type Executor = Kysely<DB> | Transaction<DB>;
 
 export type TrialDeps = { now: () => Date; newSeed: () => number };
-
-type Option = { value: string; label: string };
 
 export type TrialItem = {
   referenceId: number;
@@ -26,13 +26,13 @@ export type TrialView =
       kind: 'question';
       questionKey: string;
       prompt: string;
-      options: Option[];
+      options: QuestionOption[];
       run: { id: number; position: number; total: number };
       item: TrialItem;
     };
 
 export type AnswerResult =
-  | { status: 'rejected'; reason: 'no-run' | 'not-current' | 'bad-answer' }
+  | { status: 'rejected'; reason: 'no-player' | 'no-run' | 'not-current' | 'bad-answer' }
   | {
       status: 'recorded';
       correct: boolean;
@@ -43,23 +43,30 @@ export type AnswerResult =
       finished: { result: 'passed' | 'failed' | 'void'; score: number | null } | null;
     };
 
-type Run = { id: number; questionKey: string; itemIds: number[] };
+type Run = {
+  id: number;
+  questionKey: string;
+  itemIds: number[];
+  /** The fresh items as planned. Null on a run stored before roles were kept, which falls back to each item's current source. */
+  freshIds: ReadonlySet<number> | null;
+};
 
-const toRun = (row: { id: number; questionKey: string; itemIds: unknown }): Run => ({
-  id: row.id,
-  questionKey: row.questionKey,
-  itemIds: row.itemIds as number[],
-});
+type StoredPlan = number[] | { core: number[]; fresh: number[] };
 
-function servableReferences(db: Executor, questionKey: string) {
-  return db
-    .selectFrom('KnightsReferenceImage as r')
-    .innerJoin('Image as img', 'img.id', 'r.imageId')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .where('r.questionKey', '=', questionKey)
-    .where('r.pool', '=', 'trials')
-    .where('r.status', '=', 'active')
-    .where(servableImage);
+const toRun = (row: { id: number; questionKey: string; itemIds: unknown }): Run => {
+  const plan = row.itemIds as StoredPlan;
+  return Array.isArray(plan)
+    ? { id: row.id, questionKey: row.questionKey, itemIds: plan, freshIds: null }
+    : {
+        id: row.id,
+        questionKey: row.questionKey,
+        itemIds: [...plan.core, ...plan.fresh],
+        freshIds: new Set(plan.fresh),
+      };
+};
+
+function servableTrialReferences(db: Executor, questionKey: string) {
+  return servableReferences(db, REFERENCE_POOL.trials).where('r.questionKey', '=', questionKey);
 }
 
 export async function promoteToKnight(db: Executor, userId: number) {
@@ -100,7 +107,7 @@ async function loadQuestion(db: Executor, questionKey: string) {
     .select(['prompt', 'options'])
     .where('key', '=', questionKey)
     .executeTakeFirstOrThrow();
-  return { prompt: question.prompt, options: question.options as Option[] };
+  return { prompt: question.prompt, options: question.options as QuestionOption[] };
 }
 
 async function openRun(db: Executor, userId: number, questionKey: string): Promise<Run | null> {
@@ -121,7 +128,7 @@ async function startRun(
   deps: TrialDeps
 ): Promise<Run | null> {
   const [pool, met] = await Promise.all([
-    servableReferences(db, questionKey).select(['r.id', 'r.source']).execute(),
+    servableTrialReferences(db, questionKey).select(['r.id', 'r.source']).execute(),
     db
       .selectFrom('KnightsTrialAnswer')
       .select('referenceId')
@@ -130,13 +137,13 @@ async function startRun(
       .execute(),
   ]);
   const seen = new Set(met.map((m) => m.referenceId));
-  const freshUnseen = pool.filter((r) => r.source !== 'core' && !seen.has(r.id));
+  const freshUnseen = pool.filter((r) => r.source !== REFERENCE_SOURCE.core && !seen.has(r.id));
   if (freshUnseen.length < TRIALS.minFresh) return null;
 
   const seed = deps.newSeed();
   const plan = planRun({
     seed,
-    core: pool.filter((r) => r.source === 'core').map((r) => r.id),
+    core: pool.filter((r) => r.source === REFERENCE_SOURCE.core).map((r) => r.id),
     freshUnseen: freshUnseen.map((r) => r.id),
     length: TRIALS.runLength,
     freshCount: TRIALS.freshCount,
@@ -149,7 +156,7 @@ async function startRun(
       playerId: userId,
       questionKey,
       seed,
-      itemIds: JSON.stringify([...plan.core, ...plan.fresh]),
+      itemIds: JSON.stringify({ core: plan.core, fresh: plan.fresh }),
       startedAt: utc(deps.now()),
     })
     .onConflict((oc) =>
@@ -175,7 +182,7 @@ async function nextItem(
   const remaining = run.itemIds.filter((id) => !answered.has(id));
   if (remaining.length === 0) return null;
 
-  const servable = await servableReferences(db, run.questionKey)
+  const servable = await servableTrialReferences(db, run.questionKey)
     .select(['r.id', 'img.url as imageKey', 'img.width', 'img.height'])
     .where('r.id', 'in', remaining)
     .execute();
@@ -193,11 +200,14 @@ async function finishRun(db: Executor, run: Run, userId: number, now: Date) {
   const answers = await db
     .selectFrom('KnightsTrialAnswer as a')
     .innerJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
-    .select(['a.correct', 'r.source'])
+    .select(['a.correct', 'a.referenceId', 'r.source'])
     .where('a.runId', '=', run.id)
     .execute();
   const { result, score } = scoreRun(
-    answers.map((a) => ({ fresh: a.source !== 'core', correct: a.correct })),
+    answers.map((a) => ({
+      fresh: run.freshIds ? run.freshIds.has(a.referenceId) : a.source !== REFERENCE_SOURCE.core,
+      correct: a.correct,
+    })),
     TRIALS
   );
   const cooldownUntil = new Date(now.getTime() + TRIALS.cooldownHours * 3_600_000);
@@ -288,6 +298,13 @@ export async function answerTrial(
   const now = deps.now();
 
   return db.transaction().execute(async (trx): Promise<AnswerResult> => {
+    const member = await trx
+      .selectFrom('NewOrderPlayer')
+      .select('userId')
+      .where('userId', '=', userId)
+      .executeTakeFirst();
+    if (!member) return { status: 'rejected', reason: 'no-player' };
+
     const locked = await trx
       .selectFrom('KnightsTrialRun')
       .select(['id', 'questionKey', 'itemIds'])
@@ -341,7 +358,7 @@ export async function answerTrial(
       correct,
       correctAnswer: reference.answer,
       correctLabel: options.find((o) => o.value === reference.answer)?.label ?? reference.answer,
-      explanation: reference.source === 'core' ? reference.explanation : null,
+      explanation: reference.source === REFERENCE_SOURCE.core ? reference.explanation : null,
       imageKey: next.item.imageKey,
       finished,
     };

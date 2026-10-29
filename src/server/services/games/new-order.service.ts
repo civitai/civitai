@@ -1402,8 +1402,15 @@ export async function resetPlayer({
     // Reset player back to level 1
     dbWrite.newOrderPlayer.update({
       where: { userId: playerId },
-      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0, startAt: new Date() },
+      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0 },
     }),
+    // Knights v2 gold: unconverted gold is forfeited like the counters below; paid and reserved gold stays.
+    // startAt must be set here (database clock, under the row lock), not by the Prisma data: Knights' conversion ordering depends on it.
+    dbWrite.$executeRaw`
+      UPDATE "NewOrderPlayer"
+      SET "startAt" = clock_timestamp(), "goldPending" = 0, "goldEarned" = "goldConverted", "goldCleared" = "goldConverted"
+      WHERE "userId" = ${playerId}
+    `,
     // Cleanse all smites
     dbWrite.newOrderSmite.updateMany({
       where: { targetPlayerId: playerId, cleansedAt: null },

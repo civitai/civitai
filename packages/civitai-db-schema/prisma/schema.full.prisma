@@ -8001,6 +8001,9 @@ model NewOrderPlayer {
   /// Gold from votes not yet graded / already earned.
   goldPending Int @default(0)
   goldEarned  Int @default(0)
+  /// Earned gold a detection run has cleared (a running total), and gold already converted to Buzz. Convertible = cleared - converted.
+  goldCleared   Int @default(0)
+  goldConverted Int @default(0)
 }
 
 model NewOrderLinkReview {
@@ -8083,6 +8086,8 @@ model KnightsVote {
   settledAt   DateTime? // idempotency marker: set once progression for the final verdict is granted
   labelled    Boolean  @default(false)
   converted   Boolean  @default(false)
+  consequence String? // what a graded hidden check cost the player (warning | smite)
+  noticedAt   DateTime? // when the player dismissed the notice of that cost
 
   @@id([itemId, playerId, createdAt])
   @@index([playerId, createdAt])
@@ -8098,6 +8103,8 @@ model KnightsPlayer {
   shields           Int       @default(0)
   shieldWeek        DateTime  @db.Date
   recapDismissedFor DateTime? @db.Date
+  /// The `NewOrderPlayer.startAt` the player has been told about; a later one is a career reset they have not seen yet.
+  startAtSeen DateTime?
 }
 
 /// One row per player per UTC day on which they voted. `goldRecorded` counts against the daily cap;
@@ -8123,6 +8130,41 @@ model KnightsNotificationSend {
 
   @@id([playerId, day])
   @@index([playerId, kind, sentAt])
+}
+
+/// One finished link-detection run. The main app writes a row when a run completes; Knights runs its post-detection pass (clearing gold, writing labels) once per row, `passedAt` marking it done.
+model KnightsDetectionRun {
+  id          Int       @id @default(autoincrement())
+  completedAt DateTime  @default(now())
+  passedAt    DateTime?
+}
+
+/// Which detection run cleared how much of a player's earned gold, and when.
+model KnightsGoldClearing {
+  id        Int      @id @default(autoincrement())
+  playerId  Int
+  runId     Int
+  gold      Int
+  clearedAt DateTime @default(now())
+
+  @@unique([playerId, runId])
+}
+
+/// One conversion of cleared gold to Yellow Buzz. The row is written `pending` with the gold reserved in `NewOrderPlayer.goldConverted`; `paid` once Buzz confirms, `failed` when Buzz refuses it for good (the reservation is released). `externalTransactionId` is the idempotency key sent to Buzz.
+model KnightsGoldConversion {
+  id                    Int       @id @default(autoincrement())
+  playerId              Int
+  gold                  Int
+  buzz                  Int
+  status                String    @default("pending") // pending | paid | failed
+  externalTransactionId String    @unique
+  buzzTransactionId     String?
+  createdAt             DateTime  @default(now())
+  lastAttemptAt         DateTime?
+  paidAt                DateTime?
+
+  @@index([playerId, createdAt])
+  @@index([status, createdAt])
 }
 
 /// An image with a known answer for Acolyte Trials or hidden checks. `answer` is the option value of `questionKey`.

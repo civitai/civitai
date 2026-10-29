@@ -1255,9 +1255,15 @@ importers:
       '@civitai/auth':
         specifier: workspace:*
         version: link:../../packages/civitai-auth
+      '@civitai/axiom':
+        specifier: workspace:*
+        version: link:../../packages/civitai-axiom
       '@civitai/brand':
         specifier: workspace:*
         version: link:../../packages/civitai-brand
+      '@civitai/buzz':
+        specifier: workspace:*
+        version: link:../../packages/civitai-buzz
       '@civitai/db':
         specifier: workspace:*
         version: link:../../packages/civitai-db
@@ -1756,6 +1762,9 @@ importers:
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../civitai-db-schema
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:../civitai-shared
       kysely:
         specifier: ^0.28.7
         version: 0.28.17

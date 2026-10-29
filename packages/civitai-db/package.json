@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@civitai/db-schema": "workspace:*",
+    "@civitai/shared": "workspace:*",
     "kysely": "^0.28.7",
     "pg": "^8.11.3",
     "prom-client": "^14.2.0",
