@@ -39,7 +39,7 @@
  *
  * 🔴 THIS FILE IS A LOCAL INSTRUMENT, NOT AN ENFORCED GATE — RUN IT YOURSELF. It is a
  * `*.browser.test.tsx`, so `vitest.config.mts` collects it into the `component` project,
- * which `.github/workflows/lint.yml` runs as `Component tests`. A failure turns that
+ * which `.github/workflows/lint.yml` runs as the `Component tests` step. A failure turns its
  * check red, but nothing in this repo blocks a merge. Making it required is a real change
  * with its own cost argument and belongs in its own PR — do
  * not bolt it on here. Run it with:
