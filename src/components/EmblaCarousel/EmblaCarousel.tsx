@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import type { EmblaCarouselProviderProps } from '~/components/EmblaCarousel/EmblaCarouselProvider';
+import { HatLayerHost, useHatLayer } from '~/components/Cosmetics/EventDecoration/HatLayer';
 import {
   EmblaCarouselProvider,
   useEmblaStore,
@@ -19,6 +20,7 @@ export function Embla({
   withControls,
   withIndicators,
   controlSize,
+  hatLayer,
   ...args
 }: EmblaCarouselProps) {
   return (
@@ -29,6 +31,7 @@ export function Embla({
         withControls={withControls}
         withIndicators={withIndicators}
         controlSize={controlSize}
+        hatLayer={hatLayer}
       >
         {children}
       </EmblaCarouselWrapper>
@@ -43,7 +46,36 @@ type EmblaCarouselWrapperProps = {
   controlSize?: number;
   withIndicators?: boolean;
   withControls?: boolean;
+  /** Draws the hats worn by its slides into an unclipped layer over the carousel. */
+  hatLayer?: boolean;
 };
+
+// A hat layer cannot ride a moving slide, so its hats wait out the scroll.
+const HAT_SETTLE_FALLBACK_MS = 800;
+
+function EmblaHatMotion() {
+  const emblaApi = useEmblaStore((state) => state.emblaApi);
+  const setMoving = useHatLayer()?.setMoving;
+  useEffect(() => {
+    if (!emblaApi || !setMoving) return;
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    const settle = () => {
+      clearTimeout(fallback);
+      setMoving(false);
+    };
+    const scroll = () => {
+      setMoving(true);
+      clearTimeout(fallback);
+      fallback = setTimeout(settle, HAT_SETTLE_FALLBACK_MS);
+    };
+    emblaApi.on('scroll', scroll).on('settle', settle).on('reInit', settle);
+    return () => {
+      clearTimeout(fallback);
+      emblaApi.off('scroll', scroll).off('settle', settle).off('reInit', settle);
+    };
+  }, [emblaApi, setMoving]);
+  return null;
+}
 
 function EmblaCarouselWrapper({
   children,
@@ -51,6 +83,7 @@ function EmblaCarouselWrapper({
   controlSize,
   withIndicators,
   withControls,
+  hatLayer,
   ...rest
 }: EmblaCarouselWrapperProps) {
   const nextClick = useEmblaStore((state) => state.nextClick);
@@ -75,7 +108,17 @@ function EmblaCarouselWrapper({
 
   return (
     <div className={clsx('relative', className)} onKeyDownCapture={handleKeyDown} {...rest}>
-      {children}
+      {hatLayer ? (
+        <HatLayerHost>
+          {children}
+          <EmblaHatMotion />
+        </HatLayerHost>
+      ) : (
+        <>
+          {children}
+          <EmblaHatMotion />
+        </>
+      )}
       {withControls && <EmblaControls size={controlSize} />}
       {withIndicators && (
         <EmblaIndicators

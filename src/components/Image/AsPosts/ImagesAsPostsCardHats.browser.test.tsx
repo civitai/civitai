@@ -157,27 +157,21 @@ const post = (seed: any[], imageCount?: number) =>
 
 const shownId = () =>
   document.querySelector('[data-testid="slide"]')?.getAttribute('data-image-id');
-// The image the hat is worn by, prefixed 'card:' when it is drawn on the card rather than the media.
+// The image the hat is worn by, prefixed 'outside:' when it is not in the card's hat layer.
 const hatOn = () => {
   const hats = document.querySelectorAll('button[data-event-decoration="hat"]');
   if (hats.length > 1) return `${hats.length} hats`;
   const hat = hats[0];
   if (!hat) return null;
   const id = hat.closest('[data-worn-on]')?.getAttribute('data-worn-on') ?? '?';
-  return hat.closest('.flex-1.overflow-hidden') ? id : `card:${id}`;
+  return hat.closest('[data-testid="hat-layer"]') ? id : `outside:${id}`;
 };
-// The images whose hats are in view: embla mounts its neighbours too, and only the viewport's
-// clipping keeps their hats off the shown slide.
-const hatsInView = () => {
-  const media = document.querySelector('.flex-1.overflow-hidden')!.getBoundingClientRect();
-  return Array.from(document.querySelectorAll('button[data-event-decoration="hat"]'))
-    .filter((hat) => {
-      const r = hat.getBoundingClientRect();
-      const [x, y] = [r.left + r.width / 2, r.top + r.height / 2];
-      return x > media.left && x < media.right && y > media.top && y < media.bottom;
-    })
-    .map((hat) => hat.closest('[data-worn-on]')?.getAttribute('data-worn-on'));
-};
+// The images whose hats are drawn: the layer draws only the slide whose corner is in view, so the
+// neighbours embla mounts beside it have none.
+const hatsDrawn = () =>
+  Array.from(document.querySelectorAll('button[data-event-decoration="hat"]')).map((hat) =>
+    hat.closest('[data-worn-on]')?.getAttribute('data-worn-on')
+  );
 const clickNext = () => userEvent.click(document.querySelector<HTMLElement>('button.right-3')!);
 
 function renderCard(data: any) {
@@ -195,10 +189,17 @@ beforeEach(() => {
 });
 
 describe('a gallery post card wears a hat only on the slide that wears it', () => {
-  test('single-image post: the hat is on the media, not the card', async () => {
+  test("single-image post: the hat hangs past the media's corner, not clipped inside it", async () => {
     renderCard(post(images(1, 1)));
     await vi.waitFor(() => expect(shownId()).toBe('1'));
-    expect(hatOn()).toBe('1');
+    await vi.waitFor(() => expect(hatOn()).toBe('1'));
+    const media = document.querySelector('.flex-1.overflow-hidden')!.getBoundingClientRect();
+    const hat = document
+      .querySelector('button[data-event-decoration="hat"]')!
+      .getBoundingClientRect();
+    // The card's media clips at its edge; the hat is above and left of it as on a feed card.
+    expect(media.top - hat.top).toBeGreaterThanOrEqual(24);
+    expect(media.left - hat.left).toBeGreaterThanOrEqual(12);
   });
 
   test('no hat anywhere when no image wears one', async () => {
@@ -241,16 +242,16 @@ describe('a gallery post card wears a hat only on the slide that wears it', () =
     expect(hatOn()).toBe('7');
   });
 
-  test("swipe carousel: only the shown slide's hat is in view", async () => {
+  test("swipe carousel: only the shown slide's hat is drawn", async () => {
     mocks.state.swipeGalleryCards = true;
     renderCard(post(images(3, 2)));
     await vi.waitFor(() => expect(document.querySelectorAll('.transform-3d').length).toBe(3));
-    await vi.waitFor(() => expect(hatsInView()).toEqual([]));
+    await vi.waitFor(() => expect(hatsDrawn()).toEqual([]));
 
     await clickNext();
-    await vi.waitFor(() => expect(hatsInView()).toEqual(['2']));
+    await vi.waitFor(() => expect(hatsDrawn()).toEqual(['2']), { timeout: 3000 });
 
     await clickNext();
-    await vi.waitFor(() => expect(hatsInView()).toEqual([]));
+    await vi.waitFor(() => expect(hatsDrawn()).toEqual([]));
   });
 });
