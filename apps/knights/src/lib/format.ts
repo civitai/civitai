@@ -8,3 +8,10 @@ export const formatWait = (seconds: number): string => {
   if (minutes < 60) return `${minutes}m ${String(total % 60).padStart(2, '0')}s`;
   return `${Math.floor(minutes / 60)}h ${String(minutes % 60).padStart(2, '0')}m`;
 };
+
+/** A whole number with thousands separators, the same on every machine. */
+export const count = (n: number): string => n.toLocaleString('en-US');
+
+/** An ISO timestamp as a UTC calendar date, e.g. "Dec 15, 2026". */
+export const formatDate = (iso: string): string =>
+  new Date(iso).toLocaleDateString('en-US', { timeZone: 'UTC', dateStyle: 'medium' });

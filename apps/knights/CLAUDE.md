@@ -67,7 +67,7 @@ SQL on PGlite.
 
 `/` shows "Join the Order" to a user with no `NewOrderPlayer` row: a sensitive-content warning (explicit imagery regardless of the user's browsing level), then the `join` action, which requires `accepted=yes`, calls `joinOrder` (`lib/server/join.service.ts`, the only place an Acolyte row is created; idempotent, never touches an existing row) and redirects to `/play`. `/play` redirects a user with no row back to `/`. The v1 Acolyte badge cosmetic is not awarded here yet.
 
-`/rules` is the player-facing rules page (linked from `/` and the status bar). Its numbers come from `rulesFacts()` (`lib/server/rules.ts`), which reads the Trials, progression, daily and rank config; the rating guide reads the shared level labels and descriptions. The heart count is a local constant there until the smite rules own it. Vote pacing is described without its limits. Update the page when a rule changes.
+`/rules` is the player-facing rules page. Its numbers come from `rulesFacts()` (`lib/server/rules.ts`), which reads the Trials, progression, daily and rank config; the rating guide reads the shared level labels. Update the page when a rule changes. Vote pacing is deliberately not described there (public repo).
 
 ## Progression (`src/lib/server/progression`)
 

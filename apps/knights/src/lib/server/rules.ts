@@ -4,7 +4,7 @@ import { goldForRank, PROGRESSION, RATING } from './progression/config';
 import { rankTable } from './progression/rating';
 import { TRIALS } from './trials/config';
 
-/** Smites a player can take before the career resets. Not yet in config; the smite rules own it. */
+/** Hardcoded until the smite rules define it; keep in sync with them. */
 const HEARTS = 3;
 
 const RATING_GUIDE_LEVELS = [
@@ -16,7 +16,7 @@ const RATING_GUIDE_LEVELS = [
   NsfwLevel.Blocked,
 ] as const;
 
-/** Every number the rules page quotes, read from the same config the game runs on. */
+/** Numbers the rules page quotes. Read from the game's config, except HEARTS. */
 export function rulesFacts() {
   return {
     trials: {

@@ -11,11 +11,7 @@ export const VOTE_LIMITS: readonly VoteLimit[] = [
   { windowSeconds: 86400, max: 3000 },
 ];
 
-/**
- * When the player may vote again, or null if they may now. Read from the vote ledger, so a lockout
- * needs no state of its own and survives a restart: it ends when the vote that filled the window
- * ages out of it.
- */
+/** When the player may vote again, or null if they may now. Derived from the vote ledger, so it needs no state and survives a restart. */
 export async function voteLockUntil(
   db: Kysely<DB> | Transaction<DB>,
   playerId: number,

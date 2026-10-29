@@ -1,6 +1,6 @@
 <script lang="ts">
   import StatusBar from '$lib/StatusBar.svelte';
-  import { percent } from '$lib/format';
+  import { count, percent } from '$lib/format';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -29,7 +29,7 @@
         <td>{percent(rank.accuracyBar)}</td>
         <td>{rank.voteWeight}x</td>
         <td>{rank.goldMultiplier}x</td>
-        <td>{rank.dailyGoldCap.toLocaleString('en-US')}</td>
+        <td>{count(rank.dailyGoldCap)}</td>
       </tr>
     {/each}
   </tbody>

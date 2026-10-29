@@ -1,10 +1,12 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
+  import { formatDate } from '$lib/format';
   import type { ActionData, PageData } from './$types';
 
   let { data, form }: { data: PageData; form: ActionData } = $props();
   let warning = $state(false);
   let submitting = $state(false);
+  let attempted = $state(false);
 </script>
 
 <h1>Knights of New Order</h1>
@@ -19,7 +21,7 @@
     <dt>Fervor</dt>
     <dd>{data.player.fervor}</dd>
     <dt>Sworn in</dt>
-    <dd>{new Date(data.player.startAt).toLocaleDateString()}</dd>
+    <dd>{formatDate(data.player.startAt)}</dd>
   </dl>
   <p><a href="/play" data-sveltekit-preload-data="off">Begin judging</a></p>
 {:else}
@@ -44,6 +46,7 @@
         action="?/join"
         use:enhance={() => {
           submitting = true;
+          attempted = true;
           return async ({ update }) => {
             try {
               await update();
@@ -55,9 +58,12 @@
       >
         <input type="hidden" name="accepted" value="yes" />
         <button type="submit" disabled={submitting}>Agree and continue</button>
-        <button type="button" onclick={() => (warning = false)} disabled={submitting}>Cancel</button>
+        <button type="button" onclick={() => {
+            warning = false;
+            attempted = false;
+          }} disabled={submitting}>Cancel</button>
       </form>
-      {#if form?.message}
+      {#if attempted && form?.message}
         <p class="notice" role="alert">{form.message}</p>
       {/if}
     </section>
@@ -65,7 +71,6 @@
     <p><button type="button" onclick={() => (warning = true)}>Join the Order</button></p>
   {/if}
 {/if}
-<p class="muted"><a href="/rules">Rules</a></p>
 
 <style>
   .warning {

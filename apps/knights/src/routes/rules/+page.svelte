@@ -1,9 +1,9 @@
 <script lang="ts">
+  import { count } from '$lib/format';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
   let facts = $derived(data.facts);
-  const gold = (n: number) => n.toLocaleString('en-US');
 </script>
 
 <h1>Rules of the Order</h1>
@@ -86,7 +86,7 @@
 <ul>
   <li>
     Judge {facts.watch.size} images in a UTC day to complete that day's Watch. A completed Watch
-    pays a streak bonus of {gold(facts.watch.bonusGold)} gold per day of streak, up to {facts.watch
+    pays a streak bonus of {count(facts.watch.bonusGold)} gold per day of streak, up to {facts.watch
       .streakCap} days.
   </li>
   <li>
@@ -99,7 +99,7 @@
 <h2>Gold</h2>
 <ul>
   <li>
-    A judgment starts at {gold(facts.gold.perCorrectVote)} gold for a Knight (more at higher ranks)
+    A judgment starts at {count(facts.gold.perCorrectVote)} gold for a Knight (more at higher ranks)
     and is <strong>pending</strong> until the image is decided.
   </li>
   <li>
