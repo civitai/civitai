@@ -2169,8 +2169,9 @@ export const blocksRouter = router({
    * dedicated route `POST /api/blocks/submit-version`, NOT here. The bundle is
    * a base64 ZIP (~67 MiB encoded) that exceeds the shared tRPC body limit;
    * keeping it off tRPC lets `/api/trpc/[trpc]` stay at 17 MiB instead of
-   * lifting the cap for every tRPC call app-wide. That route uses ModEndpoint
-   * (same moderator + appBlocks-flag gate) and the same `submitVersion` service.
+   * lifting the cap for every tRPC call app-wide. That route takes the
+   * session, the `appBlocksAuthor` capability + appBlocks flag (the CLI route's
+   * gates) and calls the same `submitVersion` service.
    */
 
   /**

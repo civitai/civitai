@@ -55,6 +55,13 @@ export function assistantRules(runner: AssistantRunner = 'browser'): string {
   ].join('\n');
 }
 
+/**
+ * How an app reaches the App Store from here. The user has no CLI and cannot reach the sandbox's files,
+ * so the only way is the page's Submit for review button, which `submit_for_review` offers.
+ */
+export const SUBMIT_RULE =
+  '- When the user asks to submit or publish the app (for review, or for the App Store), call submit_for_review on its own in its step, once the app is ready; it is refused until it is, so do what a refusal says, then call it again. The user then sees the app’s name and version with a Submit for review button, and pressing it sends the app to moderator review as them; a moderator approves it before it goes live. Never submit it any other way: do not run civitai app submit, app package or any other CLI submit or sign-in, and never tell the user to use the Civitai CLI, to sign in to it, to download or upload a zip, or to go to /apps/submit.';
+
 const RULES_AFTER_SETUP = [
   '- Before you scaffold, restate the features the user asked for with set_checklist: every requested feature and nothing they did not ask for. Your reply ends there so they can confirm or change the list.',
   '- Run tests and the typecheck on their own and unpiped (cd <blockId> && npm test, cd <blockId> && npx tsc --noEmit), never through | tail, | grep or | head: the exit code must be the check’s own.',
@@ -65,6 +72,7 @@ const RULES_AFTER_SETUP = [
   // Spelled out as well as named, so it holds on an @civitai/sdk without the helper.
   "- Price a generation with estimatedCost(estimate) from @civitai/sdk where the installed version exports it; otherwise an estimate is priced when its status is not 'failed' and cost.total is a number (0 is a price), and that number is the price. A priced estimate comes back 'pending', not 'succeeded': never require 'succeeded'.",
   '- Before you tell the user the app is ready, call report_ready, on its own in its step. It is refused until the preview check, the tests and the typecheck have passed since your last file change or other command (a dev_server_start or dev_server_restart counts) and every checklist item is done; do what a refusal says, then call it again. Never say the app is ready, or describe what the browser shows, without it.',
+  SUBMIT_RULE,
 ];
 
 /** In the system prompt, not the per-reply instructions, which the chat cuts at 4,000 characters. */

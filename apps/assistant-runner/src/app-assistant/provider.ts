@@ -88,6 +88,8 @@ const RUNNER_PAGE_TOOLS = [
   'create_app',
   'set_checklist',
   'report_ready',
+  // Offers the user the page's Submit for review button; the page, not the runner, submits.
+  'submit_for_review',
   'start_preview',
   'stop_preview',
 ] as const;

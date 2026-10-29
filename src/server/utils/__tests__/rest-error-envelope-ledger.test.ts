@@ -262,8 +262,9 @@ function bodyLeaks(body: string): boolean {
  * it is an OVER-REPORT, not a leak — see that block.
  *
  * 🟡 TIER 2 — session-authed: a logged-in user can trigger it, the public cannot.
- * `blocks/submit-version.ts` is `ModEndpoint` and so belongs in TIER 3, where it
- * now is. Its `v1/` namesake is NOT — see the note on that entry.
+ * `blocks/submit-version.ts` was `ModEndpoint` (TIER 3) until App Assistant's Submit for
+ * review: it now takes the same authoring capability as its `v1/` namesake, so it is TIER 2
+ * with it — see the note on that entry.
  * TIER 2 includes `orchestrator/refreshBlobs.ts`: `OrchestratorEndpoint` is
  * `AuthedEndpoint` + a per-user token (`endpoint-helpers.ts`), with NO moderator
  * check — an earlier draft filed it under TIER 3, which would have dispositioned a
@@ -313,6 +314,9 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   // a non-operator-reachable disclosure as "arguably the point". Mod-only in
   // practice today only because of the static mod floor.
   'v1/blocks/submit-version.ts',
+  // Its session-cookie twin: the same `submitVersion` errors, behind the same
+  // `isAppBlocksAuthorEnabled` capability (App Assistant's Submit for review button).
+  'blocks/submit-version.ts',
   'v1/blocks/withdraw.ts',
   'v1/creator-program/join.ts',
   'v1/image-upload/multipart/index.ts',
@@ -344,7 +348,6 @@ const KNOWN_UNFIXED_SAME_CLASS: string[] = [
   'admin/temp/remove-deprecated-base-models.ts',
   'admin/test.ts',
   'admin/update-freshdesk-customer.ts',
-  'blocks/submit-version.ts', // ModEndpoint
   'mod/clavata-image-process.ts',
   'mod/csam-upload.ts',
   'mod/mute-user-pending-review.ts',

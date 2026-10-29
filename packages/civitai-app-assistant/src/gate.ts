@@ -1,4 +1,5 @@
 import type { AssistantTool, ToolGate, ToolResult } from './tool';
+import { SUBMIT_FOR_REVIEW, createSubmitTool } from './submit';
 
 /** The sandbox MCP server's id; the chat offers each of its tools as `sandbox__<tool>`. */
 export const SANDBOX_SERVER_ID = 'sandbox';
@@ -13,6 +14,8 @@ export const APP_ASSISTANT_TURN_TOOL_CALL_LIMIT = 150;
 
 export const REPORT_READY = 'report_ready';
 export const SET_CHECKLIST = 'set_checklist';
+/** Calls that only read the checks: never counted as still running, and refused until the app is ready. */
+const READS_CHECKS = new Set([REPORT_READY, SUBMIT_FOR_REVIEW]);
 const CHECKLIST_MAX_ITEMS = 30;
 const CHECKLIST_LABEL_MAX = 200;
 
@@ -160,8 +163,12 @@ export interface GateCore {
   reset(): void;
   beforeToolCall: ToolGate;
   onToolResult(result: ToolResult): void;
-  /** `set_checklist` and `report_ready`, without a view. */
-  tools: { [SET_CHECKLIST]: AssistantTool; [REPORT_READY]: AssistantTool };
+  /** `set_checklist`, `report_ready` and `submit_for_review`, without a view. */
+  tools: {
+    [SET_CHECKLIST]: AssistantTool;
+    [REPORT_READY]: AssistantTool;
+    [SUBMIT_FOR_REVIEW]: AssistantTool;
+  };
   /** The checklist waiting for the user's Build it, if one is. */
   awaiting(): AwaitingChecklist | null;
   /** The user answered the checklist another way: nothing waits for Build it any more. */
@@ -234,12 +241,16 @@ export function createGateCore({
     return out;
   };
 
-  const notReady = (): string | null => {
+  const notReady = (tool: string = REPORT_READY): string | null => {
     const reasons = missing();
-    return reasons.length
-      ? `Not ready yet. ${reasons.join(' ')} Then call report_ready again.`
-      : null;
+    return reasons.length ? `Not ready yet. ${reasons.join(' ')} Then call ${tool} again.` : null;
   };
+  /** As a check-reading call is refused when it runs: another call of its step still running, or not ready. */
+  const refusalWhenRun = (tool: string): string | null =>
+    running > 0
+      ? `Call ${tool} on its own, once your other tool calls have returned: they can still change the app.`
+      : notReady(tool);
+  let submitOffers = 0;
 
   const beforeToolCall: ToolGate = (name, _input, context) => {
     if (context.conversationId !== conversationId) {
@@ -261,8 +272,8 @@ export function createGateCore({
     }
     const refused = refuse?.(name);
     if (refused) return { refuse: refused };
-    if (name === REPORT_READY) {
-      const refusal = notReady();
+    if (READS_CHECKS.has(name)) {
+      const refusal = notReady(name);
       if (refusal) return { refuse: refusal };
     } else running++;
     return { allow: true };
@@ -285,7 +296,7 @@ export function createGateCore({
     const { name, output, isError, refused, stopped, subagent } = result;
     // Neither ran. One its ended reply did not run stays counted in `running`; the next reply starts at 0.
     if (refused !== undefined || stopped) return;
-    if (name !== REPORT_READY) running = Math.max(0, running - 1);
+    if (!READS_CHECKS.has(name)) running = Math.max(0, running - 1);
     verify(result);
     // A checklist a server runner showed: its Build it is the one waiting (the page shows the card).
     const shown = output as { awaitsUser?: unknown; checklist?: unknown } | null | undefined;
@@ -361,24 +372,29 @@ export function createGateCore({
     async execute() {
       // Let the rest of this step's calls reach the gate first.
       await new Promise((resolve) => setTimeout(resolve, 0));
-      if (running > 0)
-        throw new Error(
-          'Call report_ready on its own, once your other tool calls have returned: they can still change the app.'
-        );
-      const refusal = notReady();
+      const refusal = refusalWhenRun(REPORT_READY);
       if (refusal) throw new Error(refusal);
       return {
         ready: true,
-        note: 'Tell the user the app is ready for review, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed.',
+        note: 'Tell the user the app is ready for review, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed. If they want it in the App Store, call submit_for_review when they ask.',
       };
     },
   };
+
+  const submit_for_review = createSubmitTool({
+    refusal: () => refusalWhenRun(SUBMIT_FOR_REVIEW),
+    nextId: () => `${checklistPrefix}-submit-${++submitOffers}`,
+  });
 
   return {
     reset,
     beforeToolCall,
     onToolResult,
-    tools: { [SET_CHECKLIST]: set_checklist, [REPORT_READY]: report_ready },
+    tools: {
+      [SET_CHECKLIST]: set_checklist,
+      [REPORT_READY]: report_ready,
+      [SUBMIT_FOR_REVIEW]: submit_for_review,
+    },
     awaiting: () => awaiting,
     clearAwaiting: () => {
       awaiting = null;
