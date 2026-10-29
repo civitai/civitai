@@ -39,15 +39,16 @@ async function main() {
     const ids = models.slice(i, i + CHUNK).map((m) => m.id);
     // A model transferred since its creation had another owner in between, and the event does not
     // say whom: its creator was not its last owner, so it gets no row here.
-    const rows = await clickhouse.$query<{ modelId: number; userId: number }>(`
-      SELECT modelId, anyIf(userId, type = 'Create' AND userId > 0) AS userId
+    // Not `AS userId`: the alias would shadow the column inside its own aggregate (ClickHouse 184).
+    const rows = await clickhouse.$query<{ modelId: number; creatorId: number }>(`
+      SELECT modelId, anyIf(userId, type = 'Create' AND userId > 0) AS creatorId
       FROM modelEvents
       WHERE type IN ('Create', 'Transfer') AND modelId IN (${ids.join(',')})
       GROUP BY modelId
       HAVING countIf(type = 'Create' AND userId > 0) > 0 AND countIf(type = 'Transfer') = 0
     `);
     for (const line of creatorInsertsSql(
-      rows.map((r) => ({ modelId: Number(r.modelId), userId: Number(r.userId) }))
+      rows.map((r) => ({ modelId: Number(r.modelId), userId: Number(r.creatorId) }))
     )) {
       console.log(line);
       printed += 1;
