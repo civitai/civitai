@@ -1,5 +1,4 @@
 import { createHash } from 'crypto';
-import { v4 as uuid } from 'uuid';
 import { REDIS_SYS_KEYS, sysRedis, type RedisKeyTemplateSys } from '~/server/redis/client';
 import { logSysRedisFailOpen } from '~/server/redis/fail-open-log';
 import {
@@ -213,7 +212,7 @@ export async function upsertCandidate(
   input: UpsertCandidateInput,
   userId: number
 ): Promise<ScannerPolicyCandidate> {
-  const id = input.id ?? uuid();
+  const id = input.id ?? crypto.randomUUID();
   const isCreate = !input.id;
   const now = nowIso();
 

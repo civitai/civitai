@@ -1,5 +1,4 @@
 import type Stripe from 'stripe';
-import { v4 as uuid } from 'uuid';
 import {
   isBlockedTipaltiStatus,
   NotificationCategory,
@@ -131,7 +130,7 @@ export async function updateByStripeConnectAccount({
         userId: userPaymentConfig.userId,
         type: 'creators-program-payments-enabled',
         category: NotificationCategory.System,
-        key: `creators-program-payments-enabled:${uuid()}`,
+        key: `creators-program-payments-enabled:${crypto.randomUUID()}`,
         details: {},
       }).catch();
     }
@@ -150,7 +149,7 @@ export async function updateByStripeConnectAccount({
         userId: userPaymentConfig.userId,
         type: 'creators-program-rejected-stripe',
         category: NotificationCategory.System,
-        key: `creators-program-rejected-stripe:${uuid()}`,
+        key: `creators-program-rejected-stripe:${crypto.randomUUID()}`,
         details: {},
       }).catch();
     }
@@ -335,7 +334,7 @@ export async function updateByTipaltiAccount({
         userId: userPaymentConfig.userId,
         type: 'creators-program-payments-enabled',
         category: NotificationCategory.System,
-        key: `creators-program-payments-enabled:${uuid()}`,
+        key: `creators-program-payments-enabled:${crypto.randomUUID()}`,
         details: {},
       }).catch();
     }
@@ -345,7 +344,7 @@ export async function updateByTipaltiAccount({
         userId: userPaymentConfig.userId,
         type: 'creators-program-rejected-tipalti',
         category: NotificationCategory.System,
-        key: `creators-program-rejected-tipalti:${uuid()}`,
+        key: `creators-program-rejected-tipalti:${crypto.randomUUID()}`,
         details: {},
       }).catch(() => {
         log({ method: 'createNotification', userId: userPaymentConfig.userId });

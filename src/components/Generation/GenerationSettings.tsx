@@ -16,6 +16,7 @@ import type { UserSettingsSchema } from '~/server/schema/user.schema';
 import { IconInfoCircle } from '@tabler/icons-react';
 import { useEffect, useRef } from 'react';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 
 type GenerationKeys = keyof UserSettingsSchema['generation'];
 type GenerationSettingOption = {
@@ -141,11 +142,16 @@ function AdvancedModeModal() {
 }
 
 export function GenerationSettingsPopover({ children }: { children: React.ReactElement }) {
+  const isSignedIn = !!useCurrentUser();
   const { generation = {} } = useCurrentUserSettings();
 
+  // Settings can't be saved while signed out, so the modal could never record a choice and would
+  // reopen on every failed save.
   useEffect(() => {
-    if (generation.advancedMode === undefined) openAdvancedModeModal();
-  }, [generation.advancedMode]);
+    if (isSignedIn && generation.advancedMode === undefined) openAdvancedModeModal();
+  }, [isSignedIn, generation.advancedMode]);
+
+  if (!isSignedIn) return null;
 
   return (
     <Popover withArrow position="bottom-end">

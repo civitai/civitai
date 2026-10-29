@@ -16,7 +16,6 @@ import {
 } from '~/components/ContainerProvider/ContainerProvider';
 import { useInView as useInViewStandalone } from 'react-intersection-observer';
 import { env } from '~/env/client';
-import { v4 as uuidv4 } from 'uuid';
 import { isDev } from '~/env/other';
 import { usePausableInterval } from '~/utils/timer.utils';
 import { getMatchingPathname } from '~/shared/constants/pathname.constants';
@@ -42,7 +41,7 @@ function AdUnitContent({
   // Generate the id at first render (not in an effect) so the placement div is in
   // the DOM before the auction is queued — otherwise a late-mounting slot can push
   // startAuction before its <div id> exists and the slot never fills.
-  const [id] = useState(() => initialId ?? uuidv4());
+  const [id] = useState(() => initialId ?? crypto.randomUUID());
 
   useEffect(() => {
     if (!adUnitDictionary[adUnit]) adUnitDictionary[adUnit] = id;
@@ -396,7 +395,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string; maxHeight?: number 
   containerWidthRef.current = containerWidth ?? 0;
 
   const handleServe = useCallback(() => {
-    const id = props.id ?? uuidv4();
+    const id = props.id ?? crypto.randomUUID();
     if (!props.id) setId(id);
     if (fetchingRef.current || document.visibilityState !== 'visible') return;
     if (!containerWidthRef.current) return;

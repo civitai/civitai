@@ -2,7 +2,6 @@ import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import { isEqual, omit } from 'lodash-es';
-import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
 import { createNotification } from '~/server/services/notification.service';
@@ -538,7 +537,7 @@ export async function bulkSetCommentTosViolation({
       userId: comment.user.id,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:comment:${uuid()}`,
+      key: `tos-violation:comment:${crypto.randomUUID()}`,
       details: { modelName: comment.model?.name ?? '', entity: 'comment' },
     })
       .then(() => {

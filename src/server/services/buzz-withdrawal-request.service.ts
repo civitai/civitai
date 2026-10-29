@@ -2,7 +2,6 @@
 // This file is part of the legacy buzz withdrawal request system.
 // Has been replaced by the creators program.
 import type { Prisma } from '@prisma/client';
-import { v4 as uuid } from 'uuid';
 import { BuzzWithdrawalRequestSort, NotificationCategory } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
 import type { GetByIdStringInput } from '~/server/schema/base.schema';
@@ -233,7 +232,10 @@ export const cancelBuzzWithdrawalRequest = async ({
   const request = await dbRead.buzzWithdrawalRequest
     .findUniqueOrThrow(requestFindArgs)
     .catch(() => {
-      dbReadFallbackCounter.inc({ entity: 'buzzWithdrawalRequest', caller: 'cancelBuzzWithdrawalRequest' });
+      dbReadFallbackCounter.inc({
+        entity: 'buzzWithdrawalRequest',
+        caller: 'cancelBuzzWithdrawalRequest',
+      });
       return dbWrite.buzzWithdrawalRequest.findUniqueOrThrow(requestFindArgs);
     });
 
@@ -391,7 +393,7 @@ export const updateBuzzWithdrawalRequest = async ({
         userId: request.userId as number,
         type: 'creators-program-withdrawal-updated',
         category: NotificationCategory.System,
-        key: `creators-program-withdrawal-updated:${uuid()}`,
+        key: `creators-program-withdrawal-updated:${crypto.randomUUID()}`,
         details: {},
       }).catch();
 
@@ -520,7 +522,10 @@ export const updateBuzzWithdrawalRequest = async ({
       const transferRecord = await dbRead.buzzWithdrawalRequestHistory
         .findFirstOrThrow(transferRecordFindArgs)
         .catch(() => {
-          dbReadFallbackCounter.inc({ entity: 'buzzWithdrawalRequestHistory', caller: 'updateBuzzWithdrawalRequest' });
+          dbReadFallbackCounter.inc({
+            entity: 'buzzWithdrawalRequestHistory',
+            caller: 'updateBuzzWithdrawalRequest',
+          });
           return dbWrite.buzzWithdrawalRequestHistory.findFirstOrThrow(transferRecordFindArgs);
         });
 
@@ -612,7 +617,7 @@ export const updateBuzzWithdrawalRequest = async ({
             userId: request.userId as number,
             type: 'creators-program-withdrawal-approved',
             category: NotificationCategory.System,
-            key: `creators-program-withdrawal-approved:${uuid()}`,
+            key: `creators-program-withdrawal-approved:${crypto.randomUUID()}`,
             details: {},
           }).catch();
           break;
@@ -621,7 +626,7 @@ export const updateBuzzWithdrawalRequest = async ({
             userId: request.userId as number,
             type: 'creators-program-withdrawal-rejected',
             category: NotificationCategory.System,
-            key: `creators-program-withdrawal-rejected:${uuid()}`,
+            key: `creators-program-withdrawal-rejected:${crypto.randomUUID()}`,
             details: {},
           }).catch();
           break;
@@ -630,7 +635,7 @@ export const updateBuzzWithdrawalRequest = async ({
             userId: request.userId as number,
             type: 'creators-program-withdrawal-transferred',
             category: NotificationCategory.System,
-            key: `creators-program-withdrawal-transferred:${uuid()}`,
+            key: `creators-program-withdrawal-transferred:${crypto.randomUUID()}`,
             details: {},
           }).catch();
           break;
@@ -639,7 +644,7 @@ export const updateBuzzWithdrawalRequest = async ({
             userId: request.userId as number,
             type: 'creators-program-withdrawal-reverted',
             category: NotificationCategory.System,
-            key: `creators-program-withdrawal-reverted:${uuid()}`,
+            key: `creators-program-withdrawal-reverted:${crypto.randomUUID()}`,
             details: {},
           }).catch();
           break;
