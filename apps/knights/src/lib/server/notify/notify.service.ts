@@ -118,6 +118,7 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
   const found: number[] = [];
   for (const rank of RANKS) {
     const stages = stagesWorkedBy(rank);
+    // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
     if (rank === 'Acolyte' || rank === 'Inquisitor' || stages.length === 0) continue;
     const rows = await subscribers(db, 'new-images', day)
       .innerJoin('NewOrderPlayer as p', 'p.userId', 's.userId')

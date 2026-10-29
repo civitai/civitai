@@ -4,7 +4,6 @@ import { createNotificationProcessor } from '~/server/notifications/base.notific
 const KNIGHTS_APP_URL = 'https://knights.civitai.com';
 const KNIGHTS_SECTION = 'Knights of New Order';
 
-/** Sent by `apps/knights` (`/api/jobs/notify`), not by a query here. */
 export const knightsNewOrderNotifications = createNotificationProcessor({
   'new-order-sanity-warning': {
     displayName: 'Knights of New Order: Performance Check Failed',

@@ -76,7 +76,7 @@ export type NotificationProcessor = {
    * meant as "off" would subscribe the user instead.
    */
   optIn?: boolean;
-  /** Opt-in type sent by another app through the notifications client's bulk path, which does no settings lookup. The processor has no `prepareQuery`: the event path would drop exactly the subscribers. Requires `optIn`. */
+  /** Opt-in type sent by another app (today `apps/knights`, `/api/jobs/notify`) through the notifications client's bulk path, which does no settings lookup. The processor has no `prepareQuery`: the event path would drop exactly the subscribers. Requires `optIn`. */
   externalProducer?: boolean;
   /** Groups this type under its own heading in notification settings. The notification itself keeps `category`. */
   section?: string;
