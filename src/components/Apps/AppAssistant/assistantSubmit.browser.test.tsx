@@ -3,6 +3,7 @@ import { describe, expect, test, vi } from 'vitest';
 import type { ChatToolResult } from '@civitai/components-chat/civitai-chat';
 import { createAssistantGate } from '~/components/Apps/AppAssistant/assistantGate';
 import type { PreparedSubmit, SubmitReceipt } from '~/components/Apps/AppAssistant/assistantSubmit';
+import { submitNotChosen } from '@civitai/app-assistant';
 import {
   SubmitError,
   sendForReview,
@@ -59,9 +60,12 @@ type Send = (prepared: PreparedSubmit) => Promise<SubmitReceipt>;
 function setup({
   send = vi.fn<Send>(async () => ({ publishRequestId: 'pubreq_1', slug: APP, version: '0.1.0' })),
   files = APP_FILES,
+  openApp,
 }: {
   send?: Send;
   files?: Record<string, string>;
+  /** The open app's key, for the chosen-app gate; unset, the gate is off. */
+  openApp?: () => string | null;
 } = {}) {
   const prepare = vi.fn(async (sandbox: string) => {
     expect(sandbox).toBe(SANDBOX);
@@ -70,6 +74,7 @@ function setup({
   const gate = createAssistantGate({
     currentApp: () => SANDBOX,
     submit: { prepare, send },
+    ...(openApp ? { openApp } : {}),
   });
   return { gate, prepare, send };
 }
@@ -369,6 +374,28 @@ describe('Submit for review', () => {
       expect(card.textContent).toMatch(/Ask App Assistant to submit the app again\.$/);
       expect(send).not.toHaveBeenCalled();
     }
+  });
+
+  test('a new chat cannot submit the open app it did not make or choose, even once every check passed', async () => {
+    const { gate, send, prepare } = setup({ openApp: () => APP });
+    await passChecks(gate);
+    const { refused } = await offer(gate);
+    expect(refused).toBe(submitNotChosen(APP));
+    expect(prepare).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test('the chat that made the open app gets the button', async () => {
+    const { gate } = setup({ openApp: () => APP });
+    await gate.beforeToolCall('create_app', { name: 'Prompt randomizer' }, conv);
+    gate.onToolResult(
+      result('create_app', { app: APP, state: 'starting', note: 'n' }, { input: { name: 'x' } })
+    );
+    await passChecks(gate);
+    const { refused, output } = await offer(gate);
+    expect(refused).toBeNull();
+    const card = render(gate, output)!;
+    await expect.poll(() => submitButton(card)).not.toBeNull();
   });
 
   test('an offer this page did not make (an earlier visit’s) shows no button', async () => {

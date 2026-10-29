@@ -5,9 +5,11 @@ import type {
   ChatToolResult,
 } from '@civitai/components-chat/civitai-chat';
 import {
+  CREATE_APP,
   REPORT_READY,
   SET_CHECKLIST,
   SUBMIT_FOR_REVIEW,
+  USE_OPEN_APP,
   createGateCore,
   normalizeChecklist,
 } from '@civitai/app-assistant';
@@ -42,6 +44,15 @@ export interface AssistantGate {
   beforeToolCall: ChatToolGate;
   onToolResult(result: ChatToolResult): void;
   tools: Record<string, ChatTool>;
+  /**
+   * `tools` with `create_app` and `use_open_app` telling the gate what their saved calls chose as the
+   * chat shows them (`chatId`, the open chat): a reloaded or reopened chat keeps the app it made or
+   * chose. The page has no other view of a saved chat's calls.
+   */
+  restoringChoices(
+    tools: Record<string, ChatTool>,
+    chatId: () => string | null
+  ): Record<string, ChatTool>;
 }
 
 /**
@@ -54,6 +65,7 @@ export function createAssistantGate({
   onBuild,
   currentApp,
   submit,
+  openApp,
 }: {
   /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
   refuse?: (name: string) => string | null;
@@ -65,6 +77,8 @@ export function createAssistantGate({
   currentApp?: () => string | null;
   /** What the Submit for review button does; without it, a submit_for_review call shows no button. */
   submit?: SubmitCardsDeps;
+  /** The open app's key: a chat may change it only once it made or chose it (`createGateCore`). */
+  openApp?: () => string | null;
 } = {}): AssistantGate {
   const submitCards = submit ? createSubmitCards(submit) : null;
   let buildButtons: HTMLButtonElement[] = [];
@@ -81,6 +95,7 @@ export function createAssistantGate({
       onReply?.();
     },
     currentApp,
+    openApp,
   });
 
   const answered = () => {
@@ -132,6 +147,28 @@ export function createAssistantGate({
       [SET_CHECKLIST]: set_checklist,
       [REPORT_READY]: report_ready,
       [SUBMIT_FOR_REVIEW]: submit_for_review,
+    },
+    restoringChoices: (tools, chatId) => {
+      const out = { ...tools };
+      for (const name of [CREATE_APP, USE_OPEN_APP]) {
+        const tool = tools[name];
+        if (!tool) continue;
+        out[name] = {
+          ...tool,
+          render(call) {
+            const id = chatId();
+            if (id !== null && call.state === 'done')
+              core.restoreChoice(id, {
+                name: call.name,
+                input: call.input,
+                output: call.output,
+                isError: false,
+              });
+            return tool.render?.(call);
+          },
+        };
+      }
+      return out;
     },
   };
 }

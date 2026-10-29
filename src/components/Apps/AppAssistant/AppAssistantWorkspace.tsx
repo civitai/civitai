@@ -416,6 +416,8 @@ export function AppAssistantWorkspace({
           prepare: (name) => prepareSubmitRef.current(name),
           send: (prepared) => sendForReview(prepared),
         },
+        // A chat changes only the app it made or chose: a new chat never builds over the open one.
+        openApp: () => live.current.active?.app ?? null,
       }),
     [appTools]
   );
@@ -461,7 +463,8 @@ export function AppAssistantWorkspace({
         getSession: () => live.current.session,
         setSession: showPreview,
       }),
-      ...appTools.tools,
+      // A reloaded chat keeps the app it made or chose: its saved calls tell the gate as they show.
+      ...gate.restoringChoices(appTools.tools, () => chatIdRef.current),
       ...gate.tools,
       ...(remoteRunner ? {} : coverTools),
     }),

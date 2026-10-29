@@ -1,3 +1,4 @@
+import { CREATE_APP, USE_OPEN_APP } from './app-tools';
 import type { AssistantTool, ToolGate, ToolResult } from './tool';
 import { SUBMIT_FOR_REVIEW, createSubmitTool } from './submit';
 
@@ -43,6 +44,45 @@ const KEEPS_CHECKS = new Set(
 const SANDBOX_PREFIX = sandboxTool('');
 const PREVIEW_CHECK = sandboxTool('preview_check');
 const RUN_COMMAND = sandboxTool('run_command');
+
+/**
+ * Sandbox tools that cannot change the app: what a chat may call on an app open in it that it has not
+ * chosen (`openAppNotChosen`). Every other sandbox tool, one the sandbox adds later included, may.
+ */
+const READS_APP = new Set([...KEEPS_CHECKS, PREVIEW_CHECK]);
+
+/** Whether a call can change the open app's files (a test or typecheck run cannot). */
+export function changesApp(name: string, input: unknown): boolean {
+  if (!name.startsWith(SANDBOX_PREFIX) || READS_APP.has(name)) return false;
+  return !(name === RUN_COMMAND && checkKindOf((input as { command?: unknown } | null)?.command));
+}
+
+/**
+ * What a change to the open app is refused with in a chat that neither made it (`create_app`) nor
+ * chose it (`use_open_app`): a new chat opened beside an app must not build over that app.
+ */
+export const openAppNotChosen = (app: string) =>
+  `Nothing in ${app} was changed: this chat has not been asked to change it. If the user asked for a different app, call create_app to make a new one and leave ${app} as it is. If they clearly asked to change ${app} itself, call use_open_app with app ${app}, then make the change. If it is not clear which, ask them "Make a new app, or replace ${app}?" and wait for their answer.`;
+
+/**
+ * What `submit_for_review` is refused with in a chat that neither made the open app (`create_app`)
+ * nor chose it (`use_open_app`): a new chat must not submit an app it did not build.
+ */
+export const submitNotChosen = (app: string) =>
+  `${app} was not submitted: this chat did not make it or work on it. If the user clearly asked to submit ${app} itself, call use_open_app with app ${app}, check it is ready, then call submit_for_review again; otherwise ask them which app they mean.`;
+
+/**
+ * The app a finished `create_app` or `use_open_app` call chose for the chat, if it did. Only a
+ * `create_app` that made a new app chooses it: one that found an app the user already had
+ * (`existed`: the open one, a paused one it started, one made elsewhere) chooses nothing.
+ */
+function chosenAppOf({ name, output, isError, refused, stopped, subagent }: ToolResult) {
+  if (name !== CREATE_APP && name !== USE_OPEN_APP) return null;
+  if (isError || refused !== undefined || stopped || subagent !== undefined) return null;
+  const result = output as { app?: unknown; existed?: unknown } | null | undefined;
+  if (name === CREATE_APP && result?.existed === true) return null;
+  return typeof result?.app === 'string' ? result.app : null;
+}
 
 // Only the bare check counts: a pipe, `;`, `||`, a newline, a flag (`-u`, `--help`), a path filter
 // or a `-p` config can exit 0 without the whole check passing. Spaces and tabs only, since a newline
@@ -146,6 +186,12 @@ export interface GateCoreOptions {
    * the page does not, and its results stay as they were.
    */
   checklistApp?: () => string | null;
+  /**
+   * The key of the app open now. Set, a call that can change it (`changesApp`) is refused
+   * (`openAppNotChosen`) until this conversation made that app with `create_app` or chose it with
+   * `use_open_app`. Both the page and the server runner set it.
+   */
+  openApp?: () => string | null;
 }
 
 /** What a gate starts from: what this conversation already did (a server run picking a reply up). */
@@ -184,6 +230,11 @@ export interface GateCore {
   clearAwaiting(): void;
   /** Starts from what the conversation already did; call before the first call of the reply. */
   restore(state: GateRestore): void;
+  /**
+   * A saved call of `conversationId` as a reopened chat shows it (the page, which keeps no history):
+   * what it chose counts, as `restore` reads it on the runner, unless this page load chose since.
+   */
+  restoreChoice(conversationId: string, result: ToolResult): void;
 }
 
 /**
@@ -197,8 +248,20 @@ export function createGateCore({
   currentApp,
   checklistPrefix = Math.random().toString(36).slice(2, 10),
   checklistApp,
+  openApp,
 }: GateCoreOptions = {}): GateCore {
   let conversationId: string | null = null;
+  // Keyed by conversation: the page's one gate serves every chat. Not cleared by reset: the page resets
+  // as the new app opens, after create_app's result chose it.
+  const chosenApps = new Map<string, string>();
+  // Chosen by a call made since this gate began, which a saved call shown later never overrides.
+  const chosenLive = new Set<string>();
+  const choose = (result: ToolResult) => {
+    const app = chosenAppOf(result);
+    if (app === null || conversationId === null) return;
+    chosenApps.set(conversationId, app);
+    chosenLive.add(conversationId);
+  };
   // The chat numbers every reply, Continue and Retry included.
   let reply: number | null = null;
   let turnCalls = 0;
@@ -261,7 +324,7 @@ export function createGateCore({
       : notReady(tool);
   let submitOffers = 0;
 
-  const beforeToolCall: ToolGate = (name, _input, context) => {
+  const beforeToolCall: ToolGate = (name, input, context) => {
     if (context.conversationId !== conversationId) {
       conversationId = context.conversationId;
       reset();
@@ -281,6 +344,12 @@ export function createGateCore({
     }
     const refused = refuse?.(name);
     if (refused) return { refuse: refused };
+    const appOpen = openApp?.() ?? null;
+    if (appOpen !== null && appOpen !== chosenApps.get(context.conversationId)) {
+      if (changesApp(name, input)) return { refuse: openAppNotChosen(appOpen) };
+      // Submitting sends the open app as the user: only a chat that made or chose it may.
+      if (name === SUBMIT_FOR_REVIEW) return { refuse: submitNotChosen(appOpen) };
+    }
     if (READS_CHECKS.has(name)) {
       const refusal = notReady(name);
       if (refusal) return { refuse: refusal };
@@ -306,6 +375,7 @@ export function createGateCore({
     // Neither ran. One its ended reply did not run stays counted in `running`; the next reply starts at 0.
     if (refused !== undefined || stopped) return;
     if (!READS_CHECKS.has(name)) running = Math.max(0, running - 1);
+    choose(result);
     verify(result);
     // A checklist a server runner showed: its Build it is the one waiting (the page shows the card).
     // Never for an all-done list, even if the runner reports awaitsUser.
@@ -419,6 +489,9 @@ export function createGateCore({
     restore({ conversationId: id, earlier, current, app = null }) {
       conversationId = id;
       reset();
+      chosenApps.delete(id);
+      chosenLive.delete(id);
+      for (const result of [...earlier, ...current]) choose(result);
       // Without app tags (the page), every checklist counts, as it did before.
       const forThisApp = (result: ToolResult) =>
         !checklistApp || (result.output as { app?: unknown } | null)?.app === app;
@@ -434,6 +507,10 @@ export function createGateCore({
       }
       carriedCalls = current.filter((result) => result.subagent === undefined).length;
     },
+    restoreChoice(id, result) {
+      const app = chosenAppOf(result);
+      if (app !== null && !chosenLive.has(id)) chosenApps.set(id, app);
+    },
   };
 }
 
@@ -444,7 +521,7 @@ function opensOtherApp(
 ): boolean {
   const opened = (output as { app?: unknown } | null)?.app;
   return (
-    name === 'create_app' &&
+    name === CREATE_APP &&
     !isError &&
     refused === undefined &&
     !stopped &&
