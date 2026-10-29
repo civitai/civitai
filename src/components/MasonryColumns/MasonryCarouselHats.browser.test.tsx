@@ -40,6 +40,14 @@ function Card({ data }: { data: { id: number } }) {
 const rect = (el: Element | null | undefined) => el!.getBoundingClientRect();
 const hats = () => [...document.querySelectorAll('button[data-event-decoration="hat"]')];
 
+// The hat is really visible past the card's edge: the topmost element at a point inside its
+// overhang is the hat, so a clipping ancestor (which bounding rects ignore) turns this red.
+function expectOverhangVisible(hat: Element) {
+  const r = hat.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 8);
+  expect(hit?.closest('button[data-event-decoration="hat"]')).toBe(hat);
+}
+
 async function carousel() {
   await page.viewport(1100, 600);
   renderWithProviders(
@@ -66,6 +74,7 @@ describe('a hat on a masonry carousel card', () => {
       )!;
       expect(h).toBeTruthy();
     });
+    expectOverhangVisible(h);
     expect(rect(first).top - rect(h).top).toBeGreaterThanOrEqual(34);
     expect(rect(first).left - rect(h).left).toBeGreaterThanOrEqual(24);
     expect(rect(h).left).toBeGreaterThanOrEqual(rect(root).left - 40);
@@ -89,6 +98,18 @@ describe('a hat on a masonry carousel card', () => {
     try {
       await userEvent.click(document.querySelector<HTMLElement>('button.right-3')!);
       await vi.waitFor(() => expect(fewest).toBe(0));
+      // The scroll has stopped when the first card has not moved for a few frames.
+      let still = 0;
+      let last = NaN;
+      await vi.waitFor(
+        () => {
+          const left = rect(document.querySelector('[data-testid="card"]')).left;
+          still = left === last ? still + 1 : 0;
+          last = left;
+          expect(still).toBeGreaterThanOrEqual(5);
+        },
+        { timeout: 10000, interval: 100 }
+      );
       await vi.waitFor(() => expect(hats().length).toBeGreaterThan(0), {
         timeout: HAT_SETTLE_FALLBACK_MS + 1000,
       });

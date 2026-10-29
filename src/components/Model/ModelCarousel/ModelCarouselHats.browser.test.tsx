@@ -94,6 +94,14 @@ import { ModelCarousel } from '~/components/Model/ModelCarousel/ModelCarousel';
 const rect = (el: Element | null | undefined) => el!.getBoundingClientRect();
 const hats = () => [...document.querySelectorAll('button[data-event-decoration="hat"]')];
 
+// The hat is really visible past the card's edge: the topmost element at a point inside its
+// overhang is the hat, so a clipping ancestor (which bounding rects ignore) turns this red.
+function expectOverhangVisible(hat: Element) {
+  const r = hat.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 8);
+  expect(hit?.closest('button[data-event-decoration="hat"]')).toBe(hat);
+}
+
 describe('a hat on a model page carousel picture', () => {
   test('hangs past the picture corner: above and left of it, whole in the page', async () => {
     await page.viewport(1100, 800);
@@ -113,6 +121,7 @@ describe('a hat on a model page carousel picture', () => {
       h = hats().find((el) => Math.abs(rect(el).left - rect(first).left) < 80)!;
       expect(h).toBeTruthy();
     });
+    expectOverhangVisible(h);
     expect(rect(first).top - rect(h).top).toBeGreaterThanOrEqual(34);
     expect(rect(first).left - rect(h).left).toBeGreaterThanOrEqual(24);
     expect(rect(h).left).toBeGreaterThanOrEqual(root.left - 40);

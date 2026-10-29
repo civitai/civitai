@@ -44,11 +44,8 @@ export function HatLayerHost({ children }: { children: ReactNode }) {
 type Box = { left: number; top: number; width: number; height: number };
 
 /**
- * Draws `children` into the hat layer at the size of the positioned parent this is placed in.
- * DrawnMediaHat (the image detail) has its own layer and portal because it differs where it
- * counts: it measures the picture drawn inside a letterboxed slot, sizes its own room per edge
- * (an `allowance`, not the container's CSS variable) and holds still on the slide it is given;
- * this one measures the card, reads the CSS variable, and also hides slides out of view.
+ * Draws children into the hat layer at the size of the positioned parent this sits in. Kept
+ * separate from DrawnMediaHat, which measures the letterboxed picture and sizes its own room.
  */
 export function LayeredHat({
   layer,

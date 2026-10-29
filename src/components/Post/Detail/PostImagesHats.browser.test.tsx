@@ -78,6 +78,14 @@ import { PostImages } from '~/components/Post/Detail/PostImages';
 const rect = (el: Element | null | undefined) => el!.getBoundingClientRect();
 const hats = () => [...document.querySelectorAll('button[data-event-decoration="hat"]')];
 
+// The hat is really visible past the card's edge: the topmost element at a point inside its
+// overhang is the hat, so a clipping ancestor (which bounding rects ignore) turns this red.
+function expectOverhangVisible(hat: Element) {
+  const r = hat.getBoundingClientRect();
+  const hit = document.elementFromPoint(r.left + r.width / 2, r.top + 8);
+  expect(hit?.closest('button[data-event-decoration="hat"]')).toBe(hat);
+}
+
 describe('a hat on a post page image', () => {
   test('hangs past the picture corner', async () => {
     await page.viewport(1100, 800);
@@ -89,6 +97,7 @@ describe('a hat on a post page image', () => {
     await vi.waitFor(() => expect(hats()).toHaveLength(1));
     const h = hats()[0];
     const media = [...document.querySelectorAll('[data-testid="media"]')][1];
+    expectOverhangVisible(h);
     expect(rect(media).top - rect(h).top).toBeGreaterThanOrEqual(34);
     expect(rect(media).left - rect(h).left).toBeGreaterThanOrEqual(24);
   });

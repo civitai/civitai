@@ -193,11 +193,19 @@ describe('a gallery post card wears a hat only on the slide that wears it', () =
     await vi.waitFor(() => expect(shownId()).toBe('1'));
     await vi.waitFor(() => expect(hatOn()).toBe('1'));
     const media = document.querySelector('.flex-1.overflow-hidden')!.getBoundingClientRect();
-    const hat = document
-      .querySelector('button[data-event-decoration="hat"]')!
-      .getBoundingClientRect();
+    const hatEl = document.querySelector('button[data-event-decoration="hat"]')!;
+    const hat = hatEl.getBoundingClientRect();
     expect(media.top - hat.top).toBeGreaterThanOrEqual(24);
     expect(media.left - hat.left).toBeGreaterThanOrEqual(12);
+    // Really visible left of the card: a clipping ancestor, which bounding rects ignore, turns this red.
+    let hitLeftOfCard = false;
+    for (let x = hat.left + 2; x < media.left - 4; x += 4)
+      for (let y = hat.top; y < hat.bottom; y += 4)
+        if (
+          document.elementFromPoint(x, y)?.closest('button[data-event-decoration="hat"]') === hatEl
+        )
+          hitLeftOfCard = true;
+    expect(hitLeftOfCard).toBe(true);
   });
 
   test('no hat anywhere when no image wears one', async () => {
