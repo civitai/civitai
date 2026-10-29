@@ -5,9 +5,15 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  readPostDetailViaKysely,
+  readPostDetailViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import {
   getDbWithoutLag,
+  getKyselyWithoutLag,
   preventReplicationLag,
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
@@ -33,7 +39,7 @@ import { editPostImageSelect, postSelect } from '~/server/selectors/post.selecto
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
-import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   buildPostCursorClause,
   encodePostCursor,
@@ -70,6 +76,7 @@ import {
   invalidateManyImageExistence,
   purgeImageGenerationDataCache,
   queueImageSearchIndexUpdate,
+  isPlainOwnerDelete,
 } from '~/server/services/image.service';
 import type { AssertPostOwnedBy } from '~/server/services/image.service';
 import { bustImageDeliveryMetadataCache } from '~/server/services/image-delivery.service';
@@ -667,11 +674,17 @@ const getPostCollectionCollectionItem = async ({
 
 export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  const db = await getDbWithoutLag('post', id);
-  const post = await db.post.findFirst({
-    where: { id, ...getPostDetailVisibility(user) },
-    select: postSelect,
-  });
+  let db: typeof dbRead | typeof dbWrite;
+  let post: Awaited<ReturnType<typeof readPostDetailViaKysely>> = undefined;
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6)) {
+    const kysely = await getKyselyWithoutLag('post', id);
+    db = kysely === (await loadKyselyDb()).kyselyWrite ? dbWrite : dbRead;
+    post = await readPostDetailViaKysely(kysely, { id, viewer: user, now: new Date() });
+  } else {
+    db = await getDbWithoutLag('post', id);
+  }
+  // A post whose user row is gone reads `undefined` through Kysely, and Prisma throws for it.
+  if (post === undefined) post = await readPostDetailViaPrisma(db, { id, viewer: user });
 
   if (!post) throw throwNotFoundError();
 
@@ -1209,7 +1222,11 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
   await userImageVideoCountCaches.refresh(userIds);
 }
 
-export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
+export const deletePost = async ({
+  id,
+  isModerator,
+  deletedById,
+}: GetByIdInput & { isModerator?: boolean; deletedById?: number }) => {
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
@@ -1230,12 +1247,21 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
 
       const deletableImages = images.filter((image) => image.deletable);
 
-      let deletedImages: { id: number; url: string }[] = [];
+      type DeletedImage = {
+        id: number;
+        url: string;
+        userId: number;
+        ingestion: string;
+        needsReview: string | null;
+        nsfwLevel: number;
+        blockedFor: string | null;
+      };
+      let deletedImages: DeletedImage[] = [];
       if (deletableImages.length) {
-        deletedImages = await tx.$queryRaw<{ id: number; url: string }[]>`
+        deletedImages = await tx.$queryRaw<DeletedImage[]>`
           DELETE FROM "Image"
           WHERE id IN (${Prisma.join(deletableImages.map((i) => i.id))})
-          RETURNING id, url
+          RETURNING id, url, "userId", ingestion::text, "needsReview", "nsfwLevel", "blockedFor"
         `;
       }
 
@@ -1296,7 +1322,15 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
     await invalidateManyImageExistence(deletedImageIds);
 
     await Limiter({ batchSize: 5 }).process(deletedImages, async (batch) =>
-      Promise.all(batch.map(({ id, url }) => deleteImageFromS3({ id, url })))
+      Promise.all(
+        batch.map((image) =>
+          deleteImageFromS3({
+            id: image.id,
+            url: image.url,
+            keepShopArtwork: isPlainOwnerDelete(image, deletedById),
+          })
+        )
+      )
     );
   }
 

@@ -82,7 +82,6 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
   let stored: z.infer<typeof placementConfigSchema> = {};
 
   try {
-    // `kysely-hot-reads-5` on: the same row through Kysely, on the same replica.
     const row = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
       ? await readKeyValueViaKysely((await loadKyselyDb()).kyselyRead, PLACEMENT_CONFIG_KEY)
       : await readKeyValueViaPrisma(dbRead, PLACEMENT_CONFIG_KEY);

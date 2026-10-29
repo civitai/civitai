@@ -8,6 +8,7 @@ import type * as BuzzService from '~/server/services/buzz.service';
 import type * as Blocklist from '~/server/services/blocklist.service';
 import type { CosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import { DEFAULT_CREATOR_SHOP_FEES } from '~/server/schema/creator-shop.schema';
+import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -159,6 +160,7 @@ beforeAll(async () => {
     CREATE TYPE "CosmeticType" AS ENUM ('Badge', 'NamePlate', 'ContentDecoration', 'ProfileDecoration', 'ProfileBackground', 'Sticker', 'ChatTheme', 'CardDecoration');
     CREATE TYPE "CosmeticShopItemStatus" AS ENUM ('Draft', 'PendingReview', 'Published', 'Rejected', 'RequestedChanges', 'Archived');
     CREATE TABLE "User" (id int PRIMARY KEY, muted boolean NOT NULL DEFAULT false, "bannedAt" timestamp, "deletedAt" timestamp);
+    CREATE TABLE "Image" (id serial PRIMARY KEY, "userId" int NOT NULL, url text NOT NULL);
     CREATE TABLE "Cosmetic" (
       id int PRIMARY KEY, name text NOT NULL, type "CosmeticType" NOT NULL, data jsonb, "createdById" int
     );
@@ -196,6 +198,7 @@ beforeEach(async () => {
     DELETE FROM "ItemDefinition";
     DELETE FROM "Cosmetic";
     DELETE FROM "User";
+    DELETE FROM "Image";
     INSERT INTO "User" (id) VALUES (${CREATOR}), (${OTHER}), (${MOD});
   `);
   await seedItems();
@@ -1002,5 +1005,38 @@ describe('an item in a mystery pack on sale', () => {
       shop.updateCreatorShopItem({ userId: CREATOR, id, availableQuantity: 10 })
     ).rejects.toThrow(refusal);
     expect(dbMock.dbWrite.cosmeticShopItem.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('submitMysteryPack box image key', () => {
+  const KEY = '0a0b0c0d-0000-4000-8000-0000000000aa';
+  const boxes = () => q<{ id: number }>(`SELECT id FROM "ItemDefinition"`);
+
+  it("refuses another user's image key before charging", async () => {
+    await q(`INSERT INTO "Image" ("userId", url) VALUES ($1, $2)`, [OTHER, KEY]);
+
+    await expect(submit({ imageUrl: KEY, rightsAffirmed: true })).rejects.toThrow(
+      COVER_IMAGE_UNAVAILABLE_MESSAGE
+    );
+    expect(buzz.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(await boxes()).toEqual([]);
+  });
+
+  it("refuses the creator's own image key too", async () => {
+    await q(`INSERT INTO "Image" ("userId", url) VALUES ($1, $2)`, [CREATOR, KEY]);
+
+    await expect(submit({ imageUrl: KEY, rightsAffirmed: true })).rejects.toThrow(
+      COVER_IMAGE_UNAVAILABLE_MESSAGE
+    );
+    expect(await boxes()).toEqual([]);
+  });
+
+  it('accepts a fresh key once, and refuses it for a second box', async () => {
+    await submit({ imageUrl: KEY, rightsAffirmed: true });
+
+    await expect(submit({ imageUrl: KEY, rightsAffirmed: true })).rejects.toThrow(
+      COVER_IMAGE_UNAVAILABLE_MESSAGE
+    );
+    expect(await boxes()).toHaveLength(1);
   });
 });

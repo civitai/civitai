@@ -904,7 +904,6 @@ export const getUserEngagedModelVersionsHandler = async ({
   ctx: ProtectedContext;
 }) => {
   const userId = ctx.user.id;
-  // `kysely-hot-reads-5` on: the same ids through Kysely, on the same replica.
   const versions = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
     ? await readModelVersionIdsViaKysely((await loadKyselyDb()).kyselyRead, input.id)
     : await readModelVersionIdsViaPrisma(dbRead, input.id);

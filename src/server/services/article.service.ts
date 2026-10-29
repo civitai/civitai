@@ -56,6 +56,7 @@ import {
   getEventDecorationsForEntity,
 } from '~/server/services/cosmetic.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
+import { shopArtworkUrls } from '~/server/services/image-url-ownership';
 import {
   deleteImageById,
   enqueueImageIngestion,
@@ -958,6 +959,7 @@ export const upsertArticle = async ({
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
     await throwOnBlockedUserContent(data.content, { isModerator, surface: 'article' });
+    await assertNoShopArtworkInContent(data.content, article?.content);
 
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
@@ -1646,6 +1648,22 @@ export const unusedAuthorImage = (ownerId: number) =>
   } satisfies Prisma.ImageWhereInput);
 
 /**
+ * Deleting an orphaned image deletes its object, so one whose key shop artwork uses stays: an
+ * article saved before shop keys were refused can hold one.
+ */
+async function withoutShopArtwork(
+  db: Prisma.TransactionClient | typeof dbWrite,
+  images: { id: number; url: string }[]
+) {
+  if (!images.length) return [];
+  const shopUrls = await shopArtworkUrls(
+    images.map((image) => image.url),
+    db
+  );
+  return images.filter((image) => !shopUrls.has(image.url)).map((image) => image.id);
+}
+
+/**
  * Drops images used as a service offering's cover. That column has no Prisma relation, so
  * `unusedAuthorImage` cannot see it; a new plain image-id column needs the same treatment.
  */
@@ -1742,12 +1760,12 @@ export const deleteArticleById = async ({
       if (imageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
         const trulyOrphanedImages = await dbWrite.image.findMany({
           where: { id: { in: imageIds }, ...unusedAuthorImage(article.userId) },
-          select: { id: true },
+          select: { id: true, url: true },
         });
 
         const deletable = await withoutOfferingCovers(
           dbWrite,
-          trulyOrphanedImages.map((img) => img.id)
+          await withoutShopArtwork(dbWrite, trulyOrphanedImages)
         );
         // Per image, so one failed delete does not stop the rest.
         for (const imageId of deletable) {
@@ -1934,7 +1952,7 @@ export async function assertArticleContentUrlsUsable({
       await assertClientKeysIssuedToCaller({ urls, userId: ownerId, alsoIssuedTo: userId });
     }
     for (const urls of urlChunks(missing.filter((url) => stored.has(url)))) {
-      await assertClientImageUrlsUsable({ urls, userId: ownerId });
+      await assertClientImageUrlsUsable({ urls, userId: ownerId, shopArtwork: false });
       const { issuedToOthers } = await keyIssuers({ urls, userId: ownerId, alsoIssuedTo: userId });
       if (issuedToOthers.length) throw imageUrlUnavailableError();
     }
@@ -1972,13 +1990,33 @@ export async function checkSavedArticleContentUrls({
     lookupFailed: false,
   };
   for (const urls of urlChunks(await contentUrlsWithoutRows(content))) {
-    await assertClientImageUrlsUsable({ urls, userId: ownerId });
+    await assertClientImageUrlsUsable({ urls, userId: ownerId, shopArtwork: false });
     const issuers = await keyIssuers({ urls, userId: ownerId });
     result.issuedToOthers.push(...issuers.issuedToOthers);
     result.unrecorded.push(...issuers.unrecorded);
     result.lookupFailed ||= issuers.recordReadFailed || issuers.requestLogReadFailed;
   }
   return result;
+}
+
+/**
+ * Content images become `Image` rows, and deleting one removes its object, so an article may not
+ * embed a key that shop artwork uses. Checked before the write: linking runs after it, and must
+ * create and scan a row for every image the content holds. Only images new to this save count, so
+ * an article that already holds one can still be edited.
+ */
+async function assertNoShopArtworkInContent(
+  content: string | null | undefined,
+  storedContent: string | null | undefined
+) {
+  if (!content) return;
+  const stored = new Set(storedContent ? getContentMedia(storedContent).map((m) => m.url) : []);
+  const added = getContentMedia(content)
+    .map((media) => media.url)
+    .filter((url) => !stored.has(url));
+  if (!added.length) return;
+  const shopUrls = await shopArtworkUrls(added);
+  if (shopUrls.size) throw imageUrlUnavailableError(ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE);
 }
 
 /**
@@ -2122,11 +2160,11 @@ export async function linkArticleContentImages({
     if (orphanedIds.length > 0) {
       const trulyOrphaned = await tx.image.findMany({
         where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
-        select: { id: true },
+        select: { id: true, url: true },
       });
       trulyOrphanedIds = await withoutOfferingCovers(
         tx,
-        trulyOrphaned.map((img) => img.id)
+        await withoutShopArtwork(tx, trulyOrphaned)
       );
     }
 

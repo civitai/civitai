@@ -20,6 +20,10 @@ export const modelOf = (owner: number) => owner * 10;
 export const versionOf = (owner: number, n = 1) => owner * 100 + n;
 export const fileOf = (version: number) => version * 10 + 1;
 
+const OWNERSHIP_MIGRATION = path.resolve(
+  __dirname,
+  '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_model_ownership/migration.sql'
+);
 const HOLD_MIGRATION = path.resolve(
   __dirname,
   '../../../../packages/civitai-db-schema/prisma/migrations/20261019220000_evidence_hold/migration.sql'
@@ -94,6 +98,7 @@ export async function createModelHoldDb() {
   const db = new PGlite();
   await db.exec(BASE_SCHEMA);
   await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
+  await db.exec(readFileSync(OWNERSHIP_MIGRATION, 'utf8'));
   return db;
 }
 
@@ -106,7 +111,7 @@ export async function seedModelHoldDb(db: PGlite) {
     -- The hold tables refuse TRUNCATE, so the reset runs with triggers off.
     SET session_replication_role = replica;
     TRUNCATE "CsamReport", "Image", "Model", "EntityAccess", "PaidAccess", "EvidenceHold",
-      "EvidenceHoldImage", "EvidenceHoldPost" CASCADE;
+      "EvidenceHoldImage", "EvidenceHoldPost", "ModelOwnership" CASCADE;
     SET session_replication_role = DEFAULT;
     INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED}, 'manual', 'review');
     INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});
@@ -251,3 +256,13 @@ export function realTransactions(db: PGlite) {
     ).affectedRows,
   })) as never);
 }
+
+/** An account that owns nothing here and no hold covers: an unheld earlier owner. */
+export const FORMER_CLEAN = 4;
+
+/** Records that `owner`'s model was created by `former` and transferred to `owner`. */
+export const ownedBefore = (db: PGlite, owner: number, former: number) =>
+  db.query(
+    `INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES ($1, $2, 'create'), ($1, $3, 'transfer')`,
+    [modelOf(owner), former, owner]
+  );
