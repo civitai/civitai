@@ -55,11 +55,14 @@ function isSharedCacheable(res: ServerResponse) {
  * redirect, a `notFound` or a throw, and `setHeader` would throw `ERR_HTTP_HEADERS_SENT`).
  */
 export function syncTrpcPoolCookie(req: IncomingMessage, res: ServerResponse, enabled: boolean) {
-  if (res.headersSent || isSharedCacheable(res)) return;
   const value = getCookies({ req: req as never })[TRPC_POOL_COOKIE];
+  let cookie: string | undefined;
   if (enabled && value !== '1') {
-    putSetCookie(res, `${TRPC_POOL_COOKIE}=1; ${attributes(TRPC_POOL_COOKIE_MAX_AGE_S)}`);
+    cookie = `${TRPC_POOL_COOKIE}=1; ${attributes(TRPC_POOL_COOKIE_MAX_AGE_S)}`;
   } else if (!enabled && value !== undefined) {
-    putSetCookie(res, `${TRPC_POOL_COOKIE}=; ${attributes(0)}`);
+    cookie = `${TRPC_POOL_COOKIE}=; ${attributes(0)}`;
   }
+  // Checked only when there is something to write: a request in step touches no response header.
+  if (cookie === undefined || res.headersSent || isSharedCacheable(res)) return;
+  putSetCookie(res, cookie);
 }
