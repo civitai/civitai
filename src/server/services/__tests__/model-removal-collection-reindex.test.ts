@@ -478,7 +478,9 @@ describe('permaDeleteModelById — legal hold', () => {
       CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL, "nsfwLevel" int NOT NULL DEFAULT 1);
       CREATE TABLE "Thread" (
         id serial PRIMARY KEY, "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "reviewId" int,
-        "postId" int, "imageId" int, "parentThreadId" int, "rootThreadId" int, "commentId" int,
+        "postId" int REFERENCES "Post"(id) ON DELETE CASCADE,
+        "imageId" int REFERENCES "Image"(id) ON DELETE CASCADE,
+        "parentThreadId" int, "rootThreadId" int, "commentId" int,
         metadata jsonb NOT NULL DEFAULT '{}'
       );
       CREATE TABLE "CommentV2" (
@@ -706,11 +708,10 @@ describe('permaDeleteModelById — legal hold', () => {
     const threads = await db.query<{ id: number; postId: number | null; imageId: number | null }>(
       `SELECT id, "postId", "imageId" FROM "Thread" WHERE id >= 800 ORDER BY id`
     );
+    // The unheld ones cascade with their parents; the held ones were detached first.
     expect(threads.rows).toEqual([
       { id: 800, postId: null, imageId: null },
       { id: 801, postId: null, imageId: null },
-      { id: 802, postId: POST_ID, imageId: null },
-      { id: 803, postId: null, imageId: IMAGE_ID },
     ]);
     // In the statement that deletes them: a hold placed between two statements would be missed.
     for (const table of ['Image', 'Post'])
