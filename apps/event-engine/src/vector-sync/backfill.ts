@@ -289,6 +289,7 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
     const write = vectorWriter(payloads, total, deps, paceWrites);
     batch.done = (async () => {
       let error: unknown;
+      let writeFailed: unknown;
       try {
         const result = await embedder!.embed(inputs, {
           acceptStamp: async (stamp) => {
@@ -297,17 +298,28 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
           },
           onVectors: async (vectors) => resolve(batch, await write(vectors)),
         });
-        // Whatever was not stored as it came (a failed early write).
-        await write(result.vectors)
-          .then((ids) => resolve(batch, ids))
-          .catch((err) => void (error = err));
+        // Whatever was not stored as it came (a failed early write). These vectors are paid for,
+        // so the write is retried here, never by re-embedding; if Qdrant stays down the run stops.
+        for (let tries = 1; ; tries++) {
+          try {
+            resolve(batch, await write(result.vectors));
+            break;
+          } catch (err) {
+            if (tries >= ATTEMPTS) {
+              error = writeFailed = err;
+              break;
+            }
+            logger.warn({ err, tries }, 'vector-backfill: writing vectors failed; retrying');
+            await sleep(5000 * tries);
+          }
+        }
         resolve(batch, result.failed, true);
-        error = result.error ?? error;
+        if (!writeFailed) error = result.error ?? error;
       } catch (err) {
         error = err;
       }
       const left = inputs.filter((i) => batch.unresolved.has(Number(i.id)));
-      const fatal = FATAL.has((error as Error | undefined)?.name ?? '');
+      const fatal = !!writeFailed || FATAL.has((error as Error | undefined)?.name ?? '');
       const attempt = Math.max(0, ...left.map((i) => pending.get(Number(i.id))!.attempt)) + 1;
       if (fatal || (left.length && attempt >= ATTEMPTS)) {
         failure ??= error ?? new Error('embedding returned no result for some images');
@@ -346,6 +358,8 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
         // The loop ran during the re-read: its deadline may have counted these failed meanwhile.
         again = again.filter((i) => batch.unresolved.has(Number(i.id)));
         for (const i of again) pending.get(Number(i.id))!.attempt = attempt;
+        // Out of `running` before its images are back in the queue, so no new batch overlaps it.
+        running.delete(batch);
         queue.unshift(...again);
         if (again.length) retryAt = now() + 5000 * attempt;
       }

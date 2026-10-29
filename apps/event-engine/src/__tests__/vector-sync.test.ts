@@ -1190,6 +1190,47 @@ describe('backfill', () => {
     expect(c.t).toBeLessThan(20_000);
   });
 
+  // Review of #7158: a Qdrant write failing twice used to re-embed vectors already paid for.
+  test('vectors in hand whose write keeps failing are written again, not re-embedded', async () => {
+    const pg = new FakePg().put(...ids(1, 10).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const upsert = store.upsert;
+    let upserts = 0;
+    store.upsert = async (points) => {
+      if (++upserts <= 2) throw new Error('qdrant down');
+      return upsert(points);
+    };
+    const embedder = new FakeEmbedder();
+    const c = clock();
+    const state = memoryState();
+    await runBackfill(
+      { watermark: 10, floor: 0, span: 10 },
+      { ...deps(pg, store, embedder), state, now: c.now, sleep: c.sleep }
+    );
+    expect(embedder.calls.flat()).toHaveLength(10);
+    expect(store.points.size).toBe(10);
+    expect(state.cursor).toBe(0);
+  });
+
+  test('a Qdrant write that never recovers stops the run with the cursor held, re-embedding nothing', async () => {
+    const pg = new FakePg().put(...ids(1, 10).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    store.upsert = async () => {
+      throw new Error('qdrant down');
+    };
+    const embedder = new FakeEmbedder();
+    const c = clock();
+    const state = memoryState();
+    await expect(
+      runBackfill(
+        { watermark: 10, floor: 0, span: 10 },
+        { ...deps(pg, store, embedder), state, now: c.now, sleep: c.sleep }
+      )
+    ).rejects.toThrow('qdrant down');
+    expect(embedder.calls.flat()).toHaveLength(10);
+    expect(state.cursor).toBeNull();
+  });
+
   // A run lasts days: only consecutive read failures stop it, not four blips spread over it.
   test('a page read that fails once is retried, and failures on different pages do not add up', async () => {
     const pg = new FakePg().put(...ids(1, 50).map((id) => imageRow(id)));
