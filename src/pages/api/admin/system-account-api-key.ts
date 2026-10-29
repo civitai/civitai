@@ -1,11 +1,13 @@
 import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import * as z from 'zod';
-import { isModerationAccountUser, isSystemAccountMeta } from '@civitai/auth';
 import { TokenScope, TokenScopePresets } from '@civitai/auth/token-scope';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
-import { holdsModeratorAccess } from '~/server/auth/moderator-access';
+import {
+  systemAccountRefusal,
+  systemAccountSelect,
+} from '~/server/auth/system-account-eligibility';
 import { logToAxiom } from '~/server/logging/client';
 import { addApiKey, deleteApiKeys } from '~/server/services/api-key.service';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -56,31 +58,10 @@ const schema = z.object({
   ),
 });
 
-async function refusal(userId: number): Promise<{ status: number; error: string } | null> {
-  const user = await dbWrite.user.findUnique({
-    where: { id: userId },
-    select: {
-      id: true,
-      username: true,
-      meta: true,
-      deletedAt: true,
-      bannedAt: true,
-      isModerator: true,
-      roles: { select: { role: true } },
-    },
-  });
-  if (!user) return { status: 404, error: 'User not found' };
-  if (!isSystemAccountMeta(user.meta)) return { status: 403, error: 'Not a system account' };
-  if (user.deletedAt || user.bannedAt) return { status: 403, error: 'Account is not active' };
-  if (
-    isModerationAccountUser(user, env.CIVITAI_MODERATION_USER_ID) ||
-    (await holdsModeratorAccess({
-      isModerator: user.isModerator,
-      roles: user.roles.map(({ role }) => role),
-    }))
-  )
-    return { status: 403, error: 'Account has moderator access' };
-  return null;
+async function refusal(userId: number) {
+  return systemAccountRefusal(
+    await dbWrite.user.findUnique({ where: { id: userId }, select: systemAccountSelect })
+  );
 }
 
 // Unconfigured while it repeats another admin token.
