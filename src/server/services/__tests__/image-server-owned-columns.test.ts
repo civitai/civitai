@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as z from 'zod';
 import type * as OrchestratorService from '~/server/services/orchestrator/orchestrator.service';
 
@@ -12,6 +12,7 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
 }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
 import { upsertCreatorAnnouncementSchema } from '~/server/schema/announcement.schema';
 import { upsertArticleInput } from '~/server/schema/article.schema';
 import { upsertBountyEntryInputSchema } from '~/server/schema/bounty-entry.schema';
@@ -27,7 +28,11 @@ import { setVideoThumbnailSchema } from '~/server/schema/image.schema';
 import { createPostWithImagesSchema, postAddImageInput } from '~/server/schema/post.schema';
 import { purchasableRewardUpsertSchema } from '~/server/schema/purchasable-reward.schema';
 import { userProfileUpdateSchema } from '~/server/schema/user-profile.schema';
-import { resolveCoverImageId, type CoverImageDeps } from '~/server/services/cover-image.service';
+import {
+  COVER_IMAGE_UNAVAILABLE_MESSAGE,
+  resolveCoverImageId,
+  type CoverImageDeps,
+} from '~/server/services/cover-image.service';
 import {
   createEntityImages,
   createImage,
@@ -486,6 +491,7 @@ describe('resolveCoverImageId', () => {
     const deps: CoverImageDeps = {
       findReusableImageId: vi.fn().mockResolvedValue(null),
       objectExists: vi.fn().mockResolvedValue(true),
+      assertUrlUsable: vi.fn().mockResolvedValue(undefined),
       createImage: createImageDep,
       logExistenceUnknown: vi.fn(),
     };
@@ -499,4 +505,53 @@ describe('resolveCoverImageId', () => {
     expect(args).not.toHaveProperty('index');
     expect(args).not.toHaveProperty('id');
   });
+});
+
+describe('a client url owned by another user', () => {
+  const unavailable = { code: 'BAD_REQUEST', message: COVER_IMAGE_UNAVAILABLE_MESSAGE };
+  const ownedBy = (userId: number) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: URL_KEY, userId }]));
+  // clearAllMocks keeps implementations; the fake must not reach the other describes.
+  afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+
+  const sites = {
+    createImage: () =>
+      createImage({ url: URL_KEY, type: 'image', userId: OWNER, skipIngestion: true }),
+    createEntityImages: () =>
+      createEntityImages({
+        images: [{ url: URL_KEY, type: 'image' } as never],
+        userId: OWNER,
+        entityType: 'Bounty',
+        entityId: 1,
+      }),
+    updateEntityImages: () => {
+      dbMock.dbWrite.imageConnection.findMany.mockResolvedValueOnce([] as never);
+      return updateEntityImages({
+        images: [{ url: URL_KEY, type: 'image' } as never],
+        userId: OWNER,
+        entityType: 'Bounty',
+        entityId: 1,
+      });
+    },
+  };
+  const written = (site: keyof typeof sites) =>
+    site === 'createImage'
+      ? dbMock.dbWrite.image.create.mock.calls.length
+      : dbMock.dbWrite.image.createMany.mock.calls.length;
+
+  for (const site of Object.keys(sites) as (keyof typeof sites)[]) {
+    it(`${site} refuses it before writing`, async () => {
+      ownedBy(OTHER_USER);
+
+      await expect(sites[site]()).rejects.toMatchObject(unavailable);
+      expect(written(site)).toBe(0);
+    });
+
+    it(`${site} writes a url the caller owns`, async () => {
+      ownedBy(OWNER);
+
+      await sites[site]();
+      expect(written(site)).toBe(1);
+    });
+  }
 });

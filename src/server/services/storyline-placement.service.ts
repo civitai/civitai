@@ -196,6 +196,16 @@ export async function createStorylinePlacement({
       if (!dropped.count) throw throwBadRequestError(STORYLINE_REFUSALS.alreadySubmitted);
     }
 
+    // After the draft row, the order `deleteStoryline` locks them in, so a delete and a submit
+    // take turns and the delete sees this placement.
+    const [storyline] = await tx.$queryRaw<{ id: number }[]>`
+      SELECT st.id FROM "Storyline" st
+      JOIN "StorylineChapter" c ON c."storylineId" = st.id
+      WHERE c."postId" = ${parentPostId}
+      FOR SHARE OF st
+    `;
+    if (!storyline) throw throwBadRequestError(STORYLINE_REFUSALS.notAChapter);
+
     return tx.placement.create({
       data: {
         surface: SURFACE,
@@ -723,32 +733,49 @@ const toSetting = (
 ): PlacementSpaceSetting | undefined =>
   row ? { mode: row.mode as PlacementSpaceMode, price: row.price } : undefined;
 
-/**
- * A storyline's continuation settings, for its creator. Resolved from the storyline's own row and
- * the creator's account rather than through a chapter, so it works before any chapter exists.
- * Complete reads as closed, as it does for a contributor.
- */
-export async function getStorylineSpace({
+async function getManagedStoryline({
   storylineId,
   userId,
+  isModerator,
 }: {
   storylineId: number;
   userId: number;
-}): Promise<StorylineSpace> {
+  isModerator?: boolean;
+}) {
   const storyline = await dbWrite.storyline.findUnique({
     where: { id: storylineId },
     select: { userId: true, status: true },
   });
   if (!storyline) throw throwNotFoundError('Storyline not found');
-  if (storyline.userId !== userId)
+  if (storyline.userId !== userId && !isModerator)
     throw throwAuthorizationError('placement: that is not your storyline');
+  return storyline;
+}
+
+/**
+ * A storyline's continuation settings, for its creator, or read-only for a moderator. Resolved from
+ * the storyline's own row and the creator's account rather than through a chapter, so it works
+ * before any chapter exists. Complete reads as closed, as it does for a contributor.
+ */
+export async function getStorylineSpace({
+  storylineId,
+  userId,
+  isModerator,
+}: {
+  storylineId: number;
+  userId: number;
+  isModerator?: boolean;
+}): Promise<StorylineSpace> {
+  const storyline = await getManagedStoryline({ storylineId, userId, isModerator });
+  // The owner's account default and price cap, whoever is looking.
+  const ownerId = storyline.userId;
 
   const rows = await dbWrite.placementSpace.findMany({
     where: {
       surface: SURFACE,
       OR: [
         { entityType: 'storyline', entityId: storylineId },
-        { entityType: 'user', entityId: userId },
+        { entityType: 'user', entityId: ownerId },
       ],
     },
     select: { entityType: true, mode: true, price: true },
@@ -758,7 +785,7 @@ export async function getStorylineSpace({
     storyline: toSetting(own),
     user: toSetting(rows.find((row) => row.entityType === 'user')),
   });
-  const { max: cap } = await placementPriceRange(userId, SURFACE);
+  const { max: cap } = await placementPriceRange(ownerId, SURFACE);
 
   return {
     storylineId,
@@ -770,7 +797,10 @@ export async function getStorylineSpace({
   };
 }
 
-/** Writes a storyline's own level of the space. `setPlacementSpace` checks ownership. */
+/**
+ * Writes a storyline's own level of the space, for its owner only: `setPlacementSpace` gives a
+ * moderator no bypass.
+ */
 export async function setStorylineSpace({
   storylineId,
   mode,

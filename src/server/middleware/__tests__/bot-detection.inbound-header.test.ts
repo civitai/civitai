@@ -39,7 +39,7 @@ function headerSeenByApp(response: Response, request: NextRequest) {
 describe('botDetectionMiddleware and an inbound crawler header', () => {
   it.each([
     ['an image detail page', '/images/123'],
-    ['a tRPC call', '/api/trpc/image.get'],
+    ['a public REST call on another resource', '/api/v1/models'],
     ['a public REST call', '/api/v1/images'],
     ['a listing page under a matched prefix', '/images'],
     ['the home page', '/'],

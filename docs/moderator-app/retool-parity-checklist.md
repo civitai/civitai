@@ -777,6 +777,8 @@ Retool's board is the triage entry point, and the walkthrough's colour quote lan
 ## 11. Operational
 
 - [ ] `FRESHDESK_API_KEY` — see the handover. (`CIVITAI_MOD_API_KEY` is retired, 2026-08-19.)
+- [ ] `FRESHDESK_WRITE_API_KEY` — the `/tickets` reply, status and "Send to support" actions refuse
+      without it. Separate from the read key on purpose; there is no fallback between them.
       **`RETOOL_DATABASE_URL` is superseded**: the cutover retires it in favour of
       `MODERATOR_DATABASE_URL`, which already points at the same database the xguard lab uses. Set that
       one in every deployed environment instead — see [`retool-db-cutover.md`](retool-db-cutover.md).

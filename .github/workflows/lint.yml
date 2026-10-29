@@ -617,6 +617,8 @@ jobs:
       KYSELY_HOT_READS_3_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-4 suite (its own `hot_reads_4_parity` schema).
       KYSELY_HOT_READS_4_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-5 suite (its own `hot_reads_5_parity` schema).
+      KYSELY_HOT_READS_5_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1202,3 +1204,47 @@ jobs:
 
       - name: Component tests
         run: pnpm run test:component
+
+  component-quarantine:
+    name: Component tests (quarantine, non-blocking)
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' }}
+    # Why: AppAssistantWorkspace.browser.test.tsx stalls on Playwright clicks at random on CI
+    # runners, and red-ed PRs that do not touch it (civitai/civitai#7101). It is held out of the
+    # blocking `Component tests` job and runs here instead, with the groups skipped there
+    # un-skipped. List and exit conditions: scripts/ci/component-quarantine.mjs.
+    #
+    # Non-blocking on pull requests only, same shape as the `unit` job above: on a PR the run's
+    # `conclusion` stays `success` while the step is red, so count green runs from the
+    # `Quarantined component tests` STEP's conclusion (jobs endpoint), not the run's. On `main` the
+    # verdict is real. Exit after 10 green runs in a row, or re-decide by 2026-11-11.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+
+      # A `--project` that matches nothing exits 0, so the run's JSON report goes through the
+      # same gate as the blocking job (`--narrowed`: a floor and file ledger make no sense for one
+      # file). The gate only ever adds a failure; it never turns vitest's red into green.
+      - name: Quarantined component tests
+        run: |
+          rc=0
+          pnpm exec vitest run --project component-quarantine \
+            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/quarantine-report.json" || rc=$?
+          node scripts/ci/assert-component-suite-ran.mjs "$RUNNER_TEMP/quarantine-report.json" --narrowed || exit 1
+          exit $rc

@@ -19,7 +19,7 @@ import type * as TrpcMod from '~/utils/trpc';
  *
  * 🔴 THE INVARIANT GOT *WIDER* WITH THE RAIL, WHICH IS WORTH SAYING EXPLICITLY. A tab set
  * that differed between the server and the first client paint cost a row of chrome; a RAIL
- * that differs costs 276px of the page's WIDTH, and the store grid beneath it is a
+ * that differs costs 292px of the page's WIDTH, and the store grid beneath it is a
  * container query — so the same mismatch now re-ladders every card on the page rather than
  * shifting one bar. The deferral is load-bearing for more than it was.
  *
@@ -533,7 +533,7 @@ describe('the rail — hides entirely below two tabs', () => {
  * ordinary `/apps` user — the SSR and first-paint section set is `[Marketplace]` ALONE.
  * One section is below `APPS_NAV_MIN_SECTIONS`, so `AppsPageLayout` renders NO RAIL and
  * the body takes the full container. After mount `getNavSummary` resolves, `Activity`
- * appears, the count reaches two, and the rail mounts — moving the page body 276px to the
+ * appears, the count reaches two, and the rail mounts — moving the page body 292px to the
  * right and re-laddering the container-queried store grid underneath it.
  *
  * 🔴 THIS IS NOT A HYDRATION MISMATCH AND THE DEFERRAL IS NOT THE BUG. Server and first
@@ -544,7 +544,7 @@ describe('the rail — hides entirely below two tabs', () => {
  *
  *   • reserve the rail from the first paint for any logged-in store viewer whose summary
  *     query will run (all SSR-safe inputs), and the genuinely-one-section cohort gets
- *     276px of permanent chrome showing a single link — the exact waste the `< 2` collapse
+ *     292px of permanent chrome showing a single link — the exact waste the `< 2` collapse
  *     exists to prevent;
  *   • defer, as now, and that cohort pays nothing while the common one pays a one-time
  *     shift.
@@ -553,7 +553,7 @@ describe('the rail — hides entirely below two tabs', () => {
  * is make the current behaviour a checked fact, so the choice is visible in a diff rather
  * than inherited by accident.
  */
-describe('🔴 the rail MOUNTS on the 1 → 2 transition (a 276px post-hydration shift)', () => {
+describe('🔴 the rail MOUNTS on the 1 → 2 transition (a 292px post-hydration shift)', () => {
   // Local, because the sibling describe's `EMPTY_SUMMARY` is scoped to that block.
   const NO_ROWS = {
     hasInstalls: false,

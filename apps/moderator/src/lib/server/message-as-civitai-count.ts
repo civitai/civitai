@@ -22,8 +22,7 @@ export async function countAwaitingReply(): Promise<number> {
   return rows[0]?.count ?? 0;
 }
 
-// Shared and short: the client re-reads at most once a minute per tab, so 15 s costs no freshness, and
-// one fill per window serves every moderator instead of one query per request.
+// One fill serves every moderator; the client re-reads only once a minute anyway.
 const awaitingReply = createCache({
   name: 'civitai-messages-awaiting:v1',
   fetch: async () => ({ count: await countAwaitingReply() }),

@@ -11,6 +11,7 @@ import {
   LEGAL_HOLD_BUTTON_TEXT,
   LEGAL_HOLD_REFUSAL,
   LEGAL_HOLD_STOPPED,
+  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
 } from '$lib/legal-hold';
 import { PURGE_INCOMPLETE } from '$lib/purge-result';
 
@@ -133,6 +134,15 @@ describe('purgeAllContent and a legal hold', () => {
       entityId: TARGET,
       activity: 'purgeAllContent',
     });
+  });
+
+  it('records a stopped purge that left bids unrefunded, and says so', async () => {
+    purge = () =>
+      json({ message: LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE, incomplete: ['bid-refunds'] }, 409);
+    expect(await run()).toEqual({ ok: false, error: LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE });
+    expect(recordModActivity).toHaveBeenCalledWith(
+      expect.objectContaining({ activity: 'purgeAllContent', entityId: TARGET })
+    );
   });
 });
 

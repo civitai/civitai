@@ -5507,6 +5507,11 @@ export type StorylineCollaborator = {
   userId: number;
   createdAt: Generated<Timestamp>;
 };
+export type StorylineCoverUpload = {
+  storylineId: number;
+  imageId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type StorylineCreateClick = {
   userId: number;
   parentChapterId: number;
@@ -5858,6 +5863,7 @@ export type User = {
   rewardsEligibility: Generated<RewardsEligibility>;
   eligibilityChangedAt: Timestamp | null;
   customerId: string | null;
+  subscriptionId: string | null;
   paddleCustomerId: string | null;
   profilePictureId: number | null;
   settings: Generated<unknown | null>;
@@ -6610,6 +6616,7 @@ export type DB = {
   StorylineChapter: StorylineChapter;
   StorylineChapterEdge: StorylineChapterEdge;
   StorylineCollaborator: StorylineCollaborator;
+  StorylineCoverUpload: StorylineCoverUpload;
   StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
   StorylinePendingChapter: StorylinePendingChapter;

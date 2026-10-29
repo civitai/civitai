@@ -606,14 +606,14 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
    * 🔴 THE RAIL-OPEN RUNG — the reason the constant moved at all, and the case the old
    * value silently lost.
    *
-   * The left rail takes 276px off every `/apps/*` body, so at a 2560 viewport the card
-   * list gets 2242 of grid rather than 2528. At the old 1200 that is ONE column: the
+   * The left rail takes 292px off every `/apps/*` body, so at a 2560 viewport the card
+   * list gets 2226 of grid rather than 2528. At the old 1200 that is ONE column: the
    * 640px content-to-control gap this constant exists to close reopened on exactly the
    * monitors it was written for. 1100 restores the second column there and changes
    * nothing at 1300 / 1440 / 1920, where a single column was already correct.
    *
    * RED AT `origin/main` BY CONSTRUCTION: at `APPS_CARD_LIST_MIN_COLUMN = 1200`,
-   * `columnsAt(2242)` is 1.
+   * `columnsAt(2226)` is 1.
    */
   test('🔴 with the rail OPEN, a 2560 viewport still gets TWO columns', () => {
     const railOpenGrid =
@@ -621,7 +621,7 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
       APPS_RESERVED_SCROLLBAR -
       APPS_CONTAINER_GUTTER -
       appsRailChromeWidth(false);
-    expect(railOpenGrid).toBe(2242);
+    expect(railOpenGrid).toBe(2226);
     expect(columnsAt(railOpenGrid)).toBe(2);
 
     // …and the narrower viewports are UNCHANGED — one column with the rail open, exactly
@@ -638,7 +638,7 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
     // 🔴 THE BOUND IS SOLVED, NOT SAMPLED — and this is the correction an audit forced.
     // The previous version asserted 1100 / 1120 / 1200 and the COMMENT generalised that
     // three-point sample into "1100 is the LOOSEST value that restores it". It is not:
-    // two columns need `2n + 16 <= 2242`, so the largest admissible value is **1113**, and
+    // two columns need `2n + 16 <= 2226`, so the largest admissible value is **1105**, and
     // the sample simply had no point between 1100 and 1120. A sampled inequality cannot
     // establish a maximum; scanning for the first failure can, so it does.
     const columnsAtMin = (w: number, min: number) =>
@@ -648,7 +648,7 @@ describe('🔴 the card-list column ladder steps exactly where the surplus appea
       if (columnsAtMin(railOpenGrid, n) >= 2) bound = n;
       else break;
     }
-    expect(bound, 'the largest min-column that still yields two columns at 2242').toBe(1113);
+    expect(bound, 'the largest min-column that still yields two columns at 2226').toBe(1105);
     expect(columnsAtMin(railOpenGrid, bound)).toBe(2);
     expect(columnsAtMin(railOpenGrid, bound + 1)).toBe(1);
 

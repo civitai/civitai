@@ -454,6 +454,83 @@ describe('POST dev-tunnel/keepalive', () => {
   });
 });
 
+describe('POST dev-tunnel/keepalive by host (a tunnel the run did not open)', () => {
+  const keepHost = async (userId: number, host: string) =>
+    call(keepaliveRoute, { body: { grant: await grantFor(userId), host } });
+
+  it('keeps the grant’s user’s tunnel at the host alive, whoever opened it', async () => {
+    // Opened outside this run (the page's Restart preview is another grant of the same user).
+    const { sessionId, host } = (await startFor(OWNER, OWNED_APP)).json as {
+      sessionId: string;
+      host: string;
+    };
+    ageSession(sessionId, nowSec() - DEV_TUNNEL_IDLE_SECONDS - 120);
+    const before = nowSec();
+    const { status, json } = await keepHost(OWNER, host);
+    expect(status).toBe(200);
+    expect(json).toEqual({
+      host,
+      idleExpiresAt: sessionRecord(sessionId).lastActivityAt + DEV_TUNNEL_IDLE_SECONDS,
+      expiresAt: sessionRecord(sessionId).hardExpiresAt,
+    });
+    expect(sessionRecord(sessionId).lastActivityAt).toBeGreaterThanOrEqual(before);
+    // The run never learns the tunnel's id.
+    expect(JSON.stringify(json)).not.toContain(sessionId);
+    listRoutesFor([sessionId]);
+    expect(await reapExpiredDevTunnels()).toMatchObject({ swept: 1, reaped: 0 });
+  });
+
+  it('never keeps another user’s tunnel alive, even at a host the caller names', async () => {
+    const { sessionId: theirs, host } = (await startFor(OTHER, OTHERS_APP)).json as {
+      sessionId: string;
+      host: string;
+    };
+    ageSession(theirs, 3000);
+    expect(await keepHost(OWNER, host)).toMatchObject({
+      status: 404,
+      json: { error: 'No such dev tunnel', code: 'NOT_FOUND' },
+    });
+    expect(sessionRecord(theirs).lastActivityAt).toBe(3000);
+    // Control: the path is reachable — its owner's grant keeps the same tunnel alive.
+    expect((await keepHost(OTHER, host)).status).toBe(200);
+    expect(sessionRecord(theirs).lastActivityAt).not.toBe(3000);
+  });
+
+  it('never keeps a tunnel that is no longer at that host (a stale host entry)', async () => {
+    const { sessionId, host } = (await startFor(OWNER, OWNED_APP)).json as {
+      sessionId: string;
+      host: string;
+    };
+    ageSession(sessionId, 4000);
+    const stale = host.replace(/^dev-[0-9a-f]{16}/, 'dev-0f0f0f0f0f0f0f0f');
+    expect(stale).not.toBe(host);
+    store.set(`${PREFIX}:host:${stale}`, sessionId);
+    expect(await keepHost(OWNER, stale)).toMatchObject({ status: 404 });
+    expect(sessionRecord(sessionId).lastActivityAt).toBe(4000);
+    // Control: the same tunnel at its own host is kept.
+    expect((await keepHost(OWNER, host)).status).toBe(200);
+    expect(sessionRecord(sessionId).lastActivityAt).not.toBe(4000);
+  });
+
+  it('404 NOT_FOUND for no tunnel at the host, or a host that is not a dev host; gates refuse first', async () => {
+    const { sessionId, host } = (await startFor(OWNER, OWNED_APP)).json as {
+      sessionId: string;
+      host: string;
+    };
+    await call(stopRoute, { body: { grant: await grantFor(OWNER), sessionId } });
+    expect(await keepHost(OWNER, host)).toMatchObject({ status: 404, json: { code: 'NOT_FOUND' } });
+    expect(await keepHost(OWNER, 'example.com')).toMatchObject({ status: 404 });
+    const live = (await startFor(OWNER, OWNED_APP)).json as { sessionId: string; host: string };
+    ageSession(live.sessionId, 5000);
+    devTunnelFlagMock.mockResolvedValue(false);
+    expect(await keepHost(OWNER, live.host)).toMatchObject({
+      status: 403,
+      json: { code: 'FORBIDDEN' },
+    });
+    expect(sessionRecord(live.sessionId).lastActivityAt).toBe(5000);
+  });
+});
+
 describe('POST dev-tunnel/stop', () => {
   const stop = async (userId: number, sessionId: string) =>
     call(stopRoute, { body: { grant: await grantFor(userId), sessionId } });

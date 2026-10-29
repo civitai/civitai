@@ -30,9 +30,13 @@ export class LegalHoldError extends Error {
 /** What a moderator is told when a hold stopped a wipe part-way. Never says which hold applies. */
 export const LEGAL_HOLD_STOPPED = 'Purge stopped by a legal hold part-way; contact Legal.';
 
+/** A stopped purge that also left bids unrefunded; the moderator must not read it as nothing owed. */
+export const LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE = `${LEGAL_HOLD_STOPPED} Some bids were not refunded; check the refund alerts.`;
+
 /** A hold that landed after the check stopped a wipe part-way: some of it was already deleted. */
 export class LegalHoldStoppedError extends LegalHoldError {
-  constructor() {
+  /** The steps that ran before the stop and failed, as `removeAllContent` names them. */
+  constructor(readonly incomplete: string[] = []) {
     super();
     this.name = 'LegalHoldStoppedError';
   }
@@ -51,7 +55,10 @@ export class LegalHoldUnconfirmedError extends LegalHoldError {
 
 /** What a moderator is told for a `LegalHoldError`; the most specific class wins. */
 export function legalHoldMessage(e: LegalHoldError) {
-  if (e instanceof LegalHoldStoppedError) return LEGAL_HOLD_STOPPED;
+  if (e instanceof LegalHoldStoppedError)
+    return e.incomplete.includes('bid-refunds')
+      ? LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE
+      : LEGAL_HOLD_STOPPED;
   if (e instanceof LegalHoldUnconfirmedError) return HOLD_UNCONFIRMED;
   return LEGAL_HOLD_REFUSAL;
 }
@@ -334,22 +341,41 @@ export function heldModelIdsSql(modelIds: Prisma.Sql, markerView: boolean): Pris
   `;
 }
 
+/** Authors one call logs at most; a bulk delete can retain rows from every author it touched. */
+const HOLD_LOG_AUTHORS = 200;
+
 /**
  * Logs the holds that kept rows a moderator's bulk delete asked for. Best-effort, and the reason
  * goes no further than here. An author with no hold of their own had a row kept for a held reply
  * below it.
  */
 export async function logHoldRetained(action: string, userIds: number[]) {
-  for (const userId of new Set(userIds)) {
-    const hold = await holdOrNull(userId);
+  const authors = [...new Set(userIds)];
+  const logged = authors.slice(0, HOLD_LOG_AUTHORS);
+  const holds = await getAccountLegalHolds(logged).catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userIds: logged },
+    }).catch(() => undefined);
+    return null;
+  });
+  for (const userId of logged) {
+    const legs = holds?.get(userId) ?? null;
     logToAxiom({
       type: 'info',
       name: 'account-legal-hold',
-      message:
-        hold?.legs.length === 0 ? `${action}: kept for a held reply` : `${action}: rows retained`,
-      details: { userId, legs: hold?.legs ?? null },
-    });
+      message: legs?.length === 0 ? `${action}: kept for a held reply` : `${action}: rows retained`,
+      details: { userId, legs },
+    }).catch(() => undefined);
   }
+  if (authors.length > logged.length)
+    logToAxiom({
+      type: 'info',
+      name: 'account-legal-hold',
+      message: `${action}: rows retained for ${authors.length - logged.length} more authors`,
+    }).catch(() => undefined);
 }
 
 export type AccountLegalHold = {
@@ -363,30 +389,55 @@ export type AccountLegalHold = {
  * any lookup failure; callers treat that as held.
  */
 export async function getAccountLegalHold(userId: number): Promise<AccountLegalHold> {
-  const id = Prisma.sql`${userId}::int`;
+  const { legs, markerView } = (await readAccountHolds([userId]))[0];
+  return { legs, markerView };
+}
+
+/** `getAccountLegalHold` for many accounts, in one statement (two when the marker view exists). */
+async function getAccountLegalHolds(userIds: number[]): Promise<Map<number, AccountHoldLeg[]>> {
+  if (!userIds.length) return new Map();
+  return new Map((await readAccountHolds(userIds)).map((h) => [h.userId, h.legs]));
+}
+
+async function readAccountHolds(
+  userIds: number[]
+): Promise<(AccountLegalHold & { userId: number })[]> {
+  const id = Prisma.raw('u."userId"');
   const legs = holdLegsSql(id);
-  const [row] = await dbWrite.$queryRaw<Record<string, unknown>[]>`
+  const rows = await dbWrite.$queryRaw<Record<string, unknown>[]>`
     SELECT
+      u."userId",
       ${Prisma.join(
         Object.entries(legs).map(([name, leg]) => Prisma.sql`${leg} AS ${Prisma.raw(`"${name}"`)}`)
       )},
       to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL AS "markerView",
       to_regclass(${`"${HOLD_MARKER_TABLE}"`}) IS NOT NULL AS "markerTable"
+    FROM unnest(${userIds}::int[]) AS u("userId")
   `;
-  if (!row) throw new Error('Legal hold lookup returned no row');
+  if (rows.length !== userIds.length) throw new Error('Legal hold lookup returned no row');
 
   // Anything but an explicit `false` counts as held.
-  const held = (Object.keys(legs) as AccountHoldLeg[]).filter((leg) => row[leg] !== false);
+  const held = new Map(
+    rows.map((row) => [
+      Number(row.userId),
+      (Object.keys(legs) as AccountHoldLeg[]).filter((leg) => row[leg] !== false),
+    ])
+  );
+  const markerView = rows[0].markerView === true;
 
   // A separate statement: a query naming the view fails to parse on a database that lacks it.
-  if (row.markerView === true) {
-    const [marker] = await dbWrite.$queryRaw<{ held: unknown }[]>`SELECT ${markerSql(id)} AS held`;
-    if (marker?.held !== false) held.push('hold-marker');
-    return { legs: held, markerView: true };
+  if (markerView) {
+    const marks = await dbWrite.$queryRaw<{ userId: number; held: unknown }[]>`
+      SELECT u."userId", ${markerSql(id)} AS held FROM unnest(${userIds}::int[]) AS u("userId")
+    `;
+    const marked = new Map(marks.map((m) => [Number(m.userId), m.held]));
+    for (const [userId, legsHeld] of held)
+      if (marked.get(userId) !== false) legsHeld.push('hold-marker');
+  } else if (!(rows[0].markerView === false && rows[0].markerTable === false)) {
+    // The table without its view means the view was dropped or renamed: held until it is back.
+    for (const legsHeld of held.values()) legsHeld.push('hold-marker');
   }
-  // The table without its view means the view was dropped or renamed: held until it is back.
-  if (!(row.markerView === false && row.markerTable === false)) held.push('hold-marker');
-  return { legs: held, markerView: false };
+  return [...held].map(([userId, legsHeld]) => ({ userId, legs: legsHeld, markerView }));
 }
 
 export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHoldLeg[]> {

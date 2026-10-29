@@ -226,8 +226,8 @@ clean**: `lazy()` preserves the `AppRouter` type inference via `DecorateCreateRo
 
 ### Cycle audit (the documented hazard)
 Lazy loading reorders module evaluation and can surface latent circular deps as runtime
-`TypeError: Cannot read properties of undefined`. The existing `circular-dependency-plugin` block
-in `next.config.mjs` only scans the **client** bundle (`!options.isServer`), so it would miss the
+`TypeError: Cannot read properties of undefined`. The former (commented-out, since removed)
+`circular-dependency-plugin` block in `next.config.mjs` only scanned the **client** bundle, so it would miss the
 **server** cycles that matter here. A static audit (12 agents, all 92 routers) found **11 unique
 import cycles**; **86 routers are cycle-free**.
 

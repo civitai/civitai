@@ -43,6 +43,9 @@ app's `/admin`. Reaching `/messages` also needs its page grant.
 
 ## Setup
 
+- The shared account: a user named `CivitaiModeration` (display name "Civitai Moderation") with
+  `isModerator` set, which is what draws the staff nameplate, and chat setting `dmPolicy: nobody`, which
+  keeps it reply-only.
 - `CIVITAI_MODERATION_USER_ID` on the main app, the moderator app and the auth hub: the shared account's
   user id. Unset turns the feature off.
 - Migration `20261209000000_mod_thread_claim` (applied by hand).

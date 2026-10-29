@@ -1025,6 +1025,17 @@ export class Tracker {
     );
   }
 
+  // Exactly these four columns, in their own table with a 12-month TTL (not `actions`, which has
+  // none): migrations/2026-10-28-image-upload-requests.sql.
+  public imageUploadRequest(key: string) {
+    return this.send('imageUploadRequests', ({ actor }) => ({
+      userId: actor.userId,
+      ip: actor.ip,
+      key,
+      time: new Date(),
+    }));
+  }
+
   public search(values: { query: string; index: string; filters?: any }) {
     const { filters, ...rest } = values;
     return this.track('search', {
