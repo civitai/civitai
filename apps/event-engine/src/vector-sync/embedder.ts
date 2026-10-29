@@ -1,8 +1,9 @@
 import { assertVectorSyncConfig, config } from '@/config';
 import { logger } from '@/utils/logger';
 import type { ImageRow } from './eligibility';
-import { EMBED_MODEL, VECTOR_DIMENSIONS, type ModelStamp } from './qdrant';
+import { EMBED_MODEL, ModelMismatchError, VECTOR_DIMENSIONS, type ModelStamp } from './qdrant';
 import { parseRetryAfter, RateLimiter } from './ratelimit';
+import { sinkFromConfig, type VectorSink } from './sink';
 
 // The orchestration client has no type for this step yet; this is the subset we send and read.
 // One step embeds exactly one input; a workflow carries many steps.
@@ -97,6 +98,54 @@ export function buildEmbedInput(
   if (/^[a-z]+:/i.test(row.url)) return { skip: 'external-url' };
   const build = builders[row.type];
   return build ? build(row, opts) : { skip: 'unsupported-type' };
+}
+
+/** Below this, a cut vector is not the direct one (see verifyPrefix). */
+export const PREFIX_MIN_COSINE = 0.9999;
+const PREFIX_CHECK_ATTEMPTS = 3;
+/** After a check that could not be made, wide embeds are refused this long, then checked again. */
+const PREFIX_RETRY_AFTER_MS = 10 * 60_000;
+
+/**
+ * The cut vectors could not be checked (the orchestrator kept failing the direct embed). Unlike a
+ * mismatch it clears: the process refuses wide embeds for a while, then checks again.
+ */
+export class PrefixCheckUnavailableError extends Error {
+  name = 'PrefixCheckUnavailableError';
+}
+
+/** The first `n` values of `v`, scaled to unit length: a wide embedding cut to a narrower one. */
+export function unitPrefix(v: number[], n: number): number[] {
+  const out = v.slice(0, n);
+  const norm = Math.hypot(...out);
+  return norm ? out.map((x) => x / norm) : out;
+}
+
+function cosine(a: number[], b: number[]) {
+  let dot = 0;
+  let na = 0;
+  let nb = 0;
+  for (let i = 0; i < a.length; i++) {
+    dot += a[i] * b[i];
+    na += a[i] * a[i];
+    nb += b[i] * b[i];
+  }
+  return dot / Math.sqrt(na * nb);
+}
+
+/** The width to request, and the sink: wider only with somewhere to keep the full vector. */
+function widthFromConfig() {
+  const width = config.vectorSync.embedSourceDimensions;
+  if (width === VECTOR_DIMENSIONS) return {};
+  const sink = sinkFromConfig();
+  if (!sink) {
+    logger.warn(
+      { width },
+      'vector-sync: VECTOR_EMBED_SOURCE_DIMENSIONS is set but no VECTOR_SINK_BUCKET; requesting the stored width'
+    );
+    return {};
+  }
+  return { sourceDimensions: width, sink };
 }
 
 /** Step names are how results map back to images. */
@@ -263,6 +312,10 @@ export type EmbedderOptions = {
   maxStepsPerSecond?: number;
   /** No outage re-submit starts this long after a batch's first attempt (see looksLikeOutage). */
   outageRetryForMs?: number;
+  /** Width asked of the orchestrator; wider than VECTOR_DIMENSIONS, vectors are cut to it. */
+  sourceDimensions?: number;
+  /** Where full-width vectors go, when sourceDimensions is wider. */
+  sink?: VectorSink | null;
 };
 
 type EmbedCall = {
@@ -306,12 +359,26 @@ export class Embedder {
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly now: () => number;
   readonly batchSize: number;
+  readonly sourceDimensions: number;
+  readonly sink: VectorSink | null;
+  /** Media kinds whose cut vectors have matched a direct embed at the stored width. */
+  private readonly prefixVerified = new Set<'image' | 'video'>();
+  private readonly prefixChecks = new Map<'image' | 'video', Promise<void>>();
+  /** Set once a check refused: every later call is refused before it submits anything, for good
+   * after a mismatch and until `prefixRetryAt` when the check could not be made. */
+  private prefixFailed?: unknown;
+  private prefixRetryAt = Infinity;
 
   constructor(private readonly opts: EmbedderOptions) {
     this.budget = new JobBudget(Math.max(1, opts.maxInFlight));
     this.fetch = opts.fetch ?? globalThis.fetch;
     this.sleep = opts.sleep ?? ((ms) => new Promise((r) => setTimeout(r, ms)));
     this.now = opts.now ?? Date.now;
+    // Wider only with a sink: a full vector with nowhere to go is not worth asking for.
+    this.sink = opts.sink ?? null;
+    this.sourceDimensions = this.sink
+      ? Math.max(VECTOR_DIMENSIONS, opts.sourceDimensions ?? VECTOR_DIMENSIONS)
+      : VECTOR_DIMENSIONS;
     this.batchSize = Math.min(
       MAX_INPUTS_PER_WORKFLOW,
       Math.max(1, opts.batchSize ?? MAX_INPUTS_PER_WORKFLOW)
@@ -348,6 +415,7 @@ export class Embedder {
       // Backfill and reconcile only: live sync must keep up with uploads, and is bounded by the
       // event rate rather than a walk over existing images.
       maxStepsPerSecond: priority === 'low' ? config.vectorSync.embedMaxStepsPerSecond : 0,
+      ...widthFromConfig(),
       priority,
     });
   }
@@ -362,6 +430,14 @@ export class Embedder {
       acceptStamp,
       onVectors,
     };
+    if (this.prefixFailed && this.now() >= this.prefixRetryAt) {
+      this.prefixFailed = undefined;
+      this.prefixRetryAt = Infinity;
+    }
+    if (this.prefixFailed) {
+      call.result.error = this.prefixFailed;
+      return call.result;
+    }
     const queue = [...inputs];
     const running = new Set<Promise<void>>();
 
@@ -425,7 +501,7 @@ export class Embedder {
   ): Promise<void> {
     let workflow: Workflow;
     try {
-      workflow = await this.runWithRetry(batch, paced);
+      workflow = await this.runWithRetry(batch, paced, this.sourceDimensions);
     } catch (err) {
       if (!(err instanceof WorkflowRejectedError)) throw err;
       if (batch.length === 1 || depth >= MAX_SPLIT_DEPTH) {
@@ -450,23 +526,37 @@ export class Embedder {
     for (const input of batch) {
       const out = steps.get(stepName(input.id));
       const output = out?.output;
+      const width = output?.embedding?.length;
+      if (this.wide && out?.status === 'succeeded' && width && width !== this.sourceDimensions) {
+        // The orchestrator did not honour the width: every workflow would be paid for and dropped.
+        throw this.refuseWide(
+          new ModelMismatchError(
+            {},
+            { model: output!.model, modelRevision: output!.modelRevision, dimensions: width },
+            `asked for ${this.sourceDimensions}-d vectors, got ${width}-d; not embedding at this width`
+          )
+        );
+      }
       if (
         out?.status !== 'succeeded' ||
         !output ||
         // Without them the vector cannot be checked against the collection's model.
         !output.modelRevision ||
         !output.profile ||
-        output.embedding?.length !== VECTOR_DIMENSIONS ||
+        output.embedding?.length !== this.sourceDimensions ||
         (output.precision && output.precision !== 'float32')
       ) {
         failed.push(input.id);
         continue;
       }
       const kind = input.videoUrl ? 'video' : 'image';
+      const wide = this.sourceDimensions > VECTOR_DIMENSIONS;
       const stamp: ModelStamp = {
         model: output.model,
         modelRevision: output.modelRevision,
-        dimensions: output.dimensions,
+        // The stored width: a wide vector is cut to it below.
+        dimensions: wide ? VECTOR_DIMENSIONS : output.dimensions,
+        ...(wide ? { sourceDimensions: output.dimensions } : {}),
         ...(kind === 'video' ? { videoProfile: output.profile } : { profile: output.profile }),
       };
       accepted.push([Number(input.id), output.embedding, stamp, kind]);
@@ -500,6 +590,28 @@ export class Embedder {
     // Every distinct stamp in this workflow is checked before any of its vectors is kept.
     const distinct = new Map<string, [ModelStamp, 'image' | 'video']>();
     for (const [, , stamp, kind] of accepted) distinct.set(JSON.stringify(stamp), [stamp, kind]);
+    // Checked once per process and media kind; the workflows that finish meanwhile wait on it.
+    // A failed check stays failed: nothing more is kept or paid for at this width.
+    for (const kind of new Set(accepted.map(([, , , k]) => k))) {
+      if (!this.wide || this.prefixVerified.has(kind)) continue;
+      let check = this.prefixChecks.get(kind);
+      if (!check) {
+        const ofKind = accepted.filter(([, , , k]) => k === kind);
+        const ids = new Set(ofKind.map(([id]) => String(id)));
+        check = this.verifyPrefix(
+          batch.filter((input) => ids.has(input.id)),
+          ofKind
+        ).then(
+          () => void this.prefixVerified.add(kind),
+          (err) => {
+            if (err instanceof PrefixCheckUnavailableError) this.prefixChecks.delete(kind);
+            throw this.refuseWide(err);
+          }
+        );
+        this.prefixChecks.set(kind, check);
+      }
+      await check;
+    }
     for (const [stamp, kind] of distinct.values()) {
       const seen = call.stamps.get(kind);
       if (seen && JSON.stringify(seen) !== JSON.stringify(stamp))
@@ -511,8 +623,21 @@ export class Embedder {
     if (accepted.length) {
       this.onProgress?.();
       call.result.stamp ??= accepted[0][2];
-      for (const [id, vector] of accepted) call.result.vectors.set(id, vector);
-      await call.onVectors?.(new Map(accepted.map(([id, vector]) => [id, vector])));
+      const stored = new Map<number, number[]>();
+      for (const [id, vector, stamp] of accepted) {
+        if (this.sourceDimensions === VECTOR_DIMENSIONS) {
+          stored.set(id, vector);
+          continue;
+        }
+        this.sink?.add(id, vector, {
+          model: stamp.model ?? EMBED_MODEL,
+          revision: stamp.modelRevision,
+          profile: (stamp.profile ?? stamp.videoProfile)!,
+        });
+        stored.set(id, unitPrefix(vector, VECTOR_DIMENSIONS));
+      }
+      for (const [id, vector] of stored) call.result.vectors.set(id, vector);
+      await call.onVectors?.(stored);
     }
     if (retryOutage) {
       await this.sleep(backoff);
@@ -520,6 +645,32 @@ export class Embedder {
       const again = batch.filter((input) => unfinished.has(input.id));
       await this.embedSplitting(again, call, depth, outageRetries + 1, started);
     }
+  }
+
+  private get wide() {
+    return this.sourceDimensions > VECTOR_DIMENSIONS;
+  }
+
+  /**
+   * Refuses wide embeds: for good after a mismatch, for a while when the check could not be made.
+   * A refusal for good is never shortened by a later one. Returns `err` to throw.
+   */
+  private refuseWide(err: unknown) {
+    const retryAt =
+      err instanceof PrefixCheckUnavailableError ? this.now() + PREFIX_RETRY_AFTER_MS : Infinity;
+    if (!this.prefixFailed || this.prefixRetryAt !== Infinity) {
+      this.prefixFailed = err;
+      this.prefixRetryAt = retryAt;
+    }
+    return err;
+  }
+
+  /** Until every kind seen so far has passed its check (or before any has been seen). */
+  private get awaitingPrefix() {
+    if (!this.wide) return false;
+    if (!this.prefixVerified.size) return true;
+    for (const kind of this.prefixChecks.keys()) if (!this.prefixVerified.has(kind)) return true;
+    return false;
   }
 
   /** The step rate submits are paced to now, after setLimits; 0 is unlimited. */
@@ -531,6 +682,8 @@ export class Embedder {
 
   /** How many of `max` steps the account's quota takes now, across every call on this embedder. */
   submitAllowance(max: number) {
+    // One workflow at a time until a cut vector has been checked, so a mismatch wastes only one.
+    if (this.awaitingPrefix && this.budget.inFlight > 0) return 0;
     return this.allowance(max, this.budget.inFlight === 0);
   }
 
@@ -551,7 +704,67 @@ export class Embedder {
   }
 
   /** `paced`: the first attempt already took its step-rate slot (the embed loop's batches). */
-  private async runWithRetry(batch: EmbedInput[], paced = false): Promise<Workflow> {
+  /**
+   * Embeds the batch again at the stored width and refuses to go on if a cut vector differs from
+   * its direct one: mixing them in one collection would skew every search. A check that cannot be
+   * made (no image embedded both ways, or the direct embed failing) is retried a few times and then
+   * refused too, so a process never keeps paying for wide vectors it cannot use.
+   */
+  private async verifyPrefix(
+    batch: EmbedInput[],
+    accepted: Array<[number, number[], ModelStamp, 'image' | 'video']>
+  ) {
+    let problem = '';
+    for (let attempt = 1; attempt <= PREFIX_CHECK_ATTEMPTS; attempt++) {
+      let workflow: Workflow;
+      try {
+        workflow = await this.runWithRetry(batch, false, VECTOR_DIMENSIONS);
+      } catch (err) {
+        problem = (err as Error).message;
+        if (attempt < PREFIX_CHECK_ATTEMPTS) await this.sleep(5000 * attempt);
+        continue;
+      }
+      const direct = new Map((workflow.steps ?? []).map((s) => [s.name, s.output?.embedding]));
+      let compared = 0;
+      let worst = 1;
+      for (const [id, vector] of accepted) {
+        const other = direct.get(stepName(String(id)));
+        if (other?.length !== VECTOR_DIMENSIONS) continue;
+        compared++;
+        worst = Math.min(worst, cosine(unitPrefix(vector, VECTOR_DIMENSIONS), other));
+      }
+      if (!compared) {
+        problem = 'no image embedded at both widths';
+        if (attempt < PREFIX_CHECK_ATTEMPTS) await this.sleep(5000 * attempt);
+        continue;
+      }
+      logger.info(
+        { compared, worstCosine: worst, sourceDimensions: this.sourceDimensions },
+        'vector-sync: cut vectors checked against direct embeds'
+      );
+      if (worst < PREFIX_MIN_COSINE) {
+        throw new ModelMismatchError(
+          {},
+          accepted[0][2],
+          `a ${this.sourceDimensions}-d vector cut to ${VECTOR_DIMENSIONS} differs from the direct ${VECTOR_DIMENSIONS}-d embed (cosine ${worst}); not mixing them`
+        );
+      }
+      return;
+    }
+    throw new PrefixCheckUnavailableError(
+      `could not check ${
+        this.sourceDimensions
+      }-d vectors cut to ${VECTOR_DIMENSIONS} against direct embeds (${problem}); refusing the wider width for ${
+        PREFIX_RETRY_AFTER_MS / 60_000
+      } min`
+    );
+  }
+
+  private async runWithRetry(
+    batch: EmbedInput[],
+    paced = false,
+    dimensions = this.sourceDimensions
+  ): Promise<Workflow> {
     let errors = 0;
     let rateLimited = 0;
     const rateLimitedSince = this.now();
@@ -561,7 +774,7 @@ export class Embedder {
       const hold = this.limits.waitMs(this.now());
       if (hold > 0) await this.sleep(hold);
       try {
-        return await this.run(batch);
+        return await this.run(batch, dimensions);
       } catch (err) {
         // Giving up on a workflow that may still be running: the caller's retry (a backfill page,
         // the next consumer flush) re-sends it within seconds, so wait for it to finish first.
@@ -590,7 +803,7 @@ export class Embedder {
     }
   }
 
-  private async run(batch: EmbedInput[]): Promise<Workflow> {
+  private async run(batch: EmbedInput[], dimensions: number): Promise<Workflow> {
     const wait = this.opts.waitSeconds ?? 60;
     // Ephemeral: the orchestrator keeps no document for it. It disappears once terminal, so the
     // result comes back on the submit or a long poll; one that finishes between polls is gone,
@@ -604,7 +817,7 @@ export class Embedder {
         timeout: '00:30:00',
         input: {
           model: EMBED_MODEL,
-          dimensions: VECTOR_DIMENSIONS,
+          dimensions,
           precision: 'float32',
           ...(input.videoUrl ? { videoUrl: input.videoUrl } : { imageUrl: input.imageUrl }),
         },

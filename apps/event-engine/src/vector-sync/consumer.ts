@@ -224,6 +224,10 @@ async function main() {
   const store = VectorStore.fromConfig();
   await store.bootstrap();
   const embedder = consumerEmbedder();
+  const sink = embedder?.sink;
+  const sinkLog = sink
+    ? setInterval(() => logger.info({ sink: sink.stats() }, 'vector-sync: sink'), 60_000)
+    : undefined;
 
   const topics = [
     ...VECTOR_SYNC_TOPICS,
@@ -318,6 +322,7 @@ async function main() {
     logger.info({ signal }, 'vector-sync: shutting down');
     clearInterval(timer);
     clearInterval(gate);
+    clearInterval(sinkLog);
     try {
       consumer.pause(topics.map((topic) => ({ topic })));
       await queue.flush();
@@ -325,6 +330,10 @@ async function main() {
       logger.error({ err }, 'vector-sync: final flush failed; uncommitted events will redeliver');
     }
     await consumer.disconnect().catch(() => undefined);
+    if (sink) {
+      await sink.close();
+      logger.info({ sink: sink.stats() }, 'vector-sync: sink closed');
+    }
     await pg.end().catch(() => undefined);
     process.exit(0);
   };

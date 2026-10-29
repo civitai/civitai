@@ -115,18 +115,16 @@ async function main() {
     (m, err) => logger.error({ err }, m)
   );
   const store = VectorStore.fromConfig();
+  let embedder: Awaited<ReturnType<typeof reconcileEmbedder>> = null;
   try {
-    await reconcile(
-      { from, to, bucket },
-      {
-        pg,
-        store,
-        // With embedding off, drift is still deleted and the missing ids are counted.
-        embedder: dryRun ? null : await reconcileEmbedder(store),
-        dryRun,
-      }
-    );
+    // With embedding off, drift is still deleted and the missing ids are counted.
+    embedder = dryRun ? null : await reconcileEmbedder(store);
+    await reconcile({ from, to, bucket }, { pg, store, embedder, dryRun });
   } finally {
+    if (embedder?.sink) {
+      await embedder.sink.close();
+      logger.info({ sink: embedder.sink.stats() }, 'vector-reconcile: sink closed');
+    }
     await pg.end();
   }
 }

@@ -179,6 +179,18 @@ export const config = {
     // Inputs per workflow, 1 to 128.
     embedBatchSize: vectorInt('VECTOR_EMBED_BATCH_SIZE', 128, 1, 128),
     embedVideo: process.env.VECTOR_EMBED_VIDEO === 'true',
+    // Width requested from the orchestrator. Wider than the collection, the vector is cut to it
+    // and renormalised, and the full one goes to the sink below; without a sink this is ignored.
+    embedSourceDimensions: vectorInt('VECTOR_EMBED_SOURCE_DIMENSIONS', 256, 256, 2048),
+    // Object storage for full-width vectors (vector-sync/sink.ts); no bucket, no sink.
+    sink: {
+      bucket: process.env.VECTOR_SINK_BUCKET ?? '',
+      prefix: process.env.VECTOR_SINK_PREFIX ?? 'vectors/',
+      endpoint: process.env.VECTOR_SINK_ENDPOINT ?? '',
+      region: process.env.VECTOR_SINK_REGION ?? '',
+      accessKeyId: process.env.VECTOR_SINK_ACCESS_KEY_ID ?? '',
+      secretAccessKey: process.env.VECTOR_SINK_SECRET_ACCESS_KEY ?? '',
+    },
   },
 };
 

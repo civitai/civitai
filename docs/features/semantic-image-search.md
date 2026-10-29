@@ -132,6 +132,39 @@ locally until the orchestration client ships it.
   (a 404), and the whole workflow is sent again under a new key, which the orchestrator mostly
   answers from its cache of identical inputs.
 - Step priority is `low` for backfill and reconcile, `normal` for live sync.
+- **Wider source vectors:** `VECTOR_EMBED_SOURCE_DIMENSIONS` (default 256) asks the
+  orchestrator for a wider embedding. Only with a sink configured: without one the stored width
+  is requested. The first `VECTOR_DIMENSIONS` values, renormalised, go to Qdrant, so a wider
+  collection can be filled later from the sink without re-embedding.
+  - Each process checks that this cut matches the model's own narrower output before it keeps
+    any vector, once per media kind. It embeds the first workflow's images again at 256 and
+    refuses (a `ModelMismatchError`) if any pair's cosine is under 0.9999.
+  - Until every kind seen so far has passed, only one workflow is out at a time, so a refusal
+    wastes one wide workflow. A refusal is fail-closed for the whole process: a video mismatch also
+    stops image embedding, and the consumer stops embedding until it restarts. A succeeded step at
+    a width other than the one asked for refuses the same way, after one workflow. Video embedding is off
+    (`VECTOR_EMBED_VIDEO`), so a video mismatch can't happen today; revisit per-kind failure
+    when it is turned on.
+  - A check that can't be made (no image embedded both ways, or the 256 embed failing) is tried
+    3 times, spaced out. Then wide embeds are refused for 10 minutes without submitting anything,
+    and checked again (`PrefixCheckUnavailableError`, which the consumer retries; the backfill
+    stops once its batch retries run out). The cost of a check is one extra workflow at 256, or
+    3 when it is retried.
+  - The collection stays 256-d. A fresh collection's first fill also records `sourceDimensions`
+    in its metadata. A collection that was already filled keeps its own: its earlier points came
+    from whatever width filled them, and the check above is what lets the two be mixed.
+  - The sink (`vector-sync/sink.ts`, `VECTOR_SINK_*`) writes append-only shard pairs to
+    S3-compatible storage under `<prefix><model>/<revision>/<profile>/d<width>/`: `*.vectors.npy`
+    (float16 `[n, width]`) and `*.ids.npy` (int32 `[n]`), 4,096 vectors per shard, about 16 MB
+    at 2048. The ids file is written second, so a shard that has one is complete. An image
+    embedded twice is in two shards, with the same vector. Nothing is deleted, so a re-ingest must
+    re-check eligibility (blocked and deleted images keep their shard rows).
+  - Writing is best effort and never holds up Qdrant. Shards are written in the background, a
+    failed one is retried, and past 16,384 buffered vectors the oldest are dropped and counted.
+    A write not done in 2 minutes counts as failed. The backfill's progress line, and a
+    `vector-sync: sink` line every minute in the consumer, report
+    `sink: {buffered, written, failedFlushes, dropped}`.
+    Dropped vectors are only in Qdrant, cut.
 
 ## Keeping it in sync
 

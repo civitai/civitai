@@ -26,17 +26,25 @@ export type ModelStamp = {
   /** Image preprocessing profile; an embed of video only reports `videoProfile`. */
   profile?: string;
   videoProfile?: string;
+  /** The stored vectors' width. */
   dimensions: number;
+  /**
+   * The width the orchestrator was asked for, when wider: the stored vector is its renormalised
+   * prefix. Recorded by the first fill only, and not compared: the embedder checks the prefix
+   * against a direct embed at the stored width before it keeps any (verifyPrefix in embedder.ts).
+   */
+  sourceDimensions?: number;
 };
 
 export class ModelMismatchError extends Error {
-  constructor(stored: Partial<ModelStamp>, got: ModelStamp) {
+  constructor(stored: Partial<ModelStamp>, got: ModelStamp, message?: string) {
     super(
-      `Embedder returned ${got.model}@${got.modelRevision} (${
-        got.profile ?? got.videoProfile
-      }) but the collection holds ${stored.model}@${stored.modelRevision} (${stored.profile}/${
-        stored.videoProfile
-      }). Create a new collection and swap the alias.`
+      message ??
+        `Embedder returned ${got.model}@${got.modelRevision} (${
+          got.profile ?? got.videoProfile
+        }) but the collection holds ${stored.model}@${stored.modelRevision} (${stored.profile}/${
+          stored.videoProfile
+        }). Create a new collection and swap the alias.`
     );
     this.name = 'ModelMismatchError';
   }
@@ -127,6 +135,10 @@ export class VectorStore {
     if (!stored.modelRevision) missing.modelRevision = got.modelRevision;
     if (!stored.profile && got.profile) missing.profile = got.profile;
     if (!stored.videoProfile && got.videoProfile) missing.videoProfile = got.videoProfile;
+    // Only with the first stamp: points already stored came from whatever width filled them.
+    if (!stored.modelRevision && got.sourceDimensions) {
+      missing.sourceDimensions = got.sourceDimensions;
+    }
     if (!Object.keys(missing).length) return;
     await this.client.updateCollection(this.collection, { metadata: missing });
     const after = await this.readStamp();

@@ -18,7 +18,9 @@ import {
   type EmbedderOptions,
   JobBudget,
   MixedStampError,
+  unitPrefix,
 } from '@/vector-sync/embedder';
+import { VectorSink } from '@/vector-sync/sink';
 import {
   eligibleSql,
   IMAGE_ROW_COLUMNS,
@@ -1253,6 +1255,62 @@ describe('backfill', () => {
     expect(failedOnce.size).toBe(6);
     expect(result.done).toBe(true);
     expect(store.points.size).toBe(50);
+  });
+
+  // On a collection that already has a model, the pipeline runs several workflows at once; until a
+  // cut vector is checked it must run one, or a mismatch throws away a whole budget of wide ones.
+  test('a wide run on a stamped collection pays for one wide workflow before a failed check stops it', async () => {
+    const pg = new FakePg().put(...ids(1, 50).map((id) => imageRow(id)));
+    const store = new FakeStore();
+    const widths: number[] = [];
+    const wide = (id: number) => Array.from({ length: 2048 }, (_, i) => Math.sin(id + i));
+    const e = new Embedder({
+      endpoint: 'http://orch',
+      token: 't',
+      maxInFlight: 50,
+      maxRetries: 0,
+      batchSize: 10,
+      priority: 'low',
+      sleep: async () => undefined,
+      sourceDimensions: 2048,
+      sink: new VectorSink(async () => undefined, { flushEveryMs: 0 }),
+      fetch: (async (_u: string | URL | Request, init?: RequestInit) => {
+        const body = JSON.parse(String(init?.body)) as {
+          steps: Array<{ name: string; input: { dimensions: number } }>;
+        };
+        const width = body.steps[0].input.dimensions;
+        widths.push(width);
+        // At 256, a vector that is not the 2048 one's prefix.
+        const embedding = (id: number) =>
+          width === 2048 ? wide(id) : unitPrefix(wide(id).slice(1000), 256);
+        return new Response(
+          JSON.stringify({
+            id: 'wf',
+            status: 'succeeded',
+            steps: body.steps.map((st) => ({
+              name: st.name,
+              status: 'succeeded',
+              output: {
+                ...STAMP,
+                dimensions: width,
+                precision: 'float32',
+                embedding: embedding(Number(st.name.slice(4))),
+              },
+            })),
+          }),
+          { status: 200 }
+        );
+      }) as unknown as typeof fetch,
+    });
+    const c = clock();
+    await expect(
+      runBackfill(
+        { watermark: 50, floor: 0, span: 50 },
+        { ...deps(pg, store, null), embedder: e, state: memoryState(), now: c.now, sleep: c.sleep }
+      )
+    ).rejects.toBeInstanceOf(ModelMismatchError);
+    expect(widths).toEqual([2048, 256]);
+    expect(store.points.size).toBe(0);
   });
 
   // Decision: a wait the loop is woken from clears its timer, so a finished run does not keep the
