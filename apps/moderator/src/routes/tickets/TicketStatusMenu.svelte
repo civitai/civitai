@@ -48,11 +48,10 @@
       disabled={!canReply || change.submitting}
       title={why}
       aria-label="Change status (now {label})"
-      class="inline-flex items-center gap-0.5 rounded-full outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+      class="inline-flex cursor-pointer items-center rounded-full outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
       data-touch-target
     >
       <TicketStatusBadge {status} {label} />
-      <span aria-hidden="true" class="text-xs text-dark-2">▾</span>
     </DropdownMenu.Trigger>
     <DropdownMenu.Content align="start">
       <DropdownMenu.RadioGroup value={String(status)} onValueChange={choose}>

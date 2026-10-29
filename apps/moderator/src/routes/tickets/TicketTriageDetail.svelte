@@ -203,7 +203,7 @@
 
 {#snippet composer()}
   <section
-    class="-mx-5 mt-5 -mb-5 border-t border-dark-4 bg-dark-8 px-5 py-3 xl:sticky xl:bottom-0 xl:z-10"
+    class="-mx-5 mt-5 -mb-5 border-t border-dark-4 bg-dark-8 px-5 py-3 xl:sticky xl:-bottom-5 xl:z-10"
   >
     <TicketReply ticketId={row.id} currentStatus={row.status} {canReply} ondone={done} />
   </section>
