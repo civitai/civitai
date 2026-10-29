@@ -12,6 +12,7 @@
     doneLabel,
     enabled,
     why,
+    fields,
     ondone,
   }: {
     ticketId: string;
@@ -23,6 +24,8 @@
     doneLabel: string;
     enabled: boolean;
     why: string;
+    /** Further hidden fields the action reads, such as the id of the row it acts on. */
+    fields?: Record<string, string | number>;
     ondone: (what: string, data: Record<string, unknown> | undefined) => void;
   } = $props();
 
@@ -38,6 +41,9 @@
 <form method="POST" action="?/{action}" use:enhance={form.enhance} class="flex flex-col gap-1.5">
   <input type="hidden" name="ticketId" value={ticketId} />
   <input type="hidden" name="userId" value={userId} />
+  {#each Object.entries(fields ?? {}) as [name, value] (name)}
+    <input type="hidden" {name} {value} />
+  {/each}
   <!-- The confirm button is the only real submit; it must not unmount itself in its own click
        handler (the submit would never fire) — `confirming` closes from `onSettled` instead. -->
   {#if confirming}

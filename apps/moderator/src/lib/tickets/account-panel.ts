@@ -3,7 +3,7 @@ import { ACCOUNT_RESTRICTION_FEATURE, type TicketView } from './routing';
 /** Router topics that mean the ticket is about the sender's account. Edit to add one. */
 export const ACCOUNT_TOPICS: readonly string[] = ['account-issue'];
 
-export type AccountPanel = 'panel' | 'unlinked' | 'hidden';
+export type PanelVisibility = 'panel' | 'unlinked' | 'hidden';
 
 /** Only moderation-view tickets about an account qualify; one with no linked user gets a note, not a panel. */
 export function accountPanelFor(ticket: {
@@ -11,7 +11,7 @@ export function accountPanelFor(ticket: {
   cfFeature: string | null | undefined;
   routerTopic: string | null | undefined;
   civitaiUserId: number | null;
-}): AccountPanel {
+}): PanelVisibility {
   if (ticket.view !== 'moderation') return 'hidden';
   const aboutAccount =
     ticket.cfFeature?.trim() === ACCOUNT_RESTRICTION_FEATURE ||

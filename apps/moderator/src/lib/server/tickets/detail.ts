@@ -8,7 +8,7 @@ import {
   type TicketDetail,
 } from '../freshdesk.service';
 import { getRoutedTicketContext } from '../decision-sources/support';
-import { accountSectionFor } from './account';
+import { loadPanels, type CanRead } from './panels';
 import { sentByTickets } from './sent-by';
 import { ticketSnapshot, toRecord } from './snapshot';
 import { resolveUserId } from '../user-lookup.service';
@@ -123,7 +123,7 @@ const CONVERSATION_UNAVAILABLE = {
 export async function loadTicketPayload(
   view: TicketView,
   ticketId: string,
-  { canSeeEmail, canViewAccount }: { canSeeEmail: boolean; canViewAccount: boolean }
+  { canSeeEmail, canRead }: { canSeeEmail: boolean; canRead: CanRead }
 ) {
   // Started before the ticket read so the two run in parallel; wasted if the ticket is refused.
   const conversation: Promise<TicketConversationResult> = isFreshdeskId(ticketId)
@@ -136,13 +136,19 @@ export async function loadTicketPayload(
 
   // The address is resolved here even without the grant, and never leaves the server without it.
   const civitaiUserId = await linkedCivitaiUserId(ticket, routed);
-  const account = await accountSectionFor({
-    view,
-    cfFeature: ticket.cfFeature,
-    routerTopic: routed?.topic ?? null,
-    civitaiUserId,
-    canView: canViewAccount,
-  });
+  const panels = await loadPanels(
+    {
+      view,
+      cfFeature: ticket.cfFeature,
+      routerTopic: routed?.topic ?? null,
+      civitaiUserId,
+      text: [
+        ticket.subject,
+        ticket.description.status === 'found' ? ticket.description.text : '',
+      ].join('\n'),
+    },
+    canRead
+  );
 
   const sentToSupport = hasSentToSupportTag(ticket.tags);
   const sentBy = sentToSupport ? await sentByOf(ticketId) : null;
@@ -167,7 +173,7 @@ export async function loadTicketPayload(
       sentToSupport,
       sentBy,
     },
-    ...(account ? { account } : {}),
+    ...panels,
     conversation: await conversation,
   };
 }
