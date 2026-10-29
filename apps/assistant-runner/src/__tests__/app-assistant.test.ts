@@ -117,6 +117,7 @@ describe('App Assistant’s tools on the runner', () => {
         'create_app',
         'set_checklist',
         'report_ready',
+        'submit_for_review',
         'start_preview',
         'stop_preview',
       ])
@@ -127,6 +128,7 @@ describe('App Assistant’s tools on the runner', () => {
       'set_checklist',
       'start_preview',
       'stop_preview',
+      'submit_for_review',
     ]);
     // The page's prompt, shared: the same rules, and the remote mode's word on the preview.
     expect(tools.rules?.('DEFAULTS')).toBe(`DEFAULTS\n\n${assistantRules('remote')}`);
@@ -333,6 +335,22 @@ describe('App Assistant’s gate on the runner', () => {
     );
   });
 
+  it('offers submit_for_review only once the app is ready, and a file change withdraws it', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open();
+    const early = (await call(tools.tools, 'submit_for_review')) as { error: string };
+    expect(early.error).toMatch(/^Not ready yet\..*Then call submit_for_review again\.$/);
+    await passAll(tools.tools);
+    const offer = (await call(tools.tools, 'submit_for_review')) as Record<string, unknown>;
+    expect(offer).toMatchObject({ awaitsUser: true, submit: expect.any(String) });
+    // The page hears of it, as of every call: that is what shows its Submit for review button.
+    expect(reported.at(-1)).toMatchObject({ name: 'submit_for_review', isError: false });
+    await call(tools.tools, 'sandbox__write_file', { path: 'a', content: 'x' });
+    expect(((await call(tools.tools, 'submit_for_review')) as { error: string }).error).toMatch(
+      /sandbox__preview_check: it has not run/
+    );
+  });
+
   it('a command other than the checks undoes them; reading does not', async () => {
     fake.add('my-app');
     const { tools } = await open();
@@ -508,6 +526,7 @@ describe('the runner’s prompt', () => {
     'create_app',
     'set_checklist',
     'report_ready',
+    'submit_for_review',
     'start_preview',
     'stop_preview',
     'dispatch_agent',

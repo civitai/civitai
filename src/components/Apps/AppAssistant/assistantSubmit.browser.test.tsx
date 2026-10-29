@@ -1,0 +1,318 @@
+import JSZip from 'jszip';
+import { describe, expect, test, vi } from 'vitest';
+import type { ChatToolResult } from '@civitai/components-chat/civitai-chat';
+import { createAssistantGate } from '~/components/Apps/AppAssistant/assistantGate';
+import type { PreparedSubmit, SubmitReceipt } from '~/components/Apps/AppAssistant/assistantSubmit';
+import {
+  SubmitError,
+  sendForReview,
+  submitBundleFromExport,
+} from '~/components/Apps/AppAssistant/assistantSubmit';
+
+const SANDBOX = 'sbx-0123456789ab';
+const APP = 'prompt-randomizer';
+const MANIFEST = { blockId: APP, name: 'Prompt Randomizer', version: '0.1.0' };
+const conv = { conversationId: 'c', reply: 1 };
+const ctx = { signal: new AbortController().signal, conversationId: 'c', files: [] };
+
+/** The app's export, as the sandbox service zips it: everything under `<app>/`. */
+async function exportOf(files: Record<string, string>, app = APP): Promise<Blob> {
+  const zip = new JSZip();
+  zip.folder(app);
+  for (const [path, content] of Object.entries(files)) zip.file(`${app}/${path}`, content);
+  return zip.generateAsync({ type: 'blob' });
+}
+
+const APP_FILES = {
+  'block.manifest.json': JSON.stringify(MANIFEST),
+  'package.json': '{"name":"prompt-randomizer"}',
+  'src/main.ts': 'export {};',
+};
+
+/** A finished call as the page hears of it. */
+const result = (name: string, output: unknown, extra: Partial<ChatToolResult> = {}) => ({
+  name,
+  input: name === 'sandbox__run_command' ? extra.input : {},
+  output,
+  isError: false,
+  ...extra,
+});
+
+/** Every check report_ready asks for, passed, as the page's gate hears of them. */
+async function passChecks(gate: ReturnType<typeof createAssistantGate>) {
+  const items = [{ label: 'Randomize a prompt', done: true }];
+  gate.beforeToolCall('set_checklist', { items }, conv);
+  const shown = await gate.tools.set_checklist.execute({ items }, ctx);
+  gate.onToolResult(result('set_checklist', shown, { input: { items } }));
+  for (const [name, input, output] of [
+    ['sandbox__preview_check', {}, 'render: ok'],
+    ['sandbox__run_command', { command: `cd ${APP} && npm test` }, 'exit_code: 0'],
+    ['sandbox__run_command', { command: `cd ${APP} && npx tsc --noEmit` }, 'exit_code: 0'],
+  ] as const) {
+    gate.beforeToolCall(name, input, conv);
+    gate.onToolResult(result(name, output, { input }));
+  }
+}
+
+type Send = (prepared: PreparedSubmit) => Promise<SubmitReceipt>;
+
+function setup({
+  send = vi.fn<Send>(async () => ({ publishRequestId: 'pubreq_1', slug: APP, version: '0.1.0' })),
+  files = APP_FILES,
+}: {
+  send?: Send;
+  files?: Record<string, string>;
+} = {}) {
+  const prepare = vi.fn(async (sandbox: string) => {
+    expect(sandbox).toBe(SANDBOX);
+    return submitBundleFromExport(await exportOf(files), APP);
+  });
+  const gate = createAssistantGate({
+    currentApp: () => SANDBOX,
+    submit: { prepare, send },
+  });
+  return { gate, prepare, send };
+}
+
+/** Calls submit_for_review through the gate, as a reply would, and tells the page of the result. */
+async function offer(gate: ReturnType<typeof createAssistantGate>) {
+  const decision = await gate.beforeToolCall('submit_for_review', {}, conv);
+  if (decision && 'refuse' in decision) {
+    gate.onToolResult({
+      ...result('submit_for_review', null),
+      isError: true,
+      refused: decision.refuse,
+    });
+    return { refused: decision.refuse, output: undefined };
+  }
+  const output = await gate.tools.submit_for_review.execute({}, ctx);
+  gate.onToolResult(result('submit_for_review', output));
+  return { refused: null, output };
+}
+
+const render = (gate: ReturnType<typeof createAssistantGate>, output: unknown) =>
+  gate.tools.submit_for_review.render?.({
+    name: 'submit_for_review',
+    input: {},
+    state: 'done',
+    output,
+  }) as HTMLElement | undefined;
+
+const submitButton = (card: HTMLElement | undefined) =>
+  [...(card?.querySelectorAll('button') ?? [])].find(
+    (b) => b.textContent === 'Submit for review'
+  ) ?? null;
+
+describe('Submit for review', () => {
+  test('the gate offers submit_for_review, which submits nothing by itself', async () => {
+    const { gate, send, prepare } = setup();
+    expect(Object.keys(gate.tools)).toContain('submit_for_review');
+    await passChecks(gate);
+    const { output } = await offer(gate);
+    expect(output).toMatchObject({ awaitsUser: true, submit: expect.any(String) });
+    expect(send).not.toHaveBeenCalled();
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  test('is refused, with no button, until the app passed the checks', async () => {
+    const { gate, send } = setup();
+    const { refused } = await offer(gate);
+    expect(refused).toMatch(/^Not ready yet\..*Then call submit_for_review again\.$/);
+    // A refused call shows the chat's own card, never a button.
+    expect(
+      gate.tools.submit_for_review.render?.({
+        name: 'submit_for_review',
+        input: {},
+        state: 'error',
+        error: refused!,
+      })
+    ).toBeUndefined();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  test('a file change after the checks refuses it again', async () => {
+    const { gate } = setup();
+    await passChecks(gate);
+    gate.beforeToolCall('sandbox__write_file', { path: 'a' }, conv);
+    gate.onToolResult(result('sandbox__write_file', 'ok'));
+    expect((await offer(gate)).refused).toMatch(/sandbox__preview_check: it has not run/);
+  });
+
+  test('shows the app’s name and version, and the press sends that bundle to the review route', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({ publishRequestId: 'pubreq_1', slug: APP, version: '0.1.0' }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+    );
+    const { gate, prepare } = setup({
+      send: vi.fn((prepared: PreparedSubmit) => sendForReview(prepared, fetchImpl)),
+      files: {
+        ...APP_FILES,
+        'scratch/probe.ts': 'probe',
+        'prompt-randomizer-0.1.0.zip': 'an earlier package',
+      },
+    });
+    await passChecks(gate);
+    const { output } = await offer(gate);
+    const card = render(gate, output)!;
+    document.body.append(card);
+    try {
+      await expect.poll(() => submitButton(card)).not.toBeNull();
+      expect(prepare).toHaveBeenCalledTimes(1);
+      expect(card.querySelector('[data-testid="app-assistant-submit-what"]')?.textContent).toBe(
+        'Prompt Randomizer 0.1.0 (prompt-randomizer)'
+      );
+      // The same card on every render: the chat renders it again on every change.
+      expect(render(gate, output)).toBe(card);
+      expect(fetchImpl).not.toHaveBeenCalled();
+
+      submitButton(card)!.click();
+      await expect
+        .poll(() => card.querySelector('[role="status"]')?.textContent)
+        .toBe(
+          'Submitted Prompt Randomizer 0.1.0 for review. A moderator reviews it before it goes live in the App Store.'
+        );
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const [url, init] = fetchImpl.mock.calls[0];
+      expect(url).toBe('/api/blocks/submit-version');
+      expect(init).toMatchObject({ method: 'POST', credentials: 'same-origin' });
+      const { bundleBase64 } = JSON.parse(String(init?.body)) as { bundleBase64: string };
+      const sent = await JSZip.loadAsync(bundleBase64, { base64: true });
+      // The app's files at the root, as `civitai app submit` packages them.
+      expect(
+        Object.keys(sent.files)
+          .filter((p) => !sent.files[p].dir)
+          .sort()
+      ).toEqual(['block.manifest.json', 'package.json', 'src/main.ts']);
+      expect(JSON.parse(await sent.file('block.manifest.json')!.async('string'))).toEqual(MANIFEST);
+      expect(submitButton(card)).toBeNull();
+    } finally {
+      card.remove();
+    }
+  });
+
+  test('a card the chat shows before the page hears of the call gets its button once it does', async () => {
+    const { gate } = setup();
+    await passChecks(gate);
+    await gate.beforeToolCall('submit_for_review', {}, conv);
+    const output = await gate.tools.submit_for_review.execute({}, ctx);
+    const card = render(gate, output)!;
+    expect(submitButton(card)).toBeNull();
+    gate.onToolResult(result('submit_for_review', output));
+    await expect.poll(() => submitButton(card)).not.toBeNull();
+  });
+
+  test('a user the route refuses sees why, and cannot press again', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ message: 'Apps are restricted to the Civitai team' }), {
+          status: 403,
+        })
+    );
+    const { gate } = setup({
+      send: vi.fn((prepared: PreparedSubmit) => sendForReview(prepared, fetchImpl)),
+    });
+    await passChecks(gate);
+    const card = render(gate, (await offer(gate)).output)!;
+    await expect.poll(() => submitButton(card)).not.toBeNull();
+    submitButton(card)!.click();
+    await expect
+      .poll(() => card.querySelector('[role="alert"]')?.textContent)
+      .toBe(
+        'Not submitted: Apps are restricted to the Civitai team. Your account cannot submit apps for review.'
+      );
+    expect(submitButton(card)).toBeNull();
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
+  });
+
+  test('a failed submit says what went wrong and leaves the button to try again', async () => {
+    const send = vi
+      .fn<Send>()
+      .mockRejectedValueOnce(
+        new SubmitError(
+          'Not submitted: you already have a pending submission for slug prompt-randomizer. Ask App Assistant to fix this, then submit again.',
+          400
+        )
+      )
+      .mockResolvedValueOnce({ publishRequestId: 'pubreq_2', slug: APP, version: '0.1.0' });
+    const { gate } = setup({ send });
+    await passChecks(gate);
+    const card = render(gate, (await offer(gate)).output)!;
+    await expect.poll(() => submitButton(card)).not.toBeNull();
+    submitButton(card)!.click();
+    await expect
+      .poll(() => card.querySelector('[role="alert"]')?.textContent)
+      .toMatch(/^Not submitted: you already have a pending submission/);
+    expect(submitButton(card)).not.toBeNull();
+    submitButton(card)!.click();
+    await expect
+      .poll(() => card.querySelector('[role="status"]')?.textContent)
+      .toMatch(/^Submitted Prompt Randomizer 0\.1\.0 for review/);
+    expect(send).toHaveBeenCalledTimes(2);
+  });
+
+  test('the offer closes when anything else happens: a later call, a new reply, a message, another app', async () => {
+    for (const moveOn of [
+      (gate: ReturnType<typeof createAssistantGate>) =>
+        gate.onToolResult(result('sandbox__write_file', 'ok')),
+      (gate: ReturnType<typeof createAssistantGate>) =>
+        gate.beforeToolCall('sandbox__read_file', {}, { ...conv, reply: 2 }),
+      (gate: ReturnType<typeof createAssistantGate>) => gate.answered(),
+      (gate: ReturnType<typeof createAssistantGate>) => gate.appChanged('sbx-other'),
+    ]) {
+      const { gate, send } = setup();
+      await passChecks(gate);
+      const card = render(gate, (await offer(gate)).output)!;
+      await expect.poll(() => submitButton(card)).not.toBeNull();
+      moveOn(gate);
+      expect(submitButton(card)).toBeNull();
+      expect(card.textContent).toMatch(/Ask App Assistant to submit the app again\.$/);
+      expect(send).not.toHaveBeenCalled();
+    }
+  });
+
+  test('an offer this page did not make (an earlier visit’s) shows no button', async () => {
+    const { gate, prepare } = setup();
+    await passChecks(gate);
+    const { output } = await offer(gate);
+    const other = setup().gate;
+    const restored = render(other, JSON.parse(JSON.stringify(output)));
+    expect(submitButton(restored)).toBeNull();
+    expect(prepare).not.toHaveBeenCalled();
+  });
+
+  test('without a way to submit, the call keeps the chat’s default card', async () => {
+    const gate = createAssistantGate();
+    expect(gate.tools.submit_for_review.render).toBeUndefined();
+  });
+});
+
+describe('the bundle a press sends', () => {
+  test('refuses a manifest naming another app, which would submit under another slug', async () => {
+    const exported = await exportOf({
+      ...APP_FILES,
+      'block.manifest.json': JSON.stringify({ ...MANIFEST, blockId: 'someone-elses-app' }),
+    });
+    await expect(submitBundleFromExport(exported, APP)).rejects.toThrow(
+      'Your app\'s block.manifest.json names its blockId "someone-elses-app", not "prompt-randomizer". Ask App Assistant to fix it.'
+    );
+  });
+
+  test('refuses an app with no manifest', async () => {
+    const { 'block.manifest.json': _, ...rest } = APP_FILES;
+    await expect(submitBundleFromExport(await exportOf(rest), APP)).rejects.toThrow(
+      'Your app has no block.manifest.json, so it cannot be submitted. Ask App Assistant to add it.'
+    );
+  });
+
+  test('keeps a nested scratch folder, which is the app’s own source', async () => {
+    const { bundle } = await submitBundleFromExport(
+      await exportOf({ ...APP_FILES, 'src/scratch/util.ts': 'x' }),
+      APP
+    );
+    const zip = await JSZip.loadAsync(bundle);
+    expect(zip.file('src/scratch/util.ts')).not.toBeNull();
+  });
+});
