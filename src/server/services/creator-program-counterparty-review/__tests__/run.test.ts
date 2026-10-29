@@ -360,6 +360,18 @@ describe('runCounterpartyReview, indirect transfers', () => {
     });
   });
 
+  it('still warns and files direct exchanges when the hops setting cannot be read', async () => {
+    const w = world({ rows: [pair(22, 5_000, 4_000)], indirectRows: [loop([22, 33], 3_000)] });
+    w.deps.readMaxIntermediaries = async () => {
+      throw new Error('redis down');
+    };
+
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 1, indirect: 0 });
+    expect(w.reports[0].findings).toEqual([
+      expect.objectContaining({ userId: creator.id, action: WARNED_ACTION }),
+    ]);
+  });
+
   it('searches before any warning is sent', async () => {
     const order: string[] = [];
     const w = world({

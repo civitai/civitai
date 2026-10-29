@@ -84,12 +84,12 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     deps.log?.('creator-program-counterparty-review-ceiling', { pairs: pairs.length });
   // Read before any warning goes out: a failure after that would leave warned members unfiled.
   // A failed search costs only the indirect findings; the direct ones are still filed.
-  const maxIntermediaries = Math.min(
-    MAX_INTERMEDIARIES,
-    Math.max(DEFAULT_MAX_INTERMEDIARIES, Math.trunc(await deps.readMaxIntermediaries()) || 0)
-  );
   const transfers: IndirectTransfer[] = [];
   try {
+    const maxIntermediaries = Math.min(
+      MAX_INTERMEDIARIES,
+      Math.max(DEFAULT_MAX_INTERMEDIARIES, Math.trunc(await deps.readMaxIntermediaries()) || 0)
+    );
     for (let n = DEFAULT_MAX_INTERMEDIARIES; n <= maxIntermediaries; n++) {
       const found = await findIndirectTransfers(deps.ch, {
         since: BANKABLE_CUTOVER,
