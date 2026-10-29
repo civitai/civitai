@@ -223,9 +223,14 @@ export function createGateCore({
   openApp,
 }: GateCoreOptions = {}): GateCore {
   let conversationId: string | null = null;
-  // The app this conversation made or chose, which it may change. Not cleared by `reset`: the page
-  // resets as the app it just made opens, after the `create_app` result chose it.
-  let chosenApp: string | null = null;
+  // The app each conversation made or chose, which it may change, by conversation id: the page's one
+  // gate serves every chat the user moves between. Not cleared by `reset`: the page resets as the app
+  // it just made opens, after the `create_app` result chose it.
+  const chosenApps = new Map<string, string>();
+  const choose = (result: ToolResult) => {
+    const app = chosenAppOf(result);
+    if (app !== null && conversationId !== null) chosenApps.set(conversationId, app);
+  };
   // The chat numbers every reply, Continue and Retry included.
   let reply: number | null = null;
   let turnCalls = 0;
@@ -288,7 +293,6 @@ export function createGateCore({
     if (context.conversationId !== conversationId) {
       conversationId = context.conversationId;
       reset();
-      chosenApp = null;
     }
     if (context.reply !== reply) {
       reply = context.reply;
@@ -306,7 +310,11 @@ export function createGateCore({
     const refused = refuse?.(name);
     if (refused) return { refuse: refused };
     const appOpen = openApp?.() ?? null;
-    if (appOpen !== null && appOpen !== chosenApp && changesApp(name, input))
+    if (
+      appOpen !== null &&
+      appOpen !== chosenApps.get(context.conversationId) &&
+      changesApp(name, input)
+    )
       return { refuse: openAppNotChosen(appOpen) };
     if (name === REPORT_READY) {
       const refusal = notReady();
@@ -333,7 +341,7 @@ export function createGateCore({
     // Neither ran. One its ended reply did not run stays counted in `running`; the next reply starts at 0.
     if (refused !== undefined || stopped) return;
     if (name !== REPORT_READY) running = Math.max(0, running - 1);
-    chosenApp = chosenAppOf(result) ?? chosenApp;
+    choose(result);
     verify(result);
     // A checklist a server runner showed: its Build it is the one waiting (the page shows the card).
     const shown = output as { awaitsUser?: unknown; checklist?: unknown } | null | undefined;
@@ -434,8 +442,8 @@ export function createGateCore({
     restore({ conversationId: id, earlier, current, app = null }) {
       conversationId = id;
       reset();
-      chosenApp = null;
-      for (const result of [...earlier, ...current]) chosenApp = chosenAppOf(result) ?? chosenApp;
+      chosenApps.delete(id);
+      for (const result of [...earlier, ...current]) choose(result);
       // Without app tags (the page), every checklist counts, as it did before.
       const forThisApp = (result: ToolResult) =>
         !checklistApp || (result.output as { app?: unknown } | null)?.app === app;
