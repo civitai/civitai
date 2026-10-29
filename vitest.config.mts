@@ -244,7 +244,6 @@ const prebundledDeps = [
   'zustand',
   'immer',
   'clsx',
-  'uuid',
   'prom-client',
   '@tanstack/react-query',
   '@paddle/paddle-node-sdk',

@@ -1,4 +1,4 @@
-import matter from 'gray-matter';
+import { parseFrontmatter } from '~/utils/frontmatter';
 import { unified } from 'unified';
 import remarkParse from 'remark-parse';
 import remarkRehype from 'remark-rehype';
@@ -20,7 +20,7 @@ const markdownHtmlProcessor = unified()
   .use(rehypeStringify);
 
 export async function markdownToHtml(markdown: string) {
-  const { content } = matter(markdown);
+  const { content } = parseFrontmatter(markdown);
   const result = await markdownHtmlProcessor.process(content);
   return result.toString();
 }
