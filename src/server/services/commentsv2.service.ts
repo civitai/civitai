@@ -1426,28 +1426,21 @@ const heldReplyBelowSql = (table: 'Comment' | 'CommentV2', markerView: boolean) 
         SELECT 1 FROM below WHERE ${accountHoldSql(Prisma.sql`below."userId"`, markerView)}
       )`
     : Prisma.sql`EXISTS (
-        WITH RECURSIVE below AS (
-          SELECT t.id FROM "Thread" t WHERE t."commentId" = c.id
-          UNION
-          SELECT t.id FROM "Thread" t
-          JOIN "CommentV2" k ON t."commentId" = k.id
-          JOIN below b ON k."threadId" = b.id
-        )
-        SELECT 1 FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
-        WHERE ${accountHoldSql(Prisma.sql`r."userId"`, markerView)}
+        SELECT 1 FROM "Thread" t
+        WHERE t."commentId" = c.id AND ${heldCommentInTreeSql(Prisma.raw('t.id'), markerView)}
       )`;
 
-/**
- * Clears the ToS flag on the flagged comment `id` unless a moderator's delete would keep it: its
- * author, or anyone who replied below it, is held. Such a comment stays hidden. The hold is read in
- * the same statement as the write. Null when there is no such flagged comment, or when its author
- * deleted it and a hold kept it: clearing that would republish it.
- */
 const removedByAuthorSql = {
   Comment: Prisma.sql`c."removedByAuthor"`,
   CommentV2: Prisma.sql`(c.metadata ->> 'removedByAuthor')::boolean`,
 };
 
+/**
+ * Clears the ToS flag on the flagged comment `id` unless a moderator's delete would keep it: its
+ * author, or anyone who replied below it, is held. Such a comment stays hidden. The hold is read in
+ * the same statement as the write. Null when there is no such flagged comment, or when its author
+ * deleted it: clearing that would republish it.
+ */
 export async function clearTosUnlessHeld(
   table: 'Comment' | 'CommentV2',
   id: number,

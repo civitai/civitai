@@ -596,14 +596,23 @@ describe('a member deleting their own CommentV2', () => {
   });
 
   // Once the held reply goes, only its author's delete keeps the comment down.
-  // A moderator's delete leaves `metadata` as it found it: null, or without the key.
+  // A moderator's delete leaves `metadata` as it found it: null, or without the key. A mark that
+  // does not read as a boolean fails the statement, which keeps the comment hidden.
   it.each([
-    ['leaves the one its author deleted hidden', true, null, 0, 'hidden'],
-    ['restores one a moderator deleted (control)', false, null, 1, 'public'],
-    ['restores one a moderator deleted, with other metadata', false, '{"x": 1}', 1, 'public'],
+    ['leaves the one its author deleted hidden', true, null, 0, 0, 'hidden'],
+    ['restores one a moderator deleted (control)', false, null, 1, 0, 'public'],
+    ['restores one a moderator deleted, with other metadata', false, '{"x": 1}', 1, 0, 'public'],
+    [
+      'keeps one with an unreadable mark hidden',
+      false,
+      '{"removedByAuthor": "abc"}',
+      0,
+      1,
+      'hidden',
+    ],
   ])(
     'and a ToS restore after the hold no longer covers it %s',
-    async (_, byAuthor, metadata, count, after) => {
+    async (_, byAuthor, metadata, count, retainedHidden, after) => {
       await holder.db.exec(`
         INSERT INTO "Thread" (id, "commentId") VALUES (500, 11);
         INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (51, ${HELD}, 500, 'zzfixture');
@@ -613,7 +622,10 @@ describe('a member deleting their own CommentV2', () => {
       ]);
       await deleteComment({ id: 11, byAuthor });
       await holder.db.exec(`DELETE FROM "CommentV2" WHERE id = 51`);
-      await expect(bulkClearCommentV2TosViolation({ ids: [11] })).resolves.toMatchObject({ count });
+      await expect(bulkClearCommentV2TosViolation({ ids: [11] })).resolves.toMatchObject({
+        count,
+        retainedHidden,
+      });
       expect(await state('CommentV2')).toMatchObject({ 11: after });
     }
   );
@@ -658,6 +670,21 @@ describe('a CommentV2 with replies', () => {
       retainedHidden: 1,
     });
     expect(await state('CommentV2')).toMatchObject({ 11: 'hidden', 72: 'public', 73: 'public' });
+  });
+
+  // A reply thread whose comment is gone hangs off 900 by `parentThreadId` alone.
+  it('stays hidden through a ToS restore while a held reply sits in a thread only its parent edge reaches', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "parentThreadId") VALUES (902, 900);
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (75, ${HELD}, 902, 'zzfixture');
+    `);
+    await bulkDeleteComments({ commentIds: [], commentV2Ids: [11] });
+
+    await expect(bulkClearCommentV2TosViolation({ ids: [11] })).resolves.toMatchObject({
+      count: 0,
+      retainedHidden: 1,
+    });
+    expect(await state('CommentV2')).toMatchObject({ 11: 'hidden' });
   });
 
   it('is kept while a reply below is held only by the marker', async () => {
