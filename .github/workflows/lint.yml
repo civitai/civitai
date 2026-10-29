@@ -1151,14 +1151,16 @@ jobs:
       # writes no report at all, which is precisely the case this must catch, and
       # it is indistinguishable from a healthy run if you only read the step's
       # own status. Report-only on PRs exactly like the tests above, since it is half
-      # of their verdict.
+      # of their verdict. Gated on the Chromium install like the tests: when setup
+      # failed, that step is already the red, and a missing report here would only
+      # restate it.
       #
       # All three arms were exercised before this was committed: a real report
       # exits 0; a report with `testResults: []` / `numTotalTests: 0` exits 1; a
       # missing report exits 1 with its own message.
       - name: Assert the geometry tier actually collected something
         id: geometry-ledger
-        if: always() && env.SUITE_GEOMETRY == 'true'
+        if: always() && steps.chromium.outcome == 'success' && env.SUITE_GEOMETRY == 'true'
         continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
           node - <<'JS'
