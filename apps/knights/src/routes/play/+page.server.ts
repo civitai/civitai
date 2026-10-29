@@ -2,10 +2,11 @@ import { fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
 import { imageUrl } from '$lib/server/image-url';
-import { getPlayerStatusOrNew } from '$lib/server/player-status';
 import { openItem, sealItem } from '$lib/server/feed-token';
 import { answerHiddenCheck, pickHiddenCheck } from '$lib/server/hidden/hidden.service';
+import { requireMember } from '$lib/server/membership';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
+import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
@@ -40,13 +41,15 @@ const CONSEQUENCE_TEXT = {
 } as const;
 
 const TRIAL_REJECTION_TEXT = {
+  'no-player': 'You have not joined the Order yet.',
   'no-run': 'You have no trial under way.',
   'not-current': 'That is not the image before you now.',
   'bad-answer': 'That answer is not on offer.',
 } as const;
 
-export const load: PageServerLoad = async ({ locals }) => {
-  const status = await getPlayerStatusOrNew(db, locals.user.id);
+export const load: PageServerLoad = async ({ locals, depends }) => {
+  depends('app:play');
+  const status = await requireMember(db, locals.user.id);
 
   if (status.rank === 'Acolyte') {
     const trial = await getTrial(db, locals.user.id, trialDeps);
@@ -77,14 +80,29 @@ export const load: PageServerLoad = async ({ locals }) => {
   }
 
   const now = queueDeps.now();
+  const lockedUntil =
+    queueDeps.voteLimits && !locals.user.isModerator
+      ? await voteLockUntil(db, locals.user.id, now, queueDeps.voteLimits)
+      : null;
   const [feed, daily, recap, resetNotice] = await Promise.all([
-    getFeed(db, locals.user.id, { limit: 1 }),
+    lockedUntil ? null : getFeed(db, locals.user.id, { limit: 1 }),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
     hasUnseenReset(db, locals.user.id),
   ]);
   const resetPending = status.smites >= status.maxSmites;
-  const page = { mode: 'queue' as const, status, daily, recap, resetNotice, resetPending };
+  const lockoutSeconds = lockedUntil
+    ? Math.max(1, Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000))
+    : null;
+  const page = {
+    mode: 'queue' as const,
+    status,
+    daily,
+    recap,
+    resetNotice,
+    resetPending,
+    lockoutSeconds,
+  };
   if (!feed || resetPending) return { ...page, question: null, item: null };
 
   const secret = feedSecret();
@@ -123,14 +141,15 @@ export const actions: Actions = {
     if (typeof token !== 'string' || typeof answer !== 'string') {
       return fail(400, { message: 'Pick an answer.' });
     }
-    const item = openItem(feedSecret(), locals.user.id, token);
-    if (!item) return fail(400, { message: 'Pick an answer.' });
+    const ref = openItem(feedSecret(), locals.user.id, token);
+    if (!ref) return fail(400, { message: 'Pick an answer.' });
+    const itemId = ref.id;
 
     try {
-      if (item.kind === 'hidden') {
+      if (ref.kind === 'hidden') {
         const result = await answerHiddenCheck(
           db,
-          { userId: locals.user.id, referenceId: item.id, answer },
+          { userId: locals.user.id, referenceId: itemId, answer },
           { ...resetDeps, now: queueDeps.now }
         );
         if (result.status === 'rejected') {
@@ -150,15 +169,24 @@ export const actions: Actions = {
       }
       const result = await castVote(
         db,
-        { userId: locals.user.id, itemId: item.id, answer },
+        { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
         queueDeps
       );
+      if (result.status === 'limited') {
+        return fail(429, {
+          message: 'You are judging too quickly. Rest a little.',
+          lockoutSeconds: Math.max(
+            1,
+            Math.ceil((result.until.getTime() - queueDeps.now().getTime()) / 1000)
+          ),
+        });
+      }
       if (result.status === 'rejected') {
         return fail(409, { message: REJECTION_TEXT[result.reason] });
       }
       return { success: true };
     } catch (error) {
-      console.error('knights: vote failed', { error });
+      console.error('knights: vote failed', { itemId, error });
       return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });
     }
   },

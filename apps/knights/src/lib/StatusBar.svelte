@@ -28,6 +28,7 @@
     {/each}
   </span>
   {@render links?.()}
+  · <a href="/rules">Rules</a>
 </p>
 {#if status.rating.bar !== null}
   <p class="status">

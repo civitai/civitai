@@ -4,14 +4,13 @@ const castVote = vi.hoisted(() => vi.fn());
 const answerHiddenCheck = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
-vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: {} }));
+vi.mock('$lib/server/queue/runtime', () => ({
+  queueDeps: { now: () => new Date('2026-12-15T12:00:00Z') },
+}));
 vi.mock('$lib/server/daily/daily.service', () => ({}));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
-vi.mock('$lib/server/hidden/hidden.service', () => ({
-  answerHiddenCheck,
-  pickHiddenCheck: vi.fn(),
-}));
+vi.mock('$lib/server/hidden/hidden.service', () => ({ answerHiddenCheck, pickHiddenCheck: vi.fn() }));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote, getFeed: vi.fn() }));
 
 const { sealItem } = await import('$lib/server/feed-token');
@@ -20,12 +19,12 @@ const { actions } = await import('./+page.server');
 const queueItem = (id: number) => sealItem('secret', 7, { kind: 'queue', id });
 const hiddenItem = (id: number) => sealItem('secret', 7, { kind: 'hidden', id });
 
-const submit = (fields: Record<string, string>) => {
+const submit = (fields: Record<string, string>, user: Record<string, unknown> = {}) => {
   const body = new FormData();
   for (const [key, value] of Object.entries(fields)) body.set(key, value);
   return actions.vote({
     request: new Request('http://knights.test/play', { method: 'POST', body }),
-    locals: { user: { id: 7 } },
+    locals: { user: { id: 7, ...user } },
   } as never);
 };
 
@@ -69,6 +68,24 @@ describe('vote action', () => {
       status: 409,
       data: { message: expect.stringMatching(/standing/i) },
     });
+  });
+
+  it('tells a paced player to rest', async () => {
+    castVote.mockResolvedValue({ status: 'limited', until: new Date('2026-12-15T12:00:30Z') });
+    expect(await submit({ item: queueItem(3), answer: '4' })).toMatchObject({
+      status: 429,
+      data: { message: expect.stringMatching(/too quickly/i), lockoutSeconds: 30 },
+    });
+  });
+
+  it('passes the moderator flag so moderators are not paced', async () => {
+    castVote.mockResolvedValue({ status: 'recorded' });
+    await submit({ item: queueItem(3), answer: '4' }, { isModerator: true });
+    expect(castVote).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: 7, isModerator: true }),
+      expect.anything()
+    );
   });
 
   it('asks for an answer when the form is incomplete', async () => {
