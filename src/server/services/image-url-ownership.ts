@@ -90,7 +90,7 @@ export async function assertClientImageUrlsUsable({
 
 const UPLOAD_KEY_OWNER_TTL_SECONDS = 30 * 24 * 60 * 60;
 /** From then, every upload key in a client url needs an issue record or a row of the caller's. */
-export const UNRECORDED_KEYS_ACCEPTED_UNTIL = new Date('2026-11-12T00:00:00Z');
+export const UNRECORDED_KEYS_ACCEPTED_UNTIL = new Date('2026-11-05T05:00:00Z');
 
 const uploadKeyOwnerCounter = registerCounterWithLabels({
   name: 'upload_key_owner_total',
