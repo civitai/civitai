@@ -24,8 +24,8 @@ vi.mock('~/server/clickhouse/client', () => ({
       if (holder.logDown) throw new Error('unavailable');
       // As ClickHouse does: a WHERE name matching a SELECT alias resolves to that aggregate.
       const alias = sql.match(/any\(userId\) AS (\w+)/)?.[1];
-      const where = sql.slice(sql.indexOf('WHERE'));
-      if (!alias || new RegExp(`\\b${alias}\\b`).test(where))
+      const at = sql.indexOf('WHERE');
+      if (!alias || at < 0 || new RegExp(`\\b${alias}\\b`).test(sql.slice(at)))
         throw new Error('Aggregate function any(userId) is found in WHERE');
       return holder.issued
         .filter(({ key }) => sql.includes(`'${key}'`))
