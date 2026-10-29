@@ -1,7 +1,7 @@
 -- Idempotent: applied by hand, possibly more than once.
--- Apply after 20261213120000_knights_v2_progression and BEFORE deploying the Knights app and the main app (the generated
--- Prisma client reads the NewOrderPlayer gold columns): the detection job writes KnightsDetectionRun and
--- the Knights tick reads the new columns and tables.
+-- Deploy order: apply 20261213120000_knights_v2_progression, then this migration; then deploy the main app (its
+-- generated Prisma client reads the NewOrderPlayer gold columns); the Knights app goes out no earlier than the main
+-- app, or a reset in between runs the old resetPlayer and forfeits no gold.
 -- ALTER on the partitioned "KnightsVote" parent (indexes) propagates to every month.
 
 ALTER TABLE "NewOrderPlayer" ADD COLUMN IF NOT EXISTS "goldCleared" INTEGER NOT NULL DEFAULT 0;
@@ -45,7 +45,8 @@ CREATE INDEX IF NOT EXISTS "KnightsDetectionRun_unpassed_idx" ON "KnightsDetecti
 CREATE INDEX IF NOT EXISTS "NewOrderPlayer_uncleared_gold_idx" ON "NewOrderPlayer" ("userId")
   WHERE "goldEarned" > "goldCleared";
 
-CREATE INDEX IF NOT EXISTS "KnightsVote_unlabelled_idx" ON "KnightsVote" ("settledAt")
+DROP INDEX IF EXISTS "KnightsVote_unlabelled_idx";
+CREATE INDEX IF NOT EXISTS "KnightsVote_unlabelled_keyset_idx" ON "KnightsVote" ("settledAt", "itemId", "playerId")
   WHERE "settledAt" IS NOT NULL AND NOT "labelled";
 
 CREATE INDEX IF NOT EXISTS "KnightsVote_player_settled_gold_idx" ON "KnightsVote" ("playerId", "settledAt")

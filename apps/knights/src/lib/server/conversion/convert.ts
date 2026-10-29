@@ -95,7 +95,7 @@ export async function markConversionPaid(
     .execute();
 }
 
-/** Marks a pending conversion failed and gives its gold back, in one transaction. Gold reserved before a career reset was forfeited by it, so it is forfeited here too rather than given back. */
+/** Marks a pending conversion failed and gives its gold back, in one transaction. Gold reserved before a career reset was forfeited by it, so it is forfeited here too rather than given back; a tie at the clock's millisecond counts as before the reset. */
 async function failConversion(db: Kysely<DB>, conversion: Conversion): Promise<boolean> {
   return db.transaction().execute(async (trx) => {
     const player = await trx
@@ -111,7 +111,7 @@ async function failConversion(db: Kysely<DB>, conversion: Conversion): Promise<b
       .where('status', '=', 'pending')
       .executeTakeFirst();
     if (Number(failed.numUpdatedRows) === 0) return false;
-    const forfeited = player !== undefined && conversion.createdAt < player.startAt;
+    const forfeited = player !== undefined && conversion.createdAt <= player.startAt;
     const gold = conversion.gold;
     await trx
       .updateTable('NewOrderPlayer')

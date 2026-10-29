@@ -1405,8 +1405,7 @@ export async function resetPlayer({
       data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0 },
     }),
     // Knights v2 gold: unconverted gold is forfeited like the counters below; paid and reserved gold stays.
-    // startAt is the database clock read under the row lock the update above took, the same clock and order
-    // Knights stamps conversions with.
+    // startAt must be set here (database clock, under the row lock), not by the Prisma data: Knights' conversion ordering depends on it.
     dbWrite.$executeRaw`
       UPDATE "NewOrderPlayer"
       SET "startAt" = clock_timestamp(), "goldPending" = 0, "goldEarned" = "goldConverted", "goldCleared" = "goldConverted"

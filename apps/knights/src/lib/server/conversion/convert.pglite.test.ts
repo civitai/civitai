@@ -375,8 +375,8 @@ describe('a career reset', () => {
 
   it.each([
     ['one millisecond before the reset', '2026-12-24 23:59:59.999', true],
-    ['at the moment of the reset', '2026-12-25 00:00:00.000', false],
-    ['after the reset', '2026-12-25 00:00:00.001', false],
+    ['in the same millisecond as the reset', '2026-12-25 00:00:00.000', true],
+    ['one millisecond after the reset', '2026-12-25 00:00:00.001', false],
   ])(
     'decides a conversion made %s by its ordering with startAt',
     async (_when, createdAt, forfeits) => {

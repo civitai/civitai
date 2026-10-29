@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { bootLabelStore, createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer, seedSettledVote, setGold } from '../../../test/seed';
@@ -62,7 +62,7 @@ beforeEach(async () => {
   log.mockReset();
   await pg.exec(
     `TRUNCATE "KnightsDetectionRun", "KnightsGoldClearing", "KnightsGoldConversion", "KnightsVote", "KnightsPlayerDay", "NewOrderPlayer", "User" RESTART IDENTITY;
-     TRUNCATE label_store.subject CASCADE`
+     TRUNCATE label_store.subject, label_store.erased_subject, label_store.record_failure CASCADE`
   );
 });
 
@@ -375,6 +375,47 @@ describe('labels', () => {
     expect(failures.slice(-2)).toEqual([0, 0]);
     expect(await labelled(1)).toEqual([true]);
     expect(await labels()).toHaveLength(1);
+  });
+
+  describe('when the store raises for one vote', () => {
+    const personHash = (raiseFor: string) => `
+      CREATE OR REPLACE FUNCTION label_store.person_hash(p_kind TEXT, p_user_id INTEGER)
+      RETURNS TEXT LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = label_store, pg_temp AS $$
+      BEGIN
+        ${raiseFor}
+        RETURN (SELECT encode(sha256(convert_to(s."key" || ':' || p_kind || ':' || p_user_id, 'UTF8')), 'hex')
+                FROM label_store.secret s);
+      END $$`;
+    afterEach(() => pg.exec(personHash('')));
+
+    it('writes the other votes of the batch, records the failure and gives up on that vote after a few passes', async () => {
+      vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      for (const id of [1, 2, 3]) await seedPlayer(pg, id);
+      await vote(1, 1, 101);
+      await vote(2, 2, 102);
+      await vote(3, 3, 103);
+      await pg.exec(personHash(`IF p_user_id = 2 THEN RAISE EXCEPTION 'boom'; END IF;`));
+
+      await run();
+      expect(await pass()).toMatchObject({ done: true, labelsWritten: 2, labelFailures: 1 });
+      expect(await labels()).toHaveLength(2);
+      expect(await labelled(2)).toEqual([false]);
+
+      for (let i = 0; i < 5; i++) {
+        await run(`2026-12-${13 + i} 00:00:00`);
+        await pass();
+      }
+
+      expect(await labelled(2)).toEqual([true]);
+      expect(await labels()).toHaveLength(2);
+      expect(
+        (
+          await pg.query(
+            `SELECT count(*)::int AS n FROM label_store.record_failure WHERE "sourceRef" LIKE 'KnightsVoteError:%'`
+          )
+        ).rows
+      ).toEqual([{ n: 5 }]);
+    });
   });
 
   it('does not label yes/no votes', async () => {
