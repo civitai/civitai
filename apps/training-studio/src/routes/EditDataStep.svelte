@@ -13,7 +13,8 @@
   import { backend, browser, portalProps } from '$lib/host';
   import { buzzMode } from '$lib/buzz-mode.svelte';
   import { pool } from '$lib/pool';
-  import { isAbort, uploadFile, UploadError } from '$lib/upload';
+  import { blobPreviewUrl } from '$lib/reuse';
+  import { isAbort } from '$lib/upload';
   import type { EditGenerationItem, EditImageOption } from '$lib/edit-helpers-core';
   import { Button } from '@civitai/ui/components/ui/button/index.js';
   import { Input } from '@civitai/ui/components/ui/input/index.js';
@@ -24,14 +25,17 @@
   import EditImportDialog from './EditImportDialog.svelte';
   import EditGenerationPickerModal from './EditGenerationPickerModal.svelte';
   import CreateAfterDialog from './CreateAfterDialog.svelte';
-  import { blobAirFromUrl, nextImgId, type Img } from './trainingFlow';
-  import { fileDrop } from './fileDrop';
+  import { blobAirFromUrl, nextImgId, plural, type Img } from './trainingFlow';
+  import { fileDrop, isZip, pickedFiles } from './fileDrop';
+  import { inFlight, uploadedFields, uploadTile } from './tileUpload';
   import {
+    blobImg,
     groupByStart,
     hashFile,
     isPairReady,
     localImg,
     nextPairId,
+    pairImgs,
     pairProblem,
     pollUntilDone,
     RECOMMENDED_PAIRS,
@@ -72,17 +76,17 @@
   let setAllText = $state('');
 
   const suggesting = new SvelteSet<number>();
-  // In-flight uploads by `<pairId>:<side>`, so removing a pair (or leaving) aborts them.
-  const controllers = new Map<string, AbortController>();
+  // Keyed `<pairId>:<side>` for uploads and `<pairId>:suggest` for a suggestion.
+  const requests = inFlight<string>();
   // Leaving the step aborts every upload; the pairs outlive it (the flow owns them), so an interrupted
   // image is left failed-with-Retry rather than frozen mid-upload, and queued ones never start.
   let left = false;
   $effect(() => () => {
     left = true;
-    for (const c of controllers.values()) c.abort();
+    requests.abortAll();
     for (const pair of pairs)
-      for (const img of [pair.before, pair.after])
-        if (img?.status === 'uploading' && img.file)
+      for (const img of pairImgs(pair))
+        if (img.status === 'uploading' && img.file)
           Object.assign(img, { status: 'error', message: 'Upload interrupted' });
   });
 
@@ -98,30 +102,10 @@
   async function uploadSide(id: number, side: Side) {
     const file = pairById(id)?.[side]?.file;
     if (!file || left) return;
-    const key = `${id}:${side}`;
-    controllers.get(key)?.abort();
-    const controller = new AbortController();
-    controllers.set(key, controller);
-    patchImg(id, side, { status: 'uploading', progress: 0, message: undefined });
-    try {
-      const blob = await uploadFile(file, (f) => patchImg(id, side, { progress: f }), controller.signal);
-      patchImg(id, side, {
-        status: 'uploaded',
-        progress: 1,
-        blobId: blob.id,
-        blobUrl: blob.url ?? undefined,
-        nsfwLevel: blob.nsfwLevel ?? undefined,
-      });
-    } catch (err) {
-      // Aborted by a remove (the pair is gone) or by leaving (handled on unmount).
-      if (isAbort(err)) return;
-      patchImg(id, side, {
-        status: err instanceof UploadError && err.permanent ? 'blocked' : 'error',
-        message: err instanceof Error ? err.message : 'Upload failed',
-      });
-    } finally {
-      if (controllers.get(key) === controller) controllers.delete(key);
-    }
+    const blob = await requests.run(`${id}:${side}`, (signal) =>
+      uploadTile(file, (values) => patchImg(id, side, values), signal)
+    );
+    if (blob) patchImg(id, side, uploadedFields(blob));
   }
 
   async function uploadAll(targets: { id: number; side: Side }[]) {
@@ -172,7 +156,7 @@
     }));
     pairs = [...pairs, ...added];
     filter = 'all';
-    notice = `${added.length} ${added.length === 1 ? 'pair' : 'pairs'} added from ${name}.`;
+    notice = `${plural(added.length, 'pair')} added from ${name}.`;
     void uploadAll(
       added.flatMap((p) => [
         { id: p.id, side: 'before' as const },
@@ -190,46 +174,31 @@
       .filter((item) => !have.has(item.resultBlobId))
       .map((item) => ({
         id: nextPairId(),
-        before: {
-          id: nextImgId(),
+        before: blobImg({
           name: item.sourceUrl.split('?')[0]!.split('/').pop() ?? 'start',
           previewUrl: '',
-          mediaType: 'image',
-          status: 'uploaded',
-          progress: 1,
           blobId: blobAirFromUrl(item.sourceUrl),
           blobUrl: item.sourceUrl,
           sourceWorkflowId: item.workflowId,
-          tags: [],
-          caption: '',
-        },
-        after: {
-          id: nextImgId(),
+        }),
+        after: blobImg({
           name: `${item.resultBlobId}`,
           // The full image, not the picker's preview: the zip reads its bytes from here first.
           previewUrl: item.resultUrl,
           sourceWorkflowId: item.workflowId,
-          mediaType: 'image',
-          status: 'uploaded',
-          progress: 1,
           blobId: item.resultBlobId,
           blobUrl: item.resultUrl,
           nsfwLevel: item.nsfwLevel,
-          tags: [],
-          caption: '',
-        },
+        }),
         instruction: item.prompt,
         source: 'gen',
       }));
     if (added.length === 0) return;
     pairs = [...pairs, ...added];
     filter = 'all';
-    notice = `${added.length} ${added.length === 1 ? 'pair' : 'pairs'} added from your generations.`;
+    notice = `${plural(added.length, 'pair')} added from your generations.`;
     void pool(added, 4, async (p) => {
-      const url = await backend()
-        .datasetBlob(p.before.blobUrl!, p.before.sourceWorkflowId!)
-        .then((blob) => URL.createObjectURL(blob))
-        .catch(() => '');
+      const url = await blobPreviewUrl(p.before.blobUrl!, p.before.sourceWorkflowId!);
       if (!url) return;
       if (!pairById(p.id)) return URL.revokeObjectURL(url);
       patchImg(p.id, 'before', { previewUrl: url });
@@ -239,52 +208,47 @@
   function useCreated(option: EditImageOption, prompt: string, workflowId: string) {
     const pair = createId === null ? undefined : pairById(createId);
     if (!pair) return;
-    pair.after = {
-      id: nextImgId(),
+    pair.after = blobImg({
       name: option.blobId,
       previewUrl: option.url,
-      mediaType: 'image',
-      status: 'uploaded',
-      progress: 1,
       blobId: option.blobId,
       blobUrl: option.url,
       nsfwLevel: option.nsfwLevel,
       sourceWorkflowId: workflowId,
-      tags: [],
-      caption: '',
-    };
+    });
     if (!pair.instruction.trim()) pair.instruction = prompt;
   }
 
   async function suggest(id: number) {
     const pair = pairById(id);
     if (!pair?.after?.blobUrl || !pair.before.blobUrl || suggesting.has(id)) return;
+    const beforeUrl = pair.before.blobUrl;
+    const afterUrl = pair.after.blobUrl;
     suggesting.add(id);
-    const controller = new AbortController();
-    controllers.set(`${id}:suggest`, controller);
-    try {
-      const { workflowId } = await backend().suggestSubmit({
-        beforeUrl: pair.before.blobUrl,
-        afterUrl: pair.after.blobUrl,
-        currencies: buzzMode.currencies,
-      });
-      const { text } = await pollUntilDone(
-        (signal) => backend().suggestPoll(workflowId, signal),
-        controller.signal
-      );
-      const current = pairById(id);
-      // Typed in while it ran: the user's own words win.
-      if (current && !current.instruction.trim()) {
-        if (text) current.instruction = text;
-        else notice = "Couldn't suggest an instruction for that pair — write it yourself.";
+    await requests.run(`${id}:suggest`, async (signal) => {
+      try {
+        const { workflowId } = await backend().suggestSubmit({
+          beforeUrl,
+          afterUrl,
+          currencies: buzzMode.currencies,
+        });
+        const { text } = await pollUntilDone(
+          (pollSignal) => backend().suggestPoll(workflowId, pollSignal),
+          signal
+        );
+        const current = pairById(id);
+        // Typed in while it ran: the user's own words win.
+        if (current && !current.instruction.trim()) {
+          if (text) current.instruction = text;
+          else notice = "Couldn't suggest an instruction for that pair — write it yourself.";
+        }
+      } catch (err) {
+        if (!isAbort(err) && !signal.aborted)
+          notice = err instanceof Error ? err.message : "Couldn't suggest an instruction.";
+      } finally {
+        suggesting.delete(id);
       }
-    } catch (err) {
-      if (!isAbort(err) && !controller.signal.aborted)
-        notice = err instanceof Error ? err.message : "Couldn't suggest an instruction.";
-    } finally {
-      suggesting.delete(id);
-      controllers.delete(`${id}:suggest`);
-    }
+    });
   }
 
   // A preview may be shared by pairs that start from the same image (`addEditFrom`), so it is only
@@ -298,10 +262,7 @@
   }
 
   function removePair(id: number) {
-    for (const key of [`${id}:before`, `${id}:after`, `${id}:suggest`]) {
-      controllers.get(key)?.abort();
-      controllers.delete(key);
-    }
+    for (const key of [`${id}:before`, `${id}:after`, `${id}:suggest`]) requests.abort(key);
     const pair = pairById(id);
     if (pair) {
       revoke(pair.before, id);
@@ -335,8 +296,6 @@
     setAllOpen = false;
   }
 
-  const ZIP_MIMES = new Set(['application/zip', 'application/x-zip-compressed']);
-  const isZip = (f: File) => ZIP_MIMES.has(f.type) || f.name.toLowerCase().endsWith('.zip');
   function openImport(file: File) {
     importFile = file;
     importOpen = true;
@@ -348,11 +307,6 @@
   }
 
   const drop = fileDrop((v) => (dragging = v), takeFiles);
-  function picked(e: Event, take: (files: File[]) => void) {
-    const input = e.currentTarget as HTMLInputElement;
-    take([...(input.files ?? [])]);
-    input.value = '';
-  }
 
   const sourceLabel = (p: EditPair) =>
     p.source === 'zip' ? (p.sourceName ?? 'Imported zip') : p.source === 'gen' ? 'Generator' : 'Uploaded';
@@ -489,18 +443,21 @@
     </div>
   </div>
 
-  <input bind:this={fileInput} type="file" multiple accept="image/*" class="hidden" onchange={(e) => picked(e, takeFiles)} />
-  <input bind:this={zipInput} type="file" accept=".zip,application/zip" class="hidden" onchange={(e) => picked(e, (f) => f[0] && openImport(f[0]))} />
+  <input bind:this={fileInput} type="file" multiple accept="image/*" class="hidden" onchange={(e) => takeFiles(pickedFiles(e))} />
+  <input bind:this={zipInput} type="file" accept=".zip,application/zip" class="hidden" onchange={(e) => {
+    const [zip] = pickedFiles(e);
+    if (zip) openImport(zip);
+  }} />
   <input
     bind:this={afterInput}
     type="file"
     accept="image/*"
     class="hidden"
-    onchange={(e) =>
-      picked(e, (f) => {
-        if (afterTarget !== null && f[0]) setAfter(afterTarget, f[0]);
-        afterTarget = null;
-      })}
+    onchange={(e) => {
+      const [file] = pickedFiles(e);
+      if (afterTarget !== null && file) setAfter(afterTarget, file);
+      afterTarget = null;
+    }}
   />
 
   {#if notice}
@@ -511,7 +468,7 @@
     <div class="flex flex-col gap-2.5 rounded-xl border border-dark-4 bg-dark-6 px-4 py-3">
       <div class="flex flex-wrap items-center justify-between gap-3">
         <div class="flex flex-wrap items-baseline gap-3">
-          <span class="font-semibold text-dark-0">{pairs.length} {pairs.length === 1 ? 'pair' : 'pairs'}</span>
+          <span class="font-semibold text-dark-0">{plural(pairs.length, 'pair')}</span>
           <span class="text-xs text-dark-2">
             {pairs.length >= RECOMMENDED_PAIRS
               ? 'A good size for a first run'
@@ -615,8 +572,7 @@
       <details class="group rounded-xl border border-dark-4 bg-dark-6">
         <summary class="flex items-center justify-between px-4 py-3 text-sm text-dark-0">
           <span>
-            {grouped.singles.length}
-            {grouped.singles.length === 1 ? 'pair' : 'pairs'} with their own starting image
+            {plural(grouped.singles.length, 'pair')} with their own starting image
           </span>
           <IconChevronDown size={15} stroke={2} class="text-dark-2 transition group-open:rotate-180" />
         </summary>
@@ -655,7 +611,7 @@
           onclick={() => (filter = 'attention')}
           class="font-mono text-xs text-buzz underline decoration-dotted underline-offset-2"
         >
-          Fix {attentionCount} {attentionCount === 1 ? 'pair' : 'pairs'} to continue, or remove {attentionCount === 1 ? 'it' : 'them'}
+          Fix {plural(attentionCount, 'pair')} to continue, or remove {attentionCount === 1 ? 'it' : 'them'}
         </button>
       {:else if uploading}
         <span class="font-mono text-xs text-dark-2">Uploading…</span>

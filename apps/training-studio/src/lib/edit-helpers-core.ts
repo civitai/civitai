@@ -4,17 +4,21 @@
 // component share them. Generation and suggestion are charged to the caller's token.
 import {
   getWorkflow,
-  queryWorkflows,
   submitWorkflow,
-  type BuzzClientAccount,
   type WorkflowStepTemplate,
 } from '@civitai/orchestration-client';
 import { CIVITAI_TAG } from '$lib/data/trainingRows';
 import {
   describeSubmitError,
-  RETENTION_DAYS,
+  isUsableBlob,
+  MAX_GENERATION_ITEMS,
+  queryRecentWorkflows,
   resolveCurrencies,
+  TERMINAL_STATUSES,
+  WHATIF_CURRENCIES,
+  whatIfCost,
   type OrchestratorClient,
+  type OutputBlob,
 } from './orchestrator-core';
 
 /** One past image edit: the image it started from, one of its results, and the prompt that made it. */
@@ -29,21 +33,12 @@ export interface EditGenerationItem {
   nsfwLevel?: string;
 }
 
-interface RawBlob {
-  id: string;
-  available: boolean;
-  url?: string | null;
-  previewUrl?: string | null;
-  blockedReason?: string | null;
-  nsfwLevel?: string | null;
-}
 interface RawImageGenStep {
   $type?: string;
   input?: { images?: unknown; prompt?: unknown };
-  output?: { images?: RawBlob[] };
+  output?: { images?: OutputBlob[] };
 }
 
-const MAX_EDIT_GENERATIONS = 200;
 const ORCHESTRATOR_BLOB_PATH = '/v2/consumer/blobs/';
 // The generator tags every workflow with its workflow key; an image edit is this one.
 const EDIT_WORKFLOW_TAG = 'img2img:edit';
@@ -54,21 +49,16 @@ const EDIT_WORKFLOW_TAG = 'img2img:edit';
 export async function listEditGenerations(
   client: OrchestratorClient
 ): Promise<EditGenerationItem[]> {
-  const fromDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await queryWorkflows({
-    client,
-    query: {
-      tags: [CIVITAI_TAG, 'gen', 'img', EDIT_WORKFLOW_TAG],
-      take: 100,
-      fromDate,
-      hideMatureContent: false,
-    },
-  });
-  if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
+  const workflows = await queryRecentWorkflows(client, [
+    CIVITAI_TAG,
+    'gen',
+    'img',
+    EDIT_WORKFLOW_TAG,
+  ]);
 
   const items: EditGenerationItem[] = [];
   const seen = new Set<string>();
-  for (const workflow of data.items ?? []) {
+  for (const workflow of workflows) {
     if (!workflow.id) continue;
     const params = (workflow.metadata as { params?: { prompt?: unknown } } | null)?.params;
     for (const step of (workflow.steps ?? []) as RawImageGenStep[]) {
@@ -82,7 +72,7 @@ export async function listEditGenerations(
       );
       if (!prompt) continue;
       for (const blob of step.output?.images ?? []) {
-        if (!blob.available || blob.blockedReason || !blob.url || seen.has(blob.id)) continue;
+        if (!isUsableBlob(blob) || seen.has(blob.id)) continue;
         seen.add(blob.id);
         items.push({
           workflowId: workflow.id,
@@ -95,16 +85,14 @@ export async function listEditGenerations(
         });
       }
     }
-    if (items.length >= MAX_EDIT_GENERATIONS) break;
+    if (items.length >= MAX_GENERATION_ITEMS) break;
   }
-  return items.slice(0, MAX_EDIT_GENERATIONS);
+  return items.slice(0, MAX_GENERATION_ITEMS);
 }
 
 // Tagged apart from `gen` so the helpers' outputs never show up in the caller's generation feed or
 // in "From my edit generations".
 const HELPER_TAGS = [CIVITAI_TAG, 'training-studio-edit-helper'];
-const WHATIF_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue'];
-const TERMINAL = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 // Never fetched by a whatif.
 const WHATIF_IMAGE = 'https://example.com/whatif.png';
 
@@ -138,24 +126,11 @@ async function submit(
   return data.id;
 }
 
-async function quote(
-  client: OrchestratorClient,
-  step: WorkflowStepTemplate
-): Promise<number | null> {
-  const { data, error } = await submitWorkflow({
-    client,
-    body: { steps: [step], currencies: WHATIF_CURRENCIES },
-    query: { whatif: true },
-  });
-  if (!data) throw new Error(`whatif failed: ${describeSubmitError(error)}`);
-  return data.cost?.total ?? null;
-}
-
 async function readStep(client: OrchestratorClient, workflowId: string) {
   const { data, error } = await getWorkflow({ client, path: { workflowId } });
   if (!data) throw new Error(`poll failed: ${error?.detail ?? 'no data returned'}`);
   const step = data.steps?.[0] as { status?: string; output?: unknown } | undefined;
-  return { done: TERMINAL.has(data.status), succeeded: data.status === 'succeeded', step };
+  return { done: TERMINAL_STATUSES.has(data.status), step };
 }
 
 /** How many options one "create the after image" run produces. */
@@ -196,7 +171,7 @@ export interface EditImageOption {
 }
 
 export const editImageQuote = (client: OrchestratorClient) =>
-  quote(client, editImageStep(WHATIF_IMAGE, 'whatif'));
+  whatIfCost(client, editImageStep(WHATIF_IMAGE, 'whatif'), 'whatif');
 
 export const submitEditImage = (client: OrchestratorClient, req: EditImageRequest) =>
   submit(client, editImageStep(req.imageUrl, req.prompt.trim()), req.currencies, 'image edit');
@@ -208,10 +183,10 @@ export async function pollEditImage(
   workflowId: string
 ): Promise<{ done: boolean; options: EditImageOption[] }> {
   const { done, step } = await readStep(client, workflowId);
-  const images = (step?.output as { images?: RawBlob[] } | undefined)?.images ?? [];
+  const images = (step?.output as { images?: OutputBlob[] } | undefined)?.images ?? [];
   const options = images
-    .filter((b) => b.available && !b.blockedReason && b.url)
-    .map((b) => ({ blobId: b.id, url: b.url!, nsfwLevel: b.nsfwLevel ?? undefined }));
+    .filter(isUsableBlob)
+    .map((b) => ({ blobId: b.id, url: b.url, nsfwLevel: b.nsfwLevel ?? undefined }));
   return { done, options };
 }
 
@@ -255,7 +230,7 @@ export interface SuggestRequest {
 }
 
 export const suggestQuote = (client: OrchestratorClient) =>
-  quote(client, suggestStep(WHATIF_IMAGE, WHATIF_IMAGE));
+  whatIfCost(client, suggestStep(WHATIF_IMAGE, WHATIF_IMAGE), 'whatif');
 
 export const submitSuggest = (client: OrchestratorClient, req: SuggestRequest) =>
   submit(client, suggestStep(req.beforeUrl, req.afterUrl), req.currencies, 'suggestion');

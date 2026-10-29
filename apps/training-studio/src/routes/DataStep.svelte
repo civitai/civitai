@@ -26,9 +26,9 @@
   import { Input } from '@civitai/ui/components/ui/input/index.js';
   import * as Tooltip from '@civitai/ui/components/ui/tooltip/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
-  import { backend, hostConfig, portalProps } from '$lib/host';
+  import { hostConfig, portalProps } from '$lib/host';
   import { isMatureNsfwLevel, nsfwLevelLabel } from '$lib/buzz-balance.svelte';
-  import { directDatasetUrl, type ReuseItem } from '$lib/reuse';
+  import { blobPreviewUrl, directDatasetUrl, type ReuseItem } from '$lib/reuse';
   import { playOnHover, resetOnLeave } from '$lib/video-preview';
   import { extOfAir, extsOfMedia, mediaOfExt, mimeOfExt } from '$lib/media';
   import {
@@ -38,7 +38,7 @@
   import { loraTypeById, mediaCount, type LabelType, type Media } from '$lib/data/trainingModels';
   import { pool } from '$lib/pool';
   import { runAutoLabel, type AutoLabelResult } from '$lib/autolabel';
-  import { isAbort, uploadFile, UploadError } from '$lib/upload';
+  import { isAbort } from '$lib/upload';
   import { trainingBlobKey } from '$lib/train-core';
   import { buildDatasetZip, saveBlob, uniqueBaseNames } from '$lib/dataset-zip';
   import {
@@ -55,6 +55,7 @@
     labelString,
     nextImgId,
     parseLabel,
+    plural,
     runCard,
     splitTags,
     startLabelPass,
@@ -65,7 +66,8 @@
   } from './trainingFlow';
   import LabelEditorModal from './LabelEditorModal.svelte';
   import GenerationPickerModal from './GenerationPickerModal.svelte';
-  import { fileDrop } from './fileDrop';
+  import { fileDrop, isZip, pickedFiles } from './fileDrop';
+  import { inFlight, uploadedFields, uploadTile } from './tileUpload';
   import ReuseDatasetModal from './ReuseDatasetModal.svelte';
   import ManageTagsModal from './ManageTagsModal.svelte';
   import type { GenerationItem } from '$lib/data/trainingRows';
@@ -259,8 +261,7 @@
 
   let dragging = $state(false);
   let fileInput: HTMLInputElement;
-  // In-flight uploads, so removing a tile (or leaving) aborts its request.
-  const controllers = new Map<number, AbortController>();
+  const uploads = inFlight<number>();
 
   // Mutate the tile through `images` (the state proxy) rather than the captured ref, so the change
   // is reactive.
@@ -293,43 +294,24 @@
   }
 
   async function uploadOne(id: number, file: File) {
-    const controller = new AbortController();
-    controllers.set(id, controller);
-    patch(id, { status: 'uploading', progress: 0, message: undefined });
-    try {
-      const blob = await uploadFile(file, (fraction) => patch(id, { progress: fraction }), controller.signal);
-      const owner = ownerOf(trainingBlobKey(blob.id), id);
-      if (owner) {
-        // Whichever copy finishes first is kept, so a zip's caption can sit on the dropped one.
-        const dropped = images.find((i) => i.id === id);
-        if (dropped?.sourceLabel && !owner.sourceLabel && !isLabeled(owner))
-          patch(owner.id, {
-            tags: dropped.tags,
-            caption: dropped.caption,
-            sourceLabel: dropped.sourceLabel,
-            labelTried: dropped.labelTried,
-          });
-        dupOwnerIds = [...dupOwnerIds, owner.id];
-        remove(id);
-        return;
-      }
-      patch(id, {
-        status: 'uploaded',
-        progress: 1,
-        blobId: blob.id,
-        blobUrl: blob.url ?? undefined,
-        nsfwLevel: blob.nsfwLevel ?? undefined,
-      });
-    } catch (err) {
-      if (isAbort(err)) return;
-      const permanent = err instanceof UploadError && err.permanent;
-      patch(id, {
-        status: permanent ? 'blocked' : 'error',
-        message: err instanceof Error ? err.message : 'Upload failed',
-      });
-    } finally {
-      controllers.delete(id);
+    const blob = await uploads.run(id, (signal) => uploadTile(file, (values) => patch(id, values), signal));
+    if (!blob) return;
+    const owner = ownerOf(trainingBlobKey(blob.id), id);
+    if (owner) {
+      // Whichever copy finishes first is kept, so a zip's caption can sit on the dropped one.
+      const dropped = images.find((i) => i.id === id);
+      if (dropped?.sourceLabel && !owner.sourceLabel && !isLabeled(owner))
+        patch(owner.id, {
+          tags: dropped.tags,
+          caption: dropped.caption,
+          sourceLabel: dropped.sourceLabel,
+          labelTried: dropped.labelTried,
+        });
+      dupOwnerIds = [...dupOwnerIds, owner.id];
+      remove(id);
+      return;
     }
+    patch(id, uploadedFields(blob));
   }
 
   function retry(id: number) {
@@ -412,12 +394,7 @@
     if (targets.length === 0) return;
     await pool(targets, 4, async (t) => {
       const direct = directDatasetUrl(t.air);
-      const url =
-        direct ??
-        (await backend()
-          .datasetBlob(t.air, t.workflowId)
-          .then((blob) => URL.createObjectURL(blob))
-          .catch(() => ''));
+      const url = direct ?? (await blobPreviewUrl(t.air, t.workflowId));
       if (!url) return;
       // Tile removed mid-fetch — or the whole flow unmounted (its cleanup empties `images`, so
       // this same guard catches a late resolve after teardown and the URL never leaks).
@@ -528,10 +505,9 @@
         return;
       }
       saveBlob(blob, 'training-dataset.zip');
-      const plural = (n: number) => `${n} file${n === 1 ? '' : 's'}`;
       exportNotice = [
-        failed > 0 && `${plural(failed)} couldn't be fetched`,
-        blocked > 0 && `${plural(blocked)} blocked by the scan`,
+        failed > 0 && `${plural(failed, 'file')} couldn't be fetched`,
+        blocked > 0 && `${plural(blocked, 'file')} blocked by the scan`,
       ]
         .filter(Boolean)
         .join(' and ');
@@ -566,15 +542,12 @@
     void maybeAutoLabel();
   }
   function onPickZip(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    const file = input.files?.[0];
+    const [file] = pickedFiles(e);
     if (file) void importZip(file);
-    input.value = '';
   }
 
   function remove(id: number) {
-    controllers.get(id)?.abort();
-    controllers.delete(id);
+    uploads.abort(id);
     const tile = images.find((x) => x.id === id);
     if (tile) URL.revokeObjectURL(tile.previewUrl);
     images = images.filter((x) => x.id !== id);
@@ -651,8 +624,6 @@
     if (r.caption) img.caption = r.caption;
   }
 
-  const ZIP_MIMES = new Set(['application/zip', 'application/x-zip-compressed']);
-  const isZip = (f: File) => ZIP_MIMES.has(f.type) || f.name.toLowerCase().endsWith('.zip');
   // One drop target's worth of handlers, shared by the empty-state dropzone and the populated
   // dataset area (dropping used to work only before the first upload).
   const drop = fileDrop(
@@ -666,9 +637,7 @@
     }
   );
   function onPick(e: Event) {
-    const input = e.currentTarget as HTMLInputElement;
-    void addFiles(input.files);
-    input.value = ''; // let the same file be re-picked after a remove
+    void addFiles(pickedFiles(e));
   }
 
   let genPickerOpen = $state(false);

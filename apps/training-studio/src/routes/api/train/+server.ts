@@ -7,11 +7,7 @@ import {
   TrainingSubmitError,
   type SubmittedBatch,
 } from '$lib/train-core';
-import {
-  TrainingTextCheckError,
-  TrainingTextRefusedError,
-  textCheckFailureStatus,
-} from '$lib/training-text';
+import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 
 // Submit the real training workflow(s) — one per run — and return their ids. This spends Buzz, so it's
 // the single write in the whole flow. HTTP mapping over core.submitTrainingBatch: a batch refused by us or
@@ -33,12 +29,11 @@ export const POST: RequestHandler = async ({ locals, request }) => {
       token,
       runs,
       locals.user.id,
-      locals.devPreview ? null : request.headers.get('cookie') ?? ''
+      textCheckCookie(locals, request)
     );
   } catch (err) {
     if (err instanceof TrainingBatchValidationError) error(400, err.message);
-    if (err instanceof TrainingTextRefusedError) error(400, err.message);
-    if (err instanceof TrainingTextCheckError) error(textCheckFailureStatus(err), err.message);
+    throwTextCheckHttpError(err);
     if (err instanceof TrainingSubmitError && err.isRefusal)
       error(400, `Training could not start: ${err.reason}`);
     if (err instanceof TrainingSubmitError && err.status !== undefined && err.status < 500)

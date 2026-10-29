@@ -30,3 +30,15 @@ export function fileDrop(
     },
   };
 }
+
+const ZIP_MIMES = new Set(['application/zip', 'application/x-zip-compressed']);
+export const isZip = (f: File) => ZIP_MIMES.has(f.type) || f.name.toLowerCase().endsWith('.zip');
+
+/** The files a file input's change event picked. Clears the input, so picking the same file again
+ *  (after removing it) still fires a change. */
+export function pickedFiles(e: Event): File[] {
+  const input = e.currentTarget as HTMLInputElement;
+  const files = [...(input.files ?? [])];
+  input.value = '';
+  return files;
+}

@@ -6,6 +6,7 @@
   import { Spinner } from '@civitai/ui/components/ui/spinner/index.js';
   import * as Dialog from '@civitai/ui/components/ui/dialog/index.js';
   import { readEditZip, type ImportedPair } from './editPairs';
+  import { plural } from './trainingFlow';
 
   let {
     open = $bindable(false),
@@ -27,8 +28,6 @@
     void file;
     untrack(() => (defaultInstruction = ''));
   });
-
-  const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
   function summary(pairs: ImportedPair[]) {
     const seen = new Set<string>();

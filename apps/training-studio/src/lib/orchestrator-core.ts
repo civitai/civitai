@@ -109,22 +109,31 @@ export function consumerBlobUrl(endpoint: string, air: string, workflowId?: stri
 
 /** The caller's training runs from the orchestrator, newest first, mapped to list rows. */
 export async function listTrainingWorkflows(client: OrchestratorClient): Promise<TrainingRow[]> {
+  const workflows = await queryRecentWorkflows(client, [CIVITAI_TAG, TRAINING_TAG]);
+  return workflows.map(workflowToRow).filter((r): r is TrainingRow => r !== null);
+}
+
+/** The caller's workflows carrying every one of `tags`, newest first, within the retention window. */
+export async function queryRecentWorkflows(client: OrchestratorClient, tags: string[]) {
   const fromDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
   const { data, error } = await queryWorkflows({
     client,
-    query: { tags: [CIVITAI_TAG, TRAINING_TAG], take: 100, fromDate, hideMatureContent: false },
+    query: { tags, take: 100, fromDate, hideMatureContent: false },
   });
   if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
-  return (data.items ?? []).map(workflowToRow).filter((r): r is TrainingRow => r !== null);
+  return data.items ?? [];
 }
+
+/** Workflow statuses that end a run — a poll stops on any of them. */
+export const TERMINAL_STATUSES = new Set(['succeeded', 'failed', 'expired', 'canceled']);
 
 const GENERATION_TAG = 'gen';
 const MEDIA_TAG: Record<Media, string> = { image: 'img', video: 'vid', audio: 'aud' };
 /** A picker grid caps out well before this; enough to cover a heavy day of generations. */
-const MAX_GENERATION_ITEMS = 200;
+export const MAX_GENERATION_ITEMS = 200;
 
 /** One output blob off a raw workflow step, across all media shapes (image/video/audio). */
-interface OutputBlob {
+export interface OutputBlob {
   id: string;
   available: boolean;
   url?: string | null;
@@ -133,6 +142,10 @@ interface OutputBlob {
   type?: string;
   nsfwLevel?: string | null;
 }
+/** An output blob a dataset or picker can use: scanned clean, available, and with a URL. */
+export const isUsableBlob = (blob: OutputBlob): blob is OutputBlob & { url: string } =>
+  blob.available && !blob.blockedReason && !!blob.url;
+
 interface RawStep {
   $type?: string;
   output?: {
@@ -195,24 +208,18 @@ export async function listGenerations(
   client: OrchestratorClient,
   media: Media
 ): Promise<GenerationItem[]> {
-  const fromDate = new Date(Date.now() - RETENTION_DAYS * 24 * 60 * 60 * 1000).toISOString();
-  const { data, error } = await queryWorkflows({
-    client,
-    query: {
-      tags: [CIVITAI_TAG, GENERATION_TAG, MEDIA_TAG[media]],
-      take: 100,
-      fromDate,
-      hideMatureContent: false,
-    },
-  });
-  if (!data) throw new Error(`queryWorkflows failed: ${error?.detail ?? 'no data returned'}`);
+  const workflows = await queryRecentWorkflows(client, [
+    CIVITAI_TAG,
+    GENERATION_TAG,
+    MEDIA_TAG[media],
+  ]);
 
   const items: GenerationItem[] = [];
   const seen = new Set<string>();
-  for (const workflow of data.items ?? []) {
+  for (const workflow of workflows) {
     for (const step of (workflow.steps ?? []) as RawStep[]) {
       for (const blob of stepBlobsForMedia(step, media)) {
-        if (blob.available && !blob.blockedReason && blob.url && !seen.has(blob.id)) {
+        if (isUsableBlob(blob) && !seen.has(blob.id)) {
           seen.add(blob.id);
           items.push({
             blobId: blob.id,
@@ -237,7 +244,22 @@ const WHATIF_IMAGE_COUNT = 20;
 const WHATIF_SAMPLE_PROMPTS = ['sample prompt', 'sample prompt', 'sample prompt'];
 // Which Buzz wallets may pay — the standard user spend set. It gates the payment source, not the price,
 // so the estimated total is the same for any non-empty set; required on the workflow body regardless.
-const WHATIF_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue'];
+export const WHATIF_CURRENCIES: BuzzClientAccount[] = ['yellow', 'blue'];
+
+/** Price one step without submitting it (`whatif`): the total Buzz cost, or null when unpriced. */
+export async function whatIfCost(
+  client: OrchestratorClient,
+  step: WorkflowStepTemplate,
+  what: string
+): Promise<number | null> {
+  const { data, error } = await submitWorkflow({
+    client,
+    body: { steps: [step], currencies: WHATIF_CURRENCIES },
+    query: { whatif: true },
+  });
+  if (!data) throw new Error(`${what} failed: ${describeSubmitError(error)}`);
+  return data.cost?.total ?? null;
+}
 
 /**
  * Every field the ORCHESTRATOR prices must be expressible here, because Review's "this is what
@@ -314,13 +336,7 @@ export async function trainingWhatIf(
         },
       }) as unknown as WorkflowStepTemplate;
 
-  const { data, error } = await submitWorkflow({
-    client,
-    body: { steps: [step], currencies: WHATIF_CURRENCIES },
-    query: { whatif: true },
-  });
-  if (!data) throw new Error(`training whatif failed: ${describeSubmitError(error)}`);
-  return data.cost?.total ?? null;
+  return whatIfCost(client, step, 'training whatif');
 }
 
 /** Mint a short-lived presigned URL for a single dataset blob. The browser POSTs the file straight to

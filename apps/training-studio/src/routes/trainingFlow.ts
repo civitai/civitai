@@ -270,6 +270,9 @@ export async function imgBytes(
   throw new Error(`${img.name} unavailable`);
 }
 
+/** "1 pair", "3 pairs". */
+export const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
+
 /** Per-run training parameters chosen on the Review step (mirrors the prod trainer's fields). */
 export interface RunParams {
   steps: number;

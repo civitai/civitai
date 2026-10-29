@@ -1,5 +1,6 @@
 import JSZip from 'jszip';
 import { mediaOfExt, mimeOfExt } from '$lib/media';
+import { abortableDelay } from '$lib/pool';
 import { trainingBlobKey, type TrainingItem } from '$lib/train-core';
 import {
   compareFileNames,
@@ -46,12 +47,33 @@ export function localImg(file: File, name = file.name): Img {
   };
 }
 
+/** A tile for an image that is already an orchestrator blob (a generation, a created after image):
+ *  scanned, so nothing to upload. */
+export function blobImg(
+  fields: Pick<Img, 'name' | 'previewUrl' | 'blobId' | 'blobUrl'> &
+    Partial<Pick<Img, 'nsfwLevel' | 'sourceWorkflowId'>>
+): Img {
+  return {
+    id: nextImgId(),
+    mediaType: 'image',
+    status: 'uploaded',
+    progress: 1,
+    tags: [],
+    caption: '',
+    ...fields,
+  };
+}
+
+/** The pair's images: its start, then its result when it has one. */
+export const pairImgs = (pair: EditPair): Img[] =>
+  pair.after ? [pair.before, pair.after] : [pair.before];
+
 export type PairProblem = 'uploading' | 'failed' | 'no-after' | 'no-instruction';
 
 /** What keeps a pair out of training, or null when it is ready. Upload problems come first: an
  *  instruction is worth nothing on a pair whose images never arrived. */
 export function pairProblem(pair: EditPair): PairProblem | null {
-  const images = pair.after ? [pair.before, pair.after] : [pair.before];
+  const images = pairImgs(pair);
   if (images.some(isFailed)) return 'failed';
   if (images.some((img) => !isTrainable(img))) return 'uploading';
   if (!pair.after) return 'no-after';
@@ -269,16 +291,6 @@ export async function pollUntilDone<T extends { done: boolean }>(
     const answer = await poll(signal);
     if (answer.done) return answer;
     if (Date.now() > deadline) throw new Error('This is taking too long — try again.');
-    await new Promise<void>((resolve, reject) => {
-      const timer = setTimeout(resolve, intervalMs);
-      signal.addEventListener(
-        'abort',
-        () => {
-          clearTimeout(timer);
-          reject(signal.reason);
-        },
-        { once: true }
-      );
-    });
+    await abortableDelay(intervalMs, signal);
   }
 }

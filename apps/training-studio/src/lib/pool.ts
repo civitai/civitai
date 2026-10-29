@@ -14,3 +14,18 @@ export async function pool<T>(
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, worker));
 }
+
+/** Resolve after `ms`, or reject with an AbortError as soon as `signal` aborts. */
+export function abortableDelay(ms: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    signal.addEventListener(
+      'abort',
+      () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      },
+      { once: true }
+    );
+  });
+}

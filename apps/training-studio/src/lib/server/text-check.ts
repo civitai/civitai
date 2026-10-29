@@ -1,6 +1,8 @@
+import { error } from '@sveltejs/kit';
 import {
   TrainingTextCheckError,
   TrainingTextRefusedError,
+  textCheckFailureStatus,
   type TrainingTextCheck,
 } from '$lib/training-text';
 import { logToAxiom } from './axiom';
@@ -57,4 +59,14 @@ export function mainAppTextCheck(cookie: string, userId: number): TrainingTextCh
  *  dev-login preview (`cookie` null), which has no session to send it with. */
 export function requestTextCheck(cookie: string | null, userId: number): TrainingTextCheck {
   return cookie === null ? async () => undefined : mainAppTextCheck(cookie, userId);
+}
+
+export const textCheckCookie = (locals: App.Locals, request: Request): string | null =>
+  locals.devPreview ? null : request.headers.get('cookie') ?? '';
+
+/** Answer a failed check over HTTP: a refusal is a 400 carrying its reason, a check that couldn't run
+ *  its own status. Returns for any other error, which stays the caller's to map. */
+export function throwTextCheckHttpError(err: unknown): void {
+  if (err instanceof TrainingTextRefusedError) error(400, err.message);
+  if (err instanceof TrainingTextCheckError) error(textCheckFailureStatus(err), err.message);
 }

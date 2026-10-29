@@ -2,11 +2,7 @@ import { json, error } from '@sveltejs/kit';
 import type { RequestHandler } from './$types';
 import { requireToken } from '$lib/server/token';
 import { continueTraining, continueTrainingWhatIf, type ContinueOpts } from '$lib/server/train';
-import {
-  TrainingTextCheckError,
-  TrainingTextRefusedError,
-  textCheckFailureStatus,
-} from '$lib/training-text';
+import { textCheckCookie, throwTextCheckHttpError } from '$lib/server/text-check';
 
 function parse(v: string | null): number | null {
   const n = Number(v);
@@ -59,12 +55,11 @@ export const POST: RequestHandler = async ({ locals, request }) => {
         token,
         locals.user.id,
         opts,
-        locals.devPreview ? null : request.headers.get('cookie') ?? ''
+        textCheckCookie(locals, request)
       ),
     });
   } catch (err) {
-    if (err instanceof TrainingTextRefusedError) error(400, err.message);
-    if (err instanceof TrainingTextCheckError) error(textCheckFailureStatus(err), err.message);
+    throwTextCheckHttpError(err);
     console.warn('[training-studio] continueTraining failed', err);
     error(502, err instanceof Error ? err.message : 'Could not start training.');
   }

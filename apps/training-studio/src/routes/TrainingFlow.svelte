@@ -29,7 +29,7 @@
   } from './trainingFlow';
   import type { FromPrices, LabelType } from '$lib/data/trainingModels';
   import type { ReuseItem } from '$lib/reuse';
-  import { isPairReady, pairItems, seedEditPrompts, type EditPair } from './editPairs';
+  import { isPairReady, pairImgs, pairItems, seedEditPrompts, type EditPair } from './editPairs';
 
   let {
     prices,
@@ -121,8 +121,8 @@
     for (const img of images) URL.revokeObjectURL(img.previewUrl);
     images = [];
     for (const pair of pairs)
-      for (const img of [pair.before, pair.after])
-        if (img?.previewUrl.startsWith('blob:')) URL.revokeObjectURL(img.previewUrl);
+      for (const img of pairImgs(pair))
+        if (img.previewUrl.startsWith('blob:')) URL.revokeObjectURL(img.previewUrl);
     pairs = [];
   });
 
