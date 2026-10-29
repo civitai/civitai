@@ -505,6 +505,14 @@ export const updateCommentReportStatusByReason = ({
   `;
 };
 
+/**
+ * Whether a legacy comment is already hidden for ToS: one its author deleted may be kept that way for
+ * a hold, and its author must not hear about a comment they removed.
+ */
+export const isLegacyCommentHidden = async (id: number) =>
+  !!(await dbWrite.comment.findUnique({ where: { id }, select: { tosViolation: true } }))
+    ?.tosViolation;
+
 export async function bulkSetCommentTosViolation({
   ids,
   actor,
@@ -525,6 +533,7 @@ export async function bulkSetCommentTosViolation({
   let count = 0;
 
   for (const id of ids) {
+    const wasHidden = await isLegacyCommentHidden(id);
     const comment = await updateCommentById({ id, data: { tosViolation: true } }).catch(() => null);
     if (!comment) continue;
     count += 1;
@@ -543,6 +552,7 @@ export async function bulkSetCommentTosViolation({
       )
     );
 
+    if (wasHidden) continue;
     await createNotification({
       userId: comment.user.id,
       type: 'tos-violation',

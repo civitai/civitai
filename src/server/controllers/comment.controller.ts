@@ -24,6 +24,7 @@ import {
   getCommentsViaKysely,
   getPinnedComments,
   getPinnedCommentsViaKysely,
+  isLegacyCommentHidden,
   toggleHideComment,
   togglePinComment,
   updateCommentById,
@@ -406,6 +407,7 @@ export const setTosViolationHandler = async ({
     const { id } = input;
     if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
 
+    const wasHidden = await isLegacyCommentHidden(id);
     const updatedComment = await updateCommentById({ id, data: { tosViolation: true } });
     if (!updatedComment) throw throwNotFoundError(`No comment with id ${id}`);
 
@@ -423,6 +425,7 @@ export const setTosViolationHandler = async ({
       )
     );
 
+    if (wasHidden) return updatedComment;
     await createNotification({
       userId: updatedComment.user.id,
       type: 'tos-violation',

@@ -73,6 +73,27 @@ it('bulkSetCommentV2TosViolation actions an already-hidden comment without telli
   );
 });
 
+// The legacy twin: an author's own delete keeps a legacy comment hidden for a hold the same way.
+it('bulkSetCommentTosViolation actions and rewards an already-hidden comment without telling its author', async () => {
+  const { createNotification } = await import('~/server/services/notification.service');
+  const { reportAcceptedReward } = await import('~/server/rewards');
+  dbMock.dbWrite.comment.findUnique.mockResolvedValueOnce({ tosViolation: true } as never);
+  dbMock.dbWrite.comment.findUnique.mockResolvedValueOnce({ tosViolation: false } as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (_s: unknown, ...values: unknown[]) =>
+    values.includes(1) ? [{ id: 501, userId: 7 }] : []) as never);
+
+  await expect(bulkSetCommentTosViolation({ ids: [1, 2], actor })).resolves.toMatchObject({
+    count: 2,
+    notified: 1,
+    rewardedReports: 1,
+  });
+  expect(createNotification).toHaveBeenCalledTimes(1);
+  expect(reportAcceptedReward.apply).toHaveBeenCalledWith(
+    { userId: 7, reportId: 501 },
+    expect.anything()
+  );
+});
+
 describe('bulkSetCommentTosViolation', () => {
   it('counts rows written, not ids submitted', async () => {
     dbMock.dbWrite.comment.update
