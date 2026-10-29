@@ -1,4 +1,6 @@
 import { Prisma } from '@prisma/client';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import type { EventViewer } from '~/server/events/event-access';
 import { TRPCError } from '@trpc/server';
 import {
@@ -192,6 +194,9 @@ import type {
   EventDecorationCosmetic,
 } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { getSfwModelNames } from '~/server/services/model-sfw-face.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { showsSfwFace, withSfwModelNames } from '~/shared/utils/model-sfw-face';
 import {
   imageSelect,
   publishedImageWhere,
@@ -281,12 +286,12 @@ import type {
   ReportReason,
   ReviewReactions,
   TagType,
+  CollectionItemStatus,
 } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   BlockImageReason,
   CosmeticEntity,
-  CollectionItemStatus,
   CollectionMode,
   AppealStatus,
   EntityType,
@@ -939,25 +944,23 @@ export const deleteImageById = async ({
       deletedById !== undefined &&
       (await imagesWithOpenReports([id]).catch(() => new Set([id]))).has(id);
 
-    const image = await dbWrite.image
-      .delete({
-        where: { id },
-        select: {
-          url: true,
-          postId: true,
-          nsfwLevel: true,
-          userId: true,
-          metadata: true,
-          ingestion: true,
-          needsReview: true,
-          blockedFor: true,
-        },
-      })
-      .catch((error) => {
-        if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
-          return null;
-        throw error;
-      });
+    const markerView = await holdMarkerViewExists();
+    const [image = null] = await dbWrite.$queryRaw<
+      {
+        url: string;
+        postId: number | null;
+        nsfwLevel: number;
+        userId: number;
+        metadata: unknown;
+        ingestion: string;
+        needsReview: string | null;
+        blockedFor: string | null;
+      }[]
+    >`
+      WITH ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT ${id}::int` }, markerView)}
+      DELETE FROM "Image" WHERE id = ${id}
+      RETURNING url, "postId", "nsfwLevel", "userId", metadata, ingestion::text, "needsReview", "blockedFor"
+    `;
     // No row came back: it was already gone, or a hold marker kept it (the delete trigger takes it
     // off the site instead). Either way it leaves search like any deleted image.
     if (!image) {
@@ -1098,6 +1101,7 @@ export async function deleteImages(
   // This call's own rows run no wider than the shared limit, so they never wait out their slot
   // behind each other; only other senders in the process can hold them back.
   const ownLimit = pLimit(MAX_IN_FLIGHT_RETRACTIONS);
+  const markerView = await holdMarkerViewExists();
   const images = await Limiter({ batchSize: 100 }).process(ids, async (ids, batchIndex) => {
     // Resolved before the DELETE for the same reason as deleteImageById: the
     // membership rows cascade away with the images, taking with them the only record
@@ -1117,9 +1121,14 @@ export async function deleteImages(
         parentId: number | null;
       }[]
     >`
+      WITH doomed AS (
+        SELECT id FROM "Image"
+        WHERE id IN (${Prisma.join(ids)})
+          ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
+      ),
+      ${detachHeldThreadsCte({ imageId: Prisma.sql`SELECT id FROM doomed` }, markerView)}
       DELETE FROM "Image"
-      WHERE id IN (${Prisma.join(ids)})
-        ${onlyWhere ? Prisma.sql`AND (${onlyWhere})` : Prisma.empty}
+      WHERE id IN (SELECT id FROM doomed)
       RETURNING id, url, "postId", "nsfwLevel", "userId", cast(metadata->'parentId' as int) as "parentId"
     `;
     const imageIds = results.map((x) => x.id);
@@ -4854,7 +4863,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         actor,
       })
     );
-    let results = mainResult.results;
+    const results = mainResult.results;
 
     let nextCursor: number | undefined;
     if (results.length > limit) {
@@ -6264,7 +6273,9 @@ export const getImage = async ({
 };
 
 export const getImageResources = async ({ id }: GetByIdInput) => {
-  const resources = await dbRead.$queryRaw<ImageResourceHelperModel[]>`
+  const resources = await dbRead.$queryRaw<
+    (ImageResourceHelperModel & { sfwName: string | null })[]
+  >`
     SELECT
       irh."imageId",
       irh."reviewId",
@@ -6283,7 +6294,8 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
       irh."modelCommentCount",
       irh."modelType",
       irh."modelVersionBaseModel",
-      irh."detected"
+      irh."detected",
+      m."sfwName"
     FROM
       "ImageResourceHelper" irh
     JOIN "Model" m ON m.id = irh."modelId" AND m."status" = 'Published'
@@ -6523,6 +6535,7 @@ type CachedImagesForModelVersions = {
   modelVersionId: number;
   images: ImagesForModelVersions[];
 };
+// eslint-disable-next-line local-rules/no-module-scope-cache -- exported and used by many callers; making it lazy is out of scope here
 export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
@@ -8603,8 +8616,13 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
   const tools = image.tools.map(({ notes, tool }) => ({ ...tool, notes }));
   const techniques = image.techniques.map(({ notes, technique }) => ({ ...technique, notes }));
 
-  const cachedResources = await imageResourcesCache.fetch([id]);
-  const resources = (cachedResources[id]?.resources ?? []).map((r) => ({
+  const cachedResources = (await imageResourcesCache.fetch([id]))[id]?.resources ?? [];
+  // The cache is per image, so a model's .com face is looked up here rather than stored in it.
+  const sfwModelNames = await getSfwModelNames(
+    cachedResources.map((r) => r.modelId),
+    showsSfwFace(getRequestBrowsingLevel(viewer))
+  );
+  const resources = withSfwModelNames(cachedResources, sfwModelNames).map((r) => ({
     imageId: r.imageId,
     modelVersionId: r.modelVersionId,
     strength: r.strength,

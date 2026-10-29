@@ -112,7 +112,7 @@ describe('/comments/<id> — getServerSideProps wiring', () => {
     // `Number(id)` — a string id would silently miss every row and read as "comment not found".
     getRow.mockResolvedValue(undefined);
     await run();
-    expect(getRow).toHaveBeenCalledWith(COMMENT_ID);
+    expect(getRow).toHaveBeenCalledWith(COMMENT_ID, { includeHidden: false });
   });
 
   it('positive control: the mock is actually consulted (it is not answering from nothing)', async () => {

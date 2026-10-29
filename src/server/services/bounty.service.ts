@@ -1,3 +1,5 @@
+import { bountyThreadParents, detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import type * as z from 'zod';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -814,8 +816,12 @@ export const deleteBountyById = async ({
       });
   }
 
+  const markerView = await holdMarkerViewExists();
   return dbWrite.$transaction(async (tx) => {
     if (!(await lockBountyForPayout(tx, id))) return null;
+    await tx.$executeRaw(
+      detachHeldThreadsSql(bountyThreadParents(Prisma.sql`SELECT ${id}::int`), markerView)
+    );
     const deletedBounty = await tx.bounty.delete({ where: { id } });
     await tx.file.deleteMany({ where: { entityId: id, entityType: 'Bounty' } });
     return deletedBounty;

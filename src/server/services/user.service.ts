@@ -7,6 +7,7 @@ import {
   accountHoldSql,
   assertAccountNotUnderLegalHold,
   guardedAccountScrubSql,
+  holdMarkerViewExists,
   isLegalHoldAbort,
   LegalHoldError,
   LegalHoldStoppedError,
@@ -14,6 +15,15 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
+import {
+  bountyThreadParents,
+  detachHeldThreadsCte,
+  heldLegacyCommentOnModelSql,
+  heldLegacyReplyBelowSql,
+  modelThreadParents,
+  questionThreadParents,
+  type ThreadParents,
+} from '~/server/services/comment-thread-hold';
 import { KEPT_MODEL_STATUS, PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
@@ -1565,7 +1575,14 @@ async function refundBidsForRemovedModels(
   models: { id: number; name: string; modelVersions: { id: number }[] }[],
   wipe: { userId: number; actorUserId: number | null }
 ): Promise<BidRefundFailure[]> {
-  const failures = await refundEachRemovedModel(models);
+  return alertBidRefundFailures(await refundEachRemovedModel(models), wipe);
+}
+
+/** Logs each failed bid refund of a wipe as its own `bid-refund-failed` line, and returns them. */
+function alertBidRefundFailures(
+  failures: BidRefundFailure[],
+  wipe: { userId: number; actorUserId: number | null }
+): BidRefundFailure[] {
   for (const failure of failures)
     logToAxiom({
       name: 'bid-refund-failed',
@@ -1699,31 +1716,83 @@ export const removeAllContent = async ({
   // here. The rows above stay deleted in that case; they are not evidence. Bounties, entries,
   // answers, questions and reviews are here because each cascades its comment thread.
   const unlessHeld = Prisma.sql`NOT ${held}`;
+  const softDeleteFailed: { modelId: number; message: string }[] = [];
+  const softDeleteRefundFailures: BidRefundFailure[] = [];
   let stopped: boolean;
   try {
-    await dbWrite.$executeRaw`
-      DELETE FROM "BountyEntry" be
+    // A parent's delete cascades into its comment threads, other people's comments included; a
+    // thread holding a held author's comment is detached from it first.
+    const detach = (parents: ThreadParents) => detachHeldThreadsCte(parents, markerView);
+    const doomedEntries = Prisma.sql`SELECT be.id FROM "BountyEntry" be
       WHERE be."userId" = ${id}
         AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."awardedToId" = be.id)
         AND ${unlessHeld}`;
     await dbWrite.$executeRaw`
-      DELETE FROM "Bounty"
-      WHERE "userId" = ${id} AND id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Answer" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Question" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "ResourceReview" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "CommentV2" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Comment" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Article" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    await dbWrite.$executeRaw`DELETE FROM "Post" WHERE "userId" = ${id} AND ${unlessHeld}`;
-    // A model is also kept while any owner it had before is held.
+      WITH ${detach({ bountyEntryId: doomedEntries })}
+      DELETE FROM "BountyEntry" WHERE id IN (${doomedEntries})`;
+    const doomedBounties = Prisma.sql`SELECT b.id FROM "Bounty" b
+      WHERE b."userId" = ${id} AND b.id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}`;
     await dbWrite.$executeRaw`
-      DELETE FROM "Model"
-      WHERE "userId" = ${id} AND ${unlessHeld}
-        AND id NOT IN (${heldModelIdsSql(
-          Prisma.sql`SELECT om.id FROM "Model" om WHERE om."userId" = ${id}`,
-          markerView
-        )})`;
+      WITH ${detach(bountyThreadParents(doomedBounties))}
+      DELETE FROM "Bounty" WHERE id IN (${doomedBounties})`;
+    const owned = (table: string) =>
+      Prisma.sql`SELECT o.id FROM ${Prisma.raw(
+        `"${table}"`
+      )} o WHERE o."userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`
+      WITH ${detach({ answerId: owned('Answer') })}
+      DELETE FROM "Answer" WHERE id IN (${owned('Answer')})`;
+    await dbWrite.$executeRaw`
+      WITH ${detach(questionThreadParents(owned('Question')))}
+      DELETE FROM "Question" WHERE id IN (${owned('Question')})`;
+    await dbWrite.$executeRaw`
+      WITH ${detach({ reviewId: owned('ResourceReview') })}
+      DELETE FROM "ResourceReview" WHERE id IN (${owned('ResourceReview')})`;
+    await dbWrite.$executeRaw`DELETE FROM "CommentV2" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    // A legacy reply goes with its parent; a comment with a held reply below it is kept, hidden.
+    await dbWrite.$executeRaw`
+      DELETE FROM "Comment" c
+      WHERE c."userId" = ${id} AND ${unlessHeld}
+        AND NOT ${heldLegacyReplyBelowSql(Prisma.raw('c.id'), markerView)}`;
+    await dbWrite.$executeRaw`
+      UPDATE "Comment" SET "tosViolation" = true, "removedByAuthor" = true, "updatedAt" = now()
+      WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`
+      WITH ${detach({ articleId: owned('Article') })}
+      DELETE FROM "Article" WHERE id IN (${owned('Article')})`;
+    await dbWrite.$executeRaw`
+      WITH ${detach({ postId: owned('Post') })}
+      DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
+    const formerOwnerHeld = heldModelIdsSql(
+      Prisma.sql`SELECT om.id FROM "Model" om WHERE om."userId" = ${id}`,
+      markerView
+    );
+    // A model with a held legacy comment is soft-deleted, as a moderator's delete does. One an
+    // earlier owner's hold keeps is hidden below instead, with the record a restore reads.
+    const commentHeld = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT m.id FROM "Model" m
+      WHERE m."userId" = ${id} AND ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), markerView)}
+        AND m.id NOT IN (${formerOwnerHeld})`;
+    if (commentHeld.length) {
+      const { deleteModelById } = await import('~/server/services/model.service');
+      for (const { id: modelId } of commentHeld)
+        await deleteModelById({
+          id: modelId,
+          userId: actorUserId,
+          isModerator: true,
+          onBidRefundFailed: (failure) =>
+            softDeleteRefundFailures.push(...alertBidRefundFailures([failure], alertedBy)),
+        }).catch((e: unknown) =>
+          softDeleteFailed.push({ modelId, message: (e as Error)?.message })
+        );
+    }
+    // A model is also kept while any owner it had before is held.
+    const doomedModels = Prisma.sql`${owned('Model')}
+      AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('o.id'), markerView)}
+      AND o.id NOT IN (${formerOwnerHeld})`;
+    await dbWrite.$executeRaw`
+      WITH ${detach(modelThreadParents(doomedModels))}
+      DELETE FROM "Model" WHERE id IN (${doomedModels})`;
     // Status only: the unpublish flow stamps meta.unpublishedAt, which notifies the owner.
     await dbWrite.$executeRaw`
       WITH hidden AS (
@@ -1758,7 +1827,9 @@ export const removeAllContent = async ({
       true,
       { onlyWhere: unlessHeld }
     );
-    await dbWrite.$executeRaw`DELETE FROM "Image" WHERE "userId" = ${id} AND ${unlessHeld}`;
+    await dbWrite.$executeRaw`
+      WITH ${detach({ imageId: owned('Image') })}
+      DELETE FROM "Image" WHERE id IN (${owned('Image')})`;
     await refreshProfilePicturesForUsers([id]);
 
     // A hold that landed mid-wipe stopped the deletes above without an error.
@@ -1776,6 +1847,7 @@ export const removeAllContent = async ({
       type: 'error',
       message: 'Stopped by a legal hold placed during the wipe',
       userId: id,
+      ...(softDeleteFailed.length && { softDeleteFailed }),
     }).catch(() => undefined);
     await unindexDeleted([
       [articlesSearchIndex, 'Article', articles],
@@ -1813,7 +1885,9 @@ export const removeAllContent = async ({
           userId: id,
         }).catch(() => undefined)
       );
-    throw new LegalHoldStoppedError(refundFailures.length ? ['bid-refunds'] : []);
+    throw new LegalHoldStoppedError(
+      refundFailures.length || softDeleteRefundFailures.length ? ['bid-refunds'] : []
+    );
   }
 
   // The main-database wipe is done. A step that throws is logged and named in `incomplete`, and the
@@ -1830,6 +1904,8 @@ export const removeAllContent = async ({
       ...details,
     }).catch(() => undefined);
   };
+  for (const { modelId, message } of softDeleteFailed)
+    failed('model-soft-delete', message, { modelId });
   const runStep = async (step: string, fn: () => Promise<unknown>) => {
     try {
       await fn();
@@ -1873,7 +1949,8 @@ export const removeAllContent = async ({
   await runStep('article-metrics', () => articleMetrics.queueUpdate(articles.map((a) => a.id)));
 
   const refundFailures = await refundBidsForRemovedModels(models, alertedBy);
-  if (refundFailures.length) failed('bid-refunds', 'some bids were not refunded');
+  if (refundFailures.length || softDeleteRefundFailures.length)
+    failed('bid-refunds', 'some bids were not refunded');
 
   // The two stores below are separate databases, so no statement there can carry the hold: check
   // again before either.
@@ -3200,7 +3277,17 @@ export async function toggleReview({
   setTo ??= review ? false : true;
 
   if (setTo === false) {
-    await dbWrite.resourceReview.deleteMany({ where: { modelId, modelVersionId, userId } });
+    const doomed = Prisma.sql`SELECT r.id FROM "ResourceReview" r
+      WHERE r."modelId" = ${modelId} AND r."userId" = ${userId}
+      ${
+        modelVersionId !== undefined
+          ? Prisma.sql`AND r."modelVersionId" = ${modelVersionId}`
+          : Prisma.empty
+      }`;
+    const markerView = await holdMarkerViewExists();
+    await dbWrite.$executeRaw`
+      WITH ${detachHeldThreadsCte({ reviewId: doomed }, markerView)}
+      DELETE FROM "ResourceReview" WHERE id IN (${doomed})`;
     modelMetrics.queueUpdate(modelId);
     // Use the actual modelVersionId from the existing review row when input was
     // undefined. If the user had reviews on multiple versions (rare — typically

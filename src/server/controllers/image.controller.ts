@@ -41,6 +41,7 @@ import {
 } from '~/server/services/image-appeal-flag';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { readImageAppChip } from '~/server/services/blocks/image-app-chip.service';
 import { buildSearchActor } from '~/server/meilisearch/client';
 import { getGallerySettingsByModelId } from '~/server/services/model.service';
@@ -939,7 +940,17 @@ export const getImageResourcesHandler = async ({
   ctx: Context;
 }) => {
   try {
-    return await getImageResources({ ...input });
+    const resources = await getImageResources({ ...input });
+    // A .com face makes the name depend on the viewer, so that response stays out of the edge cache.
+    if (ctx.cache && resources.some((resource) => resource.sfwName != null)) ctx.cache.skip = true;
+    const showSfwFace = showsSfwFace(getRequestBrowsingLevel(ctx));
+    return resources.map(({ sfwName, modelName, ...resource }) => ({
+      ...resource,
+      modelName:
+        modelName == null
+          ? modelName
+          : resolveModelFace({ name: modelName, sfwName }, showSfwFace).name,
+    }));
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

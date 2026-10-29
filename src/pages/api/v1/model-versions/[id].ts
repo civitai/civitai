@@ -33,11 +33,8 @@ import { reduceToBasicFileMetadata } from '~/server/services/model-file.service'
 import type { Session } from '~/types/session';
 import { modelVersionToAir } from '~/server/utils/resource-air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
-import {
-  allBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
-import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
 import { logToAxiom } from '~/server/logging/client';
 import { hasValidCreatorMembershipCached } from '~/server/services/creator-program.service';
 import {
@@ -64,9 +61,7 @@ export default MixedAuthEndpoint(async function handler(
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
   const status = user?.isModerator ? undefined : ModelStatus.Published;
 
-  const region = getRegion(req);
-  const isRestricted = isRegionRestricted(region);
-  const allowedBrowsingLevels = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  const allowedBrowsingLevels = apiBrowsingLevel(req);
 
   try {
     const modelVersion = await dbRead.$queryRaw<
@@ -151,6 +146,7 @@ export default MixedAuthEndpoint(async function handler(
         (
           SELECT json_build_object(
             'name', m.name,
+            'sfwName', m."sfwName",
             'type', m.type,
             'nsfw', m.nsfw,
             'poi', m.poi,
@@ -188,11 +184,17 @@ export async function prepareModelVersionResponse(
   baseUrl: URL,
   images?: AsyncReturnType<typeof getImagesForModelVersion>,
   // `null` means known-ungated; only `undefined` self-fetches.
-  paidAccess?: PublicPaidAccessDto | null
+  paidAccess?: PublicPaidAccessDto | null,
+  // The .com face, as the API v1 model list resolves it: for a caller served only safe levels.
+  showSfwFace = false
 ) {
   // `availability` and the owner only decide visibility; they are not part of the response.
-  const { files, model: modelRow, metrics, vaeId, availability, ...version } = modelVersion;
-  const { availability: modelAvailability, userId: ownerId, ...model } = modelRow;
+  const { files, model: modelRow, metrics, vaeId, availability, ...storedVersion } = modelVersion;
+  const { availability: modelAvailability, userId: ownerId, ...storedModel } = modelRow;
+  const withSfwFace = showSfwFace && storedModel.sfwName != null;
+  const model = resolveModelFace(storedModel, withSfwFace);
+  // A .com face has no per-version description; the .red one is not shown in its place.
+  const version = withSfwFace ? { ...storedVersion, description: null } : storedVersion;
   const vae = !!vaeId ? await getVaeFiles({ vaeIds: [vaeId] }) : [];
   files.push(...vae);
   const castedFiles = files as Array<
@@ -264,7 +266,13 @@ export async function prepareModelVersionResponse(
             metadata: reduceToBasicFileMetadata(metadata),
             hashes: hashesAsObject(hashes),
             name: safeDecodeURIComponent(
-              getDownloadFilename({ model, modelVersion: version, file, versionFiles: castedFiles })
+              // The stored name, so the advertised name matches the file the download route serves.
+              getDownloadFilename({
+                model: storedModel,
+                modelVersion: version,
+                file,
+                versionFiles: castedFiles,
+              })
             ),
             primary: primaryFile.id === file.id,
             // Pin the URL to THIS file — see the matching note in
@@ -325,9 +333,18 @@ export async function resModelVersionDetails(
   const baseUrl = new URL(
     isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
   );
-  const body = await prepareModelVersionResponse(modelVersion, baseUrl);
+  const showSfwFace = showsSfwFace(apiBrowsingLevel(req));
+  const body = await prepareModelVersionResponse(
+    modelVersion,
+    baseUrl,
+    undefined,
+    undefined,
+    showSfwFace
+  );
   if (!body) return res.status(404).json({ error: 'Missing model file' });
   // Only its owner or a moderator gets here with a Private version: never let a cache keep it.
-  if (isPrivateModelVersion(modelVersion)) res.setHeader('Cache-Control', 'private, no-store');
+  // Nor a response showing the .com face: it varies by region, which the shared cache doesn't key on.
+  if (isPrivateModelVersion(modelVersion) || (showSfwFace && modelVersion.model.sfwName != null))
+    res.setHeader('Cache-Control', 'private, no-store');
   res.status(200).json(body);
 }
