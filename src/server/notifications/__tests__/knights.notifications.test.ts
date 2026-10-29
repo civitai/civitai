@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { deriveNotificationSettings } from '~/components/Notifications/useNotificationSettings';
 import { knightsNewOrderNotifications } from '~/server/notifications/new-order.notifications';
 import {
   isOptInNotification,
@@ -11,35 +10,15 @@ const TYPES = ['knights-verdicts-in', 'knights-streak-ends-soon', 'knights-new-i
 const SECTION = 'Knights of New Order';
 
 describe('Knights daily-loop notifications', () => {
-  it('lists the three types together under the game section, each opt-in', () => {
+  it('lists the three types together under the game section, each on by default', () => {
     const group = notificationCategoryTypes[SECTION] ?? [];
 
     expect(group.map((s) => s.type).sort()).toEqual([...TYPES].sort());
-    expect(group.every((s) => s.optIn)).toBe(true);
     for (const type of TYPES) {
-      expect(isOptInNotification(type)).toBe(true);
-      // The bulk on/off toggles must never write the row that subscribes.
-      expect(notificationTypes).not.toContain(type);
+      // A settings row means off, written by the standard toggles (bulk ones included).
+      expect(isOptInNotification(type)).toBe(false);
+      expect(notificationTypes).toContain(type);
     }
-  });
-
-  it('keeps the game section visible although every type in it is opt-in', () => {
-    expect(deriveNotificationSettings([]).hasCategory[SECTION]).toBe(true);
-  });
-
-  it('treats a settings row as subscribed, and no row as off', () => {
-    const { notificationSettings } = deriveNotificationSettings([{ type: 'knights-new-images' }]);
-
-    expect(notificationSettings['knights-new-images']).toBe(true);
-    expect(notificationSettings['knights-verdicts-in']).toBe(false);
-    expect(notificationSettings['knights-streak-ends-soon']).toBe(false);
-  });
-
-  it('does not let a subscription switch on the master notifications toggle', () => {
-    const everything = deriveNotificationSettings([]);
-    const subscribed = deriveNotificationSettings(TYPES.map((type) => ({ type })));
-
-    expect(subscribed.hasNotifications).toBe(everything.hasNotifications);
   });
 
   it('links to the Knights app routes', () => {

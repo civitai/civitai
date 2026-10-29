@@ -4,9 +4,9 @@ import { describe, expect, it } from 'vitest';
 import { notificationProcessors } from '~/server/notifications/utils.notifications';
 
 /**
- * `createNotification` drops every recipient who has a `UserNotificationSettings` row for the type.
- * For an `externalProducer` type that row means subscribed, so sending it through the event path
- * would drop exactly the people who asked for it. Only the owning app's bulk send may deliver it.
+ * An `externalProducer` type is sent by one other app, which decides the recipients, the daily cap
+ * and the access rule. `createNotification` applies none of that (and, for an `optIn` type, would
+ * drop exactly the subscribers), so only the owning app's bulk send may deliver it.
  *
  * A source scan, so it sees a literal type name next to a `createNotification(` call and nothing
  * built at runtime.

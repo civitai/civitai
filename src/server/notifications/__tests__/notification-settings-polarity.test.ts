@@ -39,7 +39,6 @@ describe('notification settings polarity', () => {
       const query = await queryFor(type);
 
       if (def.externalProducer) {
-        expect(def.optIn, `${type} is externalProducer, so it must be optIn`).toBe(true);
         expect(query, `${type} is externalProducer, so it must not have a query`).toBeUndefined();
       } else if (def.optIn) {
         // An opt-in type MUST have a query that derives recipients from the table. Without one, the

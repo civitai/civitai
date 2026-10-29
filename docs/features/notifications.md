@@ -105,10 +105,11 @@ there rather than shipping unmuteable.
 
 An `optIn` type inverts this: a row means subscribed, and the processor's `prepareQuery` must derive
 recipients by joining `UserNotificationSettings` (the polarity test checks it). An `externalProducer`
-type is the exception: another app (today `apps/knights`, `/api/jobs/notify`) reads the subscribers
-itself and sends through the bulk path, so the processor has **no** `prepareQuery` and must be `optIn`.
-Adding a query there would run a second recipient derivation; leaving the type off the event path is
-deliberate, because `createNotification` would drop exactly the subscribers.
+type is the exception: another app (today `apps/knights`, `/api/jobs/notify`) picks the recipients
+itself, applies the settings rows with the polarity the type declares (the Knights types are opt-out:
+default on for players who joined, a row turns one off) and sends through the bulk path. The processor
+has **no** `prepareQuery`; a query there would run a second recipient derivation, and
+`createNotification` must never be called for the type (a guard test scans for it).
 
 ## Caching
 

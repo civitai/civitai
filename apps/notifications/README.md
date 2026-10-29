@@ -15,7 +15,7 @@ One process owns the whole notification write side:
   UPSERTs the `PendingNotification` queue row. This is net-new surface — the external server was
   GET-only.
 - **(A2) Bulk producer** — `POST /notifications/bulk`, same auth. Takes **pre-resolved** recipients
-  and applies **no** opt-out filter; each caller filters in its own SQL (`send-notifications` processors; `apps/knights` for its opt-in types). This
+  and applies **no** opt-out filter; each caller filters in its own SQL (`send-notifications` processors; `apps/knights` for its types). This
   is the path `src/server/jobs/send-notifications.ts` uses, and it is why a processor missing its
   `NOT EXISTS "UserNotificationSettings"` clause is unmuteable.
 - **(B) Fan-out worker** — the ported ~5s poll loop. Claims `PendingNotification` rows, fans each into
