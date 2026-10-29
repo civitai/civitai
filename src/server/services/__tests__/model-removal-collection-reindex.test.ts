@@ -142,6 +142,7 @@ import { HOLD_UNCONFIRMED } from '~/server/services/legal-hold.service';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { deleteModelFileObjects } from '~/utils/s3-utils';
+import { userModelCountCache } from '~/server/redis/caches';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
 
@@ -313,6 +314,28 @@ describe('deleteModelById — soft delete', () => {
       versionIds: [VERSION_ID],
       error: 'buzz down',
     });
+  });
+
+  // The delete has committed by then: a cache that is down must not leave the bids standing.
+  it('refunds the bids when a step after the delete fails', async () => {
+    vi.mocked(userModelCountCache.refresh).mockRejectedValueOnce(new Error('cache down'));
+    mockDbWrite.$transaction.mockImplementationOnce((async (fn: (t: unknown) => unknown) =>
+      fn({
+        $executeRaw: vi.fn(async () => 1),
+        model: {
+          update: vi.fn(async () => ({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfwLevel: 1,
+            modelVersions: [{ id: VERSION_ID }],
+          })),
+        },
+      })) as never);
+
+    await expect(
+      deleteModelById({ id: MODEL_ID, userId: 77, isModerator: true, onBidRefundFailed: vi.fn() })
+    ).rejects.toThrow('cache down');
+    expect(mockDeleteBidsForModel).toHaveBeenCalledWith({ modelId: MODEL_ID });
   });
 
   it('records no deleter when no person ordered the delete', async () => {

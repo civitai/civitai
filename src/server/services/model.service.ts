@@ -2191,6 +2191,20 @@ export const deleteModelById = async ({
     return model;
   });
 
+  const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
+  // Refunded before the cache and index steps below: the delete has committed, and a failure in one
+  // of them must not leave the bids standing. Without `onBidRefundFailed` its error is thrown last.
+  let refundError: unknown;
+  try {
+    const { refundFailed } = await deleteBidsForModel({ modelId: id });
+    if (refundFailed.length)
+      onBidRefundFailed?.({ versionIds: deletedVersionIds, transactionIds: refundFailed });
+  } catch (e) {
+    if (onBidRefundFailed)
+      onBidRefundFailed({ versionIds: deletedVersionIds, error: (e as Error)?.message });
+    else refundError = e;
+  }
+
   if (deletedModel) {
     await userModelCountCache.refresh(deletedModel.userId);
   }
@@ -2202,7 +2216,6 @@ export const deleteModelById = async ({
   // scope caveat as updateModelById: the getModelsRaw base row is not lag-aware —
   // but for a delete the model row is gone, so a fresh read rebuilds to null→404,
   // never cached, so the base-row gap is benign on this path.)
-  const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
   await preventModelVersionLagBatch(id, deletedVersionIds);
   // Drop the deleted model's post images from the image search index — parity
   // with unpublishModelById / permaDeleteModelById. The image index doesn't
@@ -2240,14 +2253,7 @@ export const deleteModelById = async ({
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
   // deleted model stops serving a stale 200 (it would 404 on rebuild).
   await bustPublicModelResponseCache(id);
-  try {
-    const { refundFailed } = await deleteBidsForModel({ modelId: id });
-    if (refundFailed.length)
-      onBidRefundFailed?.({ versionIds: deletedVersionIds, transactionIds: refundFailed });
-  } catch (e) {
-    if (!onBidRefundFailed) throw e;
-    onBidRefundFailed({ versionIds: deletedVersionIds, error: (e as Error)?.message });
-  }
+  if (refundError) throw refundError;
 
   return deletedModel;
 };
