@@ -47,7 +47,7 @@ async function upload(file: File) {
   return { sent, result };
 }
 
-describe('uploadOrchestratorImage — a Civitai generation keeps its AI stamp through the re-encode', () => {
+describe('uploadOrchestratorImage — a generated image keeps its generation metadata through the re-encode', () => {
   beforeEach(() => {
     mocks.uploadConsumerBlob.mockReset().mockResolvedValue({ url: 'https://example.com/x.jpg' });
   });

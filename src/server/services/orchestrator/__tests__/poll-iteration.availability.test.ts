@@ -128,7 +128,7 @@ describe('pollIterationWorkflow availability', () => {
     expect(mocks.createImage).not.toHaveBeenCalled();
   });
 
-  it('tells a user held to PG-13 by an unmarked source image how to bring the image in', async () => {
+  it('tells a user held to PG-13 by their source image how to bring a Civitai image in', async () => {
     givenWorkflow([output({ available: false, blockedReason: 'NSFWLevelSourceImageRestricted' })], {
       status: 'failed',
     });
