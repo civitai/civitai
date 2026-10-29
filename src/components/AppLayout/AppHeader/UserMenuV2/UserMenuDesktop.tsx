@@ -2,8 +2,8 @@ import type { DragEndEvent } from '@dnd-kit/core';
 import { closestCenter, DndContext, PointerSensor, useSensor, useSensors } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import { Button, Menu, Text, UnstyledButton } from '@mantine/core';
-import { IconChevronRight } from '@tabler/icons-react';
+import { Menu, Text, UnstyledButton } from '@mantine/core';
+import { IconChevronRight, IconPlus } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { createContext, useContext, useRef, useState } from 'react';
 import {
@@ -14,6 +14,7 @@ import {
 } from '~/components/AppLayout/AppHeader/UserMenu';
 import { useGetCreator } from '~/components/AppLayout/AppHeader/hooks';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
+import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -531,22 +532,25 @@ function DesktopBuzzItem({ onOpen }: { onOpen: () => void }) {
       href="/user/buzz-dashboard"
       // Buy Buzz below stops its click, so it is not counted as an open.
       onClick={onOpen}
-      className="rounded-lg !border !border-solid !border-blue-2 bg-white shadow-sm dark:!border-transparent dark:bg-dark-7/60 dark:shadow-none"
+      className="rounded-lg bg-blue-1 dark:bg-dark-7/60"
       rightSection={
-        <Button
+        <LegacyActionIcon
           component="div"
+          role="button"
           variant="light"
-          radius="xl"
-          px={12}
-          size="compact-xs"
+          color="blue"
+          radius="md"
+          size={24}
+          aria-label="Buy Buzz"
+          title="Buy Buzz"
           onClick={(e: React.MouseEvent) => {
             e.preventDefault();
             e.stopPropagation();
             onBuyBuzz({});
           }}
         >
-          Buy Buzz
-        </Button>
+          <IconPlus size={16} />
+        </LegacyActionIcon>
       }
     >
       <span className="flex items-center gap-1">

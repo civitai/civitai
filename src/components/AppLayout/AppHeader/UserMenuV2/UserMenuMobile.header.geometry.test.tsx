@@ -467,27 +467,23 @@ describe('account card frame', () => {
     expect(dark.image).not.toBe(light.image);
   });
 
-  test('the Buzz strip stands out from the card in light mode and stays translucent in dark', async () => {
+  test('the Buzz strip is a tinted fill in light mode and stays translucent in dark', async () => {
     const { card } = await renderHeader();
     const strip = stripOf(card);
     const read = () => {
       const style = getComputedStyle(strip);
-      return {
-        background: style.backgroundColor,
-        border: style.borderTopColor,
-        width: style.borderTopWidth,
-      };
+      return { background: style.backgroundColor, border: style.borderTopWidth };
     };
     const light = read();
     document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
     await nextLayout();
     const dark = read();
 
+    // Opaque in light, so it fills in against the pale gradient rather than washing into it.
     expect(light.background).toMatch(/^rgb\(/);
-    expect(light.width).toBe('1px');
-    expect(light.border).not.toBe('rgba(0, 0, 0, 0)');
+    expect(light.background).not.toBe('rgb(254, 254, 254)');
     expect(dark.background).not.toBe(light.background);
-    expect(dark.border).toBe('rgba(0, 0, 0, 0)');
+    expect([light.border, dark.border]).toEqual(['0px', '0px']);
   });
 
   test('the desktop account card carries the same frame as the phone card', async () => {
@@ -507,8 +503,10 @@ describe('account card frame', () => {
     const frame = frameOf(card);
     expect(frame.border).toBe('1px');
     expect(frame.image).toContain('linear-gradient');
-    // Mantine's menu-item reset removes borders, so the strip's border must win it.
+    // The desktop strip carries the same plus as the phone card, not a text pill.
     const strip = document.querySelector('[data-account-card] a[href="/user/buzz-dashboard"]')!;
-    expect(getComputedStyle(strip).borderTopWidth).toBe('1px');
+    const buy = strip.querySelector<HTMLElement>('[aria-label="Buy Buzz"]')!;
+    expect(buy.getAttribute('role')).toBe('button');
+    expect(buy.textContent).toBe('');
   });
 });
