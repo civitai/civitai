@@ -1,7 +1,7 @@
 import { db } from '$lib/server/db';
 import { imageUrl } from '$lib/server/image-url';
 import { listJudgments } from '$lib/server/progression/judgments';
-import { getPlayerStatusOrNew } from '$lib/server/player-status';
+import { requireMember } from '$lib/server/membership';
 import type { PageServerLoad } from './$types';
 
 const MAX_PAGE = 1000;
@@ -12,7 +12,7 @@ export const load: PageServerLoad = async ({ locals, url }) => {
     Number.isSafeInteger(requested) && requested >= 1 && requested <= MAX_PAGE ? requested : 1;
 
   const [status, { judgments, hasMore }] = await Promise.all([
-    getPlayerStatusOrNew(db, locals.user.id),
+    requireMember(db, locals.user.id),
     listJudgments(db, locals.user.id, { page }),
   ]);
 

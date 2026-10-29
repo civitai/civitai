@@ -1759,6 +1759,9 @@ importers:
       '@civitai/db-schema':
         specifier: workspace:*
         version: link:../civitai-db-schema
+      '@civitai/shared':
+        specifier: workspace:*
+        version: link:../civitai-shared
       kysely:
         specifier: ^0.28.7
         version: 0.28.17

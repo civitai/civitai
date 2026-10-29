@@ -2,9 +2,10 @@ import { fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
 import { imageUrl } from '$lib/server/image-url';
-import { getPlayerStatusOrNew } from '$lib/server/player-status';
+import { requireMember } from '$lib/server/membership';
 import { conversionEnabled } from '$lib/server/conversion/runtime';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
+import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { trialDeps } from '$lib/server/trials/runtime';
 import { answerTrial, getTrial } from '$lib/server/trials/trials.service';
@@ -21,13 +22,15 @@ const REJECTION_TEXT: Record<RejectReason, string> = {
 };
 
 const TRIAL_REJECTION_TEXT = {
+  'no-player': 'You have not joined the Order yet.',
   'no-run': 'You have no trial under way.',
   'not-current': 'That is not the image before you now.',
   'bad-answer': 'That answer is not on offer.',
 } as const;
 
-export const load: PageServerLoad = async ({ locals }) => {
-  const status = await getPlayerStatusOrNew(db, locals.user.id);
+export const load: PageServerLoad = async ({ locals, depends }) => {
+  depends('app:play');
+  const status = await requireMember(db, locals.user.id);
 
   if (status.rank === 'Acolyte') {
     const trial = await getTrial(db, locals.user.id, trialDeps);
@@ -59,12 +62,19 @@ export const load: PageServerLoad = async ({ locals }) => {
   }
 
   const now = queueDeps.now();
+  const lockedUntil =
+    queueDeps.voteLimits && !locals.user.isModerator
+      ? await voteLockUntil(db, locals.user.id, now, queueDeps.voteLimits)
+      : null;
   const [feed, daily, recap] = await Promise.all([
-    getFeed(db, locals.user.id, { limit: 1 }),
+    lockedUntil ? null : getFeed(db, locals.user.id, { limit: 1 }),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
   ]);
   const conversionOpen = conversionEnabled();
+  const lockoutSeconds = lockedUntil
+    ? Math.max(1, Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000))
+    : null;
   if (!feed) {
     return {
       conversionOpen,
@@ -74,6 +84,7 @@ export const load: PageServerLoad = async ({ locals }) => {
       recap,
       question: null,
       item: null,
+      lockoutSeconds,
     };
   }
 
@@ -84,6 +95,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     status,
     daily,
     recap,
+    lockoutSeconds,
     question: feed.question,
     item: {
       id: item.id,
@@ -104,7 +116,20 @@ export const actions: Actions = {
     }
 
     try {
-      const result = await castVote(db, { userId: locals.user.id, itemId, answer }, queueDeps);
+      const result = await castVote(
+        db,
+        { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
+        queueDeps
+      );
+      if (result.status === 'limited') {
+        return fail(429, {
+          message: 'You are judging too quickly. Rest a little.',
+          lockoutSeconds: Math.max(
+            1,
+            Math.ceil((result.until.getTime() - queueDeps.now().getTime()) / 1000)
+          ),
+        });
+      }
       if (result.status === 'rejected') {
         return fail(409, { message: REJECTION_TEXT[result.reason] });
       }

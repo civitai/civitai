@@ -1,16 +1,22 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const getPlayerStatusOrNew = vi.hoisted(() => vi.fn());
+const getPlayerStatus = vi.hoisted(() => vi.fn());
 const getTrial = vi.hoisted(() => vi.fn());
 const getFeed = vi.hoisted(() => vi.fn());
 const getDailyStatus = vi.hoisted(() => vi.fn());
 const getRecap = vi.hoisted(() => vi.fn());
 const dismissRecap = vi.hoisted(() => vi.fn());
+const voteLockUntil = vi.hoisted(() => vi.fn());
+const queueDeps = vi.hoisted(() => ({
+  now: () => new Date('2026-12-15T12:00:00Z'),
+  voteLimits: undefined as unknown,
+}));
 const NOW = new Date('2026-12-15T12:00:00Z');
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
-vi.mock('$lib/server/player-status', () => ({ getPlayerStatusOrNew }));
-vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { now: () => NOW } }));
+vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
+vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
+vi.mock('$lib/server/queue/vote-rate', () => ({ voteLockUntil }));
 vi.mock('$lib/server/daily/daily.service', () => ({ getDailyStatus, getRecap, dismissRecap }));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote: vi.fn(), getFeed }));
 vi.mock('$lib/server/trials/runtime', () => ({ trialDeps: {} }));
@@ -18,10 +24,13 @@ vi.mock('$lib/server/trials/trials.service', () => ({ answerTrial: vi.fn(), getT
 
 const { load, actions } = await import('./+page.server');
 
-const run = () => load({ locals: { user: { id: 7 } } } as never) as Promise<Record<string, any>>;
+const run = (user: Record<string, unknown> = {}) =>
+  load({ locals: { user: { id: 7, ...user } }, depends: vi.fn() } as never) as Promise<
+    Record<string, any>
+  >;
 
 beforeEach(() => {
-  getPlayerStatusOrNew.mockReset();
+  getPlayerStatus.mockReset();
   getTrial.mockReset();
   getFeed.mockReset();
   getFeed.mockResolvedValue(null);
@@ -30,6 +39,8 @@ beforeEach(() => {
   getRecap.mockReset();
   getRecap.mockResolvedValue(null);
   dismissRecap.mockReset();
+  voteLockUntil.mockReset();
+  queueDeps.voteLimits = undefined;
 });
 
 describe('play load and the conversion switch', () => {
@@ -52,7 +63,7 @@ describe('play load and the conversion switch', () => {
 
 describe('play load', () => {
   it('sends a level 1 Acolyte to Trials', async () => {
-    getPlayerStatusOrNew.mockResolvedValue({ rank: 'Acolyte', level: 1, xpIntoLevel: 0 });
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, xpIntoLevel: 0 });
     getTrial.mockResolvedValue({ kind: 'unavailable' });
 
     const page = await run();
@@ -62,20 +73,20 @@ describe('play load', () => {
   });
 
   it('sends an Acolyte to Trials', async () => {
-    getPlayerStatusOrNew.mockResolvedValue({ rank: 'Acolyte', level: 2 });
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 2 });
     getTrial.mockResolvedValue({ kind: 'unavailable' });
     expect((await run()).mode).toBe('trials');
   });
 
   it('keeps Knights on the queue', async () => {
-    getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight', level: 2 });
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
     const page = await run();
     expect(page.mode).toBe('queue');
     expect(getTrial).not.toHaveBeenCalled();
   });
 
   it('gives a Knight the day, evaluated at the injected clock, and the recap', async () => {
-    getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight', level: 2 });
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
     getRecap.mockResolvedValue({ cast: 30 });
 
     const page = await run();
@@ -91,10 +102,51 @@ describe('play load', () => {
   });
 
   it('keeps the daily loop off the Trials page', async () => {
-    getPlayerStatusOrNew.mockResolvedValue({ rank: 'Acolyte', level: 1 });
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1 });
     getTrial.mockResolvedValue({ kind: 'unavailable' });
     await run();
     expect(getDailyStatus).not.toHaveBeenCalled();
+  });
+});
+
+describe('play load vote pacing', () => {
+  const limits = [{ windowSeconds: 60, max: 3 }];
+  const until = new Date('2026-12-15T12:00:30Z');
+
+  beforeEach(() => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2 });
+    queueDeps.voteLimits = limits;
+  });
+
+  it('shows the lockout instead of the next image while the player is paced', async () => {
+    voteLockUntil.mockResolvedValue(until);
+
+    const page = await run();
+
+    expect(page.lockoutSeconds).toBe(30);
+    expect(page.item).toBeNull();
+    expect(getFeed).not.toHaveBeenCalled();
+    expect(voteLockUntil).toHaveBeenCalledWith(expect.anything(), 7, NOW, limits);
+  });
+
+  it('serves the feed when the player is not paced', async () => {
+    voteLockUntil.mockResolvedValue(null);
+    expect((await run()).lockoutSeconds).toBeNull();
+    expect(getFeed).toHaveBeenCalled();
+  });
+
+  it('never paces a moderator', async () => {
+    await run({ isModerator: true });
+    expect(voteLockUntil).not.toHaveBeenCalled();
+    expect(getFeed).toHaveBeenCalled();
+  });
+});
+
+describe('play load when not sworn in', () => {
+  it('sends a user with no player row to the front page to join', async () => {
+    getPlayerStatus.mockResolvedValue(null);
+    await expect(run()).rejects.toMatchObject({ status: 303, location: '/' });
+    expect(getTrial).not.toHaveBeenCalled();
   });
 });
 

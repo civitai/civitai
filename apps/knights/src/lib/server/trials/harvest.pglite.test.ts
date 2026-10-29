@@ -268,3 +268,38 @@ describe('harvestRulings batching', () => {
     expect((await harvestRulings(db, { now: NOW, config: small })).scanned).toBe(0);
   });
 });
+
+describe('harvestRulings with the spot-check on', () => {
+  const spot = { ...HARVEST, spotCheck: true };
+
+  it('holds a Trials item as pending but lets a hidden check straight in', async () => {
+    await image(1);
+    await ruling(1);
+    await harvestRulings(db, { now: NOW, config: { ...spot, hiddenCheckShare: 0 } });
+    await image(2);
+    await ruling(2);
+    await harvestRulings(db, { now: NOW, config: { ...spot, hiddenCheckShare: 1 } });
+
+    expect(
+      (
+        await pg.query<{ imageId: number; pool: string; status: string }>(
+          `SELECT "imageId","pool","status" FROM "KnightsReferenceImage" ORDER BY "imageId"`
+        )
+      ).rows
+    ).toEqual([
+      { imageId: 1, pool: 'trials', status: 'pending' },
+      { imageId: 2, pool: 'hiddenCheck', status: 'active' },
+    ]);
+  });
+
+  it('retires a pending item that nobody checked before it aged out', async () => {
+    await pg.query(
+      `INSERT INTO "KnightsReferenceImage" ("imageId","pool","answer","source","status","harvestedAt")
+       VALUES (1,'trials','4','harvested','pending',$1)`,
+      [daysAgo(100)]
+    );
+    await image(1);
+
+    expect((await harvestRulings(db, { now: NOW, config: spot })).retired).toBe(1);
+  });
+});

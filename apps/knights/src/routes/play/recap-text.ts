@@ -1,6 +1,5 @@
+import { count } from '$lib/format';
 import type { Recap } from '$lib/server/daily/daily.service';
-
-const count = (n: number) => n.toLocaleString('en-US');
 
 /** "18 of yesterday's 30 judgments were confirmed · accuracy 86% · +1,800 gold earned", then "+700 streak bonus" on its own line. */
 export function recapLines(recap: Recap): string[] {

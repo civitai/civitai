@@ -1,8 +1,8 @@
 <script lang="ts">
+  import { count } from '$lib/format';
   import type { DailyStatus } from '$lib/server/daily/daily.service';
 
   let { daily }: { daily: DailyStatus } = $props();
-  const gold = (n: number) => n.toLocaleString('en-US');
 </script>
 
 <section class="daily" aria-label="Daily Watch">
@@ -11,9 +11,9 @@
     <progress aria-label="Daily Watch progress" max={daily.watchSize} value={Math.min(daily.votes, daily.watchSize)}></progress>
     {Math.min(daily.votes, daily.watchSize)}/{daily.watchSize}
     {#if daily.watchDone}
-      · complete, +{gold(daily.bonusGold)} gold streak bonus
+      · complete, +{count(daily.bonusGold)} gold streak bonus
     {:else}
-      · finish it for +{gold(daily.bonusGold)} gold
+      · finish it for +{count(daily.bonusGold)} gold
     {/if}
   </p>
   <p class="line">
@@ -32,7 +32,7 @@
       <strong class="cap">Gold cap reached for today</strong>
       · judgments still earn XP and count toward the Watch
     {:else}
-      Gold recorded today: {gold(daily.goldRecorded)}/{gold(daily.goldCap)}
+      Gold recorded today: {count(daily.goldRecorded)}/{count(daily.goldCap)}
     {/if}
   </p>
 </section>
