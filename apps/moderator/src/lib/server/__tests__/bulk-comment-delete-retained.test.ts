@@ -101,7 +101,7 @@ describe('a ToS restore with comments kept hidden', () => {
 
     await expect(restore()).resolves.toEqual({
       ok: false,
-      error: '1 could not be restored and stay hidden; try them again. Restored 1, kept hidden 1.',
+      error: '1 could not be restored and stay hidden. Restored 1, kept hidden 1.',
     });
     expect(activities()).toEqual([
       'comments:restoreFromTos:1',

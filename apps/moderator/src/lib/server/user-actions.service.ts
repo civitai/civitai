@@ -494,7 +494,7 @@ export async function bulkCommentAction(input: {
   if (failed)
     return {
       ok: false,
-      error: `${failed} could not be restored and stay hidden; try them again. Restored ${affected}, kept hidden ${retainedHidden}.`,
+      error: `${failed} could not be restored and stay hidden. Restored ${affected}, kept hidden ${retainedHidden}.`,
     };
   // Both endpoints count rows they actually wrote, so a short count is real.
   return { ok: true, affected, retainedHidden };

@@ -1454,7 +1454,7 @@ export async function clearTosUnlessHeld(
         AND ${removedByAuthorSql[table]} IS NOT TRUE
     ), cleared AS (
       UPDATE ${Prisma.raw(`"${table}"`)} c SET "tosViolation" = false, "updatedAt" = now()
-      FROM target t WHERE c.id = t.id AND t.held IS FALSE
+      FROM target t WHERE c.id = t.id AND t.held IS FALSE AND c."tosViolation"
       RETURNING c.id
     ), reopened AS (
       -- Only Actioned: a report someone Dismissed was not closed by this flag.
