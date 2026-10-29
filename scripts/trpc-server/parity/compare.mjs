@@ -298,6 +298,8 @@ for (const c of cases) {
     candidate: rb.error
       ? { error: rb.error }
       : { status: rb.status, statusMessage: rb.statusMessage },
+    // What the case actually exercised, so a run where every case short-circuits is visible.
+    referenceBody: ra.error ? undefined : snippet(ra.body),
     verdict: failing.length > 0 ? 'DIFF' : declaredSeen.length > 0 ? 'DECLARED' : 'SAME',
     failing,
     declared: c.divergence ? { ...c.divergence, seen: declaredSeen } : undefined,
@@ -313,6 +315,8 @@ for (const r of results) {
   const ref = r.reference.error || `${r.reference.status}`;
   const cand = r.candidate.error || `${r.candidate.status}`;
   console.log(`${r.verdict.padEnd(8)} ${r.id.padEnd(36)} next=${ref} candidate=${cand}`);
+  if (r.referenceBody)
+    console.log(`           next body: ${r.referenceBody.slice(0, 120).replace(/\s+/g, ' ')}`);
   for (const [part, diffs] of Object.entries(r.diffs)) {
     for (const d of diffs) console.log(`           ${part}: ${d}`);
   }

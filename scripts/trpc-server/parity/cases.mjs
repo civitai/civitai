@@ -30,11 +30,16 @@ const DESKTOP_UA =
 const GOOGLEBOT_UA = 'Mozilla/5.0 (compatible; Googlebot/2.1; +http://www.google.com/bot.html)';
 
 /** Headers a request through the CDN carries; the "no XFF" case sends none of them. */
+// `origin` matters: in production a tRPC call from an origin outside the allow-list (or none) is
+// refused with 401 before any procedure runs. `NEXTAUTH_URL` is on the list in the parity env.
+const SITE = 'http://localhost:3000';
 const edge = {
   'user-agent': DESKTOP_UA,
   'cf-connecting-ip': NORMAL_IP,
   'x-forwarded-for': NORMAL_IP,
   'x-forwarded-proto': 'https',
+  origin: SITE,
+  referer: `${SITE}/`,
 };
 
 /**
@@ -220,7 +225,13 @@ export function buildCases(ctx) {
     {
       id: 'no-forwarded-headers',
       path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
-      headers: { 'user-agent': GOOGLEBOT_UA },
+      headers: { 'user-agent': GOOGLEBOT_UA, origin: SITE, referer: `${SITE}/` },
+    },
+    {
+      // No origin at all: the "use the public API" refusal.
+      id: 'no-origin-refused',
+      path: `/api/trpc/content.get?input=${enc({ json: TOS })}`,
+      headers: { 'user-agent': DESKTOP_UA, 'cf-connecting-ip': NORMAL_IP },
     },
 
     // --- probes -----------------------------------------------------------------------------------
