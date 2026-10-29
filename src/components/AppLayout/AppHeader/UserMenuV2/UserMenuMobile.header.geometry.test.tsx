@@ -467,7 +467,7 @@ describe('account card frame', () => {
     expect(dark.image).not.toBe(light.image);
   });
 
-  test('the Buzz strip is a tinted fill in light mode and stays translucent in dark', async () => {
+  test('the Buzz strip is a grey fill in light mode and stays translucent in dark', async () => {
     const { card } = await renderHeader();
     const strip = stripOf(card);
     const read = () => {

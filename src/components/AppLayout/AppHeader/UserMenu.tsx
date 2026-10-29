@@ -707,7 +707,7 @@ export function BuzzBalances({
   return (
     <div
       ref={stripRef}
-      className="flex flex-nowrap items-stretch overflow-hidden rounded-lg bg-blue-1 dark:bg-dark-7/60"
+      className="flex flex-nowrap items-stretch overflow-hidden rounded-lg bg-gray-2 dark:bg-dark-7/60"
     >
       {href ? (
         <NextLink href={href} onClick={onOpen} className="flex min-w-0 flex-1">
