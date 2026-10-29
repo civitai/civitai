@@ -1,4 +1,5 @@
 import { backend, browser } from '$lib/host';
+import { matureSpend, type Spend } from '$lib/mature-charge';
 
 // The live header balance. Module-scope `$state`, but only ever WRITTEN in the browser (seed/refresh guard
 // on `browser`), so it never holds one user's balance during another user's SSR render — the same
@@ -31,24 +32,21 @@ export const buzzBalance = {
   },
 };
 
-/** How much of `price` would come out of the chosen yellow/green account, Blue spending first.
- *  Null = nothing beyond Blue. `uncertain` = the balance couldn't be read — fail SAFE and assume
- *  the whole price may be non-Blue rather than reverting to silent spending. One definition for
- *  every spend site, because two hand-written copies of a money answer is how they diverge.
- *  `blueUsable: false` = Blue can't pay for this run at all (a mature dataset for a non-member):
- *  the orchestrator takes Blue, refunds it seconds later, and charges the full price in YELLOW —
- *  whatever the chosen mode (a Green-mode run was observed charged Yellow). */
+/** `matureSpend` against the live Blue balance, for every spend site. `mature` = the dataset has
+ *  mature images (then the non-Blue part is Yellow, never Green); `member` = a paid membership, which
+ *  lets Blue pay for mature content. Unknown membership counts as not a member. */
 export function nonBlueSpend(
   price: number | null | undefined,
   mode: 'yellow' | 'green',
-  blueUsable = true
-): { amount: number; currency: 'yellow' | 'green'; uncertain: boolean } | null {
-  if (price == null || price <= 0) return null;
-  if (!blueUsable) return { amount: price, currency: 'yellow', uncertain: false };
-  const blue = balances?.blue;
-  if (typeof blue !== 'number') return { amount: price, currency: mode, uncertain: true };
-  if (price <= blue) return null;
-  return { amount: price - Math.max(0, blue), currency: mode, uncertain: false };
+  opts: { mature?: boolean; member?: boolean } = {}
+): Spend | null {
+  return matureSpend({
+    price,
+    blue: balances?.blue,
+    mode,
+    mature: opts.mature ?? false,
+    member: opts.member ?? false,
+  });
 }
 
 // The main app's `isMature` (src/shared/constants/orchestrator.constants.ts) — the ratings Blue can't
