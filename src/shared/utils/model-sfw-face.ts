@@ -49,6 +49,22 @@ export function resolveModelFace<T extends ModelSfwFaceSource>(
   };
 }
 
+/**
+ * Swaps the model name on rows that name a model by id (image resources, version lists,
+ * notification details) for its .com title. `sfwNames` holds only models with a face on, and is
+ * empty for a viewer who gets the .red face.
+ */
+export function withSfwModelNames<T extends { modelId: number; modelName: string }>(
+  rows: T[],
+  sfwNames: ReadonlyMap<number, string>
+): T[] {
+  if (!sfwNames.size) return rows;
+  return rows.map((row) => {
+    const sfwName = sfwNames.get(row.modelId);
+    return sfwName ? { ...row, modelName: sfwName } : row;
+  });
+}
+
 /** Normalises a write that carries the face. Clearing the title turns the face off, description included. */
 export function normalizeSfwFaceInput(data: {
   sfwName?: string | null;

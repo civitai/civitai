@@ -1,3 +1,5 @@
+import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   GetAnswersInput,
@@ -6,7 +8,7 @@ import type {
 } from './../schema/answer.schema';
 import { dbWrite, dbRead } from '~/server/db/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 
 export const getAnswers = async <TSelect extends Prisma.AnswerSelect>({
   questionId,
@@ -39,7 +41,13 @@ export const upsertAnswer = async ({ userId, ...data }: UpsertAnswerInput & { us
 };
 
 export const deleteAnswer = async ({ id }: GetByIdInput) => {
-  await dbWrite.answer.delete({ where: { id } });
+  const markerView = await holdMarkerViewExists();
+  await dbWrite.$transaction([
+    dbWrite.$executeRaw(
+      detachHeldThreadsSql({ answerId: Prisma.sql`SELECT ${id}::int` }, markerView)
+    ),
+    dbWrite.answer.delete({ where: { id } }),
+  ]);
 };
 
 export const setAnswerVote = async ({

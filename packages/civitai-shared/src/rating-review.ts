@@ -17,6 +17,9 @@ export const RATING_REVIEW_ENTITY_TYPES = [
 ] as const;
 export type RatingReviewEntityType = (typeof RATING_REVIEW_ENTITY_TYPES)[number];
 
+/** Model meta key a system check writes beside the nsfw lock it adds; any other lock change clears it. */
+export const SYSTEM_NSFW_LOCK_META_KEY = 'systemNsfwLock';
+
 export function isRatingReviewEntityType(v: unknown): v is RatingReviewEntityType {
   return typeof v === 'string' && (RATING_REVIEW_ENTITY_TYPES as readonly string[]).includes(v);
 }

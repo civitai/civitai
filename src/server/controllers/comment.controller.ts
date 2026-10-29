@@ -23,6 +23,7 @@ import {
   getCommentsViaKysely,
   getPinnedComments,
   getPinnedCommentsViaKysely,
+  isLegacyCommentHidden,
   toggleHideComment,
   togglePinComment,
   updateCommentById,
@@ -263,7 +264,7 @@ export const deleteUserCommentHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const deleted = await deleteCommentById({ ...input });
+    const deleted = await deleteCommentById({ ...input, byAuthor: !ctx.user.isModerator });
     // if (!deleted) throw throwNotFoundError(`No comment with id ${input.id}`);
 
     await ctx.track.commentEvent({ type: 'Delete', commentId: deleted.id });
@@ -405,6 +406,7 @@ export const setTosViolationHandler = async ({
     const { id } = input;
     if (!user.isModerator) throw throwAuthorizationError('Only moderators can set TOS violation');
 
+    const wasHidden = await isLegacyCommentHidden(id);
     const updatedComment = await updateCommentById({ id, data: { tosViolation: true } });
     if (!updatedComment) throw throwNotFoundError(`No comment with id ${id}`);
 
@@ -422,6 +424,7 @@ export const setTosViolationHandler = async ({
       )
     );
 
+    if (wasHidden) return updatedComment;
     await createNotification({
       userId: updatedComment.user.id,
       type: 'tos-violation',

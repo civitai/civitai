@@ -2579,6 +2579,10 @@ export type Comment = {
   locked: Generated<boolean | null>;
   hidden: Generated<boolean | null>;
   pinnedAt: Timestamp | null;
+  /**
+   * Kept hidden for a hold when its author deleted it; a ToS restore leaves it hidden.
+   */
+  removedByAuthor: Generated<boolean>;
 };
 export type CommentMute = {
   userId: number;

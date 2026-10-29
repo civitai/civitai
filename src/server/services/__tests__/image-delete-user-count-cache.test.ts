@@ -1,4 +1,3 @@
-import { Prisma } from '@prisma/client';
 import { afterEach, describe, it, expect, vi, beforeEach } from 'vitest';
 import type * as PromClient from '~/server/prom/client';
 
@@ -85,15 +84,17 @@ beforeEach(() => {
   thumbnailRefreshSpy = vi.spyOn(thumbnailCache, 'refresh').mockResolvedValue(undefined as never);
 });
 
+// The single delete is one raw statement; every other raw read here answers empty.
+const deleteReturns = (row: Record<string, unknown> | Error) =>
+  mockDbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+    if (!Array.from(strings).join('?').includes('DELETE FROM "Image"')) return [];
+    if (row instanceof Error) throw row;
+    return [row];
+  }) as never);
+
 describe('deleteImageById', () => {
   it("busts the owner's image/video count cache", async () => {
-    mockDbWrite.$queryRaw.mockResolvedValue([]);
-    mockDbWrite.image.delete.mockResolvedValue({
-      url: 'some-url',
-      postId: POST_ID,
-      nsfwLevel: 1,
-      userId: OWNER_ID,
-    });
+    deleteReturns({ url: 'some-url', postId: POST_ID, nsfwLevel: 1, userId: OWNER_ID });
 
     await deleteImageById({ id: IMAGE_ID });
 
@@ -118,9 +119,6 @@ describe('deleteImageById', () => {
       JSON.stringify(values).includes(String(IMAGE_ID))
         ? [{ imageId: IMAGE_ID, userId: OWNER_ID, postId: POST_ID }]
         : []) as never);
-    mockDbWrite.image.delete.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('not found', { code: 'P2025', clientVersion: 'x' })
-    );
 
     await expect(deleteImageById({ id: IMAGE_ID })).resolves.toBeUndefined();
 
@@ -142,9 +140,6 @@ describe('deleteImageById', () => {
   // Already gone: no kept record, so it leaves search and nothing else runs for it.
   it('drops a row the delete did not remove from search, and stops there', async () => {
     mockDbWrite.$queryRaw.mockResolvedValue([]);
-    mockDbWrite.image.delete.mockRejectedValue(
-      new Prisma.PrismaClientKnownRequestError('not found', { code: 'P2025', clientVersion: 'x' })
-    );
 
     await expect(deleteImageById({ id: IMAGE_ID })).resolves.toBeUndefined();
 
@@ -155,8 +150,7 @@ describe('deleteImageById', () => {
   });
 
   it('does not treat any other delete failure as a removed row', async () => {
-    mockDbWrite.$queryRaw.mockResolvedValue([]);
-    mockDbWrite.image.delete.mockRejectedValue(new Error('connection reset'));
+    deleteReturns(new Error('connection reset'));
 
     await deleteImageById({ id: IMAGE_ID });
 
@@ -173,8 +167,7 @@ describe('deleting a custom video thumbnail', () => {
       ([ids]) => ids === 900 || (Array.isArray(ids) && ids.includes(900))
     );
   it('refreshes the parent video’s thumbnail entry on a single delete', async () => {
-    mockDbWrite.$queryRaw.mockResolvedValue([]);
-    mockDbWrite.image.delete.mockResolvedValue({
+    deleteReturns({
       url: 'thumb',
       postId: null,
       nsfwLevel: 1,
@@ -223,14 +216,7 @@ describe('deleting a custom video thumbnail', () => {
   });
 
   it('refreshes nothing when no deleted image was a thumbnail', async () => {
-    mockDbWrite.$queryRaw.mockResolvedValue([]);
-    mockDbWrite.image.delete.mockResolvedValue({
-      url: 'img',
-      postId: null,
-      nsfwLevel: 1,
-      userId: OWNER_ID,
-      metadata: {},
-    });
+    deleteReturns({ url: 'img', postId: null, nsfwLevel: 1, userId: OWNER_ID, metadata: {} });
 
     await deleteImageById({ id: IMAGE_ID });
 

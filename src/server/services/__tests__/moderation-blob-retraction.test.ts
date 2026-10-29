@@ -525,17 +525,32 @@ describe('retraction load on the image-cache service', () => {
 
 describe('an image whose key shop artwork uses', () => {
   const OWNER = 7;
-  const deleted = (over: Record<string, unknown> = {}) =>
-    dbMock.dbWrite.image.delete.mockResolvedValue({
-      url: KEY,
-      postId: null,
-      nsfwLevel: 1,
-      userId: OWNER,
-      ingestion: 'Scanned',
-      needsReview: null,
-      blockedFor: null,
-      ...over,
-    } as never);
+  // The delete is one raw statement; the other raw reads around it find nothing.
+  // The delete is one raw statement; `reports` answers the open-report read before it, and the
+  // other raw reads around it find nothing.
+  const deleted = (
+    over: Record<string, unknown> | null = {},
+    reports: () => unknown[] = () => []
+  ) =>
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
+      const text = strings.join('');
+      if (text.includes('"ImageReport"')) return reports();
+      return text.includes('DELETE FROM "Image"') && over
+        ? [
+            {
+              url: KEY,
+              postId: null,
+              nsfwLevel: 1,
+              userId: OWNER,
+              metadata: null,
+              ingestion: 'Scanned',
+              needsReview: null,
+              blockedFor: null,
+              ...over,
+            },
+          ]
+        : [];
+    }) as never);
   beforeEach(() => mockShopArtworkUrls.mockResolvedValue(new Set([KEY])));
 
   it('keeps its object when the owner deletes it', async () => {
@@ -566,9 +581,7 @@ describe('an image whose key shop artwork uses', () => {
   });
 
   it('deletes and purges its object when the owner deletes it under an open report', async () => {
-    deleted();
-    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) =>
-      strings.join('').includes('"ImageReport"') ? [{ imageId: 4242 }] : []) as never);
+    deleted({}, () => [{ imageId: 4242 }]);
 
     await deleteImageById({ id: 4242, deletedById: OWNER });
 
@@ -577,11 +590,9 @@ describe('an image whose key shop artwork uses', () => {
   });
 
   it('deletes and purges its object when the report lookup fails', async () => {
-    deleted();
-    dbMock.dbWrite.$queryRaw.mockImplementation((async (strings: TemplateStringsArray) => {
-      if (strings.join('').includes('"ImageReport"')) throw new Error('lookup failed');
-      return [];
-    }) as never);
+    deleted({}, () => {
+      throw new Error('lookup failed');
+    });
 
     await deleteImageById({ id: 4242, deletedById: OWNER });
 
@@ -590,7 +601,7 @@ describe('an image whose key shop artwork uses', () => {
 
   // A hold marker keeps the row, so nothing reaches storage, whoever deletes it.
   it('leaves a held image to its hold', async () => {
-    dbMock.dbWrite.image.delete.mockResolvedValue(null as never);
+    deleted(null);
 
     await deleteImageById({ id: 4242, deletedById: OWNER });
 

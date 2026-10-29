@@ -92,27 +92,36 @@ import { imageObjectSchema, type ImageObjectValue } from '~/shared/generation/va
 
 // --- sliders / enums / seed ---------------------------------------------------
 
-export const SEED: FieldDef<number | undefined> = {
-  input: z
-    .union([z.null(), z.undefined(), z.coerce.number().int().min(1).max(MAX_SEED)])
-    .optional()
-    .transform((val) => (val === null ? undefined : val)),
-  output: z.number().int().min(1).max(MAX_SEED).optional(),
-  default: undefined,
-  // 🔴 DROPPED, not clamped, and SILENTLY — nothing renders the note. A trusted `set()`
-  // skips the input union above, so an out-of-contract seed reaches `validate()` and
-  // refuses, killing the Generate button. The backend takes uint32, so clamping would
-  // submit a DIFFERENT seed dressed as the original; dropping gives an honest random one.
-  //
-  // Tested against `output` rather than the bounds: `> MAX_SEED || < 1` is false for NaN
-  // and misses 1.5, both of which arrive from `?gen=` handoffs and parsed metadata.
-  correct: (value) =>
-    value !== undefined && !(Number.isInteger(value) && value >= 1 && value <= MAX_SEED)
-      ? { value: undefined, reason: 'seed_unreproducible' }
-      : undefined,
-  // Seed is stored globally (bare key), not per family.
-  scope: rootScope(),
-};
+/**
+ * A seed, or undefined for random. `max` is the provider's ceiling: most take uint32
+ * (`SEED`); a provider that takes signed int32 passes `MAX_RANDOM_SEED`.
+ */
+export function seedDef(max: number): FieldDef<number | undefined, { max: number }> {
+  return {
+    input: z
+      .union([z.null(), z.undefined(), z.coerce.number().int().min(1).max(max)])
+      .optional()
+      .transform((val) => (val === null ? undefined : val)),
+    output: z.number().int().min(1).max(max).optional(),
+    default: undefined,
+    // 🔴 DROPPED, not clamped, and usually SILENTLY — most forms render no note. A trusted `set()`
+    // skips the input union above, so an out-of-contract seed reaches `validate()` and
+    // refuses, killing the Generate button. Clamping would
+    // submit a DIFFERENT seed dressed as the original; dropping gives an honest random one.
+    //
+    // Tested against `output` rather than the bounds: `> max || < 1` is false for NaN
+    // and misses 1.5, both of which arrive from `?gen=` handoffs and parsed metadata.
+    correct: (value) =>
+      value !== undefined && !(Number.isInteger(value) && value >= 1 && value <= max)
+        ? { value: undefined, reason: 'seed_unreproducible' }
+        : undefined,
+    // Seed is stored globally (bare key), not per family.
+    scope: rootScope(),
+    meta: { max },
+  };
+}
+
+export const SEED = seedDef(MAX_SEED);
 
 /**
  * The standard edit-images field: present on every non-txt workflow,

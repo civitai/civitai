@@ -1,3 +1,5 @@
+import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { Prisma } from '@prisma/client';
 import { Currency } from '~/shared/utils/prisma/enums';
 import type {
@@ -446,6 +448,14 @@ export const deleteBountyEntry = async ({
 const PAYOUT_PENDING = Symbol('payout-pending');
 
 async function deleteEntryRows(tx: Prisma.TransactionClient, id: number) {
+  const entryImageIds = Prisma.sql`SELECT ic."imageId" FROM "ImageConnection" ic
+    WHERE ic."entityId" = ${id} AND ic."entityType" = 'BountyEntry'`;
+  await tx.$executeRaw(
+    detachHeldThreadsSql(
+      { bountyEntryId: Prisma.sql`SELECT ${id}::int`, imageId: entryImageIds },
+      await holdMarkerViewExists()
+    )
+  );
   const entry = await tx.bountyEntry.delete({ where: { id } });
   if (!entry) return null;
 

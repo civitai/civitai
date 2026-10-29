@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import type * as LegalHoldService from '~/server/services/legal-hold.service';
 import { readFileSync } from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -13,6 +14,10 @@ import type * as TextScanRoute from '~/server/services/text-scan/route';
 // The Redis-backed post-commit helpers never settle without a live Redis, so they are stubbed.
 const { deleteImageById } = vi.hoisted(() => ({ deleteImageById: vi.fn(async () => undefined) }));
 
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LegalHoldService>()),
+  holdMarkerViewExists: async () => true,
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageService>()),
   deleteImageById,

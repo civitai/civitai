@@ -10,9 +10,10 @@ vi.mock('~/server/utils/moderator-endpoint', async (importOriginal) => ({
 }));
 
 /**
- * Three owner actions write a model's whole meta back after reading it. A content wipe, a moderator
- * or a scan that writes the meta between that read and the write must keep what it wrote: each
- * writer merges over the row it re-reads under a lock.
+ * Owner actions and the moderator take-down, bring-back and review decline write a model's whole
+ * meta back after reading it. A content wipe, another moderator or a scan that writes the meta
+ * between that read and the write must keep what it wrote: each writer merges over the row it
+ * re-reads under a lock.
  */
 
 const { requestReviewHandler, changeModelModifierHandler, declineReviewHandler } = await import(

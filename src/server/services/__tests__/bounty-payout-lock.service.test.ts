@@ -1,4 +1,5 @@
 import { BuzzApiError } from '@civitai/buzz';
+import type * as LegalHoldService from '~/server/services/legal-hold.service';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
@@ -23,6 +24,10 @@ const { buzz, events, fileCheck } = vi.hoisted(() => ({
 }));
 
 // Hand-listed: the real buzz.service builds HTTP clients at load; these are the calls under test.
+vi.mock('~/server/services/legal-hold.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof LegalHoldService>()),
+  holdMarkerViewExists: async () => true,
+}));
 vi.mock('~/server/services/buzz.service', () => ({
   ...buzz,
   createMultiAccountBuzzTransaction: vi.fn(),
@@ -118,6 +123,8 @@ const find = (userId: number) => benefactors.find((b) => b.userId === userId);
 
 function transactionClient(held: (() => void)[]) {
   return {
+    // The comment-thread detach ahead of a delete; nothing here has threads.
+    $executeRaw: async () => 0,
     $queryRaw: async (strings: TemplateStringsArray) => {
       const sql = strings.join('?');
       if (!sql.includes('FOR UPDATE')) throw new Error(`unexpected query: ${sql}`);

@@ -245,6 +245,45 @@ describe('resolveRatingReview', () => {
     expect(res.modelVersionIds).toHaveLength(2);
   });
 
+  it("makes the nsfw lock the moderator's: the system lock marker is cleared, other meta kept", async () => {
+    const modelId = await seedEntity(db, 'Model', {
+      userId: owner,
+      nsfw: true,
+      lockedProperties: ['nsfw'],
+      meta: JSON.stringify({
+        systemNsfwLock: { source: 'text-scan', at: '2026-09-01T00:00:00Z' },
+        cannotPromote: true,
+      }),
+    });
+    const id = await fileReview('Model', modelId, 4, 1);
+
+    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod });
+
+    const [m] = await rows<{ meta: Record<string, unknown>; lockedProperties: string[] }>(
+      db,
+      `SELECT "meta", "lockedProperties" FROM "Model" WHERE "id" = $1`,
+      [modelId]
+    );
+    expect(m).toEqual({ meta: { cannotPromote: true }, lockedProperties: ['nsfw'] });
+  });
+
+  it('resolves a model whose meta is null or not an object without touching it', async () => {
+    for (const meta of [null, JSON.stringify(null)]) {
+      const modelId = await seedEntity(db, 'Model', {
+        userId: owner,
+        nsfw: true,
+        lockedProperties: ['nsfw'],
+        meta,
+      });
+      const id = await fileReview('Model', modelId, 4, 1);
+      await service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod });
+      const [m] = await rows<{ nsfw: boolean }>(db, `SELECT "nsfw" FROM "Model" WHERE "id" = $1`, [
+        modelId,
+      ]);
+      expect(m.nsfw).toBe(false);
+    }
+  });
+
   it('refuses to mark a poi, minor or sfwOnly model NSFW and leaves the review Pending', async () => {
     for (const flag of ['poi', 'minor', 'sfwOnly'] as const) {
       const modelId = await seedEntity(db, 'Model', {

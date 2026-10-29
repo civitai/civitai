@@ -1,3 +1,4 @@
+import { heldLegacyReplyBelowSql } from '~/server/services/comment-thread-hold';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
@@ -435,21 +436,29 @@ export const togglePinComment = async ({
   await preventReplicationLag('commentModel', comment.modelId);
 };
 
-export const deleteCommentById = async ({ id }: GetByIdInput) => {
+export const deleteCommentById = async ({
+  id,
+  byAuthor = false,
+}: GetByIdInput & { byAuthor?: boolean }) => {
   const { modelId, model } =
     (await dbWrite.comment.findUnique({
       where: { id },
       select: { modelId: true, model: { select: { userId: true } } },
     })) ?? {};
 
-  const deleted = await dbWrite.comment.delete({ where: { id } });
-  if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
+  // Its replies go with it, so one kept for a held reply below it is hidden instead, as in the
+  // moderator bulk delete.
+  const markerView = await holdMarkerViewExists();
+  const { deleted, retained } = await dbWrite.$transaction((tx) =>
+    deleteLegacyCommentsUnlessHeld(tx, [id], markerView, { byAuthor })
+  );
+  if (!deleted.length && !retained.length) throw throwNotFoundError(`No comment with id ${id}`);
   await preventReplicationLag('commentModel', modelId);
 
   if (model?.userId) await userMetrics.queueUpdate(model.userId);
   if (modelId) await modelMetrics.queueUpdate(modelId);
 
-  return deleted;
+  return { id };
 };
 
 export const updateCommentById = async ({
@@ -495,6 +504,14 @@ export const updateCommentReportStatusByReason = ({
   `;
 };
 
+/**
+ * Whether a legacy comment is already hidden for ToS: one its author deleted may be kept that way for
+ * a hold, and its author must not hear about a comment they removed.
+ */
+export const isLegacyCommentHidden = async (id: number) =>
+  !!(await dbWrite.comment.findUnique({ where: { id }, select: { tosViolation: true } }))
+    ?.tosViolation;
+
 export async function bulkSetCommentTosViolation({
   ids,
   actor,
@@ -515,6 +532,7 @@ export async function bulkSetCommentTosViolation({
   let count = 0;
 
   for (const id of ids) {
+    const wasHidden = await isLegacyCommentHidden(id);
     const comment = await updateCommentById({ id, data: { tosViolation: true } }).catch(() => null);
     if (!comment) continue;
     count += 1;
@@ -533,6 +551,7 @@ export async function bulkSetCommentTosViolation({
       )
     );
 
+    if (wasHidden) continue;
     await createNotification({
       userId: comment.user.id,
       type: 'tos-violation',
@@ -589,10 +608,11 @@ export async function bulkDeleteComments({
   };
 }
 
-async function deleteLegacyCommentsUnlessHeld(
+export async function deleteLegacyCommentsUnlessHeld(
   tx: Prisma.TransactionClient,
   ids: number[],
-  markerView: boolean
+  markerView: boolean,
+  { byAuthor = false }: { byAuthor?: boolean } = {}
 ) {
   if (ids.length === 0) return { deleted: [], retained: [] };
   // A reply goes with its parent (the foreign key cascades), so a comment is also kept while any
@@ -602,19 +622,12 @@ async function deleteLegacyCommentsUnlessHeld(
     DELETE FROM "Comment" c
     WHERE c.id = ANY(${ids}::int[])
       AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
-      AND NOT EXISTS (
-        WITH RECURSIVE below AS (
-          SELECT r.id, r."userId" FROM "Comment" r WHERE r."parentId" = c.id
-          UNION
-          SELECT r.id, r."userId" FROM "Comment" r JOIN below b ON r."parentId" = b.id
-        ),
-        authors AS MATERIALIZED (SELECT DISTINCT "userId" FROM below)
-        SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
-      )
+      AND NOT ${heldLegacyReplyBelowSql(Prisma.raw('c.id'), markerView)}
     RETURNING c."modelId"
   `;
   const retained = await tx.$queryRaw<{ userId: number }[]>`
     UPDATE "Comment" SET "tosViolation" = true, "updatedAt" = now()
+      ${byAuthor ? Prisma.sql`, "removedByAuthor" = true` : Prisma.empty}
     WHERE id = ANY(${ids}::int[])
     RETURNING "userId"
   `;
@@ -653,19 +666,25 @@ async function afterLegacyCommentsDeleted({
  * puts them back in the queue. Reopening is only ever correct for the ones this flag actioned.
  */
 export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) => {
-  if (ids.length === 0) return { count: 0, reopenedReports: 0 };
+  if (ids.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0 };
 
   const ReportReason = (await import('~/shared/utils/prisma/enums')).ReportReason;
   const ReportStatus = (await import('~/shared/utils/prisma/enums')).ReportStatus;
+  const { clearTosOrKeep } = await import('~/server/services/commentsv2.service');
+  const markerView = await holdMarkerViewExists();
 
   let reopenedReports = 0;
   let count = 0;
+  const retained: number[] = [];
+  let retainedHidden = 0;
 
   for (const id of ids) {
-    const updated = await dbWrite.comment
-      .update({ where: { id }, data: { tosViolation: false }, select: { id: true } })
-      .catch(() => null);
-    if (!updated) continue;
+    const outcome = await clearTosOrKeep('Comment', id, markerView);
+    if (outcome?.held) {
+      retainedHidden += 1;
+      if (outcome.userId !== null) retained.push(outcome.userId);
+    }
+    if (!outcome?.cleared) continue;
     count += 1;
 
     const reports = await dbWrite.$queryRaw<{ id: number }[]>`
@@ -680,5 +699,6 @@ export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) =
     reopenedReports += reports.length;
   }
 
-  return { count, reopenedReports };
+  if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
+  return { count, reopenedReports, retainedHidden };
 };

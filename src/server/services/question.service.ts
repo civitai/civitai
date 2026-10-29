@@ -1,4 +1,6 @@
-import type { Prisma } from '@prisma/client';
+import { detachHeldThreadsSql, questionThreadParents } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { Prisma } from '@prisma/client';
 import { isNotTag } from './../schema/tag.schema';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import { TagTarget } from '~/shared/utils/prisma/enums';
@@ -147,7 +149,13 @@ export const upsertQuestion = async ({
 };
 
 export const deleteQuestion = async ({ id }: GetByIdInput) => {
-  await dbWrite.question.delete({ where: { id } });
+  const markerView = await holdMarkerViewExists();
+  await dbWrite.$transaction([
+    dbWrite.$executeRaw(
+      detachHeldThreadsSql(questionThreadParents(Prisma.sql`SELECT ${id}::int`), markerView)
+    ),
+    dbWrite.question.delete({ where: { id } }),
+  ]);
 };
 
 export const setQuestionAnswer = async ({ id, answerId }: SetQuestionAnswerInput) => {

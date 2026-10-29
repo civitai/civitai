@@ -11,7 +11,13 @@ import { isReactionAllowedForEntity } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
 import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 import { createNotification } from '~/server/services/notification.service';
-import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import {
   getNsfwLevelDeprecatedReverseMapping,
@@ -272,6 +278,13 @@ export const toggleReactionHandler = async ({
         `The ${input.reaction} reaction is not available for this ${input.entityType}.`
       );
     }
+
+    if (
+      input.entityType === 'comment' &&
+      !ctx.user.isModerator &&
+      (await isCommentGoneForMembers(input.entityId))
+    )
+      throw throwNotFoundError(`No comment with id ${input.entityId}`);
 
     if (input.entityType === 'image') {
       // We are only doing this for image contests for now. Because the user

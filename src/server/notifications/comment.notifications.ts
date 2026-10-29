@@ -13,9 +13,12 @@ import { getModelCommentThreadUrl } from '~/utils/comment-url-helpers';
 import { QS } from '~/utils/qs';
 import { withDefiniteArticle } from '~/utils/string-helpers';
 
-/** A live CommentV3 row written since the cursor. Tombstones keep their row and must not notify. */
+/**
+ * A live CommentV3 row written since the cursor. Tombstones keep their row and must not notify, and
+ * neither does a row hidden for ToS.
+ */
 export const liveV3Since = (lastSent: string) =>
-  `c."deletedAt" IS NULL AND c."createdAt" > '${lastSent}'`;
+  `c."deletedAt" IS NULL AND NOT c."tosViolation" AND c."createdAt" > '${lastSent}'`;
 
 /**
  * The id the model page's dialog addresses a comment by: its old Comment id. Every v1-shaped row has
@@ -274,7 +277,8 @@ export const CommentNotificationPriority = {
  */
 const siblingAuthors = (sameParent: string) => `(SELECT ARRAY_AGG(s."userId") FROM (
                      SELECT DISTINCT cu."userId" FROM "CommentV3" cu
-                     WHERE ${sameParent} AND cu."deletedAt" IS NULL AND cu."userId" != c."userId"
+                     WHERE ${sameParent} AND cu."deletedAt" IS NULL AND NOT cu."tosViolation"
+                       AND cu."userId" != c."userId"
                    ) s
                    WHERE ${notBlockedBetween('s."userId"', 'c."userId"')}
                      AND ${notCommentMuted('s."userId"', 'c')})`;

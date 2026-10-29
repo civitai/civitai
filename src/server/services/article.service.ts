@@ -1,6 +1,7 @@
+import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
 import type { EventViewer } from '~/server/events/event-access';
 import { Prisma } from '@prisma/client';
-import { accountHoldSql } from '~/server/services/legal-hold.service';
+import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
@@ -1727,7 +1728,11 @@ export const deleteArticleById = async ({
     // Before the transaction: `CollectionItem.articleId` cascades from `Article`.
     const collectionsToRebuild = await getCollectionIdsForArticle({ articleId: id });
 
+    const markerView = await holdMarkerViewExists();
     const deleted = await dbWrite.$transaction(async (tx) => {
+      await tx.$executeRaw(
+        detachHeldThreadsSql({ articleId: Prisma.sql`SELECT ${id}::int` }, markerView)
+      );
       const article = await tx.article.delete({
         where: { id },
         select: { coverId: true },

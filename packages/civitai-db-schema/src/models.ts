@@ -2951,6 +2951,7 @@ export interface Comment {
   locked: boolean | null;
   hidden: boolean | null;
   pinnedAt: Date | null;
+  removedByAuthor: boolean;
   comments?: Comment[];
   reactions?: CommentReaction[];
   reports?: CommentReport[];
