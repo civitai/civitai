@@ -567,6 +567,21 @@ describe('the recap', () => {
     expect(await getRecap(db, { playerId: 1, now: NOON(D2) })).toMatchObject({ day: D1, cast: 3 });
   });
 
+  it('has no recap when every vote of the last day came before a mid-day reset', async () => {
+    await seedPlayer(pg, 1);
+    await ledger(1, D1, { correct: 3 }); // 08:01 .. 08:03
+    await setStart(1, `${D1} 12:00:00`);
+    expect(await getRecap(db, { playerId: 1, now: NOON(D2) })).toBeNull();
+  });
+
+  it('looks back past a day with only pre-reset votes to an earlier one that has some', async () => {
+    await seedPlayer(pg, 1);
+    await setStart(1, `${D1} 06:00:00`);
+    await ledger(1, D1, { correct: 2 });
+    await seedDay(1, D2, { votes: 4 }); // counter from before a reset; no ledger votes
+    expect(await getRecap(db, { playerId: 1, now: NOON(D3) })).toMatchObject({ day: D1, cast: 2 });
+  });
+
   it('has no recap for days before a career reset', async () => {
     await seedPlayer(pg, 1);
     await ledger(1, D1, { correct: 5 });

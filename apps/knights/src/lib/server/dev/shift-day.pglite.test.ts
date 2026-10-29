@@ -140,6 +140,21 @@ describe('shiftMyDayBack', () => {
     expect(row.rows[0].at).toBe('2026-12-14 10:15');
   });
 
+  it('moves a reset made within the shifted days, and leaves an older one', async () => {
+    await playedToday(1);
+    await playedToday(2);
+    await pg.query(`UPDATE "NewOrderPlayer" SET "startAt"='${TODAY} 08:00:00' WHERE "userId"=1`);
+    await pg.query(`UPDATE "NewOrderPlayer" SET "startAt"='2020-03-01 08:00:00' WHERE "userId"=2`);
+
+    await shiftMyDayBack(db, 1);
+    await shiftMyDayBack(db, 2);
+
+    const starts = await pg.query<{ userId: number; at: string }>(
+      `SELECT "userId", to_char("startAt",'YYYY-MM-DD HH24:MI') AS at FROM "NewOrderPlayer" ORDER BY "userId"`
+    );
+    expect(starts.rows.map((r) => r.at)).toEqual(['2026-12-14 08:00', '2020-03-01 08:00']);
+  });
+
   it('says so when there is nothing to shift', async () => {
     await seedPlayer(pg, 1);
     expect(await shiftMyDayBack(db, 1)).toEqual({ ok: false, reason: 'nothing-to-shift' });

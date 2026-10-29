@@ -258,54 +258,58 @@ export async function getRecap(
   if (keeper?.dismissed === today) return null;
 
   const startAt = await startAtOf(db, playerId);
-  const last = await db
-    .selectFrom('KnightsPlayerDay')
-    .select([sql<string>`"day"::text`.as('day'), 'bonusGold', 'watchCompletedAt'])
-    .where('playerId', '=', playerId)
-    .where('day', '<', dateOf(today))
-    .where('day', '>=', dateOf(utcDay(startAt)))
-    .where('votes', '>', 0)
-    .orderBy('day', 'desc')
-    .limit(1)
-    .executeTakeFirst();
-  if (!last) return null;
+  // A day row's counter can hold only votes from before a reset, so look back until a day has votes since it.
+  for (let before = today; ; ) {
+    const last = await db
+      .selectFrom('KnightsPlayerDay')
+      .select([sql<string>`"day"::text`.as('day'), 'bonusGold', 'watchCompletedAt'])
+      .where('playerId', '=', playerId)
+      .where('day', '<', dateOf(before))
+      .where('day', '>=', dateOf(utcDay(startAt)))
+      .where('votes', '>', 0)
+      .orderBy('day', 'desc')
+      .limit(1)
+      .executeTakeFirst();
+    if (!last) return null;
+    before = last.day;
 
-  const from = new Date(Math.max(dayStart(last.day).getTime(), startAt.getTime()));
-  const totals = await db
-    .selectFrom('KnightsVote')
-    .select([
-      sql<string>`count(*)`.as('cast'),
-      sql<string>`count(*) filter (where "settledAt" is not null and "verdict" = 'correct')`.as(
-        'confirmed'
-      ),
-      sql<string>`count(*) filter (where "settledAt" is not null and "verdict" = 'failed')`.as(
-        'failed'
-      ),
-      sql<string>`count(*) filter (where "settledAt" is null)`.as('pending'),
-      sql<string>`coalesce(sum("gold") filter (where "settledAt" is not null and "verdict" = 'correct'), 0)`.as(
-        'gold'
-      ),
-    ])
-    .where('playerId', '=', playerId)
-    .where('createdAt', '>=', utc(from))
-    .where('createdAt', '<', utc(nextDayStart(last.day)))
-    .executeTakeFirstOrThrow();
+    const from = new Date(Math.max(dayStart(last.day).getTime(), startAt.getTime()));
+    const totals = await db
+      .selectFrom('KnightsVote')
+      .select([
+        sql<string>`count(*)`.as('cast'),
+        sql<string>`count(*) filter (where "settledAt" is not null and "verdict" = 'correct')`.as(
+          'confirmed'
+        ),
+        sql<string>`count(*) filter (where "settledAt" is not null and "verdict" = 'failed')`.as(
+          'failed'
+        ),
+        sql<string>`count(*) filter (where "settledAt" is null)`.as('pending'),
+        sql<string>`coalesce(sum("gold") filter (where "settledAt" is not null and "verdict" = 'correct'), 0)`.as(
+          'gold'
+        ),
+      ])
+      .where('playerId', '=', playerId)
+      .where('createdAt', '>=', utc(from))
+      .where('createdAt', '<', utc(nextDayStart(last.day)))
+      .executeTakeFirstOrThrow();
 
-  const cast = Number(totals.cast);
-  if (cast === 0) return null;
-  const confirmed = Number(totals.confirmed);
-  const graded = confirmed + Number(totals.failed);
-  return {
-    day: last.day,
-    when: dayLabel(last.day, today),
-    cast,
-    confirmed,
-    graded,
-    accuracy: graded > 0 ? confirmed / graded : null,
-    goldEarned: Number(totals.gold),
-    pending: Number(totals.pending),
-    streakBonus: watchStands(last.watchCompletedAt, startAt) ? last.bonusGold : 0,
-  };
+    const cast = Number(totals.cast);
+    if (cast === 0) continue;
+    const confirmed = Number(totals.confirmed);
+    const graded = confirmed + Number(totals.failed);
+    return {
+      day: last.day,
+      when: dayLabel(last.day, today),
+      cast,
+      confirmed,
+      graded,
+      accuracy: graded > 0 ? confirmed / graded : null,
+      goldEarned: Number(totals.gold),
+      pending: Number(totals.pending),
+      streakBonus: watchStands(last.watchCompletedAt, startAt) ? last.bonusGold : 0,
+    };
+  }
 }
 
 export async function dismissRecap(

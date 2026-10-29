@@ -58,6 +58,13 @@ export async function shiftMyDayBack(db: Kysely<DB>, userId: number): Promise<Sh
       .where('playerId', '=', userId)
       .where('createdAt', '>=', utc(dayStart(earliestDay)))
       .execute();
+    // Keeps activity from after a career reset after it.
+    await trx
+      .updateTable('NewOrderPlayer')
+      .set({ startAt: sql<Date>`"startAt" - make_interval(days => ${SHIFT_DAYS}::int)` })
+      .where('userId', '=', userId)
+      .where('startAt', '>=', utc(dayStart(earliestDay)))
+      .execute();
     await trx
       .updateTable('KnightsPlayer')
       .set({
