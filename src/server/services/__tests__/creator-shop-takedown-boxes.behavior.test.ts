@@ -56,6 +56,9 @@ vi.mock('~/server/services/creator-program.service', () => ({
 }));
 const notifications = vi.hoisted(() => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/notification.service', () => notifications);
+vi.mock('~/server/services/cdn-access.service', () => ({
+  recordShopTakedownArtwork: async () => ({ queued: 0, unproven: 0, otherOwner: 0, inUse: 0 }),
+}));
 vi.mock('~/server/utils/distributed-lock', () => ({
   withDistributedLock: (_options: unknown, operation: () => Promise<unknown>) => operation(),
 }));

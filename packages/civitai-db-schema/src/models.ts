@@ -4578,6 +4578,14 @@ export interface ShopArtworkKeyOwner {
   recordedAt: Date;
 }
 
+export interface ImageCdnShopTakedown {
+  id: number;
+  url: string;
+  shopItemId: number;
+  userId: number | null;
+  takenDownAt: Date;
+}
+
 export interface ImageCdnAccessClaim {
   url: string;
   token: string;
