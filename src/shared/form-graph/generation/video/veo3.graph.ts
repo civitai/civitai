@@ -40,6 +40,11 @@ type Veo3ApiVersion = (typeof veo3ApiVersions)[number];
 
 const veo3ApiVersionOptions = [{ label: 'Veo 3.1', value: '3.1' as Veo3ApiVersion }];
 
+const VEO3_DURATION_INPUT = z.coerce.number().optional();
+// ref2vid pins duration to 8s at the boundary
+const VEO3_REF2VID_DURATION_INPUT = VEO3_DURATION_INPUT.transform(() => 8);
+const VEO3_DURATION_OUTPUT = z.number();
+
 export const veo3 = defineGraph<FamilyExt>({ scope: familyScope })
   .field(
     'images',
@@ -72,12 +77,8 @@ export const veo3 = defineGraph<FamilyExt>({ scope: familyScope })
   .field('duration', ({ _ext }) => {
     const isRef2Vid = _ext.workflow === 'img2vid:ref2vid';
     return {
-      // ref2vid pins duration to 8s at the boundary
-      input: z.coerce
-        .number()
-        .optional()
-        .transform((v) => (isRef2Vid ? 8 : v)),
-      output: z.number(),
+      input: isRef2Vid ? VEO3_REF2VID_DURATION_INPUT : VEO3_DURATION_INPUT,
+      output: VEO3_DURATION_OUTPUT,
       default: 8,
       meta: {
         options: isRef2Vid ? [{ label: '8 seconds', value: 8 }] : veo3Durations,

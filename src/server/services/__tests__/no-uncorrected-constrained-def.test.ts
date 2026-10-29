@@ -22,7 +22,7 @@ import { describe, expect, it } from 'vitest';
  * 🔴 WHICH HOOK IS NOT A STYLE CHOICE, and getting it wrong is a money bug rather than a
  * cosmetic one. `correct` runs on the SERVER parse too. It is safe only when `input` already
  * rejects or normalises the same value, so the hook cannot see it there. Where `input` is
- * permissive — `textDef`'s bare `z.string()`, or any of the six sites ledgered below as
+ * permissive — `textDef`'s bare `z.string()`, or any site ledgered below as
  * `coerce` — a `correct` turns a 400 into a silent normalise-and-bill on a path billed per
  * generation, and the hook must be `coerce`, which trusted writes alone run. That mistake was
  * made and caught in review on the same day, which is why it is pinned here as well as

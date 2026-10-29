@@ -106,6 +106,7 @@ const upscaleSelectionSchema = z.discriminatedUnion('type', [
   z.object({ type: z.literal('multiplier'), multiplier: z.number() }),
   z.object({ type: z.literal('resolution'), resolution: z.number() }),
 ]);
+const upscaleSelectionInput = upscaleSelectionSchema.optional();
 
 /** An Upscaler-type resource with a pinned default. */
 const UPSCALER = {
@@ -193,7 +194,7 @@ export const imageUpscale = defineGraph<GenerationCtx>()
     };
 
     return {
-      input: upscaleSelectionSchema.optional(),
+      input: upscaleSelectionInput,
       output: upscaleSelectionSchema,
       default: defaultValue,
       // A selection that stopped being useful for every image
