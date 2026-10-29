@@ -9,8 +9,9 @@ import { makeTrpcProxy } from '../../../../test/trpcProxyStub';
 /**
  * The image detail letterboxes its picture inside a full-height slot, so an image's hat goes on the
  * box the picture is drawn in (useDrawnMediaBox), not on the slot's corner. To whoever changes this:
- * - the hat sits in the PICTURE's top-left corner and follows it when the slot resizes (the info
- *   sidebar opening or closing moves the picture without a window resize);
+ * - the hat sits ON the PICTURE's top-left corner, over its edge as in the feed, and follows it
+ *   when the slot resizes (the info sidebar opening or closing moves the picture without a window
+ *   resize); the slot clips, so it reaches out only over letterbox space and stays whole in the slot;
  * - it is the feed-card hat, never larger, and smaller on a narrower picture;
  * - Escape with the hat's popover open closes only the popover; with it closed, Escape still closes
  *   the viewer (the modal it opens in, ImageDetailModal's PageModal);
@@ -26,9 +27,9 @@ const svg = (w: number, h: number, fill: string) =>
 const HAT = svg(10, 10, '#e64980');
 
 const mocks = vi.hoisted(() => ({
-  state: { cover: false },
-  image: (hatted: boolean, width = 2000, height = 1000) => ({
-    id: 1,
+  state: { cover: false, tall: false },
+  image: (hatted: boolean, width = 2000, height = 1000, id = 1) => ({
+    id,
     nsfwLevel: 1,
     url: 'picture',
     width,
@@ -59,7 +60,12 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
       <img src={HAT} className={className} alt="" />
     ) : (
       <div {...wrapperProps}>
-        <img src={svg(2000, 1000, '#228be6')} className={className} data-testid="picture" alt="" />
+        <img
+          src={mocks.state.tall ? svg(1000, 2000, '#228be6') : svg(2000, 1000, '#228be6')}
+          className={className}
+          data-testid="picture"
+          alt=""
+        />
       </div>
     ),
 }));
@@ -89,17 +95,30 @@ import { getHatLayout } from '~/components/Cosmetics/EventDecoration/event-decor
 const onClose = vi.fn();
 let setSlot: (size: { width: number; height: number }) => void = () => undefined;
 
-function Viewer({ image, bare }: { image: ReturnType<typeof mocks.image>; bare?: boolean }) {
+let goNext: () => void = () => undefined;
+
+function Viewer({
+  image,
+  second,
+  bare,
+}: {
+  image: ReturnType<typeof mocks.image>;
+  second?: ReturnType<typeof mocks.image>;
+  bare?: boolean;
+}) {
   const [slot, set] = useState({ width: 800, height: 600 });
+  const [index, setIndex] = useState(0);
+  goNext = () => setIndex(1);
   setSlot = set;
   const stage = (
     <div style={{ ...slot, display: 'flex', flexDirection: 'column' }}>
       <div className="relative flex min-h-0 flex-1 flex-col">
         <ImageDetailCarousel
-          images={[image]}
-          index={0}
-          canNavigate={false}
-          next={() => undefined}
+          images={second ? [image, second] : [image]}
+          index={index}
+          canNavigate={!!second}
+          loop={false}
+          next={() => setIndex(1)}
           previous={() => undefined}
         />
       </div>
@@ -128,21 +147,26 @@ const hat = () => document.querySelector<HTMLElement>('button[data-event-decorat
 const rect = (el: Element | null) => el!.getBoundingClientRect();
 const popover = () => document.querySelector('[data-testid="worn-hat-popover"]');
 
-// The hat sits inside the picture's top-left corner: within its box and near its corner.
+// The hat straddles the picture's top edge near its left corner, whole within the slot: the slot
+// above the 2:1 picture is letterbox space the hat reaches into, and the slot clips beyond it.
 async function expectOnPictureCorner() {
   await vi.waitFor(() => {
-    const picture = rect(document.querySelector('[data-testid="picture"]'));
+    const el = document.querySelector('[data-testid="picture"]')!;
+    const picture = rect(el);
+    const slot = rect(el.closest('.relative'));
     const h = rect(hat());
-    expect(h.left).toBeGreaterThanOrEqual(picture.left - 1);
-    expect(h.top).toBeGreaterThanOrEqual(picture.top - 1);
+    expect(h.top).toBeLessThan(picture.top - 4);
+    expect(h.bottom).toBeGreaterThan(picture.top + 4);
+    expect(h.top).toBeGreaterThanOrEqual(slot.top - 1);
+    expect(h.left).toBeGreaterThanOrEqual(slot.left - 1);
     expect(h.left - picture.left).toBeLessThan(40);
-    expect(h.top - picture.top).toBeLessThan(40);
   });
 }
 
 beforeEach(() => {
   onClose.mockClear();
   mocks.state.cover = false;
+  mocks.state.tall = false;
 });
 
 describe('the image detail wears the image hat on the picture', () => {
@@ -163,11 +187,23 @@ describe('the image detail wears the image hat on the picture', () => {
     await expectOnPictureCorner();
   });
 
+  test('on a picture flush with the slot top, the hat reaches over the header like a feed card', async () => {
+    mocks.state.tall = true;
+    renderWithProviders(<Viewer image={mocks.image(true, 1000, 2000)} />);
+    await vi.waitFor(() => expect(hat()).not.toBeNull());
+    const picture = rect(document.querySelector('[data-testid="picture"]'));
+    const slot = rect(document.querySelector('[data-testid="picture"]')!.closest('.relative'));
+    // A 1:2 picture fills an 800x600 slot's height: nothing above it but the header.
+    expect(picture.top - slot.top).toBeLessThan(2);
+    // The same reach as a feed card's hat (ShowcaseGridHats asserts 34 for the feed).
+    await vi.waitFor(() => expect(picture.top - rect(hat()).top).toBeGreaterThanOrEqual(34));
+  });
+
   test('the feed-card hat, smaller on a narrower picture', async () => {
     renderWithProviders(<Viewer image={mocks.image(true)} />);
     await vi.waitFor(() => expect(hat()).not.toBeNull());
     // offsetWidth: the hat's own size, before its tilt widens its bounding box.
-    const full = getHatLayout('inside', undefined).width;
+    const full = getHatLayout('corner', undefined).width;
     await vi.waitFor(() => expect(hat()!.offsetWidth).toBe(Math.round(full)));
 
     setSlot({ width: 160, height: 600 });
@@ -218,18 +254,77 @@ describe('the image detail wears the image hat on the picture', () => {
     expect(document.activeElement).toBe(hat());
   });
 
-  test('stickers paint and take the pointer above the hat', async () => {
+  test('the hat takes the pointer in its own shape, a sticker over the picture everywhere else', async () => {
     mocks.state.cover = true;
     renderWithProviders(<Viewer image={mocks.image(true)} bare />);
     await vi.waitFor(() => expect(hat()).not.toBeNull());
     await expectOnPictureCorner();
-    // Every point of the hat is under the sticker, so the sticker is what the pointer reaches.
+    // The hat is drawn outside the slide (it hangs past the picture), so it sits above the sticker;
+    // its pointer area is its own outline, so the sticker still gets the rest of its box.
     const h = rect(hat());
-    const hits = new Set<string | null>();
+    const hits = new Set<string>();
     for (let x = h.left + 2; x < h.right - 2; x += 4)
-      for (let y = h.top + 2; y < h.bottom - 2; y += 4)
-        hits.add(document.elementFromPoint(x, y)?.getAttribute('data-testid') ?? null);
-    expect([...hits]).toEqual(['sticker']);
+      for (let y = h.top + 2; y < h.bottom - 2; y += 4) {
+        const at = document.elementFromPoint(x, y);
+        hits.add(
+          at?.closest('[data-event-decoration="hat"]')
+            ? 'hat'
+            : at?.getAttribute('data-testid') ?? ''
+        );
+      }
+    expect([...hits].sort()).toEqual(['hat', 'sticker']);
+  });
+
+  test('the hat is out of sight while the carousel moves and is back on the next picture', async () => {
+    renderWithProviders(
+      <Viewer image={mocks.image(true)} second={mocks.image(true, 2000, 1000, 2)} />
+    );
+    await vi.waitFor(() => expect(hat()).not.toBeNull());
+    // Sampled every frame from before the swipe, so a hat left behind by a moving slide is recorded
+    // rather than polled for: a hat more than 50px from every picture's left edge is off its picture.
+    const strays: number[] = [];
+    let shownBefore = 0;
+    let travel = 0;
+    let swiping = false;
+    let sampling = true;
+    // The first picture is as wide as the slot, so its left is the slot's.
+    const slotLeft = rect(document.querySelector('[data-testid="picture"]')).left;
+    const sample = () => {
+      const h = hat();
+      const pictures = [...document.querySelectorAll('[data-testid="picture"]')];
+      if (h) {
+        if (!swiping) shownBefore++;
+        const off = Math.min(...pictures.map((p) => Math.abs(rect(h).left - rect(p).left)));
+        if (off > 50) strays.push(off);
+      }
+      // One frame can land after the test has unmounted the carousel.
+      if (pictures[0]) travel = Math.max(travel, Math.abs(rect(pictures[0]).left - slotLeft));
+      if (sampling) requestAnimationFrame(sample);
+    };
+    try {
+      sample();
+      await vi.waitFor(() => expect(shownBefore).toBeGreaterThan(2));
+      swiping = true;
+      goNext();
+
+      // Settled on the second picture, which is flush with the slot again: the hat is on its corner.
+      await vi.waitFor(
+        () => {
+          const second = rect(document.querySelectorAll('[data-testid="picture"]')[1]);
+          expect(Math.abs(second.left - slotLeft)).toBeLessThan(1);
+          expect(hat()).not.toBeNull();
+          expect(rect(hat()).bottom).toBeGreaterThan(second.top + 4);
+          expect(rect(hat()).top).toBeLessThan(second.top - 4);
+        },
+        { timeout: 3000 }
+      );
+    } finally {
+      sampling = false;
+    }
+    // The samples saw a hat before the swipe and the pictures really travelling, so no strays means
+    // something.
+    expect(travel).toBeGreaterThan(100);
+    expect(strays).toEqual([]);
   });
 
   test('gate: no hat when the image carries none', async () => {

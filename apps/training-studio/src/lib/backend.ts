@@ -40,6 +40,9 @@ export type TrainingRunPayload = Omit<TrainingRunInput, 'continueFrom' | 'curren
 export interface StudioBackend {
   listTrainings(): Promise<TrainingRow[]>;
   getRunDetail(workflowId: string): Promise<TrainingDetail>;
+  /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
+   *  answered by the main app. Rejects when it can't tell. */
+  modelLive(modelId: number): Promise<boolean>;
   getRunDataset(workflowId: string): Promise<{ air: string; caption: string }[]>;
   /** One dataset image/video/audio blob. Blobs need auth (shell: the session-gated proxy; element: a
    *  Bearer fetch against the orchestrator), so views turn these into object URLs — a bare URL for a

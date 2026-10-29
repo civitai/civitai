@@ -47,6 +47,7 @@ import type { ModelFileCached } from '~/server/services/model-file.service';
 import { getFilesForModelVersionCache } from '~/server/services/model-file.service';
 import type { GenerationResourceDataModel } from '~/server/redis/resource-data.redis';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { applyPaidAccessGating } from '~/server/services/generation/paid-access-gating';
 import { getFeaturedModels } from '~/server/services/model.service';
 import { bustMvCache, getLinkedVaeIds } from '~/server/services/model-version.service';
@@ -1332,6 +1333,8 @@ export async function getResourceData(
 
   const { next, member } = await coverageAudience(user);
 
+  const showSfwFace = showsSfwFace(browsingLevel);
+
   // Spans localize the gen-path park: getResourceData does these as SEQUENTIAL
   // awaits, so wrapping each shows which prelim lookup dominates.
   const featuredModels = await withSpan('gen:getResourceData:featured', () => getFeaturedModels());
@@ -1386,7 +1389,8 @@ export async function getResourceData(
     // handed us — and on the cache's fail-open path one origin lookup is single-flighted and its
     // record shared by every caller that joined that window. `canGenerate` is a PER-USER decision,
     // so mutating in place applies this user's gate outcome to a concurrent user's payload.
-    const { userFlags: ownerFlags, ...ownerlessModel } = item.model;
+    const { userFlags: ownerFlags, ...ownerModel } = item.model;
+    const ownerlessModel = resolveModelFace(ownerModel, showSfwFace);
     let model = ownerlessModel;
     if (!canGenerate) {
       const { sfwOnly: _sfwOnly, minor: _minor, ...rest } = ownerlessModel;

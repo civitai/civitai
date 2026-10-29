@@ -740,7 +740,8 @@ export const deleteComment = async ({ id }: { id: number }) => {
  * The CommentV2 half of the moderator bulk delete (`bulkDeleteComments`), in the caller's
  * transaction. Deleting one sets its reply thread's link null rather than deleting the replies, but
  * an orphaned reply thread does not stay safe, so a comment is also kept while a held author replied
- * anywhere below it.
+ * anywhere below it. The hold is checked once per author below, not per reply: its cost grows with
+ * the number of holding reports.
  */
 export async function deleteCommentsV2UnlessHeld(
   tx: Prisma.TransactionClient,
@@ -759,9 +760,11 @@ export async function deleteCommentsV2UnlessHeld(
           SELECT t.id FROM "Thread" t
           JOIN "CommentV2" k ON t."commentId" = k.id
           JOIN below b ON k."threadId" = b.id
+        ),
+        authors AS MATERIALIZED (
+          SELECT DISTINCT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
         )
-        SELECT 1 FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
-        WHERE ${accountHoldSql(Prisma.sql`r."userId"`, markerView)}
+        SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
       )
     RETURNING c."userId", c."threadId"
   `;
@@ -804,7 +807,6 @@ export async function bulkSetCommentV2TosViolation({
 }) {
   if (ids.length === 0) return { count: 0, notified: 0, rewardedReports: 0 };
 
-  const { v4: uuid } = await import('uuid');
   const { reportAcceptedReward } = await import('~/server/rewards');
   const { createNotification } = await import('~/server/services/notification.service');
   const { NotificationCategory } = await import('~/server/common/enums');
@@ -850,7 +852,7 @@ export async function bulkSetCommentV2TosViolation({
       userId: updated.userId,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:commentv2:${uuid()}`,
+      key: `tos-violation:commentv2:${crypto.randomUUID()}`,
       details: { modelName: '', entity: 'comment' },
     })
       .then(() => {

@@ -4,6 +4,7 @@ import path from 'path';
 
 import { mode as testCacheMode } from './scripts/test-cache/core.mjs';
 import TestCacheSequencer from './scripts/test-cache/sequencer.mjs';
+import { QUARANTINED_COMPONENT_FILES } from './scripts/ci/component-quarantine.mjs';
 
 // Worker count is UNCAPPED by default — Vitest's own resolution applies untouched (`cpus - 1` in
 // run mode, `floor(cpus / 2)` in watch; the browser pool sizes itself at `min(12, cpus - 1)`).
@@ -243,7 +244,6 @@ const prebundledDeps = [
   'zustand',
   'immer',
   'clsx',
-  'uuid',
   'prom-client',
   '@tanstack/react-query',
   '@paddle/paddle-node-sdk',
@@ -635,9 +635,25 @@ export default defineConfig({
           ...browserTestShell(),
           name: 'component',
           include: ['src/**/*.browser.test.tsx'],
+          // Held out of the blocking run, see scripts/ci/component-quarantine.mjs.
+          exclude: ['**/node_modules/**', ...QUARANTINED_COMPONENT_FILES],
           // process-shim MUST come first (no imports) so it runs before any
           // component's module graph reads `process.env` at import time.
           setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
+        },
+      },
+      {
+        // Exactly the files `component` excludes, same setup, run by the non-blocking
+        // `component-quarantine` CI job. `provide.quarantineRun` lets those files un-skip
+        // the groups that are skipped for the blocking run. Disjoint from `component` by
+        // construction: the same list is its `include` and `component`'s `exclude`.
+        ...browserProjectShell(),
+        test: {
+          ...browserTestShell(),
+          name: 'component-quarantine',
+          include: QUARANTINED_COMPONENT_FILES,
+          setupFiles: ['test/browser-process-shim.ts', 'test/component-setup.tsx'],
+          provide: { quarantineRun: true },
         },
       },
       {

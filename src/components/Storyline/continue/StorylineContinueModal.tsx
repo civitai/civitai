@@ -67,12 +67,18 @@ export default function StorylineContinueModal({
   const submit = useSubmitStorylineContinuation({ onSuccess: setOutcome });
   const addOwn = useAddOwnerStorylineChapter({ onSuccess: () => setOutcome('added') });
   const insert = useInsertStorylineChapter({ onSuccess: () => setOutcome('added') });
-  const ownerAdd =
-    !!currentUser && !!storyline && !!parentChapterId && storyline.userId === currentUser.id;
+  const inserting = insertBeforeChapterId !== undefined;
+  const isOwner = !!currentUser && !!storyline && storyline.userId === currentUser.id;
+  // A moderator inserts and joins for the owner; continuing as themselves stays theirs.
+  const managing = isOwner || (!!storyline && !!currentUser?.isModerator);
+  const ownerAdd = !!parentChapterId && (isOwner || (managing && inserting));
+  const actingAsOwner = ownerAdd && !isOwner;
+  const joining = managing && !!parentChapterId && mode === 'join';
 
   const { posts, alreadyChapters, postsLoading, postsError, morePosts } = useOwnStorylinePosts({
-    enabled,
+    enabled: enabled && !!storyline,
     excludePostId: parentPostId,
+    author: actingAsOwner && storyline ? storyline.user : undefined,
   });
 
   const parentName =
@@ -89,7 +95,6 @@ export default function StorylineContinueModal({
         })
       : null;
 
-  const inserting = insertBeforeChapterId !== undefined;
   const ownerPending = inserting ? insert.isPending : addOwn.isPending;
   const ownerError = inserting ? insert.error : addOwn.error;
 
@@ -113,9 +118,9 @@ export default function StorylineContinueModal({
         </Group>
       ) : !storylineId || !storyline ? (
         <Alert color="gray">This chapter is not part of a storyline you can continue.</Alert>
-      ) : !ownerAdd && terms.unavailable ? (
+      ) : !ownerAdd && !joining && terms.unavailable ? (
         <Alert color="gray">Continuing storylines is not open yet.</Alert>
-      ) : !ownerAdd && !terms.data ? (
+      ) : !ownerAdd && !joining && !terms.data ? (
         <Alert color="red">Couldn&apos;t load what continuing this storyline costs.</Alert>
       ) : (
         <>
@@ -132,7 +137,7 @@ export default function StorylineContinueModal({
               data-testid="storyline-add-mode"
             />
           )}
-          {ownerAdd && parentChapterId && mode === 'join' ? (
+          {joining && parentChapterId ? (
             <StorylineJoinChapterForm
               parentChapterId={parentChapterId}
               parentName={parentName}
@@ -140,7 +145,7 @@ export default function StorylineContinueModal({
             />
           ) : (
             <StorylineContinueForm
-              viewerId={currentUser.id}
+              viewerId={actingAsOwner ? storyline.userId : currentUser.id}
               storyline={storyline}
               cover={storyline.coverImage}
               parentName={parentName}

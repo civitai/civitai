@@ -1,9 +1,13 @@
+import { useState } from 'react';
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as IsMobileMod from '~/hooks/useIsMobile';
 import type * as BrowsingLevelMod from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import type { StorylineFeedFilter } from '~/components/Storyline/StorylineFiltersDropdown';
+import type { StorylineFeedSort } from '~/components/Storyline/StorylineFeedFilters';
+import { StorylinesFeedControls } from '~/components/Storyline/StorylineFeedFilters';
 import { StorylinesFeed } from '~/components/Storyline/StorylinesFeed';
 
 /**
@@ -73,6 +77,18 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
   EdgeMedia: ({ src }: { src: string }) => <img alt="cover" src={`https://cdn.test/${src}`} />,
 }));
 
+/** What /storylines does: the sub-nav's menus pick and the feed reads what they pick. */
+function FeedWithControls() {
+  const [filter, setFilter] = useState<StorylineFeedFilter>('all');
+  const [sort, setSort] = useState<StorylineFeedSort>('newest');
+  return (
+    <>
+      <StorylinesFeedControls sort={sort} onSort={setSort} filter={filter} onFilter={setFilter} />
+      <StorylinesFeed filter={filter} sort={sort} />
+    </>
+  );
+}
+
 const cover = (id: number, url: string) => ({
   id,
   url,
@@ -132,7 +148,7 @@ const testIds = (el: Element, id: string) =>
 
 describe('StorylinesFeed', () => {
   test('lists storylines in the order given, with the covers and counts the server sends', async () => {
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
 
     const links = page.getByRole('link');
     await expect.element(links.first()).toBeVisible();
@@ -162,7 +178,7 @@ describe('StorylinesFeed', () => {
       // Complete says so in its status chip; no lock on top.
       card(4, null, { open: false, status: 'Complete' }),
     ];
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
     await expect.element(page.getByRole('link').first()).toBeVisible();
 
     expect([1, 2, 3, 4].map((id) => testIds(cardFor(id), 'storyline-closed-chip'))).toEqual([
@@ -180,7 +196,7 @@ describe('StorylinesFeed', () => {
       card(1, null, { open: false, whoCanContinue: 'Collaborators' }),
       card(2, null, { open: false, whoCanContinue: 'Collaborators' }),
     ];
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
     await expect.element(page.getByRole('link').first()).toBeVisible();
 
     expect([1, 2].map((id) => testIds(cardFor(id), 'storyline-closed-chip'))).toEqual([
@@ -196,7 +212,7 @@ describe('StorylinesFeed', () => {
       card(3, null, { continuePrice: null }),
       card(4, null, { open: false, continuePrice: 50 }),
     ];
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
     await expect.element(page.getByRole('link').first()).toBeVisible();
 
     expect([1, 2, 3, 4].map((id) => testIds(cardFor(id), 'storyline-price-chip'))).toEqual([
@@ -209,7 +225,7 @@ describe('StorylinesFeed', () => {
 
   test('loading shows card skeletons, not a spinner', async () => {
     mocks.loading = true;
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
 
     await expect.element(page.getByTestId('storylines-feed-skeleton')).toBeVisible();
     expect(
@@ -222,7 +238,7 @@ describe('StorylinesFeed', () => {
     ['Open for continuations', 'open'],
     ['Complete', 'complete'],
   ])('the %s filter is sent to the server as %s once applied', async (label, filter) => {
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
     await expect.element(page.getByRole('link').first()).toBeVisible();
     expect(mocks.feedInput.mock.lastCall?.[0]).toEqual(expect.objectContaining({ filter: 'all' }));
 
@@ -241,7 +257,7 @@ describe('StorylinesFeed', () => {
 
   test('on a phone the filters open in a drawer and apply the same way', async () => {
     mocks.mobile = true;
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
     await expect.element(page.getByRole('link').first()).toBeVisible();
 
     await page.getByRole('button', { name: 'Filters' }).click();
@@ -257,7 +273,7 @@ describe('StorylinesFeed', () => {
   });
 
   test('the Filters button counts an active filter, and "All" counts none', async () => {
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
     const filters = page.getByRole('button', { name: 'Filters' });
     await expect.element(filters).toBeVisible();
     const badge = () =>
@@ -274,7 +290,7 @@ describe('StorylinesFeed', () => {
   });
 
   test('passes the sort to the server', async () => {
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
     await expect.element(page.getByRole('link').first()).toBeVisible();
     expect(mocks.feedInput.mock.lastCall?.[0]).toEqual(expect.objectContaining({ sort: 'newest' }));
 
@@ -288,7 +304,7 @@ describe('StorylinesFeed', () => {
 
   test('an unsafe cover stays blurred', async () => {
     mocks.safe = false;
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
 
     await expect.element(page.getByRole('link').first()).toBeVisible();
     expect(page.getByRole('img', { name: 'cover' }).elements()).toHaveLength(0);
@@ -297,7 +313,7 @@ describe('StorylinesFeed', () => {
 
   test('a failed load says so and offers a retry, not an empty feed', async () => {
     mocks.failed = true;
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
 
     await expect.element(page.getByText("Couldn't load storylines")).toBeVisible();
     expect(page.getByText('No storylines match.').elements()).toHaveLength(0);
@@ -307,7 +323,7 @@ describe('StorylinesFeed', () => {
 
   test('says so when nothing matches', async () => {
     mocks.items = [];
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
 
     await expect.element(page.getByText('No storylines match.')).toBeVisible();
   });
@@ -317,7 +333,7 @@ describe('a storyline with no chapter 1 yet', () => {
   test('its owner is told so and can go write it', async () => {
     mocks.user = { id: 18 };
     mocks.items = [card(8, null, { chapterCount: 0, contributorCount: 0 })];
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
 
     await expect.element(page.getByText('No chapter 1 yet')).toBeVisible();
     await expect
@@ -332,7 +348,7 @@ describe('a storyline with no chapter 1 yet', () => {
   test('its owner can use a post already published as chapter 1', async () => {
     mocks.user = { id: 18 };
     mocks.items = [card(8, null, { chapterCount: 0, contributorCount: 0 })];
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
 
     await page.getByRole('button', { name: "Use a post you've published" }).click();
     expect(mocks.openFirstChapter).toHaveBeenCalledWith({ storylineId: 8 });
@@ -341,7 +357,7 @@ describe('a storyline with no chapter 1 yet', () => {
   test('a chapter-less storyline is not offered for writing to anyone but its owner', async () => {
     mocks.user = { id: 99 };
     mocks.items = [card(8, null, { chapterCount: 0, contributorCount: 0 })];
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
 
     await expect.element(page.getByRole('link', { name: /Story 8/ })).toBeVisible();
     expect(page.getByText('No chapter 1 yet').elements()).toHaveLength(0);
@@ -354,7 +370,7 @@ describe('a storyline with no chapter 1 yet', () => {
   test("the owner's storylines that have chapters read as before", async () => {
     mocks.user = { id: 17 };
     mocks.items = [card(7, cover(701, 'cover-of-7'))];
-    renderWithProviders(<StorylinesFeed />);
+    renderWithProviders(<FeedWithControls />);
 
     await expect.element(page.getByRole('link', { name: /Story 7/ })).toBeVisible();
     expect(page.getByText('No chapter 1 yet').elements()).toHaveLength(0);

@@ -120,14 +120,16 @@ function itemRow(over: Record<string, unknown> = {}) {
 
 const BODY = { title: 'Neon Drift', tagline: 'Arcade racer' };
 
-/** Public images and their uploaders: 51 is the owner's, 52 and 53 the creator's. */
+/** Public images and their uploaders: 51 is the owner's, 52 and 53 the creator's, 54 someone else's. */
 const OWNER_IMAGE = 51;
 const CREATOR_IMAGE = 52;
 const CREATOR_IMAGE_2 = 53;
+const STRANGER_IMAGE = 54;
 const IMAGE_OWNERS: Record<number, number> = {
   [OWNER_IMAGE]: OWNER,
   [CREATOR_IMAGE]: CREATOR,
   [CREATOR_IMAGE_2]: CREATOR,
+  [STRANGER_IMAGE]: 9999,
 };
 const notPublic = () => new TRPCError({ code: 'NOT_FOUND', message: 'No image' });
 
@@ -464,9 +466,20 @@ describe('upsertCatalogSubListing — item images', () => {
     });
   });
 
-  it('refuses an image the author did not upload, even the listing owner’s', async () => {
-    await expectError(asCreator({ ...BODY, imageId: OWNER_IMAGE }), 403, 'image_not_yours');
+  it('takes the listing owner’s image on a creator’s item, still attributed to the creator', async () => {
+    await expect(asCreator({ ...BODY, imageId: OWNER_IMAGE })).resolves.toMatchObject({
+      status: 'pending',
+    });
+    expect(write.appSubListing.create.mock.calls[0][0].data).toMatchObject({
+      authorUserId: CREATOR,
+      imageId: OWNER_IMAGE,
+    });
+  });
+
+  it('refuses an image neither the author nor the listing owner uploaded', async () => {
+    await expectError(asCreator({ ...BODY, imageId: STRANGER_IMAGE }), 403, 'image_not_yours');
     await expectError(put({ ...BODY, imageId: CREATOR_IMAGE }), 403, 'image_not_yours');
+    await expectError(put({ ...BODY, imageId: STRANGER_IMAGE }), 403, 'image_not_yours');
     nothingWritten();
   });
 
@@ -488,6 +501,98 @@ describe('upsertCatalogSubListing — item images', () => {
     expect(data).toMatchObject({ pendingImageId: CREATOR_IMAGE_2, pendingTitle: 'Neon Drift' });
     expect(data).not.toHaveProperty('imageId');
     expect(data).not.toHaveProperty('status');
+  });
+
+  it.each([
+    ['a creator’s item', CREATOR],
+    ['the owner’s own item', OWNER],
+  ])(
+    'on %s, a new card the listing owner uploaded goes live without review',
+    async (_label, author) => {
+      write.oauthConsent.findUnique.mockResolvedValue({ id: 1 });
+      write.appSubListing.findUnique.mockResolvedValue(
+        itemRow({ authorUserId: author, imageId: CREATOR_IMAGE, contentRating: 'pg' })
+      );
+      await expect(
+        put({ ...BODY, imageId: OWNER_IMAGE, contentRating: 'pg', creatorUserId: author })
+      ).resolves.toMatchObject({ status: 'approved', pendingEdit: false });
+      const { where, data } = write.appSubListing.updateMany.mock.calls[0][0];
+      expect(data).toMatchObject({
+        imageId: OWNER_IMAGE,
+        pendingImageId: null,
+        pendingSubmittedAt: null,
+        editRejectionReason: null,
+      });
+      expect(data).not.toHaveProperty('status');
+      expect(data).not.toHaveProperty('title');
+      // Compare-and-set on the approved row as read.
+      expect(where).toMatchObject({ id: ROW_ID, status: 'approved' });
+      expect(mockBust).toHaveBeenCalledTimes(1);
+    }
+  );
+
+  it('a new owner card replaces a staged edit the platform no longer sends', async () => {
+    write.appSubListing.findUnique.mockResolvedValue(
+      itemRow({ pendingTitle: 'Neon Drift II', pendingSubmittedAt: new Date(VERSION) })
+    );
+    await expect(put({ ...BODY, imageId: OWNER_IMAGE })).resolves.toMatchObject({
+      status: 'approved',
+      pendingEdit: false,
+    });
+    expect(write.appSubListing.updateMany.mock.calls[0][0].data).toMatchObject({
+      imageId: OWNER_IMAGE,
+      pendingTitle: null,
+      pendingSubmittedAt: null,
+    });
+  });
+
+  it.each([
+    ['the title', { title: 'Neon Drift II' }],
+    ['the tagline', { tagline: 'Arcade racer, now with drifts' }],
+    ['the rating', { contentRating: 'pg13' }],
+  ])('an owner card sent with a change to %s is staged whole', async (_label, change) => {
+    write.appSubListing.findUnique.mockResolvedValue(itemRow({ imageId: CREATOR_IMAGE }));
+    await expect(put({ ...BODY, imageId: OWNER_IMAGE, ...change })).resolves.toMatchObject({
+      status: 'approved',
+      pendingEdit: true,
+    });
+    const { data } = write.appSubListing.updateMany.mock.calls[0][0];
+    expect(data).toMatchObject({
+      pendingImageId: OWNER_IMAGE,
+      pendingSubmittedAt: expect.any(Date),
+    });
+    expect(data).not.toHaveProperty('imageId');
+    expect(mockBust).not.toHaveBeenCalled();
+  });
+
+  it('a creator card the owner did not upload is still staged (control for the owner card)', async () => {
+    write.oauthConsent.findUnique.mockResolvedValue({ id: 1 });
+    write.appSubListing.findUnique.mockResolvedValue(
+      itemRow({ authorUserId: CREATOR, imageId: OWNER_IMAGE })
+    );
+    await expect(
+      put({ ...BODY, imageId: CREATOR_IMAGE, creatorUserId: CREATOR })
+    ).resolves.toMatchObject({ status: 'approved', pendingEdit: true });
+    expect(write.appSubListing.updateMany.mock.calls[0][0].data).not.toHaveProperty('imageId');
+    expect(mockBust).not.toHaveBeenCalled();
+  });
+
+  it('an owner card on a pending item stays a draft for review', async () => {
+    write.appSubListing.findUnique.mockResolvedValue(
+      itemRow({ status: 'pending', approvedAt: null })
+    );
+    await expect(put({ ...BODY, imageId: OWNER_IMAGE })).resolves.toMatchObject({
+      status: 'pending',
+    });
+    expect(write.appSubListing.updateMany.mock.calls[0][0].data).not.toHaveProperty('status');
+    expect(mockBust).not.toHaveBeenCalled();
+  });
+
+  it('an owner card that is not public is refused, nothing goes live', async () => {
+    write.appSubListing.findUnique.mockResolvedValue(itemRow({ imageId: CREATOR_IMAGE }));
+    mockGetImage.mockRejectedValueOnce(notPublic());
+    await expectError(put({ ...BODY, imageId: OWNER_IMAGE }), 400, 'image_not_public');
+    nothingWritten();
   });
 
   it('a staged image goes through the same checks as a new one', async () => {

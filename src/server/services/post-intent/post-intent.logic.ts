@@ -1,6 +1,7 @@
 import * as z from 'zod';
 import { POST_TAG_LIMIT } from '~/server/common/constants';
 import type { ExternalMetaSchema } from '~/server/schema/image.schema';
+import { APP_SUB_LISTING_EXTERNAL_ID_RE } from '~/shared/constants/app-sub-listing.constants';
 import { sniffImageFormat } from '~/shared/utils/image-magic-bytes';
 import { POST_INTENT_MAX_MEDIA } from '~/shared/utils/post-intent';
 
@@ -114,6 +115,8 @@ export const postIntentManifestSchema = z.object({
     .refine((d) => Object.keys(d).length <= DETAILS_LIMIT, `at most ${DETAILS_LIMIT} details`)
     .optional(),
   expiresAt: z.iso.datetime({ offset: true }).optional(),
+  // A bad item key falls back to the app's own credit rather than refusing the share.
+  item: z.string().regex(APP_SUB_LISTING_EXTERNAL_ID_RE).optional().catch(undefined),
 });
 export type PostIntentManifest = z.infer<typeof postIntentManifestSchema>;
 

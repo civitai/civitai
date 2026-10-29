@@ -18,10 +18,12 @@ import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useSpotlight } from '~/hooks/useSpotlight';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useHasClientHistory } from '~/store/ClientHistoryStore';
+import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import {
-  hasPublicBrowsingLevel,
-  hasSafeBrowsingLevel,
-} from '~/shared/constants/browsingLevel.constants';
+  decideGatedState,
+  type GatedState,
+  type UseGatedResult,
+} from '~/components/Gated/gated-state';
 import { useSession, useSessionDiagnostics } from '~/providers/SessionProvider';
 import { shellPageDataStatus } from '~/components/Shell/shell-page-data';
 import { reportLoginGateWithAuthCookie, type LoginGateSignal } from '~/utils/faro/loginGate';
@@ -30,7 +32,7 @@ import { Meta, type MetaProps } from '~/components/Meta/Meta';
 import { ownDomainCanonical } from '~/components/Meta/canonical';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { requireLogin } from '~/components/Login/requireLogin';
-import { useAdGate } from '~/components/Ads/AdsProvider';
+import { useAdGate, useSetAdPageNsfwLevel } from '~/components/Ads/AdsProvider';
 import { useAppContext, useServerDomains } from '~/providers/AppProvider';
 import { isAdGatedContent } from '~/shared/utils/ad-gating';
 import { outerCardStyle } from '~/components/Buzz/CryptoDeposit/crypto-deposit.constants';
@@ -43,34 +45,14 @@ const PAYWALL_HAS_PART = {
   cssSelector: `.${PAYWALL_SELECTOR_CLASS}`,
 };
 
-/**
- * Which view `Gated` will render given the current request.
- *
- *   - `loading`  — session is still resolving for above-PG content; render nothing yet
- *   - `page`     — full content visible (children render). May be a verified-bot
- *                  bypass of an otherwise-gated page; check `isPaywalled` to know
- *   - `unrated`  — content hasn't been moderation-rated yet (SFW site only)
- *   - `login`    — login required (PG13 on SFW or non-safe on .red, logged-out)
- *   - `redirect` — content moved to civitai.red, redirect prompt shown
- */
-export type GatedState = 'loading' | 'page' | 'unrated' | 'login' | 'redirect';
-
-export interface UseGatedResult {
-  state: GatedState;
-  /**
-   * True when `state === 'page'` only because a verified search-engine
-   * crawler bypassed what would have otherwise been a login gate. Triggers
-   * paywall structured-data augmentation in `Gated` and the `.paywalled-content`
-   * wrapper around children.
-   */
-  isPaywalled: boolean;
-}
+export type { GatedState, UseGatedResult } from '~/components/Gated/gated-state';
 
 /**
  * Computes which view `Gated` would render for the current request. Pure
  * decision — does not call routing or DOM APIs, only reads state from
  * existing providers (session, feature flags, AppContext). Safe to call
  * directly when you need the gate decision without rendering the gate UI.
+ * The decision itself is `decideGatedState`, shared with code outside React.
  */
 export function useGated({
   contentNsfwLevel,
@@ -86,50 +68,15 @@ export function useGated({
   const { data, status } = useSession();
   const verifiedBot = useAppContext().verifiedBot;
 
-  // Defer the decision while session is loading and we have no cached data — for anything a
-  // signed-out viewer could be gated from, i.e. everything above PG. PG13 included: deciding it
-  // while loading is `login` on either site, shown to a viewer who may well be signed in.
-  if (!hasPublicBrowsingLevel(contentNsfwLevel) && status === 'loading' && !data) {
-    return { state: 'loading', isPaywalled: false };
-  }
-
-  // Unrated content — only block on the SFW site. Owners/mods bypass so
-  // they can preview their own drafts before publishing.
-  if (!features.canViewNsfw && contentNsfwLevel === 0 && !bypassRating) {
-    return { state: 'unrated', isPaywalled: false };
-  }
-
-  const isUnratedOwnerPreview = bypassRating && contentNsfwLevel === 0;
-  const isPG13Only =
-    hasSafeBrowsingLevel(contentNsfwLevel) && !hasPublicBrowsingLevel(contentNsfwLevel);
-
-  // PG13 on the SFW site requires login. Verified bots aren't a special
-  // case here — civitai.com is strictly SFW even for crawlers, so a bot
-  // hitting a PG13 page sees the same login gate any anonymous user would.
-  if (!features.canViewNsfw && !currentUser && !nsfw && isPG13Only && !isUnratedOwnerPreview) {
-    return { state: 'login', isPaywalled: false };
-  }
-
-  const meetsAllowedLevel = currentUser
-    ? hasSafeBrowsingLevel(contentNsfwLevel)
-    : hasPublicBrowsingLevel(contentNsfwLevel);
-
-  // SFW site, NSFW content — redirect to civitai.red.
-  if (!features.canViewNsfw && (nsfw || !meetsAllowedLevel) && !isUnratedOwnerPreview) {
-    return { state: 'redirect', isPaywalled: false };
-  }
-
-  // Logged-out browsing is PG-only across both sites. On civitai.red this
-  // catches PG13+ (the SFW site already redirected NSFW via `meetsAllowedLevel`
-  // and gated PG13 via the `isPG13Only` branch above). Verified bots bypass:
-  // they see the page with paywall structured data so the URL is indexable.
-  // Humans get the login gate.
-  if (!currentUser && !hasPublicBrowsingLevel(contentNsfwLevel)) {
-    if (verifiedBot) return { state: 'page', isPaywalled: true };
-    return { state: 'login', isPaywalled: false };
-  }
-
-  return { state: 'page', isPaywalled: false };
+  return decideGatedState({
+    contentNsfwLevel,
+    nsfw,
+    bypassRating,
+    canViewNsfw: !!features.canViewNsfw,
+    signedIn: !!currentUser,
+    sessionLoading: status === 'loading' && !data,
+    verifiedBot: !!verifiedBot,
+  });
 }
 
 // Faro may initialise after the first login render (its flag can arrive with a shell's page data).
@@ -206,6 +153,8 @@ export function Gated<TImage extends { nsfwLevel: number; url: string; type?: Me
 
   // Rating, not `state` — a PG13 page still serves ads while showing a login gate.
   useAdGate(!!suppressAds || isAdGatedContent({ contentNsfwLevel, nsfw }));
+  // Ad requests report this page's rating rather than the viewer's browsing level
+  useSetAdPageNsfwLevel(contentNsfwLevel);
 
   // Whether the content is canonically SFW for the purpose of the deindex
   // decision. Some entities (e.g. `Model`) carry a coarse `nsfw` boolean

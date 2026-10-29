@@ -26,7 +26,7 @@ import {
   resolveCurrencies,
   type OrchestratorClient,
 } from './orchestrator-core';
-import type { ExtraParamField } from '$lib/data/trainingModels';
+import { isProdigy, MAX_NON_PRODIGY_LR, type ExtraParamField } from '$lib/data/trainingModels';
 import {
   canDeleteRun,
   CIVITAI_TAG,
@@ -152,6 +152,11 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
   });
   const trainingData = { type: 'blobs', items };
   const optimizerType = run.optimizer.toLowerCase();
+  // Prodigy finds its own step size and expects lr 1 (the main trainer forces it the same way);
+  // forced here so a stale or saved run can't send a model's normal rate. A 0 TE rate stays 0: TE off.
+  const prodigy = isProdigy(run.optimizer);
+  const lr = prodigy ? 1 : run.unetLr;
+  const textEncoderLr = prodigy && run.textEncoderLr > 0 ? 1 : run.textEncoderLr;
 
   const step = isFlux2(run.engine)
     ? {
@@ -185,9 +190,9 @@ function buildStep(run: TrainingRunInput, traceMode: string): WorkflowStepTempla
           steps: run.steps,
           epochs: run.epochs,
           batchSize: run.batchSize,
-          lr: run.unetLr,
-          textEncoderLr: run.textEncoderLr,
-          trainTextEncoder: run.textEncoderLr > 0,
+          lr,
+          textEncoderLr,
+          trainTextEncoder: textEncoderLr > 0,
           lrScheduler: run.lrScheduler,
           optimizerType,
           networkDim: run.networkDim,
@@ -315,6 +320,15 @@ function validateRun(run: TrainingRunInput | undefined, field: string): void {
   if (!isNonEmptyString(run.lrScheduler))
     fail(`${field}.lrScheduler`, 'must be a non-empty string.');
   if (!isNonEmptyString(run.optimizer)) fail(`${field}.optimizer`, 'must be a non-empty string.');
+  if (!isProdigy(run.optimizer)) {
+    for (const key of ['unetLr', 'textEncoderLr'] as const) {
+      if (run[key] >= MAX_NON_PRODIGY_LR)
+        fail(
+          `${field}.${key}`,
+          `must be less than ${MAX_NON_PRODIGY_LR} for non-Prodigy optimizers.`
+        );
+    }
+  }
   for (const key of OPTIONAL_NON_NEGATIVE_FIELDS) {
     if (run[key] !== undefined && !(isFiniteNumber(run[key]) && run[key] >= 0))
       fail(`${field}.${key}`, 'must be a non-negative number.');

@@ -8,7 +8,9 @@ const mocks = vi.hoisted(() => ({
   move: vi.fn(),
   error: null as string | null,
   graph: undefined as unknown,
+  currentUser: null as null | { id: number; isModerator?: boolean },
 }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   ...(await importOriginal<typeof QueriesMod>()),
@@ -77,6 +79,7 @@ beforeEach(() => {
   mocks.move.mockReset();
   mocks.error = null;
   mocks.graph = graphOf();
+  mocks.currentUser = null;
 });
 
 describe('reordering chapters on the map', () => {
@@ -116,6 +119,12 @@ describe('reordering chapters on the map', () => {
     renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
     await expect.element(page.getByTestId('storyline-lanes')).toBeVisible();
     expect(reorderButtons()).toBe(0);
+  });
+
+  test("a moderator has the owner's controls", async () => {
+    mocks.currentUser = { id: 99, isModerator: true };
+    renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
+    await expect.element(page.getByRole('button', { name: 'Reorder chapter 2' })).toBeVisible();
   });
 
   test("a contributor's chapter in the middle ends the run, so nothing is movable", async () => {

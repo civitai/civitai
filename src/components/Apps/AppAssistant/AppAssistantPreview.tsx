@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Alert, Button, Center, Group, Loader, Stack, Text } from '@mantine/core';
 import { IconPlayerPlay, IconRefresh } from '@tabler/icons-react';
 import { useQuery } from '@tanstack/react-query';
 import { DevTunnelBlockHost } from '~/components/AppBlocks/DevTunnelBlockHost';
 import { DevTunnelDnsGate } from '~/components/AppBlocks/DevTunnelDnsGate';
-import { fetchPreviewFrame } from '~/components/Apps/AppAssistant/previewFrame';
+import { fetchPreviewFrame, PreviewGoneError } from '~/components/Apps/AppAssistant/previewFrame';
+import type { SandboxTunnelStatus } from '~/components/Apps/AppAssistant/previewTunnelStatus';
 import type { PreviewSession } from '~/components/Apps/AppAssistant/previewTools';
 
 function EmptyState({ children }: { children: React.ReactNode }) {
@@ -24,6 +25,13 @@ export interface PreviewRestart {
   /** Why the last restart failed, in words for the user. */
   error: string | null;
 }
+
+/**
+ * How often a shown preview on the server runner is checked for still being live (and again when
+ * the tab comes back into view): civitai reaps an idle tunnel, and a frame already loaded never
+ * notices its host is gone.
+ */
+export const PREVIEW_LIVE_CHECK_MS = 60_000;
 
 /** What the pane says when no preview of the open app is live (after a reload, say). */
 export const NO_LIVE_PREVIEW = 'The live preview isn’t running.';
@@ -61,11 +69,20 @@ export function AppAssistantPreview({
   canPreview,
   session,
   restart,
+  liveCheckMs = PREVIEW_LIVE_CHECK_MS,
+  tunnelStatus,
 }: {
   canPreview: boolean;
   session: PreviewSession | null;
   /** On the server runner: the pane offers it when no preview is live, or the app will not load. */
   restart?: PreviewRestart;
+  /** How often a shown preview is checked for still being live (`PREVIEW_LIVE_CHECK_MS`). */
+  liveCheckMs?: number;
+  /**
+   * Asks the open app's sandbox whether its tunnel is up (`fetchSandboxTunnelStatus`); `null` when it
+   * would not say. Given, a check made when the tab comes back into view asks it too.
+   */
+  tunnelStatus?: () => Promise<SandboxTunnelStatus | null>;
 }) {
   const frame = useQuery({
     // A new start (the page's own tunnel id, or the runner's next start) fetches a fresh frame.
@@ -80,6 +97,68 @@ export function AppAssistantPreview({
   // The frame reached its host's terminal fallback (never ready, its token failed, a fatal error).
   const [failed, setFailed] = useState(false);
   useEffect(() => setFailed(false), [frame.data]);
+  // Whether the next check asks the sandbox too (see `live`): on the first check of a page, after
+  // the tab comes back into view, and after the user works in the pane (whose keep-awake already
+  // sends the sandbox a request then, so asking adds nothing to its idle clock).
+  const askSandbox = useRef(true);
+  // The preview (`view`) the sandbox said was down: that answer stands for it, whatever civitai says.
+  const sandboxDownView = useRef<string | null>(null);
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') askSandbox.current = true;
+    };
+    // On `document`, so it runs before react-query's own refetch on the same event (on `window`).
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
+  }, []);
+  // On the server runner, while the frame is up: whether the preview is still live. Down when civitai
+  // has no live tunnel for it (`PreviewGoneError`), or when the app's sandbox says its tunnel is not
+  // running, or runs to another host than civitai's; a sandbox's "down" stands for that preview, as
+  // civitai lists a tunnel until its idle expiry. civitai is asked every `liveCheckMs` and when the
+  // tab comes back into view; the sandbox only on the occasions above, because every request to it
+  // counts as activity and a visible tab nobody works in must still let the app pause. Any other
+  // failure, and a sandbox that does not answer (`null`: a timeout, an error status), leaves the
+  // preview shown: an unreachable sandbox says nothing about the tunnel, and showing a live preview
+  // as stopped would be the worse mistake. Each preview (`view`) is checked afresh, so an old answer
+  // never ends a new one.
+  const live = useQuery({
+    queryKey: [
+      'app-assistant',
+      'preview-live',
+      session?.blockId,
+      session?.sessionId,
+      session?.view,
+    ],
+    queryFn: async () => {
+      const { blockId, sessionId, view: shownView } = session as PreviewSession;
+      const view = `${blockId}\n${sessionId}\n${shownView}`;
+      if (sandboxDownView.current === view) return false;
+      let shown;
+      try {
+        shown = await fetchPreviewFrame((session as PreviewSession).blockId);
+      } catch (error) {
+        if (error instanceof PreviewGoneError) return false;
+        throw error;
+      }
+      if (!tunnelStatus || !askSandbox.current) return true;
+      askSandbox.current = false;
+      const sandbox = await tunnelStatus().catch(() => null);
+      if (!sandbox) return true;
+      const host = 'host' in shown ? shown.host : null;
+      if (sandbox.running && !(host && sandbox.host && sandbox.host !== host)) return true;
+      sandboxDownView.current = view;
+      return false;
+    },
+    enabled: !!session && !!restart && !!frame.data,
+    // The frame's own fetch just said it is live.
+    initialData: true,
+    staleTime: liveCheckMs,
+    refetchInterval: liveCheckMs,
+    refetchOnWindowFocus: true,
+    gcTime: 0,
+    retry: false,
+  });
+  const gone = !!restart && live.data === false;
 
   if (!canPreview)
     return (
@@ -88,7 +167,7 @@ export function AppAssistantPreview({
         app.
       </EmptyState>
     );
-  if (!session && restart)
+  if ((!session || gone) && restart)
     return (
       <Center className="h-full">
         <RestartPreview restart={restart} reason={NO_LIVE_PREVIEW} />
@@ -102,7 +181,11 @@ export function AppAssistantPreview({
     );
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div
+      className="flex h-full min-h-0 flex-col"
+      onPointerDownCapture={() => (askSandbox.current = true)}
+      onFocusCapture={() => (askSandbox.current = true)}
+    >
       <Group justify="space-between" px="sm" py={6} wrap="nowrap" className="shrink-0">
         <Stack gap={0} className="min-w-0">
           <Text size="xs" c="dimmed" truncate>

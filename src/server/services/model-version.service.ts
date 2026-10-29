@@ -1,4 +1,11 @@
 import { Prisma } from '@prisma/client';
+import {
+  contentKeptError,
+  deleteUnlessHeld,
+  heldModelIdsSql,
+  modelRowHeldSql,
+  ownerHeld,
+} from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { asResourceValue } from '~/shared/utils/resource.utils';
 import type { GenerationResource } from '~/shared/types/generation.types';
@@ -130,7 +137,12 @@ import {
   getDonationGoals,
   getOwnerDonationGoals,
 } from '~/server/services/donation-goal.service';
-import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
+import {
+  imagesForModelVersionsCache,
+  isTrainingSampleUrlUsable,
+  TrainingSampleRefusedError,
+  uploadImageFromUrl,
+} from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -182,6 +194,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -205,8 +218,15 @@ export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>(
   return result;
 };
 
-export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
+export const getVersionsByIds = async ({
+  ids,
+  browsingLevel,
+}: {
+  ids: number[];
+  browsingLevel?: number;
+}) => {
   if (ids.length === 0) return [];
+  const showSfwFace = showsSfwFace(browsingLevel);
 
   const results = await dbRead.modelVersion.findMany({
     where: { id: { in: ids } },
@@ -218,6 +238,7 @@ export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
         select: {
           id: true,
           name: true,
+          sfwName: true,
           minor: true,
           sfwOnly: true,
         },
@@ -230,7 +251,7 @@ export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
     name: v.name,
     baseModel: v.baseModel,
     modelId: v.model.id,
-    modelName: v.model.name,
+    modelName: resolveModelFace(v.model, showSfwFace).name,
     minor: v.model.minor,
     sfwOnly: v.model.sfwOnly,
   }));
@@ -382,9 +403,16 @@ export async function assertUserEarlyAccessLimits({
       (!!existing?.initialPublishedAt && existing.initialPublishedAt <= new Date()) ||
       existing?.status === ModelStatus.Published;
     if (everPublished) {
-      const gate = (await getPaidAccess('ModelVersion', [versionId]))[versionId];
+      // The primary, not getPaidAccess's hour-old cache: writeModelVersionGateAndGoal decides from the
+      // primary whether to rewrite this gate, and the two must agree on which row they are looking at.
+      const gate = await dbWrite.paidAccess.findUnique({
+        where: { entityType_entityId: { entityType: 'ModelVersion', entityId: versionId } },
+        select: { timeframeDays: true, endsAt: true },
+      });
       const hasActiveTimedGate =
         !!gate && gate.timeframeDays != null && (gate.endsAt == null || gate.endsAt > new Date());
+      // writeModelVersionGateAndGoal leaves this gate as it is, so there is no window to cap.
+      if (gate && isEndedTimedGateResubmitted(gate, { timeframeDays })) return;
       if (!hasActiveTimedGate)
         throw throwBadRequestError(
           "Early access can't be started on a version that has already been published."
@@ -454,16 +482,43 @@ export const getLicensingRoots = async ({
   return { roots, defaultVersionId };
 };
 
+// An edit form reloads an ended window's row and sends it back with the rest of the version. Writing it
+// would recompute endsAt from publishedAt, which the ending job has moved to the expiry, and so restart
+// the paywall. Judged on the server clock: a client clock must never decide that a gate has ended.
+export function isEndedTimedGateResubmitted(
+  stored: { timeframeDays?: number | null; endsAt: Date | null },
+  input: { permanent?: boolean; timeframeDays?: number | null },
+  now: Date = new Date()
+) {
+  return (
+    stored.timeframeDays != null &&
+    stored.endsAt != null &&
+    stored.endsAt <= now &&
+    !input.permanent &&
+    input.timeframeDays === stored.timeframeDays
+  );
+}
+
 // Shared tail of both upsertModelVersion branches: write the gate + (optional) donation goal natively,
 // then invalidate the derived caches. Kept out of the version write's transaction deliberately.
+// Returns whether the stored gate was kept as it was (see isEndedTimedGateResubmitted).
 async function writeModelVersionGateAndGoal(
   version: { id: number; modelId: number },
   ownerId: number,
   paidAccess: ModelVersionPaidAccessInputSchema | null | undefined,
   donationGoal: { amount: number } | null | undefined
 ) {
-  await writePaidAccessForModelVersion(version.id, paidAccess ?? null);
-  if (donationGoal)
+  const stored = paidAccess
+    ? await dbWrite.paidAccess.findUnique({
+        where: { entityType_entityId: { entityType: 'ModelVersion', entityId: version.id } },
+        select: { timeframeDays: true, endsAt: true },
+      })
+    : null;
+  const keptGate = !!stored && !!paidAccess && isEndedTimedGateResubmitted(stored, paidAccess);
+
+  if (!keptGate) await writePaidAccessForModelVersion(version.id, paidAccess ?? null);
+  // A goal ends a running window early; an ended one has nothing left to end.
+  if (donationGoal && !keptGate)
     await ensureDonationGoal({
       entityType: 'ModelVersion',
       entityId: version.id,
@@ -476,6 +531,7 @@ async function writeModelVersionGateAndGoal(
     bustMvCache(version.id, version.modelId),
     dataForModelsCache.refresh(version.modelId),
   ]);
+  return keptGate;
 }
 
 // Entity-change audit shapes (docs/entity-change-tracking-plan.md): normalize the
@@ -1182,7 +1238,12 @@ export const upsertModelVersion = async ({
     );
 
     const paidAccessBefore = tracker ? await readPaidAccessAuditState(version.id) : null;
-    await writeModelVersionGateAndGoal(version, model.userId, paidAccess, donationGoal);
+    const keptGate = await writeModelVersionGateAndGoal(
+      version,
+      model.userId,
+      paidAccess,
+      donationGoal
+    );
 
     if (tracker) {
       const changeRows = diffEntityChanges({
@@ -1200,7 +1261,7 @@ export const upsertModelVersion = async ({
           ...data,
           // Mirror the write semantics above: paidAccess + monetization are always
           // applied (absent input = gate cleared / monetization deleted).
-          paidAccess: toPaidAccessAuditState(paidAccess),
+          paidAccess: keptGate ? paidAccessBefore : toPaidAccessAuditState(paidAccess),
           monetization: toMonetizationAuditShape(monetization),
         },
         actorRole: resolveActorRole({
@@ -1377,7 +1438,7 @@ export const updateModelVersionPaidAccess = async ({
   const paidAccessBefore = tracker ? await readPaidAccessAuditState(id) : null;
   // Native: paid access + donation goal are written directly (a published version's existing goal is
   // never replaced — ensureDonationGoal is create-once). Shares upsertModelVersion's write+bust tail.
-  await writeModelVersionGateAndGoal(
+  const keptGate = await writeModelVersionGateAndGoal(
     { id, modelId },
     existingVersion.model.userId,
     paidAccess,
@@ -1387,7 +1448,8 @@ export const updateModelVersionPaidAccess = async ({
   // After the gate write, so a failed write can't leave the version marked as having affirmed a price
   // it never got. Merged in SQL rather than read-modify-write: `meta` is shared with moderation flags
   // (needsReview / declinedReason), and rewriting the whole object would clobber a concurrent change.
-  if (rightsAffirmation)
+  // A kept gate applied no price, so there is nothing affirmed.
+  if (rightsAffirmation && !keptGate)
     await dbWrite.$executeRaw`
       UPDATE "ModelVersion"
       SET meta = ${asJsonbObjectSql('meta')} || ${JSON.stringify({ rightsAffirmation })}::jsonb
@@ -1400,7 +1462,7 @@ export const updateModelVersionPaidAccess = async ({
       entityId: id,
       ownerId: existingVersion.model.userId,
       before: { paidAccess: paidAccessBefore },
-      after: { paidAccess: toPaidAccessAuditState(paidAccess) },
+      after: { paidAccess: keptGate ? paidAccessBefore : toPaidAccessAuditState(paidAccess) },
       actorRole: resolveActorRole({
         actorUserId: actorUserId ?? 0,
         ownerId: existingVersion.model.userId,
@@ -1459,6 +1521,13 @@ async function purgeModelVersionByHashCacheById(modelVersionId: number) {
   });
   await purgeModelVersionByHashCache(hashes.map((h) => h.hash));
 }
+
+/** The versions `ids` with their model owner as `m."userId"`, for `deleteUnlessHeld`. */
+const versionOwnerSql = (ids: number[]) => Prisma.sql`
+  FROM "ModelVersion" mv
+  JOIN "Model" m ON m.id = mv."modelId"
+  WHERE mv.id = ANY(${ids}::int[])
+`;
 
 export const deleteVersionById = async ({
   id,
@@ -1535,7 +1604,26 @@ export const deleteVersionById = async ({
       where: { entityType: 'ModelVersion', entityId: id },
     });
 
-    const deleted = await tx.modelVersion.delete({ where: { id } });
+    // The caller returns the whole row, so it is read here, under the lock taken above.
+    const deleted = await tx.modelVersion.findUniqueOrThrow({ where: { id } });
+    // A held owner's version is refused, and the throw rolls back the access rows removed above.
+    const outcome = await deleteUnlessHeld(
+      tx.$executeRaw`
+        DELETE FROM "ModelVersion" mv
+        USING "Model" m
+        WHERE mv.id = ${id}
+          AND m.id = mv."modelId"
+          AND NOT ${modelRowHeldSql()}
+      `,
+      {
+        expected: 1,
+        isModerator,
+        db: tx,
+        ownerFrom: versionOwnerSql([id]),
+        held: modelRowHeldSql(),
+      }
+    );
+    if (outcome === 'short') throw throwNotFoundError(`No model version with id ${id}`);
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
 
     return deleted;
@@ -1943,8 +2031,10 @@ export const publishModelVersionById = async ({
   const version = await dbWrite.$transaction(
     async (tx) => {
       // Re-checked here, under a lock, because the caller's check ran before this transaction and
-      // a takedown can land in between.
-      if (enforceTakedown && (await readDownedVersion(tx, id, 'update')))
+      // a takedown can land in between. Locked even when not enforced: it takes the model before
+      // the version, and the writes below would otherwise take them the other way round.
+      const downed = await readDownedVersion(tx, id, 'update');
+      if (enforceTakedown && downed)
         throw throwAuthorizationError('You are not authorized to publish this model version');
 
       let updatedVersion;
@@ -3134,8 +3224,11 @@ export const createModelVersionPostFromTraining = async ({
       imageUrls.map(async (data) => {
         const imageUrl = typeof data === 'string' ? data : data.image_url;
         // '' is a failed sample's slot; uploading it throws and fails the whole publish.
-        if (!imageUrl) return undefined;
-        return uploadImageFromUrl({ imageUrl });
+        if (!imageUrl || !isTrainingSampleUrlUsable(imageUrl)) return undefined;
+        return uploadImageFromUrl({ imageUrl }).catch((error) => {
+          if (error instanceof TrainingSampleRefusedError) return undefined;
+          throw error;
+        });
       })
     )
   ).filter((x): x is NonNullable<typeof x> => isDefined(x?.url));
@@ -3162,6 +3255,7 @@ export const createModelVersionPostFromTraining = async ({
         meta: image.meta,
         url: image.url as string,
         user,
+        serverMintedUrl: true,
       })
     )
   );
@@ -3530,6 +3624,12 @@ export const mergeVersions = async ({
     }
   }
 
+  // Checked again in the delete below; this only spares a held owner the long transaction.
+  if (
+    await ownerHeld(dbWrite, Prisma.sql`FROM "Model" m WHERE m.id = ${modelId}`, modelRowHeldSql())
+  )
+    throw contentKeptError(false);
+
   // Populated inside the tx after files are moved to the target — captures any
   // file row that slipped past the move and would be orphaned by the cascade.
   let sourceFileUrls: string[] = [];
@@ -3545,6 +3645,8 @@ export const mergeVersions = async ({
         ORDER BY id
         FOR UPDATE
       `;
+      if (runs.length !== new Set([targetVersionId, ...sourceVersionIds]).size)
+        throw throwNotFoundError('One or more versions to merge no longer exist.');
       const sourceRuns = runs.filter((r) => sourceVersionIds.includes(r.id));
       const lockedSource = sourceRuns.find(
         (r) => r.trainingStatus && versionRemovalLockedTrainingStatuses.includes(r.trainingStatus)
@@ -3826,9 +3928,26 @@ export const mergeVersions = async ({
       await tx.paidAccess.deleteMany({
         where: { entityType: 'ModelVersion', entityId: { in: sourceVersionIds } },
       });
-      await tx.modelVersion.deleteMany({
-        where: { id: { in: sourceVersionIds } },
-      });
+      // A held owner's merge is refused, and the throw rolls back the whole merge.
+      const outcome = await deleteUnlessHeld(
+        tx.$executeRaw`
+          DELETE FROM "ModelVersion" mv
+          USING "Model" m
+          WHERE mv.id = ANY(${sourceVersionIds}::int[])
+            AND m.id = mv."modelId"
+            -- One model: its owners, present and past, checked once rather than once per version.
+            AND m.id NOT IN (${heldModelIdsSql(Prisma.sql`SELECT ${modelId}::int`, true)})
+        `,
+        {
+          expected: new Set(sourceVersionIds).size,
+          isModerator: false,
+          db: tx,
+          ownerFrom: versionOwnerSql(sourceVersionIds),
+          held: modelRowHeldSql(),
+        }
+      );
+      if (outcome === 'short')
+        throw throwNotFoundError('One or more source versions no longer exist.');
 
       // 13. Update the model's lastVersionAt
       await updateModelLastVersionAt({ id: modelId, tx });

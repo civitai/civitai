@@ -1549,21 +1549,9 @@ describe('model-file-scan.service', () => {
           reason: 'duplicate',
           userId: -1,
           isModerator: true,
-          meta: { someExisting: 'meta' },
           customMessage: expect.stringContaining('blocked hash'),
         })
       );
-    });
-
-    it('coerces null/missing meta to an empty object before passing along', async () => {
-      mockDbWrite.modelVersion.findUnique.mockResolvedValue({
-        id: 50,
-        model: { id: 500, meta: null },
-      });
-
-      await unpublishBlockedModel(50);
-
-      expect(mockUnpublishModelById).toHaveBeenCalledWith(expect.objectContaining({ meta: {} }));
     });
   });
 
@@ -1703,7 +1691,6 @@ describe('model-file-scan.service', () => {
         modelId: 65,
         ownerId: 790,
         modelStatus: 'Draft',
-        modelMeta: { showcaseCollectionId: 1 },
       });
     });
 

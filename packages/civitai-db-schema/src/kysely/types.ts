@@ -87,6 +87,7 @@ import type {
   BountyEntryMode,
   BountyEngagementType,
   CsamReportType,
+  CsamQueueSetAsideOutcome,
   Availability,
   PaidAccessEntityType,
   SaleDiscountType,
@@ -2939,6 +2940,17 @@ export type CsamFlagRelease = {
   imageCount: number;
   createdAt: Generated<Timestamp>;
 };
+export type CsamQueueSetAside = {
+  imageId: number;
+  userId: number;
+  outcome: CsamQueueSetAsideOutcome;
+  /**
+   * The report an `AfterReport` row follows. Nothing writes `AfterReport` rows yet.
+   */
+  csamReportId: number | null;
+  moderatorId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type CsamReport = {
   id: Generated<number>;
   userId: number | null;
@@ -4058,6 +4070,17 @@ export type ModelMetricDaily = {
   date: Timestamp;
   count: number;
 };
+export type ModelOwnership = {
+  id: Generated<number>;
+  modelId: number;
+  userId: number;
+  /**
+   * 'create' | 'transfer' | 'account-delete' | 'restore' | 'baseline' (a CHECK in SQL)
+   */
+  reason: string;
+  actorId: number | null;
+  createdAt: Generated<Timestamp>;
+};
 export type ModelPermissionSnapshot = {
   id: Generated<number>;
   modelId: number;
@@ -4224,6 +4247,12 @@ export type ModerationRuleVersion = {
   createdById: number;
   createdAt: Generated<Timestamp>;
 };
+export type ModThreadClaim = {
+  chatId: number;
+  moderatorId: number;
+  claimedAt: Generated<Timestamp>;
+  expiresAt: Timestamp;
+};
 export type NewOrderPlayer = {
   userId: number;
   rankType: NewOrderRankType;
@@ -4266,6 +4295,16 @@ export type OauthClient = {
    * Read by the auth hub's /authorize gate. First-party (spoke) clients have no row here, so are never gated.
    */
   accessMode: Generated<string>;
+  /**
+   * Staff-only, confidential system apps only (auth hub admin, OAuth Apps): signed-in users go straight through
+   * /authorize with no consent screen, as first-party (spoke) clients do. Ignored for a public app.
+   */
+  skipConsent: Generated<boolean>;
+  /**
+   * Staff-only, confidential system apps only: this client's own /oauth/token limit per minute, used once a request
+   * is past the per-IP limit and the client has proved its secret. Null = the per-IP limit only.
+   */
+  tokenRateLimit: number | null;
   userId: number;
   isVerified: Generated<boolean>;
   createdAt: Generated<Timestamp>;
@@ -5480,6 +5519,11 @@ export type StorylineCollaborator = {
   userId: number;
   createdAt: Generated<Timestamp>;
 };
+export type StorylineCoverUpload = {
+  storylineId: number;
+  imageId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type StorylineCreateClick = {
   userId: number;
   parentChapterId: number;
@@ -5831,6 +5875,7 @@ export type User = {
   rewardsEligibility: Generated<RewardsEligibility>;
   eligibilityChangedAt: Timestamp | null;
   customerId: string | null;
+  subscriptionId: string | null;
   paddleCustomerId: string | null;
   profilePictureId: number | null;
   settings: Generated<unknown | null>;
@@ -6395,6 +6440,7 @@ export type DB = {
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
   CsamFlagRelease: CsamFlagRelease;
+  CsamQueueSetAside: CsamQueueSetAside;
   CsamReport: CsamReport;
   CsamReportArchiveObject: CsamReportArchiveObject;
   CsamReportAudit: CsamReportAudit;
@@ -6480,6 +6526,7 @@ export type DB = {
   ModelInterest: ModelInterest;
   ModelMetric: ModelMetric;
   ModelMetricDaily: ModelMetricDaily;
+  ModelOwnership: ModelOwnership;
   ModelPermissionSnapshot: ModelPermissionSnapshot;
   ModelReport: ModelReport;
   ModelReportStat: ModelReportStat;
@@ -6495,6 +6542,7 @@ export type DB = {
   ModelVersionSponsorshipSettings: ModelVersionSponsorshipSettings;
   ModerationRule: ModerationRule;
   ModerationRuleVersion: ModerationRuleVersion;
+  ModThreadClaim: ModThreadClaim;
   NewOrderPlayer: NewOrderPlayer;
   NewOrderRank: NewOrderRank;
   NewOrderSmite: NewOrderSmite;
@@ -6581,6 +6629,7 @@ export type DB = {
   StorylineChapter: StorylineChapter;
   StorylineChapterEdge: StorylineChapterEdge;
   StorylineCollaborator: StorylineCollaborator;
+  StorylineCoverUpload: StorylineCoverUpload;
   StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
   StorylinePendingChapter: StorylinePendingChapter;

@@ -40,6 +40,14 @@ name: Lint
 #                       ESLint error - 44 (45%) would red the job for reasons
 #                       unrelated to the PR, turning a 3-line bugfix into a
 #                       200-line reformat. The job would be off within a week.
+#   EVERY FILE       -> report-only, and only when the PR changes lint config,
+#                       package.json or pnpm-lock.yaml (list in
+#                       scripts/ci/lint-targets.mjs). Those can change the
+#                       verdict for files the PR never touched, so checking only
+#                       the changed files would hide what the change does. Every
+#                       file is linted at HEAD and at the merge base, and only
+#                       the findings HEAD adds are reported, so the change's
+#                       effect is not buried under the pre-existing backlog.
 #
 # Findings surface as file annotations on the PR diff: ESLint via the problem
 # matcher in .github/problem-matchers/, Prettier via ::warning / ::error commands.
@@ -209,7 +217,12 @@ jobs:
     # base-relative job someone adds, which would otherwise be red on every
     # commit to `main` from the day it lands.
     if: github.event_name == 'pull_request'
-    timeout-minutes: 10
+    # Sized for the full run (see the header), which lints every tracked file
+    # twice, at HEAD and at the merge base, and may reinstall dependencies for
+    # the base. A normal PR finishes far inside it. Keep a full run, including a
+    # lockfile reinstall, well clear of the limit: if full runs approach it, raise
+    # it rather than letting a config PR time out with no verdict.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -225,6 +238,7 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
+      # Writes the file lists the steps below read; see the script's header.
       - name: Collect changed files
         id: changed
         env:
@@ -232,17 +246,7 @@ jobs:
         run: |
           set -euo pipefail
           git fetch -q origin "$BASE_REF"
-          git diff --name-only --diff-filter=A FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > added.txt
-          git diff --name-only --diff-filter=CMR FETCH_HEAD...HEAD -- '*.ts' '*.tsx' > modified.txt
-          # Only paths an eslint config covers. apps/event-engine has its own `root: true`
-          # config, which eslint resolves per file, so linting it from here works; the other
-          # apps/ members have none and would fall through to the root Next config, whose
-          # typed rules crash outside src/.
-          LINTABLE='^(src|packages|apps/event-engine)/'
-          grep -E "$LINTABLE" added.txt > added-lint.txt || true
-          grep -E "$LINTABLE" modified.txt > modified-lint.txt || true
-          echo "added ($(wc -l < added.txt)):"; cat added.txt
-          echo "modified ($(wc -l < modified.txt)):"; cat modified.txt
+          node scripts/ci/lint-targets.mjs FETCH_HEAD
 
       # BLOCKING. Migrations live next to the schema in packages/civitai-db-schema.
       # The root prisma/migrations directory predates the monorepo and has no
@@ -294,30 +298,72 @@ jobs:
       # Report-only: 10% of recently-touched files carry a pre-existing
       # error-severity finding. See the header comment.
       - name: ESLint (modified files, report-only)
+        if: steps.changed.outputs.full != 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
-          if [ ! -s modified-lint.txt ]; then echo "no modified lintable files"; exit 0; fi
-          xargs -a modified-lint.txt pnpm exec eslint --format unix \
+          if [ ! -s report-lint.txt ]; then echo "no lintable files to report on"; exit 0; fi
+          xargs -a report-lint.txt pnpm exec eslint --format unix \
             | sed "s|^$GITHUB_WORKSPACE/||"
 
       # Report-only: 19% of src files are unformatted today and a formatter has no
       # changed-line granularity. See the header comment.
       - name: Prettier (modified files, report-only)
+        if: steps.changed.outputs.full != 'true'
         continue-on-error: true
         run: |
           set -euo pipefail
-          if [ ! -s modified.txt ]; then echo "no modified files"; exit 0; fi
-          xargs -a modified.txt pnpm exec prettier --list-different > unformatted.txt || true
+          if [ ! -s report.txt ]; then echo "no files to report on"; exit 0; fi
+          xargs -a report.txt pnpm exec prettier --list-different > unformatted.txt || true
           while IFS= read -r f; do
             [ -n "$f" ] || continue
             echo "::warning file=$f::Not formatted (pre-existing, not blocking). Run: pnpm exec prettier --write $f"
           done < unformatted.txt
           if [ -s unformatted.txt ]; then
-            echo "$(wc -l < unformatted.txt) modified file(s) are not formatted."
+            echo "$(wc -l < unformatted.txt) file(s) are not formatted (report-only)."
             exit 1
           fi
-          echo "all modified files formatted"
+          echo "all checked files formatted"
+
+      # FULL RUN (lint config or dependencies changed): lint every file at HEAD, then
+      # the same files at the merge base, and report only what HEAD adds. The base
+      # is checked out in this workspace so the HEAD install is reused; it is
+      # reinstalled only when the lockfile differs, since linting the base with
+      # HEAD's dependencies would hide every finding a version bump introduces.
+      # The script is copied out first because the base may not have it.
+      - name: Lint all files at HEAD (full run)
+        if: steps.changed.outputs.full == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP/lint"
+          cp scripts/ci/lint-new-findings.mjs "$RUNNER_TEMP/lint/"
+          node "$RUNNER_TEMP/lint/lint-new-findings.mjs" collect head report-lint.txt report.txt "$RUNNER_TEMP/lint"
+
+      - name: Lint the same files at the merge base (full run)
+        if: steps.changed.outputs.full == 'true'
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          head_sha=$(git rev-parse HEAD)
+          base_sha=$(git merge-base FETCH_HEAD HEAD)
+          # -f: postinstall can rewrite tracked generated files, and no later step reads
+          # the working tree.
+          trap 'git checkout -q -f --detach "$head_sha"' EXIT
+          git checkout -q -f --detach "$base_sha"
+          if ! git diff --quiet "$base_sha" "$head_sha" -- pnpm-lock.yaml; then
+            echo "pnpm-lock.yaml differs from the merge base: installing the base's dependencies"
+            pnpm install --frozen-lockfile --prefer-offline
+          fi
+          node "$RUNNER_TEMP/lint/lint-new-findings.mjs" collect base report-lint.txt report.txt "$RUNNER_TEMP/lint" --existing-only
+
+      # Fails (and annotates) only on findings the PR adds; the backlog both trees
+      # share is counted in the step summary but never fails it. continue-on-error
+      # keeps the job green either way, like the other report-only steps.
+      - name: New lint findings vs merge base (full run, report-only)
+        if: steps.changed.outputs.full == 'true'
+        continue-on-error: true
+        run: node "$RUNNER_TEMP/lint/lint-new-findings.mjs" compare "$RUNNER_TEMP/lint"
 
   typecheck:
     name: Typecheck (main pushes / fork PRs / non-main base)
@@ -571,6 +617,10 @@ jobs:
       KYSELY_HOT_READS_3_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
       # Likewise for the kysely-hot-reads-4 suite (its own `hot_reads_4_parity` schema).
       KYSELY_HOT_READS_4_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-5 suite (its own `hot_reads_5_parity` schema).
+      KYSELY_HOT_READS_5_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
+      # Likewise for the kysely-hot-reads-6 suite (its own `hot_reads_6_parity` schema).
+      KYSELY_HOT_READS_6_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1156,3 +1206,47 @@ jobs:
 
       - name: Component tests
         run: pnpm run test:component
+
+  component-quarantine:
+    name: Component tests (quarantine, non-blocking)
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' }}
+    # Why: AppAssistantWorkspace.browser.test.tsx stalls on Playwright clicks at random on CI
+    # runners, and red-ed PRs that do not touch it (civitai/civitai#7101). It is held out of the
+    # blocking `Component tests` job and runs here instead, with the groups skipped there
+    # un-skipped. List and exit conditions: scripts/ci/component-quarantine.mjs.
+    #
+    # Non-blocking on pull requests only, same shape as the `unit` job above: on a PR the run's
+    # `conclusion` stays `success` while the step is red, so count green runs from the
+    # `Quarantined component tests` STEP's conclusion (jobs endpoint), not the run's. On `main` the
+    # verdict is real. Exit after 10 green runs in a row, or re-decide by 2026-11-11.
+    continue-on-error: ${{ github.event_name == 'pull_request' }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install Chromium for Playwright
+        run: pnpm exec playwright install --with-deps chromium
+
+      # A `--project` that matches nothing exits 0, so the run's JSON report goes through the
+      # same gate as the blocking job (`--narrowed`: a floor and file ledger make no sense for one
+      # file). The gate only ever adds a failure; it never turns vitest's red into green.
+      - name: Quarantined component tests
+        run: |
+          rc=0
+          pnpm exec vitest run --project component-quarantine \
+            --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/quarantine-report.json" || rc=$?
+          node scripts/ci/assert-component-suite-ran.mjs "$RUNNER_TEMP/quarantine-report.json" --narrowed || exit 1
+          exit $rc

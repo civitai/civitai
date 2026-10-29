@@ -24,6 +24,7 @@
   import AbuseFindingsPanel from '../AbuseFindingsPanel.svelte';
   import ModerationMemoryPanel from '../ModerationMemoryPanel.svelte';
   import NotificationsPanel from '../NotificationsPanel.svelte';
+  import MessageAsCivitai from '$lib/components/MessageAsCivitai.svelte';
   import PromptAuditPanel from '../PromptAuditPanel.svelte';
   import PromptScansPanel from '../PromptScansPanel.svelte';
   import ReactionsPanel from '../ReactionsPanel.svelte';
@@ -242,6 +243,11 @@
         canStrike={data.canStrike}
       />
     {:else if section === 'notifications'}
+      <MessageAsCivitai
+        userId={result.identity.id}
+        canAct={!!data.grants['user.message.asCivitai']}
+        action="?/messageAsCivitai"
+      />
       <NotificationsPanel
         userId={result.identity.id}
         canAct={data.canStrike}

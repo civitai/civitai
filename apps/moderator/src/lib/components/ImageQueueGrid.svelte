@@ -17,7 +17,7 @@
   import { Card, CardContent } from '@civitai/ui/components/ui/card/index.js';
   import EdgeMedia from '$lib/components/EdgeMedia.svelte';
   import HeldMedia from '$lib/components/image-queue/HeldMedia.svelte';
-  import { heldMediaUrl, reportHeldGridView } from '$lib/held-media';
+  import { reportHeldGridView } from '$lib/held-media';
   import NumberedPager from '$lib/components/NumberedPager.svelte';
   import { readCursorTrail, writeCursorTrail, clearPaging, IMAGE_PAGE_PARAM } from '$lib/paging';
   import { getBrowsingLevelLabel, NsfwLevel } from '@civitai/shared';
@@ -78,7 +78,7 @@
   } = $props();
 
   const fullHref = (item: T) =>
-    heldMedia ? heldMediaUrl(item.id) : `${civitaiUrl}/images/${item.id}`;
+    heldMedia ? `/images/csam/held/${item.id}` : `${civitaiUrl}/images/${item.id}`;
   const fullLabel = $derived(heldMedia ? 'Open full size' : 'Open on Civitai');
 
   // Once per page view, at its first non-empty render: keyed on the URL, so an action that refreshes

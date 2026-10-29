@@ -16,6 +16,7 @@ import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
 import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
+import { imageDetailMediaProps } from '~/components/Image/DetailV2/image-detail-main-media';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
@@ -171,6 +172,9 @@ export function ImageDetailCarousel({
   // what makes the swipe stutter on mobile. Embla emits 'settle' once the
   // animation is done AND the finger is up.
   const [settledIndex, setSettledIndex] = useState(index);
+  // The hat is drawn in a layer outside embla's clipping viewport, so it cannot ride a moving slide.
+  const [hatLayer, setHatLayer] = useState<HTMLDivElement | null>(null);
+  const [moving, setMoving] = useState(false);
   const onSettleRef = useRef(onSettle);
   onSettleRef.current = onSettle;
 
@@ -184,6 +188,7 @@ export function ImageDetailCarousel({
         fallback = undefined;
       }
       const current = embla.selectedScrollSnap();
+      setMoving(false);
       setSettledIndex(current);
       onSettleRef.current?.(current);
     };
@@ -197,10 +202,20 @@ export function ImageDetailCarousel({
       fallback = setTimeout(commit, SETTLE_FALLBACK_MS);
     };
 
-    embla.on('settle', commit).on('reInit', commit).on('select', armFallback);
+    const startMoving = () => setMoving(true);
+
+    embla
+      .on('settle', commit)
+      .on('reInit', commit)
+      .on('select', armFallback)
+      .on('scroll', startMoving);
     return () => {
       if (fallback) clearTimeout(fallback);
-      embla.off('settle', commit).off('reInit', commit).off('select', armFallback);
+      embla
+        .off('settle', commit)
+        .off('reInit', commit)
+        .off('select', armFallback)
+        .off('scroll', startMoving);
     };
   }, [embla]);
 
@@ -211,7 +226,7 @@ export function ImageDetailCarousel({
   if (!images.length) return null;
 
   return (
-    <div ref={ref} className="flex min-h-0 flex-1 items-stretch justify-stretch">
+    <div ref={ref} className="relative flex min-h-0 flex-1 items-stretch justify-stretch">
       <Embla
         withControls={canNavigate}
         className="flex-1"
@@ -238,6 +253,8 @@ export function ImageDetailCarousel({
                     <ImageContent
                       image={image}
                       active={index === i}
+                      hatLayer={index === i ? hatLayer : null}
+                      hatHidden={moving}
                       {...connect}
                       videoRef={index === i ? videoRef : undefined}
                     />
@@ -248,6 +265,8 @@ export function ImageDetailCarousel({
           </Embla.Container>
         </Embla.Viewport>
       </Embla>
+      {/* Not clipped like the viewport, so a hat can hang past the picture's corner. */}
+      <div ref={setHatLayer} className="pointer-events-none absolute inset-0 isolate" />
     </div>
   );
 }
@@ -256,8 +275,16 @@ function ImageContent({
   image,
   videoRef,
   active = true,
+  hatLayer,
+  hatHidden,
   ...connect
-}: { image: ImageProps; active?: boolean } & ConnectProps & ImageDetailCarouselProps) {
+}: {
+  image: ImageProps;
+  active?: boolean;
+  hatLayer: HTMLElement | null;
+  hatHidden: boolean;
+} & ConnectProps &
+  ImageDetailCarouselProps) {
   const [defaultMuted, setDefaultMuted] = useLocalStorage({
     getInitialValueInEffect: false,
     key: 'detailView_defaultMuted',
@@ -313,10 +340,11 @@ function ImageContent({
             </div>
           ) : (
             <EdgeMedia
-              src={image.url}
-              name={image.name ?? image.id.toString()}
+              // `src`, `name`, `type`, `anim` and `original`: the props that shape the request,
+              // shared with the shell's preload of this image (see `image-detail-main-media`) so
+              // the two cannot ask for different URLs.
+              {...imageDetailMediaProps(image)}
               alt={image.name ?? undefined}
-              type={image.type}
               imageId={image.id}
               className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
               wrapperProps={{
@@ -328,11 +356,8 @@ function ImageContent({
                 },
               }}
               // No `width`: EdgeImage turns one into an inline `maxWidth` that beats `max-w-full`,
-              // and the aspect-ratio wrapper then clips the image's height.
-              // `anim` and `original` feed the CDN URL — an inactive slide has to
-              // request the same URL the active one will, or it warms nothing
-              anim
-              original={isVideo ? true : undefined}
+              // and the aspect-ratio wrapper then clips the image's height. A `width` would also
+              // change the URL, which `imageDetailMediaProps` owns.
               html5Controls={
                 active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))
               }
@@ -354,11 +379,18 @@ function ImageContent({
               controls={active}
               videoProps={{
                 autoPlay: active,
+                // A slide mid-transition is still in view, which the player's own in-view check
+                // reads as a reason to play.
+                standby: !active,
               }}
             />
           )}
-          {/* The hat before the stickers, so stickers paint and take the pointer above it. */}
-          <DrawnMediaHat imageId={image.id} decoration={image.eventDecoration} />
+          <DrawnMediaHat
+            imageId={image.id}
+            decoration={image.eventDecoration}
+            layer={hatLayer}
+            hidden={hatHidden}
+          />
           {safe && <ImageStickerOverlay imageId={image.id} />}
         </div>
       )}

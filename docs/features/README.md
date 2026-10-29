@@ -22,6 +22,7 @@ Operational runbooks, security reviews, incident handoffs and content-policy rec
 | Buzz Accounts | [docs/features/buzz-accounts.md](buzz-accounts.md) |
 | Monetization rules (paid access / fees / donation goals) | [docs/features/monetization-rules.md](monetization-rules.md) |
 | Notifications | [docs/features/notifications.md](notifications.md) |
+| Message as Civitai Moderation (shared moderator chat account) | [docs/features/message-as-civitai.md](message-as-civitai.md) |
 | Web Push (browser push notifications) | [docs/features/web-push.md](web-push.md) |
 | Metrics/Analytics | [docs/features/entity-metrics.md](entity-metrics.md) |
 | Feed Impressions | [docs/features/feed-impressions.md](feed-impressions.md) |

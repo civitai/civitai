@@ -103,7 +103,10 @@ describe('user.legalHold', () => {
       TemplateStringsArray,
       ...never[]
     ];
-    const ids = Prisma.sql(strings, ...values).values.filter((v) => typeof v === 'number');
+    // The lookup binds ids as a list, so it can read many accounts in one statement.
+    const ids = Prisma.sql(strings, ...values)
+      .values.flat()
+      .filter((v) => typeof v === 'number');
     expect(new Set(ids)).toEqual(new Set([TARGET]));
   });
 

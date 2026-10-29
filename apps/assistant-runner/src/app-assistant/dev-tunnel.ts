@@ -34,8 +34,12 @@ export class DevTunnelError extends Error {
 /** One run's dev-tunnel calls to civitai. */
 export interface DevTunnels {
   start(input: DevTunnelStartInput, signal?: AbortSignal): Promise<StartedTunnel>;
-  /** Stamps the tunnel's idle clock (never its 8 h cap). */
-  keepalive(sessionId: string, signal?: AbortSignal): Promise<void>;
+  /**
+   * Stamps the idle clock (never the 8 h cap) of the run's user's tunnel at `host`, whoever opened
+   * it (this run, the page's Restart preview, an earlier reply): the host the app's sandbox is
+   * connected to. civitai answers 404 `NOT_FOUND` when no tunnel of that user's is there.
+   */
+  keepalive(target: { host: string }, signal?: AbortSignal): Promise<void>;
   /** Idempotent: a tunnel already gone is no error. */
   stop(sessionId: string, signal?: AbortSignal): Promise<void>;
 }
@@ -80,8 +84,8 @@ export class CivitaiDevTunnels {
           throw new DevTunnelError('Civitai answered the preview start oddly.', 503, 'unavailable');
         return { sessionId, host, sshHostPublicKey };
       },
-      keepalive: async (sessionId, signal) => {
-        await post('keepalive', { sessionId }, signal);
+      keepalive: async ({ host }, signal) => {
+        await post('keepalive', { host }, signal);
       },
       stop: async (sessionId, signal) => {
         await post('stop', { sessionId }, signal);

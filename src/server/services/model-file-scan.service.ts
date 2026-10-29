@@ -32,7 +32,6 @@ import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
 import type { GetByIdInput } from '~/server/schema/base.schema';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import type { ModelType } from '~/shared/utils/prisma/enums';
 import { ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
@@ -323,7 +322,6 @@ export async function applyScanOutcome(outcome: ScanOutcome): Promise<void> {
         modelId: scannedModelId,
         ownerId: scannedModel.userId,
         modelStatus: scannedModel.status,
-        modelMeta: scannedModel.meta as ModelMeta | null,
       }).catch((e) =>
         logToAxiom(
           {
@@ -929,15 +927,13 @@ export const rescanModel = async ({ id }: GetByIdInput) => {
 export async function unpublishBlockedModel(modelVersionId: number) {
   const version = await dbWrite.modelVersion.findUnique({
     where: { id: modelVersionId },
-    select: { id: true, model: { select: { id: true, meta: true } } },
+    select: { id: true, model: { select: { id: true } } },
   });
   if (!version?.model?.id) return;
 
-  const meta = (version.model.meta as ModelMeta | null) || {};
   await unpublishModelById({
     id: version.model.id,
     reason: 'duplicate',
-    meta,
     customMessage: 'Model has been unpublished due to matching a blocked hash',
     userId: -1,
     isModerator: true,

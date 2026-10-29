@@ -261,7 +261,7 @@ describe('the rail surface is PAINTED, and only the rail is', () => {
     // `margin: -8px` grows this div's border box 8px past the `<aside>` on all four
     // sides — that is the whole mechanism, and it is why the paint reaches into the
     // gutter. It clears the body column ONLY because `.railRow`'s gap and the Container
-    // gutter are both 16px, i.e. by exactly 8px with nothing to spare.
+    // gutter leave it 24px (32px gap − 8px bleed) and 8px (16px gutter − 8px bleed) to spare.
     //
     // `AppsPageLayout.chromeAlignment.browser.test.tsx` measures
     // `nav[aria-label="App sections"]`, never this div, so its 22-test ledger is

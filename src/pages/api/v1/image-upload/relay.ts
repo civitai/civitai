@@ -10,6 +10,8 @@ import { handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
+import { trackImageUpload } from '~/server/services/image-upload-action.service';
+import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
 import {
   IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
   sanitizeImageUploadRelayProducer,
@@ -76,9 +78,12 @@ export const config = {
  * `Request body exceeded 10MB for <path>` line:
  *
  *     /api/v1/image-upload/relay       matched     -> truncation warning
- *     /api/trpc/audit.probe            matched     -> truncation warning
+ *     /api/trpc/audit.probe            matched     -> truncation warning (*)
  *     /api/blocks/submit-version       NOT matched -> none
  *     /api/mod/clavata-image-process   NOT matched -> none
+ *
+ * (*) Matched when measured. `/api/trpc` has since left the matcher (#7128), so it is no
+ * longer truncated at 10 MiB; its own 17mb `sizeLimit` is its only body limit now.
  *
  * Both matched arms fired in the same run, so the two absences are real, not a probe
  * wired to nothing. ⚠ An earlier version of this comment asserted the cap as a
@@ -258,15 +263,19 @@ export default async function imageUploadRelay(req: NextApiRequest, res: NextApi
   recordImageUploadRelay(outcome, producer);
 }
 
-async function runRelay(
+/**
+ * The checks every relay request passes before anything else runs: POST only, the production
+ * origin guard, and an authenticated, unbanned session. Shared with the chunked relay
+ * (`relay-chunked.ts`) so the two routes cannot drift on who may push bytes through us.
+ */
+export async function authorizeRelayRequest(
   req: NextApiRequest,
-  res: NextApiResponse,
-  producer: ImageUploadRelayProducer
-): Promise<ImageUploadRelayOutcome> {
+  res: NextApiResponse
+): Promise<{ userId: number } | { outcome: ImageUploadRelayOutcome }> {
   if (req.method !== 'POST') {
     res.setHeader('Allow', 'POST');
     res.status(405).json({ error: 'Method not allowed' });
-    return 'method_not_allowed';
+    return { outcome: 'method_not_allowed' };
   }
 
   // CSRF guard. This raw route bypasses the tRPC pipeline, so it never gets
@@ -280,8 +289,9 @@ async function runRelay(
   // ⚠ NOT cookie-only, and the distinction matters. `getServerAuthSession` also
   // accepts `Authorization: Bearer <api key>` and `?token=`, and this route lives
   // under the public `/api/v1/` namespace. `blocks/submit-version.ts` uses the same
-  // expression but IS cookie-only (`ModEndpoint`), which is why its comment says no
-  // bearer exemption is needed — that justification does NOT transfer here.
+  // expression and is not cookie-only either (a signed-in session or a full-access
+  // personal key, `requireFullScopeSession`); it too 403s a prod bearer client that
+  // sends no Origin, rather than exempting it.
   // 🔴 FULL PATH, because there are two: `src/pages/api/blocks/submit-version.ts` is
   // the one meant. Its `/api/v1/` sibling is BEARER-only and deliberately OMITS the
   // origin guard entirely (it would break the headless CLI, which sends no Origin) —
@@ -298,15 +308,26 @@ async function runRelay(
   // bearer client ever needs the fallback.
   if (isProd && !isAllowedOriginRequest(req)) {
     res.status(403).json({ error: 'Cross-origin request blocked' });
-    return 'forbidden_origin';
+    return { outcome: 'forbidden_origin' };
   }
 
   const session = await getServerAuthSession({ req, res });
   const userId = session?.user?.id;
   if (!userId || session.user?.bannedAt) {
     res.status(401).json({ error: 'Unauthorized' });
-    return 'unauthorized';
+    return { outcome: 'unauthorized' };
   }
+  return { userId };
+}
+
+async function runRelay(
+  req: NextApiRequest,
+  res: NextApiResponse,
+  producer: ImageUploadRelayProducer
+): Promise<ImageUploadRelayOutcome> {
+  const auth = await authorizeRelayRequest(req, res);
+  if ('outcome' in auth) return auth.outcome;
+  const { userId } = auth;
 
   // 🔴 Bound the memory this route can hold at once. It buffers whole, and
   // `Buffer.concat` allocates a second copy while the chunk array is still live, so
@@ -315,19 +336,7 @@ async function runRelay(
   // max-size relays are an OOMKill of the whole pod, taking every unrelated request
   // on it down too. Shedding here is strictly better: the client keeps its original
   // error and the direct path is untouched.
-  if (inFlight >= MAX_CONCURRENT_RELAYS) {
-    // 🔴 429, NOT 503. `instrumentApiResponse` counts every `status >= 500` into
-    // `civitai_app_http_errors_total`, so shedding with a 5xx makes deliberate,
-    // healthy load-shedding indistinguishable from a server fault in this route's
-    // own error attribution — the same reasoning that makes `handleEndpointError`
-    // map a client disconnect to 499. 429 is also the honest semantic: the request
-    // was fine, there was no capacity for it right now.
-    res.setHeader('Retry-After', String(RELAY_RETRY_AFTER_SECONDS));
-    res.status(429).json({ error: 'Upload fallback is busy' });
-    return 'busy';
-  }
-
-  inFlight += 1;
+  if (!tryAcquireRelaySlot(res)) return 'busy';
   try {
     let body: Buffer;
     try {
@@ -361,6 +370,8 @@ async function runRelay(
       // `uploadImageBufferToStore` returns { key, backend }; the direct presign route
       // calls the same value `id` in its response, so keep the wire shape identical.
       const { key } = await uploadImageBufferToStore(body, { contentType });
+      trackImageUpload(req, res, key);
+      await recordUploadKeyOwner(key, userId);
       res.status(200).json({ id: key });
       // One event per relayed upload. The usage counter (below) says THAT relays
       // happen; this says WHO — the only signal that can size the population of
@@ -424,8 +435,35 @@ async function runRelay(
     // and a leaked slot is permanent — the route would wedge, shedding every request
     // with 429 until the pod restarts, which is a worse failure than the one the cap
     // prevents.
-    inFlight -= 1;
+    releaseRelaySlot();
   }
+}
+
+/**
+ * Take one of the per-pod buffering slots, or write the 429 and return false.
+ *
+ * Shared with the chunked relay's piece requests, which buffer a body too: ONE counter for both
+ * routes is what keeps `MAX_CONCURRENT_RELAYS` a bound on what this process can hold, rather than
+ * one bound per route. The caller must `releaseRelaySlot()` in a `finally`.
+ */
+export function tryAcquireRelaySlot(res: NextApiResponse): boolean {
+  if (inFlight >= MAX_CONCURRENT_RELAYS) {
+    // 🔴 429, NOT 503. `instrumentApiResponse` counts every `status >= 500` into
+    // `civitai_app_http_errors_total`, so shedding with a 5xx makes deliberate,
+    // healthy load-shedding indistinguishable from a server fault in this route's
+    // own error attribution — the same reasoning that makes `handleEndpointError`
+    // map a client disconnect to 499. 429 is also the honest semantic: the request
+    // was fine, there was no capacity for it right now.
+    res.setHeader('Retry-After', String(RELAY_RETRY_AFTER_SECONDS));
+    res.status(429).json({ error: 'Upload fallback is busy' });
+    return false;
+  }
+  inFlight += 1;
+  return true;
+}
+
+export function releaseRelaySlot() {
+  inFlight -= 1;
 }
 
 export class PayloadTooLargeError extends Error {
@@ -498,7 +536,7 @@ export class TruncatedBodyError extends Error {
  * cannot see delivery either — it drives a `Readable.from` and an object literal — so it
  * pins the calls this measurement showed matter, and nothing more.
  */
-async function readCappedBody(
+export async function readCappedBody(
   req: NextApiRequest,
   res: NextApiResponse,
   limit: number

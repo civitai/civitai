@@ -256,8 +256,8 @@
     const ids = new Set(tagFilter.ids);
     return statusShownImages.filter((i) => ids.has(i.id));
   });
-  // Mirrors Review's `blueExcluded`: unknown membership is warned too.
-  const matureChargesYellow = hostConfig().isPaidMember !== true;
+  // Unknown membership is treated as not a member, as on Review.
+  const isMember = hostConfig().isPaidMember === true;
 
   let dragging = $state(false);
   let fileInput: HTMLInputElement;
@@ -728,15 +728,20 @@
   {@const rating = nsfwLevelLabel(img.nsfwLevel)}
   {#if rating}
     {@const badgeClass = 'absolute bottom-1.5 left-1.5 rounded px-1.5 py-0.5 font-mono text-xs font-semibold'}
-    {#if isMature(img) && matureChargesYellow}
+    {#if isMature(img)}
       <Tooltip.Provider>
         <Tooltip.Root>
           <Tooltip.Trigger class="{badgeClass} bg-buzz text-black" aria-label="Rated {rating}">
             {rating}
           </Tooltip.Trigger>
           <Tooltip.Content class="max-w-[240px] text-xs" portalProps={portalProps()}>
-            Rated {rating}. Without a membership, one mature image charges the whole run in Yellow
-            Buzz — remove it to pay in Blue.
+            {#if isMember}
+              Rated {rating}. Mature content can't be paid with Green Buzz, so anything beyond your
+              Blue Buzz is charged in Yellow.
+            {:else}
+              Rated {rating}. Without a membership, one mature image charges the whole run in Yellow
+              Buzz. Remove it to pay in Blue.
+            {/if}
           </Tooltip.Content>
         </Tooltip.Root>
       </Tooltip.Provider>

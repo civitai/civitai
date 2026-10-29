@@ -25,6 +25,8 @@ section).
   its first image and its share of readers. The main path is shown first and largest, with Read as
   the main action, then continuations by the storyline's endorsed collaborators, then everyone
   else's, ordered by how many readers took them. Writing a continuation sits below.
+  On a desktop, a chapter with exactly one way on also continues down it on →, and the Read button
+  shows the key; with several paths → does nothing here.
 - **Where branches meet.** Two branches can rejoin at one chapter. The reader's path and chapter
   numbers follow the way they came (the URL carries it, so a shared link reproduces the route), and
   the chip's map marks a chapter where another branch joins (the page's chapters list draws it too).
@@ -70,6 +72,15 @@ section).
   price, if any, to submit a continuation.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
   review and are listed ahead of other contributors' at the end of a chapter.
+- **Moderators.** A moderator can manage any storyline as its creator does: title, status, who may
+  continue, content level, covers, removing collaborators, and inserting, reordering, joining and
+  choosing the main route of chapters. Setting the price, endorsing collaborators and answering
+  continuations stay the creator's. Each such edit is recorded in the moderator activity log.
+- **Deleting.** The creator or a moderator deletes a storyline from its page's menu. Every chapter's
+  post stays published; the storyline, its chapter order and its comments go. It is refused while a
+  paid continuation is pending or its Buzz has not settled. Only a moderator can delete one that
+  has approved a paid continuation, is under an open report, or was taken down (and not while the
+  creator's appeal is open).
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or
   declined. A post above the storyline's content level cannot be submitted at all. A post submitted
   while still a draft or still being scanned reaches the queue once it is published and rated, or is
@@ -99,9 +110,8 @@ section).
 
 ## Not in the first version
 
-An in-app tool for making the next section, a way for authors to write image captions (the server
-side is built), and deleting a storyline: its creator
-marks it complete instead, and moderators take down one that breaks the rules.
+An in-app tool for making the next section, and a way for authors to write image captions (the
+server side is built).
 
 ## Trying it locally
 

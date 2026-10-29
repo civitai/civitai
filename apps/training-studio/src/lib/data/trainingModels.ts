@@ -1576,6 +1576,13 @@ export const ecosystemTrainsPairs = (ecosystem: string): boolean =>
 export const ecosystemTakesSampleImages = (ecosystem: string): boolean =>
   SAMPLE_SOURCE_IMAGE_ECOSYSTEMS.has(ecosystem);
 
+// Mirrors the orchestrator's training schema: lr >= 0.1 is refused unless the optimizer is a Prodigy,
+// which finds its own step size and expects lr 1.
+const PRODIGY_OPTIMIZERS = ['prodigy', 'prodigy8bit'];
+export const MAX_NON_PRODIGY_LR = 0.1;
+export const isProdigy = (optimizer: string): boolean =>
+  PRODIGY_OPTIMIZERS.includes(optimizer.toLowerCase());
+
 export const TE_TRAINING_UNSUPPORTED = new Set(['krea2']);
 export const TE_TRAINING_UNSUPPORTED_REASON =
   'its backend cannot train the text encoder, and a run that tries hangs without finishing.';

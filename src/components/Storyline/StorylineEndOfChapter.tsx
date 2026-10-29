@@ -3,6 +3,7 @@ import {
   Badge,
   Button,
   CloseButton,
+  Kbd,
   Progress,
   Skeleton,
   Text,
@@ -19,11 +20,13 @@ import {
   IconRoute,
 } from '@tabler/icons-react';
 import clsx from 'clsx';
+import { useEffect } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineEarlyAccessModal } from '~/components/Storyline/StorylineEarlyAccessModal';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
 import { openStorylineContinueModal } from '~/components/Storyline/continue/openStorylineContinueModal';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { StorylineChild } from '~/components/Storyline/storyline.queries';
 import {
   useStorylineChildren,
@@ -39,6 +42,7 @@ import {
 } from '~/components/Storyline/storyline-mode.utils';
 import { storylineContinueUrl } from '~/components/Storyline/storyline-routes';
 import { storylinePriceLabel } from '~/components/Storyline/storyline-ui';
+import { useHasCoarsePointer, useIsMobile } from '~/hooks/useIsMobile';
 
 export function openStorylineEarlyAccess({
   chapterId,
@@ -82,6 +86,7 @@ export function StorylineEndOfChapter({
   isOwner?: boolean;
   layout?: 'overlay' | 'section';
 }) {
+  const currentUser = useCurrentUser();
   const { data: children, isLoading } = useStorylineChildren(chapterId);
   const { data: forkShares } = useStorylineForkShares(chapterId);
   const tracking = useStorylineTracking();
@@ -95,6 +100,38 @@ export function StorylineEndOfChapter({
     depth: chapterDepth + 1,
   })) as StorylineChild[];
   const ended = !children?.length && !isLoading;
+
+  // With one way on, → takes it. Desktop only: the reader's overlay, never a narrow stage or a touch screen.
+  const stageIsNarrow = useIsMobile({ breakpoint: 'md', type: 'media' });
+  const touchScreen = useHasCoarsePointer();
+  const arrowContinues =
+    layout === 'overlay' &&
+    !stageIsNarrow &&
+    !touchScreen &&
+    !isLoading &&
+    others.length === 0 &&
+    !!main?.post &&
+    !main.tombstone;
+  useEffect(() => {
+    if (!arrowContinues || !main) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== 'ArrowRight' || event.defaultPrevented) return;
+      if (event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(target.tagName))
+      )
+        return;
+      // The window's capture phase comes before the carousel's own arrow handler, which would
+      // otherwise reopen this card on the chapter we are leaving.
+      event.preventDefault();
+      event.stopPropagation();
+      onContinue(main);
+    };
+    window.addEventListener('keydown', onKeyDown, true);
+    return () => window.removeEventListener('keydown', onKeyDown, true);
+  }, [arrowContinues, main, onContinue]);
 
   return (
     <div
@@ -132,7 +169,14 @@ export function StorylineEndOfChapter({
           <LeadSkeleton />
         ) : (
           <>
-            {main && <LeadFork child={main} shares={forkShares} onContinue={onContinue} />}
+            {main && (
+              <LeadFork
+                child={main}
+                shares={forkShares}
+                onContinue={onContinue}
+                hotkey={arrowContinues}
+              />
+            )}
             {others.length > 0 && (
               <>
                 <Text component="div" className="flex items-center gap-1.5 font-bold">
@@ -196,36 +240,36 @@ export function StorylineEndOfChapter({
               {parentPostId && (
                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                   {isOwner ? (
-                    <>
-                      <Anchor
-                        component="button"
-                        type="button"
-                        size="sm"
-                        onClick={() =>
-                          openStorylineContinueModal({ parentPostId, parentChapterId: chapterId })
-                        }
-                        data-testid="storyline-add-own-chapter"
-                      >
-                        or use a post you already made
-                      </Anchor>
-                      <Anchor
-                        component="button"
-                        type="button"
-                        size="sm"
-                        onClick={() =>
-                          openStorylineContinueModal({
-                            parentPostId,
-                            parentChapterId: chapterId,
-                            mode: 'join',
-                          })
-                        }
-                        data-testid="storyline-join-existing-chapter"
-                      >
-                        Join an existing chapter
-                      </Anchor>
-                    </>
+                    <Anchor
+                      component="button"
+                      type="button"
+                      size="sm"
+                      onClick={() =>
+                        openStorylineContinueModal({ parentPostId, parentChapterId: chapterId })
+                      }
+                      data-testid="storyline-add-own-chapter"
+                    >
+                      or use a post you already made
+                    </Anchor>
                   ) : (
                     <StorylineContinueWithPost parentPostId={parentPostId} />
+                  )}
+                  {(isOwner || currentUser?.isModerator) && (
+                    <Anchor
+                      component="button"
+                      type="button"
+                      size="sm"
+                      onClick={() =>
+                        openStorylineContinueModal({
+                          parentPostId,
+                          parentChapterId: chapterId,
+                          mode: 'join',
+                        })
+                      }
+                      data-testid="storyline-join-existing-chapter"
+                    >
+                      Join an existing chapter
+                    </Anchor>
                   )}
                 </div>
               )}
@@ -305,10 +349,13 @@ function LeadFork({
   child,
   shares,
   onContinue,
+  hotkey,
 }: {
   child: StorylineChild;
   shares: StorylineShares;
   onContinue: (child: StorylineChild) => void;
+  /** → also takes this way, so the button says so. */
+  hotkey?: boolean;
 }) {
   const hidden = !child.post;
   const share = getForkShare(shares, child.chapterId);
@@ -383,7 +430,15 @@ function LeadFork({
         ) : (
           <Button
             size="lg"
-            rightSection={<IconArrowRight size={18} />}
+            rightSection={
+              hotkey ? (
+                <Kbd size="xs" aria-hidden data-testid="storyline-read-next-hotkey">
+                  →
+                </Kbd>
+              ) : (
+                <IconArrowRight size={18} />
+              )
+            }
             onClick={() => onContinue(child)}
             className="w-full @md:w-auto @md:self-start"
             data-testid="storyline-read-next"

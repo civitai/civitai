@@ -123,6 +123,7 @@ import { dbMock } from '~/__tests__/mocks/db.mock';
 import '~/__tests__/mocks/redis.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { recordedOwnership } from './model-ownership-db';
 
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -153,8 +154,24 @@ const storedModel = {
   sfwCoverImageId: null as number | null,
 };
 
+// The row the save's transaction locks: the same as the first read unless a test says otherwise.
+let lockedRow: Partial<typeof storedModel> | null = null;
+let lockHeld = false;
+const isModelLock = (strings: TemplateStringsArray, values: unknown[]) =>
+  Array.isArray(strings) &&
+  /FROM "Model"\s+WHERE id = \?\s+FOR NO KEY UPDATE/.test(strings.join('?')) &&
+  values[0] === MODEL_ID;
+
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
-  mockDbWrite.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
+  const firstRow = { ...storedModel, ...overrides };
+  lockedRow = firstRow;
+  mockDbWrite.model.findUnique.mockImplementation((async ({ where }: { where: { id: number } }) =>
+    where.id === MODEL_ID ? (lockHeld ? lockedRow : firstRow) : null) as never);
+}
+
+/** What a write that landed after the save's first read left in the row it then locks. */
+function mockLocked(overrides: Partial<typeof storedModel>) {
+  lockedRow = { ...lockedRow, ...overrides };
 }
 
 const baseInput = {
@@ -179,6 +196,7 @@ function createData() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lockHeld = false;
   vi.mocked(getTextScanMode).mockResolvedValue('off');
   mockEvaluateContent.mockReturnValue({
     shouldMarkNSFW: false,
@@ -191,7 +209,13 @@ beforeEach(() => {
   mockDbRead.model.count.mockResolvedValue(0);
   mockGetHighestTierSubscription.mockResolvedValue({ tier: 'gold' });
   mockDbWrite.modelVersion.findMany.mockResolvedValue([]);
-  mockDbWrite.$queryRaw.mockResolvedValue([]);
+  mockDbWrite.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    if (isModelLock(strings, values)) lockHeld = true;
+    return [];
+  }) as never);
   mockDbWrite.model.create.mockResolvedValue({
     id: MODEL_ID,
     nsfwLevel: 1,
@@ -318,6 +342,104 @@ describe('moderation-flow meta keys', () => {
   });
 });
 
+// A content wipe's removal record: client meta can neither set nor change it, a moderator's included
+// (their edit form sends stored meta back, which could put a stale record onto a live model).
+describe('removal record keys', () => {
+  const RECORD = {
+    removedWithOwner: true,
+    statusBeforeRemoval: 'Published',
+    versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
+  };
+
+  it.each([
+    ['an owner', OWNER_ID, false],
+    ['a moderator', MODERATOR_ID, true],
+  ])('drops them from %s’s meta on a model without them', async (_, userId, isModerator) => {
+    mockStored({ meta: {} });
+    await upsert({
+      id: MODEL_ID,
+      userId,
+      isModerator,
+      meta: { ...RECORD, hideBuzz: true } as ModelUpsertInput['meta'],
+    });
+    expect(updateData().meta).toEqual({ hideBuzz: true });
+  });
+
+  it('keeps the stored record when a moderator saves different values', async () => {
+    mockStored({ meta: RECORD });
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      meta: { removedWithOwner: false, statusBeforeRemoval: 'Draft' } as ModelUpsertInput['meta'],
+    });
+    expect(updateData().meta).toEqual(RECORD);
+  });
+});
+
+describe('the locked row', () => {
+  const RECORD = {
+    removedWithOwner: true,
+    statusBeforeRemoval: 'Published',
+    versionsUnpublishedByRemoval: [{ id: 1, status: 'Published' }],
+  };
+
+  it('refuses an owner’s save of a model a content wipe kept, writing nothing', async () => {
+    mockStored({ meta: RECORD });
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID })).rejects.toThrow(/not authorized/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses it when the wipe kept the model after the save read it', async () => {
+    mockStored({ meta: {} });
+    mockLocked({ meta: RECORD });
+    await expect(upsert({ id: MODEL_ID, userId: OWNER_ID })).rejects.toThrow(/not authorized/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('keeps the record a wipe wrote after a moderator’s save read the model', async () => {
+    mockStored({ meta: {} });
+    mockLocked({ meta: RECORD });
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      meta: { hideBuzz: true } as ModelUpsertInput['meta'],
+    });
+    expect(updateData().meta).toEqual({ ...RECORD, hideBuzz: true });
+  });
+
+  it('keeps a moderation key written after an owner’s save read the model', async () => {
+    mockStored({ meta: {} });
+    mockLocked({ meta: { cannotPublish: true } });
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      meta: { hideBuzz: true } as ModelUpsertInput['meta'],
+    });
+    expect(updateData().meta).toEqual({ cannotPublish: true, hideBuzz: true });
+  });
+
+  it('refuses an owner’s stale availability once the model was made private after the read', async () => {
+    mockStored({ availability: Availability.Public });
+    mockLocked({ availability: Availability.Private });
+    await expect(
+      upsert({ id: MODEL_ID, userId: OWNER_ID, availability: Availability.Public })
+    ).rejects.toThrow(/availability/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('writes the owner’s meta over the row it read (control)', async () => {
+    mockStored({ meta: { hideDownloads: true } });
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      meta: { hideBuzz: true } as ModelUpsertInput['meta'],
+    });
+    expect(updateData().meta).toEqual({ hideDownloads: true, hideBuzz: true });
+  });
+});
+
 describe('stored snapshot', () => {
   it('reads the stored row from the primary, never the replica', async () => {
     await upsert({ id: MODEL_ID, userId: OWNER_ID });
@@ -344,6 +466,29 @@ describe('cannotPromote on a private model', () => {
     });
 
     expect(updateData().meta).toEqual({ cannotPromote: true, restoreCannotPromote: true });
+  });
+
+  it('records a moderator ban set after the save read the model', async () => {
+    privateStored({ cannotPromote: true });
+    mockLocked({ meta: { cannotPromote: true, restoreCannotPromote: true } });
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true });
+
+    expect(updateData().meta).toEqual({ cannotPromote: true, restoreCannotPromote: true });
+  });
+
+  it('keeps cannotPromote forced on for a model made private after the save read it', async () => {
+    mockStored({ availability: Availability.Public, meta: {} });
+    mockLocked({ availability: Availability.Private, meta: { cannotPromote: true } });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      meta: { cannotPromote: false } as ModelUpsertInput['meta'],
+    });
+
+    expect(updateData().meta).toEqual({ cannotPromote: true });
   });
 
   it('keeps cannotPromote forced on and drops the marker on a moderator unban', async () => {
@@ -472,6 +617,41 @@ describe('availability', () => {
     await upsert({ userId: OWNER_ID, availability: Availability.Public });
 
     expect(createData().availability).toBe(Availability.Public);
+  });
+
+  it('records the creator as the first owner of the new model, in the create transaction', async () => {
+    mockGetHighestTierSubscription.mockResolvedValue(null);
+    mockDbWrite.model.create.mockResolvedValueOnce({
+      id: 4242,
+      nsfwLevel: 0,
+      meta: null,
+      availability: Availability.Public,
+    } as never);
+    // A distinct client with its own raw writer, so a write on dbWrite would not pass for one on it.
+    const txExecuteRaw = vi.fn(async () => 1);
+    const tx = new Proxy(mockDbWrite, {
+      get: (target, key) =>
+        key === '$executeRaw' ? txExecuteRaw : (target as Record<string | symbol, unknown>)[key],
+    });
+    mockDbWrite.$transaction.mockImplementationOnce(async (fn: (client: unknown) => unknown) =>
+      fn(tx)
+    );
+
+    await upsert({ userId: OWNER_ID, availability: Availability.Public });
+
+    const ownership = (txExecuteRaw.mock.calls as unknown as [Prisma.Sql][])
+      .map(([sql]) => sql)
+      .find((sql) => sql.sql.includes('"ModelOwnership"'));
+    expect(ownership, 'no ownership row written in the transaction').toBeDefined();
+    expect(
+      await recordedOwnership(
+        [
+          [4242, OWNER_ID],
+          [4243, OWNER_ID],
+        ],
+        [ownership!]
+      )
+    ).toEqual([{ modelId: 4242, userId: OWNER_ID, reason: 'create', actorId: OWNER_ID }]);
   });
 });
 

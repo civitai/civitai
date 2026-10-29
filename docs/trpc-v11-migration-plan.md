@@ -148,7 +148,7 @@ TypeScript **5.9.2** satisfies tRPC v11's **≥5.7.2** requirement. No React or 
 
 ### Phase 0 — De-risk cycles up front (do before touching versions)
 Independent of the upgrade; pure win and required before Phase 3.
-- Run dev/build with `CIRCULAR_DEPENDENCY_PLUGIN=true` (already wired in `next.config.mjs`).
+- Map cycles with a standalone tool such as `npx madge --circular --extensions ts,tsx src`; the `circular-dependency-plugin` block is gone from `next.config.mjs`.
 - Catalog every reported cycle. Fix by extracting shared leaf values (constants/enums/schemas)
   into zero-import leaf modules and importing leaf schemas from source, not via big-module
   re-exports — the exact patterns in the notes doc §1.
@@ -226,8 +226,8 @@ clean**: `lazy()` preserves the `AppRouter` type inference via `DecorateCreateRo
 
 ### Cycle audit (the documented hazard)
 Lazy loading reorders module evaluation and can surface latent circular deps as runtime
-`TypeError: Cannot read properties of undefined`. The existing `circular-dependency-plugin` block
-in `next.config.mjs` only scans the **client** bundle (`!options.isServer`), so it would miss the
+`TypeError: Cannot read properties of undefined`. The former (commented-out, since removed)
+`circular-dependency-plugin` block in `next.config.mjs` only scanned the **client** bundle, so it would miss the
 **server** cycles that matter here. A static audit (12 agents, all 92 routers) found **11 unique
 import cycles**; **86 routers are cycle-free**.
 

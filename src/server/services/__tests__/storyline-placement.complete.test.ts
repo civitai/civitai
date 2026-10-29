@@ -65,6 +65,8 @@ beforeEach(() => {
   dbMock.dbWrite.placementSpace.findMany.mockResolvedValue([]);
   dbMock.dbWrite.placement.count.mockResolvedValue(0);
   dbMock.dbWrite.placement.create.mockResolvedValue({ id: 1 });
+  // The submit's storyline lock finds the storyline.
+  dbMock.dbWrite.$queryRaw.mockResolvedValue([{ id: 1 }] as never);
 });
 
 /**

@@ -1,10 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { Prisma } from '@prisma/client';
+import { sanitizeAppChromeName } from '~/components/AppBlocks/appChromeName';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
-import { BLOCK_POST_APP_ID_META_KEY } from '~/server/services/blocks/block-post.logic';
+import {
+  BLOCK_POST_APP_ID_META_KEY,
+  BLOCK_POST_SUB_LISTING_ID_META_KEY,
+} from '~/server/services/blocks/block-post.logic';
 import type {
   AppPostIntentRecord,
   PostIntentManifest,
@@ -29,7 +33,9 @@ import { getToolByDomain } from '~/server/services/tool.service';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
 import { probeVideoDimensions } from '~/server/services/video-dimensions';
 import { SafeFetchError, safeFetch } from '~/server/utils/safe-fetch';
+import { ratingAllowedOnHost } from '~/server/utils/server-domain';
 import { constants } from '~/server/common/constants';
+import { effectiveSubListingRating } from '~/shared/constants/app-sub-listing.constants';
 import { plainTextToPostHtml } from '~/shared/utils/post-intent';
 import { EntityType, JobQueueType, MediaType } from '~/shared/utils/prisma/enums';
 import {
@@ -59,7 +65,7 @@ export type StagedIntentMedia = {
 
 export type StagedIntent = {
   manifestUrl: string;
-  app: { name: string; host: string };
+  app: { name: string; host: string; itemName?: string };
   title?: string;
   description?: string;
   tags: string[];
@@ -104,6 +110,49 @@ export async function resolveAppForManifestUrl(
   const appId = listing?.connectClientId ?? listing?.appBlock?.appId;
   if (!listing || !appId) return null;
   return { ...match, listingName: listing.name, appId };
+}
+
+/**
+ * The approved sub-listing `item` names under the app's own listing, or null. Never throws: an
+ * item that does not resolve leaves the post credited to the app alone.
+ */
+export async function resolveIntentItem(
+  record: Pick<AppPostIntentRecord, 'listingId'>,
+  item: string | undefined
+): Promise<{ id: string; title: string; rating: string | null } | null> {
+  if (!item) return null;
+  try {
+    const row = await dbRead.appSubListing.findFirst({
+      where: {
+        parentListingId: record.listingId,
+        itemKey: item,
+        status: APPROVED,
+        author: { bannedAt: null, deletedAt: null },
+        parentListing: { subListingParent: { is: { enabled: true } } },
+      },
+      select: {
+        id: true,
+        title: true,
+        contentRating: true,
+        parentListing: { select: { contentRating: true } },
+      },
+    });
+    return (
+      row && {
+        id: row.id,
+        title: sanitizeAppChromeName(row.title) ?? '',
+        rating: effectiveSubListingRating(row.parentListing.contentRating, row.contentRating),
+      }
+    );
+  } catch (err) {
+    logToAxiom({
+      name: 'post-intent',
+      type: 'error',
+      message: 'failed to resolve item',
+      error: err instanceof Error ? err.message : String(err),
+    }).catch(() => null);
+    return null;
+  }
 }
 
 async function checkStageRateLimit(key: string, limit: { max: number; windowSeconds: number }) {
@@ -243,15 +292,22 @@ async function stageMediaItem(
   return staged;
 }
 
-function toStagedIntent(
+/** `requestHost` hides a mature item's name where the post's chip would hide the item. */
+async function toStagedIntent(
   manifestUrl: string,
-  record: Pick<AppPostIntentRecord, 'listingName' | 'host'>,
+  record: Pick<AppPostIntentRecord, 'listingId' | 'listingName' | 'host'>,
   manifest: PostIntentManifest,
-  staged: StagedIntentMedia[]
-): StagedIntent {
+  staged: StagedIntentMedia[],
+  requestHost: string
+): Promise<StagedIntent> {
+  const item = await resolveIntentItem(record, manifest.item);
   return {
     manifestUrl,
-    app: { name: record.listingName, host: record.host },
+    app: {
+      name: record.listingName,
+      host: record.host,
+      ...(item?.title && ratingAllowedOnHost(item.rating, requestHost) && { itemName: item.title }),
+    },
     title: manifest.title,
     description: manifest.description,
     tags: manifest.tags ?? [],
@@ -267,10 +323,13 @@ function toStagedIntent(
 export async function stageIntent({
   manifestUrl: rawManifestUrl,
   userId,
+  requestHost = '',
   now = new Date(),
 }: {
   manifestUrl: string;
   userId: number;
+  /** The site host the user is on; absent, a mature item goes unnamed. */
+  requestHost?: string;
   now?: Date;
 }): Promise<StagedIntent> {
   const manifestUrl = toCanonical(rawManifestUrl);
@@ -280,7 +339,7 @@ export async function stageIntent({
 
   const existing = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
   if (existing) {
-    const resumed = resumeClaim(existing, manifestUrl, userId, now, record);
+    const resumed = await resumeClaim(existing, manifestUrl, userId, now, record, requestHost);
     if (resumed) return resumed;
     if (!(await releaseClaim(existing.id, existing.staged as StagedIntentMedia[]))) {
       const after = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
@@ -299,7 +358,7 @@ export async function stageIntent({
     if (!releaseUrl)
       throw new PostIntentRefusal('busy', 'This share is still loading. Try again in a moment.');
     await checkStageRateLimit(`user:${userId}`, POST_INTENT_USER_STAGE_LIMIT);
-    return await fetchAndStage({ manifestUrl, record, userId, now });
+    return await fetchAndStage({ manifestUrl, record, userId, requestHost, now });
   } finally {
     await releaseUser();
     await releaseUrl?.();
@@ -316,13 +375,14 @@ type ManifestRow = {
 };
 
 /** The staged intent to hand back when `userId` reopens a live claim of their own. */
-function resumeClaim(
+async function resumeClaim(
   row: ManifestRow,
   manifestUrl: string,
   userId: number,
   now: Date,
-  record: AppPostIntentRecord
-): StagedIntent | null {
+  record: AppPostIntentRecord,
+  requestHost: string
+): Promise<StagedIntent | null> {
   if (row.postedAt)
     throw new PostIntentRefusal('already-posted', 'This share has already been posted.');
   const live = row.claimExpiresAt.getTime() > now.getTime();
@@ -333,7 +393,8 @@ function resumeClaim(
     manifestUrl,
     record,
     row.manifest as PostIntentManifest,
-    row.staged as StagedIntentMedia[]
+    row.staged as StagedIntentMedia[],
+    requestHost
   );
 }
 
@@ -341,11 +402,13 @@ async function fetchAndStage({
   manifestUrl,
   record,
   userId,
+  requestHost,
   now,
 }: {
   manifestUrl: string;
   record: AppPostIntentRecord;
   userId: number;
+  requestHost: string;
   now: Date;
 }): Promise<StagedIntent> {
   const { bytes } = await fetchFromApp(manifestUrl, POST_INTENT_MANIFEST_MAX_BYTES, [
@@ -378,13 +441,14 @@ async function fetchAndStage({
     await deleteStagedObjects(staged);
     if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === 'P2002') {
       const winner = await dbWrite.postIntentManifest.findUnique({ where: { manifestUrl } });
-      const resumed = winner && resumeClaim(winner, manifestUrl, userId, now, record);
+      const resumed =
+        winner && (await resumeClaim(winner, manifestUrl, userId, now, record, requestHost));
       if (resumed) return resumed;
       throw new PostIntentRefusal('claimed', 'Someone else is already posting this share.');
     }
     throw err;
   }
-  return toStagedIntent(manifestUrl, record, manifest, staged);
+  return toStagedIntent(manifestUrl, record, manifest, staged, requestHost);
 }
 
 /**
@@ -445,6 +509,7 @@ export async function publishIntent({
   const staged = claim.staged as StagedIntentMedia[];
   const external = buildIntentExternalMeta(manifest, record);
   const toolId = await resolveToolId(record);
+  const item = await resolveIntentItem(record, manifest.item);
   const tagIds = tags?.length
     ? Object.values(await findOrCreateTagsByName(tags)).filter((t): t is number => t !== undefined)
     : [];
@@ -477,7 +542,10 @@ export async function publishIntent({
           title: title || null,
           detail,
           publishedAt,
-          metadata: { [BLOCK_POST_APP_ID_META_KEY]: record.appId },
+          metadata: {
+            [BLOCK_POST_APP_ID_META_KEY]: record.appId,
+            ...(item && { [BLOCK_POST_SUB_LISTING_ID_META_KEY]: item.id }),
+          },
           tags: tagIds.length ? { create: tagIds.map((tagId) => ({ tagId })) } : undefined,
         },
         select: { id: true },

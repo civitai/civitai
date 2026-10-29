@@ -27,6 +27,7 @@ import clsx from 'clsx';
 import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import styles from './EdgeVideo.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useDialogId } from '~/components/Dialog/dialogId';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 import { getVideoPosition, recordVideoPosition } from '~/store/video-playback.store';
 
@@ -51,6 +52,8 @@ type VideoProps = Omit<
   imageId?: number;
   /** Play after a second of hover when not autoplaying. */
   hoverPlay?: boolean;
+  /** Mounted for preloading, not on screen: never plays, whatever the viewport says. */
+  standby?: boolean;
 };
 
 export type EdgeVideoRef = {
@@ -93,6 +96,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       disablePoster,
       imageId,
       hoverPlay = true,
+      standby = false,
       onLoad,
       onError,
       onLoadedData,
@@ -292,10 +296,13 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const node = useScrollAreaRef();
 
     // ensure that video only plays when it is in the current view/dialog
-    const dialogCount = useDialogStore((state) => state.dialogs.length);
-    const stackRef = useRef<number | null>(null);
-    if (stackRef.current === null) stackRef.current = dialogCount;
-    const isCurrentStack = stackRef.current === dialogCount;
+    // Not a depth captured at mount: a player that mounts under an already-open dialog (the page
+    // behind the image detail remounts on a remix click) would take that depth as its own.
+    const dialogId = useDialogId();
+    const isCurrentStack = useDialogStore((state) => {
+      const top = state.dialogs[state.dialogs.length - 1];
+      return dialogId === undefined ? !top : top?.id === dialogId;
+    });
 
     const [canPlay, setCanPlay] = useState(false);
     useEffect(() => {
@@ -317,14 +324,15 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     useEffect(() => {
       const videoElem = ref.current;
       if (!videoElem) return;
-      if (isCurrentStack && (canPlay || props.autoPlay)) {
+      if (!standby && isCurrentStack && (canPlay || props.autoPlay)) {
         // Coming back from the detail dialog, this element is still paused where it was left;
         // the other player kept the position moving.
         const resumeAt = resumeId ? getVideoPosition(resumeId) : undefined;
         if (resumeAt !== undefined && Math.abs(resumeAt - videoElem.currentTime) > 0.5) {
           videoElem.currentTime = resumeAt;
         }
-        videoElem.play().catch(() => {
+        // Some iOS Safari versions return undefined from play() instead of a promise.
+        videoElem.play()?.catch(() => {
           // Autoplay failed, user interaction required
           setAutoplayFailed(true);
         });
@@ -334,7 +342,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
         // the video the moment it is maximized.
         videoElem.pause();
       }
-    }, [canPlay, isCurrentStack, props.autoPlay, isSelfFullscreen, resumeId]);
+    }, [canPlay, isCurrentStack, standby, props.autoPlay, isSelfFullscreen, resumeId]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {

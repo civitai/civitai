@@ -58,6 +58,7 @@ import { challengeAutoQueueJob } from '~/server/jobs/challenge-auto-queue';
 import { challengeCompletionJob } from '~/server/jobs/challenge-completion';
 import { challengeHealthCheckJob } from '~/server/jobs/challenge-health-check';
 import { evidenceHoldExpiryAlertJob } from '~/server/jobs/evidence-hold-expiry-alert';
+import { revokeUserTokensJob } from '~/server/jobs/revoke-user-tokens';
 import { dailyChallengeJobs } from '~/server/jobs/daily-challenge-processing';
 import { gdprStripeScrubJob } from '~/server/jobs/gdpr-stripe-scrub';
 import { deleteOldTrainingData } from '~/server/jobs/delete-old-training-data';
@@ -276,6 +277,7 @@ export const jobs: Job[] = [
   challengeAutoQueueJob,
   challengeHealthCheckJob,
   evidenceHoldExpiryAlertJob,
+  revokeUserTokensJob,
   contestCollectionYoutubeUpload,
   contestCollectionVimeoUpload,
   dummyJob,

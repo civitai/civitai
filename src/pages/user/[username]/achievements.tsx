@@ -4,7 +4,7 @@ import { Page } from '~/components/AppLayout/Page';
 import { ProfileAchievementsList } from '~/components/CreatorJourney/ProfileAchievements';
 import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
-import { dbRead } from '~/server/db/client';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { parseMilestoneShareToken } from '~/shared/constants/creator-journey.constants';
 import { trpc } from '~/utils/trpc';
@@ -17,7 +17,7 @@ export const getServerSideProps = createServerSideProps({
     // The nav hides the tab; this closes the URL.
     if (!features?.creatorJourney)
       return { redirect: { destination: `/user/${username}`, permanent: false } };
-    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    const user = await getUserBannedAtByUsername(username);
     if (user?.bannedAt) return { redirect: { destination: `/user/${username}`, permanent: false } };
 
     // Not prefetched: an owner sees their secret achievements by name, and an SSG prefetch has no viewer.

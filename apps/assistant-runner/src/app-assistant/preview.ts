@@ -13,8 +13,8 @@ import type { Logger } from '../core/interfaces';
 import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 
 /**
- * How often a live run stamps its tunnel's idle clock. civitai reaps a tunnel 30 minutes after its
- * last activity (`DEV_TUNNEL_IDLE_SECONDS`); every 5 minutes leaves five more chances inside that
+ * How often a live run stamps its app's tunnel's idle clock. civitai reaps a tunnel 30 minutes
+ * after its last activity (`DEV_TUNNEL_IDLE_SECONDS`); every 5 minutes leaves five more chances inside that
  * window when a call fails (civitai's `unavailable` is retried at the next one), costs at most 24
  * calls in a 2-hour run, and, since every call re-judges the user's gates, a gate turned off stops
  * keeping the tunnel alive within about 5 minutes.
@@ -98,8 +98,10 @@ export type AutoPreview = { shown: StartedPreview } | { error: string };
  * sandbox at a host civitai did not open. What a result says (and so what the page and the saved
  * conversation see) is the block id and the host, never the tunnel's id.
  *
- * While the run lives the tunnel is kept from idling out (`PREVIEW_KEEPALIVE_MS`); `close()`, as the
- * run ends, stops that and leaves the tunnel to civitai's normal idle expiry, so the user can keep
+ * While the run lives (`keepWhileRunning`) the open app's preview is kept from idling out
+ * (`PREVIEW_KEEPALIVE_MS`), whoever opened it: this run, an earlier one, or the page's Restart
+ * preview, as long as the app's sandbox is connected to it. `close()`, as the run
+ * ends, stops that and leaves the tunnel to civitai's normal idle expiry, so the user can keep
  * looking at it for a while after the reply ends.
  */
 export class RunnerPreview {
@@ -107,6 +109,8 @@ export class RunnerPreview {
   #open: OpenTunnel | null = null;
   #timer: ReturnType<typeof setInterval> | undefined;
   #keeping = false;
+  /** Set by `keepWhileRunning`: a run's preview (never a run-less restart's) is kept alive. */
+  #keepCurrent = false;
   #closed = false;
   /**
    * Starts and stops run one at a time: the chat runs a step's calls together, and two starts at
@@ -118,6 +122,20 @@ export class RunnerPreview {
 
   constructor(deps: RunnerPreviewDeps) {
     this.#deps = deps;
+  }
+
+  /**
+   * For a run: from now until `close()`, keeps the open app's preview from idling out, whoever
+   * opened it. Each tick asks the open app's sandbox which host its tunnel is connected to
+   * (`tunnel_status`) and has civitai keep the run's user's tunnel at that host: never another
+   * app's (it is not that app's sandbox), never another user's (civitai checks the owner), and
+   * never one the sandbox has let go (paused, disconnected), which civitai then lets idle out.
+   * Paused by `stop_preview` (the user asked for it to go) until the next start.
+   */
+  keepWhileRunning(): void {
+    if (this.#closed) return;
+    this.#keepCurrent = true;
+    this.#keepAlive();
   }
 
   /** Stops keeping the tunnel alive (the run ended); the tunnel itself stays until it idles out. */
@@ -447,7 +465,7 @@ export class RunnerPreview {
       declaredAuth,
       result,
     };
-    this.#keepAlive();
+    if (this.#keepCurrent) this.#keepAlive();
     return result;
   }
 
@@ -486,24 +504,46 @@ export class RunnerPreview {
   }
 
   async #tick(): Promise<void> {
-    const open = this.#open;
-    if (!open || this.#closed || this.#keeping) return;
+    if (this.#closed || this.#keeping) return;
     this.#keeping = true;
+    let host: string | null = null;
     try {
-      await this.#deps.tunnels.keepalive(open.sessionId);
+      host = await this.#connectedHost();
+      // Ended, or stopped (`stop_preview`), while the sandbox was asked.
+      if (!host || this.#closed || !this.#timer) return;
+      await this.#deps.tunnels.keepalive({ host });
     } catch (error) {
-      // Gone (past its cap, closed elsewhere), refused, or the grant is no longer good: nothing left
-      // to keep alive. `unavailable` is asked again at the next tick.
-      if (!(error instanceof DevTunnelError) || error.code !== 'unavailable') {
-        if (this.#open === open) {
-          this.#open = null;
-          this.#stopKeeping();
-        }
+      if (error instanceof DevTunnelError && error.status === 404) {
+        // civitai has no tunnel of the user's at that host (it went, at its cap or stopped): one may
+        // open later (the page's Restart preview), so the next tick looks again. One this run
+        // opened there is gone, so a start of the same preview opens a new one.
+        if (this.#open?.host === host) this.#open = null;
+        return;
       }
+      // Refused (a gate, the dev-tunnel flag) or the grant is no longer good: nothing to keep alive
+      // for this run. `unavailable`, and a sandbox that would not answer, are asked again next tick.
+      if (error instanceof DevTunnelError && error.code !== 'unavailable') this.#stopKeeping();
       this.#warn(error, 'keeping a preview alive failed');
     } finally {
       this.#keeping = false;
     }
+  }
+
+  /**
+   * The host the open app's sandbox has a tunnel running to (`tunnel_status`), else `null`: no app
+   * open and running, no tunnel in it, or an answer that does not say.
+   */
+  async #connectedHost(): Promise<string | null> {
+    const app = this.#deps.sandbox.active;
+    if (!app || app.state !== 'running') return null;
+    const status = await this.#deps.sandbox.call('tunnel_status', {});
+    // Another app opened meanwhile: its sandbox is asked at the next tick.
+    if (status.isError || this.#deps.sandbox.active?.name !== app.name) return null;
+    const { running, host } = (parseJson(status.text) ?? {}) as {
+      running?: unknown;
+      host?: unknown;
+    };
+    return running === true && typeof host === 'string' && host ? host : null;
   }
 
   #warn(error: unknown, message: string): void {

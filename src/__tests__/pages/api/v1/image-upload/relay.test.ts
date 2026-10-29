@@ -1,11 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Readable } from 'stream';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import type * as EnvOther from '~/env/other';
 import type * as AuthSession from '~/server/auth/get-server-auth-session';
 import type * as S3Utils from '~/utils/s3-utils';
 import type * as HttpErrors from '~/server/prom/http-errors';
 import type * as OriginHelpers from '~/server/utils/origin-helpers';
+import type * as ImageUploadAction from '~/server/services/image-upload-action.service';
 
 // Covers the FALLBACK image-upload relay (`/api/v1/image-upload/relay`).
 //
@@ -32,11 +34,13 @@ const {
   mockGetServerAuthSession,
   mockUploadImageBufferToStore,
   mockIsAllowedOriginRequest,
+  mockTrackImageUpload,
   prodFlag,
 } = vi.hoisted(() => ({
   mockGetServerAuthSession: vi.fn(),
   mockUploadImageBufferToStore: vi.fn(),
   mockIsAllowedOriginRequest: vi.fn(),
+  mockTrackImageUpload: vi.fn(),
   // A getter-backed box, so a single test can flip `isProd` without a second file.
   prodFlag: { value: false },
 }));
@@ -66,6 +70,11 @@ vi.mock('~/server/prom/http-errors', async (importOriginal) => ({
 vi.mock('~/server/utils/origin-helpers', async (importOriginal) => ({
   ...(await importOriginal<typeof OriginHelpers>()),
   isAllowedOriginRequest: mockIsAllowedOriginRequest,
+}));
+
+vi.mock('~/server/services/image-upload-action.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUploadAction>()),
+  trackImageUpload: mockTrackImageUpload,
 }));
 
 import handler, {
@@ -244,6 +253,13 @@ describe('image-upload relay', () => {
     const [buf, opts] = mockUploadImageBufferToStore.mock.calls[0];
     expect(Buffer.from(buf).toString()).toBe('image-bytes');
     expect(opts).toEqual({ contentType: 'image/png' });
+    // The upload-request IP is recorded against the key the store minted.
+    expect(mockTrackImageUpload).toHaveBeenCalledExactlyOnceWith(req, res, 'server-minted-uuid');
+    expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
+      'system:upload-key-owner:server-minted-uuid',
+      '7',
+      { EX: 30 * 24 * 60 * 60 }
+    );
   });
 
   it('reassembles a MULTI-CHUNK body in order', async () => {
@@ -805,7 +821,7 @@ describe('image-upload relay', () => {
       // label, an absent header or an array, a naive re-read of the header produces the
       // same answer the sanitiser does. Without this line a mutant that re-reads
       // `req.headers[...]` in the log payload keeps the counter perfectly bounded (so the
-      // 44-row check above stays green) while putting an unbounded caller-controlled
+      // cross-product row-count check above stays green) while putting an unbounded caller-controlled
       // string into a structured log. Verified as a surviving mutant before this was added.
       expect(relayEvents()).toHaveLength(1);
       expect(relayEvents()[0]).toMatchObject({ producer: 'other' });

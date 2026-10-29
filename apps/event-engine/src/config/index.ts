@@ -174,6 +174,8 @@ export const config = {
     embedOutageRetrySeconds: vectorInt('VECTOR_EMBED_OUTAGE_RETRY_SECONDS', 900, 0, 7200),
     // Backfill and reconcile steps submitted per second per process, cache hits included; 0 is unlimited.
     embedMaxStepsPerSecond: vectorInt('VECTOR_EMBED_MAX_STEPS_PER_SECOND', 10, 0, 1000),
+    // false: ignore the orchestrator's in-flight quota headers (429s still hold); anything else honours them.
+    embedHonorQuota: process.env.VECTOR_EMBED_HONOR_QUOTA !== 'false',
     // Inputs per workflow, 1 to 128.
     embedBatchSize: vectorInt('VECTOR_EMBED_BATCH_SIZE', 128, 1, 128),
     embedVideo: process.env.VECTOR_EMBED_VIDEO === 'true',

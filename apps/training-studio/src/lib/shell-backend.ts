@@ -60,6 +60,12 @@ export const shellBackend: StudioBackend = {
       'Failed to load training'
     ),
 
+  modelLive: async (modelId) => {
+    const res = await fetch(`/api/model-status?id=${modelId}`);
+    if (!res.ok) throw new Error(await messageOf(res, `Model check failed (${res.status})`));
+    return ((await res.json()) as { live: boolean }).live;
+  },
+
   getRunDataset: async (workflowId) => {
     const res = await fetch(`/api/run-dataset?id=${encodeURIComponent(workflowId)}`);
     if (!res.ok) throw new Error("Couldn't load that dataset.");

@@ -482,3 +482,40 @@ describe('edit LoRA pairs', () => {
     expect(input.trainingData.items).toEqual(pair('0001'));
   });
 });
+
+describe('Prodigy learning rate', () => {
+  // Prodigy finds its own step size and expects lr 1; the orchestrator refuses lr >= 0.1 for
+  // anything else. The main trainer couples the two the same way.
+  it('sends lr 1 for a Prodigy run, whatever the run carries', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-prodigy' } });
+    await submitTraining(client, { ...baseRun(), optimizer: 'Prodigy' });
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(input).toMatchObject({ optimizerType: 'prodigy', lr: 1, textEncoderLr: 1 });
+    expect(input.trainTextEncoder).toBe(true);
+  });
+
+  it('keeps the text encoder off for a Prodigy run that does not train it', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-prodigy-te-off' } });
+    await submitTraining(client, { ...baseRun(), optimizer: 'Prodigy', textEncoderLr: 0 });
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(input).toMatchObject({ lr: 1, textEncoderLr: 0, trainTextEncoder: false });
+  });
+
+  it('leaves the rate alone for other optimizers', async () => {
+    submitWorkflow.mockResolvedValueOnce({ data: { id: 'wf-adafactor' } });
+    await submitTraining(client, baseRun());
+    const input = submitWorkflow.mock.calls.at(-1)![0].body.steps[0].input;
+    expect(input).toMatchObject({ lr: 5e-4, textEncoderLr: 5e-5 });
+  });
+
+  it('refuses a Prodigy-level rate on another optimizer before anything is submitted', async () => {
+    const calls = submitWorkflow.mock.calls.length;
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), unetLr: 1 }], { checkText })
+    ).rejects.toThrow(/unetLr must be less than 0.1 for non-Prodigy optimizers/);
+    await expect(
+      submitTrainingBatch(client, [{ ...baseRun(), textEncoderLr: 0.1 }], { checkText })
+    ).rejects.toThrow(/textEncoderLr must be less than 0.1 for non-Prodigy optimizers/);
+    expect(submitWorkflow.mock.calls.length).toBe(calls);
+  });
+});

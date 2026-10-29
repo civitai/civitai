@@ -440,4 +440,17 @@ describe('toggleBan onlyBan', () => {
     expect(modActivityCreate).not.toHaveBeenCalled();
     expect(mockSendModerationEmail).not.toHaveBeenCalled();
   });
+
+  // The banned row goes back to the moderator's client; the legacy billing pointer stays server-side.
+  it('returns the banned row without its subscription id', async () => {
+    const row = { id: USER_ID, bannedAt: new Date(), subscriptionId: 'sub_zzfixture' };
+    dbMock.dbWrite.user.findUniqueOrThrow.mockImplementation((async (args: {
+      omit?: Record<string, boolean>;
+    }) => Object.fromEntries(Object.entries(row).filter(([key]) => !args.omit?.[key]))) as never);
+
+    const user = await banOnly();
+
+    expect(user).toMatchObject({ id: USER_ID });
+    expect(user).not.toHaveProperty('subscriptionId');
+  });
 });

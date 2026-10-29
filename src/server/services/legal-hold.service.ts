@@ -1,7 +1,9 @@
 import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  PLACEHOLDER_OWNER_ID,
   reportHolds,
   userNamedOnHoldingReportSql,
   userUnderLegalHoldSql,
@@ -28,9 +30,13 @@ export class LegalHoldError extends Error {
 /** What a moderator is told when a hold stopped a wipe part-way. Never says which hold applies. */
 export const LEGAL_HOLD_STOPPED = 'Purge stopped by a legal hold part-way; contact Legal.';
 
+/** A stopped purge that also left bids unrefunded; the moderator must not read it as nothing owed. */
+export const LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE = `${LEGAL_HOLD_STOPPED} Some bids were not refunded; check the refund alerts.`;
+
 /** A hold that landed after the check stopped a wipe part-way: some of it was already deleted. */
 export class LegalHoldStoppedError extends LegalHoldError {
-  constructor() {
+  /** The steps that ran before the stop and failed, as `removeAllContent` names them. */
+  constructor(readonly incomplete: string[] = []) {
     super();
     this.name = 'LegalHoldStoppedError';
   }
@@ -49,7 +55,10 @@ export class LegalHoldUnconfirmedError extends LegalHoldError {
 
 /** What a moderator is told for a `LegalHoldError`; the most specific class wins. */
 export function legalHoldMessage(e: LegalHoldError) {
-  if (e instanceof LegalHoldStoppedError) return LEGAL_HOLD_STOPPED;
+  if (e instanceof LegalHoldStoppedError)
+    return e.incomplete.includes('bid-refunds')
+      ? LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE
+      : LEGAL_HOLD_STOPPED;
   if (e instanceof LegalHoldUnconfirmedError) return HOLD_UNCONFIRMED;
   return LEGAL_HOLD_REFUSAL;
 }
@@ -86,16 +95,17 @@ function holdLegsSql(id: Prisma.Sql) {
     // Any image of theirs listed in a report that still holds, whoever the report names. Walks the
     // reports' image lists rather than the user's images: the lists are short, an account's images
     // are not. Compared as bigint so an id past int range still matches rather than being skipped.
-    'reported-image': Prisma.sql`EXISTS (
-      SELECT 1
+    // Uncorrelated, so Postgres builds the set once per statement rather than once per row.
+    'reported-image': Prisma.sql`((${id}) IN (
+      SELECT ri."userId"
       FROM "CsamReport" rr
       CROSS JOIN LATERAL jsonb_array_elements(
         CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
       ) re
       JOIN "Image" ri
         ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
-      WHERE ri."userId" = ${id} AND ${reportHolds('rr')}
-    )`,
+      WHERE ${reportHolds('rr')}
+    ))`,
   } satisfies Partial<Record<AccountHoldLeg, Prisma.Sql>>;
 }
 
@@ -125,6 +135,87 @@ export function accountHoldSql(id: Prisma.Sql, markerView: boolean): Prisma.Sql 
   return Prisma.sql`(${Prisma.join(legs, ' OR ')})`;
 }
 
+/** What an owner is told when a delete of their content is refused. Never says why. */
+export const OWNER_CONTENT_KEPT =
+  "This can't be removed right now. Contact support if you need it removed.";
+
+/**
+ * Whether content owned by `owner` (an int SQL expression) must be kept: the hold the purge jobs read,
+ * which includes the placeholder owner, or any account hold. Put it in the DELETE itself, so a hold
+ * placed after an earlier check still stops it. Names the marker view, so it needs its migration.
+ */
+export function ownerHeldSql(owner: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`(${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})`;
+}
+
+/**
+ * Whether the owner of the row `from` selects (aliasing its owner as `m."userId"`) is held: `true`
+ * when held or when that cannot be read, `false` when not held or when there is no such row.
+ */
+export async function ownerHeld(
+  db: Pick<Prisma.TransactionClient, '$queryRaw'>,
+  from: Prisma.Sql,
+  held: Prisma.Sql = ownerHeldSql(Prisma.raw('m."userId"'))
+): Promise<boolean> {
+  const rows = await db.$queryRaw<{ held: unknown }[]>`SELECT ${held} AS held ${from}`.catch(
+    (e: unknown) => {
+      logToAxiom({
+        type: 'error',
+        name: 'content-legal-hold-check-failed',
+        message: (e as Error).message,
+      }).catch(() => undefined);
+      return null;
+    }
+  );
+  if (!rows) return true;
+  return rows.some((r) => r.held !== false);
+}
+
+/** The refusal for a delete a hold stopped: never names the hold to an owner. */
+export function contentKeptError(isModerator: boolean | undefined) {
+  return new TRPCError({
+    code: 'FORBIDDEN',
+    message: isModerator ? LEGAL_HOLD_REFUSAL : OWNER_CONTENT_KEPT,
+  });
+}
+
+/**
+ * Runs a DELETE guarded by `ownerHeldSql` that should remove `expected` rows. Throws the hold refusal
+ * when it removed fewer and the owner of the row `ownerFrom` selects is held (see `ownerHeld`), or
+ * when it failed on the marker view. Any other error is rethrown. Either way nothing it is part of
+ * commits. Returns 'short' when it removed fewer for another reason: the rows were already gone.
+ */
+export async function deleteUnlessHeld(
+  statement: Promise<number>,
+  {
+    expected,
+    isModerator,
+    db,
+    ownerFrom,
+    held,
+  }: {
+    expected: number;
+    isModerator: boolean | undefined;
+    db: Pick<Prisma.TransactionClient, '$queryRaw'>;
+    ownerFrom: Prisma.Sql;
+    /** What the DELETE was guarded by, over `ownerFrom`'s aliases. */
+    held: Prisma.Sql;
+  }
+): Promise<'deleted' | 'short'> {
+  const removed = await statement.catch((e: unknown) => {
+    if (!isLegalHoldAbort(e)) throw e;
+    logToAxiom({
+      type: 'error',
+      name: 'content-legal-hold-check-failed',
+      message: (e as Error).message,
+    }).catch(() => undefined);
+    throw contentKeptError(isModerator);
+  });
+  if (removed >= expected) return 'deleted';
+  if (await ownerHeld(db, ownerFrom, held)) throw contentKeptError(isModerator);
+  return 'short';
+}
+
 /**
  * The `markerView` for `accountHoldSql` in a statement over many accounts' rows, where there is no
  * single account to check first. Without the view, `accountHoldSql` holds every row if either marker
@@ -145,22 +236,146 @@ export async function holdMarkerTableExists(): Promise<boolean> {
   return row?.present === true;
 }
 
+export type ModelOwnershipReason = 'create' | 'transfer' | 'account-delete' | 'restore';
+
+/**
+ * Records `userId` as an owner of every model `where` matches (over `"Model" m`). Run it in the same
+ * transaction as the owner write, so the hold reads every owner a model has had.
+ */
+export function recordModelOwnershipSql({
+  where,
+  userId,
+  reason,
+  actorId = null,
+}: {
+  where: Prisma.Sql;
+  userId: number;
+  reason: ModelOwnershipReason;
+  actorId?: number | null;
+}): Prisma.Sql {
+  return Prisma.sql`
+    INSERT INTO "ModelOwnership" ("modelId", "userId", "reason", "actorId")
+    SELECT m.id, ${userId}::int, ${reason}, ${actorId}::int FROM "Model" m WHERE ${where}
+  `;
+}
+
+/**
+ * Records the current owner of every model `where` matches (over `"Model" m`) that has no row for that
+ * owner yet, as a baseline: a model created before its history began, or before the backfill reached
+ * it, still keeps its owner on record when it moves. Run before the owner write.
+ */
+export function recordCurrentModelOwnersSql(where: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`
+    INSERT INTO "ModelOwnership" ("modelId", "userId", "reason")
+    SELECT m.id, m."userId", 'baseline' FROM "Model" m
+    WHERE ${where}
+      AND NOT EXISTS (
+        SELECT 1 FROM "ModelOwnership" o WHERE o."modelId" = m.id AND o."userId" = m."userId"
+      )
+  `;
+}
+
+/**
+ * Whether the "ModelOwnership" row `ho` is a placeholder row that still holds its model. An account
+ * deletion's placeholder holds until the model is restored; then its owner's own holds apply. A
+ * backfilled one always holds: who owned the model before it is not fully recorded.
+ */
+const placeholderRowHoldsSql = Prisma.sql`(ho."userId" = ${Prisma.raw(
+  String(PLACEHOLDER_OWNER_ID)
+)} AND (ho.reason <> 'account-delete' OR NOT EXISTS (
+  SELECT 1 FROM "ModelOwnership" hrs
+  WHERE hrs."modelId" = ho."modelId" AND hrs.reason = 'restore' AND hrs.id > ho.id
+)))`;
+
+/**
+ * Whether a model's data is held: its owner is the placeholder or under an account hold, or so is any
+ * owner it had before. A placeholder that an account deletion put there stops holding once the model
+ * is restored to an owner; one recorded by the backfill always holds. `modelId` is an int SQL
+ * expression. Names "ModelOwnership": without the table the statement fails, and so deletes nothing.
+ */
+export function modelDataHeldSql(modelId: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  const placeholder = Prisma.raw(String(PLACEHOLDER_OWNER_ID));
+  return Prisma.sql`(EXISTS (
+    SELECT 1 FROM "Model" hm
+    WHERE hm.id = ${modelId}
+      AND (hm."userId" = ${placeholder} OR ${accountHoldSql(Prisma.raw('hm."userId"'), markerView)})
+  ) OR EXISTS (
+    SELECT 1 FROM "ModelOwnership" ho
+    WHERE ho."modelId" = ${modelId}
+      AND (${placeholderRowHoldsSql} OR ${accountHoldSql(Prisma.raw('ho."userId"'), markerView)})
+  ))`;
+}
+
+/**
+ * Whether the data of the model aliased `m` is held, by its owner's holds or by any owner it had: the
+ * guard for a DELETE of its files or versions.
+ */
+export function modelRowHeldSql(): Prisma.Sql {
+  return Prisma.sql`(${ownerHeldSql(Prisma.raw('m."userId"'))} OR ${modelDataHeldSql(
+    Prisma.raw('m.id'),
+    true
+  )})`;
+}
+
+/**
+ * The ids, among the model ids `modelIds` selects, whose data `modelDataHeldSql` holds, as a query.
+ * For a statement over many models: each owner, present or past, is checked once, not once per row.
+ */
+export function heldModelIdsSql(modelIds: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  const placeholder = Prisma.raw(String(PLACEHOLDER_OWNER_ID));
+  return Prisma.sql`
+    WITH owners AS MATERIALIZED (
+      SELECT hm.id AS "modelId", hm."userId" FROM "Model" hm WHERE hm.id IN (${modelIds})
+      UNION
+      SELECT ho."modelId", ho."userId" FROM "ModelOwnership" ho WHERE ho."modelId" IN (${modelIds})
+    ), held_owners AS MATERIALIZED (
+      SELECT a."userId" FROM (SELECT DISTINCT "userId" FROM owners) a
+      WHERE ${accountHoldSql(Prisma.raw('a."userId"'), markerView)}
+    )
+    SELECT ow."modelId" FROM owners ow WHERE ow."userId" IN (SELECT "userId" FROM held_owners)
+    UNION
+    SELECT hm.id FROM "Model" hm WHERE hm.id IN (${modelIds}) AND hm."userId" = ${placeholder}
+    UNION
+    SELECT ho."modelId" FROM "ModelOwnership" ho
+    WHERE ho."modelId" IN (${modelIds}) AND ${placeholderRowHoldsSql}
+  `;
+}
+
+/** Authors one call logs at most; a bulk delete can retain rows from every author it touched. */
+const HOLD_LOG_AUTHORS = 200;
+
 /**
  * Logs the holds that kept rows a moderator's bulk delete asked for. Best-effort, and the reason
  * goes no further than here. An author with no hold of their own had a row kept for a held reply
  * below it.
  */
 export async function logHoldRetained(action: string, userIds: number[]) {
-  for (const userId of new Set(userIds)) {
-    const hold = await holdOrNull(userId);
+  const authors = [...new Set(userIds)];
+  const logged = authors.slice(0, HOLD_LOG_AUTHORS);
+  const holds = await getAccountLegalHolds(logged).catch((e: unknown) => {
+    logToAxiom({
+      type: 'error',
+      name: 'account-legal-hold-check-failed',
+      message: (e as Error).message,
+      details: { userIds: logged },
+    }).catch(() => undefined);
+    return null;
+  });
+  for (const userId of logged) {
+    const legs = holds?.get(userId) ?? null;
     logToAxiom({
       type: 'info',
       name: 'account-legal-hold',
-      message:
-        hold?.legs.length === 0 ? `${action}: kept for a held reply` : `${action}: rows retained`,
-      details: { userId, legs: hold?.legs ?? null },
-    });
+      message: legs?.length === 0 ? `${action}: kept for a held reply` : `${action}: rows retained`,
+      details: { userId, legs },
+    }).catch(() => undefined);
   }
+  if (authors.length > logged.length)
+    logToAxiom({
+      type: 'info',
+      name: 'account-legal-hold',
+      message: `${action}: rows retained for ${authors.length - logged.length} more authors`,
+    }).catch(() => undefined);
 }
 
 export type AccountLegalHold = {
@@ -174,30 +389,55 @@ export type AccountLegalHold = {
  * any lookup failure; callers treat that as held.
  */
 export async function getAccountLegalHold(userId: number): Promise<AccountLegalHold> {
-  const id = Prisma.sql`${userId}::int`;
+  const { legs, markerView } = (await readAccountHolds([userId]))[0];
+  return { legs, markerView };
+}
+
+/** `getAccountLegalHold` for many accounts, in one statement (two when the marker view exists). */
+async function getAccountLegalHolds(userIds: number[]): Promise<Map<number, AccountHoldLeg[]>> {
+  if (!userIds.length) return new Map();
+  return new Map((await readAccountHolds(userIds)).map((h) => [h.userId, h.legs]));
+}
+
+async function readAccountHolds(
+  userIds: number[]
+): Promise<(AccountLegalHold & { userId: number })[]> {
+  const id = Prisma.raw('u."userId"');
   const legs = holdLegsSql(id);
-  const [row] = await dbWrite.$queryRaw<Record<string, unknown>[]>`
+  const rows = await dbWrite.$queryRaw<Record<string, unknown>[]>`
     SELECT
+      u."userId",
       ${Prisma.join(
         Object.entries(legs).map(([name, leg]) => Prisma.sql`${leg} AS ${Prisma.raw(`"${name}"`)}`)
       )},
       to_regclass(${`"${HOLD_MARKER_VIEW}"`}) IS NOT NULL AS "markerView",
       to_regclass(${`"${HOLD_MARKER_TABLE}"`}) IS NOT NULL AS "markerTable"
+    FROM unnest(${userIds}::int[]) AS u("userId")
   `;
-  if (!row) throw new Error('Legal hold lookup returned no row');
+  if (rows.length !== userIds.length) throw new Error('Legal hold lookup returned no row');
 
   // Anything but an explicit `false` counts as held.
-  const held = (Object.keys(legs) as AccountHoldLeg[]).filter((leg) => row[leg] !== false);
+  const held = new Map(
+    rows.map((row) => [
+      Number(row.userId),
+      (Object.keys(legs) as AccountHoldLeg[]).filter((leg) => row[leg] !== false),
+    ])
+  );
+  const markerView = rows[0].markerView === true;
 
   // A separate statement: a query naming the view fails to parse on a database that lacks it.
-  if (row.markerView === true) {
-    const [marker] = await dbWrite.$queryRaw<{ held: unknown }[]>`SELECT ${markerSql(id)} AS held`;
-    if (marker?.held !== false) held.push('hold-marker');
-    return { legs: held, markerView: true };
+  if (markerView) {
+    const marks = await dbWrite.$queryRaw<{ userId: number; held: unknown }[]>`
+      SELECT u."userId", ${markerSql(id)} AS held FROM unnest(${userIds}::int[]) AS u("userId")
+    `;
+    const marked = new Map(marks.map((m) => [Number(m.userId), m.held]));
+    for (const [userId, legsHeld] of held)
+      if (marked.get(userId) !== false) legsHeld.push('hold-marker');
+  } else if (!(rows[0].markerView === false && rows[0].markerTable === false)) {
+    // The table without its view means the view was dropped or renamed: held until it is back.
+    for (const legsHeld of held.values()) legsHeld.push('hold-marker');
   }
-  // The table without its view means the view was dropped or renamed: held until it is back.
-  if (!(row.markerView === false && row.markerTable === false)) held.push('hold-marker');
-  return { legs: held, markerView: false };
+  return [...held].map(([userId, legsHeld]) => ({ userId, legs: legsHeld, markerView }));
 }
 
 export async function getAccountLegalHoldLegs(userId: number): Promise<AccountHoldLeg[]> {

@@ -90,6 +90,13 @@ const tx = {
     txLog.push(`raw ${strings.join('?')} [${values.join(',')}]`);
     return 0;
   }),
+  // Only the storyline lock: the storyline of the chapter on the parent post.
+  $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
+    if (!/FOR SHARE OF st\s*$/.test(strings.join('?')))
+      throw new Error('fake: unexpected raw query in the submit transaction');
+    txLog.push(`lock storyline of post ${values.join(',')}`);
+    return [{ id: 1 }];
+  }),
   placement: {
     count: vi.fn(async ({ where }: { where: Where }) => {
       txLog.push('count');
@@ -371,12 +378,20 @@ describe('createStorylinePlacement — the pending cap', () => {
       `raw SELECT pg_advisory_xact_lock(?::int, ?::int) [${PLACER_LOCK_CLASS},${PLACER}]`,
       'count',
       'findFirst',
+      `lock storyline of post ${CHAPTER}`,
       'create',
     ]);
     expect(dbMock.dbWrite.$executeRaw).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.$executeRawUnsafe).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.placement.count).not.toHaveBeenCalled();
     expect(dbMock.dbWrite.placement.create).not.toHaveBeenCalled();
+  });
+  // The storyline lock is what makes a delete wait for this submit, or this submit see the
+  // delete: a storyline deleted between the terms check and the insert is refused, not escrowed.
+  it('refuses, taking no Buzz, when the storyline is gone by the time it locks', async () => {
+    tx.$queryRaw.mockResolvedValueOnce([] as never);
+    await expect(submit()).rejects.toThrow(STORYLINE_REFUSALS.notAChapter);
+    expect(tx.placement.create).not.toHaveBeenCalled();
   });
 });
 

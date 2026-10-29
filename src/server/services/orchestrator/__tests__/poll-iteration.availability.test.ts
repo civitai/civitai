@@ -36,10 +36,12 @@ vi.mock('~/server/services/storage-resolver', async (importOriginal) => ({
   registerMediaLocation: vi.fn(),
 }));
 
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
 import { isMature } from '~/shared/constants/orchestrator.constants';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
+import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 
 const MATURE = 'x';
 const SAFE = 'pg';
@@ -107,6 +109,20 @@ describe('pollIterationWorkflow availability', () => {
     expect(console.error).not.toHaveBeenCalled();
   });
 
+  it('records the stored key as issued to the polling user', async () => {
+    givenWorkflow([output({ nsfwLevel: SAFE })]);
+
+    await poll();
+
+    const key = (mocks.createImage.mock.calls[0][0] as { url: string }).url;
+    expect(key).toEqual(expect.any(String));
+    expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
+      `system:upload-key-owner:${key}`,
+      '7',
+      { EX: 30 * 24 * 60 * 60 }
+    );
+  });
+
   it('formats nothing while the workflow is still running', async () => {
     givenWorkflow([], { status: 'processing' });
 
@@ -125,6 +141,17 @@ describe('pollIterationWorkflow availability', () => {
     expect(result.errorMessage).toMatch(/yellow Buzz/);
     expect(fetch).not.toHaveBeenCalled();
     expect(mocks.createImage).not.toHaveBeenCalled();
+  });
+
+  it('tells a user held to PG-13 by their source image how to bring a Civitai image in', async () => {
+    givenWorkflow([output({ available: false, blockedReason: 'NSFWLevelSourceImageRestricted' })], {
+      status: 'failed',
+    });
+
+    const result = await poll();
+
+    expect(result.status).toBe('failed');
+    expect(result.errorMessage).toBe(UNMARKED_SOURCE_IMAGE_MESSAGE);
   });
 
   it('hands a mature result off instead of returning it on the restricted site', async () => {

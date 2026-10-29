@@ -25,11 +25,13 @@ function toTrpcError(err: unknown): never {
 const postIntentProcedure = guardedProcedure.use(isFlagProtected('appPostIntent'));
 
 export const postIntentRouter = router({
-  stage: postIntentProcedure
-    .input(manifestInput)
-    .mutation(({ ctx, input }) =>
-      stageIntent({ manifestUrl: input.manifestUrl, userId: ctx.user.id }).catch(toTrpcError)
-    ),
+  stage: postIntentProcedure.input(manifestInput).mutation(({ ctx, input }) =>
+    stageIntent({
+      manifestUrl: input.manifestUrl,
+      userId: ctx.user.id,
+      requestHost: ctx.req?.headers?.host ?? '',
+    }).catch(toTrpcError)
+  ),
   publish: postIntentProcedure
     .input(
       manifestInput.extend({

@@ -1,8 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { TRPCError } from '@trpc/server';
-import { getHTTPStatusCodeFromError } from '@trpc/server/http';
+import path from 'node:path';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { setEnv } from '~/__tests__/mocks/env.mock';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
 
 /**
  * `/api/mod/user/delete` — the moderator path to a data-subject erasure request.
@@ -43,19 +44,9 @@ vi.mock('~/server/clickhouse/client', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
-vi.mock('~/server/utils/endpoint-helpers', () => ({
-  handleEndpointError: (
-    res: { status: (n: number) => { json: (b: unknown) => unknown } },
-    e: unknown
-  ) => {
-    // The REAL mapper, not a hand-written table. A table here has to be extended every time the
-    // handler learns a new refusal code, and the failure when it is not is a 500 in a test asserting
-    // a 4xx — which reads as a bug in the endpoint.
-    const status = e instanceof TRPCError ? getHTTPStatusCodeFromError(e) : 500;
-    return res
-      .status(status)
-      .json({ error: (e as { code?: string }).code ?? 'error', message: (e as Error).message });
-  },
+// The REAL envelope: the moderator app reads the refusal out of exactly this body.
+vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
+  ...(await importOriginal<typeof EndpointHelpers>()),
 }));
 
 const deleteUser = vi.fn(async () => ({}));
@@ -72,7 +63,12 @@ vi.mock('~/server/services/moderator-grants', () => ({
 }));
 
 import handler from '~/pages/api/mod/user/delete';
-import { LegalHoldError } from '~/server/services/legal-hold.service';
+import { LegalHoldError, LegalHoldUnconfirmedError } from '~/server/services/legal-hold.service';
+import {
+  GENERIC_SERVER_ERROR_MESSAGE,
+  REST_ERROR_CODE,
+  restErrorBody,
+} from '~/server/utils/rest-error-envelope';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const TARGET = 8675309;
@@ -299,6 +295,38 @@ describe('user.delete — confirming which account', () => {
   });
 });
 
+describe('user.delete — the shared moderation account', () => {
+  it('refuses deleting it, found by its name', async () => {
+    liveTarget('CivitaiModeration');
+    const { status } = await call({ userId: TARGET, username: 'CivitaiModeration' });
+    expect(status).toBe(400);
+    expect(deleteUser).not.toHaveBeenCalled();
+  });
+
+  it('deletes another account holding the name while the shared id is configured', async () => {
+    liveTarget('CivitaiModeration');
+    setEnv({ CIVITAI_MODERATION_USER_ID: TARGET + 1 });
+    try {
+      const { status } = await call({ userId: TARGET, username: 'CivitaiModeration' });
+      expect(status).toBe(200);
+      expect(deleteUser).toHaveBeenCalledTimes(1);
+    } finally {
+      setEnv({ CIVITAI_MODERATION_USER_ID: '' });
+    }
+  });
+
+  it('refuses deleting it, found by its id', async () => {
+    setEnv({ CIVITAI_MODERATION_USER_ID: TARGET });
+    try {
+      const { status } = await call({ userId: TARGET, username: NAME });
+      expect(status).toBe(400);
+      expect(deleteUser).not.toHaveBeenCalled();
+    } finally {
+      setEnv({ CIVITAI_MODERATION_USER_ID: '' });
+    }
+  });
+});
+
 describe('user.delete — the already-deleted refusal', () => {
   it('refuses an account that is already deleted, and says so', async () => {
     dbMock.dbWrite.user.findFirst.mockResolvedValue({
@@ -508,6 +536,37 @@ describe('user.delete — an account under a legal hold', () => {
     expect(mockUserActivity).not.toHaveBeenCalled();
   });
 
+  /** The moderator app's body reader and refusal texts, loaded by path across the app boundary. */
+  const moderatorSide = async () => {
+    const lib = path.resolve(__dirname, '../../../../../..', 'apps/moderator/src/lib');
+    const { restErrorReason } = (await import(
+      /* @vite-ignore */ `${lib}/server/rest-error-reason.ts`
+    )) as { restErrorReason: (body: unknown, status: number) => string | null };
+    const texts = (await import(/* @vite-ignore */ `${lib}/legal-hold.ts`)) as Record<
+      string,
+      string
+    >;
+    return { restErrorReason, ...texts };
+  };
+
+  it.each([
+    ['a hold', () => new LegalHoldError(), 'LEGAL_HOLD_REFUSAL'],
+    [
+      'a hold status it could not read',
+      () => new LegalHoldUnconfirmedError(),
+      'HOLD_UNKNOWN_REFUSAL',
+    ],
+  ])('refuses %s with the text the moderator app maps it by', async (_, error, refusal) => {
+    deleteUser.mockRejectedValueOnce(error());
+    const moderator = await moderatorSide();
+
+    const { status, body } = await call({ userId: TARGET, username: NAME });
+
+    expect(status).toBe(403);
+    expect(moderator[refusal]).toEqual(expect.any(String));
+    expect(moderator.restErrorReason(body, status)).toBe(moderator[refusal]);
+  });
+
   // THE CONTROL: any other failure is not reported as a hold.
   it('does not dress up another failure as a hold', async () => {
     deleteUser.mockRejectedValueOnce(new Error('boom'));
@@ -515,6 +574,8 @@ describe('user.delete — an account under a legal hold', () => {
     const { status, body } = await call({ userId: TARGET, username: NAME });
 
     expect(status).toBe(500);
-    expect(JSON.stringify(body)).not.toContain('legal hold');
+    expect(body).toEqual(
+      restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE)
+    );
   });
 });

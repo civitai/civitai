@@ -8,6 +8,10 @@ import type {
 } from '~/server/schema/csam.schema';
 import { csamCapabilitiesDictionary, csamContentsDictionary } from '~/server/schema/csam.schema';
 import { clickhouse } from '~/server/clickhouse/client';
+import {
+  getImageUploadIpEvents,
+  UPLOAD_REQUEST_IP_NOTE,
+} from '~/server/services/image-upload-action.service';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
@@ -56,6 +60,8 @@ import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { JsonReplacer } from '~/server/utils/json-stream-helpers';
 import { writeJsonObject } from '~/server/utils/json-stream-helpers';
 import { getConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
+import type { ShownRendition } from '@civitai/shared/held-media';
+import { SHOWN_ACTIONS, shownActivity } from '@civitai/shared/held-media';
 import { logToAxiom } from '~/server/logging/client';
 import { csamArchivePathFor, recordCsamArchive } from '~/server/metrics/csam-archive.metrics';
 import { trimNonAlphanumeric } from '~/utils/string-helpers';
@@ -91,6 +97,10 @@ type EvidenceFileRecord = {
 type CsamReportImage = {
   id: number;
   fileAnnotations?: Ncmec.FileAnnotationsSchema;
+  /** The `fileViewedByEsp` sent for this file. */
+  viewedByEsp?: boolean;
+  /** Which copy the record behind a true `viewedByEsp` says was on screen. */
+  viewRendition?: ShownRendition;
 } & CsamReportUploadProps &
   Partial<EvidenceFileRecord>;
 
@@ -99,7 +109,7 @@ type CsamReportUserActivity = {
   ip: string;
   time: string;
   details?: {
-    type: 'post' | 'model-version';
+    type: 'post' | 'model-version' | 'image-upload-request';
     id: number;
   };
 };
@@ -376,6 +386,9 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
         }));
         captureEvents = captureEvents.concat(postCaptureEvents);
       }
+      captureEvents = captureEvents.concat(
+        await getImageUploadIpEvents({ userId: report.userId, imageIds })
+      );
       break;
     case 'TrainingData':
       const modelVersionId = report.details?.modelVersionIds?.[0];
@@ -556,6 +569,49 @@ export async function processCsamReport(runStart: CsamReportProps) {
   }
 }
 
+export function getReportedUserAdditionalInfo(
+  email: string | null,
+  userActivity: CsamReportUserActivity[]
+) {
+  return (
+    [
+      email ? `Email: ${email}` : null,
+      userActivity.some((a) => a.details?.type === 'image-upload-request')
+        ? UPLOAD_REQUEST_IP_NOTE
+        : null,
+    ]
+      .filter(Boolean)
+      .join('\n') || undefined
+  );
+}
+
+const activityKey = (a: CsamReportUserActivity) =>
+  [a.type, a.ip, a.time, a.details?.type, a.details?.id].join('|');
+
+function mergeUserActivity(stored: CsamReportUserActivity[], live: CsamReportUserActivity[]) {
+  const seen = new Set(stored.map(activityKey));
+  return stored.concat(live.filter((a) => !seen.has(activityKey(a))));
+}
+
+/**
+ * The report's IP events: those stored on it plus any ClickHouse still holds, written back to the
+ * report before it is sent. Every unsent report passes here on each send run, so its IPs are kept
+ * on the report from its first run on, though the ClickHouse rows expire (upload requests after 12
+ * months). Undefined when the claim was lost.
+ */
+async function snapshotUserActivity(claim: SendClaim) {
+  const stored = claim.report.details?.userActivity ?? [];
+  const merged = mergeUserActivity(stored, await getUserIpInfo(claim.report));
+  if (isProd && merged.length > stored.length) {
+    const written = await updateUnderClaim(claim, 'ip-snapshot', {}, (current) => ({
+      ...current,
+      userActivity: mergeUserActivity(current.userActivity ?? [], merged),
+    }));
+    if (!written) return;
+  }
+  return merged;
+}
+
 async function getInitialReportData(claim: SendClaim) {
   const { report } = claim;
   const reportingUser = await getReportingUser(report.reportedById);
@@ -563,7 +619,8 @@ async function getInitialReportData(claim: SendClaim) {
   if (!reportingUser || !reportedUser)
     return await deleteUnderClaim(claim, 'no reporting or reported user');
 
-  const userActivity = await getUserIpInfo(report);
+  const userActivity = await snapshotUserActivity(claim);
+  if (!userActivity) return;
 
   return {
     incidentSummary: {
@@ -590,7 +647,7 @@ async function getInitialReportData(claim: SendClaim) {
           dateTime: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
         };
       }),
-      additionalInfo: reportedUser.email ? `Email: ${reportedUser.email}` : undefined,
+      additionalInfo: getReportedUserAdditionalInfo(reportedUser.email, userActivity),
     },
   } satisfies Report;
 }
@@ -1110,6 +1167,17 @@ async function reportImages(claim: SendClaim) {
       'archive-data'
     );
 
+  // Read before the CyberTip is opened: a view recorded once the send has begun does not count.
+  let viewed: Map<number, ShownRendition>;
+  try {
+    viewed = await getViewedImageIds(
+      images.map((image) => image.id),
+      report
+    );
+  } catch (e) {
+    return logSendFailure(report, e, 'send-view-check');
+  }
+
   // Known before the CyberTip is opened, so NCMEC is told in the report itself what it lacks.
   const noLongerStored =
     absent.length +
@@ -1194,12 +1262,14 @@ async function reportImages(claim: SendClaim) {
         data: { fileId, hash },
       } = await uploadToCyberTip(claim, file);
 
+      const viewRendition = viewed.get(image.id);
+      const viewedByEsp = !!viewRendition;
       await cybertipClient.submitFileDetails({
         reportId: ncmecReportId,
         fileId,
         originalFileName: image.name?.split('?')[0] ?? undefined,
         locationOfFile: imageUrl,
-        fileViewedByEsp: true,
+        fileViewedByEsp: viewedByEsp,
         fileAnnotations,
       });
 
@@ -1209,6 +1279,8 @@ async function reportImages(claim: SendClaim) {
         fileAnnotations,
         fileId,
         hash,
+        viewedByEsp,
+        viewRendition,
         source: original.source,
         sha256: original.sha256,
         bytes: original.data.length,
@@ -1261,6 +1333,42 @@ async function reportImages(claim: SendClaim) {
       },
       'error'
     );
+}
+
+/** The rows that count as a moderator having seen an image: opened or selected once on screen. */
+const shownActivities = (rendition: ShownRendition) =>
+  SHOWN_ACTIONS.map((action) => shownActivity(action, rendition));
+
+/** Each image's earliest counted row stamped before now, by the database's own clock, as the
+ *  rendition it records. A CDN row counts only when the report's filer wrote it, from a day before
+ *  the filing on. `createdAt` is zoneless and in UTC. */
+async function getViewedImageIds(
+  imageIds: number[],
+  report: Pick<CsamReportProps, 'reportedById' | 'createdAt'>
+) {
+  const viewed = new Map<number, ShownRendition>();
+  if (!imageIds.length) return viewed;
+  // The primary: a replica may not have a view recorded just before the send.
+  const rows = await dbWrite.$queryRaw<{ entityId: number; activity: string }[]>`
+    SELECT DISTINCT ON ("entityId") "entityId", activity FROM "ModActivity"
+    WHERE "entityType" = 'image'
+      AND "entityId" = ANY(${imageIds}::int[])
+      AND "createdAt" < (now() AT TIME ZONE 'UTC')
+      AND (
+        activity = ANY(${shownActivities('original')}::text[])
+        OR (
+          activity = ANY(${shownActivities('cdn-450')}::text[])
+          AND "userId" = ${report.reportedById}
+          AND "createdAt" >= (${new Date(
+            report.createdAt
+          ).toISOString()}::timestamptz AT TIME ZONE 'UTC') - interval '24 hours'
+        )
+      )
+    ORDER BY "entityId", "createdAt", id
+  `;
+  for (const { entityId, activity } of rows)
+    viewed.set(entityId, activity.slice(activity.lastIndexOf(':') + 1) as ShownRendition);
+  return viewed;
 }
 
 async function reportGenerationData(claim: SendClaim) {
@@ -1338,6 +1446,7 @@ async function reportGenerationData(claim: SendClaim) {
             await cybertipClient.submitFileDetails({
               fileId,
               reportId,
+              fileViewedByEsp: false,
               publiclyAvailable: false,
               // details: valuePair ? [{ type: FileDetailType.EXIF, valuePair }] : undefined,
             });
@@ -1410,7 +1519,12 @@ async function reportTrainingData(claim: SendClaim) {
           const {
             data: { fileId, hash },
           } = await uploadToCyberTip(claim, blobToFile(imgBlob, filename));
-          await cybertipClient.submitFileDetails({ reportId, fileId, originalFileName: filename });
+          await cybertipClient.submitFileDetails({
+            reportId,
+            fileId,
+            originalFileName: filename,
+            fileViewedByEsp: false,
+          });
           return { filename, fileId, hash };
         });
         return { trainingData: await sending.sent };
@@ -1549,7 +1663,7 @@ async function reportExternalLink(claim: SendClaim) {
               fileId,
               originalFileName: filename,
               locationOfFile,
-              fileViewedByEsp: true,
+              fileViewedByEsp: false,
               publiclyAvailable: false,
               fileAnnotations,
             });
@@ -1574,7 +1688,7 @@ async function reportExternalLink(claim: SendClaim) {
               reportId,
               fileId,
               originalFileName: filename,
-              fileViewedByEsp: true,
+              fileViewedByEsp: false,
               publiclyAvailable: false,
               fileRelevance: FileRelevance.SupplementalReported,
               additionalInfo: ['Chat log screenshot / supplemental evidence'],
