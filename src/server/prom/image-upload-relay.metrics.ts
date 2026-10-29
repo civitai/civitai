@@ -56,8 +56,8 @@
 // `~/server/metrics/generation-model-substitution.metrics.ts` documents for the
 // unseeded case — do not "simplify" an alert by removing the seeding or its call.
 //
-// 🔴 CARDINALITY: TWO labels over two closed unions, each declared exactly once — 16
-// outcomes here, 4 producers in `~/utils/image-upload-relay-producer`. 16 x 4 = 64
+// 🔴 CARDINALITY: TWO labels over two closed unions, each declared exactly once — 17
+// outcomes here, 4 producers in `~/utils/image-upload-relay-producer`. 17 x 4 = 68
 // series, TOTAL, per pod — a fixed bound that no traffic can move. Deliberately NO
 // user id, NO object key, NO bucket, NO host, NO path, NO content type, NO byte size:
 // every one of those is caller-influenced or unbounded, and prom-client retains each
@@ -71,7 +71,7 @@
 // single-PUT path, which shipped first — read as evidence for BOTH. Grading the newer
 // multipart path on the undifferentiated counter returns a confident false positive, and
 // no amount of reading the number more carefully fixes that: the discriminating fact is
-// simply not in the series. 64 fixed series is a cheap price for a signal that can answer
+// simply not in the series. 68 fixed series is a cheap price for a signal that can answer
 // the question it is consulted for. See that module for the header and the sanitiser.
 //
 // prom-client GOTCHA (same as the neighbouring metric modules): Next can evaluate a
@@ -113,6 +113,9 @@ export const IMAGE_UPLOAD_RELAY_OUTCOMES = [
   /** Chunked relay, 404 — no session with that id belongs to the caller (unknown, expired or
    *  someone else's; deliberately not told apart). */
   'session_invalid',
+  /** Chunked relay, 409 — `complete` found the multipart upload already completed or aborted
+   *  at the store. Terminal; the session is dropped. */
+  'upload_gone',
   /** Chunked relay, 400 — a malformed step: unknown action, bad size or part number, a piece
    *  whose declared length does not match the plan, or a complete with parts missing. */
   'bad_request',
@@ -126,7 +129,8 @@ export const IMAGE_UPLOAD_RELAY_OUTCOMES = [
   'busy',
   /** 413 — over the size cap, refused either by declared length or by running total. */
   'too_large',
-  /** 400 — the body ended short of its declared length; never stored. */
+  /** 400 — the body ended short of its declared length (or, for a chunked-relay piece, of its
+   *  planned size); never stored. */
   'truncated',
   /** 400 — a zero-length body. */
   'empty',
@@ -178,11 +182,14 @@ const HELP =
   'step); chunk_started = a chunked-relay session opened; chunk_stored = one chunked-relay ' +
   'piece stored; chunk_aborted = a chunked-relay session abandoned (none of these three is a ' +
   'rescue); session_invalid = ' +
-  'chunked-relay session unknown, expired or not the caller (404); bad_request = malformed ' +
+  'chunked-relay session unknown, expired or not the caller (404); upload_gone = chunked-relay ' +
+  'complete found the upload already completed or aborted at the store (409); ' +
+  'bad_request = malformed ' +
   'chunked-relay step (400); method_not_allowed = not a POST; ' +
   'forbidden_origin = production cross-origin guard; unauthorized = no session or banned; ' +
   'busy = shed by the per-pod in-flight cap (429); too_large = over the size cap (413); ' +
-  'truncated = body ended short of its declared Content-Length (400, never stored); ' +
+  'truncated = body ended short of its declared Content-Length, or a chunked-relay piece ' +
+  'is shorter than its planned size (400, never stored); ' +
   'empty = zero-length body (400); read_error = reading the body threw (400); ' +
   'store_error = the store write or the chunked-relay session store threw (500, or 499 on a ' +
   'client disconnect); ' +
@@ -210,7 +217,7 @@ const HELP =
   'that are alive right now. Do not alert on rate() of a single child.';
 
 /**
- * Seed all 64 series at 0 — the FULL CROSS PRODUCT of outcomes x producers.
+ * Seed all 68 series at 0 — the FULL CROSS PRODUCT of outcomes x producers.
  *
  * 🔴 THE CROSS PRODUCT IS THE POINT, not the outcome list. Seeding only the outcomes
  * (with some default producer) would restore the exact ambiguity this seeding exists to
@@ -230,7 +237,7 @@ const HELP =
  * every pod the honest, useful reading of this counter is a row of zeros. That reading
  * only exists if the zeros are emitted.
  *
- * Free by construction: 64 series is the counter's entire cardinality budget, so
+ * Free by construction: 68 series is the counter's entire cardinality budget, so
  * seeding costs exactly what a fully-exercised pod already costs and cannot grow.
  *
  * 🔴 SEEDING ALONE IS NOT ENOUGH. Something must CALL this at scrape time or the module

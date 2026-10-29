@@ -22,6 +22,7 @@ import {
 } from '~/utils/image-upload-relay-producer';
 import {
   abortImageMultipartToStore,
+  classifyS3MultipartError,
   completeImageMultipartToStore,
   startImageMultipartToStore,
   uploadImagePartToStore,
@@ -177,14 +178,16 @@ async function storePart(
       ? session.pieceSize
       : session.size - session.pieceSize * (session.partCount - 1);
 
-  // 🔴 A declared length is REQUIRED here, unlike `relay.ts`: it is the only way to tell Next's
-  // silent truncation from a clean end-of-body (see `readCappedBody`), and a piece we cannot
-  // verify must not become part of a stored image. Every real caller sends a Blob, which always
-  // declares one. An over-declared piece falls through to `readCappedBody`'s 413.
-  const declared = Number(firstValue(req.headers['content-length']));
-  if (!Number.isInteger(declared) || declared < expected) {
-    res.status(400).json({ error: 'Piece length does not match the upload plan' });
-    return 'bad_request';
+  // A declared length is checked against the plan before reading; an over-declared piece falls
+  // through to `readCappedBody`'s 413. It is optional because a proxy hop may forward the body
+  // without one — the byte-count check after the read is what holds either way.
+  const declaredRaw = firstValue(req.headers['content-length']);
+  if (declaredRaw !== undefined) {
+    const declared = Number(declaredRaw);
+    if (!Number.isInteger(declared) || declared < expected) {
+      res.status(400).json({ error: 'Piece length does not match the upload plan' });
+      return 'bad_request';
+    }
   }
 
   if (!tryAcquireRelaySlot(res)) return 'busy';
@@ -197,6 +200,13 @@ async function storePart(
       if (e instanceof TruncatedBodyError) return 'truncated';
       res.status(400).json({ error: 'Failed to read upload body' });
       return 'read_error';
+    }
+    // 🔴 The piece must be EXACTLY its planned size. With no declared length this is the only
+    // thing that tells Next's silent truncation from a clean end-of-body; a longer body was
+    // already refused by the cap above.
+    if (body.length !== expected) {
+      res.status(400).json({ error: 'Upload body was incomplete' });
+      return 'truncated';
     }
 
     try {
@@ -241,12 +251,22 @@ async function completeSession(
 
     // `size` is safe to register as the object's size: every part was length-checked against
     // the plan derived from it before it was stored.
-    const { key } = await completeImageMultipartToStore({
-      key: session.key,
-      uploadId: session.uploadId,
-      parts,
-      totalBytes: session.size,
-    });
+    let key: string;
+    try {
+      ({ key } = await completeImageMultipartToStore({
+        key: session.key,
+        uploadId: session.uploadId,
+        parts,
+        totalBytes: session.size,
+      }));
+    } catch (e) {
+      // Already completed or aborted at the store (a cancel racing this complete): terminal,
+      // so 409 like `/api/upload/complete`, and the session can never be used again.
+      if (classifyS3MultipartError(e) !== 'not-found') throw e;
+      await deleteRelaySession(sessionId).catch(() => undefined);
+      res.status(409).json({ error: 'Upload already finalized or aborted' });
+      return 'upload_gone';
+    }
     // The TTL reaps it if this fails; the object is stored either way.
     await deleteRelaySession(sessionId).catch(() => undefined);
     trackImageUpload(req, res, key);
@@ -278,7 +298,12 @@ async function abortSession(
   try {
     const session = await getOwnedRelaySession(sessionId, userId);
     if (!session || !sessionId) return sessionNotFound(res);
-    await abortImageMultipartToStore({ key: session.key, uploadId: session.uploadId });
+    try {
+      await abortImageMultipartToStore({ key: session.key, uploadId: session.uploadId });
+    } catch (e) {
+      // Already gone at the store: the abort's goal holds, so it is idempotent success.
+      if (classifyS3MultipartError(e) !== 'not-found') throw e;
+    }
     await deleteRelaySession(sessionId);
     res.status(200).json({ ok: true });
     return 'chunk_aborted';

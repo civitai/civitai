@@ -308,16 +308,47 @@ describe('chunked image-upload relay', () => {
       expect(await outcomes()).toMatchObject({ truncated: 1 });
     });
 
-    it('requires a declared length matching the plan', async () => {
+    it('refuses a declared length short of the plan before reading', async () => {
       const { session } = await start();
-      const missing = await call({
-        query: { action: 'part', session, part: '2' },
-        body: [Buffer.alloc(LAST_PIECE)],
-      });
       const short = await sendPart(session, 1, CHUNKED_RELAY_PIECE_BYTES - 1);
-      expect(missing.statusCode).toBe(400);
       expect(short.statusCode).toBe(400);
       expect(mockUploadPart).not.toHaveBeenCalled();
+      expect(await outcomes()).toMatchObject({ bad_request: 1 });
+    });
+
+    describe('with no Content-Length (a hop that forwards the body chunked)', () => {
+      function sendUndeclared(session: string, part: number, bytes: number) {
+        return call({
+          query: { action: 'part', session, part: String(part) },
+          body: [Buffer.alloc(bytes, part)],
+        });
+      }
+
+      it('accepts a piece of exactly its planned size', async () => {
+        const { session } = await start();
+        const res = await sendUndeclared(session, 2, LAST_PIECE);
+        expect(res.statusCode).toBe(200);
+        expect(mockUploadPart.mock.calls.map(([a]) => [a.partNumber, a.body.length])).toEqual([
+          [2, LAST_PIECE],
+        ]);
+      });
+
+      it('refuses a piece longer than planned with 413 and stores nothing', async () => {
+        const { session } = await start();
+        const res = await sendUndeclared(session, 2, LAST_PIECE + 1);
+        expect(res.statusCode).toBe(413);
+        expect(mockUploadPart).not.toHaveBeenCalled();
+        expect(await outcomes()).toMatchObject({ too_large: 1 });
+      });
+
+      it('refuses a piece shorter than planned with 400 and stores nothing', async () => {
+        const { session } = await start();
+        // Short by an amount unrelated to the piece size, the shape of a silently cut body.
+        const res = await sendUndeclared(session, 1, CHUNKED_RELAY_PIECE_BYTES - 98_765);
+        expect(res.statusCode).toBe(400);
+        expect(mockUploadPart).not.toHaveBeenCalled();
+        expect(await outcomes()).toMatchObject({ truncated: 1 });
+      });
     });
 
     it.each(['0', '3', '1.5', 'x'])('refuses part number %s outside the plan', async (part) => {
@@ -356,6 +387,14 @@ describe('chunked image-upload relay', () => {
       await sendPart(session, 1, CHUNKED_RELAY_PIECE_BYTES);
       expect(__getInFlightForTest()).toBe(0);
     });
+
+    it('releases its slot when the store write fails', async () => {
+      const { session } = await start();
+      mockUploadPart.mockRejectedValueOnce(new Error('store down'));
+      const res = await sendPart(session, 1, CHUNKED_RELAY_PIECE_BYTES);
+      expect(res.statusCode).toBe(500);
+      expect(__getInFlightForTest()).toBe(0);
+    });
   });
 
   describe('start', () => {
@@ -392,5 +431,65 @@ describe('chunked image-upload relay', () => {
     expect(res.statusCode).toBe(200);
     expect(mockAbort).toHaveBeenCalledExactlyOnceWith({ key: MINTED_KEY, uploadId: UPLOAD_ID });
     expect((await sendPart(session, 2, LAST_PIECE)).statusCode).toBe(404);
+  });
+
+  /**
+   * An upload already completed or aborted at the store surfaces as `NoSuchUpload`. These go
+   * through the REAL `classifyS3MultipartError` (the s3-utils mock spreads the original), the
+   * same classifier `/api/upload/{complete,abort}` use; the unclassified error beside each is the
+   * control that it is the classification, not any throw, that changes the answer.
+   */
+  describe('a multipart upload already gone at the store', () => {
+    const noSuchUpload = () => Object.assign(new Error('gone'), { name: 'NoSuchUpload' });
+
+    async function startWithAllParts() {
+      const { session } = await start();
+      await sendPart(session, 1, CHUNKED_RELAY_PIECE_BYTES);
+      await sendPart(session, 2, LAST_PIECE);
+      return session;
+    }
+
+    it('complete answers a terminal 409 and drops the session', async () => {
+      const session = await startWithAllParts();
+      mockComplete.mockRejectedValueOnce(noSuchUpload());
+
+      const res = await call({ query: { action: 'complete', session } });
+
+      expect(res.statusCode).toBe(409);
+      expect(await outcomes()).toMatchObject({ upload_gone: 1 });
+      expect(mockTrackImageUpload).not.toHaveBeenCalled();
+      expect((await call({ query: { action: 'complete', session } })).statusCode).toBe(404);
+    });
+
+    it('complete still answers 500 for an unclassified store error', async () => {
+      const session = await startWithAllParts();
+      mockComplete.mockRejectedValueOnce(new Error('boom'));
+
+      const res = await call({ query: { action: 'complete', session } });
+
+      expect(res.statusCode).toBe(500);
+      expect(await outcomes()).toMatchObject({ store_error: 1 });
+    });
+
+    it('abort treats it as already done', async () => {
+      const { session } = await start();
+      mockAbort.mockRejectedValueOnce(noSuchUpload());
+
+      const res = await call({ query: { action: 'abort', session } });
+
+      expect(res.statusCode).toBe(200);
+      expect(await outcomes()).toMatchObject({ chunk_aborted: 1 });
+      expect((await call({ query: { action: 'abort', session } })).statusCode).toBe(404);
+    });
+
+    it('abort still answers 500 for an unclassified store error', async () => {
+      const { session } = await start();
+      mockAbort.mockRejectedValueOnce(new Error('boom'));
+
+      const res = await call({ query: { action: 'abort', session } });
+
+      expect(res.statusCode).toBe(500);
+      expect(await outcomes()).toMatchObject({ store_error: 1 });
+    });
   });
 });
