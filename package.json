@@ -1,6 +1,6 @@
 {
   "name": "model-share",
-  "version": "5.1.391",
+  "version": "5.1.392",
   "private": true,
   "packageManager": "pnpm@10.28.1",
   "engines": {
@@ -255,7 +255,7 @@
     "google-auth-library": "^9.15.0",
     "googleapis": "^144.0.0",
     "gray-matter": "^4.0.3",
-    "happy-dom": "^20.0.2",
+    "happy-dom": "^20.14.6",
     "he": "^1.2.0",
     "html-to-text": "^9.0.5",
     "html2canvas-pro": "2.3.8",
