@@ -3681,12 +3681,18 @@ export const upsertModel = async (
         const locked = await lockModelRow(tx, id);
         const prevMeta = locked?.meta ?? null;
         if (!isModerator && isRemovedWithOwner(prevMeta)) throw removedWithOwnerEditError();
-        // The profanity lock was decided off the read before this transaction. A lock that landed
-        // since (a moderator's) wins: this save neither rewrites it nor claims it as the system's.
-        if (profanityAutoNsfw && locked?.lockedProperties.includes('nsfw')) {
-          delete data.nsfw;
-          delete data.lockedProperties;
-          meta = withoutSystemNsfwLock(meta ?? {});
+        // Locks are enforced again against this locked row: the enforcement above read the row
+        // before the transaction, and a lock set since then wins over the owner's value. The
+        // profanity lock is built from this row too, so it keeps every lock the row has now.
+        if (!isModerator && locked) {
+          enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
+          if (profanityAutoNsfw && locked.lockedProperties.includes('nsfw')) {
+            profanityAutoNsfw = false;
+            meta = withoutSystemNsfwLock(meta ?? {});
+          } else if (profanityAutoNsfw) {
+            data.nsfw = true;
+            data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
+          }
         }
         if (
           !isModerator &&
@@ -6295,6 +6301,12 @@ export const privateModelFromTraining = async ({
           takenDown = true;
           throw error;
         }
+        // Against this locked row as well as the read above: a lock set since then wins.
+        enforceLockedProperties({
+          data,
+          storedLockedProperties: locked.lockedProperties,
+          isModerator: user.isModerator,
+        });
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
         // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
