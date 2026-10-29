@@ -509,6 +509,8 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'apps/assistant/runner-viewer-token',
   'apps/assistant/token',
   'auth/freshdesk',
+  // Session submit (App Assistant's Submit for review): no OAuth-client token reaches submitVersion here.
+  'blocks/submit-version',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',
   'user/orchestrator-key',
