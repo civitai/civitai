@@ -5,6 +5,7 @@ import { isModerationAccountUser, isSystemAccountMeta } from '@civitai/auth';
 import { TokenScope, TokenScopePresets } from '@civitai/auth/token-scope';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import { holdsModeratorAccess } from '~/server/auth/moderator-access';
 import { logToAxiom } from '~/server/logging/client';
 import { addApiKey, deleteApiKeys } from '~/server/services/api-key.service';
 import { trackModActivity } from '~/server/services/moderator.service';
@@ -71,19 +72,14 @@ async function refusal(userId: number): Promise<{ status: number; error: string 
   if (!user) return { status: 404, error: 'User not found' };
   if (!isSystemAccountMeta(user.meta)) return { status: 403, error: 'Not a system account' };
   if (user.deletedAt || user.bannedAt) return { status: 403, error: 'Account is not active' };
-  if (isModerationAccountUser(user, env.CIVITAI_MODERATION_USER_ID) || user.isModerator)
+  if (
+    isModerationAccountUser(user, env.CIVITAI_MODERATION_USER_ID) ||
+    (await holdsModeratorAccess({
+      isModerator: user.isModerator,
+      roles: user.roles.map(({ role }) => role),
+    }))
+  )
     return { status: 403, error: 'Account has moderator access' };
-
-  const roles = user.roles.map(({ role }) => role);
-  if (roles.includes('moderator:admin'))
-    return { status: 403, error: 'Account has moderator access' };
-  if (roles.length) {
-    const held = await dbWrite.appPageAccess.findFirst({
-      where: { app: 'moderator', roles: { hasSome: roles } },
-      select: { path: true },
-    });
-    if (held) return { status: 403, error: 'Account has moderator access' };
-  }
   return null;
 }
 
