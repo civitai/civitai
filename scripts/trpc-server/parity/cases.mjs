@@ -3,9 +3,10 @@
  * `trpc-server/server.cjs` booted from the same image with the same environment, and the two
  * responses are diffed (see `compare.mjs`).
  *
- * `divergence` declares a difference this server is KNOWN not to reproduce, with the reason. A
- * declared case still has its status compared; only the parts it names are reported instead of
- * failed. Nothing else may differ.
+ * `divergence` declares a case where Next's answer is KNOWN to differ, with the reason. Only the
+ * Next side is let go: the candidate's answer is pinned EXACTLY instead (status, status message,
+ * every header but Date/Connection/Keep-Alive, body bytes), so a change to this server still goes
+ * red. Every other case must match Next.
  *
  * Cases only use procedures that need no seeded data: CI runs both servers against an empty
  * database, so DB-backed procedures fail — identically on both sides, which is still compared.
@@ -40,6 +41,28 @@ const edge = {
   'x-forwarded-proto': 'https',
   origin: SITE,
   referer: `${SITE}/`,
+};
+
+const PAGE_RENDERED =
+  "Next answers via page rendering (here the preview-auth guard's 302 because IS_PREVIEW=true; in production its HTML 404/400 page). Mode R renders no pages; routing must send only single-segment /api/trpc/<seg> to it.";
+
+/** This server's exact answers for those paths (router headers, then a plain-text body). */
+const NOT_FOUND = {
+  status: 404,
+  statusMessage: 'Not Found',
+  headers: [
+    'content-length: 9',
+    'content-type: text/plain; charset=utf-8',
+    'x-frame-options: DENY',
+  ],
+  body: 'Not Found',
+};
+// No routing headers: under Next the decode error is thrown before they are applied.
+const BAD_REQUEST = {
+  status: 400,
+  statusMessage: 'Bad Request',
+  headers: ['content-length: 11', 'content-type: text/plain; charset=utf-8'],
+  body: 'Bad Request',
 };
 
 /**
@@ -183,30 +206,24 @@ export function buildCases(ctx) {
       path: '/api/trpc//content.get',
       headers: edge,
     },
+    // These three never reach a route, and Next answers them by rendering a page.
     {
       id: 'multi-segment-fetch',
       path: '/api/trpc/a/b',
       headers: { ...edge, 'sec-fetch-dest': 'empty' },
+      divergence: { reason: PAGE_RENDERED, candidate: NOT_FOUND },
     },
     {
       id: 'multi-segment-document',
       path: '/api/trpc/a/b',
       headers: edge,
-      divergence: {
-        parts: ['headers', 'body'],
-        reason:
-          'Next renders its 404 page here; this server never loads the page renderer and answers a plain-text 404. Only reachable if the router sends multi-segment paths to this server.',
-      },
+      divergence: { reason: PAGE_RENDERED, candidate: NOT_FOUND },
     },
     {
       id: 'bad-percent-escape',
       path: '/api/trpc/%E0%A4%A',
       headers: edge,
-      divergence: {
-        parts: ['headers', 'body'],
-        reason:
-          'Next renders its /_error page with 400 here; this server answers a plain-text 400 for the same status.',
-      },
+      divergence: { reason: PAGE_RENDERED, candidate: BAD_REQUEST },
     },
 
     // --- 8. region --------------------------------------------------------------------------------

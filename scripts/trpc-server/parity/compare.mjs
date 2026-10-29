@@ -16,7 +16,8 @@
  *   node compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
  *     --env-file parity.env --redis 127.0.0.1:6379 --report out.json [--expect-red <case-id>]
  *
- * Exit codes: 0 parity (every undeclared part equal); 1 a difference; 2 the harness could not
+ * Exit codes: 0 parity (every case equal to Next, every declared case equal to its pinned
+ * answer); 1 a difference; 2 the harness could not
  * observe what it was asked to (a server unreachable, no cases ran, …). With `--expect-red`, the
  * run must instead DIFFER on that case and 0 means it did — the negative control that proves the
  * harness can see a broken server.
@@ -264,6 +265,29 @@ function compare(c, ra, rb) {
   return parts;
 }
 
+/** The candidate's response against a declared case's exact expected answer. */
+function compareToPin(pin, rb) {
+  const parts = { status: [], headers: [], body: [] };
+  if (rb.error) {
+    parts.status.push(`transport: ${rb.error}`);
+    return parts;
+  }
+  if (rb.status !== pin.status || rb.statusMessage !== pin.statusMessage) {
+    parts.status.push(
+      `pinned ${pin.status} ${pin.statusMessage} vs ${rb.status} ${rb.statusMessage}`
+    );
+  }
+  const hb = headerMultiset(rb.rawHeaders);
+  parts.headers.push(
+    ...multisetDiff([...pin.headers].sort(), hb.headers),
+    ...hb.cookies.map((cookie) => `+ set-cookie: ${cookie}`)
+  );
+  if (!rb.body.equals(Buffer.from(pin.body))) {
+    parts.body.push(`pinned: ${pin.body}`, `B: ${snippet(rb.body)}`);
+  }
+  return parts;
+}
+
 // --- run ----------------------------------------------------------------------------------------------
 
 const cases = buildCases({ sessionCookie });
@@ -278,13 +302,10 @@ for (const c of cases) {
   const rb = await send(args.b, c);
   await sleep(settleMs);
 
-  const parts = compare(c, ra, rb);
-  const declared = new Set(c.divergence ? c.divergence.parts : []);
+  // A declared case lets only the reference differ: the candidate is held to its pinned answer.
+  const parts = c.divergence ? compareToPin(c.divergence.candidate, rb) : compare(c, ra, rb);
   const failing = Object.entries(parts)
-    .filter(([part, diffs]) => diffs.length > 0 && !declared.has(part))
-    .map(([part]) => part);
-  const declaredSeen = Object.entries(parts)
-    .filter(([part, diffs]) => diffs.length > 0 && declared.has(part))
+    .filter(([, diffs]) => diffs.length > 0)
     .map(([part]) => part);
 
   results.push({
@@ -300,9 +321,9 @@ for (const c of cases) {
       : { status: rb.status, statusMessage: rb.statusMessage },
     // What the case actually exercised, so a run where every case short-circuits is visible.
     referenceBody: ra.error ? undefined : snippet(ra.body),
-    verdict: failing.length > 0 ? 'DIFF' : declaredSeen.length > 0 ? 'DECLARED' : 'SAME',
+    verdict: failing.length > 0 ? 'DIFF' : c.divergence ? 'DECLARED' : 'SAME',
     failing,
-    declared: c.divergence ? { ...c.divergence, seen: declaredSeen } : undefined,
+    declared: c.divergence,
     diffs: parts,
   });
 }
