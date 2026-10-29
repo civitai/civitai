@@ -22,7 +22,7 @@ const run = async (completedAt = RUN_AT) =>
       [completedAt]
     )
   ).rows[0].id;
-const pass = (extra: { batchSize?: number } = {}) =>
+const pass = (extra: { batchSize?: number; budgetMs?: number } = {}) =>
   runPostDetectionPass(db, { now: NOW, log, ...extra });
 const cleared = async (userId: number) =>
   (
@@ -207,6 +207,27 @@ describe('gold clearing', () => {
   });
 });
 
+describe('a pass that runs out of time', () => {
+  it('stays open and finishes on the next tick', async () => {
+    await seedPlayer(pg, 1);
+    await seedSettledVote(pg, { itemId: 1, playerId: 1, imageId: 101, gold: 100 });
+    await setGold(pg, 1, { earned: 100 });
+    const runId = await run();
+
+    expect(await pass({ budgetMs: 0 })).toMatchObject({
+      ran: true,
+      runId,
+      done: false,
+      clearedGold: 0,
+    });
+    expect(await labels()).toEqual([]);
+    expect(await cleared(1)).toBe(0);
+
+    expect(await pass()).toMatchObject({ done: true, clearedGold: 100, labelsWritten: 1 });
+    expect(await pass()).toEqual({ ran: false });
+  });
+});
+
 describe('labels', () => {
   const vote = (itemId: number, playerId: number, imageId: number, answer = '4') =>
     seedSettledVote(pg, { itemId, playerId, imageId, answer });
@@ -332,6 +353,28 @@ describe('labels', () => {
         requireUnanimous: false,
       },
     ]);
+  });
+
+  it('gives up on a vote the store keeps refusing, after a few tries', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await vote(1, 1, 101);
+    await vote(2, 2, 102);
+    await pg.exec(
+      `INSERT INTO label_store.erased_subject ("subjectType","subjectId") VALUES ('image','101')`
+    );
+
+    const failures: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      await run(`2026-12-${13 + i} 00:00:00`);
+      const result = await pass();
+      failures.push(result.ran ? result.labelFailures : -1);
+    }
+
+    expect(failures.slice(0, 5)).toEqual([1, 1, 1, 1, 1]);
+    expect(failures.slice(-2)).toEqual([0, 0]);
+    expect(await labelled(1)).toEqual([true]);
+    expect(await labels()).toHaveLength(1);
   });
 
   it('does not label yes/no votes', async () => {

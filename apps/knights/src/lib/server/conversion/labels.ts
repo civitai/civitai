@@ -3,6 +3,9 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { utc } from '@civitai/db/kysely';
 import { heldSql } from './held';
 
+/** A vote the store has refused this many times is given up on (its reason stays in `record_failure`), so it is not retried forever. */
+const MAX_REFUSALS = 5;
+
 export type LabelCursor = { settledAt: Date; itemId: number; playerId: number };
 export type LabelBatch = {
   scanned: number;
@@ -84,9 +87,11 @@ export async function writeLabelBatch(
       FROM base b
     ), outcome AS (
       SELECT r.*,
-        (NOT r."hasSubject" OR r."labelId" IS NOT NULL OR EXISTS (
-          SELECT 1 FROM label_store.label l WHERE l."sourceRef" = r."ref"
-        )) AS "done"
+        CASE
+          WHEN NOT r."hasSubject" OR r."labelId" IS NOT NULL THEN true
+          WHEN EXISTS (SELECT 1 FROM label_store.label l WHERE l."sourceRef" = r."ref") THEN true
+          ELSE (SELECT count(*) FROM label_store.record_failure f WHERE f."sourceRef" = r."ref") >= ${MAX_REFUSALS}
+        END AS "done"
       FROM rec r
     ), marked AS (
       UPDATE "KnightsVote" v SET "labelled" = true
