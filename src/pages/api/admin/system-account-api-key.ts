@@ -64,8 +64,14 @@ async function refusal(userId: number) {
   );
 }
 
+// Unconfigured while it repeats another admin token.
+function keyToken() {
+  const token = env.SYSTEM_ACCOUNT_KEY_TOKEN;
+  return token && [env.WEBHOOK_TOKEN, env.JOB_TOKEN].includes(token) ? undefined : token;
+}
+
 export default HeaderTokenSecuredEndpoint(
-  () => env.SYSTEM_ACCOUNT_KEY_TOKEN,
+  keyToken,
   async function (req: AxiomAPIRequest, res: NextApiResponse) {
     if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
     res.setHeader('Cache-Control', 'no-store');
