@@ -39,6 +39,15 @@ beforeEach(() => {
 });
 
 describe('UserErrorBoundary reset', () => {
+  // React 18 gets the first mount right even without this, because the error
+  // retry reuses the derived state; pinned so that does not have to be relied on.
+  test('initial state already agrees with the reset key', () => {
+    const props = { features, resetKey: '/images/1', children: null };
+    const boundary = new UserErrorBoundary(props);
+
+    expect(UserErrorBoundary.getDerivedStateFromProps(props, boundary.state)).toBeNull();
+  });
+
   // The boundary's own first render is where a stored key and the prop could
   // disagree; a reset there would retry the page that just threw, forever.
   test('a page that throws on first mount settles on the fallback, then recovers', async () => {
