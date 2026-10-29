@@ -2,6 +2,8 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { isProd } from '~/env/other';
 import { prepareModelVersionResponse } from '~/pages/api/v1/model-versions/[id]';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
+import { showsSfwFace } from '~/shared/utils/model-sfw-face';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { dbRead } from '~/server/db/client';
 import { getModelVersionApiSelect } from '~/server/selectors/modelVersion.selector';
@@ -64,13 +66,15 @@ export default PublicEndpoint(
     const baseUrl = new URL(
       isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
     );
+    const showSfwFace = showsSfwFace(apiBrowsingLevel(req));
     const modelVersions = await Promise.all(
       files.map((file) =>
         prepareModelVersionResponse(
           file.modelVersion,
           baseUrl,
           images.filter((x) => x.modelVersionId === file.modelVersion.id),
-          paidAccess[file.modelVersion.id] ?? null
+          paidAccess[file.modelVersion.id] ?? null,
+          showSfwFace
         )
       )
     );

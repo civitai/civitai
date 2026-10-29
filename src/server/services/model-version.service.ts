@@ -196,6 +196,7 @@ import {
 } from '~/shared/constants/basemodel.constants';
 import type { ImageMetadata } from '~/server/schema/media.schema';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 
 export const getModelVersionRunStrategies = async ({
   modelVersionId,
@@ -219,8 +220,15 @@ export const getVersionById = async <TSelect extends Prisma.ModelVersionSelect>(
   return result;
 };
 
-export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
+export const getVersionsByIds = async ({
+  ids,
+  browsingLevel,
+}: {
+  ids: number[];
+  browsingLevel?: number;
+}) => {
   if (ids.length === 0) return [];
+  const showSfwFace = showsSfwFace(browsingLevel);
 
   const results = await dbRead.modelVersion.findMany({
     where: { id: { in: ids } },
@@ -232,6 +240,7 @@ export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
         select: {
           id: true,
           name: true,
+          sfwName: true,
           minor: true,
           sfwOnly: true,
         },
@@ -244,7 +253,7 @@ export const getVersionsByIds = async ({ ids }: { ids: number[] }) => {
     name: v.name,
     baseModel: v.baseModel,
     modelId: v.model.id,
-    modelName: v.model.name,
+    modelName: resolveModelFace(v.model, showSfwFace).name,
     minor: v.model.minor,
     sfwOnly: v.model.sfwOnly,
   }));

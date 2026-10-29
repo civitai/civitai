@@ -3914,6 +3914,15 @@ export const upsertModel = async (
       await updateModelNsfwLevels([result.id]);
       await bustPublicModelResponseCache(result.id);
     }
+    // The generator's cached version rows carry the .com title.
+    if (sfwFaceChanged) {
+      const versions = await dbWrite.modelVersion.findMany({
+        where: { modelId: result.id },
+        select: { id: true },
+      });
+      const { resourceDataCache } = await import('~/server/redis/resource-data.redis');
+      await resourceDataCache.bust(versions.map((version) => version.id));
+    }
 
     // A lift is the moderator's only when their input set the flag false: a sweep clearing it
     // between the read and the write must not be stamped as their decision.
