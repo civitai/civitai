@@ -792,7 +792,7 @@ jobs:
     #
     # ── THE APP TYPECHECK RIDES HERE, AND WHY IT IS NOT ITS OWN JOB ANY MORE ──────────────
     #
-    # It was the `apps-typecheck` job: ~2m of `tsc` behind a full checkout + install, and the
+    # It was the `apps-typecheck` job: a short `tsc` behind a full checkout + install, and the
     # plan's org-wide concurrent-job limit is what this workflow saturates, so every job a run
     # starts queues someone else's. Both suites are blocking and small, so they share one
     # install. Its step is `!cancelled()` and the package ledger is `always()`, so a red in
@@ -800,9 +800,9 @@ jobs:
     #
     # 🔴 THE TIMEOUT IS SHARED NOW, WHICH IS EXACTLY WHAT ONCE CANCELLED THIS TYPECHECK. It
     # left the `apps` job because that job's tests grew into the shared timeout and killed a
-    # typecheck that takes ~2m. This job is the opposite shape (the package suites run in
-    # well under a minute), and 20m leaves several times the combined runtime as headroom. If
-    # either half grows toward it, split them again rather than raising the limit blind.
+    # short typecheck. This job is the opposite shape (both halves are short), and 20m leaves
+    # several times the combined runtime as headroom. Re-read the step durations if either half
+    # grows toward it, and split them again rather than raising the limit blind.
     timeout-minutes: 20
     # Per-suite selectors, evaluated once so each step's `if` reads a name rather than
     # repeating the `only` expression. They render as the strings 'true' / 'false'.
@@ -902,12 +902,11 @@ jobs:
         if: always() && env.SUITE_PACKAGES == 'true'
         run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
 
-      # No app under `apps/` was typechecked by anything before this. The root
-      # `pnpm run typecheck` is bounded by the root tsconfig `include` — `src`,
-      # `packages/*/src`, `scripts/local-dev/*.ts`, `tests`, `test`,
-      # `.next/types/**/*.ts` — with no `apps/*` entry, and BOTH tiers (this
-      # workflow's `typecheck` job and the `tekton / typecheck` status) run that
-      # same script, so the gap could not close on its own.
+      # The only typecheck `apps/*` gets. The root `pnpm run typecheck` is bounded by
+      # the root tsconfig `include` — `src`, `packages/*/src`, `scripts/local-dev/*.ts`,
+      # `tests`, `test`, `.next/types/**/*.ts` — with no `apps/*` entry, and BOTH tiers
+      # (this workflow's `typecheck` job and the `tekton / typecheck` status) run that
+      # same script.
       #
       # `!cancelled()` so a red package step does not hide this verdict; gated on the install
       # rather than on the steps above, because a typecheck without `node_modules` would only
@@ -1023,8 +1022,8 @@ jobs:
     # a reason to keep this job Chromium-free") and points at vitest.config.mts's dedupe +
     # optimizeDeps pre-bundling as the canonical fix for it.
     #
-    # Blocking on PRs for `component` itself: `main` was 380/380 files green when it was added,
-    # so a red here is the PR's. (`main` has no required checks; this cannot block a merge, only
+    # Blocking on PRs for `component` itself: `main` was green when it was added, so a red here
+    # is the PR's. (`main` has no required checks; this cannot block a merge, only
     # show red on it.) There is no job-level `continue-on-error`: report-only is per step.
     #
     # 35, not the 25 `component` alone had: geometry and the quarantine run each add a few
@@ -1103,13 +1102,9 @@ jobs:
       #   the step underneath failed — a green that has to be disbelieved, which is worse than no
       #   run at all.
       #
-      # 🔴 THIS WAS WRITTEN AS A LITERAL `true` FIRST AND CI CAUGHT IT.
-      # `scripts/__tests__/main-branch-ci-coverage.test.ts` > "has no unconditionally
-      # report-only job on the push path" went red on the PR that added the tier. The guard is
-      # not a style rule: it forbids exactly the stale-TRUE shape described above, and it
-      # accepts a conditional value BECAUSE a conditional can differ between a PR and a push
-      # while a literal cannot. It now checks steps as well as jobs. Do not "simplify" this
-      # back to `true`.
+      # 🔴 NOT A LITERAL `true`: `scripts/__tests__/main-branch-ci-coverage.test.ts` rejects an
+      # unconditionally report-only job or step on the push path, because a conditional can
+      # differ between a PR and a push while a literal cannot.
       #
       # 🔴 ON A PR A RED GEOMETRY STEP READS `success` EVERYWHERE THE API LOOKS. A step-level
       # `continue-on-error` reports `conclusion: success` for the step in the jobs endpoint and
@@ -1124,10 +1119,7 @@ jobs:
       # together. What would make that safe, concretely: no run red for a reason other than a
       # real geometry regression — in particular no Chromium launch failures and no timeouts on
       # a 2-core runner. This tier has no import/transform phase to blame, unlike `unit`, so a
-      # red is either the code or the browser — both worth someone's attention. (Runner wall
-      # time has not been re-measured since the tier was 10 tests. Derive the current count
-      # rather than reading one here — every figure written into this file has gone stale
-      # within a commit or two.)
+      # red is either the code or the browser — both worth someone's attention.
       #
       # Gated on the Chromium install rather than on `component`: it must run after a red
       # component suite, and must not run, and fail a second time, when setup never finished.
@@ -1233,9 +1225,8 @@ jobs:
       # blocking `Component tests` step and runs here instead, with the groups skipped there
       # un-skipped. List and exit conditions: scripts/ci/component-quarantine.mjs.
       #
-      # NOT RUN ON PULL REQUESTS. Its exit criterion — 10 green runs in a row, or re-decide by
-      # 2026-11-11 — is read from runs on `main`, and on a PR it was report-only anyway, so a PR
-      # run bought a few runner-minutes of a verdict nobody was asked to act on. Count the green
+      # Push to `main` and dispatch only; exit criteria in scripts/ci/component-quarantine.mjs,
+      # read from runs on `main`. Count the green
       # streak from this STEP's conclusion in push runs on `main` (jobs endpoint): here it is a
       # real verdict, so a red quarantine run turns the `main` run red, attributed by step name.
       # The `continue-on-error` expression is inert while the step skips PRs; it is kept so
