@@ -266,6 +266,34 @@ describe('POST /api/admin/system-account-profile', () => {
     expect(logToAxiom).not.toHaveBeenCalled();
   });
 
+  it('reopens chat when a policy other than nobody is set while chat is switched off', async () => {
+    users = [
+      systemUser({ settings: { chat: { dmPolicy: 'everyone' }, features: { chat: false } } }),
+    ];
+    const { status, body } = await call({
+      userId: SYSTEM_ID,
+      settings: { chat: { dmPolicy: 'everyone' } },
+    });
+    expect(status).toBe(200);
+    expect(body.changed).toEqual(['settings.chat.dmPolicy', 'settings.features.chat']);
+    expect(patchUserSettings).toHaveBeenCalledWith(SYSTEM_ID, {
+      mergeInto: { chat: { dmPolicy: 'everyone' }, features: { chat: true } },
+      location: 'admin/system-account-profile',
+    });
+    expect(trackModActivity).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves chat switched off when the policy set is nobody', async () => {
+    users = [
+      systemUser({ settings: { chat: { dmPolicy: 'everyone' }, features: { chat: false } } }),
+    ];
+    await call({ userId: SYSTEM_ID, settings: { chat: { dmPolicy: 'nobody' } } });
+    expect(patchUserSettings).toHaveBeenCalledWith(SYSTEM_ID, {
+      mergeInto: { chat: { dmPolicy: 'nobody' } },
+      location: 'admin/system-account-profile',
+    });
+  });
+
   it('writes only the field that differs', async () => {
     const { body } = await call({
       userId: SYSTEM_ID,
@@ -291,7 +319,7 @@ describe('POST /api/admin/system-account-profile', () => {
       settings: { chat: { dmPolicy: 'nobody' } },
     });
     expect(status).toBe(500);
-    expect(body).toMatchObject({ changed: ['name'], failed: 'settings.chat.dmPolicy' });
+    expect(body).toMatchObject({ changed: ['name'], failed: ['settings.chat.dmPolicy'] });
     expect(trackModActivity).toHaveBeenCalledTimes(1);
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -299,7 +327,7 @@ describe('POST /api/admin/system-account-profile', () => {
         details: {
           userId: SYSTEM_ID,
           changed: ['name'],
-          failed: { field: 'settings.chat.dmPolicy', error: 'Error' },
+          failed: { fields: ['settings.chat.dmPolicy'], error: 'Error' },
           asserted_actor: 9,
         },
       }),
@@ -315,7 +343,7 @@ describe('POST /api/admin/system-account-profile', () => {
       settings: { chat: { dmPolicy: 'nobody' } },
     });
     expect(status).toBe(500);
-    expect(body).toMatchObject({ changed: [], failed: 'name' });
+    expect(body).toMatchObject({ changed: [], failed: ['name'] });
     expect(trackModActivity).toHaveBeenCalledTimes(1);
     expect(patchUserSettings).not.toHaveBeenCalled();
   });

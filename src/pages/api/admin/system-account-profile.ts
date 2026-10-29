@@ -1,10 +1,12 @@
 import type { AxiomAPIRequest } from '@civitai/next-axiom';
 import type { NextApiResponse } from 'next';
 import * as z from 'zod';
-import { isModerationAccountUser, isSystemAccountMeta } from '@civitai/auth';
 import { env } from '~/env/server';
 import { isReservedModerationUsername } from '~/server/auth/moderation-account';
-import { holdsModeratorAccess } from '~/server/auth/moderator-access';
+import {
+  systemAccountRefusal,
+  systemAccountSelect,
+} from '~/server/auth/system-account-eligibility';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { chatDmPolicy } from '~/server/schema/chat.schema';
@@ -73,55 +75,44 @@ export default HeaderTokenSecuredEndpoint(
 
     const user = await dbWrite.user.findUnique({
       where: { id: userId },
-      select: {
-        id: true,
-        username: true,
-        meta: true,
-        deletedAt: true,
-        bannedAt: true,
-        isModerator: true,
-        roles: { select: { role: true } },
-        name: true,
-        settings: true,
-      },
+      select: { ...systemAccountSelect, name: true, settings: true },
     });
-    if (!user) return res.status(404).json({ error: 'User not found' });
-    if (!isSystemAccountMeta(user.meta))
-      return res.status(403).json({ error: 'Not a system account' });
-    if (user.deletedAt || user.bannedAt)
-      return res.status(403).json({ error: 'Account is not active' });
-    if (
-      isModerationAccountUser(user, env.CIVITAI_MODERATION_USER_ID) ||
-      (await holdsModeratorAccess({
-        isModerator: user.isModerator,
-        roles: user.roles.map(({ role }) => role),
-      }))
-    )
-      return res.status(403).json({ error: 'Account has moderator access' });
+    const refused = await systemAccountRefusal(user);
+    if (refused || !user) return res.status(refused?.status ?? 404).json({ error: refused?.error });
 
-    const writes: [field: string, write: () => Promise<unknown>][] = [];
+    const writes: [fields: string[], write: () => Promise<unknown>][] = [];
     if (name !== undefined && name !== user.name)
-      writes.push(['name', () => forceUpdateUserIdentity({ userId, name })]);
-    if (dmPolicy !== undefined && asObject(asObject(user.settings).chat).dmPolicy !== dmPolicy)
-      writes.push([
-        'settings.chat.dmPolicy',
-        () =>
-          patchUserSettings(userId, {
-            mergeInto: { chat: { dmPolicy } },
-            location: 'admin/system-account-profile',
-          }),
-      ]);
+      writes.push([['name'], () => forceUpdateUserIdentity({ userId, name })]);
+    if (dmPolicy !== undefined) {
+      const stored = asObject(user.settings);
+      // `features.chat === false` reads as `nobody` (resolveDmPolicy), as in chat.controller.
+      const reopenChat = dmPolicy !== 'nobody' && asObject(stored.features).chat === false;
+      if (reopenChat || asObject(stored.chat).dmPolicy !== dmPolicy)
+        writes.push([
+          reopenChat
+            ? ['settings.chat.dmPolicy', 'settings.features.chat']
+            : ['settings.chat.dmPolicy'],
+          () =>
+            patchUserSettings(userId, {
+              mergeInto: {
+                chat: { dmPolicy },
+                ...(reopenChat ? { features: { chat: true } } : {}),
+              },
+              location: 'admin/system-account-profile',
+            }),
+        ]);
+    }
     if (!writes.length) return res.status(200).json({ userId, changed: [], auditRecorded: false });
 
     // A failed write may still have committed, so it is audited with the ones that succeeded.
     const changed: string[] = [];
-    let failed: { field: string; error: string } | undefined;
-    for (const [field, write] of writes) {
+    let failed: { fields: string[]; error: string } | undefined;
+    for (const [fields, write] of writes) {
       try {
         await write();
-        changed.push(field);
+        changed.push(...fields);
       } catch (error) {
-        failed = { field, error: (error as Error).name };
+        failed = { fields, error: (error as Error).name };
         break;
       }
     }
@@ -143,7 +134,7 @@ export default HeaderTokenSecuredEndpoint(
       .catch(() => false);
 
     if (failed)
-      return res.status(500).json({ userId, changed, failed: failed.field, auditRecorded });
+      return res.status(500).json({ userId, changed, failed: failed.fields, auditRecorded });
     return res.status(200).json({ userId, changed, auditRecorded });
   }
 );
