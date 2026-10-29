@@ -142,8 +142,9 @@ async function findReusableImageId({
   // or local database. On a database without it this is a sequential scan of `Image`; keep that
   // in mind before adding a call site on a hotter path than "the user saved a cover with no id".
   //
-  // Scoped to `userId`: only the caller's own rows are reused, which keeps the outcome identical
-  // to what `createImage` would have produced (a row owned by the caller), minus the duplicate.
+  // 🔴 Keep this scoped to `userId`. A cover must be one the caller owns, and this reuse is the
+  // only ownership step on the path: the outcome stays identical to what `createImage` would
+  // have produced (a row owned by the caller), minus the duplicate.
   const candidates = await dbWrite.image.findMany({
     where: { url, userId },
     select: {
