@@ -330,8 +330,8 @@ describe('autoMuteScamAccount', () => {
       expect(m.createStrike).toHaveBeenCalledOnce();
     });
 
-    it('still strikes a lookalike of the shared account', async () => {
-      setEnv({ CIVITAI_MODERATION_USER_ID: 99 });
+    it('still strikes a lookalike of the reserved name, even with no id configured', async () => {
+      setEnv({ CIVITAI_MODERATION_USER_ID: undefined });
       dbMock.dbWrite.user.findUnique.mockResolvedValue(
         user({ username: 'CivitaiModerati0n', meta: { systemAccount: false } })
       );
