@@ -106,7 +106,8 @@ beforeAll(async () => {
     );
     CREATE TABLE "Image" (
       id int PRIMARY KEY, "userId" int NOT NULL, "needsReview" text, "blockedFor" text,
-      url text NOT NULL DEFAULT 'u', "postId" int, "nsfwLevel" int NOT NULL DEFAULT 1, metadata jsonb
+      url text NOT NULL DEFAULT 'u', "postId" int, "nsfwLevel" int NOT NULL DEFAULT 1, metadata jsonb,
+      ingestion text NOT NULL DEFAULT 'Scanned'
     );
     CREATE TYPE "UserEngagementType" AS ENUM ('Follow', 'Hide', 'Block');
     CREATE TABLE "User" (id int PRIMARY KEY, username text);

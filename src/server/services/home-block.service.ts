@@ -239,9 +239,8 @@ export const getHomeBlockById = async ({
     },
   } as const;
   // A miss (or any error) on the replica falls back to the primary, through Prisma, so its
-  // not-found throw is unchanged. `kysely-hot-reads-5` on: the replica read is through Kysely, and
-  // a missing row there takes the same fallback. A call with no `id` (the input allows it) stays
-  // on Prisma, which rejects it as before.
+  // not-found throw is unchanged. A missing Kysely row takes the same fallback. A call with no `id`
+  // (the input allows it) stays on Prisma, which rejects it as before.
   const fallback = () => {
     dbReadFallbackCounter.inc({ entity: 'homeBlock', caller: 'getHomeBlockById' });
     return dbWrite.homeBlock.findUniqueOrThrow(homeBlockFindArgs);

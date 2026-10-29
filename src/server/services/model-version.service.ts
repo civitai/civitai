@@ -2,9 +2,10 @@ import { Prisma } from '@prisma/client';
 import {
   contentKeptError,
   deleteUnlessHeld,
+  heldModelIdsSql,
   isLegalHoldAbort,
+  modelRowHeldSql,
   ownerHeld,
-  ownerHeldSql,
 } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
@@ -138,7 +139,12 @@ import {
   getDonationGoals,
   getOwnerDonationGoals,
 } from '~/server/services/donation-goal.service';
-import { imagesForModelVersionsCache, uploadImageFromUrl } from '~/server/services/image.service';
+import {
+  imagesForModelVersionsCache,
+  isTrainingSampleUrlUsable,
+  TrainingSampleRefusedError,
+  uploadImageFromUrl,
+} from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
 import { scanEntitiesInBackground, scanModelAndRules } from '~/server/services/text-scan/submit';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
@@ -1608,9 +1614,15 @@ export const deleteVersionById = async ({
         USING "Model" m
         WHERE mv.id = ${id}
           AND m.id = mv."modelId"
-          AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+          AND NOT ${modelRowHeldSql()}
       `,
-      { expected: 1, isModerator, db: tx, ownerFrom: versionOwnerSql([id]) }
+      {
+        expected: 1,
+        isModerator,
+        db: tx,
+        ownerFrom: versionOwnerSql([id]),
+        held: modelRowHeldSql(),
+      }
     );
     if (outcome === 'short') throw throwNotFoundError(`No model version with id ${id}`);
     await updateModelLastVersionAt({ id: deleted.modelId, tx });
@@ -3213,8 +3225,11 @@ export const createModelVersionPostFromTraining = async ({
       imageUrls.map(async (data) => {
         const imageUrl = typeof data === 'string' ? data : data.image_url;
         // '' is a failed sample's slot; uploading it throws and fails the whole publish.
-        if (!imageUrl) return undefined;
-        return uploadImageFromUrl({ imageUrl });
+        if (!imageUrl || !isTrainingSampleUrlUsable(imageUrl)) return undefined;
+        return uploadImageFromUrl({ imageUrl }).catch((error) => {
+          if (error instanceof TrainingSampleRefusedError) return undefined;
+          throw error;
+        });
       })
     )
   ).filter((x): x is NonNullable<typeof x> => isDefined(x?.url));
@@ -3241,6 +3256,7 @@ export const createModelVersionPostFromTraining = async ({
         meta: image.meta,
         url: image.url as string,
         user,
+        serverMintedUrl: true,
       })
     )
   );
@@ -3610,7 +3626,9 @@ export const mergeVersions = async ({
   }
 
   // Checked again in the delete below; this only spares a held owner the long transaction.
-  if (await ownerHeld(dbWrite, Prisma.sql`FROM "Model" m WHERE m.id = ${modelId}`))
+  if (
+    await ownerHeld(dbWrite, Prisma.sql`FROM "Model" m WHERE m.id = ${modelId}`, modelRowHeldSql())
+  )
     throw contentKeptError(false);
 
   // Populated inside the tx after files are moved to the target — captures any
@@ -3920,13 +3938,15 @@ export const mergeVersions = async ({
           USING "Model" m
           WHERE mv.id = ANY(${sourceVersionIds}::int[])
             AND m.id = mv."modelId"
-            AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+            -- One model: its owners, present and past, checked once rather than once per version.
+            AND m.id NOT IN (${heldModelIdsSql(Prisma.sql`SELECT ${modelId}::int`, true)})
         `,
         {
           expected: new Set(sourceVersionIds).size,
           isModerator: false,
           db: tx,
           ownerFrom: versionOwnerSql(sourceVersionIds),
+          held: modelRowHeldSql(),
         }
       );
       if (outcome === 'short')

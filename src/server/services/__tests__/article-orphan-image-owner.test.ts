@@ -268,6 +268,30 @@ describe('deleteArticleById', () => {
     }
   );
 
+  // An article saved before shop keys were refused can hold one as the author's own image row.
+  it('keeps an unused image of the author whose key shop artwork uses', async () => {
+    const shopKey = '0a0b0c0d-0000-4000-8000-0000000000aa';
+    dbMock.dbWrite.image.findMany.mockImplementation((async ({ where }: any) =>
+      [...UNLINKED, ...COVERS]
+        .filter((row) => matches(row, where))
+        .map((row) => ({
+          id: row.id,
+          url: row.id === UNUSED_OWN.id ? shopKey : `key-${row.id}`,
+        }))) as never);
+    const heldRead = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) =>
+      strings.join('').includes('unnest(')
+        ? Promise.resolve([{ key: shopKey }])
+        : heldRead?.(strings, ...values)) as never);
+
+    await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });
+
+    expect(deletedIds()).toEqual([]);
+  });
+
   const deleteWithCover = async (cover: Row) => {
     deleteArticleWithCover(cover);
     await deleteArticleById({ id: ARTICLE_ID, userId: AUTHOR });

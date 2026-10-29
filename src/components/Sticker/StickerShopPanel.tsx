@@ -24,6 +24,7 @@ import { browseShopItems } from '~/components/Shop/shop-browse';
 import { STICKER_HOVER_CARD_WIDTH } from '~/components/Sticker/StickerPlacementHoverCard';
 import { HOVER_DELAY_MS } from '~/components/UserAvatar/hover-card.constants';
 import { StickerPriceBadge } from '~/components/Sticker/StickerPriceBadge';
+import { SHELF_TILE_STYLE } from '~/components/Sticker/shelf-tile-style';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
 import { isStickerKeptOffImage } from '~/shared/constants/cosmetic-flags.constants';
@@ -83,7 +84,7 @@ export function StickerShopPanel({
   maxScale: number;
   imageNsfwLevel: number;
 }) {
-  const { grab, dragging } = useStickerDragOut(maxScale);
+  const { grab, dragging, shelfRef } = useStickerDragOut(maxScale);
   const [search, setSearch] = useState('');
   // The community half searches server-side, so this is a request per keystroke
   // without the debounce. The official half is already in memory and filters
@@ -214,7 +215,7 @@ export function StickerShopPanel({
       </div>
 
       <ScrollArea.Autosize mah={260} type="auto" scrollbarSize={6}>
-        <div className="flex flex-wrap gap-2 p-2">
+        <div ref={shelfRef} className="flex flex-wrap gap-2 p-2">
           {/* Two rows of them, which is what the shelf holds before it scrolls —
               so the panel opens at the height it will keep, instead of growing
               under the cursor as the stickers land. */}
@@ -269,7 +270,7 @@ export function StickerShopPanel({
                       'relative flex shrink-0 cursor-grab flex-col items-center rounded border p-2',
                       dragging === tile.cosmeticId ? 'border-blue-5' : 'border-transparent'
                     )}
-                    style={{ touchAction: 'none' }}
+                    style={SHELF_TILE_STYLE}
                     onPointerDown={grab(tile.cosmeticId, {
                       pack: {
                         shopItemId: tile.shopItemId,

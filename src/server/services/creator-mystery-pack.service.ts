@@ -40,6 +40,7 @@ import {
 import type { BuzzSpendType } from '~/shared/constants/buzz.constants';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import type { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import { assertClientImageUrlsUsable } from '~/server/services/image-url-ownership';
 
 /** The shape of `BoxRevision.proposal`. */
 export type MysteryPackProposal = {
@@ -286,6 +287,7 @@ export async function submitMysteryPack({
   await throwOnBlockedUserContent([name, description], { surface: 'creatorShop' });
   if (imageUrl && !rightsAffirmed)
     throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
+  if (imageUrl) await assertClientImageUrlsUsable({ urls: [imageUrl], userId, shopRow: {} });
   await assertCreatorMayBuild({ userId, countryCode });
   const { proposal } = await checkProposal(dbWrite, {
     creatorId: userId,

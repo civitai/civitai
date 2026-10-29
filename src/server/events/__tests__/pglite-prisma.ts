@@ -7,14 +7,17 @@ import { Prisma } from '@prisma/client';
  * `Prisma.sql` fragment is inlined with its own values, as Prisma does.
  */
 export function pgliteRaw(db: PGlite) {
-  const run = (strings: TemplateStringsArray, ...values: unknown[]) => {
-    const sql = Prisma.sql(strings, ...values);
+  // Prisma also takes a built `Prisma.Sql` as the only argument.
+  const run = (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) => {
+    const sql = Array.isArray(strings)
+      ? Prisma.sql(strings as TemplateStringsArray, ...values)
+      : (strings as Prisma.Sql);
     return db.query(sql.text, sql.values);
   };
   return {
-    executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    executeRaw: async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
       (await run(strings, ...values)).affectedRows ?? 0,
-    queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) =>
+    queryRaw: async (strings: TemplateStringsArray | Prisma.Sql, ...values: unknown[]) =>
       (await run(strings, ...values)).rows,
   };
 }

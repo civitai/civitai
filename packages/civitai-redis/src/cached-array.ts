@@ -60,7 +60,7 @@ export type CachedLookupOptions<T extends object> = {
   // compressed value read through the general msgpack path throws → the entry is EVICTED and
   // reported as a miss — a silent permanent miss+evict loop. Writes may skip compression (fetch's
   // not-found marker does): the compress-aware read passes any non-sentinel value straight to
-  // msgpack. invalidate() rewrites the records and not-found markers it reads, compressed.
+  // msgpack. invalidate() rewrites the records it reads, and its debounce markers, compressed.
   //
   // Back-compat is free in BOTH directions: the compress-aware read is sentinel-discriminated, so
   // legacy uncompressed entries written before the flag was flipped still decode. No key-bust or
@@ -192,7 +192,7 @@ const MISS_FILL_JOIN_MAX_MS = 10_000;
 const NON_SWR_BUST_WINDOW = 2;
 /**
  * Default for an SWR cache's invalidate(): how long the backdated entry is still served as fresh
- * before revalidating. Unchanged from the builder's historical 10 s default.
+ * before revalidating, and the EX of the debounce marker that replaces a notFound marker.
  */
 const SWR_INVALIDATE_WINDOW = 10;
 type MissFillEntry = { startedAt: number };
@@ -439,7 +439,8 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         if (cached) {
           if (cached.notFound) continue;
           // A readable marker is inside its window by construction: bust() writes it with EX = the
-          // window (per-call debounceTime, else the cache's, else NON_SWR_BUST_WINDOW), so Redis
+          // window (per-call debounceTime, else the cache's, else NON_SWR_BUST_WINDOW or, from
+          // invalidate(), SWR_INVALIDATE_WINDOW), so Redis
           // ends it and the marker needs no timestamp. Inside it the lookup is served but not
           // written back.
           if (cached.debounce) {
@@ -650,13 +651,36 @@ export function createCacheBuilders(deps: CacheBuilderDeps) {
         cacheResults.push(...batchResults.filter(isDefined));
       }
 
-      const invaliDate = new Date(
-        Date.now() -
-          ttl * 1000 +
-          (options.debounceTime ?? debounceTime ?? SWR_INVALIDATE_WINDOW) * 1000
-      );
+      const windowSeconds = options.debounceTime ?? debounceTime ?? SWR_INVALIDATE_WINDOW;
+      const invaliDate = new Date(Date.now() - ttl * 1000 + windowSeconds * 1000);
+
+      // fetch() serves a notFound marker without looking at cachedAt, so backdating one only
+      // renews its EX and the row the bust announced is never read. A debounce marker sends reads
+      // to origin for the window (uncached, so a lagging replica can't re-pin the empty result).
+      // A zero window can't be an EX (Redis rejects EX 0), so it drops the marker instead.
+      const notFoundIds = cacheResults
+        .filter((x) => (x as AnyRecord).notFound)
+        .map((x) => x[idKey] as unknown as number);
+      if (notFoundIds.length > 0 && windowSeconds <= 0)
+        await redis.del(notFoundIds.map((id) => `${key}:${id}` as RedisKeyTemplateCache));
+      else if (notFoundIds.length > 0)
+        await Promise.all(
+          notFoundIds.map((id) =>
+            redis.packed.set(
+              `${key}:${id}` as RedisKeyTemplateCache,
+              { [idKey]: id, debounce: true },
+              { EX: windowSeconds },
+              packedOptions
+            )
+          )
+        );
+
       const updates = cacheResults.filter(
-        (x) => x !== null && 'cachedAt' in x && (x as AnyRecord).cachedAt !== invaliDate
+        (x) =>
+          x !== null &&
+          !(x as AnyRecord).notFound &&
+          'cachedAt' in x &&
+          (x as AnyRecord).cachedAt !== invaliDate
       ) as T[];
       if (updates.length === 0) return;
       const toCache = Object.fromEntries(

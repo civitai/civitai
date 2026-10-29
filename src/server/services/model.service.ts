@@ -13,11 +13,13 @@ import type { VersionReadiness } from '~/shared/generation/generator-readiness';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import {
-  accountHoldSql,
   assertOwnersNotUnderLegalHold,
   HOLD_UNCONFIRMED,
   LegalHoldError,
   legalHoldMessage,
+  modelDataHeldSql,
+  recordCurrentModelOwnersSql,
+  recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
 import {
   detachHeldThreadsCte,
@@ -25,7 +27,7 @@ import {
   heldLegacyCommentOnModelSql,
   modelThreadParents,
 } from '~/server/services/comment-thread-hold';
-import { userUnderLegalHoldSql } from '~/server/utils/legal-hold';
+import { isRemovedWithOwner, withoutRemovedWithOwner } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { isEmpty, uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -2456,17 +2458,15 @@ export const permaDeleteModelById = async ({
         },
       });
 
-      // A held owner's model is refused, and the rollback restores its posts and images. The hold is
-      // checked in the DELETE itself, so one placed during this transaction still stops it. It is the
-      // account hold too: its image legs cover the images this deletes.
-      const owner = Prisma.raw('m."userId"');
+      // Checked in the DELETE itself, so a hold placed during this transaction still stops it, and
+      // the rollback restores the posts and images.
       const [deletedModel] = await tx.$queryRaw<
         { id: number; userId: number; nsfwLevel: number }[]
       >`
         WITH ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT ${id}::int`), true)}
         DELETE FROM "Model" m
         WHERE m.id = ${id}
-          AND NOT (${userUnderLegalHoldSql(owner)} OR ${accountHoldSql(owner, true)})
+          AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
           AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), true)}
         RETURNING m.id, m."userId", m."nsfwLevel"
       `.catch(holdUnconfirmed);
@@ -2477,8 +2477,7 @@ export const permaDeleteModelById = async ({
         if (!stillThere)
           throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
         const [owner] = await tx.$queryRaw<{ ownerHeld: boolean }[]>`
-          SELECT (${userUnderLegalHoldSql(Prisma.sql`${model.userId}::int`)}
-            OR ${accountHoldSql(Prisma.sql`${model.userId}::int`, true)}) AS "ownerHeld"
+          SELECT ${modelDataHeldSql(Prisma.sql`${id}::int`, true)} AS "ownerHeld"
         `.catch(holdUnconfirmed);
         throw new TRPCError({
           code: 'FORBIDDEN',
@@ -3530,6 +3529,15 @@ export const upsertModel = async (
           },
         });
 
+        await tx.$executeRaw(
+          recordModelOwnershipSql({
+            where: Prisma.sql`m.id = ${created.id}`,
+            userId,
+            reason: 'create',
+            actorId: userId,
+          })
+        );
+
         if (descriptionSupplied && expansion.evaluated)
           await reconcileBlurbReferences({
             entityType: 'Model',
@@ -4179,6 +4187,15 @@ export const publishModelById = async ({
 
   const model = await dbWrite.$transaction(
     async (tx) => {
+      // The caller's removal check read the replica before this; a content wipe that hid the model
+      // since then must still refuse an owner's publish, and its record must not be written over.
+      if (enforceModelRules) {
+        const [locked] = await tx.$queryRaw<{ meta: unknown }[]>`
+          SELECT meta FROM "Model" WHERE id = ${id} FOR UPDATE
+        `;
+        if (isRemovedWithOwner(locked?.meta))
+          throw throwAuthorizationError('You are not authorized to publish this model');
+      }
       // A held model must not be overwritten by a publish that raced the hold. Moderators and
       // internal callers don't enforce rules and may republish a held model.
       const model = await tx.model
@@ -4469,7 +4486,9 @@ export const unpublishModelById = async ({
       const updatedMeta = preserveModStatus
         ? meta
         : {
-            ...meta,
+            // A violation take-down of a model a content wipe hid ends the wipe's record: from here
+            // on it is an ordinary take-down, which a restore must not undo.
+            ...(reason ? withoutRemovedWithOwner(meta ?? {}) : meta),
             ...(reason
               ? {
                   unpublishedReason: reason,
@@ -5772,6 +5791,13 @@ export async function migrateResourceToCollection({
           },
           select: { id: true },
         });
+        await tx.$executeRaw(
+          recordModelOwnershipSql({
+            where: Prisma.sql`m.id = ${newModel.id}`,
+            userId: modelData.userId,
+            reason: 'create',
+          })
+        );
 
         modelIds.push(newModel.id);
 
@@ -6087,7 +6113,7 @@ function assertPrivateFlowPublishable({
   isModerator?: boolean;
 }) {
   if (isModerator) return;
-  if (constants.modPublishOnlyStatuses.includes(status))
+  if (constants.modPublishOnlyStatuses.includes(status) || isRemovedWithOwner(meta))
     throw throwAuthorizationError('You are not authorized to publish this model');
   if ((meta as ModelMeta | null)?.cannotPublish)
     throw throwBadRequestError('This model cannot be published due to moderation restrictions.');
@@ -6229,7 +6255,8 @@ export const privateModelFromTraining = async ({
                 ...(stripServerOwnedMeta(
                   stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)
                 ) ?? {}),
-                ...pickServerOwnedMeta(storedMeta),
+                // Only a moderator gets here with a wipe's record; their publish ends it.
+                ...withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)),
                 ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
                 // Makes it so these models cannot go into auctions or be promoted
                 cannotPromote: true,
@@ -6410,7 +6437,11 @@ export const publishPrivateModel = async (
     // Back to what a moderator had set before the private cycle forced cannotPromote on.
     const { [RESTORE_CANNOT_PROMOTE_KEY]: restoreCannotPromote, ...storedMeta } = (current.meta ??
       {}) as ModelMeta & Record<string, unknown>;
-    const publishedMeta = { ...storedMeta, cannotPromote: restoreCannotPromote === true };
+    // Only a moderator gets here with a wipe's record; their publish ends it.
+    const publishedMeta = {
+      ...withoutRemovedWithOwner(storedMeta),
+      cannotPromote: restoreCannotPromote === true,
+    };
     const stillPublished = await tx.$queryRaw<{ id: number }[]>`
       SELECT id FROM "ModelVersion"
       WHERE id IN (${Prisma.join(versionIds)}) AND status = 'Published'
@@ -6715,7 +6746,8 @@ export async function transferModelOwnership({
   // never belonged to this account, so unsetting it here would revoke a claim it didn't grant.
   const becomesOfficial = targetUserId === constants.system.officialUserId;
 
-  const result = await dbWrite.$transaction([
+  const [, ...result] = await dbWrite.$transaction([
+    dbWrite.$executeRaw(recordCurrentModelOwnersSql(Prisma.sql`m.id = ANY(${modelIds}::int[])`)),
     dbWrite.model.updateMany({
       where: { id: { in: modelIds } },
       data: { userId: targetUserId, ...(becomesOfficial ? { isOfficial: true } : {}) },
@@ -6791,11 +6823,19 @@ export async function transferModelOwnership({
         AND ps."entityId" = mv.id
         AND mv."modelId" = ANY(${modelIds}::int[])
     `,
+    dbWrite.$executeRaw(
+      recordModelOwnershipSql({
+        where: Prisma.sql`m.id = ANY(${modelIds}::int[])`,
+        userId: targetUserId,
+        reason: 'transfer',
+        actorId: modUserId,
+      })
+    ),
   ]);
 
   const tracker = new Tracker();
   for (const m of models) {
-    await tracker.modelEvent({ type: 'Transfer', modelId: m.id, nsfw: m.nsfw });
+    await tracker.modelEvent({ type: 'Transfer', modelId: m.id, nsfw: m.nsfw, userId: modUserId });
   }
 
   const affectedVersionIds = (

@@ -39,6 +39,7 @@ vi.mock('~/server/services/blocklist.service', () => ({
   throwOnBlockedUserContent: vi.fn(),
 }));
 vi.mock('~/server/services/image.service', () => ({
+  checkEntityImageKeys: vi.fn(async () => []),
   createEntityImages: vi.fn(async () => []),
   updateEntityImages: vi.fn(async () => []),
   enqueueImageIngestion: vi.fn(),

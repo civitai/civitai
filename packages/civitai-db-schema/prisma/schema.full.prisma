@@ -1147,6 +1147,22 @@ model Model {
   @@index([status, nsfw])
 }
 
+/// Every owner a model has had, including its first. Read by the legal hold so a transfer cannot
+/// move data out of it. Append-only (a trigger refuses UPDATE and DELETE); no foreign keys, so rows
+/// outlive the model and user.
+model ModelOwnership {
+  id        Int      @id @default(autoincrement())
+  modelId   Int
+  userId    Int
+  /// 'create' | 'transfer' | 'account-delete' | 'restore' | 'baseline' (a CHECK in SQL)
+  reason    String
+  actorId   Int?
+  createdAt DateTime @default(now())
+
+  @@index([modelId])
+  @@index([userId])
+}
+
 /// A model's licensing permissions as they stood from `effectiveAt` until its next row, so a merge can
 /// be judged by the permission in effect when it was made rather than by today's. Before a model's
 /// first row nothing is known; a model with no rows has held its current permissions since
@@ -6729,6 +6745,25 @@ model CsamReport {
   sendClaimId      String?        @db.Uuid
   sendClaimedAt    DateTime?
   // modelVersionIds  Int[]     @default([])
+}
+
+enum CsamQueueSetAsideOutcome {
+  AfterReport
+  Dismissed
+}
+
+/// An image a moderator took out of the CSAM review queue without changing the image. Whether the row
+/// still counts is decided when the queue is read; a changed flag or a new report deletes it.
+model CsamQueueSetAside {
+  imageId      Int                      @id
+  userId       Int
+  outcome      CsamQueueSetAsideOutcome
+  /// The report an `AfterReport` row follows. Nothing writes `AfterReport` rows yet.
+  csamReportId Int?
+  moderatorId  Int
+  createdAt    DateTime                 @default(now())
+
+  @@index([userId])
 }
 
 /// Written by a trigger on `CsamReport`: one row per change to a sent report and per deleted report.

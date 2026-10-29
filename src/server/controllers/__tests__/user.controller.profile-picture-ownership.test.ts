@@ -51,6 +51,7 @@ vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: vi.fn
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch: vi.fn() })) }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
 import { updateUserHandler } from '~/server/controllers/user.controller';
 
@@ -118,6 +119,7 @@ function expectImageUntouched(imageId: number) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  redisMock.sysRedis.mGet.mockResolvedValue([String(CALLER_ID)] as never);
   currentPictureOwnedBy(CALLER_ID);
   mockUpdateUserById.mockResolvedValue({ id: CALLER_ID, profilePictureId: CREATED_PICTURE_ID });
   mockIngestImage.mockResolvedValue(true);
@@ -215,6 +217,36 @@ describe('profile picture updates are scoped to the caller', () => {
       mockGetUserById.mockResolvedValue({ profilePictureId: null, image: AVATAR_KEY });
       mockUpdateUserById.mockResolvedValue({ id: CALLER_ID });
       await saveImage();
+      expect(mockUpdateUserById).toHaveBeenCalled();
+    });
+  });
+
+  describe('a new picture or `image` whose key was issued to another user', () => {
+    beforeEach(() => {
+      dbMock.dbWrite.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
+      redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER_USER_ID)] as never);
+    });
+    afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+
+    it('is refused before writing', async () => {
+      await expect(saveProfilePicture()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      await expect(
+        updateUserHandler({
+          ctx: { user: { id: CALLER_ID } },
+          input: { id: CALLER_ID, image: AVATAR_KEY },
+        } as never)
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockUpdateUserById).not.toHaveBeenCalled();
+    });
+
+    it('does not apply to the current `image` saved again', async () => {
+      mockGetUserById.mockResolvedValue({ profilePictureId: null, image: AVATAR_KEY });
+      mockUpdateUserById.mockResolvedValue({ id: CALLER_ID });
+
+      await updateUserHandler({
+        ctx: { user: { id: CALLER_ID } },
+        input: { id: CALLER_ID, image: AVATAR_KEY },
+      } as never);
       expect(mockUpdateUserById).toHaveBeenCalled();
     });
   });

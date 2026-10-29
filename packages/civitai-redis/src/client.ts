@@ -2546,6 +2546,8 @@ export const REDIS_SYS_KEYS = {
       the reversal is unrecoverable.
      */
     PENDING_IMAGE_RESTORES: 'system:pending-image-restores',
+    // `<prefix>:<key>` = the userId an image upload key was issued to (TTL 30 days).
+    UPLOAD_KEY_OWNER: 'system:upload-key-owner',
     // Hash { sampleRate: '0'..'1', until?: ISO-8601 | epoch ms }; missing or 0 = off.
     FEED_REQUEST_CAPTURE: 'system:feed-request-capture',
     // Hash { sampleRate, until?, timeoutMs?, maxInflight? }: mirror a share of image-feed

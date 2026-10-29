@@ -13,6 +13,7 @@ import {
 } from '~/server/services/bounty-entry-file-check.service';
 import { getFilesByEntity, updateEntityFiles } from '~/server/services/file.service';
 import {
+  checkEntityImageKeys,
   createEntityImages,
   invalidateManyImageExistence,
   updateEntityImages,
@@ -120,6 +121,7 @@ export const upsertBountyEntry = async ({
   await throwOnBlockedUserContent(description, { surface: 'bountyEntry' });
 
   let imagesToIngest: IngestImageInput[] = [];
+  const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
   const result = await dbWrite.$transaction(async (tx) => {
     if (id) {
@@ -147,6 +149,7 @@ export const upsertBountyEntry = async ({
           images,
           tx,
           userId,
+          keysCheckedFor,
           entityId: entry.id,
           entityType: 'BountyEntry',
         });
@@ -177,6 +180,7 @@ export const upsertBountyEntry = async ({
           images,
           tx,
           userId,
+          keysCheckedFor,
           entityId: entry.id,
           entityType: 'BountyEntry',
         });

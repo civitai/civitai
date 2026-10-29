@@ -39,6 +39,7 @@ import {
   withTextScanDecision,
 } from '~/server/services/text-scan/flag-snapshot';
 import {
+  checkEntityImageKeys,
   createEntityImages,
   updateEntityImages,
   enqueueImageIngestion,
@@ -249,6 +250,7 @@ export const createBounty = async ({
   ]);
 
   let imagesToIngest: IngestImageInput[] = [];
+  const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
@@ -294,6 +296,7 @@ export const createBounty = async ({
           images,
           tx,
           userId,
+          keysCheckedFor,
           entityId: bounty.id,
           entityType: 'Bounty',
         });
@@ -393,6 +396,7 @@ export const updateBountyById = async ({
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
   let imagesToIngest: IngestImageInput[] = [];
+  const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
@@ -514,6 +518,7 @@ export const updateBountyById = async ({
           entityId: bounty.id,
           entityType: 'Bounty',
           userId,
+          keysCheckedFor,
         });
       }
 

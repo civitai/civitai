@@ -234,6 +234,14 @@ describe('POST /api/admin/system-account-api-key', () => {
     expect(apiKeys).toHaveLength(0);
   });
 
+  it.each(['WEBHOOK_TOKEN', 'JOB_TOKEN'])('is closed while its token repeats %s', async (other) => {
+    // Distinct per row: env overrides persist across tests in a file.
+    const shared = `shared-${other}`.padEnd(40, 's');
+    setEnv({ SYSTEM_ACCOUNT_KEY_TOKEN: shared, [other]: shared });
+    expect((await call({ userId: SYSTEM_ID }, { token: shared })).status).toBe(503);
+    expect(apiKeys).toHaveLength(0);
+  });
+
   it('mints a read-only User key that expires in a year, storing only its hash', async () => {
     const before = Date.now();
     const { status, body, headers } = await call({ userId: SYSTEM_ID });

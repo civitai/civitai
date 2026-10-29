@@ -11,6 +11,9 @@ import {
   isLegalHoldAbort,
   LegalHoldError,
   LegalHoldStoppedError,
+  heldModelIdsSql,
+  recordCurrentModelOwnersSql,
+  recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
 import {
   bountyThreadParents,
@@ -21,6 +24,7 @@ import {
   questionThreadParents,
   type ThreadParents,
 } from '~/server/services/comment-thread-hold';
+import { KEPT_MODEL_STATUS, PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -47,6 +51,11 @@ import { onModelReviewsChanged } from '~/server/events/points/hooks';
 import { syncEventRosterMember } from '~/server/events/points/roster-sync';
 import { syncOwnerEventHats } from '~/server/events/points/sync';
 import { kyselyRead } from '~/server/db/kyselyDb';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readModelVersionEngagementsViaKysely,
+  readModelVersionEngagementsViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 
 import { preventReplicationLag } from '~/server/db/db-lag-helpers';
 import { logToAxiom } from '~/server/logging/client';
@@ -118,11 +127,16 @@ import {
 } from '~/server/services/account-deletion-images';
 import { clearAccountDeletionImageMarkers } from '~/server/services/account-deletion-image-markers';
 import { deleteImages } from '~/server/services/image.service';
-import { refreshOwnedStickerCache, userModelCountCache } from '~/server/redis/caches';
+import {
+  refreshOwnedStickerCache,
+  userContentOverviewCache,
+  userModelCountCache,
+} from '~/server/redis/caches';
 import { createNotification } from '~/server/services/notification.service';
 import { createBuzzTransactionMany } from '~/server/services/buzz.service';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { isEventDecorationData } from '~/shared/constants/event-decoration.constants';
+import { chunkIds } from '~/utils/array-helpers';
 import { formatDate } from '~/utils/date-helpers';
 import {
   cancelAllPaddleSubscriptions,
@@ -699,10 +713,12 @@ export async function getUserEngagedModelVersions({
 }) {
   const versionIds = Array.isArray(modelVersionIds) ? modelVersionIds : [modelVersionIds];
 
-  return dbRead.modelVersionEngagement.findMany({
-    where: { userId, modelVersionId: { in: versionIds } },
-    select: { modelVersionId: true, type: true },
-  });
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+    return readModelVersionEngagementsViaKysely(kyselyRead, {
+      userId,
+      modelVersionIds: versionIds,
+    });
+  return readModelVersionEngagementsViaPrisma(dbRead, { userId, modelVersionIds: versionIds });
 }
 
 export async function getUserDownloadedModelVersions({
@@ -1095,6 +1111,18 @@ export const deleteUser = async ({ id, username, removeModels, removeImages }: D
       // transaction, so nothing else in it commits. It also clears "subscriptionId": a second pointer
       // to the billing record (subscription -> customer -> charges) that outlives paddleCustomerId.
       dbWrite.$executeRaw(guardedAccountScrubSql(user.id, markerView)),
+      ...(removeModels
+        ? []
+        : [
+            dbWrite.$executeRaw(recordCurrentModelOwnersSql(Prisma.sql`m."userId" = ${user.id}`)),
+            dbWrite.$executeRaw(
+              recordModelOwnershipSql({
+                where: Prisma.sql`m."userId" = ${user.id}`,
+                userId: PLACEHOLDER_OWNER_ID,
+                reason: 'account-delete',
+              })
+            ),
+          ]),
       dbWrite.model.updateMany({ where: { userId: user.id }, data: modelData }),
       dbWrite.account.deleteMany({ where: { userId: user.id } }),
       dbWrite.session.deleteMany({ where: { userId: user.id } }),
@@ -1238,45 +1266,81 @@ export const restoreUser = async ({ id, username, email, restoreModels }: Restor
     );
   }
 
-  // Look up the audited model ownership up front (ClickHouse lives outside Postgres).
-  let auditIds: number[] = [];
+  // The models the account created, for those with no recorded owner but the placeholder (ClickHouse
+  // lives outside Postgres, so read up front). A Create event's actor is the model's creator; every
+  // other event's actor may be a moderator. A model transferred since was not this account's when it
+  // went to the placeholder, and the event does not say to whom it went, so it is left out.
+  let createdIds: number[] = [];
   if (restoreModels) {
-    // `modelEvents.userId` is the actor of each event; for a model that's the original owner.
-    // The deletion path (removeModels:false) sets Model.userId = -1 without touching
-    // status/deletedAt, so we reclaim only those orphans. Models deleted via removeModels:true
-    // keep their userId and get status='Deleted' instead — they are intentionally NOT restored
-    // here, and a model with no tracked event won't appear, so reclaim is best-effort.
-    const auditRows =
+    const createdRows =
       (await clickhouse?.$query<{ modelId: number }>(`
         SELECT DISTINCT modelId
         FROM modelEvents
-        WHERE userId = ${id}
+        WHERE userId = ${id} AND type = 'Create'
       `)) ?? [];
-    auditIds = auditRows.map((r) => r.modelId);
+    const created = createdRows.map((r) => Number(r.modelId)).filter(Number.isInteger);
+    const transferred = new Set<number>();
+    for (const ids of chunkIds(created, 5000)) {
+      const rows =
+        (await clickhouse?.$query<{ modelId: number }>(`
+          SELECT DISTINCT modelId
+          FROM modelEvents
+          WHERE type = 'Transfer' AND modelId IN (${ids.join(',')})
+        `)) ?? [];
+      for (const r of rows) transferred.add(Number(r.modelId));
+    }
+    createdIds = created.filter((modelId) => !transferred.has(modelId));
   }
 
   // Reclaim orphaned models BEFORE flipping deletedAt. We deliberately avoid wrapping the user and
   // model writes in one transaction: a user can own thousands of models, and an interactive
   // transaction would hold a connection + row locks open across the whole set (and risk Prisma's
-  // 5s timeout). The model reclaim is a single atomic UPDATE, so it doesn't need one. Doing it
-  // first also keeps the operation re-runnable — if it fails, deletedAt is still set, so a retry
-  // passes the guard above instead of being locked out.
+  // 5s timeout). Doing it first also keeps the operation re-runnable — if it fails, deletedAt is
+  // still set, so a retry passes the guard above instead of being locked out.
+  //
+  // The deletion path (removeModels:false) sets Model.userId = -1 without touching status/deletedAt,
+  // so only those orphans are reclaimed, and only those whose last recorded owner before the
+  // placeholder is this account. Models deleted via removeModels:true keep their userId and get
+  // status='Deleted' instead — they are intentionally NOT restored here.
   let modelsRestored = 0;
   let restoredModelIds: number[] = [];
-  if (restoreModels && auditIds.length > 0) {
-    // Capture the exact orphaned rows we're about to reclaim so the returned ids reflect what
-    // actually changed (rather than every audited model, some of which may not be orphaned).
-    const orphans = await dbWrite.model.findMany({
-      where: { id: { in: auditIds }, userId: -1 },
-      select: { id: true },
-    });
+  if (restoreModels) {
+    const orphans = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT m.id
+      FROM "Model" m
+      WHERE m."userId" = -1
+        AND m.id IN (
+          SELECT o."modelId" FROM "ModelOwnership" o WHERE o."userId" = ${id}
+          UNION
+          SELECT unnest(${createdIds}::int[])
+        )
+        AND COALESCE(
+          (
+            SELECT o."userId" FROM "ModelOwnership" o
+            WHERE o."modelId" = m.id AND o."userId" <> -1
+            ORDER BY o.id DESC
+            LIMIT 1
+          ),
+          CASE WHEN m.id = ANY(${createdIds}::int[]) THEN ${id}::int END
+        ) = ${id}
+      ORDER BY m.id
+    `;
     restoredModelIds = orphans.map((m) => m.id);
 
     if (restoredModelIds.length > 0) {
-      const updated = await dbWrite.model.updateMany({
-        where: { id: { in: restoredModelIds }, userId: -1 },
-        data: { userId: id },
-      });
+      const [updated] = await dbWrite.$transaction([
+        dbWrite.model.updateMany({
+          where: { id: { in: restoredModelIds }, userId: -1 },
+          data: { userId: id },
+        }),
+        dbWrite.$executeRaw(
+          recordModelOwnershipSql({
+            where: Prisma.sql`m.id = ANY(${restoredModelIds}::int[]) AND m."userId" = ${id}`,
+            userId: id,
+            reason: 'restore',
+          })
+        ),
+      ]);
       modelsRestored = updated.count;
     }
   }
@@ -1432,6 +1496,47 @@ async function goneIds(table: 'Model' | 'Article' | 'Collection' | 'Bounty', ids
   return ids.filter((i) => !kept.has(i));
 }
 
+/** The listed models that no longer exist or are no longer published, read on the primary. */
+async function modelsOffSite(ids: number[]) {
+  if (!ids.length) return [];
+  const published = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Model" WHERE id = ANY(${ids}::int[]) AND status = 'Published'`;
+  const live = new Set(published.map((r) => r.id));
+  return ids.filter((i) => !live.has(i));
+}
+
+/**
+ * Of the listed models, read on the primary, those a wipe deleted and those it kept and hid: still
+ * in the hidden status and carrying the wipe's record. A model a moderator took down for a
+ * violation is in the same status without the record, and its bids stand.
+ */
+async function removedModels(ids: number[]) {
+  if (!ids.length) return { gone: [], hidden: [] };
+  const left = await dbWrite.$queryRaw<{ id: number; hidden: boolean }[]>`
+    SELECT id, (status = ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)}
+      AND meta ->> 'removedWithOwner' = 'true') IS TRUE AS hidden
+    FROM "Model" WHERE id = ANY(${ids}::int[])`;
+  const present = new Set(left.map((r) => r.id));
+  return {
+    gone: ids.filter((i) => !present.has(i)),
+    hidden: left.filter((r) => r.hidden).map((r) => r.id),
+  };
+}
+
+/** Drops the caches that would still serve a hidden model as published: its status was a raw write. */
+async function dropHiddenModelCaches(modelIds: number[], userId: number) {
+  const versions = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "ModelVersion" WHERE "modelId" = ANY(${modelIds}::int[])`;
+  // Imported here: a static import joins user.service to the model-version import cycle.
+  const { bustMvCache } = await import('~/server/services/model-version.service');
+  await bustMvCache(
+    versions.map((v) => v.id),
+    modelIds,
+    userId
+  );
+  await userContentOverviewCache.refresh(userId);
+}
+
 /** Queues a search-index Delete for each listed row that no longer exists. */
 async function unindexDeleted(
   lists: [
@@ -1453,22 +1558,24 @@ async function unindexDeleted(
 }
 
 // With `modelIds` when it could not be read which models went: its versions are only candidates
-// to check, never `versionIds` to refund, since a model a hold kept still holds live bids.
+// to check, never `versionIds` to refund: a model a hold kept and left public holds live bids, and
+// one that is gone, or still hidden (UnpublishedViolation with meta.removedWithOwner), is refunded.
 type BidRefundFailure =
   | { versionIds: number[]; transactionIds?: string[]; error?: string }
   | { modelIds: number[]; candidateVersionIds: number[]; error: string };
 
 /**
- * A model a hold kept keeps its bids; versions are passed by id because the model row is gone. Never
- * throws: a re-run of the wipe finds no models to refund, so each failure is logged as its own
- * `bid-refund-failed` line (alerted on) with the ids a manual refund needs, or the candidates to check
- * when it could not tell which models went, and returned.
+ * Refunds the bids on the models the wipe deleted or kept and hid; a model a hold kept and left
+ * public keeps its bids. Versions are passed by id because a deleted model's row is gone. Never
+ * throws: a re-run of the wipe finds no deleted models to refund, so each failure is logged as its
+ * own `bid-refund-failed` line (alerted on) with the ids a manual refund needs, or the candidates to
+ * check when it could not tell which models went, and returned.
  */
-async function refundBidsForDeletedModels(
+async function refundBidsForRemovedModels(
   models: { id: number; name: string; modelVersions: { id: number }[] }[],
   wipe: { userId: number; actorUserId: number | null }
 ): Promise<BidRefundFailure[]> {
-  return alertBidRefundFailures(await refundEachDeletedModel(models), wipe);
+  return alertBidRefundFailures(await refundEachRemovedModel(models), wipe);
 }
 
 /** Logs each failed bid refund of a wipe as its own `bid-refund-failed` line, and returns them. */
@@ -1482,7 +1589,7 @@ function alertBidRefundFailures(
       type: 'error',
       message:
         'modelIds' in failure
-          ? 'A content wipe could not tell which models it deleted; check which candidates are gone before refunding any bids'
+          ? 'A content wipe could not tell which models it removed; refund only the candidates whose model is gone, or still hidden (UnpublishedViolation with meta.removedWithOwner)'
           : 'A content wipe could not refund bids; refund them by hand',
       source: 'remove-all-content',
       userId: wipe.userId,
@@ -1492,18 +1599,14 @@ function alertBidRefundFailures(
   return failures;
 }
 
-async function refundEachDeletedModel(
+async function refundEachRemovedModel(
   models: { id: number; name: string; modelVersions: { id: number }[] }[]
 ): Promise<BidRefundFailure[]> {
   const versionIdsOf = (m: (typeof models)[number]) => m.modelVersions.map((v) => v.id);
-  let gone: Set<number>;
+  let removed: Set<number>;
   try {
-    gone = new Set(
-      await goneIds(
-        'Model',
-        models.map((m) => m.id)
-      )
-    );
+    const { gone, hidden } = await removedModels(models.map((m) => m.id));
+    removed = new Set([...gone, ...hidden]);
   } catch (e) {
     return [
       {
@@ -1515,7 +1618,7 @@ async function refundEachDeletedModel(
   }
   const failures: BidRefundFailure[] = [];
   for (const m of models) {
-    if (!gone.has(m.id)) continue;
+    if (!removed.has(m.id)) continue;
     const versionIds = versionIdsOf(m);
     try {
       const { refundFailed } = await refundBidsForVersions({
@@ -1660,10 +1763,16 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       WITH ${detach({ postId: owned('Post') })}
       DELETE FROM "Post" WHERE id IN (${owned('Post')})`;
-    // A model with a held legacy comment is soft-deleted, as a moderator's delete does.
+    const formerOwnerHeld = heldModelIdsSql(
+      Prisma.sql`SELECT om.id FROM "Model" om WHERE om."userId" = ${id}`,
+      markerView
+    );
+    // A model with a held legacy comment is soft-deleted, as a moderator's delete does. One an
+    // earlier owner's hold keeps is hidden below instead, with the record a restore reads.
     const commentHeld = await dbWrite.$queryRaw<{ id: number }[]>`
       SELECT m.id FROM "Model" m
-      WHERE m."userId" = ${id} AND ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), markerView)}`;
+      WHERE m."userId" = ${id} AND ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), markerView)}
+        AND m.id NOT IN (${formerOwnerHeld})`;
     if (commentHeld.length) {
       const { deleteModelById } = await import('~/server/services/model.service');
       for (const { id: modelId } of commentHeld)
@@ -1677,11 +1786,39 @@ export const removeAllContent = async ({
           softDeleteFailed.push({ modelId, message: (e as Error)?.message })
         );
     }
+    // A model is also kept while any owner it had before is held.
     const doomedModels = Prisma.sql`${owned('Model')}
-      AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('o.id'), markerView)}`;
+      AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('o.id'), markerView)}
+      AND o.id NOT IN (${formerOwnerHeld})`;
     await dbWrite.$executeRaw`
       WITH ${detach(modelThreadParents(doomedModels))}
       DELETE FROM "Model" WHERE id IN (${doomedModels})`;
+    // Status only: the unpublish flow stamps meta.unpublishedAt, which notifies the owner.
+    await dbWrite.$executeRaw`
+      WITH hidden AS (
+        UPDATE "Model" km
+        SET status = CASE WHEN km.status IN ('Published', 'Scheduled', 'Unpublished')
+                       THEN ${Prisma.raw(`'${KEPT_MODEL_STATUS}'`)} ELSE km.status END,
+            meta = ${asJsonbObjectSql('km.meta')} || jsonb_build_object(
+              'removedWithOwner', true,
+              'statusBeforeRemoval', km.status,
+              'versionsUnpublishedByRemoval', COALESCE((
+                SELECT jsonb_agg(jsonb_build_object('id', kv.id, 'status', kv.status) ORDER BY kv.id)
+                FROM "ModelVersion" kv
+                WHERE kv."modelId" = km.id AND kv.status IN ('Published', 'Scheduled')
+                  AND km.status IN ('Published', 'Scheduled', 'Unpublished')
+              ), '[]'::jsonb)
+            )
+        -- A draft or a model in training keeps its status: the record alone stops its owner
+        -- publishing it. One a moderator took down or deleted needs neither.
+        WHERE km."userId" = ${id} AND km.status NOT IN ('UnpublishedViolation', 'Deleted')
+          AND ${unlessHeld}
+        RETURNING km.id, km.meta
+      )
+      UPDATE "ModelVersion" mv SET status = 'Unpublished'
+      FROM hidden h, jsonb_array_elements(h.meta -> 'versionsUnpublishedByRemoval') taken
+      WHERE mv."modelId" = h.id AND mv.id = (taken ->> 'id')::int
+        AND mv.status IN ('Published', 'Scheduled')`;
     await dbWrite.$executeRaw`DELETE FROM "ChatMessage" WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`DELETE FROM "ChatMember" WHERE "userId" = ${id} AND ${unlessHeld}`;
     // Rows, storage objects and caches; then any image uploaded since the list was read.
@@ -1713,19 +1850,41 @@ export const removeAllContent = async ({
       ...(softDeleteFailed.length && { softDeleteFailed }),
     }).catch(() => undefined);
     await unindexDeleted([
-      [modelsSearchIndex, 'Model', models],
       [articlesSearchIndex, 'Article', articles],
       [collectionsSearchIndex, 'Collection', collections],
       [bountiesSearchIndex, 'Bounty', bounties],
-    ]).catch((e: unknown) =>
-      logToAxiom({
-        name: 'remove-all-content',
-        type: 'error',
-        message: `Unindexing after a stopped wipe failed: ${(e as Error).message}`,
-        userId: id,
-      }).catch(() => undefined)
-    );
-    const refundFailures = await refundBidsForDeletedModels(models, alertedBy);
+    ])
+      .then(async () => {
+        // A stop after the hide leaves hidden models: they leave search with the deleted ones.
+        const offSite = await modelsOffSite(models.map((m) => m.id));
+        if (offSite.length)
+          await modelsSearchIndex.queueUpdate(
+            offSite.map((modelId) => ({ id: modelId, action: SearchIndexUpdateQueueAction.Delete }))
+          );
+      })
+      .catch((e: unknown) =>
+        logToAxiom({
+          name: 'remove-all-content',
+          type: 'error',
+          message: `Unindexing after a stopped wipe failed: ${(e as Error).message}`,
+          userId: id,
+        }).catch(() => undefined)
+      );
+    const refundFailures = await refundBidsForRemovedModels(models, alertedBy);
+    await removedModels(models.map((m) => m.id))
+      .then(async ({ hidden }) => {
+        if (hidden.length) await dropHiddenModelCaches(hidden, id);
+      })
+      .catch((e: unknown) =>
+        logToAxiom({
+          name: 'remove-all-content',
+          type: 'error',
+          message: `Dropping hidden models' caches after a stopped wipe failed: ${
+            (e as Error).message
+          }`,
+          userId: id,
+        }).catch(() => undefined)
+      );
     throw new LegalHoldStoppedError(
       refundFailures.length || softDeleteRefundFailures.length ? ['bid-refunds'] : []
     );
@@ -1761,7 +1920,24 @@ export const removeAllContent = async ({
       )
     );
 
-  await unindex('index-models', modelsSearchIndex, models);
+  // A model an earlier owner of which is held was kept, hidden: every model leaves search, and the
+  // caller is told which were kept.
+  let keptModelIds: number[] = [];
+  await runStep('index-models', async () => {
+    const gone = await goneIds(
+      'Model',
+      models.map((m) => m.id)
+    );
+    const goneSet = new Set(gone);
+    keptModelIds = models.map((m) => m.id).filter((modelId) => !goneSet.has(modelId));
+    if (models.length)
+      await modelsSearchIndex.queueUpdate(
+        models.map((m) => ({ id: m.id, action: SearchIndexUpdateQueueAction.Delete }))
+      );
+  });
+  if (keptModelIds.length)
+    await runStep('kept-model-caches', () => dropHiddenModelCaches(keptModelIds, id));
+  else await runStep('content-counts', () => userContentOverviewCache.refresh(id));
   await unindex('index-images', imagesSearchIndex, images);
   await unindex('index-image-metrics', imagesMetricsSearchIndex, images);
   await unindex('index-articles', articlesSearchIndex, articles);
@@ -1772,7 +1948,7 @@ export const removeAllContent = async ({
   await runStep('user-metrics', () => userMetrics.queueUpdate(id));
   await runStep('article-metrics', () => articleMetrics.queueUpdate(articles.map((a) => a.id)));
 
-  const refundFailures = await refundBidsForDeletedModels(models, alertedBy);
+  const refundFailures = await refundBidsForRemovedModels(models, alertedBy);
   if (refundFailures.length || softDeleteRefundFailures.length)
     failed('bid-refunds', 'some bids were not refunded');
 
@@ -1874,7 +2050,7 @@ export const removeAllContent = async ({
   const docStoreError = await wipeAccountFromDocStore(id);
   if (docStoreError) failed('doc-store', docStoreError);
 
-  return { incomplete };
+  return { incomplete, keptModelIds };
 };
 
 /**

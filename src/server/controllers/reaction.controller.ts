@@ -69,7 +69,6 @@ async function getTrackerEvent(
   const action = result === 'created' ? 'Create' : 'Delete';
   switch (input.entityType) {
     case 'image':
-      // `kysely-hot-reads-5` on: the same two columns through Kysely, on the same replica.
       const image = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
         ? await readImageNsfwLevelAndOwnerViaKysely(
             (
@@ -312,8 +311,7 @@ export const toggleReactionHandler = async ({
     // the door for private models.
     const checkAccess = ['image', 'post'];
     if (checkAccess.includes(input.entityType)) {
-      // `kysely-hot-reads-5` on: the image's `postId` alone through Kysely, on the same replica.
-      // A missing image then runs the Prisma read, so its not-found throw is unchanged.
+      // A missing image runs the Prisma read, so its not-found throw is unchanged.
       const readImagePostId = async (imageId: number) => {
         if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5)) {
           const row = await readImagePostIdViaKysely((await loadKyselyDb()).kyselyRead, imageId);

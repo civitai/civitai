@@ -338,6 +338,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
 
     expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
       incomplete: ['app-storage'],
+      keptModelIds: [],
     });
 
     const lines = warn.mock.calls.map((c) => String(c[0]));
@@ -363,6 +364,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
 
     expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
       incomplete: ['app-storage-truncated'],
+      keptModelIds: [],
     });
 
     const truncated = warn.mock.calls
@@ -394,7 +396,10 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // Positive control for the guard above: the warning must not fire on the
     // happy path, or it is noise that trains an operator to ignore it.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({ incomplete: [] });
+    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
+      incomplete: [],
+      keptModelIds: [],
+    });
     expect(
       warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[removeAllContent]'))
     ).toEqual([]);
@@ -422,6 +427,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // Must RESOLVE, not reject.
     await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toEqual({
       incomplete: ['app-storage'],
+      keptModelIds: [],
     });
 
     // 🔴 Same anti-vacuity point: a build that never calls the purge also never
