@@ -458,7 +458,9 @@
     "patchedDependencies": {
       "@mantine/hooks": "patches/@mantine__hooks.patch",
       "@prisma/client@6.13.0": "patches/@prisma__client@6.13.0.patch",
-      "next@16.4.3": "patches/next@16.4.3.patch"
+      "next@16.4.3": "patches/next@16.4.3.patch",
+      "@prisma/generator-helper@6.19.3": "patches/@prisma__generator-helper@6.19.3.patch",
+      "@prisma/generator-helper@5.22.0": "patches/@prisma__generator-helper@5.22.0.patch"
     }
   }
 }
