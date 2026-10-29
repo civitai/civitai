@@ -5,6 +5,9 @@ import {
   TURN_LIMIT_REFUSAL,
   isKeepLimitResult,
   openAppNotChosen,
+  submitNotChosen,
+  SAMPLE_NOT_AGREED,
+  SUBMIT_NEEDS_READY,
   assistantRules,
   assistantSubagentRules,
   assistantSubagentInstructions,
@@ -126,6 +129,7 @@ describe('App Assistant’s tools on the runner', () => {
         'use_open_app',
         'set_checklist',
         'report_ready',
+        'submit_for_review',
         'start_preview',
         'stop_preview',
       ])
@@ -136,6 +140,7 @@ describe('App Assistant’s tools on the runner', () => {
       'set_checklist',
       'start_preview',
       'stop_preview',
+      'submit_for_review',
       'use_open_app',
     ]);
     // The page's prompt, shared: the same rules, and the remote mode's word on the preview.
@@ -341,6 +346,40 @@ describe('App Assistant’s gate on the runner', () => {
     expect(((await call(tools.tools, 'report_ready', CIVITAI)) as { error: string }).error).toMatch(
       /sandbox__preview_check: it has not run/
     );
+  });
+
+  it('offers submit_for_review only once the app is ready, and a file change withdraws it', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open();
+    expect(await call(tools.tools, 'submit_for_review')).toMatchObject({
+      error: SUBMIT_NEEDS_READY,
+    });
+    await passAll(tools.tools);
+    // Every check passed, but report_ready has not said so: submitting waits on it.
+    expect(await call(tools.tools, 'submit_for_review')).toMatchObject({
+      error: SUBMIT_NEEDS_READY,
+    });
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({ ready: true });
+    const offer = (await call(tools.tools, 'submit_for_review')) as Record<string, unknown>;
+    expect(offer).toMatchObject({ awaitsUser: true, submit: expect.any(String) });
+    // The page hears of it, as of every call: that is what shows its Submit for review button.
+    expect(reported.at(-1)).toMatchObject({ name: 'submit_for_review', isError: false });
+    await call(tools.tools, 'sandbox__write_file', { path: 'a', content: 'x' });
+    expect(((await call(tools.tools, 'submit_for_review')) as { error: string }).error).toMatch(
+      /sandbox__preview_check: it has not run/
+    );
+  });
+
+  it('an app whose report_ready was refused (sample data the user never agreed to) cannot be submitted', async () => {
+    fake.add('my-app');
+    const { tools } = await open();
+    await passAll(tools.tools);
+    expect(await call(tools.tools, 'report_ready', { data: 'sample' })).toMatchObject({
+      error: expect.stringContaining(SAMPLE_NOT_AGREED),
+    });
+    expect(await call(tools.tools, 'submit_for_review')).toMatchObject({
+      error: SUBMIT_NEEDS_READY,
+    });
   });
 
   it('a command other than the checks undoes them; reading does not', async () => {
@@ -669,6 +708,7 @@ describe('the runner’s prompt', () => {
     'use_open_app',
     'set_checklist',
     'report_ready',
+    'submit_for_review',
     'start_preview',
     'stop_preview',
     'dispatch_agent',
@@ -874,6 +914,40 @@ describe('a new chat beside an open app', () => {
       await call(tools.tools, 'sandbox__write_file', { path: `${OPEN}/a.ts`, content: 'x' })
     ).toBe('wrote 1 bytes');
     expect(changesTo(dashboard.name)).toHaveLength(1);
+  });
+
+  it('a new chat cannot submit the open app it did not build, even with every check passed; choosing it lets it', async () => {
+    fake.add(OPEN);
+    const { tools, reported } = await open({ page: { app: OPEN }, history: NEW_CHAT });
+    // Every check runs, as none of them changes the app.
+    await passAll(tools.tools);
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({ ready: true });
+    expect(await call(tools.tools, 'submit_for_review')).toMatchObject({
+      error: submitNotChosen(OPEN),
+    });
+    expect(reported.at(-1)).toMatchObject({
+      name: 'submit_for_review',
+      refused: submitNotChosen(OPEN),
+    });
+    expect(await call(tools.tools, 'use_open_app', { app: OPEN })).toMatchObject({ app: OPEN });
+    expect(await call(tools.tools, 'submit_for_review')).toMatchObject({
+      awaitsUser: true,
+      submit: expect.any(String),
+    });
+  });
+
+  it('the chat that made the open app may submit it', async () => {
+    fake.add(OPEN);
+    const earlier = messagesOf([
+      ['create_app', { name: 'Buzz dashboard' }, { app: OPEN, state: 'starting', note: 'n' }],
+    ]);
+    const { tools } = await open({ page: { app: OPEN }, history: { earlier, current: [] } });
+    await passAll(tools.tools);
+    expect(await call(tools.tools, 'report_ready', CIVITAI)).toMatchObject({ ready: true });
+    expect(await call(tools.tools, 'submit_for_review')).toMatchObject({
+      awaitsUser: true,
+      submit: expect.any(String),
+    });
   });
 
   it('what a chat chose was another app: the app the user switched to is not changed', async () => {

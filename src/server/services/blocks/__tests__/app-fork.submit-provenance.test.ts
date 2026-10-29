@@ -143,6 +143,8 @@ describe('submitVersion — fork provenance comes only from the fork session', (
     await submitVersion({
       bundleBuffer: await bundle({ version: '0.2.0' }),
       submittedByUserId: SUBMITTER_ID,
+      // A moderator: the owner gate on an existing app is pinned in publish-request.orchestration.test.ts.
+      submitterIsModerator: true,
     });
     expect(m.setProvenance).not.toHaveBeenCalled();
   });

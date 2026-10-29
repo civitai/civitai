@@ -222,6 +222,20 @@ export function pickServerOwnedMeta(meta: ModelMeta | null | undefined): ModelMe
   return pickKeys(meta, SERVER_ONLY_META_KEYS);
 }
 
+const PUBLISH_KEPT_META_KEYS: readonly string[] = [
+  ...SERVER_ONLY_META_KEYS,
+  ...MODERATION_OWNED_META_KEYS,
+  'cannotPublish',
+  'cannotPromote',
+];
+
+/** `meta` with the keys no publish may set or clear taken from `stored`, the row it overwrites. */
+export function withStoredPublishKeys(meta: ModelMeta, stored: ModelMeta | null): ModelMeta {
+  const rest = { ...meta } as Record<string, unknown>;
+  for (const key of PUBLISH_KEPT_META_KEYS) delete rest[key];
+  return { ...rest, ...pickKeys(stored, PUBLISH_KEPT_META_KEYS) } as ModelMeta;
+}
+
 /** The moderation-owned and moderation-flow keys of a stored meta, for a wholesale meta write by a non-moderator. */
 export function pickModerationOwnedMeta(
   meta: ModelMeta | null | undefined,

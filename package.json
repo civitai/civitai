@@ -128,7 +128,7 @@
   },
   "prisma": {
     "schema": "packages/civitai-db-schema/prisma/schema.prisma",
-    "seed": "ts-node --compiler-options {\"module\":\"CommonJS\"} packages/civitai-db-schema/prisma/seed.ts"
+    "seed": "tsx packages/civitai-db-schema/prisma/seed.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.490.0",
@@ -225,7 +225,6 @@
     "@trpc/next": "^11.17.0",
     "@trpc/react-query": "^11.17.0",
     "@trpc/server": "^11.17.0",
-    "@typescript/analyze-trace": "^0.10.1",
     "algoliasearch": "^4.23.3",
     "archiver": "^6.0.1",
     "blurhash": "^2.0.4",
@@ -337,7 +336,6 @@
     "zustand": "^4.3.7"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-agent-sdk": "^0.2.6",
     "@electric-sql/pglite": "^0.4.6",
     "@faker-js/faker": "^9.0.3",
     "@ladle/react": "^5.1.1",
@@ -370,6 +368,7 @@
     "@types/yazl": "3.3.1",
     "@typescript-eslint/eslint-plugin": "^5.33.0",
     "@typescript-eslint/parser": "^5.33.0",
+    "@typescript/analyze-trace": "^0.10.1",
     "@vitest/browser": "^4.1.11",
     "@vitest/browser-playwright": "4.1.11",
     "@vitest/coverage-v8": "^4.1.11",
@@ -396,7 +395,6 @@
     "prisma-generator-typescript-interfaces": "^1.6.1",
     "prisma-kysely": "^2.2.0",
     "tailwindcss": "^3.4.3",
-    "ts-node": "^10.9.1",
     "tsx": "^4.19.2",
     "turbo": "^2.9.17",
     "typed-scss-modules": "^8.1.1",

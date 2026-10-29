@@ -942,15 +942,23 @@ export const publishModelHandler = async ({
     });
     await assertNotCrossOwnerDuplicate({ modelId: input.id, ownerId: model.userId, isModerator });
 
-    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...rest } =
-      modelMeta || {};
-    // A moderator publishing a model a content wipe hid ends that removal: its record goes too.
-    const meta = withoutRemovedWithOwner(rest);
     const updatedModel = await publishModelById({
       ...input,
-      meta: withModelRulesClearance(meta, modelMeta, isModerator),
+      meta: (stored) => {
+        const {
+          needsReview,
+          unpublishedReason,
+          unpublishedAt,
+          unpublishedBy,
+          customMessage,
+          ...rest
+        } = stored || {};
+        // A moderator publishing a model a content wipe hid ends that removal: its record goes too.
+        return withModelRulesClearance(withoutRemovedWithOwner(rest), stored, isModerator);
+      },
       republishing,
       enforceModelRules: !isModerator,
+      refuseRemovedWithOwner: !isModerator,
     });
     // Held for review: not published, so no publish side effects below.
     if (updatedModel.status === ModelStatus.UnpublishedViolation) return updatedModel;
