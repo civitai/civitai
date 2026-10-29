@@ -1,14 +1,15 @@
 import { sql, type Kysely, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import { isRank, RANK_RULES, type Rank } from '../ranks';
-import { DAILY, goldWithinCap, streakBonusGold } from './config';
+import { DAILY, dailyGoldCapOf, goldWithinCap, streakBonusGold } from './config';
 import { dayLabel, dayStart, nextDayStart, utcDay, type Day } from './days';
 import {
   advanceStreak,
   grantWeeklyShield,
   liveStreak,
   newPlayerState,
+  shieldCoversToday,
+  voidStreak,
   type StreakState,
 } from './streak';
 
@@ -33,6 +34,66 @@ async function readKeeper(
   return (await query.executeTakeFirst()) ?? null;
 }
 
+async function startAtOf(db: Executor, playerId: number): Promise<Date> {
+  const player = await db
+    .selectFrom('NewOrderPlayer')
+    .select('startAt')
+    .where('userId', '=', playerId)
+    .executeTakeFirst();
+  return player?.startAt ?? new Date(0);
+}
+
+/** A Watch counts only if it was completed at or after the player's last career reset. */
+const watchStands = (completedAt: Date | null, startAt: Date) =>
+  completedAt !== null && completedAt >= startAt;
+
+/**
+ * The streak a career reset has not ended. Everything recorded before `startAt` is void: the last
+ * Watch must have been completed at or after it. Shields survive the reset.
+ */
+async function readStreakState(
+  db: Executor,
+  playerId: number,
+  startAt: Date,
+  lock = false
+): Promise<StreakState | null> {
+  const state = await readKeeper(db, playerId, lock);
+  if (!state?.lastWatchDay) return state;
+  const startDay = utcDay(startAt);
+  if (state.lastWatchDay > startDay) return state;
+  if (state.lastWatchDay < startDay) return voidStreak(state);
+  const last = await db
+    .selectFrom('KnightsPlayerDay')
+    .select('watchCompletedAt')
+    .where('playerId', '=', playerId)
+    .where('day', '=', dateOf(state.lastWatchDay))
+    .executeTakeFirst();
+  return last?.watchCompletedAt && !watchStands(last.watchCompletedAt, startAt)
+    ? voidStreak(state)
+    : state;
+}
+
+/**
+ * Votes that count toward today's Watch when a reset happened earlier today; null when today is
+ * entirely after the reset and the day row's own counter is right.
+ */
+async function votesSinceMidDayReset(
+  db: Executor,
+  playerId: number,
+  today: Day,
+  startAt: Date
+): Promise<number | null> {
+  if (startAt <= dayStart(today)) return null;
+  const counted = await db
+    .selectFrom('KnightsVote')
+    .select(sql<string>`count(*)`.as('n'))
+    .where('playerId', '=', playerId)
+    .where('createdAt', '>=', utc(startAt))
+    .where('createdAt', '<', utc(nextDayStart(today)))
+    .executeTakeFirstOrThrow();
+  return Number(counted.n);
+}
+
 async function ensureKeeper(trx: Executor, playerId: number, today: Day) {
   const fresh = newPlayerState(today);
   await trx
@@ -42,8 +103,13 @@ async function ensureKeeper(trx: Executor, playerId: number, today: Day) {
     .execute();
 }
 
-async function completeWatch(trx: Executor, playerId: number, today: Day): Promise<number> {
-  const before = (await readKeeper(trx, playerId, true)) ?? newPlayerState(today);
+async function completeWatch(
+  trx: Executor,
+  playerId: number,
+  today: Day,
+  startAt: Date
+): Promise<number> {
+  const before = (await readStreakState(trx, playerId, startAt, true)) ?? newPlayerState(today);
   const { shieldUsed: _spent, ...after } = advanceStreak(before, today);
   await trx
     .updateTable('KnightsPlayer')
@@ -61,14 +127,21 @@ async function completeWatch(trx: Executor, playerId: number, today: Day): Promi
 export type DayRecord = { gold: number; bonus: number; watchCompleted: boolean };
 
 /**
- * Counts one vote into the player's UTC day: clamps its gold to what is left of the rank's daily cap
- * and, on the vote that reaches the Watch size, advances the streak and prices the bonus.
- * Call it only after this transaction has locked the player's NewOrderPlayer row: that lock is what
- * serialises one player's concurrent votes, so the day row cannot be overspent or complete twice.
+ * Counts one vote into the player's UTC day: clamps its gold to the rank's daily cap and, on the
+ * vote that completes the Watch, advances the streak and prices the bonus. Only votes since `startAt`
+ * (the last career reset) count toward the Watch; the cap counts the whole day's gold.
+ *
+ * Call only after this transaction has locked the player's NewOrderPlayer row: that lock serialises one player's concurrent votes, so the day row cannot be overspent or complete twice.
  */
 export async function recordVoteDay(
   trx: Executor,
-  { playerId, rank, gold, now }: { playerId: number; rank: Rank; gold: number; now: Date }
+  {
+    playerId,
+    rank,
+    gold,
+    now,
+    startAt,
+  }: { playerId: number; rank: string; gold: number; now: Date; startAt: Date }
 ): Promise<DayRecord> {
   const today = utcDay(now);
   await ensureKeeper(trx, playerId, today);
@@ -86,9 +159,9 @@ export async function recordVoteDay(
     .executeTakeFirstOrThrow();
 
   const recorded = goldWithinCap(rank, row.goldRecorded, gold);
-  const votes = row.votes + 1;
-  const watchCompleted = row.watchCompletedAt === null && votes >= DAILY.watchSize;
-  const bonus = watchCompleted ? await completeWatch(trx, playerId, today) : 0;
+  const votes = (await votesSinceMidDayReset(trx, playerId, today, startAt)) ?? row.votes + 1;
+  const watchCompleted = !watchStands(row.watchCompletedAt, startAt) && votes >= DAILY.watchSize;
+  const bonus = watchCompleted ? await completeWatch(trx, playerId, today, startAt) : 0;
 
   await trx
     .updateTable('KnightsPlayerDay')
@@ -113,6 +186,8 @@ export type DailyStatus = {
   streak: number;
   shields: number;
   maxShields: number;
+  /** Missing today would still leave the streak alive, because a shield will cover it. */
+  shieldCoversToday: boolean;
   /** Paid when today's Watch completes; what was paid once it has. */
   bonusGold: number;
 };
@@ -122,22 +197,24 @@ export async function getDailyStatus(
   { playerId, rank, now }: { playerId: number; rank: string; now: Date }
 ): Promise<DailyStatus> {
   const today = utcDay(now);
-  const [row, stored] = await Promise.all([
+  const startAt = await startAtOf(db, playerId);
+  const [row, stored, sinceReset] = await Promise.all([
     db
       .selectFrom('KnightsPlayerDay')
       .select(['votes', 'goldRecorded', 'watchCompletedAt', 'bonusGold'])
       .where('playerId', '=', playerId)
       .where('day', '=', dateOf(today))
       .executeTakeFirst(),
-    readKeeper(db, playerId),
+    readStreakState(db, playerId, startAt),
+    votesSinceMidDayReset(db, playerId, today, startAt),
   ]);
   const state = stored ?? newPlayerState(today);
-  const watchDone = row?.watchCompletedAt != null;
-  const goldCap = isRank(rank) ? RANK_RULES[rank].dailyGoldCap : 0;
+  const watchDone = watchStands(row?.watchCompletedAt ?? null, startAt);
+  const goldCap = dailyGoldCapOf(rank);
   const goldRecorded = row?.goldRecorded ?? 0;
 
   return {
-    votes: row?.votes ?? 0,
+    votes: sinceReset ?? row?.votes ?? 0,
     watchSize: DAILY.watchSize,
     watchDone,
     goldRecorded,
@@ -146,13 +223,15 @@ export async function getDailyStatus(
     streak: liveStreak(state, today),
     shields: grantWeeklyShield(state, today).shields,
     maxShields: DAILY.maxShields,
-    bonusGold: watchDone ? row.bonusGold : streakBonusGold(advanceStreak(state, today).streak),
+    shieldCoversToday: shieldCoversToday(state, today),
+    bonusGold:
+      watchDone && row ? row.bonusGold : streakBonusGold(advanceStreak(state, today).streak),
   };
 }
 
 export type Recap = {
   day: Day;
-  /** "yesterday" or "on Oct 26" */
+  /** "yesterday", "on Oct 26" */
   when: string;
   cast: number;
   confirmed: number;
@@ -161,9 +240,11 @@ export type Recap = {
   accuracy: number | null;
   goldEarned: number;
   pending: number;
+  /** The Watch bonus paid that day, apart from the vote gold in `goldEarned`. */
+  streakBonus: number;
 };
 
-/** The player's last play day before today, unless they already dismissed the recap today. */
+/** The player's last play day since their last career reset and before today, unless they dismissed the recap today. */
 export async function getRecap(
   db: Executor,
   { playerId, now }: { playerId: number; now: Date }
@@ -176,17 +257,20 @@ export async function getRecap(
     .executeTakeFirst();
   if (keeper?.dismissed === today) return null;
 
+  const startAt = await startAtOf(db, playerId);
   const last = await db
     .selectFrom('KnightsPlayerDay')
-    .select(sql<string>`"day"::text`.as('day'))
+    .select([sql<string>`"day"::text`.as('day'), 'bonusGold', 'watchCompletedAt'])
     .where('playerId', '=', playerId)
     .where('day', '<', dateOf(today))
+    .where('day', '>=', dateOf(utcDay(startAt)))
     .where('votes', '>', 0)
     .orderBy('day', 'desc')
     .limit(1)
     .executeTakeFirst();
   if (!last) return null;
 
+  const from = new Date(Math.max(dayStart(last.day).getTime(), startAt.getTime()));
   const totals = await db
     .selectFrom('KnightsVote')
     .select([
@@ -203,7 +287,7 @@ export async function getRecap(
       ),
     ])
     .where('playerId', '=', playerId)
-    .where('createdAt', '>=', utc(dayStart(last.day)))
+    .where('createdAt', '>=', utc(from))
     .where('createdAt', '<', utc(nextDayStart(last.day)))
     .executeTakeFirstOrThrow();
 
@@ -220,6 +304,7 @@ export async function getRecap(
     accuracy: graded > 0 ? confirmed / graded : null,
     goldEarned: Number(totals.gold),
     pending: Number(totals.pending),
+    streakBonus: watchStands(last.watchCompletedAt, startAt) ? last.bonusGold : 0,
   };
 }
 

@@ -1,4 +1,4 @@
-import { RANK_RULES, type Rank } from '../ranks';
+import { isRank, RANK_RULES } from '../ranks';
 
 /** Days are UTC everywhere. The per-rank gold cap is `dailyGoldCap` in `ranks.ts`. */
 export const DAILY = {
@@ -14,6 +14,10 @@ export const DAILY = {
 export const streakBonusGold = (streak: number): number =>
   DAILY.watchBonusGold * Math.min(streak, DAILY.streakCap);
 
-/** What is left of today's gold cap after `recorded`, and the share of `gold` that fits in it. */
-export const goldWithinCap = (rank: Rank, recorded: number, gold: number): number =>
-  Math.max(0, Math.min(gold, RANK_RULES[rank].dailyGoldCap - recorded));
+/** 0 for a rank the table does not know. */
+export const dailyGoldCapOf = (rank: string): number =>
+  isRank(rank) ? RANK_RULES[rank].dailyGoldCap : 0;
+
+/** The part of `gold` that still fits under the rank's daily cap. */
+export const goldWithinCap = (rank: string, recorded: number, gold: number): number =>
+  Math.max(0, Math.min(gold, dailyGoldCapOf(rank) - recorded));

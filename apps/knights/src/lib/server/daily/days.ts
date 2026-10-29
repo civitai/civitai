@@ -1,10 +1,12 @@
-const DAY_MS = 86_400_000;
+import { utcDayKey } from '@civitai/shared/post-scheduling';
+
+export const DAY_MS = 86_400_000;
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 
 /** A UTC calendar day as `YYYY-MM-DD`. Strings keep days away from the host timezone and the driver's date parsing. */
 export type Day = string;
 
-export const utcDay = (instant: Date): Day => instant.toISOString().slice(0, 10);
+export const utcDay: (instant: Date) => Day = utcDayKey;
 
 export const dayStart = (day: Day): Date => new Date(`${day}T00:00:00.000Z`);
 
@@ -22,5 +24,7 @@ export const isoWeekStart = (day: Day): Day => addDays(day, -((dayStart(day).get
 export function dayLabel(day: Day, today: Day): string {
   if (day === addDays(today, -1)) return 'yesterday';
   const start = dayStart(day);
-  return `on ${MONTHS[start.getUTCMonth()]} ${start.getUTCDate()}`;
+  const year = start.getUTCFullYear();
+  const date = `${MONTHS[start.getUTCMonth()]} ${start.getUTCDate()}`;
+  return year === dayStart(today).getUTCFullYear() ? `on ${date}` : `on ${date}, ${year}`;
 }

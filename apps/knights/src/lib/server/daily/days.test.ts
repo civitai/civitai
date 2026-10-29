@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   addDays,
+  DAY_MS,
   dayLabel,
   daysBetween,
   dayStart,
@@ -37,5 +38,13 @@ describe('days', () => {
   it('labels the previous day "yesterday" and an earlier one by date', () => {
     expect(dayLabel('2026-12-14', '2026-12-15')).toBe('yesterday');
     expect(dayLabel('2026-10-26', '2026-12-15')).toBe('on Oct 26');
+  });
+
+  it('adds the year when it is not the current one', () => {
+    expect(dayLabel('2025-12-30', '2026-01-02')).toBe('on Dec 30, 2025');
+  });
+
+  it('is one day of milliseconds', () => {
+    expect(DAY_MS).toBe(86_400_000);
   });
 });

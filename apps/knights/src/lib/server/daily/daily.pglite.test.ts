@@ -13,7 +13,7 @@ import {
 } from '../queue/queue.service';
 import { RANK_RULES } from '../ranks';
 import { DAILY } from './config';
-import { dismissRecap, getDailyStatus, getRecap } from './daily.service';
+import { dismissRecap, getDailyStatus, getRecap, recordVoteDay } from './daily.service';
 
 const Q = 'knights.image.nsfwLevel';
 const NOON = (day: string) => new Date(`${day}T12:00:00Z`);
@@ -40,12 +40,12 @@ beforeEach(async () => {
   );
 });
 
-async function voteOnFreshItem(userId: number, at: Date) {
+async function voteOnFreshItem(userId: number, at: Date, votesNeeded?: number) {
   const id = ++imageId;
   await seedImage(pg, id);
   const itemId = await enqueueItem(
     db,
-    { questionKey: Q, imageId: id, source: 'test', expiresAt: null },
+    { questionKey: Q, imageId: id, source: 'test', expiresAt: null, votesNeeded },
     at
   );
   return castVote(db, { userId, itemId, answer: '4' }, { applyConsensus, now: () => at });
@@ -267,6 +267,158 @@ describe('streaks and shields', () => {
   });
 });
 
+const setStart = (userId: number, at: string) =>
+  pg.query(`UPDATE "NewOrderPlayer" SET "startAt"=$2::timestamp WHERE "userId"=$1`, [userId, at]);
+
+const setKeeper = (
+  userId: number,
+  o: { streak: number; lastWatchDay: string; shields?: number; shieldWeek?: string }
+) =>
+  pg.query(
+    `INSERT INTO "KnightsPlayer" ("playerId","streak","lastWatchDay","shields","shieldWeek") VALUES ($1,$2,$3,$4,$5)`,
+    [userId, o.streak, o.lastWatchDay, o.shields ?? 0, o.shieldWeek ?? '2026-12-14']
+  );
+
+const markWatch = (userId: number, day: string, at: string, bonus: number) =>
+  pg.query(
+    `INSERT INTO "KnightsPlayerDay" ("playerId","day","votes","watchCompletedAt","bonusGold") VALUES ($1,$2,30,$3,$4)
+     ON CONFLICT ("playerId","day") DO UPDATE SET "watchCompletedAt"=$3,"bonusGold"=$4,"votes"=30`,
+    [userId, day, at, bonus]
+  );
+
+describe('a rank the cap does not know', () => {
+  it('records no gold and does not throw', async () => {
+    await seedPlayer(pg, 1);
+    const day = await db.transaction().execute((trx) =>
+      recordVoteDay(trx, {
+        playerId: 1,
+        rank: 'Squire',
+        gold: 100,
+        now: NOON(D1),
+        startAt: new Date(0),
+      })
+    );
+    expect(day.gold).toBe(0);
+    expect((await dayRow(1, D1)).votes).toBe(1);
+  });
+});
+
+describe('settling votes whose gold the cap trimmed', () => {
+  it('moves only the trimmed gold from pending to earned', async () => {
+    await seedPlayer(pg, 1);
+    await seedDay(1, D1, { goldRecorded: cap - 60 });
+
+    await voteOnFreshItem(1, NOON(D1), 1);
+
+    const vote = await pg.query<{ gold: number; verdict: string; settledAt: Date | null }>(
+      `SELECT gold,verdict,"settledAt" FROM "KnightsVote" WHERE "playerId"=1`
+    );
+    expect(vote.rows[0]).toMatchObject({ gold: 60, verdict: 'correct' });
+    expect(vote.rows[0].settledAt).not.toBeNull();
+    expect(await wallet(1)).toEqual({
+      exp: PROGRESSION.voteXp + PROGRESSION.correctXp,
+      goldPending: 0,
+      goldEarned: 60,
+    });
+  });
+
+  it('settles a zero-gold vote with its XP and no gold', async () => {
+    await seedPlayer(pg, 1);
+    await seedDay(1, D1, { goldRecorded: cap });
+
+    await voteOnFreshItem(1, NOON(D1), 1);
+
+    expect(await wallet(1)).toEqual({
+      exp: PROGRESSION.voteXp + PROGRESSION.correctXp,
+      goldPending: 0,
+      goldEarned: 0,
+    });
+  });
+
+  it('keeps the bonus separate from the vote gold when the settling vote completes the Watch', async () => {
+    await seedPlayer(pg, 1);
+    await seedDay(1, D1, { votes: DAILY.watchSize - 1, goldRecorded: cap - 40 });
+
+    await voteOnFreshItem(1, NOON(D1), 1);
+
+    expect((await wallet(1)).goldEarned).toBe(40 + DAILY.watchBonusGold);
+  });
+});
+
+describe('a career reset (startAt)', () => {
+  it('counts only the votes cast after a reset made earlier the same day', async () => {
+    await seedPlayer(pg, 1);
+    await seedDay(1, D1, { votes: DAILY.watchSize - 1 });
+    await setStart(1, `${D1} 12:00:00`);
+
+    await voteOnFreshItem(1, new Date(`${D1}T13:00:00Z`));
+    expect(await dayRow(1, D1)).toMatchObject({ votes: 1, watchCompletedAt: null, bonusGold: 0 });
+    expect((await wallet(1)).goldEarned).toBe(0);
+
+    for (let i = 1; i < DAILY.watchSize; i++) await voteOnFreshItem(1, new Date(`${D1}T13:00:00Z`));
+    expect(await dayRow(1, D1)).toMatchObject({
+      votes: DAILY.watchSize,
+      bonusGold: DAILY.watchBonusGold,
+    });
+  });
+
+  it('does not show the votes of before the reset as progress, nor a Watch finished before it', async () => {
+    await seedPlayer(pg, 1);
+    await markWatch(1, D1, `${D1} 08:00:00`, DAILY.watchBonusGold);
+    await setStart(1, `${D1} 12:00:00`);
+    await voteOnFreshItem(1, new Date(`${D1}T13:00:00Z`));
+
+    expect(await getDailyStatus(db, { playerId: 1, rank: 'Knight', now: NOON(D1) })).toMatchObject({
+      votes: 1,
+      watchDone: false,
+    });
+  });
+
+  it('ends a 7-day streak, keeps the shields, and starts again from 1', async () => {
+    await seedPlayer(pg, 1);
+    await setKeeper(1, { streak: 7, lastWatchDay: D1, shields: 1 });
+    await setStart(1, `${D2} 00:00:00`);
+
+    const at = () => getDailyStatus(db, { playerId: 1, rank: 'Knight', now: NOON(D2) });
+    expect(await at()).toMatchObject({ streak: 0, shields: 1 });
+
+    await completeWatchOn(1, D2);
+
+    expect(await keeper(1)).toMatchObject({ streak: 1, shields: 1, lastWatchDay: D2 });
+    expect((await dayRow(1, D2)).bonusGold).toBe(DAILY.watchBonusGold);
+  });
+
+  it('ends a streak whose last Watch was finished earlier on the day of the reset', async () => {
+    await seedPlayer(pg, 1);
+    await setKeeper(1, { streak: 3, lastWatchDay: D1 });
+    await markWatch(1, D1, `${D1} 08:00:00`, 300);
+    await setStart(1, `${D1} 12:00:00`);
+
+    await completeWatchOn(1, D2);
+
+    expect((await keeper(1)).streak).toBe(1);
+  });
+
+  it('keeps a streak whose last Watch was finished after the reset', async () => {
+    await seedPlayer(pg, 1);
+    await setKeeper(1, { streak: 3, lastWatchDay: D1 });
+    await markWatch(1, D1, `${D1} 08:00:00`, 300);
+    await setStart(1, `${D1} 06:00:00`);
+
+    await completeWatchOn(1, D2);
+
+    expect((await keeper(1)).streak).toBe(4);
+  });
+
+  it('leaves the gold cap counting the whole day', async () => {
+    await seedPlayer(pg, 1);
+    await seedDay(1, D1, { goldRecorded: cap });
+    await setStart(1, `${D1} 12:00:00`);
+    await voteOnFreshItem(1, new Date(`${D1}T13:00:00Z`));
+    expect((await wallet(1)).goldPending).toBe(0);
+  });
+});
+
 describe('getDailyStatus', () => {
   it('reports progress, the cap and the shield for today', async () => {
     await seedPlayer(pg, 1);
@@ -302,6 +454,8 @@ describe('getDailyStatus', () => {
     expect((await at(D2)).streak).toBe(1);
     expect((await at(D3)).streak).toBe(1); // D2 missed, the shield will cover it
     expect((await at(D4)).streak).toBe(0); // two missed days
+    expect((await at(D2)).shieldCoversToday).toBe(true);
+    expect((await at(D3)).shieldCoversToday).toBe(false); // the shield is already spoken for
   });
 
   it('works for a player who has not voted yet', async () => {
@@ -356,6 +510,7 @@ describe('the recap', () => {
       accuracy: 18 / 21,
       goldEarned: 1800,
       pending: 9,
+      streakBonus: 0,
     });
   });
 
@@ -403,6 +558,36 @@ describe('the recap', () => {
 
     await ledger(1, D2, { correct: 1 });
     expect(await getRecap(db, { playerId: 1, now: NOON(D3) })).toMatchObject({ day: D2 });
+  });
+
+  it('counts only the votes cast since a career reset', async () => {
+    await seedPlayer(pg, 1);
+    await ledger(1, D1, { correct: 5 }); // cast 08:01 .. 08:05
+    await setStart(1, `${D1} 08:03:00`);
+    expect(await getRecap(db, { playerId: 1, now: NOON(D2) })).toMatchObject({ day: D1, cast: 3 });
+  });
+
+  it('has no recap for days before a career reset', async () => {
+    await seedPlayer(pg, 1);
+    await ledger(1, D1, { correct: 5 });
+    await setStart(1, `${D2} 00:00:00`);
+    expect(await getRecap(db, { playerId: 1, now: NOON(D2) })).toBeNull();
+  });
+
+  it('reports the streak bonus of that day apart from vote gold', async () => {
+    await seedPlayer(pg, 1);
+    await ledger(1, D1, { correct: 2 });
+    await markWatch(1, D1, `${D1} 09:00:00`, 700);
+    const recap = await getRecap(db, { playerId: 1, now: NOON(D2) });
+    expect(recap).toMatchObject({ goldEarned: 200, streakBonus: 700 });
+  });
+
+  it('does not report a bonus for a Watch finished before a reset', async () => {
+    await seedPlayer(pg, 1);
+    await ledger(1, D1, { correct: 2 });
+    await markWatch(1, D1, `${D1} 07:00:00`, 700);
+    await setStart(1, `${D1} 08:00:00`);
+    expect(await getRecap(db, { playerId: 1, now: NOON(D2) })).toMatchObject({ streakBonus: 0 });
   });
 
   it('counts only the player own votes', async () => {

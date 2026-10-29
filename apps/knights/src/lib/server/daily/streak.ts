@@ -62,3 +62,18 @@ export function liveStreak(before: StreakState, today: Day): number {
   if (missed <= 0) return state.streak;
   return missed === 1 && state.shields > 0 ? state.streak : 0;
 }
+
+/** A career reset ends the streak; shields are kept. */
+export const voidStreak = (state: StreakState): StreakState => ({
+  ...state,
+  streak: 0,
+  lastWatchDay: null,
+});
+
+/** Whether a shield would keep the streak alive if today's Watch is missed. */
+export function shieldCoversToday(state: StreakState, today: Day): boolean {
+  if (liveStreak(state, today) === 0 || state.lastWatchDay === null) return false;
+  return (
+    daysBetween(state.lastWatchDay, today) === 1 && grantWeeklyShield(state, today).shields > 0
+  );
+}

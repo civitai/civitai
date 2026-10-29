@@ -306,7 +306,7 @@ export async function castVote(
 
         const player = await trx
           .selectFrom('NewOrderPlayer')
-          .select(['rankType', 'exp'])
+          .select(['rankType', 'exp', 'startAt'])
           .where('userId', '=', input.userId)
           .executeTakeFirst();
         if (!player) return rejected('no-player');
@@ -383,13 +383,13 @@ export async function castVote(
           .where('userId', '=', input.userId)
           .execute();
 
-        // After the player row lock above, and after the voters' locks: one player's concurrent votes queue
-        // on that lock, so the day row never needs a lock order of its own.
+        // Must stay after the player row lock: recordVoteDay relies on it (see its doc).
         const day = await recordVoteDay(trx, {
           playerId: input.userId,
           rank: player.rankType,
           gold,
           now,
+          startAt: player.startAt,
         });
         if (day.gold !== gold) {
           await trx

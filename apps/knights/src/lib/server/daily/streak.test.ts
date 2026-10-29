@@ -5,6 +5,8 @@ import {
   grantWeeklyShield,
   liveStreak,
   newPlayerState,
+  shieldCoversToday,
+  voidStreak,
   type StreakState,
 } from './streak';
 
@@ -115,5 +117,36 @@ describe('liveStreak', () => {
     expect(
       liveStreak(state({ streak: 3, lastWatchDay: '2026-12-15', shields: 1 }), '2026-12-18')
     ).toBe(0);
+  });
+});
+
+describe('shieldCoversToday', () => {
+  const alive = state({ streak: 3, lastWatchDay: '2026-12-15', shields: 1 });
+
+  it('is true when missing today would be covered by the shield', () => {
+    expect(shieldCoversToday(alive, '2026-12-16')).toBe(true);
+  });
+
+  it('is false without a shield, or with no streak', () => {
+    expect(shieldCoversToday({ ...alive, shields: 0 }, '2026-12-16')).toBe(false);
+    expect(shieldCoversToday(state({ shields: 1 }), '2026-12-16')).toBe(false);
+  });
+
+  it('is false when the shield is already covering yesterday', () => {
+    expect(shieldCoversToday(alive, '2026-12-17')).toBe(false);
+  });
+
+  it('counts a shield the new week grants', () => {
+    expect(
+      shieldCoversToday(state({ streak: 3, lastWatchDay: '2026-12-20', shields: 0 }), '2026-12-21')
+    ).toBe(true);
+  });
+});
+
+describe('voidStreak', () => {
+  it('ends the streak and keeps the shields', () => {
+    expect(voidStreak(state({ streak: 7, lastWatchDay: '2026-12-15', shields: 1 }))).toEqual(
+      state({ streak: 0, lastWatchDay: null, shields: 1 })
+    );
   });
 });
