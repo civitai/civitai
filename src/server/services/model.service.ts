@@ -304,6 +304,7 @@ import { assertSfwFaceSafe } from '~/server/services/model-sfw-face.service';
 import { isGenerationDisabled } from '~/shared/constants/model-version-flags.constants';
 import { pgDbRead } from '~/server/db/pgDb';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 
 export const getModel = async <TSelect extends Prisma.ModelSelect>({
   id,
@@ -3256,9 +3257,22 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
   await tx.$queryRaw`SELECT id FROM "Model" WHERE id = ${id} FOR NO KEY UPDATE`;
   const row = await tx.model.findUnique({
     where: { id },
-    select: { status: true, availability: true, meta: true },
+    select: { status: true, availability: true, meta: true, lockedProperties: true },
   });
   return row && { ...row, meta: row.meta as ModelMeta | null };
+}
+
+/**
+ * Whether a moderator's save adds or removes the nsfw lock. Such a save makes the lock the
+ * moderator's, so it drops the `systemNsfwLock` marker that lets an owner dispute a system-set one.
+ */
+function changesNsfwLock(stored: string[] | null | undefined, next: string[] | undefined) {
+  return next !== undefined && (stored ?? []).includes('nsfw') !== next.includes('nsfw');
+}
+
+function withoutSystemNsfwLock(meta: ModelMeta): ModelMeta {
+  const { [SYSTEM_NSFW_LOCK_META_KEY]: _marker, ...rest } = meta;
+  return rest;
 }
 
 const removedWithOwnerEditError = () =>
@@ -3627,6 +3641,8 @@ export const upsertModel = async (
           select: { type: true, poi: true, minor: true, sfwOnly: true, lockedProperties: true },
         });
         typeBeforeUpdate = replaced?.type;
+        if (isModerator && changesNsfwLock(replaced?.lockedProperties, data.lockedProperties))
+          mergedMeta = withoutSystemNsfwLock(mergedMeta);
         // Read here rather than off `beforeUpdate` so the recorded "before" is the row this
         // transaction replaces. Only for a save that sends permissions at all.
         const storedPermissions = writesPermissions(data)
@@ -4038,20 +4054,29 @@ export async function applyModelContentChange({
         })
       : null;
     if (flagged) {
-      const meta = {
-        ...((stored.meta as MixedObject | null) ?? {}),
-        ...flagged.metaPatch,
-        ...(flagged.lock && { systemNsfwLock: systemNsfwLockMarker('profanity-filter') }),
-      } as Prisma.InputJsonObject;
-      // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-
-      // rolling the jsonb + text[] binds is where that trade stops being worth it. The
-      // `updatedAt` bump it carries is honest — the model's rating actually changed.
-      await dbWrite.model.update({
-        where: { id },
-        data: flagged.lock
-          ? { nsfw: true, lockedProperties: uniq([...stored.lockedProperties, 'nsfw']), meta }
-          : { meta },
-      });
+      // jsonb merges, never `stored.meta` written back: that read is stale by now, and writing it
+      // would drop whatever a moderator or a scan set since. `updatedAt` is bumped by hand, unlike the
+      // body write above: the model's rating actually changed.
+      const patch = JSON.stringify(flagged.metaPatch);
+      const locked = flagged.lock
+        ? await dbWrite.$executeRaw`
+            UPDATE "Model" m
+            SET nsfw = TRUE,
+                "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw'),
+                meta = ${asJsonbObjectSql('m.meta')} || ${patch}::jsonb || jsonb_build_object(
+                  ${SYSTEM_NSFW_LOCK_META_KEY}::text,
+                  jsonb_build_object('source', 'profanity-filter', 'at', now())
+                ),
+                "updatedAt" = now()
+            WHERE m.id = ${id}
+              AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))`
+        : 0;
+      // Nothing to lock, or a moderator's lock landed since the read: record the detection only.
+      if (!locked)
+        await dbWrite.$executeRaw`
+          UPDATE "Model" m
+          SET meta = ${asJsonbObjectSql('m.meta')} || ${patch}::jsonb, "updatedAt" = now()
+          WHERE m.id = ${id}`;
     }
   }
 
@@ -6213,6 +6238,8 @@ export const privateModelFromTraining = async ({
           throw error;
         }
         const storedMeta = locked.meta;
+        const moderatorChangesNsfwLock =
+          user.isModerator && changesNsfwLock(locked.lockedProperties, data.lockedProperties);
         // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
         const restoreCannotPromote =
           locked.availability !== Availability.Private && storedMeta?.cannotPromote === true;
@@ -6258,7 +6285,9 @@ export const privateModelFromTraining = async ({
                   stripModerationOwnedMeta(meta as ModelMeta, user.isModerator)
                 ) ?? {}),
                 // Only a moderator gets here with a wipe's record; their publish ends it.
-                ...withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)),
+                ...(moderatorChangesNsfwLock
+                  ? withoutSystemNsfwLock(withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta)))
+                  : withoutRemovedWithOwner(pickServerOwnedMeta(storedMeta))),
                 ...(user.isModerator ? {} : pickModerationOwnedMeta(storedMeta)),
                 // Makes it so these models cannot go into auctions or be promoted
                 cannotPromote: true,
@@ -6274,6 +6303,14 @@ export const privateModelFromTraining = async ({
             takenDown = true;
             throw throwAuthorizationError('You are not authorized to publish this model');
           });
+
+        // In the transaction, like upsertModel's, so a moderator's lock change cannot commit unlogged.
+        if (user.isModerator && data.lockedProperties)
+          for (const activity of moderatorFlagActivities(
+            { poi: false, minor: false, sfwOnly: false, lockedProperties: locked.lockedProperties },
+            { lockedProperties: data.lockedProperties }
+          ))
+            await trackModActivity(user.id, { entityType: 'model', entityId: id, activity }, tx);
 
         if (result.modelVersions.length > 0) {
           const now = new Date();

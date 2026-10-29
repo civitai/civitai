@@ -111,6 +111,7 @@ import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -529,6 +530,61 @@ describe('privateModelFromTraining — lock enforcement', () => {
 
     expect(result).toBeNull();
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+});
+
+const systemMarker = { source: 'text-scan', at: '2026-09-05T00:00:00.000Z' };
+
+describe('system nsfw lock marker on a moderator save', () => {
+  const locked = { nsfw: true, lockedProperties: ['nsfw'], meta: { systemNsfwLock: systemMarker } };
+
+  it('drops the marker when a moderator removes the nsfw lock', async () => {
+    mockStored(locked);
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, lockedProperties: [] });
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+  });
+
+  it('drops the marker when a moderator adds the nsfw lock over a stale one', async () => {
+    mockStored({ ...locked, lockedProperties: [] });
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: ['nsfw'],
+    });
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+  });
+
+  it('keeps the marker on a moderator save that leaves the nsfw lock alone', async () => {
+    mockStored(locked);
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: ['nsfw', 'poi'],
+    });
+    expect(updateData().meta).toEqual(expect.objectContaining({ systemNsfwLock: systemMarker }));
+  });
+
+  it('drops the marker and logs the unlock when a moderator unlocks nsfw in the private flow', async () => {
+    mockStored(locked);
+    await privateFromTraining({
+      user: { id: MODERATOR_ID, isModerator: true },
+      lockedProperties: [],
+    });
+    expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
+    expect(trackModActivity).toHaveBeenCalledWith(
+      MODERATOR_ID,
+      { entityType: 'model', entityId: MODEL_ID, activity: 'unlockProperty:nsfw' },
+      expect.anything()
+    );
+  });
+
+  it("keeps the marker and logs nothing on an owner's private-flow publish", async () => {
+    mockStored(locked);
+    await privateFromTraining({ user: { id: OWNER_ID, isModerator: false }, lockedProperties: [] });
+    expect(updateData().meta).toEqual(expect.objectContaining({ systemNsfwLock: systemMarker }));
+    expect(trackModActivity).not.toHaveBeenCalled();
   });
 });
 
