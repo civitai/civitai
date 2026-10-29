@@ -697,10 +697,12 @@ describe('a new chat beside an open app', () => {
     expect(
       await call(tools.tools, 'sandbox__write_file', { path: `${OPEN}/a.ts`, content: 'x' })
     ).toMatchObject({ error: openAppNotChosen(OPEN) });
-    // A test or typecheck run changes nothing, so it runs.
-    await call(tools.tools, 'sandbox__run_command', run(`cd ${OPEN} && npm test`));
-    expect(fake.callsTo('run_command')).toBe(1);
     expect(changesTo(dashboard.name)).toEqual([]);
+    // A test or typecheck run changes nothing, so it runs (and is the only call that reached it).
+    await call(tools.tools, 'sandbox__run_command', run(`cd ${OPEN} && npm test`));
+    expect(changesTo(dashboard.name)).toEqual([
+      { sandbox: dashboard.name, tool: 'run_command', args: run(`cd ${OPEN} && npm test`) },
+    ]);
   });
 
   it('a follow-up in the chat that made the app still changes it (not over-fixed)', async () => {
