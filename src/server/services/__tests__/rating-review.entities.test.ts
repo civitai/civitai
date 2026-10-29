@@ -89,6 +89,64 @@ describe('loadRatingReviewSubject', () => {
     expect((await loadRatingReviewSubject('Model', 1))?.disputeRestriction).toBeUndefined();
   });
 
+  describe('system nsfw lock', () => {
+    const lockedAt = '2026-09-05T00:00:00.000Z';
+    const locked = (over: Record<string, unknown> = {}) => ({
+      userId: 3,
+      nsfw: true,
+      updatedAt: at,
+      name: 'm',
+      deletedAt: null,
+      poi: false,
+      minor: false,
+      lockedProperties: ['nsfw'],
+      meta: { systemNsfwLock: { source: 'text-scan', at: lockedAt } },
+      ...over,
+    });
+    const systemLock = async (row: Record<string, unknown>) => {
+      dbMock.dbRead.model.findUnique.mockResolvedValueOnce(row);
+      return (await loadRatingReviewSubject('Model', 1))?.systemNsfwLock;
+    };
+
+    beforeEach(() => {
+      dbMock.dbRead.modActivity.findFirst.mockReset();
+      dbMock.dbRead.modActivity.findFirst.mockResolvedValue(null);
+    });
+
+    it('holds while a system-marked lock stands and no moderator has locked it since', async () => {
+      expect(await systemLock(locked())).toBe(true);
+    });
+
+    it('yields to a moderator lock logged after the marker', async () => {
+      dbMock.dbRead.modActivity.findFirst.mockImplementation(
+        async (args: { where: { activity: { in: string[] }; createdAt: { gt: Date } } }) =>
+          args.where.activity.in.includes('lockProperty:nsfw') &&
+          args.where.createdAt.gt.getTime() === new Date(lockedAt).getTime()
+            ? { id: 1 }
+            : null
+      );
+      expect(await systemLock(locked())).toBe(false);
+      expect(dbMock.dbRead.modActivity.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({ entityType: 'model', entityId: 1 }),
+        })
+      );
+    });
+
+    it('fails closed when a later write dropped the marker', async () => {
+      expect(await systemLock(locked({ meta: {} }))).toBe(false);
+      expect(await systemLock(locked({ meta: null }))).toBe(false);
+      expect(await systemLock(locked({ meta: { systemNsfwLock: { at: 'not a date' } } }))).toBe(
+        false
+      );
+    });
+
+    it('does not hold once the lock or the nsfw flag is gone', async () => {
+      expect(await systemLock(locked({ lockedProperties: [] }))).toBe(false);
+      expect(await systemLock(locked({ nsfw: false }))).toBe(false);
+    });
+  });
+
   it('gives a system challenge no owner and a user challenge its creator', async () => {
     const row = {
       createdById: 9,

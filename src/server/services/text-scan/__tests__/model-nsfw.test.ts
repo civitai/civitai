@@ -55,6 +55,12 @@ describe('applyModelNsfwTextScan', () => {
   it('flips and locks nsfw, attributes it to the text scan, and notifies the owner once', async () => {
     await applyModelNsfwTextScan(args(true));
     expect(flipSql()).toContain('array_append(');
+    // Merged into meta in the same guarded write as the lock, never written back from a read.
+    expect(flipSql()).toMatch(/meta = \? \|\| jsonb_build_object\(\s*'systemNsfwLock'/);
+    const flipCall = dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
+      (c[0] as readonly string[]).join('?').includes('SET nsfw = TRUE')
+    );
+    expect(flipCall).toContain('text-scan');
     expect(updateModelNsfwLevels).toHaveBeenCalledWith([1]);
     expect(entityChangesMock).toHaveBeenCalled();
     expect(createNotification).toHaveBeenCalledWith(

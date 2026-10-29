@@ -9,6 +9,7 @@ import {
 import { isTextScanRaised } from '@civitai/shared/rated-entity-sql';
 import type { dbWrite } from '~/server/db/client';
 import { dbRead } from '~/server/db/client';
+import { readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 import { ChallengeSource, EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
 export type RatingReviewSubject = {
@@ -21,6 +22,9 @@ export type RatingReviewSubject = {
   overrideBasis: number | null;
   // Set when something other than the rating decides the level, so a dispute could not move it.
   disputeRestriction?: string;
+  // A system check, not a moderator, locked the level: the owner may dispute it even after the scan
+  // that raised it has gone clean.
+  systemNsfwLock?: boolean;
 };
 
 // A POI/minor flag forces the model SFW, so a rating dispute cannot move it while the flag stands.
@@ -29,6 +33,38 @@ export const FLAG_RESTRICTED_MESSAGE =
 // A forced level wins over a moderator rating, so resolving a dispute would change nothing.
 export const FORCED_LEVEL_MESSAGE =
   "This collection's rating is fixed by Civitai, so it can't be disputed.";
+
+// Moderator actions that lock a model's nsfw flag. One logged after the system marker makes the lock
+// the moderator's.
+const MODERATOR_NSFW_LOCK_ACTIVITIES = [
+  'lockProperty:nsfw',
+  'setSfwOnly',
+  'setMinor',
+  'setMinorAutoHash',
+  'setMinorTextScan',
+  'setPoi',
+  'setPoiAutoHash',
+];
+
+async function hasSystemNsfwLock(
+  modelId: number,
+  m: { nsfw: boolean; lockedProperties: string[] | null; meta: unknown },
+  db: Db
+) {
+  if (!m.nsfw || !m.lockedProperties?.includes('nsfw')) return false;
+  const at = readSystemNsfwLockAt(m.meta);
+  if (!at) return false;
+  const moderatorLock = await db.modActivity.findFirst({
+    where: {
+      entityType: 'model',
+      entityId: modelId,
+      activity: { in: MODERATOR_NSFW_LOCK_ACTIVITIES },
+      createdAt: { gt: at },
+    },
+    select: { id: true },
+  });
+  return !moderatorLock;
+}
 
 // Blocked is a ToS action, not a rating: an `nsfw` bounty stores R|X|XXX|Blocked, so its highest bit would read as Blocked.
 const ratedLevel = (mask: number) => getHighestBrowsingLevelBit(mask & allBrowsingLevelsFlag);
@@ -73,6 +109,8 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
         deletedAt: true,
         poi: true,
         minor: true,
+        lockedProperties: true,
+        meta: true,
       },
     });
     if (!m || m.deletedAt) return null;
@@ -85,6 +123,7 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       override: null,
       overrideBasis: null,
       disputeRestriction: m.poi || m.minor ? FLAG_RESTRICTED_MESSAGE : undefined,
+      systemNsfwLock: await hasSystemNsfwLock(id, m, db),
     };
   },
   Post: async (id, db) => {
