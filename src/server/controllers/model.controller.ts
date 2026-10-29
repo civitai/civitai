@@ -1746,17 +1746,21 @@ export const requestReviewHandler = async ({
       },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
-    if (model.status !== ModelStatus.UnpublishedViolation)
-      throw throwBadRequestError(
-        'Cannot request a review for this model because it is not in the correct status'
-      );
+    const assertReviewable = (status: ModelStatus | undefined) => {
+      if (status !== ModelStatus.UnpublishedViolation)
+        throw throwBadRequestError(
+          'Cannot request a review for this model because it is not in the correct status'
+        );
+    };
+    assertReviewable(model.status);
 
     // Deliberately not upsertModel: this only sets meta, and routing it through the full
     // upsert ran the non-moderator profanity filter over the model name.
     const updatedModel = await updateModelById({
       id: model.id,
       data: {},
-      meta: (stored) => {
+      meta: (stored, row) => {
+        assertReviewable(row?.status);
         if (!ctx.user.isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
         return { ...stored, needsReview: true };
       },

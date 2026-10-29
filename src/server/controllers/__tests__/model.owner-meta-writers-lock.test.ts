@@ -225,3 +225,63 @@ describe('the moderator writers', () => {
     });
   });
 });
+
+describe('the locked re-checks of the moderator writers', () => {
+  const actor = { actor: { id: 7 }, tracker: { modelEvent: vi.fn() } };
+  const lockedRow = (row: object) =>
+    dbMock.dbWrite.model.findUnique.mockImplementation((async () =>
+      lockHeld ? { meta: { note: 1 }, ...row } : null) as never);
+
+  it('refuses a take-down when another moderator took it down after the read', async () => {
+    lockedRow({ mode: 'TakenDown' });
+    await expect(takeDown.handler({ modelId: MODEL }, actor)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a bring-back when it was brought back after the read', async () => {
+    for (const db of [dbMock.dbRead, dbMock.dbWrite])
+      db.model.findFirst.mockResolvedValue({ id: MODEL, mode: 'TakenDown' } as never);
+    lockedRow({ mode: null });
+    await expect(bringBack.handler({ modelId: MODEL }, actor)).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a review request when the model was republished after the read', async () => {
+    lockedRow({ status: 'Published' });
+    await expect(requestReviewHandler({ input: { id: MODEL }, ctx: ctx() })).rejects.toMatchObject({
+      code: 'BAD_REQUEST',
+    });
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses a decline when the model left review after the read', async () => {
+    lockedRow({ status: 'Published' });
+    await expect(
+      declineReviewHandler({ input: { id: MODEL, reason: 'no' }, ctx: ctx(true) })
+    ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+});
+
+describe('a moderator on a model a content wipe kept', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.model.findUnique.mockImplementation((async () =>
+      lockHeld
+        ? { status: 'UnpublishedViolation', mode: null, meta: { note: 1, ...KEPT } }
+        : null) as never);
+  });
+
+  it('may request a review on it', async () => {
+    await requestReviewHandler({ input: { id: MODEL }, ctx: ctx(true) });
+    expect(written()).toEqual({ note: 1, ...KEPT, needsReview: true });
+  });
+
+  it('may set its showcase', async () => {
+    await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: 7, isModerator: true });
+    expect(written()).toEqual({ note: 1, ...KEPT, showcaseCollectionId: 9 });
+  });
+});

@@ -5850,6 +5850,7 @@ export async function migrateResourceToCollection({
     collectionId: collection.id,
     id: modelId,
     userId: model.userId,
+    isModerator,
   });
 
   // Bust caches
