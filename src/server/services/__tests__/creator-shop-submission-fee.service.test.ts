@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
+import { takenImageKeyFake } from './image-url-ownership.fake';
 dbMock.dbRead.cosmeticShopItem.findMany.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindMany as (...a: unknown[]) => unknown)(...args)
 );
@@ -226,6 +228,27 @@ describe('pack submission fee charged', () => {
     await expect(
       submitCreatorShopPack({ ...packInput, memberCosmeticIds: members, quotedFee: 1000 })
     ).rejects.toThrow(/fee changed/i);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(mocks.shopItemCreate).not.toHaveBeenCalled();
+  });
+  it('refuses a cover whose key is already in use, before charging', async () => {
+    const probes: unknown[][] = [];
+    const original = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation(takenImageKeyFake(probes));
+    try {
+      await expect(
+        submitCreatorShopPack({
+          ...packInput,
+          memberCosmeticIds: members,
+          quotedFee: 1000,
+          imageUrl: '0a0b0c0d-0000-4000-8000-0000000000aa',
+          rightsAffirmed: true,
+        })
+      ).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+    } finally {
+      dbMock.dbWrite.$queryRaw.mockImplementation(original as never);
+    }
+    expect(probes).toHaveLength(1);
     expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
     expect(mocks.shopItemCreate).not.toHaveBeenCalled();
   });

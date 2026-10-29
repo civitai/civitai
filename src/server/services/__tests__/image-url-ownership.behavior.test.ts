@@ -1,7 +1,10 @@
 import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
+import { readFileSync } from 'fs';
+import path from 'path';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { Prisma } from '@prisma/client';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
@@ -11,9 +14,8 @@ dbMock.dbWrite.$queryRaw.mockImplementation(((
   ...a: Parameters<ReturnType<typeof pgliteRaw>['queryRaw']>
 ) => pgliteRaw(holder.db).queryRaw(...a)) as never);
 
-const { assertClientImageUrlsUsable, COVER_IMAGE_UNAVAILABLE_MESSAGE } = await import(
-  '~/server/services/image-url-ownership'
-);
+const { assertClientImageUrlsUsable, COVER_IMAGE_UNAVAILABLE_MESSAGE, shopArtworkUrls } =
+  await import('~/server/services/image-url-ownership');
 
 const CALLER = 7;
 const OTHER = 8;
@@ -29,11 +31,14 @@ beforeAll(async () => {
       "id" serial PRIMARY KEY, "userId" integer NOT NULL, "url" text NOT NULL,
       "ingestion" text NOT NULL DEFAULT 'Scanned'
     );
+    CREATE TABLE "Cosmetic" ("id" integer PRIMARY KEY, "data" jsonb NOT NULL);
+    CREATE TABLE "CosmeticShopItem" ("id" integer PRIMARY KEY, "meta" jsonb NOT NULL DEFAULT '{}');
+    CREATE TABLE "ItemDefinition" ("id" integer PRIMARY KEY, "imageUrl" text);
   `);
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image"`);
+  await holder.db.exec(`TRUNCATE "Image", "Cosmetic", "CosmeticShopItem", "ItemDefinition"`);
   await holder.db.exec(`
     INSERT INTO "Image" ("userId", url, ingestion) VALUES
       (${CALLER}, '${OWN_KEY}', 'Scanned'),
@@ -136,5 +141,127 @@ describe('assertClientImageUrlsUsable', () => {
     );
 
     expect(await refused(['https://example.invalid/a.png'])).toBeNull();
+  });
+});
+
+describe('assertClientImageUrlsUsable and shop artwork', () => {
+  const SHOP_KEY = FRESH_KEY;
+  const holders = [
+    [
+      'cosmetic artwork',
+      `INSERT INTO "Cosmetic" (id, data) VALUES (1, '{"url":"${SHOP_KEY}"}')`,
+      { cosmeticId: 1 },
+    ],
+    [
+      'a pack cover',
+      `INSERT INTO "CosmeticShopItem" (id, meta) VALUES (1, '{"coverUrl":"${SHOP_KEY}"}')`,
+      { shopItemId: 1 },
+    ],
+    [
+      'a box image',
+      `INSERT INTO "ItemDefinition" (id, "imageUrl") VALUES (1, '${SHOP_KEY}')`,
+      { itemDefinitionId: 1 },
+    ],
+  ] as const;
+
+  it.each(holders)('refuses a key %s uses, however the url spells it', async (_holder, insert) => {
+    await holder.db.exec(insert);
+
+    expect(await refused([SHOP_KEY])).toBeInstanceOf(TRPCError);
+    expect(await refused([SHOP_KEY.toUpperCase()])).toBeInstanceOf(TRPCError);
+    expect(
+      await refused([
+        `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${SHOP_KEY}/original=true/a.jpeg`,
+      ])
+    ).toBeInstanceOf(TRPCError);
+  });
+
+  it.each(holders)('lets the row %s belongs to keep its own key', async (_holder, insert, own) => {
+    await holder.db.exec(insert);
+
+    const result = await assertClientImageUrlsUsable({
+      urls: [SHOP_KEY],
+      userId: CALLER,
+      shopRow: own,
+    }).then(
+      () => null,
+      (e: unknown) => e
+    );
+    expect(result).toBeNull();
+  });
+
+  it('refuses a key another shop row uses, even while editing one', async () => {
+    await holder.db.exec(`INSERT INTO "Cosmetic" (id, data) VALUES (2, '{"url":"${SHOP_KEY}"}')`);
+
+    const result = await assertClientImageUrlsUsable({
+      urls: [SHOP_KEY],
+      userId: CALLER,
+      shopRow: { cosmeticId: 1, shopItemId: 2, itemDefinitionId: 2 },
+    }).then(
+      () => null,
+      (e: unknown) => e
+    );
+    expect(result).toBeInstanceOf(TRPCError);
+  });
+
+  it("accepts shop artwork on the caller's own image key and refuses it on another user's", async () => {
+    const shop = (url: string) =>
+      assertClientImageUrlsUsable({ urls: [url], userId: CALLER, shopRow: {} }).then(
+        () => null,
+        (e: unknown) => e
+      );
+
+    expect(await shop(OWN_KEY)).toBeNull();
+    expect(await shop(OTHERS_LIVE_KEY)).toBeInstanceOf(TRPCError);
+  });
+
+  it.each([
+    `/${SHOP_KEY}?v=1`,
+    SHOP_KEY.toUpperCase(),
+    `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${SHOP_KEY}/original=true/a.jpeg`,
+    SHOP_KEY.replace('-', '%2D'),
+  ])('matches a shop row that stored the key as %s', async (stored) => {
+    await holder.db.query(`INSERT INTO "ItemDefinition" (id, "imageUrl") VALUES (1, $1)`, [stored]);
+
+    expect(await refused([SHOP_KEY])).toBeInstanceOf(TRPCError);
+    expect(await shopArtworkUrls([SHOP_KEY, OWN_KEY])).toEqual(new Set([SHOP_KEY]));
+  });
+
+  it('looks each shop column up through its migration index', async () => {
+    const migration = readFileSync(
+      path.resolve(
+        __dirname,
+        '../../../../packages/civitai-db-schema/prisma/migrations/20261211120000_shop_artwork_key_indexes/migration.sql'
+      ),
+      'utf8'
+    );
+    await holder.db.exec(migration.replaceAll('CONCURRENTLY ', ''));
+    const probes: { text: string; values: unknown[] }[] = [];
+    dbMock.dbWrite.$queryRaw.mockImplementationOnce(((
+      strings: TemplateStringsArray,
+      ...values: unknown[]
+    ) => {
+      const sql = Prisma.sql(strings, ...values);
+      probes.push({ text: sql.text, values: sql.values });
+      return Promise.resolve([]);
+    }) as never);
+    await refused([SHOP_KEY]);
+
+    await holder.db.exec(`SET enable_seqscan = off`);
+    try {
+      const { rows } = await holder.db.query<{ 'QUERY PLAN': string }>(
+        `EXPLAIN ${probes[0].text}`,
+        probes[0].values
+      );
+      const plan = rows.map((row) => row['QUERY PLAN']).join('\n');
+      for (const index of [
+        'Cosmetic_data_url_key_idx',
+        'CosmeticShopItem_meta_coverUrl_key_idx',
+        'ItemDefinition_imageUrl_key_idx',
+      ])
+        expect(plan).toContain(index);
+    } finally {
+      await holder.db.exec(`RESET enable_seqscan`);
+    }
   });
 });

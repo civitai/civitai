@@ -56,6 +56,7 @@ import {
   getEventDecorationsForEntity,
 } from '~/server/services/cosmetic.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
+import { shopArtworkUrls } from '~/server/services/image-url-ownership';
 import {
   deleteImageById,
   enqueueImageIngestion,
@@ -1927,7 +1928,13 @@ export async function linkArticleContentImages({
       const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
 
       // Batch create: Missing images (upsert with unique constraint handles races)
-      const missingMedia = contentImages.filter((media) => !existingUrlMap.has(media.url));
+      const unlinked = contentImages.filter((media) => !existingUrlMap.has(media.url));
+      // A row on a shop artwork key would let deleting it take the artwork's object with it.
+      const shopUrls = await shopArtworkUrls(
+        unlinked.map((media) => media.url),
+        tx
+      );
+      const missingMedia = unlinked.filter((media) => !shopUrls.has(media.url));
       const newlyCreatedImages: { id: number; url: string }[] = [];
 
       if (missingMedia.length > 0) {

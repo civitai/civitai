@@ -41,6 +41,7 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { CosmeticShopItemStatus, CosmeticType } from '~/shared/utils/prisma/enums';
+import { assertClientImageUrlsUsable } from '~/server/services/image-url-ownership';
 
 type ResolvedMember = PackMemberPricing & {
   name: string;
@@ -217,6 +218,7 @@ export const submitCreatorShopPack = async ({
   // supplied — the members were each affirmed when they were submitted.
   if (imageUrl && !rightsAffirmed)
     throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
+  if (imageUrl) await assertClientImageUrlsUsable({ urls: [imageUrl], userId });
 
   const members = withOwnership(await resolvePackMembers(memberCosmeticIds), userId);
   assertMembersBundlable(memberCosmeticIds, members);
@@ -353,6 +355,12 @@ export const updateCreatorShopPack = async ({
   const meta = (existing.meta ?? {}) as CosmeticShopItemMeta;
   const memberIds = memberCosmeticIds ?? existing.members.map((m) => m.cosmeticId);
   const packOwnerId = existing.addedById ?? userId;
+  if (imageUrl && imageUrl !== meta.coverUrl)
+    await assertClientImageUrlsUsable({
+      urls: [imageUrl],
+      userId: packOwnerId,
+      shopRow: { shopItemId: existing.id },
+    });
   const membershipSupplied = memberCosmeticIds !== undefined;
   const repriced = price !== undefined;
   // Re-snapshot whenever the price moves, not only when the contents do. The
