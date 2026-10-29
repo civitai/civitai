@@ -81,22 +81,14 @@ require('next/dist/server/lib/cpu-profile');
 require('next/dist/server/require-hook');
 require('next/dist/server/node-polyfill-crypto');
 require('next/dist/server/node-environment');
-const {
-  ensureInstrumentationRegistered,
-} = require('next/dist/server/lib/router-utils/instrumentation-globals.external');
-const { setHttpClientAndAgentOptions } = require('next/dist/server/setup-http-agent-env');
-const {
-  installGlobalBehaviors,
-} = require('next/dist/server/node-environment-extensions/global-behaviors');
-const {
-  installProcessErrorHandlers,
-} = require('next/dist/server/node-environment-extensions/process-error-handlers');
+// The Next helpers this file uses come through next-compat, which checks every one of them as it
+// loads (see `expectExport` there), so a Next upgrade that drops one fails the image build.
 const compat = require('./next-compat.cjs');
 
 // What the NextNodeServer constructor installs from the config, before instrumentation runs.
-installGlobalBehaviors(nextConfig);
-setHttpClientAndAgentOptions(nextConfig);
-installProcessErrorHandlers(
+compat.installGlobalBehaviors(nextConfig);
+compat.setHttpClientAndAgentOptions(nextConfig);
+compat.installProcessErrorHandlers(
   Boolean(
     nextConfig.experimental && nextConfig.experimental.removeUncaughtErrorAndRejectionListeners
   )
@@ -222,7 +214,7 @@ server.on('listening', async () => {
     // --- 4. instrumentation.ts register() --------------------------------------------------------
     // The route modules would also trigger this on their first request (ensureInstrumentation);
     // it is memoised process-wide in this same module, so that later call is a no-op.
-    await ensureInstrumentationRegistered(dir, nextConfig.distDir || '.next');
+    await compat.ensureInstrumentationRegistered(dir, nextConfig.distDir || '.next');
     console.log('[trpc-server] instrumentation registered');
 
     // --- 5. route modules -----------------------------------------------------------------------

@@ -14,7 +14,8 @@
  *
  * Usage:
  *   node compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
- *     --env-file parity.env --redis 127.0.0.1:6379 --report out.json [--expect-red <case-id>]
+ *     --env-file parity.env --redis 127.0.0.1:6379 --report out.json
+ *     [--expect-red <case-id> [--expect-red-diff '<diff line prefix>']]
  *
  * Exit codes: 0 parity (every case equal to Next, every declared case equal to its pinned
  * answer); 1 a difference; 2 the harness could not
@@ -44,6 +45,7 @@ const { values: args } = parseArgs({
     redis: { type: 'string' },
     report: { type: 'string' },
     'expect-red': { type: 'string' },
+    'expect-red-diff': { type: 'string' },
     'settle-ms': { type: 'string', default: '300' },
   },
 });
@@ -246,8 +248,8 @@ function snippet(buf) {
 function compare(c, ra, rb) {
   const parts = { status: [], headers: [], body: [] };
   if (ra.error || rb.error) {
-    if (ra.error !== rb.error)
-      parts.status.push(`transport: ${ra.error || 'ok'} vs ${rb.error || 'ok'}`);
+    // Two transport failures are not parity: neither server answered, so nothing was compared.
+    parts.status.push(`transport: ${ra.error || 'ok'} vs ${rb.error || 'ok'}`);
     return parts;
   }
   if (ra.status !== rb.status || ra.statusMessage !== rb.statusMessage) {
@@ -261,6 +263,17 @@ function compare(c, ra, rb) {
   );
   if (!ra.body.equals(rb.body)) {
     parts.body.push(`A: ${snippet(ra.body)}`, `B: ${snippet(rb.body)}`);
+  }
+  // A case may also require a header on BOTH sides (e.g. a streamed response must be chunked):
+  // equal-but-wrong on both would otherwise pass.
+  for (const [name, value] of Object.entries(c.expectHeaders || {})) {
+    for (const [side, h] of [
+      ['A', ha],
+      ['B', hb],
+    ]) {
+      if (!h.headers.includes(`${name}: ${value}`))
+        parts.headers.push(`${side} lacks required ${name}: ${value}`);
+    }
   }
   return parts;
 }
@@ -361,9 +374,25 @@ console.log(
 if (args['expect-red']) {
   const target = results.find((r) => r.id === args['expect-red']);
   if (!target) fail2(`--expect-red ${args['expect-red']}: no such case`);
-  if (target.verdict === 'DIFF') {
-    console.log(`\nNEGATIVE CONTROL OK: ${target.id} is red against the broken server.`);
+  // Red for the RIGHT reason: the named diff line must be among the case's differences, so a
+  // different break (or noise) on the same case cannot pass as the control.
+  const want = args['expect-red-diff'];
+  const lines = Object.values(target.diffs).flat();
+  const hit = want ? lines.some((l) => l.startsWith(want)) : true;
+  if (target.verdict === 'DIFF' && hit) {
+    console.log(
+      `\nNEGATIVE CONTROL OK: ${target.id} is red against the broken server` +
+        (want ? `, with "${want}…".` : '.')
+    );
     process.exit(0);
+  }
+  if (target.verdict === 'DIFF') {
+    console.error(
+      `\nNEGATIVE CONTROL FAILED: ${target.id} is red, but not with "${want}…":\n  ${lines.join(
+        '\n  '
+      )}`
+    );
+    process.exit(1);
   }
   console.error(
     `\nNEGATIVE CONTROL FAILED: ${target.id} is ${target.verdict} against a server that was broken on purpose; the harness cannot see that break.`

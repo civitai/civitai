@@ -278,7 +278,7 @@ jobs:
         run: |
           node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3002 \
             --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/mutant.json" \
-            --expect-red client-sent-internal-headers
+            --expect-red client-sent-internal-headers --expect-red-diff '+ x-nextjs-matched-path:'
 
       - name: The alerted span is still emitted
         if: always() && steps.gate.outcome != 'failure'

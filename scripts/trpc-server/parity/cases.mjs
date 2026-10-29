@@ -147,6 +147,19 @@ export function buildCases(ctx) {
       headers: edge,
     },
     {
+      // The streaming link (`httpBatchStreamLink`): the response is JSON lines written as each
+      // call settles, so it must come back chunked from both servers, with the same bytes once
+      // the chunks are concatenated. One call fails input validation and one succeeds; that
+      // settle order does not depend on timing, so the bytes are stable.
+      id: 'streamed-batch-one-error',
+      path: batchUrl([
+        ['content.get', TOS],
+        ['content.get', { slug: ['not a valid slug!'] }],
+      ]),
+      headers: { ...edge, 'trpc-accept': 'application/jsonl' },
+      expectHeaders: { 'transfer-encoding': 'chunked' },
+    },
+    {
       // TRPC_MAX_BATCH_SIZE is 3 in the harness environment.
       id: 'batch-over-max-size',
       path: batchUrl([

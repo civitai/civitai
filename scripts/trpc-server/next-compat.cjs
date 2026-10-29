@@ -19,23 +19,152 @@
 
 // Plain CommonJS that runs without a compile step, so `require` is the only way to load here.
 /* eslint-disable @typescript-eslint/no-var-requires */
-const { filterInternalHeaders } = require('next/dist/server/lib/server-ipc/utils');
-const { DecodeError } = require('next/dist/shared/lib/utils');
-const { parseUrl } = require('next/dist/shared/lib/router/utils/parse-url');
-const { getPathMatch } = require('next/dist/shared/lib/router/utils/path-match');
-const {
-  matchHas,
-  compileNonPath,
-} = require('next/dist/shared/lib/router/utils/prepare-destination');
-const { modifyRouteRegex } = require('next/dist/lib/redirect-status');
-const { normalizeLocalePath } = require('next/dist/shared/lib/i18n/normalize-locale-path');
-const { addPathPrefix } = require('next/dist/shared/lib/router/utils/add-path-prefix');
-const { getRouteRegex } = require('next/dist/shared/lib/router/utils/route-regex');
-const { getRouteMatcher } = require('next/dist/shared/lib/router/utils/route-matcher');
-const {
-  NEXT_QUERY_PARAM_PREFIX,
-  NEXT_INTERCEPTION_MARKER_PREFIX,
-} = require('next/dist/lib/constants');
+/**
+ * Every Next export this server uses, checked HERE, at module scope, as the module loads.
+ *
+ * These are unpublished internals (`next/dist/...`), so a Next bump can rename or drop one
+ * without any type error. Destructuring a missing name gives `undefined`, which would surface as
+ * a TypeError on some later request, or never. Instead, loading this file throws, naming the
+ * export. `scripts/ci/assert-standalone-boot-graph.mjs` loads this file in the image build, so
+ * that throw fails the BUILD.
+ *
+ * Each `require` stays a short literal on its own unindented line: that is the form the boot-graph
+ * gate reads.
+ */
+function expectExport(mod, specifier, name, type) {
+  const value = mod == null ? undefined : mod[name];
+  const ok =
+    type === 'string' ? typeof value === 'string' && value.length > 0 : typeof value === type;
+  if (!ok) {
+    throw new Error(
+      `trpc-server: ${specifier} no longer exports ${name} as a ${
+        type === 'string' ? 'non-empty string' : type
+      } ` + `(got ${typeof value}). A Next upgrade changed an internal this server depends on.`
+    );
+  }
+  return value;
+}
+
+const ipcUtils = require('next/dist/server/lib/server-ipc/utils');
+const sharedUtils = require('next/dist/shared/lib/utils');
+const parseUrlMod = require('next/dist/shared/lib/router/utils/parse-url');
+const pathMatch = require('next/dist/shared/lib/router/utils/path-match');
+const prepareDest = require('next/dist/shared/lib/router/utils/prepare-destination');
+const redirectStatus = require('next/dist/lib/redirect-status');
+const localePath = require('next/dist/shared/lib/i18n/normalize-locale-path');
+const pathPrefix = require('next/dist/shared/lib/router/utils/add-path-prefix');
+const routeRegex = require('next/dist/shared/lib/router/utils/route-regex');
+const routeMatcher = require('next/dist/shared/lib/router/utils/route-matcher');
+const nextConstants = require('next/dist/lib/constants');
+const instrumentationGlobals = require('next/dist/server/lib/router-utils/instrumentation-globals.external');
+const httpAgentEnv = require('next/dist/server/setup-http-agent-env');
+const globalBehaviors = require('next/dist/server/node-environment-extensions/global-behaviors');
+const processErrorHandlers = require('next/dist/server/node-environment-extensions/process-error-handlers');
+
+const NEXT = 'next/dist';
+const filterInternalHeaders = expectExport(
+  ipcUtils,
+  `${NEXT}/server/lib/server-ipc/utils`,
+  'filterInternalHeaders',
+  'function'
+);
+const DecodeError = expectExport(
+  sharedUtils,
+  `${NEXT}/shared/lib/utils`,
+  'DecodeError',
+  'function'
+);
+const parseUrl = expectExport(
+  parseUrlMod,
+  `${NEXT}/shared/lib/router/utils/parse-url`,
+  'parseUrl',
+  'function'
+);
+const getPathMatch = expectExport(
+  pathMatch,
+  `${NEXT}/shared/lib/router/utils/path-match`,
+  'getPathMatch',
+  'function'
+);
+const matchHas = expectExport(
+  prepareDest,
+  `${NEXT}/shared/lib/router/utils/prepare-destination`,
+  'matchHas',
+  'function'
+);
+const compileNonPath = expectExport(
+  prepareDest,
+  `${NEXT}/shared/lib/router/utils/prepare-destination`,
+  'compileNonPath',
+  'function'
+);
+const modifyRouteRegex = expectExport(
+  redirectStatus,
+  `${NEXT}/lib/redirect-status`,
+  'modifyRouteRegex',
+  'function'
+);
+const normalizeLocalePath = expectExport(
+  localePath,
+  `${NEXT}/shared/lib/i18n/normalize-locale-path`,
+  'normalizeLocalePath',
+  'function'
+);
+const addPathPrefix = expectExport(
+  pathPrefix,
+  `${NEXT}/shared/lib/router/utils/add-path-prefix`,
+  'addPathPrefix',
+  'function'
+);
+const getRouteRegex = expectExport(
+  routeRegex,
+  `${NEXT}/shared/lib/router/utils/route-regex`,
+  'getRouteRegex',
+  'function'
+);
+const getRouteMatcher = expectExport(
+  routeMatcher,
+  `${NEXT}/shared/lib/router/utils/route-matcher`,
+  'getRouteMatcher',
+  'function'
+);
+const NEXT_QUERY_PARAM_PREFIX = expectExport(
+  nextConstants,
+  `${NEXT}/lib/constants`,
+  'NEXT_QUERY_PARAM_PREFIX',
+  'string'
+);
+const NEXT_INTERCEPTION_MARKER_PREFIX = expectExport(
+  nextConstants,
+  `${NEXT}/lib/constants`,
+  'NEXT_INTERCEPTION_MARKER_PREFIX',
+  'string'
+);
+// Used by server.cjs; checked here so that the build's load of this file covers them too.
+const ensureInstrumentationRegistered = expectExport(
+  instrumentationGlobals,
+  `${NEXT}/server/lib/router-utils/instrumentation-globals.external`,
+  'ensureInstrumentationRegistered',
+  'function'
+);
+const setHttpClientAndAgentOptions = expectExport(
+  httpAgentEnv,
+  `${NEXT}/server/setup-http-agent-env`,
+  'setHttpClientAndAgentOptions',
+  'function'
+);
+const installGlobalBehaviors = expectExport(
+  globalBehaviors,
+  `${NEXT}/server/node-environment-extensions/global-behaviors`,
+  'installGlobalBehaviors',
+  'function'
+);
+const installProcessErrorHandlers = expectExport(
+  processErrorHandlers,
+  `${NEXT}/server/node-environment-extensions/process-error-handlers`,
+  'installProcessErrorHandlers',
+  'function'
+);
 
 /**
  * `buildCustomRoute` from `next/dist/server/lib/router-utils/filesystem.js` (module-local there,
@@ -264,6 +393,11 @@ function sendBadRequest(res) {
 
 module.exports = {
   applyRoutingHeaders,
+  ensureInstrumentationRegistered,
+  expectExport,
+  installGlobalBehaviors,
+  installProcessErrorHandlers,
+  setHttpClientAndAgentOptions,
   createPageMatcher,
   createRouting,
   fillForwardedHeaders,
