@@ -54,7 +54,13 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  *     ramped. Never flip it 100%-at-once; bump the Flipt % rollout and watch the faro-rum stream
  *     bytes stay under the 10 MB/s per-stream ceiling.
  * The cohort boolean is read once at first-init (threaded in via `initFaro`, same model as the
- * `features.faro` gate on the whole SDK) — a flag change applies on the next page load.
+ * `features.faro` gate on the whole SDK) — a flag change applies on the next page load. The one
+ * exception is a static shell boot, whose flags are user-less until its page data arrives: there
+ * the cohort is undecided until then, and the instrumentation is attached late if the viewer is in
+ * it (`viewerFlagsReady`, `attachResourceTiming`). That exception covers resource_timing ONLY:
+ * the `exp_*` session attributes (`experimentAttributes`) are still built from the flags at init,
+ * so on a shell boot they come from the user-less boot flags and stay so for the session — an
+ * open, older bug this does not fix.
  * See ResourceTimingInstrumentation.
  *
  * SAMPLING (two decoupled layers):
@@ -83,6 +89,8 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
 // and Next.js Fast-Refresh (HMR), where the module state can reset but the global
 // Faro instance persists.
 let faroInitStarted = false;
+/** `ResourceTimingInstrumentation` is on this module's Faro, from init or `attachResourceTiming`. */
+let resourceTimingAttached = false;
 const WINDOW_GUARD_KEY = '__civitaiFaroInitialized__';
 
 /**
@@ -248,6 +256,14 @@ function initFaro({
     }
   }
 
+  const resourceTimingInstrumentations = buildResourceTimingInstrumentations({
+    buildArgEnabled: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
+    cohortEnabled: resourceTimingCohort,
+    sampleRateEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
+    maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
+  });
+  resourceTimingAttached = resourceTimingInstrumentations.length > 0;
+
   initializeFaro({
     url: collectorUrl,
     app: {
@@ -318,12 +334,7 @@ function initFaro({
       // ramped. The volume knobs (sample rate + per-client cap) are env-tunable, resolved here
       // with a safe fallback to the defaults (sample rate 0.05 keeps the shared faro-rum Loki
       // stream under its 10 MB/s ceiling at 100k concurrent). See ResourceTimingInstrumentation.
-      ...buildResourceTimingInstrumentations({
-        buildArgEnabled: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
-        cohortEnabled: resourceTimingCohort,
-        sampleRateEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
-        maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
-      }),
+      ...resourceTimingInstrumentations,
     ],
     // Defensive outer wrapper: processBeacon (redact + exception classify/tag) already fails
     // closed, but guarantee that any unexpected throw still drops the beacon (null) rather than
@@ -338,24 +349,56 @@ function initFaro({
   });
 }
 
+/**
+ * Adds `ResourceTimingInstrumentation` to an already-initialised Faro, for a viewer whose cohort
+ * only became known after init (a shell boot; see `FaroProvider`). A no-op when Faro is not ours
+ * to extend or the instrumentation is already on. Faro's `add` initialises it, and its
+ * `buffered: true` observer then drains the `/api` entries recorded before it, the page-data
+ * request included.
+ */
+function attachResourceTiming() {
+  if (!faroInitStarted || resourceTimingAttached) return;
+  const instrumentations = buildResourceTimingInstrumentations({
+    buildArgEnabled: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
+    cohortEnabled: true,
+    sampleRateEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
+    maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
+  });
+  if (!instrumentations.length || !faro?.instrumentations) return;
+  resourceTimingAttached = true;
+  faro.instrumentations.add(...instrumentations);
+}
+
 export function FaroProvider({
   region,
   shell,
   signedIn,
+  viewerFlagsReady,
 }: {
   region?: string | null;
   /** The hard load's render mode and viewer, frozen by `_app`; see pageAttributes.ts. */
   shell: boolean;
   signedIn: boolean;
+  /**
+   * False while the feature flags are not yet the viewer's own: a static shell boots on the
+   * user-less evaluation and gets the viewer's with its page data. True everywhere else.
+   */
+  viewerFlagsReady: boolean;
 }) {
   const features = useFeatureFlags();
   const enabled = env.NEXT_PUBLIC_FARO_ENABLED && !!features.faro;
+  // The cohort is a per-USER Flipt rollout, so the user-less flags a shell boots on cannot answer
+  // it: read that way, a signed-in viewer in the cohort was never in it on a shell page, and one
+  // outside it could be put in. Undecided until the flags are the viewer's, then decided exactly
+  // as a server render decides it for the same viewer — at init when they already are, else by
+  // attaching the instrumentation to the running SDK once they arrive.
+  const resourceTimingCohort = viewerFlagsReady && !!features.faroResourceTiming;
 
   useEffect(() => {
     try {
       if (enabled) {
         initFaro({
-          resourceTimingCohort: !!features.faroResourceTiming,
+          resourceTimingCohort,
           experimentAttributes: buildRumExperimentAttributes(features),
           geoAttributes: buildRumGeoAttributes(region),
           pageAttributes: buildRumPageAttributes({ shell, signedIn }),
@@ -373,6 +416,15 @@ export function FaroProvider({
       // Never let RUM bootstrap / teardown break the app.
     }
   }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled || !resourceTimingCohort) return;
+    try {
+      attachResourceTiming();
+    } catch {
+      // Never let RUM bootstrap break the app.
+    }
+  }, [enabled, resourceTimingCohort]);
 
   return null;
 }

@@ -41,6 +41,7 @@ type AbortBody = {
   type: string;
   uploadId: string;
   backend: string;
+  fileSize: number;
   failure?: { kind: string; partNumber?: number; status?: number };
 };
 
@@ -400,7 +401,13 @@ describe('useS3UploadStore.upload', () => {
  * fully intact.
  */
 describe('useS3UploadStore.upload multipart teardown', () => {
-  const expectedAbort = { ...UPLOAD_IDENTITY, type: UploadType.Model };
+  // `fileSize` is the uploaded file's byte count, so failed uploads can be grouped by size
+  // server-side. Each case passes the size of the file it uploaded.
+  const expectedAbort = (fileSize: number) => ({
+    ...UPLOAD_IDENTITY,
+    type: UploadType.Model,
+    fileSize,
+  });
 
   it('aborts the upload when completion fails terminally', async () => {
     vi.stubGlobal('fetch', makeFetch(1));
@@ -410,7 +417,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
 
     expect(result).toBeUndefined();
     expect(useS3UploadStore.getState().items[0].status).toBe('error');
-    expect(abortCalls).toEqual([expectedAbort]);
+    expect(abortCalls).toEqual([expectedAbort(CHUNK)]);
   });
 
   it('aborts the upload when completion returns a terminal 422', async () => {
@@ -422,7 +429,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     await runUpload({ file: makeFile(CHUNK * 2), type: UploadType.Model });
 
     expect(completeCalls).toBe(1);
-    expect(abortCalls).toEqual([expectedAbort]);
+    expect(abortCalls).toEqual([expectedAbort(CHUNK * 2)]);
   });
 
   it('aborts the upload when completion returns a terminal 409', async () => {
@@ -433,7 +440,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
 
     await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
 
-    expect(abortCalls).toEqual([expectedAbort]);
+    expect(abortCalls).toEqual([expectedAbort(CHUNK)]);
   });
 
   // Invariant guard, not regression cover: this path already aborted. It pins the
@@ -450,7 +457,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     expect(useS3UploadStore.getState().items[0].status).toBe('error');
     expect(abortCalls).toEqual([
       {
-        ...expectedAbort,
+        ...expectedAbort(CHUNK * 2),
         failure: { kind: 'part-status', partNumber: 2, status: 400 },
       },
     ]);
@@ -478,7 +485,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     const result = await runUpload({ file: makeFile(CHUNK), type: UploadType.Model });
 
     expect(result).toBeUndefined();
-    expect(abortCalls).toEqual([expectedAbort]);
+    expect(abortCalls).toEqual([expectedAbort(CHUNK)]);
   });
 
   it('still aborts when the row was cleared from the store before a part failed', async () => {
@@ -493,7 +500,7 @@ describe('useS3UploadStore.upload multipart teardown', () => {
     expect(result).toBeUndefined();
     expect(abortCalls).toEqual([
       {
-        ...expectedAbort,
+        ...expectedAbort(CHUNK),
         failure: { kind: 'part-status', partNumber: 1, status: 400 },
       },
     ]);

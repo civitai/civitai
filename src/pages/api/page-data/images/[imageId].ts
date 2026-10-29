@@ -1,4 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { imageDetailPreloadUrl } from '~/components/Image/DetailV2/image-detail-main-media';
+import {
+  hasImageDetailQueryFilters,
+  parseImageQueryParams,
+} from '~/components/Image/image-query-params';
+import { SHELL_MAIN_IMAGE_URL_KEY } from '~/components/Shell/shell-page-data';
+import { STORYLINE_CHAPTER_PARAM } from '~/components/Storyline/storyline-mode.utils';
 import { logToAxiom } from '~/server/logging/client';
 import { resolveImageDetailPageData } from '~/server/page-data/image-detail';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
@@ -26,7 +33,8 @@ import {
 /**
  * `GET /api/page-data/images/[imageId]` — everything a server render of `/images/[imageId]`
  * computes for ITS viewer, in one response: the settings bootstrap and the session, the feature
- * flags and their per-user overlay, chat settings, region, `adsGated`, and the page's `trpcState`.
+ * flags and their per-user overlay, chat settings, region, `adsGated`, and the page's `trpcState` —
+ * plus the URL of the page's main image for this viewer, for the shell to preload.
  * It is what the static (viewer-independent) shell of the page reads instead of being rendered
  * per viewer.
  *
@@ -51,6 +59,18 @@ import {
  */
 
 const CACHE_CONTROL = 'private, no-store';
+
+/**
+ * Whether the page shows its main image from `image.get` — the row `imageDetailPreloadUrl` builds
+ * the URL from. Not when the page's query carries feed filters (`ImageDetailProvider` then shows
+ * the `image.getInfinite` row, whose index path has no `name`, so its URL differs), by the page's
+ * own rule; nor in storyline mode, whose images come from the storyline's list.
+ */
+function mainImageFromImageGet(query: NextApiRequest['query']) {
+  if (query[STORYLINE_CHAPTER_PARAM] !== undefined) return false;
+  const filters = parseImageQueryParams(query);
+  return !hasImageDetailQueryFilters(filters, filters.postId);
+}
 
 const jsonRoundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -139,6 +159,18 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       region: getRegion(req),
       adsGated: resolveAdsGated(result, flags),
       trpcState: dehydrateSsgState(ssg, req.url),
+      // The exact URL the page's main `<img>` will request for THIS viewer, or absent when it
+      // will request none (video, gated, blur-dependent, hidden). The shell's inline head script
+      // preloads it the moment this body arrives (`shellPageDataPrefetchScript`). Here and never
+      // in the cached shell HTML, which is the same for every viewer.
+      [SHELL_MAIN_IMAGE_URL_KEY]: mainImageFromImageGet(req.query)
+        ? imageDetailPreloadUrl({
+            image: result.image,
+            viewer: session?.user,
+            forcedBrowsingLevel: result.forcedBrowsingLevel,
+            canViewNsfw: !!flags.canViewNsfw,
+          })
+        : undefined,
     });
   } catch (e) {
     logToAxiom({

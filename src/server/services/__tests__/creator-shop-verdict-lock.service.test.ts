@@ -8,6 +8,7 @@
  * earlier read on the primary would.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 import type * as Caches from '~/server/redis/caches';
 
 const { mocks } = vi.hoisted(() => ({
@@ -17,6 +18,12 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
+const { assertUsableSpy } = vi.hoisted(() => ({ assertUsableSpy: vi.fn() }));
+vi.mock('~/server/services/image-url-ownership', async (importOriginal) => {
+  const actual = await importOriginal<typeof ImageUrlOwnership>();
+  assertUsableSpy.mockImplementation(actual.assertClientImageUrlsUsable);
+  return { ...actual, assertClientImageUrlsUsable: assertUsableSpy };
+});
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
   refundMultiAccountTransaction: vi.fn(),
@@ -350,13 +357,9 @@ describe('a bundle pack edited while it is being reviewed', () => {
     }
     expect(update).not.toHaveBeenCalled();
     expect(probes).toHaveLength(1);
-    // Bound as: keys, shop write, owner, keys, own cosmetic, keys, own pack, keys, own box.
-    expect([probes[0][1], probes[0][4], probes[0][6], probes[0][8]]).toEqual([
-      true,
-      null,
-      42,
-      null,
-    ]);
+    expect(assertUsableSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 11, shopRow: { shopItemId: 42 } })
+    );
   });
 
   it.each([

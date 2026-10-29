@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 import { CosmeticType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
@@ -30,6 +31,12 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
+const { assertUsableSpy } = vi.hoisted(() => ({ assertUsableSpy: vi.fn() }));
+vi.mock('~/server/services/image-url-ownership', async (importOriginal) => {
+  const actual = await importOriginal<typeof ImageUrlOwnership>();
+  assertUsableSpy.mockImplementation(actual.assertClientImageUrlsUsable);
+  return { ...actual, assertClientImageUrlsUsable: assertUsableSpy };
+});
 vi.mock('sharp', () => ({ default: () => ({ metadata: mocks.sharpMetadata }) }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mocks.createBuzzTransaction,
@@ -250,7 +257,7 @@ describe('pack submission fee charged', () => {
     }
     expect(probes).toHaveLength(1);
     // Checked as a shop write: no image row may hold the key, the creator's own included.
-    expect(probes[0][1]).toBe(true);
+    expect(assertUsableSpy).toHaveBeenCalledWith(expect.objectContaining({ shopRow: {} }));
     expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
     expect(mocks.shopItemCreate).not.toHaveBeenCalled();
   });

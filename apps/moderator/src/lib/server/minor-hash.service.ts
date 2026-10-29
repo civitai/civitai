@@ -1732,7 +1732,10 @@ export async function getModelFlagDetail({
       ) f ON TRUE
       LEFT JOIN LATERAL (
         SELECT count(*) FILTER (WHERE o.status::text = 'Published')::int AS "uploaderPublished",
-               count(*) FILTER (WHERE o.status::text = 'UnpublishedViolation')::int AS "uploaderModUnpublished",
+               count(*) FILTER (
+                 WHERE o.status::text = 'UnpublishedViolation'
+                   AND o.meta ->> 'removedWithOwner' IS DISTINCT FROM 'true'
+               )::int AS "uploaderModUnpublished",
                count(*) FILTER (WHERE o.id <> m.id AND ${revertedSql})::int AS "revertedCount",
                to_char(max(${revertedAtSql}) FILTER (WHERE o.id <> m.id) AT TIME ZONE 'UTC',
                        'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "revertedLastAt"

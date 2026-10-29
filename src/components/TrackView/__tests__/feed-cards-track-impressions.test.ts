@@ -71,8 +71,6 @@ const PROP_DEPENDENT_SHELLS = new Set(
 // Grid cards that do not report impressions of their own, and why. Keep this
 // short and specific: every entry is a place the guard has stopped looking.
 const EXEMPT: Record<string, string> = {
-  'components/Account/HiddenTagsSection.tsx:TagBadge': 'settings list of hidden tags',
-  'components/Account/HiddenUsersSection.tsx:UserBadge': 'settings list of hidden users',
   'components/Csam/CsamImageSelection.tsx:CsamImageCard': 'moderation tool',
   'components/Games/NewOrder/JudgmentHistory.tsx:JudgmentHistoryItem': 'game history, not a feed',
   'components/ImageGeneration/GenerationForm/ResourceSelectModal/ResourceHitList.tsx:<inline>':

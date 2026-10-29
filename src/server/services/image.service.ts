@@ -21,7 +21,6 @@ import {
 } from '~/server/services/image-appeal-flag';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
-import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server';
 import {
@@ -57,7 +56,11 @@ import {
   METRICS_IMAGES_SEARCH_INDEX,
   nsfwRestrictedBaseModels,
 } from '~/server/common/constants';
-import { imageReviewedSql, KNIGHTS_VOTE_NSFW_LEVEL_REASON } from '~/server/common/image-visibility';
+import {
+  hasBlockMarker,
+  imageReviewedSql,
+  KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+} from '~/server/common/image-visibility';
 import {
   assertImageVisibleToViewer,
   imageVisibilityConditions,
@@ -350,6 +353,7 @@ import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
+  shopArtworkUrls,
 } from '~/server/services/image-url-ownership';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
@@ -587,10 +591,36 @@ export async function purgeResizeCache({
 type DeleteImageFromS3Args = {
   id: number;
   url: string;
+  /** Set only by {@link isPlainOwnerDelete}: keep an object that shop artwork still uses. */
+  keepShopArtwork?: boolean;
   purgeOnFailure?: boolean;
   abortSignal?: AbortSignal;
   retractionGate?: RetractionGate;
 } & PurgeResizeCacheRetraction;
+
+/**
+ * An owner deleting their own scanned image that carries no block and is not held for review. Only
+ * then may a delete leave behind an object that shop artwork still uses: a block, takedown or
+ * moderator delete always removes it, since a non-persisted CDN deny lapses and the bytes would be
+ * served again. Scanned, so a delete cannot outrun a verdict still on its way.
+ */
+export function isPlainOwnerDelete(
+  image: {
+    userId: number;
+    ingestion: string;
+    needsReview: string | null;
+    nsfwLevel: number;
+    blockedFor: string | null;
+  },
+  deletedById: number | undefined
+) {
+  return (
+    image.userId === deletedById &&
+    image.ingestion === ImageIngestionStatus.Scanned &&
+    !image.needsReview &&
+    !hasBlockMarker(image)
+  );
+}
 
 export async function deleteImageFromS3(
   args: DeleteImageFromS3Args
@@ -612,6 +642,7 @@ async function deleteImageFromStorage({
   // needs a bound supplies its own.
   abortSignal,
   retractionGate,
+  keepShopArtwork = false,
 }: DeleteImageFromS3Args): Promise<{
   storage: StorageDeleteOutcome;
   purge?: ImageCacherOutcome;
@@ -645,6 +676,7 @@ async function deleteImageFromStorage({
     });
 
     if (!!imageWithSameUrl) return { storage: 'skipped' };
+    if (keepShopArtwork && (await shopArtworkUrls([url])).size) return { storage: 'skipped' };
 
     // B2 is the only backend an image can be on, so the registry is consulted for observability
     // rather than to choose a destination — a miss means "unregistered", never "somewhere else".
@@ -859,7 +891,8 @@ async function bustKeptImages(kept: KeptImage[], updatePosts: boolean) {
 export const deleteImageById = async ({
   id,
   updatePost,
-}: GetByIdInput & { updatePost?: boolean }) => {
+  deletedById,
+}: GetByIdInput & { updatePost?: boolean; deletedById?: number }) => {
   updatePost ??= true;
   try {
     // Resolved BEFORE the delete: `CollectionItem.imageId` is `onDelete: Cascade`, so
@@ -880,7 +913,16 @@ export const deleteImageById = async ({
     const image = await dbWrite.image
       .delete({
         where: { id },
-        select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
+        select: {
+          url: true,
+          postId: true,
+          nsfwLevel: true,
+          userId: true,
+          metadata: true,
+          ingestion: true,
+          needsReview: true,
+          blockedFor: true,
+        },
       })
       .catch((error) => {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
@@ -905,7 +947,11 @@ export const deleteImageById = async ({
     const invalidateExistence = invalidateManyImageExistence([id]);
 
     await Promise.all([
-      deleteImageFromS3({ id, url: image.url }),
+      deleteImageFromS3({
+        id,
+        url: image.url,
+        keepShopArtwork: isPlainOwnerDelete(image, deletedById),
+      }),
       queueImageSearchIndexUpdate({
         ids: [id],
         action: SearchIndexUpdateQueueAction.Delete,
@@ -1353,7 +1399,7 @@ export async function handleBlockImages({
             userId: img.userId,
             type: 'tos-violation',
             category: NotificationCategory.System,
-            key: `tos-violation:image:${uuid()}`,
+            key: `tos-violation:image:${crypto.randomUUID()}`,
             details: {
               modelName: img.postId ? `post #${img.postId}` : 'a post',
               entity: 'image',

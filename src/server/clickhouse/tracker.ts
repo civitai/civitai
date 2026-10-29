@@ -795,7 +795,13 @@ export class Tracker {
     return this.track('bugReports', values);
   }
 
-  public modelEvent(values: { type: ModelActivty; modelId: number; nsfw: boolean }) {
+  /** `userId` names the actor when the request has none, as a moderator's transfer. */
+  public modelEvent(values: {
+    type: ModelActivty;
+    modelId: number;
+    nsfw: boolean;
+    userId?: number;
+  }) {
     return this.track('modelEvents', { ...values, ...this.provenance });
   }
 

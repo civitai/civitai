@@ -73,6 +73,7 @@ import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSy
 import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import { isImageDetailPoiHidden } from '~/components/Image/DetailV2/image-detail-main-media';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
 import { ImagePublishedWithApp } from '~/components/Image/DetailV2/ImagePublishedWithApp';
@@ -218,9 +219,7 @@ export function ImageDetail2() {
 
   if (!image) return <NotFound />;
   // Avoid showing POI images to non-mods non owners.
-  if (image.poi && image.user.id !== currentUser?.id && !currentUser?.isModerator) {
-    return <NotFound />;
-  }
+  if (isImageDetailPoiHidden(image, currentUser)) return <NotFound />;
 
   const actualCollection = collection || collectionItems[0]?.collection;
   const forcedBrowsingLevel = actualCollection?.metadata?.forcedBrowsingLevel;

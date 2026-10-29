@@ -120,6 +120,7 @@ import { checkModelRulesLiteralHold } from '~/server/services/text-scan/model-ru
 import { scanModelAndRules } from '~/server/services/text-scan/submit';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 
 export const getModelVersionRunStrategiesHandler = ({ input: { id } }: { input: GetByIdInput }) => {
   try {
@@ -888,7 +889,8 @@ export const publishModelVersionHandler = async ({
     if (
       !ctx.user.isModerator &&
       (constants.modPublishOnlyStatuses.includes(version.status) ||
-        constants.modPublishOnlyStatuses.includes(version.model.status))
+        constants.modPublishOnlyStatuses.includes(version.model.status) ||
+        isRemovedWithOwner(version.model.meta))
     ) {
       throw throwAuthorizationError('You are not authorized to publish this model version');
     }
@@ -1445,7 +1447,8 @@ export async function publishPrivateModelVersionHandler({
   if (
     !ctx.user.isModerator &&
     (constants.modPublishOnlyStatuses.includes(version.status) ||
-      constants.modPublishOnlyStatuses.includes(version.model.status))
+      constants.modPublishOnlyStatuses.includes(version.model.status) ||
+      isRemovedWithOwner(version.model.meta))
   ) {
     throw throwAuthorizationError('You are not authorized to publish this model version');
   }
