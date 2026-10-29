@@ -24,6 +24,10 @@ import type { SessionUser } from '~/types/session';
 import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server';
+import {
+  isTrustedOrchestratorUrl,
+  logHostOf,
+} from '~/server/services/orchestrator/trusted-blob-url';
 import type { VotableTagModel } from '~/libs/tags';
 import { clickhouse } from '~/server/clickhouse/client';
 import { toClickhouseInt64 } from '~/server/clickhouse/int64';
@@ -294,7 +298,6 @@ import {
   ImageScanFailureClass,
 } from '~/server/services/image-scan-failure';
 import { withRetries } from '~/utils/errorHandling';
-import { fetchBlob } from '~/utils/file-utils';
 import { getMetadata } from '~/utils/metadata';
 import { removeEmpty } from '~/utils/object-helpers';
 import { DeleteObjectCommand } from '@aws-sdk/client-s3';
@@ -340,7 +343,10 @@ import {
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
-import { assertClientImageUrlsUsable } from '~/server/services/image-url-ownership';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+} from '~/server/services/image-url-ownership';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
 const model3dService = () => import('~/server/services/model3d.service');
@@ -6922,6 +6928,7 @@ export async function createImage({
   verifiedSourceImageIds,
   blockProvenance,
   assertPostOwnedBy = createPostOwnerCheck(),
+  clientUrl,
   ...image
 }: ImageSchema & {
   userId: number;
@@ -6942,6 +6949,11 @@ export async function createImage({
    * images to one post passes one so the post is looked up once; without it, each call checks.
    */
   assertPostOwnedBy?: AssertPostOwnedBy;
+  /**
+   * `url` came from the client: each upload key in it must have been issued to `userId`, or to
+   * `alsoIssuedTo` when the client is acting on another user's behalf.
+   */
+  clientUrl?: true | { alsoIssuedTo: number };
 }) {
   if (blockProvenance && !blockProvenance.appId) {
     throw new Error('createImage: blockProvenance requires an appId');
@@ -7035,6 +7047,13 @@ export async function createImage({
    */
   const mediaVerdict = await probeCreatedImageMedia(image.url);
   await assertClientImageUrlsUsable({ urls: [image.url], userId: image.userId });
+  if (clientUrl) {
+    await assertClientKeysIssuedToCaller({
+      urls: [image.url],
+      userId: image.userId,
+      alsoIssuedTo: clientUrl === true ? undefined : clientUrl.alsoIssuedTo,
+    });
+  }
 
   /**
    * Logged on EVERY call, whatever the verdict, so the `absent` rate has a denominator:
@@ -7210,18 +7229,41 @@ export async function fillVideoDimensions({ id, url }: { id: number; url: string
   return dimensions;
 }
 
+const uncheckedUrls = (images: { url: string }[], checked: string[] = []) =>
+  images.map((i) => i.url).filter((url) => !checked.includes(url));
+
+/**
+ * Checks the upload keys of the images an entity write will create, so the lookups run before
+ * the caller opens its transaction. Pass the result to `createEntityImages` or
+ * `updateEntityImages` as `keysCheckedFor`.
+ */
+export async function checkEntityImageKeys({
+  images,
+  userId,
+}: {
+  images?: ImageReferenceInput[] | null;
+  userId: number;
+}) {
+  const urls = (images ?? []).filter((i) => !i.id).map((i) => i.url);
+  await assertClientKeysIssuedToCaller({ urls, userId });
+  return urls;
+}
+
 export const createEntityImages = async ({
   tx,
   entityId,
   entityType,
   images,
   userId,
+  keysCheckedFor,
 }: {
   tx?: Prisma.TransactionClient;
   entityId?: number;
   entityType?: string;
   images: ImageReferenceInput[];
   userId: number;
+  /** Urls already passed through `assertClientKeysIssuedToCaller` for `userId`. */
+  keysCheckedFor?: string[];
 }) => {
   const dbClient = tx ?? dbWrite;
 
@@ -7230,6 +7272,11 @@ export const createEntityImages = async ({
   }
 
   await assertClientImageUrlsUsable({ urls: images.map((i) => i.url), userId, db: dbClient });
+  await assertClientKeysIssuedToCaller({
+    urls: uncheckedUrls(images, keysCheckedFor),
+    userId,
+    db: dbClient,
+  });
   await dbClient.image.createMany({
     data: images.map((image) => ({
       ...pickClientImageColumns(image),
@@ -7663,12 +7710,15 @@ export const updateEntityImages = async ({
   entityType,
   images,
   userId,
+  keysCheckedFor,
 }: {
   tx?: Prisma.TransactionClient;
   entityId: number;
   entityType: string;
   images: ImageReferenceInput[];
   userId: number;
+  /** Urls already passed through `assertClientKeysIssuedToCaller` for `userId`. */
+  keysCheckedFor?: string[];
 }) => {
   const dbClient = tx ?? dbWrite;
   const connections = await dbClient.imageConnection.findMany({
@@ -7710,6 +7760,11 @@ export const updateEntityImages = async ({
 
   if (newImages.length > 0) {
     await assertClientImageUrlsUsable({ urls: newImages.map((i) => i.url), userId, db: dbClient });
+    await assertClientKeysIssuedToCaller({
+      urls: uncheckedUrls(newImages, keysCheckedFor),
+      userId,
+      db: dbClient,
+    });
     await dbClient.image.createMany({
       data: newImages.map((image) => ({
         ...pickClientImageColumns(image),
@@ -7868,6 +7923,23 @@ export async function reportCsamImages({
       where: { id: { in: imageIds } },
       data: { needsReview: 'csam' },
     });
+    // Reporting an image already flagged leaves its flag unchanged, so the set-aside trigger does not
+    // fire and this delete is what puts the image back in the queue. It must follow the flag write:
+    // that write's row lock is what a concurrent dismiss waits on, and its new row version is what
+    // makes that dismiss refuse. The table and its grants are applied by hand; a role that may not
+    // delete skips it rather than fail the report.
+    const [setAside] = await tx.$queryRaw<{ deletable: boolean | null }[]>`
+      SELECT has_table_privilege(to_regclass('"CsamQueueSetAside"'), 'DELETE') AS deletable`;
+    if (setAside?.deletable)
+      await tx.$executeRaw`DELETE FROM "CsamQueueSetAside" WHERE "imageId" = ANY(${imageIds}::int[])`;
+    else if (setAside?.deletable === false)
+      logToAxiom({
+        type: 'warning',
+        name: 'csam-queue-set-aside-not-deletable',
+        message: 'the table exists but this role may not delete from it; grant DELETE',
+      }).catch(() => {
+        // swallow — best effort logging
+      });
     // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and
     // the uploader is not told.
     await tx.appeal.updateMany({
@@ -8809,6 +8881,7 @@ export async function setVideoThumbnail({
       ...pickClientImageColumns(customThumbnail),
       userId: image.userId,
       metadata: { parentId: image.id },
+      clientUrl: { alsoIssuedTo: userId },
     });
     thumbnailId = thumbnail.id;
   }
@@ -9059,8 +9132,56 @@ export const getMyImages = async ({
   }
 };
 
+const trainingSampleFetchCounter = registerCounterWithLabels({
+  name: 'training_sample_fetch_total',
+  help: 'Training sample image urls refused before or while fetching',
+  labelNames: ['outcome'] as const,
+});
+
+/** Whether a training sample url may be copied; a refused one is counted and its host logged. */
+export function isTrainingSampleUrlUsable(url: string) {
+  if (isTrustedOrchestratorUrl(url)) return true;
+  trainingSampleFetchCounter.inc({ outcome: 'skipped' });
+  logToAxiom({ type: 'info', name: 'training-sample-skipped', host: logHostOf(url) }).catch(
+    () => null
+  );
+  return false;
+}
+
+const MAX_TRAINING_SAMPLE_REDIRECTS = 3;
+
+/** A training sample url, or a redirect from it, that is not fetched. */
+export class TrainingSampleRefusedError extends Error {
+  constructor() {
+    super('Unsupported image url');
+  }
+}
+
+/** Fetches a training sample, following redirects only between orchestrator urls. */
+async function fetchTrainingSample(url: string) {
+  let current = url;
+  const signal = AbortSignal.timeout(120_000);
+  for (let hop = 0; hop <= MAX_TRAINING_SAMPLE_REDIRECTS; hop++) {
+    if (!isTrustedOrchestratorUrl(current)) {
+      trainingSampleFetchCounter.inc({ outcome: hop ? 'redirect_refused' : 'url_refused' });
+      throw new TrainingSampleRefusedError();
+    }
+    const response = await fetch(current, { redirect: 'manual', credentials: 'omit', signal });
+    const location = response.headers.get('location');
+    if (response.status >= 300 && response.status < 400 && location) {
+      await response.body?.cancel().catch(() => null);
+      current = new URL(location, current).toString();
+      continue;
+    }
+    return response.blob().catch(() => null);
+  }
+  trainingSampleFetchCounter.inc({ outcome: 'too_many_redirects' });
+  throw new TrainingSampleRefusedError();
+}
+
+/** Copies a training sample image into image storage. Only orchestrator urls are fetched. */
 export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => {
-  const blob = await fetchBlob(imageUrl);
+  const blob = await fetchTrainingSample(imageUrl);
 
   if (!blob) {
     throw new Error('Failed to fetch image');
@@ -9075,7 +9196,7 @@ export const uploadImageFromUrl = async ({ imageUrl }: { imageUrl: string }) => 
   });
 
   const data = await upload.done();
-  const meta = await getMetadata(imageUrl);
+  const meta = await getMetadata(blob);
   // Attempt to guess if this is a video or image based off of the sample image url.
   // This is no accurate science for all scenarios, but should give out a decent result at least.
   const isVideo = imageUrl.includes('.mp4') || imageUrl.includes('.mov');

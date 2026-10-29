@@ -32,7 +32,15 @@ import clsx from 'clsx';
 import dynamic from 'next/dynamic';
 import type { LinkProps } from 'next/link';
 import { useRouter } from 'next/router';
-import React, { createContext, forwardRef, useContext, useState } from 'react';
+import React, {
+  createContext,
+  forwardRef,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from 'react';
 import { useGetEdgeUrl } from '~/client-utils/cf-images-utils';
 import type { UserMenuItem } from '~/components/AppLayout/AppHeader/hooks';
 import {
@@ -44,6 +52,7 @@ import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { Burger } from '~/components/Burger/Burger';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 import { useAvailableBuzz } from '~/components/Buzz/useAvailableBuzz';
+import { useQueryBuzz } from '~/components/Buzz/useBuzz';
 import {
   type CivitaiAccount,
   useAccountContext,
@@ -628,15 +637,50 @@ type BuzzBalanceProps = Pick<
 >;
 
 /**
- * Blue Buzz and the domain's own Buzz as separate balances, never summed. `labelled` names each one
- * in its own segment; the segments stack when they do not fit side by side.
+ * Blue Buzz and the domain's own Buzz as separate balances, never summed. `labelled` draws them as one
+ * strip on a single row, with an optional `action` at its end. When the row does not fit, the "Blue" and
+ * "Yellow" labels go first, then the amounts abbreviate.
  */
 export function BuzzBalances({
   labelled = false,
+  href,
+  onOpen,
+  action,
   ...buzzProps
-}: BuzzBalanceProps & { labelled?: boolean }) {
+}: BuzzBalanceProps & {
+  labelled?: boolean;
+  /** `labelled` only: the balances open this page. */
+  href?: string;
+  onOpen?: () => void;
+  /** `labelled` only: a control at the strip's end, outside the link. */
+  action?: React.ReactNode;
+}) {
   const [mainBuzzColor] = useAvailableBuzz();
   const types: BuzzSpendType[] = ['blue', mainBuzzColor];
+  const stripRef = useRef<HTMLDivElement>(null);
+  // 0: labels and full amounts, 1: no labels, 2: no labels and abbreviated amounts.
+  const [fit, setFit] = useState(0);
+
+  // Start over from the roomiest layout whenever the strip's width changes.
+  useEffect(() => {
+    const strip = stripRef.current;
+    if (!strip || typeof ResizeObserver === 'undefined') return;
+    let width = strip.clientWidth;
+    const observer = new ResizeObserver(() => {
+      if (strip.clientWidth === width) return;
+      width = strip.clientWidth;
+      setFit(0);
+    });
+    observer.observe(strip);
+    return () => observer.disconnect();
+  }, []);
+  // A layout that overflows steps down to the next one; runs after every render so a growing balance
+  // is caught too.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- bounded: it only steps down while fit < 2
+  useLayoutEffect(() => {
+    const strip = stripRef.current;
+    if (strip && strip.scrollWidth > strip.clientWidth && fit < 2) setFit(fit + 1);
+  });
 
   if (!labelled)
     return (
@@ -647,24 +691,64 @@ export function BuzzBalances({
       </>
     );
 
-  // Every segment draws its left divider and the row starts 1px outside the box, so whichever segment
-  // starts a line, first or wrapped, has its divider clipped away.
+  const balances = (
+    <>
+      {types.map((type) => (
+        <BuzzBalanceSegment
+          key={type}
+          type={type}
+          showLabel={fit === 0}
+          buzzProps={{ ...buzzProps, withAbbreviation: fit === 2 }}
+        />
+      ))}
+    </>
+  );
+
   return (
-    <div className="overflow-hidden rounded-lg bg-white dark:bg-dark-7">
-      <div className="-ml-px flex flex-wrap">
-        {types.map((type) => (
-          <div
-            key={type}
-            data-buzz-balance={type}
-            className="flex flex-[1_0_auto] items-center justify-between gap-3 whitespace-nowrap border-l border-gray-3 px-3 py-2 dark:border-dark-4"
-          >
-            <Text size="xs" c="dimmed" tt="capitalize">
-              {type}
-            </Text>
-            <UserBuzz accountTypes={[type]} {...buzzProps} />
-          </div>
-        ))}
-      </div>
+    <div
+      ref={stripRef}
+      className="flex flex-nowrap items-stretch overflow-hidden rounded-lg bg-gray-2 dark:bg-dark-7/60"
+    >
+      {href ? (
+        <NextLink href={href} onClick={onOpen} className="flex min-w-0 flex-1">
+          {balances}
+        </NextLink>
+      ) : (
+        <div className="flex min-w-0 flex-1">{balances}</div>
+      )}
+      {action && <div className="flex shrink-0 items-center pr-2">{action}</div>}
+    </div>
+  );
+}
+
+function BuzzBalanceSegment({
+  type,
+  showLabel,
+  buzzProps,
+}: {
+  type: BuzzSpendType;
+  showLabel: boolean;
+  buzzProps: BuzzBalanceProps;
+}) {
+  const {
+    data: { total },
+  } = useQueryBuzz([type]);
+  const name = `${type} Buzz ${total.toLocaleString()}`;
+
+  return (
+    <div
+      role="group"
+      aria-label={name}
+      title={name}
+      data-buzz-balance={type}
+      className="flex flex-[1_0_auto] items-center justify-between gap-3 whitespace-nowrap border-l border-gray-3 px-3 py-2 first:border-l-0 dark:border-dark-4"
+    >
+      {showLabel && (
+        <Text size="xs" c="dimmed" tt="capitalize">
+          {type}
+        </Text>
+      )}
+      <UserBuzz accountTypes={[type]} {...buzzProps} />
     </div>
   );
 }

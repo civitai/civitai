@@ -1,15 +1,22 @@
 /**
- * A `$queryRaw` implementation that answers the client image url ownership probe from `rows`,
- * using the keys, shop-write flag and userId the probe binds, so a probe with the wrong keys or
- * caller is seen. Every other raw query gets `[]`.
+ * A `$queryRaw` implementation that answers the client image url probes from `rows`, using the
+ * keys and users each probe binds, so a probe with the wrong keys or users is seen: the ownership
+ * probe (rows of another user, or any row for a shop write) and the issued-key probe (rows of the
+ * allowed users). Every other raw query gets `[]`.
  */
 export const imageUrlOwnersFake = (rows: { url: string; userId: number }[]) =>
-  (async (strings: TemplateStringsArray, keys: unknown, shopWrite: unknown, userId: unknown) =>
-    strings.join('').includes('url = ANY(') &&
-    Array.isArray(keys) &&
-    rows.some((row) => keys.includes(row.url) && (shopWrite === true || row.userId !== userId))
+  (async (strings: TemplateStringsArray, keys: unknown, second: unknown, third: unknown) => {
+    const sql = strings.join('');
+    if (!sql.includes('url = ANY(') || !Array.isArray(keys)) return [];
+    if (Array.isArray(second))
+      return rows
+        .filter((row) => keys.includes(row.url) && second.includes(row.userId))
+        .map(({ url }) => ({ url }));
+    // The ownership probe binds keys, then whether it is a shop write, then the caller.
+    return rows.some((row) => keys.includes(row.url) && (second === true || row.userId !== third))
       ? [{}]
-      : []) as never;
+      : [];
+  }) as never;
 
 /**
  * A `$queryRaw` implementation that answers the ownership probe as "already used", recording the

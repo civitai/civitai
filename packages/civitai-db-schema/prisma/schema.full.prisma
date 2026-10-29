@@ -6729,6 +6729,25 @@ model CsamReport {
   // modelVersionIds  Int[]     @default([])
 }
 
+enum CsamQueueSetAsideOutcome {
+  AfterReport
+  Dismissed
+}
+
+/// An image a moderator took out of the CSAM review queue without changing the image. Whether the row
+/// still counts is decided when the queue is read; a changed flag or a new report deletes it.
+model CsamQueueSetAside {
+  imageId      Int                      @id
+  userId       Int
+  outcome      CsamQueueSetAsideOutcome
+  /// The report an `AfterReport` row follows. Nothing writes `AfterReport` rows yet.
+  csamReportId Int?
+  moderatorId  Int
+  createdAt    DateTime                 @default(now())
+
+  @@index([userId])
+}
+
 /// Written by a trigger on `CsamReport`: one row per change to a sent report and per deleted report.
 model CsamReportAudit {
   id              Int       @id @default(autoincrement())

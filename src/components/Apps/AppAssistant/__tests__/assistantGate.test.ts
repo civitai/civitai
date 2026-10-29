@@ -57,8 +57,10 @@ async function allPassing(gate: ReturnType<typeof createAssistantGate>) {
   gate.onToolResult(run('cd my-app && npx tsc --noEmit', 0));
 }
 
+/** A real-data app's report_ready, as every test not about the data declares it. */
+const CIVITAI = { data: 'civitai' };
 const readyDecision = (gate: ReturnType<typeof createAssistantGate>) =>
-  gate.beforeToolCall(REPORT_READY, {}, ctx);
+  gate.beforeToolCall(REPORT_READY, CIVITAI, ctx);
 
 const STOP_AT_LIMIT = {
   refuse:
@@ -223,7 +225,7 @@ describe('report_ready', () => {
   it('starts over in another conversation, and after reset', async () => {
     const gate = gateInConversation();
     await allPassing(gate);
-    expect(gate.beforeToolCall(REPORT_READY, {}, { conversationId: 'conv-2' })).toHaveProperty(
+    expect(gate.beforeToolCall(REPORT_READY, CIVITAI, { conversationId: 'conv-2' })).toHaveProperty(
       'refuse'
     );
 
@@ -231,6 +233,150 @@ describe('report_ready', () => {
     await allPassing(other);
     other.reset();
     expect(readyDecision(other)).toHaveProperty('refuse');
+  });
+});
+
+describe('report_ready and the app’s data', () => {
+  // Live on 2026-10-29: asked for a LoRA explorer of real Civitai models, a run hardcoded eight
+  // invented models, passed report_ready, and told the user the app was ready. Literal texts, so a
+  // reworded refusal is re-read here.
+  const NO_DATA =
+    "Not ready yet. Say where what the app shows comes from: call report_ready with data: 'civitai' (from Civitai), 'sample' (made-up sample data) or 'none' (no Civitai data). Then call report_ready again.";
+  const NOT_AGREED =
+    "Not ready yet. The user has not agreed to sample data. Tell them plainly the app would show made-up sample data, not real Civitai data, and why; offer to label it as sample data or to change the app to what Civitai provides. Only once they agree, call set_checklist with data: 'sample'. Then call report_ready again.";
+  const NO_LABEL =
+    'Not ready yet. An app showing sample data must say so: add a visible "Sample data" label at the top of the app, then run sandbox__preview_check, whose visible text must show it. Then call report_ready again.';
+  const NOT_AS_PROMISED =
+    'Not ready yet. The checklist told the user the app shows Civitai data, but report_ready says it shows none. Make it show the Civitai data the user asked for, or tell them why it cannot and agree a change through set_checklist. Then call report_ready again.';
+
+  /** A passing preview check whose visible text is `text`. */
+  const previewShowing = (text: string): ChatToolResult => ({
+    ...preview('ok'),
+    output: `render: ok\npage_errors: 0  console_errors: 0  failed_requests: 1  unanswered_host_requests: 0\n## failed requests\n- https://civitai.com/api/v1/models?query=pony — net::ERR_INTERNET_DISCONNECTED (offline-in-sandbox: not localhost)\n## visible text (#root)\n${text}`,
+  });
+
+  /** Every check passing, under a checklist that said `data` (left out when undefined). */
+  async function passingWith(data: string | undefined, visible = 'LoRA Explorer') {
+    const gate = gateInConversation();
+    await gate.tools[SET_CHECKLIST].execute(
+      { items: [{ label: 'Search models', done: true }], ...(data ? { data } : {}) },
+      toolCtx
+    );
+    gate.onToolResult(previewShowing(visible));
+    gate.onToolResult(run('cd my-app && npm test', 0));
+    gate.onToolResult(run('cd my-app && npx tsc --noEmit', 0));
+    return gate;
+  }
+  const ready = (gate: ReturnType<typeof createAssistantGate>, input: unknown) =>
+    gate.beforeToolCall(REPORT_READY, input, ctx);
+
+  it('is refused until the data is declared, whatever else passed', async () => {
+    const gate = await passingWith(undefined);
+    expect(ready(gate, {})).toEqual({ refuse: NO_DATA });
+    expect(ready(gate, { data: 'real' })).toEqual({ refuse: NO_DATA });
+    await expect(Promise.resolve(gate.tools[REPORT_READY].execute({}, toolCtx))).rejects.toThrow(
+      NO_DATA
+    );
+  });
+
+  it('refuses sample data the user never agreed to, labelled or not', async () => {
+    // The live case: the checklist said nothing about the data.
+    expect(ready(await passingWith(undefined, 'Sample data'), { data: 'sample' })).toEqual({
+      refuse: NOT_AGREED,
+    });
+    // The checklist promised Civitai data.
+    expect(ready(await passingWith('civitai', 'Sample data'), { data: 'sample' })).toEqual({
+      refuse: NOT_AGREED,
+    });
+  });
+
+  it('refuses agreed sample data until the app shows the label', async () => {
+    expect(ready(await passingWith('sample', 'LoRA Explorer'), { data: 'sample' })).toEqual({
+      refuse: NO_LABEL,
+    });
+  });
+
+  it('counts the label only in the visible text, not elsewhere in the report', async () => {
+    const gate = await passingWith('sample');
+    gate.onToolResult({
+      ...preview('ok'),
+      output:
+        'render: ok\npage_errors: 0  console_errors: 1  failed_requests: 0  unanswered_host_requests: 0\n## console errors\n- Sample data missing\n## visible text (#root)\nLoRA Explorer',
+    });
+    expect(ready(gate, { data: 'sample' })).toEqual({ refuse: NO_LABEL });
+  });
+
+  it('forgets the label when a later preview check no longer shows it', async () => {
+    const gate = await passingWith('sample', 'Sample data\nLoRA Explorer');
+    expect(ready(gate, { data: 'sample' })).toEqual({ allow: true });
+    gate.onToolResult(previewShowing('LoRA Explorer'));
+    expect(ready(gate, { data: 'sample' })).toEqual({ refuse: NO_LABEL });
+  });
+
+  it('says ready for agreed, labelled sample data, and tells the assistant to say so', async () => {
+    const gate = await passingWith('sample', 'SAMPLE DATA · LoRA Explorer');
+    expect(ready(gate, { data: 'sample' })).toEqual({ allow: true });
+    await expect(
+      Promise.resolve(gate.tools[REPORT_READY].execute({ data: 'sample' }, toolCtx))
+    ).resolves.toEqual({
+      ready: true,
+      data: 'sample',
+      note: 'Tell the user the app is ready for review, that it shows sample data, not real Civitai data, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed and that the data is sample data.',
+    });
+  });
+
+  it('refuses "none" when the checklist promised Civitai data', async () => {
+    expect(ready(await passingWith('civitai'), { data: 'none' })).toEqual({
+      refuse: NOT_AS_PROMISED,
+    });
+  });
+
+  // Over-fixing guards: a real-data app, and an app with no Civitai data, are not held up.
+  it.each([
+    [undefined, 'civitai'],
+    ['civitai', 'civitai'],
+    [undefined, 'none'],
+    ['none', 'none'],
+    ['sample', 'civitai'],
+  ])('says ready under a checklist that said %s and data: %s', async (said, data) => {
+    const gate = await passingWith(said);
+    expect(ready(gate, { data })).toEqual({ allow: true });
+    await expect(
+      Promise.resolve(gate.tools[REPORT_READY].execute({ data }, toolCtx))
+    ).resolves.toEqual({
+      ready: true,
+      data,
+      note: 'Tell the user the app is ready for review, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed.',
+    });
+  });
+
+  it('shows the list again when only its data changes, so the user agrees to sample data', async () => {
+    const gate = gateInConversation();
+    const items = [{ label: 'Search models' }];
+    expect(
+      await gate.tools[SET_CHECKLIST].execute({ items, data: 'civitai' }, toolCtx)
+    ).toMatchObject({ awaitsUser: true });
+    expect(
+      await gate.tools[SET_CHECKLIST].execute({ items, data: 'sample' }, toolCtx)
+    ).toMatchObject({ awaitsUser: true });
+    // Ticking an item off without data keeps the agreed data and does not show the list again.
+    expect(
+      await gate.tools[SET_CHECKLIST].execute(
+        { items: [{ label: 'Search models', done: true }] },
+        toolCtx
+      )
+    ).toEqual({ updated: true, open: 0 });
+    gate.onToolResult(previewShowing('Sample data'));
+    gate.onToolResult(run('cd my-app && npm test', 0));
+    gate.onToolResult(run('cd my-app && npx tsc --noEmit', 0));
+    expect(ready(gate, { data: 'sample' })).toEqual({ allow: true });
+  });
+
+  it('rejects a data value it does not know', () => {
+    const gate = gateInConversation();
+    expect(() =>
+      gate.tools[SET_CHECKLIST].execute({ items: ['a'], data: 'mock' }, toolCtx)
+    ).toThrow('data must be one of civitai, sample, none.');
   });
 });
 
@@ -371,7 +517,7 @@ describe('what clears the checks', () => {
 
 describe('report_ready alongside other calls', () => {
   const readyResult = (gate: ReturnType<typeof createAssistantGate>) =>
-    Promise.resolve(gate.tools[REPORT_READY].execute({}, toolCtx));
+    Promise.resolve(gate.tools[REPORT_READY].execute(CIVITAI, toolCtx));
 
   /** A gate with every check passing and no call left running. */
   async function settledAndPassing() {
@@ -415,7 +561,9 @@ describe('report_ready alongside other calls', () => {
   it('forgets calls left running by an earlier reply', async () => {
     const gate = await settledAndPassing();
     gate.beforeToolCall('sandbox__read_file', {}, ctx);
-    expect(gate.beforeToolCall(REPORT_READY, {}, { ...ctx, reply: 2 })).toEqual({ allow: true });
+    expect(gate.beforeToolCall(REPORT_READY, CIVITAI, { ...ctx, reply: 2 })).toEqual({
+      allow: true,
+    });
     await expect(readyResult(gate)).resolves.toMatchObject({ ready: true });
   });
 
@@ -479,7 +627,7 @@ describe('subagent calls and the per-reply limit', () => {
 
 describe('report_ready while a subagent runs', () => {
   const readyResult = (gate: ReturnType<typeof createAssistantGate>) =>
-    Promise.resolve(gate.tools[REPORT_READY].execute({}, toolCtx));
+    Promise.resolve(gate.tools[REPORT_READY].execute(CIVITAI, toolCtx));
   const dispatched: ChatToolResult = {
     name: 'dispatch_agent',
     input: { task: 'Find where auth is handled', mode: 'read' },

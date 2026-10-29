@@ -1,7 +1,9 @@
+import { readFileSync } from 'node:fs';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as EmailTemplates from '~/server/email/templates';
 import type * as BuzzService from '~/server/services/buzz.service';
@@ -145,11 +147,11 @@ beforeEach(async () => {
     const flat = Prisma.sql(strings, ...(v as never[]));
     // Only the statements that write the review flag; the other raw writers touch columns this
     // stand-in does not have.
-    if (!/"Appeal"|SET "needsReview"/.test(flat.text)) return 0;
+    if (!/"Appeal"|SET "needsReview"|"CsamQueueSetAside"/.test(flat.text)) return 0;
     return (await run(flat)).affectedRows ?? 0;
   }) as never);
   await holder.db.exec(`
-    TRUNCATE "Image", "Appeal";
+    TRUNCATE "Image", "Appeal" CASCADE;
     INSERT INTO "Image" (id, "userId", ingestion, "blockedFor", "nsfwLevel", "needsReview") VALUES
       (${APPEALED}, 7, 'Blocked', 'moderated', 32, 'appeal'),
       (${FLAGGED}, 8, 'Scanned', NULL, 4, 'minor'),
@@ -388,5 +390,117 @@ describe('reportCsamImages', () => {
     } as never);
 
     expect((await imageRow(APPEALED)).needsReview).toBe('csam');
+  });
+});
+
+describe('reportCsamImages and images set aside from the CSAM queue', () => {
+  const moderator = { id: 2, isModerator: true } as never;
+
+  beforeAll(async () => {
+    await holder.db.exec(`CREATE TABLE "CsamReport" (id serial PRIMARY KEY)`);
+    await holder.db.exec(
+      readFileSync(
+        new URL(
+          '../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_csam_queue_set_aside/migration.sql',
+          import.meta.url
+        ),
+        'utf8'
+      )
+    );
+  });
+
+  beforeEach(async () => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(
+      (async (strings: TemplateStringsArray, ...v: unknown[]) =>
+        (await run(Prisma.sql(strings, ...(v as never[])))).rows) as never
+    );
+    // REVIEW_FLAGGED already carries the CSAM flag, so reporting it changes nothing on the image.
+    await holder.db.exec(`
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", outcome, "moderatorId") VALUES
+        (${REVIEW_FLAGGED}, 10, 'Dismissed', 1), (${DECIDED}, 9, 'Dismissed', 1);
+    `);
+  });
+
+  const setAsideIds = async () =>
+    (
+      await holder.db.query<{ imageId: number }>(
+        `SELECT "imageId" FROM "CsamQueueSetAside" ORDER BY 1`
+      )
+    ).rows.map((r) => r.imageId);
+
+  it('puts a reported image back in the queue, and only that image', async () => {
+    await reportCsamImages({ imageIds: [REVIEW_FLAGGED], user: moderator });
+
+    expect(await setAsideIds()).toEqual([DECIDED]);
+    expect((await imageRow(REVIEW_FLAGGED)).needsReview).toBe('csam');
+  });
+
+  it('still reports before the migration is applied', async () => {
+    await holder.db.exec(`
+      ALTER TABLE "Image" DISABLE TRIGGER "Image_csam_queue_set_aside_end";
+      ALTER TABLE "CsamQueueSetAside" RENAME TO "CsamQueueSetAsideAway";
+    `);
+    try {
+      await reportCsamImages({ imageIds: [FLAGGED], user: moderator });
+      expect((await imageRow(FLAGGED)).needsReview).toBe('csam');
+    } finally {
+      await holder.db.exec(`
+        ALTER TABLE "CsamQueueSetAsideAway" RENAME TO "CsamQueueSetAside";
+        ALTER TABLE "Image" ENABLE TRIGGER "Image_csam_queue_set_aside_end";
+      `);
+    }
+  });
+
+  // A role with every grant but the ones named, as an app role whose grants were missed.
+  const asRoleWithout = async (revoke: string, fn: () => Promise<void>) => {
+    await holder.db.exec(`
+      DROP ROLE IF EXISTS app_role;
+      CREATE ROLE app_role;
+      GRANT ALL ON ALL TABLES IN SCHEMA public TO app_role;
+      GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO app_role;
+      ${revoke};
+      SET ROLE app_role;
+    `);
+    try {
+      await fn();
+    } finally {
+      await holder.db.exec(`
+        ROLLBACK;
+        RESET ROLE;
+        DROP OWNED BY app_role;
+        DROP ROLE app_role;
+      `);
+    }
+  };
+
+  it('still reports when the role may not delete set-asides, and says the grant is missing', async () => {
+    loggingMock.logToAxiom.mockClear();
+    await asRoleWithout(`REVOKE DELETE ON "CsamQueueSetAside" FROM app_role`, async () => {
+      await reportCsamImages({ imageIds: [REVIEW_FLAGGED], user: moderator });
+    });
+    expect((await imageRow(REVIEW_FLAGGED)).needsReview).toBe('csam');
+    expect(await setAsideIds()).toEqual([DECIDED, REVIEW_FLAGGED]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'csam-queue-set-aside-not-deletable' })
+    );
+  });
+
+  it('ends a set-aside on a flag change by a role with no grant on the table', async () => {
+    await asRoleWithout(`REVOKE ALL ON "CsamQueueSetAside" FROM app_role`, async () => {
+      await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${DECIDED}`);
+    });
+    expect(await setAsideIds()).toEqual([REVIEW_FLAGGED]);
+  });
+
+  it('lets no role attach the set-aside function to a table of its own', async () => {
+    await asRoleWithout(`SELECT 1`, async () => {
+      await expect(
+        holder.db.exec(`
+          CREATE TEMP TABLE own (id int);
+          CREATE TRIGGER own_end AFTER UPDATE ON own FOR EACH ROW
+            EXECUTE FUNCTION csam_queue_set_aside_end();
+        `)
+      ).rejects.toThrow(/permission denied for function/);
+    });
   });
 });

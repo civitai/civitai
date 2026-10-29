@@ -519,6 +519,17 @@
     if (!toUrl || d.modelId == null) return null;
     return hostLink(toUrl({ modelId: d.modelId }));
   });
+  // The run keeps its modelId after the owner deletes the model, so ask once per id (a primitive,
+  // so the training poll's fresh `d` doesn't re-ask), and only when there's a link to drop. Never
+  // settles on the server: SSR and hydration both render the pending branch.
+  const runModelId = $derived(modelLink ? d.modelId : undefined);
+  const modelLive = $derived(
+    runModelId == null
+      ? null
+      : browser
+        ? backend().modelLive(runModelId)
+        : new Promise<boolean>(() => {})
+  );
 
   let mode = $state<'epoch' | 'compare'>('epoch');
   // A single-epoch continuation still has ancestors worth comparing against, so lineage alone
@@ -1194,55 +1205,69 @@
       </div>
     {/if}
 
-    {#if publishUrl() || modelLink}
-      <div class="flex flex-wrap items-center gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5">
-        {#if d.state === 'published'}
-          <!-- State first, link second: a published run must never fall through to a Publish CTA —
-               older runs carry `published` without `modelId`, and a host may omit modelPageUrl. -->
-          {#if modelLink}
-            <Button size="sm" {...modelLink}>
-              <IconExternalLink size={14} stroke={2} />View your model page
+    {#snippet publishPanel(link: ReturnType<typeof hostLink> | null)}
+      {#if publishUrl() || link}
+        <div class="flex flex-wrap items-center gap-3 rounded-xl border border-dark-4 bg-dark-6 p-5">
+          {#if d.state === 'published'}
+            <!-- State first, link second: a published run must never fall through to a Publish CTA —
+                 older runs carry `published` without `modelId`, and a host may omit modelPageUrl. -->
+            {#if link}
+              <Button size="sm" {...link}>
+                <IconExternalLink size={14} stroke={2} />View your model page
+              </Button>
+            {/if}
+            <p class="m-0 font-mono text-xs text-dark-2">
+              This run was published as a model on Civitai.
+            </p>
+          {:else if publishLink && publishEpoch}
+            <Button size="sm" {...publishLink}>
+              <IconUpload size={14} stroke={2} />Publish a model page
             </Button>
-          {/if}
-          <p class="m-0 font-mono text-xs text-dark-2">
-            This run was published as a model on Civitai.
-          </p>
-        {:else if publishLink && publishEpoch}
-          <Button size="sm" {...publishLink}>
-            <IconUpload size={14} stroke={2} />Publish a model page
-          </Button>
-          {#if modelLink}
-            <Button size="sm" variant="outline" {...modelLink}>
+            {#if link}
+              <Button size="sm" variant="outline" {...link}>
+                <IconExternalLink size={14} stroke={2} />View draft
+              </Button>
+              <p class="m-0 font-mono text-xs text-dark-2">
+                You already have a draft model page for this run — publishing picks up where you left
+                off, or open the draft directly.
+              </p>
+            {:else}
+              <p class="m-0 font-mono text-xs text-dark-2">
+                Creates a draft model page on Civitai from epoch {publishEpoch.number}{publishEpoch ===
+                recommended
+                  ? ' (recommended)'
+                  : ''} — you review, finish, and publish it there. Nothing goes public until you do.
+              </p>
+            {/if}
+          {:else if link}
+            <!-- A draft exists but there's nothing to publish from here — the weights expired, or
+                 this host has no publish surface. The draft link must not hide behind either. -->
+            <Button size="sm" variant="outline" {...link}>
               <IconExternalLink size={14} stroke={2} />View draft
             </Button>
             <p class="m-0 font-mono text-xs text-dark-2">
-              You already have a draft model page for this run — publishing picks up where you left
-              off, or open the draft directly.
+              You have a draft model page for this run on Civitai.
             </p>
           {:else}
+            <Button size="sm" disabled>Publish a model page</Button>
             <p class="m-0 font-mono text-xs text-dark-2">
-              Creates a draft model page on Civitai from epoch {publishEpoch.number}{publishEpoch ===
-              recommended
-                ? ' (recommended)'
-                : ''} — you review, finish, and publish it there. Nothing goes public until you do.
+              Available once a checkpoint with downloadable weights is ready.
             </p>
           {/if}
-        {:else if modelLink}
-          <!-- A draft exists but there's nothing to publish from here — the weights expired, or
-               this host has no publish surface. The draft link must not hide behind either. -->
-          <Button size="sm" variant="outline" {...modelLink}>
-            <IconExternalLink size={14} stroke={2} />View draft
-          </Button>
-          <p class="m-0 font-mono text-xs text-dark-2">
-            You have a draft model page for this run on Civitai.
-          </p>
-        {:else}
-          <Button size="sm" disabled>Publish a model page</Button>
-          <p class="m-0 font-mono text-xs text-dark-2">
-            Available once a checkpoint with downloadable weights is ready.
-          </p>
-        {/if}
-      </div>
+        </div>
+      {/if}
+    {/snippet}
+    <!-- Pending or a failed check keeps the link: hiding a real draft is worse than a stale one. -->
+    {#if modelLive}
+      {#await modelLive}
+        {@render publishPanel(modelLink)}
+      {:then live}
+        {@render publishPanel(live ? modelLink : null)}
+      {:catch}
+        {@render publishPanel(modelLink)}
+      {/await}
+    {:else}
+      {@render publishPanel(modelLink)}
     {/if}
   {/if}
 

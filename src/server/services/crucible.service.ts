@@ -869,6 +869,7 @@ export const updateCrucible = async ({
         coverImage: { ...changes.coverImage, type: MediaType.image },
         userId: crucible.userId,
         currentCoverId: crucible.imageId,
+        uploaderId: userId,
       })
     : undefined;
   const heroImageId = changes.heroImage
@@ -876,6 +877,7 @@ export const updateCrucible = async ({
         coverImage: { ...changes.heroImage, type: MediaType.image },
         userId: crucible.userId,
         currentCoverId: crucible.heroImageId,
+        uploaderId: userId,
       })
     : undefined;
 

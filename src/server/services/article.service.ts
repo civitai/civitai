@@ -96,6 +96,14 @@ import { getFilesByEntity } from './file.service';
 import { generateJSON } from '~/server/utils/tiptap-generate-json';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
+import {
+  ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE,
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+  COVER_IMAGE_UNAVAILABLE_MESSAGE,
+  imageUrlUnavailableError,
+  keyIssuers,
+} from '~/server/services/image-url-ownership';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
@@ -892,6 +900,15 @@ export const upsertArticle = async ({
       if (!article) throw throwNotFoundError();
       const isOwner = article.userId === userId || isModerator;
       if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
+    }
+
+    if (data.content) {
+      await assertArticleContentUrlsUsable({
+        content: data.content,
+        storedContent: article?.content,
+        userId,
+        ownerId: article?.userId ?? userId,
+      });
     }
 
     enforceLockedProperties({
@@ -1899,6 +1916,89 @@ export async function unpublishArticleById({
 
 // --- Article Image Scanning Functions ---
 
+/** The content image urls of `content` with no `Image` row. */
+async function contentUrlsWithoutRows(content: string) {
+  const urls = [...new Set(getContentMedia(content).map((media) => media.url))];
+  if (!urls.length) return [];
+  const existing = await dbWrite.image.findMany({
+    where: { url: { in: urls } },
+    select: { url: true },
+  });
+  const existingUrls = new Set(existing.map((image) => image.url));
+  return urls.filter((url) => !existingUrls.has(url));
+}
+
+/**
+ * The content urls `linkArticleContentImages` would create rows for, checked against the article's
+ * owner. A url this save adds must pass the client image url checks; one already in the stored
+ * content is refused only when its row or upload key belongs to another user.
+ */
+export async function assertArticleContentUrlsUsable({
+  content,
+  storedContent,
+  userId,
+  ownerId,
+}: {
+  content: string;
+  storedContent?: string | null;
+  userId: number;
+  ownerId: number;
+}) {
+  const missing = await contentUrlsWithoutRows(content);
+  const stored = new Set(storedContent ? getContentMedia(storedContent).map((m) => m.url) : []);
+  try {
+    for (const urls of urlChunks(missing.filter((url) => !stored.has(url)))) {
+      await assertClientImageUrlsUsable({ urls, userId: ownerId });
+      await assertClientKeysIssuedToCaller({ urls, userId: ownerId, alsoIssuedTo: userId });
+    }
+    for (const urls of urlChunks(missing.filter((url) => stored.has(url)))) {
+      await assertClientImageUrlsUsable({ urls, userId: ownerId });
+      const { issuedToOthers } = await keyIssuers({ urls, userId: ownerId, alsoIssuedTo: userId });
+      if (issuedToOthers.length) throw imageUrlUnavailableError();
+    }
+  } catch (error) {
+    if (error instanceof TRPCError && error.message === COVER_IMAGE_UNAVAILABLE_MESSAGE)
+      throw imageUrlUnavailableError(ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE);
+    throw error;
+  }
+}
+
+/** Each check takes a bounded number of keys; an article can hold more images than that. */
+const CONTENT_URLS_PER_CHECK = 16;
+function urlChunks(urls: string[]) {
+  const chunks: string[][] = [];
+  for (let i = 0; i < urls.length; i += CONTENT_URLS_PER_CHECK) {
+    chunks.push(urls.slice(i, i + CONTENT_URLS_PER_CHECK));
+  }
+  return chunks;
+}
+
+/**
+ * For content already saved: `assertClientImageUrlsUsable` on the urls with no row, and the keys
+ * among them that were issued to another user or have no issue record, reported, not refused.
+ */
+export async function checkSavedArticleContentUrls({
+  content,
+  ownerId,
+}: {
+  content: string;
+  ownerId: number;
+}) {
+  const result = {
+    issuedToOthers: [] as string[],
+    unrecorded: [] as string[],
+    lookupFailed: false,
+  };
+  for (const urls of urlChunks(await contentUrlsWithoutRows(content))) {
+    await assertClientImageUrlsUsable({ urls, userId: ownerId });
+    const issuers = await keyIssuers({ urls, userId: ownerId });
+    result.issuedToOthers.push(...issuers.issuedToOthers);
+    result.unrecorded.push(...issuers.unrecorded);
+    result.lookupFailed ||= issuers.recordReadFailed || issuers.requestLogReadFailed;
+  }
+  return result;
+}
+
 /**
  * Content images become `Image` rows, and deleting one removes its object, so an article may not
  * embed a key that shop artwork uses. Checked before the write: linking runs after it, and must
@@ -2718,6 +2818,13 @@ export async function rescanArticle({
     },
   });
   if (!article) throw throwNotFoundError(`No article with id ${id}`);
+  if (article.content)
+    await assertArticleContentUrlsUsable({
+      content: article.content,
+      storedContent: article.content,
+      userId: article.userId,
+      ownerId: article.userId,
+    });
 
   // --- Reset ingestion state ---
   // Raw SQL to avoid bumping Article.updatedAt — a rescan is not a user-edit
