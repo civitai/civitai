@@ -1027,8 +1027,8 @@ describe('backfill', () => {
     await run1;
   });
 
-  // Review of this pipeline: the embedder reserved a full batch of step rate for a short one, so
-  // on sparse pages its schedule ran ahead and batches queued inside it, past a pause.
+  // Reserving a full batch of step rate for a short one ran the embedder's schedule ahead on
+  // sparse pages, so batches queued inside it, out of a pause's reach.
   test('sparse pages: short batches are paced by their length and never wait inside the embedder', async () => {
     const pg = new FakePg().put(...ids(1, 30).map((n) => imageRow(n * 10)));
     const store = new FakeStore();
@@ -1090,8 +1090,8 @@ describe('backfill', () => {
     expect(state.cursor).toBe(0);
   });
 
-  // Review: the expiry ran while a failed batch was re-read, then the requeue wrote to the
-  // entries it had cleared, an unhandled rejection that ends the process.
+  // The loop runs while a failed batch is re-read; requeueing entries its deadline cleared would
+  // be an unhandled rejection that ends the process.
   test('a batch past its deadline while its failure is re-read is not requeued, and the run ends cleanly', async () => {
     const pg = new FakePg().put(...ids(1, 10).map((id) => imageRow(id)));
     const store = new FakeStore();
@@ -1123,8 +1123,8 @@ describe('backfill', () => {
     expect(result.cursor).toBe(0);
   });
 
-  // Review: a quota with nothing left split one batch inside embed() into one-step workflows
-  // sent one after another, which a pause could not reach.
+  // A quota with nothing left would split one batch inside embed() into one-step workflows sent
+  // one after another, out of a pause's reach.
   test('a used-up quota sizes batches in the pipeline, so a pause stops the next workflow', async () => {
     const pg = new FakePg().put(...ids(1, 30).map((id) => imageRow(id)));
     const store = new FakeStore();
@@ -1190,7 +1190,7 @@ describe('backfill', () => {
     expect(c.t).toBeLessThan(20_000);
   });
 
-  // Review of #7158: a Qdrant write failing twice used to re-embed vectors already paid for.
+  // Vectors in hand are paid for: a failing write is retried as a write, never by re-embedding.
   test('vectors in hand whose write keeps failing are written again, not re-embedded', async () => {
     const pg = new FakePg().put(...ids(1, 10).map((id) => imageRow(id)));
     const store = new FakeStore();
@@ -1255,8 +1255,8 @@ describe('backfill', () => {
     expect(store.points.size).toBe(50);
   });
 
-  // Decision (review of #7150): a wait the loop is woken from clears its timer, so a finished run
-  // does not keep the process alive for the rest of a tick.
+  // Decision: a wait the loop is woken from clears its timer, so a finished run does not keep the
+  // process alive for the rest of a tick.
   test('a run leaves no timer behind once it returns', async () => {
     const pg = new FakePg().put(...ids(1, 10).map((id) => imageRow(id)));
     const store = new FakeStore();
