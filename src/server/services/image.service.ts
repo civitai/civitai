@@ -7848,10 +7848,11 @@ export async function reportCsamImages({
       data: { needsReview: 'csam' },
     });
     // Reporting an image already flagged leaves its flag unchanged, so the set-aside trigger does not
-    // fire and this delete is what puts the image back in the queue. The table is applied by hand.
-    const [setAside] = await tx.$queryRaw<{ exists: boolean }[]>`
-      SELECT to_regclass('"CsamQueueSetAside"') IS NOT NULL AS exists`;
-    if (setAside?.exists)
+    // fire and this delete is what puts the image back in the queue. The table and its grants are
+    // applied by hand; a role that may not delete skips it rather than fail the report.
+    const [setAside] = await tx.$queryRaw<{ deletable: boolean | null }[]>`
+      SELECT has_table_privilege(to_regclass('"CsamQueueSetAside"'), 'DELETE') AS deletable`;
+    if (setAside?.deletable)
       await tx.$executeRaw`DELETE FROM "CsamQueueSetAside" WHERE "imageId" = ANY(${imageIds}::int[])`;
     // CSAM outranks the appeal and its queue must own the image. Closed silently: no refund, and
     // the uploader is not told.

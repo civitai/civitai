@@ -35,10 +35,10 @@ CREATE INDEX "CsamQueueSetAside_userId_idx" ON "CsamQueueSetAside" ("userId");
 -- A changed flag, or an image no longer removed, ends a set-aside: the next one is a new decision.
 -- The moderation log keeps the old one. Owner's rights, so an image write never needs a grant on
 -- this table.
-CREATE OR REPLACE FUNCTION csam_queue_set_aside_end() RETURNS trigger
+CREATE FUNCTION csam_queue_set_aside_end() RETURNS trigger
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $$
 BEGIN
-  DELETE FROM "CsamQueueSetAside" WHERE "imageId" = NEW."id";
+  DELETE FROM public."CsamQueueSetAside" WHERE "imageId" = NEW."id";
   RETURN NULL;
 END;
 $$;
@@ -51,4 +51,7 @@ CREATE TRIGGER "Image_csam_queue_set_aside_end"
     OR (OLD."ingestion" = 'Blocked' AND NEW."ingestion" IS DISTINCT FROM 'Blocked')
   )
   EXECUTE FUNCTION csam_queue_set_aside_end();
+
+-- Only this trigger runs it: no role may attach it to a table of its own.
+REVOKE ALL ON FUNCTION csam_queue_set_aside_end() FROM PUBLIC;
 COMMIT;

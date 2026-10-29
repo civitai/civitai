@@ -449,4 +449,52 @@ describe('reportCsamImages and images set aside from the CSAM queue', () => {
       `);
     }
   });
+
+  // A role with every grant but the ones named, as an app role whose grants were missed.
+  const asRoleWithout = async (revoke: string, fn: () => Promise<void>) => {
+    await holder.db.exec(`
+      DROP ROLE IF EXISTS app_role;
+      CREATE ROLE app_role;
+      GRANT ALL ON ALL TABLES IN SCHEMA public TO app_role;
+      GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO app_role;
+      ${revoke};
+      SET ROLE app_role;
+    `);
+    try {
+      await fn();
+    } finally {
+      await holder.db.exec(`
+        RESET ROLE;
+        DROP OWNED BY app_role;
+        DROP ROLE app_role;
+      `);
+    }
+  };
+
+  it('still reports when the role may not delete set-asides', async () => {
+    await asRoleWithout(`REVOKE DELETE ON "CsamQueueSetAside" FROM app_role`, async () => {
+      await reportCsamImages({ imageIds: [REVIEW_FLAGGED], user: moderator });
+    });
+    expect((await imageRow(REVIEW_FLAGGED)).needsReview).toBe('csam');
+    expect(await setAsideIds()).toEqual([DECIDED, REVIEW_FLAGGED]);
+  });
+
+  it('ends a set-aside on a flag change by a role with no grant on the table', async () => {
+    await asRoleWithout(`REVOKE ALL ON "CsamQueueSetAside" FROM app_role`, async () => {
+      await holder.db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${DECIDED}`);
+    });
+    expect(await setAsideIds()).toEqual([REVIEW_FLAGGED]);
+  });
+
+  it('lets no role attach the set-aside function to a table of its own', async () => {
+    await asRoleWithout(`SELECT 1`, async () => {
+      await expect(
+        holder.db.exec(`
+          CREATE TEMP TABLE own (id int);
+          CREATE TRIGGER own_end AFTER UPDATE ON own FOR EACH ROW
+            EXECUTE FUNCTION csam_queue_set_aside_end();
+        `)
+      ).rejects.toThrow(/permission denied for function/);
+    });
+  });
 });
