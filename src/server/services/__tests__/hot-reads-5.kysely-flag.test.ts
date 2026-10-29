@@ -73,8 +73,7 @@ describe('control', () => {
 describe('getPlacementConfig (KeyValue)', () => {
   const load = async () => (await import('~/server/services/placement.service')).getPlacementConfig;
 
-  // `sticker` defaults to 48 expiry hours; each path's stored value (29, 31) differs from it
-  // and from the other, so the assertion names which read configured the result.
+  // Stored values differ from each other and from the default: the assertion names the read used.
   it('OFF: one Prisma read on the replica, whose value configures the result', async () => {
     const getPlacementConfig = await load();
     dbMock.dbRead.keyValue.findUnique.mockResolvedValue({

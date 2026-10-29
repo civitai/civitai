@@ -5,9 +5,15 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { BlockedReason, PostSort, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import {
+  readPostDetailViaKysely,
+  readPostDetailViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import {
   getDbWithoutLag,
+  getKyselyWithoutLag,
   preventReplicationLag,
   preventReplicationLagBatch,
 } from '~/server/db/db-lag-helpers';
@@ -33,7 +39,7 @@ import { editPostImageSelect, postSelect } from '~/server/selectors/post.selecto
 import { simpleTagSelect } from '~/server/selectors/tag.selector';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { newTagNames } from '~/server/services/new-tag-names';
-import { getPostDetailVisibility } from '~/server/services/post-detail-visibility';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import {
   buildPostCursorClause,
   encodePostCursor,
@@ -667,11 +673,17 @@ const getPostCollectionCollectionItem = async ({
 
 export type PostDetail = AsyncReturnType<typeof getPostDetail>;
 export const getPostDetail = async ({ id, user }: GetByIdInput & { user?: SessionUser }) => {
-  const db = await getDbWithoutLag('post', id);
-  const post = await db.post.findFirst({
-    where: { id, ...getPostDetailVisibility(user) },
-    select: postSelect,
-  });
+  let db: typeof dbRead | typeof dbWrite;
+  let post: Awaited<ReturnType<typeof readPostDetailViaKysely>> = undefined;
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6)) {
+    const kysely = await getKyselyWithoutLag('post', id);
+    db = kysely === (await loadKyselyDb()).kyselyWrite ? dbWrite : dbRead;
+    post = await readPostDetailViaKysely(kysely, { id, viewer: user, now: new Date() });
+  } else {
+    db = await getDbWithoutLag('post', id);
+  }
+  // A post whose user row is gone reads `undefined` through Kysely, and Prisma throws for it.
+  if (post === undefined) post = await readPostDetailViaPrisma(db, { id, viewer: user });
 
   if (!post) throw throwNotFoundError();
 
