@@ -35,6 +35,7 @@
     enhancer={form.enhance}
     idPrefix="ticket-appeal-{appealId}"
     size="xs"
+    confirm
     busy={form.submitting}
     disabled={form.submitting}
     bind:draft
