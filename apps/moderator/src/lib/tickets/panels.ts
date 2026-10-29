@@ -1,6 +1,7 @@
 import { accountPanelFor, type PanelVisibility } from './account-panel';
 import { APPEAL_QUEUE_PATHS } from './appeals';
 import { appealsPanelFor } from './appeals-panel';
+import { RATINGS_PATH } from './rating-disputes';
 import type { TicketView } from './routing';
 
 /** What decides whether a panel applies to a ticket. */
@@ -31,6 +32,15 @@ export const PANELS = {
   },
   appeals: {
     readGrants: APPEAL_QUEUE_PATHS,
+    visibility: appealsPanelFor,
+  },
+  // Read-only: the lists User Lookup shows, under its grant. Held on the tickets the Appeals card shows on.
+  history: {
+    readGrants: ['/retool/user-lookup'],
+    visibility: appealsPanelFor,
+  },
+  ratingDisputes: {
+    readGrants: [RATINGS_PATH],
     visibility: appealsPanelFor,
   },
 } satisfies Record<string, PanelSpec>;

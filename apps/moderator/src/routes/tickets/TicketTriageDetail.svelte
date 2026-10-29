@@ -17,6 +17,8 @@
   import TicketAccount from './TicketAccount.svelte';
   import TicketAppeals from './TicketAppeals.svelte';
   import TicketEscalate from './TicketEscalate.svelte';
+  import TicketHistory from './TicketHistory.svelte';
+  import TicketRatingDisputes from './TicketRatingDisputes.svelte';
   import TicketReply from './TicketReply.svelte';
   import TicketStatusBadge from './TicketStatusBadge.svelte';
 
@@ -198,6 +200,12 @@
       accountCardShown={panels.account?.status === 'ok'}
       ondone={accountDone}
     />
+  {/if}
+  {#if panels.ratingDisputes}
+    <TicketRatingDisputes ticketId={row.id} disputes={panels.ratingDisputes} ondone={accountDone} />
+  {/if}
+  {#if panels.history}
+    <TicketHistory history={panels.history} />
   {/if}
   <TriageCard title="Requester" dense>
     <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">

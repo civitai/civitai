@@ -48,8 +48,16 @@ is its own page grant. Acting on a ticket is a separate permission:
   the queue's shared `ruleFlagAppeal`). Account appeals are history-only here and are ruled in the Account card. Each action
   re-checks that the appeal is the linked user's, pending and of that kind, decides with the row's ids, and
   adds a private note naming the moderator. If the ruling closed a different appeal than the one posted, it is reported as a
-  warning and the note names the appeal actually closed. Cards are declared in the
+  warning and the note names the appeal actually closed; a model flag ruling that left the posted appeal pending
+  (it decided another appeal on the model) says so and never names the posted one as decided. Cards are declared in the
   panel registry (`$lib/tickets/panels.ts`).
+- Two more cards show on the same tickets and need a linked user. **History** (read-only, with `/retool/user-lookup`):
+  the user's newest 10 strikes, notes, enforcement activity and image removals, each section loaded on its own
+  (a failing one reads "Unavailable") and linked to User Lookup for the full list. A strike's description is
+  not shown, and image removals filed under a CSAM reason are dropped. **Rating disputes** (with `/ratings`): the user's
+  newest 10, pending first; a pending one is ruled from the card by picking a level and confirming, through the
+  queue's `resolveRatingReviewAction`. The action re-checks that the dispute is the linked user's and
+  still pending, decides with the row's id, and adds a private note naming the moderator.
 - Both views read one shared Redis snapshot of every live ticket (subject, status, Feature, tags, dates,
   requester name; never a body or an email address), not Freshdesk, so a page load costs no Freshdesk calls. The snapshot
   is rebuilt in full from the status searches when missing or six hours old (Freshdesk search returns at most

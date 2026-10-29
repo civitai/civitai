@@ -8,9 +8,13 @@ const { loadPanels } = await import('../tickets/panels');
 
 const account = vi.fn();
 const appeals = vi.fn();
+const history = vi.fn();
+const ratingDisputes = vi.fn();
 const loaders = {
   account: (...a: unknown[]) => account(...a),
   appeals: (...a: unknown[]) => appeals(...a),
+  history: (...a: unknown[]) => history(...a),
+  ratingDisputes: (...a: unknown[]) => ratingDisputes(...a),
 } as never;
 const all = () => true;
 
@@ -24,6 +28,10 @@ const ticket = {
 beforeEach(() => {
   account.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
   appeals.mockReset().mockResolvedValue({ status: 'ok', userId: 7, appeals: [], truncated: false });
+  history.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
+  ratingDisputes
+    .mockReset()
+    .mockResolvedValue({ status: 'ok', userId: 7, disputes: [], truncated: false });
 });
 
 describe('loadPanels', () => {
@@ -55,6 +63,8 @@ describe('loadPanels', () => {
     expect(await loadPanels({ ...ticket, civitaiUserId: null }, all, loaders)).toEqual({
       account: { status: 'unlinked' },
       appeals: { status: 'unlinked' },
+      history: { status: 'unlinked' },
+      ratingDisputes: { status: 'unlinked' },
     });
     expect(account).not.toHaveBeenCalled();
     expect(appeals).not.toHaveBeenCalled();
@@ -106,12 +116,18 @@ describe('the appeals panel', () => {
   it('says only that no user is linked for a Moderation Decision with none', async () => {
     expect(await loadPanels({ ...decision, civitaiUserId: null }, all, loaders)).toEqual({
       appeals: { status: 'unlinked' },
+      history: { status: 'unlinked' },
+      ratingDisputes: { status: 'unlinked' },
     });
   });
 
   it('is hidden from a viewer who holds no appeal queue, and shown to one who holds any', async () => {
     const none = (p: string) =>
-      !p.startsWith('/images/') && !p.startsWith('/models/') && !p.startsWith('/appeals/');
+      !p.startsWith('/images/') &&
+      !p.startsWith('/models/') &&
+      !p.startsWith('/appeals/') &&
+      p !== '/retool/user-lookup' &&
+      p !== '/ratings';
     expect(await loadPanels(decision, none, loaders)).toEqual({});
     const one = (p: string) => p === '/appeals/other';
     expect(await loadPanels(decision, one, loaders)).toHaveProperty('appeals');
@@ -123,5 +139,41 @@ describe('the appeals panel', () => {
     const res = await loadPanels(ticket, all, loaders);
     expect(res.appeals).toEqual({ status: 'unavailable', userId: 7 });
     expect(res.account).toMatchObject({ status: 'ok' });
+  });
+});
+
+describe('the history and rating disputes panels', () => {
+  const decision = { ...ticket, cfFeature: 'Moderation Decision' };
+  const only = (path: string) => (p: string) => p === path;
+
+  it('show on the tickets the Appeals card shows on, not elsewhere', async () => {
+    const res = await loadPanels(decision, all, loaders);
+    expect(res).toHaveProperty('history');
+    expect(res).toHaveProperty('ratingDisputes');
+    const other = await loadPanels({ ...decision, cfFeature: 'Billing' }, all, loaders);
+    expect(other).toEqual({});
+    expect(history).toHaveBeenCalledTimes(1);
+    expect(ratingDisputes).toHaveBeenCalledTimes(1);
+  });
+
+  it('are each held back from a viewer without their own grant, without loading', async () => {
+    const lookup = await loadPanels(decision, only('/retool/user-lookup'), loaders);
+    expect(lookup).toHaveProperty('history');
+    expect(lookup).not.toHaveProperty('ratingDisputes');
+    const ratings = await loadPanels(decision, only('/ratings'), loaders);
+    expect(ratings).toHaveProperty('ratingDisputes');
+    expect(ratings).not.toHaveProperty('history');
+    expect(history).toHaveBeenCalledTimes(1);
+    expect(ratingDisputes).toHaveBeenCalledTimes(1);
+  });
+
+  it('become unavailable when their read throws, leaving the others alone', async () => {
+    history.mockRejectedValue(new Error('db down'));
+    ratingDisputes.mockRejectedValue(new Error('db down'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await loadPanels(decision, all, loaders);
+    expect(res.history).toEqual({ status: 'unavailable', userId: 7 });
+    expect(res.ratingDisputes).toEqual({ status: 'unavailable', userId: 7 });
+    expect(res.appeals).toMatchObject({ status: 'ok' });
   });
 });
