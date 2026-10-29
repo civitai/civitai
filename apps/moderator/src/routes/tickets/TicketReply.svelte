@@ -13,12 +13,18 @@
     currentStatus,
     canReply,
     ondone,
+    submitting = $bindable(false),
+    locked = false,
   }: {
     ticketId: string;
     currentStatus: number;
     /** False renders the controls disabled, with the reason: an absent form reads as the page having none. */
     canReply: boolean;
     ondone: (what: string, data: Record<string, unknown> | undefined, status: number | null) => void;
+    /** Out: this form is in flight. */
+    submitting?: boolean;
+    /** Another write to this ticket is in flight. */
+    locked?: boolean;
   } = $props();
 
   /** Stands for "leave the status as it is"; posted as an empty `statusAfter`. */
@@ -43,7 +49,10 @@
     statusAfter === LEAVE ? `Leave as ${statusLabel(currentStatus)}` : statusLabel(Number(statusAfter))
   );
   const why = $derived(canReply ? undefined : denied('tickets.reply'));
-  const busy = $derived(reply.submitting);
+  $effect(() => {
+    submitting = reply.submitting;
+  });
+  const busy = $derived(reply.submitting || locked);
 </script>
 
 <form method="POST" action="?/reply" use:enhance={reply.enhance} class="flex flex-col gap-2">

@@ -13,6 +13,8 @@
     label,
     canReply,
     ondone,
+    submitting = $bindable(false),
+    locked = false,
   }: {
     ticketId: string;
     status: number;
@@ -20,6 +22,10 @@
     /** False renders the trigger disabled, with the reason. */
     canReply: boolean;
     ondone: (what: string, data: Record<string, unknown> | undefined, status: number | null) => void;
+    /** Out: a status change is in flight. */
+    submitting?: boolean;
+    /** Another write to this ticket is in flight. */
+    locked?: boolean;
   } = $props();
 
   let form = $state<HTMLFormElement>();
@@ -31,6 +37,11 @@
     reset: false,
   });
   const why = $derived(canReply ? undefined : denied('tickets.reply'));
+  $effect(() => {
+    submitting = change.submitting;
+  });
+  // Follows the ticket's status, so a failed change does not leave another status checked.
+  let checked = $derived(String(status));
 
   async function choose(value: string) {
     if (value === String(status)) return;
@@ -45,7 +56,7 @@
   <input type="hidden" name="status" value={picked} />
   <DropdownMenu.Root>
     <DropdownMenu.Trigger
-      disabled={!canReply || change.submitting}
+      disabled={!canReply || change.submitting || locked}
       title={why}
       aria-label="Change status (now {label})"
       class="inline-flex cursor-pointer items-center rounded-full outline-none hover:opacity-80 focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
@@ -54,7 +65,13 @@
       <TicketStatusBadge {status} {label} />
     </DropdownMenu.Trigger>
     <DropdownMenu.Content align="start">
-      <DropdownMenu.RadioGroup value={String(status)} onValueChange={choose}>
+      <DropdownMenu.RadioGroup
+        bind:value={checked}
+        onValueChange={(v) => {
+          checked = String(status);
+          choose(v);
+        }}
+      >
         {#each SETTABLE_STATUSES as s (s)}
           <DropdownMenu.RadioItem value={String(s)}>{statusLabel(s)}</DropdownMenu.RadioItem>
         {/each}

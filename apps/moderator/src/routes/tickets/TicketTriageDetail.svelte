@@ -60,6 +60,9 @@
   // Tags arrive with the detail read; null until then.
   const tagSplit = $derived(read ? splitTags(read.payload.ticket.tags) : null);
   const failure = $derived(detail.value && !detail.value.ok ? detail.value.message : null);
+  // The reply and the status menu both write the ticket's status, so one waits while the other is in flight.
+  let replying = $state(false);
+  let changingStatus = $state(false);
 
   function done(what: string, data: Record<string, unknown> | undefined, status: number | null) {
     const moved = data?.moved;
@@ -91,12 +94,21 @@
 
 {#snippet header()}
   {@const kind = row.cfFeature ?? row.routerTopic}
-  {@const sentText = sentByText({ sentToSupport: row.sentToSupport, sentBy: row.sentBy })}
+  {@const sentBy = read ? read.payload.ticket.sentBy : row.sentBy}
+  {@const sentText = sentByText({ sentToSupport: row.sentToSupport, sentBy })}
   {@const rest = tagSplit?.rest ?? []}
   <div class="min-w-0 space-y-1.5">
     <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
       <h2 class="m-0 text-lg font-semibold break-words text-white">{title}</h2>
-      <TicketStatusMenu ticketId={row.id} status={row.status} label={row.statusLabel} {canReply} ondone={done} />
+      <TicketStatusMenu
+        ticketId={row.id}
+        status={row.status}
+        label={row.statusLabel}
+        {canReply}
+        ondone={done}
+        bind:submitting={changingStatus}
+        locked={replying}
+      />
       {#if kind}
         <Badge variant="outline" class="border-dark-4 bg-transparent text-dark-1">{kind}</Badge>
       {/if}
@@ -118,7 +130,7 @@
       {#if sentText}
         <span aria-hidden="true">·</span>
         <span>
-          {sentText}{#if row.sentBy}<span> · {dateTime(row.sentBy.at)}</span>{/if}
+          {sentText}{#if sentBy}<span> · {dateTime(sentBy.at)}</span>{/if}
         </span>
       {/if}
     </p>
@@ -150,7 +162,7 @@
         <p class="m-0 text-sm text-dark-2">Loading the ticket from Freshdesk…</p>
       {/if}
     </div>
-    {#if read}{@render composer()}{/if}
+    {@render composer()}
   </div>
 {/snippet}
 
@@ -205,7 +217,14 @@
   <section
     class="-mx-5 mt-5 -mb-5 border-t border-dark-4 bg-dark-8 px-5 py-3 xl:sticky xl:-bottom-5 xl:z-10"
   >
-    <TicketReply ticketId={row.id} currentStatus={row.status} {canReply} ondone={done} />
+    <TicketReply
+      ticketId={row.id}
+      currentStatus={row.status}
+      {canReply}
+      ondone={done}
+      bind:submitting={replying}
+      locked={changingStatus}
+    />
   </section>
 {/snippet}
 
