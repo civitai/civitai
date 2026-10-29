@@ -7,10 +7,9 @@
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_BUTTON, LINK_CLASS, dateTime, relativeTime } from '$lib/format';
   import { keepLast } from '$lib/keep-last.svelte';
-  import type { TicketAccount as Account } from '$lib/server/tickets/account';
-  import type { TicketAppeals as Appeals } from '$lib/server/tickets/appeals';
   import type { TicketPayload } from '$lib/server/tickets/detail';
   import type { TicketRow } from '$lib/server/tickets/list';
+  import type { PanelSections } from '$lib/server/tickets/panels';
   import { createDetailLoader } from '$lib/tickets/fetch-detail';
   import { closedOut } from '$lib/tickets/outcome';
   import { requesterLabel, sentByText } from '$lib/tickets/row';
@@ -173,11 +172,10 @@
       read.payload.ticket.tags,
       read.payload.ticket.requesterName || row.requesterName,
       read.payload.ticket.requesterEmail,
-      read.payload.account,
-      read.payload.appeals
+      read.payload
     )}
   {:else}
-    {@render cards(row.civitaiUserId, row.sentBy, null, row.requesterName, undefined, undefined, undefined)}
+    {@render cards(row.civitaiUserId, row.sentBy, null, row.requesterName, undefined, {})}
   {/if}
 {/snippet}
 
@@ -187,15 +185,19 @@
   tags: string[] | null,
   requesterName: string | null,
   requesterEmail: string | null | undefined,
-  account: Account | undefined,
-  appeals: Appeals | undefined
+  panels: Partial<PanelSections>
 )}
   {@const sentText = sentByText({ sentToSupport: row.sentToSupport, sentBy: sent })}
-  {#if account}
-    <TicketAccount ticketId={row.id} {account} canAct={canAccountAct} {canUnban} ondone={accountDone} />
+  {#if panels.account}
+    <TicketAccount ticketId={row.id} account={panels.account} canAct={canAccountAct} {canUnban} ondone={accountDone} />
   {/if}
-  {#if appeals}
-    <TicketAppeals ticketId={row.id} {appeals} ondone={accountDone} />
+  {#if panels.appeals}
+    <TicketAppeals
+      ticketId={row.id}
+      appeals={panels.appeals}
+      accountCardShown={panels.account?.status === 'ok'}
+      ondone={accountDone}
+    />
   {/if}
   <TriageCard title="Requester" dense>
     <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">

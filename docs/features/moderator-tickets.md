@@ -32,15 +32,20 @@ is its own page grant. Acting on a ticket is a separate permission:
   with Unban, Unmute / Lift timed mute and Overturn / Uphold for an open restriction. The card needs User
   Lookup's page grant; each action keeps the grant it needs there (`user.ban`, or the `/users` page) and
   re-checks that the posted user is the ticket's linked user. A private note names the moderator. Lifting
-  only: no ban, new restriction or strike from a ticket.
+  only: no ban, new restriction or strike from a ticket. A pending Account site appeal (read with the card
+  for a viewer holding `/appeals/account`) is ruled in the card through the queue's service, so approving
+  lifts the ban and mute in one action; approving a ban needs `user.ban`.
 - A moderation ticket whose Feature is "Moderation Decision" or "Account Restriction or Banned Account" and
   (or with no Feature, router topic `image-moderation-appeal` / `nsfw-moderation`) that links to a Civitai
   user shows an Appeals card: the user's pending appeals and those filed or decided
   in the last 30 days, each typed once (removed content, site form, model flag, image) and shown only when
   the moderator holds that queue's page grant. Appeals on an entity the ticket links to are marked. A pending
-  image appeal can be ruled on from the card under `/images/appeals`; the action re-checks that the appeal is
-  the linked user's, still pending and still flagged for appeal review on its image, and adds a private note
-  naming the moderator. If the ruling closed a different appeal than the one posted, it is reported as a
+  appeal can be ruled on from the card under its own queue's grant: image (`/images/appeals`, still flagged
+  for appeal review), removed content (`/images/removed-appeals`, also "closed: the user deleted it"; a
+  failed fee refund is a warning), and Article / Model / Other site forms (`/appeals/<slug>`, with a message
+  to the user). Account appeals are history-only here and are ruled in the Account card. Each action
+  re-checks that the appeal is the linked user's, pending and of that kind, decides with the row's ids, and
+  adds a private note naming the moderator. If the ruling closed a different appeal than the one posted, it is reported as a
   warning and the note names the appeal actually closed. Cards are declared in the
   panel registry (`$lib/tickets/panels.ts`).
 - Both views read one shared Redis snapshot of every live ticket (subject, status, Feature, tags, dates,

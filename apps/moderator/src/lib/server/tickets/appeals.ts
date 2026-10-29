@@ -24,7 +24,9 @@ export type TicketAppeal = {
   resolvedMessage: string | null;
   /** The ticket's subject or description links to this appeal's content. */
   mentioned: boolean;
-  /** Pending, a plain image appeal, and its image still flagged `appeal` (what the image appeals queue lists): the only rows the card offers a ruling for. */
+  /** The form category of a site-form appeal. */
+  category: string | null;
+  /** Pending and either a removed-content appeal, an Article/Model/Other form, or a plain image appeal still flagged `appeal`. An Account appeal is decided in the Account card. */
   rulable: boolean;
 };
 
@@ -108,6 +110,12 @@ const liveReads: AppealReads = {
     ).map((r) => r.id),
 };
 
+function isRulable(kind: AppealKind, row: AppealRow, flagged: Set<number>): boolean {
+  if (kind === 'image') return flagged.has(row.entityId);
+  if (kind === 'removed') return true;
+  return kind === 'site' && row.category !== 'Account';
+}
+
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
 
 /**
@@ -173,7 +181,8 @@ export async function appealsSectionFor(
       resolvedReason: row.resolvedReason,
       resolvedMessage: row.resolvedMessage,
       mentioned: mentioned(row.entityType, row.entityId),
-      rulable: kind === 'image' && row.status === 'Pending' && flagged.has(row.entityId),
+      category: row.category,
+      rulable: row.status === 'Pending' && isRulable(kind, row, flagged),
     })),
   };
 }

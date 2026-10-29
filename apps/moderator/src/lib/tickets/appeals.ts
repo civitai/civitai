@@ -18,6 +18,8 @@ export const APPEAL_ROWS = 25;
 
 export const IMAGE_APPEALS_PATH = '/images/appeals';
 export const REMOVED_APPEALS_PATH = '/images/removed-appeals';
+/** Account appeals are decided in the ticket's Account card, which lifts the ban or mute with the ruling. */
+export const ACCOUNT_APPEALS_PATH = siteAppealQueuePath('account');
 
 /**
  * Each row in exactly one kind, first match wins: a removed-content appeal can also carry a form

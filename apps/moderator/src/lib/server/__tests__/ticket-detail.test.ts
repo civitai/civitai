@@ -103,7 +103,15 @@ describe('loadTicketPayload', () => {
       routerTopic: null,
       civitaiUserId: 99,
       canView: true,
+      canAppeal: true,
     });
+    await loadTicketPayload('moderation', '5', {
+      canSeeEmail: false,
+      canRead: (p) => p !== '/appeals/account',
+    });
+    expect(accountSectionFor).toHaveBeenLastCalledWith(
+      expect.objectContaining({ canAppeal: false })
+    );
   });
 
   it('asks the router live when the snapshot holds a router answer with no linked account', async () => {

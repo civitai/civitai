@@ -6,15 +6,19 @@
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
   import type { TicketAppeal, TicketAppeals } from '$lib/server/tickets/appeals';
   import { APPEAL_KIND_LABEL, APPEAL_WINDOW_DAYS } from '$lib/tickets/appeals';
+  import TicketAccountAction from './TicketAccountAction.svelte';
   import TicketAppealRuling from './TicketAppealRuling.svelte';
 
   let {
     ticketId,
     appeals,
+    accountCardShown,
     ondone,
   }: {
     ticketId: string;
     appeals: TicketAppeals;
+    /** The Account card is on this ticket, so an Account appeal can be pointed to it. */
+    accountCardShown: boolean;
     ondone: (what: string, data: Record<string, unknown> | undefined) => void;
   } = $props();
 
@@ -60,7 +64,29 @@
             </div>
           {/if}
           {#if a.rulable}
-            <TicketAppealRuling {ticketId} userId={appeals.userId} appealId={a.id} {ondone} />
+            <TicketAppealRuling
+              {ticketId}
+              userId={appeals.userId}
+              appealId={a.id}
+              kind={a.kind === 'site' ? 'site' : a.kind === 'removed' ? 'removed' : 'image'}
+              {ondone}
+            />
+            {#if a.kind === 'removed'}
+              <TicketAccountAction
+                {ticketId}
+                userId={appeals.userId}
+                action="appealCloseRemoved"
+                label="Close: the user deleted it"
+                confirmText="The appeal is closed as deleted by its owner, and they are told."
+                doneLabel="Appeal closed"
+                enabled
+                why=""
+                fields={{ appealId: a.id }}
+                {ondone}
+              />
+            {/if}
+          {:else if a.status === 'Pending' && a.category === 'Account' && accountCardShown}
+            <p class="m-0 text-dark-2">Decided in the Account card.</p>
           {/if}
         </li>
       {/each}

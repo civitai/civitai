@@ -75,22 +75,40 @@ describe('appealsSectionFor', () => {
     expect(res.status === 'ok' && res.appeals.map((a) => a.id)).toEqual([2, 4]);
   });
 
-  it('offers a ruling only on a pending image appeal', async () => {
+  it('offers a ruling on pending image, removed-content and Article/Model/Other form appeals', async () => {
     appealsOf.mockResolvedValue([
       { ...base, id: 1 },
       { ...base, id: 2, status: 'Approved' },
       { ...base, id: 3, entityType: 'Model' },
       { ...base, id: 4, entityRemovedAt: new Date('2026-10-02T00:00:00Z') },
       { ...base, id: 5, category: 'Other' },
+      { ...base, id: 6, entityType: 'Article', category: 'Article' },
+      { ...base, id: 7, entityType: 'Model', category: 'Model' },
+      { ...base, id: 8, entityRemovedAt: new Date('2026-10-02T00:00:00Z'), status: 'Rejected' },
     ]);
     const res = await appealsSectionFor(ticket(), reads);
     expect(res.status === 'ok' && res.appeals.map((a) => [a.id, a.rulable])).toEqual([
       [1, true],
       [2, false],
       [3, false],
-      [4, false],
-      [5, false],
+      [4, true],
+      [5, true],
+      [6, true],
+      [7, true],
+      [8, false],
     ]);
+  });
+
+  it('never offers a ruling on an Account appeal: the Account card decides it', async () => {
+    appealsOf.mockResolvedValue([
+      { ...base, id: 1, entityType: 'User', entityId: 7, category: 'Account' },
+    ]);
+    const res = await appealsSectionFor(ticket(), reads);
+    expect(res.status === 'ok' && res.appeals[0]).toMatchObject({
+      kind: 'site',
+      category: 'Account',
+      rulable: false,
+    });
   });
 
   it('offers no ruling on an image the appeals queue no longer lists', async () => {

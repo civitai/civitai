@@ -38,8 +38,29 @@ export type AppealWriteDeps = TicketActionDeps & {
 
 const ruling = z.object({ appealId: int4Id, status: z.enum(['Approved', 'Rejected']) });
 
-const NOT_PERMITTED = 'Not permitted.';
-const DECIDED = 'That appeal has already been decided — nothing was changed.';
+export const NOT_PERMITTED = 'Not permitted.';
+export const DECIDED = 'That appeal has already been decided — nothing was changed.';
+
+/**
+ * The appeal row a ticket action was posted for, once it is confirmed to be a pending appeal of the
+ * ticket's user. The caller still checks its kind, and decides with the row's ids, never the form's.
+ */
+export async function loadOwnedAppeal(
+  appealOf: AppealWriteDeps['appealOf'],
+  appealId: number,
+  userId: number
+) {
+  const appeal = await appealOf(appealId);
+  if (!appeal) return { refused: fail(404, { error: 'Appeal not found.' }) };
+  if (appeal.userId !== userId)
+    return {
+      refused: fail(409, {
+        error: 'That appeal belongs to another account — nothing was changed.',
+      }),
+    };
+  if (appeal.status !== 'Pending') return { refused: fail(409, { error: DECIDED }) };
+  return { appeal };
+}
 
 /**
  * 🔴 THE APPEAL RULED ON IS THE TICKET USER'S. `resolveImageAppeal` is keyed by image and closes
@@ -56,13 +77,9 @@ export function createTicketAppealActions(deps: AppealWriteDeps) {
       const ok = await checkTicketTarget(deps.linkedUser, event);
       if (ok.refused) return ok.refused;
 
-      const appeal = await deps.appealOf(input.appealId);
-      if (!appeal) return fail(404, { error: 'Appeal not found.' });
-      if (appeal.userId !== ok.userId)
-        return fail(409, {
-          error: 'That appeal belongs to another account — nothing was changed.',
-        });
-      if (appeal.status !== 'Pending') return fail(409, { error: DECIDED });
+      const owned = await loadOwnedAppeal(deps.appealOf, input.appealId, ok.userId);
+      if (owned.refused) return owned.refused;
+      const { appeal } = owned;
       if (classifyAppeal(appeal) !== 'image')
         return fail(409, {
           error:

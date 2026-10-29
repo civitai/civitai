@@ -1,3 +1,4 @@
+import { ACCOUNT_APPEALS_PATH } from '$lib/tickets/appeals';
 import { PANELS, type PanelContext, type PanelKey } from '$lib/tickets/panels';
 import { accountSectionFor, type TicketAccount } from './account';
 import { appealsSectionFor, type TicketAppeals } from './appeals';
@@ -19,13 +20,14 @@ type Loaders = {
 };
 
 export const liveLoaders: Loaders = {
-  account: ({ view, cfFeature, routerTopic, civitaiUserId }) =>
+  account: ({ view, cfFeature, routerTopic, civitaiUserId }, canRead) =>
     accountSectionFor({
       view,
       cfFeature: cfFeature ?? null,
       routerTopic: routerTopic ?? null,
       civitaiUserId,
       canView: true,
+      canAppeal: canRead(ACCOUNT_APPEALS_PATH),
     }),
   appeals: (ticket, canRead) =>
     appealsSectionFor({ userId: ticket.civitaiUserId, text: ticket.text ?? '', canRead }),
