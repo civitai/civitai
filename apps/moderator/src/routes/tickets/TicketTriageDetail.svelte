@@ -1,11 +1,12 @@
 <script lang="ts">
   import { browser } from '$app/environment';
   import { invalidateAll } from '$app/navigation';
+  import { Badge } from '@civitai/ui/components/ui/badge/index.js';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
-  import TriageColumns from '$lib/components/triage/TriageColumns.svelte';
+  import ReportDetailColumns from '$lib/components/report-queue/ReportDetailColumns.svelte';
   import { userLookupUrl } from '$lib/entity-url';
-  import { LINK_BUTTON, LINK_CLASS, dateTime, relativeTime } from '$lib/format';
+  import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
   import { keepLast } from '$lib/keep-last.svelte';
   import type { TicketPayload } from '$lib/server/tickets/detail';
   import type { TicketRow } from '$lib/server/tickets/list';
@@ -14,6 +15,7 @@
   import { closedOut } from '$lib/tickets/outcome';
   import { requesterLabel, sentByText } from '$lib/tickets/row';
   import type { TicketView } from '$lib/tickets/routing';
+  import { splitTags } from '$lib/tickets/tags';
   import TicketAccount from './TicketAccount.svelte';
   import TicketAppeals from './TicketAppeals.svelte';
   import TicketEscalate from './TicketEscalate.svelte';
@@ -55,6 +57,8 @@
   const read = $derived(
     detail.value?.ok && detail.value.payload.ticket.id === row.id ? detail.value : null
   );
+  // Tags arrive with the detail read; null until then.
+  const tagSplit = $derived(read ? splitTags(read.payload.ticket.tags) : null);
   const failure = $derived(detail.value && !detail.value.ok ? detail.value.message : null);
 
   function done(what: string, data: Record<string, unknown> | undefined, status: number | null) {
@@ -86,19 +90,45 @@
 </script>
 
 {#snippet header()}
-  <div class="flex flex-wrap items-start justify-between gap-x-4 gap-y-2">
-    <div class="min-w-0 flex-1 basis-80 space-y-1.5">
-      <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <h2 class="m-0 text-lg font-semibold break-words text-white">{title}</h2>
-        <span class="text-[13px] text-dark-2 tabular-nums">#{row.id}</span>
-        <TicketStatusBadge status={row.status} label={row.statusLabel} />
-      </div>
-      <p class="m-0 text-sm text-dark-2">
+  {@const kind = row.cfFeature ?? row.routerTopic}
+  {@const sentText = sentByText({ sentToSupport: row.sentToSupport, sentBy: row.sentBy })}
+  {@const rest = tagSplit?.rest ?? []}
+  <div class="min-w-0 space-y-1.5">
+    <div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+      <h2 class="m-0 text-lg font-semibold break-words text-white">{title}</h2>
+      <TicketStatusBadge status={row.status} label={row.statusLabel} />
+      {#if kind}
+        <Badge variant="outline" class="border-dark-4 bg-transparent text-dark-1">{kind}</Badge>
+      {/if}
+    </div>
+    <p class="m-0 flex flex-wrap items-center gap-x-1.5 text-sm text-dark-2">
+      <a
+        class="{LINK_CLASS} tabular-nums"
+        href={row.freshdeskUrl}
+        target="_blank"
+        rel="noreferrer"
+        title="Open in Freshdesk"
+        aria-label="Open ticket {row.id} in Freshdesk">#{row.id} ↗</a
+      >
+      <span aria-hidden="true">·</span>
+      <span>
         created <span title={dateTime(row.createdAt)}>{relativeTime(row.createdAt)}</span>
         · updated <span title={dateTime(row.updatedAt)}>{relativeTime(row.updatedAt)}</span>
-      </p>
-    </div>
-    <a class={LINK_BUTTON} href={row.freshdeskUrl} target="_blank" rel="noreferrer">Freshdesk ↗</a>
+      </span>
+      {#if sentText}
+        <span aria-hidden="true">·</span>
+        <span>
+          {sentText}{#if row.sentBy}<span> · {dateTime(row.sentBy.at)}</span>{/if}
+        </span>
+      {/if}
+    </p>
+    {#if rest.length > 0}
+      <ul class="m-0 flex list-none flex-wrap gap-1 p-0">
+        {#each rest as tag (tag)}
+          <li class="rounded-full border border-dark-4 px-2 py-px text-xs text-dark-2">{tag}</li>
+        {/each}
+      </ul>
+    {/if}
   </div>
 {/snippet}
 
@@ -111,6 +141,7 @@
       </p>
     {/if}
     {@render ticketBody(read.payload)}
+    {@render composer()}
   {:else if failure}
     <p class="m-0 text-sm text-red-300" role="alert">Could not read the ticket: {failure}</p>
   {:else}
@@ -165,48 +196,43 @@
   </section>
 {/snippet}
 
+{#snippet composer()}
+  <section class="mt-6 border-t border-dark-4 pt-4">
+    <h3 class="m-0 mb-2 text-[11px] font-semibold tracking-[0.5px] text-dark-2 uppercase">Reply</h3>
+    <TicketReply ticketId={row.id} currentStatus={row.status} {canReply} ondone={done} />
+  </section>
+{/snippet}
+
 <!-- Cards render from the row until the detail read arrives, then from the read. -->
 {#snippet info()}
   {#if read}
     {@render cards(
       read.payload.ticket.civitaiUserId,
-      read.payload.ticket.sentBy,
-      read.payload.ticket.tags,
       read.payload.ticket.requesterName || row.requesterName,
       read.payload.ticket.requesterEmail,
+      tagSplit?.tier ?? null,
       read.payload
     )}
   {:else}
-    {@render cards(row.civitaiUserId, row.sentBy, null, row.requesterName, undefined, {})}
+    {@render cards(row.civitaiUserId, row.requesterName, undefined, undefined, {})}
+  {/if}
+  {#if view === 'moderation'}
+    <TriageCard title="Send to support" dense>
+      <p class="m-0 mb-2 text-dark-2">
+        Not a moderation issue, or needs the support team? Send it to support.
+      </p>
+      <TicketEscalate ticketId={row.id} {canEscalate} ondone={done} />
+    </TriageCard>
   {/if}
 {/snippet}
 
 {#snippet cards(
   civitaiUserId: number | null,
-  sent: TicketRow['sentBy'],
-  tags: string[] | null,
   requesterName: string | null,
   requesterEmail: string | null | undefined,
+  tier: string | null | undefined,
   panels: Partial<PanelSections>
 )}
-  {@const sentText = sentByText({ sentToSupport: row.sentToSupport, sentBy: sent })}
-  {#if panels.account}
-    <TicketAccount ticketId={row.id} account={panels.account} canAct={canAccountAct} {canUnban} ondone={accountDone} />
-  {/if}
-  {#if panels.appeals}
-    <TicketAppeals
-      ticketId={row.id}
-      appeals={panels.appeals}
-      accountCardShown={panels.account?.status === 'ok'}
-      ondone={accountDone}
-    />
-  {/if}
-  {#if panels.ratingDisputes}
-    <TicketRatingDisputes ticketId={row.id} disputes={panels.ratingDisputes} ondone={accountDone} />
-  {/if}
-  {#if panels.history}
-    <TicketHistory history={panels.history} />
-  {/if}
   <TriageCard title="Requester" dense>
     <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">
       <dt class="text-dark-2">Name</dt>
@@ -224,39 +250,33 @@
           <span class="text-dark-2">No linked Civitai account</span>
         {/if}
       </dd>
-    </dl>
-  </TriageCard>
-  <TriageCard title="Ticket" dense>
-    <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">
-      <dt class="text-dark-2">Feature</dt>
-      <dd class="m-0 min-w-0 break-words text-white">
-        {row.cfFeature ?? 'None'}
-      </dd>
-      {#if row.routerTopic}
-        <dt class="text-dark-2">Router topic</dt>
-        <dd class="m-0 min-w-0 break-words text-white">{row.routerTopic}</dd>
+      <!-- Tags arrive with the detail read; until then the tier is unknown, not absent. -->
+      {#if tier !== undefined}
+        <dt class="text-dark-2">Tier</dt>
+        <dd class="m-0 min-w-0 break-words text-white">{tier ?? '—'}</dd>
       {/if}
     </dl>
-    {#if sentText}
-      <p class="m-0 mt-1.5 text-white">
-        {sentText}{#if sent}<span class="text-dark-2"> · {dateTime(sent.at)}</span>{/if}
-      </p>
-    {/if}
-    {#if tags && tags.length > 0}
-      <ul class="m-0 mt-2 flex list-none flex-wrap gap-1 p-0">
-        {#each tags as tag (tag)}
-          <li class="rounded-full border border-dark-4 px-2 py-px text-xs text-dark-1">{tag}</li>
-        {/each}
-      </ul>
-    {/if}
   </TriageCard>
-{/snippet}
-
-{#snippet decision()}
-  <TicketReply ticketId={row.id} currentStatus={row.status} {canReply} ondone={done} />
-  {#if view === 'moderation'}
-    <TicketEscalate ticketId={row.id} {canEscalate} ondone={done} />
+  {#if panels.account}
+    <TicketAccount ticketId={row.id} account={panels.account} canAct={canAccountAct} {canUnban} ondone={accountDone} />
+  {/if}
+  {#if panels.appeals}
+    <TicketAppeals
+      ticketId={row.id}
+      appeals={panels.appeals}
+      accountCardShown={panels.account?.status === 'ok'}
+      ondone={accountDone}
+    />
+  {/if}
+  {#if panels.ratingDisputes}
+    <TicketRatingDisputes ticketId={row.id} disputes={panels.ratingDisputes} ondone={accountDone} />
+  {/if}
+  {#if panels.history}
+    <TicketHistory history={panels.history} />
   {/if}
 {/snippet}
 
-<TriageColumns verdict={undefined} error={undefined} {header} {evidence} {info} {decision} />
+<!-- Below `xl` the columns stack and the pane scrolls as one. The reply sits in the middle column, under the conversation; the sidebar holds only the context cards. -->
+<div class="flex min-h-0 flex-1 flex-col overflow-y-auto xl:overflow-hidden">
+  <ReportDetailColumns {header} {evidence} actions={info} />
+</div>
