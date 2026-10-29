@@ -1,5 +1,6 @@
 <script lang="ts">
   import { page } from '$app/state';
+  import { resolutionReasonLabel } from '@civitai/shared/resolution-reasons';
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { entityUrl, imageLookupUrl, modelLookupUrl, userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
@@ -53,7 +54,7 @@
           </div>
           {#if a.resolvedReason || a.resolvedMessage}
             <div class="min-w-0 break-words text-dark-2">
-              {#if a.resolvedReason}{a.resolvedReason}{/if}{#if a.resolvedReason && a.resolvedMessage}
+              {#if a.resolvedReason}{resolutionReasonLabel(a.resolvedReason)}{/if}{#if a.resolvedReason && a.resolvedMessage}
                 ·
               {/if}{#if a.resolvedMessage}“{a.resolvedMessage}”{/if}
             </div>

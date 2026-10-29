@@ -95,9 +95,11 @@
   const choose = (verdict: Verdict) => (draft = chooseVerdict(draft, verdict));
 
   let confirming = $state(false);
-  // A confirmation belongs to the verdict it was asked for.
+  // A confirmation belongs to the verdict it was asked for. Tracked through a derived value so editing
+  // the reason or note, which replaces `draft`, does not cancel it.
+  const verdict = $derived(draft.verdict);
   $effect(() => {
-    void draft.verdict;
+    void verdict;
     confirming = false;
   });
 
