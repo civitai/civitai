@@ -1460,6 +1460,35 @@ describe('follow-ups 13 and 14', () => {
     };
   }
 
+  // 10-28: with every other page done and a --max-rate hold set, the loop waited only on the
+  // one page stuck behind a slow workflow, and submitted nothing for minutes.
+  test('a page stuck on a slow workflow does not stop new pages once the --max-rate hold ends', async () => {
+    const pg = new FakePg().put(...Array.from({ length: 30 }, (_, i) => imageRow(i + 1)));
+    const store = new FakeStore();
+    const run = clockedRun(pg, store, 0);
+    let release: () => void = () => undefined;
+    const stuck = new Promise<void>((r) => (release = r));
+    const embedder = new FakeEmbedder();
+    const embed = embedder.embed;
+    embedder.embed = async (inputs, opts) => {
+      if (inputs.some((i) => Number(i.id) > 20)) await stuck;
+      return embed(inputs, opts);
+    };
+    const done = runBackfill(
+      { watermark: 30, floor: 0, span: 10, pages: 2, maxRate: 5 },
+      { ...run.deps, embedder }
+    );
+    for (let i = 0; i < 200 && !store.points.has(1); i++) {
+      await new Promise((r) => setTimeout(r, 0));
+    }
+    // The bottom page (ids 1-10) started after the hold, while the top page is still stuck.
+    expect([...store.points.keys()].filter((id) => id <= 10)).toHaveLength(10);
+    expect([...store.points.keys()].some((id) => id > 20)).toBe(false);
+    release();
+    await done;
+    expect(store.points.size).toBe(30);
+  });
+
   test('--max-rate spaces pages by their writes', async () => {
     const pg = new FakePg().put(...Array.from({ length: 30 }, (_, i) => imageRow(i + 1)));
     const store = new FakeStore();
