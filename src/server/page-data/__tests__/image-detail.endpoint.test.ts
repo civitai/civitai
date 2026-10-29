@@ -138,7 +138,11 @@ function renderPage({ user, imageId, host }: Fixture) {
 
 async function fetchPageData(
   { user, imageId, host }: Fixture,
-  { method = 'GET', cookies = {} }: { method?: string; cookies?: Record<string, string> } = {}
+  {
+    method = 'GET',
+    cookies = {},
+    query = {},
+  }: { method?: string; cookies?: Record<string, string>; query?: Record<string, string> } = {}
 ) {
   const token = user ? `viewer-${user.id}` : undefined;
   if (user && token) h.tokens.set(token, user);
@@ -148,7 +152,7 @@ async function fetchPageData(
     headers: { host },
     // The session cookie first: the session stub reads the first cookie value.
     cookies: { ...(token ? { [sessionCookieName()]: token } : {}), ...cookies },
-    query: { imageId: String(imageId) },
+    query: { imageId: String(imageId), ...query },
   };
   const res = fakeResponse();
   await handler(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
@@ -428,5 +432,48 @@ describe('page-data main image preload URL', () => {
   ] as const)('a URL for %s', async (_, fixture, name, key) => {
     const { body } = await fetchPageData({ ...fixture, host: 'civitai.com' });
     expect(body?.mainImageUrl).toBe(edge(key, 'original=true', name));
+  });
+});
+
+/**
+ * With feed filters in its query the page shows its image from `image.getInfinite`, whose rows
+ * (from the index) carry no `name` — so their URL is not the one built from `image.get`, and a
+ * preload of it would be a second full download. The endpoint withholds the URL on the page's own
+ * rule (`hasImageDetailQueryFilters`), and in storyline mode.
+ */
+describe('page-data main image preload URL and the page query', () => {
+  const viewer106 = { user: USERS.viewer, imageId: 106, host: 'civitai.com' } as const;
+  const URL_106 = [
+    env.NEXT_PUBLIC_IMAGE_LOCATION,
+    'media-106',
+    'original=true',
+    'Sunset Over Hills.jpeg',
+  ]
+    .filter(Boolean)
+    .join('/');
+
+  it('control: no query, a URL', async () => {
+    const { body } = await fetchPageData(viewer106);
+    expect(body?.mainImageUrl).toBe(URL_106);
+  });
+
+  it.each([
+    ['a feed filter (?modelVersionId=1)', { modelVersionId: '1' }],
+    ['a post (?postId=5)', { postId: '5' }],
+    ['a sort (?sort=Newest)', { sort: 'Newest' }],
+    ['storyline mode (?storylineChapter=3)', { storylineChapter: '3' }],
+  ])('none for %s', async (_, query) => {
+    const { res, body } = await fetchPageData(viewer106, { query });
+    expect(res.statusCode).toBe(200);
+    expect(body?.mainImageUrl).toBeUndefined();
+  });
+
+  it.each([
+    // The page's parse drops a query it cannot read whole, so the page shows `image.get`'s image.
+    ['a junk postId (?postId=null)', { postId: 'null' }],
+    ['a param the feed does not read (?active=true)', { active: 'true' }],
+  ])('a URL for %s, as the page shows the image.get row', async (_, query) => {
+    const { body } = await fetchPageData(viewer106, { query });
+    expect(body?.mainImageUrl).toBe(URL_106);
   });
 });
