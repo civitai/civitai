@@ -6,31 +6,40 @@ import {
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
+type SettingRow = { type: string };
+
+export function deriveNotificationSettings(userNotificationSettings: SettingRow[]) {
+  let hasNotifications = false;
+  const notificationSettings: Record<string, boolean> = {};
+  const hasCategory: Record<string, boolean> = {};
+  for (const [category, settings] of Object.entries(notificationCategoryTypes)) {
+    // A group made only of opt-in types has nothing to feed the aggregate below, yet its
+    // checkboxes must still render: they are the only way to subscribe.
+    hasCategory[category] = settings.every((setting) => setting.optIn);
+    for (const { type, optIn } of settings) {
+      const hasRow = userNotificationSettings.some((setting) => setting.type === type);
+      // A row means opted-out normally, but subscribed for an opt-in type.
+      const isEnabled = optIn ? hasRow : !hasRow;
+      notificationSettings[type] = isEnabled;
+      // Opt-in types don't feed the aggregates: they aren't part of the baseline every user
+      // starts with, so a promo subscription shouldn't make the master switch read as "on".
+      // Turning everything off therefore hides their checkbox — which is why `toggleAll`/
+      // `toggleCategory` unsubscribe them on the way down rather than stranding the user.
+      if (optIn) continue;
+      if (!hasCategory[category] && isEnabled) hasCategory[category] = true;
+      if (!hasNotifications && isEnabled) hasNotifications = true;
+    }
+  }
+  return { hasNotifications, hasCategory, notificationSettings };
+}
+
 export const useNotificationSettings = (enabled = true) => {
   const { data: userNotificationSettings = [], isLoading } =
     trpc.user.getNotificationSettings.useQuery(undefined, { enabled });
-  const { hasNotifications, hasCategory, notificationSettings } = useMemo(() => {
-    let hasNotifications = false;
-    const notificationSettings: Record<string, boolean> = {};
-    const hasCategory: Record<string, boolean> = {};
-    for (const [category, settings] of Object.entries(notificationCategoryTypes)) {
-      hasCategory[category] = false;
-      for (const { type, optIn } of settings) {
-        const hasRow = userNotificationSettings.some((setting) => setting.type === type);
-        // A row means opted-out normally, but subscribed for an opt-in type.
-        const isEnabled = optIn ? hasRow : !hasRow;
-        notificationSettings[type] = isEnabled;
-        // Opt-in types don't feed the aggregates: they aren't part of the baseline every user
-        // starts with, so a promo subscription shouldn't make the master switch read as "on".
-        // Turning everything off therefore hides their checkbox — which is why `toggleAll`/
-        // `toggleCategory` unsubscribe them on the way down rather than stranding the user.
-        if (optIn) continue;
-        if (!hasCategory[category] && isEnabled) hasCategory[category] = true;
-        if (!hasNotifications && isEnabled) hasNotifications = true;
-      }
-    }
-    return { hasNotifications, hasCategory, notificationSettings };
-  }, [userNotificationSettings]);
+  const { hasNotifications, hasCategory, notificationSettings } = useMemo(
+    () => deriveNotificationSettings(userNotificationSettings),
+    [userNotificationSettings]
+  );
 
   return { hasNotifications, hasCategory, notificationSettings, isLoading };
 };

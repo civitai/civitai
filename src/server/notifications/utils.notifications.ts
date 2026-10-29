@@ -129,12 +129,14 @@ function getNotificationTypes() {
     string,
     { displayName: string; type: string; optIn: boolean }[]
   > = {};
-  for (const [type, { displayName, toggleable, category, optIn, showCategory }] of Object.entries(
-    notificationProcessors
-  )) {
+  for (const [
+    type,
+    { displayName, toggleable, category, section, optIn, showCategory },
+  ] of Object.entries(notificationProcessors)) {
     if (toggleable === false && !showCategory) continue;
-    notificationCategoryTypes[category] ??= [];
-    notificationCategoryTypes[category]!.push({ type, displayName, optIn: optIn ?? false });
+    const group = section ?? category;
+    notificationCategoryTypes[group] ??= [];
+    notificationCategoryTypes[group]!.push({ type, displayName, optIn: optIn ?? false });
     if (optIn) optInNotificationTypes.push(type);
     else notificationTypes.push(type);
   }

@@ -1,6 +1,15 @@
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
+// The Knights app is its own site, so these open in a new tab.
+const KNIGHTS_APP_URL = 'https://knights.civitai.com';
+const KNIGHTS_SECTION = 'Knights of New Order';
+
+/**
+ * The three `knights-*` types are sent by the Knights app (`apps/knights`, `/api/jobs/notify`), at
+ * most one a player a day. All are opt-in: the app reads who subscribed and sends through the bulk
+ * path, which skips the opt-out filter, so a settings row here means subscribed.
+ */
 export const knightsNewOrderNotifications = createNotificationProcessor({
   'new-order-sanity-warning': {
     displayName: 'Knights of New Order: Performance Check Failed',
@@ -65,6 +74,43 @@ export const knightsNewOrderNotifications = createNotificationProcessor({
         details.buzzAmount as number
       } Buzz from your banked Gold rewards! Thank you for your continued dedication to content moderation. Sorry for the delay!`,
       url: '/user/transactions',
+    }),
+  },
+  'knights-verdicts-in': {
+    displayName: 'Your verdicts are in',
+    category: NotificationCategory.Other,
+    section: KNIGHTS_SECTION,
+    optIn: true,
+    externalProducer: true,
+    prepareMessage: () => ({
+      message: 'Knights of New Order: Your verdicts are in. See how your judgments turned out.',
+      url: `${KNIGHTS_APP_URL}/judgments`,
+      target: '_blank',
+    }),
+  },
+  'knights-streak-ends-soon': {
+    displayName: 'Your streak ends soon',
+    category: NotificationCategory.Other,
+    section: KNIGHTS_SECTION,
+    optIn: true,
+    externalProducer: true,
+    prepareMessage: () => ({
+      message:
+        "Knights of New Order: Your streak ends soon. Finish today's Daily Watch to keep it.",
+      url: `${KNIGHTS_APP_URL}/play`,
+      target: '_blank',
+    }),
+  },
+  'knights-new-images': {
+    displayName: 'New images to judge',
+    category: NotificationCategory.Other,
+    section: KNIGHTS_SECTION,
+    optIn: true,
+    externalProducer: true,
+    prepareMessage: () => ({
+      message: 'Knights of New Order: New images are waiting for your judgment.',
+      url: `${KNIGHTS_APP_URL}/play`,
+      target: '_blank',
     }),
   },
 });
