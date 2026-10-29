@@ -136,7 +136,6 @@ async function handle(req, res) {
   }
 
   const routed = compat.resolveRouting(routing, req);
-  if (routed.redirect) return compat.sendRedirect(res, routed.redirect);
 
   // Under Next the undecodable-path DecodeError is thrown while routes are still being resolved,
   // before the routing headers are applied, so the 400 carries none of them. A plain 404 is

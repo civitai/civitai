@@ -46,6 +46,9 @@ const edge = {
 const PAGE_RENDERED =
   "Next answers via page rendering (here the preview-auth guard's 302 because IS_PREVIEW=true; in production its HTML 404/400 page). Mode R renders no pages; routing must send only single-segment /api/trpc/<seg> to it.";
 
+const REDIRECTED_BY_NEXT =
+  'Next answers this path with a 308 redirect before any route runs. Mode R does not port redirects: routing never sends it a trailing-slash or repeated-slash path, and kubelet probes use exact paths, so it is not a page here and gets the plain 404.';
+
 /** This server's exact answers for those paths (router headers, then a plain-text body). */
 const NOT_FOUND = {
   status: 404,
@@ -200,11 +203,13 @@ export function buildCases(ctx) {
       id: 'trailing-slash',
       path: `/api/trpc/content.get/?input=${enc({ json: TOS })}`,
       headers: edge,
+      divergence: { reason: REDIRECTED_BY_NEXT, candidate: NOT_FOUND },
     },
     {
       id: 'repeated-slash',
       path: '/api/trpc//content.get',
       headers: edge,
+      divergence: { reason: REDIRECTED_BY_NEXT, candidate: NOT_FOUND },
     },
     // These three never reach a route, and Next answers them by rendering a page.
     {
@@ -261,6 +266,7 @@ export function buildCases(ctx) {
       id: 'probe-live-trailing-slash',
       path: '/api/live/?token={WEBHOOK_TOKEN}',
       headers: {},
+      divergence: { reason: REDIRECTED_BY_NEXT, candidate: NOT_FOUND },
     },
   ];
 }

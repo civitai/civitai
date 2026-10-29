@@ -12,7 +12,8 @@ const require = createRequire(import.meta.url);
 const compat = require('../next-compat.cjs');
 
 // The shape `next build` writes for this app's config: i18n with one locale, the internal
-// trailing-slash redirect, one user redirect, and the X-Frame-Options header rule.
+// trailing-slash redirect, one user redirect, and the X-Frame-Options header rule. The redirects
+// are present to show they are NOT applied: this server does not port them.
 const routesManifest = {
   redirects: [
     {
@@ -56,23 +57,11 @@ describe('resolveRouting', () => {
     });
   });
 
-  it('308s a trailing slash to the path without it, keeping the query, with no headers', () => {
-    expect(route('/api/trpc/content.get/?batch=1&input=%7B%22a%22%7D')).toEqual({
-      redirect: {
-        statusCode: 308,
-        destination: '/api/trpc/content.get?batch=1&input=%7B%22a%22%7D',
-      },
-    });
-  });
-
-  it('308s repeated slashes to the normalised URL', () => {
-    expect(route('/api/trpc//content.get?x=1')).toEqual({
-      redirect: { statusCode: 308, destination: '/api/trpc/content.get?x=1' },
-    });
-  });
-
-  it('follows a user redirect with its own status', () => {
-    expect(route('/old-page')).toEqual({ redirect: { statusCode: 301, destination: '/new-page' } });
+  it('applies no redirect: a trailing-slash, repeated-slash or user-redirected path gets headers only', () => {
+    const headersOnly = { headers: { 'X-Frame-Options': 'DENY' } };
+    expect(route('/api/trpc/content.get/?batch=1')).toEqual(headersOnly);
+    expect(route('/api/trpc//content.get?x=1')).toEqual(headersOnly);
+    expect(route('/old-page')).toEqual(headersOnly);
   });
 
   it('refuses to start on a manifest feature it does not implement', () => {
@@ -153,7 +142,14 @@ describe('createPageMatcher', () => {
 
   it('does not serve a multi-segment path or a locale-prefixed API path', () => {
     expect(match('/api/trpc/a/b')).toEqual({ notFound: true });
+    expect(match('/api/trpc//a')).toEqual({ notFound: true });
     expect(match('/en/api/live')).toEqual({ notFound: true });
+  });
+
+  // Next 308s these before any route runs; this server answers them 404 rather than serving them.
+  it('does not serve a trailing-slash path, static or dynamic', () => {
+    expect(match('/api/trpc/a.b/')).toEqual({ notFound: true });
+    expect(match('/api/live/')).toEqual({ notFound: true });
   });
 
   it('reports an undecodable % escape instead of matching', () => {

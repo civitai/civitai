@@ -17,9 +17,15 @@ name: tRPC server parity
 # Runs when anything that can change either server's answers changes: the server itself, the
 # image, Next/tRPC (package.json / lockfile / patches), the route modules it serves, and the
 # request policy the tRPC route applies.
+#
+# Report-only: not a required check. It needs the preview image, which the preview pipeline builds
+# only for some PRs, so a PR that will get no image fails in seconds with the reason instead of
+# waiting for one.
 on:
   pull_request:
     branches: [main]
+    # `labeled`: adding the `preview` label is what makes a PR get an image, so it re-runs this.
+    types: [opened, synchronize, reopened, labeled]
     paths:
       - 'scripts/trpc-server/**'
       - 'scripts/ci/assert-standalone-boot-graph.mjs'
@@ -103,9 +109,39 @@ jobs:
       - name: Install
         run: pnpm install --frozen-lockfile
 
-      # The preview pipeline builds and pushes the image for every PR head; it is usually there
-      # before this job starts and is waited for (up to 40 minutes) otherwise. Its build runs the
-      # Dockerfile's boot-graph gate, which now also loads the standalone server's requires.
+      # Whether the preview pipeline will build an image for this PR at all, decided the way that
+      # pipeline's own authorization step decides it: the author must have write access to this
+      # repository (MEMBER/OWNER/COLLABORATOR; a fork PR never qualifies), AND the PR must carry the
+      # `preview` label or its author be on the auto-deploy list. The list is the repository
+      # variable PREVIEW_AUTO_DEPLOY_USERS (space-separated logins), kept out of this file. Read
+      # live from the API, so a label added after the push counts.
+      - name: Will a preview image be built for this PR?
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTO_DEPLOY_USERS: ${{ vars.PREVIEW_AUTO_DEPLOY_USERS }}
+        run: |
+          pr=$(gh api "repos/${{ github.repository }}/pulls/$PR")
+          assoc=$(jq -r .author_association <<< "$pr")
+          login=$(jq -r '.user.login | ascii_downcase' <<< "$pr")
+          head_repo=$(jq -r .head.repo.full_name <<< "$pr")
+          labelled=$(jq -r '[.labels[].name] | index("preview") != null' <<< "$pr")
+          auto=false
+          for u in $(tr '[:upper:],' '[:lower:] ' <<< "$AUTO_DEPLOY_USERS"); do
+            [ "$u" = "$login" ] && auto=true
+          done
+          echo "association=$assoc same-repo=$([ "$head_repo" = "${{ github.repository }}" ] && echo yes || echo no) preview-label=$labelled auto-deploy=$auto"
+          member=false
+          case "$assoc" in MEMBER|OWNER|COLLABORATOR) member=true ;; esac
+          if [ "$head_repo" != "${{ github.repository }}" ] || [ "$member" != true ] || { [ "$labelled" != true ] && [ "$auto" != true ]; }; then
+            echo "::error::No preview image will be built for this PR. Add the \`preview\` label to run the Mode R parity check."
+            exit 1
+          fi
+
+      # The image is usually there before this job starts, and is waited for (up to 40 minutes)
+      # otherwise. Its build runs the Dockerfile's boot-graph gate, which now also loads the
+      # standalone server's requires.
       - name: Pull the preview image for this head commit
         env:
           GH_TOKEN: ${{ github.token }}

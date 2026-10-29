@@ -19,19 +19,15 @@
 
 // Plain CommonJS that runs without a compile step, so `require` is the only way to load here.
 /* eslint-disable @typescript-eslint/no-var-requires */
-const nodeUrl = require('node:url');
 const { filterInternalHeaders } = require('next/dist/server/lib/server-ipc/utils');
-const { normalizeRepeatedSlashes, DecodeError } = require('next/dist/shared/lib/utils');
+const { DecodeError } = require('next/dist/shared/lib/utils');
 const { parseUrl } = require('next/dist/shared/lib/router/utils/parse-url');
 const { getPathMatch } = require('next/dist/shared/lib/router/utils/path-match');
 const {
-  prepareDestination,
   matchHas,
   compileNonPath,
 } = require('next/dist/shared/lib/router/utils/prepare-destination');
-const { modifyRouteRegex, getRedirectStatus } = require('next/dist/lib/redirect-status');
-const { stringifyQuery } = require('next/dist/server/server-route-utils');
-const { addRequestMeta } = require('next/dist/server/request-meta');
+const { modifyRouteRegex } = require('next/dist/lib/redirect-status');
 const { normalizeLocalePath } = require('next/dist/shared/lib/i18n/normalize-locale-path');
 const { addPathPrefix } = require('next/dist/shared/lib/router/utils/add-path-prefix');
 const { getRouteRegex } = require('next/dist/shared/lib/router/utils/route-regex');
@@ -40,22 +36,17 @@ const {
   NEXT_QUERY_PARAM_PREFIX,
   NEXT_INTERCEPTION_MARKER_PREFIX,
 } = require('next/dist/lib/constants');
-const { RedirectStatusCode } = require('next/dist/client/components/redirect-status-code');
 
 /**
  * `buildCustomRoute` from `next/dist/server/lib/router-utils/filesystem.js` (module-local there,
- * so it cannot be imported): the matcher router-server builds for each `headers()` and
- * `redirects()` entry of the routes manifest.
+ * so it cannot be imported): the matcher router-server builds for each `headers()` entry of the
+ * routes manifest.
  */
-function buildCustomRoute(type, item, basePath, caseSensitive) {
-  const restrictedRedirectPaths = ['/_next'].map((p) => (basePath ? `${basePath}${p}` : p));
+function buildHeaderRoute(item, caseSensitive) {
   const match = getPathMatch(item.source, {
     strict: true,
     removeUnnamedParams: true,
-    regexModifier: (regex) =>
-      item.internal
-        ? regex
-        : modifyRouteRegex(regex, type === 'redirect' ? restrictedRedirectPaths : undefined),
+    regexModifier: (regex) => (item.internal ? regex : modifyRouteRegex(regex, undefined)),
     sensitive: caseSensitive,
   });
   return { ...item, match };
@@ -87,20 +78,21 @@ function createRouting({ routesManifest, nextConfig }) {
     nextConfig.experimental && nextConfig.experimental.caseSensitiveRoutes
   );
   const headers = (routesManifest.headers || []).map((item) =>
-    buildCustomRoute('header', item, basePath, caseSensitive)
-  );
-  const redirects = (routesManifest.redirects || []).map((item) =>
-    buildCustomRoute('redirect', item, basePath, caseSensitive)
+    buildHeaderRoute(item, caseSensitive)
   );
   const i18n = nextConfig.i18n || null;
 
-  return { headers, redirects, i18n };
+  // `redirects()` are deliberately NOT ported. Next answers a redirected path (the trailing-slash
+  // and repeated-slash 308s, every user redirect) before any route runs, and the router in front
+  // of this server sends it only single-segment `/api/trpc/<seg>` paths, which none of them match.
+  // A redirected path that does arrive is not a page here, so it gets the plain 404.
+  return { headers, i18n };
 }
 
 /**
  * The pathname a custom route is matched against: resolve-routes `handleRoute`. Under i18n the
  * request path carries the default locale (`/en/api/...`) for user routes, and has it stripped
- * again for internal ones such as the trailing-slash redirect.
+ * again for internal ones.
  */
 function routeMatchPathname(routing, parsedPathname, route) {
   if (!routing.i18n || !route.internal) return parsedPathname;
@@ -110,27 +102,11 @@ function routeMatchPathname(routing, parsedPathname, route) {
 }
 
 /**
- * What router-server decides for a request before it invokes any route, ported from
- * `resolve-routes.js` (`resolveRoutes`, the headers and redirects branches) and the redirect
- * handling in `router-server.js`. Returns one of:
- *   { redirect: { statusCode, destination } }  — answer with a redirect, apply no headers
- *   { headers }                                 — the config headers to set, then route
+ * The config headers router-server would set for this request before invoking any route, ported
+ * from `resolve-routes.js` (`resolveRoutes`, the headers branch). Returns { headers }.
  */
 function resolveRouting(routing, req) {
-  const urlNoQuery = (req.url || '').split('?', 1)[0];
-
-  // Repeated slashes and backslashes: a 308 to the normalised URL, before anything else.
-  if (urlNoQuery && /(\\|\/\/)/.test(urlNoQuery)) {
-    return {
-      redirect: {
-        statusCode: RedirectStatusCode.PermanentRedirect,
-        destination: nodeUrl.format(parseUrl(normalizeRepeatedSlashes(req.url))),
-      },
-    };
-  }
-
   const parsedUrl = parseUrl(req.url || '');
-  addRequestMeta(req, 'initQuery', { ...parsedUrl.query });
 
   // i18n: the default locale is added to the path for matching (resolve-routes ~L141).
   let pathname = parsedUrl.pathname || '/';
@@ -173,45 +149,7 @@ function resolveRouting(routing, req) {
     }
   }
 
-  // redirects() next: the first match answers, and router-server then applies NO headers
-  // (resolveRoutes returns `resHeaders: null` for a redirect).
-  for (const route of routing.redirects) {
-    let params = route.match(routeMatchPathname(routing, pathname, route));
-    if ((route.has || route.missing) && params) {
-      const hasParams = matchHas(req, parsedUrl.query, route.has, route.missing);
-      if (hasParams) Object.assign(params, hasParams);
-      else params = false;
-    }
-    if (!params || !route.destination) continue;
-    const { parsedDestination } = prepareDestination({
-      appendParamsToQuery: false,
-      destination: route.destination,
-      params,
-      query: parsedUrl.query,
-    });
-    const { query } = parsedDestination;
-    delete parsedDestination.query;
-    parsedDestination.search = stringifyQuery(req, query);
-    parsedDestination.pathname = normalizeRepeatedSlashes(parsedDestination.pathname);
-    return {
-      redirect: {
-        statusCode: getRedirectStatus(route),
-        destination: nodeUrl.format(parsedDestination),
-      },
-    };
-  }
-
   return { headers: resHeaders };
-}
-
-/** router-server's redirect response (`router-server.js`, "handle redirect"). */
-function sendRedirect(res, { statusCode, destination }) {
-  res.statusCode = statusCode;
-  res.setHeader('location', destination);
-  if (statusCode === RedirectStatusCode.PermanentRedirect) {
-    res.setHeader('Refresh', `0;url=${destination}`);
-  }
-  res.end(destination);
 }
 
 /** router-server applies the routing headers with `setHeader`, before the route runs. */
@@ -288,6 +226,9 @@ function createPageMatcher(pages) {
     else statics.add(page);
   }
   return function matchPage(pathname) {
+    // Next never invokes a route for a trailing-slash path (it 308s first, and this server does
+    // not port redirects), so this server does not serve one either.
+    if (pathname.length > 1 && pathname.endsWith('/')) return { notFound: true };
     if (statics.has(pathname)) return { page: pathname };
     for (const { page, match } of dynamics) {
       try {
@@ -330,6 +271,5 @@ module.exports = {
   resolveRouting,
   sendBadRequest,
   sendNotFound,
-  sendRedirect,
   stripInternalQuery,
 };
