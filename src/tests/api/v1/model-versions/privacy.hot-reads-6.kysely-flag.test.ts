@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as FliptClient from '~/server/flipt/client';
 import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
 
@@ -11,10 +12,7 @@ import type * as HotReads6 from '@civitai/db-queries/hot-reads-6';
  * another owner).
  */
 
-const { mockFindUnique, mockMembership } = vi.hoisted(() => ({
-  mockFindUnique: vi.fn(),
-  mockMembership: vi.fn(),
-}));
+const { mockMembership } = vi.hoisted(() => ({ mockMembership: vi.fn() }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => ({
   ...(await importOriginal<typeof FliptClient>()),
@@ -23,10 +21,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => ({
 vi.mock('@civitai/db-queries/hot-reads-6', async (importOriginal) => {
   const actual = await importOriginal<typeof HotReads6>();
   return Object.fromEntries(Object.keys(actual).map((name) => [name, vi.fn()]));
-});
-vi.mock('~/server/db/client', () => {
-  const stub = { modelVersion: { findUnique: mockFindUnique }, $queryRaw: vi.fn() };
-  return { dbRead: stub, dbWrite: stub, dbKV: stub, dbReadLong: stub, dbReadReplica: stub };
 });
 vi.mock('~/server/services/model.service', () => ({ getVaeFiles: async () => [] }));
 vi.mock('~/server/services/image.service', () => ({ getImagesForModelVersion: async () => [] }));
@@ -56,6 +50,8 @@ import { kyselyRead } from '~/server/db/kyselyDb';
 import { isFlipt } from '~/server/flipt/client';
 
 const flag = vi.mocked(isFlipt);
+// `~/server/db/client` is the canonical shared mock (src/__tests__/mocks/db.mock.ts).
+const mockFindUnique = dbMock.dbRead.modelVersion.findUnique;
 const q = vi.mocked(queries);
 const FLAG = 'kysely-hot-reads-6';
 const VERSION = 9242;
