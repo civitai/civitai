@@ -418,6 +418,7 @@ export const useS3UploadStore = create<StoreProps>()(
                 type,
                 uploadId,
                 backend,
+                fileSize: size,
                 ...(failure ? { failure } : {}),
               }),
             });
