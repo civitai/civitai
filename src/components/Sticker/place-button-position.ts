@@ -142,6 +142,9 @@ export function placeButtonBoxes({
     : { below: current, above: shiftDown(current, -distance) };
 }
 
+/** More than the candidate model can be off by, so a flip never undoes itself. */
+const FLIP_MARGIN = 2;
+
 /**
  * Whether the buy button belongs above the sticker rather than below it.
  *
@@ -155,9 +158,6 @@ export function placeButtonBoxes({
  * have nowhere good to put the button, and moving it to a second bad position
  * is worse than leaving it where the user last saw it.
  */
-/** More than the candidate model can be off by, so a flip never undoes itself. */
-const FLIP_MARGIN = 2;
-
 export function shouldFlipPlaceButton({
   below,
   above,
@@ -234,8 +234,9 @@ export function placeButtonPosition({
   outset: number;
   gap: number;
 }): { flipped: boolean; below: number; above: number } | null {
-  // The sticker's element no longer rotates — the artwork inside it does — so
-  // its box is the unrotated one the chrome is laid out against.
+  // The artwork rotates inside the sticker's element, so the element's box is
+  // the unrotated one the chrome is laid out against.
+
   // 🔴 FRACTIONAL, LIKE THE RECT THE CANDIDATES START FROM. `offsetHeight`
   // rounds, and when this and the cluster's height both round down the
   // modelled jump comes out shorter than the real one: a cluster edge inside

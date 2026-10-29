@@ -363,17 +363,11 @@ describe('the candidate boxes survive coming from a DOMRect', () => {
 });
 
 /**
- * 🔴 ONE CANDIDATE IS MEASURED AND THE OTHER IS MODELLED, AND THEY CAN DISAGREE.
- *
- * Captured in the geometry harness at 390x844 (free-offer cluster, sticker
- * 101.484px tall, cluster 126.594px): heights read through `offsetHeight` round
- * to 101 and 127, so the model put the other side 272.22px away when the cluster
- * really moved 272.298px. With the cluster's bottom edge inside that 0.078px of
- * the tray, unflipped saw the tray and flipped; flipped, the modelled `below`
- * fell just short of the tray and unflipped. 57 commits, React #185.
- *
- * Fractional heights shrink the gap to float error; the margin is what makes any
- * gap under it harmless, so it is what this pins.
+ * 🔴 ONE CANDIDATE IS MEASURED AND THE OTHER IS MODELLED, AND THEY CAN DISAGREE
+ * by a fraction of a pixel. The decision must come out the same from either
+ * side even then, or a cluster edge in that sliver flips on every re-measure.
+ * The numbers are from a real capture: a modelled jump 0.078px shorter than
+ * the real one, with the cluster's edge inside that gap at the tray.
  */
 describe('a modelled side that is a fraction of a pixel off', () => {
   const CLUSTER_HEIGHT = 126.594;
@@ -424,8 +418,8 @@ describe('a modelled side that is a fraction of a pixel off', () => {
 /**
  * The same capture driven through `placeButtonPosition` from element-shaped
  * fakes, re-deciding after each flip the way the layout effect does. Each fake
- * also carries the rounded `offsetHeight` a browser would report, which the
- * decision must not use.
+ * also carries an `offsetHeight` that disagrees with its rect; the decision
+ * must use the rect.
  */
 describe('placeButtonPosition settles where the capture looped', () => {
   const STICKER = { width: 76, height: 101.484 };
@@ -444,7 +438,9 @@ describe('placeButtonPosition settles where the capture looped', () => {
       width,
       height,
     }),
-    offsetHeight: Math.round(height),
+    // Deliberately further off than any rounding, so a decision that read it
+    // instead of the rect would land on the wrong side.
+    offsetHeight: Math.round(height) - 3,
   });
 
   // Where the cluster really lands on each side of a sticker whose top is

@@ -335,6 +335,12 @@ export function DraftSticker({
 
     const { flipped, rotation } = frame.current;
     const tray = useStickerPlacementDraftStore.getState().tray;
+    // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
+    // to the node while the class comes from state splits them across a render:
+    // the element then carries the standoff for the side it just left, and the
+    // real distance between the two candidate positions is off by `below +
+    // above` against the model `candidateDistance` builds. A flip decision feeds
+    // on that mismatch.
     const next = placeButtonPosition({
       sticker: element,
       cluster: button,
@@ -348,13 +354,6 @@ export function DraftSticker({
     });
     if (!next) return;
 
-    // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
-    // to the node while the class comes from state splits them across a render:
-    // the element then carries the standoff for the side it just left, and the
-    // real distance between the two candidate positions is off by `below +
-    // above` against the model `candidateDistance` builds. A flip decision feeds
-    // on that mismatch.
-    //
     // Every pointer move re-measures, so bail on an unchanged result rather
     // than handing React a new object to re-render for.
     setPosition((current) =>
