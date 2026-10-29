@@ -131,7 +131,7 @@ describe('Submit for review', () => {
   test('is refused, with no button, until the app passed the checks', async () => {
     const { gate, send } = setup();
     const { refused } = await offer(gate);
-    expect(refused).toMatch(/^Not ready yet\..*Then call submit_for_review again\.$/);
+    expect(refused).toBe(SUBMIT_NEEDS_READY);
     // A refused call shows the chat's own card, never a button.
     expect(
       gate.tools.submit_for_review.render?.({
