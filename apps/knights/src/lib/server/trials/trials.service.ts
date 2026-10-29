@@ -48,13 +48,27 @@ export type AnswerResult =
       finished: { result: 'passed' | 'failed' | 'void'; score: number | null } | null;
     };
 
-type Run = { id: number; questionKey: string; itemIds: number[] };
+type Run = {
+  id: number;
+  questionKey: string;
+  itemIds: number[];
+  /** The fresh items as planned. Null on a run stored before roles were kept, which falls back to each item's current source. */
+  freshIds: ReadonlySet<number> | null;
+};
 
-const toRun = (row: { id: number; questionKey: string; itemIds: unknown }): Run => ({
-  id: row.id,
-  questionKey: row.questionKey,
-  itemIds: row.itemIds as number[],
-});
+type StoredPlan = number[] | { core: number[]; fresh: number[] };
+
+const toRun = (row: { id: number; questionKey: string; itemIds: unknown }): Run => {
+  const plan = row.itemIds as StoredPlan;
+  return Array.isArray(plan)
+    ? { id: row.id, questionKey: row.questionKey, itemIds: plan, freshIds: null }
+    : {
+        id: row.id,
+        questionKey: row.questionKey,
+        itemIds: [...plan.core, ...plan.fresh],
+        freshIds: new Set(plan.fresh),
+      };
+};
 
 function servableReferences(db: Executor, questionKey: string) {
   return db
@@ -154,7 +168,7 @@ async function startRun(
       playerId: userId,
       questionKey,
       seed,
-      itemIds: JSON.stringify([...plan.core, ...plan.fresh]),
+      itemIds: JSON.stringify({ core: plan.core, fresh: plan.fresh }),
       startedAt: utc(deps.now()),
     })
     .onConflict((oc) =>
@@ -198,11 +212,14 @@ async function finishRun(db: Executor, run: Run, userId: number, now: Date) {
   const answers = await db
     .selectFrom('KnightsTrialAnswer as a')
     .innerJoin('KnightsReferenceImage as r', 'r.id', 'a.referenceId')
-    .select(['a.correct', 'r.source'])
+    .select(['a.correct', 'a.referenceId', 'r.source'])
     .where('a.runId', '=', run.id)
     .execute();
   const { result, score } = scoreRun(
-    answers.map((a) => ({ fresh: a.source !== REFERENCE_SOURCE.core, correct: a.correct })),
+    answers.map((a) => ({
+      fresh: run.freshIds ? run.freshIds.has(a.referenceId) : a.source !== REFERENCE_SOURCE.core,
+      correct: a.correct,
+    })),
     TRIALS
   );
   const cooldownUntil = new Date(now.getTime() + TRIALS.cooldownHours * 3_600_000);

@@ -20,6 +20,12 @@ let pg: PGlite;
 let db: Kysely<DB>;
 let now = T0;
 let seeds: number[] = [];
+/** A stored plan is `{ core, fresh }`; runs stored before roles were kept are a flat list. */
+const idsOf = (raw: unknown): number[] => {
+  const plan = raw as number[] | { core: number[]; fresh: number[] };
+  return Array.isArray(plan) ? plan : [...plan.core, ...plan.fresh];
+};
+
 const deps: TrialDeps = {
   now: () => now,
   newSeed: () => seeds.shift() ?? 1,
@@ -157,11 +163,11 @@ describe('getTrial', () => {
     }
 
     const view = await current(1);
-    const run = (await pg.query<{ itemIds: number[] }>(`SELECT "itemIds" FROM "KnightsTrialRun"`))
+    const run = (await pg.query<{ itemIds: unknown }>(`SELECT "itemIds" FROM "KnightsTrialRun"`))
       .rows[0];
 
-    expect(run.itemIds.some((id) => pending.includes(id))).toBe(false);
-    expect(view.run.total).toBe(run.itemIds.length);
+    expect(idsOf(run.itemIds).some((id) => pending.includes(id))).toBe(false);
+    expect(view.run.total).toBe(idsOf(run.itemIds).length);
   });
 
   it('has nothing to serve when every fresh item is still pending', async () => {
@@ -178,11 +184,11 @@ describe('getTrial', () => {
 
     const view = await current(1);
     const run = (
-      await pg.query<{ seed: number; itemIds: number[] }>(`SELECT * FROM "KnightsTrialRun"`)
+      await pg.query<{ seed: number; itemIds: unknown }>(`SELECT * FROM "KnightsTrialRun"`)
     ).rows[0];
 
     expect(run.seed).toBe(4242);
-    expect(run.itemIds).toHaveLength(6);
+    expect(idsOf(run.itemIds)).toHaveLength(6);
     expect(view.run).toEqual({ id: expect.any(Number), position: 1, total: 6 });
     const planned = planRun({
       seed: 4242,
@@ -191,7 +197,8 @@ describe('getTrial', () => {
       length: TRIALS.runLength,
       freshCount: TRIALS.freshCount,
     });
-    expect(run.itemIds).toEqual([...planned.core, ...planned.fresh]);
+    expect(run.itemIds).toEqual({ core: planned.core, fresh: planned.fresh });
+    expect(idsOf(run.itemIds)).toEqual([...planned.core, ...planned.fresh]);
     expect([1, 2]).toContain(view.item.referenceId);
     expect(JSON.stringify(view)).not.toMatch(/answer|explanation|correct/i);
   });
@@ -206,8 +213,8 @@ describe('getTrial', () => {
     await current(2);
     await current(3);
     const plans = (
-      await pg.query<{ itemIds: number[] }>(`SELECT "itemIds" FROM "KnightsTrialRun" ORDER BY "id"`)
-    ).rows.map((r) => r.itemIds);
+      await pg.query<{ itemIds: unknown }>(`SELECT "itemIds" FROM "KnightsTrialRun" ORDER BY "id"`)
+    ).rows.map((r) => idsOf(r.itemIds));
     expect(plans[1]).toEqual(plans[0]);
     expect(plans[2]).not.toEqual(plans[0]);
   });
@@ -229,9 +236,13 @@ describe('getTrial', () => {
 
     await reference(23);
     await current(1);
-    const second = (
-      await pg.query<{ itemIds: number[] }>(`SELECT "itemIds" FROM "KnightsTrialRun" ORDER BY "id"`)
-    ).rows[1].itemIds;
+    const second = idsOf(
+      (
+        await pg.query<{ itemIds: unknown }>(
+          `SELECT "itemIds" FROM "KnightsTrialRun" ORDER BY "id"`
+        )
+      ).rows[1].itemIds
+    );
     const freshIds = [3, 4, 5, 6, 7, 8, 9];
     expect(second.filter((id) => freshIds.includes(id)).sort()).toEqual([7, 8, 9]);
     expect(second.filter((id) => metBefore.includes(id) && id > 2)).toEqual([]);
@@ -375,6 +386,78 @@ describe('answerTrial', () => {
   });
 });
 
+describe('curation while a run is open', () => {
+  /** Answers every item right, running `between` after each fresh answer. */
+  async function playRightWith(userId: number, between: (referenceId: number) => Promise<void>) {
+    let last;
+    for (let guard = 0; guard < 40; guard++) {
+      const view = await getTrial(db, userId, deps);
+      if (view.kind !== 'question') return last;
+      const id = view.item.referenceId;
+      const { rows } = await pg.query<{ answer: string; source: string }>(
+        `SELECT "answer","source" FROM "KnightsReferenceImage" WHERE "id"=$1`,
+        [id]
+      );
+      last = await answerTrial(
+        db,
+        { questionKey: Q, userId, referenceId: id, answer: rows[0].answer },
+        deps
+      );
+      if (rows[0].source !== 'core') await between(id);
+    }
+    throw new Error('run did not end');
+  }
+
+  const finishedOf = (outcome: Awaited<ReturnType<typeof playOut>>) =>
+    outcome?.status === 'recorded' ? outcome.finished : null;
+
+  it('scores an item by the role it had when the run was planned, even if it was promoted since', async () => {
+    await player(1);
+    await standardPool();
+    await current(1);
+    let promoted = 0;
+
+    const outcome = await playRightWith(1, async (id) => {
+      if (promoted++ < 2) {
+        await pg.query(`UPDATE "KnightsReferenceImage" SET "source"='core' WHERE "id"=$1`, [id]);
+      }
+    });
+
+    expect(finishedOf(outcome)).toEqual({ result: 'passed', score: 1 });
+  });
+
+  it('scores an item by its planned role even if it was retired after it was answered', async () => {
+    await player(1);
+    await standardPool();
+    await current(1);
+    let retired = 0;
+
+    const outcome = await playRightWith(1, async (id) => {
+      if (retired++ < 2) {
+        await pg.query(`UPDATE "KnightsReferenceImage" SET "status"='retired' WHERE "id"=$1`, [id]);
+      }
+    });
+
+    expect(finishedOf(outcome)).toMatchObject({ result: 'passed' });
+  });
+});
+
+describe('a run stored as a flat id list', () => {
+  it("still plays and scores, by each item's current source", async () => {
+    await player(1);
+    await standardPool();
+    await current(1);
+    const { rows } = await pg.query<{ itemIds: unknown }>(
+      `SELECT "itemIds" FROM "KnightsTrialRun"`
+    );
+    await pg.query(`UPDATE "KnightsTrialRun" SET "itemIds"=$1::jsonb`, [
+      JSON.stringify(idsOf(rows[0].itemIds)),
+    ]);
+
+    expect(await playOut(1)).toMatchObject({ finished: { result: 'passed', score: 1 } });
+  });
+});
+
 describe('graduation', () => {
   it('promotes a player who passes on fresh items, whatever they did on core', async () => {
     await player(1);
@@ -420,22 +503,23 @@ describe('graduation', () => {
     for (const id of [21, 22, 23, 24, 25, 26, 27, 28]) await reference(id, { answer: '8' });
     seeds = [100, 200];
     await playOut(1, [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14]);
-    const firstRun = (
-      await pg.query<{ itemIds: number[] }>(`SELECT "itemIds" FROM "KnightsTrialRun"`)
-    ).rows[0].itemIds;
+    const firstRun = idsOf(
+      (await pg.query<{ itemIds: unknown }>(`SELECT "itemIds" FROM "KnightsTrialRun"`)).rows[0]
+        .itemIds
+    );
 
     now = new Date(T0.getTime() + (TRIALS.cooldownHours + 1) * 3_600_000);
     const view = await current(1);
 
     const runs = (
-      await pg.query<{ seed: number; itemIds: number[] }>(
+      await pg.query<{ seed: number; itemIds: unknown }>(
         `SELECT * FROM "KnightsTrialRun" ORDER BY "id"`
       )
     ).rows;
     expect(runs.map((r) => r.seed)).toEqual([100, 200]);
     const unmet = [3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14].filter((id) => !firstRun.includes(id));
     expect(unmet).toHaveLength(4);
-    expect(runs[1].itemIds).toEqual(expect.arrayContaining(unmet));
+    expect(idsOf(runs[1].itemIds)).toEqual(expect.arrayContaining(unmet));
     expect(view.run.position).toBe(1);
   });
 });
