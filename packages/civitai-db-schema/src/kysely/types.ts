@@ -3685,6 +3685,22 @@ export type KnightsHarvestCursor = {
   lastActivityId: Generated<number>;
   updatedAt: Timestamp;
 };
+export type KnightsPlayer = {
+  playerId: number;
+  streak: Generated<number>;
+  lastWatchDay: Timestamp | null;
+  shields: Generated<number>;
+  shieldWeek: Timestamp;
+  recapDismissedFor: Timestamp | null;
+};
+export type KnightsPlayerDay = {
+  playerId: number;
+  day: Timestamp;
+  votes: Generated<number>;
+  goldRecorded: Generated<number>;
+  watchCompletedAt: Timestamp | null;
+  bonusGold: Generated<number>;
+};
 export type KnightsQuestion = {
   key: string;
   version: Generated<number>;
@@ -6588,6 +6604,8 @@ export type DB = {
   JobQueue: JobQueue;
   KeyValue: KeyValue;
   KnightsHarvestCursor: KnightsHarvestCursor;
+  KnightsPlayer: KnightsPlayer;
+  KnightsPlayerDay: KnightsPlayerDay;
   KnightsQuestion: KnightsQuestion;
   KnightsQueueItem: KnightsQueueItem;
   KnightsReferenceImage: KnightsReferenceImage;

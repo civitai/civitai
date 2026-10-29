@@ -8089,6 +8089,30 @@ model KnightsVote {
   @@index([itemId, stage])
 }
 
+/// Knights-owned per-player state for the daily loop; days are UTC. `shieldWeek` is the Monday of the last
+/// ISO week a shield was granted, `lastWatchDay` the last day a Daily Watch was completed.
+model KnightsPlayer {
+  playerId          Int       @id
+  streak            Int       @default(0)
+  lastWatchDay      DateTime? @db.Date
+  shields           Int       @default(0)
+  shieldWeek        DateTime  @db.Date
+  recapDismissedFor DateTime? @db.Date
+}
+
+/// One row per player per UTC day on which they voted. `goldRecorded` counts against the daily cap;
+/// `bonusGold` (the streak bonus) is paid straight to goldEarned and does not.
+model KnightsPlayerDay {
+  playerId         Int
+  day              DateTime  @db.Date
+  votes            Int       @default(0)
+  goldRecorded     Int       @default(0)
+  watchCompletedAt DateTime?
+  bonusGold        Int       @default(0)
+
+  @@id([playerId, day])
+}
+
 /// An image with a known answer for Acolyte Trials or hidden checks. `answer` is the option value of `questionKey`.
 model KnightsReferenceImage {
   id            Int                  @id @default(autoincrement())

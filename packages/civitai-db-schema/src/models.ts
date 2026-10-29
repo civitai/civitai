@@ -5110,6 +5110,24 @@ export interface KnightsVote {
   converted: boolean;
 }
 
+export interface KnightsPlayer {
+  playerId: number;
+  streak: number;
+  lastWatchDay: Date | null;
+  shields: number;
+  shieldWeek: Date;
+  recapDismissedFor: Date | null;
+}
+
+export interface KnightsPlayerDay {
+  playerId: number;
+  day: Date;
+  votes: number;
+  goldRecorded: number;
+  watchCompletedAt: Date | null;
+  bonusGold: number;
+}
+
 export interface KnightsReferenceImage {
   id: number;
   imageId: number;
