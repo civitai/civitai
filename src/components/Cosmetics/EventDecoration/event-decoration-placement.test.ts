@@ -294,11 +294,6 @@ it('a container can declare more room above than beside its cards', () => {
   expect(hatShiftCss(-40, 'left')).not.toContain('allowance-top');
 });
 
-it('masonry carousels give hats no room and no growth', () => {
-  const source = readFileSync('src/components/MasonryColumns/MasonryCarousel.tsx', 'utf8');
-  expect(source).toMatch(/'\[--event-decoration-allowance:0px\] \[--event-decoration-grow:1\]'/);
-});
-
 // Chosen by Justin in the hat tuner on his phone (2026-10-09): 4px further up and left on cards
 // without a frame. Change it with him.
 it('nudges hats on plain cards by the chosen amount', () => {

@@ -81,6 +81,7 @@ vi.mock('~/server/redis/caches', () => ({
   getUserContentOverviewSfw: vi.fn(async () => ({})),
 }));
 
+import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
 import { updateUserProfile } from '~/server/services/user-profile.service';
 
 const USER_ID = 4242;
@@ -217,5 +218,36 @@ describe('updateUserProfile — a new cover image', () => {
     });
     expect(coverImage.connectOrCreate.create).not.toHaveProperty('postId');
     expect(coverImage.connectOrCreate.create).not.toHaveProperty('index');
+  });
+
+  describe('whose url is owned by another user', () => {
+    const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
+    const OTHER = 77;
+    const cover = { url: KEY, type: 'image' } as never;
+
+    for (const slot of ['coverImage', 'sfwCoverImage'] as const) {
+      it(`refuses ${slot} before writing`, async () => {
+        mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: KEY, userId: OTHER }]));
+
+        await expect(updateUserProfile({ userId: USER_ID, [slot]: cover })).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+        });
+        expect(tx.userProfile.update).not.toHaveBeenCalled();
+      });
+
+      it(`leaves ${slot} unchecked when it names an existing image by id`, async () => {
+        mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: KEY, userId: OTHER }]));
+
+        await updateUserProfile({ userId: USER_ID, [slot]: { id: 5, url: KEY, type: 'image' } });
+        expect(tx.userProfile.update).toHaveBeenCalled();
+      });
+
+      it(`writes ${slot} when the caller owns the url`, async () => {
+        mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: KEY, userId: USER_ID }]));
+
+        await updateUserProfile({ userId: USER_ID, [slot]: cover });
+        expect(tx.userProfile.update).toHaveBeenCalled();
+      });
+    }
   });
 });
