@@ -6,7 +6,12 @@ import {
   KNIGHTS_NSFW_LEVEL_QUESTION,
   KNIGHTS_VOTE_NSFW_LEVEL_REASON,
 } from '@civitai/shared/new-order';
-import { servableImage } from '../servable-image';
+import {
+  REFERENCE_POOL,
+  REFERENCE_SOURCE,
+  REFERENCE_STATUS,
+  servableImage,
+} from '@civitai/db/knights';
 import { HARVEST, type HarvestConfig } from './config';
 import { poolFor } from './plan';
 
@@ -80,16 +85,23 @@ export async function harvestRulings(
       const inserted = await db
         .insertInto('KnightsReferenceImage')
         .values(
-          holding.map((row) => ({
-            imageId: row.imageId,
-            questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
-            pool: poolFor(row.imageId, config.hiddenCheckShare),
-            answer: String(row.level),
-            source: 'harvested',
-            modActivityId: row.activityId,
-            harvestedAt: utc(now),
-            updatedAt: utc(now),
-          }))
+          holding.map((row) => {
+            const pool = poolFor(row.imageId, config.hiddenCheckShare);
+            return {
+              imageId: row.imageId,
+              questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
+              pool,
+              status:
+                config.spotCheck && pool === REFERENCE_POOL.trials
+                  ? REFERENCE_STATUS.pending
+                  : REFERENCE_STATUS.active,
+              answer: String(row.level),
+              source: REFERENCE_SOURCE.harvested,
+              modActivityId: row.activityId,
+              harvestedAt: utc(now),
+              updatedAt: utc(now),
+            };
+          })
         )
         .onConflict((oc) => oc.column('imageId').doNothing())
         .returning('id')
@@ -117,9 +129,9 @@ async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Pr
   const agedOut = new Date(now.getTime() - config.freshMaxAgeDays * DAY_MS);
   const result = await db
     .updateTable('KnightsReferenceImage as r')
-    .set({ status: 'retired', updatedAt: utc(now) })
-    .where('r.status', '=', 'active')
-    .where('r.source', '!=', 'core')
+    .set({ status: REFERENCE_STATUS.retired, updatedAt: utc(now) })
+    .where('r.status', 'in', [REFERENCE_STATUS.active, REFERENCE_STATUS.pending])
+    .where('r.source', '!=', REFERENCE_SOURCE.core)
     .where((eb) =>
       eb.or([
         eb('r.harvestedAt', '<', utc(agedOut)),
