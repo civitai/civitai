@@ -39,6 +39,21 @@ describe('runLinkDetection recording the run for Knights', () => {
     expect(write.knightsDetectionRun.create).toHaveBeenCalledTimes(1);
   });
 
+  it('dates the run from before its reads, so gold earned while it ran is not released by it', async () => {
+    let firstReadAt = Infinity;
+    query.mockImplementation(async () => {
+      firstReadAt = Math.min(firstReadAt, Date.now());
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      return [];
+    });
+
+    await runLinkDetection();
+
+    const { completedAt } = write.knightsDetectionRun.create.mock.calls[0][0].data;
+    expect(completedAt).toBeInstanceOf(Date);
+    expect(completedAt.getTime()).toBeLessThanOrEqual(firstReadAt);
+  });
+
   it('records nothing when detection is not configured, so nothing is released', async () => {
     getConfig.mockResolvedValue(null);
 

@@ -214,22 +214,19 @@ export async function persistLinkedClusters(clusters: LinkCluster[]) {
   return counts;
 }
 
-/**
- * Tells Knights that a detection run finished. Its post-detection pass (earned gold becomes convertible,
- * settled votes get their labels) runs only for a recorded run, so a run that did not complete, or did
- * not run, releases nothing.
- */
-export async function recordDetectionRun() {
-  await dbWrite.knightsDetectionRun.create({ data: {} });
+/** Records a finished run for Knights. Its post-detection pass runs only for recorded runs, so a run that did not complete releases nothing. `cutoff` is when the run began reading, so gold earned while it ran is not released by it. */
+export async function recordDetectionRun(cutoff: Date) {
+  await dbWrite.knightsDetectionRun.create({ data: { completedAt: cutoff } });
 }
 
 export async function runLinkDetection() {
   if (!clickhouse) return null;
   const config = await loadConfig();
   if (!config) return null;
+  const cutoff = new Date();
   const clusters = await findLinkedClusters(config);
   const counts = await persistLinkedClusters(clusters);
-  await recordDetectionRun();
+  await recordDetectionRun(cutoff);
   await logToAxiom({
     type: 'info',
     name: 'new-order-link-detection',
