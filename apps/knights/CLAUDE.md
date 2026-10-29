@@ -33,7 +33,7 @@ SQL on PGlite.
   override on the item wins. `minRank` must be a stage rank (Knight, Templar, Paladin); anything else throws.
 - `getFeed`: open items the player's rank may judge, higher stages first, then priority and age, from the first
   question in that order. Which ranks may judge a stage is `canVote` in `ranks.ts`, shared with `castVote`; Inquisitors
-  and Acolytes get no feed. It never selects the image's rating. Hidden checks are not served yet (no grader).
+  and Acolytes get no feed. It never selects the image's rating and never returns a hidden check (see Hidden checks).
   Only images the public feeds would show are served (`servableImage`, `src/lib/server/servable-image.ts`, shared with `getFeed`, `castVote`, Trials, the harvest and the dev script): an image-type, published post, level not 0 or Blocked, no block marker, no review hold.
 - `castVote`: refuses what the feed would not serve, then one transaction that locks the item row, refuses a vote
   that would weigh 0 (`no-weight`), writes the ledger row with its weight, and decides the stage's votes (`resolution.ts`): 5 votes
@@ -88,7 +88,7 @@ Tables `KnightsPlayer` (streak, shields, recap dismissal) and `KnightsPlayerDay`
 
 Tables `KnightsReferenceImage`, `KnightsTrialRun`, `KnightsTrialAnswer`, `KnightsHarvestCursor` (migration `20261212120000_knights_v2_trials`, applied by hand). All knobs and their defaults are in `trials/config.ts`.
 
-- A reference image has a known `answer`, a `source` (`core` | `harvested`; `agreement`, from Templar/Paladin agreement, is a later source) and a `pool`. `imageId` is unique across modules on purpose: one known answer per image, and an image sits in `trials` or in `hiddenCheck`, never both. Hidden checks are not served yet. Core rows are curated elsewhere (moderator app, later) and need an `explanation`.
+- A reference image has a known `answer`, a `source` (`core` | `harvested`; `agreement`, from Templar/Paladin agreement, is a later source) and a `pool`. `imageId` is unique across modules on purpose: one known answer per image, and an image sits in `trials` or in `hiddenCheck`, never both. Core rows are curated elsewhere (moderator app, later) and need an `explanation`.
 - `POST /api/jobs/harvest` (`Authorization: Bearer $JOBS_TOKEN`) reads `ModActivity` rows `setNsfwLevel` on images past a cursor, no older than `maxRulingAgeDays`. It keeps an image only while the moderator ruling still stands and its image is still servable (`servableImage`; see `harvest.service.ts`). Images already present are skipped. It also retires fresh items older than `freshMaxAgeDays` or whose image moved. Safe to run repeatedly; schedule it daily.
 - A run is per question key (`TRIAL_MODULES`; only `knights.image.nsfwLevel`), seeded per player: `seed` and the planned `itemIds` are stored on the run. It opens with core items, then fresh ones, which never repeat for that player. One open run per player and module.
 - After each answer the page shows right or wrong, the correct level and, for core items, the explanation.
@@ -116,6 +116,13 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261211120000_knig
 - Dev queue: with the migration applied to your local database, `cd apps/knights && pnpm run dev:enqueue-recent [count]` enqueues the newest eligible
   images (scanned, unlocked, and servable: published, level not 0 or Blocked, no block marker, no review hold; default 50, max 1000) as source `dev-backfill`. It reads `DATABASE_URL` from
   `apps/knights/.env`, is safe to repeat, and refuses to run unless the host is `localhost` or `127.0.0.1`.
+
+## Hidden checks and smites
+
+Details: [`docs/features/knights-hidden-checks-and-smites.md`](../../docs/features/knights-hidden-checks-and-smites.md); migration `20261219120000_knights_v2_smites` (by hand). Values: `hidden/config.ts`, `smites/config.ts`.
+
+- Hidden checks (`src/lib/server/hidden`): known-answer images in a Knight's feed, graded at once, never in the queue, no vote, XP or gold. Feed items are addressed by sealed tokens (`feed-token.ts`, `FEED_TOKEN_SECRET`).
+- Smites (`src/lib/server/smites`) use the shared `NewOrderSmite` table; settled correct votes work them off. The career reset goes through the main app's `resetPlayer` (`/api/mod/knights/reset-player`); active smites are the pending record and the tick retries.
 
 ## Wired packages
 

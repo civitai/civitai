@@ -8,6 +8,7 @@
     position,
     links,
   }: { status: PlayerStatus; position?: Snippet; links?: Snippet } = $props();
+  let hearts = $derived(Math.max(0, status.maxSmites - status.smites));
 </script>
 
 <p class="status">
@@ -16,6 +17,16 @@
 </p>
 <p class="status">
   Fervor {status.fervor} · Gold {status.goldEarned} earned, {status.goldPending} pending
+  ·
+  <span
+    class="hearts"
+    title="Receive {hearts} more smites and it's game over!"
+    aria-label="{hearts} of {status.maxSmites} hearts left"
+  >
+    {#each { length: status.maxSmites } as _, heart (heart)}
+      <span class:lost={heart >= hearts}>{heart < hearts ? '♥' : '♡'}</span>
+    {/each}
+  </span>
   {@render links?.()}
 </p>
 {#if status.rating.bar !== null}
@@ -44,6 +55,13 @@
 <style>
   .status {
     margin: 0 0 0.25rem;
+    color: var(--muted);
+  }
+  .hearts {
+    color: #d33;
+    letter-spacing: 0.1em;
+  }
+  .hearts .lost {
     color: var(--muted);
   }
   .below {

@@ -791,7 +791,7 @@ describe('what the feed serves', () => {
 });
 
 describe('vote weight', () => {
-  it('refuses a vote that weighs nothing, so a head always carries weight', async () => {
+  it('refuses a vote from a player whose smites call for a career reset, however many they have', async () => {
     await player(1, 'Knight');
     await pg.query(
       `INSERT INTO "NewOrderSmite" ("targetPlayerId") SELECT 1 FROM generate_series(1,6)`
@@ -799,7 +799,7 @@ describe('vote weight', () => {
     await image(10);
     const id = await item(10);
 
-    expect(await vote(1, id, '4')).toMatchObject({ status: 'rejected', reason: 'no-weight' });
+    expect(await vote(1, id, '4')).toMatchObject({ status: 'rejected', reason: 'reset-pending' });
     expect(await verdicts(id)).toEqual([]);
   });
 });

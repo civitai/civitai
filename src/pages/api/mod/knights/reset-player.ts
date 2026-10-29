@@ -9,7 +9,7 @@ const RESET_REASON = 'Your New Order career has been reset due to excessive smit
 
 const schema = z.object({ playerId: z.coerce.number().int().positive() });
 
-// The Knights app calls this when a player reaches the smite limit; the original game does the same in `smitePlayer`.
+// The Knights app calls this when a player's smites call for a reset, as the original game does in `smitePlayer`.
 // Idempotent: the limit is checked here, and the reset cleanses the smites, so a repeated call is `not-due`.
 // The Knights career-reset notice finds the reset by RESET_REASON.
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {

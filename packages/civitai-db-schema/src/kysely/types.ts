@@ -3685,6 +3685,15 @@ export type KnightsHarvestCursor = {
   lastActivityId: Generated<number>;
   updatedAt: Timestamp;
 };
+export type KnightsHiddenCheckAnswer = {
+  id: Generated<number>;
+  playerId: number;
+  referenceId: number;
+  imageId: number;
+  answer: string;
+  correct: boolean;
+  createdAt: Generated<Timestamp>;
+};
 export type KnightsPlayer = {
   playerId: number;
   streak: Generated<number>;
@@ -3692,6 +3701,10 @@ export type KnightsPlayer = {
   shields: Generated<number>;
   shieldWeek: Timestamp;
   recapDismissedFor: Timestamp | null;
+  /**
+   * When the player last dismissed the notice that a smite-triggered career reset happened.
+   */
+  resetNoticeSeenAt: Timestamp | null;
 };
 export type KnightsPlayerDay = {
   playerId: number;
@@ -6604,6 +6617,7 @@ export type DB = {
   JobQueue: JobQueue;
   KeyValue: KeyValue;
   KnightsHarvestCursor: KnightsHarvestCursor;
+  KnightsHiddenCheckAnswer: KnightsHiddenCheckAnswer;
   KnightsPlayer: KnightsPlayer;
   KnightsPlayerDay: KnightsPlayerDay;
   KnightsQuestion: KnightsQuestion;

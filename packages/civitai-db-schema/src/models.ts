@@ -5117,6 +5117,7 @@ export interface KnightsPlayer {
   shields: number;
   shieldWeek: Date;
   recapDismissedFor: Date | null;
+  resetNoticeSeenAt: Date | null;
 }
 
 export interface KnightsPlayerDay {
@@ -5144,6 +5145,7 @@ export interface KnightsReferenceImage {
   createdAt: Date;
   updatedAt: Date;
   trialAnswers?: KnightsTrialAnswer[];
+  hiddenAnswers?: KnightsHiddenCheckAnswer[];
 }
 
 export interface KnightsTrialRun {
@@ -5167,6 +5169,17 @@ export interface KnightsTrialAnswer {
   playerId: number;
   referenceId: number;
   reference?: KnightsReferenceImage;
+  answer: string;
+  correct: boolean;
+  createdAt: Date;
+}
+
+export interface KnightsHiddenCheckAnswer {
+  id: number;
+  playerId: number;
+  referenceId: number;
+  reference?: KnightsReferenceImage;
+  imageId: number;
   answer: string;
   correct: boolean;
   createdAt: Date;

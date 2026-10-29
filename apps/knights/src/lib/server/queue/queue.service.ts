@@ -9,6 +9,7 @@ import { standingOf } from '../progression/rating';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { ledgerOf, settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '../servable-image';
+import { SMITES } from '../smites/config';
 import { isRank, RANKS, type Rank } from '../ranks';
 import { canVote, FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
 import {
@@ -66,7 +67,8 @@ export type RejectReason =
   | 'not-eligible'
   | 'bad-answer'
   | 'already-voted'
-  | 'no-weight';
+  | 'no-weight'
+  | 'reset-pending';
 
 export type CastVoteResult =
   | { status: 'rejected'; reason: RejectReason }
@@ -111,6 +113,17 @@ export async function getFeed(
               .select(sql<number>`1`.as('one'))
               .whereRef('v.itemId', '=', 'i.id')
               .where('v.playerId', '=', userId)
+          )
+        )
+      )
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('KnightsHiddenCheckAnswer as h')
+              .select(sql<number>`1`.as('one'))
+              .whereRef('h.imageId', '=', 'i.imageId')
+              .where('h.playerId', '=', userId)
           )
         )
       )
@@ -331,6 +344,9 @@ export async function castVote(
           .where('targetPlayerId', '=', input.userId)
           .where('cleansedAt', 'is', null)
           .executeTakeFirstOrThrow();
+
+        // A career reset is pending; the player does not play on until it is done.
+        if (Number(smites.n) >= SMITES.max) return rejected('reset-pending');
 
         const { belowBar } = standingOf(player.rankType, await ledgerOf(trx, input.userId));
 

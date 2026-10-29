@@ -11,6 +11,8 @@ import {
   type Standing,
 } from './progression/rating';
 import { RATING } from './progression/config';
+import { SMITES } from './smites/config';
+import { activeSmiteCount } from './smites/smites.service';
 
 export type PlayerStatus = {
   rank: string;
@@ -21,6 +23,9 @@ export type PlayerStatus = {
   fervor: number;
   goldPending: number;
   goldEarned: number;
+  /** Active smites, out of `maxSmites`; the player's hearts are what is left. */
+  smites: number;
+  maxSmites: number;
   rating: Standing & { graded: number; minGraded: number };
   nextRank: {
     rank: string;
@@ -32,7 +37,7 @@ export type PlayerStatus = {
   } | null;
 };
 
-type Extras = { ledger?: Ledger; goldPending?: number; goldEarned?: number };
+type Extras = { ledger?: Ledger; goldPending?: number; goldEarned?: number; smites?: number };
 
 export function statusFrom(rank: string, exp: number, standing: Extras = {}): PlayerStatus {
   const progress = getLevelProgression(exp);
@@ -48,6 +53,8 @@ export function statusFrom(rank: string, exp: number, standing: Extras = {}): Pl
     fervor: calculateFervor(ledger),
     goldPending: standing.goldPending ?? 0,
     goldEarned: standing.goldEarned ?? 0,
+    smites: standing.smites ?? 0,
+    maxSmites: SMITES.max,
     rating: {
       graded: ledger.graded,
       minGraded: RATING.minGraded,
@@ -72,7 +79,11 @@ export async function getPlayerStatus(
     .where('userId', '=', userId)
     .executeTakeFirst();
   return player
-    ? statusFrom(player.rankType, player.exp, { ...player, ledger: await ledgerOf(db, userId) })
+    ? statusFrom(player.rankType, player.exp, {
+        ...player,
+        ledger: await ledgerOf(db, userId),
+        smites: await activeSmiteCount(db, userId),
+      })
     : null;
 }
 

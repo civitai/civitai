@@ -42,6 +42,22 @@
 </StatusBar>
 
 {#if data.mode === 'queue'}
+  {#if data.resetNotice}
+    <section class="recap" role="alert" aria-label="Career reset">
+      <div>
+        <p class="verdict">Your career has been reset.</p>
+        <p>
+          Three smites were more than the Order would bear. You are an Acolyte again at level 1, and
+          the Trials await.
+        </p>
+      </div>
+      <form method="POST" action="?/dismissResetNotice" use:enhance={submit}>
+        <button type="submit" disabled={submitting}>Understood</button>
+      </form>
+    </section>
+  {:else if data.resetPending}
+    <p class="notice" role="alert">Your career is being reset. Return in a moment.</p>
+  {/if}
   {#if data.recap}
     <section class="recap" aria-label="Recap of your last play day">
       <div>
@@ -65,6 +81,9 @@
     <img src={form.reveal.src} alt="The subject you just judged" />
     <p class="verdict">{form.reveal.correct ? 'Rightly judged.' : 'Not quite.'}</p>
     <p>The answer: {form.reveal.correctLabel}</p>
+    {#if 'consequence' in form && form.consequence}
+      <p class="penalty" role="alert">{form.consequence}</p>
+    {/if}
     {#if form.reveal.explanation}
       <p class="explanation">{form.reveal.explanation}</p>
     {/if}
@@ -123,7 +142,7 @@
   {/key}
 
   <form method="POST" action="?/vote" use:enhance={submit}>
-    <input type="hidden" name="itemId" value={data.item.id} />
+    <input type="hidden" name="item" value={data.item.id} />
     <div class="options">
       {#each data.question.options as option (option.value)}
         <button type="submit" name="answer" value={option.value} disabled={submitting}>
@@ -181,6 +200,10 @@
   }
   .verdict {
     color: var(--gold);
+  }
+  .penalty {
+    color: var(--gold);
+    font-weight: bold;
   }
   .explanation {
     color: var(--muted);
