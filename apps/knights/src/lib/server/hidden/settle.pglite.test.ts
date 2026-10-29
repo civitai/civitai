@@ -203,6 +203,22 @@ describe('grading hidden checks', () => {
     expect(await ledgerOf(db, 1)).toEqual({ correct: 0, graded: 0 });
   });
 
+  it.each([
+    ['unpublished', `UPDATE "Post" SET "publishedAt"=NULL WHERE id=10`],
+    ['blocked', `UPDATE "Image" SET "ingestion"='Blocked' WHERE id=10`],
+  ])(
+    'grades a check inconclusive, with no cost, when its image was %s since',
+    async (_label, change) => {
+      await seedPlayer(pg, 1);
+      await answer(1, await reference(10, '16'), '2');
+      await pg.query(change);
+      await settle(minutes(31));
+      expect((await vote(1))[0]).toMatchObject({ verdict: 'inconclusive', consequence: null });
+      expect(await smites(1)).toHaveLength(0);
+      expect((await player(1)).goldPending).toBe(0);
+    }
+  );
+
   it('grades a check once', async () => {
     await seedPlayer(pg, 1);
     await answer(1, await reference(10), '4');

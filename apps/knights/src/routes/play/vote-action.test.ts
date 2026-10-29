@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const castVote = vi.hoisted(() => vi.fn());
+const feedSecretMock = vi.hoisted(() => vi.fn(() => 'secret'));
 const answerHiddenCheck = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
@@ -8,7 +9,7 @@ vi.mock('$lib/server/queue/runtime', () => ({
   queueDeps: { now: () => new Date('2026-12-15T12:00:00Z') },
 }));
 vi.mock('$lib/server/daily/daily.service', () => ({}));
-vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
+vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: feedSecretMock, resetDeps: {} }));
 vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 1 }) }));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
@@ -92,6 +93,18 @@ describe('vote action', () => {
       expect.objectContaining({ userId: 7, isModerator: true }),
       expect.anything()
     );
+  });
+
+  it('answers with the normal failure, not a thrown error, when the feed key is missing', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    feedSecretMock.mockImplementationOnce(() => {
+      throw new Error('FEED_TOKEN_SECRET is not configured');
+    });
+    expect(await submit({ item: queueItem(3), answer: '4' })).toMatchObject({
+      status: 500,
+      data: { message: expect.stringMatching(/try again/i) },
+    });
+    expect(castVote).not.toHaveBeenCalled();
   });
 
   it('asks for an answer when the form is incomplete', async () => {

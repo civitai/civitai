@@ -146,7 +146,13 @@ export const actions: Actions = {
     if (typeof token !== 'string' || typeof answer !== 'string') {
       return fail(400, { message: 'Pick an answer.' });
     }
-    const ref = openItem(feedSecret(), locals.user.id, token);
+    let ref: ReturnType<typeof openItem>;
+    try {
+      ref = openItem(feedSecret(), locals.user.id, token);
+    } catch (error) {
+      console.error('knights: the feed cannot be served', { error });
+      return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });
+    }
     if (!ref) return fail(400, { message: 'Pick an answer.' });
     const itemId = ref.id;
 

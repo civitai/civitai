@@ -791,6 +791,26 @@ describe('what the feed serves', () => {
 });
 
 describe('vote weight', () => {
+  it('lowers a vote by each active smite, and still counts the vote below the reset limit', async () => {
+    await player(1, 'Knight');
+    await player(2, 'Knight');
+    await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (2),(2)`);
+    await image(10);
+    const id = await item(10);
+
+    expect(await vote(1, id, '4')).toMatchObject({ status: 'recorded' });
+    expect(await vote(2, id, '4')).toMatchObject({ status: 'recorded' });
+
+    const weights = (
+      await pg.query<{ playerId: number; weight: number }>(
+        `SELECT "playerId", weight FROM "KnightsVote" WHERE "itemId"=$1 ORDER BY "playerId"`,
+        [id]
+      )
+    ).rows;
+    expect(weights[1].weight).toBeGreaterThan(0);
+    expect(weights[1].weight).toBeLessThan(weights[0].weight);
+  });
+
   it('refuses a vote from a player whose smites call for a career reset, however many they have', async () => {
     await player(1, 'Knight');
     await pg.query(

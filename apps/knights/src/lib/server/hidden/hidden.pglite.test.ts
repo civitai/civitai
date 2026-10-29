@@ -184,6 +184,25 @@ describe('answering a hidden check', () => {
     expect(await answer(1, 9999, '4')).toEqual({ status: 'rejected', reason: 'unavailable' });
   });
 
+  it('answers a check whose image is gone exactly as it answers a queue item whose image is gone', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    const ref = await reference(10);
+    await seedImage(pg, 11);
+    const item = await enqueueItem(db, { questionKey: Q, imageId: 11, source: 'test' }, NOW);
+    await pg.query(`UPDATE "Post" SET "publishedAt"=NULL WHERE id IN (10, 11)`);
+
+    const asCheck = await answer(1, ref, '4');
+    const asVote = await castVote(
+      db,
+      { userId: 2, itemId: item, answer: '4' },
+      { applyConsensus: async () => ({ outcome: 'applied' }), now: () => NOW }
+    );
+    expect(asCheck).toEqual(asVote);
+    expect(asCheck).toEqual({ status: 'rejected', reason: 'unavailable' });
+    expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toHaveLength(0);
+  });
+
   it('refuses like a vote while a career reset is pending', async () => {
     await seedPlayer(pg, 1);
     await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (1),(1),(1)`);

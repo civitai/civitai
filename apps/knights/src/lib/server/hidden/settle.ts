@@ -1,4 +1,5 @@
 import { sql, type Kysely } from 'kysely';
+import { servableImage } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
@@ -42,12 +43,16 @@ export async function settleHiddenChecks(
       .execute();
     if (due.length === 0) return { graded: 0, failed: 0, xp: [], resetFor: [] as number[] };
 
+    // A check whose image has since gone (removed, blocked, unpublished) is not graded: nothing is paid or penalised.
     const known = new Map(
       (
         await trx
-          .selectFrom('KnightsReferenceImage')
-          .select(['id', 'answer'])
-          .where('id', 'in', [...new Set(due.map((v) => -v.itemId))])
+          .selectFrom('KnightsReferenceImage as r')
+          .innerJoin('Image as img', 'img.id', 'r.imageId')
+          .innerJoin('Post as p', 'p.id', 'img.postId')
+          .select(['r.id', 'r.answer'])
+          .where('r.id', 'in', [...new Set(due.map((v) => -v.itemId))])
+          .where(servableImage)
           .execute()
       ).map((r) => [r.id, r.answer])
     );
