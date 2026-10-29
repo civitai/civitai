@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { sql, type Kysely } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
@@ -13,13 +14,25 @@ const CLAIM_CHUNK = 1000;
 /** What `claim` stores in `KnightsNotificationSend.type`: the kind, not the notification type. */
 const VERDICTS_KIND: NotifyKind = 'verdicts';
 
-/** One bulk notification: the same message for every user in it. */
 export type NotificationBatch = { kind: NotifyKind; type: string; key: string; userIds: number[] };
 export type SendBatch = (batch: NotificationBatch) => Promise<void>;
 
-export type NotifyResult = { sent: Record<NotifyKind, number>; failed: number };
+/** Thrown by a sender when the notifications app certainly did not accept the batch, so its claims can be released. */
+export class BatchRejected extends Error {
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = 'BatchRejected';
+  }
+}
 
-/** Players who opted into `kind` and have not been sent anything on `day`. */
+export type NotifyResult = {
+  sent: Record<NotifyKind, number>;
+  /** Players whose batch was refused; their slot was given back. */
+  failed: number;
+  /** Players whose batch may or may not have been saved; their slot is kept. */
+  unconfirmed: number;
+};
+
 const subscribers = (db: Kysely<DB>, kind: NotifyKind, day: Day) =>
   db
     .selectFrom('UserNotificationSettings as s')
@@ -30,10 +43,7 @@ const subscribers = (db: Kysely<DB>, kind: NotifyKind, day: Day) =>
       )})`
     );
 
-/**
- * Subscribers whose votes settled since they last played and since they were last told about verdicts.
- * "Played" is the player's newest vote: any vote after a settlement means they have seen it.
- */
+/** A vote cast after a settlement counts as having seen it. */
 async function withNewVerdicts(db: Kysely<DB>, day: Day, now: Date): Promise<number[]> {
   const day_ms = 86_400_000;
   const searchFrom = new Date(now.getTime() - NOTIFY.voteSearchDays * day_ms);
@@ -57,7 +67,6 @@ async function withNewVerdicts(db: Kysely<DB>, day: Day, now: Date): Promise<num
   return rows.map((r) => r.userId);
 }
 
-/** Subscribers with a live streak, no Watch yet today, and no shield that would cover the miss. */
 async function withStreakAtRisk(db: Kysely<DB>, day: Day): Promise<number[]> {
   const rows = await subscribers(db, 'streak', day)
     .innerJoin('KnightsPlayer as k', 'k.playerId', 's.userId')
@@ -95,8 +104,17 @@ async function withStreakAtRisk(db: Kysely<DB>, day: Day): Promise<number[]> {
     .map((row) => row.userId);
 }
 
-/** Subscribers of a voting rank for whom the queue holds an item they have not voted on. */
 async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
+  // A vote cannot predate its item, so no open item has votes before the oldest one; the constant
+  // bound on the partition key lets Postgres skip older monthly partitions (a bound that references
+  // the item's own createdAt does not prune).
+  const oldest = await db
+    .selectFrom('KnightsQueueItem')
+    .select((eb) => eb.fn.min('createdAt').as('at'))
+    .where('status', '=', 'Open')
+    .executeTakeFirst();
+  if (!oldest?.at) return [];
+  const oldestOpen = oldest.at;
   const found: number[] = [];
   for (const rank of RANKS) {
     const stages = stagesWorkedBy(rank);
@@ -111,7 +129,9 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
             .select(sql<number>`1`.as('one'))
             .where('i.minRank', 'in', stages)
             .where(
-              sql<boolean>`not exists (select 1 from "KnightsVote" v where v."itemId" = i."id" and v."playerId" = s."userId")`
+              sql<boolean>`not exists (select 1 from "KnightsVote" v where v."itemId" = i."id" and v."playerId" = s."userId" and v."createdAt" >= ${utc(
+                oldestOpen
+              )})`
             )
         )
       )
@@ -122,9 +142,8 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
 }
 
 /**
- * Picks at most one notification per player for the UTC day of `now`: verdicts, then a streak
- * warning (from `streakWarningHourUtc`), then new images. Until the warning hour a player whose
- * streak is at risk is held back from "new images", so the warning still has the day's slot.
+ * At most one per player per UTC day: verdicts, then streak (from `streakWarningHourUtc`), then new
+ * images. Before that hour an at-risk player is held back from new images so the warning keeps the slot.
  */
 export async function planNotifications(
   db: Kysely<DB>,
@@ -150,7 +169,7 @@ export async function planNotifications(
   return plan;
 }
 
-/** The send claim is the day's one slot: whoever inserts it sends, a rerun finds it taken. */
+/** Insert-first is the dedupe: concurrent or repeated runs cannot both send to a player. */
 async function claim(
   db: Kysely<DB>,
   kind: NotifyKind,
@@ -175,16 +194,40 @@ const release = (db: Kysely<DB>, kind: NotifyKind, day: Day, ids: number[]) =>
     .where('playerId', 'in', ids)
     .execute();
 
-/** Plans, claims each player's slot, then sends. A batch that fails to send gives its slots back so the next run retries it. */
+/** The same chunk of players always gets the same key, so a retry of it can be recognised server-side. */
+const batchKey = (kind: NotifyKind, day: Day, userIds: number[]) =>
+  `knights-daily:${kind}:${day}:${createHash('sha1').update(userIds.join(',')).digest('hex')}`;
+
+/**
+ * Plans, claims each player's slot, then sends. A refused batch gives its slots back for the next run;
+ * one whose outcome is unknown keeps them, because a retry could send a second notification that day.
+ */
 export async function sendNotifications(
   db: Kysely<DB>,
-  { now, send }: { now: Date; send: SendBatch }
+  {
+    now,
+    send,
+    accessible,
+  }: {
+    now: Date;
+    send: SendBatch;
+    /** The ids among those given who can open the app today. */
+    accessible: (ids: number[]) => Promise<number[]>;
+  }
 ): Promise<NotifyResult> {
   const day = utcDay(now);
-  const plan = await planNotifications(db, now);
+  const planned = await planNotifications(db, now);
+  const open = new Set(await accessible([...new Set(Object.values(planned).flat())]));
+  const plan = Object.fromEntries(
+    NOTIFY_KINDS.map(({ kind }) => [
+      kind,
+      planned[kind].filter((id) => open.has(id)).sort((a, b) => a - b),
+    ])
+  ) as Record<NotifyKind, number[]>;
   const result: NotifyResult = {
     sent: { verdicts: 0, streak: 0, 'new-images': 0 },
     failed: 0,
+    unconfirmed: 0,
   };
 
   for (const { kind } of NOTIFY_KINDS) {
@@ -192,10 +235,11 @@ export async function sendNotifications(
     for (let at = 0; at < ids.length; at += CLAIM_CHUNK) {
       const claimed = await claim(db, kind, day, ids.slice(at, at + CLAIM_CHUNK), now);
       if (claimed.length === 0) continue;
+      claimed.sort((a, b) => a - b);
       const batch: NotificationBatch = {
         kind,
         type: typeOf(kind),
-        key: `knights-daily:${kind}:${day}:${now.getTime()}:${at}`,
+        key: batchKey(kind, day, claimed),
         userIds: claimed,
       };
       try {
@@ -203,8 +247,12 @@ export async function sendNotifications(
         result.sent[kind] += claimed.length;
       } catch (error) {
         console.error(`knights: ${kind} notification batch failed`, error);
-        result.failed += claimed.length;
-        await release(db, kind, day, claimed);
+        if (error instanceof BatchRejected) {
+          result.failed += claimed.length;
+          await release(db, kind, day, claimed);
+        } else {
+          result.unconfirmed += claimed.length;
+        }
       }
     }
   }

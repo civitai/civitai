@@ -6,7 +6,7 @@ import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { enqueueItem, ensureVotePartitions } from '../queue/queue.service';
 import { typeOf, type NotifyKind } from './config';
-import { sendNotifications, type NotificationBatch } from './notify.service';
+import { BatchRejected, sendNotifications, type NotificationBatch } from './notify.service';
 
 const Q = 'knights.image.nsfwLevel';
 const TODAY = '2026-12-17';
@@ -62,12 +62,15 @@ const seedSettledVote = (playerId: number, settledAt = '2026-12-16 10:00:00') =>
     [playerId * 100, playerId, Q, settledAt]
   );
 
-function runner() {
+const everyone = async (ids: number[]) => ids;
+
+function runner({ blocked = [] as number[] } = {}) {
   const batches: NotificationBatch[] = [];
   const send = vi.fn(async (batch: NotificationBatch) => {
     batches.push(batch);
   });
-  const run = (now: Date) => sendNotifications(db, { now, send });
+  const accessible = async (ids: number[]) => ids.filter((id) => !blocked.includes(id));
+  const run = (now: Date) => sendNotifications(db, { now, send, accessible });
   const received = () => {
     const out = new Map<number, NotifyKind[]>();
     for (const b of batches)
@@ -176,7 +179,7 @@ describe('sendNotifications', () => {
     await enqueueImage();
     await pg.query(
       `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
-       SELECT id,1,'2026-12-16 08:00:00',$1,"imageId",'Knight','4',1 FROM "KnightsQueueItem"`,
+       SELECT id,1,'2026-12-17 08:00:00',$1,"imageId",'Knight','4',1 FROM "KnightsQueueItem"`,
       [Q]
     );
     const { run, received } = runner();
@@ -248,18 +251,47 @@ describe('sendNotifications', () => {
     expect(received().get(1)).toEqual(['verdicts', 'new-images']);
   });
 
-  it('gives the day back when a send fails, so the next run retries', async () => {
+  it('gives the day back when the notifications app refuses a batch, and retries it under the same key', async () => {
     await seedPlayer(pg, 1);
     await subscribe(1, 'new-images');
     await enqueueImage();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    const failing = vi.fn().mockRejectedValue(new Error('down'));
+    const refusing = vi.fn().mockRejectedValue(new BatchRejected('bad request'));
 
-    const first = await sendNotifications(db, { now: at(9), send: failing });
-    expect(first.failed).toBe(1);
+    const first = await sendNotifications(db, { now: at(9), send: refusing, accessible: everyone });
+    expect(first).toMatchObject({ failed: 1, unconfirmed: 0 });
+
+    const { run, received, send } = runner();
+    await run(at(10));
+    expect(received().get(1)).toEqual(['new-images']);
+    expect(send.mock.calls[0]![0].key).toBe(refusing.mock.calls[0]![0].key);
+  });
+
+  it('keeps the day when the outcome of a send is unknown, so a retry cannot double-send', async () => {
+    await seedPlayer(pg, 1);
+    await subscribe(1, 'new-images');
+    await enqueueImage();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const timedOut = vi.fn().mockRejectedValue(new Error('timeout'));
+
+    const first = await sendNotifications(db, { now: at(9), send: timedOut, accessible: everyone });
+    expect(first).toMatchObject({ failed: 0, unconfirmed: 1 });
 
     const { run, received } = runner();
     await run(at(10));
-    expect(received().get(1)).toEqual(['new-images']);
+    expect(received().size).toBe(0);
+  });
+
+  it('notifies only players who can open the app', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await subscribe(1, 'new-images');
+    await subscribe(2, 'new-images');
+    await enqueueImage();
+    const { run, received } = runner({ blocked: [2] });
+
+    await run(at(12));
+
+    expect([...received().keys()]).toEqual([1]);
   });
 });

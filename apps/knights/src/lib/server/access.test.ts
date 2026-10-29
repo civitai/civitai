@@ -9,7 +9,7 @@ vi.mock('@civitai/flipt/context', () => ({
   buildFliptContext: (user: { id: number }) => ({ userId: String(user.id) }),
 }));
 
-const { accessFor, KNIGHTS_APP_FLAG } = await import('./access');
+const { accessFor, accessibleIds, KNIGHTS_APP_FLAG } = await import('./access');
 
 const user = (isModerator = false) => ({ id: 7, isModerator } as never);
 
@@ -41,5 +41,30 @@ describe('accessFor', () => {
     flipt.ensureInitialized.mockRejectedValue(new Error('flipt unreachable'));
     expect(await accessFor(user())).toBe('closed');
     expect(await accessFor(user(true))).toBe('allow');
+  });
+});
+
+describe('accessibleIds', () => {
+  it('lets in moderators and users the flag is on for, and nobody else', async () => {
+    flipt.isEnabledSync.mockImplementation((_flag, entity) => entity === '2');
+
+    const open = await accessibleIds([
+      { id: 1, isModerator: true },
+      { id: 2, isModerator: false },
+      { id: 3, isModerator: false },
+    ]);
+
+    expect(open).toEqual([1, 2]);
+  });
+
+  it('lets in only moderators when Flipt is down', async () => {
+    flipt.ensureInitialized.mockRejectedValue(new Error('down'));
+
+    const open = await accessibleIds([
+      { id: 1, isModerator: true },
+      { id: 2, isModerator: false },
+    ]);
+
+    expect(open).toEqual([1]);
   });
 });

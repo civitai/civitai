@@ -13,9 +13,8 @@ export type NotifyKind = (typeof NOTIFY_KINDS)[number]['kind'];
 export const typeOf = (kind: NotifyKind): string => NOTIFY_KINDS.find((k) => k.kind === kind)!.type;
 
 export const NOTIFY = {
-  /** "Streak ends soon" goes out from this UTC hour; until then a player with a streak at risk is held back from the other two. */
+  /** UTC hour from which "streak ends soon" is sent. */
   streakWarningHourUtc: 21,
-  /** A settled vote older than this no longer counts as news. */
   verdictLookbackDays: 3,
   /** Votes older than this are not searched at all (the ledger is partitioned by month). */
   voteSearchDays: 30,

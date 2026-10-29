@@ -45,8 +45,7 @@ Defined once in `packages/civitai-notifications/src/constants.ts` and re-exporte
 
 Processors live in `src/server/notifications/*.notifications.ts`, are built with
 `createNotificationProcessor()` from `base.notifications.ts`, and are collected in the
-`utils.notifications.ts` registry. Each defines query preparation, message formatting, and its
-category/settings.
+`utils.notifications.ts` registry. Each defines query preparation, message formatting, and its category/settings. An optional `section` groups a type under its own heading in the settings UI instead of its category's (the Knights of New Order types); the notification itself keeps its `category`.
 
 The registry is large and covers far more than the obvious feature areas — read it rather than
 assuming a notification type doesn't exist yet.
@@ -103,6 +102,13 @@ Omit it and the toggle renders, saves, and does nothing.
 in `pnpm run test:lint-rules`. Its file lists name `NotificationsCard.tsx` only — the
 `accountSettingsV2` pane is not yet covered. Its `KNOWN_INERT` list is empty and pinned, so a new inert type fails
 there rather than shipping unmuteable.
+
+An `optIn` type inverts this: a row means subscribed, and the processor's `prepareQuery` must derive
+recipients by joining `UserNotificationSettings` (the polarity test checks it). An `externalProducer`
+type is the exception: another app (today `apps/knights`, `/api/jobs/notify`) reads the subscribers
+itself and sends through the bulk path, so the processor has **no** `prepareQuery` and must be `optIn`.
+Adding a query there would run a second recipient derivation; leaving the type off the event path is
+deliberate, because `createNotification` would drop exactly the subscribers.
 
 ## Caching
 

@@ -1,5 +1,5 @@
 import { createFliptClient, type FliptFeatureFlags } from '@civitai/flipt';
-import { buildFliptContext } from '@civitai/flipt/context';
+import { buildFliptContext, type FliptTargetUser } from '@civitai/flipt/context';
 import type { SessionUser } from '@civitai/auth';
 import { decideAccess, type Access } from '$lib/access';
 
@@ -18,7 +18,7 @@ function getFlipt(): FliptFeatureFlags {
 }
 
 // Segments match on context properties, not the entity id; a context-less call matches no segment.
-async function isFlagOn(user: SessionUser): Promise<boolean> {
+async function isFlagOn(user: FliptTargetUser): Promise<boolean> {
   try {
     const flipt = getFlipt();
     await flipt.ensureInitialized();
@@ -32,4 +32,21 @@ async function isFlagOn(user: SessionUser): Promise<boolean> {
 export async function accessFor(user: SessionUser): Promise<Access> {
   const isModerator = user.isModerator === true;
   return decideAccess({ isModerator, flagOn: isModerator ? false : await isFlagOn(user) });
+}
+
+/**
+ * The ids among `users` that `accessFor` would let in, without a session. Flipt evaluates locally, so a
+ * batch costs no network call per user. The context carries only the id and moderator status, so a
+ * segment that matches on tier or early-adopter status does not see those users here: they are skipped,
+ * never notified by mistake.
+ */
+export async function accessibleIds(
+  users: { id: number; isModerator: boolean }[]
+): Promise<number[]> {
+  const open: number[] = [];
+  for (const user of users) {
+    const flagOn = user.isModerator ? false : await isFlagOn({ id: user.id });
+    if (decideAccess({ isModerator: user.isModerator, flagOn }) === 'allow') open.push(user.id);
+  }
+  return open;
 }

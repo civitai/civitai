@@ -71,8 +71,8 @@ export const voidStreak = (state: StreakState): StreakState => ({
 });
 
 /**
- * The streak a career reset has not ended: the last Watch must have been completed at or after
- * `startAt`. `lastWatchCompletedAt` is only read when that Watch fell on the reset's own day.
+ * The streak a career reset has not ended: the last Watch must have been completed at or after `startAt`.
+ * `lastWatchCompletedAt` only matters when the last Watch fell on the reset's own day, so callers may skip loading it otherwise.
  */
 export function streakAfterReset(
   state: StreakState,
