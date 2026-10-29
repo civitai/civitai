@@ -177,5 +177,12 @@ describe('draft sticker handles on a phone', () => {
     const { x, y } = centre(artwork.getBoundingClientRect());
 
     expect(handles()).not.toContain(document.elementFromPoint(x, y));
+
+    // And each corner's ring leaves the side facing the body to the body.
+    for (const handle of handles().filter((h) => h.getBoundingClientRect().width < 14)) {
+      const dot = centre(handle.getBoundingClientRect());
+      const inward = { x: dot.x + Math.sign(x - dot.x) * 12, y: dot.y + Math.sign(y - dot.y) * 12 };
+      expect(document.elementFromPoint(inward.x, inward.y), 'inward of a corner').not.toBe(handle);
+    }
   });
 });

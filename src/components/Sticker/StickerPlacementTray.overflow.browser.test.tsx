@@ -7,6 +7,7 @@ import type * as StickerUtil from '~/components/Sticker/sticker.util';
 import type * as Trpc from '~/utils/trpc';
 import { LOADABLE_IMAGE_DATA_URI, renderWithProviders } from '../../../test/component-setup';
 import { makeTrpcProxy } from '../../../test/trpcProxyStub';
+import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
 import { IsClientProvider } from '~/providers/IsClientProvider';
 import { StickerPlacementTray } from '~/components/Sticker/StickerPlacementTray';
 
@@ -169,5 +170,11 @@ describe('sticker placement tray on a phone', () => {
 
     expect(style.touchAction).toBe('pan-y');
     expect(style.userSelect).toBe('none');
+  });
+
+  test("a swipe on the tray is the tray's, not the image carousel's", async () => {
+    await renderTray();
+    const tile = document.querySelector('img[alt=":letter-0:"]') as HTMLElement;
+    expect(tile.closest(`[${STICKER_EDITOR_ATTR}]`)).not.toBeNull();
   });
 });

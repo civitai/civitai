@@ -68,8 +68,7 @@ describe('watchTouchDrag', () => {
   test('a swipe on the image changes slide', async () => {
     const embla = await renderCarousel();
     swipe(document.querySelector('[data-testid="image"]') as Element);
-    await settle();
-    expect(embla().selectedScrollSnap()).toBe(1);
+    await expect.poll(() => embla().selectedScrollSnap()).toBe(1);
   });
 
   test('a drag on a sticker being placed leaves the slide where it is', async () => {

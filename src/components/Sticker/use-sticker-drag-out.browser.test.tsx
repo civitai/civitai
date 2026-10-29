@@ -7,11 +7,13 @@ import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.s
 const COSMETIC_ID = 5;
 
 function Shelf() {
-  const { grab } = useStickerDragOut(0.5);
+  const { grab, shelfRef } = useStickerDragOut(0.5);
   return (
-    <button type="button" data-testid="tile" onPointerDown={grab(COSMETIC_ID)}>
-      sticker
-    </button>
+    <div ref={shelfRef}>
+      <button type="button" data-testid="tile" onPointerDown={grab(COSMETIC_ID)}>
+        sticker
+      </button>
+    </div>
   );
 }
 
@@ -73,9 +75,7 @@ describe('picking a sticker off the shelf', () => {
 
   test('a tap adds the sticker where the image is in view', async () => {
     const button = await tile();
-    const down = press('pointerdown', 'touch', 150, 400, button);
-    // Not claimed, so the browser is still free to scroll the shelf.
-    expect(down.defaultPrevented).toBe(false);
+    press('pointerdown', 'touch', 150, 400, button);
     press('pointerup', 'touch', 150, 400, window);
 
     expect(drafts()).toHaveLength(1);
@@ -97,7 +97,31 @@ describe('picking a sticker off the shelf', () => {
     await new Promise((resolve) => setTimeout(resolve, LONG_PRESS_MS + 50));
     press('pointermove', 'touch', 60, 90, window);
 
-    expect(drafts()).toHaveLength(1);
+    await expect.poll(() => drafts()).toHaveLength(1);
     expect(drafts()[0]).toMatchObject({ cosmeticId: COSMETIC_ID, x: 0.2, y: 0.3 });
+  });
+
+  // `pan-y` lets the press start as a scroll candidate; once a sticker is picked
+  // up, only a cancelled touchmove keeps the page from scrolling under it, and
+  // that holds until the finger lifts — the same touch goes on to move the draft.
+  test('the page scrolls until a sticker is picked up, then holds still until the finger lifts', async () => {
+    const button = await tile();
+    const scrolls = () => {
+      const move = new TouchEvent('touchmove', { bubbles: true, cancelable: true });
+      button.dispatchEvent(move);
+      return !move.defaultPrevented;
+    };
+    press('pointerdown', 'touch', 150, 400, button);
+    expect(scrolls()).toBe(true);
+
+    await new Promise((resolve) => setTimeout(resolve, LONG_PRESS_MS + 50));
+    await expect.poll(scrolls).toBe(false);
+
+    press('pointermove', 'touch', 60, 90, window);
+    await expect.poll(() => drafts()).toHaveLength(1);
+    expect(scrolls()).toBe(false);
+
+    window.dispatchEvent(new TouchEvent('touchend'));
+    expect(scrolls()).toBe(true);
   });
 });

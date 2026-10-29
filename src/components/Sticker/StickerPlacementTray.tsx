@@ -168,7 +168,7 @@ export function StickerPlacementTray({
   // The creator's ceiling, not just the global one. Read before the early return
   // below, because the pickup gesture is a hook and cannot be conditional.
   const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
-  const { grab, dragging } = useStickerDragOut(maxScale);
+  const { grab, dragging, shelfRef } = useStickerDragOut(maxScale);
 
   /**
    * What the tray actually draws: the collection filtered by what was typed, in
@@ -422,6 +422,7 @@ export function StickerPlacementTray({
               came out wider than the visible panel, putting the track's end and the last
               sticker outside the clip. */}
           <div
+            ref={shelfRef}
             className="overflow-y-auto"
             style={{ maxHeight: trayRowsHeight(2), scrollbarWidth: 'thin' }}
           >

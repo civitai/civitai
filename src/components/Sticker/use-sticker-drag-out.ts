@@ -1,5 +1,5 @@
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Box } from '~/components/Sticker/place-button-position';
 import type { DraftPurchase } from '~/store/sticker-placement-draft.store';
 import {
@@ -36,6 +36,24 @@ export function useStickerDragOut(maxScale: number) {
   // A gesture in flight when the surface unmounts would leave window listeners
   // behind and could drop a sticker onto an image nobody is looking at any more.
   useEffect(() => () => endGrab.current?.(), []);
+
+  // 🔴 ON THE SHELF FROM MOUNT, NOT ADDED AT THE LONG PRESS. Browsers decide when
+  // a touch starts whether its moves can be cancelled at all; a listener added
+  // mid-gesture gets `cancelable: false` and the page scrolls anyway. Held
+  // until the finger lifts, not just until the draft exists: the same touch
+  // goes on to move the draft, still under the tile's `pan-y`.
+  const holding = useRef(false);
+  const shelfCleanup = useRef<(() => void) | null>(null);
+  const shelfRef = useCallback((node: HTMLElement | null) => {
+    shelfCleanup.current?.();
+    shelfCleanup.current = null;
+    if (!node) return;
+    const block = (move: TouchEvent) => {
+      if (holding.current && move.cancelable) move.preventDefault();
+    };
+    node.addEventListener('touchmove', block, { passive: false });
+    shelfCleanup.current = () => node.removeEventListener('touchmove', block);
+  }, []);
 
   const grab = (cosmeticId: number, purchase?: DraftPurchase) => (event: ReactPointerEvent) => {
     // No pickup while a drag is already in flight. The layer holds one
@@ -102,15 +120,17 @@ export function useStickerDragOut(maxScale: number) {
     event: ReactPointerEvent
   ) => {
     endGrab.current?.();
+    // Claims nothing but the emulated mouse events a tap would otherwise fire,
+    // which open the shop tile's hover card; scrolling is `touch-action`'s call.
+    event.preventDefault();
     const { pointerId } = event;
     const tile = event.currentTarget;
     let press = startTouchPress(event.clientX, event.clientY, event.timeStamp);
 
-    // From the long press on, the finger is carrying a sticker: the page must
-    // not scroll under it. Only a non-passive touchmove can still refuse that
-    // once `touch-action: pan-y` has let the gesture start as a scroll candidate.
-    const holdPage = (touch: TouchEvent) => {
-      if (touch.cancelable) touch.preventDefault();
+    const letGo = () => {
+      holding.current = false;
+      window.removeEventListener('touchend', letGo);
+      window.removeEventListener('touchcancel', letGo);
     };
 
     const step = (input: TouchPressInput) => {
@@ -118,7 +138,9 @@ export function useStickerDragOut(maxScale: number) {
       press = next;
       if (action === 'arm') {
         setDragging(cosmeticId);
-        window.addEventListener('touchmove', holdPage, { passive: false });
+        holding.current = true;
+        window.addEventListener('touchend', letGo);
+        window.addEventListener('touchcancel', letGo);
         try {
           tile.setPointerCapture(pointerId);
         } catch {
@@ -127,6 +149,11 @@ export function useStickerDragOut(maxScale: number) {
       } else if (action === 'drag' && input.type === 'move') {
         const at = pointerOverSurface(input.x, input.y);
         if (!at) return;
+        // Another finger may have started a gesture during the long press.
+        if (useStickerPlacementDraftStore.getState().interaction) {
+          letGo();
+          return teardown();
+        }
         useStickerPlacementDraftStore.getState().begin(cosmeticId, at, maxScale, purchase);
         useStickerPlacementDraftStore.getState().setInteraction('move', pointerId);
         teardown();
@@ -136,6 +163,7 @@ export function useStickerDragOut(maxScale: number) {
           .begin(cosmeticId, centreInView(), maxScale, purchase);
         teardown();
       } else if (action === 'abort') {
+        letGo();
         teardown();
       }
     };
@@ -157,7 +185,6 @@ export function useStickerDragOut(maxScale: number) {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       window.removeEventListener('pointercancel', onCancel);
-      window.removeEventListener('touchmove', holdPage);
       endGrab.current = null;
       setDragging(null);
     };
@@ -168,7 +195,7 @@ export function useStickerDragOut(maxScale: number) {
     window.addEventListener('pointercancel', onCancel);
   };
 
-  return { grab, dragging };
+  return { grab, dragging, shelfRef };
 }
 
 /** How long a still finger has to rest on a sticker to pick it up. */
