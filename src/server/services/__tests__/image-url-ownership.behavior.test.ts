@@ -205,6 +205,17 @@ describe('assertClientImageUrlsUsable and shop artwork', () => {
     expect(await stored(OTHERS_LIVE_KEY)).toBeInstanceOf(TRPCError);
   });
 
+  it('refuses to run a shop artwork write without the shop artwork check', async () => {
+    await expect(
+      assertClientImageUrlsUsable({
+        urls: [SHOP_KEY],
+        userId: CALLER,
+        shopRow: {},
+        shopArtwork: false,
+      })
+    ).rejects.toThrow(/needs the shop artwork check/);
+  });
+
   it('ignores a cosmetic the shop does not sell', async () => {
     await holder.db.exec(`INSERT INTO "Cosmetic" (id, data) VALUES (1, '{"url":"${SHOP_KEY}"}')`);
 

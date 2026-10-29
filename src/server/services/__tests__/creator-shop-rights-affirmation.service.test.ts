@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 import {
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
@@ -19,6 +20,12 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
+const { assertUsableSpy } = vi.hoisted(() => ({ assertUsableSpy: vi.fn() }));
+vi.mock('~/server/services/image-url-ownership', async (importOriginal) => {
+  const actual = await importOriginal<typeof ImageUrlOwnership>();
+  assertUsableSpy.mockImplementation(actual.assertClientImageUrlsUsable);
+  return { ...actual, assertClientImageUrlsUsable: assertUsableSpy };
+});
 vi.mock('sharp', () => ({
   default: () => ({ metadata: mocks.sharpMetadata }),
 }));
@@ -230,7 +237,7 @@ describe('artwork key already in use', () => {
     ).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
     expect(probes).toHaveLength(1);
     // Checked as a shop write: no image row may hold the key, the creator's own included.
-    expect(probes[0][1]).toBe(true);
+    expect(assertUsableSpy).toHaveBeenCalledWith(expect.objectContaining({ shopRow: {} }));
     expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
     expect(mocks.cosmeticCreate).not.toHaveBeenCalled();
   });
@@ -258,7 +265,8 @@ describe('artwork key already in use', () => {
     ).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
     expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
     expect(probes).toHaveLength(1);
-    // Bound as: keys, shop write, owner, keys, own cosmetic, keys, own pack, keys, own box.
-    expect([probes[0][1], probes[0][4], probes[0][6], probes[0][8]]).toEqual([true, 7, null, null]);
+    expect(assertUsableSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 11, shopRow: { cosmeticId: 7 } })
+    );
   });
 });
