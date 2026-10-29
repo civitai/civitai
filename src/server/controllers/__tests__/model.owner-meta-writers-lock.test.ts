@@ -86,3 +86,52 @@ it('keeps what was written since when an owner sets the showcase collection', as
   await setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER });
   expect(written()).toEqual({ note: 1, ...WRITTEN_SINCE, showcaseCollectionId: 9 });
 });
+
+it('keeps what was written since when a moderator takes the model down', async () => {
+  await changeModelModifierHandler({ input: { id: MODEL, mode: 'TakenDown' }, ctx: ctx(true) });
+  expect(written()).toEqual({
+    note: 1,
+    ...WRITTEN_SINCE,
+    takenDownAt: expect.any(String),
+    takenDownBy: OWNER,
+  });
+});
+
+it('drops the archive stamps, and keeps what was written since, when an owner unarchives', async () => {
+  for (const db of [dbMock.dbRead, dbMock.dbWrite])
+    db.model.findFirst.mockResolvedValue({ id: MODEL, mode: 'Archived' } as never);
+  dbMock.dbWrite.model.findUnique.mockImplementation((async () =>
+    lockHeld
+      ? { meta: { note: 1, ...WRITTEN_SINCE, archivedAt: 'then', archivedBy: OWNER } }
+      : null) as never);
+
+  await changeModelModifierHandler({ input: { id: MODEL, mode: null }, ctx: ctx() });
+
+  expect(written()).toEqual({ note: 1, ...WRITTEN_SINCE });
+});
+
+it('stores a cleared showcase as null', async () => {
+  await setModelShowcaseCollection({ id: MODEL, collectionId: null, userId: OWNER });
+  expect(written()).toEqual({ note: 1, ...WRITTEN_SINCE, showcaseCollectionId: null });
+});
+
+it('refuses an owner’s archive when a moderator took the model down after the read', async () => {
+  dbMock.dbWrite.model.findUnique.mockImplementation((async () =>
+    lockHeld
+      ? { mode: 'TakenDown', meta: { note: 1, takenDownAt: 'then', takenDownBy: 7 } }
+      : null) as never);
+
+  await expect(
+    changeModelModifierHandler({ input: { id: MODEL, mode: 'Archived' }, ctx: ctx() })
+  ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+});
+
+it('refuses an owner’s archive of a model already taken down', async () => {
+  for (const db of [dbMock.dbRead, dbMock.dbWrite])
+    db.model.findFirst.mockResolvedValue({ id: MODEL, mode: 'TakenDown' } as never);
+  await expect(
+    changeModelModifierHandler({ input: { id: MODEL, mode: 'Archived' }, ctx: ctx() })
+  ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+  expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+});

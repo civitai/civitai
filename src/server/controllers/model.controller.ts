@@ -1825,17 +1825,23 @@ export const changeModelModifierHandler = async ({
     // If changing to takenDown, only moderators can do it
     if (mode === ModelModifier.TakenDown && !ctx.user.isModerator) throw throwAuthorizationError();
 
+    // Checked on the early read to fail fast, and again on the locked row: a takedown that lands in
+    // between must not be undone by the owner's change.
+    const assertModeChange = (current: ModelModifier | null | undefined) => {
+      if (current === mode) throw throwBadRequestError(`Model is already ${String(mode)}`);
+      // Only moderators move a model off a takedown.
+      if (current === ModelModifier.TakenDown && !ctx.user.isModerator)
+        throw throwAuthorizationError();
+    };
     const model = await getModel({ id, select: { id: true, mode: true } });
     if (!model) throw throwNotFoundError(`No model with id ${id}`);
-    if (model.mode === mode) throw throwBadRequestError(`Model is already ${String(mode)}`);
-    // If removing mode, but model is taken down, only moderators can do it
-    if (model.mode === ModelModifier.TakenDown && mode === null && !ctx.user.isModerator)
-      throw throwAuthorizationError();
+    assertModeChange(model.mode);
 
     const updatedModel = await updateModelById({
       id,
       data: { mode },
-      meta: (stored) => {
+      meta: (stored, row) => {
+        assertModeChange(row?.mode);
         const { archivedAt, takenDownAt, archivedBy, takenDownBy, ...restMeta } = stored || {};
         if (mode === ModelModifier.Archived)
           return { ...restMeta, archivedAt: new Date().toISOString(), archivedBy: ctx.user.id };

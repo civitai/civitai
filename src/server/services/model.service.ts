@@ -2066,15 +2066,18 @@ export const updateModelById = async ({
 }: {
   id: number;
   data: Prisma.ModelUpdateInput;
-  /** Builds the meta to write from the stored meta, re-read under a lock held for the write. */
-  meta?: (stored: ModelMeta | null) => ModelMeta;
+  /**
+   * Builds the meta to write from the stored row, re-read under a lock held for the write; it may
+   * throw to refuse the write on what that row says.
+   */
+  meta?: (stored: ModelMeta | null, row: Awaited<ReturnType<typeof lockModelRow>>) => ModelMeta;
 }) => {
   const model = meta
     ? await dbWrite.$transaction(async (tx) => {
-        const stored = (await lockModelRow(tx, id))?.meta ?? null;
+        const row = await lockModelRow(tx, id);
         return tx.model.update({
           where: { id },
-          data: { ...data, meta: meta(stored) as Prisma.JsonObject },
+          data: { ...data, meta: meta(row?.meta ?? null, row) as Prisma.JsonObject },
         });
       })
     : await dbWrite.model.update({ where: { id }, data });
@@ -3264,7 +3267,7 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
   await tx.$queryRaw`SELECT id FROM "Model" WHERE id = ${id} FOR NO KEY UPDATE`;
   const row = await tx.model.findUnique({
     where: { id },
-    select: { status: true, availability: true, meta: true },
+    select: { status: true, availability: true, mode: true, meta: true },
   });
   return row && { ...row, meta: row.meta as ModelMeta | null };
 }
