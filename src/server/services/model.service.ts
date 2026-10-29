@@ -3272,7 +3272,7 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
   return row && { ...row, meta: row.meta as ModelMeta | null };
 }
 
-const removedWithOwnerEditError = () =>
+export const removedWithOwnerEditError = () =>
   throwAuthorizationError('You are not authorized to edit this model');
 
 const cannotPublishError = () =>
@@ -5723,8 +5723,11 @@ export async function setModelShowcaseCollection({
   const updated = await updateModelById({
     id,
     data: {},
-    // A null collectionId clears the showcase.
-    meta: (stored) => ({ ...stored, showcaseCollectionId: collectionId } as ModelMeta),
+    meta: (stored) => {
+      if (!isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
+      // A null collectionId clears the showcase.
+      return { ...stored, showcaseCollectionId: collectionId } as ModelMeta;
+    },
   });
 
   await dataForModelsCache.refresh(updated.id);

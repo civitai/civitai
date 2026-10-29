@@ -1,6 +1,13 @@
-import { beforeEach, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import type * as ModeratorEndpoint from '~/server/utils/moderator-endpoint';
+
+// The moderator routes' auth is not what this file tests: their handlers are called directly.
+vi.mock('~/server/utils/moderator-endpoint', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeratorEndpoint>()),
+  defineModeratorEndpoint: (_name: string, def: unknown) => def,
+}));
 
 /**
  * Three owner actions write a model's whole meta back after reading it. A content wipe, a moderator
@@ -8,17 +15,21 @@ import type { ModelMeta } from '~/server/schema/model.schema';
  * writer merges over the row it re-reads under a lock.
  */
 
-const { requestReviewHandler, changeModelModifierHandler } = await import('../model.controller');
+const { requestReviewHandler, changeModelModifierHandler, declineReviewHandler } = await import(
+  '../model.controller'
+);
+type ModHandler = { handler: (input: { modelId: number }, ctx: unknown) => Promise<unknown> };
+const takeDown = (await import('~/pages/api/mod/model/take-down')).default as unknown as ModHandler;
+const bringBack = (await import('~/pages/api/mod/model/bring-back'))
+  .default as unknown as ModHandler;
 const { setModelShowcaseCollection } = await import('~/server/services/model.service');
 
 const MODEL = 1;
 const OWNER = 5;
 // Written after the action read the model: what the write must not drop.
-const WRITTEN_SINCE = {
-  removedWithOwner: true,
-  statusBeforeRemoval: 'Published',
-  cannotPublish: true,
-} satisfies ModelMeta;
+const WRITTEN_SINCE = { cannotPublish: true, cannotPromote: true } satisfies ModelMeta;
+// A content wipe's record: an owner's write is refused on it, a moderator's keeps it.
+const KEPT = { removedWithOwner: true, statusBeforeRemoval: 'Published' } satisfies ModelMeta;
 
 let lockHeld: boolean;
 
@@ -68,7 +79,7 @@ const ctx = (isModerator = false) =>
   ({ user: { id: OWNER, isModerator }, track: { modelEvent: vi.fn() } } as never);
 
 it('keeps what was written since when an owner requests a review', async () => {
-  await requestReviewHandler({ input: { id: MODEL } });
+  await requestReviewHandler({ input: { id: MODEL }, ctx: ctx() });
   expect(written()).toEqual({ note: 1, ...WRITTEN_SINCE, needsReview: true });
 });
 
@@ -134,4 +145,83 @@ it('refuses an owner’s archive of a model already taken down', async () => {
     changeModelModifierHandler({ input: { id: MODEL, mode: 'Archived' }, ctx: ctx() })
   ).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
   expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+});
+
+describe('a model a content wipe kept, as the locked row shows it', () => {
+  beforeEach(() => {
+    dbMock.dbWrite.model.findUnique.mockImplementation((async () =>
+      lockHeld
+        ? { status: 'UnpublishedViolation', mode: null, meta: { note: 1, ...KEPT } }
+        : null) as never);
+  });
+
+  it.each([
+    ['requests a review', () => requestReviewHandler({ input: { id: MODEL }, ctx: ctx() })],
+    [
+      'archives it',
+      () => changeModelModifierHandler({ input: { id: MODEL, mode: 'Archived' }, ctx: ctx() }),
+    ],
+    [
+      'sets its showcase',
+      () => setModelShowcaseCollection({ id: MODEL, collectionId: 9, userId: OWNER }),
+    ],
+  ])('refuses an owner who %s, writing nothing', async (_, act) => {
+    await expect(act()).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+  });
+
+  it('lets a moderator archive it (control)', async () => {
+    await changeModelModifierHandler({ input: { id: MODEL, mode: 'Archived' }, ctx: ctx(true) });
+    expect(dbMock.dbWrite.model.update).toHaveBeenCalled();
+  });
+});
+
+describe('the moderator writers', () => {
+  const actor = { actor: { id: 7 }, tracker: { modelEvent: vi.fn() } };
+  beforeEach(() => {
+    dbMock.dbWrite.model.findUnique.mockImplementation((async () =>
+      lockHeld
+        ? {
+            status: 'UnpublishedViolation',
+            mode: null,
+            meta: { note: 1, ...WRITTEN_SINCE, ...KEPT },
+          }
+        : null) as never);
+  });
+
+  it('keeps what was written since when a moderator takes it down in the moderator app', async () => {
+    await takeDown.handler({ modelId: MODEL }, actor);
+    expect(written()).toEqual({
+      note: 1,
+      ...WRITTEN_SINCE,
+      ...KEPT,
+      takenDownAt: expect.any(String),
+      takenDownBy: 7,
+    });
+  });
+
+  it('keeps what was written since when a moderator brings it back', async () => {
+    for (const db of [dbMock.dbRead, dbMock.dbWrite])
+      db.model.findFirst.mockResolvedValue({ id: MODEL, mode: 'TakenDown' } as never);
+    dbMock.dbWrite.model.findUnique.mockImplementation((async () =>
+      lockHeld
+        ? { mode: 'TakenDown', meta: { note: 1, ...WRITTEN_SINCE, ...KEPT, takenDownAt: 'then' } }
+        : null) as never);
+
+    await bringBack.handler({ modelId: MODEL }, actor);
+
+    expect(written()).toEqual({ note: 1, ...WRITTEN_SINCE, ...KEPT });
+  });
+
+  it('keeps what was written since when a moderator declines a review', async () => {
+    await declineReviewHandler({ input: { id: MODEL, reason: 'no' }, ctx: ctx(true) });
+    expect(written()).toEqual({
+      note: 1,
+      ...WRITTEN_SINCE,
+      ...KEPT,
+      declinedReason: 'no',
+      declinedAt: expect.any(String),
+      needsReview: false,
+    });
+  });
 });

@@ -154,6 +154,7 @@ import {
   toggleCheckpointCoverage,
   toggleLockModel,
   unpublishModelById,
+  removedWithOwnerEditError,
   updateModelById,
   queueModelEarlyAccessReindex,
   upsertModel,
@@ -1725,7 +1726,13 @@ export const setModelSfwOnlyHandler = async ({
   }
 };
 
-export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) => {
+export const requestReviewHandler = async ({
+  input,
+  ctx,
+}: {
+  input: GetByIdInput;
+  ctx: ProtectedContext;
+}) => {
   try {
     const model = await dbRead.model.findUnique({
       where: { id: input.id },
@@ -1749,7 +1756,10 @@ export const requestReviewHandler = async ({ input }: { input: GetByIdInput }) =
     const updatedModel = await updateModelById({
       id: model.id,
       data: {},
-      meta: (stored) => ({ ...stored, needsReview: true }),
+      meta: (stored) => {
+        if (!ctx.user.isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
+        return { ...stored, needsReview: true };
+      },
     });
 
     return updatedModel;
@@ -1783,21 +1793,25 @@ export const declineReviewHandler = async ({
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    const meta = (model.meta as ModelMeta | null) || {};
-    if (model.status !== ModelStatus.UnpublishedViolation && !meta?.needsReview)
-      throw throwBadRequestError(
-        'Cannot decline a review for this model because it is not in the correct status'
-      );
+    const assertDeclinable = (status: ModelStatus | undefined, meta: ModelMeta | null) => {
+      if (status !== ModelStatus.UnpublishedViolation && !meta?.needsReview)
+        throw throwBadRequestError(
+          'Cannot decline a review for this model because it is not in the correct status'
+        );
+    };
+    assertDeclinable(model.status, model.meta as ModelMeta | null);
 
     const updatedModel = await updateModelById({
       id: model.id,
-      data: {
-        meta: {
-          ...meta,
+      data: {},
+      meta: (stored, row) => {
+        assertDeclinable(row?.status, stored);
+        return {
+          ...stored,
           declinedReason: input.reason,
           declinedAt: new Date().toISOString(),
           needsReview: false,
-        } as Prisma.JsonObject,
+        };
       },
     });
     await trackModActivity(ctx.user.id, {
@@ -1842,6 +1856,7 @@ export const changeModelModifierHandler = async ({
       data: { mode },
       meta: (stored, row) => {
         assertModeChange(row?.mode);
+        if (!ctx.user.isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
         const { archivedAt, takenDownAt, archivedBy, takenDownBy, ...restMeta } = stored || {};
         if (mode === ModelModifier.Archived)
           return { ...restMeta, archivedAt: new Date().toISOString(), archivedBy: ctx.user.id };
