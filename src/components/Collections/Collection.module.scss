@@ -12,7 +12,6 @@
 
 // Header actions sit on the page surface, so the title stays the focus.
 .headerAction {
-  --button-bg: var(--mantine-color-body);
-  --button-hover: var(--mantine-color-body);
-  --button-color: var(--mantine-color-body);
+  background-color: var(--mantine-color-body) !important;
+  color: var(--mantine-color-body) !important;
 }
