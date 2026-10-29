@@ -109,10 +109,12 @@ interface TrainingStudioHost {
    *  the affordance. Same URL semantics as `generateUrl`. */
   modelPageUrl?(req: { modelId: number }): string;
 
-  /** Whether that model still exists for this user (`GET /api/training-studio/model-status`):
-   *  the stamped modelId outlives a deleted model. The run page asks once per modelId; false drops
-   *  the link (an unpublished run then offers Publish, which makes a fresh draft), while pending or
-   *  a rejection keeps it. Should time out on its own. Optional — omit and the link is unchecked. */
+  /** Whether that model still counts for this user (`GET /api/training-studio/model-status`): false
+   *  once the owner deleted it, since the stamped modelId outlives the delete. The run page asks
+   *  once per modelId; false drops the link (an unpublished run then offers Publish, which makes a
+   *  fresh draft), while pending or a rejection keeps it. A moderator's delete still counts, so
+   *  Publish can't route around it. Should time out on its own. Optional — omit and the link is
+   *  unchecked. */
   modelLive?(modelId: number): Promise<boolean>;
 
   /** Open the host's own model picker for the Custom training base (the main app's

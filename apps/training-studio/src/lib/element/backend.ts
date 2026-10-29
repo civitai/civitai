@@ -29,9 +29,9 @@ export interface StudioElementHost {
   checkTrainingText?(input: {
     triggerWord: string;
   }): Promise<{ ok: true } | { ok: false; error: string }>;
-  /** Whether the run's model still exists for this user (not missing, not Deleted), answered by the
-   *  host's server; it should settle (time out) on its own. Omit and a run links its stored modelId
-   *  unchecked. */
+  /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
+   *  answered by the host's server; it should settle (time out) on its own. Omit and a run links
+   *  its stored modelId unchecked. */
   modelLive?(modelId: number): Promise<boolean>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;

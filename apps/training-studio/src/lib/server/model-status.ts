@@ -2,8 +2,8 @@ import { mainAppSessionOrigin } from './main-app';
 
 const CHECK_TIMEOUT_MS = 5_000;
 
-/** The main app's answer to whether this user's model still exists (not missing, not Deleted), asked
- *  with their forwarded session cookie. Rejects when the main app gives no answer. */
+/** The main app's answer to whether this user's model still counts (not missing, not deleted by its
+ *  owner), asked with their forwarded session cookie. Rejects when the main app gives no answer. */
 export function mainAppModelLive(cookie: string): (modelId: number) => Promise<boolean> {
   return async (modelId) => {
     const res = await fetch(

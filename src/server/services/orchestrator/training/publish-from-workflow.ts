@@ -20,6 +20,7 @@ import { dbWrite } from '~/server/db/client';
 import type { TrainingResultsV2 } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
 import { sampleSlotUrl } from '~/server/services/orchestrator/training/workflow-state';
+import { studioModelNotOwnerDeleted } from '~/server/services/orchestrator/training/studio-draft-filter';
 import type {
   TrainingDetailsBaseModelList,
   TrainingDetailsObj,
@@ -310,10 +311,8 @@ export async function createDraftModelFromWorkflow({
       userId: user.id,
       uploadType: ModelUploadType.Trained,
       meta: { path: ['trainingStudioWorkflowId'], equals: workflow.id },
-      // The owner deleting the draft means start over: Publish makes a fresh one, which
-      // from-orchestrator re-stamps onto the run. A moderator's delete still matches, so it can't be
-      // routed around.
-      NOT: { status: ModelStatus.Deleted, deletedBy: user.id },
+      // A fresh draft made past the owner's delete is re-stamped onto the run by from-orchestrator.
+      ...studioModelNotOwnerDeleted(user.id),
     },
     // A restored draft and its replacement can both match; the run follows the newest.
     orderBy: { id: 'desc' },
