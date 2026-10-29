@@ -107,10 +107,7 @@ export async function assertClientImageUrlsUsable({
   if (owned.length) throw imageUrlUnavailableError();
 }
 
-/**
- * The urls among `urls` that name a key shop artwork uses. For a writer that creates `Image` rows
- * from content it does not refuse, so it can skip those instead.
- */
+/** The urls among `urls` that name a key shop artwork uses. */
 export async function shopArtworkUrls(urls: string[], db: Db = dbWrite): Promise<Set<string>> {
   const keysByUrl = new Map(urls.map((url) => [url, storedUrlsFor(url).slice(1)]));
   const keys = [...new Set([...keysByUrl.values()].flat())];

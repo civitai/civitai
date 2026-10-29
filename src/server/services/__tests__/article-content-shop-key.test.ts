@@ -70,14 +70,15 @@ beforeAll(async () => {
 beforeEach(() => {
   createManyAndReturn.mockClear();
   enqueueImageIngestion.mockClear();
-  // The shop-key lookup runs on PGlite; every other raw query in the save gets no rows.
+  // The shop-key lookup runs on PGlite; the other raw queries get fixed answers.
   dbMock.dbWrite.$queryRaw.mockImplementation(((
     strings: TemplateStringsArray,
     ...values: unknown[]
   ) =>
     strings.join('').includes('unnest(')
       ? pgliteRaw(db).queryRaw(strings, ...values)
-      : Promise.resolve([])) as never);
+      : // The owner's legal-hold read: not held.
+        Promise.resolve(strings.join('').includes(' AS held') ? [{ held: false }] : [])) as never);
   dbMock.dbWrite.article.create.mockResolvedValue({ id: 1, userId: 7, content: '' } as never);
   dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => unknown) =>
     cb({
@@ -104,6 +105,39 @@ describe('linkArticleContentImages', () => {
       images.map((image: { url: string }) => image.url)
     );
     expect(queued).toEqual([SHOP_KEY, FREE_KEY]);
+  });
+});
+
+describe('linkArticleContentImages orphan cleanup', () => {
+  // An article saved before shop keys were refused can hold one as the author's own image row.
+  it('never offers for deletion an orphaned image whose key shop artwork uses', async () => {
+    const orphans = [
+      { id: 5, url: SHOP_KEY },
+      { id: 6, url: FREE_KEY },
+    ];
+    dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => unknown) =>
+      cb({
+        $queryRaw: pgliteRaw(db).queryRaw,
+        image: {
+          findMany: async ({ where }: { where: { id?: unknown } }) => (where.id ? orphans : []),
+          createManyAndReturn,
+        },
+        imageConnection: {
+          upsert: vi.fn(),
+          findMany: async () => orphans.map((orphan) => ({ imageId: orphan.id })),
+          deleteMany: vi.fn(),
+        },
+        serviceOffering: { findMany: async () => [] },
+      })) as never);
+
+    const { orphanedImageIds } = await linkArticleContentImages({
+      articleId: 1,
+      content: '<p>both images removed</p>',
+      userId: 7,
+      ownerId: 7,
+    });
+
+    expect(orphanedImageIds).toEqual([6]);
   });
 });
 

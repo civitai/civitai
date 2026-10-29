@@ -1634,6 +1634,22 @@ export const unusedAuthorImage = (ownerId: number) =>
  * Drops images used as a service offering's cover. That column has no Prisma relation, so
  * `unusedAuthorImage` cannot see it; a new plain image-id column needs the same treatment.
  */
+/**
+ * Deleting an orphaned image deletes its object, so one whose key shop artwork uses stays: an
+ * article saved before shop keys were refused can hold one.
+ */
+async function withoutShopArtwork(
+  db: Prisma.TransactionClient | typeof dbWrite,
+  images: { id: number; url: string }[]
+) {
+  if (!images.length) return [];
+  const shopUrls = await shopArtworkUrls(
+    images.map((image) => image.url),
+    db
+  );
+  return images.filter((image) => !shopUrls.has(image.url)).map((image) => image.id);
+}
+
 async function withoutOfferingCovers(
   db: Pick<Prisma.TransactionClient, 'serviceOffering'>,
   imageIds: number[]
@@ -1727,12 +1743,12 @@ export const deleteArticleById = async ({
       if (imageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
         const trulyOrphanedImages = await dbWrite.image.findMany({
           where: { id: { in: imageIds }, ...unusedAuthorImage(article.userId) },
-          select: { id: true },
+          select: { id: true, url: true },
         });
 
         const deletable = await withoutOfferingCovers(
           dbWrite,
-          trulyOrphanedImages.map((img) => img.id)
+          await withoutShopArtwork(dbWrite, trulyOrphanedImages)
         );
         // Per image, so one failed delete does not stop the rest.
         for (const imageId of deletable) {
@@ -2047,11 +2063,11 @@ export async function linkArticleContentImages({
     if (orphanedIds.length > 0) {
       const trulyOrphaned = await tx.image.findMany({
         where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
-        select: { id: true },
+        select: { id: true, url: true },
       });
       trulyOrphanedIds = await withoutOfferingCovers(
         tx,
-        trulyOrphaned.map((img) => img.id)
+        await withoutShopArtwork(tx, trulyOrphaned)
       );
     }
 
