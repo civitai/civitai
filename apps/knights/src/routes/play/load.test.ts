@@ -45,7 +45,7 @@ beforeEach(() => {
 
 describe('play load and the conversion switch', () => {
   it('hides the Convert link unless conversion is switched on', async () => {
-    getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight', level: 5 });
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
     const previous = process.env.KNIGHTS_CONVERSION_ENABLED;
     try {
       delete process.env.KNIGHTS_CONVERSION_ENABLED;
