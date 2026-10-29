@@ -8001,6 +8001,9 @@ model NewOrderPlayer {
   /// Gold from votes not yet graded / already earned.
   goldPending Int @default(0)
   goldEarned  Int @default(0)
+  /// Earned gold a detection run has cleared (a running total), and gold already converted to Buzz. Convertible = cleared - converted.
+  goldCleared   Int @default(0)
+  goldConverted Int @default(0)
 }
 
 model NewOrderLinkReview {
@@ -8111,6 +8114,40 @@ model KnightsPlayerDay {
   bonusGold        Int       @default(0)
 
   @@id([playerId, day])
+}
+
+/// One finished link-detection run. The main app writes a row when a run completes; Knights runs its post-detection pass (clearing gold, writing labels) once per row, `passedAt` marking it done.
+model KnightsDetectionRun {
+  id          Int       @id @default(autoincrement())
+  completedAt DateTime  @default(now())
+  passedAt    DateTime?
+}
+
+/// Which detection run cleared how much of a player's earned gold, and when.
+model KnightsGoldClearing {
+  id        Int      @id @default(autoincrement())
+  playerId  Int
+  runId     Int
+  gold      Int
+  clearedAt DateTime @default(now())
+
+  @@unique([playerId, runId])
+}
+
+/// One conversion of cleared gold to Yellow Buzz. The gold is reserved (`NewOrderPlayer.goldConverted`) when the row is written as `pending`; `paid` once Buzz confirmed it. `externalTransactionId` is the idempotency key sent to Buzz, so a retry of a pending row never pays twice.
+model KnightsGoldConversion {
+  id                    Int       @id @default(autoincrement())
+  playerId              Int
+  gold                  Int
+  buzz                  Int
+  status                String    @default("pending") // pending | paid
+  externalTransactionId String    @unique
+  buzzTransactionId     String?
+  createdAt             DateTime  @default(now())
+  paidAt                DateTime?
+
+  @@index([playerId, createdAt])
+  @@index([status, createdAt])
 }
 
 /// An image with a known answer for Acolyte Trials or hidden checks. `answer` is the option value of `questionKey`.
