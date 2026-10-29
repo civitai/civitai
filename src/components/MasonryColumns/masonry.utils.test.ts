@@ -13,6 +13,12 @@ describe('getColumnCount', () => {
     expect(getColumnCount(100, 320, 7)).toBe(1);
   });
 
+  test('a NaN or fractional max/column width still gives a whole column count', () => {
+    expect(getColumnCount(900, 320, NaN)).toBe(1);
+    expect(getColumnCount(900, NaN, 7)).toBe(1);
+    expect(getColumnCount(900, 320, 2.5)).toBe(2);
+  });
+
   test('fits columns plus gaps, capped at the max', () => {
     expect(getColumnCount(672, 320, 7)).toBe(2);
     expect(getColumnCount(10_000, 320, 7)).toBe(7);

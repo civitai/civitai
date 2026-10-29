@@ -22,7 +22,8 @@ export function getColumnCount(
 ) {
   if (!Number.isFinite(width) || width <= 0) return 0;
   const fit = Math.floor((width + gap) / (columnWidth + gap));
-  return Math.max(1, Math.min(fit, maxColumnCount));
+  const count = Math.floor(Math.min(fit, maxColumnCount));
+  return Number.isFinite(count) ? Math.max(1, count) : 1;
 }
 
 export function useMasonryColumns<TData>(
