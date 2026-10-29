@@ -112,6 +112,15 @@ export function normalizeChecklist(raw: unknown): ChecklistItem[] | null {
 }
 
 /**
+ * Whether a changed checklist waits on the user's Build it: one whose items are all done does not,
+ * since there is nothing left to build (the list the assistant shows once the app is finished). The
+ * first checklist a gate knows waits whatever it says (`set_checklist`).
+ */
+export function checklistAwaitsBuild(items: readonly ChecklistItem[]): boolean {
+  return items.some((item) => !item.done);
+}
+
+/**
  * Where what the app shows comes from, as `report_ready` must declare it: `civitai` (from Civitai,
  * through @civitai/sdk), `sample` (made-up data in place of Civitai's) or `none` (no Civitai data).
  */
@@ -343,13 +352,19 @@ export function createGateCore({
     if (name !== REPORT_READY) running = Math.max(0, running - 1);
     verify(result);
     // A checklist a server runner showed: its Build it is the one waiting (the page shows the card).
+    // Never for an all-done list, even if the runner reports awaitsUser, unless it asks the user to
+    // agree to sample data.
     const shown = output as { awaitsUser?: unknown; checklist?: unknown } | null | undefined;
+    const items = normalizeChecklist((result.input as { items?: unknown } | null)?.items);
     if (
       name === SET_CHECKLIST &&
       !isError &&
       subagent === undefined &&
       shown?.awaitsUser === true &&
-      typeof shown.checklist === 'string'
+      typeof shown.checklist === 'string' &&
+      (!items ||
+        checklistAwaitsBuild(items) ||
+        (result.input as { data?: unknown } | null)?.data === 'sample')
     )
       awaiting = { id: shown.checklist, app: currentApp?.() ?? null };
   };
@@ -371,7 +386,7 @@ export function createGateCore({
 
   const set_checklist: AssistantTool = {
     description:
-      "Show the user the list of features they asked for, as a checklist with a Build it button. Call it before you scaffold, with every requested feature and nothing they did not ask for, and in the same message, before the call, write one short sentence asking the user to tap Build it or say what to change. Call it again with done: true on an item once it works and has a passing test. Changing the labels or data shows the user the new list and ends your reply. Set data: 'civitai' when the app shows Civitai data, and 'sample' only once the user agreed to sample data: the card then tells them it is not real Civitai data.",
+      "Show the user the list of features they asked for, as a checklist with a Build it button. Call it before you scaffold, with every requested feature and nothing they did not ask for, and in the same message, before the call, write one short sentence asking the user to tap Build it or say what to change. Call it again with done: true on an item once it works and has a passing test. Changing the labels or data while an item is still open shows the user the new list and ends your reply. Set data: 'civitai' when the app shows Civitai data, and 'sample' only once the user agreed to sample data: the card then tells them it is not real Civitai data, and shows them the list again even when every item is done.",
     activity: 'Writing the feature checklist…',
     inputSchema: {
       properties: {
@@ -402,15 +417,22 @@ export function createGateCore({
       const data = input.data === undefined ? checklistData : dataSourceOf(input.data);
       if (input.data !== undefined && !data)
         throw new Error(`data must be one of ${DATA_SOURCES.join(', ')}.`);
+      // Against the last checklist this gate knows: on the runner, `restore` seeds it from the
+      // conversation's earlier replies; the page knows only this page load's. Marking items done is
+      // progress, not a new list.
+      const previous = checklist;
       const changed =
-        !checklist ||
-        checklist.length !== items.length ||
-        checklist.some((item, i) => item.label !== items[i].label) ||
+        !previous ||
+        previous.length !== items.length ||
+        previous.some((item, i) => item.label !== items[i].label) ||
         data !== checklistData;
+      // Sample data is the user's to agree to, so a list newly saying it waits even when all done.
+      const newlySample = data === 'sample' && checklistData !== 'sample';
       checklist = items;
       checklistData = data;
       const tag = checklistApp ? { app: checklistApp() } : {};
-      if (changed) {
+      // A first list waits even with every item done: nothing is built before the user confirms it.
+      if (!previous || (changed && checklistAwaitsBuild(items)) || newlySample) {
         awaiting = { id: `${checklistPrefix}-${++checklistCalls}`, app: currentApp?.() ?? null };
         return {
           shown: true,

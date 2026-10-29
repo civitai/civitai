@@ -19,6 +19,7 @@ import type {
 } from '~/shared/constants/event-decoration.constants';
 import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
 import { WornHatPopover } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
+import { LayeredHat, useHatLayer } from '~/components/Cosmetics/EventDecoration/HatLayer';
 import styles from './EventDecorationOverlay.module.scss';
 
 /**
@@ -45,29 +46,35 @@ export function EventDecorationOverlay({
   /** The content wearing it. A click then also opens its stats; without, it only bursts. */
   wornOn?: EventDecorationEntity;
 }) {
-  if (decoration.type === 'hat')
+  const hatLayer = useHatLayer();
+  if (decoration.type !== 'hat') return null;
+  const hat = (width?: number) => (
+    <CardHat
+      url={decoration.url}
+      fit={decoration.fit}
+      placement={placement}
+      framed={framed}
+      cardWidth={cardWidth ?? width}
+      allowance={allowance}
+      event={decoration.event}
+      wornOn={wornOn}
+    />
+  );
+  if (hatLayer?.layer && placement === 'corner' && allowance === undefined)
     return (
-      <CardHat
-        url={decoration.url}
-        fit={decoration.fit}
-        placement={placement}
-        framed={framed}
-        cardWidth={cardWidth}
-        allowance={allowance}
-        event={decoration.event}
-        wornOn={wornOn}
-      />
+      <LayeredHat layer={hatLayer.layer} hidden={hatLayer.moving} version={hatLayer.version}>
+        {({ width }) => hat(width)}
+      </LayeredHat>
     );
-  return null;
+  return hat();
 }
 
 export type WornDecoration = { data: EventDecorationData } | null | undefined;
 
 /**
- * One image's own hat, in its media's corner. The media clips at its edge, so the hat stays inside
- * it, unless the caller gives the `allowance` its slot can show: then it sits on the corner as in
- * the feed. For views that show one image's media (a gallery post's slides, the post page, the
- * image detail).
+ * One image's own hat, in its media's corner. The media clips at its edge, so the hat stays
+ * inside it unless the caller passes an `allowance` or an ancestor's hat layer carries it past
+ * the corner.
  */
 export function ImageMediaHat({
   imageId,
@@ -82,11 +89,12 @@ export function ImageMediaHat({
   /** How far past the media's top and left the hat may reach; without it, none. */
   allowance?: HatAllowance;
 }) {
+  const inLayer = useInHatLayer();
   if (!decoration) return null;
   return (
     <EventDecorationOverlay
       decoration={decoration.data}
-      placement={allowance === undefined ? 'inside' : 'corner'}
+      placement={allowance === undefined && !inLayer ? 'inside' : 'corner'}
       allowance={allowance}
       cardWidth={cardWidth}
       wornOn={{ entityType: 'Image', entityId: imageId }}
@@ -94,11 +102,16 @@ export function ImageMediaHat({
   );
 }
 
-/** Steps the media's top-left badges clear of its ImageMediaHat. */
-export function imageMediaHatClearLeft(decoration: WornDecoration) {
+/** Whether an ancestor's hat layer carries the hats here, so they hang past the media's corner. */
+export const useInHatLayer = () => !!useHatLayer()?.layer;
+
+/** Steps the media's top-left badges clear of its ImageMediaHat, which `inLayer` puts on the corner. */
+export function imageMediaHatClearLeft(decoration: WornDecoration, inLayer = false) {
   if (!decoration) return undefined;
   return {
-    '--event-decoration-clear-left': getEventDecorationClearLeftCss(decoration.data, 'inside'),
+    '--event-decoration-clear-left': inLayer
+      ? getEventDecorationClearLeftCss(decoration.data, 'corner', HAT_PLAIN_CARD_NUDGE)
+      : getEventDecorationClearLeftCss(decoration.data, 'inside'),
   } as CSSProperties;
 }
 

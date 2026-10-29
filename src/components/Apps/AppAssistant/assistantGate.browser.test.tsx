@@ -141,6 +141,56 @@ describe('Build it under the checklist', () => {
     );
     expect(again).not.toHaveProperty('awaitsUser');
   });
+
+  test('a first list offers Build it even with every item done', async () => {
+    const done = [{ label: 'Ask questions', done: true }];
+    const gate = createAssistantGate({ onBuild: vi.fn() });
+    gate.beforeToolCall('set_checklist', { items: done }, conv);
+    const output = await gate.tools.set_checklist.execute({ items: done }, ctx);
+    expect(output).toMatchObject({ shown: true, awaitsUser: true });
+    const card = gate.tools.set_checklist.render!({
+      name: 'set_checklist',
+      input: { items: done },
+      state: 'done',
+      output,
+    }) as HTMLElement;
+    expect(buildButton(card)).not.toBeNull();
+  });
+
+  test('a changed list with every item done offers no Build it, from the page or from a server runner', async () => {
+    const done = [{ label: 'Ask questions well', done: true }];
+    const gate = createAssistantGate({ onBuild: vi.fn() });
+    gate.beforeToolCall('set_checklist', { items }, conv);
+    await gate.tools.set_checklist.execute({ items }, ctx);
+    const output = await gate.tools.set_checklist.execute({ items: done }, ctx);
+    expect(output).toEqual({ updated: true, open: 0 });
+    const card = (input: unknown, shown: unknown) =>
+      gate.tools.set_checklist.render!({
+        name: 'set_checklist',
+        input,
+        state: 'done',
+        output: shown,
+      }) as HTMLElement;
+    expect(buildButton(card({ items: done }, output))).toBeNull();
+
+    // A runner's report that says it waits (a runner without the rule) is not taken for a done list.
+    const reported = { shown: true, awaitsUser: true, checklist: 'runner-1' };
+    gate.onToolResult({
+      name: 'set_checklist',
+      input: { items: done },
+      output: reported,
+      isError: false,
+    });
+    expect(buildButton(card({ items: done }, reported))).toBeNull();
+    // Control: the same report for a list with an item open offers it.
+    gate.onToolResult({
+      name: 'set_checklist',
+      input: { items },
+      output: reported,
+      isError: false,
+    });
+    expect(buildButton(card({ items }, reported))).not.toBeNull();
+  });
 });
 
 describe('the report_ready card', () => {

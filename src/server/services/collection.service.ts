@@ -69,6 +69,10 @@ import { createNotification } from '~/server/services/notification.service';
 import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
+import {
+  assertClientImageUrlsUsable,
+  imageUrlUnavailableError,
+} from '~/server/services/image-url-ownership';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
 import { getPostsInfinite } from '~/server/services/post.service';
 import { enqueueJobs } from '~/server/services/job-queue.service';
@@ -1453,6 +1457,26 @@ export const upsertCollection = async ({
     // }
 
     const updated = await dbWrite.$transaction(async (tx) => {
+      // Decided in the transaction: a cover row deleted after this read fails the `connect`
+      // rather than turning it into an unchecked create.
+      const coverId = imageId ?? image?.id;
+      const existingCover =
+        coverId != null
+          ? await tx.image.findUnique({
+              where: { id: coverId },
+              select: { id: true, userId: true },
+            })
+          : null;
+      if (
+        existingCover &&
+        existingCover.userId !== userId &&
+        existingCover.id !== currentCollection.image?.id &&
+        !isModerator
+      )
+        throw imageUrlUnavailableError();
+      if (!imageId && image && !existingCover)
+        await assertClientImageUrlsUsable({ urls: [image.url], userId, db: tx });
+
       if (tags) {
         // Attempt to run this first, collides with create/connect
         await tx.tagsOnCollection.deleteMany({
@@ -1494,20 +1518,19 @@ export const upsertCollection = async ({
             : image !== undefined
             ? image === null
               ? { disconnect: true }
+              : existingCover
+              ? { connect: { id: existingCover.id } }
               : {
-                  connectOrCreate: {
-                    where: { id: image.id ?? -1 },
-                    create: {
-                      ...pickClientImageColumns(image),
-                      meta:
-                        (sanitizeProvenance(
-                          image?.meta as Record<string, unknown> | null | undefined
-                        ) as Prisma.JsonObject | undefined) ?? Prisma.JsonNull,
-                      metadata: stripBlockProvenanceMetadata(image.metadata),
-                      userId,
-                      resources: undefined,
-                      id: undefined,
-                    },
+                  create: {
+                    ...pickClientImageColumns(image),
+                    meta:
+                      (sanitizeProvenance(
+                        image?.meta as Record<string, unknown> | null | undefined
+                      ) as Prisma.JsonObject | undefined) ?? Prisma.JsonNull,
+                    metadata: stripBlockProvenanceMetadata(image.metadata),
+                    userId,
+                    resources: undefined,
+                    id: undefined,
                   },
                 }
             : undefined,

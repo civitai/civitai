@@ -501,6 +501,113 @@ describe('the app’s data on the runner', () => {
   });
 });
 
+describe('Build it on the runner', () => {
+  const LABELS = ['Split the bill', 'Round up the tip'];
+  const items = (...done: boolean[]) => LABELS.map((label, i) => ({ label, done: done[i] }));
+  /** The reply that showed the list and waited for Build it, as the conversation saved it. */
+  const shownEarlier = () =>
+    messagesOf([
+      [
+        'set_checklist',
+        { items: items(false, false) },
+        { shown: true, awaitsUser: true, checklist: 'run1-1', note: 'shown', app: 'my-app' },
+      ],
+    ]);
+  const checklistsReported = (reported: ChatToolResult[]) =>
+    reported.filter((result) => result.name === 'set_checklist').map((result) => result.output);
+
+  it('the reply after Build it ticks the list off without offering Build it again', async () => {
+    fake.add('my-app');
+    const { tools, reported } = await open({
+      history: { earlier: shownEarlier(), current: [] },
+    });
+    expect(await call(tools.tools, 'set_checklist', { items: items(true, false) })).toEqual({
+      updated: true,
+      open: 1,
+      app: 'my-app',
+    });
+    expect(await call(tools.tools, 'set_checklist', { items: items(true, true) })).toEqual({
+      updated: true,
+      open: 0,
+      app: 'my-app',
+    });
+    // What the page is told, which decides its Build it.
+    expect(checklistsReported(reported)).toEqual([
+      { updated: true, open: 1, app: 'my-app' },
+      { updated: true, open: 0, app: 'my-app' },
+    ]);
+  });
+
+  it('the reply after an errored Build it reply ticks the list off without offering Build it again', async () => {
+    fake.add('my-app');
+    const earlier: ModelMessage[] = [
+      // The plan reply, then the Build it reply up to where it errored, its last call cut off.
+      ...messagesOf([
+        [
+          'set_checklist',
+          { items: items(false, false) },
+          { shown: true, awaitsUser: true, checklist: 'run1-1', note: 'shown', app: 'my-app' },
+        ],
+        ['sandbox__write_file', { path: 'my-app/src/split.ts', content: 'x' }, 'wrote 1 bytes'],
+        ['sandbox__run_command', run('cd my-app && npm test'), 'exit_code: 1'],
+      ]),
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'cut-1',
+            toolName: 'sandbox__write_file',
+            input: { path: 'my-app/src/tip.ts', content: 'y' },
+          },
+        ],
+      },
+    ];
+    const { tools, reported } = await open({ history: { earlier, current: [] } });
+    expect(await call(tools.tools, 'set_checklist', { items: items(true, false) })).toEqual({
+      updated: true,
+      open: 1,
+      app: 'my-app',
+    });
+    expect(await call(tools.tools, 'set_checklist', { items: items(true, true) })).toEqual({
+      updated: true,
+      open: 0,
+      app: 'my-app',
+    });
+    expect(checklistsReported(reported)).toEqual([
+      { updated: true, open: 1, app: 'my-app' },
+      { updated: true, open: 0, app: 'my-app' },
+    ]);
+  });
+
+  it('a new list, with other labels, still waits for Build it', async () => {
+    fake.add('my-app');
+    const { tools } = await open({ history: { earlier: shownEarlier(), current: [] } });
+    expect(
+      await call(tools.tools, 'set_checklist', {
+        items: [{ label: 'Split the bill' }, { label: 'Pick a currency' }],
+      })
+    ).toMatchObject({ shown: true, awaitsUser: true, app: 'my-app' });
+  });
+
+  // An all-done list newly saying sample data still waits: the user must agree to sample data. A data
+  // change that needs no agreement (to 'civitai') on a finished list is progress, as #7153 has it.
+  it('a finished list that newly says sample data waits for the user; one saying civitai does not', async () => {
+    fake.add('my-app');
+    const sample = await open({ history: { earlier: shownEarlier(), current: [] } });
+    expect(
+      await call(sample.tools.tools, 'set_checklist', { items: items(true, true), data: 'sample' })
+    ).toMatchObject({ shown: true, awaitsUser: true, app: 'my-app' });
+    const civitai = await open({ history: { earlier: shownEarlier(), current: [] } });
+    expect(
+      await call(civitai.tools.tools, 'set_checklist', {
+        items: items(true, true),
+        data: 'civitai',
+      })
+    ).toEqual({ updated: true, open: 0, app: 'my-app' });
+  });
+});
+
 describe('the gate follows the app', () => {
   it('within a reply: checks passed on one app do not make another ready', async () => {
     fake.add('my-app');

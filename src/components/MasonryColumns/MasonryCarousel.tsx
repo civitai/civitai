@@ -35,9 +35,10 @@ export function MasonryCarousel<TData>({
   return data.length ? (
     <Embla
       key={id}
-      // The viewport clips at the first slide's edge: event hats get no room there, nor to grow.
+      // Allowance matches the page gutter (left) and full bleed (top); the layer hangs hats into it.
+      hatLayer
       className={clsx(
-        '[--event-decoration-allowance:0px] [--event-decoration-grow:1]',
+        '[--event-decoration-allowance-top:36px] [--event-decoration-allowance:16px] [--event-decoration-grow:1] md:[--event-decoration-allowance:36px]',
         viewportClassName
       )}
       align={totalItems <= columnCount ? 'start' : 'end'}
