@@ -9,7 +9,8 @@ const { accountSectionFor } = await import('../tickets/account');
 const identity = vi.fn();
 const timedMute = vi.fn();
 const restrictions = vi.fn();
-const reads = { identity, timedMute, restrictions };
+const pendingAppeal = vi.fn();
+const reads = { identity, timedMute, restrictions, pendingAppeal };
 
 const ticket = {
   view: 'moderation' as const,
@@ -30,6 +31,7 @@ beforeEach(() => {
   });
   timedMute.mockReset().mockResolvedValue(null);
   restrictions.mockReset().mockResolvedValue([]);
+  pendingAppeal.mockReset().mockResolvedValue(null);
 });
 
 describe('accountSectionFor', () => {
@@ -92,5 +94,39 @@ describe('accountSectionFor', () => {
     expect(await accountSectionFor(ticket, reads)).toEqual({ status: 'unavailable', userId: 7 });
     identity.mockResolvedValueOnce(null);
     expect(await accountSectionFor(ticket, reads)).toEqual({ status: 'unavailable', userId: 7 });
+  });
+});
+
+describe('the pending Account appeal', () => {
+  const found = {
+    id: 12,
+    createdAt: new Date('2026-10-20T00:00:00Z'),
+    appealMessage: 'I was hacked',
+  };
+
+  it('is read only for a viewer holding /appeals/account, and left off otherwise', async () => {
+    pendingAppeal.mockResolvedValue(found);
+    const without = await accountSectionFor(ticket, reads);
+    expect(without).not.toHaveProperty('pendingAppeal');
+    expect(pendingAppeal).not.toHaveBeenCalled();
+
+    const res = await accountSectionFor({ ...ticket, canAppeal: true }, reads);
+    expect(pendingAppeal).toHaveBeenCalledWith(7);
+    expect(res).toMatchObject({
+      status: 'ok',
+      pendingAppeal: { id: 12, createdAt: '2026-10-20T00:00:00.000Z', message: 'I was hacked' },
+    });
+  });
+
+  it('is null when there is none', async () => {
+    const res = await accountSectionFor({ ...ticket, canAppeal: true }, reads);
+    expect(res).toMatchObject({ status: 'ok', pendingAppeal: null });
+  });
+
+  it('does not take the account down when only the appeal read fails', async () => {
+    pendingAppeal.mockRejectedValue(new Error('db'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await accountSectionFor({ ...ticket, canAppeal: true }, reads);
+    expect(res).toMatchObject({ status: 'ok', username: 'ann', pendingAppeal: null });
   });
 });

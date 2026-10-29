@@ -75,22 +75,21 @@ describe('GET /api/tickets/[id]', () => {
     await call({ grants: { 'decisions.support.pii': true } });
     expect(loadTicketPayload).toHaveBeenLastCalledWith('moderation', '74924', {
       canSeeEmail: true,
-      canViewAccount: true,
+      canRead: expect.any(Function),
     });
     await call();
     expect(loadTicketPayload).toHaveBeenLastCalledWith('moderation', '74924', {
       canSeeEmail: false,
-      canViewAccount: true,
+      canRead: expect.any(Function),
     });
   });
 
-  it('asks for the account section only for a viewer who may open User Lookup', async () => {
+  it("lets the loader read the viewer's page grants, so each panel can be withheld", async () => {
     canAccess.mockImplementation((_u: unknown, path: string) => path !== '/retool/user-lookup');
     await call();
-    expect(loadTicketPayload).toHaveBeenLastCalledWith('moderation', '74924', {
-      canSeeEmail: false,
-      canViewAccount: false,
-    });
+    const { canRead } = loadTicketPayload.mock.lastCall![2] as { canRead: (p: string) => boolean };
+    expect(canRead('/retool/user-lookup')).toBe(false);
+    expect(canRead('/images/appeals')).toBe(true);
     expect(canAccess).toHaveBeenCalledWith(USER, '/retool/user-lookup');
   });
 

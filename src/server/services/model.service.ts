@@ -2063,14 +2063,25 @@ function withoutMinorHashMeta<T extends { meta: unknown }>(model: T): T {
 export const updateModelById = async ({
   id,
   data,
+  meta,
 }: {
   id: number;
   data: Prisma.ModelUpdateInput;
+  /**
+   * Builds the meta to write from the stored row, re-read under a lock held for the write; it may
+   * throw to refuse the write on what that row says.
+   */
+  meta?: (stored: ModelMeta | null, row: Awaited<ReturnType<typeof lockModelRow>>) => ModelMeta;
 }) => {
-  const model = await dbWrite.model.update({
-    where: { id },
-    data,
-  });
+  const model = meta
+    ? await dbWrite.$transaction(async (tx) => {
+        const row = await lockModelRow(tx, id);
+        return tx.model.update({
+          where: { id },
+          data: { ...data, meta: meta(row?.meta ?? null, row) as Prisma.JsonObject },
+        });
+      })
+    : await dbWrite.model.update({ where: { id }, data });
 
   await userModelCountCache.refresh(model.userId);
   // Flag replica-lag on the model BEFORE busting so a concurrent edge-miss read
@@ -3257,7 +3268,14 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
   await tx.$queryRaw`SELECT id FROM "Model" WHERE id = ${id} FOR NO KEY UPDATE`;
   const row = await tx.model.findUnique({
     where: { id },
-    select: { status: true, availability: true, meta: true, lockedProperties: true, nsfw: true },
+    select: {
+      status: true,
+      availability: true,
+      mode: true,
+      meta: true,
+      lockedProperties: true,
+      nsfw: true,
+    },
   });
   return row && { ...row, meta: row.meta as ModelMeta | null };
 }
@@ -3282,7 +3300,7 @@ function withoutSystemNsfwLock(meta: ModelMeta): ModelMeta {
   return rest;
 }
 
-const removedWithOwnerEditError = () =>
+export const removedWithOwnerEditError = () =>
   throwAuthorizationError('You are not authorized to edit this model');
 
 const cannotPublishError = () =>
@@ -5719,19 +5737,18 @@ export async function setModelShowcaseCollection({
   userId: number;
   isModerator?: boolean;
 }) {
-  const model = await getModel({ id, select: { id: true, userId: true, meta: true } });
+  const model = await getModel({ id, select: { id: true, userId: true } });
   if (!model) throw throwNotFoundError(`No model with id ${id}`);
   if (model.userId !== userId && !isModerator)
     throw throwAuthorizationError('You are not allowed to set this model collection showcase');
 
-  const modelMeta = model.meta as ModelMeta | null;
-
   const updated = await updateModelById({
     id,
-    data: {
-      meta: modelMeta
-        ? { ...modelMeta, showcaseCollectionId: collectionId }
-        : { showcaseCollectionId: collectionId },
+    data: {},
+    meta: (stored) => {
+      if (!isModerator && isRemovedWithOwner(stored)) throw removedWithOwnerEditError();
+      // A null collectionId clears the showcase.
+      return { ...stored, showcaseCollectionId: collectionId } as ModelMeta;
     },
   });
 
@@ -5855,6 +5872,7 @@ export async function migrateResourceToCollection({
     collectionId: collection.id,
     id: modelId,
     userId: model.userId,
+    isModerator,
   });
 
   // Bust caches
