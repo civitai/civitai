@@ -27,16 +27,19 @@ const request = (fields: Record<string, string>) =>
     },
   } as never);
 
-const dismiss = (slug: string) =>
+const dismiss = (
+  slug: string,
+  fields: Record<string, string> = { imageId: '52', version: '901' }
+) =>
   actions.dismissFlag({
-    request: request({ imageId: '52' }),
+    request: request(fields),
     locals: { user: { id: 7 } },
     params: { slug },
   } as never);
 
 beforeEach(() => {
   vi.resetAllMocks();
-  dismissFromCsamQueue.mockResolvedValue(true);
+  dismissFromCsamQueue.mockResolvedValue({ ok: true });
 });
 
 describe('dismissFlag', () => {
@@ -47,18 +50,27 @@ describe('dismissFlag', () => {
     expect(dismissFromCsamQueue).not.toHaveBeenCalled();
   });
 
-  it('dismisses from its own queue, as the acting moderator', async () => {
+  it('refuses without the version the moderator was shown', async () => {
+    expect(await dismiss('csam', { imageId: '52' })).toMatchObject({ status: 400 });
+    expect(dismissFromCsamQueue).not.toHaveBeenCalled();
+  });
+
+  it('dismisses from its own queue, as the acting moderator, at the version shown', async () => {
     const result = await dismiss('csam');
 
     expect(result).toEqual({ success: true, imageId: 52 });
-    expect(dismissFromCsamQueue).toHaveBeenCalledWith({ imageId: 52, userId: 7 });
+    expect(dismissFromCsamQueue).toHaveBeenCalledWith({ imageId: 52, version: '901', userId: 7 });
   });
 
-  it('says so when there was nothing to dismiss', async () => {
-    dismissFromCsamQueue.mockResolvedValue(false);
+  it('says so when the image changed or there was nothing to dismiss', async () => {
+    dismissFromCsamQueue.mockResolvedValue({ ok: false, reason: 'changed' });
 
-    const result = await dismiss('csam');
+    expect(await dismiss('csam')).toMatchObject({ status: 409 });
+  });
 
-    expect(result).toMatchObject({ status: 409 });
+  it('reports a missing table or grant as unavailable, not as a changed image', async () => {
+    dismissFromCsamQueue.mockResolvedValue({ ok: false, reason: 'unavailable' });
+
+    expect(await dismiss('csam')).toMatchObject({ status: 503 });
   });
 });

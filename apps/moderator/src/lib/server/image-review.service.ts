@@ -3,7 +3,13 @@ import { dbRead } from './db';
 import { getClickhouse } from './clickhouse';
 import { takePage } from './keyset-page';
 import { getFlagClearHolds, holdMarkerState, type FlagClearHoldLeg } from './csam-flag-clear';
-import { setAsideCounts, setAsideState, type SetAsideState } from './csam-queue-set-aside';
+import {
+  imagesVersion,
+  imageVersion,
+  setAsideCounts,
+  setAsideState,
+  type SetAsideState,
+} from './csam-queue-set-aside';
 import type { MediaType } from '$lib/media/edge-url';
 import { FLAG_KEPT_THROUGH_BLOCK, type ImageReviewType } from '$lib/image-review';
 import { DEFAULT_REPORT_REASONS } from '$lib/reports';
@@ -40,6 +46,8 @@ export type ImageReviewItem = {
   /** Raw `metadata` text, for the placeholder of a file that cannot be shown. */
   size: string | null;
   duration: string | null;
+  /** `imageVersion`: what a dismissal from the CSAM queue is taken against. */
+  version: string;
   reviewTags: ReviewTag[];
 };
 
@@ -108,6 +116,7 @@ export async function getImageReviewQueue({
       'i.mimeType',
       sql<string | null>`i.metadata ->> 'size'`.as('size'),
       sql<string | null>`i.metadata ->> 'duration'`.as('duration'),
+      imageVersion('i').as('version'),
     ])
     // needsReview + ingestion equality drives the Image_needsReview_index partial index. The bit-op
     // browsing-level test and the correlated tag EXISTS/NOT EXISTS subqueries stay as sql fragments.
@@ -239,6 +248,8 @@ export type CsamQueueUser = {
   pending: number;
   /** Flagged, removed and not yet dismissed, at any browsing level: what a bulk dismiss would take. */
   removed: number;
+  /** `imagesVersion` of those images, which a bulk dismiss is taken against; null when none. */
+  removedVersion: string | null;
   latestImageId: number;
   /** Newest `reportSentAt` of the user's CSAM reports; null when none was sent. */
   reportSentAt: Date | null;
@@ -289,7 +300,11 @@ export async function getCsamQueueByUser({
       .execute(),
     dbRead
       .selectFrom('Image as i')
-      .select(['i.userId', sql<number>`count(*)::int`.as('count')])
+      .select([
+        'i.userId',
+        sql<number>`count(*)::int`.as('count'),
+        imagesVersion('i').as('version'),
+      ])
       .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
       .where('i.ingestion', '=', 'Blocked')
       .where('i.userId', 'in', userIds)
@@ -303,7 +318,7 @@ export async function getCsamQueueByUser({
     marker === 'view'
       ? legs
       : legs.map((leg) => (leg === 'evidenceHold' ? 'evidenceHoldUnknown' : leg));
-  const removedByUser = new Map(removed.map((r) => [r.userId, Number(r.count)]));
+  const removedByUser = new Map(removed.map((r) => [r.userId, r]));
   const usernames = new Map(users.map((u) => [u.id, u.username]));
   const reportsByUser = new Map(reports.map((r) => [r.userId, r.reportSentAt]));
 
@@ -313,7 +328,8 @@ export async function getCsamQueueByUser({
       username: usernames.get(g.userId) ?? null,
       flagged: Number(g.flagged),
       pending: Number(g.pending),
-      removed: removedByUser.get(g.userId) ?? 0,
+      removed: Number(removedByUser.get(g.userId)?.count ?? 0),
+      removedVersion: removedByUser.get(g.userId)?.version ?? null,
       latestImageId: Number(g.latestImageId),
       reportSentAt: reportsByUser.get(g.userId) ?? null,
       reported: reportsByUser.has(g.userId),

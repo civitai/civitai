@@ -357,6 +357,32 @@ describe('images set aside from the CSAM queue', () => {
     expect(users.find((u) => u.userId === 301)?.removed).toBe(2);
   });
 
+  // A report of an image already flagged writes the same flag: only the version says it happened.
+  it('shows a new version of an image, and of its owner’s removed images, once it is written', async () => {
+    const shown = async () => ({
+      image: (
+        await getImageReviewQueue({
+          needsReview: 'csam',
+          browsingLevel: ALL_LEVELS,
+          userId: 301,
+          limit: 50,
+        })
+      ).items.find((i) => i.id === 64)?.version,
+      user: (await getCsamQueueByUser({ browsingLevel: ALL_LEVELS })).users.find(
+        (u) => u.userId === 301
+      )?.removedVersion,
+    });
+    const before = await shown();
+    expect(before.image).toEqual(expect.any(String));
+    expect(before.user).toEqual(expect.any(String));
+    expect(await shown()).toEqual(before);
+
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 64`);
+    const after = await shown();
+    expect(after.image).not.toBe(before.image);
+    expect(after.user).not.toBe(before.user);
+  });
+
   it('badges what the by-user page shows as pending', async () => {
     const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
     const pending = users.reduce((n, u) => n + u.pending, 0);

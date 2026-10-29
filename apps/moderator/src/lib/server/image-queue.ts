@@ -273,11 +273,16 @@ export const imageQueueActions = {
     if (params.slug !== FLAG_KEPT_THROUGH_BLOCK) return fail(403, { error: 'Not available here.' });
     const form = await request.formData();
     const imageId = Number(form.get('imageId'));
-    if (!imageId) return fail(400, { error: 'Missing image id.' });
-    const dismissed = await dismissFromCsamQueue({ imageId, userId: locals.user.id });
-    if (!dismissed)
-      return fail(409, {
-        error: 'This image is no longer in this queue. Reload.',
+    const version = form.get('version');
+    if (!imageId || typeof version !== 'string' || !version)
+      return fail(400, { error: 'Missing image id or version.' });
+    const result = await dismissFromCsamQueue({ imageId, version, userId: locals.user.id });
+    if (!result.ok)
+      return fail(result.reason === 'unavailable' ? 503 : 409, {
+        error:
+          result.reason === 'unavailable'
+            ? 'Dismissing is not available yet. Nothing was dismissed.'
+            : 'This image changed or left this queue since it was shown. Nothing was dismissed. Reload.',
         imageId,
       });
     return { success: true, imageId };
@@ -287,7 +292,11 @@ export const imageQueueActions = {
   dismissUserFlags: async ({ request, locals, params }) => {
     if (params.slug !== FLAG_KEPT_THROUGH_BLOCK) return fail(403, { error: 'Not available here.' });
     const input = parseForm(
-      z.object({ userId: int4Id, expectedCount: z.coerce.number().int().positive() }),
+      z.object({
+        userId: int4Id,
+        expectedCount: z.coerce.number().int().positive(),
+        version: z.string().min(1),
+      }),
       await request.formData()
     );
     if (typeof input === 'string') return fail(400, { error: input });

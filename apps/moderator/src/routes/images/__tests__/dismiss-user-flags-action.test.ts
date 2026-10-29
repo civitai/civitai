@@ -25,7 +25,7 @@ const request = (fields: Record<string, string>) =>
 
 const post = (
   slug: string,
-  fields: Record<string, string> = { userId: '40', expectedCount: '3' }
+  fields: Record<string, string> = { userId: '40', expectedCount: '3', version: 'v1' }
 ) =>
   actions.dismissUserFlags({
     request: request(fields),
@@ -45,15 +45,21 @@ describe('dismissUserFlags', () => {
   });
 
   it('refuses without the count the moderator confirmed', async () => {
-    expect(await post('csam', { userId: '40' })).toMatchObject({ status: 400 });
+    expect(await post('csam', { userId: '40', version: 'v1' })).toMatchObject({ status: 400 });
     expect(dismissUserFromCsamQueue).not.toHaveBeenCalled();
   });
 
-  it('dismisses as the acting moderator, for the count confirmed', async () => {
+  it('refuses without the version the moderator was shown', async () => {
+    expect(await post('csam', { userId: '40', expectedCount: '3' })).toMatchObject({ status: 400 });
+    expect(dismissUserFromCsamQueue).not.toHaveBeenCalled();
+  });
+
+  it('dismisses as the acting moderator, for the count and version shown', async () => {
     expect(await post('csam')).toMatchObject({ success: true });
     expect(dismissUserFromCsamQueue).toHaveBeenCalledWith({
       userId: 40,
       expectedCount: 3,
+      version: 'v1',
       moderatorId: 7,
     });
   });

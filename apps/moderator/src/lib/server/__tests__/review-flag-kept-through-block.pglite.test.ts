@@ -1,7 +1,10 @@
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
+import { sql } from '@civitai/db/kysely';
+import type { DB } from '@civitai/db-schema/kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { imagesVersion, imageVersion, setAsideCounts } from '../csam-queue-set-aside';
 import type * as ModActivity from '../mod-activity';
 import type * as ThumbnailCache from '../thumbnail-cache';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
@@ -160,6 +163,60 @@ const imageRow = async (id: number) =>
     )
   ).rows[0];
 
+const kysely = () => dbHandle.current as Kysely<DB>;
+/** The version the queue would show for the image now. */
+const versionOf = async (imageId: number) =>
+  (
+    await kysely()
+      .selectFrom('Image as i')
+      .select(imageVersion('i').as('v'))
+      .where('i.id', '=', imageId)
+      .executeTakeFirstOrThrow()
+  ).v;
+/** The version the by-user queue would show for user 8's removed images not yet dismissed. */
+const userVersion = async () =>
+  (
+    await kysely()
+      .selectFrom('Image as i')
+      .select(imagesVersion('i').as('v'))
+      .where('i.userId', '=', 8)
+      .where('i.needsReview', '=', 'csam')
+      .where('i.ingestion', '=', 'Blocked')
+      .where(sql<boolean>`not ${setAsideCounts('i', { table: true, writable: true })}`)
+      .executeTakeFirstOrThrow()
+  ).v;
+const dismiss = async (imageId: number, userId: number, version?: string) =>
+  dismissFromCsamQueue({ imageId, userId, version: version ?? (await versionOf(imageId)) });
+const dismissUser = async (expectedCount: number, version?: string) =>
+  dismissUserFromCsamQueue({
+    userId: 8,
+    expectedCount,
+    moderatorId: 2,
+    version: version ?? (await userVersion()),
+  });
+/** What `reportCsamImages` writes for an image already flagged: the same flag, and no set-aside. */
+const reportAgain = (imageId: number) =>
+  db.exec(`
+    UPDATE "Image" SET "needsReview" = 'csam' WHERE id = ${imageId};
+    DELETE FROM "CsamQueueSetAside" WHERE "imageId" = ${imageId};
+  `);
+/** Runs `fn` as a role with every grant but INSERT on the set-aside table. */
+const withoutSetAsideInsert = async (fn: () => Promise<void>) => {
+  await db.exec(`
+    DROP ROLE IF EXISTS app_role;
+    CREATE ROLE app_role;
+    GRANT ALL ON ALL TABLES IN SCHEMA public TO app_role;
+    GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO app_role;
+    REVOKE INSERT ON "CsamQueueSetAside" FROM app_role;
+    SET ROLE app_role;
+  `);
+  try {
+    await fn();
+  } finally {
+    await db.exec(`ROLLBACK; RESET ROLE; DROP OWNED BY app_role; DROP ROLE app_role;`);
+  }
+};
+
 /** A Pending appeal beside the flag cannot be opened today; seeded to prove neither path relies on that. */
 const seedPendingAppeal = (imageId: number) =>
   db.query(`INSERT INTO "Appeal" ("userId", "entityType", "entityId") VALUES (7, 'Image', $1)`, [
@@ -239,7 +296,7 @@ describe('dismissFromCsamQueue', () => {
       .rows;
 
   it('takes the image out as dismissed and leaves it flagged and removed', async () => {
-    expect(await dismissFromCsamQueue({ imageId: FLAGGED_REMOVED, userId: 2 })).toBe(true);
+    expect(await dismiss(FLAGGED_REMOVED, 2)).toEqual({ ok: true });
 
     expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
     expect(await setAside()).toEqual([
@@ -250,7 +307,7 @@ describe('dismissFromCsamQueue', () => {
   // The purge reads `review`/`bulkRemove` rows as a moderator's takedown of the image; a dismissal
   // recorded as either would license destroying its stored bytes.
   it('records its own activity, not a takedown', async () => {
-    await dismissFromCsamQueue({ imageId: FLAGGED_REMOVED, userId: 2 });
+    await dismiss(FLAGGED_REMOVED, 2);
 
     expect(await activity()).toEqual([
       {
@@ -270,7 +327,7 @@ describe('dismissFromCsamQueue', () => {
         FOR EACH ROW EXECUTE FUNCTION refuse_activity();
     `);
     try {
-      await expect(dismissFromCsamQueue({ imageId: FLAGGED_REMOVED, userId: 2 })).rejects.toThrow();
+      await expect(dismiss(FLAGGED_REMOVED, 2)).rejects.toThrow();
       expect(await setAside()).toEqual([]);
     } finally {
       await db.exec(
@@ -280,15 +337,15 @@ describe('dismissFromCsamQueue', () => {
   });
 
   it('is a no-op the second time', async () => {
-    await dismissFromCsamQueue({ imageId: FLAGGED_REMOVED, userId: 2 });
-    expect(await dismissFromCsamQueue({ imageId: FLAGGED_REMOVED, userId: 3 })).toBe(false);
+    await dismiss(FLAGGED_REMOVED, 2);
+    expect(await dismiss(FLAGGED_REMOVED, 3)).toEqual({ ok: false, reason: 'changed' });
 
     expect(await setAside()).toHaveLength(1);
     expect(await activity()).toHaveLength(1);
   });
 
   it('refuses an image that is not removed', async () => {
-    expect(await dismissFromCsamQueue({ imageId: FLAGGED, userId: 2 })).toBe(false);
+    expect(await dismiss(FLAGGED, 2)).toEqual({ ok: false, reason: 'changed' });
 
     expect(await imageRow(FLAGGED)).toEqual({ needsReview: 'csam', ingestion: 'Scanned' });
     expect(await setAside()).toEqual([]);
@@ -296,13 +353,41 @@ describe('dismissFromCsamQueue', () => {
   });
 
   it('refuses any other flag', async () => {
-    expect(await dismissFromCsamQueue({ imageId: OTHER_FLAG_REMOVED, userId: 2 })).toBe(false);
+    expect(await dismiss(OTHER_FLAG_REMOVED, 2)).toEqual({ ok: false, reason: 'changed' });
 
     expect(await imageRow(OTHER_FLAG_REMOVED)).toEqual({
       needsReview: 'appeal',
       ingestion: 'Blocked',
     });
     expect(await setAside()).toEqual([]);
+  });
+
+  it('refuses a dismissal of the image as it was before a report that landed since', async () => {
+    const shown = await versionOf(FLAGGED_REMOVED);
+    await reportAgain(FLAGGED_REMOVED);
+
+    expect(await dismiss(FLAGGED_REMOVED, 2, shown)).toEqual({ ok: false, reason: 'changed' });
+    expect(await setAside()).toEqual([]);
+    expect(await activity()).toEqual([]);
+    expect(await dismiss(FLAGGED_REMOVED, 2)).toEqual({ ok: true });
+  });
+
+  it('is unavailable before the table exists', async () => {
+    await db.exec(`ALTER TABLE "CsamQueueSetAside" RENAME TO "CsamQueueSetAsideAway"`);
+    try {
+      expect(await dismiss(FLAGGED_REMOVED, 2)).toEqual({ ok: false, reason: 'unavailable' });
+    } finally {
+      await db.exec(`ALTER TABLE "CsamQueueSetAsideAway" RENAME TO "CsamQueueSetAside"`);
+    }
+    expect(await activity()).toEqual([]);
+  });
+
+  it('is unavailable to a role that may not write set-asides', async () => {
+    await withoutSetAsideInsert(async () => {
+      expect(await dismiss(FLAGGED_REMOVED, 2)).toEqual({ ok: false, reason: 'unavailable' });
+    });
+    expect(await setAside()).toEqual([]);
+    expect(await activity()).toEqual([]);
   });
 });
 
@@ -338,13 +423,11 @@ describe('dismissUserFromCsamQueue', () => {
     ).rows.map((r) => r.entityId);
 
   it('dismisses every removed image not yet dismissed and keeps every flag', async () => {
-    expect(await dismissUserFromCsamQueue({ userId: 8, expectedCount: 2, moderatorId: 2 })).toEqual(
-      {
-        ok: true,
-        dismissed: 2,
-        remaining: 1,
-      }
-    );
+    expect(await dismissUser(2)).toEqual({
+      ok: true,
+      dismissed: 2,
+      remaining: 1,
+    });
 
     expect(await flags()).toEqual([
       { id: FLAGGED_REMOVED, needsReview: 'csam' },
@@ -357,12 +440,10 @@ describe('dismissUserFromCsamQueue', () => {
   });
 
   it('dismisses nothing when the count differs from what the moderator confirmed', async () => {
-    expect(await dismissUserFromCsamQueue({ userId: 8, expectedCount: 3, moderatorId: 2 })).toEqual(
-      {
-        ok: false,
-        reason: 'changed',
-      }
-    );
+    expect(await dismissUser(3)).toEqual({
+      ok: false,
+      reason: 'changed',
+    });
 
     expect(await dismissedIds()).toEqual([57]);
     expect(await loggedIds()).toEqual([]);
@@ -374,23 +455,70 @@ describe('dismissUserFromCsamQueue', () => {
       INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId", "createdAt")
         VALUES (55, 8, 'AfterReport', 1, now());
     `);
-    expect(await dismissUserFromCsamQueue({ userId: 8, expectedCount: 2, moderatorId: 2 })).toEqual(
-      {
-        ok: false,
-        reason: 'changed',
-      }
-    );
+    expect(await dismissUser(2)).toEqual({
+      ok: false,
+      reason: 'changed',
+    });
 
     expect(await dismissedIds()).toEqual([57]);
     expect(await loggedIds()).toEqual([]);
   });
 
+  it('dismisses nothing when an image was reported again since it was shown', async () => {
+    const shown = await userVersion();
+    await reportAgain(55);
+
+    expect(await dismissUser(2, shown)).toEqual({ ok: false, reason: 'changed' });
+    expect(await dismissedIds()).toEqual([57]);
+    expect(await loggedIds()).toEqual([]);
+  });
+
+  it('dismisses nothing when a report puts back a dismissed image, even at the count shown', async () => {
+    const shown = await userVersion();
+    // 57 back in the queue and 55 dismissed meanwhile: still two images, not the two shown.
+    await reportAgain(57);
+    await db.exec(`
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId", "createdAt")
+        VALUES (55, 8, 'Dismissed', 3, now());
+    `);
+
+    expect(await dismissUser(2, shown)).toEqual({ ok: false, reason: 'changed' });
+    expect(await dismissedIds()).toEqual([55]);
+    expect(await loggedIds()).toEqual([]);
+  });
+
+  // A dismissal writes nothing a hold protects: the flag stays, the image stays removed, and its log
+  // entry is not a takedown. So a hold does not stand in its way.
+  it('dismisses a held user’s images like anyone else’s, and leaves them flagged and removed', async () => {
+    await db.exec(`
+      CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
+      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId";
+      INSERT INTO "EvidenceHold" ("userId") VALUES (8);
+    `);
+    try {
+      expect(await dismissUser(2)).toEqual({ ok: true, dismissed: 2, remaining: 1 });
+    } finally {
+      await db.exec(`DROP VIEW "EvidenceHeldUser"; DROP TABLE "EvidenceHold";`);
+    }
+    expect(await imageRow(FLAGGED_REMOVED)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    expect(await imageRow(55)).toEqual({ needsReview: 'csam', ingestion: 'Blocked' });
+    expect(await dismissedIds()).toEqual([FLAGGED_REMOVED, 55, 57]);
+  });
+
+  it('dismisses nothing for a role that may not write set-asides', async () => {
+    await withoutSetAsideInsert(async () => {
+      expect(await dismissUser(2)).toEqual({ ok: false, reason: 'unavailable' });
+    });
+    expect(await dismissedIds()).toEqual([57]);
+  });
+
   it('dismisses nothing before the table exists', async () => {
     await db.exec(`ALTER TABLE "CsamQueueSetAside" RENAME TO "CsamQueueSetAsideAway"`);
     try {
-      expect(
-        await dismissUserFromCsamQueue({ userId: 8, expectedCount: 2, moderatorId: 2 })
-      ).toEqual({ ok: false, reason: 'unavailable' });
+      expect(await dismissUser(2, 'shown before the migration')).toEqual({
+        ok: false,
+        reason: 'unavailable',
+      });
     } finally {
       await db.exec(`ALTER TABLE "CsamQueueSetAsideAway" RENAME TO "CsamQueueSetAside"`);
     }

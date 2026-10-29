@@ -17,7 +17,8 @@
     selected,
     submit,
   }: {
-    item: { id: number; nsfwLevel: number; minor: boolean; poi: boolean };
+    /** `version` comes with a review-queue item, the only kind `dismissFlag` is shown for. */
+    item: { id: number; nsfwLevel: number; minor: boolean; poi: boolean; version?: string };
     /** Couples the report's status to the verdict: accept → Unactioned, block → Actioned. It is also
      *  the card's selection key on the reported queue, where cards key by report rather than image. */
     reportId?: number;
@@ -54,6 +55,7 @@
   {#if dismissFlag}
     <form method="POST" action="?/dismissFlag" use:enhance={submit}>
       <input type="hidden" name="imageId" value={item.id} />
+      <input type="hidden" name="version" value={item.version} />
       <Button type="submit" variant="outline" size="sm" class="text-amber-400 hover:text-amber-300">
         Dismiss, keep removed
       </Button>

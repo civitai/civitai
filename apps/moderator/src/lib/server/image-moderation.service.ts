@@ -17,7 +17,7 @@ import { bustProfilePictures } from './profile-picture-cache';
 import { NsfwLevel } from '@civitai/shared';
 import { FLAG_KEPT_THROUGH_BLOCK } from '$lib/image-review';
 import { holdRemovals, type HeldRemoval } from './removal-hold';
-import { setAsideCounts, setAsideState } from './csam-queue-set-aside';
+import { imagesVersion, imageVersion, setAsideCounts, setAsideState } from './csam-queue-set-aside';
 import type { Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 
@@ -290,30 +290,38 @@ export async function blockImage({
   return {};
 }
 
+export type DismissResult = { ok: true } | { ok: false; reason: 'changed' | 'unavailable' };
+
 /**
  * Takes a removed image out of the CSAM review queue as dismissed, leaving the image itself as it is:
- * flag, block and uploader untouched. False when it is not a removed, flagged image or was already
- * dismissed, e.g. another moderator got there first.
+ * flag, block and uploader untouched. `version` is the `imageVersion` the moderator was shown; an
+ * image written since (reported again, say) is 'changed', as is one no longer removed and flagged or
+ * already dismissed.
  */
 export async function dismissFromCsamQueue({
   imageId,
+  version,
   userId,
 }: {
   imageId: number;
+  version: string;
   userId: number;
-}): Promise<boolean> {
+}): Promise<DismissResult> {
   return dbWrite.transaction().execute(async (tx) => {
+    const state = await setAsideState(tx);
+    if (!state.writable) return { ok: false, reason: 'unavailable' } as const;
     const image = await tx
-      .selectFrom('Image')
-      .select('userId')
-      .where('id', '=', imageId)
-      .where('needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
-      .where('ingestion', '=', 'Blocked')
+      .selectFrom('Image as i')
+      .select('i.userId')
+      .where('i.id', '=', imageId)
+      .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
+      .where('i.ingestion', '=', 'Blocked')
+      .where(imageVersion('i'), '=', version)
       .forUpdate()
       .executeTakeFirst();
-    if (!image) return false;
+    if (!image) return { ok: false, reason: 'changed' } as const;
     const dismissed = await insertDismissals(tx, [{ imageId, userId: image.userId }], userId);
-    return dismissed === 1;
+    return dismissed === 1 ? ({ ok: true } as const) : ({ ok: false, reason: 'changed' } as const);
   });
 }
 
@@ -325,33 +333,36 @@ class QueueChanged extends Error {}
 
 /**
  * `dismissFromCsamQueue` for every one of one user's removed, flagged images not already dismissed,
- * in one transaction. `expectedCount` is what the moderator confirmed; any other number rolls back,
- * so nothing is dismissed that was not shown. `remaining` is what still needs a verdict.
+ * in one transaction. `expectedCount` and `version` (`imagesVersion` of those images) are what the
+ * moderator was shown; anything else rolls back, so nothing is dismissed that was not shown as it is
+ * now. `remaining` is what still needs a verdict.
  */
 export async function dismissUserFromCsamQueue({
   userId,
   expectedCount,
+  version,
   moderatorId,
 }: {
   userId: number;
   expectedCount: number;
+  version: string;
   moderatorId: number;
 }): Promise<DismissUserResult> {
   try {
     return await dbWrite.transaction().execute(async (tx) => {
       const state = await setAsideState(tx);
-      if (!state.table) return { ok: false, reason: 'unavailable' } as const;
-      const images = await tx
+      if (!state.writable) return { ok: false, reason: 'unavailable' } as const;
+      const live = tx
         .selectFrom('Image as i')
-        .select('i.id')
         .where('i.userId', '=', userId)
         .where('i.needsReview', '=', FLAG_KEPT_THROUGH_BLOCK)
         .where('i.ingestion', '=', 'Blocked')
-        .where(sql<boolean>`not ${setAsideCounts('i', state)}`)
-        .orderBy('i.id')
-        .forUpdate()
-        .execute();
+        .where(sql<boolean>`not ${setAsideCounts('i', state)}`);
+      const images = await live.select('i.id').orderBy('i.id').forUpdate().execute();
       if (images.length !== expectedCount) throw new QueueChanged();
+      // Under the row locks just taken, so no write lands between this and the inserts.
+      const shown = await live.select(imagesVersion('i').as('version')).executeTakeFirst();
+      if (shown?.version !== version) throw new QueueChanged();
       const rows = images.map(({ id }) => ({ imageId: id, userId }));
       if ((await insertDismissals(tx, rows, moderatorId)) !== rows.length) throw new QueueChanged();
       const { remaining } = await tx

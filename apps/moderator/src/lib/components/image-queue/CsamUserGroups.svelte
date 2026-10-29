@@ -124,6 +124,7 @@
               >
                 <input type="hidden" name="userId" value={user.userId} />
                 <input type="hidden" name="expectedCount" value={user.removed} />
+                <input type="hidden" name="version" value={user.removedVersion} />
                 <ConfirmSubmit
                   label="Dismiss, keep removed"
                   name="op"
