@@ -153,6 +153,11 @@ Two sections:
 (`familyResources`, `perModelSlider`, `promptOnlyTextBlock`) and `../defs`. Ideogram 4
 (`e680364460`) is a compact reference for the whole set.
 
+A field whose def depends on graph values (`({ version }) => ...`) must not build zod schemas
+inline, or it rebuilds them on every keystroke. Hoist the def, or wrap it in `cachedFactory` keyed
+on the values it reads (`tripoFaceLimitDef` in `model3d/tripo.graph.ts`). `no-churning-field-def`
+fails otherwise.
+
 Exports: always export `<name>VersionIds` (as a `const` object) so the handler can import it for
 version-to-model-string mapping.
 

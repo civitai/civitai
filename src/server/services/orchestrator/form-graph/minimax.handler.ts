@@ -205,7 +205,8 @@ export const createMiniMaxInput = defineHandler<
           ? 'adaptive'
           : (data.aspectRatio?.value as MiniMaxH3VideoGenInput['aspectRatio']),
         duration: data.duration,
-        resolution: '2K',
+        model: data.mode,
+        resolution: data.resolution as MiniMaxH3VideoGenInput['resolution'],
         firstFrameImage,
         lastFrameImage,
         referenceImages,
