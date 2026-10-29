@@ -83,7 +83,7 @@ export type BackfillResult = ReturnType<typeof emptyStats> & {
 
 /** The real Embedder has all of these; a fake without them is unbounded and unpaced. */
 type PipelineEmbedder = Pick<Embedder, 'embed'> &
-  Partial<Pick<Embedder, 'batchSize' | 'submitWaitMs' | 'submitAllowance'>> & {
+  Partial<Pick<Embedder, 'batchSize' | 'submitWaitMs' | 'submitAllowance' | 'sink'>> & {
     budget?: Pick<Embedder['budget'], 'capacity' | 'inFlight'>;
   };
 
@@ -426,6 +426,7 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
         oldestOutstandingSec: oldest === Infinity ? null : Math.round((now() - oldest) / 1000),
         maxRate: opts.maxRate ?? null,
         window: opts.window ?? null,
+        sink: embedder?.sink?.stats() ?? null,
         ...extra,
       },
       msg
@@ -682,6 +683,7 @@ async function main() {
       );
     } finally {
       stopWatching();
+      await embedder?.sink?.close();
       await pg.end();
     }
   } finally {
