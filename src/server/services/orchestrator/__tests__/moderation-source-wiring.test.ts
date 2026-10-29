@@ -183,6 +183,13 @@ const EXPECTED_SOURCE_BY_CALL_SITE: Record<CallSiteKey, ExpectedCallSite> = {
     siteNote: "the 'promptAudit' step's submit-phase audit",
     arg: { kind: 'absent' },
   },
+  // The Training Studio's check on an edit prompt before the Studio submits the edit to the
+  // orchestrator itself; that generation never passes through `generateFromGraph`.
+  'src/pages/api/training-studio/check-text.ts::auditEditPrompt': {
+    sites: 1,
+    siteNote: "the audit of the Studio's edit prompt and its input image",
+    arg: { kind: 'absent' },
+  },
   'src/server/services/orchestrator/promptEnhancement.ts::enhancePrompt': {
     sites: 2,
     siteNote:
