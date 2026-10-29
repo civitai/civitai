@@ -63,6 +63,10 @@ SQL on PGlite.
 - The user guard in `hooks.server.ts` skips exactly the routes in `JOB_PATHS` (tick, partitions, harvest); a new job route must be added there.
 - `/play` is the minimal voting page, with a status line (rank, level and XP from `@civitai/shared/new-order-levels`, the trial position for Acolytes, and the progression standing described under Progression). Acolytes, and players with no `NewOrderPlayer` row yet, get Trials instead of the feed and cannot vote; Knights and above keep the feed. It also shows the Daily Watch panel and the dismissable recap (see Daily loop); `/ranks` lists each rank's daily gold cap.
 
+## Joining
+
+`/` shows "Join the Order" to a user with no `NewOrderPlayer` row: a sensitive-content warning (explicit imagery regardless of the user's browsing level), then the `join` action, which requires `accepted=yes`, calls `joinOrder` (`lib/server/join.service.ts`, the only place an Acolyte row is created; idempotent, never touches an existing row) and redirects to `/play`. `/play` redirects a user with no row back to `/`. The v1 Acolyte badge cosmetic is not awarded here yet.
+
 ## Progression (`src/lib/server/progression`)
 
 Migration `20261213120000_knights_v2_progression` (applied by hand): `KnightsVote.xp` / `settledAt`, `NewOrderPlayer.goldPending` / `goldEarned`. Progression amounts are in `progression/config.ts`; the Watch, streak and shield amounts are in `daily/config.ts` and the per-rank daily gold cap is in `ranks.ts` (see Daily loop).
