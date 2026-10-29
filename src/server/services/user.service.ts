@@ -1652,7 +1652,7 @@ export const removeAllContent = async ({
       WHERE c."userId" = ${id} AND ${unlessHeld}
         AND NOT ${heldLegacyReplyBelowSql(Prisma.raw('c.id'), markerView)}`;
     await dbWrite.$executeRaw`
-      UPDATE "Comment" SET "tosViolation" = true, "updatedAt" = now()
+      UPDATE "Comment" SET "tosViolation" = true, "removedByAuthor" = true, "updatedAt" = now()
       WHERE "userId" = ${id} AND ${unlessHeld}`;
     await dbWrite.$executeRaw`
       WITH ${detach({ articleId: owned('Article') })}

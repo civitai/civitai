@@ -123,6 +123,7 @@ import {
   LegalHoldUnconfirmedError,
 } from '~/server/services/legal-hold.service';
 import { removeAllContent } from '~/server/services/user.service';
+import { bulkClearCommentTosViolation } from '~/server/services/comment.service';
 import { deleteImages } from '~/server/services/image.service';
 import { refundBidsForVersions } from '~/server/services/auction.service';
 import { purgeUserAppStorageForAccountWipe } from '~/server/services/apps/user-storage-purge.service';
@@ -194,7 +195,13 @@ beforeAll(async () => {
       ADD COLUMN "deletedAt" timestamp(3), ADD COLUMN "updatedAt" timestamp(3);
     ALTER TABLE "Comment" ADD COLUMN "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE,
       ADD COLUMN "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
-      ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3);
+      ADD COLUMN "tosViolation" boolean NOT NULL DEFAULT false, ADD COLUMN "updatedAt" timestamp(3),
+      ADD COLUMN "removedByAuthor" boolean NOT NULL DEFAULT false;
+    -- What a ToS restore reopens; no reports here, so only the flag moves.
+    CREATE DOMAIN "ReportStatus" AS text;
+    CREATE DOMAIN "ReportReason" AS text;
+    CREATE TABLE "Report" (id int PRIMARY KEY, status text, reason text);
+    CREATE TABLE "CommentReport" ("reportId" int, "commentId" int);
     -- A parent's comment thread, and the comments on it, go with the parent; reply threads with
     -- their root.
     CREATE TABLE "Thread" (
@@ -989,6 +996,40 @@ describe('removeAllContent keeps other people’s comments a held author is part
     ).toEqual([
       { id: 5000, tosViolation: true },
       { id: 5001, tosViolation: false },
+    ]);
+  });
+
+  it("leaves the legacy comment it kept hidden through a moderator's ToS restore", async () => {
+    // Prisma's update, as one UPDATE whose WHERE carries every field the call names.
+    vi.mocked(dbMock.dbWrite.comment.update).mockImplementation((async (args: {
+      where: { id: number; removedByAuthor?: boolean };
+      data: { tosViolation: boolean };
+    }) => {
+      const { rows: updated } = await holder.db.query(
+        `UPDATE "Comment" SET "tosViolation" = $2 WHERE id = $1
+           AND ($3::boolean IS NULL OR "removedByAuthor" = $3) RETURNING id`,
+        [args.where.id, args.data.tosViolation, args.where.removedByAuthor ?? null]
+      );
+      if (!updated.length) throw Object.assign(new Error('not found'), { code: 'P2025' });
+      return updated[0];
+    }) as never);
+    // 5003 is a bystander's comment a moderator hid: the control a restore brings back.
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId", "parentId") VALUES
+        (5000, ${CLEAN}, NULL, NULL), (5001, ${HELD}, NULL, 5000);
+      INSERT INTO "Comment" (id, "userId", "tosViolation") VALUES (5003, ${BYSTANDER}, true);
+    `);
+
+    await removeAllContent({ id: CLEAN });
+    await expect(bulkClearCommentTosViolation({ ids: [5000, 5003] })).resolves.toMatchObject({
+      count: 1,
+    });
+
+    expect(
+      await rows(`SELECT id, "tosViolation" FROM "Comment" WHERE id IN (5000, 5003) ORDER BY id`)
+    ).toEqual([
+      { id: 5000, tosViolation: true },
+      { id: 5003, tosViolation: false },
     ]);
   });
 });
