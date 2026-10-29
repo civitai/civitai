@@ -1,3 +1,10 @@
+import { uniqBy } from 'lodash-es';
+import type { ImageInput } from '~/server/schema/image.schema';
+import { TRPCError } from '@trpc/server';
+import {
+  COVER_IMAGE_UNAVAILABLE_MESSAGE,
+  resolveCoverImageId,
+} from '~/server/services/cover-image.service';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
@@ -12,6 +19,13 @@ import {
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { StorylineModActivity } from '~/server/services/moderator.service';
 import { trackModActivity } from '~/server/services/moderator.service';
+import { placementMoneyInFlightSql } from '~/server/services/placement-escrow.service';
+import {
+  accountHoldSql,
+  contentKeptError,
+  holdMarkerViewExists,
+  ownerHeldSql,
+} from '~/server/services/legal-hold.service';
 import { isPlacementBlocked } from '~/server/services/placement-moderation.service';
 import { enforceBlockedBrowsingTags } from '~/server/services/blocked-browsing-tags.service';
 import { placementPriceRanges } from '~/server/services/placement.service';
@@ -64,7 +78,7 @@ import {
   toStorylineForkShares,
 } from '~/shared/utils/storyline';
 import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
-import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
+import { AppealStatus, EntityType, ReportStatus } from '~/shared/utils/prisma/enums';
 import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 import { createStorylineLinkJudge, STORYLINE_LINK_REFUSALS } from '~/shared/utils/storyline-graph';
 import {
@@ -752,6 +766,7 @@ export async function createStoryline({
         await assertStorylinePicks(tx, {
           storylineId: storyline.id,
           ownerId: userId,
+          callerId: userId,
           maxNsfwLevel,
           imageIds: [coverImageId, heroImageId],
         });
@@ -777,6 +792,8 @@ export async function updateStoryline({
   coverImageId,
   heroImageId,
   heroImagePosition,
+  coverUpload,
+  heroUpload,
   userId,
   isModerator,
 }: {
@@ -789,10 +806,25 @@ export async function updateStoryline({
   coverImageId?: number | null;
   heroImageId?: number | null;
   heroImagePosition?: number;
+  /** A file the caller just uploaded, made an image of theirs and picked. */
+  coverUpload?: ImageInput;
+  heroUpload?: ImageInput;
   userId: number;
   isModerator?: boolean;
 }) {
   const current = await getOwnedStoryline({ storylineId: id, userId, isModerator });
+  // An upload is a file the caller just put up, so its key is behind no image yet.
+  for (const upload of [coverUpload, heroUpload])
+    if (
+      upload &&
+      (await dbWrite.image.findFirst({ where: { url: upload.url }, select: { id: true } }))
+    )
+      throw new TRPCError({ code: 'BAD_REQUEST', message: COVER_IMAGE_UNAVAILABLE_MESSAGE });
+  if (coverUpload) coverImageId = await resolveCoverImageId({ coverImage: coverUpload, userId });
+  if (heroUpload) heroImageId = await resolveCoverImageId({ coverImage: heroUpload, userId });
+  const uploadedIds = [coverUpload && coverImageId, heroUpload && heroImageId].filter(
+    (imageId): imageId is number => !!imageId
+  );
   if (maxNsfwLevel !== undefined) {
     if (!isStorylineCeilingLevel(maxNsfwLevel))
       throw throwBadRequestError('Invalid maximum rating');
@@ -800,12 +832,14 @@ export async function updateStoryline({
   }
   if (title !== undefined)
     await throwOnBlockedUserContent(title, { isModerator, surface: 'storyline' });
-  // A moderator editing is held to the owner's rule: the picks are the owner's chapters'. A pick
-  // sent back unchanged is not judged again, so the picker can resend the whole form after a
+  // A chapter image is held to the owner's rule, whoever picks it; an upload must be the picker's
+  // own. A pick sent back unchanged is not judged again, so the picker can resend the whole form after a
   // collaborator whose image it is has been removed.
   await assertStorylinePicks(dbWrite, {
     storylineId: id,
     ownerId: current.userId,
+    callerId: userId,
+    uploadedIds,
     maxNsfwLevel: storylineCeiling({
       maxNsfwLevel: maxNsfwLevel ?? current.maxNsfwLevel,
       minorByScan: current.minorByScan,
@@ -820,19 +854,26 @@ export async function updateStoryline({
   // raising it again brings them back.
   // Closing a Complete storyline to continuations is left to the placement layer reading the
   // status, so there is no second switch here to disagree with it.
-  const updated = await dbWrite.storyline.update({
-    where: { id },
-    data: {
-      title,
-      status,
-      maxNsfwLevel,
-      whoCanContinue,
-      coverImageId,
-      heroImageId,
-      heroImagePosition,
-    },
-    select: { ...storylineSelect, ...storylinePicksSelect },
-  });
+  const [, updated] = await dbWrite.$transaction([
+    // What lets the read path use an image in no post as this storyline's pick.
+    dbWrite.storylineCoverUpload.createMany({
+      data: uploadedIds.map((imageId) => ({ storylineId: id, imageId })),
+      skipDuplicates: true,
+    }),
+    dbWrite.storyline.update({
+      where: { id },
+      data: {
+        title,
+        status,
+        maxNsfwLevel,
+        whoCanContinue,
+        coverImageId,
+        heroImageId,
+        heroImagePosition,
+      },
+      select: { ...storylineSelect, ...storylinePicksSelect },
+    }),
+  ]);
   // An edited title is how an owner has a title verdict looked at again.
   if (title !== undefined && title !== current.title)
     scanEntityInBackground({ entityType: 'Storyline', entityId: id });
@@ -846,42 +887,168 @@ export async function updateStoryline({
 }
 
 /**
- * Deletes a storyline that has never had a chapter, for its owner only. Chapter rows are never
- * deleted (a removed or post-deleted chapter stays as a tombstone), so "no rows" means no chapter
- * in any state, and with it no continuation placement or Buzz: every placement targets a chapter's
- * post. A chapter-1 draft is unlinked by the cascade and stays an ordinary draft.
+ * Whether deleting storyline `id` would delete anything of a held account: its owner's, or a
+ * comment its cascade takes. The `commentId` arm reaches threads the cascade does not delete, so it
+ * can only refuse more than needed.
  */
-export async function deleteStoryline({ id, userId }: { id: number; userId: number }) {
+function storylineHeldSql({
+  id,
+  ownerId,
+  markerView,
+}: {
+  id: number;
+  ownerId: number;
+  markerView: boolean;
+}) {
+  return Prisma.sql`(${ownerHeldSql(Prisma.sql`${ownerId}::int`)} OR EXISTS (
+    WITH RECURSIVE below AS (
+      SELECT t.id FROM "Thread" t WHERE t."storylineId" = ${id}
+      UNION
+      -- One indexed lookup per link: an OR across them scans the whole Thread table every step.
+      SELECT x.id FROM below b CROSS JOIN LATERAL (
+        SELECT t.id FROM "Thread" t WHERE t."parentThreadId" = b.id
+        UNION ALL
+        SELECT t.id FROM "Thread" t WHERE t."rootThreadId" = b.id
+        UNION ALL
+        SELECT t.id FROM "CommentV2" k JOIN "Thread" t ON t."commentId" = k.id
+        WHERE k."threadId" = b.id
+      ) x
+    ),
+    authors AS MATERIALIZED (
+      SELECT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
+      UNION
+      SELECT c."userId" FROM "CommentV3" c
+      WHERE c."entityType" = 'storyline' AND c."entityId" = ${id}
+    )
+    SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
+  ))`;
+}
+
+export const STORYLINE_DELETE_REFUSALS = {
+  /** Every reason an owner may not delete, in one text, so no one reason can be told apart. */
+  owner:
+    "You can't delete this storyline yourself. A moderator can delete it for you; contact support.",
+  appealOpen: 'This storyline has an open appeal. Rule on it before deleting',
+  paidContinuations:
+    "This storyline has paid continuations that haven't settled yet. Try again once they have",
+} as const;
+
+/**
+ * Deletes a storyline for its owner or a moderator. Its posts stay as they are: the chapter rows
+ * that tie them to the storyline go with it (by cascade, as do its edges, branch choices, create
+ * clicks, collaborators and comment thread), and a chapter-1 draft is unlinked and stays a draft.
+ *
+ * Refused while any paid continuation on it is pending or its Buzz has not finished moving, so no
+ * escrow is left pointing at a chapter that no longer exists. A taken-down storyline is kept for
+ * moderation: its owner cannot delete it, and a moderator cannot while the owner's appeal is open.
+ */
+export async function deleteStoryline({
+  id,
+  userId,
+  isModerator,
+}: {
+  id: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  // Read outside the transaction, as `bulkDeleteComments` does: what `accountHoldSql` needs.
+  const markerView = await holdMarkerViewExists();
   await dbWrite.$transaction(async (tx) => {
     // Ownership first, unlocked (the owner never changes), so no one else's call takes a lock.
     const [owned] = await tx.$queryRaw<{ userId: number }[]>`
       SELECT "userId" FROM "Storyline" WHERE id = ${id}
     `;
     if (!owned) throw throwNotFoundError('Storyline not found');
-    if (owned.userId !== userId)
+    const asModerator = owned.userId !== userId;
+    if (asModerator && !isModerator)
       throw throwAuthorizationError('Only the owner can delete this storyline');
     // Drafts before the storyline, the order `promotePendingChapter` locks them in: the cascade
     // below would otherwise deadlock against a chapter-1 draft going live.
     await tx.$queryRaw`SELECT 1 FROM "StorylinePendingChapter" WHERE "storylineId" = ${id} FOR UPDATE`;
-    // FOR UPDATE waits out and then blocks every chapter writer: adds share this row
-    // (`lockStorylineForAdd`), inserts and moves hold it NO KEY, and a chapter-1 insert's foreign
-    // key takes KEY SHARE. Whatever committed first, the count below sees it.
+    // FOR UPDATE waits out and then blocks every chapter writer and continuation submit: adds and
+    // submits share this row (`lockStorylineForAdd`, `createStorylinePlacement`), inserts and
+    // moves hold it NO KEY, and a chapter-1 insert's foreign key takes KEY SHARE. Whatever
+    // committed first, the reads below see it.
     const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
       SELECT "tosViolation" FROM "Storyline" WHERE id = ${id} FOR UPDATE
     `;
     if (!storyline) throw throwNotFoundError('Storyline not found');
-    // Kept for moderation: deleting would drop the takedown and any appeal with it.
-    if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
-    const [{ hasChapter }] = await tx.$queryRaw<{ hasChapter: boolean }[]>`
-      SELECT EXISTS (SELECT 1 FROM "StorylineChapter" WHERE "storylineId" = ${id}) AS "hasChapter"
+    if (storyline.tosViolation) {
+      // The owner never, moderator or not: the takedown is against them.
+      if (!asModerator) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
+      const [{ appealOpen }] = await tx.$queryRaw<{ appealOpen: boolean }[]>`
+        SELECT EXISTS (
+          SELECT 1 FROM "Appeal"
+          WHERE "entityType" = ${EntityType.Storyline}::"EntityType" AND "entityId" = ${id}
+            AND status = ${AppealStatus.Pending}::"AppealStatus" AND "entityRemovedAt" IS NULL
+        ) AS "appealOpen"
+      `;
+      if (appealOpen) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.appealOpen);
+    }
+    // A paid continuation targets a chapter's post, and an approved one is its chapter's
+    // placement.
+    const [{ unsettled, approved }] = await tx.$queryRaw<
+      { unsettled: boolean; approved: boolean }[]
+    >`
+      WITH paid AS (
+        SELECT p.id, p.status FROM "Placement" p
+        WHERE p.surface = 'storyline' AND NOT p.free AND p.amount > 0
+          AND (
+            (p."targetType" = 'post' AND p."targetId" IN (
+              SELECT "postId" FROM "StorylineChapter" WHERE "storylineId" = ${id} AND "postId" IS NOT NULL
+            ))
+            OR p.id IN (
+              SELECT "placementId" FROM "StorylineChapter" WHERE "storylineId" = ${id} AND "placementId" IS NOT NULL
+            )
+          )
+      )
+      SELECT EXISTS (SELECT 1 FROM paid WHERE status = 'approved') AS approved, EXISTS (
+        SELECT 1 FROM paid p WHERE ${placementMoneyInFlightSql(Prisma.raw('p'))}
+      ) AS unsettled
     `;
-    if (hasChapter) throw throwBadRequestError('Only a storyline with no chapters can be deleted');
+    if (unsettled) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.paidContinuations);
+    const held = storylineHeldSql({ id, ownerId: owned.userId, markerView });
+    const holdRefusal = () =>
+      asModerator ? contentKeptError(true) : throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
+    const [{ isHeld }] = await tx.$queryRaw<{ isHeld: boolean }[]>`SELECT ${held} AS "isHeld"`;
+    if (isHeld) throw holdRefusal();
+    // An owner paid for approved continuations cannot then delete the chapters they were paid for
+    // (a refunded one does not count), nor delete what is under report. A moderator can.
+    if (!asModerator) {
+      if (approved) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
+      const [{ reported }] = await tx.$queryRaw<{ reported: boolean }[]>`
+        SELECT EXISTS (
+          SELECT 1 FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
+          WHERE sr."storylineId" = ${id}
+            AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+        ) AS reported
+      `;
+      if (reported) throw throwBadRequestError(STORYLINE_DELETE_REFUSALS.owner);
+    }
     // No foreign key: the owner's continuation price for this storyline would outlive it.
     await tx.$executeRaw`
       DELETE FROM "PlacementSpace"
       WHERE surface = 'storyline' AND "entityType" = 'storyline' AND "entityId" = ${id}
     `;
-    await tx.$executeRaw`DELETE FROM "Storyline" WHERE id = ${id}`;
+    // A moderator's delete answers the open reports on it, which would otherwise sit in the queue
+    // with nothing to point at once the cascade takes their links.
+    if (asModerator)
+      await tx.$executeRaw`
+        UPDATE "Report" r SET status = ${ReportStatus.Actioned}::"ReportStatus"
+        FROM "StorylineReport" sr
+        WHERE sr."reportId" = r.id AND sr."storylineId" = ${id}
+          AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+      `;
+    // The hold is in the DELETE itself too, so one placed after the check above still stops it.
+    const deleted = await tx.$executeRaw`DELETE FROM "Storyline" WHERE id = ${id} AND NOT ${held}`;
+    if (!deleted) throw holdRefusal();
+    // In the transaction, unlike `trackStorylineModEdit`: nothing else records what was deleted.
+    if (asModerator)
+      await trackModActivity(
+        userId,
+        { entityType: 'storyline', entityId: id, activity: 'delete' },
+        tx
+      );
   });
   return { id };
 }
@@ -1164,10 +1331,18 @@ export async function resolveStorylineTitleAppeal({
   return { granted: grant };
 }
 
+export const STORYLINE_PICK_REFUSALS = {
+  notAllowed:
+    "Choose an image from your own chapters, an endorsed collaborator's, or one you upload",
+  cannotUse: 'This image cannot be used as a cover or banner',
+  unrated: 'This image has not been rated yet. Try again once it has been',
+} as const;
+
 /**
- * The cover and banner may only be images from this storyline's chapters written by its owner or
- * by an endorsed collaborator (the endorsement is their consent), not from removed chapters, and
- * rated within the ceiling. Anything else is refused, whatever the client offered.
+ * The cover and banner may only be an image from this storyline's chapters, written by its owner
+ * or an endorsed collaborator (the endorsement is their consent) and not removed, or one the caller
+ * uploaded. A chapter image must also be rated within the ceiling; an upload is taken whatever its
+ * scan says and judged when read. Anything else is refused, whatever the client offered.
  *
  * Checked when chosen only. A collaborator removed later leaves their image as the cover until
  * the owner changes it, unless the image itself is deleted. An image that later becomes hidden or
@@ -1178,11 +1353,17 @@ async function assertStorylinePicks(
   {
     storylineId,
     ownerId,
+    callerId,
+    uploadedIds = [],
     maxNsfwLevel,
     imageIds,
   }: {
     storylineId: number;
     ownerId: number;
+    /** Who is picking: an image they uploaded (in no post) is theirs to use. */
+    callerId: number;
+    /** Images this request uploaded. The only images in no post a pick may be. */
+    uploadedIds?: number[];
     maxNsfwLevel: number;
     /** undefined is no change and null clears: neither is checked. */
     imageIds: (number | null | undefined)[];
@@ -1195,6 +1376,10 @@ async function assertStorylinePicks(
       where: { id: { in: ids } },
       select: {
         id: true,
+        userId: true,
+        postId: true,
+        ingestion: true,
+        tosViolation: true,
         nsfwLevel: true,
         minor: true,
         poi: true,
@@ -1212,21 +1397,33 @@ async function assertStorylinePicks(
   for (const imageId of ids) {
     const image = byId.get(imageId);
     const chapter = image?.post?.storylineChapter;
-    if (
-      !image ||
-      !chapter ||
-      chapter.storylineId !== storylineId ||
-      chapter.removedAt ||
-      !allowedAuthors.has(chapter.userId)
-    )
-      throw throwBadRequestError(
-        "Choose an image from your own chapters or an endorsed collaborator's"
-      );
+    const fromChapter =
+      !!chapter &&
+      chapter.storylineId === storylineId &&
+      !chapter.removedAt &&
+      allowedAuthors.has(chapter.userId);
+    const uploaded =
+      !!image &&
+      image.postId == null &&
+      image.userId === callerId &&
+      uploadedIds.includes(image.id);
+    if (!image || (!fromChapter && !uploaded))
+      throw throwBadRequestError(STORYLINE_PICK_REFUSALS.notAllowed);
+    // The caller's own upload is taken whatever its scan says: a refusal here would tell them the
+    // verdict. The read gate shows it only once the scan has cleared and rated it, within the
+    // ceiling, and the owner sees the same note for any pick that is not showing.
+    if (uploaded) continue;
     // Never shown as a cover or banner (see storylineImageVisible), so refused rather than kept.
-    if (image.minor || image.poi)
-      throw throwBadRequestError('This image cannot be used as a cover or banner');
-    if (!image.nsfwLevel)
-      throw throwBadRequestError('This image has not been rated yet. Try again once it has been');
+    if (
+      image.minor ||
+      image.poi ||
+      image.tosViolation ||
+      image.ingestion === 'Blocked' ||
+      image.ingestion === 'Error' ||
+      image.ingestion === 'NotFound'
+    )
+      throw throwBadRequestError(STORYLINE_PICK_REFUSALS.cannotUse);
+    if (!image.nsfwLevel) throw throwBadRequestError(STORYLINE_PICK_REFUSALS.unrated);
     if (!storylineLevelAllowed({ postLevel: image.nsfwLevel, maxNsfwLevel }))
       throw throwBadRequestError("This image is rated above the storyline's maximum rating");
   }
@@ -2128,6 +2325,9 @@ export async function getStoryline({
     coverImage: chosen(id, coverImageId) ?? firstChapter?.firstImage ?? null,
     coverImageId: isOwnerView ? coverImageId : null,
     heroImageId: isOwnerView ? heroImageId : null,
+    // A pick that is not showing, usually an upload whose scan has not cleared it yet.
+    coverPickHidden: isOwnerView && coverImageId != null && !chosen(id, coverImageId),
+    heroPickHidden: isOwnerView && heroImageId != null && !banner,
     titleAppealable,
     titleAppeal,
     rootChapterId: root?.id ?? null,
@@ -3084,8 +3284,9 @@ function getStorylineImageGate(
 }
 
 /**
- * An image this reader may be shown from a storyline chapter. Expects `i` (Image), `p` (its Post)
- * and `st` (the Storyline its chapter is in).
+ * An image this reader may be shown for a storyline: a chapter image, or an image in no chapter
+ * that is listed as uploaded for this storyline. Expects `i` (Image), `p` (its Post, if any) and
+ * `st` (the Storyline).
  */
 function storylineImageVisible(gate: StorylineImageGate) {
   const viewerId = gate.viewer?.id ?? -1;
@@ -3093,7 +3294,7 @@ function storylineImageVisible(gate: StorylineImageGate) {
       AND i."acceptableMinor" = false
       -- Shown to everyone who sees the card or page, so no minor or real-person image.
       AND i.minor = false AND i.poi = false
-      AND (p.availability <> 'Private' OR p."userId" = ${viewerId})
+      AND (p.id IS NULL OR p.availability <> 'Private' OR p."userId" = ${viewerId})
       AND i."nsfwLevel" <> 0
       AND (i."nsfwLevel" & ${gate.browsingLevel}::int) <> 0
       AND (i."nsfwLevel" & ~(${storylineCeilingSql} * 2 - 1)) = 0
@@ -3171,14 +3372,23 @@ async function getChosenStorylineImages(
   picks: { storylineId: number; imageId: number | null }[]
 ) {
   const key = (storylineId: number, imageId: number) => `${storylineId}:${imageId}`;
-  const imageIds = [...new Set(picks.flatMap((pick) => (pick.imageId ? [pick.imageId] : [])))];
+  const pairs = uniqBy(
+    picks.flatMap((pick) => (pick.imageId ? [{ ...pick, imageId: pick.imageId }] : [])),
+    (pick) => key(pick.storylineId, pick.imageId)
+  );
   const found = new Map<string, StorylineFeedCover>();
-  if (imageIds.length) {
+  if (pairs.length) {
     const resolved = await gate();
     const rows = await dbRead.$queryRaw<
       (StorylineFeedCover & {
         storylineId: number;
-        postId: number;
+        postId: number | null;
+        chapterId: number | null;
+        storylineUserId: number;
+        uploaderIsModerator: boolean | null;
+        uploaderBannedAt: Date | null;
+        uploaderDeletedAt: Date | null;
+        uploadedHere: boolean;
         postUserId: number;
         postNsfwLevel: number;
         publishedAt: Date | null;
@@ -3190,22 +3400,42 @@ async function getChosenStorylineImages(
         minorByScan: boolean;
       })[]
     >`
-      SELECT ${storylineImageColumns}, c."storylineId", i."postId",
+      SELECT ${storylineImageColumns}, st.id AS "storylineId", i."postId", c.id AS "chapterId",
         p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt",
         p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt",
-        st."maxNsfwLevel", st."minorByScan"
-      FROM "Image" i
-      JOIN "StorylineChapter" c ON c."postId" = i."postId"
-      JOIN "Storyline" st ON st.id = c."storylineId"
-      JOIN "Post" p ON p.id = i."postId"
-      JOIN "User" pu ON pu.id = p."userId"
-      WHERE i.id = ANY(${imageIds}::int[])
-        AND ${storylineImageVisible(resolved)}
+        st."maxNsfwLevel", st."minorByScan", st."userId" AS "storylineUserId",
+        iu."isModerator" AS "uploaderIsModerator", iu."bannedAt" AS "uploaderBannedAt",
+        iu."deletedAt" AS "uploaderDeletedAt", cu."imageId" IS NOT NULL AS "uploadedHere"
+      FROM unnest(${pairs.map((pair) => pair.storylineId)}::int[], ${pairs.map(
+      (pair) => pair.imageId
+    )}::int[]) AS pick("storylineId", "imageId")
+      JOIN "Image" i ON i.id = pick."imageId"
+      JOIN "Storyline" st ON st.id = pick."storylineId"
+      LEFT JOIN "StorylineChapter" c ON c."postId" = i."postId" AND c."storylineId" = st.id
+      LEFT JOIN "Post" p ON p.id = i."postId"
+      LEFT JOIN "User" pu ON pu.id = p."userId"
+      JOIN "User" iu ON iu.id = i."userId"
+      LEFT JOIN "StorylineCoverUpload" cu ON cu."storylineId" = st.id AND cu."imageId" = i.id
+      WHERE ${storylineImageVisible(resolved)}
     `;
     for (const row of rows) {
+      // A no-chapter cover must be listed as uploaded for this storyline, by its owner or a
+      // moderator whose account still stands and whom this reader has not blocked.
+      if (row.chapterId == null) {
+        if (
+          !row.postId &&
+          row.uploadedHere &&
+          (row.userId === row.storylineUserId || row.uploaderIsModerator) &&
+          !row.uploaderBannedAt &&
+          !row.uploaderDeletedAt &&
+          !resolved.blockedUserIds.has(row.userId)
+        )
+          found.set(key(row.storylineId, row.id), toStorylineImage(row));
+        continue;
+      }
       const tombstone = getStorylineChapterTombstone({
         post: {
-          id: row.postId,
+          id: row.postId!,
           userId: row.postUserId,
           nsfwLevel: row.postNsfwLevel,
           publishedAt: row.publishedAt,
@@ -3263,8 +3493,10 @@ export async function getStorylinesInfinite({
   const isModerator = !!viewer?.isModerator;
 
   const where: Prisma.Sql[] = [
-    // As `isStorylineHidden`, including a storyline with no chapter 1 yet.
-    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (rc.id IS NOT NULL AND st."tosViolation" = false AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL))`,
+    // As `isStorylineHidden`, including a storyline with no chapter 1 yet, except that a taken-down
+    // one is out of the feed for its owner and moderators too. They still open it by its URL.
+    Prisma.sql`st."tosViolation" = false`,
+    Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (rc.id IS NOT NULL AND u."bannedAt" IS NULL AND u."deletedAt" IS NULL))`,
     Prisma.sql`(${isModerator} OR st."userId" = ${viewerId} OR (${storyLevelSql} & ${browsingLevel}::int) <> 0)`,
   ];
   // One array parameter, not one bind per id: the list can run to tens of thousands.

@@ -165,9 +165,8 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
     // edit here (and a reminder that `details` is a String column, so a new step needs NO
     // ClickHouse migration — only a new `type` VALUE would).
     //
-    // `agent_prompt_copy` arrived with `AgentOnboardingCard`: the page now offers two routes
-    // into building an app (copy the three CLI commands, or paste one prompt into a coding
-    // agent) and they are separate steps so the comparison is answerable. The count is
+    // `agent_prompt_copy` arrived with `AgentOnboardingCard`. `cli_copy` was removed with the
+    // manual CLI steps it counted: `/apps/build` no longer offers them anywhere. The count is
     // deliberately NOT in this test's name any more — it was "the four funnel steps" and the
     // number had to be edited in two places to add one step, which is one place too many.
     const arm = trackActionSchema.options.find(
@@ -175,7 +174,6 @@ describe('🔴 APPS_BUILD_STATES matches the values the tracker will accept', ()
     ) as never as { shape: { details: { shape: { action: { options: readonly string[] } } } } };
     expect([...arm.shape.details.shape.action.options].sort()).toEqual([
       'agent_prompt_copy',
-      'cli_copy',
       'create_entry',
       'request_access',
       'view',

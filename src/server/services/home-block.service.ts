@@ -69,7 +69,11 @@ import {
 } from '~/shared/constants/browsingLevel.constants';
 import { HOME_BLOCK_ITEMS_PER_ROW } from '~/shared/constants/home-block.constants';
 import { capPerUser } from '~/shared/utils/cap-per-user';
-import { rotateShopSectionItems, shopBlockMaxItems } from '~/shared/utils/cosmetic-shop-rotation';
+import {
+  COSMETIC_SHOP_ROTATION_DEFAULTS,
+  rotateShopSectionItems,
+  shopBlockMaxItems,
+} from '~/shared/utils/cosmetic-shop-rotation';
 import { CrucibleStatus, HomeBlockType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { normalizeCrucibleEventTag } from '~/shared/constants/crucible.constants';
 import type { DomainColor } from '~/shared/utils/prisma/enums';
@@ -261,10 +265,13 @@ export const getHomeBlockById = async ({
   const rotation = metadata.cosmeticShopSection;
   if (!block?.cosmeticShopSection || !rotation?.random) return block;
 
+  const visible = shopBlockMaxItems(rotation) ?? COSMETIC_SHOP_ROTATION_DEFAULTS.maxItems;
   const rotated = rotateShopSectionItems(block.cosmeticShopSection.items, {
     sectionId: rotation.id,
     rotateHours: rotation.rotateHours,
     now: Date.now(),
+    visible,
+    getId: (item) => item.shopItem.id,
   });
   return {
     ...block,
@@ -272,7 +279,7 @@ export const getHomeBlockById = async ({
       ...block.cosmeticShopSection,
       // A rotating block shows a handful of a section that can hold over a hundred. Three times
       // that is room for the client to drop blocked sellers and still fill the row.
-      items: rotated.slice(0, 3 * (shopBlockMaxItems(rotation) ?? rotated.length)),
+      items: rotated.slice(0, 3 * visible),
     },
   };
 };
@@ -677,13 +684,18 @@ export const getHomeBlockData = async ({
         return null;
       }
 
-      // This body is shared by every viewer, so the creatorShop flag is resolved as it is for a
-      // signed-out one: on while the flag is public, off when it is pulled or Flipt can't answer.
-      // The per-viewer block filter the shop page applies can't live in a shared body either; the
-      // block applies it on the client.
+      // This body is shared by every viewer, so the creatorShop and stickers flags are resolved as
+      // they are for a signed-out one: on while the flag is public, off when it is pulled or Flipt
+      // can't answer. The per-viewer block filter the shop page applies can't live in a shared body
+      // either; the block applies it on the client.
+      const [creatorShopEnabled, stickersEnabled] = await Promise.all([
+        isFliptPublic('creator-shop'),
+        isFliptPublic('stickers'),
+      ]);
       const data = await getShopSectionsWithItems({
         sectionId: cosmeticShopSectionMeta.id,
-        creatorShopEnabled: await isFliptPublic('creator-shop'),
+        creatorShopEnabled,
+        stickersEnabled,
       });
 
       const [cosmeticShopSection] = data;

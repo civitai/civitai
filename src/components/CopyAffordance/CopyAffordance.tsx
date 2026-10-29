@@ -52,8 +52,8 @@ import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon
  * a disabled state — and note that an unexercised `disabled` prop in here is precisely where
  * the "guard on one element, handler on another" defect would reappear, for all seven.
  *
- * `onCopy` is OPTIONAL and defaults to nothing. That is what keeps `GetStartedBody`,
- * `CliSubmitCta` and {@link AgentOnboardingCard} the "pure presentational (props-only, no
+ * `onCopy` is OPTIONAL and defaults to nothing. That is what keeps `CliSubmitCta` and
+ * {@link AgentOnboardingCard} the "pure presentational (props-only, no
  * tRPC / no network)" components their headers claim — a property their
  * `*.browser.test.tsx` suites depend on, since they mount them with no providers. The
  * analytics call lives at the ONE call site that has a tracker (`AppsBuildBody`), threaded

@@ -1,9 +1,10 @@
 import { spawnSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
+import { QUARANTINED_COMPONENT_FILES } from '../ci/component-quarantine.mjs';
 import { DIRECT_COMMANDS } from '../queued-check-rules.mjs';
 
 import {
@@ -322,6 +323,45 @@ describe('the on-disk ledger — a file that stops being COLLECTED', () => {
     expect(out).toContain(join('Deep', 'C.browser.test.tsx'));
     expect(out).not.toContain('EXECUTED ONLY');
     expect(code).toBe(1);
+  });
+
+  it('does not demand a QUARANTINED file from the blocking run, and still names any other', () => {
+    // The quarantined file is run by the `component-quarantine` job, so its absence from this
+    // report is expected; one of its neighbours missing is not. 1502 executed clears the floor,
+    // so the on-disk check is what decides both outcomes.
+    const q = mkdtempSync(join(tmpdir(), 'component-ondisk-quarantine-'));
+    const quarantined = QUARANTINED_COMPONENT_FILES[0];
+    try {
+      mkdirSync(join(q, dirname(quarantined)), { recursive: true });
+      for (const p of [
+        quarantined,
+        'src/components/A.browser.test.tsx',
+        'src/components/B.browser.test.tsx',
+      ]) {
+        mkdirSync(join(q, dirname(p)), { recursive: true });
+        writeFileSync(join(q, p), '// fixture\n');
+      }
+      const ran = ['src/components/A.browser.test.tsx', 'src/components/B.browser.test.tsx'];
+      const ok = runGateAt(
+        writeReport(
+          'ondisk-quarantined-ok.json',
+          ran.map((name) => ({ name: join(q, name), passed: 751 }))
+        ),
+        q
+      );
+      expect(ok.out).toContain('2 on disk');
+      expect(ok.code).toBe(0);
+
+      const missing = runGateAt(
+        writeReport('ondisk-quarantined-missing.json', [{ name: join(q, ran[0]), passed: 1502 }]),
+        q
+      );
+      expect(missing.out).toContain('B.browser.test.tsx');
+      expect(missing.out).not.toContain('AppAssistantWorkspace');
+      expect(missing.code).toBe(1);
+    } finally {
+      rmSync(q, { recursive: true, force: true });
+    }
   });
 
   it('a NARROWED run does not trip it', () => {

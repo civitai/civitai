@@ -396,6 +396,7 @@ export const serverSchema = z
     JOB_TOKEN: z.string(),
     WEBHOOK_URL: z.url().optional(),
     WEBHOOK_TOKEN: z.string(),
+    SYSTEM_ACCOUNT_KEY_TOKEN: z.string().optional(),
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
@@ -828,7 +829,7 @@ export const serverSchema = z
     PAYPAL_CLIENT_ID: z.string().optional(),
     S3_VAULT_BUCKET: z.string().optional(),
     HEALTHCHECK_TIMEOUT: z.coerce.number().optional().default(1500),
-    // Comma-delimited check names to skip in /api/health (e.g. "searchMetrics").
+    // Comma-delimited check names to skip in /api/health (e.g. "clickhouse").
     // Static counterpart to the runtime sysRedis DISABLED_HEALTHCHECKS list.
     HEALTHCHECK_DISABLED: commaDelimitedStringArray().optional(),
     FRESHDESK_JWT_SECRET: z.string().optional(),

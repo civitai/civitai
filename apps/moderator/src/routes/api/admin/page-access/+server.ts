@@ -36,7 +36,8 @@ export const POST = defineEndpoint({
   returns: '{ changed, path, before, after }. 409 carries `current`, the roles stored now.',
   notes: [
     'Send JSON in the body from this app’s own origin; query parameters are refused.',
-    'Admin-only paths, the admin role, and roles the auth hub does not list are refused.',
+    'Admin-only paths are refused, and the admin role is never granted. A role the auth hub does not list can be revoked once the grant holds it, never granted.',
+    'Revoking a service account’s role (e.g. `system:dispute-agent`) breaks the service that uses it at once.',
   ],
   handler: async ({ path, role, op, expect, gateRef, reason }, event) => {
     const user = event.locals.user;
@@ -47,11 +48,25 @@ export const POST = defineEndpoint({
       return json({ error: 'Send the change in the JSON body only.' }, { status: 400 });
 
     if (!isEditableGrant(path)) return json({ error: `${path} is not editable.` }, { status: 400 });
-    const grantable = await grantableRoles();
-    if (!grantable) return json({ error: NO_ROLE_CATALOGUE }, { status: 503 });
-    // The super role is never in this list (`isStorableRole`), so it cannot be granted from here.
-    if (!grantable.includes(role))
-      return json({ error: `${role} is not a role that can be granted.` }, { status: 400 });
+    // A role the grant holds may always be revoked: /admin has no column for one from outside the
+    // catalogue (a service account's), so this is the only way to take it off. `expect` is checked
+    // against the full stored row before anything is written, so naming it there proves it is stored,
+    // and the revoke needs no catalogue read — it still works while the hub cannot be read.
+    if (!(op === 'revoke' && expect.includes(role))) {
+      const grantable = await grantableRoles();
+      if (!grantable) return json({ error: NO_ROLE_CATALOGUE }, { status: 503 });
+      // The super role is never in this list (`isStorableRole`), so it cannot be granted from here.
+      if (!grantable.includes(role))
+        return json(
+          {
+            error:
+              op === 'grant'
+                ? `${role} is not a role that can be granted.`
+                : `${role} is not held by ${path} and is not a role this app grants.`,
+          },
+          { status: 400 }
+        );
+    }
 
     // Only the named role moves; every other stored role, retired or not, is carried as it was.
     const others = expect.filter((r) => r !== role);

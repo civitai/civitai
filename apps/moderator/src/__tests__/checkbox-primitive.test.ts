@@ -207,6 +207,10 @@ describe('destructive surfaces carry the touch-target marker', () => {
     'routes/retool/user-lookup/ReviewsPanel.svelte',
     'routes/text-scan/model-rules/AliasBackfill.svelte',
     'routes/text-scan/model-rules/SuggestAliases.svelte',
+    'routes/tickets/TicketAccountAction.svelte',
+    'routes/tickets/TicketEscalate.svelte',
+    'routes/tickets/TicketReply.svelte',
+    'routes/tickets/TicketRestrictionRuling.svelte',
   ];
 
   it('is exactly the declared set of files', () => {
