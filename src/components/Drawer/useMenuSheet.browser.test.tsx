@@ -16,8 +16,10 @@ vi.mock('~/hooks/useMobileGenerator', async (importOriginal) => ({
 function TileMenu() {
   const menuSheet = useMenuSheet();
   return (
-    <div style={{ position: 'absolute', top: 0, right: 0 }}>
-      <Menu withinPortal {...menuSheet.menuProps}>
+    // Theme-default unportaled and transformed like a virtualized row; useMenuSheet must force the
+    // portal itself, or the sheet's `position: fixed` anchors to this box.
+    <div style={{ position: 'absolute', top: 0, right: 0, transform: 'translateY(0)' }}>
+      <Menu withinPortal={false} {...menuSheet.menuProps}>
         <Menu.Target>
           <button>More</button>
         </Menu.Target>

@@ -24,6 +24,9 @@ export function useMenuSheet() {
     onChange: setOpened,
     trigger: 'click',
     withArrow: false,
+    // The theme keeps popovers inline; a transformed ancestor (a virtualized row) would make the
+    // sheet's `position: fixed` relative to it instead of the viewport.
+    withinPortal: true,
     zIndex: mobileMenuSheetZIndex,
     transitionProps: { transition: 'slide-up', duration: 150 },
   };

@@ -10,6 +10,7 @@ import {
   useApplyHiddenPreferences,
 } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
@@ -35,6 +36,8 @@ const GRID_GAP = 16;
 /** Below this a column stops being worth showing, so the count drops instead. */
 const MIN_COLUMN_WIDTH = 240;
 const MAX_COLUMN_COUNT = 4;
+/** Fixed: the virtual list needs row height up front, so the compact row's content must fit it. */
+const COMPACT_ROW_HEIGHT = 120;
 
 /**
  * The catalog grid, sized to FILL its pane.
@@ -46,7 +49,13 @@ const MAX_COLUMN_COUNT = 4;
  * derived from the measured pane instead — the count comes from a minimum
  * width, and the columns then divide the space exactly.
  */
-function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
+function FillingMasonryGrid({
+  children,
+  maxColumns = MAX_COLUMN_COUNT,
+}: {
+  children: React.ReactNode;
+  maxColumns?: number;
+}) {
   const [width, setWidth] = useState(0);
   // Debounced to match MasonryProvider's own 100ms observer. `columnWidth`
   // arrives there as a prop and bypasses that debounce, so an undebounced
@@ -72,9 +81,9 @@ function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
   const [columnCount, columnWidth] = useMemo(() => {
     if (!width) return [1, MIN_COLUMN_WIDTH];
     const fits = Math.floor((width + GRID_GAP) / (MIN_COLUMN_WIDTH + GRID_GAP));
-    const count = Math.min(Math.max(fits, 1), MAX_COLUMN_COUNT);
+    const count = Math.min(Math.max(fits, 1), maxColumns);
     return [count, Math.floor((width - (count - 1) * GRID_GAP) / count)];
-  }, [width]);
+  }, [width, maxColumns]);
 
   return (
     <div ref={ref}>
@@ -88,6 +97,7 @@ function FillingMasonryGrid({ children }: { children: React.ReactNode }) {
 export function ResourceHitList({ query }: { query: string }) {
   const { canGenerate, resources, selectSource, excludedIds, tab, filters, excludeTurbo } =
     useResourceSelectContext();
+  const compact = useIsMobile({ type: 'media' });
   const loadedOnly = filters.loadedOnly;
   const turboOnly = filters.turboOnly;
 
@@ -275,9 +285,10 @@ export function ResourceHitList({ query }: { query: string }) {
         height={height}
         selectSource={selectSource}
         coverageNext={coverageNext}
+        compact={compact}
       />
     ),
-    [selectSource, coverageNext]
+    [selectSource, coverageNext, compact]
   );
 
   if (loading && !filtered.length)
@@ -377,12 +388,14 @@ export function ResourceHitList({ query }: { query: string }) {
         </div>
       )}
 
-      <FillingMasonryGrid>
+      <FillingMasonryGrid maxColumns={compact ? 1 : MAX_COLUMN_COUNT}>
         <MasonryColumnsVirtual
           data={restItems}
           render={renderCard}
-          imageDimensions={() => ({ width: 450, height: Math.round(450 * (9 / 7)) })}
-          adjustHeight={({ height }) => height + 82}
+          imageDimensions={() =>
+            compact ? { width: 1, height: 1 } : { width: 450, height: Math.round(450 * (9 / 7)) }
+          }
+          adjustHeight={({ height }) => (compact ? COMPACT_ROW_HEIGHT : height + 82)}
           itemId={(x) => x.id}
         />
       </FillingMasonryGrid>

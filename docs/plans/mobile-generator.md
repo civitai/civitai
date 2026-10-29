@@ -203,6 +203,8 @@ replaced in phase 4.
 - `SheetSelect`: in the mobile generator every select in the form (sampler, scheduler, the graph's
   other selects, the ControlNet and preprocessor selects) shows as a field that opens a sheet;
   everywhere else it is Mantine's Select. `SelectInput` now ties its wrapper label to the field.
+  `SheetSelect` also takes `readOnly` (no sheet, no ✕: a picker card with one version) and
+  `leftSection`.
 - Not covered here: the output format and priority pickers are menus (phase 4); the VAE and
   upscaler pickers are the resource search (see phase 4); the preset picker's select sits inside its
   own modal.
@@ -331,9 +333,15 @@ Built:
   component, `SheetOption` (`src/components/Drawer/`), shared with the site's sort menu.
 - Tapping a checkbox's or radio's description toggles it, site-wide (`choice-label.module.scss` in
   the theme). Switch already did.
-- On a phone the resource picker's toolbar (tabs, sort, filters, search, categories) folds away while
-  its results scroll down, and returns on the way up; it stays while the search field has focus.
-  Not behind the flag. `useHideOnScroll` (`src/hooks/`) is the one hide-on-scroll rule: the
+- Under 768px (`useIsMobile({ type: 'media' })`, not behind the flag) the resource picker, in every
+  `ResourceSelectModal` consumer:
+  - slides its toolbar away while the results scroll down (on every layout the toolbar is a sticky
+    header inside the results, so its return never moves them); it stays while it has focus;
+  - lists results as one column of fixed-height rows (`ResourceSelectCard` `compact`): thumbnail,
+    name over two lines, like, ⋮ (`ModelCardMenu`: hide, block, report), type, base model, paid and
+    private marks, version and Select.
+- On a coarse pointer a picker card's image no longer links to the model page; the name does. The
+  picker's cards no longer show the auction bid button. `useHideOnScroll` (`src/hooks/`) is the one hide-on-scroll rule: the
   generator header, the picker toolbar, the site's `SubNav` and the comics reader header all use
   it (shown near the top; hidden after 100px down since the last turn, back after 100px up).
 - While a text field in the form has focus (the keyboard is up), the footer hides so the field
@@ -359,7 +367,9 @@ Built:
   sheet's content, with a back arrow, rather than stacking a second sheet.
 - Tiles in the mobile generator keep favourite, thumbs up and down and Improve; Download moves into
   the tile's ⋮ menu, and Remix and Details are in the lightbox, as in the mockup. The ⋮ and Improve
-  menus open as bottom sheets (`useMenuSheet`), so a long menu never runs off the screen.
+  menus open as bottom sheets (`useMenuSheet`), so a long menu never runs off the screen, as does the
+  picker card's ⋮. `useMenuSheet` portals the sheet: the theme keeps popovers inline, and a
+  transformed ancestor (a virtualized row) would hold its `position: fixed`.
 - Queue cards on a phone drop the workflow ID copy, the moderator dashboard link and the duration
   badge. The cost badge's breakdown (a sheet on a phone) ends with what paid for the run, so the
   separate transactions icon shows only for a run with no cost; the cost and workflow badges wrap

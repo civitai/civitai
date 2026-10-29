@@ -31,7 +31,7 @@ import { SelectMenuV2 } from '~/components/SelectMenu/SelectMenu';
 import useIsClient from '~/hooks/useIsClient';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { TURBO_VARIANT_MODEL_TYPES } from '~/server/schema/model-version.schema';
-import { mobileMenuSheetZIndex } from '~/shared/constants/app-layout.constants';
+import { mobileMenuSheetZIndex, remixMenuZIndex } from '~/shared/constants/app-layout.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
 import { activeBaseModels } from '~/shared/constants/basemodel.constants';
 import { ModelType } from '~/shared/utils/prisma/enums';
@@ -275,13 +275,15 @@ export function ResourceSelectFiltersDropdown() {
 
   return (
     <Popover
-      zIndex={200}
+      // Portaled: the toolbar sits inside the picker's scrolling results, which would clip this
+      // tall dropdown. Portaled, it has to clear the dialog stack, as the remix menu does.
+      withinPortal
+      zIndex={remixMenuZIndex}
       position="bottom-end"
       shadow="md"
       radius={12}
       onClose={() => setOpened(false)}
       middlewares={{ flip: true, shift: true }}
-      // withinPortal
     >
       <Popover.Target>{target}</Popover.Target>
       <Popover.Dropdown maw={468} p={0} w="100%">

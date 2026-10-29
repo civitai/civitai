@@ -152,6 +152,16 @@ describe('SheetSelect', () => {
     await expect.element(page.getByRole('dialog', { name: 'Sampler' })).not.toBeInTheDocument();
   });
 
+  test('a read-only select shows its value and opens nothing', async () => {
+    renderWithProviders(
+      <SheetSelect label="Sampler" data={SAMPLERS} value="Euler a" readOnly onChange={vi.fn()} />
+    );
+    const field = page.getByRole('button', { name: 'Sampler' });
+    await expect.element(field).toHaveTextContent('Euler a');
+    await field.click();
+    await expect.element(page.getByRole('dialog', { name: 'Sampler' })).not.toBeInTheDocument();
+  });
+
   test('re-choosing the current option closes without reporting a change', async () => {
     const onChange = vi.fn();
     renderWithProviders(

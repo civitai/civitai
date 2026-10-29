@@ -49,6 +49,8 @@ function SelectInSheet({
   error,
   placeholder,
   disabled,
+  readOnly,
+  leftSection,
   required,
   withAsterisk,
   className,
@@ -106,7 +108,7 @@ function SelectInSheet({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drill, opened]);
 
-  const showClear = clearable && value != null && !disabled;
+  const showClear = clearable && value != null && !disabled && !readOnly;
   const target = (
     <InputBase
       component="button"
@@ -122,8 +124,10 @@ function SelectInSheet({
       className={className}
       style={style}
       size={size}
+      leftSection={leftSection}
+      leftSectionPointerEvents="none"
       rightSection={
-        showClear ? (
+        readOnly ? undefined : showClear ? (
           <CloseButton
             size="sm"
             aria-label={`Clear ${typeof title === 'string' ? title : 'selection'}`}
@@ -135,7 +139,7 @@ function SelectInSheet({
       }
       rightSectionPointerEvents={showClear ? 'all' : 'none'}
       aria-haspopup={drill ? 'listbox' : 'dialog'}
-      onClick={() => setOpened(true)}
+      onClick={() => !readOnly && setOpened(true)}
     >
       {selected ? (
         <span className="block truncate">{selected.label}</span>

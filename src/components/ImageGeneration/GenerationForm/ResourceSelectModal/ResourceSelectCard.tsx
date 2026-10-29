@@ -2,22 +2,29 @@ import {
   Badge,
   Button,
   Group,
-  Select,
   Stack,
   Text,
   Tooltip,
   useComputedColorScheme,
   useMantineTheme,
 } from '@mantine/core';
-import { IconBrush, IconCheck, IconDownload, IconLock, IconPlus } from '@tabler/icons-react';
+import {
+  IconBrush,
+  IconCheck,
+  IconDotsVertical,
+  IconDownload,
+  IconLock,
+  IconPlus,
+  IconThumbUp,
+  IconThumbUpFilled,
+} from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useMemo, useState } from 'react';
 import { useShowsSfwFace } from '~/hooks/useShowsSfwFace';
+import { useHasCoarsePointer } from '~/hooks/useIsMobile';
+import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
 import { searchHitName } from '~/shared/utils/model-sfw-face';
-import { BidModelButton } from '~/components/Auction/BidModelButton';
 import cardClasses from '~/components/Cards/Cards.module.css';
-import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { CivitaiLinkManageButton } from '~/components/CivitaiLink/CivitaiLinkManageButton';
 import type { Props as DescriptionTableProps } from '~/components/DescriptionTable/DescriptionTable';
 import { DescriptionTable } from '~/components/DescriptionTable/DescriptionTable';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
@@ -40,7 +47,7 @@ import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { Availability, ModelType } from '~/shared/utils/prisma/enums';
+import { Availability } from '~/shared/utils/prisma/enums';
 import { fetchGenerationData } from '~/store/generation-graph.store';
 import { getModelRecency } from '~/components/Cards/model-card.utils';
 import { formatDate } from '~/utils/date-helpers';
@@ -59,7 +66,7 @@ import {
   pricingFilterKey,
   versionSatisfiesPricingFilter,
 } from '~/shared/search/model-pricing-filter';
-import { TopRightIcons } from './TopRightIcons';
+import { ModelCardMenu, TopRightIcons } from './TopRightIcons';
 import {
   LoadedMark,
   useResidency,
@@ -68,15 +75,19 @@ import {
 import { VersionPricingBadge } from './VersionPricingBadge';
 
 const IMAGE_CARD_WIDTH = 450;
+const COMPACT_IMAGE_WIDTH = 160;
 
 export function ResourceSelectCard({
   data,
   height,
   selectSource,
   coverageNext,
+  compact,
 }: {
   data: TransformedModel;
   height?: number;
+  /** Row layout instead of the image card, for narrow viewports. */
+  compact?: boolean;
   selectSource?: ResourceSelectSource;
   coverageNext?: boolean;
 }) {
@@ -100,6 +111,8 @@ export function ResourceSelectCard({
   const colorScheme = useComputedColorScheme('dark');
   const showSfwFace = useShowsSfwFace();
   const modelName = searchHitName(data, showSfwFace);
+  // No image link on touch: a tap while scrolling opened the model page. The name is the link.
+  const imageLinks = !useHasCoarsePointer();
 
   const versions = data.versions;
   const initialIndex = useMemo(
@@ -210,6 +223,198 @@ export function ResourceSelectCard({
 
   const originalAspectRatio = image.width && image.height ? image.width / image.height : 1;
   const width = originalAspectRatio > 1 ? IMAGE_CARD_WIDTH * originalAspectRatio : IMAGE_CARD_WIDTH;
+  const media = (
+    <EdgeMedia
+      src={image.url}
+      name={image.name ?? image.id.toString()}
+      alt={image.name ?? undefined}
+      type={image.type}
+      width={compact ? COMPACT_IMAGE_WIDTH : width}
+      placeholder="empty"
+      className={cardClasses.image}
+      loading="lazy"
+    />
+  );
+  const modelUrl = getModelUrl({ modelId: data.id, modelName, modelVersionId: selectedVersion.id });
+  const isPrivate = data.availability === Availability.Private;
+
+  const nameLink = (
+    <Text
+      component={Link}
+      href={modelUrl}
+      target="_blank"
+      onClick={(e: React.MouseEvent) => e.stopPropagation()}
+      size="sm"
+      fw={700}
+      lh={compact ? 1.25 : 1}
+      data-testid="resource-select-name"
+      // `self-start`: in the full card's flex column, the default `align-items: stretch`
+      // would make the whole card width the link's hit area.
+      className={clsx(
+        'max-w-full self-start hover:underline',
+        compact ? 'line-clamp-2 break-words' : 'truncate'
+      )}
+    >
+      {modelName}
+    </Text>
+  );
+
+  const versionSelect = (
+    <SheetSelect
+      className="min-w-0 flex-1"
+      sheetTitle="Version"
+      size={compact ? 'xs' : undefined}
+      leftSection={
+        selectSource === 'generation' && selectedVersion?.generatorLoaded ? (
+          <LoadedMark readiness="ready" />
+        ) : undefined
+      }
+      leftSectionWidth={26}
+      leftSectionPointerEvents="none"
+      onClick={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+      }}
+      readOnly={versions.length <= 1}
+      value={_selectedIndex?.toString()}
+      data={versions.map((version, index) => ({
+        label: version.name,
+        value: index.toString(),
+      }))}
+      renderOption={({ option }) => {
+        const version = versions[Number(option.value)];
+        return (
+          <Group gap={6} wrap="nowrap" className="min-w-0">
+            {selectSource === 'generation' && version?.generatorLoaded && (
+              <LoadedMark readiness="ready" />
+            )}
+            <span className="truncate">{option.label}</span>
+          </Group>
+        );
+      }}
+      onChange={(index) => setSelectedIndex(Number(index ?? 0))}
+      styles={{
+        input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
+      }}
+    />
+  );
+
+  const compatibilityBadge =
+    compatibility === 'partial' ? (
+      <Badge color="yellow" variant="light" size="sm">
+        Partial support
+      </Badge>
+    ) : incompatible ? (
+      <Badge color="red" variant="light" size="sm">
+        Incompatible
+      </Badge>
+    ) : null;
+
+  // The batch control, separate from the primary action: adding one resource stays a single
+  // click, and building a set is opt-in rather than the toll everyone pays.
+  const stageButton = multiSelect && !incompatible && (
+    <Tooltip
+      label={isAdded ? 'Remove from selection' : 'Add to selection'}
+      position="top"
+      withArrow
+    >
+      <LegacyActionIcon
+        aria-label={isAdded ? 'Remove from selection' : 'Add to selection'}
+        aria-pressed={isAdded}
+        variant={isAdded ? 'filled' : 'default'}
+        size={compact ? 30 : undefined}
+        disabled={atLimit}
+        onClick={(e: React.MouseEvent) => {
+          e.preventDefault();
+          e.stopPropagation();
+          // Un-staging needs no round trip — the resource is in hand.
+          if (isAdded && selectedVersion) removeStaged(selectedVersion.id);
+          else handleSelect('stage');
+        }}
+      >
+        {isAdded ? <IconCheck size={16} /> : <IconPlus size={16} />}
+      </LegacyActionIcon>
+    </Tooltip>
+  );
+
+  const selectButton = (
+    <Button
+      loading={loading}
+      size={compact ? 'xs' : undefined}
+      disabled={incompatible || (batching && atLimit)}
+      variant={isAdded ? 'light' : 'filled'}
+      onClick={(e: React.MouseEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (!batching) return void handleSelect('take');
+        if (isAdded && selectedVersion) removeStaged(selectedVersion.id);
+        else handleSelect('stage');
+      }}
+    >
+      {batching ? (isAdded ? 'Added' : 'Add') : 'Select'}
+    </Button>
+  );
+
+  if (compact)
+    return (
+      <TwCosmeticWrapper cosmetic={data.cosmetic?.data} style={height ? { height } : undefined}>
+        <TwCard
+          direction="row"
+          className="h-full gap-3 p-2"
+          style={{ display: versions.length === 0 ? 'none' : undefined }}
+        >
+          <ImageGuard2 image={image} connectType="model" connectId={data.id} explain={false}>
+            {(safe) => (
+              <div className="relative w-20 shrink-0 overflow-hidden rounded">
+                {safe ? media : <MediaHash {...image} />}
+                <ImageGuard2.BlurToggle className="absolute left-1 top-1" />
+              </div>
+            )}
+          </ImageGuard2>
+          <div className="flex min-w-0 flex-1 flex-col gap-1.5 text-black dark:text-white">
+            <div className="flex items-start gap-1">
+              <div className="flex min-w-0 flex-1">{nameLink}</div>
+              {!!currentUser && (
+                <LegacyActionIcon
+                  variant="subtle"
+                  color={isFavorite ? 'green' : 'gray'}
+                  size="sm"
+                  aria-label={isFavorite ? 'Unlike' : 'Like'}
+                  aria-pressed={isFavorite}
+                  onClick={() => handleToggleFavorite({ setTo: !isFavorite })}
+                >
+                  {isFavorite ? <IconThumbUpFilled size={16} /> : <IconThumbUp size={16} />}
+                </LegacyActionIcon>
+              )}
+              <ModelCardMenu
+                data={data}
+                imageId={image.id}
+                target={
+                  <LegacyActionIcon variant="subtle" color="gray" size="sm" className="-mr-1">
+                    <IconDotsVertical size={16} />
+                  </LegacyActionIcon>
+                }
+              />
+            </div>
+            <div className="flex min-w-0 flex-wrap items-center gap-1">
+              <ModelTypeBadge type={data.type} baseModel={selectedVersion.baseModel} size="sm" />
+              <VersionPricingBadge pricing={selectedVersion.pricing} size="sm" />
+              {isPrivate && (
+                <Badge color="gray" variant="light" size="sm" leftSection={<IconLock size={12} />}>
+                  Private
+                </Badge>
+              )}
+              {compatibilityBadge}
+            </div>
+            <div className="mt-auto flex items-center gap-2">
+              {versionSelect}
+              {stageButton}
+              {selectButton}
+            </div>
+          </div>
+        </TwCard>
+      </TwCosmeticWrapper>
+    );
 
   return (
     <TwCosmeticWrapper cosmetic={data.cosmetic?.data} style={height ? { height } : undefined}>
@@ -224,26 +429,12 @@ export function ResourceSelectCard({
                 {(safe) => {
                   return (
                     <div className="relative overflow-hidden aspect-portrait">
-                      {safe ? (
-                        <Link
-                          href={getModelUrl({
-                            modelId: data.id,
-                            modelName,
-                            modelVersionId: selectedVersion.id,
-                          })}
-                          target="_blank"
-                        >
-                          <EdgeMedia
-                            src={image.url}
-                            name={image.name ?? image.id.toString()}
-                            alt={image.name ?? undefined}
-                            type={image.type}
-                            width={width}
-                            placeholder="empty"
-                            className={cardClasses.image}
-                            loading="lazy"
-                          />
+                      {safe && imageLinks ? (
+                        <Link href={modelUrl} target="_blank">
+                          {media}
                         </Link>
+                      ) : safe ? (
+                        media
                       ) : (
                         <MediaHash {...image} />
                       )}
@@ -273,7 +464,7 @@ export function ResourceSelectCard({
                       <TopRightIcons data={data} setFlipped={setFlipped} imageId={image.id} />
                       <Group className="absolute bottom-2 right-2 flex items-center gap-1">
                         <VersionPricingBadge pricing={selectedVersion?.pricing} />
-                        {data.availability === Availability.Private && (
+                        {isPrivate && (
                           <Tooltip
                             label="This is a private model which requires permission to generate with."
                             position="top"
@@ -293,23 +484,6 @@ export function ResourceSelectCard({
                               <IconLock size={16} />
                             </Badge>
                           </Tooltip>
-                        )}
-                        {selectSource !== 'auction' && (
-                          <BidModelButton
-                            actionIconProps={{
-                              size: 'md',
-                              variant: colorScheme === 'light' ? undefined : 'light',
-                              px: 4,
-                            }}
-                            entityData={{
-                              ...selectedVersion,
-                              model: {
-                                ...data,
-                                cannotPromote: data.cannotPromote ?? false,
-                              },
-                              image,
-                            }}
-                          />
                         )}
                         {!!currentUser && (
                           <Tooltip
@@ -347,112 +521,12 @@ export function ResourceSelectCard({
             ))}
 
           <div className="flex flex-col gap-2 p-3 text-black dark:text-white">
-            <Text
-              component={Link}
-              href={getModelUrl({
-                modelId: data.id,
-                modelName,
-                modelVersionId: selectedVersion.id,
-              })}
-              target="_blank"
-              onClick={(e: React.MouseEvent) => e.stopPropagation()}
-              size="sm"
-              fw={700}
-              lh={1}
-              data-testid="resource-select-name"
-              // `self-start` so the link's hit area is the name, not the full
-              // width of the card — the parent is a flex column, where the
-              // default `align-items: stretch` would fill the cross axis.
-              className="max-w-full self-start truncate hover:underline"
-            >
-              {modelName}
-            </Text>
+            {nameLink}
             <div className="flex items-center justify-between gap-2">
-              <Select
-                className="flex-1"
-                leftSection={
-                  selectSource === 'generation' && selectedVersion?.generatorLoaded ? (
-                    <LoadedMark readiness="ready" />
-                  ) : undefined
-                }
-                leftSectionWidth={26}
-                leftSectionPointerEvents="none"
-                onClick={(e) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                }}
-                readOnly={versions.length <= 1}
-                value={_selectedIndex?.toString()}
-                data={versions.map((version, index) => ({
-                  label: version.name,
-                  value: index.toString(),
-                }))}
-                renderOption={({ option }) => {
-                  const version = versions[Number(option.value)];
-                  return (
-                    <Group gap={6} wrap="nowrap" className="min-w-0">
-                      {selectSource === 'generation' && version?.generatorLoaded && (
-                        <LoadedMark readiness="ready" />
-                      )}
-                      <span className="truncate">{option.label}</span>
-                    </Group>
-                  );
-                }}
-                onChange={(index) => setSelectedIndex(Number(index ?? 0))}
-                styles={{
-                  input: { cursor: versions.length <= 1 ? 'auto !important' : undefined },
-                }}
-              />
-              {compatibility === 'partial' && (
-                <Badge color="yellow" variant="light" size="sm">
-                  Partial support
-                </Badge>
-              )}
-              {incompatible && (
-                <Badge color="red" variant="light" size="sm">
-                  Incompatible
-                </Badge>
-              )}
-              {/* The batch control, separate from the primary action: adding one
-                  resource stays a single click, and building a set is opt-in
-                  rather than the toll everyone pays. */}
-              {multiSelect && !incompatible && (
-                <Tooltip
-                  label={isAdded ? 'Remove from selection' : 'Add to selection'}
-                  position="top"
-                  withArrow
-                >
-                  <LegacyActionIcon
-                    aria-label={isAdded ? 'Remove from selection' : 'Add to selection'}
-                    aria-pressed={isAdded}
-                    variant={isAdded ? 'filled' : 'default'}
-                    disabled={atLimit}
-                    onClick={(e: React.MouseEvent) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      // Un-staging needs no round trip — the resource is in hand.
-                      if (isAdded && selectedVersion) removeStaged(selectedVersion.id);
-                      else handleSelect('stage');
-                    }}
-                  >
-                    {isAdded ? <IconCheck size={16} /> : <IconPlus size={16} />}
-                  </LegacyActionIcon>
-                </Tooltip>
-              )}
-              <Button
-                loading={loading}
-                disabled={incompatible || (batching && atLimit)}
-                variant={isAdded ? 'light' : 'filled'}
-                onClick={(e: React.MouseEvent) => {
-                  e.preventDefault();
-                  e.stopPropagation();
-                  if (!batching) return void handleSelect('take');
-                  if (isAdded && selectedVersion) removeStaged(selectedVersion.id);
-                  else handleSelect('stage');
-                }}
-              >
-                {batching ? (isAdded ? 'Added' : 'Add') : 'Select'}
-              </Button>
+              {versionSelect}
+              {compatibilityBadge}
+              {stageButton}
+              {selectButton}
             </div>
           </div>
         </>
