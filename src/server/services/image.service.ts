@@ -346,6 +346,7 @@ import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
+  shopArtworkUrls,
 } from '~/server/services/image-url-ownership';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
@@ -583,10 +584,28 @@ export async function purgeResizeCache({
 type DeleteImageFromS3Args = {
   id: number;
   url: string;
+  /** Set only by {@link isPlainOwnerDelete}: keep an object that shop artwork still uses. */
+  keepShopArtwork?: boolean;
   purgeOnFailure?: boolean;
   abortSignal?: AbortSignal;
   retractionGate?: RetractionGate;
 } & PurgeResizeCacheRetraction;
+
+/**
+ * An owner deleting their own image that is not blocked or held for review. Only then may a delete
+ * leave behind an object that shop artwork still uses: a block, takedown or moderator delete always
+ * removes it, since a non-persisted CDN deny lapses and the bytes would be served again.
+ */
+export function isPlainOwnerDelete(
+  image: { userId: number; ingestion: string | null; needsReview: string | null },
+  deletedById: number | undefined
+) {
+  return (
+    image.userId === deletedById &&
+    image.ingestion !== ImageIngestionStatus.Blocked &&
+    !image.needsReview
+  );
+}
 
 export async function deleteImageFromS3(
   args: DeleteImageFromS3Args
@@ -608,6 +627,7 @@ async function deleteImageFromStorage({
   // needs a bound supplies its own.
   abortSignal,
   retractionGate,
+  keepShopArtwork = false,
 }: DeleteImageFromS3Args): Promise<{
   storage: StorageDeleteOutcome;
   purge?: ImageCacherOutcome;
@@ -641,6 +661,7 @@ async function deleteImageFromStorage({
     });
 
     if (!!imageWithSameUrl) return { storage: 'skipped' };
+    if (keepShopArtwork && (await shopArtworkUrls([url])).size) return { storage: 'skipped' };
 
     // B2 is the only backend an image can be on, so the registry is consulted for observability
     // rather than to choose a destination — a miss means "unregistered", never "somewhere else".
@@ -855,7 +876,8 @@ async function bustKeptImages(kept: KeptImage[], updatePosts: boolean) {
 export const deleteImageById = async ({
   id,
   updatePost,
-}: GetByIdInput & { updatePost?: boolean }) => {
+  deletedById,
+}: GetByIdInput & { updatePost?: boolean; deletedById?: number }) => {
   updatePost ??= true;
   try {
     // Resolved BEFORE the delete: `CollectionItem.imageId` is `onDelete: Cascade`, so
@@ -876,7 +898,15 @@ export const deleteImageById = async ({
     const image = await dbWrite.image
       .delete({
         where: { id },
-        select: { url: true, postId: true, nsfwLevel: true, userId: true, metadata: true },
+        select: {
+          url: true,
+          postId: true,
+          nsfwLevel: true,
+          userId: true,
+          metadata: true,
+          ingestion: true,
+          needsReview: true,
+        },
       })
       .catch((error) => {
         if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025')
@@ -901,7 +931,11 @@ export const deleteImageById = async ({
     const invalidateExistence = invalidateManyImageExistence([id]);
 
     await Promise.all([
-      deleteImageFromS3({ id, url: image.url }),
+      deleteImageFromS3({
+        id,
+        url: image.url,
+        keepShopArtwork: isPlainOwnerDelete(image, deletedById),
+      }),
       queueImageSearchIndexUpdate({
         ids: [id],
         action: SearchIndexUpdateQueueAction.Delete,

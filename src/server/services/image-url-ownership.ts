@@ -111,6 +111,10 @@ export async function assertClientImageUrlsUsable({
   shopArtwork?: boolean;
   db?: Db;
 }) {
+  if (shopRow && !shopArtwork)
+    throw new Error(
+      'assertClientImageUrlsUsable: a shop artwork write needs the shop artwork check'
+    );
   if (
     shopRow &&
     urls.some((url) => url && storedUrlsFor(url).length && storedUrlsFor(url)[1] !== url)

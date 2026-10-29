@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import { setEnv } from '~/__tests__/mocks/env.mock';
+import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 
 const mockLogToAxiom = loggingMock.logToAxiom;
 
@@ -25,6 +26,8 @@ const mockLogToAxiom = loggingMock.logToAxiom;
 // image.service is the graph root; the mock scaffold mirrors the established recipe
 // (delete-image-from-s3-logging.test.ts): stub the infra clients and the event-engine-common
 // submodule so importing it boots no real infra. Env comes from the canonical mock.
+
+const mockShopArtworkUrls = vi.hoisted(() => vi.fn(async (_urls: string[]) => new Set<string>()));
 
 const { mockFetch, mockB2Send, mockResolveMediaLocation, mockGetB2ImageS3Client } = vi.hoisted(
   () => ({
@@ -87,6 +90,11 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
   imagesMetricsSearchIndex: { queueUpdate: vi.fn() },
 }));
 
+vi.mock('~/server/services/image-url-ownership', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUrlOwnership>()),
+  shopArtworkUrls: mockShopArtworkUrls,
+}));
+
 const { purgeResizeCache, deleteImageFromS3, deleteImages, deleteImageById } = await import(
   '../image.service'
 );
@@ -120,6 +128,7 @@ beforeEach(() => {
   mockResolveMediaLocation.mockResolvedValue({ backend: 'backblaze', url: 'https://b2/x' });
   mockB2Send.mockResolvedValue({ Key: KEY });
   mockGetB2ImageS3Client.mockReturnValue({ send: mockB2Send });
+  mockShopArtworkUrls.mockResolvedValue(new Set());
 });
 
 describe('purgeResizeCache retraction opt-in', () => {
@@ -504,5 +513,58 @@ describe('retraction load on the image-cache service', () => {
       vi.useRealTimers();
       release();
     }
+  });
+});
+
+describe('an image whose key shop artwork uses', () => {
+  const OWNER = 7;
+  const deleted = (over: Record<string, unknown> = {}) =>
+    dbMock.dbWrite.image.delete.mockResolvedValue({
+      url: KEY,
+      postId: null,
+      nsfwLevel: 1,
+      userId: OWNER,
+      ingestion: 'Scanned',
+      needsReview: null,
+      ...over,
+    } as never);
+  beforeEach(() => mockShopArtworkUrls.mockResolvedValue(new Set([KEY])));
+
+  it('keeps its object when the owner deletes it', async () => {
+    deleted();
+
+    await deleteImageById({ id: 4242, deletedById: OWNER });
+
+    expect(mockB2Send).not.toHaveBeenCalled();
+    expect(invalidateCalls()).toHaveLength(0);
+  });
+
+  it.each([
+    ['a moderator deletes it', { deletedById: 99 }, {}],
+    ['the deleter is unknown', {}, {}],
+    ['it is blocked', { deletedById: OWNER }, { ingestion: 'Blocked' }],
+    ['it is held for review', { deletedById: OWNER }, { needsReview: 'csam' }],
+  ])('deletes and purges its object when %s', async (_case, args, over) => {
+    deleted(over);
+
+    await deleteImageById({ id: 4242, ...args });
+
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
+    expect(invalidateCalls()).toHaveLength(1);
+  });
+
+  // A hold marker keeps the row, so nothing reaches storage, whoever deletes it.
+  it('leaves a held image to its hold', async () => {
+    dbMock.dbWrite.image.delete.mockResolvedValue(null as never);
+
+    await deleteImageById({ id: 4242, deletedById: OWNER });
+
+    expect(mockB2Send).not.toHaveBeenCalled();
+  });
+
+  it('is deleted by the delete paths that do not ask to keep it', async () => {
+    await deleteImageFromS3({ id: 4242, url: KEY });
+
+    expect(mockB2Send).toHaveBeenCalledTimes(1);
   });
 });

@@ -69,6 +69,12 @@ const FOREIGN_IMAGE = { id: 2, url: 'foreign-url', userId: FOREIGN_USER_ID, dele
 // delete is not stable.
 const sqlTextOf = (strings: TemplateStringsArray | string[]) => Array.from(strings).join('?');
 
+/** The moderation state the DELETE returns for every deleted image. */
+const deletedState: { ingestion: string; needsReview: string | null } = {
+  ingestion: 'Scanned',
+  needsReview: null,
+};
+
 /** `kept`: deletable images the DELETE does not return, as when a hold marker keeps the row. */
 function primeQueries(images: (typeof OWNER_IMAGE)[], kept: number[] = []) {
   const deletable = images.filter((i) => i.deletable && !kept.includes(i.id));
@@ -76,7 +82,14 @@ function primeQueries(images: (typeof OWNER_IMAGE)[], kept: number[] = []) {
     const sql = sqlTextOf(strings);
     if (sql.includes('pg_class')) return [{ present: false }];
     if (sql.includes('"collectionId"')) return [];
-    if (sql.includes('DELETE FROM "Image"')) return deletable.map(({ id, url }) => ({ id, url }));
+    if (sql.includes('DELETE FROM "Image"'))
+      return deletable.map(({ id, url, userId }) => ({
+        id,
+        url,
+        userId,
+        ingestion: deletedState.ingestion,
+        needsReview: deletedState.needsReview,
+      }));
     if (sql.includes('DELETE FROM "Post"')) return [{ id: POST_ID, nsfwLevel: 1 }];
     if (sql.includes('AS deletable')) return images;
     return [];
@@ -185,8 +198,30 @@ describe('deletePost orphan de-indexing', () => {
     expect(mockDeleteImageFromS3).toHaveBeenCalledWith({
       id: OWNER_IMAGE.id,
       url: OWNER_IMAGE.url,
+      keepShopArtwork: false,
     });
   });
+
+  // Only then may the storage delete keep an object that shop artwork still uses.
+  it.each([
+    ['the poster deletes it', POSTER_ID, 'Scanned', null, true],
+    ['someone else deletes it', 99, 'Scanned', null, false],
+    ['it is blocked', POSTER_ID, 'Blocked', null, false],
+    ['it is held for review', POSTER_ID, 'Scanned', 'csam', false],
+  ] as const)(
+    'asks to keep shop artwork only for a plain owner delete: %s',
+    async (_case, deletedById, ingestion, needsReview, keep) => {
+      Object.assign(deletedState, { ingestion, needsReview });
+      primeQueries([OWNER_IMAGE]);
+
+      await deletePost({ id: POST_ID, deletedById });
+
+      expect(mockDeleteImageFromS3).toHaveBeenCalledWith(
+        expect.objectContaining({ id: OWNER_IMAGE.id, keepShopArtwork: keep })
+      );
+      Object.assign(deletedState, { ingestion: 'Scanned', needsReview: null });
+    }
+  );
 
   it('de-indexes without deleting when every image is someone else’s', async () => {
     primeQueries([FOREIGN_IMAGE]);

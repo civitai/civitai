@@ -63,6 +63,7 @@ import {
   createImage,
   createImageResources,
   deleteImageFromS3,
+  isPlainOwnerDelete,
   deleteImagesForModelVersionCache,
   getImagesForPosts,
   imagesForModelVersionsCache,
@@ -1209,7 +1210,11 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
   await userImageVideoCountCaches.refresh(userIds);
 }
 
-export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerator?: boolean }) => {
+export const deletePost = async ({
+  id,
+  isModerator,
+  deletedById,
+}: GetByIdInput & { isModerator?: boolean; deletedById?: number }) => {
   // Before the transaction: `CollectionItem.postId` cascades and the post's images go
   // with it, so nothing can resolve this afterwards.
   const collectionsToRebuild = await getCollectionIdsForPostCascade({ postId: id });
@@ -1230,12 +1235,19 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
 
       const deletableImages = images.filter((image) => image.deletable);
 
-      let deletedImages: { id: number; url: string }[] = [];
+      type DeletedImage = {
+        id: number;
+        url: string;
+        userId: number;
+        ingestion: string | null;
+        needsReview: string | null;
+      };
+      let deletedImages: DeletedImage[] = [];
       if (deletableImages.length) {
-        deletedImages = await tx.$queryRaw<{ id: number; url: string }[]>`
+        deletedImages = await tx.$queryRaw<DeletedImage[]>`
           DELETE FROM "Image"
           WHERE id IN (${Prisma.join(deletableImages.map((i) => i.id))})
-          RETURNING id, url
+          RETURNING id, url, "userId", ingestion::text, "needsReview"::text
         `;
       }
 
@@ -1296,7 +1308,15 @@ export const deletePost = async ({ id, isModerator }: GetByIdInput & { isModerat
     await invalidateManyImageExistence(deletedImageIds);
 
     await Limiter({ batchSize: 5 }).process(deletedImages, async (batch) =>
-      Promise.all(batch.map(({ id, url }) => deleteImageFromS3({ id, url })))
+      Promise.all(
+        batch.map((image) =>
+          deleteImageFromS3({
+            id: image.id,
+            url: image.url,
+            keepShopArtwork: isPlainOwnerDelete(image, deletedById),
+          })
+        )
+      )
     );
   }
 
