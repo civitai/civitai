@@ -875,8 +875,8 @@ export async function bulkSetCommentV2TosViolation({
 
   let rewardedReports = 0;
   let notified = 0;
-  // Rows written, NOT ids submitted — see the note on the legacy twin in comment.service.ts. A row
-  // already hidden counts: its reports are actioned on this pass.
+  // Rows written, not ids submitted. A row already hidden counts: its reports are actioned on this
+  // pass.
   let count = 0;
 
   for (const id of ids) {

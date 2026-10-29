@@ -26,8 +26,9 @@ vi.mock('~/server/utils/comment-permalink', async (importOriginal) => ({
 
 // The page's `createServerSideProps` wrapper resolves a session; stub it so the test exercises the
 // resolver rather than auth.
-vi.mock('~/server/utils/get-server-auth-session', () => ({
-  getServerAuthSession: vi.fn(async () => null),
+const getSession = vi.hoisted(() => vi.fn());
+vi.mock('~/server/auth/get-server-auth-session', () => ({
+  getServerAuthSession: getSession,
 }));
 
 const COMMENT_ID = 8123;
@@ -56,6 +57,7 @@ const run = async () => {
 
 beforeEach(() => {
   getRow.mockReset();
+  getSession.mockReset().mockResolvedValue(null);
 });
 
 describe('/comments/<id> — getServerSideProps wiring', () => {
@@ -113,6 +115,18 @@ describe('/comments/<id> — getServerSideProps wiring', () => {
     getRow.mockResolvedValue(undefined);
     await run();
     expect(getRow).toHaveBeenCalledWith(COMMENT_ID, { includeHidden: false });
+  });
+
+  it('reads a comment hidden for ToS for a moderator, and only for a moderator', async () => {
+    getRow.mockResolvedValue(undefined);
+    getSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
+    await run();
+    getSession.mockResolvedValue({ user: { id: 2, isModerator: false } });
+    await run();
+    expect(getRow.mock.calls).toEqual([
+      [COMMENT_ID, { includeHidden: true }],
+      [COMMENT_ID, { includeHidden: false }],
+    ]);
   });
 
   it('positive control: the mock is actually consulted (it is not answering from nothing)', async () => {
