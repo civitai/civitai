@@ -18,6 +18,7 @@
   import { splitTags } from '$lib/tickets/tags';
   import TicketAccount from './TicketAccount.svelte';
   import TicketAppeals from './TicketAppeals.svelte';
+  import TicketContentReports from './TicketContentReports.svelte';
   import TicketEscalate from './TicketEscalate.svelte';
   import TicketHistory from './TicketHistory.svelte';
   import TicketRatingDisputes from './TicketRatingDisputes.svelte';
@@ -298,6 +299,9 @@
   {/if}
   {#if panels.history}
     <TicketHistory history={panels.history} />
+  {/if}
+  {#if panels.contentIssue}
+    <TicketContentReports content={panels.contentIssue} />
   {/if}
 {/snippet}
 

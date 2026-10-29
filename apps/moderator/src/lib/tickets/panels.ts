@@ -1,6 +1,7 @@
 import { accountPanelFor, type PanelVisibility } from './account-panel';
 import { APPEAL_QUEUE_PATHS } from './appeals';
 import { appealsPanelFor } from './appeals-panel';
+import { IMAGE_REMOVALS_PATH, USER_REPORTS_PATH, contentPanelFor } from './content-panel';
 import { RATINGS_PATH } from './rating-disputes';
 import type { TicketView } from './routing';
 
@@ -42,6 +43,11 @@ export const PANELS = {
   ratingDisputes: {
     readGrants: [RATINGS_PATH],
     visibility: appealsPanelFor,
+  },
+  // Support view. Each section of the card reads under its own source page's grant; the panel shows for either.
+  contentIssue: {
+    readGrants: [USER_REPORTS_PATH, IMAGE_REMOVALS_PATH],
+    visibility: contentPanelFor,
   },
 } satisfies Record<string, PanelSpec>;
 

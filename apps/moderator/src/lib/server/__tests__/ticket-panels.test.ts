@@ -10,11 +10,13 @@ const account = vi.fn();
 const appeals = vi.fn();
 const history = vi.fn();
 const ratingDisputes = vi.fn();
+const contentIssue = vi.fn();
 const loaders = {
   account: (...a: unknown[]) => account(...a),
   appeals: (...a: unknown[]) => appeals(...a),
   history: (...a: unknown[]) => history(...a),
   ratingDisputes: (...a: unknown[]) => ratingDisputes(...a),
+  contentIssue: (...a: unknown[]) => contentIssue(...a),
 } as never;
 const all = () => true;
 
@@ -32,6 +34,7 @@ beforeEach(() => {
   ratingDisputes
     .mockReset()
     .mockResolvedValue({ status: 'ok', userId: 7, disputes: [], truncated: false });
+  contentIssue.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
 });
 
 describe('loadPanels', () => {
@@ -57,6 +60,29 @@ describe('loadPanels', () => {
     expect(decision).not.toHaveProperty('account');
     expect(await loadPanels({ ...ticket, view: 'support' }, all, loaders)).toEqual({});
     expect(account).not.toHaveBeenCalled();
+  });
+
+  it('shows the content panel on a support Content Related Issue ticket only', async () => {
+    const content = { ...ticket, view: 'support' as const, cfFeature: 'Content Related Issue' };
+    const res = await loadPanels(content, all, loaders);
+    expect(Object.keys(res)).toEqual(['contentIssue']);
+    expect(contentIssue).toHaveBeenCalledWith({ ...content, civitaiUserId: 7 }, all);
+    expect(await loadPanels({ ...content, view: 'moderation' }, all, loaders)).toEqual({});
+    expect(await loadPanels({ ...content, civitaiUserId: null }, all, loaders)).toEqual({
+      contentIssue: { status: 'unlinked' },
+    });
+  });
+
+  it('holds the content panel back from a viewer with neither of its page grants', async () => {
+    const content = { ...ticket, view: 'support' as const, cfFeature: 'Content Related Issue' };
+    const none = (p: string) => p !== '/reports/user' && p !== '/retool/user-lookup';
+    expect(await loadPanels(content, none, loaders)).toEqual({});
+    expect(await loadPanels(content, (p) => p === '/reports/user', loaders)).toHaveProperty(
+      'contentIssue'
+    );
+    expect(await loadPanels(content, (p) => p === '/retool/user-lookup', loaders)).toHaveProperty(
+      'contentIssue'
+    );
   });
 
   it('says only that no user is linked, without loading', async () => {

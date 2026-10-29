@@ -5,6 +5,7 @@ export type TicketView = 'moderation' | 'support';
 export const isTicketView = (v: unknown): v is TicketView => v === 'moderation' || v === 'support';
 
 export const ACCOUNT_RESTRICTION_FEATURE = 'Account Restriction or Banned Account';
+export const CONTENT_RELATED_FEATURE = 'Content Related Issue';
 
 /**
  * Which tickets belong to the moderation view. Everything else is support's. Edit this constant to move

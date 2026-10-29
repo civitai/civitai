@@ -75,7 +75,7 @@ const liveReads: HistoryReads = {
 };
 
 /** No evidence of a CSAM removal is shown in a ticket, however the removal was labelled. */
-const isCsamReason = (...reasons: (string | null)[]) => reasons.some((r) => r && /csam/i.test(r));
+export const isCsamReason = (...reasons: (string | null)[]) => reasons.some((r) => r && /csam/i.test(r));
 
 const iso = (d: Date | string | null) => (d ? new Date(d).toISOString() : null);
 
