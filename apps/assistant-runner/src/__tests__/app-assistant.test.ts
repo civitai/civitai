@@ -1,7 +1,10 @@
 import {
+  KEEP_LIMIT,
+  NEW_APP_FAILED_KEEP_OPEN,
   REMOTE_PREVIEW,
   TURN_LIMIT_REFUSAL,
   isKeepLimitResult,
+  openAppNotChosen,
   assistantRules,
   assistantSubagentRules,
   assistantSubagentInstructions,
@@ -16,6 +19,7 @@ import { AppAssistantTools, readPageState } from '../app-assistant/provider';
 import { PAUSED_BY_OTHER_APP, PAUSED_IDLE, SANDBOX_GONE } from '../app-assistant/sandbox';
 import type { OpenTools, ToolContext } from '../core/interfaces';
 import type { TokenPurpose } from '../minter';
+import { NEW_CHAT, chosenApp } from '../test-support/chosen-app';
 import { FakeSandboxService } from '../test-support/fake-sandbox';
 import { scriptedModel, toolResults } from '../core/test-support/scripted-model';
 
@@ -67,6 +71,8 @@ async function open(overrides: Partial<ToolContext> = {}) {
     runId: 'run-1',
     conversationId: 'conv-1',
     page: { app: 'my-app' },
+    // A chat that chose the open app, so its changes to it run; a new chat's are refused (NEW_CHAT).
+    history: chosenApp('my-app'),
     signal: stop.signal,
     report: (result) => reported.push(result),
     endReply: (message) => ended.push(message),
@@ -117,6 +123,7 @@ describe('App Assistant’s tools on the runner', () => {
         'sandbox__write_file',
         'sandbox__run_command',
         'create_app',
+        'use_open_app',
         'set_checklist',
         'report_ready',
         'start_preview',
@@ -129,6 +136,7 @@ describe('App Assistant’s tools on the runner', () => {
       'set_checklist',
       'start_preview',
       'stop_preview',
+      'use_open_app',
     ]);
     // The page's prompt, shared: the same rules, and the remote mode's word on the preview.
     expect(tools.rules?.('DEFAULTS')).toBe(`DEFAULTS\n\n${assistantRules('remote')}`);
@@ -658,6 +666,7 @@ describe('the runner’s prompt', () => {
   /** Every tool name an App Assistant prompt (the page's or the runner's) may mention. */
   const KNOWN = [
     'create_app',
+    'use_open_app',
     'set_checklist',
     'report_ready',
     'start_preview',
@@ -770,6 +779,131 @@ describe('the kept-apps limit, as the page is told of it', () => {
     expect(creates).toHaveLength(1);
     expect(creates[0].isError).toBe(false);
     expect(isKeepLimitResult(creates[0])).toBe(false);
+  });
+});
+
+/** A chat changes only an app it made (create_app) or chose (use_open_app). */
+describe('a new chat beside an open app', () => {
+  const OPEN = 'buzz-dashboard';
+  const CHANGES: readonly (readonly [string, Record<string, unknown>])[] = [
+    ['sandbox__delete_path', { path: `${OPEN}/src/block.ts` }],
+    ['sandbox__write_file', { path: `${OPEN}/src/block.ts`, content: 'explorer' }],
+    ['sandbox__edit_file', { path: `${OPEN}/block.manifest.json`, old: 'a', new: 'b' }],
+    ['sandbox__run_command', run(`cd ${OPEN} && rm -rf src`)],
+    ['sandbox__dev_server_restart', {}],
+    ['sandbox__dev_server_start', { command: `cd ${OPEN} && npm run dev` }],
+  ];
+  const MUTATING = new Set(CHANGES.map(([name]) => name.replace('sandbox__', '')));
+  /** The calls that changed (or could have changed) the open app, as its sandbox saw them. */
+  const changesTo = (sandbox: string) =>
+    fake.calls.filter((c) => c.sandbox === sandbox && MUTATING.has(c.tool));
+  const checklistShown = () =>
+    messagesOf([
+      [
+        'set_checklist',
+        { items: [{ label: 'A search box' }, { label: 'A type filter' }] },
+        { shown: true, awaitsUser: true, checklist: 'c-1', app: OPEN },
+      ],
+    ]);
+
+  it('Build it after a checklist for another app changes nothing in the open app, and the new app is made instead', async () => {
+    const dashboard = fake.add(OPEN);
+    const { tools, reported } = await open({
+      conversationId: 'conv-new',
+      page: { app: OPEN },
+      history: { earlier: checklistShown(), current: [] },
+    });
+    expect(await call(tools.tools, 'sandbox__list_dir', { path: OPEN })).toBe('src/');
+    for (const [name, input] of CHANGES)
+      expect(await call(tools.tools, name, input), name).toMatchObject({
+        error: openAppNotChosen(OPEN),
+      });
+    expect(changesTo(dashboard.name)).toEqual([]);
+    expect(reported.filter((r) => r.refused === openAppNotChosen(OPEN))).toHaveLength(
+      CHANGES.length
+    );
+
+    expect(await call(tools.tools, 'create_app', { name: 'LoRA explorer' })).toMatchObject({
+      app: 'lora-explorer',
+    });
+    expect(fake.sandboxes.map((s) => s.app).sort()).toEqual([OPEN, 'lora-explorer']);
+    expect(changesTo(dashboard.name)).toEqual([]);
+  });
+
+  it('a new chat with no history at all is refused the same', async () => {
+    const dashboard = fake.add(OPEN);
+    const { tools } = await open({
+      conversationId: 'conv-new',
+      page: { app: OPEN },
+      history: NEW_CHAT,
+    });
+    expect(
+      await call(tools.tools, 'sandbox__write_file', { path: `${OPEN}/a.ts`, content: 'x' })
+    ).toMatchObject({ error: openAppNotChosen(OPEN) });
+    expect(changesTo(dashboard.name)).toEqual([]);
+    // A test or typecheck run changes nothing, so it runs (and is the only call that reached it).
+    await call(tools.tools, 'sandbox__run_command', run(`cd ${OPEN} && npm test`));
+    expect(changesTo(dashboard.name)).toEqual([
+      { sandbox: dashboard.name, tool: 'run_command', args: run(`cd ${OPEN} && npm test`) },
+    ]);
+  });
+
+  it('a follow-up in the chat that made the app still changes it (not over-fixed)', async () => {
+    const dashboard = fake.add(OPEN);
+    const earlier = messagesOf([
+      ['create_app', { name: 'Buzz dashboard' }, { app: OPEN, state: 'starting', note: 'n' }],
+    ]);
+    const { tools } = await open({ page: { app: OPEN }, history: { earlier, current: [] } });
+    expect(
+      await call(tools.tools, 'sandbox__write_file', { path: `${OPEN}/a.ts`, content: 'x' })
+    ).toBe('wrote 1 bytes');
+    expect(changesTo(dashboard.name)).toHaveLength(1);
+  });
+
+  it('once the user asks to change the open app, use_open_app chooses it and the change runs', async () => {
+    const dashboard = fake.add(OPEN);
+    const { tools } = await open({ page: { app: OPEN }, history: NEW_CHAT });
+    expect(await call(tools.tools, 'use_open_app', { app: 'lora-explorer' })).toMatchObject({
+      error: expect.stringMatching(/open now is buzz-dashboard/),
+    });
+    expect(
+      await call(tools.tools, 'sandbox__write_file', { path: `${OPEN}/a.ts`, content: 'x' })
+    ).toMatchObject({ error: openAppNotChosen(OPEN) });
+    expect(await call(tools.tools, 'use_open_app', { app: OPEN })).toMatchObject({ app: OPEN });
+    expect(
+      await call(tools.tools, 'sandbox__write_file', { path: `${OPEN}/a.ts`, content: 'x' })
+    ).toBe('wrote 1 bytes');
+    expect(changesTo(dashboard.name)).toHaveLength(1);
+  });
+
+  it('what a chat chose was another app: the app the user switched to is not changed', async () => {
+    const dashboard = fake.add(OPEN);
+    const { tools } = await open({ page: { app: OPEN }, history: chosenApp('my-app') });
+    expect(
+      await call(tools.tools, 'sandbox__write_file', { path: `${OPEN}/a.ts`, content: 'x' })
+    ).toMatchObject({ error: openAppNotChosen(OPEN) });
+    expect(changesTo(dashboard.name)).toEqual([]);
+  });
+
+  it('at the kept-apps limit: the user is told, and the open app is neither chosen nor changed in its place', async () => {
+    const dashboard = fake.add(OPEN);
+    fake.add('second-app', 'suspended');
+    fake.add('third-app', 'suspended');
+    fake.keepLimit = 3;
+    const { tools, reported } = await open({ page: { app: OPEN }, history: NEW_CHAT });
+    await expect(call(tools.tools, 'create_app', { name: 'LoRA explorer' })).resolves.toMatchObject(
+      { error: KEEP_LIMIT }
+    );
+    // The page shows its free-a-slot card for it.
+    expect(isKeepLimitResult(reported.find((r) => r.name === 'create_app')!)).toBe(true);
+    expect(await call(tools.tools, 'use_open_app', { app: OPEN })).toMatchObject({
+      error: NEW_APP_FAILED_KEEP_OPEN,
+    });
+    expect(
+      await call(tools.tools, 'sandbox__write_file', { path: `${OPEN}/a.ts`, content: 'x' })
+    ).toMatchObject({ error: openAppNotChosen(OPEN) });
+    expect(changesTo(dashboard.name)).toEqual([]);
+    expect(fake.sandboxes.map((s) => s.app)).not.toContain('lora-explorer');
   });
 });
 
