@@ -942,6 +942,7 @@ export const upsertArticle = async ({
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
     await throwOnBlockedUserContent(data.content, { isModerator, surface: 'article' });
+    await assertNoShopArtworkInContent(data.content);
 
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
@@ -1894,6 +1895,20 @@ export async function unpublishArticleById({
  * @param ownerId - The article's author: only their own images, used nowhere else, are returned
  *   as orphans to delete.
  */
+/**
+ * Content images become `Image` rows, and deleting one removes its object, so an article may not
+ * embed a key that shop artwork uses. Checked before the write: linking runs after it, and must
+ * create and scan a row for every image the content holds.
+ */
+async function assertNoShopArtworkInContent(content: string | null | undefined) {
+  if (!content) return;
+  const shopUrls = await shopArtworkUrls(getContentMedia(content).map((media) => media.url));
+  if (shopUrls.size)
+    throw throwBadRequestError(
+      'An image in this article can no longer be used. Please re-upload it.'
+    );
+}
+
 export async function linkArticleContentImages({
   articleId,
   content,
@@ -1928,13 +1943,7 @@ export async function linkArticleContentImages({
       const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
 
       // Batch create: Missing images (upsert with unique constraint handles races)
-      const unlinked = contentImages.filter((media) => !existingUrlMap.has(media.url));
-      // A row on a shop artwork key would let deleting it take the artwork's object with it.
-      const shopUrls = await shopArtworkUrls(
-        unlinked.map((media) => media.url),
-        tx
-      );
-      const missingMedia = unlinked.filter((media) => !shopUrls.has(media.url));
+      const missingMedia = contentImages.filter((media) => !existingUrlMap.has(media.url));
       const newlyCreatedImages: { id: number; url: string }[] = [];
 
       if (missingMedia.length > 0) {
