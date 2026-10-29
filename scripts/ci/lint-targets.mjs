@@ -27,6 +27,8 @@ import { execFileSync } from 'node:child_process';
 import { appendFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { DEPENDENCY_TRIGGERS, changedFiles, matchesAny } from './full-run-triggers.mjs';
+
 // Paths an eslint config covers. apps/event-engine has its own `root: true` config, which
 // eslint resolves per file, so linting it from the repo root works; the other apps/ members
 // have none and would fall through to the root Next config, whose typed rules crash outside
@@ -38,11 +40,9 @@ const SOURCE = /\.tsx?$/;
 // A change to any of these re-lints everything. Each one can change the verdict for a file
 // the PR did not touch.
 const FULL_RUN_TRIGGERS = [
-  /^package\.json$/, // eslint/prettier/plugin versions, pnpm overrides
-  /^pnpm-lock\.yaml$/, // resolved versions of the same
-  // packages/.eslintrc.cjs checks import/no-extraneous-dependencies against each package's
-  // own package.json.
-  /^packages\/[^/]+\/package\.json$/,
+  // Root and packages/* manifests, the lockfile, and lint.yml. packages/.eslintrc.cjs checks
+  // import/no-extraneous-dependencies against each package's own package.json.
+  ...DEPENDENCY_TRIGGERS,
   /(^|\/)\.eslintrc(\.[cm]?js|\.json|\.ya?ml)?$/,
   /^eslint\.config\.[cm]?[jt]s$/, // flat config; ESLint 8.57 picks it up when present
   /^\.eslintignore$/,
@@ -51,9 +51,8 @@ const FULL_RUN_TRIGGERS = [
   /(^|\/)prettier\.config\.[cm]?[jt]s$/,
   /^\.prettierignore$/,
   /^tailwind\.config\.[cm]?[jt]s$/, // read by eslint-plugin-tailwindcss
-  /^\.github\/workflows\/lint\.yml$/,
   /^\.github\/problem-matchers\//,
-  /^scripts\/ci\/lint-(targets|new-findings)\.mjs$/,
+  /^scripts\/ci\/(lint-targets|lint-new-findings|full-run-triggers)\.mjs$/,
 ];
 
 const [baseRef, outDir = '.'] = process.argv.slice(2);
@@ -68,15 +67,15 @@ const git = (...args) =>
     .filter(Boolean);
 
 const range = `${baseRef}...HEAD`;
-// --no-renames: with rename detection a moved file is listed under its NEW path only, so
-// renaming .eslintrc.js away (say, to a flat config) would hide the trigger.
-const changed = git('diff', '--name-only', '--no-renames', range);
+// Renames count under both paths, so renaming .eslintrc.js away (say, to a flat config) still
+// triggers; see changedFiles.
+const changed = changedFiles(baseRef);
 const added = git('diff', '--name-only', '--diff-filter=A', range).filter((f) => SOURCE.test(f));
 const modified = git('diff', '--name-only', '--diff-filter=CMR', range).filter((f) =>
   SOURCE.test(f)
 );
 
-const triggers = changed.filter((f) => FULL_RUN_TRIGGERS.some((re) => re.test(f)));
+const triggers = changed.filter((f) => matchesAny(FULL_RUN_TRIGGERS, f));
 const full = triggers.length > 0;
 
 const addedSet = new Set(added);

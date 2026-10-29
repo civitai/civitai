@@ -456,6 +456,156 @@ jobs:
       - name: Typecheck
         run: pnpm run typecheck
 
+  # ── WHICH UNIT TEST FILES A PULL REQUEST RUNS ─────────────────────────────
+  #
+  # On a PR the `unit` job runs only the test files the change can reach; on a
+  # push to `main` (and on a dispatch) it runs everything, exactly as before.
+  # The push run is the backstop this design leans on: a regression the narrowed
+  # PR run misses still renders red on `main`, on the commit that caused it,
+  # within minutes. The PR side was already report-only, so what narrowing gives
+  # up is early signal, never a gate.
+  #
+  # Why it is worth a moving part: the plan's org-wide concurrent-job limit is
+  # the bottleneck, and this workflow saturated it. Over 24h (2026-10-28, 448
+  # runs) the 4 unit shards were 59% of all Lint job-minutes (12,434 of ~21,000,
+  # 10.7 min per shard) and 81% of Lint minutes came from pull_request runs,
+  # while the PR-side shards passed 96% of the time (760/793). The limit counts
+  # JOBS, so the saving that matters is fewer unit jobs per PR run, not faster ones.
+  #
+  # scripts/ci/unit-targets.mjs decides, in this order:
+  #   FULL      the PR changes something the import graph cannot see: the
+  #             dependency set and this file (the same list lint-targets.mjs
+  #             uses, scripts/ci/full-run-triggers.mjs), tsconfig/vitest config,
+  #             the test wrapper, ANY non-module file outside docs/ (tests read
+  #             markdown, SQL, JSON fixtures, the Prisma schema, .svelte and
+  #             workflow files by path), or code the unit setup files import.
+  #   NARROWED  vitest's own related-tests walk over the import graph, plus every
+  #             test that reads SOURCE files by path (convention guards, parity
+  #             pins), which no import edge reaches. That second set is a
+  #             heuristic, erring toward running more; see the script.
+  #   Then it packs the selection into the fewest jobs that each carry at most
+  #   one full-run shard's share of files (so no narrowed job runs longer than a
+  #   shard does today), up to 3; more than that runs FULL.
+  #
+  # 🔴 `vitest related` IS BROAD HERE, and that was measured, not assumed. The
+  # import graph has hubs (services, schemas), so a change to one of them reaches
+  # ~40-50% of the suite; the CLAUDE.md note that `vitest related` "does not
+  # narrow this codebase" is about exactly that. A leaf change reaches a handful.
+  # Measured 2026-10-29 by running only this selection over recently merged PRs
+  # (3,923-3,948 unit test files each; listing, no tests run):
+  #
+  #   20 PRs (#7144-#7189)   FULL 7   narrowed 13
+  #   FULL because:          lockfile/package.json 2, migration .sql 2,
+  #                          Prisma schema 1, .env-example 1, setup-file graph 1
+  #   narrowed, 1 job   (7)  430, 430, 431, 433, 450, 557, 568 files
+  #   narrowed, 2 jobs  (2)  1,956, 1,971   <- a hub file (a service, a schema)
+  #   narrowed, 3 jobs  (4)  1,966, 2,138, 2,200, 2,205
+  #   selected files, all 20 (FULL = ~3,930): median ~2,050, p90 FULL
+  #   selected files, narrowed 13:            median 557 (14%), p90 2,200 (56%)
+  #   unit jobs for the 20 runs: 80 before, 51 after (+20 select jobs)
+  #   est. job-minutes: ~856 before, ~530 after (-38%, select jobs at 2.5 min
+  #   included), using 10.7 min a shard, ~1.5 min of it fixed per job and the
+  #   rest linear in file count. An estimate from the model, not a measurement.
+  #
+  # So this is a moderate lever, not a large one: a third of PRs still run FULL
+  # and ~30% touch a hub and run 2-3 jobs. The win is the leaf-change third,
+  # which drops from 4 jobs to 1.
+  #
+  # The source-reader set alone is ~430 files (~11% of files, ~15% of measured
+  # test time), which is the floor of every narrowed run.
+  #
+  # COST OF THIS JOB: checkout + install + the graph walk, ~2-2.5 min on a PR,
+  # and on the unit job's critical path. On a push or dispatch it is one shell
+  # step. It saves 1-3 unit jobs of ~10 min each on the ~2/3 of PRs that narrow.
+  #
+  # The base is `HEAD^1`, the base-branch parent of the PR merge commit the
+  # checkout gives us (fetch-depth 2 fetches it), so `HEAD^1...HEAD` is exactly
+  # what the merge would bring in, whatever `main` has done since. The step
+  # asserts HEAD really is that two-parent merge commit: diffing against a base
+  # that did not resolve is how a selector silently selects nothing. It reads no
+  # `github.base_ref`, which is empty on a push (main-branch-ci-coverage.test.ts).
+  unit-targets:
+    name: Unit tests (select)
+    runs-on: ubuntu-latest
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-') }}
+    timeout-minutes: 10
+    outputs:
+      mode: ${{ steps.pr.outputs.mode || 'full' }}
+      shards: ${{ steps.pr.outputs.shards || steps.full.outputs.shards }}
+    steps:
+      # `only: unit` runs all four shards; `only: unit-<n>` runs that shard alone.
+      # The `--shard=<n>/4` denominator in the unit job stays 4 either way, so a
+      # single shard runs exactly the files it would in a full run.
+      - name: Full suite (push or dispatch)
+        id: full
+        if: github.event_name != 'pull_request'
+        env:
+          ONLY: ${{ inputs.only }}
+        run: |
+          set -euo pipefail
+          case "$ONLY" in
+            unit-[1-4]) shards="[${ONLY#unit-}]" ;;
+            *) shards='[1,2,3,4]' ;;
+          esac
+          echo "shards=$shards" >> "$GITHUB_OUTPUT"
+          echo "Full unit suite, shards $shards (${{ github.event_name }})." >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/checkout@v4
+        if: github.event_name == 'pull_request'
+        with:
+          fetch-depth: 2
+          # The graph walk must see event-engine-common, which src imports;
+          # without it every test reaching that code would silently drop out.
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+        if: github.event_name == 'pull_request'
+
+      - uses: actions/setup-node@v4
+        if: github.event_name == 'pull_request'
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        if: github.event_name == 'pull_request'
+        run: pnpm install --frozen-lockfile
+
+      - name: Select test files
+        id: pr
+        if: github.event_name == 'pull_request'
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -ne 3 ]; then
+            echo "::error::HEAD is not a two-parent PR merge commit, so HEAD^1 is not the base."
+            exit 1
+          fi
+          base=$(git rev-parse --verify HEAD^1)
+          echo "base: $base (HEAD^1)"
+          node scripts/ci/unit-targets.mjs "$base" unit-targets.json
+          node -e '
+            const r = require("./unit-targets.json");
+            const n = r.mode === "full" ? "every" : String(r.selected.length);
+            const jobs = r.mode === "full" ? 4 : r.chunks.length;
+            let s = `Unit tests: **${r.mode}**, ${n} test file(s), ${jobs} job(s).`;
+            if (r.mode === "narrowed" && r.selected.length === 0)
+              s += " Nothing in this PR reaches a unit test, so the unit job is skipped.";
+            console.log(s);
+          ' | tee -a "$GITHUB_STEP_SUMMARY"
+
+      # The narrowed jobs read their file lists from here. An artifact rather than
+      # a job output: a job's outputs reach a step as environment variables, and
+      # one env string over 128 KiB fails to exec, which 2,000 paths exceed.
+      - name: Upload the selection
+        if: steps.pr.outputs.mode == 'narrowed' && steps.pr.outputs.shards != '[]'
+        uses: actions/upload-artifact@v4
+        with:
+          name: unit-targets
+          path: unit-targets.json
+          retention-days: 1
+          # A re-run of this job uploads again into the same run.
+          overwrite: true
+
   unit:
     name: Unit tests
     runs-on: ubuntu-latest
@@ -521,10 +671,12 @@ jobs:
     # If the suite proves too noisy there, the fix is to de-flake the tests or to
     # narrow what runs on push — NOT to hide the result behind continue-on-error.
     continue-on-error: ${{ github.event_name == 'pull_request' }}
-    # `only: unit` runs all four shards; `only: unit-<n>` runs that shard alone
-    # (the matrix below narrows to it). The job-level `if` cannot read `matrix`,
-    # which is why the shard pick lives in the matrix expression instead.
-    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-') }}
+    # Which files and how many jobs come from `unit-targets` above: on a PR the
+    # change's related tests, on a push or dispatch the whole suite (and `only:
+    # unit-<n>` still narrows to that shard there). An empty selection has no
+    # matrix to expand, so the job is skipped and the select job says so.
+    needs: unit-targets
+    if: ${{ needs.unit-targets.outputs.shards != '[]' }}
     # ── SHARDED ACROSS 4 RUNNERS ────────────────────────────────────────────
     #
     # Measured before the change, n=12 runs of this job, from the Actions API:
@@ -574,10 +726,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # [1, 2, 3, 4] unless a dispatch named one shard (`only: unit-<n>`). The
-        # `--shard=<n>/4` denominator below stays 4 either way, so a single
-        # shard runs exactly the files it would in a full run.
-        shard: ${{ fromJSON('{"unit-1":[1],"unit-2":[2],"unit-3":[3],"unit-4":[4]}')[inputs.only || 'all'] || fromJSON('[1, 2, 3, 4]') }}
+        # FULL: [1, 2, 3, 4], or the one shard a dispatch named. NARROWED: one
+        # entry per chunk of the selection, [1] for most PRs.
+        shard: ${{ fromJSON(needs.unit-targets.outputs.shards) }}
     # Per-shard, not the whole suite. The ~3.4m estimate above is from the
     # 2026-08-25 measurement; on 2026-10-23, under heavy runner load, shards took
     # 7 to 12.5 minutes, close enough to the old 15m limit to be cancelled by it.
@@ -713,7 +864,32 @@ jobs:
       # The sibling `packages` / `apps` jobs have always used this separator-less
       # form; copy them, not the shell habit.
       - name: Unit tests
+        if: needs.unit-targets.outputs.mode == 'full'
         run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
+
+      # NARROWED: this job's chunk of the selection, by ABSOLUTE path. vitest
+      # reads positional arguments as substring filters; an absolute path can
+      # only match the file it names, and the assert below proves it did.
+      - name: Download the selection
+        if: needs.unit-targets.outputs.mode == 'narrowed'
+        uses: actions/download-artifact@v4
+        with:
+          name: unit-targets
+
+      - name: Unit tests (changed)
+        if: needs.unit-targets.outputs.mode == 'narrowed'
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          node -e '
+            const chunk = require("./unit-targets.json").chunks[Number(process.env.SHARD) - 1];
+            if (!chunk?.length) throw new Error(`no files for shard ${process.env.SHARD}`);
+            for (const f of chunk) console.log(f);
+          ' > unit-files.txt
+          mapfile -t files < unit-files.txt
+          echo "running ${#files[@]} selected test file(s)"
+          pnpm run test:unit:run "${files[@]/#/$PWD/}" --reporter=default --reporter=json --outputFile=unit-report.json
 
       # 🔴 POSITIVE CONTROL. A `--shard` expression that matches no files exits 0
       # and reports a green check — the same silent-zero class this repo has been
@@ -727,8 +903,15 @@ jobs:
         # shard), but a CANCELLED run has no report to read and would render a
         # confusing red assert step on top of the cancellation. Observed on shard 3
         # of the run that shipped the `--` bug.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.unit-targets.outputs.mode == 'full' }}
         run: node scripts/ci/assert-shard-ran.mjs unit-report.json ${{ matrix.shard }} 4
+
+      # The narrowed run's positive control: the files that ran must be exactly
+      # the files selected for this job (scripts/ci/assert-unit-files-ran.mjs).
+      # assert-shard-ran's whole-suite bounds mean nothing for a narrowed job.
+      - name: Assert the selected files ran
+        if: ${{ !cancelled() && needs.unit-targets.outputs.mode == 'narrowed' }}
+        run: node scripts/ci/assert-unit-files-ran.mjs unit-report.json unit-files.txt
 
       # See the restore step for why this is `main`-only. Three further details:
       #
