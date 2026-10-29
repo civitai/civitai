@@ -493,6 +493,50 @@ describe('Build it on the runner', () => {
     ]);
   });
 
+  // Seen live: Build it's reply ended in an error part-way (out of Buzz), the user asked again in a
+  // message of their own, and that reply built the app: its finished list got a Build it.
+  it('the reply after an errored Build it reply ticks the list off without offering Build it again', async () => {
+    fake.add('my-app');
+    const earlier: ModelMessage[] = [
+      // The plan reply, then the Build it reply up to where it errored, its last call cut off.
+      ...messagesOf([
+        [
+          'set_checklist',
+          { items: items(false, false) },
+          { shown: true, awaitsUser: true, checklist: 'run1-1', note: 'shown', app: 'my-app' },
+        ],
+        ['sandbox__write_file', { path: 'my-app/src/split.ts', content: 'x' }, 'wrote 1 bytes'],
+        ['sandbox__run_command', run('cd my-app && npm test'), 'exit_code: 1'],
+      ]),
+      {
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            toolCallId: 'cut-1',
+            toolName: 'sandbox__write_file',
+            input: { path: 'my-app/src/tip.ts', content: 'y' },
+          },
+        ],
+      },
+    ];
+    const { tools, reported } = await open({ history: { earlier, current: [] } });
+    expect(await call(tools.tools, 'set_checklist', { items: items(true, false) })).toEqual({
+      updated: true,
+      open: 1,
+      app: 'my-app',
+    });
+    expect(await call(tools.tools, 'set_checklist', { items: items(true, true) })).toEqual({
+      updated: true,
+      open: 0,
+      app: 'my-app',
+    });
+    expect(checklistsReported(reported)).toEqual([
+      { updated: true, open: 1, app: 'my-app' },
+      { updated: true, open: 0, app: 'my-app' },
+    ]);
+  });
+
   it('a list with every item done offers no Build it, with no earlier list', async () => {
     fake.add('my-app');
     const { tools, reported } = await open();
