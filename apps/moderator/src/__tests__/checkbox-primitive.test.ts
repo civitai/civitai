@@ -198,6 +198,7 @@ describe('destructive surfaces carry the touch-target marker', () => {
     'lib/components/BanConfirmForm.svelte',
     'lib/components/ConfirmSubmit.svelte',
     'lib/components/ImageActionBar.svelte',
+    'lib/components/RulingForm.svelte',
     'routes/audit/training-data/[versionId]/CsamReportForm.svelte',
     // The "reviewed it another way" tick that unlocks Approve on a dataset this app cannot preview.
     'routes/audit/training-data/workflow/[workflowId]/WorkflowReviewActions.svelte',
