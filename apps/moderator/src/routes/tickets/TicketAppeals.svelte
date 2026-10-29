@@ -95,7 +95,7 @@
       {/each}
     </ul>
     {#if appeals.truncated}
-      <p class="m-0 mt-2 text-dark-2">Showing the newest {appeals.appeals.length}.</p>
+      <p class="m-0 mt-2 text-dark-2">Showing {appeals.appeals.length}: pending first, then newest.</p>
     {/if}
   {/if}
 </TriageCard>

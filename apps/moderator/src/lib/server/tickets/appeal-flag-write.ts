@@ -36,6 +36,7 @@ const RESCAN =
 
 const PENDING_STILL = (id: number) =>
   `Appeal #${id} is still pending: the ruling decided another appeal on that model.`;
+const UNCONFIRMED = 'could not confirm the posted appeal was the one closed';
 
 /**
  * 🔴 THE MODEL RULED ON IS THE ROW'S, AND THE APPEAL IS THE TICKET USER'S. The main app's resolver is
@@ -75,7 +76,15 @@ export function createTicketFlagAppealActions(deps: FlagAppealWriteDeps) {
       if (!result.ok) return fail(400, { error: result.error });
 
       // The ruling is keyed by model, so it may have closed another appeal on it and left the posted one open.
-      const stillPending = (await deps.appealOf(input.appealId))?.status === 'Pending';
+      // The ruling is already made, so a failed read only costs the confirmation, never the result.
+      const after = await deps.appealOf(input.appealId).then(
+        (a) => (a?.status === 'Pending' ? 'pending' : 'closed'),
+        (e) => {
+          console.error('[tickets] re-read after model flag ruling failed', e);
+          return 'unknown' as const;
+        }
+      );
+      const stillPending = after === 'pending';
       const res = await addTicketNote(
         deps.note,
         event,
@@ -84,10 +93,11 @@ export function createTicketFlagAppealActions(deps: FlagAppealWriteDeps) {
           ? `Model flag ruling ${input.status} (decided another appeal on model ${appeal.entityId}; appeal #${input.appealId} of user ${ok.userId} is still pending)`
           : `${input.status} model flag appeal #${input.appealId} (model ${appeal.entityId}${
               split ? `, ${split}` : ''
-            }) of user ${ok.userId}`
+            }) of user ${ok.userId}${after === 'unknown' ? ` (${UNCONFIRMED})` : ''}`
       );
       const warnings = [
         stillPending ? PENDING_STILL(input.appealId) : null,
+        after === 'unknown' ? `Ruled, but ${UNCONFIRMED}.` : null,
         result.rescanQueued ? RESCAN : null,
         'warning' in res ? res.warning : null,
       ].filter((w) => w !== null);

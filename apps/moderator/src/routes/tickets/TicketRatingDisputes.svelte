@@ -60,7 +60,7 @@
       {/each}
     </ul>
     {#if disputes.truncated}
-      <p class="m-0 mt-2 text-dark-2">Showing the newest {disputes.disputes.length}.</p>
+      <p class="m-0 mt-2 text-dark-2">Showing {disputes.disputes.length}: pending first, then newest.</p>
     {/if}
   {/if}
 </TriageCard>

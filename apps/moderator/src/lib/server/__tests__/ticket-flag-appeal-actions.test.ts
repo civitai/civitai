@@ -108,6 +108,16 @@ describe('appealResolveModelFlag', () => {
     expect(text).not.toMatch(/Rejected model flag appeal #12/);
   });
 
+  it('a made ruling is not failed when the follow-up read of the appeal fails', async () => {
+    appealOf.mockResolvedValueOnce(row()).mockRejectedValueOnce(new Error('db blip'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = (await run()) as { success: boolean; warning: string };
+    expect(res.success).toBe(true);
+    expect(res.warning).toContain('could not confirm');
+    expect(note).toHaveBeenCalledTimes(1);
+    expect(note.mock.calls[0][1] as string).toContain('could not confirm');
+  });
+
   it('refuses a split that is not an Approved ruling', async () => {
     expect(await run({ status: 'Rejected', ruling: 'liftPoi' })).toMatchObject({ status: 400 });
     expect(ruleAppeal).not.toHaveBeenCalled();
