@@ -14,6 +14,8 @@ import {
 } from './detect';
 import { renderSummary, toFinding, toIndirectFinding, type ReviewOutcome } from './report';
 
+type Finding = AbuseReportInput['findings'][number];
+
 export type WarningRecord = {
   warnedAt: string;
   chatId: number;
@@ -115,7 +117,7 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
   const findings: AbuseReportInput['findings'] = [];
   // Saved only once the report carrying the repeat has been filed: saved earlier, a failed report
   // would lose the repeat for good, since the next run would see no new volume.
-  const repeatRecords = new Map<number, WarningRecord>();
+  const repeatRecords = new Map<number, { record: WarningRecord; finding: Finding }>();
   let warned = 0;
   let repeats = 0;
   let failed = 0;
@@ -166,18 +168,17 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     );
     if (!grew.length) continue;
 
-    repeatRecords.set(member.id, {
-      ...record,
-      counterparties: { ...record.counterparties, ...current },
-    });
-    findings.push(
-      toFinding(
-        member.id,
-        memberPairs,
-        { kind: 'repeat', warnedAt: new Date(record.warnedAt) },
-        BANKABLE_CUTOVER
-      )
+    const finding = toFinding(
+      member.id,
+      memberPairs,
+      { kind: 'repeat', warnedAt: new Date(record.warnedAt) },
+      BANKABLE_CUTOVER
     );
+    findings.push(finding);
+    repeatRecords.set(member.id, {
+      record: { ...record, counterparties: { ...record.counterparties, ...current } },
+      finding,
+    });
     repeats++;
   }
 
@@ -185,10 +186,7 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
   const transfersByUser = new Map<number, IndirectTransfer[]>();
   for (const t of transfers)
     transfersByUser.set(t.userId, [...(transfersByUser.get(t.userId) ?? []), t]);
-  const indirectRecords = new Map<
-    number,
-    { record: IndirectRecord; finding: AbuseReportInput['findings'][number] }
-  >();
+  const indirectRecords = new Map<number, { record: IndirectRecord; finding: Finding }>();
   const indirectMembers = transfersByUser.size
     ? await deps.findMembers([...transfersByUser.keys()])
     : [];
@@ -208,10 +206,11 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
       finding,
     });
   }
-  const indirect = indirectRecords.size;
-
   findings.sort((a, b) => b.confidence - a.confidence);
   findings.splice(MAX_FINDINGS_PER_REPORT);
+  const indirect = [...indirectRecords.values()].filter(({ finding }) =>
+    findings.includes(finding)
+  ).length;
 
   // Filed with no findings too: a run row is how the board shows the review ran.
   await deps.sendReport({
@@ -236,12 +235,17 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     },
     findings,
   });
-  const filed = new Set(findings.map((f) => f.userId));
-  for (const [userId, record] of repeatRecords)
-    if (filed.has(userId)) await deps.warnings.set(userId, record);
-  // Its own finding, not the member's: a direct finding can survive the cut while this one did not.
+  // By finding, not member: one member can have a finding that survived the cut and one that did not.
+  for (const [userId, { record, finding }] of repeatRecords)
+    if (findings.includes(finding)) await deps.warnings.set(userId, record);
   for (const [userId, { record, finding }] of indirectRecords)
-    if (findings.includes(finding)) await deps.indirect.set(userId, record);
+    if (findings.includes(finding))
+      await deps.indirect.set(userId, record).catch((e: Error) =>
+        deps.log?.('creator-program-counterparty-review-record-failed', {
+          userId,
+          error: e.message,
+        })
+      );
 
   deps.log?.('creator-program-counterparty-review-reported', {
     pairs: pairs.length,

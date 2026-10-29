@@ -161,8 +161,8 @@ describe('getBankableAmount', () => {
     expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(2_000);
   });
 
-  // The counterparty review files these transfers but moves no money: this netting is what keeps
-  // them out of bankable, however many users the Buzz passed through on the way back.
+  // The counterparty review files Buzz that returns to a creator but moves no money: this netting
+  // is what keeps it out of bankable.
   it('gains nothing from Buzz paid out that comes back as earnings', async () => {
     mockLedger({ snapshot: 50_000, earned: 25_000, spent: 25_000, consumed: 0 });
     expect((await getBankableAmount(userId, 0, afterSettle))?.remaining).toBe(50_000);

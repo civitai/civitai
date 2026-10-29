@@ -110,9 +110,15 @@ export function renderIndirectReason(transfers: IndirectTransfer[], since: Date)
   const more = transfers.length - INDIRECT_PATHS_SHOWN;
   return truncateReason(
     `No warning message was sent: whether this is abuse is a moderator decision. ${NO_ACTION_TAKEN} ` +
-      `Buzz this creator sent came back to them as bankable earnings through other accounts since ${since
+      `Since ${since
         .toISOString()
-        .slice(0, 10)} (${shown}${more > 0 ? `; and ${more} more` : ''}).`
+        .slice(
+          0,
+          10
+        )} this creator sent Buzz to other accounts that, in turn, paid it on and back to them as bankable earnings (${shown}${
+        more > 0 ? `; and ${more} more` : ''
+      }). ` +
+      `Each amount is the smallest leg of totals since then; the order of the transfers is not checked.`
   );
 }
 

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from 'vitest';
-import { abuseReportInput, type AbuseReportInput } from '@civitai/moderation';
+import {
+  abuseReportInput,
+  MAX_FINDINGS_PER_REPORT,
+  type AbuseReportInput,
+} from '@civitai/moderation';
 import { BANKABLE_CUTOVER } from '~/shared/constants/creator-program.constants';
 import {
   platformPaidFromUsersSql,
@@ -51,7 +55,7 @@ function world({
     $query: vi.fn(
       async (sql: string) =>
         (sql.includes('AS path')
-          ? indirectRows.filter((r) => r.path.length <= maxIntermediaries)
+          ? indirectRows.filter((r) => r.path.length === (sql.match(/AS e\d+\b/g) ?? []).length)
           : rows) as never[]
     ),
   };
@@ -384,6 +388,34 @@ describe('runCounterpartyReview, indirect transfers', () => {
     expect(reason).toContain('and 395 more');
     expect(reason).not.toContain('1005 → 2005');
     expect(reason.startsWith('No warning message was sent')).toBe(true);
+  });
+
+  it('files a member with both a direct and an indirect exchange once each, warning only for the direct one', async () => {
+    const w = world({ rows: [pair(22, 5_000, 4_000)], indirectRows: [loop([22, 33], 3_000)] });
+
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 1, indirect: 1 });
+    expect(w.sendWarning).toHaveBeenCalledTimes(1);
+    expect(w.reports[0].findings.map((f) => f.confidence)).toEqual([0.9, 0.7]);
+  });
+
+  it('records an indirect path only when its own finding was filed, not another of the member', async () => {
+    const others: Member[] = Array.from({ length: MAX_FINDINGS_PER_REPORT }, (_, i) => ({
+      id: 5_000 + i,
+      username: null,
+    }));
+    const w = world({
+      members: [creator, ...others],
+      rows: [
+        pair(22, 5_000, 4_000),
+        ...others.map((m) => ({ ...pair(22, 5_000, 4_000), userId: m.id })),
+      ],
+      indirectRows: [loop([22, 33], 3_000)],
+    });
+
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ indirect: 0 });
+    expect(w.reports[0].findings.some((f) => f.userId === creator.id)).toBe(true);
+    expect(w.reports[0].findings.every((f) => f.confidence > 0.7)).toBe(true);
+    expect(w.indirectStore.has(creator.id)).toBe(false);
   });
 
   it('files only current Creator Program members', async () => {
