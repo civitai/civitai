@@ -24,6 +24,7 @@ import {
 import { isDefined } from '~/utils/type-guards';
 import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
 import { isConfiguredSecret } from '~/server/utils/configured-secret';
+import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
 import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
 import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
@@ -321,6 +322,38 @@ export function TokenSecuredEndpoint(
     }
 
     if (req.query.token !== token) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    await handler(req, res);
+  });
+}
+
+const MIN_HEADER_TOKEN_LENGTH = 32;
+
+export function HeaderTokenSecuredEndpoint(
+  getToken: () => string | undefined,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+) {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    const token = getToken();
+    if (
+      !isConfiguredSecret(token) ||
+      token !== token.trim() ||
+      token.length < MIN_HEADER_TOKEN_LENGTH
+    ) {
+      res.status(503).json({ error: 'Endpoint not configured' });
+      return;
+    }
+
+    if (req.url?.includes('?') || Object.keys(req.query ?? {}).length) {
+      res.status(400).json({ error: 'This endpoint takes no query string' });
+      return;
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (typeof presented !== 'string' || !timingSafeEqualStrings(token, presented)) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }

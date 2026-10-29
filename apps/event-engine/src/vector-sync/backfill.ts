@@ -81,6 +81,8 @@ type BackfillDeps = SyncDeps & {
 };
 
 const LEASE_MS = 120_000;
+/** Longest a held run waits before re-checking the pause flag, the gate and the window. */
+const HELD_WAKE_MS = 30_000;
 
 /** Holds the run's lease for its whole length, so a second copy refuses to start. */
 export async function runBackfill(
@@ -237,7 +239,15 @@ async function runPages(opts: BackfillOptions, deps: BackfillDeps): Promise<Back
       await sleep(held === 'rate limit' ? Math.min(5000, Math.max(0, nextPageAt - now())) : 5000);
       continue;
     }
-    await Promise.race(inFlight.values());
+    if (!stop && inFlight.size < opts.pages) {
+      // A slot is free but held (the rate limit, the window, the gate or the pause flag): wake
+      // when the hold may end, not only when a page settles. A page waiting on one slow
+      // workflow would otherwise keep every other slot empty until it finished.
+      const wait = held === 'rate limit' ? Math.max(0, nextPageAt - now()) : HELD_WAKE_MS;
+      await Promise.race([...inFlight.values(), sleep(Math.min(wait, HELD_WAKE_MS))]);
+    } else {
+      await Promise.race(inFlight.values());
+    }
 
     await advance();
     if (Date.now() - lastLog > (opts.logEveryMs ?? 30_000)) {
