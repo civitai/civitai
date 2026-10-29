@@ -17,6 +17,7 @@
 <p class="status">
   Fervor {status.fervor} · Gold {status.goldEarned} earned, {status.goldPending} pending
   {@render links?.()}
+  · <a href="/rules">Rules</a>
 </p>
 {#if status.rating.bar !== null}
   <p class="status">

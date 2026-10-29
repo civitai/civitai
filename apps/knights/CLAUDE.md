@@ -56,11 +56,18 @@ SQL on PGlite.
     is unknown. Gone: `Closed`, votes inconclusive. `reason` says which.
   - Once a vote commits, a failure settling it is logged and the player still gets the accepted answer; the item stays
     `Resolved` and the job retries it.
+- Vote pacing (`queue/vote-rate.ts`): `castVote` returns `{ status: 'limited', until }` while the trailing windows in `VOTE_LIMITS` are full, counted from `KnightsVote` itself (no Redis, no state of its own). A per-player `pg_advisory_xact_lock` taken first in the vote transaction, ahead of the item lock, serialises one player's votes, and the limit is re-checked under it, so parallel requests cannot overshoot. Moderators are exempt, and a `QueueDeps` without `voteLimits` is unpaced (tests, the dev simulator). The vote action answers 429 with `lockoutSeconds`; `/play` `load` (`depends('app:play')`) carries `lockoutSeconds`, shown by `$lib/Countdown.svelte`, which re-checks the server when it reaches zero.
 - The vote ledger is partitioned by month. `POST /api/jobs/partitions` creates the next months and a vote creates its
   own month if missing; `POST /api/jobs/tick` also escalates items past `expiresAt` and settles votes on final items (`settledVotes` in its response; any failing step, or an item that could not be settled, returns 500). Both need
   `Authorization: Bearer $JOBS_TOKEN`.
 - The user guard in `hooks.server.ts` skips exactly the routes in `JOB_PATHS` (tick, partitions, harvest); a new job route must be added there.
-- `/play` is the minimal voting page, with a status line (rank, level and XP from `@civitai/shared/new-order-levels`, the trial position for Acolytes, and the progression standing described under Progression). Acolytes, and players with no `NewOrderPlayer` row yet, get Trials instead of the feed and cannot vote; Knights and above keep the feed. It also shows the Daily Watch panel and the dismissable recap (see Daily loop); `/ranks` lists each rank's daily gold cap.
+- `/play` is the minimal voting page, with a status line (rank, level and XP from `@civitai/shared/new-order-levels`, the trial position for Acolytes, and the progression standing described under Progression). Acolytes get Trials instead of the feed and cannot vote; a user with no `NewOrderPlayer` row is redirected to `/` to join (see Joining), as is `/judgments` (`requireMember`, `lib/server/membership.ts`), and a Trial answer from such a user is refused; Knights and above keep the feed. It also shows the Daily Watch panel and the dismissable recap (see Daily loop); `/ranks` lists each rank's daily gold cap.
+
+## Joining
+
+`/` shows "Join the Order" to a user with no `NewOrderPlayer` row: a sensitive-content warning (explicit imagery regardless of the user's browsing level), then the `join` action, which requires `accepted=yes`, calls `joinOrder` (`lib/server/join.service.ts`, the only place an Acolyte row is created; idempotent, never touches an existing row) and redirects to `/play`. `/play` redirects a user with no row back to `/`. The v1 Acolyte badge cosmetic is not awarded here yet.
+
+`/rules` is the player-facing rules page. Its numbers come from `rulesFacts()` (`lib/server/rules.ts`), which reads the Trials, progression, daily and rank config; the rating guide reads the shared level labels. Update the page when a rule changes. Vote pacing is deliberately not described there (public repo).
 
 ## Progression (`src/lib/server/progression`)
 

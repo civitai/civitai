@@ -377,12 +377,30 @@ describe('answerTrial', () => {
         deps
       )
     ).toEqual({ status: 'rejected', reason: 'not-current' });
+    await player(2);
     expect(
       await answerTrial(db, { questionKey: Q, userId: 2, referenceId: 1, answer: '4' }, deps)
     ).toEqual({
       status: 'rejected',
       reason: 'no-run',
     });
+  });
+});
+
+describe('answerTrial without having joined', () => {
+  it('refuses a user with no player row even when a run is open', async () => {
+    await standardPool();
+    const view = await current(1);
+
+    expect(
+      await answerTrial(
+        db,
+        { questionKey: Q, userId: 1, referenceId: view.item.referenceId, answer: '4' },
+        deps
+      )
+    ).toEqual({ status: 'rejected', reason: 'no-player' });
+    const { rows } = await pg.query(`SELECT 1 FROM "KnightsTrialAnswer"`);
+    expect(rows).toHaveLength(0);
   });
 });
 
@@ -472,14 +490,6 @@ describe('graduation', () => {
     expect(run.result).toBe('passed');
     expect(run.finishedAt).not.toBeNull();
     expect((await getTrial(db, 1, deps)).kind).toBe('not-acolyte');
-  });
-
-  it('promotes a player who passes before they have a player row', async () => {
-    await standardPool();
-    const result = await playOut(7);
-
-    expect(result).toMatchObject({ status: 'recorded', finished: { result: 'passed' } });
-    expect(await rank(7)).toBe('Knight');
   });
 
   it('keeps a player who misses the mark an Acolyte and holds a cooldown', async () => {

@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const listJudgments = vi.hoisted(() => vi.fn());
-const getPlayerStatusOrNew = vi.hoisted(() => vi.fn());
+const getPlayerStatus = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => `cdn/${key}` }));
 vi.mock('$lib/server/progression/judgments', () => ({ listJudgments }));
-vi.mock('$lib/server/player-status', () => ({ getPlayerStatusOrNew }));
+vi.mock('$lib/server/player-status', () => ({ getPlayerStatus }));
 
 const { load } = await import('./+page.server');
 
@@ -17,12 +17,17 @@ const run = (query = '') =>
 
 beforeEach(() => {
   listJudgments.mockReset();
-  getPlayerStatusOrNew.mockReset();
-  getPlayerStatusOrNew.mockResolvedValue({ rank: 'Acolyte', fervor: 0 });
+  getPlayerStatus.mockReset();
+  getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', fervor: 0 });
   listJudgments.mockResolvedValue({ judgments: [], hasMore: false });
 });
 
 describe('judgments load', () => {
+  it('sends a user who has not joined to the front page', async () => {
+    getPlayerStatus.mockResolvedValue(null);
+    await expect(run()).rejects.toMatchObject({ status: 303, location: '/' });
+  });
+
   it('reads only the signed-in player and falls back to page 1 for a bad page', async () => {
     for (const bad of [
       '?page=0',

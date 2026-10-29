@@ -9,6 +9,7 @@ import { standingOf } from '../progression/rating';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
 import { ledgerOf, settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '@civitai/db/knights';
+import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { isRank, RANKS, type Rank } from '../ranks';
 import { canVote, FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
 import {
@@ -40,6 +41,8 @@ export type QueueDeps = {
   now: () => Date;
   /** Keeps the original game's exp counter in step; called after the Postgres commit, a failure is only logged. */
   mirrorXp?: XpMirror;
+  /** Pacing for non-moderators; absent means unpaced. */
+  voteLimits?: readonly VoteLimit[];
 };
 
 /** A write-back that keeps failing is handed to the Inquisitors after this many tries. */
@@ -70,6 +73,7 @@ export type RejectReason =
 
 export type CastVoteResult =
   | { status: 'rejected'; reason: RejectReason }
+  | { status: 'limited'; until: Date }
   | { status: 'recorded' | 'resolved' | 'escalated' | 'inquisitor' };
 
 const addHours = (date: Date, hours: number) => new Date(date.getTime() + hours * 3_600_000);
@@ -262,9 +266,12 @@ const rankOrder = sql`CASE "i"."minRank" ${sql.join(
   sql` `
 )} ELSE 0 END`;
 
+/** First key of the per-player advisory lock that serialises a player's paced votes. */
+const VOTE_PACING_LOCK_NAMESPACE = 7_301;
+
 export async function castVote(
   db: Kysely<DB>,
-  input: { userId: number; itemId: number; answer: string },
+  input: { userId: number; itemId: number; answer: string; isModerator?: boolean },
   deps: QueueDeps
 ): Promise<CastVoteResult> {
   const now = deps.now();
@@ -277,6 +284,17 @@ export async function castVote(
         const rejected = (reason: RejectReason) => ({
           result: { status: 'rejected', reason } as const,
         });
+
+        // Pacing must hold across parallel requests, so one player's votes queue on this lock before they
+        // count the ledger. It is taken ahead of every row lock below, and nothing else waits on it while
+        // holding a lock of its own, so it cannot join a deadlock cycle.
+        if (deps.voteLimits && !input.isModerator) {
+          await sql`SELECT pg_advisory_xact_lock(${VOTE_PACING_LOCK_NAMESPACE}, ${input.userId})`.execute(
+            trx
+          );
+          const until = await voteLockUntil(trx, input.userId, now, deps.voteLimits);
+          if (until) return { result: { status: 'limited', until } as const };
+        }
 
         // The item row lock serialises every vote on one item: it is what keeps one vote per player
         // (the partitioned ledger cannot carry that unique key) and lets only one vote resolve the item.
