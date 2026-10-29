@@ -1,4 +1,4 @@
-import { getPostLookup } from '$lib/server/image-lookup.service';
+import { getPostLookup, getRecentImagesOutsidePost } from '$lib/server/image-lookup.service';
 import { loadAccountHistory } from '$lib/server/account-history';
 import { loadItemReports } from '$lib/server/report-queue-load';
 import { ReportEntity } from '$lib/reports';
@@ -19,11 +19,13 @@ export async function loadPostItem(postId: number, tab: PostTab, locals: App.Loc
   ]);
   const ownerId = lookup?.post.userId ?? null;
   // The heavy read, on its own tab only: a moderator settling a report from the images never opens it.
-  const accountHistory =
-    ownerId && tab === 'owner'
-      ? await loadAccountHistory(ownerId, locals.user.username ?? null)
-      : null;
-  return { postId, tab, lookup, reports, ownerId, accountHistory };
+  const [accountHistory, ownerRecentImages] = await Promise.all([
+    ownerId && tab === 'owner' ? loadAccountHistory(ownerId, locals.user.username ?? null) : null,
+    // Whether the post looks like the rest of the account's work is often the whole ruling, and at
+    // queue volume nobody opens the profile to check.
+    ownerId && tab === 'images' ? getRecentImagesOutsidePost(ownerId, postId) : [],
+  ]);
+  return { postId, tab, lookup, reports, ownerId, accountHistory, ownerRecentImages };
 }
 
 export type PostItem = Awaited<ReturnType<typeof loadPostItem>>;

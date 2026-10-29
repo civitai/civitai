@@ -159,7 +159,7 @@ path. REST endpoints refuse on their own and carry no marker.
 
 | Reason | Clause |
 | --- | --- |
-| Depicting Real People · Real person model not marked | 9.6(a) |
+| Depicting Real People · Real person model | 9.6(a) |
 | Minor in mature context · Realistic minor · NSFW minor in school environment | 9.6(b) |
 | Bestiality · Rape/Forced Sex · Graphic Violence/Gore | 9.6(c) |
 | Mind-altered NSFW | 9.6(d) — drugs in a sexual context; drunk, hypnosis and mind control are no longer prohibited |

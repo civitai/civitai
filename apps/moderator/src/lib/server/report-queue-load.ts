@@ -4,6 +4,7 @@ import { parseQueryKeys } from './query';
 import { MAX_INT4, usersByIds } from './users.service';
 import type { AdditionalReporter } from '$lib/components/report-queue/report-list';
 import { parseReportQueueFilters, reportQueueFilterSchema } from './report-queue-filters';
+import { isModelUnpublishReason } from '$lib/model-unpublish-reasons';
 import {
   DEFAULT_REPORT_REASONS,
   DEFAULT_REPORT_STATUSES,
@@ -22,6 +23,8 @@ type LoadReportQueueOptions = {
   /** Apply `reportedFrom`/`reportedTo`. Off for a queue with no date inputs, where a date left in a
    *  pasted URL would be a filter with no control showing it. */
   dates?: boolean;
+  /** Apply `?unpublished=<reason>`: the reports filed on posts made with a model unpublished for it. */
+  unpublished?: boolean;
   limit?: number;
 };
 
@@ -43,6 +46,7 @@ export async function loadReportQueue(
     statusCounts: withStatusCounts = false,
     canonicalize = true,
     dates = false,
+    unpublished = false,
     limit,
   }: LoadReportQueueOptions = {}
 ) {
@@ -74,6 +78,9 @@ export async function loadReportQueue(
   // Both defaults must stay equal to what the badge counts, or a moderator lands on a list that
   // disagrees with the number they clicked.
   const reasons = url.searchParams.has('reason') ? urlReasons : DEFAULT_REPORT_REASONS;
+  const unpublishedParam = unpublished ? url.searchParams.get('unpublished') ?? '' : '';
+  const unpublishedReason =
+    !reportId && isModelUnpublishReason(unpublishedParam) ? unpublishedParam : undefined;
 
   const queueFilters = {
     type,
@@ -82,6 +89,7 @@ export async function loadReportQueue(
     reportedBy: reportId ? undefined : filters.reportedBy || undefined,
     from: reportId || !dates ? undefined : filters.from,
     to: reportId || !dates ? undefined : filters.to,
+    unpublishedReason,
     reportId,
   };
   const [data, statusCounts] = await Promise.all([
@@ -113,6 +121,7 @@ export async function loadReportQueue(
     reportedFrom: filters.echo.reportedFrom,
     reportedTo: filters.echo.reportedTo,
     singleReport: reportId ?? null,
+    unpublishedReason: unpublishedReason ?? null,
     ...data,
     items: await withAdditionalReporters(data.items),
   };
