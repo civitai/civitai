@@ -279,6 +279,38 @@ describe('career reset (startAt)', () => {
     expect(await who(2)).toMatchObject({ goldEarned: PROGRESSION.baseGold });
   });
 
+  it('does not take a pre-reset vote out of the pending gold earned since the reset', async () => {
+    for (let i = 1; i <= 5; i++) await player(i);
+    await image(10);
+    const id = await item(10);
+    for (let i = 1; i <= 4; i++) await castVote(db, { userId: i, itemId: id, answer: '4' }, deps);
+    await pg.exec(
+      `UPDATE "NewOrderPlayer" SET "startAt"='2026-12-16', "goldPending"=70 WHERE "userId"=1`
+    );
+    await castVote(db, { userId: 5, itemId: id, answer: '4' }, deps);
+
+    expect(await who(1)).toMatchObject({ goldPending: 70, goldEarned: 0 });
+  });
+
+  it('reads the player row under lock before deciding which votes predate the reset', async () => {
+    for (let i = 1; i <= 5; i++) await player(i);
+    await image(10);
+    const id = await item(10);
+    for (let i = 1; i <= 4; i++) await castVote(db, { userId: i, itemId: id, answer: '4' }, deps);
+    const spy = vi.spyOn(pg, 'query');
+    await castVote(db, { userId: 5, itemId: id, answer: '4' }, deps);
+    const sqls = spy.mock.calls.map(([text]) => String(text));
+    spy.mockRestore();
+
+    const read = sqls.findIndex((q) => /select "userId", "startAt" from "NewOrderPlayer"/i.test(q));
+    expect(read).toBeGreaterThan(-1);
+    expect(sqls[read]).toMatch(/order by "userId" asc for update/i);
+    const write = sqls.findIndex(
+      (q, i) => i > read && /update "NewOrderPlayer" set "exp"/i.test(q)
+    );
+    expect(write).toBeGreaterThan(read);
+  });
+
   it('counts only votes cast since the reset towards fervor', async () => {
     for (let i = 1; i <= 5; i++) await player(i);
     await image(10);

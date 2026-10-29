@@ -10,6 +10,7 @@ import {
 } from '$lib/server/hidden/hidden.service';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { requireMember } from '$lib/server/membership';
+import { conversionEnabled } from '$lib/server/conversion/runtime';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
 import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
@@ -52,6 +53,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     const trial = await getTrial(db, locals.user.id, trialDeps);
     if (trial.kind !== 'not-acolyte') {
       return {
+        conversionOpen: conversionEnabled(),
         mode: 'trials' as const,
         ...common,
         trial:
@@ -86,6 +88,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     getRecap(db, { playerId: locals.user.id, now }),
   ]);
   const resetPending = status.smites >= status.maxSmites;
+  const conversionOpen = conversionEnabled();
   const lockoutSeconds = lockedUntil
     ? Math.max(1, Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000))
     : null;
@@ -95,6 +98,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     daily,
     recap,
     resetPending,
+    conversionOpen,
     lockoutSeconds,
   };
   if (!feed || resetPending) return { ...page, question: null, item: null };

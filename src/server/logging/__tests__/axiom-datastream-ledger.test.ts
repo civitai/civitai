@@ -98,6 +98,7 @@ const LOKI_ONLY: Record<string, string> = {
 const FORWARDING_FILES: ReadonlySet<string> = new Set([
   'packages/civitai-axiom/src/client.ts',
   'apps/auth/src/lib/server/axiom.ts',
+  'apps/knights/src/lib/server/axiom.ts',
   'apps/moderator/src/lib/server/axiom.ts',
   'apps/notifications/src/lib/server/clients/axiom.ts',
 ]);
