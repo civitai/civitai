@@ -445,7 +445,7 @@ describe('privateModelFromTraining — the locked row', () => {
     mockStored({});
     mockLocked({ meta: { cannotPublish: true } });
 
-    await expect(privateFromTraining({ user: owner })).rejects.toThrow();
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow(/cannot be published/);
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
     expect(mockDbWrite.model.updateMany).not.toHaveBeenCalled();
   });

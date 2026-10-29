@@ -107,6 +107,21 @@ describe('publishModelHandler on a model a content wipe kept', () => {
     await publish([10]);
     expect(publishModelById).toHaveBeenCalledTimes(1);
   });
+
+  // The read above is the replica's: a wipe that keeps the model after it is refused under the
+  // publish's lock, which only the owner's publish asks for.
+  it.each([
+    ['the owner', false, true],
+    ['a moderator', true, false],
+  ])(
+    'has the publish re-check the record under its lock for %s',
+    async (_, isModerator, refuse) => {
+      await publish([10], isModerator);
+      expect(publishModelById).toHaveBeenCalledWith(
+        expect.objectContaining({ refuseRemovedWithOwner: refuse })
+      );
+    }
+  );
 });
 
 describe('an owner publishing a draft model a content wipe kept', () => {

@@ -420,6 +420,15 @@ describe('the locked row', () => {
     expect(updateData().meta).toEqual({ cannotPublish: true, hideBuzz: true });
   });
 
+  it('refuses an owner’s stale availability once the model was made private after the read', async () => {
+    mockStored({ availability: Availability.Public });
+    mockLocked({ availability: Availability.Private });
+    await expect(
+      upsert({ id: MODEL_ID, userId: OWNER_ID, availability: Availability.Public })
+    ).rejects.toThrow(/availability/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+  });
+
   it('writes the owner’s meta over the row it read (control)', async () => {
     mockStored({ meta: { hideDownloads: true } });
     await upsert({
@@ -457,6 +466,29 @@ describe('cannotPromote on a private model', () => {
     });
 
     expect(updateData().meta).toEqual({ cannotPromote: true, restoreCannotPromote: true });
+  });
+
+  it('records a moderator ban set after the save read the model', async () => {
+    privateStored({ cannotPromote: true });
+    mockLocked({ meta: { cannotPromote: true, restoreCannotPromote: true } });
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true });
+
+    expect(updateData().meta).toEqual({ cannotPromote: true, restoreCannotPromote: true });
+  });
+
+  it('keeps cannotPromote forced on for a model made private after the save read it', async () => {
+    mockStored({ availability: Availability.Public, meta: {} });
+    mockLocked({ availability: Availability.Private, meta: { cannotPromote: true } });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      meta: { cannotPromote: false } as ModelUpsertInput['meta'],
+    });
+
+    expect(updateData().meta).toEqual({ cannotPromote: true });
   });
 
   it('keeps cannotPromote forced on and drops the marker on a moderator unban', async () => {

@@ -3596,10 +3596,18 @@ export const upsertModel = async (
       async (tx) => {
         // Merged over the row as it is now: a wipe, a moderator or a scan may have written its meta
         // since the read above, and a merge over that read would write it back.
-        const prevMeta = (await lockModelRow(tx, id))?.meta ?? null;
+        const locked = await lockModelRow(tx, id);
+        const prevMeta = locked?.meta ?? null;
         if (!isModerator && isRemovedWithOwner(prevMeta)) throw removedWithOwnerEditError();
+        if (
+          !isModerator &&
+          locked &&
+          data.availability &&
+          data.availability !== locked.availability
+        )
+          throw throwBadRequestError('A model’s availability changes only through its own flows.');
         let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
-        if (beforeUpdate.availability === Availability.Private) {
+        if ((locked?.availability ?? beforeUpdate.availability) === Availability.Private) {
           // `meta` only carries `cannotPromote` for a moderator. While private it is forced on, so the
           // moderator's decision is what publish restores.
           const sent = (meta as ModelMeta | undefined)?.cannotPromote;
@@ -4133,6 +4141,9 @@ export const publishModelById = async ({
           ?.meta as ModelMeta | null)
       : meta;
   if (snapshot?.cannotPublish) throw cannotPublishError();
+  // Plain meta is the caller's, not the row's, so only a builder's snapshot says the model was kept.
+  if (refuseRemovedWithOwner && typeof meta === 'function' && isRemovedWithOwner(snapshot))
+    throw throwAuthorizationError('You are not authorized to publish this model');
   // Publish only touches this model's own versions; ids of versions on any other model are ignored.
   const ownVersions = requestedVersionIds?.length
     ? await dbWrite.modelVersion.findMany({

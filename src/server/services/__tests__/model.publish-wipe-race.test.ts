@@ -12,7 +12,6 @@ import { withoutRemovedWithOwner } from '~/server/utils/legal-hold';
 const { publishModelById } = await import('../model.service');
 
 const MODEL = 1;
-const OTHER_MODEL = 2;
 let lockedMeta: ModelMeta | null;
 
 // The publish's re-read sees the row only once it holds the lock on that same model.
@@ -75,18 +74,12 @@ it("writes an owner's publish when the locked row carries no removal record (con
   expect(written()).toEqual({ showcaseCollectionId: 3 });
 });
 
-it('reads the record only once it holds the lock on this model', async () => {
-  lockedMeta = { removedWithOwner: true };
-  dbMock.dbWrite.$queryRaw.mockImplementation((async (
-    strings: TemplateStringsArray,
-    ...values: unknown[]
-  ) => {
-    if (isModelLock(strings)) lockedIds.add(values[0] === MODEL ? OTHER_MODEL : values[0]);
-    return [];
-  }) as never);
-  // A lock on another row leaves the re-read with nothing: it must not refuse on a row it never saw.
-  await publish(true);
-  expect(written()).toEqual({});
+it('refuses before the literal-rules check, which writes, when the primary already has the record', async () => {
+  dbMock.dbWrite.model.findUnique.mockResolvedValue({ meta: { removedWithOwner: true } } as never);
+  await expect(publish(true, (stored) => stored ?? {})).rejects.toMatchObject({
+    code: 'UNAUTHORIZED',
+  });
+  expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
 });
 
 it('lets a moderator publish it, ending the removal', async () => {
