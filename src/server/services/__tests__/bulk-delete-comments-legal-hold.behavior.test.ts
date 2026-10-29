@@ -596,16 +596,21 @@ describe('a member deleting their own CommentV2', () => {
   });
 
   // Once the held reply goes, only its author's delete keeps the comment down.
+  // A moderator's delete leaves `metadata` as it found it: null, or without the key.
   it.each([
-    ['leaves the one its author deleted hidden', true, 0, 'hidden'],
-    ['restores one a moderator deleted (control)', false, 1, 'public'],
+    ['leaves the one its author deleted hidden', true, null, 0, 'hidden'],
+    ['restores one a moderator deleted (control)', false, null, 1, 'public'],
+    ['restores one a moderator deleted, with other metadata', false, '{"x": 1}', 1, 'public'],
   ])(
     'and a ToS restore after the hold no longer covers it %s',
-    async (_, byAuthor, count, after) => {
+    async (_, byAuthor, metadata, count, after) => {
       await holder.db.exec(`
         INSERT INTO "Thread" (id, "commentId") VALUES (500, 11);
         INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (51, ${HELD}, 500, 'zzfixture');
       `);
+      await holder.db.query(`UPDATE "CommentV2" SET metadata = $1::jsonb WHERE id = 11`, [
+        metadata,
+      ]);
       await deleteComment({ id: 11, byAuthor });
       await holder.db.exec(`DELETE FROM "CommentV2" WHERE id = 51`);
       await expect(bulkClearCommentV2TosViolation({ ids: [11] })).resolves.toMatchObject({ count });
