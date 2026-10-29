@@ -204,7 +204,7 @@ export type ModerationRuleAction = "Approve" | "Block" | "Hold";
 
 export type ChangelogType = "Feature" | "Bugfix" | "Policy" | "Update" | "Incident";
 
-export type NewOrderRankType = "Acolyte" | "Knight" | "Templar";
+export type NewOrderRankType = "Acolyte" | "Knight" | "Templar" | "Paladin";
 
 export type ChallengeSource = "System" | "Mod" | "User";
 
@@ -5032,6 +5032,133 @@ export interface NewOrderPlayer {
   fervor: number;
   smiteReceived?: NewOrderSmite[];
   smiteGiven?: NewOrderSmite[];
+  payoutBlockedAt: Date | null;
+  payoutBlockReason: string | null;
+  payoutBlockedBy: number | null;
+  payoutReleaseFrom: Date | null;
+  goldPending: number;
+  goldEarned: number;
+}
+
+export interface NewOrderLinkReview {
+  id: number;
+  fingerprint: string;
+  userIds: number[];
+  evidence: JsonValue;
+  buzzMoved: number;
+  autoBlocked: boolean;
+  status: string;
+  reviewedBy: number | null;
+  reviewedAt: Date | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface KnightsQuestion {
+  key: string;
+  version: number;
+  kind: string;
+  prompt: string;
+  options: JsonValue;
+  minRank: string;
+  votesToResolve: number;
+  maxVotes: number;
+  threshold: number;
+  active: boolean;
+  createdAt: Date;
+  items?: KnightsQueueItem[];
+}
+
+export interface KnightsQueueItem {
+  id: number;
+  questionKey: string;
+  question?: KnightsQuestion;
+  imageId: number;
+  source: string;
+  minRank: string;
+  votesNeeded: number;
+  priority: number;
+  status: string;
+  expiresAt: Date | null;
+  isHiddenCheck: boolean;
+  resolvedValue: string | null;
+  resolvedAt: Date | null;
+  resolvedBy: number | null;
+  appliedAt: Date | null;
+  resolvedFromLevel: number | null;
+  applyAttempts: number;
+  nextAttemptAt: Date | null;
+  reason: string | null;
+  prediction: JsonValue | null;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
+export interface KnightsVote {
+  itemId: number;
+  playerId: number;
+  createdAt: Date;
+  questionKey: string;
+  imageId: number;
+  stage: string;
+  answer: string;
+  weight: number;
+  verdict: string;
+  gold: number | null;
+  xp: number;
+  settledAt: Date | null;
+  labelled: boolean;
+  converted: boolean;
+}
+
+export interface KnightsReferenceImage {
+  id: number;
+  imageId: number;
+  questionKey: string;
+  pool: string;
+  answer: string;
+  source: string;
+  explanation: string | null;
+  status: string;
+  modActivityId: number | null;
+  harvestedAt: Date;
+  answers: number;
+  failures: number;
+  createdAt: Date;
+  updatedAt: Date;
+  trialAnswers?: KnightsTrialAnswer[];
+}
+
+export interface KnightsTrialRun {
+  id: number;
+  playerId: number;
+  questionKey: string;
+  seed: number;
+  itemIds: JsonValue;
+  startedAt: Date;
+  finishedAt: Date | null;
+  result: string | null;
+  score: number | null;
+  cooldownUntil: Date | null;
+  trialAnswers?: KnightsTrialAnswer[];
+}
+
+export interface KnightsTrialAnswer {
+  id: number;
+  runId: number;
+  run?: KnightsTrialRun;
+  playerId: number;
+  referenceId: number;
+  reference?: KnightsReferenceImage;
+  answer: string;
+  correct: boolean;
+  createdAt: Date;
+}
+
+export interface KnightsHarvestCursor {
+  name: string;
+  lastActivityId: number;
+  updatedAt: Date;
 }
 
 export interface NewOrderRank {

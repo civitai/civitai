@@ -19,6 +19,17 @@ import clsx from 'clsx';
 
 const MAX_SMITE_COUNT = 3;
 
+// A Paladin is served the Templar pools in this game, so it gets the Templar text.
+const templarExplanation = (
+  <>
+    <p>You are a Templar of New Order and have access to all game features.</p>
+    <p>
+      You&apos;ve reached the highest rank in the game and can now see a special queue of images to
+      rate.
+    </p>
+  </>
+);
+
 const ranksExplanation: Record<NewOrderRankType, React.ReactElement> = {
   [NewOrderRankType.Acolyte]: (
     <>
@@ -32,15 +43,8 @@ const ranksExplanation: Record<NewOrderRankType, React.ReactElement> = {
       <p>Keep rating images and leveling up to earn gold and fervor to become a Templar.</p>
     </>
   ),
-  [NewOrderRankType.Templar]: (
-    <>
-      <p>You are a Templar of New Order and have access to all game features.</p>
-      <p>
-        You&apos;ve reached the highest rank in the game and can now see a special queue of images
-        to rate.
-      </p>
-    </>
-  ),
+  [NewOrderRankType.Templar]: templarExplanation,
+  [NewOrderRankType.Paladin]: templarExplanation,
 };
 
 export function PlayerCard({

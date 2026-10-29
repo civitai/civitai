@@ -29,6 +29,7 @@ const WEBHOOK_ROUTES = [
   'enable-stripe-connect',
   'enable-tipalti',
   'flip-phases',
+  'image/kono-set-nsfw-level',
   'mark-poi-images-search',
   'mod-rules',
   'mute-user-pending-review',

@@ -3680,6 +3680,100 @@ export type KeyValue = {
   key: string;
   value: unknown;
 };
+export type KnightsHarvestCursor = {
+  name: string;
+  lastActivityId: Generated<number>;
+  updatedAt: Timestamp;
+};
+export type KnightsQuestion = {
+  key: string;
+  version: Generated<number>;
+  kind: string;
+  prompt: string;
+  options: unknown;
+  minRank: Generated<string>;
+  votesToResolve: Generated<number>;
+  maxVotes: Generated<number>;
+  threshold: Generated<number>;
+  active: Generated<boolean>;
+  createdAt: Generated<Timestamp>;
+};
+export type KnightsQueueItem = {
+  id: Generated<number>;
+  questionKey: string;
+  imageId: number;
+  source: string;
+  minRank: string;
+  votesNeeded: number;
+  priority: Generated<number>;
+  status: Generated<string>;
+  expiresAt: Timestamp | null;
+  isHiddenCheck: Generated<boolean>;
+  resolvedValue: string | null;
+  resolvedAt: Timestamp | null;
+  resolvedBy: number | null;
+  appliedAt: Timestamp | null;
+  resolvedFromLevel: number | null;
+  applyAttempts: Generated<number>;
+  nextAttemptAt: Timestamp | null;
+  reason: string | null;
+  prediction: unknown | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type KnightsReferenceImage = {
+  id: Generated<number>;
+  imageId: number;
+  questionKey: Generated<string>;
+  pool: string;
+  answer: string;
+  source: string;
+  explanation: string | null;
+  status: Generated<string>;
+  modActivityId: number | null;
+  harvestedAt: Generated<Timestamp>;
+  answers: Generated<number>;
+  failures: Generated<number>;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
+export type KnightsTrialAnswer = {
+  id: Generated<number>;
+  runId: number;
+  playerId: number;
+  referenceId: number;
+  answer: string;
+  correct: boolean;
+  createdAt: Generated<Timestamp>;
+};
+export type KnightsTrialRun = {
+  id: Generated<number>;
+  playerId: number;
+  questionKey: string;
+  seed: number;
+  itemIds: unknown;
+  startedAt: Generated<Timestamp>;
+  finishedAt: Timestamp | null;
+  result: string | null;
+  score: number | null;
+  cooldownUntil: Timestamp | null;
+};
+export type KnightsVote = {
+  itemId: number;
+  playerId: number;
+  createdAt: Generated<Timestamp>;
+  questionKey: string;
+  imageId: number;
+  stage: string;
+  answer: string;
+  weight: number;
+  verdict: Generated<string>;
+  gold: number | null;
+  xp: Generated<number>;
+  settledAt: Timestamp | null;
+  labelled: Generated<boolean>;
+  converted: Generated<boolean>;
+};
 export type Leaderboard = {
   id: string;
   index: number;
@@ -4230,12 +4324,34 @@ export type ModThreadClaim = {
   claimedAt: Generated<Timestamp>;
   expiresAt: Timestamp;
 };
+export type NewOrderLinkReview = {
+  id: Generated<number>;
+  fingerprint: string;
+  userIds: number[];
+  evidence: unknown;
+  buzzMoved: Generated<number>;
+  autoBlocked: Generated<boolean>;
+  status: Generated<string>;
+  reviewedBy: number | null;
+  reviewedAt: Timestamp | null;
+  createdAt: Generated<Timestamp>;
+  updatedAt: Timestamp;
+};
 export type NewOrderPlayer = {
   userId: number;
   rankType: NewOrderRankType;
   startAt: Generated<Timestamp>;
   exp: Generated<number>;
   fervor: Generated<number>;
+  payoutBlockedAt: Timestamp | null;
+  payoutBlockReason: string | null;
+  payoutBlockedBy: number | null;
+  payoutReleaseFrom: Timestamp | null;
+  /**
+   * Gold from votes not yet graded / already earned.
+   */
+  goldPending: Generated<number>;
+  goldEarned: Generated<number>;
 };
 export type NewOrderRank = {
   type: NewOrderRankType;
@@ -6476,6 +6592,13 @@ export type DB = {
   ItemDefinition: ItemDefinition;
   JobQueue: JobQueue;
   KeyValue: KeyValue;
+  KnightsHarvestCursor: KnightsHarvestCursor;
+  KnightsQuestion: KnightsQuestion;
+  KnightsQueueItem: KnightsQueueItem;
+  KnightsReferenceImage: KnightsReferenceImage;
+  KnightsTrialAnswer: KnightsTrialAnswer;
+  KnightsTrialRun: KnightsTrialRun;
+  KnightsVote: KnightsVote;
   Leaderboard: Leaderboard;
   LeaderboardResult: LeaderboardResult;
   License: License;
@@ -6518,6 +6641,7 @@ export type DB = {
   ModerationRule: ModerationRule;
   ModerationRuleVersion: ModerationRuleVersion;
   ModThreadClaim: ModThreadClaim;
+  NewOrderLinkReview: NewOrderLinkReview;
   NewOrderPlayer: NewOrderPlayer;
   NewOrderRank: NewOrderRank;
   NewOrderSmite: NewOrderSmite;

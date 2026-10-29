@@ -27,6 +27,7 @@ import {
   getImageRatingsCounter,
   getVotingCooldownUntil,
   getVotingRateLimitConfig,
+  legacyRank,
   pendingBuzzCounter,
   recentlyGrantedBuzzCounter,
   poolCounters,
@@ -165,7 +166,11 @@ export async function getPlayerById({ playerId }: { playerId: number }) {
     getVotingCooldownUntil(playerId),
   ]);
 
-  return { ...playerData, ...user, stats, cooldownUntil };
+  // Paladin has no pools in this game; see `legacyRank`.
+  // Typed as the full enum: the client cache also stores the rank a rank-up signal carries.
+  const rankType = legacyRank(playerData.rankType) as NewOrderRankType;
+
+  return { ...playerData, rankType, ...user, stats, cooldownUntil };
 }
 
 async function getPlayerStats({ playerId }: { playerId: number }) {

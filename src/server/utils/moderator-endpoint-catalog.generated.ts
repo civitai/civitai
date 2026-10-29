@@ -39,6 +39,7 @@ export const MODERATOR_ENDPOINT_MODULES: Record<string, () => Promise<unknown>> 
   '/api/mod/homeblock/update': () => import('~/pages/api/mod/homeblock/update'),
   '/api/mod/image/set-nsfw-level': () => import('~/pages/api/mod/image/set-nsfw-level'),
   '/api/mod/image/tag-vote': () => import('~/pages/api/mod/image/tag-vote'),
+  '/api/mod/knights/enqueue': () => import('~/pages/api/mod/knights/enqueue'),
   '/api/mod/label-store/predictions': () => import('~/pages/api/mod/label-store/predictions'),
   '/api/mod/membership-gift/refund-unfulfilled': () =>
     import('~/pages/api/mod/membership-gift/refund-unfulfilled'),

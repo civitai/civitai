@@ -326,6 +326,8 @@ export const NAVIGATION: NavLink[] = [
       countKey: siteAppealCountKey(q.category),
     })),
   },
+  { path: '/knights-of-new-order', label: 'Knights of New Order Review' },
+  { path: '/knights-of-new-order/inquisitor', label: 'Knights of New Order Inquisitor Queue' },
   { path: '/admin', label: 'Permissions' },
   { path: '/page-visits', label: 'Page Usage' },
 ];
