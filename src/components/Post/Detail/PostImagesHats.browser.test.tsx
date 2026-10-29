@@ -79,7 +79,7 @@ const rect = (el: Element | null | undefined) => el!.getBoundingClientRect();
 const hats = () => [...document.querySelectorAll('button[data-event-decoration="hat"]')];
 
 describe('a hat on a post page image', () => {
-  test('hangs past the picture corner, and the rounded clip still holds the picture', async () => {
+  test('hangs past the picture corner', async () => {
     await page.viewport(1100, 800);
     renderWithProviders(
       <div data-testid="root" style={{ width: 800, margin: '80px 100px' }}>
