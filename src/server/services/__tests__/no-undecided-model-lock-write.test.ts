@@ -42,7 +42,7 @@ type Decision =
 
 const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
   'src/server/services/model.service.ts': {
-    lockWrites: 11,
+    lockWrites: 12,
     decision: {
       kind: 'clears',
       except:
