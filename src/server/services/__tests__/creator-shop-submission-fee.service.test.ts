@@ -249,6 +249,8 @@ describe('pack submission fee charged', () => {
       dbMock.dbWrite.$queryRaw.mockImplementation(original as never);
     }
     expect(probes).toHaveLength(1);
+    // Checked as a shop write: no image row may hold the key, the creator's own included.
+    expect(probes[0][1]).toBe(true);
     expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
     expect(mocks.shopItemCreate).not.toHaveBeenCalled();
   });

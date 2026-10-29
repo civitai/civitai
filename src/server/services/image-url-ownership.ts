@@ -46,7 +46,10 @@ const keyIn = (column: string) =>
     `substring(replace(translate(lower(${column}), E'\\t\\r\\n', ''), '%2d', '-') from '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')`
   );
 
-/** The shop row being edited, whose own artwork key does not count as another row's. */
+/**
+ * Set by a shop artwork write: the row being written, `{}` for a new one. Its own key does not count
+ * as another row's.
+ */
 export type ShopArtworkRow = {
   cosmeticId?: number | null;
   shopItemId?: number | null;
@@ -57,8 +60,10 @@ export type ShopArtworkRow = {
  * A client-supplied image url must be one the caller uploaded or already owns: refused when an
  * `Image` row owned by another user has it, or when shop artwork (a cosmetic, a pack cover or a box
  * image) other than `shopRow`'s own already uses it. An image delete removes the object, so a key
- * shared across those rows would take the other row's artwork with it. Callers that verify the
- * object exists run this after that check, with the same refusal.
+ * shared across those rows would take the other row's artwork with it. For the same reason shop
+ * artwork (`shopRow` set) is refused on any `Image` row's key, the caller's own included, and must
+ * be the bare key, so the stored value is the key an image create looks up. Callers that verify
+ * the object exists run this after that check, with the same refusal.
  */
 export async function assertClientImageUrlsUsable({
   urls,
@@ -71,13 +76,19 @@ export async function assertClientImageUrlsUsable({
   shopRow?: ShopArtworkRow;
   db?: Db;
 }) {
+  if (
+    shopRow &&
+    urls.some((url) => url && storedUrlsFor(url).length && storedUrlsFor(url)[1] !== url)
+  )
+    throw imageUrlUnavailableError();
   const keys = [...new Set(urls.flatMap(storedUrlsFor))];
   if (!keys.length) return;
   // Bounds the lookup; no real image url carries more than a couple of keys.
   if (keys.length > MAX_KEYS) throw imageUrlUnavailableError();
   // Whatever the other row's state.
   const owned = await db.$queryRaw<unknown[]>`
-    SELECT 1 FROM "Image" WHERE url = ANY(${keys}::text[]) AND "userId" <> ${userId}
+    SELECT 1 FROM "Image" WHERE url = ANY(${keys}::text[])
+      AND (${shopRow !== undefined} OR "userId" <> ${userId})
     UNION ALL
     SELECT 1 FROM "Cosmetic" WHERE ${keyIn(`"data"->>'url'`)} = ANY(${keys}::text[])
       AND id IS DISTINCT FROM ${shopRow?.cosmeticId ?? null}::int

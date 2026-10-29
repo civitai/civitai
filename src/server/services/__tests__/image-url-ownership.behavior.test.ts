@@ -204,15 +204,25 @@ describe('assertClientImageUrlsUsable and shop artwork', () => {
     expect(result).toBeInstanceOf(TRPCError);
   });
 
-  it("accepts shop artwork on the caller's own image key and refuses it on another user's", async () => {
-    const shop = (url: string) =>
-      assertClientImageUrlsUsable({ urls: [url], userId: CALLER, shopRow: {} }).then(
-        () => null,
-        (e: unknown) => e
-      );
+  const shop = (url: string) =>
+    assertClientImageUrlsUsable({ urls: [url], userId: CALLER, shopRow: {} }).then(
+      () => null,
+      (e: unknown) => e
+    );
 
-    expect(await shop(OWN_KEY)).toBeNull();
+  it("refuses shop artwork on any image's key, the caller's own included", async () => {
+    expect(await shop(OWN_KEY)).toBeInstanceOf(TRPCError);
     expect(await shop(OTHERS_LIVE_KEY)).toBeInstanceOf(TRPCError);
+    expect(await shop(SHOP_KEY)).toBeNull();
+  });
+
+  it.each([
+    SHOP_KEY.toUpperCase(),
+    `/${SHOP_KEY}`,
+    `${SHOP_KEY}?v=1`,
+    `https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${SHOP_KEY}/original=true/a.jpeg`,
+  ])('refuses shop artwork given as %s rather than the bare key', async (url) => {
+    expect(await shop(url)).toBeInstanceOf(TRPCError);
   });
 
   it.each([

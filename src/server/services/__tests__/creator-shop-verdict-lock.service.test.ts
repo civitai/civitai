@@ -351,7 +351,13 @@ describe('a bundle pack edited while it is being reviewed', () => {
     expect(update).not.toHaveBeenCalled();
     // Bound as: keys, owner, keys, own cosmetic, keys, own pack, keys, own box.
     expect(probes).toHaveLength(1);
-    expect([probes[0][1], probes[0][3], probes[0][5], probes[0][7]]).toEqual([11, null, 42, null]);
+    // Bound as: keys, shop write, owner, keys, own cosmetic, keys, own pack, keys, own box.
+    expect([probes[0][1], probes[0][4], probes[0][6], probes[0][8]]).toEqual([
+      true,
+      null,
+      42,
+      null,
+    ]);
   });
 
   it('does not re-check a cover the edit resends unchanged', async () => {

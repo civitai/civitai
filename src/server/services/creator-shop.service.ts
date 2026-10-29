@@ -583,7 +583,7 @@ export const submitCreatorShopItem = async ({
   const { checks, imageMeta, imageHash, allPassed } = await validateArtwork(imageUrl, cosmeticType);
   if (!allPassed)
     throw throwBadRequestError('Artwork does not meet the requirements for this cosmetic type');
-  await assertClientImageUrlsUsable({ urls: [imageUrl], userId });
+  await assertClientImageUrlsUsable({ urls: [imageUrl], userId, shopRow: {} });
 
   // Reject duplicate artwork before charging the fee.
   if (await findDuplicateArtwork(imageHash))

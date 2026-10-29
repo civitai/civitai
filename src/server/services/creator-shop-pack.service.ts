@@ -218,7 +218,7 @@ export const submitCreatorShopPack = async ({
   // supplied — the members were each affirmed when they were submitted.
   if (imageUrl && !rightsAffirmed)
     throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
-  if (imageUrl) await assertClientImageUrlsUsable({ urls: [imageUrl], userId });
+  if (imageUrl) await assertClientImageUrlsUsable({ urls: [imageUrl], userId, shopRow: {} });
 
   const members = withOwnership(await resolvePackMembers(memberCosmeticIds), userId);
   assertMembersBundlable(memberCosmeticIds, members);

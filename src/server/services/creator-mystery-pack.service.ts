@@ -287,7 +287,7 @@ export async function submitMysteryPack({
   await throwOnBlockedUserContent([name, description], { surface: 'creatorShop' });
   if (imageUrl && !rightsAffirmed)
     throw throwBadRequestError('You must confirm you have the rights to sell this artwork');
-  if (imageUrl) await assertClientImageUrlsUsable({ urls: [imageUrl], userId });
+  if (imageUrl) await assertClientImageUrlsUsable({ urls: [imageUrl], userId, shopRow: {} });
   await assertCreatorMayBuild({ userId, countryCode });
   const { proposal } = await checkProposal(dbWrite, {
     creatorId: userId,

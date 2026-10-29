@@ -1022,8 +1022,16 @@ describe('submitMysteryPack box image key', () => {
     expect(await boxes()).toEqual([]);
   });
 
-  it("refuses a key another box already uses, and accepts the creator's own image key", async () => {
+  it("refuses the creator's own image key too", async () => {
     await q(`INSERT INTO "Image" ("userId", url) VALUES ($1, $2)`, [CREATOR, KEY]);
+
+    await expect(submit({ imageUrl: KEY, rightsAffirmed: true })).rejects.toThrow(
+      COVER_IMAGE_UNAVAILABLE_MESSAGE
+    );
+    expect(await boxes()).toEqual([]);
+  });
+
+  it('accepts a fresh key once, and refuses it for a second box', async () => {
     await submit({ imageUrl: KEY, rightsAffirmed: true });
 
     await expect(submit({ imageUrl: KEY, rightsAffirmed: true })).rejects.toThrow(
