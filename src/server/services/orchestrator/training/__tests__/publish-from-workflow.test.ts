@@ -313,21 +313,53 @@ describe('createDraftModelFromWorkflow', () => {
     expect(mockCreateFile).not.toHaveBeenCalled();
   });
 
-  // Decision: deleting the draft and pressing Publish again must start over, not reopen the deleted
-  // model. Don't drop the status clause from the lookup to make "returns the existing draft" simpler.
-  it('creates a fresh draft when the only draft for the run is Deleted', async () => {
-    mockFindFirst.mockImplementation(async ({ where }: { where: { status?: { not?: string } } }) =>
-      where.status?.not === ModelStatus.Deleted
-        ? null
-        : { id: 77, status: ModelStatus.Deleted, modelVersions: [{ id: 88 }] }
-    );
-    const result = await createDraftModelFromWorkflow({
-      user: USER,
-      workflow: studioWorkflow(),
-      selectedEpochNumber: 1,
+  // Decision: the owner deleting the draft and pressing Publish again must start over, not reopen the
+  // deleted model; a moderator's delete must not be routed around that way. Don't drop the NOT clause
+  // or the orderBy to make "returns the existing draft" simpler.
+  describe('drafts for the run that were deleted or restored', () => {
+    type Row = { id: number; status: ModelStatus; deletedBy: number | null };
+    type Args = {
+      where: { NOT?: { status: ModelStatus; deletedBy: number }; status?: { not: ModelStatus } };
+      orderBy?: { id: 'asc' | 'desc' };
+    };
+    // Prisma's semantics over the run's rows: the status filters, then the order, then the first.
+    const draftsAre = (rows: Row[]) =>
+      mockFindFirst.mockImplementation((async ({ where, orderBy }: Args) => {
+        const kept = rows.filter(
+          (r) =>
+            !(where.NOT && r.status === where.NOT.status && r.deletedBy === where.NOT.deletedBy) &&
+            r.status !== where.status?.not
+        );
+        if (orderBy?.id === 'desc') kept.sort((a, b) => b.id - a.id);
+        const row = kept[0];
+        return row ? { id: row.id, modelVersions: [{ id: row.id + 1 }] } : null;
+      }) as never);
+    const publish = () =>
+      createDraftModelFromWorkflow({
+        user: USER,
+        workflow: studioWorkflow(),
+        selectedEpochNumber: 1,
+      });
+
+    it('creates a fresh draft when the owner deleted the only one', async () => {
+      draftsAre([{ id: 77, status: ModelStatus.Deleted, deletedBy: USER.id }]);
+      expect((await publish()).modelId).toBe(100);
+      expect(mockUpsertModel).toHaveBeenCalledTimes(1);
     });
-    expect(result.modelId).toBe(100);
-    expect(mockUpsertModel).toHaveBeenCalledTimes(1);
+
+    it('does not make a fresh draft past a moderator delete', async () => {
+      draftsAre([{ id: 77, status: ModelStatus.Deleted, deletedBy: 999 }]);
+      expect((await publish()).modelId).toBe(77);
+      expect(mockUpsertModel).not.toHaveBeenCalled();
+    });
+
+    it('follows the newest draft when a restored one and its replacement both exist', async () => {
+      draftsAre([
+        { id: 77, status: ModelStatus.Draft, deletedBy: USER.id },
+        { id: 90, status: ModelStatus.Draft, deletedBy: null },
+      ]);
+      expect((await publish()).modelId).toBe(90);
+    });
   });
 
   it('re-entry on an existing draft whose blobs expired resolves the ids with a null epoch instead of throwing', async () => {

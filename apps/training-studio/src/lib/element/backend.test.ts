@@ -1,5 +1,4 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type * as OrchCore from '$lib/orchestrator-core';
 
 // The cores are covered in train-core.test.ts; here they only hand back the check the element gave
 // them, so the element's own reading of the host hook is what is under test.
@@ -11,11 +10,6 @@ vi.mock('$lib/train-core', async (importOriginal) => ({
   ...(await importOriginal<typeof import('$lib/train-core')>()),
   submitTrainingBatch: core.submitTrainingBatch,
   continueTraining: core.continueTraining,
-}));
-const orch = vi.hoisted(() => ({ getTrainingWorkflow: vi.fn() }));
-vi.mock('$lib/orchestrator-core', async (importOriginal) => ({
-  ...(await importOriginal<typeof OrchCore>()),
-  getTrainingWorkflow: orch.getTrainingWorkflow,
 }));
 vi.mock('@civitai/orchestration-client', () => ({
   createCivitaiClient: () => ({ interceptors: { response: { use: () => undefined } } }),
@@ -109,19 +103,14 @@ describe('elementBackend auto-label payer', () => {
   });
 });
 
-describe('elementBackend run detail: the draft model link', () => {
-  beforeEach(() => {
-    orch.getTrainingWorkflow.mockReset().mockResolvedValue({ workflowId: 'wf', modelId: 77 });
-  });
-
-  it('drops the modelId of a model the host reports deleted', async () => {
+describe('elementBackend modelLive', () => {
+  it("answers with the host's check", async () => {
     const modelLive = vi.fn(async () => false);
-    const detail = await elementBackend({ ...host(), modelLive }).getRunDetail('wf');
-    expect(detail.modelId).toBeUndefined();
+    await expect(elementBackend({ ...host(), modelLive }).modelLive(77)).resolves.toBe(false);
     expect(modelLive).toHaveBeenCalledWith(77);
   });
 
-  it('keeps the link unchecked on a host without the hook', async () => {
-    expect((await elementBackend(host()).getRunDetail('wf')).modelId).toBe(77);
+  it('keeps the link on a host without the hook', async () => {
+    await expect(elementBackend(host()).modelLive(77)).resolves.toBe(true);
   });
 });

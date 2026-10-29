@@ -11,7 +11,6 @@ import type {
   PublishRequest,
   StudioLocation,
 } from '$lib/host';
-import { withoutDeletedModel } from '$lib/data/trainingRows';
 import { UploadError } from '$lib/upload';
 import { computeFromPrices } from '$lib/pricing-core';
 import * as orch from '$lib/orchestrator-core';
@@ -31,7 +30,8 @@ export interface StudioElementHost {
     triggerWord: string;
   }): Promise<{ ok: true } | { ok: false; error: string }>;
   /** Whether the run's model still exists for this user (not missing, not Deleted), answered by the
-   *  host's server. Omit and a run links its stored modelId unchecked. */
+   *  host's server; it should settle (time out) on its own. Omit and a run links its stored modelId
+   *  unchecked. */
   modelLive?(modelId: number): Promise<boolean>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
@@ -145,8 +145,11 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
       call(async (client) => {
         const detail = await orch.getTrainingWorkflow(client, workflowId);
         if (!detail) throw new Error('Training not found.');
-        return withoutDeletedModel(detail, host.modelLive?.bind(host));
+        return detail;
       }),
+
+    // No hook: the stored link stands unchecked.
+    modelLive: (modelId) => (host.modelLive ? host.modelLive(modelId) : Promise.resolve(true)),
 
     getRunDataset: (workflowId) => call((client) => orch.getRunDataset(client, workflowId)),
 

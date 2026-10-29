@@ -310,10 +310,13 @@ export async function createDraftModelFromWorkflow({
       userId: user.id,
       uploadType: ModelUploadType.Trained,
       meta: { path: ['trainingStudioWorkflowId'], equals: workflow.id },
-      // A deleted draft must not be reopened: Publish after a delete makes a fresh one, and the
-      // re-stamp below points the run at it.
-      status: { not: ModelStatus.Deleted },
+      // The owner deleting the draft means start over: Publish makes a fresh one, which
+      // from-orchestrator re-stamps onto the run. A moderator's delete still matches, so it can't be
+      // routed around.
+      NOT: { status: ModelStatus.Deleted, deletedBy: user.id },
     },
+    // A restored draft and its replacement can both match; the run follows the newest.
+    orderBy: { id: 'desc' },
     select: {
       id: true,
       meta: true,
