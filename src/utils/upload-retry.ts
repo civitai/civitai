@@ -1,3 +1,5 @@
+import { constants } from '~/server/common/constants';
+
 export type UploadPartError = {
   status: number | null;
   retryAfter?: string | null;
@@ -26,6 +28,12 @@ const MIN_RETRY_AFTER_MS = 1000;
 
 /** The relay route's body cap (Next's 10 MB truncation point) mirrored client-side. */
 export const RELAY_FALLBACK_MAX_BYTES = 10 * 1024 * 1024;
+
+/** Above the single-shot cap, up to this, a file goes through the chunked relay instead. */
+export const CHUNKED_RELAY_FALLBACK_MAX_BYTES = constants.mediaUpload.maxImageFileSize;
+
+/** `single_shot` posts the whole file in one request; `chunked` sends it in pieces. */
+export type RelayFallbackRoute = 'single_shot' | 'chunked';
 
 // Bounds SILENCE, not part duration: it resets on every progress event, so a slow 25 MB part
 // keeps it alive while a half-open connection trips it. 30s is well past the inter-chunk gap
@@ -130,14 +138,16 @@ export function describePartFailure(
 
 /**
  * Whether a fatal part failure qualifies for the relay fallback — re-sending the whole
- * file through our own origin when the direct PUT cannot reach the storage host at all.
+ * file through our own origin when the direct PUT cannot reach the storage host at all —
+ * and if so, which relay: `null` means the gate declined.
  *
  * 🔴 ONLY a network-layer failure qualifies. A status failure means the backend was
  * REACHED and rejected us; replaying the bytes through a second route would mask a real
  * fault rather than route around an unreachable host (the same rule the single-PUT
  * relay fallback in `useCFImageUpload` follows). The other gates: the relay writes to
  * the image bucket, so only image-type uploads on the image backend qualify; the file
- * must fit the relay's body cap; and a cancelled upload has an owner, not a fallback.
+ * must fit the single-shot body cap or, above it, the chunked relay's image size cap; and
+ * a cancelled upload has an owner, not a fallback.
  *
  * 🔴 `userAborted` MEANS "THE PERSON PRESSED CANCEL" — never "this upload's abort signal
  * has been tripped". The two are not the same thing and confusing them made this whole
@@ -146,22 +156,24 @@ export function describePartFailure(
  * its abort signal here reports `true` on every failure, including the network-layer ones
  * this exists for. Pass a flag the internal teardown does not set.
  */
-export function shouldRelayOnPartFailure(
+export function selectRelayFallback(
   err: UploadPartError | null | undefined,
   opts: { type: string; backend?: string; fileSize: number; userAborted: boolean }
-): boolean {
-  if (!err || opts.userAborted) return false;
-  if (!err.networkError || err.aborted) return false;
-  if (opts.type !== 'image') return false;
-  if (opts.backend !== 'backblaze') return false;
-  return opts.fileSize <= RELAY_FALLBACK_MAX_BYTES;
+): RelayFallbackRoute | null {
+  if (!err || opts.userAborted) return null;
+  if (!err.networkError || err.aborted) return null;
+  if (opts.type !== 'image') return null;
+  if (opts.backend !== 'backblaze') return null;
+  if (opts.fileSize <= RELAY_FALLBACK_MAX_BYTES) return 'single_shot';
+  if (opts.fileSize <= CHUNKED_RELAY_FALLBACK_MAX_BYTES) return 'chunked';
+  return null;
 }
 
 /**
  * The terminal row state for an upload that gave up: did the PERSON stop it, or did it
  * fail?
  *
- * 🔴 `userAborted` is the same flag `shouldRelayOnPartFailure` takes and means the same
+ * 🔴 `userAborted` is the same flag `selectRelayFallback` takes and means the same
  * thing — the person pressed cancel — and passing an upload's abort signal is the same
  * mistake here, with a different symptom. Both clients tear their own upload down on a
  * fatal part failure, so a status line reading that signal reports EVERY failed upload as
@@ -185,7 +197,7 @@ export function shouldRelayOnPartFailure(
  * different "terminal" (an HTTP status that must not be re-POSTed), and both clients
  * import the two of them two lines apart, which is exactly where a reader mis-binds.
  *
- * 🔴 The flag is NAMED rather than positional, matching `shouldRelayOnPartFailure`. Every
+ * 🔴 The flag is NAMED rather than positional, matching `selectRelayFallback`. Every
  * candidate expression at the call site is some `.signal.aborted` and they all typecheck,
  * so a bare boolean in argument position makes the documented mistake invisible exactly
  * where it gets made. `userAborted:` forces the author to say which one they mean.

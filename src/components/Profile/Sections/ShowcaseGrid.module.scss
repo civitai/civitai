@@ -14,7 +14,10 @@ $black: var(--mantine-color-black, #000000);
   margin-left: -28px;
   padding-top: 28px;
   padding-left: 28px;
-  --event-decoration-allowance: 36px;
+  // The profile's scroller clips 12px (ProfileLayout2's gutter) plus the cards' 8px margin left of
+  // the first card, so the hat gets that much beside it and the full 36px above.
+  --event-decoration-allowance: 20px;
+  --event-decoration-allowance-top: 36px;
   --event-decoration-grow: 1;
   // The padding above overlaps the section header; only the cards take the pointer.
   pointer-events: none;
@@ -63,6 +66,8 @@ $black: var(--mantine-color-black, #000000);
   grid-template-rows: auto;
   overflow: visible;
   // Hat room lives on .scroll-area.
+  --event-decoration-allowance: 36px;
+  --event-decoration-allowance-top: 36px;
   margin-top: -8px;
   --loading-inset-top: 0px;
   --loading-inset-left: 0px;
