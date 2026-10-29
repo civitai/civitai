@@ -54,6 +54,7 @@ export function decideGatedState({
     return { state: 'loading', isPaywalled: false };
   }
 
+  // `bypassRating`: owners/mods preview their own unrated drafts before publishing.
   if (!canViewNsfw && contentNsfwLevel === 0 && !bypassRating) {
     return { state: 'unrated', isPaywalled: false };
   }
