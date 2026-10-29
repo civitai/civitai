@@ -36,6 +36,7 @@ vi.mock('~/server/services/storage-resolver', async (importOriginal) => ({
   registerMediaLocation: vi.fn(),
 }));
 
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pollIterationWorkflow } from '~/server/services/orchestrator/poll-iteration';
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
 import { isMature } from '~/shared/constants/orchestrator.constants';
@@ -106,6 +107,20 @@ describe('pollIterationWorkflow availability', () => {
     expect(mocks.createImage).toHaveBeenCalledTimes(1);
     expect(formatGenerationResponse2).toHaveBeenCalledTimes(1);
     expect(console.error).not.toHaveBeenCalled();
+  });
+
+  it('records the stored key as issued to the polling user', async () => {
+    givenWorkflow([output({ nsfwLevel: SAFE })]);
+
+    await poll();
+
+    const key = (mocks.createImage.mock.calls[0][0] as { url: string }).url;
+    expect(key).toEqual(expect.any(String));
+    expect(redisMock.sysRedis.set).toHaveBeenCalledExactlyOnceWith(
+      `system:upload-key-owner:${key}`,
+      '7',
+      { EX: 30 * 24 * 60 * 60 }
+    );
   });
 
   it('formats nothing while the workflow is still running', async () => {
