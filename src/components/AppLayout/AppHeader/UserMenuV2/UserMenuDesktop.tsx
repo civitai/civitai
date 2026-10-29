@@ -531,7 +531,7 @@ function DesktopBuzzItem({ onOpen }: { onOpen: () => void }) {
       href="/user/buzz-dashboard"
       // Buy Buzz below stops its click, so it is not counted as an open.
       onClick={onOpen}
-      className="rounded-lg bg-white/70 dark:bg-dark-7/60"
+      className="rounded-lg !border !border-solid !border-blue-2 bg-white shadow-sm dark:!border-transparent dark:bg-dark-7/60 dark:shadow-none"
       rightSection={
         <Button
           component="div"

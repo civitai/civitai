@@ -467,6 +467,29 @@ describe('account card frame', () => {
     expect(dark.image).not.toBe(light.image);
   });
 
+  test('the Buzz strip stands out from the card in light mode and stays translucent in dark', async () => {
+    const { card } = await renderHeader();
+    const strip = stripOf(card);
+    const read = () => {
+      const style = getComputedStyle(strip);
+      return {
+        background: style.backgroundColor,
+        border: style.borderTopColor,
+        width: style.borderTopWidth,
+      };
+    };
+    const light = read();
+    document.documentElement.setAttribute('data-mantine-color-scheme', 'dark');
+    await nextLayout();
+    const dark = read();
+
+    expect(light.background).toMatch(/^rgb\(/);
+    expect(light.width).toBe('1px');
+    expect(light.border).not.toBe('rgba(0, 0, 0, 0)');
+    expect(dark.background).not.toBe(light.background);
+    expect(dark.border).toBe('rgba(0, 0, 0, 0)');
+  });
+
   test('the desktop account card carries the same frame as the phone card', async () => {
     await renderAtViewport(
       <UserMenuCtx.Provider value={{ handleClose: () => undefined }}>
@@ -484,5 +507,8 @@ describe('account card frame', () => {
     const frame = frameOf(card);
     expect(frame.border).toBe('1px');
     expect(frame.image).toContain('linear-gradient');
+    // Mantine's menu-item reset removes borders, so the strip's border must win it.
+    const strip = document.querySelector('[data-account-card] a[href="/user/buzz-dashboard"]')!;
+    expect(getComputedStyle(strip).borderTopWidth).toBe('1px');
   });
 });
