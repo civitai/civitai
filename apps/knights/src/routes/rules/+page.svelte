@@ -10,7 +10,7 @@
 
 <p class="muted">
   Knights of New Order judge how mature images should be rated, so the site can show each image to
-  the right people. <a href="/play">Back to judging</a>
+  the right people. <a href="/play" data-sveltekit-preload-data="off">Back to judging</a>
 </p>
 
 <h2>Acolyte Trials</h2>
@@ -131,7 +131,7 @@
   {/each}
 </dl>
 
-<p><a href="/">Home</a> · <a href="/play">Play</a></p>
+<p><a href="/">Home</a> · <a href="/play" data-sveltekit-preload-data="off">Play</a></p>
 
 <style>
   table {

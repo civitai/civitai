@@ -6,7 +6,8 @@ import { openItem, sealItem } from '$lib/server/feed-token';
 import {
   answerHiddenCheck,
   pickHiddenCheck,
-  takeHiddenNotices,
+  dismissHiddenNotices,
+  readHiddenNotices,
 } from '$lib/server/hidden/hidden.service';
 import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { requireMember } from '$lib/server/membership';
@@ -14,7 +15,7 @@ import { conversionEnabled } from '$lib/server/conversion/runtime';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
 import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
-import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
+import { feedSecret } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { trialDeps } from '$lib/server/trials/runtime';
 import { answerTrial, getTrial } from '$lib/server/trials/trials.service';
@@ -45,7 +46,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
   // Shown on whichever page the player lands on: a reset player lands on the Trials.
   const [resetNotice, notices] = await Promise.all([
     hasUnseenReset(db, locals.user.id, now),
-    takeHiddenNotices(db, locals.user.id, now),
+    readHiddenNotices(db, locals.user.id),
   ]);
   const common = { status, resetNotice, notices };
 
@@ -160,7 +161,7 @@ export const actions: Actions = {
                 answer,
                 isModerator: locals.user.isModerator,
               },
-              { ...resetDeps, ...queueDeps, settings: hiddenSettings() }
+              queueDeps
             )
           : await castVote(
               db,
@@ -192,6 +193,15 @@ export const actions: Actions = {
     } catch (error) {
       console.error('knights: could not store the recap dismissal', { error });
       return fail(500, { message: 'Could not dismiss the recap. Try again.', recapFailed: true });
+    }
+  },
+
+  dismissNotices: async ({ locals }) => {
+    try {
+      await dismissHiddenNotices(db, locals.user.id, queueDeps.now());
+    } catch (error) {
+      console.error('knights: could not store the notice dismissal', { error });
+      return fail(500, { message: 'Could not dismiss the notice. Try again.', noticeFailed: true });
     }
   },
 

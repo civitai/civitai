@@ -14,7 +14,8 @@ vi.mock('$lib/server/smites/smites.service', () => ({}));
 vi.mock('$lib/server/hidden/hidden.service', () => ({
   answerHiddenCheck,
   pickHiddenCheck: vi.fn(),
-  takeHiddenNotices: vi.fn(),
+  readHiddenNotices: vi.fn(),
+  dismissHiddenNotices: vi.fn(),
 }));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote, getFeed: vi.fn() }));
 

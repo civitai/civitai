@@ -3,20 +3,19 @@ import { sql, type Kysely, type Transaction } from 'kysely';
 import { REFERENCE_POOL } from '@civitai/db/knights';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
+import { mirrorXp, type XpMirror } from '../progression/legacy-exp';
+import { PROGRESSION } from '../progression/config';
 import { canVote } from '../queue/ranks';
 import {
   pacingGate,
   type CastVoteResult,
-  type RejectReason,
   type QuestionOption,
   type QueueDeps,
 } from '../queue/queue.service';
+import { creditVote, insertVote } from '../queue/vote-record';
 import { isRank } from '../ranks';
 import { servableReferences } from '../reference';
-import { SMITES } from '../smites/config';
-import { activeSmiteCount, issueSmite, resetNow, type ResetDeps } from '../smites/smites.service';
-import type { HiddenCheckSettings } from './config';
-import { SMITE_NOTICE, SMITE_REASON, WARNING_NOTICE, type Notice } from './notices';
+import { SMITE_NOTICE, WARNING_NOTICE, type Notice } from './notices';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
@@ -34,16 +33,13 @@ export type HiddenCheckResult = Exclude<
   { status: 'resolved' | 'escalated' | 'inquisitor' }
 >;
 
-type HiddenDeps = ResetDeps &
-  Pick<QueueDeps, 'now' | 'voteLimits'> & { settings: HiddenCheckSettings };
+/** A hidden check sits in the vote ledger under the negative of its reference image's id. */
+export const hiddenItemId = (referenceId: number) => -referenceId;
 
 /** Fixed per player until they answer something. */
 async function slotOf(db: Executor, userId: number): Promise<number> {
   const { rows } = await sql<{ slot: Date | null }>`
-    SELECT GREATEST(
-      (SELECT max("createdAt") FROM "KnightsVote" WHERE "playerId" = ${userId}),
-      (SELECT max("createdAt") FROM "KnightsHiddenCheckAnswer" WHERE "playerId" = ${userId})
-    ) AS slot`.execute(db);
+    SELECT max("createdAt") AS slot FROM "KnightsVote" WHERE "playerId" = ${userId}`.execute(db);
   const slot = rows[0]?.slot;
   return slot ? new Date(slot).getTime() : 0;
 }
@@ -59,21 +55,15 @@ function eligibleReferences(db: Executor, userId: number, questionKey: string) {
       eb.not(
         eb.exists(
           eb
-            .selectFrom('KnightsHiddenCheckAnswer as a')
-            .select(sql<number>`1`.as('one'))
-            .whereRef('a.referenceId', '=', 'r.id')
-            .where('a.playerId', '=', userId)
-        )
-      )
-    )
-    .where((eb) =>
-      eb.not(
-        eb.exists(
-          eb
             .selectFrom('KnightsVote as v')
             .select(sql<number>`1`.as('one'))
-            .whereRef('v.imageId', '=', 'r.imageId')
             .where('v.playerId', '=', userId)
+            .where((vb) =>
+              vb.or([
+                vb('v.itemId', '=', sql<number>`-"r"."id"`),
+                vb('v.imageId', '=', vb.ref('r.imageId')),
+              ])
+            )
         )
       )
     );
@@ -134,123 +124,80 @@ export const isSevereUnderRating = (given: string, known: string, distance: numb
   return g > 0 && k > 0 && g < k && levelDistance(g, k) >= distance;
 };
 
-type Outcome = { result: HiddenCheckResult; resetDue: boolean };
-
 /**
- * Takes a hidden check answer. It answers exactly as a vote does and touches no queue item, vote, gold or XP; what it
- * cost the player is stored on the answer and shown by `takeHiddenNotices`.
+ * Takes a hidden check answer as an ordinary vote: the same ledger row, XP, pending gold, daily tally and pacing as a
+ * queue vote. It has no queue item and no write-back; `settleHiddenChecks` grades it later.
  */
 export async function answerHiddenCheck(
   db: Kysely<DB>,
   input: { userId: number; referenceId: number; answer: string; isModerator?: boolean },
-  deps: HiddenDeps
+  deps: Pick<QueueDeps, 'now' | 'voteLimits'> & { mirrorXp?: XpMirror }
 ): Promise<HiddenCheckResult> {
   const now = deps.now();
-  const { result, resetDue } = await db.transaction().execute(async (trx): Promise<Outcome> => {
-    const rejected = (reason: RejectReason) => ({
-      result: { status: 'rejected', reason } as const,
-      resetDue: false,
-    });
-
+  const result = await db.transaction().execute(async (trx): Promise<HiddenCheckResult> => {
     const until = await pacingGate(trx, input, now, deps);
-    if (until) return { result: { status: 'limited', until }, resetDue: false };
-
-    const player = await trx
-      .selectFrom('NewOrderPlayer')
-      .select(['rankType', 'startAt'])
-      .where('userId', '=', input.userId)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!player) return rejected('no-player');
-    if (!isRank(player.rankType) || !canVote(player.rankType, 'Knight')) {
-      return rejected('not-eligible');
-    }
+    if (until) return { status: 'limited', until };
 
     const ref = await servableReferences(trx, REFERENCE_POOL.hiddenCheck)
       .innerJoin('KnightsQuestion as q', 'q.key', 'r.questionKey')
-      .select(['r.id', 'r.imageId', 'r.answer', 'q.options'])
+      .select(['r.id', 'r.imageId', 'r.questionKey', 'q.options'])
       .where('r.id', '=', input.referenceId)
       .executeTakeFirst();
-    if (!ref) return rejected('unavailable');
-    if (!(ref.options as QuestionOption[]).some((o) => o.value === input.answer)) {
-      return rejected('bad-answer');
-    }
-    if ((await activeSmiteCount(trx, input.userId)) >= SMITES.max) return rejected('reset-pending');
+    if (!ref) return { status: 'rejected', reason: 'unavailable' };
 
-    const correct = input.answer === ref.answer;
-    // Failures from before the last career reset were wiped with it.
-    const since = new Date(
-      Math.max(
-        now.getTime() - deps.settings.failureWindowHours * 3_600_000,
-        player.startAt.getTime()
-      )
-    );
-    const earlier = correct
-      ? 0
-      : Number(
-          (
-            await trx
-              .selectFrom('KnightsHiddenCheckAnswer')
-              .select((eb) => eb.fn.countAll<string>().as('n'))
-              .where('playerId', '=', input.userId)
-              .where('correct', '=', false)
-              .where('createdAt', '>=', utc(since))
-              .executeTakeFirstOrThrow()
-          ).n
-        );
-    const smites =
-      !correct &&
-      (earlier >= 1 || isSevereUnderRating(input.answer, ref.answer, deps.settings.severeDistance));
-
-    const recorded = await trx
-      .insertInto('KnightsHiddenCheckAnswer')
-      .values({
-        playerId: input.userId,
-        referenceId: ref.id,
+    const itemId = hiddenItemId(ref.id);
+    const vote = await insertVote(
+      trx,
+      { userId: input.userId, answer: input.answer, now, lockPlayer: true },
+      {
+        itemId,
+        questionKey: ref.questionKey,
         imageId: ref.imageId,
-        answer: input.answer,
-        correct,
-        consequence: correct ? null : smites ? 'smite' : 'warning',
-        createdAt: utc(now),
-      })
-      .onConflict((oc) => oc.columns(['playerId', 'referenceId']).doNothing())
-      .returning('id')
-      .executeTakeFirst();
-    if (!recorded) return rejected('already-voted');
+        stage: 'Knight',
+        options: ref.options as QuestionOption[],
+        labelled: true,
+      }
+    );
+    if (vote.status === 'rejected') return { status: 'rejected', reason: vote.reason };
 
-    await trx
-      .updateTable('KnightsReferenceImage')
-      .set({
-        answers: sql<number>`"answers" + 1`,
-        failures: sql<number>`"failures" + ${correct ? 0 : 1}`,
-      })
-      .where('id', '=', ref.id)
-      .execute();
-
-    if (!smites) return { result: { status: 'recorded' }, resetDue: false };
-    const active = await issueSmite(trx, { playerId: input.userId, reason: SMITE_REASON, now });
-    return { result: { status: 'recorded' }, resetDue: active >= SMITES.max };
+    await creditVote(trx, {
+      userId: input.userId,
+      itemId,
+      now,
+      player: vote.player,
+      gold: vote.gold,
+    });
+    return { status: 'recorded' };
   });
 
-  if (resetDue) await resetNow(input.userId, deps);
+  if (result.status === 'recorded') {
+    await mirrorXp(deps.mirrorXp, [{ playerId: input.userId, xp: PROGRESSION.voteXp }]);
+  }
   return result;
 }
 
-/** What the player's last answers cost them, once each: the old game's warning and smite messages. */
-export async function takeHiddenNotices(
-  db: Executor,
-  playerId: number,
-  now: Date
-): Promise<Notice[]> {
+const noticeOf = (consequence: string): Notice =>
+  consequence === 'smite' ? SMITE_NOTICE : WARNING_NOTICE;
+
+/** What graded checks cost the player that they have not dismissed yet. Reading changes nothing, so a preload cannot lose it. */
+export async function readHiddenNotices(db: Executor, playerId: number): Promise<Notice[]> {
   const rows = await db
-    .updateTable('KnightsHiddenCheckAnswer')
+    .selectFrom('KnightsVote')
+    .select('consequence')
+    .where('playerId', '=', playerId)
+    .where('consequence', 'is not', null)
+    .where('noticedAt', 'is', null)
+    .execute();
+  if (rows.length === 0) return [];
+  return [noticeOf(rows.some((r) => r.consequence === 'smite') ? 'smite' : 'warning')];
+}
+
+export async function dismissHiddenNotices(db: Executor, playerId: number, now: Date) {
+  await db
+    .updateTable('KnightsVote')
     .set({ noticedAt: utc(now) })
     .where('playerId', '=', playerId)
     .where('consequence', 'is not', null)
     .where('noticedAt', 'is', null)
-    .returning('consequence')
     .execute();
-  const smited = rows.some((r) => r.consequence === 'smite');
-  if (smited) return [SMITE_NOTICE];
-  return rows.length > 0 ? [WARNING_NOTICE] : [];
 }

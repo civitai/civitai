@@ -4,34 +4,25 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
-import { ledgerOf } from '../progression/progression';
+import { PROGRESSION } from '../progression/config';
 import { castVote, ensureVotePartitions, getFeed, enqueueItem } from '../queue/queue.service';
-import { SMITES } from '../smites/config';
-import { activeSmiteCount } from '../smites/smites.service';
-import { DEFAULT_HIDDEN_CHECKS, type HiddenCheckSettings } from './config';
 import {
   answerHiddenCheck,
-  isSevereUnderRating,
+  hiddenItemId,
   pickHiddenCheck,
-  takeHiddenNotices,
+  readHiddenNotices,
 } from './hidden.service';
-import { SMITE_NOTICE, WARNING_NOTICE } from './notices';
 
 const Q = 'knights.image.nsfwLevel';
 const NOW = new Date('2026-12-15T12:00:00Z');
 const SECRET = 'test-secret';
-const settings: HiddenCheckSettings = { ...DEFAULT_HIDDEN_CHECKS };
 
 let pg: PGlite;
 let db: Kysely<DB>;
-const resetPlayer = vi.fn<(id: number) => Promise<void>>(async () => undefined);
 const deps = (now = NOW, voteLimits?: { windowSeconds: number; max: number }[]) => ({
   now: () => now,
-  resetPlayer,
-  settings,
   voteLimits,
 });
-const hoursLater = (h: number) => new Date(NOW.getTime() + h * 3_600_000);
 
 beforeAll(async () => {
   ({ pg, db } = await createQueueDb());
@@ -42,10 +33,8 @@ beforeAll(async () => {
 afterAll(() => pg.close());
 beforeEach(async () => {
   vi.restoreAllMocks();
-  resetPlayer.mockReset();
-  resetPlayer.mockResolvedValue(undefined);
   await pg.exec(
-    `TRUNCATE "KnightsHiddenCheckAnswer","KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
+    `TRUNCATE "KnightsReferenceImage","KnightsVote","KnightsQueueItem","NewOrderPlayer","NewOrderSmite","Image","Post" RESTART IDENTITY CASCADE`
   );
 });
 
@@ -62,13 +51,6 @@ const pick = (userId: number, rank = 'Knight', rate = 1, questionKey = Q) =>
   pickHiddenCheck(db, { userId, rank, secret: SECRET, questionKey, rate });
 const answer = (userId: number, referenceId: number, value: string, now = NOW) =>
   answerHiddenCheck(db, { userId, referenceId, answer: value }, deps(now));
-const smites = async (id: number) =>
-  (
-    await pg.query<{ size: number; remaining: number; givenById: number; reason: string }>(
-      `SELECT size, remaining, "givenById", reason FROM "NewOrderSmite" WHERE "targetPlayerId"=$1 AND "cleansedAt" IS NULL`,
-      [id]
-    )
-  ).rows;
 
 describe('serving a hidden check', () => {
   it('offers one at a rate of 1 and never at a rate of 0, without a pool or an answer in the offer', async () => {
@@ -151,19 +133,43 @@ describe('serving a hidden check', () => {
 });
 
 describe('answering a hidden check', () => {
-  it('answers a right and a wrong check exactly as a vote is answered, and touches no queue, vote, XP or gold', async () => {
+  const voteRow = async (userId: number) =>
+    (
+      await pg.query<Record<string, unknown>>(
+        `SELECT "itemId","questionKey","imageId",stage,answer,verdict,xp,gold,labelled,"settledAt" FROM "KnightsVote" WHERE "playerId"=$1`,
+        [userId]
+      )
+    ).rows;
+
+  it('records an ordinary pending vote under the negated reference id, never labelled', async () => {
     await seedPlayer(pg, 1);
-    const [right, wrong] = [await reference(10, '8'), await reference(11, '8')];
-    expect(await answer(1, right, '8')).toEqual({ status: 'recorded' });
-    expect(await answer(1, wrong, '4')).toEqual({ status: 'recorded' });
-    expect((await pg.query(`SELECT 1 FROM "KnightsVote"`)).rows).toHaveLength(0);
+    const ref = await reference(10, '8');
+    expect(await answer(1, ref, '4')).toEqual({ status: 'recorded' });
+    expect(await voteRow(1)).toEqual([
+      expect.objectContaining({
+        itemId: hiddenItemId(ref),
+        imageId: 10,
+        answer: '4',
+        verdict: 'pending',
+        xp: PROGRESSION.voteXp,
+        labelled: true,
+        settledAt: null,
+      }),
+    ]);
     expect((await pg.query(`SELECT 1 FROM "KnightsQueueItem"`)).rows).toHaveLength(0);
+  });
+
+  it('pays the vote XP and records the pending gold at once', async () => {
+    await seedPlayer(pg, 1);
+    const ref = await reference(10);
+    await answer(1, ref, '4');
     const p = (
       await pg.query<{ exp: number; goldPending: number }>(
         `SELECT exp, "goldPending" FROM "NewOrderPlayer" WHERE "userId"=1`
       )
     ).rows[0];
-    expect(p).toMatchObject({ exp: 0 });
+    expect(p.exp).toBe(PROGRESSION.voteXp);
+    expect(p.goldPending).toBeGreaterThan(0);
   });
 
   it('refuses a second answer, an unknown option and a player who cannot judge', async () => {
@@ -185,125 +191,30 @@ describe('answering a hidden check', () => {
     expect(await answer(1, ref, '4')).toEqual({ status: 'rejected', reason: 'reset-pending' });
   });
 
-  it('is paced like a vote', async () => {
+  it('is paced by the ledger it shares with votes, and its answers count toward the pace', async () => {
     await seedPlayer(pg, 1);
-    const ref = await reference(10);
-    await pg.query(
-      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
-       VALUES (900,1,$1,$2,0,'Knight','4',1)`,
-      [new Date(NOW.getTime() - 5_000), Q]
-    );
-    const result = await answerHiddenCheck(
+    const [a, b] = [await reference(10), await reference(11)];
+    const limits = [{ windowSeconds: 60, max: 1 }];
+    const first = await answerHiddenCheck(
       db,
-      { userId: 1, referenceId: ref, answer: '4' },
-      deps(NOW, [{ windowSeconds: 60, max: 1 }])
+      { userId: 1, referenceId: a, answer: '4' },
+      deps(NOW, limits)
     );
-    expect(result).toMatchObject({ status: 'limited' });
-    expect((await pg.query(`SELECT 1 FROM "KnightsHiddenCheckAnswer"`)).rows).toHaveLength(0);
+    expect(first).toEqual({ status: 'recorded' });
+    const second = await answerHiddenCheck(
+      db,
+      { userId: 1, referenceId: b, answer: '4' },
+      deps(NOW, limits)
+    );
+    expect(second).toMatchObject({ status: 'limited' });
+    expect(await voteRow(1)).toHaveLength(1);
   });
 
-  it('costs a first failure nothing but a warning, and the next failure a smite', async () => {
-    await seedPlayer(pg, 1);
-    const [a, b] = [await reference(10, '4'), await reference(11, '4')];
-    await answer(1, a, '8');
-    expect(await smites(1)).toHaveLength(0);
-    expect(await takeHiddenNotices(db, 1, NOW)).toEqual([WARNING_NOTICE]);
-    await answer(1, b, '8', hoursLater(1));
-    expect(await smites(1)).toEqual([
-      expect.objectContaining({
-        size: SMITES.size,
-        remaining: SMITES.size,
-        givenById: SMITES.systemGiverId,
-      }),
-    ]);
-    expect(await takeHiddenNotices(db, 1, NOW)).toEqual([SMITE_NOTICE]);
-  });
-
-  it('shows a notice once, and none for a right answer', async () => {
-    await seedPlayer(pg, 1);
-    const [a, b] = [await reference(10, '4'), await reference(11, '4')];
-    await answer(1, a, '4');
-    expect(await takeHiddenNotices(db, 1, NOW)).toEqual([]);
-    await answer(1, b, '8');
-    expect(await takeHiddenNotices(db, 1, NOW)).toHaveLength(1);
-    expect(await takeHiddenNotices(db, 1, NOW)).toEqual([]);
-  });
-
-  it('stores a neutral reason on the smite', async () => {
+  it('has no cost for a wrong answer until it is graded', async () => {
     await seedPlayer(pg, 1);
     const ref = await reference(10, '16');
     await answer(1, ref, '2');
-    const [smite] = await smites(1);
-    expect(smite.reason).not.toMatch(/repeat|severe|another|24/i);
-  });
-
-  it('treats a failure outside the window as a new first failure', async () => {
-    await seedPlayer(pg, 1);
-    const [a, b] = [await reference(10, '4'), await reference(11, '4')];
-    await answer(1, a, '8');
-    await answer(1, b, '8', hoursLater(30));
-    expect(await smites(1)).toHaveLength(0);
-  });
-
-  it('ignores failures from before the last career reset', async () => {
-    await seedPlayer(pg, 1);
-    const [a, b] = [await reference(10, '4'), await reference(11, '4')];
-    await answer(1, a, '8');
-    await pg.query(`UPDATE "NewOrderPlayer" SET "startAt"=$1 WHERE "userId"=1`, [hoursLater(0.5)]);
-    await answer(1, b, '8', hoursLater(1));
-    expect(await smites(1)).toHaveLength(0);
-  });
-
-  it('smites at once for rating far below the known answer', async () => {
-    await seedPlayer(pg, 1);
-    const ref = await reference(10, '16');
-    await answer(1, ref, '2');
-    expect(await smites(1)).toHaveLength(1);
-    expect(isSevereUnderRating('8', '16', settings.severeDistance)).toBe(false);
-    expect(isSevereUnderRating('4', '16', settings.severeDistance)).toBe(true);
-    expect(isSevereUnderRating('16', '1', settings.severeDistance)).toBe(false);
-  });
-
-  it('counts the failure on the reference image', async () => {
-    await seedPlayer(pg, 1);
-    const ref = await reference(10);
-    await answer(1, ref, '8');
-    const row = (
-      await pg.query<{ answers: number; failures: number }>(
-        `SELECT answers, failures FROM "KnightsReferenceImage" WHERE id=$1`,
-        [ref]
-      )
-    ).rows[0];
-    expect(row).toEqual({ answers: 1, failures: 1 });
-  });
-
-  it('resets the career at the third active smite, once', async () => {
-    await seedPlayer(pg, 1);
-    await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (1),(1)`);
-    const ref = await reference(10, '16');
-    expect(await answer(1, ref, '1')).toEqual({ status: 'recorded' });
-    expect(resetPlayer).toHaveBeenCalledTimes(1);
-    expect(resetPlayer).toHaveBeenCalledWith(1);
-  });
-
-  it('leaves the smites active when the reset fails, so the tick can retry', async () => {
-    vi.spyOn(console, 'error').mockImplementation(() => undefined);
-    resetPlayer.mockRejectedValue(new Error('main app down'));
-    await seedPlayer(pg, 1);
-    await pg.query(`INSERT INTO "NewOrderSmite" ("targetPlayerId") VALUES (1),(1)`);
-    const ref = await reference(10, '16');
-    expect(await answer(1, ref, '1')).toEqual({ status: 'recorded' });
-    expect(await activeSmiteCount(db, 1)).toBe(3);
-  });
-
-  it('counts in the accuracy ledger, and not before a career reset', async () => {
-    await seedPlayer(pg, 1);
-    const [a, b, c] = [await reference(10), await reference(11), await reference(12)];
-    await answer(1, a, '4');
-    await answer(1, b, '4');
-    await answer(1, c, '8');
-    expect(await ledgerOf(db, 1)).toEqual({ correct: 2, graded: 3 });
-    await pg.query(`UPDATE "NewOrderPlayer" SET "startAt"=$1 WHERE "userId"=1`, [hoursLater(1)]);
-    expect(await ledgerOf(db, 1)).toEqual({ correct: 0, graded: 0 });
+    expect((await pg.query(`SELECT 1 FROM "NewOrderSmite"`)).rows).toHaveLength(0);
+    expect(await readHiddenNotices(db, 1)).toEqual([]);
   });
 });

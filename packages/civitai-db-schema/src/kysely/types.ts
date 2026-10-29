@@ -3709,23 +3709,6 @@ export type KnightsHarvestCursor = {
   lastActivityId: Generated<number>;
   updatedAt: Timestamp;
 };
-export type KnightsHiddenCheckAnswer = {
-  id: Generated<number>;
-  playerId: number;
-  referenceId: number;
-  imageId: number;
-  answer: string;
-  correct: boolean;
-  /**
-   * What the answer cost the player (warning | smite); null when it cost nothing.
-   */
-  consequence: string | null;
-  /**
-   * When the player was shown that cost.
-   */
-  noticedAt: Timestamp | null;
-  createdAt: Generated<Timestamp>;
-};
 export type KnightsPlayer = {
   playerId: number;
   streak: Generated<number>;
@@ -3834,6 +3817,8 @@ export type KnightsVote = {
   settledAt: Timestamp | null;
   labelled: Generated<boolean>;
   converted: Generated<boolean>;
+  consequence: string | null;
+  noticedAt: Timestamp | null;
 };
 export type Leaderboard = {
   id: string;
@@ -6657,7 +6642,6 @@ export type DB = {
   KnightsGoldClearing: KnightsGoldClearing;
   KnightsGoldConversion: KnightsGoldConversion;
   KnightsHarvestCursor: KnightsHarvestCursor;
-  KnightsHiddenCheckAnswer: KnightsHiddenCheckAnswer;
   KnightsPlayer: KnightsPlayer;
   KnightsPlayerDay: KnightsPlayerDay;
   KnightsQuestion: KnightsQuestion;

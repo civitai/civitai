@@ -12,8 +12,9 @@ describe('hiddenCheckSettings', () => {
         KNIGHTS_HIDDEN_CHECK_RATE: '0.2',
         KNIGHTS_HIDDEN_CHECK_FAILURE_WINDOW_HOURS: '12',
         KNIGHTS_HIDDEN_CHECK_SEVERE_DISTANCE: '3',
+        KNIGHTS_HIDDEN_CHECK_SETTLE_DELAY_MINUTES: '5',
       })
-    ).toEqual({ rate: 0.2, failureWindowHours: 12, severeDistance: 3 });
+    ).toEqual({ rate: 0.2, failureWindowHours: 12, severeDistance: 3, settleDelayMinutes: 5 });
   });
 
   it.each([

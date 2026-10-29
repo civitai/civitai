@@ -5110,6 +5110,8 @@ export interface KnightsVote {
   settledAt: Date | null;
   labelled: boolean;
   converted: boolean;
+  consequence: string | null;
+  noticedAt: Date | null;
 }
 
 export interface KnightsPlayer {
@@ -5174,7 +5176,6 @@ export interface KnightsReferenceImage {
   createdAt: Date;
   updatedAt: Date;
   trialAnswers?: KnightsTrialAnswer[];
-  hiddenAnswers?: KnightsHiddenCheckAnswer[];
 }
 
 export interface KnightsTrialRun {
@@ -5200,19 +5201,6 @@ export interface KnightsTrialAnswer {
   reference?: KnightsReferenceImage;
   answer: string;
   correct: boolean;
-  createdAt: Date;
-}
-
-export interface KnightsHiddenCheckAnswer {
-  id: number;
-  playerId: number;
-  referenceId: number;
-  reference?: KnightsReferenceImage;
-  imageId: number;
-  answer: string;
-  correct: boolean;
-  consequence: string | null;
-  noticedAt: Date | null;
   createdAt: Date;
 }
 

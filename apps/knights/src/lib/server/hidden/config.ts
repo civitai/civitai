@@ -2,6 +2,8 @@ export type HiddenCheckSettings = {
   rate: number;
   failureWindowHours: number;
   severeDistance: number;
+  /** Minutes between a check being answered and being graded. */
+  settleDelayMinutes: number;
 };
 
 /** Used when the environment does not set a value. */
@@ -9,6 +11,7 @@ export const DEFAULT_HIDDEN_CHECKS: HiddenCheckSettings = {
   rate: 0.05,
   failureWindowHours: 24,
   severeDistance: 2,
+  settleDelayMinutes: 30,
 };
 
 const read = (raw: string | undefined, fallback: number, valid: (n: number) => boolean) => {
@@ -29,6 +32,11 @@ export function hiddenCheckSettings(env: Record<string, string | undefined>): Hi
       env.KNIGHTS_HIDDEN_CHECK_SEVERE_DISTANCE,
       DEFAULT_HIDDEN_CHECKS.severeDistance,
       (n) => Number.isInteger(n) && n > 0
+    ),
+    settleDelayMinutes: read(
+      env.KNIGHTS_HIDDEN_CHECK_SETTLE_DELAY_MINUTES,
+      DEFAULT_HIDDEN_CHECKS.settleDelayMinutes,
+      (n) => n >= 0
     ),
   };
 }

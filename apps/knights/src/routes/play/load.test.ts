@@ -8,7 +8,7 @@ const getRecap = vi.hoisted(() => vi.fn());
 const dismissRecap = vi.hoisted(() => vi.fn());
 const pickHiddenCheck = vi.hoisted(() => vi.fn());
 const hasUnseenReset = vi.hoisted(() => vi.fn());
-const takeHiddenNotices = vi.hoisted(() => vi.fn());
+const readHiddenNotices = vi.hoisted(() => vi.fn());
 const voteLockUntil = vi.hoisted(() => vi.fn());
 const queueDeps = vi.hoisted(() => ({
   now: () => new Date('2026-12-15T12:00:00Z'),
@@ -30,7 +30,7 @@ vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.
 vi.mock('$lib/server/hidden/hidden.service', () => ({
   pickHiddenCheck,
   answerHiddenCheck: vi.fn(),
-  takeHiddenNotices,
+  readHiddenNotices,
 }));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote: vi.fn(), getFeed }));
 vi.mock('$lib/server/trials/runtime', () => ({ trialDeps: {} }));
@@ -57,8 +57,8 @@ beforeEach(() => {
   pickHiddenCheck.mockResolvedValue(null);
   hasUnseenReset.mockReset();
   hasUnseenReset.mockResolvedValue(false);
-  takeHiddenNotices.mockReset();
-  takeHiddenNotices.mockResolvedValue([]);
+  readHiddenNotices.mockReset();
+  readHiddenNotices.mockResolvedValue([]);
   voteLockUntil.mockReset();
   queueDeps.voteLimits = undefined;
 });
@@ -215,7 +215,7 @@ describe('play load feed', () => {
 
   it('carries the reset notice and the notices from hidden checks', async () => {
     hasUnseenReset.mockResolvedValue(true);
-    takeHiddenNotices.mockResolvedValue([{ title: 'T', message: 'M' }]);
+    readHiddenNotices.mockResolvedValue([{ title: 'T', message: 'M' }]);
     const page = await run();
     expect(page.resetNotice).toBe(true);
     expect(page.notices).toEqual([{ title: 'T', message: 'M' }]);

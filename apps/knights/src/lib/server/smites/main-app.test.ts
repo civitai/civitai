@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { SMITES } from './config';
 import { resetPlayerInMainApp } from './main-app';
 
 const fetchMock = vi.fn<typeof fetch>();
@@ -25,7 +26,7 @@ describe('resetPlayerInMainApp', () => {
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe('https://main.example/api/mod/knights/reset-player');
     expect(new Headers(init?.headers).get('x-webhook-token')).toBe('secret');
-    expect(JSON.parse(String(init?.body))).toEqual({ playerId: 9 });
+    expect(JSON.parse(String(init?.body))).toEqual({ playerId: 9, limit: SMITES.max });
   });
 
   it('counts an already reset player as done', async () => {

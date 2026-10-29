@@ -1,4 +1,4 @@
-import { sql, type Kysely, type Transaction } from 'kysely';
+import { sql, type ExpressionBuilder, type Kysely, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { ensureKeeper } from '../daily/daily.service';
@@ -62,17 +62,53 @@ export async function workOffSmites(trx: Executor, playerId: number, now: Date):
     .execute();
 }
 
-/** Lapses old smites, as the original game's nightly job does. */
-export async function expireSmites(db: Executor, now: Date): Promise<number> {
+/**
+ * Lapses old smites, as the original game's nightly job does, except for a player whose reset is still due: expiry must not
+ * undo it. The affected players are locked in id order first, the order votes and settlement take them in.
+ */
+export async function expireSmites(db: Kysely<DB>, now: Date): Promise<number> {
   const cutoff = new Date(now.getTime() - SMITES.expireAfterDays * 86_400_000);
-  const rows = await db
-    .updateTable('NewOrderSmite')
-    .set({ cleansedAt: utc(now), cleansedReason: 'Smite expired' })
-    .where('cleansedAt', 'is', null)
-    .where('createdAt', '<=', utc(cutoff))
-    .returning('id')
-    .execute();
-  return rows.length;
+  const resetDue = (eb: ExpressionBuilder<DB, 'NewOrderSmite'>) =>
+    eb('targetPlayerId', 'in', (sub) =>
+      sub
+        .selectFrom('NewOrderSmite as a')
+        .select('a.targetPlayerId')
+        .where('a.cleansedAt', 'is', null)
+        .groupBy('a.targetPlayerId')
+        .having((hb) => hb.fn.countAll(), '>=', SMITES.max)
+    );
+
+  return db.transaction().execute(async (trx) => {
+    const players = await trx
+      .selectFrom('NewOrderSmite')
+      .select('targetPlayerId')
+      .distinct()
+      .where('cleansedAt', 'is', null)
+      .where('createdAt', '<=', utc(cutoff))
+      .orderBy('targetPlayerId', 'asc')
+      .execute();
+    if (players.length === 0) return 0;
+    await trx
+      .selectFrom('NewOrderPlayer')
+      .select('userId')
+      .where(
+        'userId',
+        'in',
+        players.map((p) => p.targetPlayerId)
+      )
+      .orderBy('userId', 'asc')
+      .forUpdate()
+      .execute();
+    const rows = await trx
+      .updateTable('NewOrderSmite')
+      .set({ cleansedAt: utc(now), cleansedReason: 'Smite expired' })
+      .where('cleansedAt', 'is', null)
+      .where('createdAt', '<=', utc(cutoff))
+      .where((eb) => eb.not(resetDue(eb)))
+      .returning('id')
+      .execute();
+    return rows.length;
+  });
 }
 
 export async function playersDueForReset(db: Executor, limit = 100): Promise<number[]> {

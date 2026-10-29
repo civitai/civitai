@@ -87,6 +87,19 @@ describe('smites', () => {
     expect(await activeSmiteCount(db, 1)).toBe(1);
   });
 
+  it('does not lapse the smites of a player whose reset is still due', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    const old = new Date(NOW.getTime() - (SMITES.expireAfterDays + 1) * 86_400_000);
+    await pg.query(
+      `INSERT INTO "NewOrderSmite" ("targetPlayerId","createdAt") VALUES (1,$1),(1,$1),(1,$1),(2,$1),(2,$1)`,
+      [old]
+    );
+    expect(await expireSmites(db, NOW)).toBe(2);
+    expect(await activeSmiteCount(db, 1)).toBe(3);
+    expect(await activeSmiteCount(db, 2)).toBe(0);
+  });
+
   it('refuses a vote while a reset is due', async () => {
     await seedPlayer(pg, 1);
     await seedImage(pg, 10);

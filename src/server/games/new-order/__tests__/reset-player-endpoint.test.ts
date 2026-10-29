@@ -31,7 +31,7 @@ beforeEach(() => {
 
 describe('/api/mod/knights/reset-player', () => {
   it('resets a player at the smite limit with the original game wording and a notification', async () => {
-    const res = await call('POST', { playerId: '9' });
+    const res = await call('POST', { playerId: '9', limit: '3' });
 
     expect(count).toHaveBeenCalledWith({ where: { targetPlayerId: 9, cleansedAt: null } });
     expect(resetPlayer).toHaveBeenCalledWith({
@@ -42,9 +42,21 @@ describe('/api/mod/knights/reset-player', () => {
     expect(res.json).toHaveBeenCalledWith({ playerId: 9, outcome: 'reset' });
   });
 
+  it('uses the limit the caller names, not a fixed one', async () => {
+    count.mockResolvedValue(2);
+    expect((await call('POST', { playerId: '9', limit: '3' })).json).toHaveBeenCalledWith({
+      playerId: 9,
+      outcome: 'not-due',
+    });
+    expect((await call('POST', { playerId: '9', limit: '2' })).json).toHaveBeenCalledWith({
+      playerId: 9,
+      outcome: 'reset',
+    });
+  });
+
   it('is idempotent: a player under the limit, such as one already reset, is left alone', async () => {
     count.mockResolvedValue(0);
-    const res = await call('POST', { playerId: '9' });
+    const res = await call('POST', { playerId: '9', limit: '3' });
 
     expect(resetPlayer).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(200);
@@ -52,7 +64,7 @@ describe('/api/mod/knights/reset-player', () => {
   });
 
   it('decides under a lock held for that player', async () => {
-    await call('POST', { playerId: '9' });
+    await call('POST', { playerId: '9', limit: '3' });
     expect(withDistributedLock).toHaveBeenCalledWith(
       expect.objectContaining({ key: 'knights:reset-player:9' }),
       expect.any(Function)
@@ -61,14 +73,14 @@ describe('/api/mod/knights/reset-player', () => {
 
   it('asks the caller to retry when another reset of the player holds the lock', async () => {
     withDistributedLock.mockResolvedValue(null);
-    const res = await call('POST', { playerId: '9' });
+    const res = await call('POST', { playerId: '9', limit: '3' });
     expect(resetPlayer).not.toHaveBeenCalled();
     expect(res.status).toHaveBeenCalledWith(503);
   });
 
   it('lets a reset that did not happen surface, so the caller retries', async () => {
     resetPlayer.mockRejectedValue(new Error('db down'));
-    await expect(call('POST', { playerId: '9' })).rejects.toThrow('db down');
+    await expect(call('POST', { playerId: '9', limit: '3' })).rejects.toThrow('db down');
   });
 
   it('answers reset and logs when only the side effects after the commit failed', async () => {
@@ -76,7 +88,7 @@ describe('/api/mod/knights/reset-player', () => {
       count.mockResolvedValue(0);
       throw new Error('redis down');
     });
-    const res = await call('POST', { playerId: '9' });
+    const res = await call('POST', { playerId: '9', limit: '3' });
 
     expect(res.json).toHaveBeenCalledWith({ playerId: 9, outcome: 'reset' });
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
@@ -89,7 +101,9 @@ describe('/api/mod/knights/reset-player', () => {
 
   it.each([
     ['a missing player', {}],
-    ['a non-positive player', { playerId: '0' }],
+    ['a non-positive player', { playerId: '0', limit: '3' }],
+    ['a missing limit', { playerId: '9' }],
+    ['a limit below the floor', { playerId: '9', limit: '1' }],
   ])('answers 400 for %s', async (_label, body) => {
     const res = await call('POST', body);
     expect(res.status).toHaveBeenCalledWith(400);

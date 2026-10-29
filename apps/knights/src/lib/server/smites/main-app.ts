@@ -1,4 +1,5 @@
 import { env } from '$env/dynamic/private';
+import { SMITES } from './config';
 
 const trimSlash = (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value);
 
@@ -12,7 +13,7 @@ export async function resetPlayerInMainApp(playerId: number): Promise<void> {
   const res = await fetch(`${base}/api/mod/knights/reset-player`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-webhook-token': token },
-    body: JSON.stringify({ playerId }),
+    body: JSON.stringify({ playerId, limit: SMITES.max }),
     signal: AbortSignal.timeout(8000),
   });
   if (!res.ok) throw new Error(`main app refused the reset (${res.status})`);

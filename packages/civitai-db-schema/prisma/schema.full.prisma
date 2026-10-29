@@ -8086,6 +8086,8 @@ model KnightsVote {
   settledAt   DateTime? // idempotency marker: set once progression for the final verdict is granted
   labelled    Boolean  @default(false)
   converted   Boolean  @default(false)
+  consequence String? // what a graded hidden check cost the player (warning | smite)
+  noticedAt   DateTime? // when the player dismissed the notice of that cost
 
   @@id([itemId, playerId, createdAt])
   @@index([playerId, createdAt])
@@ -8170,7 +8172,6 @@ model KnightsReferenceImage {
   createdAt     DateTime             @default(now())
   updatedAt     DateTime             @updatedAt
   trialAnswers  KnightsTrialAnswer[]
-  hiddenAnswers KnightsHiddenCheckAnswer[]
 
   @@index([pool, status, source])
   @@index([modActivityId])
@@ -8207,26 +8208,6 @@ model KnightsTrialAnswer {
   @@unique([runId, referenceId])
   @@index([playerId, createdAt])
   @@index([referenceId])
-}
-
-/// A player's answer to a hidden check: graded at once against the reference answer, never part of the consensus queue.
-model KnightsHiddenCheckAnswer {
-  id          Int                   @id @default(autoincrement())
-  playerId    Int
-  referenceId Int
-  reference   KnightsReferenceImage @relation(fields: [referenceId], references: [id], onDelete: Cascade)
-  imageId     Int
-  answer      String
-  correct     Boolean
-  /// What the answer cost the player (warning | smite); null when it cost nothing.
-  consequence String?
-  /// When the player was shown that cost.
-  noticedAt   DateTime?
-  createdAt   DateTime              @default(now())
-
-  @@unique([playerId, referenceId])
-  @@index([playerId, createdAt])
-  @@index([playerId, imageId])
 }
 
 /// Where a harvest job stopped reading `ModActivity`.

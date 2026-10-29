@@ -1,4 +1,4 @@
-import { sql, type Kysely, type Transaction } from 'kysely';
+import { sql, type Kysely, type SqlBool, type Transaction } from 'kysely';
 import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from '@civitai/shared/new-order-levels';
@@ -20,23 +20,26 @@ export function calculateFervor({ correct, graded }: { correct: number; graded: 
 
 /** Shared by fervor and accuracy. Excludes inconclusive and unsettled votes, and votes cast before the `startAt` reset. */
 export async function ledgerOf(db: Executor, playerId: number): Promise<Ledger> {
-  // Hidden checks count as graded answers beside the settled votes.
-  const totals = await sql<{ graded: string; correct: string }>`
-    SELECT count(*) AS graded, count(*) FILTER (WHERE w.verdict = 'correct') AS correct
-    FROM (
-      SELECT g.verdict FROM (
-        SELECT v.verdict, v."createdAt" FROM "KnightsVote" v
-        WHERE v."playerId" = ${playerId} AND v."settledAt" IS NOT NULL AND v.verdict IN ('correct', 'failed')
-        UNION ALL
-        SELECT CASE WHEN h.correct THEN 'correct' ELSE 'failed' END, h."createdAt" FROM "KnightsHiddenCheckAnswer" h
-        WHERE h."playerId" = ${playerId}
-      ) g
-      WHERE g."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = ${playerId}), 'epoch')
-      ORDER BY g."createdAt" DESC
-      LIMIT ${PROGRESSION.fervorWindow}
-    ) w`.execute(db);
-  const row = totals.rows[0];
-  return { correct: Number(row.correct), graded: Number(row.graded) };
+  const window = db
+    .selectFrom('KnightsVote as v')
+    .select('v.verdict')
+    .where('v.playerId', '=', playerId)
+    .where('v.settledAt', 'is not', null)
+    .where('v.verdict', 'in', ['correct', 'failed'])
+    .where(
+      sql<SqlBool>`v."createdAt" >= COALESCE((SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = v."playerId"), 'epoch')`
+    )
+    .orderBy('v.createdAt', 'desc')
+    .limit(PROGRESSION.fervorWindow)
+    .as('w');
+  const totals = await db
+    .selectFrom(window)
+    .select([
+      sql<string>`count(*)`.as('graded'),
+      sql<string>`count(*) filter (where w.verdict = 'correct')`.as('correct'),
+    ])
+    .executeTakeFirstOrThrow();
+  return { correct: Number(totals.correct), graded: Number(totals.graded) };
 }
 
 const rankEarnedBy = (player: { rankType: string; exp: number }, ledger: Ledger) =>
@@ -80,13 +83,30 @@ export async function settleItemVotes(
 
   const votes = await trx
     .selectFrom('KnightsVote')
-    .select(['playerId', 'verdict', 'gold', 'createdAt'])
+    .select(['itemId', 'playerId', 'verdict', 'gold', 'createdAt'])
     .where('itemId', '=', itemId)
     .where('settledAt', 'is', null)
     .where('verdict', '<>', 'pending')
     .orderBy('playerId', 'asc')
     .forUpdate()
     .execute();
+  return payOutVotes(trx, votes, now);
+}
+
+export type GradedVote = {
+  itemId: number;
+  playerId: number;
+  verdict: string;
+  gold: number | null;
+  createdAt: Date;
+};
+
+/** Pays graded, unsettled votes (already row-locked, ordered by player) and marks them settled. Shared by queue items and hidden checks. */
+export async function payOutVotes(
+  trx: Executor,
+  votes: GradedVote[],
+  now: Date
+): Promise<SettleResult> {
   if (votes.length === 0) return NOTHING;
 
   const players = await trx
@@ -114,7 +134,7 @@ export async function settleItemVotes(
     await trx
       .updateTable('KnightsVote')
       .set({ xp: sql<number>`"xp" + ${bulk}`, gold: paid ? gold : 0, settledAt: utc(now) })
-      .where('itemId', '=', itemId)
+      .where('itemId', '=', vote.itemId)
       .where('playerId', '=', vote.playerId)
       .execute();
 

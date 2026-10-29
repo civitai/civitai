@@ -3,24 +3,19 @@ import { utc } from '@civitai/db/kysely';
 import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
-import { recordVoteDay } from '../daily/daily.service';
-import { goldForRank, PROGRESSION } from '../progression/config';
-import { standingOf } from '../progression/rating';
+import { PROGRESSION } from '../progression/config';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
-import { ledgerOf, settleAndMirror, settleItemVotes } from '../progression/progression';
+import { settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '@civitai/db/knights';
-import { SMITES } from '../smites/config';
-import { activeSmiteCount } from '../smites/smites.service';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
-import { isRank, RANKS, type Rank } from '../ranks';
-import { canVote, FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
+import { RANKS, type Rank } from '../ranks';
+import { creditVote, insertVote } from './vote-record';
+import { FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
 import {
   decideChoice,
   decideWriteback,
   isBlockedLevel,
   isExcessiveDownRating,
-  levelForExp,
-  voteWeight,
   type ImageState,
   type WeightedAnswer,
   type WritebackDecision,
@@ -125,8 +120,9 @@ export async function getFeed(
         eb.not(
           eb.exists(
             eb
-              .selectFrom('KnightsHiddenCheckAnswer as h')
+              .selectFrom('KnightsVote as h')
               .select(sql<number>`1`.as('one'))
+              .where('h.itemId', '<', 0)
               .whereRef('h.imageId', '=', 'i.imageId')
               .where('h.playerId', '=', userId)
           )
@@ -346,59 +342,19 @@ export async function castVote(
           .executeTakeFirst();
         if (!item) return rejected('unavailable');
 
-        const player = await trx
-          .selectFrom('NewOrderPlayer')
-          .select(['rankType', 'exp', 'startAt'])
-          .where('userId', '=', input.userId)
-          .executeTakeFirst();
-        if (!player) return rejected('no-player');
-        if (!isRank(player.rankType) || !canVote(player.rankType, item.minRank)) {
-          return rejected('not-eligible');
-        }
-
-        const options = item.options as QuestionOption[];
-        if (!options.some((o) => o.value === input.answer)) return rejected('bad-answer');
-
-        const already = await trx
-          .selectFrom('KnightsVote')
-          .select('playerId')
-          .where('itemId', '=', item.id)
-          .where('playerId', '=', input.userId)
-          .executeTakeFirst();
-        if (already) return rejected('already-voted');
-
-        const smites = await activeSmiteCount(trx, input.userId);
-
-        // A career reset is pending; the player does not play on until it is done.
-        if (smites >= SMITES.max) return rejected('reset-pending');
-
-        const { belowBar } = standingOf(player.rankType, await ledgerOf(trx, input.userId));
-
-        // A vote that weighs nothing could still be the one that tips a split into a decision.
-        const weight = voteWeight({
-          rank: player.rankType,
-          level: levelForExp(player.exp),
-          smites,
-          belowBar,
-        });
-        if (weight <= 0) return rejected('no-weight');
-        const gold = goldForRank(player.rankType, belowBar);
-
-        await trx
-          .insertInto('KnightsVote')
-          .values({
+        const vote = await insertVote(
+          trx,
+          { ...input, now },
+          {
             itemId: item.id,
-            playerId: input.userId,
-            createdAt: utc(now),
             questionKey: item.questionKey,
             imageId: item.imageId,
             stage: item.minRank,
-            answer: input.answer,
-            weight,
-            xp: PROGRESSION.voteXp,
-            gold,
-          })
-          .execute();
+            options: item.options as QuestionOption[],
+          }
+        );
+        if (vote.status === 'rejected') return rejected(vote.reason);
+
         const stageVotes: WeightedAnswer[] = await trx
           .selectFrom('KnightsVote')
           .select(['answer', 'weight'])
@@ -417,39 +373,13 @@ export async function castVote(
         // Settling updates every voter's player row in userId order. Taking the same locks first, before
         // the first player update of this transaction, keeps all transactions in one order and so deadlock-free.
         if (decision.kind === 'resolved' && !writesBack) await lockItemVoters(trx, item.id);
-        await trx
-          .updateTable('NewOrderPlayer')
-          .set({ exp: sql<number>`"exp" + ${PROGRESSION.voteXp}` })
-          .where('userId', '=', input.userId)
-          .execute();
-
-        // Must stay after the player row lock: recordVoteDay relies on it (see its doc).
-        const day = await recordVoteDay(trx, {
-          playerId: input.userId,
-          rank: player.rankType,
-          gold,
+        await creditVote(trx, {
+          userId: input.userId,
+          itemId: item.id,
           now,
-          startAt: player.startAt,
+          player: vote.player,
+          gold: vote.gold,
         });
-        if (day.gold !== gold) {
-          await trx
-            .updateTable('KnightsVote')
-            .set({ gold: day.gold })
-            .where('itemId', '=', item.id)
-            .where('playerId', '=', input.userId)
-            .where('createdAt', '=', utc(now))
-            .execute();
-        }
-        if (day.gold > 0 || day.bonus > 0) {
-          await trx
-            .updateTable('NewOrderPlayer')
-            .set({
-              goldPending: sql<number>`"goldPending" + ${day.gold}`,
-              goldEarned: sql<number>`"goldEarned" + ${day.bonus}`,
-            })
-            .where('userId', '=', input.userId)
-            .execute();
-        }
 
         if (decision.kind === 'pending') return { result: { status: 'recorded' }, xp: [voted] };
         if (decision.kind === 'split') {

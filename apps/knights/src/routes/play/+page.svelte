@@ -62,9 +62,21 @@
 {:else if data.mode === 'queue' && data.resetPending}
   <p class="notice" role="alert">Your career is being reset. Return in a moment.</p>
 {/if}
-{#each data.notices as notice (notice.title)}
-  <p class="notice" role="status"><strong>{notice.title}</strong> {notice.message}</p>
-{/each}
+{#if data.notices.length > 0}
+  <section class="recap" role="status" aria-label="Sanity check">
+    <div>
+      {#each data.notices as notice (notice.title)}
+        <p><strong>{notice.title}</strong> {notice.message}</p>
+      {/each}
+      {#if form?.noticeFailed}
+        <p>{form.message}</p>
+      {/if}
+    </div>
+    <form method="POST" action="?/dismissNotices" use:enhance={submit}>
+      <button type="submit" disabled={submitting}>Understood</button>
+    </form>
+  </section>
+{/if}
 
 {#if data.mode === 'queue'}
   {#if data.recap}
@@ -128,7 +140,7 @@
       </div>
     </form>
 
-    {#if form?.message && !form.recapFailed && !form.resetNoticeFailed}
+    {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed}
       <p class="notice" role="alert">{form.message}</p>
     {/if}
   {:else if data.trial.kind === 'cooldown'}
@@ -165,7 +177,7 @@
     </div>
   </form>
 
-  {#if form?.message && !form.recapFailed && !form.resetNoticeFailed}
+  {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed}
     <p class="notice" role="alert">{form.message}</p>
   {/if}
 {:else if !data.resetPending}

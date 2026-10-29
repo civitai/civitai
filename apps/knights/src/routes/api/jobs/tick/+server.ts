@@ -5,6 +5,8 @@ import { runPostDetectionPass } from '$lib/server/conversion/pass';
 import { TICK_CONVERSION_RETRY } from '$lib/server/conversion/config';
 import { buzzConfigured, conversionEnabled, getBuzzPort } from '$lib/server/conversion/runtime';
 import { db } from '$lib/server/db';
+import { settleHiddenChecks } from '$lib/server/hidden/settle';
+import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { isJobRequest } from '$lib/server/jobs-auth';
 import { applyPendingResolutions, escalateExpired } from '$lib/server/queue/queue.service';
 import { settleFinalItems } from '$lib/server/progression/progression';
@@ -31,6 +33,14 @@ export const POST: RequestHandler = async ({ request }) => {
   );
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
+  );
+  const hidden = await settle('hidden checks', () =>
+    settleHiddenChecks(db, {
+      now: new Date(),
+      settings: hiddenSettings(),
+      mirrorXp: queueDeps.mirrorXp,
+      ...resetDeps,
+    })
   );
   // Resets first: a smite that lapses must not drop a player out of a reset that is already due.
   const resets = await settle('career resets', () => resetPendingPlayers(db, resetDeps));
@@ -59,6 +69,7 @@ export const POST: RequestHandler = async ({ request }) => {
     !writeBacks.ok ||
     !progression.ok ||
     progression.value.failed > 0 ||
+    !hidden.ok ||
     !smites.ok ||
     !resets.ok ||
     resets.value.failed > 0 ||
@@ -71,6 +82,7 @@ export const POST: RequestHandler = async ({ request }) => {
     ...expired.value,
     ...writeBacks.value,
     settledVotes: progression.value.votes,
+    hiddenChecksGraded: hidden.value.graded,
     expiredSmites: smites.value,
     resets: resets.value.due,
     conversionsRetried: conversions.value.retried,
