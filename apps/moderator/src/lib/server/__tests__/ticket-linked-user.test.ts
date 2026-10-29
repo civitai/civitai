@@ -74,6 +74,17 @@ describe('linkedUserFor the appeals panel', () => {
     expect(await linkedUser('5')).toMatchObject({ status: 'refused', code: 409 });
   });
 
+  it('accepts a featureless ticket routed by an appeal topic, and refuses another topic', async () => {
+    getTicketDetail.mockResolvedValue({ status: 'found', ticket: { cfFeature: null } });
+    resolveTicketView.mockResolvedValue({
+      routesTo: 'moderation',
+      routed: { topic: 'image-moderation-appeal' },
+    });
+    expect(await forAppeals('5')).toEqual({ status: 'ok', userId: 7 });
+    resolveTicketView.mockResolvedValue({ routesTo: 'moderation', routed: { topic: 'billing' } });
+    expect(await forAppeals('5')).toMatchObject({ status: 'refused', code: 409 });
+  });
+
   it('refuses a ticket of any other feature with the message it was given', async () => {
     getTicketDetail.mockResolvedValue({ status: 'found', ticket: { cfFeature: 'Billing' } });
     expect(await forAppeals('5')).toEqual({

@@ -91,6 +91,18 @@ describe('the appeals panel', () => {
     expect(appeals).not.toHaveBeenCalled();
   });
 
+  it('shows for a ticket with no feature whose router topic is an appeal topic', async () => {
+    for (const routerTopic of ['image-moderation-appeal', 'nsfw-moderation']) {
+      appeals.mockClear();
+      const res = await loadPanels({ ...decision, cfFeature: null, routerTopic }, all, loaders);
+      expect(res).toHaveProperty('appeals');
+      expect(appeals).toHaveBeenCalledTimes(1);
+    }
+    expect(
+      await loadPanels({ ...decision, cfFeature: null, routerTopic: 'billing' }, all, loaders)
+    ).toEqual({});
+  });
+
   it('says only that no user is linked for a Moderation Decision with none', async () => {
     expect(await loadPanels({ ...decision, civitaiUserId: null }, all, loaders)).toEqual({
       appeals: { status: 'unlinked' },
