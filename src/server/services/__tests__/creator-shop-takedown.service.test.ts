@@ -653,6 +653,40 @@ describe('takedownCosmeticShopItem', () => {
     expect(result).toMatchObject({ owedBack: 700, clawedBack: 700, clawedBackPct: 70 });
   });
 
+  // Official-shop sales of a resellable item paid the creator 500 before the full-pool change and
+  // 700 after, with no backfill, so one item's history holds both. Each sale comes back at what it
+  // actually paid, never re-derived from the item's current terms.
+  it('reverses an old split sale and a full-pool sale of the same item at what each paid', async () => {
+    ledger = {
+      'purchase-1': [
+        sale('purchase-1', 101)[0],
+        {
+          transactionId: 'old-split-payout',
+          externalTransactionId: 'purchase-1:sell:11:yellow',
+          accountId: 0,
+          amount: 500,
+        },
+      ],
+      'purchase-2': sale('purchase-2', 102),
+    };
+
+    const result = await takedownCosmeticShopItem({ id: 42, reason: 'IP', moderatorId: 999 });
+
+    expect(refundedIds()).toEqual([
+      'purchase-1-debit',
+      'old-split-payout',
+      'purchase-2-debit',
+      'purchase-2-payout',
+    ]);
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(result).toMatchObject({
+      refundedValue: 2000,
+      owedBack: 1200,
+      clawedBack: 1200,
+      failures: [],
+    });
+  });
+
   // Run twice (a retry after a crash): a leg already refunded is not refunded again.
   it('does not refund a leg that already has its refund', async () => {
     mocks.purchaseFindMany.mockResolvedValue([purchases[0]]);
