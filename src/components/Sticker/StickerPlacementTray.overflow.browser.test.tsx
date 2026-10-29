@@ -158,3 +158,17 @@ describe('sticker placement tray overflow', () => {
     ).not.toBe('nowrap');
   });
 });
+
+describe('sticker placement tray on a phone', () => {
+  // `touch-action: none` on every tile meant no swipe on the shelf could ever
+  // scroll it. (The iOS callout setting cannot be read back in Chromium.)
+  test('a swipe on a sticker tile scrolls the shelf', async () => {
+    await renderTray();
+    const tile = document.querySelector('img[alt=":letter-0:"]')?.closest('button');
+    expect(tile).not.toBeNull();
+    const style = getComputedStyle(tile as HTMLElement);
+
+    expect(style.touchAction).toBe('pan-y');
+    expect(style.userSelect).toBe('none');
+  });
+});

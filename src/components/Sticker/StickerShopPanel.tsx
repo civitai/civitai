@@ -24,6 +24,7 @@ import { browseShopItems } from '~/components/Shop/shop-browse';
 import { STICKER_HOVER_CARD_WIDTH } from '~/components/Sticker/StickerPlacementHoverCard';
 import { HOVER_DELAY_MS } from '~/components/UserAvatar/hover-card.constants';
 import { StickerPriceBadge } from '~/components/Sticker/StickerPriceBadge';
+import { SHELF_TILE_STYLE } from '~/components/Sticker/shelf-tile-style';
 import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
 import { stickerPurchaseTerms } from '~/components/Sticker/sticker.util';
 import { isStickerKeptOffImage } from '~/shared/constants/cosmetic-flags.constants';
@@ -269,7 +270,7 @@ export function StickerShopPanel({
                       'relative flex shrink-0 cursor-grab flex-col items-center rounded border p-2',
                       dragging === tile.cosmeticId ? 'border-blue-5' : 'border-transparent'
                     )}
-                    style={{ touchAction: 'none' }}
+                    style={SHELF_TILE_STYLE}
                     onPointerDown={grab(tile.cosmeticId, {
                       pack: {
                         shopItemId: tile.shopItemId,
