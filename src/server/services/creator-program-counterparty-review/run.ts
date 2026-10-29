@@ -112,9 +112,46 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
 
   const byUser = new Map<number, CounterpartyPair[]>();
   for (const pair of pairs) byUser.set(pair.userId, [...(byUser.get(pair.userId) ?? []), pair]);
-  const members = await deps.findMembers([...byUser.keys()]);
+  const transfersByUser = new Map<number, IndirectTransfer[]>();
+  for (const t of transfers)
+    transfersByUser.set(t.userId, [...(transfersByUser.get(t.userId) ?? []), t]);
+  const allMembers = await deps.findMembers([
+    ...new Set([...byUser.keys(), ...transfersByUser.keys()]),
+  ]);
+  const members = allMembers.filter((m) => byUser.has(m.id));
 
+  // Which indirect paths to file, also decided before any warning goes out. A member with a direct
+  // finding gets these in it rather than a second finding.
+  const indirectDue = new Map<number, { transfers: IndirectTransfer[]; record: IndirectRecord }>();
+  try {
+    for (const member of allMembers) {
+      const memberTransfers = transfersByUser.get(member.id);
+      if (!memberTransfers) continue;
+      const record = (await deps.indirect.get(member.id)) ?? {};
+      if (!memberTransfers.some((t) => t.amount - (record[pathKey(t)] ?? 0) >= min)) continue;
+      indirectDue.set(member.id, {
+        transfers: memberTransfers,
+        record: {
+          ...record,
+          ...Object.fromEntries(memberTransfers.map((t) => [pathKey(t), t.amount])),
+        },
+      });
+    }
+  } catch (e) {
+    indirectDue.clear();
+    deps.log?.('creator-program-counterparty-review-indirect-failed', {
+      error: (e as Error).message,
+    });
+  }
   const findings: AbuseReportInput['findings'] = [];
+  const indirectRecords = new Map<number, { record: IndirectRecord; finding: Finding }>();
+  const file = (userId: number, finding: Finding) => {
+    findings.push(finding);
+    const due = indirectDue.get(userId);
+    if (due) indirectRecords.set(userId, { record: due.record, finding });
+    return finding;
+  };
+
   // Saved only once the report carrying the repeat has been filed: saved earlier, a failed report
   // would lose the repeat for good, since the next run would see no new volume.
   const repeatRecords = new Map<number, { record: WarningRecord; finding: Finding }>();
@@ -158,7 +195,16 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
             })
           );
       }
-      findings.push(toFinding(member.id, memberPairs, outcome, BANKABLE_CUTOVER));
+      file(
+        member.id,
+        toFinding(
+          member.id,
+          memberPairs,
+          outcome,
+          BANKABLE_CUTOVER,
+          indirectDue.get(member.id)?.transfers
+        )
+      );
       continue;
     }
 
@@ -168,13 +214,16 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     );
     if (!grew.length) continue;
 
-    const finding = toFinding(
+    const finding = file(
       member.id,
-      memberPairs,
-      { kind: 'repeat', warnedAt: new Date(record.warnedAt) },
-      BANKABLE_CUTOVER
+      toFinding(
+        member.id,
+        memberPairs,
+        { kind: 'repeat', warnedAt: new Date(record.warnedAt) },
+        BANKABLE_CUTOVER,
+        indirectDue.get(member.id)?.transfers
+      )
     );
-    findings.push(finding);
     repeatRecords.set(member.id, {
       record: { ...record, counterparties: { ...record.counterparties, ...current } },
       finding,
@@ -182,30 +231,12 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     repeats++;
   }
 
-  // Filed for a moderator only: no warning message, since more innocent patterns look like this.
-  const transfersByUser = new Map<number, IndirectTransfer[]>();
-  for (const t of transfers)
-    transfersByUser.set(t.userId, [...(transfersByUser.get(t.userId) ?? []), t]);
-  const indirectRecords = new Map<number, { record: IndirectRecord; finding: Finding }>();
-  const indirectMembers = transfersByUser.size
-    ? await deps.findMembers([...transfersByUser.keys()])
-    : [];
-  for (const member of indirectMembers) {
-    const memberTransfers = transfersByUser.get(member.id) ?? [];
-    const record = (await deps.indirect.get(member.id)) ?? {};
-    const grew = memberTransfers.filter((t) => t.amount - (record[pathKey(t)] ?? 0) >= min);
-    if (!grew.length) continue;
+  // The rest are filed for a moderator only: no warning message, since more innocent patterns look
+  // like this.
+  for (const [userId, { transfers: memberTransfers }] of indirectDue)
+    if (!indirectRecords.has(userId))
+      file(userId, toIndirectFinding(userId, memberTransfers, BANKABLE_CUTOVER));
 
-    const finding = toIndirectFinding(member.id, memberTransfers, BANKABLE_CUTOVER);
-    findings.push(finding);
-    indirectRecords.set(member.id, {
-      record: {
-        ...record,
-        ...Object.fromEntries(memberTransfers.map((t) => [pathKey(t), t.amount])),
-      },
-      finding,
-    });
-  }
   findings.sort((a, b) => b.confidence - a.confidence);
   findings.splice(MAX_FINDINGS_PER_REPORT);
   const indirect = [...indirectRecords.values()].filter(({ finding }) =>

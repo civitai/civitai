@@ -293,7 +293,9 @@ describe('runCounterpartyReview, indirect transfers', () => {
       expect.objectContaining({ userId: creator.id, confidence: 0.7, actioned: false }),
     ]);
     expect(report.findings[0]).not.toHaveProperty('action');
-    expect(report.findings[0].reason).toContain('through accounts 22 → 33: 3,000 Buzz');
+    expect(report.findings[0].reason).toContain(
+      'through accounts 22 → 33: 3,000 Buzz (loop 11-22-33)'
+    );
     expect(report.findings[0].reason.startsWith('No warning message was sent')).toBe(true);
     expect(report.counters).toMatchObject({ indirect: 1 });
     expect(w.indirectStore.get(creator.id)).toEqual({ '22>33': 3_000 });
@@ -390,31 +392,72 @@ describe('runCounterpartyReview, indirect transfers', () => {
     expect(reason.startsWith('No warning message was sent')).toBe(true);
   });
 
-  it('files a member with both a direct and an indirect exchange once each, warning only for the direct one', async () => {
+  it('files a member with both a direct and an indirect exchange once, with both in the reason', async () => {
     const w = world({ rows: [pair(22, 5_000, 4_000)], indirectRows: [loop([22, 33], 3_000)] });
 
     expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 1, indirect: 1 });
     expect(w.sendWarning).toHaveBeenCalledTimes(1);
-    expect(w.reports[0].findings.map((f) => f.confidence)).toEqual([0.9, 0.7]);
+    const { findings } = w.reports[0];
+    expect(findings).toEqual([
+      expect.objectContaining({ userId: creator.id, confidence: 0.9, action: WARNED_ACTION }),
+    ]);
+    expect(findings[0].reason).toContain('with account 22: received 5,000 Buzz, sent back 4,000');
+    expect(findings[0].reason).toContain('through accounts 22 → 33: 3,000 Buzz (loop 11-22-33)');
+    expect(w.indirectStore.get(creator.id)).toEqual({ '22>33': 3_000 });
   });
 
-  it('records an indirect path only when its own finding was filed, not another of the member', async () => {
+  it('names the same loop in the finding of every member of it, as a separate decision each', async () => {
+    const members: Member[] = [creator, { id: 22, username: null }, { id: 33, username: null }];
+    const w = world({
+      members,
+      indirectRows: [
+        loop([22, 33], 3_000),
+        { userId: 22, path: [33, 11], amount: 3_000 },
+        { userId: 33, path: [11, 22], amount: 3_000 },
+      ],
+    });
+
+    await runCounterpartyReview(w.deps);
+
+    const { findings } = w.reports[0];
+    expect(findings.map((f) => f.userId).sort()).toEqual([11, 22, 33]);
+    for (const f of findings) {
+      expect(f.reason).toContain('(loop 11-22-33)');
+      expect(f.groupKey ?? null).toBeNull();
+    }
+  });
+
+  it('still warns and files direct exchanges when reading filed indirect paths fails', async () => {
+    const w = world({ rows: [pair(22, 5_000, 4_000)], indirectRows: [loop([22, 33], 3_000)] });
+    w.deps.indirect.get = async () => {
+      throw new Error('redis down');
+    };
+
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 1, indirect: 0 });
+    expect(w.reports).toHaveLength(1);
+    expect(w.reports[0].findings).toEqual([
+      expect.objectContaining({ userId: creator.id, action: WARNED_ACTION }),
+    ]);
+    expect(w.reports[0].findings[0].reason).not.toContain('through accounts');
+    expect(w.logs).toContainEqual({
+      name: 'creator-program-counterparty-review-indirect-failed',
+      data: { error: 'redis down' },
+    });
+  });
+
+  it('records an indirect path only when its finding made it into the report', async () => {
     const others: Member[] = Array.from({ length: MAX_FINDINGS_PER_REPORT }, (_, i) => ({
       id: 5_000 + i,
       username: null,
     }));
     const w = world({
       members: [creator, ...others],
-      rows: [
-        pair(22, 5_000, 4_000),
-        ...others.map((m) => ({ ...pair(22, 5_000, 4_000), userId: m.id })),
-      ],
+      rows: others.map((m) => ({ ...pair(22, 5_000, 4_000), userId: m.id })),
       indirectRows: [loop([22, 33], 3_000)],
     });
 
     expect(await runCounterpartyReview(w.deps)).toMatchObject({ indirect: 0 });
-    expect(w.reports[0].findings.some((f) => f.userId === creator.id)).toBe(true);
-    expect(w.reports[0].findings.every((f) => f.confidence > 0.7)).toBe(true);
+    expect(w.reports[0].findings.some((f) => f.userId === creator.id)).toBe(false);
     expect(w.indirectStore.has(creator.id)).toBe(false);
   });
 

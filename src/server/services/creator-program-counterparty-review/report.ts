@@ -51,7 +51,8 @@ export type ReviewOutcome =
 export function renderReason(
   pairs: CounterpartyPair[],
   outcome: ReviewOutcome,
-  since: Date
+  since: Date,
+  indirect: IndirectTransfer[] = []
 ): string {
   const total = pairs.reduce((sum, p) => sum + twoWay(p), 0);
   const window = `since ${since.toISOString().slice(0, 10)}`;
@@ -62,7 +63,9 @@ export function renderReason(
     )} ${window} ` +
     `(${describePairs(
       pairs
-    )}). ${total.toLocaleString()} Buzz went both ways and was left out of their bankable earnings.`;
+    )}). ${total.toLocaleString()} Buzz went both ways and was left out of their bankable earnings.${
+      indirect.length ? ` ${describeIndirect(indirect, since)}` : ''
+    }`;
 
   switch (outcome.kind) {
     case 'warned':
@@ -88,9 +91,10 @@ export function toFinding(
   userId: number,
   pairs: CounterpartyPair[],
   outcome: ReviewOutcome,
-  since: Date
+  since: Date,
+  indirect: IndirectTransfer[] = []
 ): Finding {
-  const reason = renderReason(pairs, outcome, since);
+  const reason = renderReason(pairs, outcome, since, indirect);
   if (outcome.kind === 'warned')
     return { userId, confidence: 0.9, reason, actioned: true, action: WARNED_ACTION };
   return { userId, confidence: outcome.kind === 'repeat' ? 0.95 : 0.9, reason, actioned: false };
@@ -102,23 +106,40 @@ export const INDIRECT_CONFIDENCE = 0.7;
 /** Enough for a moderator to start from; the rest are counted, not listed. */
 const INDIRECT_PATHS_SHOWN = 5;
 
-export function renderIndirectReason(transfers: IndirectTransfer[], since: Date): string {
+/** The members of a transfer's loop, so a moderator can see which findings are one loop. */
+export const loopKey = (t: IndirectTransfer) =>
+  [t.userId, ...t.path].sort((a, b) => a - b).join('-');
+
+function describeIndirect(transfers: IndirectTransfer[], since: Date) {
   const shown = transfers
     .slice(0, INDIRECT_PATHS_SHOWN)
-    .map((t) => `through accounts ${t.path.join(' → ')}: ${t.amount.toLocaleString()} Buzz`)
+    .map(
+      (t) =>
+        `through accounts ${t.path.join(' → ')}: ${t.amount.toLocaleString()} Buzz (loop ${loopKey(
+          t
+        )})`
+    )
     .join('; ');
   const more = transfers.length - INDIRECT_PATHS_SHOWN;
+  return (
+    `Since ${since
+      .toISOString()
+      .slice(
+        0,
+        10
+      )} this creator sent Buzz to other accounts that, in turn, paid it on and back to them as bankable earnings (${shown}${
+      more > 0 ? `; and ${more} more` : ''
+    }). ` +
+    `Each amount is the smallest leg of totals since then; the order of the transfers is not checked.`
+  );
+}
+
+export function renderIndirectReason(transfers: IndirectTransfer[], since: Date): string {
   return truncateReason(
-    `No warning message was sent: whether this is abuse is a moderator decision. ${NO_ACTION_TAKEN} ` +
-      `Since ${since
-        .toISOString()
-        .slice(
-          0,
-          10
-        )} this creator sent Buzz to other accounts that, in turn, paid it on and back to them as bankable earnings (${shown}${
-        more > 0 ? `; and ${more} more` : ''
-      }). ` +
-      `Each amount is the smallest leg of totals since then; the order of the transfers is not checked.`
+    `No warning message was sent: whether this is abuse is a moderator decision. ${NO_ACTION_TAKEN} ${describeIndirect(
+      transfers,
+      since
+    )}`
   );
 }
 
@@ -154,6 +175,6 @@ export function renderSummary(counts: {
       'were'
     )} current Creator Program ${plural(counts.members, 'member')}. ` +
     `${counts.warned} warned for the first time, ${counts.repeats} filed again after a warning, ${counts.failed} could not be messaged. ` +
-    `${counts.indirect} filed for Buzz that came back through other accounts.`
+    `${counts.indirect} filed for indirect transfers.`
   );
 }
