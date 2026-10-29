@@ -139,7 +139,7 @@
     "@civitai/auth": "workspace:*",
     "@civitai/buzz": "workspace:*",
     "@civitai/components": "^0.13.0",
-    "@civitai/components-chat": "^0.32.1",
+    "@civitai/components-chat": "^0.33.0",
     "@civitai/cybertipline-tools": "^0.1.0",
     "@civitai/db-queries": "workspace:*",
     "@civitai/db-schema": "workspace:*",
