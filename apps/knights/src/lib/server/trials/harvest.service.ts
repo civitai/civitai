@@ -80,16 +80,20 @@ export async function harvestRulings(
       const inserted = await db
         .insertInto('KnightsReferenceImage')
         .values(
-          holding.map((row) => ({
-            imageId: row.imageId,
-            questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
-            pool: poolFor(row.imageId, config.hiddenCheckShare),
-            answer: String(row.level),
-            source: 'harvested',
-            modActivityId: row.activityId,
-            harvestedAt: utc(now),
-            updatedAt: utc(now),
-          }))
+          holding.map((row) => {
+            const pool = poolFor(row.imageId, config.hiddenCheckShare);
+            return {
+              imageId: row.imageId,
+              questionKey: KNIGHTS_NSFW_LEVEL_QUESTION,
+              pool,
+              status: config.spotCheck && pool === 'trials' ? 'pending' : 'active',
+              answer: String(row.level),
+              source: 'harvested',
+              modActivityId: row.activityId,
+              harvestedAt: utc(now),
+              updatedAt: utc(now),
+            };
+          })
         )
         .onConflict((oc) => oc.column('imageId').doNothing())
         .returning('id')
@@ -118,7 +122,7 @@ async function retireStale(db: Kysely<DB>, now: Date, config: HarvestConfig): Pr
   const result = await db
     .updateTable('KnightsReferenceImage as r')
     .set({ status: 'retired', updatedAt: utc(now) })
-    .where('r.status', '=', 'active')
+    .where('r.status', 'in', ['active', 'pending'])
     .where('r.source', '!=', 'core')
     .where((eb) =>
       eb.or([
