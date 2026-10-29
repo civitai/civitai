@@ -6,7 +6,7 @@ import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { castVote, ensureVotePartitions, enqueueItem } from '../queue/queue.service';
 import { getPlayerStatus } from '../player-status';
-import { RESET_REASON, SMITES } from './config';
+import { SMITES } from './config';
 import {
   activeSmiteCount,
   dismissResetNotice,
@@ -136,24 +136,28 @@ describe('career reset retry', () => {
 });
 
 describe('career reset notice', () => {
-  it('shows after a reset until dismissed, and not for an ordinary expiry', async () => {
+  const startAt = (id: number, at: Date) =>
+    pg.query(`UPDATE "NewOrderPlayer" SET "startAt"=$2 WHERE "userId"=$1`, [id, at]);
+  const later = (days: number) => new Date(NOW.getTime() + days * 86_400_000);
+
+  it('stays quiet about a reset from before the player first looked', async () => {
+    await seedPlayer(pg, 1, 'Knight', { startAt: '2026-12-10 00:00:00' });
+    expect(await hasUnseenReset(db, 1, NOW)).toBe(false);
+    expect(await hasUnseenReset(db, 1, NOW)).toBe(false);
+  });
+
+  it('shows a reset that lands after the first look until dismissed, whoever or whenever did it', async () => {
     await seedPlayer(pg, 1);
-    await pg.query(
-      `INSERT INTO "NewOrderSmite" ("targetPlayerId","cleansedAt","cleansedReason") VALUES (1,$1,'Smite expired')`,
-      [NOW]
-    );
-    expect(await hasUnseenReset(db, 1)).toBe(false);
-    await pg.query(
-      `INSERT INTO "NewOrderSmite" ("targetPlayerId","cleansedAt","cleansedReason") VALUES (1,$1,$2)`,
-      [NOW, RESET_REASON]
-    );
-    expect(await hasUnseenReset(db, 1)).toBe(true);
-    await dismissResetNotice(db, 1, new Date(NOW.getTime() + 1000));
-    expect(await hasUnseenReset(db, 1)).toBe(false);
-    await pg.query(
-      `INSERT INTO "NewOrderSmite" ("targetPlayerId","cleansedAt","cleansedReason") VALUES (1,$1,$2)`,
-      [new Date(NOW.getTime() + 86_400_000), RESET_REASON]
-    );
-    expect(await hasUnseenReset(db, 1)).toBe(true);
+    await hasUnseenReset(db, 1, NOW);
+    await startAt(1, later(1));
+    expect(await hasUnseenReset(db, 1, later(2))).toBe(true);
+    await dismissResetNotice(db, 1, later(2));
+    expect(await hasUnseenReset(db, 1, later(2))).toBe(false);
+    await startAt(1, later(3));
+    expect(await hasUnseenReset(db, 1, later(4))).toBe(true);
+  });
+
+  it('has nothing to show a user who has not joined', async () => {
+    expect(await hasUnseenReset(db, 99, NOW)).toBe(false);
   });
 });

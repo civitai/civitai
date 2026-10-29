@@ -42,6 +42,19 @@ describe('resetPlayerInMainApp', () => {
     await expect(resetPlayerInMainApp(9)).rejects.toThrow();
   });
 
+  it('throws on a refused token or an unconfigured endpoint, so the reset is retried', async () => {
+    fetchMock.mockResolvedValueOnce(answer({ error: 'Unauthorized' }, 401));
+    await expect(resetPlayerInMainApp(9)).rejects.toThrow(/401/);
+    fetchMock.mockResolvedValueOnce(answer({ error: 'Endpoint not configured' }, 503));
+    await expect(resetPlayerInMainApp(9)).rejects.toThrow(/503/);
+  });
+
+  it.each(['', '   '])('treats a blank token (%j) as not configured', async (blank) => {
+    process.env.WEBHOOK_TOKEN = blank;
+    await expect(resetPlayerInMainApp(9)).rejects.toThrow(/WEBHOOK_TOKEN/);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it('throws when the token is not configured', async () => {
     delete process.env.WEBHOOK_TOKEN;
     await expect(resetPlayerInMainApp(9)).rejects.toThrow(/WEBHOOK_TOKEN/);

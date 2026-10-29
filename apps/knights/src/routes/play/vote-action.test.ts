@@ -9,8 +9,13 @@ vi.mock('$lib/server/queue/runtime', () => ({
 }));
 vi.mock('$lib/server/daily/daily.service', () => ({}));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
+vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 1 }) }));
 vi.mock('$lib/server/smites/smites.service', () => ({}));
-vi.mock('$lib/server/hidden/hidden.service', () => ({ answerHiddenCheck, pickHiddenCheck: vi.fn() }));
+vi.mock('$lib/server/hidden/hidden.service', () => ({
+  answerHiddenCheck,
+  pickHiddenCheck: vi.fn(),
+  takeHiddenNotices: vi.fn(),
+}));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote, getFeed: vi.fn() }));
 
 const { sealItem } = await import('$lib/server/feed-token');
@@ -99,41 +104,41 @@ describe('vote action', () => {
     expect(castVote).not.toHaveBeenCalled();
   });
 
-  it('grades a hidden check at once and never casts a vote', async () => {
-    answerHiddenCheck.mockResolvedValue({
-      status: 'graded',
-      correct: false,
-      correctLabel: 'R',
-      imageKey: 'key-1',
-      consequence: 'smite',
-      activeSmites: 1,
-    });
+  it('answers a hidden check exactly as it answers a vote', async () => {
+    castVote.mockResolvedValue({ status: 'recorded' });
+    answerHiddenCheck.mockResolvedValue({ status: 'recorded' });
 
-    const result = await submit({ item: hiddenItem(5), answer: '8' });
+    const asVote = await submit({ item: queueItem(3), answer: '4' });
+    const asCheck = await submit({ item: hiddenItem(5), answer: '8' });
 
-    expect(castVote).not.toHaveBeenCalled();
+    expect(asCheck).toEqual(asVote);
+    expect(asCheck).toEqual({ success: true });
     expect(answerHiddenCheck).toHaveBeenCalledWith(
       expect.anything(),
-      { userId: 7, referenceId: 5, answer: '8' },
+      expect.objectContaining({ userId: 7, referenceId: 5, answer: '8' }),
       expect.anything()
     );
-    expect(result).toMatchObject({
-      success: true,
-      reveal: { correct: false, correctLabel: 'R', src: 'key-1' },
-      consequence: expect.stringMatching(/smote/i),
-    });
+    expect(castVote).toHaveBeenCalledTimes(1);
   });
 
-  it('says nothing about a penalty when the check was right', async () => {
+  it('refuses a hidden check with the same message and status as a vote', async () => {
+    const rejected = { status: 'rejected', reason: 'reset-pending' };
+    castVote.mockResolvedValue(rejected);
+    answerHiddenCheck.mockResolvedValue(rejected);
+    expect(await submit({ item: hiddenItem(5), answer: '8' })).toEqual(
+      await submit({ item: queueItem(3), answer: '4' })
+    );
+  });
+
+  it('paces a hidden check like a vote', async () => {
     answerHiddenCheck.mockResolvedValue({
-      status: 'graded',
-      correct: true,
-      correctLabel: 'R',
-      imageKey: 'key-1',
-      consequence: 'none',
-      activeSmites: 0,
+      status: 'limited',
+      until: new Date('2026-12-15T12:00:30Z'),
     });
-    expect(await submit({ item: hiddenItem(5), answer: '4' })).toMatchObject({ consequence: null });
+    expect(await submit({ item: hiddenItem(5), answer: '8' })).toMatchObject({
+      status: 429,
+      data: { lockoutSeconds: 30 },
+    });
   });
 
   it('tells a player whose career reset is pending why they cannot vote', async () => {

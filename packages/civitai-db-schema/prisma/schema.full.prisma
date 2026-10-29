@@ -8098,8 +8098,8 @@ model KnightsPlayer {
   shields           Int       @default(0)
   shieldWeek        DateTime  @db.Date
   recapDismissedFor DateTime? @db.Date
-  /// When the player last dismissed the notice that a smite-triggered career reset happened.
-  resetNoticeSeenAt DateTime?
+  /// The `NewOrderPlayer.startAt` the player has been told about; a later one is a career reset they have not seen yet.
+  startAtSeen DateTime?
 }
 
 /// One row per player per UTC day on which they voted. `goldRecorded` counts against the daily cap;
@@ -8180,6 +8180,10 @@ model KnightsHiddenCheckAnswer {
   imageId     Int
   answer      String
   correct     Boolean
+  /// What the answer cost the player (warning | smite); null when it cost nothing.
+  consequence String?
+  /// When the player was shown that cost.
+  noticedAt   DateTime?
   createdAt   DateTime              @default(now())
 
   @@unique([playerId, referenceId])

@@ -27,8 +27,9 @@ export const POST: RequestHandler = async ({ request }) => {
   const progression = await settle('progression', () =>
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
   );
-  const smites = await settle('smite expiry', () => expireSmites(db, new Date()));
+  // Resets first: a smite that lapses must not drop a player out of a reset that is already due.
   const resets = await settle('career resets', () => resetPendingPlayers(db, resetDeps));
+  const smites = await settle('smite expiry', () => expireSmites(db, new Date()));
   if (
     !expired.ok ||
     !writeBacks.ok ||

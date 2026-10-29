@@ -10,6 +10,7 @@ import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp
 import { ledgerOf, settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '@civitai/db/knights';
 import { SMITES } from '../smites/config';
+import { activeSmiteCount } from '../smites/smites.service';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
 import { isRank, RANKS, type Rank } from '../ranks';
 import { canVote, FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
@@ -282,6 +283,24 @@ const rankOrder = sql`CASE "i"."minRank" ${sql.join(
 /** First key of the per-player advisory lock that serialises a player's paced votes. */
 const VOTE_PACING_LOCK_NAMESPACE = 7_301;
 
+/**
+ * When a paced player may answer again, or null. Pacing must hold across parallel requests, so one player's answers queue on an
+ * advisory lock before they count the ledger. Take it ahead of every row lock; nothing else waits on it while holding a lock of
+ * its own, so it cannot join a deadlock cycle.
+ */
+export async function pacingGate(
+  trx: Transaction<DB>,
+  input: { userId: number; isModerator?: boolean },
+  now: Date,
+  deps: Pick<QueueDeps, 'voteLimits'>
+): Promise<Date | null> {
+  if (!deps.voteLimits || input.isModerator) return null;
+  await sql`SELECT pg_advisory_xact_lock(${VOTE_PACING_LOCK_NAMESPACE}, ${input.userId})`.execute(
+    trx
+  );
+  return voteLockUntil(trx, input.userId, now, deps.voteLimits);
+}
+
 export async function castVote(
   db: Kysely<DB>,
   input: { userId: number; itemId: number; answer: string; isModerator?: boolean },
@@ -298,16 +317,8 @@ export async function castVote(
           result: { status: 'rejected', reason } as const,
         });
 
-        // Pacing must hold across parallel requests, so one player's votes queue on this lock before they
-        // count the ledger. It is taken ahead of every row lock below, and nothing else waits on it while
-        // holding a lock of its own, so it cannot join a deadlock cycle.
-        if (deps.voteLimits && !input.isModerator) {
-          await sql`SELECT pg_advisory_xact_lock(${VOTE_PACING_LOCK_NAMESPACE}, ${input.userId})`.execute(
-            trx
-          );
-          const until = await voteLockUntil(trx, input.userId, now, deps.voteLimits);
-          if (until) return { result: { status: 'limited', until } as const };
-        }
+        const until = await pacingGate(trx, input, now, deps);
+        if (until) return { result: { status: 'limited', until } as const };
 
         // The item row lock serialises every vote on one item: it is what keeps one vote per player
         // (the partitioned ledger cannot carry that unique key) and lets only one vote resolve the item.
@@ -356,15 +367,10 @@ export async function castVote(
           .executeTakeFirst();
         if (already) return rejected('already-voted');
 
-        const smites = await trx
-          .selectFrom('NewOrderSmite')
-          .select((eb) => eb.fn.countAll<string>().as('n'))
-          .where('targetPlayerId', '=', input.userId)
-          .where('cleansedAt', 'is', null)
-          .executeTakeFirstOrThrow();
+        const smites = await activeSmiteCount(trx, input.userId);
 
         // A career reset is pending; the player does not play on until it is done.
-        if (Number(smites.n) >= SMITES.max) return rejected('reset-pending');
+        if (smites >= SMITES.max) return rejected('reset-pending');
 
         const { belowBar } = standingOf(player.rankType, await ledgerOf(trx, input.userId));
 
@@ -372,7 +378,7 @@ export async function castVote(
         const weight = voteWeight({
           rank: player.rankType,
           level: levelForExp(player.exp),
-          smites: Number(smites.n),
+          smites,
           belowBar,
         });
         if (weight <= 0) return rejected('no-weight');

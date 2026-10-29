@@ -20,11 +20,12 @@
   ·
   <span
     class="hearts"
-    title="Receive {hearts} more smites and it's game over!"
+    role="img"
     aria-label="{hearts} of {status.maxSmites} hearts left"
+    title="Each smite costs a heart. Lose all {status.maxSmites} and your career resets."
   >
     {#each { length: status.maxSmites } as _, heart (heart)}
-      <span class:lost={heart >= hearts}>{heart < hearts ? '♥' : '♡'}</span>
+      <span aria-hidden="true" class:lost={heart >= hearts}>{heart < hearts ? '♥' : '♡'}</span>
     {/each}
   </span>
   {@render links?.()}

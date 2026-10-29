@@ -3,7 +3,7 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { ensureKeeper } from '../daily/daily.service';
 import { utcDay } from '../daily/days';
-import { RESET_REASON, SMITES } from './config';
+import { SMITES } from './config';
 
 type Executor = Kysely<DB> | Transaction<DB>;
 
@@ -109,26 +109,37 @@ export async function resetPendingPlayers(
   return { due: due.length, failed };
 }
 
-/** True from the reset until the player dismisses the notice. */
-export async function hasUnseenReset(db: Executor, playerId: number): Promise<boolean> {
-  const row = await db
-    .selectFrom('NewOrderSmite as s')
-    .select('s.id')
-    .where('s.targetPlayerId', '=', playerId)
-    .where('s.cleansedReason', '=', RESET_REASON)
-    .where(
-      sql<boolean>`s."cleansedAt" > COALESCE((SELECT "resetNoticeSeenAt" FROM "KnightsPlayer" WHERE "playerId" = s."targetPlayerId"), 'epoch')`
-    )
-    .limit(1)
+/**
+ * Whether the player's career was reset since they last looked. A reset moves `NewOrderPlayer.startAt`, whoever did it
+ * and whenever it landed. The first look only records where they stand, so resets from before then stay quiet.
+ */
+export async function hasUnseenReset(db: Executor, playerId: number, now: Date): Promise<boolean> {
+  const player = await db
+    .selectFrom('NewOrderPlayer as p')
+    .leftJoin('KnightsPlayer as k', 'k.playerId', 'p.userId')
+    .select(['p.startAt', 'k.startAtSeen', 'k.playerId as keeper'])
+    .where('p.userId', '=', playerId)
     .executeTakeFirst();
-  return row !== undefined;
+  if (!player) return false;
+  if (player.startAtSeen) return player.startAt > player.startAtSeen;
+
+  if (!player.keeper) await ensureKeeper(db, playerId, utcDay(now));
+  await db
+    .updateTable('KnightsPlayer')
+    .set({ startAtSeen: utc(player.startAt) })
+    .where('playerId', '=', playerId)
+    .where('startAtSeen', 'is', null)
+    .execute();
+  return false;
 }
 
 export async function dismissResetNotice(db: Executor, playerId: number, now: Date): Promise<void> {
   await ensureKeeper(db, playerId, utcDay(now));
   await db
     .updateTable('KnightsPlayer')
-    .set({ resetNoticeSeenAt: utc(now) })
+    .set({
+      startAtSeen: sql<Date>`(SELECT "startAt" FROM "NewOrderPlayer" WHERE "userId" = ${playerId})`,
+    })
     .where('playerId', '=', playerId)
     .execute();
 }

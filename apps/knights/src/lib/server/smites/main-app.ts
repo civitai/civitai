@@ -5,7 +5,8 @@ const trimSlash = (value: string) => (value.endsWith('/') ? value.slice(0, -1) :
 /** The main app owns `resetPlayer`, so the reset has one implementation. It answers 200 once the career is reset or no longer due; anything else throws and is retried. */
 export async function resetPlayerInMainApp(playerId: number): Promise<void> {
   const token = env.WEBHOOK_TOKEN;
-  if (!token) throw new Error('WEBHOOK_TOKEN is not configured');
+  // The endpoint answers 503 to a blank secret and compares the presented token untrimmed, so send it as configured.
+  if (!token?.trim()) throw new Error('WEBHOOK_TOKEN is not configured');
 
   const base = trimSlash(env.CIVITAI_APP_URL || 'https://civitai.com');
   const res = await fetch(`${base}/api/mod/knights/reset-player`, {

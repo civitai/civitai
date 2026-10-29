@@ -3692,6 +3692,14 @@ export type KnightsHiddenCheckAnswer = {
   imageId: number;
   answer: string;
   correct: boolean;
+  /**
+   * What the answer cost the player (warning | smite); null when it cost nothing.
+   */
+  consequence: string | null;
+  /**
+   * When the player was shown that cost.
+   */
+  noticedAt: Timestamp | null;
   createdAt: Generated<Timestamp>;
 };
 export type KnightsPlayer = {
@@ -3702,9 +3710,9 @@ export type KnightsPlayer = {
   shieldWeek: Timestamp;
   recapDismissedFor: Timestamp | null;
   /**
-   * When the player last dismissed the notice that a smite-triggered career reset happened.
+   * The `NewOrderPlayer.startAt` the player has been told about; a later one is a career reset they have not seen yet.
    */
-  resetNoticeSeenAt: Timestamp | null;
+  startAtSeen: Timestamp | null;
 };
 export type KnightsPlayerDay = {
   playerId: number;

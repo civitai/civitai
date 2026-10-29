@@ -8,6 +8,7 @@ const getRecap = vi.hoisted(() => vi.fn());
 const dismissRecap = vi.hoisted(() => vi.fn());
 const pickHiddenCheck = vi.hoisted(() => vi.fn());
 const hasUnseenReset = vi.hoisted(() => vi.fn());
+const takeHiddenNotices = vi.hoisted(() => vi.fn());
 const voteLockUntil = vi.hoisted(() => vi.fn());
 const queueDeps = vi.hoisted(() => ({
   now: () => new Date('2026-12-15T12:00:00Z'),
@@ -21,8 +22,16 @@ vi.mock('$lib/server/queue/runtime', () => ({ queueDeps }));
 vi.mock('$lib/server/queue/vote-rate', () => ({ voteLockUntil }));
 vi.mock('$lib/server/daily/daily.service', () => ({ getDailyStatus, getRecap, dismissRecap }));
 vi.mock('$lib/server/smites/runtime', () => ({ feedSecret: () => 'secret', resetDeps: {} }));
-vi.mock('$lib/server/smites/smites.service', () => ({ hasUnseenReset, dismissResetNotice: vi.fn() }));
-vi.mock('$lib/server/hidden/hidden.service', () => ({ pickHiddenCheck, answerHiddenCheck: vi.fn() }));
+vi.mock('$lib/server/smites/smites.service', () => ({
+  hasUnseenReset,
+  dismissResetNotice: vi.fn(),
+}));
+vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({ rate: 0.5 }) }));
+vi.mock('$lib/server/hidden/hidden.service', () => ({
+  pickHiddenCheck,
+  answerHiddenCheck: vi.fn(),
+  takeHiddenNotices,
+}));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote: vi.fn(), getFeed }));
 vi.mock('$lib/server/trials/runtime', () => ({ trialDeps: {} }));
 vi.mock('$lib/server/trials/trials.service', () => ({ answerTrial: vi.fn(), getTrial }));
@@ -48,6 +57,8 @@ beforeEach(() => {
   pickHiddenCheck.mockResolvedValue(null);
   hasUnseenReset.mockReset();
   hasUnseenReset.mockResolvedValue(false);
+  takeHiddenNotices.mockReset();
+  takeHiddenNotices.mockResolvedValue([]);
   voteLockUntil.mockReset();
   queueDeps.voteLimits = undefined;
 });
@@ -184,9 +195,29 @@ describe('play load feed', () => {
     expect(page.resetPending).toBe(true);
   });
 
-  it('carries the reset notice', async () => {
+  it('carries the reset notice and the notices from hidden checks', async () => {
     hasUnseenReset.mockResolvedValue(true);
-    expect((await run()).resetNotice).toBe(true);
+    takeHiddenNotices.mockResolvedValue([{ title: 'T', message: 'M' }]);
+    const page = await run();
+    expect(page.resetNotice).toBe(true);
+    expect(page.notices).toEqual([{ title: 'T', message: 'M' }]);
+  });
+
+  it('shows the reset notice on the Trials page, where a reset player lands', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, smites: 0, maxSmites: 3 });
+    getTrial.mockResolvedValue({ kind: 'unavailable' });
+    hasUnseenReset.mockResolvedValue(true);
+    const page = await run();
+    expect(page.mode).toBe('trials');
+    expect(page.resetNotice).toBe(true);
+  });
+
+  it('asks for a check only for the question the feed shows, at the configured rate', async () => {
+    await run();
+    expect(pickHiddenCheck).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ questionKey: 'q', rate: 0.5 })
+    );
   });
 });
 

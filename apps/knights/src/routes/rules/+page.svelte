@@ -16,7 +16,7 @@
 <h2>Acolyte Trials</h2>
 <ul>
   <li>
-    Everyone begins as an Acolyte. A Trial is a run of {facts.trials.length} images with known
+    Everyone begins as an Acolyte. A Trial is a run of up to {facts.trials.length} images with known
     answers; the first ones come with an explanation of why.
   </li>
   <li>
@@ -114,7 +114,7 @@
 <h2>Smites and hearts</h2>
 <ul>
   <li>
-    Judging in bad faith earns smites. Each smite lowers the weight of your votes.
+    Judging in bad faith earns smites. Each smite lowers the weight of your votes, and right judgments wear smites away.
   </li>
   <li>
     You have {facts.hearts} hearts. Lose them all and your career resets: you start again from the

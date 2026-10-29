@@ -5117,7 +5117,7 @@ export interface KnightsPlayer {
   shields: number;
   shieldWeek: Date;
   recapDismissedFor: Date | null;
-  resetNoticeSeenAt: Date | null;
+  startAtSeen: Date | null;
 }
 
 export interface KnightsPlayerDay {
@@ -5182,6 +5182,8 @@ export interface KnightsHiddenCheckAnswer {
   imageId: number;
   answer: string;
   correct: boolean;
+  consequence: string | null;
+  noticedAt: Date | null;
   createdAt: Date;
 }
 

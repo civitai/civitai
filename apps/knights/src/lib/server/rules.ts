@@ -2,10 +2,8 @@ import { browsingLevelDescriptions, browsingLevelLabels, NsfwLevel } from '@civi
 import { DAILY, streakBonusGold } from './daily/config';
 import { goldForRank, PROGRESSION, RATING } from './progression/config';
 import { rankTable } from './progression/rating';
+import { SMITES } from './smites/config';
 import { TRIALS } from './trials/config';
-
-/** Hardcoded until the smite rules define it; keep in sync with them. */
-const HEARTS = 3;
 
 const RATING_GUIDE_LEVELS = [
   NsfwLevel.PG,
@@ -16,7 +14,7 @@ const RATING_GUIDE_LEVELS = [
   NsfwLevel.Blocked,
 ] as const;
 
-/** Numbers the rules page quotes. Read from the game's config, except HEARTS. */
+/** Numbers the rules page quotes, read from the game's config. */
 export function rulesFacts() {
   return {
     trials: {
@@ -41,7 +39,7 @@ export function rulesFacts() {
       streakCap: DAILY.streakCap,
       maxShields: DAILY.maxShields,
     },
-    hearts: HEARTS,
+    hearts: SMITES.max,
     ratingGuide: RATING_GUIDE_LEVELS.map((level) => ({
       level,
       label: browsingLevelLabels[level],

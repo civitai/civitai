@@ -3,14 +3,18 @@ import { db } from '$lib/server/db';
 import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
 import { imageUrl } from '$lib/server/image-url';
 import { openItem, sealItem } from '$lib/server/feed-token';
-import { answerHiddenCheck, pickHiddenCheck } from '$lib/server/hidden/hidden.service';
+import {
+  answerHiddenCheck,
+  pickHiddenCheck,
+  takeHiddenNotices,
+} from '$lib/server/hidden/hidden.service';
+import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { requireMember } from '$lib/server/membership';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
 import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { feedSecret, resetDeps } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
-import { SMITES } from '$lib/server/smites/config';
 import { trialDeps } from '$lib/server/trials/runtime';
 import { answerTrial, getTrial } from '$lib/server/trials/trials.service';
 import type { Actions, PageServerLoad } from './$types';
@@ -26,20 +30,6 @@ const REJECTION_TEXT: Record<RejectReason, string> = {
   'reset-pending': 'Your career is being reset. Return in a moment.',
 };
 
-const HIDDEN_REJECTION_TEXT = {
-  ...REJECTION_TEXT,
-  'already-answered': REJECTION_TEXT['already-voted'],
-} as const;
-
-const CONSEQUENCE_TEXT = {
-  none: null,
-  warning:
-    'You rated a validation image incorrectly. This is your warning: another failure may cost you a heart.',
-  smite:
-    'You have been smote. A heart is lost, and your judgment weighs less until you cleanse it with right judgments.',
-  reset: `Your smites reached the limit of ${SMITES.max}. Your career has been reset to Acolyte.`,
-} as const;
-
 const TRIAL_REJECTION_TEXT = {
   'no-player': 'You have not joined the Order yet.',
   'no-run': 'You have no trial under way.',
@@ -50,13 +40,20 @@ const TRIAL_REJECTION_TEXT = {
 export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
   const status = await requireMember(db, locals.user.id);
+  const now = queueDeps.now();
+  // Shown on whichever page the player lands on: a reset player lands on the Trials.
+  const [resetNotice, notices] = await Promise.all([
+    hasUnseenReset(db, locals.user.id, now),
+    takeHiddenNotices(db, locals.user.id, now),
+  ]);
+  const common = { status, resetNotice, notices };
 
   if (status.rank === 'Acolyte') {
     const trial = await getTrial(db, locals.user.id, trialDeps);
     if (trial.kind !== 'not-acolyte') {
       return {
         mode: 'trials' as const,
-        status,
+        ...common,
         trial:
           trial.kind === 'question'
             ? {
@@ -79,16 +76,14 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     }
   }
 
-  const now = queueDeps.now();
   const lockedUntil =
     queueDeps.voteLimits && !locals.user.isModerator
       ? await voteLockUntil(db, locals.user.id, now, queueDeps.voteLimits)
       : null;
-  const [feed, daily, recap, resetNotice] = await Promise.all([
+  const [feed, daily, recap] = await Promise.all([
     lockedUntil ? null : getFeed(db, locals.user.id, { limit: 1 }),
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
-    hasUnseenReset(db, locals.user.id),
   ]);
   const resetPending = status.smites >= status.maxSmites;
   const lockoutSeconds = lockedUntil
@@ -96,17 +91,22 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     : null;
   const page = {
     mode: 'queue' as const,
-    status,
+    ...common,
     daily,
     recap,
-    resetNotice,
     resetPending,
     lockoutSeconds,
   };
   if (!feed || resetPending) return { ...page, question: null, item: null };
 
   const secret = feedSecret();
-  const hidden = await pickHiddenCheck(db, { userId: locals.user.id, rank: status.rank, secret });
+  const hidden = await pickHiddenCheck(db, {
+    userId: locals.user.id,
+    rank: status.rank,
+    secret,
+    questionKey: feed.question.key,
+    rate: hiddenSettings().rate,
+  });
   if (hidden) {
     return {
       ...page,
@@ -146,32 +146,23 @@ export const actions: Actions = {
     const itemId = ref.id;
 
     try {
-      if (ref.kind === 'hidden') {
-        const result = await answerHiddenCheck(
-          db,
-          { userId: locals.user.id, referenceId: itemId, answer },
-          { ...resetDeps, now: queueDeps.now }
-        );
-        if (result.status === 'rejected') {
-          return fail(409, { message: HIDDEN_REJECTION_TEXT[result.reason] });
-        }
-        return {
-          success: true,
-          reveal: {
-            correct: result.correct,
-            correctLabel: result.correctLabel,
-            explanation: null,
-            src: imageUrl(result.imageKey),
-            finished: undefined,
-          },
-          consequence: CONSEQUENCE_TEXT[result.consequence],
-        };
-      }
-      const result = await castVote(
-        db,
-        { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
-        queueDeps
-      );
+      const result =
+        ref.kind === 'hidden'
+          ? await answerHiddenCheck(
+              db,
+              {
+                userId: locals.user.id,
+                referenceId: itemId,
+                answer,
+                isModerator: locals.user.isModerator,
+              },
+              { ...resetDeps, ...queueDeps, settings: hiddenSettings() }
+            )
+          : await castVote(
+              db,
+              { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
+              queueDeps
+            );
       if (result.status === 'limited') {
         return fail(429, {
           message: 'You are judging too quickly. Rest a little.',
@@ -205,7 +196,10 @@ export const actions: Actions = {
       await dismissResetNotice(db, locals.user.id, queueDeps.now());
     } catch (error) {
       console.error('knights: could not store the reset notice dismissal', { error });
-      return fail(500, { message: 'Could not dismiss the notice. Try again.', recapFailed: true });
+      return fail(500, {
+        message: 'Could not dismiss the notice. Try again.',
+        resetNoticeFailed: true,
+      });
     }
   },
 

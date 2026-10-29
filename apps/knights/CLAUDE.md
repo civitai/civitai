@@ -126,10 +126,10 @@ index `KnightsQueueItem_open_question_image_key` (migration `20261211120000_knig
 
 ## Hidden checks and smites
 
-Details: [`docs/features/knights-hidden-checks-and-smites.md`](../../docs/features/knights-hidden-checks-and-smites.md); migration `20261219120000_knights_v2_smites` (by hand). Values: `hidden/config.ts`, `smites/config.ts`.
+Details: [`docs/features/knights-hidden-checks-and-smites.md`](../../docs/features/knights-hidden-checks-and-smites.md). Migration `20261219120000_knights_v2_smites` (by hand). Values: `hidden/config.ts` (env), `smites/config.ts`.
 
-- Hidden checks (`src/lib/server/hidden`): known-answer images in a Knight's feed, graded at once, never in the queue, no vote, XP or gold. Feed items are addressed by sealed tokens (`feed-token.ts`, `FEED_TOKEN_SECRET`).
-- Smites (`src/lib/server/smites`) use the shared `NewOrderSmite` table; settled correct votes work them off. The career reset goes through the main app's `resetPlayer` (`/api/mod/knights/reset-player`); active smites are the pending record and the tick retries.
+- Never put a raw item id in the page: every feed item is a sealed token (`feed-token.ts`), so a hidden check cannot be told from a queue item, and answering one returns exactly what a vote returns.
+- Active smites are the pending record of a career reset: no separate flag; the tick retries the main-app reset until they are gone.
 
 ## Wired packages
 

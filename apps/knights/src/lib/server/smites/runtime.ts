@@ -4,9 +4,9 @@ import type { ResetDeps } from './smites.service';
 
 export const resetDeps: ResetDeps = { resetPlayer: resetPlayerInMainApp };
 
-/** Key for the sealed feed item ids. */
+/** Key for the sealed feed item ids. The feed fails closed without it. */
 export function feedSecret(): string {
-  const secret = env.FEED_TOKEN_SECRET || env.JOBS_TOKEN;
-  if (!secret) throw new Error('FEED_TOKEN_SECRET is not configured');
+  const secret = env.FEED_TOKEN_SECRET?.trim();
+  if (!secret) throw new Error('FEED_TOKEN_SECRET is not configured; the feed cannot be served');
   return secret;
 }

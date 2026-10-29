@@ -1,11 +1,16 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const count = dbMock.dbWrite.newOrderSmite.count;
 
-const { resetPlayer } = vi.hoisted(() => ({ resetPlayer: vi.fn() }));
+const { resetPlayer, withDistributedLock } = vi.hoisted(() => ({
+  resetPlayer: vi.fn(),
+  withDistributedLock: vi.fn(),
+}));
 vi.mock('~/server/services/games/new-order.service', () => ({ resetPlayer }));
+vi.mock('~/server/utils/distributed-lock', () => ({ withDistributedLock }));
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: (req: NextApiRequest, res: NextApiResponse) => unknown) => handler,
 }));
@@ -21,6 +26,7 @@ const call = async (method: string, body: Record<string, unknown>) => {
 beforeEach(() => {
   vi.clearAllMocks();
   count.mockResolvedValue(3);
+  withDistributedLock.mockImplementation(async (_options, operation) => operation());
 });
 
 describe('/api/mod/knights/reset-player', () => {
@@ -45,9 +51,40 @@ describe('/api/mod/knights/reset-player', () => {
     expect(res.json).toHaveBeenCalledWith({ playerId: 9, outcome: 'not-due' });
   });
 
-  it('lets a failing reset surface, so the caller retries', async () => {
-    resetPlayer.mockRejectedValue(new Error('redis down'));
-    await expect(call('POST', { playerId: '9' })).rejects.toThrow('redis down');
+  it('decides under a lock held for that player', async () => {
+    await call('POST', { playerId: '9' });
+    expect(withDistributedLock).toHaveBeenCalledWith(
+      expect.objectContaining({ key: 'knights:reset-player:9' }),
+      expect.any(Function)
+    );
+  });
+
+  it('asks the caller to retry when another reset of the player holds the lock', async () => {
+    withDistributedLock.mockResolvedValue(null);
+    const res = await call('POST', { playerId: '9' });
+    expect(resetPlayer).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(503);
+  });
+
+  it('lets a reset that did not happen surface, so the caller retries', async () => {
+    resetPlayer.mockRejectedValue(new Error('db down'));
+    await expect(call('POST', { playerId: '9' })).rejects.toThrow('db down');
+  });
+
+  it('answers reset and logs when only the side effects after the commit failed', async () => {
+    resetPlayer.mockImplementation(async () => {
+      count.mockResolvedValue(0);
+      throw new Error('redis down');
+    });
+    const res = await call('POST', { playerId: '9' });
+
+    expect(res.json).toHaveBeenCalledWith({ playerId: 9, outcome: 'reset' });
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'knights-reset-side-effects-failed',
+        details: { playerId: 9 },
+      })
+    );
   });
 
   it.each([
