@@ -242,6 +242,7 @@ import {
   stripMinorHashMeta,
   stripModerationOwnedMeta,
   stripServerOwnedMeta,
+  systemNsfwLockMarker,
   withPrivateCannotPromote,
 } from '~/server/utils/minor-flag-meta';
 import {
@@ -3452,6 +3453,7 @@ export const upsertModel = async (
       if (!storedLockedProperties.includes('nsfw')) {
         data.nsfw = true;
         data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
+        meta = { ...meta, systemNsfwLock: systemNsfwLockMarker('profanity-filter') };
         profanityAutoNsfw = true;
       }
     }
@@ -4051,6 +4053,7 @@ export async function applyModelContentChange({
       const meta = {
         ...((stored.meta as MixedObject | null) ?? {}),
         ...flagged.metaPatch,
+        ...(flagged.lock && { systemNsfwLock: systemNsfwLockMarker('profanity-filter') }),
       } as Prisma.InputJsonObject;
       // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-
       // rolling the jsonb + text[] binds is where that trade stops being worth it. The

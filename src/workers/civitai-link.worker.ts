@@ -8,7 +8,6 @@ import type {
   ResponseStatus,
   ActivitiesResponse,
 } from '~/components/CivitaiLink/shared-types';
-import { v4 as uuid } from 'uuid';
 import type { CivitaiLinkInstance } from '~/components/CivitaiLink/civitai-link-api';
 import {
   createLinkInstance,
@@ -49,7 +48,7 @@ const socket: SocketClient = io(getCivitaiLinkBaseUrl() ?? 'http://localhost:300
 // helpers
 const sendCommand = (payload: Omit<Command, 'id' | 'createdAt'>) => {
   const _payload = payload as Command;
-  _payload.id = uuid();
+  _payload.id = crypto.randomUUID();
   _payload.createdAt = new Date();
   socket.emit('command', _payload);
 };

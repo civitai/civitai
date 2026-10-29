@@ -868,7 +868,6 @@ export async function bulkSetCommentV2TosViolation({
 }) {
   if (ids.length === 0) return { count: 0, notified: 0, rewardedReports: 0 };
 
-  const { v4: uuid } = await import('uuid');
   const { reportAcceptedReward } = await import('~/server/rewards');
   const { createNotification } = await import('~/server/services/notification.service');
   const { NotificationCategory } = await import('~/server/common/enums');
@@ -921,7 +920,7 @@ export async function bulkSetCommentV2TosViolation({
       userId: updated.userId,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:commentv2:${uuid()}`,
+      key: `tos-violation:commentv2:${crypto.randomUUID()}`,
       details: { modelName: '', entity: 'comment' },
     })
       .then(() => {

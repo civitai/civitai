@@ -24,10 +24,12 @@ export async function resolveImageDetailPageData({ ctx, ssg, session }: ImageDet
   const id = Number(params.imageId);
   if (!isNumber(id)) return { notFound: true as const };
 
-  const [image] = await Promise.all([
+  // `fetch(...).catch` leaves the cache exactly as `prefetch` would (prefetch is fetch with the
+  // error swallowed); it is a `fetch` only to read the answer back.
+  const [image, , contestDetails] = await Promise.all([
     ssg?.image.get.fetch({ id }).catch(() => null),
     ssg?.image.getGenerationData.prefetch({ id }),
-    session ? ssg?.image.getContestCollectionDetails.prefetch({ id }) : null,
+    session ? ssg?.image.getContestCollectionDetails.fetch({ id }).catch(() => null) : null,
     ssg?.hiddenPreferences.getHidden.prefetch(),
   ]);
 
@@ -41,5 +43,11 @@ export async function resolveImageDetailPageData({ ctx, ssg, session }: ImageDet
           contentNsfwLevel: image.nsfwLevel,
         }
       : undefined,
+    // For the page-data endpoint's main-image preload (`createServerSideProps` ignores both): the
+    // image, and the forced level as the page's first render reads it — from the contest details
+    // in its cache, which hold nothing for a signed-out viewer.
+    image: image ?? null,
+    forcedBrowsingLevel:
+      contestDetails?.collectionItems?.[0]?.collection?.metadata?.forcedBrowsingLevel ?? null,
   };
 }

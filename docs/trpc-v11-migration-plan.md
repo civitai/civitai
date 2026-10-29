@@ -148,7 +148,7 @@ TypeScript **5.9.2** satisfies tRPC v11's **≥5.7.2** requirement. No React or 
 
 ### Phase 0 — De-risk cycles up front (do before touching versions)
 Independent of the upgrade; pure win and required before Phase 3.
-- Run dev/build with `CIRCULAR_DEPENDENCY_PLUGIN=true` (already wired in `next.config.mjs`).
+- Map cycles with a standalone tool such as `npx madge --circular --extensions ts,tsx src`; the `circular-dependency-plugin` block is gone from `next.config.mjs`.
 - Catalog every reported cycle. Fix by extracting shared leaf values (constants/enums/schemas)
   into zero-import leaf modules and importing leaf schemas from source, not via big-module
   re-exports — the exact patterns in the notes doc §1.

@@ -23,7 +23,6 @@ import {
 } from '~/server/services/image-appeal-flag';
 import { MeiliSearch, type SearchParams } from 'meilisearch';
 import type { SessionUser } from '~/types/session';
-import { v4 as uuid } from 'uuid';
 import { isDev, isProd } from '~/env/other';
 import { env } from '~/env/server';
 import {
@@ -1406,7 +1405,7 @@ export async function handleBlockImages({
             userId: img.userId,
             type: 'tos-violation',
             category: NotificationCategory.System,
-            key: `tos-violation:image:${uuid()}`,
+            key: `tos-violation:image:${crypto.randomUUID()}`,
             details: {
               modelName: img.postId ? `post #${img.postId}` : 'a post',
               entity: 'image',

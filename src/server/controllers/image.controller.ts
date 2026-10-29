@@ -1,5 +1,4 @@
 import { TRPCError } from '@trpc/server';
-import { v4 as uuid } from 'uuid';
 import {
   BlockedReason,
   ImageSort,
@@ -252,7 +251,7 @@ export const setTosViolationHandler = async ({
       userId: image.userId,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:image:${uuid()}`,
+      key: `tos-violation:image:${crypto.randomUUID()}`,
       details: {
         modelName: image.post?.title ?? `post #${image.postId as number}`,
         entity: 'image',

@@ -296,6 +296,7 @@ export const useS3Upload: UseS3Upload = (options = {}) => {
             type,
             uploadId,
             backend,
+            fileSize: size,
             ...(failure ? { failure } : {}),
             ...(relayOutcome ? { relayOutcome } : {}),
           }),

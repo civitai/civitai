@@ -1,7 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { ModelStatus, ReportReason, ReportStatus } from '~/shared/utils/prisma/enums';
 import { TRPCError } from '@trpc/server';
-import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import type { Context, ProtectedContext } from '~/server/createContext';
 import { reportAcceptedReward } from '~/server/rewards';
@@ -430,7 +429,7 @@ export const setTosViolationHandler = async ({
       userId: updatedComment.user.id,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:comment:${uuid()}`,
+      key: `tos-violation:comment:${crypto.randomUUID()}`,
       details: { modelName: updatedComment.model.name, entity: 'comment' },
     }).catch((error) => {
       // Print out any errors
