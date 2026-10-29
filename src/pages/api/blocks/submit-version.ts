@@ -135,12 +135,20 @@ export default AuthedEndpoint(
       const result = await submitVersion({
         bundleBuffer,
         submittedByUserId: user.id,
+        submitterIsModerator: !!user.isModerator,
         // #4059 — pass the client's provenance CLAIM through untouched. Absent
         // stays absent; the service must not invent a value.
         sourceCommit: parsed.data.sourceCommit,
         sourceDirty: parsed.data.sourceDirty,
       });
-      res.status(200).json(result);
+      // The stable subset, as the CLI route answers: never the file or manifest diff against the
+      // previous approved version, which is moderator review material.
+      res.status(200).json({
+        publishRequestId: result.publishRequestId,
+        slug: result.slug,
+        version: result.version,
+        status: 'pending',
+      });
     } catch (err) {
       // Service throws plain Errors with human-readable messages (bundle too
       // large, missing manifest, invalid blockId / version / name, etc).

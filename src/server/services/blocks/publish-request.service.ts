@@ -113,9 +113,18 @@ export type ManifestDiffSummary =
       changed: Array<{ field: string; from: unknown; to: unknown }>;
     };
 
+/** `submitVersion`'s refusal of a version of an existing app the submitter may not ship. */
+export const appOwnedByAnotherUser = (slug: string) =>
+  `app ${slug} is owned by another user; choose a different blockId`;
+
 export type SubmitVersionParams = {
   bundleBuffer: Buffer;
   submittedByUserId: number;
+  /**
+   * The submitter is a moderator: may queue a version of any existing app. Everyone else may
+   * only queue one of an app they own or are an accepted editor of (`resolveAppAccess`).
+   */
+  submitterIsModerator: boolean;
   /**
    * #4059 build provenance — an UNTRUSTED CLIENT CLAIM about the tree the bundle
    * was built from. Shape-validated by `submitVersionSchema` (lowercase 40-hex)
@@ -981,7 +990,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       import('~/server/utils/app-block-ids'),
       import('~/server/schema/blocks/publish-request.schema'),
     ]);
-  const { bundleBuffer, submittedByUserId, sourceCommit, sourceDirty } = params;
+  const { bundleBuffer, submittedByUserId, submitterIsModerator, sourceCommit, sourceDirty } =
+    params;
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
     throw new Error(`bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`);
@@ -1071,6 +1081,24 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // other-user collision wording avoids leaking the request id (which is
   // useless to a non-owner — only the original submitter or a mod can
   // act on it).
+  // 🔴 OWNER GATE for a version of an app that already exists. Its owner is `AppBlock.app.userId`
+  // (the OauthClient's), the same authority `resolveAppAccess` and the version-commit path use; an
+  // ACCEPTED editor of it may ship a version too, as on that path. Anyone else (a moderator aside)
+  // would otherwise queue a version of someone else's app and block its owner's own submission via
+  // one-pending-per-slug. Checked BEFORE the pending-conflict check, so a non-owner learns nothing
+  // about pending state, and the refusal names no one.
+  if (!submitterIsModerator) {
+    const ownedApp = await dbRead.appBlock.findFirst({
+      where: { blockId: slug },
+      select: { id: true },
+    });
+    if (ownedApp) {
+      const { resolveAppAccess } = await import('./app-access.service');
+      const access = await resolveAppAccess(ownedApp.id, submittedByUserId);
+      if (!access?.role) throw new Error(appOwnedByAnotherUser(slug));
+    }
+  }
+
   const conflicting = await dbRead.appBlockPublishRequest.findFirst({
     where: { slug, status: 'pending' },
     select: { id: true, submittedByUserId: true },

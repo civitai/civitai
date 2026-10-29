@@ -332,11 +332,10 @@ const GATE_LEDGER: Record<string, string> = {
   'src/server/services/blocks/publish-request.service.ts':
     'NOT a caller-identity gate: both sites STAMP the owner (the approve path minting ' +
     'the listing via mapAppBlockToListing, and the backfill attributing a synthetic ' +
-    'request). 🔴 KNOWN GAP recorded here rather than fixed in this PR: submitVersion’s ' +
-    'SUBSEQUENT-version branch never checks that the submitter owns the existing app — ' +
-    'it is masked today because both HTTP callers require isModerator. If that is ever ' +
-    'opened to non-mod authors it becomes a slug-hijack vector and needs an explicit ' +
-    'owner (or collaborator) check.',
+    'request). And one IS a gate: submitVersion refuses a version of an EXISTING app ' +
+    'unless the submitter is a moderator or resolveAppAccess gives them a role (owner ' +
+    'or ACCEPTED editor), before the pending-conflict check — the session submit route ' +
+    'admits non-moderator authors, so this closes the slug-hijack the gap left open.',
   'src/server/services/blocks/publisher-ban-revocation.service.ts':
     'NOT a caller-identity gate, and DELIBERATELY NOT WIDENED — the inverse direction ' +
     'from every other entry here. `app: { userId }` selects the BANNED PUBLISHER’s own ' +

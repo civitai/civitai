@@ -273,6 +273,23 @@ describe('Submit for review', () => {
     expect(card.textContent).not.toMatch(/civitai app|pubreq_/);
   });
 
+  test('an app name another account owns is told in plain words, naming no one', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            message: 'app prompt-randomizer is owned by another user; choose a different blockId',
+          }),
+          { status: 400 }
+        )
+    );
+    await expect(
+      sendForReview({ bundle: new Blob(['x']), manifest: MANIFEST }, fetchImpl)
+    ).rejects.toThrow(
+      'Not submitted: an app with this name already belongs to another account. Ask App Assistant to give your app a different name, then submit again.'
+    );
+  });
+
   test('any other refusal that names a CLI command is told in plain words', async () => {
     const fetchImpl = vi.fn<typeof fetch>(
       async () =>

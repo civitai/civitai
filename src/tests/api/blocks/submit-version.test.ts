@@ -137,7 +137,14 @@ const MOD = { user: { id: 42, isModerator: true, bannedAt: null } };
 /** A tester in the author cohort: not a moderator. */
 const AUTHOR = { user: { id: 7, isModerator: false, bannedAt: null } };
 const bundleBase64 = Buffer.from('fake-zip-bytes').toString('base64');
-const SERVICE_RESULT = { publishRequestId: 'pr_1', slug: 'my-app', version: '1.0.0' };
+const SERVICE_RESULT = {
+  publishRequestId: 'pr_1',
+  slug: 'my-app',
+  version: '1.0.0',
+  bundleSha256: 'a'.repeat(64),
+  fileSummary: { added: ['src/secret-diff.ts'], removed: [], changed: [] },
+  manifestDiffSummary: { changed: ['scopes'] },
+};
 
 describe('POST /api/blocks/submit-version', () => {
   beforeEach(() => {
@@ -179,6 +186,8 @@ describe('POST /api/blocks/submit-version', () => {
     expect(mockIsAppBlocksAuthorEnabled).toHaveBeenCalledWith({ user: AUTHOR.user });
     expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
     expect(mockSubmitVersion.mock.calls[0][0].submittedByUserId).toBe(7);
+    // Not a moderator: the service's owner gate applies to them.
+    expect(mockSubmitVersion.mock.calls[0][0].submitterIsModerator).toBe(false);
   });
 
   it('403s a signed-in user without the authoring capability, and submits nothing', async () => {
@@ -287,10 +296,18 @@ describe('POST /api/blocks/submit-version', () => {
     const res = makeRes();
     await invoke(makeReq({ body: { bundleBase64 } }), res);
     expect(res._status).toBe(200);
-    expect(res._body).toEqual(SERVICE_RESULT);
+    // Only the stable subset, as the CLI route answers: no diff against the approved version.
+    expect(res._body).toEqual({
+      publishRequestId: 'pr_1',
+      slug: 'my-app',
+      version: '1.0.0',
+      status: 'pending',
+    });
     expect(mockSubmitVersion).toHaveBeenCalledTimes(1);
     const arg = mockSubmitVersion.mock.calls[0][0];
     expect(arg.submittedByUserId).toBe(42);
+    // A moderator: may queue a version of any existing app (the service's owner gate).
+    expect(arg.submitterIsModerator).toBe(true);
     expect(Buffer.isBuffer(arg.bundleBuffer)).toBe(true);
     expect((arg.bundleBuffer as Buffer).equals(Buffer.from('fake-zip-bytes'))).toBe(true);
   });

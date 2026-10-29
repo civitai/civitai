@@ -120,6 +120,10 @@ const NOT_AN_AUTHOR = 'Apps are restricted to the Civitai team';
 const OWN_PENDING = /^you already have a pending submission for slug /;
 export const PENDING_SUBMISSION =
   'Not submitted: this app already has a submission waiting for review. Withdraw it on the Build page (/apps/build), then submit again.';
+/** `submitVersion`'s refusal of a version of an app another account owns. */
+const OWNED_BY_ANOTHER = /^app \S+ is owned by another user;/;
+export const NAME_TAKEN =
+  'Not submitted: an app with this name already belongs to another account. Ask App Assistant to give your app a different name, then submit again.';
 /** A refusal whose words name a CLI command, which the user has no way to run. */
 export const REFUSED_PLAINLY =
   'Not submitted: the submission was refused. Ask App Assistant to check the app, then submit again.';
@@ -127,6 +131,7 @@ export const REFUSED_PLAINLY =
 /** What the user reads when the route refused: its own message, and what to do about it. */
 function refusalMessage(status: number, message: string | null): string {
   if (message && OWN_PENDING.test(message)) return PENDING_SUBMISSION;
+  if (message && OWNED_BY_ANOTHER.test(message)) return NAME_TAKEN;
   // The service's messages are written for the CLI too; the card never shows a command to run.
   if (message && /\bcivitai app\b/.test(message)) return REFUSED_PLAINLY;
   if (status === 401) return 'You are signed out. Sign in again, then press Submit for review.';

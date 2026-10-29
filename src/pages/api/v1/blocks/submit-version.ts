@@ -239,6 +239,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
     const result = await submitVersion({
       bundleBuffer,
       submittedByUserId: user.id,
+      submitterIsModerator: !!user.isModerator,
       // #4059 — pass the client's provenance CLAIM through untouched. Absent
       // stays absent; the service must not invent a value.
       sourceCommit: parsed.data.sourceCommit,
