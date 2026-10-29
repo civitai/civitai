@@ -7,6 +7,7 @@ import {
   type ImageUploadRelayOutcome,
 } from '~/server/prom/image-upload-relay.metrics';
 import { trackImageUpload } from '~/server/services/image-upload-action.service';
+import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
 import {
   type ImageUploadRelaySession,
   createRelaySession,
@@ -270,6 +271,7 @@ async function completeSession(
     // The TTL reaps it if this fails; the object is stored either way.
     await deleteRelaySession(sessionId).catch(() => undefined);
     trackImageUpload(req, res, key);
+    await recordUploadKeyOwner(key, userId);
     res.status(200).json({ id: key });
     try {
       await logToAxiom({

@@ -8,6 +8,7 @@ import type * as S3Utils from '~/utils/s3-utils';
 import type * as HttpErrors from '~/server/prom/http-errors';
 import type * as OriginHelpers from '~/server/utils/origin-helpers';
 import type * as ImageUploadAction from '~/server/services/image-upload-action.service';
+import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // The chunked upload relay (`/api/v1/image-upload/relay-chunked`). New-feature tests: the route
@@ -24,6 +25,7 @@ const {
   mockAbort,
   mockIsAllowedOriginRequest,
   mockTrackImageUpload,
+  mockRecordUploadKeyOwner,
 } = vi.hoisted(() => ({
   mockGetServerAuthSession: vi.fn(),
   mockStart: vi.fn(),
@@ -32,6 +34,7 @@ const {
   mockAbort: vi.fn(),
   mockIsAllowedOriginRequest: vi.fn(),
   mockTrackImageUpload: vi.fn(),
+  mockRecordUploadKeyOwner: vi.fn(),
 }));
 
 vi.mock('~/env/other', async (importOriginal) => ({
@@ -65,6 +68,11 @@ vi.mock('~/server/utils/origin-helpers', async (importOriginal) => ({
 vi.mock('~/server/services/image-upload-action.service', async (importOriginal) => ({
   ...(await importOriginal<typeof ImageUploadAction>()),
   trackImageUpload: mockTrackImageUpload,
+}));
+
+vi.mock('~/server/services/image-url-ownership', async (importOriginal) => ({
+  ...(await importOriginal<typeof ImageUrlOwnership>()),
+  recordUploadKeyOwner: mockRecordUploadKeyOwner,
 }));
 
 import handler, {
@@ -297,7 +305,13 @@ describe('chunked image-upload relay', () => {
       ],
       totalBytes: FILE_SIZE,
     });
-    expect(mockTrackImageUpload).toHaveBeenCalledWith(expect.anything(), done, MINTED_KEY);
+    expect(mockTrackImageUpload).toHaveBeenCalledExactlyOnceWith(
+      expect.anything(),
+      done,
+      MINTED_KEY
+    );
+    // Every key-issuing route records the owner; without it the key is refused on save.
+    expect(mockRecordUploadKeyOwner).toHaveBeenCalledExactlyOnceWith(MINTED_KEY, OWNER);
     // A completed session is consumed: it cannot be completed or aborted again.
     expect((await call({ query: { action: 'complete', session } })).statusCode).toBe(404);
     expect(await outcomes()).toEqual({
@@ -511,6 +525,7 @@ describe('chunked image-upload relay', () => {
       expect(res.statusCode).toBe(409);
       expect(await outcomes()).toMatchObject({ upload_gone: 1 });
       expect(mockTrackImageUpload).not.toHaveBeenCalled();
+      expect(mockRecordUploadKeyOwner).not.toHaveBeenCalled();
       expect((await call({ query: { action: 'complete', session } })).statusCode).toBe(404);
     });
 
