@@ -367,13 +367,10 @@ function MyApp(props: CustomAppProps) {
                         by design; pinned by
                         src/tests/pages/app-region-optional-chain.test.ts. */}
                     {/* RUM page attributes: see src/utils/faro/pageAttributes.ts. */}
-                    {/* `viewerFlagsReady`: a shell boot's flags are user-less until its page
-                        data is adopted, and the resource_timing cohort is per user. */}
                     <FaroProvider
                       region={region?.countryCode}
                       shell={bootedShell}
                       signedIn={bootedSignedIn}
-                      viewerFlagsReady={!shellStatus || shellStatus === 'ready'}
                     />
                     <GoogleAnalytics />
                     <AccountProvider>
