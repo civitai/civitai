@@ -46,6 +46,9 @@ const keyIn = (column: string) =>
     `substring(replace(translate(lower(${column}), E'\\t\\r\\n', ''), '%2d', '-') from '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')`
   );
 
+/** Cosmetics outside the shop (event badges and the like) hold no artwork a buyer paid for. */
+const soldInShop = Prisma.sql`EXISTS (SELECT 1 FROM "CosmeticShopItem" s WHERE s."cosmeticId" = "Cosmetic".id)`;
+
 /**
  * Set by a shop artwork write: the row being written, `{}` for a new one. Its own key does not count
  * as another row's.
@@ -91,6 +94,7 @@ export async function assertClientImageUrlsUsable({
       AND (${shopRow !== undefined} OR "userId" <> ${userId})
     UNION ALL
     SELECT 1 FROM "Cosmetic" WHERE ${keyIn(`"data"->>'url'`)} = ANY(${keys}::text[])
+      AND ${soldInShop}
       AND id IS DISTINCT FROM ${shopRow?.cosmeticId ?? null}::int
     UNION ALL
     SELECT 1 FROM "CosmeticShopItem" WHERE ${keyIn(`"meta"->>'coverUrl'`)} = ANY(${keys}::text[])
@@ -113,7 +117,7 @@ export async function shopArtworkUrls(urls: string[], db: Db = dbWrite): Promise
   if (!keys.length) return new Set();
   const used = await db.$queryRaw<{ key: string }[]>`
     SELECT k AS key FROM unnest(${keys}::text[]) k
-    WHERE EXISTS (SELECT 1 FROM "Cosmetic" WHERE ${keyIn(`"data"->>'url'`)} = k)
+    WHERE EXISTS (SELECT 1 FROM "Cosmetic" WHERE ${keyIn(`"data"->>'url'`)} = k AND ${soldInShop})
       OR EXISTS (SELECT 1 FROM "CosmeticShopItem" WHERE ${keyIn(`"meta"->>'coverUrl'`)} = k)
       OR EXISTS (SELECT 1 FROM "ItemDefinition" WHERE ${keyIn(`"imageUrl"`)} = k)
   `;

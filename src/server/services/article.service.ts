@@ -942,7 +942,7 @@ export const upsertArticle = async ({
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
     await throwOnBlockedUserContent(data.content, { isModerator, surface: 'article' });
-    await assertNoShopArtworkInContent(data.content);
+    await assertNoShopArtworkInContent(data.content, article?.content);
 
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
@@ -1886,11 +1886,20 @@ export async function unpublishArticleById({
 /**
  * Content images become `Image` rows, and deleting one removes its object, so an article may not
  * embed a key that shop artwork uses. Checked before the write: linking runs after it, and must
- * create and scan a row for every image the content holds.
+ * create and scan a row for every image the content holds. Only images new to this save count, so
+ * an article that already holds one can still be edited.
  */
-async function assertNoShopArtworkInContent(content: string | null | undefined) {
+async function assertNoShopArtworkInContent(
+  content: string | null | undefined,
+  storedContent: string | null | undefined
+) {
   if (!content) return;
-  const shopUrls = await shopArtworkUrls(getContentMedia(content).map((media) => media.url));
+  const stored = new Set(storedContent ? getContentMedia(storedContent).map((m) => m.url) : []);
+  const added = getContentMedia(content)
+    .map((media) => media.url)
+    .filter((url) => !stored.has(url));
+  if (!added.length) return;
+  const shopUrls = await shopArtworkUrls(added);
   if (shopUrls.size)
     throw throwBadRequestError(
       'An image in this article can no longer be used. Please re-upload it.'

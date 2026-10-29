@@ -32,7 +32,9 @@ beforeAll(async () => {
       "ingestion" text NOT NULL DEFAULT 'Scanned'
     );
     CREATE TABLE "Cosmetic" ("id" integer PRIMARY KEY, "data" jsonb NOT NULL);
-    CREATE TABLE "CosmeticShopItem" ("id" integer PRIMARY KEY, "meta" jsonb NOT NULL DEFAULT '{}');
+    CREATE TABLE "CosmeticShopItem" (
+      "id" integer PRIMARY KEY, "cosmeticId" integer, "meta" jsonb NOT NULL DEFAULT '{}'
+    );
     CREATE TABLE "ItemDefinition" ("id" integer PRIMARY KEY, "imageUrl" text);
   `);
 });
@@ -149,7 +151,8 @@ describe('assertClientImageUrlsUsable and shop artwork', () => {
   const holders = [
     [
       'cosmetic artwork',
-      `INSERT INTO "Cosmetic" (id, data) VALUES (1, '{"url":"${SHOP_KEY}"}')`,
+      `INSERT INTO "Cosmetic" (id, data) VALUES (1, '{"url":"${SHOP_KEY}"}');
+       INSERT INTO "CosmeticShopItem" (id, "cosmeticId") VALUES (9, 1);`,
       { cosmeticId: 1 },
     ],
     [
@@ -190,8 +193,18 @@ describe('assertClientImageUrlsUsable and shop artwork', () => {
     expect(result).toBeNull();
   });
 
+  it('ignores a cosmetic the shop does not sell', async () => {
+    await holder.db.exec(`INSERT INTO "Cosmetic" (id, data) VALUES (1, '{"url":"${SHOP_KEY}"}')`);
+
+    expect(await refused([SHOP_KEY])).toBeNull();
+    expect(await shopArtworkUrls([SHOP_KEY])).toEqual(new Set());
+  });
+
   it('refuses a key another shop row uses, even while editing one', async () => {
-    await holder.db.exec(`INSERT INTO "Cosmetic" (id, data) VALUES (2, '{"url":"${SHOP_KEY}"}')`);
+    await holder.db.exec(`
+      INSERT INTO "Cosmetic" (id, data) VALUES (2, '{"url":"${SHOP_KEY}"}');
+      INSERT INTO "CosmeticShopItem" (id, "cosmeticId") VALUES (9, 2);
+    `);
 
     const result = await assertClientImageUrlsUsable({
       urls: [SHOP_KEY],

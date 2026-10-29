@@ -44,6 +44,7 @@ const { linkArticleContentImages, upsertArticle } = await import(
 
 const SHOP_KEY = '0a0b0c0d-0000-4000-8000-0000000000aa';
 const FREE_KEY = '0a0b0c0d-0000-4000-8000-0000000000bb';
+const SECOND_SHOP_KEY = '0a0b0c0d-0000-4000-8000-0000000000cc';
 const img = (key: string) =>
   `<img src="https://image.civitai.com/xG1nkqKTMzGDvpLrqFT7WA/${key}/original=true/a.jpeg">`;
 
@@ -56,9 +57,13 @@ beforeAll(async () => {
   db = new PGlite();
   await db.exec(`
     CREATE TABLE "Cosmetic" ("id" integer PRIMARY KEY, "data" jsonb NOT NULL);
-    CREATE TABLE "CosmeticShopItem" ("id" integer PRIMARY KEY, "meta" jsonb NOT NULL DEFAULT '{}');
+    CREATE TABLE "CosmeticShopItem" (
+      "id" integer PRIMARY KEY, "cosmeticId" integer, "meta" jsonb NOT NULL DEFAULT '{}'
+    );
     CREATE TABLE "ItemDefinition" ("id" integer PRIMARY KEY, "imageUrl" text);
     INSERT INTO "Cosmetic" (id, data) VALUES (1, '{"url":"${SHOP_KEY}"}');
+    INSERT INTO "CosmeticShopItem" (id, "cosmeticId") VALUES (9, 1);
+    INSERT INTO "ItemDefinition" (id, "imageUrl") VALUES (1, '${SECOND_SHOP_KEY}');
   `);
 });
 
@@ -113,6 +118,45 @@ describe('upsertArticle', () => {
   it('refuses content that embeds a shop artwork key, before writing the article', async () => {
     await expect(save(`<p>${img(SHOP_KEY)}</p>`)).rejects.toThrow(/can no longer be used/);
     expect(dbMock.dbWrite.article.create).not.toHaveBeenCalled();
+  });
+
+  // Articles saved before the check may already hold one; they must stay editable.
+  it('saves an edit that keeps a shop artwork key the stored article already holds', async () => {
+    const stored = {
+      id: 1,
+      userId: 7,
+      title: 'Stored',
+      content: `<p>${img(SHOP_KEY)}</p>`,
+      coverId: null,
+      status: 'Published',
+      publishedAt: new Date(),
+      nsfwLevel: 1,
+      userNsfwLevel: 1,
+      lockedProperties: [],
+      metadata: {},
+    };
+    dbMock.dbWrite.article.findUnique.mockResolvedValue(stored as never);
+    dbMock.dbRead.article.findUnique.mockResolvedValue(stored as never);
+    dbMock.dbWrite.article.update.mockResolvedValue({ ...stored, tags: [] } as never);
+
+    await upsertArticle({
+      id: 1,
+      userId: 7,
+      title: 'New title',
+      content: `<p>${img(SHOP_KEY)}</p><p>more</p>`,
+    } as never);
+    expect(dbMock.dbWrite.article.update).toHaveBeenCalled();
+
+    dbMock.dbWrite.article.update.mockClear();
+    await expect(
+      upsertArticle({
+        id: 1,
+        userId: 7,
+        title: 'New title',
+        content: `<p>${img(SHOP_KEY)}${img(SECOND_SHOP_KEY)}</p>`,
+      } as never)
+    ).rejects.toThrow(/can no longer be used/);
+    expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
   });
 
   it('saves content whose images no shop row uses', async () => {
