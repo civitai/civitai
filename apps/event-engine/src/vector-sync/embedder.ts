@@ -430,7 +430,10 @@ export class Embedder {
       acceptStamp,
       onVectors,
     };
-    if (this.prefixFailed && this.now() >= this.prefixRetryAt) this.prefixFailed = undefined;
+    if (this.prefixFailed && this.now() >= this.prefixRetryAt) {
+      this.prefixFailed = undefined;
+      this.prefixRetryAt = Infinity;
+    }
     if (this.prefixFailed) {
       call.result.error = this.prefixFailed;
       return call.result;
@@ -526,12 +529,13 @@ export class Embedder {
       const width = output?.embedding?.length;
       if (this.wide && out?.status === 'succeeded' && width && width !== this.sourceDimensions) {
         // The orchestrator did not honour the width: every workflow would be paid for and dropped.
-        this.prefixFailed = new ModelMismatchError(
-          {},
-          { model: output!.model, modelRevision: output!.modelRevision, dimensions: width },
-          `asked for ${this.sourceDimensions}-d vectors, got ${width}-d; not embedding at this width`
+        throw this.refuseWide(
+          new ModelMismatchError(
+            {},
+            { model: output!.model, modelRevision: output!.modelRevision, dimensions: width },
+            `asked for ${this.sourceDimensions}-d vectors, got ${width}-d; not embedding at this width`
+          )
         );
-        throw this.prefixFailed;
       }
       if (
         out?.status !== 'succeeded' ||
@@ -600,12 +604,8 @@ export class Embedder {
         ).then(
           () => void this.prefixVerified.add(kind),
           (err) => {
-            this.prefixFailed = err;
-            if (err instanceof PrefixCheckUnavailableError) {
-              this.prefixChecks.delete(kind);
-              this.prefixRetryAt = this.now() + PREFIX_RETRY_AFTER_MS;
-            } else this.prefixRetryAt = Infinity;
-            throw err;
+            if (err instanceof PrefixCheckUnavailableError) this.prefixChecks.delete(kind);
+            throw this.refuseWide(err);
           }
         );
         this.prefixChecks.set(kind, check);
@@ -649,6 +649,20 @@ export class Embedder {
 
   private get wide() {
     return this.sourceDimensions > VECTOR_DIMENSIONS;
+  }
+
+  /**
+   * Refuses wide embeds: for good after a mismatch, for a while when the check could not be made.
+   * A refusal for good is never shortened by a later one. Returns `err` to throw.
+   */
+  private refuseWide(err: unknown) {
+    const retryAt =
+      err instanceof PrefixCheckUnavailableError ? this.now() + PREFIX_RETRY_AFTER_MS : Infinity;
+    if (!this.prefixFailed || this.prefixRetryAt !== Infinity) {
+      this.prefixFailed = err;
+      this.prefixRetryAt = retryAt;
+    }
+    return err;
   }
 
   /** Until every kind seen so far has passed its check (or before any has been seen). */

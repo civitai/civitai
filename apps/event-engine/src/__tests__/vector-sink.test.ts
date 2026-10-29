@@ -254,6 +254,39 @@ describe('embedding at 2048 with a sink', () => {
     expect(base.widths.slice(4)).toEqual([2048, 256]);
   });
 
+  // A cooldown left an old retry time behind, which then cleared a refusal meant to be permanent.
+  test('a mismatch after an earlier cooldown is still refused for good', async () => {
+    let mode: 'down' | 'up' | 'narrow' = 'down';
+    let posts = 0;
+    const base = orchestrator();
+    const fetchImpl = (async (u: string | URL | Request, init?: RequestInit) => {
+      posts++;
+      const body = JSON.parse(String(init?.body)) as {
+        steps: Array<{ name: string; input: { dimensions: number } }>;
+      };
+      if (mode === 'down' && body.steps[0].input.dimensions === 256)
+        return new Response('', { status: 503 });
+      const res = await base.fetchImpl(u, init);
+      if (mode !== 'narrow') return res;
+      // Answers 2048 requests with 1024-d vectors.
+      const wf = (await res.json()) as { steps: Array<{ output: { embedding: number[] } }> };
+      for (const st of wf.steps) st.output.embedding = st.output.embedding.slice(0, 1024);
+      return new Response(JSON.stringify(wf), { status: 200 });
+    }) as unknown as typeof fetch;
+    let t = 0;
+    const e = embedder(fetchImpl, memorySink().sink, { now: () => t });
+    expect((await e.embed(inputs(5))).error).toBeInstanceOf(PrefixCheckUnavailableError);
+    mode = 'up';
+    t += 11 * 60_000;
+    expect((await e.embed(inputs(5))).error).toBeUndefined();
+    mode = 'narrow';
+    expect((await e.embed(inputs(5))).error).toBeInstanceOf(ModelMismatchError);
+    const paid = posts;
+    t += 60 * 60_000;
+    expect((await e.embed(inputs(5))).error).toBeInstanceOf(ModelMismatchError);
+    expect(posts).toBe(paid);
+  });
+
   test('a width the orchestrator does not honour stops wide embedding after one workflow', async () => {
     const fetchImpl = (async (_u: string | URL | Request, init?: RequestInit) => {
       const body = JSON.parse(String(init?.body)) as { steps: Array<{ name: string }> };
