@@ -3,6 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const escalateExpired = vi.hoisted(() => vi.fn());
 const applyPendingResolutions = vi.hoisted(() => vi.fn());
 const settleFinalItems = vi.hoisted(() => vi.fn());
+const expireSmites = vi.hoisted(() => vi.fn());
+const settleHiddenChecks = vi.hoisted(() => vi.fn());
+const resetPendingPlayers = vi.hoisted(() => vi.fn());
 const retryPendingConversions = vi.hoisted(() => vi.fn());
 const runPostDetectionPass = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
@@ -20,6 +23,10 @@ vi.mock('$lib/server/conversion/pass', () => ({ runPostDetectionPass }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { mirrorXp: undefined } }));
 vi.mock('$lib/server/progression/progression', () => ({ settleFinalItems }));
+vi.mock('$lib/server/smites/runtime', () => ({ resetDeps: {} }));
+vi.mock('$lib/server/hidden/runtime', () => ({ hiddenSettings: () => ({}) }));
+vi.mock('$lib/server/hidden/settle', () => ({ settleHiddenChecks }));
+vi.mock('$lib/server/smites/smites.service', () => ({ expireSmites, resetPendingPlayers }));
 vi.mock('$lib/server/queue/queue.service', () => ({ escalateExpired, applyPendingResolutions }));
 
 const { POST } = await import('./+server');
@@ -34,6 +41,12 @@ beforeEach(() => {
   applyPendingResolutions.mockReset();
   settleFinalItems.mockReset();
   settleFinalItems.mockResolvedValue({ items: 0, votes: 0, failed: 0 });
+  settleHiddenChecks.mockReset();
+  settleHiddenChecks.mockResolvedValue({ graded: 0, failed: 0, resets: 0 });
+  expireSmites.mockReset();
+  expireSmites.mockResolvedValue(0);
+  resetPendingPlayers.mockReset();
+  resetPendingPlayers.mockResolvedValue({ due: 0, failed: 0 });
   logToAxiom.mockReset();
   buzzConfigured.mockReset();
   buzzConfigured.mockReturnValue(true);
@@ -58,6 +71,9 @@ describe('POST /api/jobs/tick', () => {
       escalated: 2,
       applied: 1,
       settledVotes: 0,
+      hiddenChecksGraded: 0,
+      expiredSmites: 0,
+      resets: 0,
       conversionsRetried: 0,
       postDetection: { ran: false },
     });
@@ -160,5 +176,37 @@ describe('POST /api/jobs/tick', () => {
     settleFinalItems.mockResolvedValue({ items: 2, votes: 1, failed: 1 });
 
     expect((await run()).status).toBe(500);
+  });
+
+  it('retries career resets, and answers 500 while one still cannot be done', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    resetPendingPlayers.mockResolvedValue({ due: 1, failed: 1 });
+
+    const response = await run();
+
+    expect(resetPendingPlayers).toHaveBeenCalled();
+    expect(response.status).toBe(500);
+  });
+
+  it('answers 500 when grading hidden checks fails, after running the other steps', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    settleHiddenChecks.mockRejectedValue(new Error('db down'));
+
+    const response = await run();
+
+    expect(resetPendingPlayers).toHaveBeenCalled();
+    expect(expireSmites).toHaveBeenCalled();
+    expect(response.status).toBe(500);
+  });
+
+  it('retries resets before it expires smites', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    await run();
+    expect(resetPendingPlayers.mock.invocationCallOrder[0]).toBeLessThan(
+      expireSmites.mock.invocationCallOrder[0]
+    );
   });
 });

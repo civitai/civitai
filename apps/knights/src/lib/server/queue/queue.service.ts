@@ -3,22 +3,19 @@ import { utc } from '@civitai/db/kysely';
 import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
-import { recordVoteDay } from '../daily/daily.service';
-import { goldForRank, PROGRESSION } from '../progression/config';
-import { standingOf } from '../progression/rating';
+import { PROGRESSION } from '../progression/config';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
-import { ledgerOf, settleAndMirror, settleItemVotes } from '../progression/progression';
+import { settleAndMirror, settleItemVotes } from '../progression/progression';
 import { servableImage } from '@civitai/db/knights';
 import { voteLockUntil, type VoteLimit } from './vote-rate';
-import { isRank, RANKS, type Rank } from '../ranks';
-import { canVote, FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
+import { RANKS, type Rank } from '../ranks';
+import { creditVote, insertVote } from './vote-record';
+import { FEED_STRETCH_SIZE, isStageRank, nextRank, stagesWorkedBy } from './ranks';
 import {
   decideChoice,
   decideWriteback,
   isBlockedLevel,
   isExcessiveDownRating,
-  levelForExp,
-  voteWeight,
   type ImageState,
   type WeightedAnswer,
   type WritebackDecision,
@@ -69,7 +66,8 @@ export type RejectReason =
   | 'not-eligible'
   | 'bad-answer'
   | 'already-voted'
-  | 'no-weight';
+  | 'no-weight'
+  | 'reset-pending';
 
 export type CastVoteResult =
   | { status: 'rejected'; reason: RejectReason }
@@ -115,6 +113,18 @@ export async function getFeed(
               .select(sql<number>`1`.as('one'))
               .whereRef('v.itemId', '=', 'i.id')
               .where('v.playerId', '=', userId)
+          )
+        )
+      )
+      .where((eb) =>
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom('KnightsVote as h')
+              .select(sql<number>`1`.as('one'))
+              .where('h.itemId', '<', 0)
+              .whereRef('h.imageId', '=', 'i.imageId')
+              .where('h.playerId', '=', userId)
           )
         )
       )
@@ -269,6 +279,24 @@ const rankOrder = sql`CASE "i"."minRank" ${sql.join(
 /** First key of the per-player advisory lock that serialises a player's paced votes. */
 const VOTE_PACING_LOCK_NAMESPACE = 7_301;
 
+/**
+ * When a paced player may answer again, or null. Pacing must hold across parallel requests, so one player's answers queue on an
+ * advisory lock before they count the ledger. Take it ahead of every row lock; nothing else waits on it while holding a lock of
+ * its own, so it cannot join a deadlock cycle.
+ */
+export async function pacingGate(
+  trx: Transaction<DB>,
+  input: { userId: number; isModerator?: boolean },
+  now: Date,
+  deps: Pick<QueueDeps, 'voteLimits'>
+): Promise<Date | null> {
+  if (!deps.voteLimits || input.isModerator) return null;
+  await sql`SELECT pg_advisory_xact_lock(${VOTE_PACING_LOCK_NAMESPACE}, ${input.userId})`.execute(
+    trx
+  );
+  return voteLockUntil(trx, input.userId, now, deps.voteLimits);
+}
+
 export async function castVote(
   db: Kysely<DB>,
   input: { userId: number; itemId: number; answer: string; isModerator?: boolean },
@@ -285,16 +313,8 @@ export async function castVote(
           result: { status: 'rejected', reason } as const,
         });
 
-        // Pacing must hold across parallel requests, so one player's votes queue on this lock before they
-        // count the ledger. It is taken ahead of every row lock below, and nothing else waits on it while
-        // holding a lock of its own, so it cannot join a deadlock cycle.
-        if (deps.voteLimits && !input.isModerator) {
-          await sql`SELECT pg_advisory_xact_lock(${VOTE_PACING_LOCK_NAMESPACE}, ${input.userId})`.execute(
-            trx
-          );
-          const until = await voteLockUntil(trx, input.userId, now, deps.voteLimits);
-          if (until) return { result: { status: 'limited', until } as const };
-        }
+        const until = await pacingGate(trx, input, now, deps);
+        if (until) return { result: { status: 'limited', until } as const };
 
         // The item row lock serialises every vote on one item: it is what keeps one vote per player
         // (the partitioned ledger cannot carry that unique key) and lets only one vote resolve the item.
@@ -322,61 +342,19 @@ export async function castVote(
           .executeTakeFirst();
         if (!item) return rejected('unavailable');
 
-        const player = await trx
-          .selectFrom('NewOrderPlayer')
-          .select(['rankType', 'exp', 'startAt'])
-          .where('userId', '=', input.userId)
-          .executeTakeFirst();
-        if (!player) return rejected('no-player');
-        if (!isRank(player.rankType) || !canVote(player.rankType, item.minRank)) {
-          return rejected('not-eligible');
-        }
-
-        const options = item.options as QuestionOption[];
-        if (!options.some((o) => o.value === input.answer)) return rejected('bad-answer');
-
-        const already = await trx
-          .selectFrom('KnightsVote')
-          .select('playerId')
-          .where('itemId', '=', item.id)
-          .where('playerId', '=', input.userId)
-          .executeTakeFirst();
-        if (already) return rejected('already-voted');
-
-        const smites = await trx
-          .selectFrom('NewOrderSmite')
-          .select((eb) => eb.fn.countAll<string>().as('n'))
-          .where('targetPlayerId', '=', input.userId)
-          .where('cleansedAt', 'is', null)
-          .executeTakeFirstOrThrow();
-
-        const { belowBar } = standingOf(player.rankType, await ledgerOf(trx, input.userId));
-
-        // A vote that weighs nothing could still be the one that tips a split into a decision.
-        const weight = voteWeight({
-          rank: player.rankType,
-          level: levelForExp(player.exp),
-          smites: Number(smites.n),
-          belowBar,
-        });
-        if (weight <= 0) return rejected('no-weight');
-        const gold = goldForRank(player.rankType, belowBar);
-
-        await trx
-          .insertInto('KnightsVote')
-          .values({
+        const vote = await insertVote(
+          trx,
+          { ...input, now },
+          {
             itemId: item.id,
-            playerId: input.userId,
-            createdAt: utc(now),
             questionKey: item.questionKey,
             imageId: item.imageId,
             stage: item.minRank,
-            answer: input.answer,
-            weight,
-            xp: PROGRESSION.voteXp,
-            gold,
-          })
-          .execute();
+            options: item.options as QuestionOption[],
+          }
+        );
+        if (vote.status === 'rejected') return rejected(vote.reason);
+
         const stageVotes: WeightedAnswer[] = await trx
           .selectFrom('KnightsVote')
           .select(['answer', 'weight'])
@@ -395,39 +373,13 @@ export async function castVote(
         // Settling updates every voter's player row in userId order. Taking the same locks first, before
         // the first player update of this transaction, keeps all transactions in one order and so deadlock-free.
         if (decision.kind === 'resolved' && !writesBack) await lockItemVoters(trx, item.id);
-        await trx
-          .updateTable('NewOrderPlayer')
-          .set({ exp: sql<number>`"exp" + ${PROGRESSION.voteXp}` })
-          .where('userId', '=', input.userId)
-          .execute();
-
-        // Must stay after the player row lock: recordVoteDay relies on it (see its doc).
-        const day = await recordVoteDay(trx, {
-          playerId: input.userId,
-          rank: player.rankType,
-          gold,
+        await creditVote(trx, {
+          userId: input.userId,
+          itemId: item.id,
           now,
-          startAt: player.startAt,
+          player: vote.player,
+          gold: vote.gold,
         });
-        if (day.gold !== gold) {
-          await trx
-            .updateTable('KnightsVote')
-            .set({ gold: day.gold })
-            .where('itemId', '=', item.id)
-            .where('playerId', '=', input.userId)
-            .where('createdAt', '=', utc(now))
-            .execute();
-        }
-        if (day.gold > 0 || day.bonus > 0) {
-          await trx
-            .updateTable('NewOrderPlayer')
-            .set({
-              goldPending: sql<number>`"goldPending" + ${day.gold}`,
-              goldEarned: sql<number>`"goldEarned" + ${day.bonus}`,
-            })
-            .where('userId', '=', input.userId)
-            .execute();
-        }
 
         if (decision.kind === 'pending') return { result: { status: 'recorded' }, xp: [voted] };
         if (decision.kind === 'split') {

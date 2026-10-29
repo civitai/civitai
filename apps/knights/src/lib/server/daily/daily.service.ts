@@ -94,7 +94,7 @@ async function votesSinceMidDayReset(
   return Number(counted.n);
 }
 
-async function ensureKeeper(trx: Executor, playerId: number, today: Day) {
+export async function ensureKeeper(trx: Executor, playerId: number, today: Day) {
   const fresh = newPlayerState(today);
   await trx
     .insertInto('KnightsPlayer')

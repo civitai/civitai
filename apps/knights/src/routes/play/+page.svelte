@@ -43,6 +43,41 @@
   {/snippet}
 </StatusBar>
 
+{#if data.resetNotice}
+  <section class="recap" role="status" aria-label="Career reset">
+    <div>
+      <p class="verdict">Your career has been reset.</p>
+      <p>
+        {data.status.maxSmites} smites were more than the Order would bear. You are an Acolyte again at level 1,
+        and the Trials await.
+      </p>
+      {#if form?.resetNoticeFailed}
+        <p>{form.message}</p>
+      {/if}
+    </div>
+    <form method="POST" action="?/dismissResetNotice" use:enhance={submit}>
+      <button type="submit" disabled={submitting}>Understood</button>
+    </form>
+  </section>
+{:else if data.mode === 'queue' && data.resetPending}
+  <p class="notice" role="alert">Your career is being reset. Return in a moment.</p>
+{/if}
+{#if data.notices.length > 0}
+  <section class="recap" role="status" aria-label="Sanity check">
+    <div>
+      {#each data.notices as notice (notice.title)}
+        <p><strong>{notice.title}</strong> {notice.message}</p>
+      {/each}
+      {#if form?.noticeFailed}
+        <p>{form.message}</p>
+      {/if}
+    </div>
+    <form method="POST" action="?/dismissNotices" use:enhance={submit}>
+      <button type="submit" disabled={submitting}>Understood</button>
+    </form>
+  </section>
+{/if}
+
 {#if data.mode === 'queue'}
   {#if data.recap}
     <section class="recap" aria-label="Recap of your last play day">
@@ -105,7 +140,7 @@
       </div>
     </form>
 
-    {#if form?.message && !form.recapFailed}
+    {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed}
       <p class="notice" role="alert">{form.message}</p>
     {/if}
   {:else if data.trial.kind === 'cooldown'}
@@ -132,7 +167,7 @@
   {/key}
 
   <form method="POST" action="?/vote" use:enhance={submit}>
-    <input type="hidden" name="itemId" value={data.item.id} />
+    <input type="hidden" name="item" value={data.item.id} />
     <div class="options">
       {#each data.question.options as option (option.value)}
         <button type="submit" name="answer" value={option.value} disabled={submitting}>
@@ -142,10 +177,10 @@
     </div>
   </form>
 
-  {#if form?.message && !form.recapFailed}
+  {#if form?.message && !form.recapFailed && !form.resetNoticeFailed && !form.noticeFailed}
     <p class="notice" role="alert">{form.message}</p>
   {/if}
-{:else}
+{:else if !data.resetPending}
   <p>Nothing awaits your judgment right now. Return later.</p>
 {/if}
 

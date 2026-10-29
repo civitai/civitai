@@ -2,11 +2,21 @@ import { fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
 import { imageUrl } from '$lib/server/image-url';
+import { openItem, sealItem } from '$lib/server/feed-token';
+import {
+  answerHiddenCheck,
+  pickHiddenCheck,
+  dismissHiddenNotices,
+  readHiddenNotices,
+} from '$lib/server/hidden/hidden.service';
+import { hiddenSettings } from '$lib/server/hidden/runtime';
 import { requireMember } from '$lib/server/membership';
 import { conversionEnabled } from '$lib/server/conversion/runtime';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
 import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
+import { feedSecret } from '$lib/server/smites/runtime';
+import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { trialDeps } from '$lib/server/trials/runtime';
 import { answerTrial, getTrial } from '$lib/server/trials/trials.service';
 import type { Actions, PageServerLoad } from './$types';
@@ -19,6 +29,7 @@ const REJECTION_TEXT: Record<RejectReason, string> = {
   'not-open': 'This one has already been settled.',
   unavailable: 'This one is not open for judging.',
   'no-weight': 'Your standing is too low for your judgment to count yet.',
+  'reset-pending': 'Your career is being reset. Return in a moment.',
 };
 
 const TRIAL_REJECTION_TEXT = {
@@ -31,6 +42,13 @@ const TRIAL_REJECTION_TEXT = {
 export const load: PageServerLoad = async ({ locals, depends }) => {
   depends('app:play');
   const status = await requireMember(db, locals.user.id);
+  const now = queueDeps.now();
+  // Shown on whichever page the player lands on: a reset player lands on the Trials.
+  const [resetNotice, notices] = await Promise.all([
+    hasUnseenReset(db, locals.user.id, now),
+    readHiddenNotices(db, locals.user.id),
+  ]);
+  const common = { status, resetNotice, notices };
 
   if (status.rank === 'Acolyte') {
     const trial = await getTrial(db, locals.user.id, trialDeps);
@@ -38,7 +56,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
       return {
         conversionOpen: conversionEnabled(),
         mode: 'trials' as const,
-        status,
+        ...common,
         trial:
           trial.kind === 'question'
             ? {
@@ -61,7 +79,6 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     }
   }
 
-  const now = queueDeps.now();
   const lockedUntil =
     queueDeps.voteLimits && !locals.user.isModerator
       ? await voteLockUntil(db, locals.user.id, now, queueDeps.voteLimits)
@@ -71,34 +88,49 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
   ]);
+  const resetPending = status.smites >= status.maxSmites;
   const conversionOpen = conversionEnabled();
   const lockoutSeconds = lockedUntil
     ? Math.max(1, Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000))
     : null;
-  if (!feed) {
+  const page = {
+    mode: 'queue' as const,
+    ...common,
+    daily,
+    recap,
+    resetPending,
+    conversionOpen,
+    lockoutSeconds,
+  };
+  if (!feed || resetPending) return { ...page, question: null, item: null };
+
+  const secret = feedSecret();
+  const hidden = await pickHiddenCheck(db, {
+    userId: locals.user.id,
+    rank: status.rank,
+    secret,
+    questionKey: feed.question.key,
+    rate: hiddenSettings().rate,
+  });
+  if (hidden) {
     return {
-      conversionOpen,
-      mode: 'queue' as const,
-      status,
-      daily,
-      recap,
-      question: null,
-      item: null,
-      lockoutSeconds,
+      ...page,
+      question: hidden.question,
+      item: {
+        id: sealItem(secret, locals.user.id, { kind: 'hidden', id: hidden.referenceId }),
+        src: imageUrl(hidden.imageKey),
+        width: hidden.width,
+        height: hidden.height,
+      },
     };
   }
 
   const [item] = feed.items;
   return {
-    conversionOpen,
-    mode: 'queue' as const,
-    status,
-    daily,
-    recap,
-    lockoutSeconds,
+    ...page,
     question: feed.question,
     item: {
-      id: item.id,
+      id: sealItem(secret, locals.user.id, { kind: 'queue', id: item.id }),
       src: imageUrl(item.imageKey),
       width: item.width,
       height: item.height,
@@ -109,18 +141,39 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
 export const actions: Actions = {
   vote: async ({ request, locals }) => {
     const form = await request.formData();
-    const itemId = Number(form.get('itemId'));
+    const token = form.get('item');
     const answer = form.get('answer');
-    if (!Number.isInteger(itemId) || typeof answer !== 'string') {
+    if (typeof token !== 'string' || typeof answer !== 'string') {
       return fail(400, { message: 'Pick an answer.' });
     }
+    let ref: ReturnType<typeof openItem>;
+    try {
+      ref = openItem(feedSecret(), locals.user.id, token);
+    } catch (error) {
+      console.error('knights: the feed cannot be served', { error });
+      return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });
+    }
+    if (!ref) return fail(400, { message: 'Pick an answer.' });
+    const itemId = ref.id;
 
     try {
-      const result = await castVote(
-        db,
-        { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
-        queueDeps
-      );
+      const result =
+        ref.kind === 'hidden'
+          ? await answerHiddenCheck(
+              db,
+              {
+                userId: locals.user.id,
+                referenceId: itemId,
+                answer,
+                isModerator: locals.user.isModerator,
+              },
+              queueDeps
+            )
+          : await castVote(
+              db,
+              { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
+              queueDeps
+            );
       if (result.status === 'limited') {
         return fail(429, {
           message: 'You are judging too quickly. Rest a little.',
@@ -146,6 +199,27 @@ export const actions: Actions = {
     } catch (error) {
       console.error('knights: could not store the recap dismissal', { error });
       return fail(500, { message: 'Could not dismiss the recap. Try again.', recapFailed: true });
+    }
+  },
+
+  dismissNotices: async ({ locals }) => {
+    try {
+      await dismissHiddenNotices(db, locals.user.id, queueDeps.now());
+    } catch (error) {
+      console.error('knights: could not store the notice dismissal', { error });
+      return fail(500, { message: 'Could not dismiss the notice. Try again.', noticeFailed: true });
+    }
+  },
+
+  dismissResetNotice: async ({ locals }) => {
+    try {
+      await dismissResetNotice(db, locals.user.id, queueDeps.now());
+    } catch (error) {
+      console.error('knights: could not store the reset notice dismissal', { error });
+      return fail(500, {
+        message: 'Could not dismiss the notice. Try again.',
+        resetNoticeFailed: true,
+      });
     }
   },
 

@@ -5110,6 +5110,8 @@ export interface KnightsVote {
   settledAt: Date | null;
   labelled: boolean;
   converted: boolean;
+  consequence: string | null;
+  noticedAt: Date | null;
 }
 
 export interface KnightsPlayer {
@@ -5119,6 +5121,7 @@ export interface KnightsPlayer {
   shields: number;
   shieldWeek: Date;
   recapDismissedFor: Date | null;
+  startAtSeen: Date | null;
 }
 
 export interface KnightsPlayerDay {

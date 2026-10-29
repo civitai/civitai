@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { DAILY } from './daily/config';
 import { RANK_LADDER } from './progression/config';
 import { rulesFacts } from './rules';
+import { SMITES } from './smites/config';
 import { TRIALS } from './trials/config';
 
 describe('rulesFacts', () => {
@@ -11,6 +12,10 @@ describe('rulesFacts', () => {
     expect(facts.trials.passPercent).toBe(TRIALS.passMark * 100);
     expect(facts.watch.size).toBe(DAILY.watchSize);
     expect(facts.ranks.map((r) => r.rank)).toEqual(RANK_LADDER.map((r) => r.rank));
+  });
+
+  it('quotes the hearts from the smite limit', () => {
+    expect(rulesFacts().hearts).toBe(SMITES.max);
   });
 
   it('keeps a vote worth its immediate and graded XP together', () => {

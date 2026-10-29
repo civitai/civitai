@@ -1,11 +1,8 @@
 import { sql, type Kysely, type Transaction } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
-import {
-  REFERENCE_POOL,
-  REFERENCE_SOURCE,
-  REFERENCE_STATUS,
-  servableImage,
-} from '@civitai/db/knights';
+import { REFERENCE_POOL, REFERENCE_SOURCE } from '@civitai/db/knights';
+import type { QuestionOption } from '../queue/queue.service';
+import { servableReferences } from '../reference';
 import { TRIAL_MODULES, TRIALS } from './config';
 import { planRun, scoreRun } from './plan';
 import { utc } from '@civitai/db/kysely';
@@ -13,8 +10,6 @@ import { utc } from '@civitai/db/kysely';
 type Executor = Kysely<DB> | Transaction<DB>;
 
 export type TrialDeps = { now: () => Date; newSeed: () => number };
-
-type Option = { value: string; label: string };
 
 export type TrialItem = {
   referenceId: number;
@@ -31,7 +26,7 @@ export type TrialView =
       kind: 'question';
       questionKey: string;
       prompt: string;
-      options: Option[];
+      options: QuestionOption[];
       run: { id: number; position: number; total: number };
       item: TrialItem;
     };
@@ -70,15 +65,8 @@ const toRun = (row: { id: number; questionKey: string; itemIds: unknown }): Run 
       };
 };
 
-function servableReferences(db: Executor, questionKey: string) {
-  return db
-    .selectFrom('KnightsReferenceImage as r')
-    .innerJoin('Image as img', 'img.id', 'r.imageId')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .where('r.questionKey', '=', questionKey)
-    .where('r.pool', '=', REFERENCE_POOL.trials)
-    .where('r.status', '=', REFERENCE_STATUS.active)
-    .where(servableImage);
+function servableTrialReferences(db: Executor, questionKey: string) {
+  return servableReferences(db, REFERENCE_POOL.trials).where('r.questionKey', '=', questionKey);
 }
 
 export async function promoteToKnight(db: Executor, userId: number) {
@@ -119,7 +107,7 @@ async function loadQuestion(db: Executor, questionKey: string) {
     .select(['prompt', 'options'])
     .where('key', '=', questionKey)
     .executeTakeFirstOrThrow();
-  return { prompt: question.prompt, options: question.options as Option[] };
+  return { prompt: question.prompt, options: question.options as QuestionOption[] };
 }
 
 async function openRun(db: Executor, userId: number, questionKey: string): Promise<Run | null> {
@@ -140,7 +128,7 @@ async function startRun(
   deps: TrialDeps
 ): Promise<Run | null> {
   const [pool, met] = await Promise.all([
-    servableReferences(db, questionKey).select(['r.id', 'r.source']).execute(),
+    servableTrialReferences(db, questionKey).select(['r.id', 'r.source']).execute(),
     db
       .selectFrom('KnightsTrialAnswer')
       .select('referenceId')
@@ -194,7 +182,7 @@ async function nextItem(
   const remaining = run.itemIds.filter((id) => !answered.has(id));
   if (remaining.length === 0) return null;
 
-  const servable = await servableReferences(db, run.questionKey)
+  const servable = await servableTrialReferences(db, run.questionKey)
     .select(['r.id', 'img.url as imageKey', 'img.width', 'img.height'])
     .where('r.id', 'in', remaining)
     .execute();

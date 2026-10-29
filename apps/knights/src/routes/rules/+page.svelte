@@ -10,13 +10,13 @@
 
 <p class="muted">
   Knights of New Order judge how mature images should be rated, so the site can show each image to
-  the right people. <a href="/play">Back to judging</a>
+  the right people. <a href="/play" data-sveltekit-preload-data="off">Back to judging</a>
 </p>
 
 <h2>Acolyte Trials</h2>
 <ul>
   <li>
-    Everyone begins as an Acolyte. A Trial is a run of {facts.trials.length} images with known
+    Everyone begins as an Acolyte. A Trial is a run of up to {facts.trials.length} images with known
     answers; the first ones come with an explanation of why.
   </li>
   <li>
@@ -114,7 +114,7 @@
 <h2>Smites and hearts</h2>
 <ul>
   <li>
-    Judging in bad faith earns smites. Each smite lowers the weight of your votes.
+    Judging in bad faith earns smites. Each smite lowers the weight of your votes, and right judgments wear smites away.
   </li>
   <li>
     You have {facts.hearts} hearts. Lose them all and your career resets: you start again from the
@@ -131,7 +131,7 @@
   {/each}
 </dl>
 
-<p><a href="/">Home</a> · <a href="/play">Play</a></p>
+<p><a href="/">Home</a> · <a href="/play" data-sveltekit-preload-data="off">Play</a></p>
 
 <style>
   table {

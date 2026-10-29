@@ -8086,6 +8086,8 @@ model KnightsVote {
   settledAt   DateTime? // idempotency marker: set once progression for the final verdict is granted
   labelled    Boolean  @default(false)
   converted   Boolean  @default(false)
+  consequence String? // what a graded hidden check cost the player (warning | smite)
+  noticedAt   DateTime? // when the player dismissed the notice of that cost
 
   @@id([itemId, playerId, createdAt])
   @@index([playerId, createdAt])
@@ -8101,6 +8103,8 @@ model KnightsPlayer {
   shields           Int       @default(0)
   shieldWeek        DateTime  @db.Date
   recapDismissedFor DateTime? @db.Date
+  /// The `NewOrderPlayer.startAt` the player has been told about; a later one is a career reset they have not seen yet.
+  startAtSeen DateTime?
 }
 
 /// One row per player per UTC day on which they voted. `goldRecorded` counts against the daily cap;

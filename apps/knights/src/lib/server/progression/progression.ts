@@ -3,6 +3,7 @@ import { utc } from '@civitai/db/kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { getLevelProgression } from '@civitai/shared/new-order-levels';
 import { finalItem } from '../queue/item-state';
+import { workOffSmites } from '../smites/smites.service';
 import { PROGRESSION } from './config';
 import { accuracyOf, earnedRank, type Ledger } from './rating';
 import { mirrorXp, type XpDelta, type XpMirror } from './legacy-exp';
@@ -82,13 +83,30 @@ export async function settleItemVotes(
 
   const votes = await trx
     .selectFrom('KnightsVote')
-    .select(['playerId', 'verdict', 'gold', 'createdAt'])
+    .select(['itemId', 'playerId', 'verdict', 'gold', 'createdAt'])
     .where('itemId', '=', itemId)
     .where('settledAt', 'is', null)
     .where('verdict', '<>', 'pending')
     .orderBy('playerId', 'asc')
     .forUpdate()
     .execute();
+  return payOutVotes(trx, votes, now);
+}
+
+export type GradedVote = {
+  itemId: number;
+  playerId: number;
+  verdict: string;
+  gold: number | null;
+  createdAt: Date;
+};
+
+/** Pays graded, unsettled votes (already row-locked, ordered by player) and marks them settled. Shared by queue items and hidden checks. */
+export async function payOutVotes(
+  trx: Executor,
+  votes: GradedVote[],
+  now: Date
+): Promise<SettleResult> {
   if (votes.length === 0) return NOTHING;
 
   const players = await trx
@@ -104,7 +122,10 @@ export async function settleItemVotes(
     .execute();
   const startAt = new Map(players.map((p) => [p.userId, p.startAt]));
 
-  const perPlayer = new Map<number, { xp: number; pending: number; earned: number }>();
+  const perPlayer = new Map<
+    number,
+    { xp: number; pending: number; earned: number; correct: number }
+  >();
   for (const vote of votes) {
     const reset = vote.createdAt < (startAt.get(vote.playerId) ?? new Date(0));
     const paid = vote.verdict === 'correct' && !reset;
@@ -113,14 +134,15 @@ export async function settleItemVotes(
     await trx
       .updateTable('KnightsVote')
       .set({ xp: sql<number>`"xp" + ${bulk}`, gold: paid ? gold : 0, settledAt: utc(now) })
-      .where('itemId', '=', itemId)
+      .where('itemId', '=', vote.itemId)
       .where('playerId', '=', vote.playerId)
       .execute();
 
-    const total = perPlayer.get(vote.playerId) ?? { xp: 0, pending: 0, earned: 0 };
+    const total = perPlayer.get(vote.playerId) ?? { xp: 0, pending: 0, earned: 0, correct: 0 };
     total.xp += bulk;
     total.pending += reset ? 0 : gold;
     total.earned += paid ? gold : 0;
+    if (paid) total.correct++;
     perPlayer.set(vote.playerId, total);
   }
 
@@ -148,6 +170,7 @@ export async function settleItemVotes(
       })
       .where('userId', '=', playerId)
       .execute();
+    if (total.correct > 0) await workOffSmites(trx, playerId, now);
     if (total.xp > 0) xp.push({ playerId, xp: total.xp });
   }
   return { votes: votes.length, xp };

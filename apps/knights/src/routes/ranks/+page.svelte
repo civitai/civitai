@@ -50,7 +50,7 @@
   </li>
 </ul>
 
-<p><a href="/play">Back</a></p>
+<p><a href="/play" data-sveltekit-preload-data="off">Back</a></p>
 
 <style>
   table {

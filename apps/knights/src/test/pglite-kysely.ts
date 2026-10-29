@@ -21,6 +21,7 @@ const MIGRATIONS = [
   '20261213120000_knights_v2_progression',
   '20261215120000_knights_v2_daily',
   '20261218120000_knights_v2_conversion',
+  '20261219120000_knights_v2_smites',
 ].map((name) =>
   fileURLToPath(
     new URL(
@@ -77,7 +78,13 @@ CREATE TABLE "ModActivity" (
 CREATE TABLE "NewOrderSmite" (
   "id" SERIAL PRIMARY KEY,
   "targetPlayerId" INTEGER NOT NULL,
-  "cleansedAt" TIMESTAMP(3)
+  "givenById" INTEGER NOT NULL DEFAULT -1,
+  "size" INTEGER NOT NULL DEFAULT 10,
+  "remaining" INTEGER NOT NULL DEFAULT 10,
+  "reason" TEXT,
+  "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "cleansedAt" TIMESTAMP(3),
+  "cleansedReason" TEXT
 );
 `;
 

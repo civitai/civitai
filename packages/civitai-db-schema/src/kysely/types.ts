@@ -3716,6 +3716,10 @@ export type KnightsPlayer = {
   shields: Generated<number>;
   shieldWeek: Timestamp;
   recapDismissedFor: Timestamp | null;
+  /**
+   * The `NewOrderPlayer.startAt` the player has been told about; a later one is a career reset they have not seen yet.
+   */
+  startAtSeen: Timestamp | null;
 };
 export type KnightsPlayerDay = {
   playerId: number;
@@ -3813,6 +3817,8 @@ export type KnightsVote = {
   settledAt: Timestamp | null;
   labelled: Generated<boolean>;
   converted: Generated<boolean>;
+  consequence: string | null;
+  noticedAt: Timestamp | null;
 };
 export type Leaderboard = {
   id: string;
