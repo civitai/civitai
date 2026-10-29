@@ -127,10 +127,26 @@ describe('Build it under the checklist', () => {
     expect(again).not.toHaveProperty('awaitsUser');
   });
 
-  test('a list with every item done offers no Build it, from the page or from a server runner', async () => {
+  test('a first list offers Build it even with every item done', async () => {
     const done = [{ label: 'Ask questions', done: true }];
     const gate = createAssistantGate({ onBuild: vi.fn() });
     gate.beforeToolCall('set_checklist', { items: done }, conv);
+    const output = await gate.tools.set_checklist.execute({ items: done }, ctx);
+    expect(output).toMatchObject({ shown: true, awaitsUser: true });
+    const card = gate.tools.set_checklist.render!({
+      name: 'set_checklist',
+      input: { items: done },
+      state: 'done',
+      output,
+    }) as HTMLElement;
+    expect(buildButton(card)).not.toBeNull();
+  });
+
+  test('a changed list with every item done offers no Build it, from the page or from a server runner', async () => {
+    const done = [{ label: 'Ask questions well', done: true }];
+    const gate = createAssistantGate({ onBuild: vi.fn() });
+    gate.beforeToolCall('set_checklist', { items }, conv);
+    await gate.tools.set_checklist.execute({ items }, ctx);
     const output = await gate.tools.set_checklist.execute({ items: done }, ctx);
     expect(output).toEqual({ updated: true, open: 0 });
     const card = (input: unknown, shown: unknown) =>

@@ -493,8 +493,6 @@ describe('Build it on the runner', () => {
     ]);
   });
 
-  // Seen live: Build it's reply ended in an error part-way (out of Buzz), the user asked again in a
-  // message of their own, and that reply built the app: its finished list got a Build it.
   it('the reply after an errored Build it reply ticks the list off without offering Build it again', async () => {
     fake.add('my-app');
     const earlier: ModelMessage[] = [
@@ -535,17 +533,6 @@ describe('Build it on the runner', () => {
       { updated: true, open: 1, app: 'my-app' },
       { updated: true, open: 0, app: 'my-app' },
     ]);
-  });
-
-  it('a list with every item done offers no Build it, with no earlier list', async () => {
-    fake.add('my-app');
-    const { tools, reported } = await open();
-    expect(await call(tools.tools, 'set_checklist', { items: items(true, true) })).toEqual({
-      updated: true,
-      open: 0,
-      app: 'my-app',
-    });
-    expect(checklistsReported(reported)).toEqual([{ updated: true, open: 0, app: 'my-app' }]);
   });
 
   it('a new list, with other labels, still waits for Build it', async () => {

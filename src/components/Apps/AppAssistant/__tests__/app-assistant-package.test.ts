@@ -146,8 +146,9 @@ describe('the shared gate and subagents’ calls', () => {
 /**
  * Build it is for a list the user has not confirmed yet. The list the assistant shows as it ticks items
  * off, or once the app is finished, is no such list: on the server runner every reply is a new run, so
- * the gate starts from the conversation's last checklist (`restore`), and a list with every item done
- * never waits for the user (seen live: the finished list got a Build it).
+ * the gate starts from the conversation's last checklist (`restore`), and a changed list with every
+ * item done never waits for the user. A conversation's first list always waits: no build starts before
+ * the user confirms one.
  */
 describe('which checklists wait for Build it', () => {
   const conv = 'c-1';
@@ -189,15 +190,18 @@ describe('which checklists wait for Build it', () => {
     expect(core.awaiting()).toBeNull();
   });
 
-  it('a list with every item done never waits, even as the first one the gate sees', async () => {
+  it('a first list waits for Build it even with every item done', async () => {
     const core = runnerGate([]);
-    expect(await core.tools.set_checklist.execute({ items: items([true, true]) })).toEqual({
-      updated: true,
-      open: 0,
+    expect(await core.tools.set_checklist.execute({ items: items([true, true]) })).toMatchObject({
+      shown: true,
+      awaitsUser: true,
+      checklist: 'run2-1',
       app: 'tip-calc',
     });
-    expect(core.awaiting()).toBeNull();
-    // Nor one whose labels changed: there is nothing left to build.
+    expect(core.awaiting()).toEqual({ id: 'run2-1', app: 'sb-tip' });
+  });
+
+  it('a changed list with every item done does not wait: there is nothing left to build', async () => {
     const relabelled = runnerGate([shownEarlier]);
     expect(
       await relabelled.tools.set_checklist.execute({
