@@ -13,8 +13,8 @@ export type ConvertResult =
   | { status: 'converted'; gold: number; buzz: number; transactionId: string | null }
   /** Buzz did not confirm; the gold stays reserved and a retry sends the same key. */
   | { status: 'pending'; gold: number; buzz: number }
-  /** Buzz refused it for good: the reservation is released and the gold is convertible again. */
-  | { status: 'failed'; gold: number; buzz: number }
+  /** Buzz refused it for good: the gold is convertible again, unless a career reset forfeited it (`forfeited`). */
+  | { status: 'failed'; gold: number; buzz: number; forfeited: boolean }
   | { status: 'refused'; reason: 'no-player' | 'held' | 'below-minimum' };
 
 type Refusal = Extract<ConvertResult, { status: 'refused' }>['reason'];
@@ -59,6 +59,8 @@ export async function convertGold(
         buzz: buzzAmount,
         status: 'pending',
         externalTransactionId: `knights-gold-conversion:${randomUUID()}`,
+        // stamped after the player row lock, on the clock a reset's startAt uses
+        createdAt: sql<Date>`clock_timestamp()`,
       })
       .returningAll()
       .executeTakeFirstOrThrow();
@@ -94,8 +96,8 @@ export async function markConversionPaid(
 }
 
 /** Marks a pending conversion failed and gives its gold back, in one transaction. Gold reserved before a career reset was forfeited by it, so it is forfeited here too rather than given back. */
-async function failConversion(db: Kysely<DB>, conversion: Conversion) {
-  await db.transaction().execute(async (trx) => {
+async function failConversion(db: Kysely<DB>, conversion: Conversion): Promise<boolean> {
+  return db.transaction().execute(async (trx) => {
     const player = await trx
       .selectFrom('NewOrderPlayer')
       .select('startAt')
@@ -108,7 +110,7 @@ async function failConversion(db: Kysely<DB>, conversion: Conversion) {
       .where('id', '=', conversion.id)
       .where('status', '=', 'pending')
       .executeTakeFirst();
-    if (Number(failed.numUpdatedRows) === 0) return;
+    if (Number(failed.numUpdatedRows) === 0) return false;
     const forfeited = player !== undefined && conversion.createdAt < player.startAt;
     const gold = conversion.gold;
     await trx
@@ -124,6 +126,7 @@ async function failConversion(db: Kysely<DB>, conversion: Conversion) {
       })
       .where('userId', '=', conversion.playerId)
       .execute();
+    return forfeited;
   });
 }
 
@@ -134,6 +137,11 @@ async function settleConversion(
   { now, log }: { now: Date; log?: Log }
 ): Promise<ConvertResult> {
   const { gold, buzz: amount } = conversion;
+  await db
+    .updateTable('KnightsGoldConversion')
+    .set({ lastAttemptAt: utc(now) })
+    .where('id', '=', conversion.id)
+    .execute();
   let transactionId: string | null;
   try {
     ({ transactionId } = await buzz.grantYellow({
@@ -144,14 +152,14 @@ async function settleConversion(
     }));
   } catch (error) {
     if (error instanceof BuzzRejectedError) {
-      await failConversion(db, conversion);
+      const forfeited = await failConversion(db, conversion);
       await log?.({
         type: 'error',
         name: 'knights-gold-conversion-rejected',
-        details: { conversionId: conversion.id, status: error.status },
+        details: { conversionId: conversion.id, status: error.status, forfeited },
         message: 'Buzz rejected a gold conversion; the gold was released',
       });
-      return { status: 'failed', gold, buzz: amount };
+      return { status: 'failed', gold, buzz: amount, forfeited };
     }
     await log?.({
       type: 'warning',
@@ -173,8 +181,9 @@ export async function retryPendingConversions(
     now,
     limit = 50,
     budgetMs = Infinity,
+    attemptMs = 0,
     log,
-  }: { now: Date; limit?: number; budgetMs?: number; log?: Log }
+  }: { now: Date; limit?: number; budgetMs?: number; attemptMs?: number; log?: Log }
 ): Promise<{ retried: number; paid: number; failed: number }> {
   const due = await db
     .selectFrom('KnightsGoldConversion as c')
@@ -182,6 +191,17 @@ export async function retryPendingConversions(
     .where('c.status', '=', 'pending')
     .where('c.createdAt', '<=', utc(new Date(now.getTime() - PENDING_CONVERSION_RETRY_AFTER_MS)))
     .where(sql<boolean>`NOT ${heldSql('c.playerId')}`)
+    .where((eb) =>
+      eb.or([
+        eb('c.lastAttemptAt', 'is', null),
+        eb(
+          'c.lastAttemptAt',
+          '<=',
+          utc(new Date(now.getTime() - PENDING_CONVERSION_RETRY_AFTER_MS))
+        ),
+      ])
+    )
+    .orderBy(sql`COALESCE(c."lastAttemptAt", c."createdAt")`, 'asc')
     .orderBy('c.id', 'asc')
     .limit(limit)
     .execute();
@@ -190,7 +210,7 @@ export async function retryPendingConversions(
   let paid = 0;
   let failed = 0;
   for (const conversion of due) {
-    if (Date.now() >= deadline) break;
+    if (deadline - Date.now() < Math.max(attemptMs, 1)) break;
     retried++;
     try {
       const { status } = await settleConversion(db, buzz, conversion, { now, log });

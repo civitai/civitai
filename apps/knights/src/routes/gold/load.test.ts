@@ -7,7 +7,10 @@ vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatusOrNew }));
 vi.mock('$lib/server/conversion/balance', () => ({ getGoldBalance }));
 vi.mock('$lib/server/conversion/convert', () => ({ convertGold }));
-vi.mock('$lib/server/conversion/runtime', () => ({ getBuzzPort: () => ({}) }));
+const buzzConfigured = vi.hoisted(() => vi.fn());
+const logToAxiom = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
+vi.mock('$lib/server/conversion/runtime', () => ({ getBuzzPort: () => ({}), buzzConfigured }));
 
 const { load, actions } = await import('./+page.server');
 const locals = { user: { id: 7 } };
@@ -15,6 +18,9 @@ const locals = { user: { id: 7 } };
 beforeEach(() => {
   getGoldBalance.mockReset();
   convertGold.mockReset();
+  buzzConfigured.mockReset();
+  buzzConfigured.mockReturnValue(true);
+  logToAxiom.mockReset();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
@@ -47,12 +53,31 @@ describe('gold page', () => {
   });
 
   it('tells the player Buzz refused it, with their gold untouched', async () => {
-    convertGold.mockResolvedValue({ status: 'failed', gold: 6000, buzz: 6 });
+    convertGold.mockResolvedValue({ status: 'failed', gold: 6000, buzz: 6, forfeited: false });
 
     expect(await actions.convert({ locals } as never)).toMatchObject({
       status: 502,
       data: { message: expect.stringContaining('untouched') },
     });
+  });
+
+  it('says so when Buzz refused a conversion made before a career reset', async () => {
+    convertGold.mockResolvedValue({ status: 'failed', gold: 6000, buzz: 6, forfeited: true });
+
+    expect(await actions.convert({ locals } as never)).toMatchObject({
+      status: 502,
+      data: { message: expect.stringContaining('forfeited') },
+    });
+  });
+
+  it('refuses before reserving any gold when Buzz is not configured, and logs once', async () => {
+    buzzConfigured.mockReturnValue(false);
+
+    expect(await actions.convert({ locals } as never)).toMatchObject({ status: 503 });
+    expect(await actions.convert({ locals } as never)).toMatchObject({ status: 503 });
+
+    expect(convertGold).not.toHaveBeenCalled();
+    expect(logToAxiom).toHaveBeenCalledTimes(1);
   });
 
   it('says a conversion Buzz has not confirmed is on its way', async () => {

@@ -1,7 +1,7 @@
 import { fail } from '@sveltejs/kit';
 import { getGoldBalance } from '$lib/server/conversion/balance';
 import { convertGold, type ConvertResult } from '$lib/server/conversion/convert';
-import { getBuzzPort } from '$lib/server/conversion/runtime';
+import { buzzConfigured, getBuzzPort } from '$lib/server/conversion/runtime';
 import { logToAxiom } from '$lib/server/axiom';
 import { db } from '$lib/server/db';
 import { getPlayerStatusOrNew } from '$lib/server/player-status';
@@ -21,8 +21,23 @@ export const load: PageServerLoad = async ({ locals }) => {
   return { status, balance };
 };
 
+let warnedNoEndpoint = false;
+
 export const actions: Actions = {
   convert: async ({ locals }) => {
+    if (!buzzConfigured()) {
+      if (!warnedNoEndpoint) {
+        warnedNoEndpoint = true;
+        await logToAxiom({
+          type: 'warning',
+          name: 'knights-conversion-unavailable',
+          message: 'BUZZ_ENDPOINT is not configured; gold cannot be converted',
+        });
+      }
+      return fail(503, {
+        message: 'Converting gold is not available right now. Your gold is untouched.',
+      });
+    }
     let result: ConvertResult;
     try {
       result = await convertGold(db, getBuzzPort(), {
@@ -37,7 +52,9 @@ export const actions: Actions = {
     if (result.status === 'refused') return fail(409, { message: REFUSAL_TEXT[result.reason] });
     if (result.status === 'failed') {
       return fail(502, {
-        message: 'Buzz could not take this conversion. Your gold is untouched; try again later.',
+        message: result.forfeited
+          ? 'Buzz refused this conversion, which was made before your career reset, so its gold is forfeited with the rest.'
+          : 'Buzz could not take this conversion. Your gold is untouched; try again later.',
       });
     }
     if (result.status === 'pending') {

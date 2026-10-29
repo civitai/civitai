@@ -105,11 +105,13 @@ describe('resetPlayer and Knights gold', () => {
 
     const [operations] = dbMock.dbWrite.$transaction.mock.calls[0];
     expect(operations).toHaveLength(3);
-    expect(dbMock.dbWrite.newOrderPlayer.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { userId: 7 } })
-    );
+    const [update] = dbMock.dbWrite.newOrderPlayer.update.mock.calls[0];
+    expect(update.where).toEqual({ userId: 7 });
+    // startAt is set by the SQL below, from the database clock under the row lock
+    expect(update.data).not.toHaveProperty('startAt');
     const [strings, ...values] = dbMock.dbWrite.$executeRaw.mock.calls[0];
     const sql = strings.join('?').replace(/\s+/g, ' ');
+    expect(sql).toContain('"startAt" = clock_timestamp()');
     expect(sql).toContain('"goldPending" = 0');
     expect(sql).toContain('"goldEarned" = "goldConverted"');
     expect(sql).toContain('"goldCleared" = "goldConverted"');

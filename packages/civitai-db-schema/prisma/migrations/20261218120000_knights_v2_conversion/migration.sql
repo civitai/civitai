@@ -1,5 +1,6 @@
 -- Idempotent: applied by hand, possibly more than once.
--- Apply BEFORE deploying the Knights app and the main app: the detection job writes KnightsDetectionRun and
+-- Apply after 20261213120000_knights_v2_progression and BEFORE deploying the Knights app and the main app (the generated
+-- Prisma client reads the NewOrderPlayer gold columns): the detection job writes KnightsDetectionRun and
 -- the Knights tick reads the new columns and tables.
 -- ALTER on the partitioned "KnightsVote" parent (indexes) propagates to every month.
 
@@ -30,6 +31,7 @@ CREATE TABLE IF NOT EXISTS "KnightsGoldConversion" (
   "externalTransactionId" TEXT NOT NULL,
   "buzzTransactionId" TEXT,
   "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  "lastAttemptAt" TIMESTAMP(3),
   "paidAt" TIMESTAMP(3)
 );
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsGoldConversion_externalTransactionId_key" ON "KnightsGoldConversion" ("externalTransactionId");

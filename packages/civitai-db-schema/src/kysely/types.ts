@@ -3701,6 +3701,7 @@ export type KnightsGoldConversion = {
   externalTransactionId: string;
   buzzTransactionId: string | null;
   createdAt: Generated<Timestamp>;
+  lastAttemptAt: Timestamp | null;
   paidAt: Timestamp | null;
 };
 export type KnightsHarvestCursor = {

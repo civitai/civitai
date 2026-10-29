@@ -99,6 +99,8 @@ export async function settleItemVotes(
       'in',
       votes.map((v) => v.playerId)
     )
+    .orderBy('userId', 'asc')
+    .forUpdate()
     .execute();
   const startAt = new Map(players.map((p) => [p.userId, p.startAt]));
 

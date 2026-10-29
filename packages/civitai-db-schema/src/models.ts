@@ -5153,6 +5153,7 @@ export interface KnightsGoldConversion {
   externalTransactionId: string;
   buzzTransactionId: string | null;
   createdAt: Date;
+  lastAttemptAt: Date | null;
   paidAt: Date | null;
 }
 

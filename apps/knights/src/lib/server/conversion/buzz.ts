@@ -1,6 +1,5 @@
 import { BUZZ_TRANSACTION_TYPE, BuzzApiError, isSafeToRetry, type BuzzClient } from '@civitai/buzz';
-
-const WRITE_TIMEOUT_MS = 15_000;
+import { BUZZ_WRITE_TIMEOUT_MS } from './config';
 
 /** 408 and 429 say "try later", not "no". */
 const TRANSIENT_CLIENT_ERRORS = new Set([408, 429]);
@@ -42,7 +41,7 @@ export function buzzPort(client: Pick<BuzzClient, 'createTransaction'>): BuzzPor
             externalTransactionId: grant.externalTransactionId,
           },
           // A timeout is not retried: its outcome is unknown, and the caller retries with the same key.
-          { timeoutMs: WRITE_TIMEOUT_MS, shouldRetry: isSafeToRetry }
+          { timeoutMs: BUZZ_WRITE_TIMEOUT_MS, shouldRetry: isSafeToRetry }
         );
         return { transactionId: result.transactionId };
       } catch (error) {

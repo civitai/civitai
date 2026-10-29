@@ -1402,12 +1402,14 @@ export async function resetPlayer({
     // Reset player back to level 1
     dbWrite.newOrderPlayer.update({
       where: { userId: playerId },
-      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0, startAt: new Date() },
+      data: { rankType: NewOrderRankType.Acolyte, exp: 0, fervor: 0 },
     }),
-    // Knights v2 gold: unconverted gold is forfeited like the counters below; paid and reserved gold stays
+    // Knights v2 gold: unconverted gold is forfeited like the counters below; paid and reserved gold stays.
+    // startAt is the database clock read under the row lock the update above took, the same clock and order
+    // Knights stamps conversions with.
     dbWrite.$executeRaw`
       UPDATE "NewOrderPlayer"
-      SET "goldPending" = 0, "goldEarned" = "goldConverted", "goldCleared" = "goldConverted"
+      SET "startAt" = clock_timestamp(), "goldPending" = 0, "goldEarned" = "goldConverted", "goldCleared" = "goldConverted"
       WHERE "userId" = ${playerId}
     `,
     // Cleanse all smites

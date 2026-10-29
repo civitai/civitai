@@ -5,5 +5,12 @@ export const CONVERSION = {
 
 export const PENDING_CONVERSION_RETRY_AFTER_MS = 60_000;
 
-/** One tick retries at most this many unconfirmed conversions, and stops starting new ones after the budget. */
-export const TICK_CONVERSION_RETRY = { limit: 20, budgetMs: 20_000 } as const;
+/** The longest one Buzz write may take. */
+export const BUZZ_WRITE_TIMEOUT_MS = 15_000;
+
+/** One tick retries at most `limit` unconfirmed conversions, and starts none that could not finish inside the budget. */
+export const TICK_CONVERSION_RETRY = {
+  limit: 20,
+  budgetMs: 30_000,
+  attemptMs: BUZZ_WRITE_TIMEOUT_MS,
+} as const;

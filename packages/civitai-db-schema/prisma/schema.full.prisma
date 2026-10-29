@@ -8144,6 +8144,7 @@ model KnightsGoldConversion {
   externalTransactionId String    @unique
   buzzTransactionId     String?
   createdAt             DateTime  @default(now())
+  lastAttemptAt         DateTime?
   paidAt                DateTime?
 
   @@index([playerId, createdAt])
