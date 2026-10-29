@@ -26,6 +26,9 @@ vi.mock('../tickets/account', () => ({
   accountSectionFor: (...a: unknown[]) => accountSectionFor(...a),
 }));
 
+const none = () => false;
+const all = () => true;
+
 const { loadTicketPayload, openTicketInView, resolveTicketView } = await import(
   '../tickets/detail'
 );
@@ -59,7 +62,7 @@ describe('loadTicketPayload', () => {
   it('returns the ticket and its conversation for a ticket of the view', async () => {
     const res = await loadTicketPayload('moderation', '5', {
       canSeeEmail: false,
-      canViewAccount: false,
+      canRead: none,
     });
     expect(res).toMatchObject({
       status: 'ok',
@@ -68,21 +71,25 @@ describe('loadTicketPayload', () => {
     });
   });
 
-  it('adds the account section only when one is returned, and hands it the linked user and the grant', async () => {
+  it('adds the account section only for a viewer who may read it, handing the loader the linked user', async () => {
+    getTicketDetail.mockResolvedValue({
+      status: 'found',
+      ticket: ticket({ cfFeature: 'Account Restriction or Banned Account' }),
+    });
+    accountSectionFor.mockResolvedValue({ status: 'ok', userId: 99 });
     const without = await loadTicketPayload('moderation', '5', {
       canSeeEmail: false,
-      canViewAccount: false,
+      canRead: none,
     });
     expect(without).not.toHaveProperty('account');
-    accountSectionFor.mockResolvedValueOnce({ status: 'unlinked' });
     const withAccount = await loadTicketPayload('moderation', '5', {
       canSeeEmail: false,
-      canViewAccount: true,
+      canRead: all,
     });
-    expect(withAccount).toMatchObject({ account: { status: 'unlinked' } });
+    expect(withAccount).toMatchObject({ account: { status: 'ok', userId: 99 } });
     expect(accountSectionFor).toHaveBeenLastCalledWith({
       view: 'moderation',
-      cfFeature: 'Moderation Decision',
+      cfFeature: 'Account Restriction or Banned Account',
       routerTopic: null,
       civitaiUserId: 99,
       canView: true,
@@ -101,7 +108,7 @@ describe('loadTicketPayload', () => {
     );
     const res = await loadTicketPayload('moderation', '5', {
       canSeeEmail: false,
-      canViewAccount: false,
+      canRead: none,
     });
     expect(routedContext).toHaveBeenCalledTimes(1);
     expect(res.status === 'ok' && res.ticket.civitaiUserId).toBe(7);
@@ -115,7 +122,7 @@ describe('loadTicketPayload', () => {
     sentByTickets.mockRejectedValueOnce(new Error('moderator db down'));
     const res = await loadTicketPayload('support', '5', {
       canSeeEmail: false,
-      canViewAccount: false,
+      canRead: none,
     });
     expect(res.status === 'ok' && res.ticket.sentBy).toBeNull();
   });
@@ -123,12 +130,12 @@ describe('loadTicketPayload', () => {
   it('keeps the requester address behind the PII grant', async () => {
     const without = await loadTicketPayload('moderation', '5', {
       canSeeEmail: false,
-      canViewAccount: false,
+      canRead: none,
     });
     expect(JSON.stringify(without)).not.toContain('example.test');
     const withGrant = await loadTicketPayload('moderation', '5', {
       canSeeEmail: true,
-      canViewAccount: false,
+      canRead: none,
     });
     expect(withGrant.status === 'ok' && withGrant.ticket).toMatchObject({
       requesterEmail: 'ann@example.test',
@@ -138,7 +145,7 @@ describe('loadTicketPayload', () => {
   it('refuses a ticket that belongs to the other view, without returning any of it', async () => {
     const res = await loadTicketPayload('support', '5', {
       canSeeEmail: true,
-      canViewAccount: false,
+      canRead: none,
     });
     expect(res).toMatchObject({ status: 'refused', code: 404 });
     expect(JSON.stringify(res)).not.toContain('ann@example.test');
@@ -146,14 +153,14 @@ describe('loadTicketPayload', () => {
 
   it('refuses a bad id and an unreadable ticket, and degrades a failed conversation', async () => {
     expect(
-      await loadTicketPayload('moderation', 'abc', { canSeeEmail: false, canViewAccount: false })
+      await loadTicketPayload('moderation', 'abc', { canSeeEmail: false, canRead: none })
     ).toMatchObject({
       status: 'refused',
       code: 404,
     });
     getTicketDetail.mockResolvedValueOnce({ status: 'unavailable', reason: 'Freshdesk is down.' });
     expect(
-      await loadTicketPayload('moderation', '5', { canSeeEmail: false, canViewAccount: false })
+      await loadTicketPayload('moderation', '5', { canSeeEmail: false, canRead: none })
     ).toMatchObject({
       status: 'refused',
       code: 503,
@@ -161,7 +168,7 @@ describe('loadTicketPayload', () => {
     getTicketConversation.mockRejectedValueOnce(new Error('boom'));
     const res = await loadTicketPayload('moderation', '5', {
       canSeeEmail: false,
-      canViewAccount: false,
+      canRead: none,
     });
     expect(res.status === 'ok' && res.conversation.status).toBe('unavailable');
   });
