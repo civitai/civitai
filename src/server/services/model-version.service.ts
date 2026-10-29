@@ -139,6 +139,7 @@ import {
 import {
   imagesForModelVersionsCache,
   isTrainingSampleUrlUsable,
+  TrainingSampleRefusedError,
   uploadImageFromUrl,
 } from '~/server/services/image.service';
 import { createNotification } from '~/server/services/notification.service';
@@ -3208,7 +3209,10 @@ export const createModelVersionPostFromTraining = async ({
         const imageUrl = typeof data === 'string' ? data : data.image_url;
         // '' is a failed sample's slot; uploading it throws and fails the whole publish.
         if (!imageUrl || !isTrainingSampleUrlUsable(imageUrl)) return undefined;
-        return uploadImageFromUrl({ imageUrl });
+        return uploadImageFromUrl({ imageUrl }).catch((error) => {
+          if (error instanceof TrainingSampleRefusedError) return undefined;
+          throw error;
+        });
       })
     )
   ).filter((x): x is NonNullable<typeof x> => isDefined(x?.url));

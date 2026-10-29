@@ -9097,6 +9097,13 @@ export function isTrainingSampleUrlUsable(url: string) {
 
 export const MAX_TRAINING_SAMPLE_REDIRECTS = 3;
 
+/** A training sample url, or a redirect from it, that is not fetched. */
+export class TrainingSampleRefusedError extends Error {
+  constructor() {
+    super('Unsupported image url');
+  }
+}
+
 /** Fetches a training sample, following redirects only between orchestrator urls. */
 async function fetchTrainingSample(url: string) {
   let current = url;
@@ -9104,7 +9111,7 @@ async function fetchTrainingSample(url: string) {
   for (let hop = 0; hop <= MAX_TRAINING_SAMPLE_REDIRECTS; hop++) {
     if (!isTrustedOrchestratorUrl(current)) {
       trainingSampleFetchCounter.inc({ outcome: hop ? 'redirect_refused' : 'url_refused' });
-      throw new Error('Unsupported image url');
+      throw new TrainingSampleRefusedError();
     }
     const response = await fetch(current, { redirect: 'manual', credentials: 'omit', signal });
     const location = response.headers.get('location');
@@ -9116,7 +9123,7 @@ async function fetchTrainingSample(url: string) {
     return response.blob().catch(() => null);
   }
   trainingSampleFetchCounter.inc({ outcome: 'too_many_redirects' });
-  throw new Error('Unsupported image url');
+  throw new TrainingSampleRefusedError();
 }
 
 /** Copies a training sample image into image storage. Only orchestrator urls are fetched. */

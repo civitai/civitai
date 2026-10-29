@@ -93,6 +93,30 @@ describe('createModelVersionPostFromTraining', () => {
     expect(uploadImageFromUrlMock).toHaveBeenCalledWith({ imageUrl: SAMPLE });
   });
 
+  it('skips a sample refused while fetching and posts the rest', async () => {
+    const OTHER = 'https://orchestration-new.civitai.com/v2/consumer/blobs/SAMPLE2.png';
+    givenSamples([OTHER, SAMPLE]);
+    const { TrainingSampleRefusedError } = await import('~/server/services/image.service');
+    uploadImageFromUrlMock.mockImplementation(async ({ imageUrl }: { imageUrl: string }) => {
+      if (imageUrl === OTHER) throw new TrainingSampleRefusedError();
+      return { url: `uploaded:${imageUrl}`, type: 'image', metadata: { width: 1, height: 1 } };
+    });
+
+    await createModelVersionPostFromTraining({ modelVersionId: 7, user: USER });
+
+    expect(createPostMock).toHaveBeenCalledTimes(1);
+    expect(addPostImageMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('still fails when a sample fetch fails for another reason', async () => {
+    givenSamples([SAMPLE]);
+    uploadImageFromUrlMock.mockRejectedValue(new Error('Failed to fetch image'));
+
+    await expect(
+      createModelVersionPostFromTraining({ modelVersionId: 7, user: USER })
+    ).rejects.toThrow('Failed to fetch image');
+  });
+
   it('logs only the host of a skipped sample url', async () => {
     givenSamples(['https://image-generation.civitai.com/abc/123/sample.png?token=t', SAMPLE]);
 
