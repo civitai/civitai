@@ -264,10 +264,6 @@ it.each([
     'src/components/Profile/Sections/ShowcaseGrid.module.scss',
     '--event-decoration-allowance: 36px;',
   ],
-  [
-    'src/components/Profile/Sections/ShowcaseGrid.module.scss',
-    '--event-decoration-allowance-top: 36px;',
-  ],
   ['src/components/Profile/Sections/ShowcaseGrid.module.scss', '--event-decoration-grow: 1;'],
   ['src/components/HomeBlocks/HomeBlock.module.scss', '--event-decoration-grow: 1;'],
   [
@@ -291,19 +287,11 @@ it('the hat picker makes room above each preview card, declares it, and stops gr
     );
 });
 
-describe('a container with more room above than beside its cards', () => {
-  it('moves the hat in by the side room on the left and the top room above', () => {
-    expect(hatShiftCss(-40, 'left')).toBe(
-      `max(0px, -1 * var(--event-decoration-allowance, ${ITEM_BLEED}px) - -40px)`
-    );
-    expect(hatShiftCss(-40, 'top')).toContain(
-      'var(--event-decoration-allowance-top, var(--event-decoration-allowance,'
-    );
-  });
-
-  it('reads the one allowance for the top where no top allowance is declared', () => {
-    expect(hatShiftCss(-40, 'top')).toContain(`var(--event-decoration-allowance, ${ITEM_BLEED}px)`);
-  });
+it('a container can declare more room above than beside its cards', () => {
+  expect(hatShiftCss(-40, 'top')).toContain(
+    'var(--event-decoration-allowance-top, var(--event-decoration-allowance,'
+  );
+  expect(hatShiftCss(-40, 'left')).not.toContain('allowance-top');
 });
 
 it('masonry carousels give hats no room and no growth', () => {

@@ -1,16 +1,11 @@
 import { describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import homeClasses from '~/components/HomeBlocks/HomeBlock.module.scss';
+import profileClasses from '~/components/Profile/ProfileSection.module.css';
 
-// =============================================================================
-// Event hats on the corner of a shelf's cards, past their edge as in the feed, not moved inside.
-//
-// A shelf clips at its box (`overflow: hidden` for the row clamp, or a scroller), so it has to hold
-// the hat's room itself: padding above and left of the first card, undone by an equal negative
-// margin so no card moves, with the matching `--event-decoration-allowance`. Drives the real
-// ShowcaseGrid and the home-block grid's stylesheet, with the real TwCosmeticWrapper and hat
-// overlay; stubs only the hat's art and popover. Browser mode only: placement needs a real layout.
-// =============================================================================
+// A shelf clips at its box, so it holds the hat's room itself: padding above and left of the first
+// card, undone by an equal negative margin so no card moves, plus the matching
+// `--event-decoration-allowance`. Browser mode only: placement needs a real layout.
 
 const HAT_URL =
   'data:image/svg+xml,' +
@@ -77,7 +72,7 @@ async function shelf(width: number, body: React.ReactNode) {
 function expectOnCorner(clip: Element, { left }: { left: number }) {
   const [card] = cards();
   const [h] = hats();
-  expect(rect(card).top - rect(h).top).toBeGreaterThanOrEqual(24);
+  expect(rect(card).top - rect(h).top).toBeGreaterThanOrEqual(34);
   expect(rect(card).left - rect(h).left).toBeGreaterThanOrEqual(left);
   expect(rect(h).top).toBeGreaterThanOrEqual(rect(clip).top - 0.5);
   expect(rect(h).left).toBeGreaterThanOrEqual(rect(clip).left - 0.5);
@@ -99,10 +94,8 @@ describe('a hat on a shelf card sits on its corner', () => {
     const grid = root.firstElementChild!;
     expectOnCorner(grid, { left: 24 });
 
-    // The room is added and taken back: the first card is where it was (the items' 8px margin).
     expect(rect(cards()[0]).left - rect(root).left).toBeCloseTo(8, 0);
     expect(rect(cards()[0]).top - rect(root).top).toBeCloseTo(0, 0);
-    // Three columns by two rows shown; the third row stays collapsed.
     // The grid's children are the cards' wrappers; a collapsed row is zero tall.
     expect(cards().filter((c) => rect(c.parentElement).height > 0)).toHaveLength(6);
   });
@@ -117,8 +110,7 @@ describe('a hat on a shelf card sits on its corner', () => {
       </ShowcaseGrid>
     );
     const root = document.querySelector('[data-testid="root"]')!;
-    expectOnCorner(root.firstElementChild!, { left: 12 });
-    // The scroller's own 16px padding and the card's 8px margin, as before the hat's room.
+    expectOnCorner(root.firstElementChild!, { left: 20 });
     expect(rect(cards()[0]).left - rect(root).left).toBeCloseTo(24, 0);
     expect(rect(cards()[0]).top - rect(root).top).toBeCloseTo(0, 0);
   });
@@ -133,7 +125,6 @@ describe('a hat on a shelf card sits on its corner', () => {
       </ShowcaseGrid>
     );
     const root = document.querySelector('[data-testid="root"]')!;
-    // The scroll area is what clips.
     const scrollArea = root.firstElementChild!.firstElementChild!;
     expectOnCorner(scrollArea, { left: 24 });
     expect(rect(cards()[0]).left - rect(root).left).toBeCloseTo(24, 0);
@@ -155,8 +146,44 @@ describe('a hat on a shelf card sits on its corner', () => {
       </div>
     );
     const root = document.querySelector('[data-testid="root"]')!;
-    expect(rect(cards()[0]).top - rect(hats()[0]).top).toBeGreaterThanOrEqual(30);
-    expect(rect(cards()[0]).top - rect(hats()[0]).top).toBeGreaterThanOrEqual(30);
-    expect(rect(hats()[0]).top).toBeGreaterThanOrEqual(rect(root.firstElementChild).top - 0.5);
+    expectOnCorner(root.firstElementChild!, { left: 20 });
+    expect(rect(cards()[0]).top - rect(root).top).toBeCloseTo(0, 0);
+  });
+
+  test('the padding over the section header takes no click, and the loading veil stays on the cards', async () => {
+    await shelf(
+      900,
+      // The section's Stack: a 16px gap between its header and the shelf.
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <button
+          type="button"
+          data-testid="header-button"
+          style={{ height: 34, alignSelf: 'flex-end' }}
+        >
+          View all
+        </button>
+        <ShowcaseGrid
+          itemCount={items.length}
+          rows={2}
+          minWidth={280}
+          className={profileClasses.loading}
+        >
+          {items.map((i) => (
+            <Card key={i} i={i} />
+          ))}
+        </ShowcaseGrid>
+      </div>
+    );
+    const grid =
+      document.querySelector('[data-testid="root"]')!.firstElementChild!.lastElementChild!;
+    const button = document.querySelector('[data-testid="header-button"]')!;
+    // The grid's padding starts above its first card and runs up over the button's lower part.
+    const x = rect(button).left + 10;
+    const y = rect(button).bottom - 5;
+    expect(rect(grid).top).toBeLessThan(y);
+    expect(document.elementFromPoint(x, y)).toBe(button);
+    // The veil dims and catches clicks on the cards, though the shelf lets them through otherwise.
+    const card = rect(cards()[0]);
+    expect(document.elementFromPoint(card.left + 40, card.top + 80)).toBe(grid);
   });
 });
