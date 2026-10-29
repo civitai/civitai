@@ -31,14 +31,24 @@ export type NotifyResult = {
   failed: number;
   /** Players whose batch may or may not have been saved; their slot is kept. */
   unconfirmed: number;
+  /** A batch had an unknown outcome, so the run sent nothing further. */
+  halted: boolean;
 };
 
-const subscribers = (db: Kysely<DB>, kind: NotifyKind, day: Day) =>
+/**
+ * Players who joined the game (they have a `NewOrderPlayer` row), have not turned `kind` off (a settings
+ * row means off) and have not been sent anything on `day`.
+ */
+const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day) =>
   db
-    .selectFrom('UserNotificationSettings as s')
-    .where('s.type', '=', typeOf(kind))
+    .selectFrom('NewOrderPlayer as pl')
     .where(
-      sql<boolean>`not exists (select 1 from "KnightsNotificationSend" n where n."playerId" = s."userId" and n."day" = ${dateOf(
+      sql<boolean>`not exists (select 1 from "UserNotificationSettings" o where o."userId" = pl."userId" and o."type" = ${typeOf(
+        kind
+      )})`
+    )
+    .where(
+      sql<boolean>`not exists (select 1 from "KnightsNotificationSend" n where n."playerId" = pl."userId" and n."day" = ${dateOf(
         day
       )})`
     );
@@ -48,17 +58,17 @@ async function withNewVerdicts(db: Kysely<DB>, day: Day, now: Date): Promise<num
   const day_ms = 86_400_000;
   const searchFrom = new Date(now.getTime() - NOTIFY.voteSearchDays * day_ms);
   const settledFrom = new Date(now.getTime() - NOTIFY.verdictLookbackDays * day_ms);
-  const rows = await subscribers(db, 'verdicts', day)
-    .innerJoin('KnightsVote as v', 'v.playerId', 's.userId')
-    .select('s.userId')
+  const rows = await recipients(db, 'verdicts', day)
+    .innerJoin('KnightsVote as v', 'v.playerId', 'pl.userId')
+    .select('pl.userId')
     .where('v.createdAt', '>=', utc(searchFrom))
     .where('v.settledAt', '>=', utc(settledFrom))
     .where('v.verdict', 'in', ['correct', 'failed'])
-    .groupBy('s.userId')
+    .groupBy('pl.userId')
     .having(
       sql<boolean>`max(v."settledAt") > greatest(
-        coalesce((select max(n."sentAt") from "KnightsNotificationSend" n where n."playerId" = s."userId" and n."type" = ${VERDICTS_KIND}), '-infinity'::timestamp),
-        coalesce((select max(w."createdAt") from "KnightsVote" w where w."playerId" = s."userId" and w."createdAt" >= ${utc(
+        coalesce((select max(n."sentAt") from "KnightsNotificationSend" n where n."playerId" = pl."userId" and n."kind" = ${VERDICTS_KIND} and n."confirmedAt" is not null), '-infinity'::timestamp),
+        coalesce((select max(w."createdAt") from "KnightsVote" w where w."playerId" = pl."userId" and w."createdAt" >= ${utc(
           searchFrom
         )}), '-infinity'::timestamp)
       )`
@@ -68,19 +78,18 @@ async function withNewVerdicts(db: Kysely<DB>, day: Day, now: Date): Promise<num
 }
 
 async function withStreakAtRisk(db: Kysely<DB>, day: Day): Promise<number[]> {
-  const rows = await subscribers(db, 'streak', day)
-    .innerJoin('KnightsPlayer as k', 'k.playerId', 's.userId')
-    .innerJoin('NewOrderPlayer as p', 'p.userId', 's.userId')
+  const rows = await recipients(db, 'streak', day)
+    .innerJoin('KnightsPlayer as k', 'k.playerId', 'pl.userId')
     .leftJoin('KnightsPlayerDay as d', (join) =>
       join.onRef('d.playerId', '=', 'k.playerId').onRef('d.day', '=', 'k.lastWatchDay')
     )
     .select([
-      's.userId',
+      'pl.userId',
       'k.streak',
       'k.shields',
       sql<string>`k."lastWatchDay"::text`.as('lastWatchDay'),
       sql<string>`k."shieldWeek"::text`.as('shieldWeek'),
-      'p.startAt',
+      'pl.startAt',
       'd.watchCompletedAt',
     ])
     .where('k.streak', '>', 0)
@@ -120,17 +129,16 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
     const stages = stagesWorkedBy(rank);
     // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
     if (rank === 'Acolyte' || rank === 'Inquisitor' || stages.length === 0) continue;
-    const rows = await subscribers(db, 'new-images', day)
-      .innerJoin('NewOrderPlayer as p', 'p.userId', 's.userId')
-      .select('s.userId')
-      .where('p.rankType', '=', rank)
+    const rows = await recipients(db, 'new-images', day)
+      .select('pl.userId')
+      .where('pl.rankType', '=', rank)
       .where((eb) =>
         eb.exists(
           servableItems(db)
             .select(sql<number>`1`.as('one'))
             .where('i.minRank', 'in', stages)
             .where(
-              sql<boolean>`not exists (select 1 from "KnightsVote" v where v."itemId" = i."id" and v."playerId" = s."userId" and v."createdAt" >= ${utc(
+              sql<boolean>`not exists (select 1 from "KnightsVote" v where v."itemId" = i."id" and v."playerId" = pl."userId" and v."createdAt" >= ${utc(
                 oldestOpen
               )})`
             )
@@ -180,7 +188,7 @@ async function claim(
 ): Promise<number[]> {
   const rows = await db
     .insertInto('KnightsNotificationSend')
-    .values(ids.map((playerId) => ({ playerId, day: dateOf(day), type: kind, sentAt: utc(now) })))
+    .values(ids.map((playerId) => ({ playerId, day: dateOf(day), kind, sentAt: utc(now) })))
     .onConflict((oc) => oc.columns(['playerId', 'day']).doNothing())
     .returning('playerId')
     .execute();
@@ -191,17 +199,33 @@ const release = (db: Kysely<DB>, kind: NotifyKind, day: Day, ids: number[]) =>
   db
     .deleteFrom('KnightsNotificationSend')
     .where('day', '=', dateOf(day))
-    .where('type', '=', kind)
+    .where('kind', '=', kind)
     .where('playerId', 'in', ids)
     .execute();
+
+/** Marks the claims as accepted by the notifications app; only confirmed claims count as having told the player. */
+async function confirm(db: Kysely<DB>, kind: NotifyKind, day: Day, ids: number[], now: Date) {
+  try {
+    await db
+      .updateTable('KnightsNotificationSend')
+      .set({ confirmedAt: utc(now) })
+      .where('day', '=', dateOf(day))
+      .where('kind', '=', kind)
+      .where('playerId', 'in', ids)
+      .execute();
+  } catch (error) {
+    console.error(`knights: could not confirm ${kind} claims`, error);
+  }
+}
 
 /** The same chunk of players always gets the same key, so a retry of it can be recognised server-side. */
 const batchKey = (kind: NotifyKind, day: Day, userIds: number[]) =>
   `knights-daily:${kind}:${day}:${createHash('sha1').update(userIds.join(',')).digest('hex')}`;
 
 /**
- * Plans, claims each player's slot, then sends. A refused batch gives its slots back for the next run;
- * one whose outcome is unknown keeps them, because a retry could send a second notification that day.
+ * Plans, claims each player's slot, then sends. A refused batch gives its slots back for the next run.
+ * One whose outcome is unknown (a timeout, a transport error, a 5xx, any error not known to precede the
+ * send) keeps them, because a retry could send a second notification that day, and ends the run.
  */
 export async function sendNotifications(
   db: Kysely<DB>,
@@ -229,11 +253,12 @@ export async function sendNotifications(
     sent: { verdicts: 0, streak: 0, 'new-images': 0 },
     failed: 0,
     unconfirmed: 0,
+    halted: false,
   };
 
   for (const { kind } of NOTIFY_KINDS) {
     const ids = plan[kind];
-    for (let at = 0; at < ids.length; at += CLAIM_CHUNK) {
+    for (let at = 0; at < ids.length && !result.halted; at += CLAIM_CHUNK) {
       const claimed = await claim(db, kind, day, ids.slice(at, at + CLAIM_CHUNK), now);
       if (claimed.length === 0) continue;
       claimed.sort((a, b) => a - b);
@@ -245,16 +270,20 @@ export async function sendNotifications(
       };
       try {
         await send(batch);
-        result.sent[kind] += claimed.length;
       } catch (error) {
         console.error(`knights: ${kind} notification batch failed`, error);
         if (error instanceof BatchRejected) {
           result.failed += claimed.length;
           await release(db, kind, day, claimed);
         } else {
+          // Further batches would likely fail the same way, each taking its players' slots.
           result.unconfirmed += claimed.length;
+          result.halted = true;
         }
+        continue;
       }
+      result.sent[kind] += claimed.length;
+      await confirm(db, kind, day, claimed, now);
     }
   }
   return result;

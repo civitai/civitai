@@ -3688,8 +3688,9 @@ export type KnightsHarvestCursor = {
 export type KnightsNotificationSend = {
   playerId: number;
   day: Timestamp;
-  type: string;
+  kind: string;
   sentAt: Generated<Timestamp>;
+  confirmedAt: Timestamp | null;
 };
 export type KnightsPlayer = {
   playerId: number;

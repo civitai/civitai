@@ -29,7 +29,8 @@ beforeEach(async () => {
   );
 });
 
-const subscribe = (userId: number, ...kinds: NotifyKind[]) =>
+/** A settings row means the player turned that type off. */
+const optOut = (userId: number, ...kinds: NotifyKind[]) =>
   Promise.all(
     kinds.map((kind) =>
       pg.query(`INSERT INTO "UserNotificationSettings" ("userId","type") VALUES ($1,$2)`, [
@@ -83,7 +84,6 @@ function runner({ blocked = [] as number[] } = {}) {
 describe('sendNotifications', () => {
   it('tells a player their votes settled', async () => {
     await seedPlayer(pg, 1);
-    await subscribe(1, 'verdicts');
     await seedSettledVote(1);
     const { run, received } = runner();
 
@@ -94,7 +94,6 @@ describe('sendNotifications', () => {
 
   it('sends nothing about verdicts once the player has voted again', async () => {
     await seedPlayer(pg, 1);
-    await subscribe(1, 'verdicts');
     await seedSettledVote(1);
     await pg.query(
       `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
@@ -110,7 +109,6 @@ describe('sendNotifications', () => {
 
   it('sends a streak warning from 21:00 UTC and nothing else that day', async () => {
     await seedPlayer(pg, 1);
-    await subscribe(1, 'streak', 'new-images');
     await seedStreak(1);
     await enqueueImage();
     const { run, received } = runner();
@@ -126,7 +124,6 @@ describe('sendNotifications', () => {
 
   it('does not warn when a shield would cover the missed day', async () => {
     await seedPlayer(pg, 1);
-    await subscribe(1, 'streak');
     await seedStreak(1, { shields: 1 });
     const { run, received } = runner();
 
@@ -138,8 +135,6 @@ describe('sendNotifications', () => {
   it("does not warn once today's Watch is done or the streak is already lost", async () => {
     await seedPlayer(pg, 1);
     await seedPlayer(pg, 2);
-    await subscribe(1, 'streak');
-    await subscribe(2, 'streak');
     await seedStreak(1, { lastWatchDay: TODAY });
     await seedStreak(2, { lastWatchDay: '2026-12-10' });
     const { run, received } = runner();
@@ -151,7 +146,6 @@ describe('sendNotifications', () => {
 
   it('does not warn a streak a career reset has ended', async () => {
     await seedPlayer(pg, 1, 'Knight', { startAt: '2026-12-17 03:00:00' });
-    await subscribe(1, 'streak');
     await seedStreak(1);
     const { run, received } = runner();
 
@@ -163,8 +157,6 @@ describe('sendNotifications', () => {
   it('tells a player about waiting images only when their rank can judge them', async () => {
     await seedPlayer(pg, 1, 'Knight');
     await seedPlayer(pg, 2, 'Acolyte');
-    await subscribe(1, 'new-images');
-    await subscribe(2, 'new-images');
     await enqueueImage();
     const { run, received } = runner();
 
@@ -175,7 +167,6 @@ describe('sendNotifications', () => {
 
   it('is silent when the queue holds only images the player already voted on', async () => {
     await seedPlayer(pg, 1);
-    await subscribe(1, 'new-images');
     await enqueueImage();
     await pg.query(
       `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight")
@@ -192,7 +183,6 @@ describe('sendNotifications', () => {
   it('picks the best type: verdicts over the streak warning over new images', async () => {
     for (const id of [1, 2, 3]) {
       await seedPlayer(pg, id);
-      await subscribe(id, 'verdicts', 'streak', 'new-images');
     }
     await seedStreak(1);
     await seedStreak(2);
@@ -207,11 +197,33 @@ describe('sendNotifications', () => {
     expect(received().get(3)).toEqual(['new-images']);
   });
 
-  it('sends only the types a player opted into', async () => {
+  it('skips a type the player turned off and falls back to the next best', async () => {
     await seedPlayer(pg, 1);
-    await seedPlayer(pg, 2);
-    await subscribe(2, 'verdicts');
     await seedSettledVote(1);
+    await optOut(1, 'verdicts');
+    await enqueueImage();
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect(received().get(1)).toEqual(['new-images']);
+  });
+
+  it('sends nothing to a player who turned every type off', async () => {
+    await seedPlayer(pg, 1);
+    await seedSettledVote(1);
+    await optOut(1, 'verdicts', 'streak', 'new-images');
+    await enqueueImage();
+    const { run, received } = runner();
+
+    await run(at(21));
+
+    expect(received().size).toBe(0);
+  });
+
+  it('sends nothing to a user who never joined the game', async () => {
+    await seedSettledVote(1);
+    await seedStreak(1);
     await enqueueImage();
     const { run, received } = runner();
 
@@ -222,7 +234,6 @@ describe('sendNotifications', () => {
 
   it('sends at most once a day however often it runs', async () => {
     await seedPlayer(pg, 1);
-    await subscribe(1, 'verdicts', 'new-images');
     await enqueueImage();
     const { run, received, send } = runner();
 
@@ -240,7 +251,6 @@ describe('sendNotifications', () => {
 
   it('does not repeat verdicts the next day when nothing new settled', async () => {
     await seedPlayer(pg, 1);
-    await subscribe(1, 'verdicts', 'new-images');
     await seedSettledVote(1);
     await enqueueImage();
     const { run, received } = runner();
@@ -251,9 +261,47 @@ describe('sendNotifications', () => {
     expect(received().get(1)).toEqual(['verdicts', 'new-images']);
   });
 
+  it('announces verdicts again the next day when the first send was never confirmed', async () => {
+    await seedPlayer(pg, 1);
+    await seedSettledVote(1);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const timedOut = vi.fn().mockRejectedValue(new Error('timeout'));
+
+    await sendNotifications(db, { now: at(12), send: timedOut, accessible: everyone });
+    const { run, received } = runner();
+    await run(at(13));
+    expect(received().size).toBe(0);
+
+    await run(new Date('2026-12-18T09:30:00Z'));
+    expect(received().get(1)).toEqual(['verdicts']);
+  });
+
+  it('stops sending after the first batch whose outcome is unknown', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await seedSettledVote(1);
+    await optOut(2, 'verdicts');
+    await enqueueImage();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const timedOut = vi.fn().mockRejectedValue(new Error('timeout'));
+
+    const first = await sendNotifications(db, {
+      now: at(12),
+      send: timedOut,
+      accessible: everyone,
+    });
+
+    expect(timedOut).toHaveBeenCalledTimes(1);
+    expect(first).toMatchObject({ halted: true, unconfirmed: 1 });
+
+    const { run, received } = runner();
+    await run(at(13));
+    expect(received().get(2)).toEqual(['new-images']);
+    expect(received().has(1)).toBe(false);
+  });
+
   it('gives the day back when the notifications app refuses a batch, and retries it under the same key', async () => {
     await seedPlayer(pg, 1);
-    await subscribe(1, 'new-images');
     await enqueueImage();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const refusing = vi.fn().mockRejectedValue(new BatchRejected('bad request'));
@@ -269,7 +317,6 @@ describe('sendNotifications', () => {
 
   it('keeps the day when the outcome of a send is unknown, so a retry cannot double-send', async () => {
     await seedPlayer(pg, 1);
-    await subscribe(1, 'new-images');
     await enqueueImage();
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const timedOut = vi.fn().mockRejectedValue(new Error('timeout'));
@@ -285,8 +332,6 @@ describe('sendNotifications', () => {
   it('notifies only players who can open the app', async () => {
     await seedPlayer(pg, 1);
     await seedPlayer(pg, 2);
-    await subscribe(1, 'new-images');
-    await subscribe(2, 'new-images');
     await enqueueImage();
     const { run, received } = runner({ blocked: [2] });
 

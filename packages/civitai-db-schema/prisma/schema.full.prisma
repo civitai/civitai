@@ -8115,13 +8115,14 @@ model KnightsPlayerDay {
 
 /// One daily-loop notification per player per UTC day. The primary key is the cap; a send claims its row first.
 model KnightsNotificationSend {
-  playerId Int
-  day      DateTime @db.Date
-  type     String // verdicts | streak | new-images
-  sentAt   DateTime @default(now())
+  playerId    Int
+  day         DateTime  @db.Date
+  kind        String // verdicts | streak | new-images
+  sentAt      DateTime  @default(now())
+  confirmedAt DateTime? // null until the notifications app accepted the send; an unconfirmed claim still holds the day
 
   @@id([playerId, day])
-  @@index([playerId, type, sentAt])
+  @@index([playerId, kind, sentAt])
 }
 
 /// An image with a known answer for Acolyte Trials or hidden checks. `answer` is the option value of `questionKey`.

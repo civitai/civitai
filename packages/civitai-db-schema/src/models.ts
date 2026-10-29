@@ -5131,8 +5131,9 @@ export interface KnightsPlayerDay {
 export interface KnightsNotificationSend {
   playerId: number;
   day: Date;
-  type: string;
+  kind: string;
   sentAt: Date;
+  confirmedAt: Date | null;
 }
 
 export interface KnightsReferenceImage {
