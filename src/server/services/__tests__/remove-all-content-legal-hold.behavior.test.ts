@@ -94,7 +94,13 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ),
 }));
 // The soft delete is model-removal-collection-reindex's; here, only which models get it, and how.
-const { deleteModelById } = vi.hoisted(() => ({ deleteModelById: vi.fn(async () => null) }));
+// It commits the Deleted status, as the real one does before its refunds and cache steps.
+const { deleteModelById } = vi.hoisted(() => ({
+  deleteModelById: vi.fn(async ({ id }: { id: number }) => {
+    await holder.db.exec(`UPDATE "Model" SET status = 'Deleted' WHERE id = ${id}`);
+    return null;
+  }),
+}));
 vi.mock('~/server/services/model.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   deleteModelById,
@@ -1299,8 +1305,12 @@ describe('removeAllContent keeps other people’s comments a held author is part
     expect(deleteModelById).toHaveBeenCalledWith(
       expect.objectContaining({ id: MODEL, userId: 77, isModerator: true })
     );
-    // The legacy comment cascades with the model, so a hard delete would take it.
-    expect(await rows(`SELECT id FROM "Model" WHERE id = ${MODEL}`)).toEqual([{ id: MODEL }]);
+    // The legacy comment cascades with the model, so a hard delete would take it. Not hidden as
+    // well: the end-of-wipe refund would then refund its bids a second time.
+    expect(
+      await rows(`SELECT id, status, meta ->> 'removedWithOwner' AS removed
+        FROM "Model" WHERE id = ${MODEL}`)
+    ).toEqual([{ id: MODEL, status: 'Deleted', removed: null }]);
     expect(await rows(`SELECT id FROM "Comment" WHERE id = 5000`)).toEqual([{ id: 5000 }]);
   });
 
