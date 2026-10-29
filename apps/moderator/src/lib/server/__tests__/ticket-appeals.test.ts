@@ -6,7 +6,8 @@ const { appealsSectionFor } = await import('../tickets/appeals');
 
 const appealsOf = vi.fn();
 const imagesOfPosts = vi.fn();
-const reads = { appealsOf, imagesOfPosts };
+const imagesFlaggedForAppeal = vi.fn();
+const reads = { appealsOf, imagesOfPosts, imagesFlaggedForAppeal };
 const all = () => true;
 
 const base = {
@@ -33,6 +34,7 @@ const ticket = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   appealsOf.mockReset().mockResolvedValue([]);
   imagesOfPosts.mockReset().mockResolvedValue([]);
+  imagesFlaggedForAppeal.mockReset().mockImplementation(async (ids: number[]) => ids);
 });
 
 describe('appealsSectionFor', () => {
@@ -89,6 +91,38 @@ describe('appealsSectionFor', () => {
       [4, false],
       [5, false],
     ]);
+  });
+
+  it('offers no ruling on an image the appeals queue no longer lists', async () => {
+    appealsOf.mockResolvedValue([
+      { ...base, id: 1, entityId: 100 },
+      { ...base, id: 2, entityId: 200 },
+    ]);
+    imagesFlaggedForAppeal.mockResolvedValue([100]);
+    const res = await appealsSectionFor(ticket(), reads);
+    expect(res.status === 'ok' && res.appeals.map((a) => [a.id, a.rulable])).toEqual([
+      [1, true],
+      [2, false],
+    ]);
+  });
+
+  it('checks the review flag once, for the shown pending image appeals only', async () => {
+    appealsOf.mockResolvedValue([
+      { ...base, id: 1, entityId: 100 },
+      { ...base, id: 2, entityId: 200, status: 'Approved' },
+      { ...base, id: 3, entityType: 'Model', entityId: 300 },
+    ]);
+    await appealsSectionFor(ticket(), reads);
+    expect(imagesFlaggedForAppeal).toHaveBeenCalledTimes(1);
+    expect(imagesFlaggedForAppeal).toHaveBeenCalledWith([100]);
+  });
+
+  it('lists the appeals without a ruling when the flag lookup fails', async () => {
+    appealsOf.mockResolvedValue([base]);
+    imagesFlaggedForAppeal.mockRejectedValue(new Error('db'));
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    const res = await appealsSectionFor(ticket(), reads);
+    expect(res.status === 'ok' && res.appeals.map((a) => a.rulable)).toEqual([false]);
   });
 
   it('carries the decision of a decided appeal', async () => {

@@ -7,6 +7,7 @@ const linkedUser = vi.fn();
 const canAct = vi.fn();
 const appealOf = vi.fn();
 const parseReason = vi.fn();
+const needsReviewOf = vi.fn();
 const resolve = vi.fn();
 const note = vi.fn();
 
@@ -14,6 +15,7 @@ const actions = createTicketAppealActions({
   linkedUser: (...a) => linkedUser(...a),
   canAct: (...a) => canAct(...a),
   appealOf: (...a) => appealOf(...a),
+  needsReviewOf: (...a) => needsReviewOf(...a),
   parseReason: (...a) => parseReason(...a),
   resolve: (...a) => resolve(...a),
   note: (...a) => note(...a),
@@ -50,6 +52,7 @@ beforeEach(() => {
   linkedUser.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
   canAct.mockReset().mockReturnValue(true);
   appealOf.mockReset().mockResolvedValue(PENDING_IMAGE);
+  needsReviewOf.mockReset().mockResolvedValue('appeal');
   parseReason
     .mockReset()
     .mockReturnValue({ resolvedReason: 'not-violation', internalNotes: undefined });
@@ -119,6 +122,12 @@ describe('appealResolveImage', () => {
       409,
     ],
     [
+      'an image no longer flagged for appeal review',
+      () => needsReviewOf.mockResolvedValue(null),
+      409,
+    ],
+    ['an image flagged for some other review', () => needsReviewOf.mockResolvedValue('minor'), 409],
+    [
       'a ticket that is no longer a moderation ticket',
       () => linkedUser.mockResolvedValue({ status: 'refused', code: 409, message: 'moved' }),
       409,
@@ -153,6 +162,20 @@ describe('appealResolveImage', () => {
     expect(await run({ status: 'Void' })).toMatchObject({ status: 400 });
     expect(linkedUser).not.toHaveBeenCalled();
     expect(resolve).not.toHaveBeenCalled();
+  });
+
+  it('refuses, and writes no note, when the appeal closed is not the one posted', async () => {
+    resolve.mockResolvedValue({ id: 13 });
+    expect(await run()).toMatchObject({
+      status: 409,
+      data: { error: expect.stringContaining('#13') },
+    });
+    expect(note).not.toHaveBeenCalled();
+  });
+
+  it('reads the image flag from the appeal row image, before resolving', async () => {
+    await run({ imageId: '999' });
+    expect(needsReviewOf).toHaveBeenCalledWith(100);
   });
 
   it('answers "already decided" when the resolve finds no pending appeal, and leaves no note', async () => {

@@ -37,6 +37,7 @@ beforeEach(async () => {
       "entityRemovedAt" timestamp(3),
       category text
     );
+    CREATE TABLE "Image" (id serial PRIMARY KEY, "postId" integer, "needsReview" text);
   `);
   h.db.current = new Kysely({ dialect: pgliteDialect(pg) });
 });
@@ -75,5 +76,23 @@ describe('appealsSectionFor against Postgres', () => {
     const res = await appealsSectionFor({ userId: 7, text: '', canRead: () => true, now });
     expect(res.appeals.map((a) => a.entityId)).toEqual([3, 1, 2]);
     expect(res.truncated).toBe(false);
+  });
+
+  it('offers a ruling only on pending image appeals whose image is flagged for appeal review', async () => {
+    await pg.query(
+      `INSERT INTO "Image" (id, "needsReview") VALUES (1, 'appeal'), (2, NULL), (3, 'minor')`
+    );
+    await pg.query(
+      `INSERT INTO "Appeal" ("userId", "entityType", "entityId", status, "createdAt") VALUES
+       (7, 'Image', 1, 'Pending', '2026-10-03'),
+       (7, 'Image', 2, 'Pending', '2026-10-02'),
+       (7, 'Image', 3, 'Pending', '2026-10-01')`
+    );
+    const res = await appealsSectionFor({ userId: 7, text: '', canRead: () => true, now });
+    expect(res.appeals.map((a) => [a.entityId, a.rulable])).toEqual([
+      [1, true],
+      [2, false],
+      [3, false],
+    ]);
   });
 });

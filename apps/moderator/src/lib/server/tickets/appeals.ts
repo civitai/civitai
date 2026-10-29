@@ -24,7 +24,7 @@ export type TicketAppeal = {
   resolvedMessage: string | null;
   /** The ticket's subject or description links to this appeal's content. */
   mentioned: boolean;
-  /** Pending and a plain image appeal, which the image appeals grant already shown it for: the only rows the card offers a ruling for. */
+  /** Pending, a plain image appeal, and its image still flagged `appeal` (what the image appeals queue lists): the only rows the card offers a ruling for. */
   rulable: boolean;
 };
 
@@ -53,6 +53,8 @@ export type AppealReads = {
     postIds: number[],
     imageIds: number[]
   ) => Promise<{ id: number; postId: number }[]>;
+  /** Which of `imageIds` the image appeals queue lists (`needsReview = 'appeal'`). */
+  imagesFlaggedForAppeal: (imageIds: number[]) => Promise<number[]>;
 };
 
 const liveReads: AppealReads = {
@@ -95,6 +97,15 @@ const liveReads: AppealReads = {
         .where('postId', 'in', postIds)
         .execute()
     ).flatMap((r) => (r.postId === null ? [] : [{ id: r.id, postId: r.postId }])),
+  imagesFlaggedForAppeal: async (imageIds) =>
+    (
+      await dbRead
+        .selectFrom('Image')
+        .select('id')
+        .where('id', 'in', imageIds)
+        .where('needsReview', '=', 'appeal')
+        .execute()
+    ).map((r) => r.id),
 };
 
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
@@ -130,6 +141,19 @@ export async function appealsSectionFor(
       console.error('[tickets] post lookup for appeals failed', e);
     }
   }
+  // The queue lists an image only while flagged, so a ruling is offered only for those. A failed lookup
+  // offers none rather than a ruling the write would refuse.
+  const pendingImageIds = shown
+    .filter((a) => a.kind === 'image' && a.row.status === 'Pending')
+    .map((a) => a.row.entityId);
+  let flagged = new Set<number>();
+  if (pendingImageIds.length > 0) {
+    try {
+      flagged = new Set(await reads.imagesFlaggedForAppeal(pendingImageIds));
+    } catch (e) {
+      console.error('[tickets] review-flag lookup for appeals failed', e);
+    }
+  }
   const mentioned = (type: string, id: number) =>
     (type === 'Image' && (mentions.images.has(id) || viaPost.has(id))) ||
     (type === 'Model' && mentions.models.has(id));
@@ -149,7 +173,7 @@ export async function appealsSectionFor(
       resolvedReason: row.resolvedReason,
       resolvedMessage: row.resolvedMessage,
       mentioned: mentioned(row.entityType, row.entityId),
-      rulable: kind === 'image' && row.status === 'Pending',
+      rulable: kind === 'image' && row.status === 'Pending' && flagged.has(row.entityId),
     })),
   };
 }
