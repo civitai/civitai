@@ -34,6 +34,7 @@ CREATE TABLE IF NOT EXISTS "KnightsGoldConversion" (
   "lastAttemptAt" TIMESTAMP(3),
   "paidAt" TIMESTAMP(3)
 );
+ALTER TABLE "KnightsGoldConversion" ADD COLUMN IF NOT EXISTS "lastAttemptAt" TIMESTAMP(3);
 CREATE UNIQUE INDEX IF NOT EXISTS "KnightsGoldConversion_externalTransactionId_key" ON "KnightsGoldConversion" ("externalTransactionId");
 CREATE INDEX IF NOT EXISTS "KnightsGoldConversion_playerId_createdAt_idx" ON "KnightsGoldConversion" ("playerId", "createdAt");
 CREATE INDEX IF NOT EXISTS "KnightsGoldConversion_status_createdAt_idx" ON "KnightsGoldConversion" ("status", "createdAt");
