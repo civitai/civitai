@@ -3,6 +3,7 @@ import { db } from '$lib/server/db';
 import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
 import { imageUrl } from '$lib/server/image-url';
 import { requireMember } from '$lib/server/membership';
+import { conversionEnabled } from '$lib/server/conversion/runtime';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
 import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
@@ -35,6 +36,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     const trial = await getTrial(db, locals.user.id, trialDeps);
     if (trial.kind !== 'not-acolyte') {
       return {
+        conversionOpen: conversionEnabled(),
         mode: 'trials' as const,
         status,
         trial:
@@ -69,11 +71,13 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
   ]);
+  const conversionOpen = conversionEnabled();
   const lockoutSeconds = lockedUntil
     ? Math.max(1, Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000))
     : null;
   if (!feed) {
     return {
+      conversionOpen,
       mode: 'queue' as const,
       status,
       daily,
@@ -86,6 +90,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
 
   const [item] = feed.items;
   return {
+    conversionOpen,
     mode: 'queue' as const,
     status,
     daily,

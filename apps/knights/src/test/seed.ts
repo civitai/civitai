@@ -48,3 +48,42 @@ export async function seedGradedVotes(
   await insert('correct', correct, 0);
   await insert('failed', failed, correct);
 }
+
+export async function setGold(
+  pg: PGlite,
+  userId: number,
+  gold: { pending?: number; earned?: number; cleared?: number; converted?: number }
+) {
+  await pg.query(
+    `UPDATE "NewOrderPlayer" SET "goldPending"=$2, "goldEarned"=$3, "goldCleared"=$4, "goldConverted"=$5 WHERE "userId"=$1`,
+    [userId, gold.pending ?? 0, gold.earned ?? 0, gold.cleared ?? 0, gold.converted ?? 0]
+  );
+}
+
+/** One settled vote on the rating question; it needs the vote partition of `createdAt`'s month. */
+export async function seedSettledVote(
+  pg: PGlite,
+  {
+    itemId,
+    playerId,
+    imageId,
+    gold = 0,
+    answer = '4',
+    createdAt = '2026-12-10 10:00:00',
+    settledAt = '2026-12-10 11:00:00',
+  }: {
+    itemId: number;
+    playerId: number;
+    imageId: number;
+    gold?: number;
+    answer?: string;
+    createdAt?: string;
+    settledAt?: string;
+  }
+) {
+  await pg.query(
+    `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict","gold","xp","settledAt")
+     VALUES ($1,$2,$3::timestamp,'knights.image.nsfwLevel',$4,'Knight',$5,1,'correct',$6,0,$7::timestamp)`,
+    [itemId, playerId, createdAt, imageId, answer, gold, settledAt]
+  );
+}

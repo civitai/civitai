@@ -3,7 +3,20 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const escalateExpired = vi.hoisted(() => vi.fn());
 const applyPendingResolutions = vi.hoisted(() => vi.fn());
 const settleFinalItems = vi.hoisted(() => vi.fn());
+const retryPendingConversions = vi.hoisted(() => vi.fn());
+const runPostDetectionPass = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
+const logToAxiom = vi.hoisted(() => vi.fn());
+const buzzConfigured = vi.hoisted(() => vi.fn());
+const conversionEnabled = vi.hoisted(() => vi.fn());
+vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
+vi.mock('$lib/server/conversion/runtime', () => ({
+  getBuzzPort: () => ({}),
+  buzzConfigured,
+  conversionEnabled,
+}));
+vi.mock('$lib/server/conversion/convert', () => ({ retryPendingConversions }));
+vi.mock('$lib/server/conversion/pass', () => ({ runPostDetectionPass }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { mirrorXp: undefined } }));
 vi.mock('$lib/server/progression/progression', () => ({ settleFinalItems }));
@@ -21,6 +34,15 @@ beforeEach(() => {
   applyPendingResolutions.mockReset();
   settleFinalItems.mockReset();
   settleFinalItems.mockResolvedValue({ items: 0, votes: 0, failed: 0 });
+  logToAxiom.mockReset();
+  buzzConfigured.mockReset();
+  buzzConfigured.mockReturnValue(true);
+  conversionEnabled.mockReset();
+  conversionEnabled.mockReturnValue(true);
+  retryPendingConversions.mockReset();
+  retryPendingConversions.mockResolvedValue({ retried: 0, paid: 0, failed: 0 });
+  runPostDetectionPass.mockReset();
+  runPostDetectionPass.mockResolvedValue({ ran: false });
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
@@ -32,7 +54,73 @@ describe('POST /api/jobs/tick', () => {
     const response = await run();
 
     expect(response.status).toBe(200);
-    expect(await response.json()).toEqual({ escalated: 2, applied: 1, settledVotes: 0 });
+    expect(await response.json()).toEqual({
+      escalated: 2,
+      applied: 1,
+      settledVotes: 0,
+      conversionsRetried: 0,
+      postDetection: { ran: false },
+    });
+  });
+
+  it('runs the post-detection pass and retries unconfirmed conversions even when an earlier step failed', async () => {
+    escalateExpired.mockRejectedValue(new Error('db down'));
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+
+    const response = await run();
+
+    expect(retryPendingConversions).toHaveBeenCalled();
+    expect(runPostDetectionPass).toHaveBeenCalled();
+    expect(response.status).toBe(500);
+  });
+
+  it('bounds the conversion retries by count and time', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+
+    await run();
+
+    expect(retryPendingConversions).toHaveBeenCalledWith(
+      {},
+      {},
+      expect.objectContaining({ limit: expect.any(Number), budgetMs: expect.any(Number) })
+    );
+  });
+
+  it('skips the conversion retries without a warning while conversion is switched off, and still clears gold', async () => {
+    conversionEnabled.mockReturnValue(false);
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+
+    const response = await run();
+
+    expect(response.status).toBe(200);
+    expect(retryPendingConversions).not.toHaveBeenCalled();
+    expect(logToAxiom).not.toHaveBeenCalled();
+    expect(runPostDetectionPass).toHaveBeenCalled();
+  });
+
+  it('skips the conversion retries with a warning when Buzz is not configured, and still answers 200', async () => {
+    buzzConfigured.mockReturnValue(false);
+    escalateExpired.mockResolvedValue({ escalated: 1 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+
+    const response = await run();
+
+    expect(response.status).toBe(200);
+    expect(retryPendingConversions).not.toHaveBeenCalled();
+    expect(runPostDetectionPass).toHaveBeenCalled();
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'warning', name: 'knights-conversion-retries-skipped' })
+    );
+  });
+
+  it('answers 500 when the post-detection pass fails', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    runPostDetectionPass.mockRejectedValue(new Error('label store down'));
+
+    expect((await run()).status).toBe(500);
   });
 
   it('still writes back settled ratings when the escalation fails, then answers 500', async () => {

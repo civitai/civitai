@@ -5037,6 +5037,8 @@ export interface NewOrderPlayer {
   payoutReleaseFrom: Date | null;
   goldPending: number;
   goldEarned: number;
+  goldCleared: number;
+  goldConverted: number;
 }
 
 export interface NewOrderLinkReview {
@@ -5126,6 +5128,33 @@ export interface KnightsPlayerDay {
   goldRecorded: number;
   watchCompletedAt: Date | null;
   bonusGold: number;
+}
+
+export interface KnightsDetectionRun {
+  id: number;
+  completedAt: Date;
+  passedAt: Date | null;
+}
+
+export interface KnightsGoldClearing {
+  id: number;
+  playerId: number;
+  runId: number;
+  gold: number;
+  clearedAt: Date;
+}
+
+export interface KnightsGoldConversion {
+  id: number;
+  playerId: number;
+  gold: number;
+  buzz: number;
+  status: string;
+  externalTransactionId: string;
+  buzzTransactionId: string | null;
+  createdAt: Date;
+  lastAttemptAt: Date | null;
+  paidAt: Date | null;
 }
 
 export interface KnightsReferenceImage {

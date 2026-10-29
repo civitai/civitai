@@ -43,6 +43,24 @@ beforeEach(() => {
   queueDeps.voteLimits = undefined;
 });
 
+describe('play load and the conversion switch', () => {
+  it('hides the Convert link unless conversion is switched on', async () => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 5 });
+    const previous = process.env.KNIGHTS_CONVERSION_ENABLED;
+    try {
+      delete process.env.KNIGHTS_CONVERSION_ENABLED;
+      expect((await run()).conversionOpen).toBe(false);
+      process.env.KNIGHTS_CONVERSION_ENABLED = 'yes';
+      expect((await run()).conversionOpen).toBe(false);
+      process.env.KNIGHTS_CONVERSION_ENABLED = 'true';
+      expect((await run()).conversionOpen).toBe(true);
+    } finally {
+      if (previous === undefined) delete process.env.KNIGHTS_CONVERSION_ENABLED;
+      else process.env.KNIGHTS_CONVERSION_ENABLED = previous;
+    }
+  });
+});
+
 describe('play load', () => {
   it('sends a level 1 Acolyte to Trials', async () => {
     getPlayerStatus.mockResolvedValue({ rank: 'Acolyte', level: 1, xpIntoLevel: 0 });
