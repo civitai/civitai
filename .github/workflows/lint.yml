@@ -134,7 +134,7 @@ name: Lint
 # and this filter must go (or the check must be made path-aware).
 on:
   pull_request:
-    branches: [main, release]
+    branches: [main, release, ci/unit-narrowed-proof-base]
     paths:
       - '**'
       - '!docs/**'
