@@ -3,6 +3,7 @@ import { PANELS, type PanelContext, type PanelKey } from '$lib/tickets/panels';
 import { accountSectionFor, type TicketAccount } from './account';
 import { appealsSectionFor, type TicketAppeals } from './appeals';
 import { contentIssueSectionFor, type TicketContentIssue } from './content-reports';
+import { generatorSectionFor, type TicketGenerator } from './generator-restrictions';
 import { historySectionFor, type TicketHistory } from './history';
 import { ratingDisputesSectionFor, type TicketRatingDisputes } from './rating-disputes';
 
@@ -12,6 +13,7 @@ export type PanelSections = {
   history: TicketHistory;
   ratingDisputes: TicketRatingDisputes;
   contentIssue: TicketContentIssue;
+  generator: TicketGenerator;
 };
 
 export type CanRead = (path: string) => boolean;
@@ -41,6 +43,8 @@ export const liveLoaders: Loaders = {
   ratingDisputes: ({ civitaiUserId }) => ratingDisputesSectionFor({ userId: civitaiUserId }),
   contentIssue: ({ civitaiUserId }, canRead) =>
     contentIssueSectionFor({ userId: civitaiUserId, canRead }),
+  generator: ({ civitaiUserId }, canRead) =>
+    generatorSectionFor({ userId: civitaiUserId, canRead }),
 };
 
 /**

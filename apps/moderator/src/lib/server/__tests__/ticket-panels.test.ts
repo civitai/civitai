@@ -11,12 +11,14 @@ const appeals = vi.fn();
 const history = vi.fn();
 const ratingDisputes = vi.fn();
 const contentIssue = vi.fn();
+const generator = vi.fn();
 const loaders = {
   account: (...a: unknown[]) => account(...a),
   appeals: (...a: unknown[]) => appeals(...a),
   history: (...a: unknown[]) => history(...a),
   ratingDisputes: (...a: unknown[]) => ratingDisputes(...a),
   contentIssue: (...a: unknown[]) => contentIssue(...a),
+  generator: (...a: unknown[]) => generator(...a),
 } as never;
 const all = () => true;
 
@@ -35,6 +37,7 @@ beforeEach(() => {
     .mockReset()
     .mockResolvedValue({ status: 'ok', userId: 7, disputes: [], truncated: false });
   contentIssue.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
+  generator.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
 });
 
 describe('loadPanels', () => {
@@ -82,6 +85,30 @@ describe('loadPanels', () => {
     );
     expect(await loadPanels(content, (p) => p === '/retool/user-lookup', loaders)).toHaveProperty(
       'contentIssue'
+    );
+  });
+
+  it('shows the generator panel on a support Image Generator ticket only', async () => {
+    const gen = { ...ticket, view: 'support' as const, cfFeature: 'Image Generator' };
+    const res = await loadPanels(gen, all, loaders);
+    expect(Object.keys(res)).toEqual(['generator']);
+    expect(generator).toHaveBeenCalledWith({ ...gen, civitaiUserId: 7 }, all);
+    expect(await loadPanels({ ...gen, view: 'moderation' }, all, loaders)).toEqual({});
+    expect(await loadPanels({ ...gen, civitaiUserId: null }, all, loaders)).toEqual({
+      generator: { status: 'unlinked' },
+    });
+  });
+
+  it('holds the generator panel back from a viewer with neither of its page grants', async () => {
+    const gen = { ...ticket, view: 'support' as const, cfFeature: 'Image Generator' };
+    const none = (p: string) =>
+      p !== '/audit/generator-restrictions' && p !== '/retool/user-lookup';
+    expect(await loadPanels(gen, none, loaders)).toEqual({});
+    expect(
+      await loadPanels(gen, (p) => p === '/audit/generator-restrictions', loaders)
+    ).toHaveProperty('generator');
+    expect(await loadPanels(gen, (p) => p === '/retool/user-lookup', loaders)).toHaveProperty(
+      'generator'
     );
   });
 

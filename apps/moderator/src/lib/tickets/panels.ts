@@ -1,7 +1,9 @@
+import { GENERATOR_RESTRICTIONS_PATH } from '$lib/restriction-types';
 import { accountPanelFor, type PanelVisibility } from './account-panel';
 import { APPEAL_QUEUE_PATHS } from './appeals';
 import { appealsPanelFor } from './appeals-panel';
 import { IMAGE_REMOVALS_PATH, USER_REPORTS_PATH, contentPanelFor } from './content-panel';
+import { BLOCKED_PROMPTS_PATH, generatorPanelFor } from './generator-panel';
 import { RATINGS_PATH } from './rating-disputes';
 import type { TicketView } from './routing';
 
@@ -48,6 +50,10 @@ export const PANELS = {
   contentIssue: {
     readGrants: [USER_REPORTS_PATH, IMAGE_REMOVALS_PATH],
     visibility: contentPanelFor,
+  },
+  generator: {
+    readGrants: [GENERATOR_RESTRICTIONS_PATH, BLOCKED_PROMPTS_PATH],
+    visibility: generatorPanelFor,
   },
 } satisfies Record<string, PanelSpec>;
 

@@ -15,6 +15,7 @@
     ticketId,
     userId,
     restrictionId,
+    action = 'accountResolveRestriction',
     enabled,
     why,
     ondone,
@@ -22,6 +23,8 @@
     ticketId: string;
     userId: number;
     restrictionId: number;
+    /** The page action that makes the ruling: the account card's, or the generator card's. */
+    action?: string;
     enabled: boolean;
     why: string;
     ondone: (what: string, data: Record<string, unknown> | undefined) => void;
@@ -49,7 +52,7 @@
   const reasonWhy = $derived(enabled ? undefined : why);
 </script>
 
-<form method="POST" action="?/accountResolveRestriction" use:enhance={form.enhance} class="flex flex-col gap-1.5">
+<form method="POST" action="?/{action}" use:enhance={form.enhance} class="flex flex-col gap-1.5">
   <input type="hidden" name="ticketId" value={ticketId} />
   <input type="hidden" name="userId" value={userId} />
   <input type="hidden" name="userRestrictionId" value={restrictionId} />

@@ -23,6 +23,7 @@ vi.mock('../tickets/detail', () => ({ resolveTicketView, linkedCivitaiUserId }))
 
 const { linkedUser, linkedUserFor } = await import('../tickets/account-actions');
 const { appealsPanelFor } = await import('$lib/tickets/appeals-panel');
+const { generatorPanelFor } = await import('$lib/tickets/generator-panel');
 
 const ticket = { cfFeature: ACCOUNT_RESTRICTION_FEATURE };
 
@@ -46,7 +47,19 @@ describe('linkedUser', () => {
   it('refuses a ticket that now belongs to the support view', async () => {
     resolveTicketView.mockResolvedValue({ routesTo: 'support', routed: null });
     expect(await linkedUser('5')).toMatchObject({ status: 'refused', code: 409 });
-    expect(linkedCivitaiUserId).not.toHaveBeenCalled();
+  });
+
+  it('refuses a support ticket whatever its feature, for every moderation panel', async () => {
+    resolveTicketView.mockResolvedValue({ routesTo: 'support', routed: null });
+    getTicketDetail.mockResolvedValue({
+      status: 'found',
+      ticket: { cfFeature: 'Moderation Decision' },
+    });
+    expect(await linkedUser('5')).toMatchObject({ status: 'refused', code: 409 });
+    expect(await linkedUserFor(appealsPanelFor, 'no')('5')).toMatchObject({
+      status: 'refused',
+      code: 409,
+    });
   });
 
   it('refuses a moderation ticket that is not about an account', async () => {
@@ -92,5 +105,41 @@ describe('linkedUserFor the appeals panel', () => {
       code: 409,
       message: 'not an appeals ticket',
     });
+  });
+});
+
+describe('linkedUserFor a support panel', () => {
+  const forGenerator = linkedUserFor(generatorPanelFor, 'not an image generator ticket');
+  const support = { cfFeature: 'Image Generator' };
+
+  beforeEach(() => {
+    getTicketDetail.mockResolvedValue({ status: 'found', ticket: support });
+    resolveTicketView.mockResolvedValue({ routesTo: 'support', routed: null });
+  });
+
+  it('runs the predicate with the ticket’s routed view, so a support ticket is acted on', async () => {
+    expect(await forGenerator('5')).toEqual({ status: 'ok', userId: 7 });
+    expect(linkedCivitaiUserId).toHaveBeenCalledWith(support, null);
+  });
+
+  it('refuses a support ticket under a moderation predicate', async () => {
+    expect(await linkedUser('5')).toMatchObject({ status: 'refused', code: 409 });
+  });
+
+  it('refuses a ticket that has moved to the moderation view since the page loaded', async () => {
+    resolveTicketView.mockResolvedValue({ routesTo: 'moderation', routed: null });
+    expect(await forGenerator('5')).toEqual({
+      status: 'refused',
+      code: 409,
+      message: 'not an image generator ticket',
+    });
+  });
+
+  it('refuses a support ticket of another feature, and carries no user for an unlinked one', async () => {
+    getTicketDetail.mockResolvedValue({ status: 'found', ticket: { cfFeature: 'Billing' } });
+    expect(await forGenerator('5')).toMatchObject({ status: 'refused', code: 409 });
+    getTicketDetail.mockResolvedValue({ status: 'found', ticket: support });
+    linkedCivitaiUserId.mockResolvedValue(null);
+    expect(await forGenerator('5')).toEqual({ status: 'ok', userId: null });
   });
 });

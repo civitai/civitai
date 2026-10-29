@@ -20,6 +20,7 @@
   import TicketAppeals from './TicketAppeals.svelte';
   import TicketContentReports from './TicketContentReports.svelte';
   import TicketEscalate from './TicketEscalate.svelte';
+  import TicketGeneratorRestrictions from './TicketGeneratorRestrictions.svelte';
   import TicketHistory from './TicketHistory.svelte';
   import TicketRatingDisputes from './TicketRatingDisputes.svelte';
   import TicketReply from './TicketReply.svelte';
@@ -302,6 +303,9 @@
   {/if}
   {#if panels.contentIssue}
     <TicketContentReports content={panels.contentIssue} />
+  {/if}
+  {#if panels.generator}
+    <TicketGeneratorRestrictions ticketId={row.id} generator={panels.generator} ondone={accountDone} />
   {/if}
 {/snippet}
 

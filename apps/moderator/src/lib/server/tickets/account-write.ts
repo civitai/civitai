@@ -1,27 +1,18 @@
 import { fail, type RequestEvent } from '@sveltejs/kit';
-import { parseRestrictionRuling, rulingReason } from '../restriction-ruling';
 import type { ActionResult } from '../user-actions.service';
-import { unwiredRulingReason } from '$lib/restriction-types';
 import { addTicketNote, checkTicketTarget, type TicketActionDeps } from './panel-write';
+import { ruleTicketRestriction, type RestrictionRulingDeps } from './restriction-ruling';
 
 /** A shared action: `requiresGrant` hands back a refusal directly, the others a promise. */
 type Action = (event: RequestEvent) => unknown;
 
-export type AccountWriteDeps = TicketActionDeps & {
-  inner: { setBanned: Action; setMuted: Action };
-  /** The `/users` page grant, checked as the User Lookup actions do. */
-  canAct: (user: App.Locals['user']) => boolean;
-  revokeTimedMute: (input: { userId: number; moderatorId: number }) => Promise<ActionResult>;
-  resolveRestriction: (input: {
-    userRestrictionId: number;
-    status: 'Overturned' | 'Upheld';
-    resolvedReason: string;
-    internalNotes?: string;
-    userId: number;
-    moderatorId: number;
-  }) => Promise<ActionResult>;
-  restrictionOf: (id: number) => Promise<{ userId: number; type: string; status: string } | null>;
-};
+export type AccountWriteDeps = TicketActionDeps &
+  RestrictionRulingDeps & {
+    inner: { setBanned: Action; setMuted: Action };
+    /** The `/users` page grant, checked as the User Lookup actions do. */
+    canAct: (user: App.Locals['user']) => boolean;
+    revokeTimedMute: (input: { userId: number; moderatorId: number }) => Promise<ActionResult>;
+  };
 
 const NOT_PERMITTED = 'Not permitted.';
 
@@ -88,37 +79,7 @@ export function createTicketAccountActions(deps: AccountWriteDeps) {
       if (!deps.canAct(event.locals.user)) return fail(403, { error: NOT_PERMITTED });
       const ok = await checked(event);
       if (ok.refused) return ok.refused;
-      const parsed = parseRestrictionRuling(ok.form);
-      if (!parsed.ok) return fail(400, { error: parsed.error });
-      const { input } = parsed;
-
-      const row = await deps.restrictionOf(input.userRestrictionId);
-      if (!row) return fail(404, { error: 'Restriction not found.' });
-      if (row.userId !== ok.userId)
-        return fail(409, {
-          error: 'That restriction belongs to another account — nothing was changed.',
-        });
-      if (row.status !== 'Pending')
-        return fail(409, { error: 'That restriction has already been ruled on.' });
-      const unwired = unwiredRulingReason(row.type);
-      if (unwired) return fail(400, { error: unwired });
-      const reason = rulingReason(input);
-      if (!reason.ok) return fail(400, { error: reason.error });
-
-      const result = await deps.resolveRestriction({
-        userRestrictionId: input.userRestrictionId,
-        status: input.status,
-        resolvedReason: reason.resolvedReason,
-        internalNotes: reason.internalNotes,
-        userId: ok.userId,
-        moderatorId: event.locals.user.id,
-      });
-      if (!result.ok) return fail(400, { error: result.error });
-      return noted(
-        event,
-        ok.ticketId,
-        `${input.status} restriction #${input.userRestrictionId} (${row.type}) of user ${ok.userId}`
-      );
+      return ruleTicketRestriction(deps, event, ok);
     },
   };
 }
