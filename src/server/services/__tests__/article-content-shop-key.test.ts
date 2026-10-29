@@ -5,6 +5,7 @@ import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import type * as DbLagHelpers from '~/server/db/db-lag-helpers';
 import type * as RedisCaches from '~/server/redis/caches';
 import type * as ImageService from '~/server/services/image.service';
+import { ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -61,6 +62,7 @@ beforeAll(async () => {
       "id" integer PRIMARY KEY, "cosmeticId" integer, "meta" jsonb NOT NULL DEFAULT '{}'
     );
     CREATE TABLE "ItemDefinition" ("id" integer PRIMARY KEY, "imageUrl" text);
+    CREATE TABLE "Image" ("id" serial PRIMARY KEY, "userId" integer NOT NULL, "url" text NOT NULL);
     INSERT INTO "Cosmetic" (id, data) VALUES (1, '{"url":"${SHOP_KEY}"}');
     INSERT INTO "CosmeticShopItem" (id, "cosmeticId") VALUES (9, 1);
     INSERT INTO "ItemDefinition" (id, "imageUrl") VALUES (1, '${SECOND_SHOP_KEY}');
@@ -70,15 +72,18 @@ beforeAll(async () => {
 beforeEach(() => {
   createManyAndReturn.mockClear();
   enqueueImageIngestion.mockClear();
-  // The shop-key lookup runs on PGlite; the other raw queries get fixed answers.
+  // The shop-key and image-ownership lookups run on PGlite; the other raw queries get fixed answers.
   dbMock.dbWrite.$queryRaw.mockImplementation(((
     strings: TemplateStringsArray,
     ...values: unknown[]
-  ) =>
-    strings.join('').includes('unnest(')
-      ? pgliteRaw(db).queryRaw(strings, ...values)
-      : // The owner's legal-hold read: not held.
-        Promise.resolve(strings.join('').includes(' AS held') ? [{ held: false }] : [])) as never);
+  ) => {
+    // A query passed as one Prisma.sql value has no template strings.
+    const sql = Array.isArray(strings) ? strings.join('') : '';
+    if (sql.includes('unnest(') || sql.includes('FROM "Image" WHERE url = ANY('))
+      return pgliteRaw(db).queryRaw(strings, ...values);
+    // The owner's legal-hold read: not held.
+    return Promise.resolve(sql.includes(' AS held') ? [{ held: false }] : []);
+  }) as never);
   dbMock.dbWrite.article.create.mockResolvedValue({ id: 1, userId: 7, content: '' } as never);
   dbMock.dbWrite.$transaction.mockImplementation(((cb: (tx: unknown) => unknown) =>
     cb({
@@ -150,7 +155,11 @@ describe('upsertArticle', () => {
   });
 
   it('refuses content that embeds a shop artwork key, before writing the article', async () => {
-    await expect(save(`<p>${img(SHOP_KEY)}</p>`)).rejects.toThrow(/can no longer be used/);
+    // A key with an image row: only the shop artwork check, not the ownership check, can refuse it.
+    dbMock.dbWrite.image.findMany.mockResolvedValue([{ url: SHOP_KEY }] as never);
+    await expect(save(`<p>${img(SHOP_KEY)}</p>`)).rejects.toThrow(
+      ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE
+    );
     expect(dbMock.dbWrite.article.create).not.toHaveBeenCalled();
   });
 
@@ -189,8 +198,38 @@ describe('upsertArticle', () => {
         title: 'New title',
         content: `<p>${img(SHOP_KEY)}${img(SECOND_SHOP_KEY)}</p>`,
       } as never)
-    ).rejects.toThrow(/can no longer be used/);
+    ).rejects.toThrow(ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE);
     expect(dbMock.dbWrite.article.update).not.toHaveBeenCalled();
+  });
+
+  // Content can be stored with no Image row (linking failed, or scanning was off).
+  it('saves an edit that keeps a stored shop artwork key with no image row', async () => {
+    const stored = {
+      id: 1,
+      userId: 7,
+      title: 'Stored',
+      content: `<p>${img(SECOND_SHOP_KEY)}</p>`,
+      coverId: null,
+      status: 'Draft',
+      publishedAt: null,
+      nsfwLevel: 1,
+      userNsfwLevel: 1,
+      lockedProperties: [],
+      metadata: {},
+    };
+    dbMock.dbWrite.article.findUnique.mockResolvedValue(stored as never);
+    dbMock.dbRead.article.findUnique.mockResolvedValue(stored as never);
+    dbMock.dbWrite.article.update.mockResolvedValue({ ...stored, tags: [] } as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
+
+    await upsertArticle({
+      id: 1,
+      userId: 7,
+      title: 'New title',
+      content: stored.content,
+    } as never);
+
+    expect(dbMock.dbWrite.article.update).toHaveBeenCalled();
   });
 
   it('saves content whose images no shop row uses', async () => {

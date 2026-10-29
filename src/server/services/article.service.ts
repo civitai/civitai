@@ -1952,7 +1952,7 @@ export async function assertArticleContentUrlsUsable({
       await assertClientKeysIssuedToCaller({ urls, userId: ownerId, alsoIssuedTo: userId });
     }
     for (const urls of urlChunks(missing.filter((url) => stored.has(url)))) {
-      await assertClientImageUrlsUsable({ urls, userId: ownerId });
+      await assertClientImageUrlsUsable({ urls, userId: ownerId, shopArtwork: false });
       const { issuedToOthers } = await keyIssuers({ urls, userId: ownerId, alsoIssuedTo: userId });
       if (issuedToOthers.length) throw imageUrlUnavailableError();
     }
@@ -1990,7 +1990,7 @@ export async function checkSavedArticleContentUrls({
     lookupFailed: false,
   };
   for (const urls of urlChunks(await contentUrlsWithoutRows(content))) {
-    await assertClientImageUrlsUsable({ urls, userId: ownerId });
+    await assertClientImageUrlsUsable({ urls, userId: ownerId, shopArtwork: false });
     const issuers = await keyIssuers({ urls, userId: ownerId });
     result.issuedToOthers.push(...issuers.issuedToOthers);
     result.unrecorded.push(...issuers.unrecorded);
@@ -2016,10 +2016,7 @@ async function assertNoShopArtworkInContent(
     .filter((url) => !stored.has(url));
   if (!added.length) return;
   const shopUrls = await shopArtworkUrls(added);
-  if (shopUrls.size)
-    throw throwBadRequestError(
-      'An image in this article can no longer be used. Please re-upload it.'
-    );
+  if (shopUrls.size) throw imageUrlUnavailableError(ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE);
 }
 
 /**

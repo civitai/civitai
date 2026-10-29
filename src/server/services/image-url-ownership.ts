@@ -94,16 +94,21 @@ export type ShopArtworkRow = {
  * artwork (`shopRow` set) is refused on any `Image` row's key, the caller's own included, and must
  * be the bare key, so the stored value is the key an image create looks up. Callers that verify
  * the object exists run this after that check, with the same refusal.
+ *
+ * `shopArtwork: false` checks `Image` rows only: for urls an article already stores, which a save
+ * or rescan must not start refusing.
  */
 export async function assertClientImageUrlsUsable({
   urls,
   userId,
   shopRow,
+  shopArtwork = true,
   db = dbWrite,
 }: {
   urls: (string | null | undefined)[];
   userId: number;
   shopRow?: ShopArtworkRow;
+  shopArtwork?: boolean;
   db?: Db;
 }) {
   if (
@@ -115,6 +120,13 @@ export async function assertClientImageUrlsUsable({
   if (!keys.length) return;
   // Bounds the lookup; no real image url carries more than a couple of keys.
   if (keys.length > MAX_KEYS) throw imageUrlUnavailableError();
+  if (!shopArtwork) {
+    const owned = await db.$queryRaw<unknown[]>`
+      SELECT 1 FROM "Image" WHERE url = ANY(${keys}::text[]) AND "userId" <> ${userId} LIMIT 1
+    `;
+    if (owned.length) throw imageUrlUnavailableError();
+    return;
+  }
   // Whatever the other row's state.
   const owned = await db.$queryRaw<unknown[]>`
     SELECT 1 FROM "Image" WHERE url = ANY(${keys}::text[])

@@ -12,8 +12,11 @@ export const imageUrlOwnersFake = (rows: { url: string; userId: number }[]) =>
       return rows
         .filter((row) => keys.includes(row.url) && second.includes(row.userId))
         .map(({ url }) => ({ url }));
-    // The ownership probe binds keys, then whether it is a shop write, then the caller.
-    return rows.some((row) => keys.includes(row.url) && (second === true || row.userId !== third))
+    // The ownership probe binds keys, then the caller; the full one has the shop-write flag first.
+    const [shopWrite, caller] = typeof second === 'number' ? [false, second] : [second, third];
+    return rows.some(
+      (row) => keys.includes(row.url) && (shopWrite === true || row.userId !== caller)
+    )
       ? [{}]
       : [];
   }) as never;

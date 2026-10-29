@@ -193,6 +193,18 @@ describe('assertClientImageUrlsUsable and shop artwork', () => {
     expect(result).toBeNull();
   });
 
+  it('checks image rows only for urls an article already stores (shopArtwork: false)', async () => {
+    await holder.db.exec(`INSERT INTO "ItemDefinition" (id, "imageUrl") VALUES (1, '${SHOP_KEY}')`);
+    const stored = (url: string) =>
+      assertClientImageUrlsUsable({ urls: [url], userId: CALLER, shopArtwork: false }).then(
+        () => null,
+        (e: unknown) => e
+      );
+
+    expect(await stored(SHOP_KEY)).toBeNull();
+    expect(await stored(OTHERS_LIVE_KEY)).toBeInstanceOf(TRPCError);
+  });
+
   it('ignores a cosmetic the shop does not sell', async () => {
     await holder.db.exec(`INSERT INTO "Cosmetic" (id, data) VALUES (1, '{"url":"${SHOP_KEY}"}')`);
 
