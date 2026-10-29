@@ -152,4 +152,20 @@ describe('appealsSectionFor', () => {
     expect(res.status === 'ok' && res.appeals).toHaveLength(25);
     expect(res).toMatchObject({ truncated: true });
   });
+
+  it('says the list is cut when the read itself was full, even if the grants hide most of it', async () => {
+    await appealsSectionFor(ticket(), reads);
+    const limit = appealsOf.mock.calls[0][2] as number;
+    appealsOf.mockResolvedValue(
+      Array.from({ length: limit }, (_, i) => ({
+        ...base,
+        id: i + 1,
+        entityType: 'Model',
+      }))
+    );
+    const canRead = (p: string) => p === '/images/appeals';
+    const res = await appealsSectionFor(ticket({ canRead }), reads);
+    expect(res.status === 'ok' && res.appeals).toHaveLength(0);
+    expect(res).toMatchObject({ truncated: true });
+  });
 });

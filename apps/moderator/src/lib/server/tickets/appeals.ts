@@ -1,3 +1,4 @@
+import { sql } from 'kysely';
 import { dbRead } from '../db';
 import {
   APPEAL_ROWS,
@@ -79,6 +80,8 @@ const liveReads: AppealReads = {
           eb('resolvedAt', '>=', since),
         ])
       )
+      // Pending first, so the bounded read never drops one behind a busy window of decided appeals.
+      .orderBy(sql`("status" = 'Pending') desc`)
       .orderBy('createdAt', 'desc')
       .orderBy('id', 'desc')
       .limit(limit)
@@ -97,8 +100,8 @@ const liveReads: AppealReads = {
 const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOString() : null);
 
 /**
- * The linked user's appeals: every pending one plus those filed or decided in the last 30 days, newest
- * first. Only kinds whose queue the viewer may open are listed. A failed read is the caller's to turn
+ * The linked user's appeals: every pending one plus those filed or decided in the last 30 days, pending
+ * first, each newest first. Only kinds whose queue the viewer may open are listed. A failed read is the caller's to turn
  * into `unavailable`; a failed post lookup only costs the "mentioned" mark on post links.
  */
 export async function appealsSectionFor(
@@ -134,7 +137,7 @@ export async function appealsSectionFor(
   return {
     status: 'ok',
     userId: ticket.userId,
-    truncated: visible.length > APPEAL_ROWS,
+    truncated: visible.length > APPEAL_ROWS || rows.length >= FETCH_ROWS,
     appeals: shown.map(({ row, kind }) => ({
       id: row.id,
       kind,
