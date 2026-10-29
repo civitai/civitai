@@ -585,9 +585,9 @@ jobs:
           node scripts/ci/unit-targets.mjs "$base" unit-targets.json
           node -e '
             const r = require("./unit-targets.json");
-            const n = r.mode === "full" ? "every" : String(r.selected.length);
+            const n = r.mode === "full" ? "all" : String(r.selected.length);
             const jobs = r.mode === "full" ? 4 : r.chunks.length;
-            let s = `Unit tests: **${r.mode}**, ${n} test file(s), ${jobs} job(s).`;
+            let s = `Unit tests: **${r.mode}**, ${n} test files, ${jobs} job(s).`;
             if (r.mode === "narrowed" && r.selected.length === 0)
               s += " Nothing in this PR reaches a unit test, so the unit job is skipped.";
             console.log(s);

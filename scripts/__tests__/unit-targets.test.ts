@@ -108,7 +108,14 @@ describe('planShards', () => {
 });
 
 describe('decide', () => {
-  const allTests = ['src/a.test.ts', 'src/b.test.ts', 'src/guard.test.ts', 'scripts/c.test.ts'];
+  // 40 files, so one full shard's share is 10 and a handful of selected files fits one job.
+  const allTests = [
+    'src/a.test.ts',
+    'src/b.test.ts',
+    'src/guard.test.ts',
+    'scripts/c.test.ts',
+    ...Array.from({ length: 36 }, (_, i) => `src/filler/f${i}.test.ts`),
+  ];
 
   it('is full, with the trigger, when the PR changes a dependency', () => {
     expect(
