@@ -20,9 +20,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * not what this file tests).
  */
 
-const { initializeFaro, faro, envValues, featuresValue } = vi.hoisted(() => ({
+const { initializeFaro, faro, envValues, featuresValue, buildResourceTiming } = vi.hoisted(() => ({
   initializeFaro: vi.fn(),
-  faro: { pause: vi.fn(), unpause: vi.fn() },
+  faro: { pause: vi.fn(), unpause: vi.fn(), instrumentations: { add: vi.fn() } },
+  /** One stand-in instrumentation when the gate passes its cohort, as the real builder would. */
+  buildResourceTiming: vi.fn((gate: { cohortEnabled: boolean }) =>
+    gate.cohortEnabled ? [{ name: 'resource-timing-stub' }] : []
+  ),
   envValues: {
     NEXT_PUBLIC_FARO_ENABLED: 'true',
     NEXT_PUBLIC_FARO_COLLECTOR_URL: 'https://faro.test/collect',
@@ -64,7 +68,7 @@ vi.mock('~/components/Faro/SampledTracingInstrumentation', () => ({
   SampledTracingInstrumentation: class {},
 }));
 vi.mock('~/components/Faro/ResourceTimingInstrumentation', () => ({
-  buildResourceTimingInstrumentations: () => [],
+  buildResourceTimingInstrumentations: buildResourceTiming,
 }));
 
 /** Pin `Intl.DateTimeFormat().resolvedOptions().timeZone` to a deterministic IANA zone. */
@@ -92,11 +96,14 @@ const setWindow = (present: boolean) => {
  */
 const renderProvider = async (
   region: string | null | undefined,
-  hardLoad: { shell: boolean; signedIn: boolean } = { shell: false, signedIn: false }
+  hardLoad: { shell: boolean; signedIn: boolean } = { shell: false, signedIn: false },
+  viewerFlagsReady = true
 ) => {
   vi.resetModules();
   const { FaroProvider } = await import('~/components/Faro/FaroProvider');
-  return renderToStaticMarkup(createElement(FaroProvider, { region, ...hardLoad }));
+  return renderToStaticMarkup(
+    createElement(FaroProvider, { region, ...hardLoad, viewerFlagsReady })
+  );
 };
 
 const initOptions = () =>
@@ -107,6 +114,8 @@ const initOptions = () =>
 
 beforeEach(() => {
   initializeFaro.mockClear();
+  faro.instrumentations.add.mockClear();
+  buildResourceTiming.mockClear();
   setWindow(true);
 });
 
@@ -168,7 +177,7 @@ describe('FaroProvider — session-attributes wiring', () => {
     const { FaroProvider } = await import('~/components/Faro/FaroProvider');
     // TWO renders against the SAME module instance — StrictMode double-mount and
     // Fast-Refresh re-mounts must not re-initialize (module + window guards).
-    const props = { region: 'US', shell: false, signedIn: false };
+    const props = { region: 'US', shell: false, signedIn: false, viewerFlagsReady: true };
     renderToStaticMarkup(createElement(FaroProvider, props));
     renderToStaticMarkup(createElement(FaroProvider, props));
     expect(initializeFaro).toHaveBeenCalledTimes(1);
@@ -197,5 +206,65 @@ describe('FaroProvider — page attributes wiring', () => {
     const sessionAttrs = initOptions().sessionTracking.session?.attributes;
     expect(sessionAttrs).not.toHaveProperty('render_mode');
     expect(sessionAttrs).not.toHaveProperty('viewer');
+  });
+});
+
+/**
+ * The resource_timing cohort is a per-user flag. A static shell boots on user-less flags and
+ * gets the viewer's with its page data (`viewerFlagsReady`), so on a shell the cohort must be read
+ * from those, never from the boot flags — in either direction.
+ */
+describe('FaroProvider — resource_timing cohort on a shell boot', () => {
+  /** The instrumentations `initializeFaro` was handed that are the resource-timing stub. */
+  const resourceTimingAtInit = () =>
+    (
+      initializeFaro.mock.calls[0][0] as { instrumentations: { name?: string }[] }
+    ).instrumentations.filter((i) => i.name === 'resource-timing-stub').length;
+
+  afterEach(() => {
+    featuresValue.faroResourceTiming = false;
+  });
+
+  it('a full render in the cohort: attached at init, and not added a second time', async () => {
+    featuresValue.faroResourceTiming = true;
+    await renderProvider('US');
+    expect(resourceTimingAtInit()).toBe(1);
+    expect(faro.instrumentations.add).not.toHaveBeenCalled();
+  });
+
+  it('a shell whose boot flags say "in the cohort" does not attach it before the viewer’s arrive', async () => {
+    featuresValue.faroResourceTiming = true;
+    await renderProvider('US', { shell: true, signedIn: true }, false);
+    expect(initializeFaro).toHaveBeenCalledTimes(1);
+    expect(resourceTimingAtInit()).toBe(0);
+    expect(faro.instrumentations.add).not.toHaveBeenCalled();
+  });
+
+  it('a shell viewer in the cohort gets it attached once the viewer’s flags arrive', async () => {
+    vi.resetModules();
+    const { FaroProvider } = await import('~/components/Faro/FaroProvider');
+    const props = { region: 'US', shell: true, signedIn: true };
+    // Boot: user-less flags, not in the cohort.
+    renderToStaticMarkup(createElement(FaroProvider, { ...props, viewerFlagsReady: false }));
+    expect(initializeFaro).toHaveBeenCalledTimes(1);
+    expect(resourceTimingAtInit()).toBe(0);
+    expect(faro.instrumentations.add).not.toHaveBeenCalled();
+    // Page data adopted: the viewer's own flags put them in it.
+    featuresValue.faroResourceTiming = true;
+    renderToStaticMarkup(createElement(FaroProvider, { ...props, viewerFlagsReady: true }));
+    renderToStaticMarkup(createElement(FaroProvider, { ...props, viewerFlagsReady: true }));
+    expect(initializeFaro).toHaveBeenCalledTimes(1);
+    expect(faro.instrumentations.add).toHaveBeenCalledTimes(1);
+    expect(faro.instrumentations.add).toHaveBeenCalledWith({ name: 'resource-timing-stub' });
+  });
+
+  it('a shell viewer outside the cohort never gets it', async () => {
+    vi.resetModules();
+    const { FaroProvider } = await import('~/components/Faro/FaroProvider');
+    const props = { region: 'US', shell: true, signedIn: true };
+    renderToStaticMarkup(createElement(FaroProvider, { ...props, viewerFlagsReady: false }));
+    renderToStaticMarkup(createElement(FaroProvider, { ...props, viewerFlagsReady: true }));
+    expect(resourceTimingAtInit()).toBe(0);
+    expect(faro.instrumentations.add).not.toHaveBeenCalled();
   });
 });
