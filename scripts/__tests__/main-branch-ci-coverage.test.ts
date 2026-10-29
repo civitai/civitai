@@ -91,6 +91,22 @@ function reachableOnPush(job: Job): boolean {
   );
 }
 
+/**
+ * Is a `continue-on-error` value one that cannot differ between a PR and a push?
+ * A string that is not an expression is YAML-truthy in spirit and opaque in
+ * fact — treat it as unconditional rather than guess.
+ */
+function unconditionallyTrue(coe: unknown): boolean {
+  if (coe === undefined || coe === false) return false;
+  if (coe === true) return true;
+  return !(typeof coe === 'string' && coe.includes('${{'));
+}
+
+/** An `actions/cache` restore or save step. */
+function isCacheStep(step: Record<string, unknown>): boolean {
+  return typeof step.uses === 'string' && /^actions\/cache(\/(save|restore))?@/.test(step.uses);
+}
+
 /** Every `run:` script in a job, concatenated. */
 function runScripts(job: Job): string {
   return (job.steps ?? []).map((s) => (typeof s.run === 'string' ? s.run : '')).join('\n');
@@ -149,25 +165,31 @@ describe('CI coverage for commits on main', () => {
   // on PRs, a separate and deliberately-unmade decision) but it must be an
   // expression, i.e. it must be able to differ between a PR and a push. Literal
   // `true` cannot.
+  //
+  // STEPS TOO, not just jobs. A suite folded into a shared job carries its
+  // report-only flag on the step, and a step-level `continue-on-error: true` is
+  // the same stale TRUE one level down: the step's own conclusion reads
+  // `success` and the job stays green. Checking jobs alone would wave it through.
+  // The one exemption is structural, not a name list: an `actions/cache` save is
+  // best-effort infrastructure, not a verdict about the code.
   it('has no unconditionally report-only job on the push path', () => {
     const offenders = workflows
       .filter((w) => triggersOnPushToMain(w.doc))
       .flatMap((w) =>
         Object.entries(w.doc.jobs ?? {})
           .filter(([, job]) => reachableOnPush(job))
-          .filter(([, job]) => {
-            const coe = job['continue-on-error'];
-            if (coe === undefined || coe === false) return false;
-            if (coe === true) return true;
-            // A string that is not an expression is YAML-truthy in spirit and
-            // opaque in fact — treat it as an offender rather than guess.
-            return !(typeof coe === 'string' && coe.includes('${{'));
-          })
-          .map(([id]) => `${w.file}:${id}`)
+          .flatMap(([id, job]) => [
+            ...(unconditionallyTrue(job['continue-on-error']) ? [`${w.file}:${id}`] : []),
+            ...(job.steps ?? [])
+              .filter((step) => reachableOnPush(step as Job))
+              .filter((step) => !isCacheStep(step))
+              .filter((step) => unconditionallyTrue(step['continue-on-error']))
+              .map((step, i) => `${w.file}:${id} step "${String(step.name ?? step.uses ?? i)}"`),
+          ])
       );
     expect(
       offenders,
-      `These jobs run on a push to main with \`continue-on-error: true\`, so the run reports success while the step underneath fails: ${offenders.join(
+      `These run on a push to main with \`continue-on-error: true\`, so the run reports success while the step underneath fails: ${offenders.join(
         ', '
       )}`
     ).toEqual([]);

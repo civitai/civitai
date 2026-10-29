@@ -14,7 +14,11 @@ import {
 import { bountiesSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { logToAxiom } from '~/server/logging/client';
-import { retryUnsettledBountyPayouts, settleBountyPayout } from '~/server/services/bounty.service';
+import {
+  deleteSettledKeptBounties,
+  retryUnsettledBountyPayouts,
+  settleBountyPayout,
+} from '~/server/services/bounty.service';
 import { lockBountyForPayout } from '~/server/services/bounty-payout-lock';
 import {
   checkPendingBountyEntryFiles,
@@ -378,9 +382,10 @@ async function settleExpiredBounty({
   log(`Finished bounty ${id}`);
 }
 
-const bountyPayoutRetry = createJob('bounty-payout-retry', '41 * * * *', async () =>
-  retryUnsettledBountyPayouts()
-);
+const bountyPayoutRetry = createJob('bounty-payout-retry', '41 * * * *', async () => {
+  const { settled } = await retryUnsettledBountyPayouts();
+  return { settled, deletedKept: await deleteSettledKeptBounties() };
+});
 
 const bountyEntryFileCheck = createJob(
   'bounty-entry-file-check',

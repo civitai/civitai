@@ -147,17 +147,19 @@ on:
       - '!docs/**'
       - '!claudedocs/**'
       - 'docs/dev/convention-guards.md'
-  # `only` runs one job (or one unit shard) instead of the whole fan-out, for
-  # dispatches that care about a single suite. Every job's `if` reads it; on
+  # `only` runs one suite (or one unit shard) instead of the whole fan-out, for
+  # dispatches that care about a single suite. Every job's `if` reads it, and so
+  # does every suite step in a job that hosts several (`packages` hosts
+  # apps-typecheck; `component` hosts geometry and the quarantine run); on
   # pull_request and push `inputs.only` is empty and everything runs as before.
   # The ESLint job is PR-only and never runs on a dispatch, so it is not listed.
   workflow_dispatch:
     inputs:
       only:
         description: >-
-          Run only this job. all = every job (default). typecheck, unit (all 4
+          Run only this suite. all = every suite (default). typecheck, unit (all 4
           shards), unit-1 .. unit-4 (one shard), packages, apps, apps-typecheck,
-          geometry, component.
+          geometry, component (includes the quarantine run).
         type: choice
         default: all
         options:
@@ -754,7 +756,12 @@ jobs:
   packages:
     name: Package unit tests
     runs-on: ubuntu-latest
-    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'packages' }}
+    # Two suites in one job: the package suites (`only: packages`) and the app typecheck
+    # (`only: apps-typecheck`, the `Typecheck apps` step at the end). Every step below carries
+    # the selector for its own suite, so a dispatch of one skips the other's steps. The job
+    # keeps the `Package unit tests` name other docs cite; a red typecheck is attributed by its
+    # step name, `Typecheck apps`.
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'packages' || inputs.only == 'apps-typecheck' }}
     # The `packages/*` suites — 616 tests when this job was added, which until then NO CI job ran.
     # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
     # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
@@ -782,7 +789,26 @@ jobs:
     # The same is true of the two Kysely/Prisma parity suites in the app's `unit` project
     # (kysely-prisma-parity and image-generation-data.kysely-parity), which self-skip without
     # KYSELY_PARITY_DATABASE_URL.
-    timeout-minutes: 15
+    #
+    # ── THE APP TYPECHECK RIDES HERE, AND WHY IT IS NOT ITS OWN JOB ANY MORE ──────────────
+    #
+    # It was the `apps-typecheck` job: a short `tsc` behind a full checkout + install, and the
+    # plan's org-wide concurrent-job limit is what this workflow saturates, so every job a run
+    # starts queues someone else's. Both suites are blocking and small, so they share one
+    # install. Its step is `!cancelled()` and the package ledger is `always()`, so a red in
+    # either still lets the other report.
+    #
+    # 🔴 THE TIMEOUT IS SHARED NOW, WHICH IS EXACTLY WHAT ONCE CANCELLED THIS TYPECHECK. It
+    # left the `apps` job because that job's tests grew into the shared timeout and killed a
+    # short typecheck. This job is the opposite shape (both halves are short), and 20m leaves
+    # several times the combined runtime as headroom. Re-read the step durations if either half
+    # grows toward it, and split them again rather than raising the limit blind.
+    timeout-minutes: 20
+    # Per-suite selectors, evaluated once so each step's `if` reads a name rather than
+    # repeating the `only` expression. They render as the strings 'true' / 'false'.
+    env:
+      SUITE_PACKAGES: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'packages' }}
+      SUITE_APPS_TYPECHECK: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'apps-typecheck' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -796,12 +822,14 @@ jobs:
           cache: pnpm
 
       - name: Install
+        id: install
         run: pnpm install --frozen-lockfile
 
       # Not a package suite, and deliberately parked in this job anyway: it needs a completed
       # `pnpm install` and a job that FAILS the build, and this is the cheapest one that is
       # both. Adding a fourth job would buy a tidier name for the price of a fourth full
       # install; the step name is what GitHub shows on a failure, so blame stays readable.
+      # Like every packages-suite step, it skips on an `only: apps-typecheck` dispatch.
       #
       # What it guards: `/api/og` returned 500 on every request for two days because Next
       # 16.3.0 leaves the libvips SVG loader blocked and `next/og` rasterizes through it. We
@@ -811,11 +839,13 @@ jobs:
       # half of it, against the INSTALLED node_modules rather than the patch file, so a patch
       # that exists but did not apply is caught. ~50ms, no test runner.
       - name: Next SVG loader patch applied
+        if: env.SUITE_PACKAGES == 'true'
         run: node scripts/ci/assert-next-svg-patch-applied.mjs
 
       # Parked here for the same reasons as the step above. Guards the @prisma/client patch that
       # memoises the per-model field map (see the script header); reads the INSTALLED runtime.
       - name: Prisma field-map patch applied
+        if: env.SUITE_PACKAGES == 'true'
         run: node scripts/ci/assert-prisma-field-map-patch-applied.mjs
 
       # Parked here for the same two reasons as the step above: it needs a completed
@@ -844,6 +874,7 @@ jobs:
       # to be committed too. Measured both ways: uncommitted edit -> exit 0 (proves nothing),
       # same edit committed -> exit 1 with 62 changed alias lines (= 2 x 31 aliases).
       - name: Generated DB schema files match their generator
+        if: env.SUITE_PACKAGES == 'true'
         run: |
           test -f packages/civitai-db-schema/src/enums.ts
           pnpm run db:check-generated
@@ -855,9 +886,11 @@ jobs:
       # counts as out of date (exit 1), not as a pass. Like every check here it shows red but does
       # not block a merge (`main` has no required_status_checks).
       - name: Generated tag-index decode worker matches its generator
+        if: env.SUITE_PACKAGES == 'true'
         run: node scripts/build-tag-index-decode-worker.mjs --check
 
       - name: Package unit tests
+        if: env.SUITE_PACKAGES == 'true'
         run: pnpm run test:packages:run --reporter=default --reporter=json --outputFile=packages-report.json
 
       # A green vitest run is a claim, not evidence: `--project` matching nothing exits 0,
@@ -866,12 +899,35 @@ jobs:
       # results — so the job fails when the executed set shrinks, which is the regression the
       # totals cannot see.
       - name: Assert every package suite actually ran
-        if: always()
+        if: always() && env.SUITE_PACKAGES == 'true'
         run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
+
+      # The only typecheck `apps/*` gets. The root `pnpm run typecheck` is bounded by
+      # the root tsconfig `include` — `src`, `packages/*/src`, `scripts/local-dev/*.ts`,
+      # `tests`, `test`, `.next/types/**/*.ts` — with no `apps/*` entry, and BOTH tiers
+      # (this workflow's `typecheck` job and the `tekton / typecheck` status) run that
+      # same script.
+      #
+      # `!cancelled()` so a red package step does not hide this verdict; gated on the install
+      # rather than on the steps above, because a typecheck without `node_modules` would only
+      # restate the install failure.
+      #
+      # Deliberately ONE step driving a script, not one `pnpm --filter` step per
+      # app. Per-app steps abort at the first red app, so a shared type change
+      # that breaks several of them reports one; and `pnpm --filter <name>` EXITS
+      # 0 WHEN THE NAME MATCHES NOTHING (measured, pnpm 10.28.1 — it prints "No
+      # projects matched the filters" and succeeds), so a hardcoded list of
+      # package names is one chance per app for a rename to turn this gate into a
+      # green no-op. The script derives the app set from disk, proves each filter
+      # selected a real package, and collects every failure. See its header.
+      - name: Typecheck apps
+        if: ${{ !cancelled() && steps.install.outcome == 'success' && env.SUITE_APPS_TYPECHECK == 'true' }}
+        run: node scripts/ci/typecheck-apps.mjs
 
   apps:
     # The app typecheck used to run as the last steps of this job, as "App unit tests +
-    # typecheck"; it is now the `apps-typecheck` job below. Renaming is safe: neither `main`
+    # typecheck"; it then became its own `apps-typecheck` job, and is now the `Typecheck apps`
+    # step of `packages` above. Renaming is safe: neither `main`
     # nor `release` has any required_status_checks (re-verified 2026-08-20 via the
     # branch-protection API), so no merge gate keys on either string.
     name: App unit tests
@@ -941,106 +997,45 @@ jobs:
         if: always()
         run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps
 
-  apps-typecheck:
-    name: App typecheck
+  component:
+    name: Component + geometry tests
     runs-on: ubuntu-latest
-    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'apps-typecheck' }}
-    # No app under `apps/` was typechecked by anything before this. The root
-    # `pnpm run typecheck` is bounded by the root tsconfig `include` — `src`,
-    # `packages/*/src`, `scripts/local-dev/*.ts`, `tests`, `test`,
-    # `.next/types/**/*.ts` — with no `apps/*` entry, and BOTH tiers (this
-    # workflow's `typecheck` job and the `tekton / typecheck` status) run that
-    # same script, so the gap could not close on its own.
+    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry' }}
+    # The three browser-mode suites, in one job so ONE checkout, install and Chromium install
+    # serves all of them: `component` (blocking), `geometry` (report-only on PRs) and the
+    # `component-quarantine` run (push to `main` and dispatch only). Each was its own job until
+    # the plan's org-wide concurrent-job limit became the bottleneck: this workflow saturates
+    # it, and every job a run starts queues someone else's. Every suite step carries its own
+    # selector (`only: component` runs component + quarantine, `only: geometry` runs geometry),
+    # and every suite after the first is `!cancelled()`, so one red suite never hides the others.
     #
-    # Its own job, not steps at the end of `apps`: there it shared that job's
-    # timeout with the app unit tests, so as those grew the timeout landed here
-    # and cancelled a typecheck that takes ~2m (p95 2.3m over 114 runs). Costs one
-    # more `pnpm install` (~1m).
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      # Deliberately ONE step driving a script, not one `pnpm --filter` step per
-      # app. Per-app steps abort at the first red app, so a shared type change
-      # that breaks several of them reports one; and `pnpm --filter <name>` EXITS
-      # 0 WHEN THE NAME MATCHES NOTHING (measured, pnpm 10.28.1 — it prints "No
-      # projects matched the filters" and succeeds), so a hardcoded list of
-      # package names is one chance per app for a rename to turn this gate into a
-      # green no-op. The script derives the app set from disk, proves each filter
-      # selected a real package, and collects every failure. See its header.
-      - name: Typecheck apps
-        run: node scripts/ci/typecheck-apps.mjs
-
-  geometry:
-    name: Geometry tests
-    runs-on: ubuntu-latest
-    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'geometry' }}
-    # The browser-mode `geometry` project — real Chromium, the real app cascade,
-    # an explicit phone viewport. See `test/geometry-setup.tsx` for what it loads
-    # and why it is a separate project from `component`.
-    #
-    # 🔴 THIS IS THE FIRST JOB IN THIS WORKFLOW THAT INSTALLS A BROWSER, AND IT IS
-    # ALIGNED WITH THE `unit` JOB'S COMMENT RATHER THAN AN OVERRIDE OF IT.
-    # That comment gives exactly one reason for keeping browser tests out:
+    # 🔴 THE ONLY JOB IN THIS WORKFLOW THAT INSTALLS A BROWSER, AND THAT IS ALIGNED WITH THE
+    # `unit` JOB'S COMMENT RATHER THAN AN OVERRIDE OF IT. That comment gives exactly one reason
+    # for keeping browser tests out:
     #
     #   "Node env, no browser — component tests (`*.browser.test.tsx`) are not
     #    here on purpose: they need Chromium, which this job does not install.
     #    That is the whole reason."
     #
-    # It is a statement about what THAT job provides, not a ban on providing it.
-    # The same comment then retracts the only other objection on the record —
-    # "Don't cite a cold-cache flake as a reason to keep this job Chromium-free"
-    # — and points at vitest.config.mts's dedupe + optimizeDeps pre-bundling as
-    # the canonical fix for it. So a job that DOES install Chromium satisfies the
-    # stated condition instead of overriding a decision.
+    # It is a statement about what THAT job provides, not a ban on providing it. The same
+    # comment retracts the only other objection on the record ("Don't cite a cold-cache flake as
+    # a reason to keep this job Chromium-free") and points at vitest.config.mts's dedupe +
+    # optimizeDeps pre-bundling as the canonical fix for it.
     #
-    # The `component` project has its own job, `component`, at the end of this file.
+    # Blocking on PRs for `component` itself: `main` was green when it was added, so a red here
+    # is the PR's. (`main` has no required checks; this cannot block a merge, only
+    # show red on it.) There is no job-level `continue-on-error`: report-only is per step.
     #
-    # REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` — the same expression
-    # `unit` uses, and NOT a literal `true`. Both halves matter:
-    #
-    #   PR side: blocking on a brand-new tier from day one would red unrelated
-    #   PRs and the job would be switched off within a week. `main` has NO
-    #   required_status_checks, so nothing here blocks a merge either way; what
-    #   this buys is that a red renders as red-but-ignored rather than as a
-    #   failing check on someone else's work while the tier settles.
-    #
-    #   PUSH side: on a push the merge has already happened, so there is no
-    #   unrelated work to red. What `continue-on-error: true` WOULD buy there is
-    #   a run reporting `success` while the step underneath failed — a green that
-    #   has to be disbelieved, which is worse than no run at all.
-    #
-    # 🔴 THIS WAS WRITTEN AS A LITERAL `true` FIRST AND CI CAUGHT IT.
-    # `scripts/__tests__/main-branch-ci-coverage.test.ts` > "has no
-    # unconditionally report-only job on the push path" went red on the PR that
-    # added this job. The guard is not a style rule: it forbids exactly the
-    # stale-TRUE shape described above, and it accepts a conditional value
-    # BECAUSE a conditional can differ between a PR and a push while a literal
-    # cannot. Do not "simplify" this back to `true`.
-    #
-    # FLIP TO BLOCKING once a couple of weeks of runs show a clean pass rate, and
-    # remove `continue-on-error` and this paragraph together. What would make that
-    # safe, concretely: no run red for a reason other than a real geometry
-    # regression — in particular no Chromium launch failures and no timeouts on a
-    # 2-core runner. This tier has no import/transform phase to blame, unlike
-    # `unit`, so a red is either the code or the browser — both worth someone's
-    # attention. (Runner wall time has not been re-measured since the tier was
-    # 10 tests. Derive the current count rather than reading one here — every figure
-    # written into this file has gone stale within a commit or two.)
-    continue-on-error: ${{ github.event_name == 'pull_request' }}
-    timeout-minutes: 15
+    # 35, not the 25 `component` alone had: geometry and the quarantine run each add a few
+    # minutes behind it on a push, and this keeps about the headroom over the combined runtime
+    # that 25 gave `component` alone. Re-read the step durations before raising it; if
+    # `component` alone is near the limit, shard it (see its step) rather than raising this.
+    timeout-minutes: 35
+    # Per-suite selectors, evaluated once so each step's `if` reads a name rather than
+    # repeating the `only` expression. They render as the strings 'true' / 'false'.
+    env:
+      SUITE_COMPONENT: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' }}
+      SUITE_GEOMETRY: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'geometry' }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -1076,9 +1071,62 @@ jobs:
       # honoured by vitest.config.mts. Do NOT move the repo's playwright pin to
       # match a laptop — see docs/dev/worktrees.md, "Browser/component tests on NixOS".
       - name: Install Chromium for Playwright
+        id: chromium
         run: pnpm exec playwright install --with-deps chromium
 
+      # Not sharded, and `pnpm run test:component` takes NO arguments, on purpose:
+      # its wrapper hands the JSON report to scripts/ci/assert-component-suite-ran.mjs,
+      # which fails a run that executed nothing, fell under the test floor, or left
+      # any `*.browser.test.tsx` on disk out of the report. Any argument (`--shard`,
+      # `--max-workers`) marks the run narrowed and switches the floor and the file
+      # ledger off. Shard only together with a per-shard ledger.
+      - name: Component tests
+        if: env.SUITE_COMPONENT == 'true'
+        run: pnpm run test:component
+
+      # ── GEOMETRY: REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main` ──────────────────
+      #
+      # The browser-mode `geometry` project — real Chromium, the real app cascade, an explicit
+      # phone viewport. See `test/geometry-setup.tsx` for what it loads and why it is a separate
+      # project from `component`.
+      #
+      # `continue-on-error` is the same expression `unit` uses, and NOT a literal `true`. Both
+      # halves matter:
+      #
+      #   PR side: blocking on a brand-new tier from day one would red unrelated PRs and the
+      #   step would be switched off within a week. `main` has NO required_status_checks, so
+      #   nothing here blocks a merge either way.
+      #
+      #   PUSH side: on a push the merge has already happened, so there is no unrelated work to
+      #   red. What `continue-on-error: true` WOULD buy there is a run reporting `success` while
+      #   the step underneath failed — a green that has to be disbelieved, which is worse than no
+      #   run at all.
+      #
+      # 🔴 NOT A LITERAL `true`: `scripts/__tests__/main-branch-ci-coverage.test.ts` rejects an
+      # unconditionally report-only job or step on the push path, because a conditional can
+      # differ between a PR and a push while a literal cannot.
+      #
+      # 🔴 ON A PR A RED GEOMETRY STEP READS `success` EVERYWHERE THE API LOOKS. A step-level
+      # `continue-on-error` reports `conclusion: success` for the step in the jobs endpoint and
+      # leaves the job green — unlike the job-level one this tier had as its own job, which at
+      # least rendered the check red-but-ignored. The `outcome` is visible only inside the run,
+      # so `Report-only results` below turns it into a titled annotation. To count clean runs
+      # for the flip below, read that annotation (or its absence) from the check run, never the
+      # step's conclusion.
+      #
+      # FLIP TO BLOCKING once a couple of weeks of runs show a clean pass rate, and remove
+      # `continue-on-error` from both geometry steps, the annotation step and this paragraph
+      # together. What would make that safe, concretely: no run red for a reason other than a
+      # real geometry regression — in particular no Chromium launch failures and no timeouts on
+      # a 2-core runner. This tier has no import/transform phase to blame, unlike `unit`, so a
+      # red is either the code or the browser — both worth someone's attention.
+      #
+      # Gated on the Chromium install rather than on `component`: it must run after a red
+      # component suite, and must not run, and fail a second time, when setup never finished.
       - name: Geometry tests
+        id: geometry
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' && env.SUITE_GEOMETRY == 'true' }}
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: pnpm exec vitest run --project geometry --reporter=default --reporter=json --outputFile=geometry-report.json
 
       # 🔴 A GREEN VITEST RUN IS A CLAIM, NOT EVIDENCE — the same hazard the
@@ -1102,13 +1150,18 @@ jobs:
       # `if: always()` so this runs when the tests FAIL too — an aborted runner
       # writes no report at all, which is precisely the case this must catch, and
       # it is indistinguishable from a healthy run if you only read the step's
-      # own status.
+      # own status. Report-only on PRs exactly like the tests above, since it is half
+      # of their verdict. Gated on the Chromium install like the tests: when setup
+      # failed, that step is already the red, and a missing report here would only
+      # restate it.
       #
       # All three arms were exercised before this was committed: a real report
       # exits 0; a report with `testResults: []` / `numTotalTests: 0` exits 1; a
       # missing report exits 1 with its own message.
       - name: Assert the geometry tier actually collected something
-        if: always()
+        id: geometry-ledger
+        if: always() && steps.chromium.outcome == 'success' && env.SUITE_GEOMETRY == 'true'
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
           node - <<'JS'
           // Minimum ledger for the `geometry` tier. Both numbers are FLOORS (see the `<`
@@ -1167,86 +1220,47 @@ jobs:
           }
           JS
 
-  component:
-    name: Component tests
-    runs-on: ubuntu-latest
-    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' }}
-    # The browser-mode `component` project (`*.browser.test.tsx`), on the same
-    # Chromium setup as `geometry` above. See that job for why Playwright is
-    # installed from the workspace pin rather than a version written here.
-    #
-    # Blocking on PRs: `main` was 380/380 files green when this was added, so a
-    # red here is the PR's. (`main` has no required checks; this cannot block a
-    # merge, only show red on it.)
-    #
-    # Not sharded, and `pnpm run test:component` takes NO arguments, on purpose:
-    # its wrapper hands the JSON report to scripts/ci/assert-component-suite-ran.mjs,
-    # which fails a run that executed nothing, fell under the test floor, or left
-    # any `*.browser.test.tsx` on disk out of the report. Any argument (`--shard`,
-    # `--max-workers`) marks the run narrowed and switches the floor and the file
-    # ledger off. Shard only together with a per-shard ledger.
-    timeout-minutes: 25
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Chromium for Playwright
-        run: pnpm exec playwright install --with-deps chromium
-
-      - name: Component tests
-        run: pnpm run test:component
-
-  component-quarantine:
-    name: Component tests (quarantine, non-blocking)
-    runs-on: ubuntu-latest
-    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' }}
-    # Why: AppAssistantWorkspace.browser.test.tsx stalls on Playwright clicks at random on CI
-    # runners, and red-ed PRs that do not touch it (civitai/civitai#7101). It is held out of the
-    # blocking `Component tests` job and runs here instead, with the groups skipped there
-    # un-skipped. List and exit conditions: scripts/ci/component-quarantine.mjs.
-    #
-    # Non-blocking on pull requests only, same shape as the `unit` job above: on a PR the run's
-    # `conclusion` stays `success` while the step is red, so count green runs from the
-    # `Quarantined component tests` STEP's conclusion (jobs endpoint), not the run's. On `main` the
-    # verdict is real. Exit after 10 green runs in a row, or re-decide by 2026-11-11.
-    continue-on-error: ${{ github.event_name == 'pull_request' }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: Install Chromium for Playwright
-        run: pnpm exec playwright install --with-deps chromium
-
+      # ── QUARANTINE: PUSH TO `main` AND DISPATCH ONLY ─────────────────────────────────────
+      #
+      # Why: AppAssistantWorkspace.browser.test.tsx stalls on Playwright clicks at random on CI
+      # runners, and red-ed PRs that do not touch it (civitai/civitai#7101). It is held out of the
+      # blocking `Component tests` step and runs here instead, with the groups skipped there
+      # un-skipped. List and exit conditions: scripts/ci/component-quarantine.mjs.
+      #
+      # Push to `main` and dispatch only; exit criteria in scripts/ci/component-quarantine.mjs,
+      # read from runs on `main`. Count the green
+      # streak from this STEP's conclusion in push runs on `main` (jobs endpoint): here it is a
+      # real verdict, so a red quarantine run turns the `main` run red, attributed by step name.
+      # The `continue-on-error` expression is inert while the step skips PRs; it is kept so
+      # re-enabling PR runs cannot silently make the quarantine blocking there.
+      #
       # A `--project` that matches nothing exits 0, so the run's JSON report goes through the
-      # same gate as the blocking job (`--narrowed`: a floor and file ledger make no sense for one
-      # file). The gate only ever adds a failure; it never turns vitest's red into green.
+      # same gate as the blocking suite (`--narrowed`: a floor and file ledger make no sense for
+      # one file). The gate only ever adds a failure; it never turns vitest's red into green.
       - name: Quarantined component tests
+        if: ${{ !cancelled() && steps.chromium.outcome == 'success' && github.event_name != 'pull_request' && env.SUITE_COMPONENT == 'true' }}
+        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
           rc=0
           pnpm exec vitest run --project component-quarantine \
             --reporter=default --reporter=json --outputFile.json="$RUNNER_TEMP/quarantine-report.json" || rc=$?
           node scripts/ci/assert-component-suite-ran.mjs "$RUNNER_TEMP/quarantine-report.json" --narrowed || exit 1
           exit $rc
+
+      # The only place a report-only red stays visible on a PR: see the geometry paragraph above.
+      # Reads each report-only step's `outcome` (what it did) rather than its `conclusion` (what
+      # `continue-on-error` turned it into) and writes a titled annotation plus a summary line.
+      # It never fails the job.
+      - name: Report-only results
+        if: ${{ !cancelled() && github.event_name == 'pull_request' }}
+        env:
+          GEOMETRY: ${{ steps.geometry.outcome }}
+          GEOMETRY_LEDGER: ${{ steps.geometry-ledger.outcome }}
+        run: |
+          for pair in "Geometry tests=$GEOMETRY" "Geometry ledger=$GEOMETRY_LEDGER"; do
+            name=${pair%%=*}; outcome=${pair#*=}
+            echo "$name: ${outcome:-not run}" >> "$GITHUB_STEP_SUMMARY"
+            if [ "$outcome" = failure ]; then
+              echo "::error title=$name failed (report-only on pull requests)::$name failed. It does not fail this job on a PR, and its step reads success in the API. Open the step log for the cause."
+            fi
+          done

@@ -39,6 +39,7 @@ import { workflowPreferences } from '~/store/workflow-preferences.store';
 
 import type { GenerationStore } from './store';
 import { REMIX_RESET } from './remix-reset';
+import { migrateModel3dParams } from '~/shared/form-graph/generation/model3d/model3d-params';
 import { AVATAR_WORKFLOW } from '~/shared/constants/avatar-styles.constants';
 import {
   AVATAR_DEEP_LINK_PARAMS,
@@ -309,7 +310,9 @@ export function applyGenerationData(store: GenerationStore, data: GenerationData
     // Nulls are already `undefined` (see the entry), and the reset below clears
     // everything anyway — so an absent key here means "leave it at its default".
     const remixValues = {
-      ...paramsWithoutOutputSettings,
+      ...(isPolyGenRemix
+        ? migrateModel3dParams(paramsWithoutOutputSettings)
+        : paramsWithoutOutputSettings),
       ...(isPolyGenRemix ? { ecosystem: model3dEcosystem } : {}),
       workflow: resolvedWorkflow,
       model: split.model,

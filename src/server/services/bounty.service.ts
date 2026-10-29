@@ -1,5 +1,10 @@
-import { bountyThreadParents, detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
-import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import {
+  bountyThreadParents,
+  detachHeldThreadsCte,
+  detachHeldThreadsSql,
+} from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists, ownerHeldSql } from '~/server/services/legal-hold.service';
+import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 import type * as z from 'zod';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -440,6 +445,8 @@ export const updateBountyById = async ({
         ]);
 
       if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
+      if (liftedTextScanPoi && isRemovedWithOwner(existing.meta))
+        throw throwBadRequestError('This bounty is kept hidden until its payout settles');
 
       if (
         entryLimit &&
@@ -1361,6 +1368,32 @@ export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
     if (due.length < BOUNTY_PAYOUT_RETRY_BATCH_SIZE) break;
   }
   return { settled };
+}
+
+/**
+ * Only a complete bounty settled after its last recorded payout: an open one, or one whose award was
+ * recorded again after an earlier one settled, still owes supporters. Held owners' bounties are
+ * skipped and picked up on the first run after the hold ends.
+ */
+export async function deleteSettledKeptBounties() {
+  const markerView = await holdMarkerViewExists();
+  const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b
+    WHERE b.meta ->> 'removedWithOwner' = 'true' AND b.complete
+      AND b."payoutSettledAt" >= b."payoutRecordedAt"
+      AND NOT ${ownerHeldSql(Prisma.raw('b."userId"'))}`;
+  const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
+    WITH ${detachHeldThreadsCte(bountyThreadParents(doomed), markerView)},
+    gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),
+    files AS (
+      DELETE FROM "File" WHERE "entityType" = 'Bounty' AND "entityId" IN (SELECT id FROM gone)
+    )
+    SELECT id FROM gone`;
+  if (!deleted.length) return 0;
+  await SearchIndexUpdate.queueUpdate({
+    indexName: BOUNTIES_SEARCH_INDEX,
+    items: deleted.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Delete })),
+  });
+  return deleted.length;
 }
 
 export const refundBounty = async ({
