@@ -3,6 +3,7 @@ import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as NotificationService from '~/server/services/notification.service';
 import type * as EmailTemplates from '~/server/email/templates';
 import type * as BuzzService from '~/server/services/buzz.service';
@@ -32,11 +33,6 @@ vi.mock('../../../../event-engine-common/services/metrics', () => ({
 }));
 vi.mock('../../../../event-engine-common/feeds', () => ({ ImagesFeed: class {} }));
 vi.mock('../../../../event-engine-common/services/cache', () => ({ CacheService: class {} }));
-const { logToAxiom } = vi.hoisted(() => ({ logToAxiom: vi.fn(async (_: unknown) => undefined) }));
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<object>()),
-  logToAxiom,
-}));
 
 const { createNotification, sendEmail, refundTransaction, refundMultiAccountTransaction } =
   vi.hoisted(() => ({
@@ -478,13 +474,13 @@ describe('reportCsamImages and images set aside from the CSAM queue', () => {
   };
 
   it('still reports when the role may not delete set-asides, and says the grant is missing', async () => {
-    logToAxiom.mockClear();
+    loggingMock.logToAxiom.mockClear();
     await asRoleWithout(`REVOKE DELETE ON "CsamQueueSetAside" FROM app_role`, async () => {
       await reportCsamImages({ imageIds: [REVIEW_FLAGGED], user: moderator });
     });
     expect((await imageRow(REVIEW_FLAGGED)).needsReview).toBe('csam');
     expect(await setAsideIds()).toEqual([DECIDED, REVIEW_FLAGGED]);
-    expect(logToAxiom).toHaveBeenCalledWith(
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'csam-queue-set-aside-not-deletable' })
     );
   });
