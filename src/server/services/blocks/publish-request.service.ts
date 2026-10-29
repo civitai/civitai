@@ -1087,16 +1087,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // would otherwise queue a version of someone else's app and block its owner's own submission via
   // one-pending-per-slug. Checked BEFORE the pending-conflict check, so a non-owner learns nothing
   // about pending state, and the refusal names no one.
-  if (!submitterIsModerator) {
-    const ownedApp = await dbRead.appBlock.findFirst({
-      where: { blockId: slug },
-      select: { id: true },
-    });
-    if (ownedApp) {
-      const { resolveAppAccess } = await import('./app-access.service');
-      const access = await resolveAppAccess(ownedApp.id, submittedByUserId);
-      if (!access?.role) throw new Error(appOwnedByAnotherUser(slug));
-    }
+  //
+  // 🔴 ONE READ: the row gated here is the row the request links to below (`appBlockId`), so the
+  // gate and the linkage cannot disagree (an app approved between two reads would otherwise be
+  // linked without having been gated).
+  const existingApp = await dbRead.appBlock.findFirst({
+    where: { blockId: slug },
+    select: { id: true, appId: true },
+  });
+  if (existingApp && !submitterIsModerator) {
+    const { resolveAppAccess } = await import('./app-access.service');
+    const access = await resolveAppAccess(existingApp.id, submittedByUserId);
+    if (!access?.role) throw new Error(appOwnedByAnotherUser(slug));
   }
 
   const conflicting = await dbRead.appBlockPublishRequest.findFirst({
@@ -1154,11 +1156,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     );
   }
 
-  // For subsequent versions, link to the existing app row.
-  const existingApp = await dbRead.appBlock.findFirst({
-    where: { blockId: slug },
-    select: { id: true, appId: true },
-  });
+  // For subsequent versions, the request links to the existing app row read (and gated) above.
 
   // (submit-draft pre-check) W13 draft-at-submit — a FIRST-version submit now also
   // mints the on-site store `AppListing` as a pre-approval DRAFT (kind='onsite',

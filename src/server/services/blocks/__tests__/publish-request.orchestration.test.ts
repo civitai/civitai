@@ -68,6 +68,8 @@ const {
       // `findUnique` added: recordPendingFromPush resolves the app owner's
       // userId via dbRead.appBlock.findUnique({ app: { userId } }).
       appBlock: { findFirst: vi.fn(), findUnique: vi.fn() },
+      // submitVersion's owner gate: resolveAppAccess looks an editor's seat up here.
+      appCollaborator: { findFirst: vi.fn() },
       // Added 2026-05-28 for C-2 fix: approveRequest now reads the
       // OauthClient row after a P2002 collision to recover the existing
       // client on retry.
@@ -462,15 +464,55 @@ describe('submitVersion', () => {
     expect(putCalls).toHaveLength(1);
   });
 
-  /** The existing app for the slug, owned (its OauthClient's userId) by `ownerUserId`. */
-  const existingAppOwnedBy = (ownerUserId: number) => {
+  /**
+   * The existing app for the slug, owned (its OauthClient's userId) by `ownerUserId`, with its
+   * listing's collaborator rows: the seat lookup answers as the database would, by every field the
+   * query names (so a query that stops filtering on status sees a pending seat).
+   */
+  const existingAppOwnedBy = (
+    ownerUserId: number,
+    seats: { userId: number; status: string }[] = []
+  ) => {
     mockDbRead.appBlock.findFirst.mockResolvedValue({ id: 'apb_existing', appId: 'oc_existing' });
     mockDbRead.appBlock.findUnique.mockResolvedValue({
       id: 'apb_existing',
       app: { userId: ownerUserId },
-      appListing: null,
+      appListing: { id: 'apl_existing' },
     });
+    const rows = seats.map((seat) => ({ appListingId: 'apl_existing', ...seat }));
+    mockDbRead.appCollaborator.findFirst.mockImplementation(
+      async ({ where }: { where: Record<string, unknown> }) =>
+        rows.find((row) =>
+          Object.entries(where).every(
+            ([key, value]) => (row as Record<string, unknown>)[key] === value
+          )
+        ) ?? null
+    );
   };
+
+  it('lets an ACCEPTED editor of the app queue a version of it', async () => {
+    const { submitVersion } = await import('../publish-request.service');
+    existingAppOwnedBy(7, [{ userId: 42, status: 'accepted' }]);
+    const buf = await makeValidBundle();
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false });
+    expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+    expect(mockDbWrite.appBlockPublishRequest.create.mock.calls[0][0].data.appBlockId).toBe(
+      'apb_existing'
+    );
+  });
+
+  it.each(['pending', 'declined'])(
+    '🔴 refuses a collaborator whose seat is %s, as any non-owner',
+    async (status) => {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(7, [{ userId: 42, status }]);
+      const buf = await makeValidBundle();
+      await expect(
+        submitVersion({ bundleBuffer: buf, submittedByUserId: 42, submitterIsModerator: false })
+      ).rejects.toThrow('app hello is owned by another user; choose a different blockId');
+      expect(mockDbWrite.appBlockPublishRequest.create).not.toHaveBeenCalled();
+    }
+  );
 
   it('🔴 refuses a version of an existing app from a non-owner, inserting nothing and saying nothing of pending state', async () => {
     const { submitVersion } = await import('../publish-request.service');
