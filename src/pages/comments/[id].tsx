@@ -5,9 +5,11 @@ import { buildCommentPermalink, getCommentPermalinkRow } from '~/server/utils/co
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   useSession: true,
-  resolver: async ({ ctx }) => {
+  resolver: async ({ ctx, session }) => {
     const { id } = ctx.params as { id: string };
-    const url = buildCommentPermalink(await getCommentPermalinkRow(Number(id)));
+    const url = buildCommentPermalink(
+      await getCommentPermalinkRow(Number(id), { includeHidden: !!session?.user?.isModerator })
+    );
 
     if (url) {
       return {

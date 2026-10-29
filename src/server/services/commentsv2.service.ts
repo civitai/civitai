@@ -1,3 +1,8 @@
+import {
+  commentDetachedSql,
+  heldCommentInTreeSql,
+  threadDetachedSql,
+} from '~/server/services/comment-thread-hold';
 import type { GetByIdInput } from './../schema/base.schema';
 import type {
   CommentV2Model,
@@ -34,7 +39,13 @@ import type {
   ToggleThreadMuteInput,
 } from './../schema/commentv2.schema';
 import { throwOnBlockedCommentContent } from '~/server/services/blocklist.service';
-import { accountHoldSql, logHoldRetained } from '~/server/services/legal-hold.service';
+import {
+  accountHoldSql,
+  contentKeptError,
+  holdMarkerViewExists,
+  isLegalHoldAbort,
+  logHoldRetained,
+} from '~/server/services/legal-hold.service';
 import {
   getBlockCheckOwnerIdsForComment,
   getBlockCheckOwnerIdsForReply,
@@ -350,12 +361,16 @@ export const upsertComment = async ({
   // value can be a stale cached null.
   parentThreadId: _clientParentThreadId,
   isModerator,
+  includeHidden,
   track,
   eventPoints = true,
   ...data
 }: UpsertCommentV2Input & {
   userId: number;
   isModerator?: boolean;
+  // An edit that reaches a comment hidden for ToS (the challenge judge re-reviewing its own). Widens
+  // only the edit's target; every content and block check still runs.
+  includeHidden?: boolean;
   track?: Parameters<typeof recordStickerUsage>[0]['track'];
   // False for automated accounts (the challenge judge): event points are for people engaging.
   eventPoints?: boolean;
@@ -481,11 +496,18 @@ export const upsertComment = async ({
   // Wrapped so the edit's charge and the edit itself commit together.
   const { updated, charged } = await dbWrite.$transaction(async (tx) => {
     const chargedStickers = await chargeStickers(tx);
-    const row = await tx.commentV2.update({
-      where: { id: data.id },
-      data,
-      select: commentV2Select,
-    });
+    // A member edits only a comment still on the page: one hidden since the read above (an author's
+    // delete can keep it that way for a hold) answers as gone, and only a moderator sets the flag.
+    const row = await tx.commentV2
+      .update({
+        where:
+          isModerator || includeHidden ? { id: data.id } : { id: data.id, tosViolation: false },
+        data: isModerator ? data : { ...data, tosViolation: undefined },
+        select: commentV2Select,
+      })
+      .catch((e: { code?: string }) => {
+        throw e?.code === 'P2025' ? throwNotFoundError() : e;
+      });
     return { updated: row, charged: chargedStickers };
   });
   recordStickerUsage({
@@ -724,16 +746,59 @@ export const storylineOfCommentSql = (commentId: number) =>
 const firstStorylineId = async (sql: Prisma.Sql) =>
   (await dbRead.$queryRaw<{ storylineId: number }[]>(sql))[0]?.storylineId ?? null;
 
+const isDetached = async (sql: Prisma.Sql) =>
+  (await dbRead.$queryRaw<{ detached: boolean }[]>(sql))[0]?.detached === true;
+
+/** Whether a thread was taken off a deleted parent to keep a held author's comment: not public. */
+export const isThreadDetached = (threadId: number) => isDetached(threadDetachedSql(threadId));
+
+export const isCommentDetached = (commentId: number) => isDetached(commentDetachedSql(commentId));
+
+/**
+ * Whether a member gets the comment as missing: gone, hidden for ToS, or detached. Read on the
+ * primary, so a delete just made counts.
+ */
+export const isCommentGoneForMembers = async (commentId: number) => {
+  const row = await dbWrite.commentV2.findUnique({
+    where: { id: commentId },
+    select: { tosViolation: true },
+  });
+  return !row || row.tosViolation || (await isCommentDetached(commentId));
+};
+
 export const getCommentThreadStorylineId = (threadId: number) =>
   firstStorylineId(storylineOfThreadSql(threadId));
 
 export const getCommentStorylineId = (commentId: number) =>
   firstStorylineId(storylineOfCommentSql(commentId));
 
-export const deleteComment = async ({ id }: { id: number }) => {
-  const deleted = await dbWrite.commentV2.delete({ where: { id } });
-  void onCommentsRemoved([deleted]);
-  return deleted;
+/**
+ * A comment kept for a hold is hidden for ToS instead, which its author cannot tell from a delete:
+ * it goes from every read they get, and its points with it.
+ */
+export const deleteComment = async ({
+  id,
+  byAuthor = false,
+}: {
+  id: number;
+  byAuthor?: boolean;
+}) => {
+  const comment = await dbWrite.commentV2.findUnique({ where: { id } });
+  if (!comment) return null;
+  const markerView = await holdMarkerViewExists();
+  const { deleted, retained } = await dbWrite
+    .$transaction((tx) => deleteCommentsV2UnlessHeld(tx, [id], markerView, { byAuthor }))
+    .catch((e: unknown) => {
+      throw isLegalHoldAbort(e) ? contentKeptError(false) : e;
+    });
+  if (!deleted.length && !retained.length) return null;
+  if (retained.length)
+    void logHoldRetained(
+      'commentV2.delete',
+      retained.map((r) => r.userId)
+    ).catch(() => undefined);
+  void onCommentsRemoved([comment]);
+  return comment;
 };
 
 /**
@@ -746,7 +811,8 @@ export const deleteComment = async ({ id }: { id: number }) => {
 export async function deleteCommentsV2UnlessHeld(
   tx: Prisma.TransactionClient,
   ids: number[],
-  markerView: boolean
+  markerView: boolean,
+  { byAuthor = false } = {}
 ) {
   if (ids.length === 0) return { deleted: [], retained: [] };
   const deleted = await tx.$queryRaw<{ userId: number; threadId: number }[]>`
@@ -754,22 +820,17 @@ export async function deleteCommentsV2UnlessHeld(
     WHERE c.id = ANY(${ids}::int[])
       AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
       AND NOT EXISTS (
-        WITH RECURSIVE below AS (
-          SELECT t.id FROM "Thread" t WHERE t."commentId" = c.id
-          UNION
-          SELECT t.id FROM "Thread" t
-          JOIN "CommentV2" k ON t."commentId" = k.id
-          JOIN below b ON k."threadId" = b.id
-        ),
-        authors AS MATERIALIZED (
-          SELECT DISTINCT r."userId" FROM "CommentV2" r JOIN below b ON r."threadId" = b.id
-        )
-        SELECT 1 FROM authors a WHERE ${accountHoldSql(Prisma.sql`a."userId"`, markerView)}
+        SELECT 1 FROM "Thread" t
+        WHERE t."commentId" = c.id AND ${heldCommentInTreeSql(Prisma.raw('t.id'), markerView)}
       )
     RETURNING c."userId", c."threadId"
   `;
+  // One its author removed is marked, so a moderator's ToS restore can tell it from a ToS removal.
+  const removedByAuthor = byAuthor
+    ? Prisma.sql`, metadata = COALESCE(metadata, '{}'::jsonb) || '{"removedByAuthor": true}'::jsonb`
+    : Prisma.empty;
   const retained = await tx.$queryRaw<{ userId: number }[]>`
-    UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now()
+    UPDATE "CommentV2" SET "tosViolation" = true, "updatedAt" = now() ${removedByAuthor}
     WHERE id = ANY(${ids}::int[])
     RETURNING "userId"
   `;
@@ -814,10 +875,16 @@ export async function bulkSetCommentV2TosViolation({
 
   let rewardedReports = 0;
   let notified = 0;
-  // Rows actually flagged, NOT ids submitted — see the note on the legacy twin in comment.service.ts.
+  // Rows written, NOT ids submitted — see the note on the legacy twin in comment.service.ts. A row
+  // already hidden counts: its reports are actioned on this pass.
   let count = 0;
 
   for (const id of ids) {
+    // An already-hidden comment may be one its author deleted, kept for a hold: its reports are still
+    // actioned, but its author must not hear about a comment they removed.
+    const wasHidden = (
+      await dbWrite.commentV2.findUnique({ where: { id }, select: { tosViolation: true } })
+    )?.tosViolation;
     const updated = await dbWrite.commentV2
       .update({
         where: { id },
@@ -848,6 +915,7 @@ export async function bulkSetCommentV2TosViolation({
       )
     );
 
+    if (wasHidden) continue;
     await createNotification({
       userId: updated.userId,
       type: 'tos-violation',
@@ -1313,6 +1381,9 @@ export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] })
   let count = 0;
 
   for (const id of ids) {
+    // One its author deleted, kept for a hold, stays down: restoring it would republish it.
+    const row = await dbWrite.commentV2.findUnique({ where: { id }, select: { metadata: true } });
+    if ((row?.metadata as { removedByAuthor?: boolean } | null)?.removedByAuthor) continue;
     const updated = await dbWrite.commentV2
       .update({
         where: { id },

@@ -21,6 +21,11 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
+import {
+  detachHeldThreadsCte,
+  heldLegacyCommentOnModelSql,
+  modelThreadParents,
+} from '~/server/services/comment-thread-hold';
 import { isRemovedWithOwner, withoutRemovedWithOwner } from '~/server/utils/legal-hold';
 import type { ManipulateType } from 'dayjs';
 import { uniq } from 'lodash-es';
@@ -2116,9 +2121,18 @@ export const deleteModelById = async ({
   id,
   userId,
   isModerator,
+  onBidRefundFailed,
 }: GetByIdInput & {
-  userId: number;
+  /** Who deletes it; null when no person ordered it (a system-run account wipe). */
+  userId: number | null;
   isModerator?: boolean;
+  /**
+   * Called with the refunds that failed, or the error that stopped them, when its bids are refunded;
+   * the delete then still returns. Without it, a failure is only logged, or thrown.
+   */
+  onBidRefundFailed?: (
+    failure: { versionIds: number[] } & ({ transactionIds: string[] } | { error: string })
+  ) => void;
 }) => {
   if (!isModerator) {
     const versions = await dbRead.modelVersion.findMany({
@@ -2173,7 +2187,7 @@ export const deleteModelById = async ({
         UPDATE "Post"
         SET "metadata" = "metadata" || jsonb_build_object(
           'unpublishedAt', ${new Date().toISOString()},
-          'unpublishedBy', ${userId},
+          'unpublishedBy', ${userId}::int,
           'prevPublishedAt', "publishedAt"
                                        ),
             "publishedAt" = NULL
@@ -2189,6 +2203,20 @@ export const deleteModelById = async ({
     return model;
   });
 
+  const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
+  // Refunded before the cache and index steps below: the delete has committed, and a failure in one
+  // of them must not leave the bids standing. Without `onBidRefundFailed` its error is thrown last.
+  let refundError: unknown;
+  try {
+    const { refundFailed } = await deleteBidsForModel({ modelId: id });
+    if (refundFailed.length)
+      onBidRefundFailed?.({ versionIds: deletedVersionIds, transactionIds: refundFailed });
+  } catch (e) {
+    if (onBidRefundFailed)
+      onBidRefundFailed({ versionIds: deletedVersionIds, error: (e as Error)?.message });
+    else refundError = e;
+  }
+
   if (deletedModel) {
     await userModelCountCache.refresh(deletedModel.userId);
   }
@@ -2200,7 +2228,6 @@ export const deleteModelById = async ({
   // scope caveat as updateModelById: the getModelsRaw base row is not lag-aware —
   // but for a delete the model row is gone, so a fresh read rebuilds to null→404,
   // never cached, so the base-row gap is benign on this path.)
-  const deletedVersionIds = deletedModel?.modelVersions.map((v) => v.id) ?? [];
   await preventModelVersionLagBatch(id, deletedVersionIds);
   // Drop the deleted model's post images from the image search index — parity
   // with unpublishModelById / permaDeleteModelById. The image index doesn't
@@ -2238,7 +2265,7 @@ export const deleteModelById = async ({
   // Drop the origin-side public GET /api/v1/models/[id] response cache so a
   // deleted model stops serving a stale 200 (it would 404 on rebuild).
   await bustPublicModelResponseCache(id);
-  await deleteBidsForModel({ modelId: id });
+  if (refundError) throw refundError;
 
   return deletedModel;
 };
@@ -2351,6 +2378,12 @@ export const restoreModelById = async ({ id }: GetByIdInput) => {
 
 /** What a moderator is told when a hold keeps a model: kept on purpose, not a failure. Never which hold. */
 export const MODEL_KEPT_FOR_HOLD = 'Kept: account under legal hold.';
+/** The same, for a model kept only for another account's comments on it: its owner is not held. */
+export const MODEL_KEPT_FOR_HELD_COMMENT = 'Kept: retained content; contact Legal.';
+
+const holdUnconfirmed = (e: unknown): never => {
+  throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
+};
 
 export const permaDeleteModelById = async ({
   id,
@@ -2406,43 +2439,51 @@ export const permaDeleteModelById = async ({
 
       // Get images to delete and queue search index updates
       let imagesToDelete: { id: number }[] = [];
+      // Each delete detaches its held threads in the same statement, so a hold placed between the
+      // two still keeps them.
       if (postIds.length > 0) {
         imagesToDelete = await tx.image.findMany({
           where: { postId: { in: postIds } },
           select: { id: true },
         });
 
-        await tx.image.deleteMany({
-          where: { postId: { in: postIds } },
-        });
+        const doomedImages = Prisma.sql`SELECT i.id FROM "Image" i WHERE i."postId" = ANY(${postIds}::int[])`;
+        await tx.$executeRaw`
+            WITH ${detachHeldThreadsCte({ imageId: doomedImages }, true)}
+            DELETE FROM "Image" WHERE id IN (${doomedImages})`.catch(holdUnconfirmed);
       }
 
-      await tx.post.deleteMany({
-        where: {
-          userId: model.userId,
-          modelVersionId: { in: model.modelVersions.map(({ id }) => id) },
-        },
-      });
+      const doomedPosts = Prisma.sql`SELECT p.id FROM "Post" p
+        WHERE p."userId" = ${model.userId} AND p."modelVersionId" = ANY(${versionIds}::int[])`;
+      await tx.$executeRaw`
+          WITH ${detachHeldThreadsCte({ postId: doomedPosts }, true)}
+          DELETE FROM "Post" WHERE id IN (${doomedPosts})`.catch(holdUnconfirmed);
 
       // Checked in the DELETE itself, so a hold placed during this transaction still stops it, and
       // the rollback restores the posts and images.
       const [deletedModel] = await tx.$queryRaw<
         { id: number; userId: number; nsfwLevel: number }[]
       >`
+        WITH ${detachHeldThreadsCte(modelThreadParents(Prisma.sql`SELECT ${id}::int`), true)}
         DELETE FROM "Model" m
         WHERE m.id = ${id}
           AND NOT ${modelDataHeldSql(Prisma.raw('m.id'), true)}
+          AND NOT ${heldLegacyCommentOnModelSql(Prisma.raw('m.id'), true)}
         RETURNING m.id, m."userId", m."nsfwLevel"
-      `.catch((e: unknown) => {
-        throw new TRPCError({ code: 'FORBIDDEN', message: HOLD_UNCONFIRMED, cause: e });
-      });
+      `.catch(holdUnconfirmed);
       if (!deletedModel) {
         // Gone already, by a concurrent delete, is not a hold. Thrown either way: nothing this
         // transaction deleted passed a hold check, so it must not commit.
         const stillThere = await tx.model.findUnique({ where: { id }, select: { id: true } });
         if (!stillThere)
           throw new TRPCError({ code: 'NOT_FOUND', message: `No model with id ${id}` });
-        throw new TRPCError({ code: 'FORBIDDEN', message: MODEL_KEPT_FOR_HOLD });
+        const [owner] = await tx.$queryRaw<{ ownerHeld: boolean }[]>`
+          SELECT ${modelDataHeldSql(Prisma.sql`${id}::int`, true)} AS "ownerHeld"
+        `.catch(holdUnconfirmed);
+        throw new TRPCError({
+          code: 'FORBIDDEN',
+          message: owner?.ownerHeld === false ? MODEL_KEPT_FOR_HELD_COMMENT : MODEL_KEPT_FOR_HOLD,
+        });
       }
       return { deletedModel, imagesToDelete };
     },

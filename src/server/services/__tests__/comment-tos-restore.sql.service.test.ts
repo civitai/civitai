@@ -80,12 +80,37 @@ describe('clearing a comment ToS flag', () => {
     expect(result.count).toBe(1);
   });
 
+  // An author's own delete can keep a comment for a hold by flagging it; restoring that would
+  // republish what its author removed.
+  it('leaves a comment its author removed flagged, and restores the rest', async () => {
+    dbMock.dbWrite.commentV2.update.mockClear();
+    dbMock.dbWrite.commentV2.findUnique.mockImplementation((async (args: {
+      where: { id: number };
+    }) =>
+      args.where.id === 1 ? { metadata: { removedByAuthor: true } } : { metadata: null }) as never);
+
+    await expect(bulkClearCommentV2TosViolation({ ids: [1, 2] })).resolves.toMatchObject({
+      count: 1,
+    });
+    expect(dbMock.dbWrite.commentV2.update).toHaveBeenCalledTimes(1);
+    expect(dbMock.dbWrite.commentV2.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 2 } })
+    );
+  });
+
   it('does nothing at all for an empty list', async () => {
     // Not a formality: an unguarded loop would emit a bare UPDATE with no id bound.
     const result = await bulkClearCommentV2TosViolation({ ids: [] });
 
     expect(result).toEqual({ count: 0, reopenedReports: 0 });
     expect(statements).toHaveLength(0);
+  });
+
+  it('leaves a legacy comment its author removed flagged, in the same UPDATE', async () => {
+    await bulkClearCommentTosViolation({ ids: [7] });
+    expect(dbMock.dbWrite.comment.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 7, removedByAuthor: false } })
+    );
   });
 
   it('the legacy twin carries the same predicate against its own report table', async () => {

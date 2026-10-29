@@ -204,6 +204,7 @@ export async function liveCommentsOn(userId: number, { entityType, entityId }: E
     .where('entityType', '=', entityType === 'Image' ? 'image' : 'article')
     .where('entityId', '=', entityId)
     .where('deletedAt', 'is', null)
+    .where('tosViolation', '=', false)
     .executeTakeFirst();
   return Number(row?.n ?? 0);
 }

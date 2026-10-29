@@ -23,7 +23,8 @@ vi.mock('~/server/services/notification.service', () => ({
 const { bulkSetCommentV2TosViolation } = await import('../commentsv2.service');
 const { bulkSetCommentTosViolation } = await import('../comment.service');
 
-const actor = { id: 1 };
+// Distinct from every comment id, so a bound comment id is never the actor's.
+const actor = { id: 99 };
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -50,6 +51,47 @@ describe('bulkSetCommentV2TosViolation', () => {
       count: 0,
     });
   });
+});
+
+// A comment already hidden may be one its author deleted, kept for a hold: its reports are still
+// actioned, but its author must not hear about a comment they removed.
+it('bulkSetCommentV2TosViolation actions an already-hidden comment without telling its author', async () => {
+  const { createNotification } = await import('~/server/services/notification.service');
+  vi.mocked(createNotification).mockClear();
+  dbMock.dbWrite.commentV2.findUnique.mockResolvedValueOnce({ tosViolation: true } as never);
+  dbMock.dbWrite.commentV2.findUnique.mockResolvedValueOnce({ tosViolation: false } as never);
+
+  await expect(bulkSetCommentV2TosViolation({ ids: [1, 2], actor })).resolves.toMatchObject({
+    count: 2,
+    notified: 1,
+  });
+  expect(createNotification).toHaveBeenCalledTimes(1);
+  const actionedIds = dbMock.dbWrite.$queryRaw.mock.calls.map((call) => call.slice(1));
+  expect(actionedIds.some((values) => values.includes(1))).toBe(true);
+  expect(dbMock.dbWrite.commentV2.update).toHaveBeenCalledWith(
+    expect.objectContaining({ where: { id: 1 } })
+  );
+});
+
+// The legacy twin: an author's own delete keeps a legacy comment hidden for a hold the same way.
+it('bulkSetCommentTosViolation actions and rewards an already-hidden comment without telling its author', async () => {
+  const { createNotification } = await import('~/server/services/notification.service');
+  const { reportAcceptedReward } = await import('~/server/rewards');
+  dbMock.dbWrite.comment.findUnique.mockResolvedValueOnce({ tosViolation: true } as never);
+  dbMock.dbWrite.comment.findUnique.mockResolvedValueOnce({ tosViolation: false } as never);
+  dbMock.dbWrite.$queryRaw.mockImplementation((async (_s: unknown, ...values: unknown[]) =>
+    values.includes(1) ? [{ id: 501, userId: 7 }] : []) as never);
+
+  await expect(bulkSetCommentTosViolation({ ids: [1, 2], actor })).resolves.toMatchObject({
+    count: 2,
+    notified: 1,
+    rewardedReports: 1,
+  });
+  expect(createNotification).toHaveBeenCalledTimes(1);
+  expect(reportAcceptedReward.apply).toHaveBeenCalledWith(
+    { userId: 7, reportId: 501 },
+    expect.anything()
+  );
 });
 
 describe('bulkSetCommentTosViolation', () => {
