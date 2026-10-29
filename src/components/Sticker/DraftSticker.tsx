@@ -23,12 +23,7 @@ import { BuzzTransactionButton } from '~/components/Buzz/BuzzTransactionButton';
 import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
 import type { Gesture, StartGesture } from '~/components/Sticker/draft-gesture';
 import { KNOB_OFFSET, rotate } from '~/components/Sticker/draft-gesture';
-import {
-  candidateDistance,
-  chromeClearance,
-  placeButtonBoxes,
-  shouldFlipPlaceButton,
-} from '~/components/Sticker/place-button-position';
+import { placeButtonPosition } from '~/components/Sticker/place-button-position';
 import { useMutateCosmeticShop } from '~/components/CosmeticShop/cosmetic-shop.util';
 import {
   FREE_REVIEW_CAVEAT,
@@ -340,61 +335,26 @@ export function DraftSticker({
 
     const { flipped, rotation } = frame.current;
     const tray = useStickerPlacementDraftStore.getState().tray;
-    // This element no longer rotates — the artwork inside it does — so its box
-    // is the sticker's unrotated one, which is what the chrome is laid out
-    // against and what the clearance turns into the rotated extent.
-    // 🔴 FRACTIONAL, LIKE THE RECT THE CANDIDATES START FROM. `offsetHeight`
-    // rounds, and when this and the cluster's height both round down the
-    // modelled jump comes out shorter than the real one: a cluster edge inside
-    // that sliver of the tray flips, then sees the tray miss it and unflips —
-    // "Maximum update depth exceeded" (React #185).
-    const { height, width } = element.getBoundingClientRect();
-    // 🔴 AN UNMEASURED STICKER DECIDES NOTHING. `EdgeImage` has no intrinsic
-    // size until it loads, so a draft dragged in from the tray measures 0 tall
-    // for its first frames. Every number below is derived from that box, and a
-    // flip decided from a zero-height sticker puts the two candidate positions
-    // close enough together that each one argues for the other. Keeping the
-    // current side until the sticker has a size is the same rule
-    // `placementControlPosition` states for the same reason.
-    if (!(height > 0) || !(width > 0)) return;
-    const clearance = chromeClearance({
-      width,
-      height,
+    const next = placeButtonPosition({
+      sticker: element,
+      cluster: button,
+      tray: tray?.getBoundingClientRect() ?? null,
+      clip: clip.current?.getBoundingClientRect() ?? null,
+      flipped,
       rotation,
       knobOffset: KNOB_OFFSET,
       outset: HANDLE_OUTSET,
       gap: BUY_BUTTON_GAP,
     });
-    // From the cluster's own measured rect, both times: the pair that comes out
-    // is the same whichever side it is currently on, which is what stops a flip
-    // from removing its own cause and oscillating.
-    const current = button.getBoundingClientRect();
-    const boxes = placeButtonBoxes({
-      current,
-      flipped,
-      distance: candidateDistance({
-        height,
-        clusterHeight: current.height,
-        below: clearance.below,
-        above: clearance.above,
-      }),
-    });
+    if (!next) return;
 
-    const willFlip = shouldFlipPlaceButton({
-      below: boxes.below,
-      above: boxes.above,
-      tray: tray?.getBoundingClientRect() ?? null,
-      clip: clip.current?.getBoundingClientRect() ?? null,
-      flipped,
-    });
     // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
     // to the node while the class comes from state splits them across a render:
     // the element then carries the standoff for the side it just left, and the
     // real distance between the two candidate positions is off by `below +
     // above` against the model `candidateDistance` builds. A flip decision feeds
     // on that mismatch.
-    const next = { flipped: willFlip, below: clearance.below, above: clearance.above };
-
+    //
     // Every pointer move re-measures, so bail on an unchanged result rather
     // than handing React a new object to re-render for.
     setPosition((current) =>

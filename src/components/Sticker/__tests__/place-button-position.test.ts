@@ -4,6 +4,7 @@ import {
   candidateDistance,
   chromeClearance,
   placeButtonBoxes,
+  placeButtonPosition,
   shouldFlipPlaceButton,
 } from '~/components/Sticker/place-button-position';
 
@@ -350,6 +351,7 @@ describe('the candidate boxes survive coming from a DOMRect', () => {
         ...placeButtonBoxes({ current, flipped, distance: DISTANCE }),
         tray: MEASURED_TRAY,
         clip: MEASURED_CLIP,
+        flipped,
       });
 
     // Same sticker, same frame, one measurement from each side. The second was
@@ -416,5 +418,89 @@ describe('a modelled side that is a fraction of a pixel off', () => {
     const below = cluster(above.top + MODELLED);
     expect(below.bottom).toBeGreaterThan(MEASURED_TRAY.top);
     expect(shouldFlipPlaceButton({ below, above, tray: MEASURED_TRAY, clip })).toBe(false);
+  });
+});
+
+/**
+ * The same capture driven through `placeButtonPosition` from element-shaped
+ * fakes, re-deciding after each flip the way the layout effect does. Each fake
+ * also carries the rounded `offsetHeight` a browser would report, which the
+ * decision must not use.
+ */
+describe('placeButtonPosition settles where the capture looped', () => {
+  const STICKER = { width: 76, height: 101.484 };
+  const CLUSTER_HEIGHT = 126.594;
+  const SNAP = 0.5;
+  const TRAY_BAND: Box = { top: 684, bottom: 844, left: 0, right: 390 };
+  const STANDOFF = { rotation: 0, knobOffset: 0.22, outset: 6, gap: 8 };
+  const { below, above } = chromeClearance({ ...STICKER, ...STANDOFF });
+
+  const element = (top: number, height: number, width: number) => ({
+    getBoundingClientRect: () => ({
+      top,
+      bottom: top + height,
+      left: 157,
+      right: 157 + width,
+      width,
+      height,
+    }),
+    offsetHeight: Math.round(height),
+  });
+
+  // Where the cluster really lands on each side of a sticker whose top is
+  // `stickerTop`: its edge nearest the sticker, standing off by the clearance.
+  const settle = (stickerTop: number) => {
+    const sticker = element(stickerTop, STICKER.height, STICKER.width);
+    // Layout snaps to device pixels, so where the cluster lands can differ from
+    // the model by a fraction of a pixel even with every height read exactly.
+    const clusterTop = (flipped: boolean) =>
+      flipped ? stickerTop - above - CLUSTER_HEIGHT - SNAP : stickerTop + STICKER.height + below;
+
+    let flipped = false;
+    let flips = 0;
+    for (let pass = 0; pass < 6; pass++) {
+      const next = placeButtonPosition({
+        sticker,
+        cluster: element(clusterTop(flipped), CLUSTER_HEIGHT, 136),
+        tray: TRAY_BAND,
+        clip: null,
+        flipped,
+        ...STANDOFF,
+      });
+      if (!next || next.flipped === flipped) break;
+      flipped = next.flipped;
+      flips++;
+    }
+    return { flipped, flips };
+  };
+
+  it('flips once and stays when the cluster edge is a sliver into the tray', () => {
+    const stickerTop = TRAY_BAND.top + 0.05 - CLUSTER_HEIGHT - below - STICKER.height;
+    expect(settle(stickerTop)).toEqual({ flipped: true, flips: 1 });
+  });
+
+  it('decides nothing before the sticker has a size', () => {
+    const next = placeButtonPosition({
+      sticker: element(300, 0, 76),
+      cluster: element(400, CLUSTER_HEIGHT, 136),
+      tray: TRAY_BAND,
+      clip: null,
+      flipped: false,
+      ...STANDOFF,
+    });
+    expect(next).toBeNull();
+  });
+});
+
+describe('the side the cluster is already on', () => {
+  it('is kept even when it only just fits', () => {
+    // Flipped, with above 1px inside the clip and below under the tray. The
+    // margin is for the side it would move to; holding the current side to it
+    // too would send the cluster back under the tray.
+    const clip: Box = { top: 400, bottom: 844, left: 0, right: 380 };
+    const tray: Box = { top: 684, bottom: 844, left: 0, right: 390 };
+    const above: Box = { top: clip.top + 1, bottom: clip.top + 127, left: 127, right: 263 };
+    const below: Box = { top: 680, bottom: 806, left: 127, right: 263 };
+    expect(shouldFlipPlaceButton({ below, above, tray, clip, flipped: true })).toBe(true);
   });
 });
