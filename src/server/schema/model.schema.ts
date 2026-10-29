@@ -437,6 +437,8 @@ export type ModelMeta = Partial<{
   poiHashMatch: { at: string; hash: string };
   /** A moderator lifted the real-person flag or dismissed the match; older files no longer match. */
   poiHashCleared: { at: string };
+  /** A system check (not a moderator) added the nsfw lock. Server-owned. */
+  systemNsfwLock: { source: string; at: string };
   textScanFlags: TextScanFlags;
   /** The `ModelRules` text-scan match that unpublished the model. Moderator-only. */
   modelRules: {
