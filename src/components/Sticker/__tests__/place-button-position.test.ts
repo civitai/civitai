@@ -359,3 +359,62 @@ describe('the candidate boxes survive coming from a DOMRect', () => {
     expect(decide(rectLike(651, 778, 322, 454), true)).toBe(true);
   });
 });
+
+/**
+ * 🔴 ONE CANDIDATE IS MEASURED AND THE OTHER IS MODELLED, AND THEY CAN DISAGREE.
+ *
+ * Captured in the geometry harness at 390x844 (free-offer cluster, sticker
+ * 101.484px tall, cluster 126.594px): heights read through `offsetHeight` round
+ * to 101 and 127, so the model put the other side 272.22px away when the cluster
+ * really moved 272.298px. With the cluster's bottom edge inside that 0.078px of
+ * the tray, unflipped saw the tray and flipped; flipped, the modelled `below`
+ * fell just short of the tray and unflipped. 57 commits, React #185.
+ *
+ * Fractional heights shrink the gap to float error; the margin is what makes any
+ * gap under it harmless, so it is what this pins.
+ */
+describe('a modelled side that is a fraction of a pixel off', () => {
+  const CLUSTER_HEIGHT = 126.594;
+  const MODELLED = 272.22;
+  const REAL = 272.298;
+  const MEASURED_TRAY: Box = { top: 684, bottom: 844, left: 0, right: 390 };
+  const cluster = (top: number): Box => ({
+    top,
+    bottom: top + CLUSTER_HEIGHT,
+    left: 127,
+    right: 263,
+  });
+
+  const decide = (current: Box, flipped: boolean) =>
+    shouldFlipPlaceButton({
+      ...placeButtonBoxes({ current, flipped, distance: MODELLED }),
+      tray: MEASURED_TRAY,
+      clip: null,
+      flipped,
+    });
+
+  it('decides the same thing from either side', () => {
+    // The cluster's bottom 0.05px into the tray: inside the 0.078px gap.
+    const below = cluster(MEASURED_TRAY.top + 0.05 - CLUSTER_HEIGHT);
+    const above = cluster(below.top - REAL);
+
+    expect(decide(below, false)).toBe(true);
+    expect(decide(above, true)).toBe(true);
+  });
+
+  it('still leaves a cluster that clearly fits where it is', () => {
+    const below = cluster(MEASURED_TRAY.top - 10 - CLUSTER_HEIGHT);
+    expect(decide(below, false)).toBe(false);
+  });
+
+  it('does not flip onto a side that only just fits', () => {
+    // Below is under the tray; above clears the clip by 1px — inside the margin,
+    // so the cluster stays rather than moving onto a side the model may have
+    // placed a pixel wrong.
+    const clip: Box = { top: 400, bottom: 844, left: 0, right: 380 };
+    const above = cluster(clip.top + 1);
+    const below = cluster(above.top + MODELLED);
+    expect(below.bottom).toBeGreaterThan(MEASURED_TRAY.top);
+    expect(shouldFlipPlaceButton({ below, above, tray: MEASURED_TRAY, clip })).toBe(false);
+  });
+});

@@ -155,23 +155,45 @@ export function placeButtonBoxes({
  * have nowhere good to put the button, and moving it to a second bad position
  * is worse than leaving it where the user last saw it.
  */
+/** More than the candidate model can be off by, so a flip never undoes itself. */
+const FLIP_MARGIN = 2;
+
 export function shouldFlipPlaceButton({
   below,
   above,
   tray,
   clip,
+  flipped = false,
   viewportTop = 0,
 }: {
   below: Box;
   above: Box;
   tray: Box | null;
   clip: Box | null;
+  /** Which side the cluster is on now: the other side is the one held to the margin. */
+  flipped?: boolean;
   viewportTop?: number;
 }) {
-  const hidden = (box: Box) =>
-    box.top < viewportTop ||
-    (!!tray && overlaps(box, tray)) ||
-    (!!clip && (box.bottom > clip.bottom || box.top < clip.top));
+  const hidden = (box: Box, margin = 0) => {
+    // By name, never a spread: `box` can be a DOMRect (see `shiftDown`).
+    const grown: Box = {
+      top: box.top - margin,
+      bottom: box.bottom + margin,
+      left: box.left,
+      right: box.right,
+    };
+    return (
+      grown.top < viewportTop ||
+      (!!tray && overlaps(grown, tray)) ||
+      (!!clip && (grown.bottom > clip.bottom || grown.top < clip.top))
+    );
+  };
 
-  return hidden(below) && !hidden(above);
+  // 🔴 THE SIDE IT WOULD MOVE TO HAS TO CLEAR BY A MARGIN. One of the two
+  // candidates is measured and the other is modelled, so they can disagree by a
+  // fraction of a pixel; without slack a cluster edge in that sliver flips,
+  // finds the model was wrong, flips back, and never settles (React #185).
+  return flipped
+    ? hidden(below, FLIP_MARGIN) && !hidden(above)
+    : hidden(below) && !hidden(above, FLIP_MARGIN);
 }

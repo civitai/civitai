@@ -340,12 +340,15 @@ export function DraftSticker({
 
     const { flipped, rotation } = frame.current;
     const tray = useStickerPlacementDraftStore.getState().tray;
-    // Layout size, not the bounding box. This element no longer rotates — the
-    // artwork inside it does — so its own box is the sticker's unrotated one,
-    // which is what the chrome is laid out against and what the clearance turns
-    // into the rotated extent.
-    const height = element.offsetHeight;
-    const width = element.offsetWidth;
+    // This element no longer rotates — the artwork inside it does — so its box
+    // is the sticker's unrotated one, which is what the chrome is laid out
+    // against and what the clearance turns into the rotated extent.
+    // 🔴 FRACTIONAL, LIKE THE RECT THE CANDIDATES START FROM. `offsetHeight`
+    // rounds, and when this and the cluster's height both round down the
+    // modelled jump comes out shorter than the real one: a cluster edge inside
+    // that sliver of the tray flips, then sees the tray miss it and unflips —
+    // "Maximum update depth exceeded" (React #185).
+    const { height, width } = element.getBoundingClientRect();
     // 🔴 AN UNMEASURED STICKER DECIDES NOTHING. `EdgeImage` has no intrinsic
     // size until it loads, so a draft dragged in from the tray measures 0 tall
     // for its first frames. Every number below is derived from that box, and a
@@ -365,12 +368,13 @@ export function DraftSticker({
     // From the cluster's own measured rect, both times: the pair that comes out
     // is the same whichever side it is currently on, which is what stops a flip
     // from removing its own cause and oscillating.
+    const current = button.getBoundingClientRect();
     const boxes = placeButtonBoxes({
-      current: button.getBoundingClientRect(),
+      current,
       flipped,
       distance: candidateDistance({
         height,
-        clusterHeight: button.offsetHeight,
+        clusterHeight: current.height,
         below: clearance.below,
         above: clearance.above,
       }),
@@ -381,6 +385,7 @@ export function DraftSticker({
       above: boxes.above,
       tray: tray?.getBoundingClientRect() ?? null,
       clip: clip.current?.getBoundingClientRect() ?? null,
+      flipped,
     });
     // 🔴 THE SIDE AND THE TWO STANDOFFS MOVE IN ONE UPDATE. Writing the margin
     // to the node while the class comes from state splits them across a render:
