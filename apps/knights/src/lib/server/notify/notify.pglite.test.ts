@@ -28,7 +28,7 @@ afterEach(() => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","Image","Post","KnightsPlayer","KnightsPlayerDay","KnightsNotificationSend","UserNotificationSettings" RESTART IDENTITY`
+    `TRUNCATE "KnightsVote","KnightsQueueItem","NewOrderPlayer","Image","Post","KnightsPlayer","KnightsPlayerDay","KnightsNotificationSend","UserNotificationSettings","NewOrderSmite" RESTART IDENTITY`
   );
 });
 
@@ -545,5 +545,39 @@ describe('sendNotifications', () => {
     const { run } = runner();
 
     await expect(run(at(12))).resolves.toMatchObject({ confirmFailed: 1 });
+  });
+
+  it('announces a settled hidden check like any other vote', async () => {
+    await seedPlayer(pg, 1);
+    await pg.query(
+      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict","settledAt","xp","gold","labelled")
+       VALUES (-7,1,'2026-12-15 10:00:00',$1,7,'Knight','4',1,'failed','2026-12-16 10:00:00',0,0,true)`,
+      [Q]
+    );
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect(received().get(1)).toEqual(['verdicts']);
+  });
+
+  it('does not nudge a player whose career reset is pending to play, but still tells them verdicts', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await seedStreak(1);
+    await seedStreak(2);
+    await seedSettledVote(2);
+    await enqueueImage();
+    for (const target of [1, 2]) {
+      await pg.query(
+        `INSERT INTO "NewOrderSmite" ("targetPlayerId") SELECT $1 FROM generate_series(1, 3)`,
+        [target]
+      );
+    }
+    const { run, received } = runner();
+
+    await run(at(21));
+
+    expect([...received().entries()]).toEqual([[2, ['verdicts']]]);
   });
 });

@@ -5,6 +5,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { dayStart, utcDay, type Day } from '../daily/days';
 import { liveStreak, shieldCoversToday, streakAfterReset } from '../daily/streak';
 import { servableItems } from '../queue/queue.service';
+import { SMITES } from '../smites/config';
 import { stagesWorkedBy } from '../queue/ranks';
 import { RANKS } from '../ranks';
 import type { SilenceType } from './silence-types';
@@ -57,6 +58,9 @@ const notSilenced = (silenceTypes: SilenceType[]) => {
       and not exists (select 1 from "UserNotificationSettings" r where r."userId" = pl."userId" and r."type" = known."type")
   ))`;
 };
+
+/** A player with this many uncleansed smites has a career reset pending and cannot vote (`insertVote`). */
+const canPlay = sql<boolean>`(select count(*) from "NewOrderSmite" sm where sm."targetPlayerId" = pl."userId" and sm."cleansedAt" is null) < ${SMITES.max}`;
 
 /**
  * Players who joined the game (they have a `NewOrderPlayer` row), have not turned `kind` off (a settings
@@ -114,6 +118,7 @@ async function withStreakAtRisk(
   silenceTypes: SilenceType[]
 ): Promise<number[]> {
   const rows = await recipients(db, 'streak', day, silenceTypes)
+    .where(canPlay)
     .innerJoin('KnightsPlayer as k', 'k.playerId', 'pl.userId')
     .leftJoin('KnightsPlayerDay as d', (join) =>
       join.onRef('d.playerId', '=', 'k.playerId').onRef('d.day', '=', 'k.lastWatchDay')
@@ -169,6 +174,7 @@ async function withImagesWaiting(
     // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
     if (rank === 'Acolyte' || rank === 'Inquisitor' || stages.length === 0) continue;
     const rows = await recipients(db, 'new-images', day, silenceTypes)
+      .where(canPlay)
       .select('pl.userId')
       .where('pl.rankType', '=', rank)
       .where((eb) =>
