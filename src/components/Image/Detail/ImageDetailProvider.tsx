@@ -1,7 +1,7 @@
 import { useHotkeys } from '@mantine/hooks';
 import produce from 'immer';
 import { useRouter } from 'next/router';
-import { createContext, useContext, useMemo } from 'react';
+import { createContext, Fragment, useContext, useMemo, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
@@ -200,7 +200,19 @@ export function ImageDetailProvider({
   // #endregion
 
   // #region [navigation]
+  // The carousel keeps its own position and only writes the URL back. When the image changes from
+  // anywhere else (a remix card opening its source over this detail), it would keep showing the old
+  // one and, on its next settle, write that back over the new URL — so start the detail over.
+  const lastNavigatedIdRef = useRef(imageId);
+  const [seenImageId, setSeenImageId] = useState(imageId);
+  const [externalMoves, setExternalMoves] = useState(0);
+  if (!Object.is(seenImageId, imageId)) {
+    setSeenImageId(imageId);
+    if (!Object.is(lastNavigatedIdRef.current, imageId)) setExternalMoves(externalMoves + 1);
+  }
+
   const navigate = (id: number) => {
+    lastNavigatedIdRef.current = id;
     const query = browserRouter.query;
     const [, queryString] = browserRouter.asPath.split('?');
     browserRouter.replace(
@@ -259,7 +271,7 @@ export function ImageDetailProvider({
         hideReactions,
       }}
     >
-      {children}
+      <Fragment key={externalMoves}>{children}</Fragment>
     </ImageDetailContext.Provider>
   );
 }
