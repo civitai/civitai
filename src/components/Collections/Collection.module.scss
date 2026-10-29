@@ -10,12 +10,9 @@
   }
 }
 
-// Header actions fade in when the header is hovered, so the title stays the focus.
+// Header actions sit on the page surface, so the title stays the focus.
 .headerAction {
-  opacity: 0;
-  transition: opacity 150ms ease;
-}
-
-.header:hover .headerAction {
-  opacity: 1;
+  --button-bg: var(--mantine-color-body);
+  --button-hover: var(--mantine-color-body);
+  --button-color: var(--mantine-color-body);
 }
