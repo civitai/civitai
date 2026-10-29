@@ -36,7 +36,8 @@ import {
   readOwnerSettingsViaKysely,
   readOwnerSettingsViaPrisma,
 } from '~/server/services/hot-reads-3.reads';
-import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
+import { readModelMetaViaKysely } from '~/server/services/hot-reads-5.reads';
 import { findHashOwnership } from '~/server/services/model-file-hash-owner.service';
 import {
   assertTrainingSourcePublishable,
@@ -997,14 +998,12 @@ export const unpublishModelHandler = async ({
     const { id } = input;
     const model = await dbRead.model.findUnique({
       where: { id },
-      select: { meta: true, nsfw: true },
+      select: { nsfw: true },
     });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
-    const meta = (model.meta as ModelMeta | null) || {};
     const updatedModel = await unpublishModelById({
       ...input,
-      meta,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
     });
@@ -2382,7 +2381,11 @@ export async function copyGalleryBrowsingLevelHandler({
 
 export async function getModelCollectionShowcaseHandler({ input }: { input: GetByIdInput }) {
   try {
-    const model = await getModel({ id: input.id, select: { id: true, meta: true } });
+    // `kysely-hot-reads-5` on: the same two columns through Kysely, on the client the same lag
+    // decision picks (`getModel` reads through `getDbWithoutLag('model', id)`).
+    const model = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+      ? await readModelMetaViaKysely(await getKyselyWithoutLag('model', input.id), input.id)
+      : await getModel({ id: input.id, select: { id: true, meta: true } });
     if (!model) throw throwNotFoundError(`No model with id ${input.id}`);
 
     const modelMeta = model.meta as ModelMeta | null;

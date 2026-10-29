@@ -396,6 +396,7 @@ export const serverSchema = z
     JOB_TOKEN: z.string(),
     WEBHOOK_URL: z.url().optional(),
     WEBHOOK_TOKEN: z.string(),
+    SYSTEM_ACCOUNT_KEY_TOKEN: z.string().optional(),
     // Base URL of the standalone moderator app (apps/moderator). Migrated /moderator/* routes redirect
     // here via the moderator catchall page during the transition.
     MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
@@ -421,6 +422,13 @@ export const serverSchema = z
     // reason as MODERATOR_APP_INTERNAL_URL above.
     GF_REPORT_TOKEN: z.string().optional(),
     GAMES_GUEST_USER_ID: z.union([z.coerce.number().int().positive(), z.literal('')]).optional(),
+    // The shared "Civitai Moderation" account that moderators message users as. Unset or '' turns the
+    // feature off.
+    CIVITAI_MODERATION_USER_ID: z
+      .union([z.coerce.number().int().positive(), z.literal('')])
+      .optional(),
+    // Messages per target user per 24 h across all moderators, sent as Civitai Moderation.
+    MESSAGE_AS_CIVITAI_DAILY_CAP: z.coerce.number().int().positive().default(5),
     UNAUTHENTICATED_DOWNLOAD: zc.booleanString,
     UNAUTHENTICATED_LIST_NSFW: zc.booleanString,
     LOGGING: commaDelimitedStringArray(),
@@ -821,7 +829,7 @@ export const serverSchema = z
     PAYPAL_CLIENT_ID: z.string().optional(),
     S3_VAULT_BUCKET: z.string().optional(),
     HEALTHCHECK_TIMEOUT: z.coerce.number().optional().default(1500),
-    // Comma-delimited check names to skip in /api/health (e.g. "searchMetrics").
+    // Comma-delimited check names to skip in /api/health (e.g. "clickhouse").
     // Static counterpart to the runtime sysRedis DISABLED_HEALTHCHECKS list.
     HEALTHCHECK_DISABLED: commaDelimitedStringArray().optional(),
     FRESHDESK_JWT_SECRET: z.string().optional(),

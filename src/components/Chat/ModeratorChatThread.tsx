@@ -73,10 +73,13 @@ export function ModeratorChatThread({
       onConfirm: () => deleteMessage({ messageId }),
     });
 
-  const nameFor = (userId: number) =>
-    userId === -1
-      ? 'system'
-      : data?.chat.chatMembers.find((cm) => cm.userId === userId)?.user.username ?? `#${userId}`;
+  const nameFor = (userId: number, messageId?: number) => {
+    if (userId === -1) return 'system';
+    const name =
+      data?.chat.chatMembers.find((cm) => cm.userId === userId)?.user.username ?? `#${userId}`;
+    const sentBy = messageId !== undefined ? data?.sentBy[messageId] : undefined;
+    return sentBy ? `${name} (sent by ${sentBy})` : name;
+  };
 
   return (
     <Modal opened={!!chatId} onClose={onClose} size="xl" title={`Chat #${chatId}`}>
@@ -125,7 +128,7 @@ export function ModeratorChatThread({
                   <div key={msg.id} className="rounded border border-gray-3 p-2 dark:border-dark-4">
                     <Group gap="xs" wrap="nowrap">
                       <Text size="xs" fw={600}>
-                        {nameFor(msg.userId)}
+                        {nameFor(msg.userId, msg.id)}
                       </Text>
                       <Text size="xs" c="dimmed">
                         {formatDate(msg.createdAt, 'MMM D, YYYY h:mm:ss a')}

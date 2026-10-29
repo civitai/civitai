@@ -53,11 +53,17 @@ vi.mock('~/server/clickhouse/client', async (importOriginal) => ({
 import {
   closeAppealsDeletedByOwner,
   closeAppealsOnDeletedModel,
+  getAppealExcludedIds,
   isAppealBlockedByHoldMarker,
+  ROUTED_APPEAL_REVIEW_DAYS,
   voidOrphanedAppeals,
 } from '~/server/services/report.service';
 
 const FILED = '2026-09-01 00:00:00';
+const ago = (ms: number) => new Date(Date.now() - ms).toISOString().slice(0, 19).replace('T', ' ');
+const DAY = 86_400_000;
+// Routed recently enough that the review deadline is far off.
+const RECENTLY = ago(DAY);
 
 // [appeal id, userId, entityType, entityId, status, entityRemovedAt, buzzTransactionId]
 const APPEALS: [number, number, string, number, string, string | null, string | null][] = [
@@ -68,7 +74,8 @@ const APPEALS: [number, number, string, number, string, string | null, string | 
   [5, 15, 'Model', 2005, 'Pending', null, null], // hard-deleted model, no owner event: quiet
   [6, 16, 'Model', 2006, 'Pending', null, null], // model still exists
   [7, 17, 'Model', 2007, 'Rejected', null, null], // decided model
-  [8, 18, 'Image', 1008, 'Pending', '2026-09-10 00:00:00', null], // already routed
+  [8, 18, 'Image', 1008, 'Pending', RECENTLY, null], // already routed
+  // 9-14: the appeal flow excludes the image or its appellant; each is treated like 1, 2 or 15.
   [9, 19, 'Image', 1009, 'Pending', null, 'appeal-19-1'], // in a report (object entry), also owner-deleted
   [10, 20, 'Image', 1010, 'Pending', null, null], // image in a report, bare entry
   [11, 21, 'Image', 1011, 'Pending', null, null], // appellant has a report filed on them
@@ -80,6 +87,7 @@ const APPEALS: [number, number, string, number, string, string | null, string | 
   [17, 27, 'Model', 1009, 'Pending', null, null], // hard-deleted model sharing a reported image's id: quiet
   [18, 28, 'Model', 2018, 'Pending', null, 'appeal-28-1'], // model soft-deleted by its owner
   [19, 29, 'Model', 2019, 'Pending', null, 'appeal-29-1'], // model soft-deleted by a moderator: quiet
+  [20, 30, 'Image', 1020, 'Pending', null, 'appeal-30-1'], // like 2; appellant under a hold marker
 ];
 
 beforeAll(async () => {
@@ -132,8 +140,9 @@ beforeEach(async () => {
   holder.afterPick = null;
   holder.clickhouse = 'normal';
   await holder.db.exec(`
-    TRUNCATE "User", "Image", "Model", "Report", "UserReport", "CsamReport", "Appeal";
-    INSERT INTO "User" (id, "deletedAt") SELECT g, NULL FROM generate_series(11, 29) g;
+    TRUNCATE "User", "Image", "Model", "Report", "UserReport", "CsamReport", "EvidenceHeldUser", "Appeal";
+    INSERT INTO "User" (id, "deletedAt") SELECT g, NULL FROM generate_series(11, 30) g;
+    INSERT INTO "EvidenceHeldUser" ("userId") VALUES (30);
     UPDATE "User" SET "deletedAt" = now() WHERE id = 26;
     INSERT INTO "Image" (id, "userId", "blockedFor") VALUES
       (1003, 13, NULL),
@@ -185,6 +194,29 @@ const notifiedUsers = () =>
     .mock.calls.map((c) => (c[0] as { userId: number }).userId)
     .sort((a, b) => a - b);
 
+/** Everything the appellant of `id` can see of it: the row, its notices, and its refund. */
+async function seenBy(id: number, fee: string | null) {
+  const { status, resolvedReason, resolvedAt, entityRemovedAt } = (await appeals()).get(id)!;
+  const notices = vi
+    .mocked(holder.notify)
+    .mock.calls.map((c) => c[0] as { key: string; details: Record<string, unknown> })
+    .filter((n) => n.key.includes(`:${id}:`))
+    .map((n) => ({
+      key: n.key.replace(`:${id}:`, ':#:'),
+      outcome: n.details.outcome,
+      refunded: n.details.refunded,
+    }));
+  return {
+    status,
+    resolvedReason,
+    resolved: resolvedAt !== null,
+    routed: entityRemovedAt !== null,
+    notices,
+    refunded: fee !== null && refundedPrefixes().includes(fee),
+  };
+}
+const feeOf = (id: number) => APPEALS.find(([a]) => a === id)![6];
+
 describe('voidOrphanedAppeals against Postgres', () => {
   it('sorts every orphan by the one condition that distinguishes it', async () => {
     const result = await voidOrphanedAppeals();
@@ -204,19 +236,20 @@ describe('voidOrphanedAppeals against Postgres', () => {
       6: 'Pending',
       7: 'Rejected',
       8: 'Pending',
-      9: 'void:quiet',
-      10: 'void:quiet',
-      11: 'void:quiet',
+      9: 'void:deleted-by-owner',
+      10: 'Pending:routed',
+      11: 'Pending:routed',
       12: 'Pending:routed',
-      13: 'void:quiet',
-      14: 'void:quiet',
+      13: 'Pending:routed',
+      14: 'Pending:routed',
       15: 'Pending:routed',
       16: 'void:quiet',
       17: 'void:quiet',
       18: 'void:deleted-by-owner',
       19: 'void:quiet',
+      20: 'Pending:routed',
     });
-    expect(result).toMatchObject({ closedQuietly: 9, closedOwnerDeleted: 2, routedForReview: 3 });
+    expect(result).toMatchObject({ closedQuietly: 4, closedOwnerDeleted: 3, routedForReview: 8 });
     // Only Pending, unstamped orphans are candidates: decided or existing models are never looked up.
     const modelLookup = vi
       .mocked(clickhouse!.$query)
@@ -227,11 +260,24 @@ describe('voidOrphanedAppeals against Postgres', () => {
     expect(refundedPrefixes()).toEqual([
       'appeal-11-1',
       'appeal-19-1',
-      'appeal-23-1',
       'appeal-28-1',
       'appeal-29-1',
     ]);
-    expect(notifiedUsers()).toEqual([11, 12, 22, 25, 28]);
+    expect(notifiedUsers()).toEqual([11, 12, 19, 20, 21, 22, 23, 24, 25, 28, 30]);
+  });
+
+  // Each pair differs only in that the flow excludes the second appellant (13: reported, 20: held;
+  // 9: its image reported, deleted by its owner like 1).
+  it.each([
+    [2, 13],
+    [2, 20],
+    [1, 9],
+  ])('shows appellant %i and excluded appellant %i the same outcome', async (normal, excluded) => {
+    await voidOrphanedAppeals();
+
+    const expected = await seenBy(normal, feeOf(normal));
+    expect(expected.notices).toHaveLength(1);
+    expect(await seenBy(excluded, feeOf(excluded))).toEqual(expected);
   });
 
   it.each(['throw', 'empty'] as const)(
@@ -264,17 +310,18 @@ describe('voidOrphanedAppeals against Postgres', () => {
 
   it('leaves alone every appeal decided or routed between the pick and the claims', async () => {
     // Close and route each guard on status and on the stamp.
-    // Decided meanwhile: 1 (owner close), 13 (quiet close), 2 (route). Stamped meanwhile: 9 (quiet close), 12 (route).
+    // Decided meanwhile: 1 (owner close), 5 (quiet close), 2 (route).
+    // Stamped meanwhile: 9 (owner close), 16 (quiet close), 12 (route).
     holder.afterPick = `
       UPDATE "Appeal" SET status = 'Approved' WHERE id = 1;
-      UPDATE "Appeal" SET "entityRemovedAt" = '2026-09-20 00:00:00' WHERE id = 9;
-      UPDATE "Appeal" SET status = 'Rejected' WHERE id = 13;
+      UPDATE "Appeal" SET "entityRemovedAt" = '${RECENTLY}' WHERE id = 9;
+      UPDATE "Appeal" SET status = 'Rejected' WHERE id = 5;
+      UPDATE "Appeal" SET "entityRemovedAt" = '${RECENTLY}' WHERE id = 16;
       UPDATE "Appeal" SET status = 'Rejected' WHERE id = 2;
-      UPDATE "Appeal" SET "entityRemovedAt" = '2026-09-20 00:00:00' WHERE id = 12;
+      UPDATE "Appeal" SET "entityRemovedAt" = '${RECENTLY}' WHERE id = 12;
     `;
     const routedMeanwhile = async () =>
-      (await holder.db.query<{ at: Date }>(`SELECT '2026-09-20 00:00:00'::timestamp(3) AS at`))
-        .rows[0].at;
+      (await holder.db.query<{ at: Date }>(`SELECT '${RECENTLY}'::timestamp(3) AS at`)).rows[0].at;
 
     const result = await voidOrphanedAppeals();
     const rows = await appeals();
@@ -285,16 +332,90 @@ describe('voidOrphanedAppeals against Postgres', () => {
       resolvedReason: null,
     });
     expect(rows.get(9)).toMatchObject({ status: 'Pending', resolvedAt: null });
-    expect(rows.get(13)).toMatchObject({
+    expect(rows.get(5)).toMatchObject({
       status: 'Rejected',
       resolvedAt: null,
       resolvedReason: null,
     });
+    expect(rows.get(16)).toMatchObject({ status: 'Pending', resolvedAt: null });
     expect(rows.get(2)).toMatchObject({ status: 'Rejected', entityRemovedAt: null });
     expect(rows.get(12)!.entityRemovedAt).toEqual(await routedMeanwhile());
     expect(refundedPrefixes()).toEqual(['appeal-28-1', 'appeal-29-1']);
-    expect(notifiedUsers()).toEqual([25, 28]);
-    expect(result).toMatchObject({ closedQuietly: 7, closedOwnerDeleted: 1, routedForReview: 1 });
+    expect(notifiedUsers()).toEqual([20, 21, 23, 24, 25, 28, 30]);
+    expect(result).toMatchObject({ closedQuietly: 2, closedOwnerDeleted: 1, routedForReview: 6 });
+  });
+
+  // 31 and 32 have waited past the deadline, 32's appellant held; 33 is a day short of it; 34 was
+  // decided long ago. Their images are gone, so the sweep's pick never sees them.
+  describe('an appeal still unreviewed after the review deadline', () => {
+    beforeEach(async () => {
+      await holder.db.query(
+        `INSERT INTO "Appeal" (id, "userId", "entityType", "entityId", status, "createdAt", "updatedAt",
+           "entityRemovedAt", "buzzTransactionId") VALUES
+           (31, 12, 'Image', 1031, 'Pending', $1, $1, now() - make_interval(days => $2, mins => 1), 'appeal-12-2'),
+           (32, 30, 'Image', 1032, 'Pending', $1, $1, now() - make_interval(days => $2, mins => 1), 'appeal-30-2'),
+           (33, 12, 'Image', 1033, 'Pending', $1, $1, now() - make_interval(days => $2 - 1), 'appeal-12-3'),
+           (34, 12, 'Image', 1034, 'Rejected', $1, $1, now() - make_interval(days => $2 * 2), 'appeal-12-4'),
+           (35, 12, 'Model', 2035, 'Pending', $1, $1, now() - make_interval(days => $2, mins => 1), 'appeal-12-5')`,
+        // Computed in the database, whose clock and zone the deadline is measured in.
+        [FILED, ROUTED_APPEAL_REVIEW_DAYS]
+      );
+    });
+
+    it('is closed, refunded and told, the same for an excluded appellant', async () => {
+      const result = await voidOrphanedAppeals();
+
+      const normal = await seenBy(31, 'appeal-12-2');
+      expect(normal).toEqual({
+        status: 'Void',
+        resolvedReason: 'removed-before-review',
+        resolved: true,
+        routed: true,
+        notices: [
+          {
+            key: 'entity-appeal-content-removed:#:closed-unreviewed',
+            outcome: 'closed-unreviewed',
+            refunded: true,
+          },
+        ],
+        refunded: true,
+      });
+      expect(await seenBy(32, 'appeal-30-2')).toEqual(normal);
+      expect(result).toMatchObject({ closedUnreviewed: 2 });
+    });
+
+    it('leaves one short of the deadline, and one already decided, alone', async () => {
+      await voidOrphanedAppeals();
+      const rows = await appeals();
+
+      expect(rows.get(33)).toMatchObject({ status: 'Pending', resolvedAt: null });
+      expect(rows.get(34)).toMatchObject({
+        status: 'Rejected',
+        resolvedAt: null,
+        resolvedReason: null,
+      });
+      expect(refundedPrefixes()).not.toContain('appeal-12-3');
+      expect(refundedPrefixes()).not.toContain('appeal-12-4');
+    });
+
+    // 35 has waited as long as 31, but only images are routed for review today.
+    it('leaves a non-image appeal past the deadline alone', async () => {
+      await voidOrphanedAppeals();
+
+      expect((await appeals()).get(35)).toMatchObject({ status: 'Pending', resolvedAt: null });
+      expect(refundedPrefixes()).not.toContain('appeal-12-5');
+    });
+
+    it('refunds and tells each one once', async () => {
+      expect(await voidOrphanedAppeals()).toMatchObject({ closedUnreviewed: 2 });
+      vi.clearAllMocks();
+
+      const second = await voidOrphanedAppeals();
+
+      expect(second).toMatchObject({ closedUnreviewed: 0 });
+      expect(holder.refundMulti).not.toHaveBeenCalled();
+      expect(holder.notify).not.toHaveBeenCalled();
+    });
   });
 
   it('does nothing on a second run', async () => {
@@ -329,7 +450,7 @@ describe('closeAppealsDeletedByOwner against Postgres', () => {
       entityIds: [7001, 7002, 7005],
       ownerId: 40,
     });
-    // User 21 is a defensive close (fixture): refunded, not told.
+    // The flow excludes user 21 (fixture); they are refunded and told like user 40.
     await closeAppealsDeletedByOwner({ entityType: 'Image', entityIds: [7004], ownerId: 21 });
 
     const rows = await appeals();
@@ -345,6 +466,7 @@ describe('closeAppealsDeletedByOwner against Postgres', () => {
       .mock.calls.map((c) => c[0] as { key: string; details: { refunded: boolean } });
     expect(notices.map((n) => [n.key, n.details.refunded]).sort()).toEqual([
       ['entity-appeal-content-removed:101:closed-owner-deleted', true],
+      ['entity-appeal-content-removed:106:closed-owner-deleted', true],
       ['entity-appeal-content-removed:107:closed-owner-deleted', false],
     ]);
   });
@@ -395,6 +517,20 @@ describe('closeAppealsOnDeletedModel against Postgres', () => {
     dbMock.dbWrite.$queryRaw.mockRejectedValueOnce(new Error('db down'));
 
     await expect(closeAppealsOnDeletedModel({ modelId: 8001 })).resolves.toBeUndefined();
+  });
+});
+
+describe('getAppealExcludedIds against Postgres', () => {
+  // The fixture flags 21 (filed on), 23 (reported for the right reason), 24 (an image blocked for it)
+  // and 30 (held), and the images 1009 (object entry) and 1010 (bare). 22, 25 and 1011 are controls.
+  it('flags exactly the owners and images each leg covers', async () => {
+    const { images, users } = await getAppealExcludedIds({
+      imageIds: [1009, 1010, 1011],
+      userIds: [21, 22, 23, 24, 25, 30],
+    });
+
+    expect([...images].sort()).toEqual([1009, 1010]);
+    expect([...users].sort()).toEqual([21, 23, 24, 30]);
   });
 });
 

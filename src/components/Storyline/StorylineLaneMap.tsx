@@ -47,6 +47,7 @@ import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterIm
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { RouterOutput } from '~/types/router';
 import type { StorylineLanePoint } from '~/shared/utils/storyline-lanes';
 import { storylineLanePath } from '~/shared/utils/storyline-lanes';
@@ -76,18 +77,19 @@ const RATIO = 5 / 4;
 export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
   const compact = !!useIsMobile({ type: 'media' });
   const size = compact ? SIZES.compact : SIZES.wide;
-  const isOwner = storyline.viewerRole === 'owner';
+  const currentUser = useCurrentUser();
+  const canManage = storyline.viewerRole === 'owner' || !!currentUser?.isModerator;
   // The owner's graph also says which edges refuse an insert, so a straight story reads it too.
   const { data: graph } = useStorylineGraph(storyline.id, {
-    enabled: storylineMayBranch(storyline) || isOwner,
+    enabled: storylineMayBranch(storyline) || canManage,
   });
   const insertable = useMemo(
-    () => (isOwner && graph ? storylineInsertableEdges(graph) : null),
-    [isOwner, graph]
+    () => (canManage && graph ? storylineInsertableEdges(graph) : null),
+    [canManage, graph]
   );
   const moveRuns = useMemo(
-    () => (isOwner && graph ? storylineMoveRuns(graph, storyline.userId) : null),
-    [isOwner, graph, storyline.userId]
+    () => (canManage && graph ? storylineMoveRuns(graph, storyline.userId) : null),
+    [canManage, graph, storyline.userId]
   );
   const move = useMoveStorylineChapter();
   const [dragging, setDragging] = useState<number | null>(null);

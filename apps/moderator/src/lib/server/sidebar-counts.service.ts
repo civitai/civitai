@@ -34,6 +34,8 @@ import {
   getMinorQueueCounts,
   type MinorQueueCounts,
 } from './minor-hash.service';
+import { ticketSnapshot } from './tickets/snapshot';
+import { peekTicketCounts } from './tickets/view-counts';
 import { NEEDS_REVIEW_COUNT_KEYS, needsReviewTotal } from '$lib/minor-flags/needs-review';
 
 export type SidebarCounts = Record<string, number>;
@@ -42,7 +44,7 @@ export type SidebarCounts = Record<string, number>;
  *  instead of a smaller total. */
 export type SidebarCountsResult = { counts: SidebarCounts; unavailable: string[] };
 
-const counts = createCache({ name: 'sidebar-counts:v2', fetch: fetchCounts, ttlSeconds: 60 });
+const counts = createCache({ name: 'sidebar-counts:v3', fetch: fetchCounts, ttlSeconds: 60 });
 
 /** How long a part's last landed value stands in for it; older, the part is unknown. */
 export const LAST_GOOD_MS = 15 * 60_000;
@@ -130,6 +132,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     csamTextHolds,
     siteAppeals,
     evidenceHoldsEnding,
+    ticketCounts,
   ] = await Promise.all([
     getImageReviewCounts(),
     // Bitmask predicates must match the TagsOnImageNew_needsReview_idx partial index (bit 9 set, bit 10 clear).
@@ -181,6 +184,8 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
     bounded(countSiteAppeals),
     // Bounded: the view aggregates every hold row, so no index serves it.
     bounded(() => countEvidenceHoldsEnding(dbRead)),
+    // Bounded so a slow Redis read cannot hold up the sidebar; these keys are not in `maybe`, so a timeout shows no badge rather than `unavailable`.
+    bounded(() => peekTicketCounts(() => ticketSnapshot.peek())),
   ]);
   // Null where a bounded count did not answer.
   const maybe: Record<string, number | null> = {
@@ -213,6 +218,7 @@ async function fetchCounts(): Promise<SidebarCountsResult> {
       reRemovals,
       modelFlagsAppeals: modelFlagAppealGroups.reduce((sum, g) => sum + g.count, 0),
       ...Object.fromEntries(known),
+      ...ticketCounts,
     },
     unavailable,
   };

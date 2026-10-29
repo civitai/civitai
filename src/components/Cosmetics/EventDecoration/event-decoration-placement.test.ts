@@ -6,6 +6,7 @@ import {
   getEventDecorationClearLeftCss,
   getHatCardScale,
   getHatLayout,
+  getHatRoom,
   HAT_LOOK,
   HAT_LOOK_CARD_WIDTH,
   HAT_PLAIN_CARD_NUDGE,
@@ -261,7 +262,7 @@ it("home blocks hold the cards past the right edge out of a hat's reach", () => 
 it.each([
   [
     'src/components/Profile/Sections/ShowcaseGrid.module.scss',
-    '--event-decoration-allowance: 8px;',
+    '--event-decoration-allowance: 36px;',
   ],
   ['src/components/Profile/Sections/ShowcaseGrid.module.scss', '--event-decoration-grow: 1;'],
   ['src/components/HomeBlocks/HomeBlock.module.scss', '--event-decoration-grow: 1;'],
@@ -286,9 +287,11 @@ it('the hat picker makes room above each preview card, declares it, and stops gr
     );
 });
 
-it('masonry carousels give hats no room and no growth', () => {
-  const source = readFileSync('src/components/MasonryColumns/MasonryCarousel.tsx', 'utf8');
-  expect(source).toMatch(/'\[--event-decoration-allowance:0px\] \[--event-decoration-grow:1\]'/);
+it('a container can declare more room above than beside its cards', () => {
+  expect(hatShiftCss(-40, 'top')).toContain(
+    'var(--event-decoration-allowance-top, var(--event-decoration-allowance,'
+  );
+  expect(hatShiftCss(-40, 'left')).not.toContain('allowance-top');
 });
 
 // Chosen by Justin in the hat tuner on his phone (2026-10-09): 4px further up and left on cards
@@ -337,6 +340,27 @@ describe('a hat too big for the bleed', () => {
 it.each([0, 8, 24])('fits a container that gives %ipx of room', (allowance) => {
   const { reach } = getHatLayout('corner', ART.civchan, allowance);
   expect(Math.min(reach.left, reach.top)).toBeCloseTo(-allowance, 6);
+});
+
+// A picture letterboxed in a clipping slot has room on one side and none on the other.
+describe('a hat on a picture with its own room on each edge', () => {
+  it('reaches as far past each edge as that edge allows', () => {
+    const { reach } = getHatLayout('corner', ART.civchan, { left: 4, top: 20 });
+    expect(reach.left).toBeCloseTo(-4, 6);
+    expect(reach.top).toBeCloseTo(-20, 6);
+  });
+
+  it('wears one allowance on both edges like a number', () => {
+    expect(getHatLayout('corner', ART.civchan, { left: 8, top: 8 })).toEqual(
+      getHatLayout('corner', ART.civchan, 8)
+    );
+  });
+
+  it('keeps 2px inside an edge the picture meets, a feed card past one it has room for', () => {
+    expect(getHatRoom(0)).toBe(-2);
+    expect(getHatRoom(10)).toBe(8);
+    expect(getHatRoom(500)).toBe(ITEM_BLEED);
+  });
 });
 
 it('outlines its hit area with the art, not the canvas', () => {

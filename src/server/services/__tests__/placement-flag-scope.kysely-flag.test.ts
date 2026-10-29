@@ -81,7 +81,14 @@ describe('kysely-placement-reads scope', () => {
       targetId: IMAGE,
     });
 
-    expect(flag).toHaveBeenCalledTimes(1);
+    // `kysely-placement-reads` is asked once. The only other key this path evaluates is
+    // `kysely-hot-reads-5` (`getPlacementConfig`'s KeyValue read), and each call is by key alone.
+    const keys = flag.mock.calls.map((call) => {
+      expect(call).toHaveLength(1);
+      return call[0];
+    });
+    expect(keys.filter((key) => key === 'kysely-placement-reads')).toHaveLength(1);
+    for (const key of keys) expect(['kysely-placement-reads', 'kysely-hot-reads-5']).toContain(key);
     // The price range's two reads took the resolution's answer rather than asking again.
     expect(q.getUserPlacementScore).toHaveBeenCalledTimes(1);
     expect(q.listUserSubscriptionRows).toHaveBeenCalledTimes(1);

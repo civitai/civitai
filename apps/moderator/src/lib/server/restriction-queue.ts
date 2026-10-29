@@ -12,6 +12,7 @@ import {
 } from '$lib/restriction-filters';
 import { banFieldsSchema, banRemovalArgs, rejectUnexplainedOther } from '$lib/server/ban-input';
 import { banConfirmed, resolveRestriction, setBanned } from '$lib/server/user-actions.service';
+import { parseRestrictionRuling, rulingReason } from '$lib/server/restriction-ruling';
 import { checkedResolutionReason, resolutionReasonFields } from '$lib/server/resolution-reason';
 import { planRemixSources } from '$lib/restrictions/origin';
 import {
@@ -183,15 +184,9 @@ function unwiredRuling(row: RestrictionRow): string | null {
 
 export const restrictionActions = (types: readonly RestrictionType[]): Actions => ({
   resolve: async ({ request, locals }) => {
-    const input = parseForm(
-      z.object({
-        userRestrictionId: z.coerce.number().int().positive(),
-        status: z.enum(['Upheld', 'Overturned']),
-        ...resolutionReasonFields,
-      }),
-      await request.formData()
-    );
-    if (typeof input === 'string') return fail(400, { error: input });
+    const parsed = parseRestrictionRuling(await request.formData());
+    if (!parsed.ok) return fail(400, { error: parsed.error });
+    const { input } = parsed;
 
     // Owner read from the restriction, never the form: this id is what the ModActivity row names, so a
     // posted one lets the audit trail record an account that was never acted on.
@@ -199,13 +194,14 @@ export const restrictionActions = (types: readonly RestrictionType[]): Actions =
     if (!row) return fail(404, { error: 'Restriction not found.' });
     const unwired = unwiredRuling(row);
     if (unwired) return fail(400, { error: unwired });
-    const reason = checkedResolutionReason('restriction', input.status, input);
-    if (typeof reason === 'string') return fail(400, { error: reason });
+    const reason = rulingReason(input);
+    if (!reason.ok) return fail(400, { error: reason.error });
 
     const result = await resolveRestriction({
       userRestrictionId: input.userRestrictionId,
       status: input.status,
-      ...reason,
+      resolvedReason: reason.resolvedReason,
+      internalNotes: reason.internalNotes,
       userId: row.userId,
       moderatorId: locals.user.id,
     });

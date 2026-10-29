@@ -1,4 +1,10 @@
-import { createRevocationCheck, createSpokeGuard, type SessionRegistryRedis } from '@civitai/auth';
+import { env } from '$env/dynamic/private';
+import {
+  createRevocationCheck,
+  createSpokeGuard,
+  isModerationAccountUser,
+  type SessionRegistryRedis,
+} from '@civitai/auth';
 import { logToAxiom, safeError } from './axiom';
 import { getSysRedis } from './redis';
 
@@ -16,4 +22,23 @@ export const isRevoked = createRevocationCheck({
   },
 });
 
-export const guard = createSpokeGuard({ require: (user) => user.isModerator === true, isRevoked });
+/** The shared Civitai Moderation account is a moderator that never signs in. */
+export function admitsModerator(user: {
+  id: number;
+  username?: string | null;
+  isModerator?: boolean;
+}): boolean {
+  if (user.isModerator !== true) return false;
+  if (isModerationAccountUser(user, env.CIVITAI_MODERATION_USER_ID)) {
+    logToAxiom({
+      name: 'moderation-account-session-refused',
+      type: 'error',
+      source: 'moderator-app',
+      userId: user.id,
+    }).catch(() => undefined);
+    return false;
+  }
+  return true;
+}
+
+export const guard = createSpokeGuard({ require: admitsModerator, isRevoked });

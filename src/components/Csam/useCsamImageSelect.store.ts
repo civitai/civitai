@@ -5,6 +5,9 @@ const createSelectStore = () =>
   create<{
     selected: Record<number, Record<number, boolean>>;
     seeded: Record<string, boolean>;
+    /** Whether the server took or refused the tile's latest shown row, by `userId:imageId`. */
+    shownRows: Record<string, 'recorded' | 'refused'>;
+    setShownRow: (userId: number, id: number, row: 'recorded' | 'refused') => void;
     setSelected: (userId: number, ids: number[]) => void;
     seedSelected: (userId: number, id: number) => void;
     toggle: (userId: number, id: number, value?: boolean) => void;
@@ -13,6 +16,13 @@ const createSelectStore = () =>
     immer((set, get) => ({
       selected: {},
       seeded: {},
+      shownRows: {},
+      setShownRow: (userId, id, row) => {
+        set((state) => {
+          if (state.shownRows[`${userId}:${id}`] !== 'recorded')
+            state.shownRows[`${userId}:${id}`] = row;
+        });
+      },
       setSelected: (userId, ids) => {
         set((state) => {
           state.selected[userId] = ids.reduce<Record<number, boolean>>(

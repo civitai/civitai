@@ -9,6 +9,7 @@ import {
   MODEL_FLAGS_PATH,
 } from '$lib/minor-flags/paths';
 import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
+import { TICKET_COUNT_KEYS } from '$lib/tickets/counts';
 import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
@@ -28,6 +29,11 @@ export type Role = string;
 export const SUPER_ROLE: Role = 'moderator:admin';
 
 export const isStorableRole = (value: string): boolean => value !== SUPER_ROLE;
+
+// The hub's catalogue for this app is exactly its prefix (`listAppRoles`), so a stored role carrying the
+// prefix but missing from the catalogue is retired. A role without it belongs to another system (a service
+// account's) and is never this app's to remove.
+export const isAppRole = (value: string): boolean => value.startsWith(`${APP}:`);
 
 // Reachable by every authenticated moderator. The gate bounces a denied user here, so making it grantable
 // would let an admin build an infinite redirect.
@@ -182,6 +188,7 @@ export const NAVIGATION: NavLink[] = [
     ],
   },
   { path: '/creator-services/disputes', label: 'Service Disputes' },
+  { path: '/messages', label: 'Civitai Messages', countKey: 'civitaiMessages' },
   {
     label: 'Audit',
     path: '/audit',
@@ -264,6 +271,19 @@ export const NAVIGATION: NavLink[] = [
   // `/decisions/support/ticket/<id>`), resolved here by prefix like `/abuse`. Recording a ruling is a
   // separate permission (`decisions.rule`), checked in the action.
   { path: '/decisions', label: 'Decisions' },
+  // No path of its own, so each view is granted on its own: whoever works moderation tickets need not
+  // see the support queue. Acting on a ticket is separate (`tickets.reply`, `tickets.escalate`).
+  {
+    label: 'Tickets',
+    children: [
+      {
+        path: '/tickets/moderation',
+        label: 'Moderation tickets',
+        countKey: TICKET_COUNT_KEYS.moderation,
+      },
+      { path: '/tickets/support', label: 'Support tickets', countKey: TICKET_COUNT_KEYS.support },
+    ],
+  },
   { path: '/blocklists', label: 'Blocklists' },
   // No path of its own, so each child carries its own grant (like Users). `/assistant` covers the
   // moderator's own chats, the playbooks and the tool requests by prefix; the audit reads every
@@ -528,6 +548,12 @@ export function pageAccessState(edit?: {
   granted: Record<string, Role[]>;
   /** Every routable path in the tree, groups included — what `whoami` reports verdicts for. */
   paths: string[];
+  /**
+   * Stored roles the editor has no column for, by key: `kept` is carried through a save, `retired` (this
+   * app's own roles missing from the catalogue, the super role included) is dropped by it. Shown read-only
+   * so neither changes unannounced.
+   */
+  outside: Record<string, { kept: Role[]; retired: Role[] }>;
 } {
   const from = edit
     ? Object.fromEntries(
@@ -537,6 +563,16 @@ export function pageAccessState(edit?: {
         ])
       )
     : { ...stored, ...storedPermissions };
+  const outside: Record<string, { kept: Role[]; retired: Role[] }> = {};
+  for (const [key, roles] of Object.entries(edit?.grants ?? {})) {
+    // Deduped: the row renders these as keyed chips, and a stored array can repeat a role.
+    const unlisted = [...new Set(roles)].filter((role) => !edit?.roles.includes(role));
+    if (unlisted.length)
+      outside[key] = {
+        kept: unlisted.filter((role) => !isAppRole(role)),
+        retired: unlisted.filter(isAppRole),
+      };
+  }
   const granted: Record<string, Role[]> = {};
   const paths: string[] = [];
 
@@ -578,7 +614,7 @@ export function pageAccessState(edit?: {
       return { key, label: permission.label, kind: 'permission', children: [] };
     });
 
-  return { tree: walk([...NAVIGATION].sort(byNavOrder)), actions, granted, paths };
+  return { tree: walk([...NAVIGATION].sort(byNavOrder)), actions, granted, paths, outside };
 }
 
 /** A permission is grantable exactly when it is declared and the page it sits under is itself grantable. */

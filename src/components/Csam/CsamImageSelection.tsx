@@ -12,13 +12,18 @@ import {
   useComputedColorScheme,
   Alert,
   Text,
+  ActionIcon,
+  Modal,
 } from '@mantine/core';
+import { IconMaximize } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { CsamHeldMedia, useHeldGridReport } from '~/components/Csam/CsamHeldMedia';
+import { recordShown } from '~/components/Csam/csam-shown';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import type { ModerationImageModel } from '~/server/services/image.service';
+import type { ShownRendition } from '@civitai/shared/held-media';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
 import { useInView } from '~/hooks/useInView';
@@ -217,14 +222,34 @@ function SelectedCount() {
   return <>{count.toString()}</>;
 }
 
-function CsamImageCard({ data: image, height }: { data: ModerationImageModel; height: number }) {
+export function CsamImageCard({
+  data: image,
+  height,
+}: {
+  data: ModerationImageModel;
+  height: number;
+}) {
   const { ref, inView } = useInView();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const userId = image.userId;
   const imageId = image.id;
   const checked = useCsamImageSelectStore((state) => state.selected[userId]?.[imageId] ?? false);
-  const toggleSelected = () => useCsamImageSelectStore.getState().toggle(userId, imageId);
+  const preselected = useCsamImageSelectStore((state) => !!state.seeded[`${userId}:${imageId}`]);
+  const shownRow = useCsamImageSelectStore((state) => state.shownRows[`${userId}:${imageId}`]);
+  const record = (action: 'open' | 'select', rendition: ShownRendition) =>
+    void recordShown({ imageId, userId, action, rendition }).then((ok) =>
+      useCsamImageSelectStore.getState().setShownRow(userId, imageId, ok ? 'recorded' : 'refused')
+    );
+  // What the tile has put on screen so far; a selection made before then is not recorded.
+  const shown = useRef<ShownRendition | null>(null);
+  const [fullView, setFullView] = useState(false);
+  const toggleSelected = () => {
+    const store = useCsamImageSelectStore.getState();
+    const selecting = !store.selected[userId]?.[imageId];
+    store.toggle(userId, imageId);
+    if (selecting && shown.current) record('select', shown.current);
+  };
   return (
     <MasonryCard
       withBorder
@@ -239,7 +264,30 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
     >
       {inView && (
         <>
-          <CsamHeldMedia image={image} onClick={toggleSelected} />
+          <CsamHeldMedia
+            image={image}
+            onClick={toggleSelected}
+            onShown={(rendition) => (shown.current = rendition)}
+          />
+          <ActionIcon
+            variant="filled"
+            color="dark"
+            aria-label="View full size"
+            onClick={() => setFullView(true)}
+            style={{ position: 'absolute', top: 5, left: 5, zIndex: 9 }}
+          >
+            <IconMaximize size={16} />
+          </ActionIcon>
+          {checked && shownRow !== 'recorded' && (preselected || shownRow === 'refused') && (
+            <Button
+              size="compact-xs"
+              color="dark"
+              onClick={() => setFullView(true)}
+              style={{ position: 'absolute', bottom: 5, left: 5, zIndex: 9 }}
+            >
+              Open full view to confirm viewed
+            </Button>
+          )}
           <Checkbox
             checked={checked}
             onChange={toggleSelected}
@@ -253,6 +301,19 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
           />
         </>
       )}
+      <Modal
+        opened={fullView}
+        onClose={() => setFullView(false)}
+        size="xl"
+        title={`Media #${imageId}`}
+        closeButtonProps={{ 'aria-label': 'Close' }}
+      >
+        <CsamHeldMedia
+          image={image}
+          onClick={() => undefined}
+          onShown={(rendition) => record('open', rendition)}
+        />
+      </Modal>
     </MasonryCard>
   );
 }

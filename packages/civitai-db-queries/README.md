@@ -68,6 +68,15 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   `<civitai>/src/server/services/__tests__/hot-reads-4.kysely-parity.test.ts`, on the same Postgres
   service, with the same no-view check.
 
+  `hot-reads-5.db.ts` holds high-volume single-row lookups (KeyValue configs, a post's linked
+  Model3D, dismissed announcement ids, a post's collaborators, a home block, the unclaimed prize
+  count, a model's version ids, a user's model reviews, the download path's model version, the image
+  reads of `reaction.toggle`, a model's `meta`), two of them joining what
+  Prisma read in two queries. They are served behind the default-off server Flipt flag
+  `kysely-hot-reads-5` and read base tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-5.kysely-parity.test.ts`, on the same Postgres
+  service, with the same no-view check.
+
   `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
   endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
   endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs

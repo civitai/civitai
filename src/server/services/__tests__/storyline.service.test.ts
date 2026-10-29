@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as CoverImageService from '~/server/services/cover-image.service';
 import { Prisma } from '@prisma/client';
 import type * as BlocklistService from '~/server/services/blocklist.service';
 import type * as PlacementService from '~/server/services/placement.service';
@@ -33,6 +34,12 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
   setFetchThroughCache,
 }));
 const setFetchThroughCache = vi.hoisted(() => vi.fn());
+const resolveCoverImageId = vi.hoisted(() => vi.fn());
+vi.mock('~/server/services/cover-image.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof CoverImageService>()),
+  resolveCoverImageId,
+}));
+const UPLOAD_URL = '00000000-0000-4000-8000-000000000001';
 const createNotification = vi.hoisted(() => vi.fn());
 vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<typeof NotificationService>()),
@@ -59,6 +66,8 @@ vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
   throwOnBlockedUserContent: vi.fn(),
 }));
 const { scanEntityInBackground } = vi.hoisted(() => ({ scanEntityInBackground: vi.fn() }));
+const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
+vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
   ...(await importOriginal<typeof TextScanSubmit>()),
   scanEntityInBackground,
@@ -91,6 +100,7 @@ import {
   updateStoryline,
   writeChapterEdgeForPlacement,
 } from '~/server/services/storyline.service';
+import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/cover-image.service';
 
 const OWNER = 1;
 const COLLABORATOR = 2;
@@ -719,6 +729,28 @@ describe('authorization', () => {
       });
     });
 
+    it('keeps a committed edit when logging it as a mod action fails', async () => {
+      trackModActivity.mockReset();
+      trackModActivity.mockRejectedValueOnce(new Error('pool timeout'));
+      await expect(
+        updateStoryline({ id: 10, title: 'x', userId: MODERATOR, isModerator: true })
+      ).resolves.toBeDefined();
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
+    });
+
+    it("logs a moderator's edit as a mod action, and not the owner's", async () => {
+      trackModActivity.mockReset();
+      await updateStoryline({ id: 10, title: 'x', userId: OWNER });
+      expect(trackModActivity).not.toHaveBeenCalled();
+      await updateStoryline({ id: 10, title: 'x', userId: MODERATOR, isModerator: true });
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
+      expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+        entityType: 'storyline',
+        entityId: 10,
+        activity: 'update',
+      });
+    });
+
     it.each([
       ['an endorsed collaborator', COLLABORATOR],
       ['a stranger', STRANGER],
@@ -789,6 +821,19 @@ describe('authorization', () => {
       ]);
     });
 
+    it("logs a moderator's canon choice as a mod action, and not the owner's", async () => {
+      trackModActivity.mockReset();
+      await setCanonChapter({ chapterId: 31, userId: OWNER });
+      expect(trackModActivity).not.toHaveBeenCalled();
+      await setCanonChapter({ chapterId: 31, userId: MODERATOR, isModerator: true });
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
+      expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+        entityType: 'storyline',
+        entityId: 10,
+        activity: 'setCanon',
+      });
+    });
+
     it.each([
       ['an endorsed collaborator', COLLABORATOR],
       ['a stranger', STRANGER],
@@ -813,6 +858,53 @@ describe('authorization', () => {
       expect(w.storylineCollaborator.upsert.mock.calls[0][0]).toMatchObject({
         create: { storylineId: 10, userId: COLLABORATOR },
       });
+    });
+
+    // Decided with the Storylines lead: an endorsed collaborator's priced continuations skip the
+    // owner's review, so endorsing stays the owner's even for a moderator. Removing is a safety action.
+    it('refuses a moderator endorsing anyone, themselves included', async () => {
+      for (const targetUserId of [COLLABORATOR, MODERATOR])
+        await expect(
+          addStorylineCollaborator({
+            storylineId: 10,
+            targetUserId,
+            userId: MODERATOR,
+            ...{ isModerator: true },
+          })
+        ).rejects.toMatchObject(forbidden);
+      expect(w.storylineCollaborator.upsert).not.toHaveBeenCalled();
+    });
+
+    it('lets a moderator remove a collaborator, logged as a mod action', async () => {
+      trackModActivity.mockReset();
+      await removeStorylineCollaborator({
+        storylineId: 10,
+        targetUserId: COLLABORATOR,
+        userId: MODERATOR,
+        isModerator: true,
+      });
+      expect(w.storylineCollaborator.deleteMany).toHaveBeenCalledTimes(1);
+      expect(trackModActivity).toHaveBeenCalledTimes(1);
+      expect(trackModActivity).toHaveBeenCalledWith(MODERATOR, {
+        entityType: 'storyline',
+        entityId: 10,
+        activity: 'removeCollaborator',
+      });
+    });
+
+    it('refuses a stranger endorsing or removing someone', async () => {
+      await expect(
+        addStorylineCollaborator({ storylineId: 10, targetUserId: COLLABORATOR, userId: STRANGER })
+      ).rejects.toMatchObject(forbidden);
+      await expect(
+        removeStorylineCollaborator({
+          storylineId: 10,
+          targetUserId: COLLABORATOR,
+          userId: STRANGER,
+        })
+      ).rejects.toMatchObject(forbidden);
+      expect(w.storylineCollaborator.upsert).not.toHaveBeenCalled();
+      expect(w.storylineCollaborator.deleteMany).not.toHaveBeenCalled();
     });
 
     it('refuses a collaborator endorsing someone else', async () => {
@@ -2196,7 +2288,7 @@ describe('getStorylinesInfinite: card cover, open and continue price', () => {
     const { text, values } = sqlAt(1);
     expect(text).toContain('JOIN "Post" p ON p.id = i."postId"');
     expect(text).toContain('AND i.minor = false AND i.poi = false');
-    expect(text).toContain(`AND (p.availability <> 'Private' OR p."userId" = ?)`);
+    expect(text).toContain(`AND (p.id IS NULL OR p.availability <> 'Private' OR p."userId" = ?)`);
     expect(values.filter((v) => v === STRANGER)).toHaveLength(2);
   });
 
@@ -2622,7 +2714,7 @@ describe('covers and cast', () => {
   };
   const rawCalls = () => r.$queryRaw.mock.calls.map(composed);
   const isFirstImageRead = (text: string) => text.includes('DISTINCT ON (i."postId")');
-  const isChosenImageRead = (text: string) => text.includes('WHERE i.id = ANY(');
+  const isChosenImageRead = (text: string) => text.includes('AS pick("storylineId", "imageId")');
   const image = (id: number, extra: Record<string, unknown> = {}) => ({
     id,
     url: `img-${id}`,
@@ -2640,6 +2732,13 @@ describe('covers and cast', () => {
     ...image(id),
     storylineId: 10,
     postId: 500 + id,
+    chapterId: id,
+    storylineUserId: OWNER,
+    uploaderIsModerator: false,
+    uploaderBannedAt: null,
+    uploaderDeletedAt: null,
+    // Listed as uploaded here; only read for a pick in no post.
+    uploadedHere: true,
     postUserId: OWNER,
     postNsfwLevel: PG,
     publishedAt: new Date('2026-10-01'),
@@ -2685,7 +2784,10 @@ describe('covers and cast', () => {
   });
 
   describe('choosing a cover or banner', () => {
-    /** Image -> the chapter it is in: storyline, author, removed. */
+    /**
+     * Image -> the chapter it is in (storyline, author, removed), or for `upload` an image in no
+     * post, owned by `userId`; `post` is a post that is no chapter.
+     */
     const images = (
       rows: Record<
         number,
@@ -2696,6 +2798,10 @@ describe('covers and cast', () => {
           removed?: boolean;
           minor?: boolean;
           poi?: boolean;
+          upload?: boolean;
+          post?: boolean;
+          ingestion?: string;
+          tosViolation?: boolean;
         }
       >
     ) =>
@@ -2705,22 +2811,34 @@ describe('covers and cast', () => {
             .filter((id) => rows[id])
             .map((id) => ({
               id,
+              userId: rows[id].userId,
+              postId: rows[id].upload ? null : 500 + id,
+              ingestion: rows[id].ingestion ?? 'Scanned',
+              tosViolation: !!rows[id].tosViolation,
               nsfwLevel: rows[id].level ?? PG,
               minor: !!rows[id].minor,
               poi: !!rows[id].poi,
-              post: {
-                storylineChapter: {
-                  storylineId: rows[id].storylineId ?? 10,
-                  userId: rows[id].userId,
-                  removedAt: rows[id].removed ? new Date() : null,
-                },
-              },
+              post: rows[id].upload
+                ? null
+                : {
+                    storylineChapter: rows[id].post
+                      ? null
+                      : {
+                          storylineId: rows[id].storylineId ?? 10,
+                          userId: rows[id].userId,
+                          removedAt: rows[id].removed ? new Date() : null,
+                        },
+                  },
             }))
         )) as never);
 
     beforeEach(() => {
       w.storylineCollaborator.findMany.mockResolvedValue([{ userId: COLLABORATOR }] as never);
       w.storyline.update.mockResolvedValue({} as never);
+      // The array form a pick's save uses; a callback runs on the same client, as on create.
+      w.$transaction.mockImplementation(((arg: unknown) =>
+        typeof arg === 'function' ? arg(w) : Promise.all(arg as unknown[])) as never);
+      resolveCoverImageId.mockReset();
       images({
         1: { userId: OWNER },
         2: { userId: COLLABORATOR },
@@ -2731,6 +2849,16 @@ describe('covers and cast', () => {
         7: { userId: OWNER, level: 0 },
         8: { userId: OWNER, minor: true },
         9: { userId: OWNER, poi: true },
+        // Uploads (in no post) and a posted image that is no chapter.
+        20: { userId: OWNER, upload: true },
+        21: { userId: STRANGER, upload: true },
+        22: { userId: MODERATOR, upload: true },
+        23: { userId: OWNER, upload: true, ingestion: 'Pending', level: 0 },
+        24: { userId: OWNER, upload: true, level: NsfwLevel.X },
+        25: { userId: OWNER, upload: true, tosViolation: true },
+        26: { userId: OWNER, upload: true, ingestion: 'Blocked' },
+        27: { userId: OWNER, upload: true, minor: true },
+        28: { userId: OWNER, post: true },
       });
     });
 
@@ -2762,10 +2890,13 @@ describe('covers and cast', () => {
     });
 
     it.each([
-      ['a community chapter', 3, /own chapters or an endorsed collaborator/],
-      ["another storyline's chapter", 4, /own chapters or an endorsed collaborator/],
-      ['a removed chapter', 5, /own chapters or an endorsed collaborator/],
-      ['no chapter at all', 404, /own chapters or an endorsed collaborator/],
+      ['a community chapter', 3, /own chapters, an endorsed collaborator's/],
+      ["another storyline's chapter", 4, /own chapters, an endorsed collaborator's/],
+      ['a removed chapter', 5, /own chapters, an endorsed collaborator's/],
+      ['no chapter at all', 404, /own chapters, an endorsed collaborator's/],
+      ["someone else's upload", 21, /own chapters, an endorsed collaborator's, or one you upload/],
+      ["a moderator's upload, picked by the owner", 22, /or one you upload/],
+      ['a post of the owner that is no chapter', 28, /or one you upload/],
       ['above the ceiling', 6, /above the storyline's maximum rating/],
       ['not rated yet', 7, /not been rated yet/],
       ['a minor', 8, /cannot be used as a cover or banner/],
@@ -2790,6 +2921,101 @@ describe('covers and cast', () => {
       await expect(
         updateStoryline({ id: 10, userId: OWNER, coverImageId: 1, maxNsfwLevel: NsfwLevel.PG })
       ).resolves.toBeDefined();
+    });
+
+    /** Uploads a file the server makes image `imageId` of the caller, and picks it. */
+    const upload = (
+      imageId: number,
+      caller: { userId: number; isModerator?: boolean },
+      slot = 'coverUpload'
+    ) => {
+      resolveCoverImageId.mockResolvedValueOnce(imageId);
+      return updateStoryline({ id: 10, ...caller, [slot]: { url: UPLOAD_URL, type: 'image' } });
+    };
+
+    it('takes an image its owner uploads, as cover or banner, and records it as uploaded here', async () => {
+      await upload(20, { userId: OWNER });
+      await upload(20, { userId: OWNER }, 'heroUpload');
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 20 } });
+      expect(w.storyline.update.mock.calls[1][0]).toMatchObject({ data: { heroImageId: 20 } });
+      expect(w.storylineCoverUpload.createMany.mock.calls[0][0]).toEqual({
+        data: [{ storylineId: 10, imageId: 20 }],
+        skipDuplicates: true,
+      });
+    });
+
+    it("takes a moderator's own upload on someone else's storyline", async () => {
+      await upload(22, { userId: MODERATOR, isModerator: true });
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 22 } });
+    });
+
+    // An image in no post is taken only when this request uploaded it.
+    it("refuses its owner's image in no post picked by id, and records nothing", async () => {
+      await expect(updateStoryline({ id: 10, userId: OWNER, coverImageId: 20 })).rejects.toThrow(
+        /or one you upload/
+      );
+      expect(w.storyline.update).not.toHaveBeenCalled();
+      expect(w.storylineCoverUpload.createMany).not.toHaveBeenCalled();
+    });
+
+    it('does not judge again an uploaded pick sent back unchanged', async () => {
+      w.storyline.findUnique.mockResolvedValue({
+        ...storylineRow(),
+        coverImageId: 20,
+        heroImageId: null,
+        heroImagePosition: 50,
+      } as never);
+      await updateStoryline({ id: 10, userId: OWNER, coverImageId: 20 });
+      expect(w.image.findMany).not.toHaveBeenCalled();
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 20 } });
+    });
+
+    // A refusal would tell the uploader their scan's verdict; the read gate keeps it hidden instead.
+    it.each([
+      ['rated above the ceiling', 24],
+      ['taken down', 25],
+      ['blocked by its scan', 26],
+      ['of a minor', 27],
+    ])("takes its owner's own upload %s, without a word", async (_n, id) => {
+      await upload(id, { userId: OWNER });
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: id } });
+    });
+
+    it('keeps an upload whose scan has not finished, unlike an unrated chapter image', async () => {
+      await upload(23, { userId: OWNER });
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 23 } });
+      await expect(updateStoryline({ id: 10, userId: OWNER, coverImageId: 7 })).rejects.toThrow(
+        /not been rated yet/
+      );
+    });
+
+    // A fresh upload's key is behind no image yet.
+    it('refuses an upload whose file is already an image, even its own, and makes nothing', async () => {
+      w.image.findFirst.mockResolvedValueOnce({ id: 5 } as never);
+      await expect(
+        updateStoryline({ id: 10, userId: OWNER, coverUpload: { url: UPLOAD_URL, type: 'image' } })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST', message: COVER_IMAGE_UNAVAILABLE_MESSAGE });
+      expect(w.image.findFirst.mock.calls[0][0]).toMatchObject({ where: { url: UPLOAD_URL } });
+      expect(w.image.findFirst.mock.calls[0][0].where).not.toHaveProperty('userId');
+      expect(resolveCoverImageId).not.toHaveBeenCalled();
+      expect(w.storyline.update).not.toHaveBeenCalled();
+    });
+
+    it('makes an uploaded file an image of the uploader, then picks it', async () => {
+      await upload(20, { userId: OWNER });
+      expect(resolveCoverImageId).toHaveBeenCalledWith({
+        coverImage: { url: UPLOAD_URL, type: 'image' },
+        userId: OWNER,
+      });
+      expect(w.storyline.update.mock.calls[0][0]).toMatchObject({ data: { coverImageId: 20 } });
+    });
+
+    it("refuses an upload in this request whose image is not the caller's", async () => {
+      await expect(upload(21, { userId: OWNER })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringMatching(/or one you upload/),
+      });
+      expect(w.storyline.update).not.toHaveBeenCalled();
     });
 
     it("holds a moderator to the owner's rule", async () => {
@@ -3158,6 +3384,54 @@ describe('covers and cast', () => {
       expect(rawCalls().filter((call) => isChosenImageRead(call.text))).toHaveLength(1);
     });
 
+    it('shows an uploaded pick (in no post) the gate passes, as banner and cover', async () => {
+      withPicks({ heroImageId: 30, coverImageId: 30 });
+      answerRaw(
+        [{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }],
+        [picked(30, { chapterId: null, postId: null })]
+      );
+      const storyline = await page({ id: 99 });
+      expect(storyline.heroImage?.id).toBe(30);
+      expect(storyline.heroIsBanner).toBe(true);
+      expect(storyline.coverImage?.id).toBe(30);
+    });
+
+    it.each([
+      ['by a moderator', { userId: MODERATOR, uploaderIsModerator: true }, 30],
+      ['by someone else', { userId: STRANGER }, 1101],
+      ['by its owner, now banned', { uploaderBannedAt: new Date() }, 1101],
+      ['by its owner, now deleted', { uploaderDeletedAt: new Date() }, 1101],
+    ])('an image in no post %s is shown as the pick: %s', async (_n, extra, heroId) => {
+      withPicks({ heroImageId: 30 });
+      answerRaw(
+        [{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }],
+        [picked(30, { chapterId: null, postId: null, ...extra })]
+      );
+      expect((await page({ id: 99 })).heroImage?.id).toBe(heroId);
+    });
+
+    it('never shows a pick from a post that is no chapter of it', async () => {
+      withPicks({ heroImageId: 31 });
+      answerRaw(
+        [{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }],
+        [picked(31, { chapterId: null })]
+      );
+      expect((await page({ id: 99 })).heroImage?.id).toBe(1101);
+    });
+
+    it('tells the owner a pick is not showing yet, and readers nothing', async () => {
+      withPicks({ heroImageId: 30, coverImageId: 30 });
+      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }], []);
+      expect(await page({ id: OWNER })).toMatchObject({
+        coverPickHidden: true,
+        heroPickHidden: true,
+      });
+      expect(await page({ id: 99 })).toMatchObject({
+        coverPickHidden: false,
+        heroPickHidden: false,
+      });
+    });
+
     it('shows a pick from a chapter only its author or a moderator may see, to them', async () => {
       withPicks({ heroImageId: 7 });
       const unpublished = [picked(7, { postUserId: STRANGER, publishedAt: null })];
@@ -3165,16 +3439,6 @@ describe('covers and cast', () => {
       expect((await page({ id: STRANGER })).heroImage?.id).toBe(7);
       expect((await page({ id: MODERATOR, isModerator: true })).heroImage?.id).toBe(7);
       expect((await page({ id: 99 })).heroImage?.id).toBe(1101);
-    });
-
-    it('reads the chapter fields the pick is judged by from the post, not the image', async () => {
-      withPicks({ heroImageId: 7 });
-      answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
-      await page({ id: 99 });
-      const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
-      expect(read.text).toContain(
-        'c."storylineId", i."postId", p."userId" AS "postUserId", p."nsfwLevel" AS "postNsfwLevel", p."publishedAt", p."tosViolation" AS "postTosViolation", c."removedAt", pu."bannedAt", pu."deletedAt", st."maxNsfwLevel", st."minorByScan" FROM "Image" i'
-      );
     });
 
     it('has no banner when chapter 1 is a tombstone and nothing is picked', async () => {
@@ -3185,7 +3449,7 @@ describe('covers and cast', () => {
       expect(rawCalls().filter((call) => isChosenImageRead(call.text))).toHaveLength(0);
     });
 
-    it('reads the picks through the image gate and the chapter they are in', async () => {
+    it("reads the picks with the reader's hidden images and tags, read once", async () => {
       getAllHiddenForUser.mockResolvedValue({
         hiddenImages: [{ id: 77, hidden: true }],
         hiddenTags: [{ id: 5, hidden: true }],
@@ -3194,14 +3458,7 @@ describe('covers and cast', () => {
       answerRaw([{ id: 1, postId: 101, depth: 0, removedAt: null, parentIds: [] }]);
       await page({ id: 99 });
       const read = rawCalls().find((call) => isChosenImageRead(call.text))!;
-      expect(read.text).toContain('JOIN "StorylineChapter" c ON c."postId" = i."postId"');
-      expect(read.text).toContain('JOIN "Storyline" st ON st.id = c."storylineId"');
-      expect(read.text).toContain('JOIN "User" pu ON pu.id = p."userId"');
-      expect(read.text).toContain(
-        `WHERE i.id = ANY(?::int[]) AND i.ingestion = 'Scanned' AND i."tosViolation" = false`
-      );
-      expect(read.text).toContain('c."removedAt", pu."bannedAt", pu."deletedAt"');
-      expect(read.values).toEqual([[7, 8], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
+      expect(read.values).toEqual([[10, 10], [7, 8], 99, PG, NsfwLevel.PG13, [77], [5], 99]);
       // The hidden lists are read once for the picks and the main route together.
       expect(getAllHiddenForUser).toHaveBeenCalledTimes(1);
     });
@@ -3411,7 +3668,14 @@ describe('covers and cast', () => {
       expect(items[0]).not.toHaveProperty('coverImageId');
       // Three reads for the page, whatever its size: the page, first images, picks.
       expect(r.$queryRaw).toHaveBeenCalledTimes(3);
-      expect(rawCalls().find((call) => isChosenImageRead(call.text))!.values[0]).toEqual([7, 8, 9]);
+      expect(
+        rawCalls()
+          .find((call) => isChosenImageRead(call.text))!
+          .values.slice(0, 2)
+      ).toEqual([
+        [10, 11, 12],
+        [7, 8, 9],
+      ]);
       expect(rawCalls()[0].text).toContain('st."createdAt", st."coverImageId" FROM "Storyline" st');
     });
 

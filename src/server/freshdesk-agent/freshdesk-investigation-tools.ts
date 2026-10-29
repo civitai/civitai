@@ -714,7 +714,6 @@ type HealthResponse = {
   read: boolean;
   pgWrite: boolean;
   pgRead: boolean;
-  searchMetrics: boolean;
   redis: boolean;
   sysRedis: boolean;
   clickhouse: boolean;
@@ -769,7 +768,6 @@ export async function checkSiteStatus(): Promise<string> {
       ['PG (write)', healthResult.pgWrite],
       ['Redis', healthResult.redis],
       ['System Redis', healthResult.sysRedis],
-      ['Search/Metrics', healthResult.searchMetrics],
       ['ClickHouse', healthResult.clickhouse],
     ];
     for (const [name, ok] of checks) {

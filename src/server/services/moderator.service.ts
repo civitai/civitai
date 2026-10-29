@@ -1,3 +1,4 @@
+import type { shownActivity } from '@civitai/shared/held-media';
 import { dbWrite } from '~/server/db/client';
 
 type TagActivities = 'moderateTag' | 'disableTag' | 'addTag' | 'deleteTag';
@@ -44,7 +45,8 @@ export type ImageModActivity = {
     | 'setNsfwLevel'
     | 'resolveAppeal'
     | 'setNsfwLevelKono'
-    | 'heldMedia:view';
+    | 'heldMedia:view'
+    | ReturnType<typeof shownActivity>;
 };
 
 type ArticleModActivity = {
@@ -76,6 +78,7 @@ type UserModActivity = {
     | 'unmute'
     | 'revokeTimedMute'
     | 'createSystemAccount'
+    | 'mintSystemAccountApiKey'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
@@ -146,6 +149,19 @@ type HeldMediaGridModActivity = {
   activity: `heldMedia:grid:${number}`;
 };
 
+/** A moderator changed someone else's storyline through its owner's controls. */
+export type StorylineModActivity = {
+  entityType: 'storyline';
+  activity:
+    | 'update'
+    | 'insertChapter'
+    | 'moveChapter'
+    | 'linkChapter'
+    | 'setCanon'
+    | 'removeCollaborator'
+    | 'delete';
+};
+
 type SiteAlertModActivity = {
   entityType: 'siteAlert';
   activity: 'post' | 'edit' | 'extend' | 'end';
@@ -168,6 +184,7 @@ type ModActivity = {
   | BountyEntryModActivity
   | SiteAlertModActivity
   | HeldMediaGridModActivity
+  | StorylineModActivity
 );
 
 // `ON CONFLICT DO NOTHING` carries NO conflict target on purpose: a targetless clause is valid whether or

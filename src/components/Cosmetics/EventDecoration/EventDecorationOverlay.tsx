@@ -2,7 +2,10 @@ import clsx from 'clsx';
 import { useState } from 'react';
 import type { CSSProperties } from 'react';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
-import type { HatPlacement } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
+import type {
+  HatAllowance,
+  HatPlacement,
+} from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import {
   DEFAULT_HAT_PLACEMENT,
   getEventDecorationClearLeftCss,
@@ -16,6 +19,7 @@ import type {
 } from '~/shared/constants/event-decoration.constants';
 import type { EventDecorationEntity } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
 import { WornHatPopover } from '~/components/Cosmetics/EventDecoration/WornHatPopover';
+import { LayeredHat, useHatLayer } from '~/components/Cosmetics/EventDecoration/HatLayer';
 import styles from './EventDecorationOverlay.module.scss';
 
 /**
@@ -28,6 +32,7 @@ export function EventDecorationOverlay({
   placement = DEFAULT_HAT_PLACEMENT,
   framed = false,
   cardWidth,
+  allowance,
   wornOn,
 }: {
   decoration: EventDecorationData;
@@ -36,57 +41,77 @@ export function EventDecorationOverlay({
   framed?: boolean;
   /** The card's width in px; on a card narrower than a feed card the hat shrinks to match. */
   cardWidth?: number;
+  /** How far past the card's top and left a `corner` hat may reach, where the container is known. */
+  allowance?: HatAllowance;
   /** The content wearing it. A click then also opens its stats; without, it only bursts. */
   wornOn?: EventDecorationEntity;
 }) {
-  if (decoration.type === 'hat')
+  const hatLayer = useHatLayer();
+  if (decoration.type !== 'hat') return null;
+  const hat = (width?: number) => (
+    <CardHat
+      url={decoration.url}
+      fit={decoration.fit}
+      placement={placement}
+      framed={framed}
+      cardWidth={cardWidth ?? width}
+      allowance={allowance}
+      event={decoration.event}
+      wornOn={wornOn}
+    />
+  );
+  if (hatLayer?.layer && placement === 'corner' && allowance === undefined)
     return (
-      <CardHat
-        url={decoration.url}
-        fit={decoration.fit}
-        placement={placement}
-        framed={framed}
-        cardWidth={cardWidth}
-        event={decoration.event}
-        wornOn={wornOn}
-      />
+      <LayeredHat layer={hatLayer.layer} hidden={hatLayer.moving} version={hatLayer.version}>
+        {({ width }) => hat(width)}
+      </LayeredHat>
     );
-  return null;
+  return hat();
 }
 
 export type WornDecoration = { data: EventDecorationData } | null | undefined;
 
 /**
- * One image's own hat, inside its media's corner: the media clips at its edge, so the hat stays
- * inside it. For views that show one image's media (a gallery post's slides, the post page, the
- * image detail).
+ * One image's own hat, in its media's corner. The media clips at its edge, so the hat stays
+ * inside it unless the caller passes an `allowance` or an ancestor's hat layer carries it past
+ * the corner.
  */
 export function ImageMediaHat({
   imageId,
   decoration,
   cardWidth,
+  allowance,
 }: {
   imageId: number;
   decoration: WornDecoration;
   /** The media's drawn width; a picture narrower than a feed card wears the hat scaled down. */
   cardWidth?: number;
+  /** How far past the media's top and left the hat may reach; without it, none. */
+  allowance?: HatAllowance;
 }) {
+  const inLayer = useInHatLayer();
   if (!decoration) return null;
   return (
     <EventDecorationOverlay
       decoration={decoration.data}
-      placement="inside"
+      placement={allowance === undefined && !inLayer ? 'inside' : 'corner'}
+      allowance={allowance}
       cardWidth={cardWidth}
       wornOn={{ entityType: 'Image', entityId: imageId }}
     />
   );
 }
 
-/** Steps the media's top-left badges clear of its ImageMediaHat. */
-export function imageMediaHatClearLeft(decoration: WornDecoration) {
+/** Whether an ancestor's hat layer carries the hats here, so they hang past the media's corner. */
+export const useInHatLayer = () => !!useHatLayer()?.layer;
+
+/** Steps the media's top-left badges clear of its ImageMediaHat, which `inLayer` puts on the corner. */
+export function imageMediaHatClearLeft(decoration: WornDecoration, inLayer = false) {
   if (!decoration) return undefined;
   return {
-    '--event-decoration-clear-left': getEventDecorationClearLeftCss(decoration.data, 'inside'),
+    '--event-decoration-clear-left': inLayer
+      ? getEventDecorationClearLeftCss(decoration.data, 'corner', HAT_PLAIN_CARD_NUDGE)
+      : getEventDecorationClearLeftCss(decoration.data, 'inside'),
   } as CSSProperties;
 }
 
@@ -99,6 +124,7 @@ function CardHat({
   placement,
   framed,
   cardWidth,
+  allowance,
   event,
   wornOn,
 }: {
@@ -107,6 +133,7 @@ function CardHat({
   placement: HatPlacement;
   framed: boolean;
   cardWidth?: number;
+  allowance?: HatAllowance;
   event: string;
   wornOn?: EventDecorationEntity;
 }) {
@@ -114,14 +141,23 @@ function CardHat({
   const [opened, setOpened] = useState(false);
   const layout =
     placement === 'corner'
-      ? getHatLayout(placement, fit, Infinity, framed ? 0 : HAT_PLAIN_CARD_NUDGE, cardWidth)
+      ? getHatLayout(
+          placement,
+          fit,
+          allowance ?? Infinity,
+          framed ? 0 : HAT_PLAIN_CARD_NUDGE,
+          cardWidth
+        )
       : getHatLayout(placement, fit, undefined, 0, cardWidth);
-  // Moved into the card only as far as its container's room requires, which only CSS knows.
-  const fitInto = (at: number, reach: number) =>
-    placement === 'corner' ? `calc(${at}px + ${hatShiftCss(reach)})` : at;
+  // Moved into the card only as far as its container's room requires, which only CSS knows,
+  // unless the caller measured that room.
+  const fitInto = (at: number, reach: number, edge: 'left' | 'top') =>
+    placement === 'corner' && allowance === undefined
+      ? `calc(${at}px + ${hatShiftCss(reach, edge)})`
+      : at;
   const box = {
-    left: fitInto(layout.left, layout.reach.left),
-    top: fitInto(layout.top, layout.reach.top),
+    left: fitInto(layout.left, layout.reach.left, 'left'),
+    top: fitInto(layout.top, layout.reach.top, 'top'),
     width: layout.width,
     height: layout.height,
     transform: `rotate(${layout.tilt}deg)`,
