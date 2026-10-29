@@ -209,6 +209,7 @@ export function ImageDetailProvider({
   if (!Object.is(seenImageId, imageId)) {
     setSeenImageId(imageId);
     if (!Object.is(lastNavigatedIdRef.current, imageId)) setExternalMoves(externalMoves + 1);
+    lastNavigatedIdRef.current = imageId;
   }
 
   const navigate = (id: number) => {

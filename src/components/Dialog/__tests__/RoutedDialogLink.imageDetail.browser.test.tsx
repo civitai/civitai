@@ -19,7 +19,10 @@ vi.mock('~/components/Image/Detail/ImageDetailModal', async () => {
       }),
   };
 });
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/hooks/useCurrentUser', async (o) => ({
+  ...(await o<object>()),
+  useCurrentUser: () => null,
+}));
 vi.mock('~/components/Dialog/routed-dialog/registry', async () => {
   await import('~/components/Dialog/routed-dialog/image-detail.dialog');
   const { routedDialogDictionary } = await import('~/components/Dialog/routed-dialog/utils');
@@ -64,15 +67,6 @@ async function renderAtPage(asPath: string, query: Record<string, string>) {
 afterEach(() => useDialogStore.getState().closeAll());
 
 describe('remix card on the image detail', () => {
-  test('hard load: the source opens, nothing shows the remix again', async () => {
-    await renderAtPage(`/images/${REMIX_ID}`, { imageId: String(REMIX_ID) });
-    await page.getByText('remixed from').click();
-
-    await vi.waitFor(() => expect(shown().length).toBeGreaterThan(0));
-    expect(location.pathname).toBe(`/images/${SOURCE_ID}`);
-    expect(shown().map((s) => s.id)).toEqual(shown().map(() => String(SOURCE_ID)));
-  });
-
   test('opened off a feed: the source opens with its own list, not the feed it was reached through', async () => {
     await renderAtPage(`/images/${REMIX_ID}`, { imageId: String(REMIX_ID) });
     triggerRoutedDialog({

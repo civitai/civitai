@@ -206,4 +206,21 @@ describe('an open image detail when the route moves to an image from outside it'
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(mounted.count).toBe(before);
   });
+
+  test('going back to the image it started on shows that image', async () => {
+    await openAt(FEED[1]);
+    await expect.element(page.getByTestId('shown')).toHaveTextContent(String(FEED[1]));
+    getBrowserRouter().push(
+      { query: { imageId: SOURCE, dialog: ['imageDetail', 'imageDetail'] } },
+      `/images/${SOURCE}`
+    );
+    await expect.element(page.getByTestId('shown')).toHaveTextContent(String(SOURCE));
+
+    getBrowserRouter().push(
+      { query: { imageId: FEED[1], dialog: 'imageDetail' } },
+      `/images/${FEED[1]}`
+    );
+
+    await expect.element(page.getByTestId('shown')).toHaveTextContent(String(FEED[1]));
+  });
 });
