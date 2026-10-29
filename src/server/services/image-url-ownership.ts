@@ -228,8 +228,9 @@ async function ownersFromClickhouse(keys: string[]) {
   try {
     const list = keys.map((k) => `'${escapeClickhouseString(k)}'`).join(',');
     const rows = await withDeadline(
-      clickhouse.$query<{ key: string; userId: number }>(`
-        SELECT key, any(userId) AS userId
+      // The alias must not be `userId`: ClickHouse would resolve the WHERE column to the aggregate.
+      clickhouse.$query<{ key: string; owner: number }>(`
+        SELECT key, any(userId) AS owner
         FROM imageUploadRequests
         WHERE key IN (${list}) AND userId != 0
         GROUP BY key
@@ -237,9 +238,15 @@ async function ownersFromClickhouse(keys: string[]) {
       CLICKHOUSE_LOOKUP_DEADLINE_MS
     );
     // userId 0: the session lookup failed when the key was issued.
-    for (const { key, userId } of rows) if (Number(userId)) owners.set(key, Number(userId));
+    for (const { key, owner } of rows) if (Number(owner)) owners.set(key, Number(owner));
     return { owners, failed: false };
-  } catch {
+  } catch (e) {
+    logToAxiom({
+      type: 'error',
+      name: 'upload-key-owner',
+      message: 'Failed to read the upload request log',
+      error: (e as Error).message,
+    }).catch(() => undefined);
     return { owners, failed: true };
   }
 }
