@@ -284,12 +284,12 @@ import type {
   ReportReason,
   ReviewReactions,
   TagType,
+  CollectionItemStatus,
 } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   BlockImageReason,
   CosmeticEntity,
-  CollectionItemStatus,
   CollectionMode,
   AppealStatus,
   EntityType,
@@ -4857,7 +4857,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         actor,
       })
     );
-    let results = mainResult.results;
+    const results = mainResult.results;
 
     let nextCursor: number | undefined;
     if (results.length > limit) {
@@ -6529,6 +6529,7 @@ type CachedImagesForModelVersions = {
   modelVersionId: number;
   images: ImagesForModelVersions[];
 };
+// eslint-disable-next-line local-rules/no-module-scope-cache -- exported and used by many callers; making it lazy is out of scope here
 export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',

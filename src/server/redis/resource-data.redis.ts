@@ -6,6 +6,7 @@ import { REDIS_KEYS } from '~/server/redis/client';
 import type { RecommendedSettingsSchema } from '~/server/schema/model-version.schema';
 import { createCachedArray } from '~/server/utils/cache-helpers';
 
+// eslint-disable-next-line local-rules/no-module-scope-cache -- exported and used by many callers; making it lazy is out of scope here
 export const resourceDataCache = createCachedArray({
   key: REDIS_KEYS.GENERATION.RESOURCE_DATA,
   cacheNotFound: false,
