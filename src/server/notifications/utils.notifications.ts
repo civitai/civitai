@@ -172,3 +172,12 @@ export const emailNotificationTypeList = Object.entries(notificationProcessors)
   .map(([type]) => type);
 
 export const isEmailNotificationType = (type: string) => emailNotificationTypeList.includes(type);
+
+/**
+ * The opt-out types whose settings rows say whether a user turned everything off: every type the
+ * "all notifications" switch writes a row for, less the ones another app sends. The Knights job reads
+ * this over HTTP (`/api/mod/knights/notification-types`) to leave out users who silenced them all.
+ */
+export const silenceCheckTypes = notificationTypes.filter(
+  (type) => !notificationProcessors[type]?.externalProducer
+);

@@ -7,7 +7,6 @@ import { liveStreak, shieldCoversToday, streakAfterReset } from '../daily/streak
 import { servableItems } from '../queue/queue.service';
 import { stagesWorkedBy } from '../queue/ranks';
 import { RANKS } from '../ranks';
-import { optOutTypesBeforeKnights } from '@civitai/notifications';
 import { NOTIFY, NOTIFY_KINDS, typeOf, type NotifyKind } from './config';
 
 const dateOf = (day: Day) => sql<Date>`${day}::date`;
@@ -32,13 +31,15 @@ export type NotifyResult = {
   unconfirmed: number;
   /** A batch had an unknown outcome, so the run sent nothing further. */
   halted: boolean;
+  /** The types to check for "turned everything off" were unavailable, so nothing was sent. */
+  skipped: boolean;
 };
 
 /**
  * Players who joined the game (they have a `NewOrderPlayer` row), have not turned `kind` off (a settings
  * row means off) and have not been sent anything on `day`.
  */
-const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day) =>
+const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day, silenceTypes: string[]) =>
   db
     .selectFrom('NewOrderPlayer as pl')
     .where(
@@ -49,8 +50,8 @@ const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day) =>
     // Turning everything off writes rows only for the types that existed then, so a newer type has no row for them.
     .where(
       sql<boolean>`(select count(*) from "UserNotificationSettings" o where o."userId" = pl."userId" and o."type" in (${sql.join(
-        optOutTypesBeforeKnights
-      )})) < ${optOutTypesBeforeKnights.length}`
+        silenceTypes
+      )})) < ${silenceTypes.length}`
     )
     .where(
       sql<boolean>`not exists (select 1 from "KnightsNotificationSend" n where n."playerId" = pl."userId" and n."day" = ${dateOf(
@@ -59,11 +60,16 @@ const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day) =>
     );
 
 /** A vote cast after a settlement counts as having seen it. */
-async function withNewVerdicts(db: Kysely<DB>, day: Day, now: Date): Promise<number[]> {
+async function withNewVerdicts(
+  db: Kysely<DB>,
+  day: Day,
+  now: Date,
+  silenceTypes: string[]
+): Promise<number[]> {
   const day_ms = 86_400_000;
   const searchFrom = new Date(now.getTime() - NOTIFY.voteSearchDays * day_ms);
   const settledFrom = new Date(now.getTime() - NOTIFY.verdictLookbackDays * day_ms);
-  const rows = await recipients(db, 'verdicts', day)
+  const rows = await recipients(db, 'verdicts', day, silenceTypes)
     .innerJoin('KnightsVote as v', 'v.playerId', 'pl.userId')
     .select('pl.userId')
     .where('v.createdAt', '>=', utc(searchFrom))
@@ -84,8 +90,12 @@ async function withNewVerdicts(db: Kysely<DB>, day: Day, now: Date): Promise<num
   return rows.map((r) => r.userId);
 }
 
-async function withStreakAtRisk(db: Kysely<DB>, day: Day): Promise<number[]> {
-  const rows = await recipients(db, 'streak', day)
+async function withStreakAtRisk(
+  db: Kysely<DB>,
+  day: Day,
+  silenceTypes: string[]
+): Promise<number[]> {
+  const rows = await recipients(db, 'streak', day, silenceTypes)
     .innerJoin('KnightsPlayer as k', 'k.playerId', 'pl.userId')
     .leftJoin('KnightsPlayerDay as d', (join) =>
       join.onRef('d.playerId', '=', 'k.playerId').onRef('d.day', '=', 'k.lastWatchDay')
@@ -120,7 +130,11 @@ async function withStreakAtRisk(db: Kysely<DB>, day: Day): Promise<number[]> {
     .map((row) => row.userId);
 }
 
-async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
+async function withImagesWaiting(
+  db: Kysely<DB>,
+  day: Day,
+  silenceTypes: string[]
+): Promise<number[]> {
   // A vote cannot predate its item, so no open item has votes before the oldest one; the constant
   // bound on the partition key lets Postgres skip older monthly partitions (a bound that references
   // the item's own createdAt does not prune).
@@ -136,7 +150,7 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
     const stages = stagesWorkedBy(rank);
     // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
     if (rank === 'Acolyte' || rank === 'Inquisitor' || stages.length === 0) continue;
-    const rows = await recipients(db, 'new-images', day)
+    const rows = await recipients(db, 'new-images', day, silenceTypes)
       .select('pl.userId')
       .where('pl.rankType', '=', rank)
       .where((eb) =>
@@ -163,15 +177,16 @@ async function withImagesWaiting(db: Kysely<DB>, day: Day): Promise<number[]> {
  */
 export async function planNotifications(
   db: Kysely<DB>,
-  now: Date
+  now: Date,
+  silenceTypes: string[]
 ): Promise<Record<NotifyKind, number[]>> {
   const day = utcDay(now);
   const warningOpen =
     now >= new Date(dayStart(day).getTime() + NOTIFY.streakWarningHourUtc * 3_600_000);
   const [verdicts, atRisk, waiting] = await Promise.all([
-    withNewVerdicts(db, day, now),
-    withStreakAtRisk(db, day),
-    withImagesWaiting(db, day),
+    withNewVerdicts(db, day, now, silenceTypes),
+    withStreakAtRisk(db, day, silenceTypes),
+    withImagesWaiting(db, day, silenceTypes),
   ]);
 
   const plan: Record<NotifyKind, number[]> = { verdicts, streak: [], 'new-images': [] };
@@ -247,18 +262,35 @@ export async function sendNotifications(
     now,
     send,
     accessible,
+    silenceTypes,
     clock = () => new Date(),
   }: {
     now: Date;
     send: SendBatch;
     /** The ids among those given who can open the app today. */
     accessible: (ids: number[]) => Promise<number[]>;
+    /**
+     * The opt-out types a user who turned everything off has a row for, from the main app. Without
+     * it every player would look as if they had not, so an empty list sends nothing.
+     */
+    silenceTypes: string[];
     /** When a batch was actually sent; `now` is when the run started. */
     clock?: () => Date;
   }
 ): Promise<NotifyResult> {
   const day = utcDay(now);
-  const planned = await planNotifications(db, now);
+  const result: NotifyResult = {
+    sent: { verdicts: 0, streak: 0, 'new-images': 0 },
+    failed: 0,
+    unconfirmed: 0,
+    halted: false,
+    skipped: false,
+  };
+  if (silenceTypes.length === 0) {
+    console.warn('knights: no notification types to check for silenced players; sending nothing');
+    return { ...result, skipped: true };
+  }
+  const planned = await planNotifications(db, now, silenceTypes);
   const open = new Set(await accessible([...new Set(Object.values(planned).flat())]));
   const plan = Object.fromEntries(
     NOTIFY_KINDS.map(({ kind }) => [
@@ -266,12 +298,6 @@ export async function sendNotifications(
       planned[kind].filter((id) => open.has(id)).sort((a, b) => a - b),
     ])
   ) as Record<NotifyKind, number[]>;
-  const result: NotifyResult = {
-    sent: { verdicts: 0, streak: 0, 'new-images': 0 },
-    failed: 0,
-    unconfirmed: 0,
-    halted: false,
-  };
 
   for (const { kind } of NOTIFY_KINDS) {
     const ids = plan[kind];

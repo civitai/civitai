@@ -5,7 +5,6 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { enqueueItem, ensureVotePartitions } from '../queue/queue.service';
-import { optOutTypesBeforeKnights } from '@civitai/notifications';
 import { typeOf, type NotifyKind } from './config';
 import { BatchRejected, sendNotifications, type NotificationBatch } from './notify.service';
 
@@ -66,6 +65,9 @@ const seedSettledVote = (playerId: number, settledAt = '2026-12-16 10:00:00') =>
 
 const everyone = async (ids: number[]) => ids;
 
+/** What the main app's endpoint would list as the opt-out types. */
+const SILENCE_TYPES = ['type-a', 'type-b', 'type-c'];
+
 function runner({
   blocked = [] as number[],
   clock,
@@ -76,7 +78,13 @@ function runner({
   });
   const accessible = async (ids: number[]) => ids.filter((id) => !blocked.includes(id));
   const run = (now: Date) =>
-    sendNotifications(db, { now, send, accessible, clock: clock ?? (() => now) });
+    sendNotifications(db, {
+      now,
+      send,
+      accessible,
+      clock: clock ?? (() => now),
+      silenceTypes: SILENCE_TYPES,
+    });
   const received = () => {
     const out = new Map<number, NotifyKind[]>();
     for (const b of batches)
@@ -272,7 +280,12 @@ describe('sendNotifications', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const timedOut = vi.fn().mockRejectedValue(new Error('timeout'));
 
-    await sendNotifications(db, { now: at(12), send: timedOut, accessible: everyone });
+    await sendNotifications(db, {
+      now: at(12),
+      send: timedOut,
+      accessible: everyone,
+      silenceTypes: SILENCE_TYPES,
+    });
     const { run, received } = runner();
     await run(at(13));
     expect(received().size).toBe(0);
@@ -294,6 +307,7 @@ describe('sendNotifications', () => {
       now: at(12),
       send: timedOut,
       accessible: everyone,
+      silenceTypes: SILENCE_TYPES,
     });
 
     expect(timedOut).toHaveBeenCalledTimes(1);
@@ -311,7 +325,12 @@ describe('sendNotifications', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const refusing = vi.fn().mockRejectedValue(new BatchRejected('bad request'));
 
-    const first = await sendNotifications(db, { now: at(9), send: refusing, accessible: everyone });
+    const first = await sendNotifications(db, {
+      now: at(9),
+      send: refusing,
+      accessible: everyone,
+      silenceTypes: SILENCE_TYPES,
+    });
     expect(first).toMatchObject({ failed: 1, unconfirmed: 0 });
 
     const { run, received, send } = runner();
@@ -326,7 +345,12 @@ describe('sendNotifications', () => {
     vi.spyOn(console, 'error').mockImplementation(() => undefined);
     const timedOut = vi.fn().mockRejectedValue(new Error('timeout'));
 
-    const first = await sendNotifications(db, { now: at(9), send: timedOut, accessible: everyone });
+    const first = await sendNotifications(db, {
+      now: at(9),
+      send: timedOut,
+      accessible: everyone,
+      silenceTypes: SILENCE_TYPES,
+    });
     expect(first).toMatchObject({ failed: 0, unconfirmed: 1 });
 
     const { run, received } = runner();
@@ -349,12 +373,12 @@ describe('sendNotifications', () => {
     await seedPlayer(pg, 1);
     await seedPlayer(pg, 2);
     await enqueueImage();
-    for (const type of optOutTypesBeforeKnights) {
+    for (const type of SILENCE_TYPES) {
       await pg.query(`INSERT INTO "UserNotificationSettings" ("userId","type") VALUES (1,$1)`, [
         type,
       ]);
     }
-    for (const type of optOutTypesBeforeKnights.slice(1)) {
+    for (const type of SILENCE_TYPES.slice(1)) {
       await pg.query(`INSERT INTO "UserNotificationSettings" ("userId","type") VALUES (2,$1)`, [
         type,
       ]);
@@ -421,9 +445,27 @@ describe('sendNotifications', () => {
       now: at(12),
       send: refusing,
       accessible: everyone,
+      silenceTypes: SILENCE_TYPES,
     });
 
     expect(refusing).toHaveBeenCalledTimes(1);
     expect(result).toMatchObject({ halted: true, unconfirmed: 1 });
+  });
+
+  it('sends nothing when the list of types to check is unavailable', async () => {
+    await seedPlayer(pg, 1);
+    await seedSettledVote(1);
+    const { send } = runner();
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    const result = await sendNotifications(db, {
+      now: at(12),
+      send,
+      accessible: everyone,
+      silenceTypes: [],
+    });
+
+    expect(result).toMatchObject({ skipped: true });
+    expect(send).not.toHaveBeenCalled();
   });
 });

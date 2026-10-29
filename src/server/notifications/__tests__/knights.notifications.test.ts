@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest';
-import { optOutTypesBeforeKnights } from '@civitai/notifications';
 import { knightsNewOrderNotifications } from '~/server/notifications/new-order.notifications';
 import {
   isOptInNotification,
@@ -30,12 +29,5 @@ describe('Knights daily-loop notifications', () => {
     expect(open('knights-streak-ends-soon')?.url).toBe('https://knights.civitai.com/play');
     expect(open('knights-new-images')?.url).toBe('https://knights.civitai.com/play');
     expect(open('knights-new-images')?.target).toBe('_blank');
-  });
-
-  it('pins the "everything was turned off" baseline to registered opt-out types', () => {
-    const missing = optOutTypesBeforeKnights.filter((type) => !notificationTypes.includes(type));
-
-    expect(missing).toEqual([]);
-    expect(optOutTypesBeforeKnights.some((type) => TYPES.includes(type))).toBe(false);
   });
 });
