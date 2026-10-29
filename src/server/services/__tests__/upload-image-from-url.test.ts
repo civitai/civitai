@@ -7,8 +7,9 @@ vi.mock('~/utils/s3-utils', async (importOriginal) => ({
   serverUploadImage,
 }));
 
-const { uploadImageFromUrl, TrainingSampleRefusedError, MAX_TRAINING_SAMPLE_REDIRECTS } =
-  await import('~/server/services/image.service');
+const { uploadImageFromUrl, TrainingSampleRefusedError } = await import(
+  '~/server/services/image.service'
+);
 
 const TRUSTED = 'https://orchestration-new.civitai.com/v2/consumer/blobs/A.jpeg';
 const TRUSTED_2 = 'https://orchestration.civitai.com/v2/consumer/blobs/B.jpeg';
@@ -67,15 +68,14 @@ describe('uploadImageFromUrl', () => {
     for (const [, init] of fetchMock.mock.calls) expect(init.redirect).toBe('manual');
   });
 
-  it('refuses a redirect past the limit, though the next hop would answer', async () => {
-    for (let i = 0; i <= MAX_TRAINING_SAMPLE_REDIRECTS; i++)
-      fetchMock.mockResolvedValueOnce(redirectTo(TRUSTED_2));
+  it('refuses a fourth redirect, though the next hop would answer', async () => {
+    for (let i = 0; i < 4; i++) fetchMock.mockResolvedValueOnce(redirectTo(TRUSTED_2));
     fetchMock.mockResolvedValueOnce(image());
 
     await expect(uploadImageFromUrl({ imageUrl: TRUSTED })).rejects.toBeInstanceOf(
       TrainingSampleRefusedError
     );
-    expect(fetchMock).toHaveBeenCalledTimes(MAX_TRAINING_SAMPLE_REDIRECTS + 1);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(serverUploadImage).not.toHaveBeenCalled();
   });
 });

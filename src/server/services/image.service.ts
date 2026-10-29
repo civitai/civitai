@@ -9095,7 +9095,7 @@ export function isTrainingSampleUrlUsable(url: string) {
   return false;
 }
 
-export const MAX_TRAINING_SAMPLE_REDIRECTS = 3;
+const MAX_TRAINING_SAMPLE_REDIRECTS = 3;
 
 /** A training sample url, or a redirect from it, that is not fetched. */
 export class TrainingSampleRefusedError extends Error {
