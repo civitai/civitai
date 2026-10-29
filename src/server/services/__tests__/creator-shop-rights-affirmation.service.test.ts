@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as ImageUrlOwnership from '~/server/services/image-url-ownership';
 import {
   RIGHTS_AFFIRMATION_STATEMENT,
   RIGHTS_AFFIRMATION_VERSION,
@@ -19,6 +20,12 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
+const { assertUsableSpy } = vi.hoisted(() => ({ assertUsableSpy: vi.fn() }));
+vi.mock('~/server/services/image-url-ownership', async (importOriginal) => {
+  const actual = await importOriginal<typeof ImageUrlOwnership>();
+  assertUsableSpy.mockImplementation(actual.assertClientImageUrlsUsable);
+  return { ...actual, assertClientImageUrlsUsable: assertUsableSpy };
+});
 vi.mock('sharp', () => ({
   default: () => ({ metadata: mocks.sharpMetadata }),
 }));
@@ -30,6 +37,8 @@ vi.mock('~/server/services/notification.service', () => ({ createNotification: v
 
 import { submitCreatorShopItem, updateCreatorShopItem } from '../creator-shop.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { COVER_IMAGE_UNAVAILABLE_MESSAGE } from '~/server/services/image-url-ownership';
+import { takenImageKeyFake } from './image-url-ownership.fake';
 dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
   (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
 );
@@ -190,5 +199,74 @@ describe('updateCreatorShopItem', () => {
 
     const meta = mocks.shopItemUpdate.mock.calls[0][0].data.meta;
     expect(meta.rightsAffirmation).toEqual(existing.meta.rightsAffirmation);
+  });
+});
+
+describe('artwork key already in use', () => {
+  const KEY = '0a0b0c0d-0000-4000-8000-0000000000aa';
+  const original = dbMock.dbWrite.$queryRaw.getMockImplementation();
+  let probes: unknown[][];
+
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.sharpMetadata.mockResolvedValue({
+      width: 144,
+      height: 144,
+      format: 'png',
+      hasAlpha: true,
+      pages: 1,
+    });
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockResolvedValue({
+        ok: true,
+        headers: { get: () => null },
+        arrayBuffer: async () => new ArrayBuffer(8),
+      })
+    );
+    probes = [];
+    dbMock.dbWrite.$queryRaw.mockImplementation(takenImageKeyFake(probes));
+  });
+  afterEach(() => {
+    dbMock.dbWrite.$queryRaw.mockImplementation(original as never);
+  });
+
+  it('refuses a submission before charging the fee', async () => {
+    await expect(
+      submitCreatorShopItem({ ...submitInput, imageUrl: KEY, userId: 11 })
+    ).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+    expect(probes).toHaveLength(1);
+    // Checked as a shop write: no image row may hold the key, the creator's own included.
+    expect(assertUsableSpy).toHaveBeenCalledWith(expect.objectContaining({ shopRow: {} }));
+    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
+    expect(mocks.cosmeticCreate).not.toHaveBeenCalled();
+  });
+
+  it("refuses an artwork swap, checked as the creator's and excluding the item's own cosmetic", async () => {
+    mocks.shopItemFindUnique.mockResolvedValue({
+      id: 42,
+      cosmeticId: 7,
+      unitAmount: 500,
+      status: 'PendingReview',
+      meta: {},
+      addedById: 11,
+      cosmetic: { id: 7, createdById: 11, type: 'Badge', data: {} },
+      _count: { purchases: 0 },
+    });
+
+    await expect(
+      updateCreatorShopItem({
+        id: 42,
+        userId: 99,
+        isModerator: true,
+        imageUrl: KEY,
+        rightsAffirmed: true,
+      })
+    ).rejects.toThrow(COVER_IMAGE_UNAVAILABLE_MESSAGE);
+    expect(mocks.shopItemUpdate).not.toHaveBeenCalled();
+    expect(probes).toHaveLength(1);
+    expect(assertUsableSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: 11, shopRow: { cosmeticId: 7 } })
+    );
   });
 });

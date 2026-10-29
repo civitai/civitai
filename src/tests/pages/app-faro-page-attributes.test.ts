@@ -51,16 +51,21 @@ function myAppBody(): ts.Block {
 
 const squash = (text: string) => text.replace(/\s+/g, ' ').trim();
 
+function faroProviderElement() {
+  const faro = collect(
+    myAppBody(),
+    (n) =>
+      (ts.isJsxSelfClosingElement(n) || ts.isJsxOpeningElement(n)) &&
+      ts.isIdentifier(n.tagName) &&
+      n.tagName.text === 'FaroProvider'
+  ) as (ts.JsxSelfClosingElement | ts.JsxOpeningElement)[];
+  if (faro.length !== 1) throw new Error(`expected one <FaroProvider>, found ${faro.length}`);
+  return faro[0];
+}
+
 describe('_app → FaroProvider page attributes', () => {
   it('passes the frozen hard-load values to the matching props', () => {
-    const faro = collect(
-      myAppBody(),
-      (n) =>
-        (ts.isJsxSelfClosingElement(n) || ts.isJsxOpeningElement(n)) &&
-        ts.isIdentifier(n.tagName) &&
-        n.tagName.text === 'FaroProvider'
-    ) as (ts.JsxSelfClosingElement | ts.JsxOpeningElement)[];
-    if (faro.length !== 1) throw new Error(`expected one <FaroProvider>, found ${faro.length}`);
+    const faro = [faroProviderElement()];
 
     const initializers = Object.fromEntries(
       faro[0].attributes.properties
@@ -94,5 +99,42 @@ describe('_app → FaroProvider page attributes', () => {
       bootedShell: '() => shell === true',
       bootedSignedIn: '() => isHardLoadSignedIn({ session, hasAuthCookie: pageHasAuthCookie })',
     });
+  });
+});
+
+/**
+ * `viewerFlagsReady` tells FaroProvider whether the flags are the viewer's own yet, which decides
+ * the per-user resource_timing cohort. `useShellBootstrap`'s `status` is `undefined` off a shell
+ * boot and `pending` / `ready` / `failed` on one; only `ready` means the page data — and with it
+ * the viewer's flags — was adopted. A `failed` shell is leaving for a full render on the boot's
+ * user-less flags, so it must not decide the cohort. This evaluates the prop's own expression,
+ * as written in `_app`, for each status.
+ */
+describe('_app → FaroProvider viewerFlagsReady', () => {
+  const expression = () => {
+    const attr = faroProviderElement().attributes.properties.find(
+      (p): p is ts.JsxAttribute =>
+        ts.isJsxAttribute(p) && ts.isIdentifier(p.name) && p.name.text === 'viewerFlagsReady'
+    );
+    const init = attr?.initializer;
+    if (!init || !ts.isJsxExpression(init) || !init.expression) {
+      throw new Error('<FaroProvider viewerFlagsReady={…}> has no expression initializer');
+    }
+    return init.expression.getText();
+  };
+
+  it('reads the shell boot status', () => {
+    expect(squash(expression())).toBe("!shellStatus || shellStatus === 'ready'");
+  });
+
+  it.each([
+    ['not a shell boot', undefined, true],
+    ['a shell still waiting for its page data', 'pending', false],
+    ['a shell whose page data was adopted', 'ready', true],
+    ['a shell whose page data failed', 'failed', false],
+  ] as const)('%s → %s', (_, shellStatus, expected) => {
+    // eslint-disable-next-line @typescript-eslint/no-implied-eval
+    const evaluate = new Function('shellStatus', `return (${expression()});`);
+    expect(evaluate(shellStatus)).toBe(expected);
   });
 });

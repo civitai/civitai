@@ -223,7 +223,6 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
         {
           id: 'bounties',
           href: '/bounties?engagement=favorite',
-          as: '/bounties',
           visible: features.bounties,
           icon: IconMoneybag,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],

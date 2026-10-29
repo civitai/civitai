@@ -2,8 +2,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 
-const { publishModelHandler, session } = vi.hoisted(() => ({
+const { publishModelHandler, session, restoreModelRemovedWithOwner } = vi.hoisted(() => ({
   publishModelHandler: vi.fn(),
+  restoreModelRemovedWithOwner: vi.fn(),
   session: { user: { id: 7, isModerator: true, permissions: [], bannedAt: null } },
 }));
 
@@ -19,6 +20,17 @@ vi.mock('~/server/clickhouse/client', () => ({
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (fn: unknown) => fn }));
 vi.mock('~/server/controllers/model.controller', () => ({ publishModelHandler }));
+vi.mock('~/server/services/model-removed-with-owner.service', () => ({
+  restoreModelRemovedWithOwner,
+}));
+const { bustMvCache, queueUpdate, refreshCounts } = vi.hoisted(() => ({
+  bustMvCache: vi.fn(),
+  queueUpdate: vi.fn(),
+  refreshCounts: vi.fn(),
+}));
+vi.mock('~/server/services/model-version.service', () => ({ bustMvCache }));
+vi.mock('~/server/search-index', () => ({ modelsSearchIndex: { queueUpdate } }));
+vi.mock('~/server/redis/caches', () => ({ userContentOverviewCache: { refresh: refreshCounts } }));
 
 import handler from '~/pages/api/mod/model/republish';
 
@@ -149,5 +161,64 @@ describe('model.republish', () => {
     dbMock.dbWrite.model.findUnique.mockResolvedValue(null as never);
     expect(await call({ modelId: 42 })).toBe(404);
     expect(publishModelHandler).not.toHaveBeenCalled();
+  });
+});
+
+describe('model.republish on a model a content wipe kept', () => {
+  it('restores its prior status and versions instead of publishing it', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      model({ meta: { removedWithOwner: true, statusBeforeRemoval: 'Unpublished' } }) as never
+    );
+    restoreModelRemovedWithOwner.mockResolvedValue({
+      status: 'Unpublished',
+      userId: 5,
+      versionIds: [11],
+    });
+
+    expect(await call({ modelId: 42 })).toBe(200);
+    expect(restoreModelRemovedWithOwner).toHaveBeenCalledWith(42);
+    expect(publishModelHandler).not.toHaveBeenCalled();
+    expect(sent).toMatchObject({ modelId: 42, status: 'Unpublished', versionIds: [11] });
+    // Off its cached and indexed "hidden" state, and its owner's counts redone.
+    expect(bustMvCache).toHaveBeenCalledWith([11], 42);
+    expect(queueUpdate).toHaveBeenCalledWith([{ id: 42, action: 'Update' }]);
+    expect(refreshCounts).toHaveBeenCalledWith(5);
+  });
+
+  it('clears the record on a draft the wipe kept in place', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      model({
+        status: 'Draft',
+        meta: { removedWithOwner: true, statusBeforeRemoval: 'Draft' },
+      }) as never
+    );
+    restoreModelRemovedWithOwner.mockResolvedValue({ status: 'Draft', userId: 5, versionIds: [] });
+
+    expect(await call({ modelId: 42 })).toBe(200);
+    expect(restoreModelRemovedWithOwner).toHaveBeenCalledWith(42);
+    expect(publishModelHandler).not.toHaveBeenCalled();
+    expect(sent).toMatchObject({ modelId: 42, status: 'Draft', versionIds: [] });
+  });
+
+  it('refuses a recorded model back at a status the wipe moves', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      model({
+        status: 'Published',
+        meta: { removedWithOwner: true, statusBeforeRemoval: 'Published' },
+      }) as never
+    );
+    expect(await call({ modelId: 42 })).toBe(400);
+    expect(restoreModelRemovedWithOwner).not.toHaveBeenCalled();
+  });
+
+  it('refuses a recorded model that has moved since the wipe', async () => {
+    dbMock.dbWrite.model.findUnique.mockResolvedValue(
+      model({
+        status: 'Unpublished',
+        meta: { removedWithOwner: true, statusBeforeRemoval: 'Published' },
+      }) as never
+    );
+    expect(await call({ modelId: 42 })).toBe(400);
+    expect(restoreModelRemovedWithOwner).not.toHaveBeenCalled();
   });
 });

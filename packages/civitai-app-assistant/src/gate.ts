@@ -1,3 +1,4 @@
+import { CREATE_APP, USE_OPEN_APP } from './app-tools';
 import type { AssistantTool, ToolGate, ToolResult } from './tool';
 
 /** The sandbox MCP server's id; the chat offers each of its tools as `sandbox__<tool>`. */
@@ -15,6 +16,16 @@ export const REPORT_READY = 'report_ready';
 export const SET_CHECKLIST = 'set_checklist';
 const CHECKLIST_MAX_ITEMS = 30;
 const CHECKLIST_LABEL_MAX = 200;
+
+/** report_ready's refusals about the app's data (see `DataSource`). */
+export const DATA_REQUIRED =
+  "Say where what the app shows comes from: call report_ready with data: 'civitai' (from Civitai), 'sample' (made-up sample data) or 'none' (no Civitai data).";
+export const SAMPLE_NOT_AGREED =
+  "The user has not agreed to sample data. Tell them plainly the app would show made-up sample data, not real Civitai data, and why; offer to label it as sample data or to change the app to what Civitai provides. Only once they agree, call set_checklist with data: 'sample'.";
+export const SAMPLE_LABEL_MISSING =
+  'An app showing sample data must say so: add a visible "Sample data" label at the top of the app, then run sandbox__preview_check, whose visible text must show it.';
+export const DATA_NOT_AS_PROMISED =
+  'The checklist told the user the app shows Civitai data, but report_ready says it shows none. Make it show the Civitai data the user asked for, or tell them why it cannot and agree a change through set_checklist.';
 
 /** What the assistant reads as the refused call's error, in the reply after. */
 export const TURN_LIMIT_REFUSAL = `This reply made ${APP_ASSISTANT_TURN_TOOL_CALL_LIMIT} tool calls, the most one reply may make, so it ended before this call ran.`;
@@ -40,6 +51,38 @@ const KEEPS_CHECKS = new Set(
 const SANDBOX_PREFIX = sandboxTool('');
 const PREVIEW_CHECK = sandboxTool('preview_check');
 const RUN_COMMAND = sandboxTool('run_command');
+
+/**
+ * Sandbox tools that cannot change the app: what a chat may call on an app open in it that it has not
+ * chosen (`openAppNotChosen`). Every other sandbox tool, one the sandbox adds later included, may.
+ */
+const READS_APP = new Set([...KEEPS_CHECKS, PREVIEW_CHECK]);
+
+/** Whether a call can change the open app's files (a test or typecheck run cannot). */
+export function changesApp(name: string, input: unknown): boolean {
+  if (!name.startsWith(SANDBOX_PREFIX) || READS_APP.has(name)) return false;
+  return !(name === RUN_COMMAND && checkKindOf((input as { command?: unknown } | null)?.command));
+}
+
+/**
+ * What a change to the open app is refused with in a chat that neither made it (`create_app`) nor
+ * chose it (`use_open_app`): a new chat opened beside an app must not build over that app.
+ */
+export const openAppNotChosen = (app: string) =>
+  `Nothing in ${app} was changed: this chat has not been asked to change it. If the user asked for a different app, call create_app to make a new one and leave ${app} as it is. If they clearly asked to change ${app} itself, call use_open_app with app ${app}, then make the change. If it is not clear which, ask them "Make a new app, or replace ${app}?" and wait for their answer.`;
+
+/**
+ * The app a finished `create_app` or `use_open_app` call chose for the chat, if it did. Only a
+ * `create_app` that made a new app chooses it: one that found an app the user already had
+ * (`existed`: the open one, a paused one it started, one made elsewhere) chooses nothing.
+ */
+function chosenAppOf({ name, output, isError, refused, stopped, subagent }: ToolResult) {
+  if (name !== CREATE_APP && name !== USE_OPEN_APP) return null;
+  if (isError || refused !== undefined || stopped || subagent !== undefined) return null;
+  const result = output as { app?: unknown; existed?: unknown } | null | undefined;
+  if (name === CREATE_APP && result?.existed === true) return null;
+  return typeof result?.app === 'string' ? result.app : null;
+}
 
 // Only the bare check counts: a pipe, `;`, `||`, a newline, a flag (`-u`, `--help`), a path filter
 // or a `-p` config can exit 0 without the whole check passing. Spaces and tabs only, since a newline
@@ -110,14 +153,42 @@ export function checklistAwaitsBuild(items: readonly ChecklistItem[]): boolean {
   return items.some((item) => !item.done);
 }
 
+/**
+ * Where what the app shows comes from, as `report_ready` must declare it: `civitai` (from Civitai,
+ * through @civitai/sdk), `sample` (made-up data in place of Civitai's) or `none` (no Civitai data).
+ */
+export type DataSource = 'civitai' | 'sample' | 'none';
+export const DATA_SOURCES: readonly DataSource[] = ['civitai', 'sample', 'none'];
+
+export function dataSourceOf(raw: unknown): DataSource | null {
+  return DATA_SOURCES.includes(raw as DataSource) ? (raw as DataSource) : null;
+}
+
+/** The label an app showing sample data must show, as the preview check's visible text has it. */
+export const SAMPLE_DATA_LABEL = 'Sample data';
+
+/** Whether a `sandbox__preview_check` report's visible text shows {@link SAMPLE_DATA_LABEL}. */
+export function showsSampleDataLabel(output: unknown): boolean {
+  if (typeof output !== 'string') return false;
+  const at = output.indexOf('\n## visible text');
+  return at >= 0 && output.slice(at).toLowerCase().includes(SAMPLE_DATA_LABEL.toLowerCase());
+}
+
 interface Verification {
   /** The last preview check's verdict since the last file change or other command; null when none ran. */
   preview: string | null;
+  /** Whether that preview check's visible text showed the sample-data label. */
+  sampleLabel: boolean;
   tests: boolean | null;
   typecheck: boolean | null;
 }
 
-const unverified = (): Verification => ({ preview: null, tests: null, typecheck: null });
+const unverified = (): Verification => ({
+  preview: null,
+  sampleLabel: false,
+  tests: null,
+  typecheck: null,
+});
 
 /** What Build it sends as the user. */
 export const BUILD_IT_MESSAGE = 'Looks good — build it.';
@@ -143,6 +214,12 @@ export interface GateCoreOptions {
    * the page does not, and its results stay as they were.
    */
   checklistApp?: () => string | null;
+  /**
+   * The key of the app open now. Set, a call that can change it (`changesApp`) is refused
+   * (`openAppNotChosen`) until this conversation made that app with `create_app` or chose it with
+   * `use_open_app`. Both the page and the server runner set it.
+   */
+  openApp?: () => string | null;
 }
 
 /** What a gate starts from: what this conversation already did (a server run picking a reply up). */
@@ -177,6 +254,11 @@ export interface GateCore {
   clearAwaiting(): void;
   /** Starts from what the conversation already did; call before the first call of the reply. */
   restore(state: GateRestore): void;
+  /**
+   * A saved call of `conversationId` as a reopened chat shows it (the page, which keeps no history):
+   * what it chose counts, as `restore` reads it on the runner, unless this page load chose since.
+   */
+  restoreChoice(conversationId: string, result: ToolResult): void;
 }
 
 /**
@@ -190,8 +272,20 @@ export function createGateCore({
   currentApp,
   checklistPrefix = Math.random().toString(36).slice(2, 10),
   checklistApp,
+  openApp,
 }: GateCoreOptions = {}): GateCore {
   let conversationId: string | null = null;
+  // Keyed by conversation: the page's one gate serves every chat. Not cleared by reset: the page resets
+  // as the new app opens, after create_app's result chose it.
+  const chosenApps = new Map<string, string>();
+  // Chosen by a call made since this gate began, which a saved call shown later never overrides.
+  const chosenLive = new Set<string>();
+  const choose = (result: ToolResult) => {
+    const app = chosenAppOf(result);
+    if (app === null || conversationId === null) return;
+    chosenApps.set(conversationId, app);
+    chosenLive.add(conversationId);
+  };
   // The chat numbers every reply, Continue and Retry included.
   let reply: number | null = null;
   let turnCalls = 0;
@@ -199,6 +293,8 @@ export function createGateCore({
   let carriedCalls = 0;
   let verification = unverified();
   let checklist: ChecklistItem[] | null = null;
+  // What the checklist the user was shown said the app's data would be; null when it said nothing.
+  let checklistData: DataSource | null = null;
   // Calls other than report_ready that were allowed and have not returned. The chat starts every call of
   // a step together, so a write in the same step as report_ready could land after it said ready. A
   // dispatch_agent counts until its subagent returns.
@@ -209,9 +305,10 @@ export function createGateCore({
   const reset = () => {
     verification = unverified();
     checklist = null;
+    checklistData = null;
   };
 
-  const missing = (): string[] => {
+  const missing = (declared: unknown): string[] => {
     const out: string[] = [];
     if (verification.preview === null)
       out.push(
@@ -240,17 +337,30 @@ export function createGateCore({
       const open = checklist.filter((item) => !item.done).map((item) => item.label);
       if (open.length) out.push(`These checklist items are not done: ${open.join('; ')}.`);
     }
+    out.push(...dataProblems(declared));
     return out;
   };
 
-  const notReady = (): string | null => {
-    const reasons = missing();
+  // The app must not stand invented data in for the real data the user asked for without their OK.
+  const dataProblems = (declared: unknown): string[] => {
+    const data = dataSourceOf(declared);
+    if (!data) return [DATA_REQUIRED];
+    if (data === 'sample') {
+      if (checklistData !== 'sample') return [SAMPLE_NOT_AGREED];
+      if (!verification.sampleLabel) return [SAMPLE_LABEL_MISSING];
+    }
+    if (data === 'none' && checklistData === 'civitai') return [DATA_NOT_AS_PROMISED];
+    return [];
+  };
+
+  const notReady = (declared: unknown): string | null => {
+    const reasons = missing(declared);
     return reasons.length
       ? `Not ready yet. ${reasons.join(' ')} Then call report_ready again.`
       : null;
   };
 
-  const beforeToolCall: ToolGate = (name, _input, context) => {
+  const beforeToolCall: ToolGate = (name, input, context) => {
     if (context.conversationId !== conversationId) {
       conversationId = context.conversationId;
       reset();
@@ -270,8 +380,15 @@ export function createGateCore({
     }
     const refused = refuse?.(name);
     if (refused) return { refuse: refused };
+    const appOpen = openApp?.() ?? null;
+    if (
+      appOpen !== null &&
+      appOpen !== chosenApps.get(context.conversationId) &&
+      changesApp(name, input)
+    )
+      return { refuse: openAppNotChosen(appOpen) };
     if (name === REPORT_READY) {
-      const refusal = notReady();
+      const refusal = notReady((input as { data?: unknown } | null)?.data);
       if (refusal) return { refuse: refusal };
     } else running++;
     return { allow: true };
@@ -279,9 +396,10 @@ export function createGateCore({
 
   /** What a finished call says about the checks; the checklist is set by `set_checklist` itself. */
   const verify = ({ name, input, output, isError }: ToolResult) => {
-    if (name === PREVIEW_CHECK)
+    if (name === PREVIEW_CHECK) {
       verification.preview = isError ? 'error' : previewVerdictOf(output) ?? 'unreadable';
-    else if (name === RUN_COMMAND) {
+      verification.sampleLabel = !isError && showsSampleDataLabel(output);
+    } else if (name === RUN_COMMAND) {
       const kind = checkKindOf((input as { command?: unknown } | null)?.command);
       // Any other command may have changed files (sed, a scaffold, npm install).
       if (kind) verification[kind] = !isError && exitCodeOf(output) === 0;
@@ -295,9 +413,11 @@ export function createGateCore({
     // Neither ran. One its ended reply did not run stays counted in `running`; the next reply starts at 0.
     if (refused !== undefined || stopped) return;
     if (name !== REPORT_READY) running = Math.max(0, running - 1);
+    choose(result);
     verify(result);
     // A checklist a server runner showed: its Build it is the one waiting (the page shows the card).
-    // Never for an all-done list, even if the runner reports awaitsUser.
+    // Never for an all-done list, even if the runner reports awaitsUser, unless it asks the user to
+    // agree to sample data.
     const shown = output as { awaitsUser?: unknown; checklist?: unknown } | null | undefined;
     const items = normalizeChecklist((result.input as { items?: unknown } | null)?.items);
     if (
@@ -306,7 +426,9 @@ export function createGateCore({
       subagent === undefined &&
       shown?.awaitsUser === true &&
       typeof shown.checklist === 'string' &&
-      !(items && !checklistAwaitsBuild(items))
+      (!items ||
+        checklistAwaitsBuild(items) ||
+        (result.input as { data?: unknown } | null)?.data === 'sample')
     )
       awaiting = { id: shown.checklist, app: currentApp?.() ?? null };
   };
@@ -317,9 +439,18 @@ export function createGateCore({
       ? normalizeChecklist((input as { items?: unknown } | null)?.items)
       : null;
 
+  /** Takes up the checklist, and what it said about the data, a successful `set_checklist` left. */
+  const adoptChecklist = (result: ToolResult) => {
+    const items = checklistOf(result);
+    if (!items) return;
+    checklist = items;
+    const data = (result.input as { data?: unknown } | null)?.data;
+    if (data !== undefined) checklistData = dataSourceOf(data);
+  };
+
   const set_checklist: AssistantTool = {
     description:
-      'Show the user the list of features they asked for, as a checklist with a Build it button. Call it before you scaffold, with every requested feature and nothing they did not ask for, and in the same message, before the call, write one short sentence asking the user to tap Build it or say what to change. Call it again with done: true on an item once it works and has a passing test. Changing the labels while an item is still open shows the user the new list and ends your reply.',
+      "Show the user the list of features they asked for, as a checklist with a Build it button. Call it before you scaffold, with every requested feature and nothing they did not ask for, and in the same message, before the call, write one short sentence asking the user to tap Build it or say what to change. Call it again with done: true on an item once it works and has a passing test. Changing the labels or data while an item is still open shows the user the new list and ends your reply. Set data: 'civitai' when the app shows Civitai data, and 'sample' only once the user agreed to sample data: the card then tells them it is not real Civitai data, and shows them the list again even when every item is done.",
     activity: 'Writing the feature checklist…',
     inputSchema: {
       properties: {
@@ -336,6 +467,7 @@ export function createGateCore({
             required: ['label'],
           },
         },
+        data: { type: 'string', enum: [...DATA_SOURCES] },
       },
       required: ['items'],
     },
@@ -345,6 +477,10 @@ export function createGateCore({
         throw new Error(
           `items must be an array of 1-${CHECKLIST_MAX_ITEMS} { label, done } objects, each label 1-${CHECKLIST_LABEL_MAX} characters.`
         );
+      // Left out, it stays what the list last said, so ticking items off does not show the list again.
+      const data = input.data === undefined ? checklistData : dataSourceOf(input.data);
+      if (input.data !== undefined && !data)
+        throw new Error(`data must be one of ${DATA_SOURCES.join(', ')}.`);
       // Against the last checklist this gate knows: on the runner, `restore` seeds it from the
       // conversation's earlier replies; the page knows only this page load's. Marking items done is
       // progress, not a new list.
@@ -352,11 +488,15 @@ export function createGateCore({
       const changed =
         !previous ||
         previous.length !== items.length ||
-        previous.some((item, i) => item.label !== items[i].label);
+        previous.some((item, i) => item.label !== items[i].label) ||
+        data !== checklistData;
+      // Sample data is the user's to agree to, so a list newly saying it waits even when all done.
+      const newlySample = data === 'sample' && checklistData !== 'sample';
       checklist = items;
+      checklistData = data;
       const tag = checklistApp ? { app: checklistApp() } : {};
       // A first list waits even with every item done: nothing is built before the user confirms it.
-      if (!previous || (changed && checklistAwaitsBuild(items))) {
+      if (!previous || (changed && checklistAwaitsBuild(items)) || newlySample) {
         awaiting = { id: `${checklistPrefix}-${++checklistCalls}`, app: currentApp?.() ?? null };
         return {
           shown: true,
@@ -372,21 +512,29 @@ export function createGateCore({
 
   const report_ready: AssistantTool = {
     description:
-      'Call this on its own, before you tell the user the app is ready, every time. It is refused until, since your last file change or other command (including dev_server_start or dev_server_restart), sandbox__preview_check said render: ok, cd <blockId> && npm test and cd <blockId> && npx tsc --noEmit each exited 0 (run on their own, unpiped), and every set_checklist item is done. When it is refused, do what it says; never tell the user the app is ready without it.',
+      "Call this on its own, before you tell the user the app is ready, every time. It is refused until, since your last file change or other command (including dev_server_start or dev_server_restart), sandbox__preview_check said render: ok, cd <blockId> && npm test and cd <blockId> && npx tsc --noEmit each exited 0 (run on their own, unpiped), and every set_checklist item is done. data says where what the app shows comes from: 'civitai', 'sample' (made-up data, only once the user agreed through set_checklist and the app shows a visible \"Sample data\" label) or 'none'. When it is refused, do what it says; never tell the user the app is ready without it.",
     activity: 'Checking the app is ready…',
-    inputSchema: { properties: {} },
-    async execute() {
+    inputSchema: {
+      properties: { data: { type: 'string', enum: [...DATA_SOURCES] } },
+      required: ['data'],
+    },
+    async execute(input) {
       // Let the rest of this step's calls reach the gate first.
       await new Promise((resolve) => setTimeout(resolve, 0));
       if (running > 0)
         throw new Error(
           'Call report_ready on its own, once your other tool calls have returned: they can still change the app.'
         );
-      const refusal = notReady();
+      const refusal = notReady(input.data);
       if (refusal) throw new Error(refusal);
+      const data = dataSourceOf(input.data);
       return {
         ready: true,
-        note: 'Tell the user the app is ready for review, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed.',
+        data,
+        note:
+          data === 'sample'
+            ? 'Tell the user the app is ready for review, that it shows sample data, not real Civitai data, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed and that the data is sample data.'
+            : 'Tell the user the app is ready for review, and what was checked: the preview check, the tests, the typecheck and each checklist item. The user sees a card saying these checks passed.',
       };
     },
   };
@@ -403,20 +551,26 @@ export function createGateCore({
     restore({ conversationId: id, earlier, current, app = null }) {
       conversationId = id;
       reset();
+      chosenApps.delete(id);
+      chosenLive.delete(id);
+      for (const result of [...earlier, ...current]) choose(result);
       // Without app tags (the page), every checklist counts, as it did before.
       const forThisApp = (result: ToolResult) =>
         !checklistApp || (result.output as { app?: unknown } | null)?.app === app;
-      for (const result of earlier)
-        if (forThisApp(result)) checklist = checklistOf(result) ?? checklist;
+      for (const result of earlier) if (forThisApp(result)) adoptChecklist(result);
       for (const result of current) {
         if (opensOtherApp(result, app)) {
           reset();
           continue;
         }
-        if (forThisApp(result)) checklist = checklistOf(result) ?? checklist;
+        if (forThisApp(result)) adoptChecklist(result);
         if (result.refused === undefined && !result.stopped) verify(result);
       }
       carriedCalls = current.filter((result) => result.subagent === undefined).length;
+    },
+    restoreChoice(id, result) {
+      const app = chosenAppOf(result);
+      if (app !== null && !chosenLive.has(id)) chosenApps.set(id, app);
     },
   };
 }
@@ -428,7 +582,7 @@ function opensOtherApp(
 ): boolean {
   const opened = (output as { app?: unknown } | null)?.app;
   return (
-    name === 'create_app' &&
+    name === CREATE_APP &&
     !isError &&
     refused === undefined &&
     !stopped &&
