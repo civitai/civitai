@@ -5,6 +5,7 @@ const simulateOtherVoters = vi.hoisted(() => vi.fn());
 const listSimulatableItems = vi.hoisted(() => vi.fn());
 const setPlayerLevel = vi.hoisted(() => vi.fn());
 const getPlayerStatusOrNew = vi.hoisted(() => vi.fn());
+const shiftMyDayBack = vi.hoisted(() => vi.fn());
 vi.mock('$app/environment', () => ({
   get dev() {
     return isDev.value;
@@ -16,6 +17,7 @@ vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: {} }));
 vi.mock('$lib/server/redis', () => ({ getSysRedis: vi.fn() }));
 vi.mock('$lib/server/dev/simulate', () => ({ simulateOtherVoters, listSimulatableItems }));
 vi.mock('$lib/server/dev/set-level', () => ({ setPlayerLevel }));
+vi.mock('$lib/server/dev/shift-day', () => ({ shiftMyDayBack }));
 vi.mock('$lib/server/player-status', () => ({ getPlayerStatusOrNew }));
 
 const { load, actions } = await import('./+page.server');
@@ -37,6 +39,14 @@ const submitLevel = () => {
     locals: { user: { id: 7 } },
   } as never);
 };
+const submitShift = () =>
+  actions.shiftDay({
+    request: new Request('http://knights.test/dev/simulate', {
+      method: 'POST',
+      body: new FormData(),
+    }),
+    locals: { user: { id: 7 } },
+  } as never);
 const loadPage = () => load({ locals: { user: { id: 7 } } } as never);
 
 beforeEach(() => {
@@ -45,6 +55,7 @@ beforeEach(() => {
   listSimulatableItems.mockResolvedValue([]);
   setPlayerLevel.mockReset();
   getPlayerStatusOrNew.mockReset();
+  shiftMyDayBack.mockReset();
   getPlayerStatusOrNew.mockResolvedValue({ rank: 'Knight' });
 });
 
@@ -67,6 +78,11 @@ describe('simulate other voters', () => {
     it('404s the level action and changes nothing', async () => {
       await expect(submitLevel()).rejects.toMatchObject({ status: 404 });
       expect(setPlayerLevel).not.toHaveBeenCalled();
+    });
+
+    it('404s the day shift and moves nothing', async () => {
+      await expect(submitShift()).rejects.toMatchObject({ status: 404 });
+      expect(shiftMyDayBack).not.toHaveBeenCalled();
     });
   });
 
@@ -92,6 +108,18 @@ describe('simulate other voters', () => {
 
       await expect(submitLevel()).resolves.toMatchObject({ success: true });
       expect(setPlayerLevel).toHaveBeenCalledWith(expect.anything(), 7, 30, expect.any(Function));
+    });
+
+    it('shifts the day of the caller only', async () => {
+      shiftMyDayBack.mockResolvedValue({ ok: true });
+
+      await expect(submitShift()).resolves.toMatchObject({ success: true });
+      expect(shiftMyDayBack).toHaveBeenCalledWith(expect.anything(), 7);
+    });
+
+    it('tells the caller when there was nothing to shift', async () => {
+      shiftMyDayBack.mockResolvedValue({ ok: false, reason: 'nothing-to-shift' });
+      await expect(submitShift()).resolves.toMatchObject({ status: 400 });
     });
   });
 });

@@ -3,6 +3,7 @@ import { db } from '$lib/server/db';
 import { assertDevOnly } from '$lib/server/dev/guard';
 import { MAX_LEVEL } from '$lib/server/progression/levels';
 import { setPlayerLevel } from '$lib/server/dev/set-level';
+import { shiftMyDayBack } from '$lib/server/dev/shift-day';
 import { listSimulatableItems, simulateOtherVoters } from '$lib/server/dev/simulate';
 import { imageUrl } from '$lib/server/image-url';
 import { getPlayerStatusOrNew } from '$lib/server/player-status';
@@ -21,6 +22,13 @@ export const load: PageServerLoad = async ({ locals }) => {
 };
 
 export const actions: Actions = {
+  shiftDay: async ({ locals }) => {
+    assertDevOnly();
+    const result = await shiftMyDayBack(db, locals.user.id);
+    if (!result.ok) return fail(400, { message: 'You have no recorded day to shift yet.' });
+    return { success: true, shifted: true };
+  },
+
   setLevel: async ({ request, locals }) => {
     assertDevOnly();
     const level = Number((await request.formData()).get('level'));

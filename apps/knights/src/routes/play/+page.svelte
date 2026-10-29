@@ -3,6 +3,8 @@
   import { dev } from '$app/environment';
   import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
+  import DailyPanel from '$lib/DailyPanel.svelte';
+  import { recapLine } from '$lib/recap-text';
   import StatusBar from '$lib/StatusBar.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -38,6 +40,18 @@
     {#if dev}· <a href="/dev/simulate">Simulate other voters</a>{/if}
   {/snippet}
 </StatusBar>
+
+{#if data.mode === 'queue'}
+  {#if data.recap}
+    <aside class="recap" role="status">
+      <p>{recapLine(data.recap)}</p>
+      <form method="POST" action="?/dismissRecap" use:enhance>
+        <button type="submit">Dismiss</button>
+      </form>
+    </aside>
+  {/if}
+  <DailyPanel daily={data.daily} />
+{/if}
 
 {#if showReveal && form?.reveal}
   <div class="reveal" role="status" class:right={form.reveal.correct}>
@@ -122,6 +136,18 @@
 <p><a href="/">Back</a></p>
 
 <style>
+  .recap {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 1rem;
+    margin-bottom: 1rem;
+    padding-left: 1rem;
+    border-left: 3px solid var(--gold);
+  }
+  .recap p {
+    margin: 0;
+  }
   .prompt {
     font-size: 1.15rem;
   }

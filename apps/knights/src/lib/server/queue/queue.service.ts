@@ -3,6 +3,7 @@ import { utc } from '@civitai/db/kysely';
 import { gradeKnightsVotes } from '@civitai/db/knights';
 import type { DB } from '@civitai/db-schema/kysely';
 import { KNIGHTS_NSFW_LEVEL_QUESTION, KNIGHTS_STAGE_TTL_HOURS } from '@civitai/shared/new-order';
+import { recordVoteDay } from '../daily/daily.service';
 import { goldForRank, PROGRESSION } from '../progression/config';
 import { standingOf } from '../progression/rating';
 import { mirrorXp, type XpDelta, type XpMirror } from '../progression/legacy-exp';
@@ -378,12 +379,37 @@ export async function castVote(
         if (decision.kind === 'resolved' && !writesBack) await lockItemVoters(trx, item.id);
         await trx
           .updateTable('NewOrderPlayer')
-          .set({
-            exp: sql<number>`"exp" + ${PROGRESSION.voteXp}`,
-            goldPending: sql<number>`"goldPending" + ${gold}`,
-          })
+          .set({ exp: sql<number>`"exp" + ${PROGRESSION.voteXp}` })
           .where('userId', '=', input.userId)
           .execute();
+
+        // After the player row lock above, and after the voters' locks: one player's concurrent votes queue
+        // on that lock, so the day row never needs a lock order of its own.
+        const day = await recordVoteDay(trx, {
+          playerId: input.userId,
+          rank: player.rankType,
+          gold,
+          now,
+        });
+        if (day.gold !== gold) {
+          await trx
+            .updateTable('KnightsVote')
+            .set({ gold: day.gold })
+            .where('itemId', '=', item.id)
+            .where('playerId', '=', input.userId)
+            .where('createdAt', '=', utc(now))
+            .execute();
+        }
+        if (day.gold > 0 || day.bonus > 0) {
+          await trx
+            .updateTable('NewOrderPlayer')
+            .set({
+              goldPending: sql<number>`"goldPending" + ${day.gold}`,
+              goldEarned: sql<number>`"goldEarned" + ${day.bonus}`,
+            })
+            .where('userId', '=', input.userId)
+            .execute();
+        }
 
         if (decision.kind === 'pending') return { result: { status: 'recorded' }, xp: [voted] };
         if (decision.kind === 'split') {

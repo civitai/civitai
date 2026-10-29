@@ -1,5 +1,6 @@
 import { fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
+import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
 import { imageUrl } from '$lib/server/image-url';
 import { getPlayerStatusOrNew } from '$lib/server/player-status';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
@@ -55,13 +56,20 @@ export const load: PageServerLoad = async ({ locals }) => {
     }
   }
 
-  const feed = await getFeed(db, locals.user.id, { limit: 1 });
-  if (!feed) return { mode: 'queue' as const, status, question: null, item: null };
+  const now = queueDeps.now();
+  const [feed, daily, recap] = await Promise.all([
+    getFeed(db, locals.user.id, { limit: 1 }),
+    getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
+    getRecap(db, { playerId: locals.user.id, now }),
+  ]);
+  if (!feed) return { mode: 'queue' as const, status, daily, recap, question: null, item: null };
 
   const [item] = feed.items;
   return {
     mode: 'queue' as const,
     status,
+    daily,
+    recap,
     question: feed.question,
     item: {
       id: item.id,
@@ -91,6 +99,11 @@ export const actions: Actions = {
       console.error('knights: vote failed', { itemId, error });
       return fail(500, { message: 'Your judgment could not be recorded. Try again in a moment.' });
     }
+  },
+
+  dismissRecap: async ({ locals }) => {
+    await dismissRecap(db, { playerId: locals.user.id, now: queueDeps.now() });
+    return { dismissed: true };
   },
 
   trial: async ({ request, locals }) => {

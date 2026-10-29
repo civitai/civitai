@@ -62,9 +62,30 @@ describe('earnedRank', () => {
 describe('rankTable', () => {
   it('lists every ladder rank with its levels, bar, weight and gold from config', () => {
     expect(rankTable()).toEqual([
-      { rank: 'Knight', levels: '1–20', accuracyBar: 0.7, voteWeight: 1, goldMultiplier: 1 },
-      { rank: 'Templar', levels: '21–40', accuracyBar: 0.8, voteWeight: 1.5, goldMultiplier: 1.25 },
-      { rank: 'Paladin', levels: '41+', accuracyBar: 0.85, voteWeight: 2, goldMultiplier: 1.5 },
+      {
+        rank: 'Knight',
+        levels: '1–20',
+        accuracyBar: 0.7,
+        voteWeight: 1,
+        goldMultiplier: 1,
+        dailyGoldCap: 5000,
+      },
+      {
+        rank: 'Templar',
+        levels: '21–40',
+        accuracyBar: 0.8,
+        voteWeight: 1.5,
+        goldMultiplier: 1.25,
+        dailyGoldCap: 7500,
+      },
+      {
+        rank: 'Paladin',
+        levels: '41+',
+        accuracyBar: 0.85,
+        voteWeight: 2,
+        goldMultiplier: 1.5,
+        dailyGoldCap: 10000,
+      },
     ]);
     expect(rankTable().map((r) => r.rank)).toEqual(RANK_LADDER.map((r) => r.rank));
     expect(PROGRESSION.baseGold).toBeGreaterThan(0);

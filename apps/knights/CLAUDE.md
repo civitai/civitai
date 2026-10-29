@@ -75,6 +75,15 @@ Migration `20261213120000_knights_v2_progression` (applied by hand): `KnightsVot
 - `/dev/simulate` 404s unless SvelteKit's build-time `dev` is true; it also has "Set level" (`dev/set-level.ts`) and shows accuracy.
 - XP is also added to the original game's Redis exp counter (`new-order:exp`, only when that player's field is present) after the commit, while both games run: its nightly reset overwrites `NewOrderPlayer.exp` from that counter, and an absent field is re-read from Postgres, which already holds the XP.
 
+## Daily loop (`src/lib/server/daily`)
+
+Tables `KnightsPlayer` (streak, shields, recap dismissal) and `KnightsPlayerDay` (votes, gold recorded, Watch, bonus per UTC day), migration `20261215120000_knights_v2_daily` (applied by hand). Knobs: `daily/config.ts`; the per-rank gold cap is `dailyGoldCap` in `RANK_RULES` (`ranks.ts`). Days are UTC strings (`days.ts`); logic takes the clock as an argument.
+
+- `castVote` calls `recordVoteDay` after it has locked the player's `NewOrderPlayer` row; that lock serialises one player's votes, so the day row (upsert, then `FOR UPDATE`) needs no lock order of its own. It clamps the vote's gold to what is left of the cap (XP and Watch progress still count) and, on the vote that reaches `watchSize`, advances the streak and pays the bonus as earned gold. The bonus is not cap gold.
+- Streak and shields are pure (`streak.ts`). A shield is granted lazily per ISO week and spent when the next Watch completes, covering exactly one missed day. `liveStreak` shows what that completion would find.
+- The recap (`getRecap`) is read from the vote ledger for the last play day before today, so it keeps changing as votes settle; dismissal is stored per day on `KnightsPlayer`.
+- `/dev/simulate` has "Shift my day back by one" (`dev/shift-day.ts`, caller only): day rows, their votes and the streak markers move one day.
+
 ## Trials (`src/lib/server/trials`)
 
 Tables `KnightsReferenceImage`, `KnightsTrialRun`, `KnightsTrialAnswer`, `KnightsHarvestCursor` (migration `20261212120000_knights_v2_trials`, applied by hand). All knobs and their defaults are in `trials/config.ts`.
