@@ -63,16 +63,18 @@ export function renderReason(
     )} ${window} ` +
     `(${describePairs(
       pairs
-    )}). ${total.toLocaleString()} Buzz went both ways and was left out of their bankable earnings.${
-      indirect.length ? ` ${describeIndirect(indirect, since)}` : ''
-    }`;
+    )}). ${total.toLocaleString()} Buzz went both ways and was left out of their bankable earnings.`;
+  // Last, so a long list is what gets cut rather than what the review did.
+  const tail = indirect.length ? ` ${describeIndirect(indirect, since)}` : '';
 
   switch (outcome.kind) {
     case 'warned':
-      return truncateReason(`${head} Sent the one-time warning message from the Civitai account.`);
+      return truncateReason(
+        `${head} Sent the one-time warning message from the Civitai account.${tail}`
+      );
     case 'warning-failed':
       return truncateReason(
-        `${head} The warning message could not be sent (${outcome.error}); it will be retried on the next run. ${NO_ACTION_TAKEN}`
+        `${head} The warning message could not be sent (${outcome.error}); it will be retried on the next run. ${NO_ACTION_TAKEN}${tail}`
       );
     case 'repeat':
       return truncateReason(
@@ -81,7 +83,7 @@ export function renderReason(
           .slice(
             0,
             10
-          )}, and the exchange grew again after that. Removing the account from the Creator Program is a moderator decision. ${NO_ACTION_TAKEN}`
+          )}, and the exchange grew again after that. Removing the account from the Creator Program is a moderator decision. ${NO_ACTION_TAKEN}${tail}`
       );
   }
 }
@@ -134,9 +136,16 @@ function describeIndirect(transfers: IndirectTransfer[], since: Date) {
   );
 }
 
-export function renderIndirectReason(transfers: IndirectTransfer[], since: Date): string {
+export function renderIndirectReason(
+  transfers: IndirectTransfer[],
+  since: Date,
+  warnedAt?: Date
+): string {
+  const earlier = warnedAt
+    ? ` Already warned on ${warnedAt.toISOString().slice(0, 10)} for a direct exchange.`
+    : '';
   return truncateReason(
-    `No warning message was sent: whether this is abuse is a moderator decision. ${NO_ACTION_TAKEN} ${describeIndirect(
+    `No warning message was sent: whether this is abuse is a moderator decision.${earlier} ${NO_ACTION_TAKEN} ${describeIndirect(
       transfers,
       since
     )}`
@@ -146,12 +155,13 @@ export function renderIndirectReason(transfers: IndirectTransfer[], since: Date)
 export function toIndirectFinding(
   userId: number,
   transfers: IndirectTransfer[],
-  since: Date
+  since: Date,
+  warnedAt?: Date
 ): Finding {
   return {
     userId,
     confidence: INDIRECT_CONFIDENCE,
-    reason: renderIndirectReason(transfers, since),
+    reason: renderIndirectReason(transfers, since, warnedAt),
     actioned: false,
   };
 }
@@ -175,6 +185,6 @@ export function renderSummary(counts: {
       'were'
     )} current Creator Program ${plural(counts.members, 'member')}. ` +
     `${counts.warned} warned for the first time, ${counts.repeats} filed again after a warning, ${counts.failed} could not be messaged. ` +
-    `${counts.indirect} filed for indirect transfers.`
+    `${counts.indirect} of the filed members also or only had indirect transfers.`
   );
 }

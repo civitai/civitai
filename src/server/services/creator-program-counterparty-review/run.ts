@@ -152,6 +152,7 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     return finding;
   };
 
+  const warnedEarlier = new Map<number, Date>();
   // Saved only once the report carrying the repeat has been filed: saved earlier, a failed report
   // would lose the repeat for good, since the next run would see no new volume.
   const repeatRecords = new Map<number, { record: WarningRecord; finding: Finding }>();
@@ -212,7 +213,10 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     const grew = memberPairs.filter(
       (p) => twoWay(p) - (record.counterparties[String(p.counterpartyId)] ?? 0) >= min
     );
-    if (!grew.length) continue;
+    if (!grew.length) {
+      warnedEarlier.set(member.id, new Date(record.warnedAt));
+      continue;
+    }
 
     const finding = file(
       member.id,
@@ -235,7 +239,10 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
   // like this.
   for (const [userId, { transfers: memberTransfers }] of indirectDue)
     if (!indirectRecords.has(userId))
-      file(userId, toIndirectFinding(userId, memberTransfers, BANKABLE_CUTOVER));
+      file(
+        userId,
+        toIndirectFinding(userId, memberTransfers, BANKABLE_CUTOVER, warnedEarlier.get(userId))
+      );
 
   findings.sort((a, b) => b.confidence - a.confidence);
   findings.splice(MAX_FINDINGS_PER_REPORT);

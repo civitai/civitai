@@ -371,12 +371,18 @@ describe('runCounterpartyReview, indirect transfers', () => {
     });
     w.ch.$query.mockImplementation(async (sql: string) => {
       order.push(sql.includes('AS path') ? 'indirect' : 'pairs');
-      return (sql.includes('AS path') ? [] : [pair(22, 5_000, 4_000)]) as never[];
+      return (
+        sql.includes('AS path') ? [loop([22, 33], 3_000)] : [pair(22, 5_000, 4_000)]
+      ) as never[];
     });
+    w.deps.indirect.get = async () => {
+      order.push('filed paths');
+      return null;
+    };
 
     await runCounterpartyReview(w.deps);
 
-    expect(order).toEqual(['pairs', 'indirect', 'warning']);
+    expect(order).toEqual(['pairs', 'indirect', 'filed paths', 'warning']);
   });
 
   it('lists the largest paths and counts the rest, keeping the reason within its limit', async () => {
@@ -459,6 +465,32 @@ describe('runCounterpartyReview, indirect transfers', () => {
     expect(await runCounterpartyReview(w.deps)).toMatchObject({ indirect: 0 });
     expect(w.reports[0].findings.some((f) => f.userId === creator.id)).toBe(false);
     expect(w.indirectStore.has(creator.id)).toBe(false);
+  });
+
+  it('keeps what the review did ahead of a long list of indirect paths', async () => {
+    const pairs = Array.from({ length: 30 }, (_, i) => pair(100 + i, 50_000, 40_000));
+    const paths = Array.from({ length: 5 }, (_, i) =>
+      loop([1_000 + i, 2_000 + i, 3_000 + i], 30_000)
+    );
+    const w = world({ rows: pairs, indirectRows: paths, maxIntermediaries: 3 });
+
+    await runCounterpartyReview(w.deps);
+
+    const { reason } = w.reports[0].findings[0];
+    expect(reason.length).toBeLessThanOrEqual(2_000);
+    expect(reason).toContain('Sent the one-time warning message from the Civitai account.');
+  });
+
+  it('tells the moderator a member filed only for indirect transfers was warned before', async () => {
+    const w = world({ rows: [pair(22, 5_000, 4_000)] });
+    await runCounterpartyReview(w.deps);
+
+    w.setIndirectRows([loop([22, 33], 3_000)]);
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ repeats: 0, indirect: 1 });
+    const [finding] = w.reports.at(-1)!.findings;
+    expect(finding).toMatchObject({ confidence: 0.7, actioned: false });
+    expect(finding.reason).toContain('Already warned on 2026-12-01 for a direct exchange.');
+    expect(w.sendWarning).toHaveBeenCalledTimes(1);
   });
 
   it('files only current Creator Program members', async () => {
