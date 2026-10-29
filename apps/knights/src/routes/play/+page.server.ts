@@ -102,8 +102,12 @@ export const actions: Actions = {
   },
 
   dismissRecap: async ({ locals }) => {
-    await dismissRecap(db, { playerId: locals.user.id, now: queueDeps.now() });
-    return { dismissed: true };
+    try {
+      await dismissRecap(db, { playerId: locals.user.id, now: queueDeps.now() });
+    } catch (error) {
+      console.error('knights: could not store the recap dismissal', { error });
+      return fail(500, { message: 'Could not dismiss the recap. Try again.', recapFailed: true });
+    }
   },
 
   trial: async ({ request, locals }) => {

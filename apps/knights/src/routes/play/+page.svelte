@@ -3,8 +3,8 @@
   import { dev } from '$app/environment';
   import { invalidateAll } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
-  import DailyPanel from '$lib/DailyPanel.svelte';
-  import { recapLine } from '$lib/recap-text';
+  import DailyPanel from './DailyPanel.svelte';
+  import { recapLines } from './recap-text';
   import StatusBar from '$lib/StatusBar.svelte';
   import type { ActionData, PageData } from './$types';
 
@@ -43,12 +43,19 @@
 
 {#if data.mode === 'queue'}
   {#if data.recap}
-    <aside class="recap" role="status">
-      <p>{recapLine(data.recap)}</p>
-      <form method="POST" action="?/dismissRecap" use:enhance>
-        <button type="submit">Dismiss</button>
+    <section class="recap" aria-label="Recap of your last play day">
+      <div>
+        {#each recapLines(data.recap) as line (line)}
+          <p>{line}</p>
+        {/each}
+        {#if form?.recapFailed}
+          <p class="notice" role="alert">{form.message}</p>
+        {/if}
+      </div>
+      <form method="POST" action="?/dismissRecap" use:enhance={submit}>
+        <button type="submit" disabled={submitting}>Dismiss</button>
       </form>
-    </aside>
+    </section>
   {/if}
   <DailyPanel daily={data.daily} />
 {/if}
@@ -96,7 +103,7 @@
       </div>
     </form>
 
-    {#if form?.message}
+    {#if form?.message && !form.recapFailed}
       <p class="notice" role="alert">{form.message}</p>
     {/if}
   {:else if data.trial.kind === 'cooldown'}
@@ -126,7 +133,7 @@
     </div>
   </form>
 
-  {#if form?.message}
+  {#if form?.message && !form.recapFailed}
     <p class="notice" role="alert">{form.message}</p>
   {/if}
 {:else}

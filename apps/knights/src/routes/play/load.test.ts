@@ -81,9 +81,21 @@ describe('play load', () => {
 });
 
 describe('dismissRecap action', () => {
+  const run = () => actions.dismissRecap({ locals: { user: { id: 7 } } } as never);
+
   it('stores the dismissal for the caller at the injected clock', async () => {
-    const result = await actions.dismissRecap({ locals: { user: { id: 7 } } } as never);
-    expect(result).toEqual({ dismissed: true });
+    await run();
     expect(dismissRecap).toHaveBeenCalledWith(expect.anything(), { playerId: 7, now: NOW });
+  });
+
+  it('tells the player when it could not be stored', async () => {
+    const log = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    dismissRecap.mockRejectedValue(new Error('down'));
+
+    expect(await run()).toMatchObject({
+      status: 500,
+      data: { message: 'Could not dismiss the recap. Try again.', recapFailed: true },
+    });
+    expect(log).toHaveBeenCalled();
   });
 });

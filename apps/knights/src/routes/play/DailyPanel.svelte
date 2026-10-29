@@ -8,7 +8,7 @@
 <section class="daily" aria-label="Daily Watch">
   <p class="line">
     Daily Watch
-    <progress max={daily.watchSize} value={Math.min(daily.votes, daily.watchSize)}></progress>
+    <progress aria-label="Daily Watch progress" max={daily.watchSize} value={Math.min(daily.votes, daily.watchSize)}></progress>
     {Math.min(daily.votes, daily.watchSize)}/{daily.watchSize}
     {#if daily.watchDone}
       · complete, +{gold(daily.bonusGold)} gold streak bonus
@@ -19,7 +19,13 @@
   <p class="line">
     Streak: {daily.streak} {daily.streak === 1 ? 'day' : 'days'}
     · Shields: {daily.shields}/{daily.maxShields}
-    {#if daily.streak > 0 && !daily.watchDone}· the streak ends at 00:00 UTC unless you finish today's Watch{/if}
+    {#if daily.streak > 0 && !daily.watchDone}
+      {#if daily.shieldCoversToday}
+        · a shield will cover today if you miss it
+      {:else}
+        · the streak ends at 00:00 UTC unless you finish today's Watch
+      {/if}
+    {/if}
   </p>
   <p class="line">
     {#if daily.capReached}

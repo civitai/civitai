@@ -26,7 +26,7 @@ export const actions: Actions = {
     assertDevOnly();
     const result = await shiftMyDayBack(db, locals.user.id);
     if (!result.ok) return fail(400, { message: 'You have no recorded day to shift yet.' });
-    return { success: true, shifted: true };
+    return { success: true, shifted: result.days };
   },
 
   setLevel: async ({ request, locals }) => {

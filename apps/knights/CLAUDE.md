@@ -60,13 +60,13 @@ SQL on PGlite.
   own month if missing; `POST /api/jobs/tick` also escalates items past `expiresAt` and settles votes on final items (`settledVotes` in its response; any failing step, or an item that could not be settled, returns 500). Both need
   `Authorization: Bearer $JOBS_TOKEN`.
 - The user guard in `hooks.server.ts` skips exactly the routes in `JOB_PATHS` (tick, partitions, harvest); a new job route must be added there.
-- `/play` is the minimal voting page, with a status line (rank, level and XP from `@civitai/shared/new-order-levels`, the trial position for Acolytes, and the progression standing described under Progression). Acolytes, and players with no `NewOrderPlayer` row yet, get Trials instead of the feed and cannot vote; Knights and above keep the feed.
+- `/play` is the minimal voting page, with a status line (rank, level and XP from `@civitai/shared/new-order-levels`, the trial position for Acolytes, and the progression standing described under Progression). Acolytes, and players with no `NewOrderPlayer` row yet, get Trials instead of the feed and cannot vote; Knights and above keep the feed. It also shows the Daily Watch panel and the dismissable recap (see Daily loop); `/ranks` lists each rank's daily gold cap.
 
 ## Progression (`src/lib/server/progression`)
 
-Migration `20261213120000_knights_v2_progression` (applied by hand): `KnightsVote.xp` / `settledAt`, `NewOrderPlayer.goldPending` / `goldEarned`. Every amount is in `progression/config.ts`.
+Migration `20261213120000_knights_v2_progression` (applied by hand): `KnightsVote.xp` / `settledAt`, `NewOrderPlayer.goldPending` / `goldEarned`. Progression amounts are in `progression/config.ts`; the Watch, streak and shield amounts are in `daily/config.ts` and the per-rank daily gold cap is in `ranks.ts` (see Daily loop).
 
-- A vote pays flat XP at once and records `gold` (base x the voter's rank multiplier x `RATING.belowBarFactor` while below the bar) as pending on the vote and in `goldPending`.
+- A vote pays flat XP at once and records `gold` as pending on the vote and in `goldPending`: base x the voter's rank multiplier x `RATING.belowBarFactor` while below the bar, then clamped to what is left of the rank's daily cap (see Daily loop). A clamped vote records the clamped amount, so settling drops or keeps only that.
 - `settleItemVotes` pays a graded item once, only when its outcome is final (`Closed`, or `Resolved` and written back): correct = bulk XP, gold moves pending -> earned; wrong or inconclusive = gold dropped. `settledAt` plus the row lock make it idempotent. It runs in the transaction of every Knights path that finalises an item, and `POST /api/jobs/tick` sweeps (`settleFinalItems`) what other apps closed (the moderator app's rulings).
 - Fervor is computed from the ledger (the player's last `fervorWindow` settled correct/failed votes since `startAt`, inconclusive excluded); the status line reads it from there and settle also writes the `fervor` column. A vote cast before a `startAt` reset settles without paying.
 - Ranks: `progression/rating.ts`, knobs in `config.ts` (`RANK_LADDER`, `RATING`). Accuracy shares fervor's `ledgerOf` window and is "not yet rated" below `RATING.minGraded`.
@@ -79,10 +79,10 @@ Migration `20261213120000_knights_v2_progression` (applied by hand): `KnightsVot
 
 Tables `KnightsPlayer` (streak, shields, recap dismissal) and `KnightsPlayerDay` (votes, gold recorded, Watch, bonus per UTC day), migration `20261215120000_knights_v2_daily` (applied by hand). Knobs: `daily/config.ts`; the per-rank gold cap is `dailyGoldCap` in `RANK_RULES` (`ranks.ts`). Days are UTC strings (`days.ts`); logic takes the clock as an argument.
 
-- `castVote` calls `recordVoteDay` after it has locked the player's `NewOrderPlayer` row; that lock serialises one player's votes, so the day row (upsert, then `FOR UPDATE`) needs no lock order of its own. It clamps the vote's gold to what is left of the cap (XP and Watch progress still count) and, on the vote that reaches `watchSize`, advances the streak and pays the bonus as earned gold. The bonus is not cap gold.
+- `castVote` calls `recordVoteDay` only after locking the player's `NewOrderPlayer` row; that lock is what makes the day row safe. The streak bonus is earned gold, not cap gold.
 - Streak and shields are pure (`streak.ts`). A shield is granted lazily per ISO week and spent when the next Watch completes, covering exactly one missed day. `liveStreak` shows what that completion would find.
 - The recap (`getRecap`) is read from the vote ledger for the last play day before today, so it keeps changing as votes settle; dismissal is stored per day on `KnightsPlayer`.
-- `/dev/simulate` has "Shift my day back by one" (`dev/shift-day.ts`, caller only): day rows, their votes and the streak markers move one day.
+- A career reset moves `NewOrderPlayer.startAt`: a streak whose last Watch was completed before it is treated as 0 (shields kept), only votes cast since it count toward the Watch, and the recap ignores earlier votes. The gold cap still counts the whole UTC day.
 
 ## Trials (`src/lib/server/trials`)
 

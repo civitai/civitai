@@ -66,7 +66,7 @@ describe('shiftMyDayBack', () => {
   it('moves the day rows, the votes and the streak markers back one day', async () => {
     await playedToday(1);
 
-    expect(await shiftMyDayBack(db, 1)).toEqual({ ok: true });
+    expect(await shiftMyDayBack(db, 1)).toEqual({ ok: true, days: 1 });
 
     expect(await days(1)).toEqual(['2026-12-14']);
     expect(await voteTimes(1)).toEqual(['2026-12-14 09:30']);
@@ -112,7 +112,7 @@ describe('shiftMyDayBack', () => {
     );
     await pg.exec(`DROP TABLE IF EXISTS "KnightsVote_2026_11"`);
 
-    expect(await shiftMyDayBack(db, 1)).toEqual({ ok: true });
+    expect(await shiftMyDayBack(db, 1)).toEqual({ ok: true, days: 1 });
     expect(await voteTimes(1)).toEqual(['2026-11-30 09:30']);
   });
 
@@ -124,6 +124,20 @@ describe('shiftMyDayBack', () => {
 
     expect(await days(2)).toEqual([TODAY]);
     expect(await voteTimes(2)).toEqual([`${TODAY} 09:30`]);
+  });
+
+  it('moves the time a Watch was completed by exactly one day', async () => {
+    await playedToday(1);
+    await pg.query(
+      `UPDATE "KnightsPlayerDay" SET "watchCompletedAt"='${TODAY} 10:15:00' WHERE "playerId"=1`
+    );
+
+    await shiftMyDayBack(db, 1);
+
+    const row = await pg.query<{ at: string }>(
+      `SELECT to_char("watchCompletedAt",'YYYY-MM-DD HH24:MI') AS at FROM "KnightsPlayerDay" WHERE "playerId"=1`
+    );
+    expect(row.rows[0].at).toBe('2026-12-14 10:15');
   });
 
   it('says so when there is nothing to shift', async () => {

@@ -111,9 +111,9 @@ describe('simulate other voters', () => {
     });
 
     it('shifts the day of the caller only', async () => {
-      shiftMyDayBack.mockResolvedValue({ ok: true });
+      shiftMyDayBack.mockResolvedValue({ ok: true, days: 2 });
 
-      await expect(submitShift()).resolves.toMatchObject({ success: true });
+      await expect(submitShift()).resolves.toMatchObject({ success: true, shifted: 2 });
       expect(shiftMyDayBack).toHaveBeenCalledWith(expect.anything(), 7);
     });
 

@@ -36,7 +36,7 @@
   <span class="muted">Applies the rank-up that level and your recorded accuracy earn.</span>
 </form>
 
-<form method="POST" action="?/shiftDay" use:enhance={submit} class="level">
+<form method="POST" action="?/shiftDay" use:enhance={submit} class="shift">
   <button type="submit" disabled={submitting}>Shift my day back by one</button>
   <span class="muted">
     Moves your recorded days and votes one UTC day earlier, so you can check the next-day recap, streak
@@ -46,8 +46,10 @@
 
 {#if form?.message}
   <p class="notice" role="alert">{form.message}</p>
-{:else if form?.success && form.shifted}
-  <p class="notice" role="status">Your days were moved back by one.</p>
+{:else if form?.success && form.shifted !== undefined}
+  <p class="notice" role="status">
+    Moved {form.shifted} recorded {form.shifted === 1 ? 'day' : 'days'} back by one.
+  </p>
 {:else if form?.success && form.levelSet}
   <p class="notice" role="status">You are now level {form.levelSet}, {form.rank}.</p>
 {:else if form?.success}
@@ -79,7 +81,8 @@
 <p><a href="/play">Back</a></p>
 
 <style>
-  .level {
+  .level,
+  .shift {
     margin: 1rem 0;
   }
   .level input {
