@@ -2,13 +2,17 @@ import { MAX_FINDINGS_PER_REPORT, type AbuseReportInput } from '@civitai/moderat
 import { BANKABLE_CUTOVER } from '~/shared/constants/creator-program.constants';
 import {
   COUNTERPARTY_REVIEW_DETECTOR,
+  DEFAULT_MAX_INTERMEDIARIES,
   findCounterpartyPairs,
+  findIndirectTransfers,
+  MAX_INTERMEDIARIES,
   PAIR_CEILING,
   type CounterpartyPair,
+  type IndirectTransfer,
   type Member,
   type ReviewClickhouse,
 } from './detect';
-import { renderSummary, toFinding, type ReviewOutcome } from './report';
+import { renderSummary, toFinding, toIndirectFinding, type ReviewOutcome } from './report';
 
 export type WarningRecord = {
   warnedAt: string;
@@ -17,14 +21,24 @@ export type WarningRecord = {
   counterparties: Record<string, number>;
 };
 
+/** Amount per indirect path when it was last filed, keyed by `pathKey`. */
+export type IndirectRecord = Record<string, number>;
+
+export const pathKey = (t: IndirectTransfer) => t.path.join('>');
+
 export type ReviewDeps = {
   ch: ReviewClickhouse | null;
   /** The smallest two-way amount to file, or null when ops has not set one. */
   readMinimum: () => Promise<number | null>;
+  readMaxIntermediaries: () => Promise<number>;
   findMembers: (ids: number[]) => Promise<Member[]>;
   warnings: {
     get: (userId: number) => Promise<WarningRecord | null>;
     set: (userId: number, record: WarningRecord) => Promise<void>;
+  };
+  indirect: {
+    get: (userId: number) => Promise<IndirectRecord | null>;
+    set: (userId: number, record: IndirectRecord) => Promise<void>;
   };
   sendWarning: (member: Member) => Promise<{ chatId: number }>;
   sendReport: (report: AbuseReportInput) => Promise<unknown>;
@@ -37,6 +51,7 @@ export type ReviewResult = {
   warned: number;
   repeats: number;
   failed: number;
+  indirect: number;
   skipped?: 'before-cutover' | 'minimum-not-set' | 'clickhouse-unavailable';
 };
 
@@ -44,7 +59,7 @@ const twoWay = (p: CounterpartyPair) => Math.min(p.received, p.sent);
 
 export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewResult> {
   const startedAt = deps.now();
-  const empty = { pairs: 0, warned: 0, repeats: 0, failed: 0 };
+  const empty = { pairs: 0, warned: 0, repeats: 0, failed: 0, indirect: 0 };
 
   // Before the cutover every yellow and green Buzz is bankable, so an exchange gains nothing.
   if (startedAt < BANKABLE_CUTOVER) return { ...empty, skipped: 'before-cutover' };
@@ -138,6 +153,54 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
     repeats++;
   }
 
+  // Filed for a moderator only: no warning message, since more innocent patterns look like this.
+  const maxIntermediaries = Math.min(
+    MAX_INTERMEDIARIES,
+    Math.max(DEFAULT_MAX_INTERMEDIARIES, Math.trunc(await deps.readMaxIntermediaries()) || 0)
+  );
+  const ch = deps.ch;
+  const transfers: IndirectTransfer[] = [];
+  for (let n = DEFAULT_MAX_INTERMEDIARIES; n <= maxIntermediaries; n++) {
+    const found = await findIndirectTransfers(ch, {
+      since: BANKABLE_CUTOVER,
+      min,
+      intermediaries: n,
+    });
+    if (found.length >= PAIR_CEILING)
+      deps.log?.('creator-program-counterparty-review-ceiling', {
+        intermediaries: n,
+        transfers: found.length,
+      });
+    transfers.push(...found);
+  }
+  const transfersByUser = new Map<number, IndirectTransfer[]>();
+  for (const t of transfers)
+    transfersByUser.set(t.userId, [...(transfersByUser.get(t.userId) ?? []), t]);
+  const indirectRecords = new Map<
+    number,
+    { record: IndirectRecord; finding: AbuseReportInput['findings'][number] }
+  >();
+  const indirectMembers = transfersByUser.size
+    ? await deps.findMembers([...transfersByUser.keys()])
+    : [];
+  for (const member of indirectMembers) {
+    const memberTransfers = transfersByUser.get(member.id) ?? [];
+    const record = (await deps.indirect.get(member.id)) ?? {};
+    const grew = memberTransfers.filter((t) => t.amount - (record[pathKey(t)] ?? 0) >= min);
+    if (!grew.length) continue;
+
+    const finding = toIndirectFinding(member.id, memberTransfers, BANKABLE_CUTOVER);
+    findings.push(finding);
+    indirectRecords.set(member.id, {
+      record: {
+        ...record,
+        ...Object.fromEntries(memberTransfers.map((t) => [pathKey(t), t.amount])),
+      },
+      finding,
+    });
+  }
+  const indirect = indirectRecords.size;
+
   findings.sort((a, b) => b.confidence - a.confidence);
   findings.splice(MAX_FINDINGS_PER_REPORT);
 
@@ -152,20 +215,32 @@ export async function runCounterpartyReview(deps: ReviewDeps): Promise<ReviewRes
       warned,
       repeats,
       failed,
+      indirect,
     }),
-    counters: { pairs: pairs.length, members: members.length, warned, repeats, failed },
+    counters: {
+      pairs: pairs.length,
+      members: members.length,
+      warned,
+      repeats,
+      failed,
+      indirect,
+    },
     findings,
   });
   const filed = new Set(findings.map((f) => f.userId));
   for (const [userId, record] of repeatRecords)
     if (filed.has(userId)) await deps.warnings.set(userId, record);
+  // Its own finding, not the member's: a direct finding can survive the cut while this one did not.
+  for (const [userId, { record, finding }] of indirectRecords)
+    if (findings.includes(finding)) await deps.indirect.set(userId, record);
 
   deps.log?.('creator-program-counterparty-review-reported', {
     pairs: pairs.length,
     warned,
     repeats,
     failed,
+    indirect,
   });
 
-  return { pairs: pairs.length, warned, repeats, failed };
+  return { pairs: pairs.length, warned, repeats, failed, indirect };
 }

@@ -10,6 +10,7 @@ import { buzzBankTypesSql } from '~/shared/constants/buzz.constants';
 import {
   COUNTERPARTY_REVIEW_DETECTOR,
   counterpartyPairsSql,
+  indirectTransfersSql,
   PAIR_CEILING,
   type Member,
 } from '~/server/services/creator-program-counterparty-review/detect';
@@ -19,6 +20,7 @@ import {
 } from '~/server/services/creator-program-counterparty-review/report';
 import {
   runCounterpartyReview,
+  type IndirectRecord,
   type ReviewDeps,
   type WarningRecord,
 } from '~/server/services/creator-program-counterparty-review/run';
@@ -28,27 +30,43 @@ const afterCutover = new Date('2026-12-01T10:00:00Z');
 const creator: Member = { id: 11, username: 'creator_one' };
 
 type Row = { userId: number; counterpartyId: number; received: number; sent: number };
+type IndirectRow = { userId: number; path: number[]; amount: number };
 
 /** One review world: a ClickHouse that returns `rows`, a members table, and a warnings store. */
 function world({
   rows = [] as Row[],
+  indirectRows = [] as IndirectRow[],
   members = [creator],
   minimum = MIN as number | null,
+  maxIntermediaries = 2,
   now = afterCutover,
   sendWarning = vi.fn(async () => ({ chatId: 500 })),
   reportFails = () => false,
 } = {}) {
   const store = new Map<number, WarningRecord>();
+  const indirectStore = new Map<number, IndirectRecord>();
   const reports: AbuseReportInput[] = [];
   const logs: { name: string; data: Record<string, unknown> }[] = [];
-  const ch = { $query: vi.fn(async () => rows as never[]) };
+  const ch = {
+    $query: vi.fn(
+      async (sql: string) =>
+        (sql.includes('AS path')
+          ? indirectRows.filter((r) => r.path.length <= maxIntermediaries)
+          : rows) as never[]
+    ),
+  };
   const deps: ReviewDeps = {
     ch,
     readMinimum: async () => minimum,
+    readMaxIntermediaries: async () => maxIntermediaries,
     findMembers: async (ids) => members.filter((m) => ids.includes(m.id)),
     warnings: {
       get: async (id) => store.get(id) ?? null,
       set: async (id, record) => void store.set(id, record),
+    },
+    indirect: {
+      get: async (id) => indirectStore.get(id) ?? null,
+      set: async (id, record) => void indirectStore.set(id, record),
     },
     sendWarning,
     sendReport: async (report) => {
@@ -58,7 +76,17 @@ function world({
     now: () => now,
     log: (name, data) => void logs.push({ name, data }),
   };
-  return { deps, ch, store, reports, logs, sendWarning, setRows: (r: Row[]) => (rows = r) };
+  return {
+    deps,
+    ch,
+    store,
+    indirectStore,
+    reports,
+    logs,
+    sendWarning,
+    setRows: (r: Row[]) => (rows = r),
+    setIndirectRows: (r: IndirectRow[]) => (indirectRows = r),
+  };
 }
 
 const pair = (counterpartyId: number, received: number, sent: number): Row => ({
@@ -106,6 +134,7 @@ describe('runCounterpartyReview', () => {
       warned: 1,
       repeats: 0,
       failed: 0,
+      indirect: 0,
     });
 
     expect(w.sendWarning).toHaveBeenCalledTimes(1);
@@ -135,6 +164,7 @@ describe('runCounterpartyReview', () => {
       warned: 0,
       repeats: 0,
       failed: 0,
+      indirect: 0,
     });
     expect(w.sendWarning).toHaveBeenCalledTimes(1);
     expect(w.reports[1].findings).toEqual([]);
@@ -230,6 +260,135 @@ describe('runCounterpartyReview', () => {
 
     expect(await runCounterpartyReview(w.deps)).toMatchObject({ warned: 1, failed: 0 });
     expect(w.store.get(creator.id)?.chatId).toBe(501);
+  });
+});
+
+describe('runCounterpartyReview, indirect transfers', () => {
+  const loop = (path: number[], amount: number): IndirectRow => ({
+    userId: creator.id,
+    path,
+    amount,
+  });
+
+  it('files Buzz that came back through two other users for a moderator, without a warning', async () => {
+    const w = world({ indirectRows: [loop([22, 33], 3_000)] });
+
+    expect(await runCounterpartyReview(w.deps)).toEqual({
+      pairs: 0,
+      warned: 0,
+      repeats: 0,
+      failed: 0,
+      indirect: 1,
+    });
+
+    expect(w.sendWarning).not.toHaveBeenCalled();
+    expect(w.store.has(creator.id)).toBe(false);
+    const [report] = w.reports;
+    expect(() => abuseReportInput.parse(report)).not.toThrow();
+    expect(report.findings).toEqual([
+      expect.objectContaining({ userId: creator.id, confidence: 0.7, actioned: false }),
+    ]);
+    expect(report.findings[0]).not.toHaveProperty('action');
+    expect(report.findings[0].reason).toContain('through accounts 22 → 33: 3,000 Buzz came back');
+    expect(report.counters).toMatchObject({ indirect: 1 });
+    expect(w.indirectStore.get(creator.id)).toEqual({ '22>33': 3_000 });
+  });
+
+  it('asks for two intermediaries by default, and three only when the setting allows it', async () => {
+    const two = world();
+    await runCounterpartyReview(two.deps);
+    const asked = (w: ReturnType<typeof world>) =>
+      w.ch.$query.mock.calls.map(([sql]) => sql as string).filter((s) => s.includes('AS path'));
+    expect(asked(two)).toEqual([
+      indirectTransfersSql({ since: BANKABLE_CUTOVER, min: MIN, intermediaries: 2 }),
+    ]);
+
+    const three = world({ maxIntermediaries: 3 });
+    await runCounterpartyReview(three.deps);
+    expect(asked(three)).toEqual([
+      indirectTransfersSql({ since: BANKABLE_CUTOVER, min: MIN, intermediaries: 2 }),
+      indirectTransfersSql({ since: BANKABLE_CUTOVER, min: MIN, intermediaries: 3 }),
+    ]);
+
+    // Out-of-range settings are clamped, never a query with no legs or an unbounded join.
+    const high = world({ maxIntermediaries: 9 });
+    await runCounterpartyReview(high.deps);
+    expect(asked(high)).toHaveLength(2);
+    const low = world({ maxIntermediaries: 1 });
+    await runCounterpartyReview(low.deps);
+    expect(asked(low)).toHaveLength(1);
+  });
+
+  it('files an indirect path again only for new paths or new volume of at least the minimum', async () => {
+    const w = world({ indirectRows: [loop([22, 33], 3_000)] });
+    await runCounterpartyReview(w.deps);
+
+    w.setIndirectRows([loop([22, 33], 3_999)]);
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ indirect: 0 });
+    expect(w.reports.at(-1)!.findings).toEqual([]);
+
+    w.setIndirectRows([loop([22, 33], 4_000)]);
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ indirect: 1 });
+
+    w.setIndirectRows([loop([22, 33], 4_000), loop([44, 55], 1_000)]);
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ indirect: 1 });
+    expect(w.indirectStore.get(creator.id)).toEqual({ '22>33': 4_000, '44>55': 1_000 });
+    expect(w.sendWarning).not.toHaveBeenCalled();
+  });
+
+  it('files only current Creator Program members', async () => {
+    const w = world({
+      indirectRows: [loop([22, 33], 3_000), { userId: 99, path: [22, 33], amount: 3_000 }],
+    });
+
+    await runCounterpartyReview(w.deps);
+
+    expect(w.reports[0].findings.map((f) => f.userId)).toEqual([creator.id]);
+  });
+
+  it('keeps an indirect path for the next run when the report carrying it fails', async () => {
+    let failing = true;
+    const w = world({ indirectRows: [loop([22, 33], 3_000)], reportFails: () => failing });
+
+    await expect(runCounterpartyReview(w.deps)).rejects.toThrow('board unavailable');
+    expect(w.indirectStore.has(creator.id)).toBe(false);
+
+    failing = false;
+    expect(await runCounterpartyReview(w.deps)).toMatchObject({ indirect: 1 });
+  });
+});
+
+describe('indirectTransfersSql', () => {
+  const squash = (s: string) => s.replace(/\s+/g, ' ').trim();
+  const sql = squash(
+    indirectTransfersSql({ since: BANKABLE_CUTOVER, min: 1234.9, intermediaries: 2 })
+  );
+
+  // Pinned by clause: a wrong join key or a dropped filter still returns plausible rows.
+  it('chains each leg from the payee of the one before, back to the creator as bankable earnings', () => {
+    expect(sql).toContain('AS e2 ON e2.s2 = e1.p1');
+    expect(sql).toContain('AS r ON r.rc = e1.s1 AND r.rp = e2.p2');
+    expect(sql).toContain('SELECT e1.s1 AS userId, [e1.p1, e2.p2] AS path');
+    expect(sql).toContain('least(e1.amt1, e2.amt2, r.ramt) AS amount');
+  });
+
+  it('holds every leg, the closing one too, to the minimum', () => {
+    expect(sql.match(/WHERE amount >= 1234\b/g)).toHaveLength(3);
+  });
+
+  it('keeps every user on the path distinct, without NOT IN over joined columns', () => {
+    expect(sql).toContain('WHERE e1.p1 != e1.s1 AND e2.p2 != e1.s1 AND e2.p2 != e1.p1 ORDER BY');
+    expect(sql).not.toMatch(/NOT IN/);
+  });
+
+  it('adds a leg per intermediary', () => {
+    const three = squash(
+      indirectTransfersSql({ since: BANKABLE_CUTOVER, min: 1_000, intermediaries: 3 })
+    );
+    expect(three).toContain('AS e3 ON e3.s3 = e2.p2');
+    expect(three).toContain('AS r ON r.rc = e1.s1 AND r.rp = e3.p3');
+    expect(three).toContain('e3.p3 != e1.s1 AND e3.p3 != e1.p1 AND e3.p3 != e2.p2');
+    expect(three).toContain(`LIMIT ${PAIR_CEILING}`);
   });
 });
 

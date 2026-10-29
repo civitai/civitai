@@ -1,6 +1,6 @@
 import { MAX_REASON_LENGTH, type AbuseReportInput } from '@civitai/moderation';
 import { NO_ACTION_TAKEN, plural } from '../abuse-report-prose';
-import type { CounterpartyPair } from './detect';
+import type { CounterpartyPair, IndirectTransfer } from './detect';
 
 type Finding = AbuseReportInput['findings'][number];
 
@@ -96,12 +96,45 @@ export function toFinding(
   return { userId, confidence: outcome.kind === 'repeat' ? 0.95 : 0.9, reason, actioned: false };
 }
 
+/** Below a direct exchange: more innocent patterns look like this, so a moderator decides. */
+export const INDIRECT_CONFIDENCE = 0.7;
+
+export function renderIndirectReason(transfers: IndirectTransfer[], since: Date): string {
+  const paths = transfers
+    .map(
+      (t) => `through accounts ${t.path.join(' → ')}: ${t.amount.toLocaleString()} Buzz came back`
+    )
+    .join('; ');
+  return truncateReason(
+    `Buzz this creator sent came back to them as bankable earnings through other accounts since ${since
+      .toISOString()
+      .slice(
+        0,
+        10
+      )} (${paths}). Every leg is at least the review amount; the smallest leg is shown. No warning message was sent: whether this is abuse is a moderator decision. ${NO_ACTION_TAKEN}`
+  );
+}
+
+export function toIndirectFinding(
+  userId: number,
+  transfers: IndirectTransfer[],
+  since: Date
+): Finding {
+  return {
+    userId,
+    confidence: INDIRECT_CONFIDENCE,
+    reason: renderIndirectReason(transfers, since),
+    actioned: false,
+  };
+}
+
 export function renderSummary(counts: {
   pairs: number;
   members: number;
   warned: number;
   repeats: number;
   failed: number;
+  indirect: number;
 }): string {
   return (
     `${counts.pairs.toLocaleString()} creator-to-user ${plural(
@@ -113,6 +146,7 @@ export function renderSummary(counts: {
       'was',
       'were'
     )} current Creator Program ${plural(counts.members, 'member')}. ` +
-    `${counts.warned} warned for the first time, ${counts.repeats} filed again after a warning, ${counts.failed} could not be messaged.`
+    `${counts.warned} warned for the first time, ${counts.repeats} filed again after a warning, ${counts.failed} could not be messaged. ` +
+    `${counts.indirect} filed for Buzz that came back through other accounts.`
   );
 }
