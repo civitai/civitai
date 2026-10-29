@@ -1444,6 +1444,7 @@ export const addPostImage = async ({
   user,
   externalDetailsUrl,
   assertPostOwnedBy,
+  serverMintedUrl,
   ...props
 }: ImageSchema & {
   user: SessionUser;
@@ -1451,6 +1452,8 @@ export const addPostImage = async ({
   generationWorkflowId?: string;
   /** Shared across a request that adds several images to one post; see `createPostOwnerCheck`. */
   assertPostOwnedBy?: AssertPostOwnedBy;
+  /** `url` is a key the server minted and stored itself, not one from the client. */
+  serverMintedUrl?: boolean;
 }) => {
   const externalData = await parseExternalMetadata(externalDetailsUrl, user.id);
   if (externalData) {
@@ -1552,6 +1555,7 @@ export const addPostImage = async ({
     toolIds: toolId ? [toolId] : undefined,
     techniqueIds: techniqueId ? [techniqueId] : undefined,
     skipIngestion: collectionMeta.judgesApplyBrowsingLevel,
+    clientUrl: serverMintedUrl ? undefined : true,
   });
 
   await createImageResources({ imageId: partialResult.id }).catch(handleLogError);

@@ -3239,6 +3239,7 @@ export const createModelVersionPostFromTraining = async ({
         meta: image.meta,
         url: image.url as string,
         user,
+        serverMintedUrl: true,
       })
     )
   );

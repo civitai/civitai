@@ -71,6 +71,7 @@ import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provena
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
   assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
   imageUrlUnavailableError,
 } from '~/server/services/image-url-ownership';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
@@ -1456,6 +1457,9 @@ export const upsertCollection = async ({
     //   }
     // }
 
+    const newCoverUrl = !imageId && image && image.id == null ? image.url : undefined;
+    if (newCoverUrl) await assertClientKeysIssuedToCaller({ urls: [newCoverUrl], userId });
+
     const updated = await dbWrite.$transaction(async (tx) => {
       // Decided in the transaction: a cover row deleted after this read fails the `connect`
       // rather than turning it into an unchecked create.
@@ -1474,8 +1478,11 @@ export const upsertCollection = async ({
         !isModerator
       )
         throw imageUrlUnavailableError();
-      if (!imageId && image && !existingCover)
+      if (!imageId && image && !existingCover) {
         await assertClientImageUrlsUsable({ urls: [image.url], userId, db: tx });
+        if (image.url !== newCoverUrl)
+          await assertClientKeysIssuedToCaller({ urls: [image.url], userId, db: tx });
+      }
 
       if (tags) {
         // Attempt to run this first, collides with create/connect
