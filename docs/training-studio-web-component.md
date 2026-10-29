@@ -109,6 +109,14 @@ interface TrainingStudioHost {
    *  the affordance. Same URL semantics as `generateUrl`. */
   modelPageUrl?(req: { modelId: number }): string;
 
+  /** Whether that model still counts for this user (`GET /api/training-studio/model-status`): false
+   *  once the owner deleted it, since the stamped modelId outlives the delete. The run page asks
+   *  once per modelId; false drops the link (an unpublished run then offers Publish, which makes a
+   *  fresh draft), while pending or a rejection keeps it. A moderator's delete still counts, so
+   *  Publish can't route around it. Should time out on its own. Optional — omit and the link is
+   *  unchecked. */
+  modelLive?(modelId: number): Promise<boolean>;
+
   /** Open the host's own model picker for the Custom training base (the main app's
    *  resource-select modal). The component passes the run's orchestrator ecosystem so a host
    *  that can map it pre-filters to compatible checkpoints. Resolves the picked model's
@@ -151,6 +159,8 @@ Stays host-side (not orchestrator-backed or not user-token-backed):
 - **Buzz balances** — internal buzz service (`BUZZ_ENDPOINT`), no browser CORS.
 - **Trigger word check** — the main app's `POST /api/training-studio/check-text`; the standalone
   shell's server calls it with the user's session cookie, the embed through `checkTrainingText`.
+- **Model status** — the main app's `GET /api/training-studio/model-status`; the standalone shell's
+  server calls it with the user's session cookie, the embed through `modelLive`.
 
 ## CORS requirement
 
