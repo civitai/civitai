@@ -44,7 +44,9 @@ import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrap
 import {
   ImageMediaHat,
   imageMediaHatClearLeft,
+  useInHatLayer,
 } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
+import { HatLayerHost } from '~/components/Cosmetics/EventDecoration/HatLayer';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
@@ -110,7 +112,7 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
     ...(image ? [{ entityType: 'Image' as const, entityId: image.id }] : []),
   ]);
 
-  return (
+  const card = (
     <TwCosmeticWrapper
       className="w-full"
       cosmetic={cosmeticData}
@@ -139,6 +141,17 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
         </TwCard>
       </>
     </TwCosmeticWrapper>
+  );
+
+  // imageCount > images.length: the lazily fetched tail may bring a hat the first page lacks.
+  const mayWearHat =
+    data.images.some((i) => i.eventDecoration) || (data.imageCount ?? 0) > data.images.length;
+  return mayWearHat ? (
+    <div className="relative w-full">
+      <HatLayerHost>{card}</HatLayerHost>
+    </div>
+  ) : (
+    card
   );
 }
 export const ImagesAsPostsCard = memo(ImagesAsPostsCardNoMemo);
@@ -286,6 +299,7 @@ function ImagesAsPostsCardHeader({
 
 function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
   const features = useFeatureFlags();
+  const inHatLayer = useInHatLayer();
   const postId = data.postId ?? undefined;
   const image = data.images[0];
   const handleRemixClick = (e: React.MouseEvent) => {
@@ -301,7 +315,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
           <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
           <ImageGuard2.BlurToggle
             className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
-            style={imageMediaHatClearLeft(image.eventDecoration)}
+            style={imageMediaHatClearLeft(image.eventDecoration, inHatLayer)}
           />
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
@@ -417,6 +431,7 @@ function PostCarouselSlide({
   postTail?: PostTailDescriptor;
 }) {
   const features = useFeatureFlags();
+  const inHatLayer = useInHatLayer();
   const handleRemixClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -431,7 +446,7 @@ function PostCarouselSlide({
           <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
           <ImageGuard2.BlurToggle
             className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
-            style={imageMediaHatClearLeft(image.eventDecoration)}
+            style={imageMediaHatClearLeft(image.eventDecoration, inHatLayer)}
           />
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">

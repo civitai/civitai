@@ -43,6 +43,10 @@ const hubSources = (over: Partial<ResolvedHubSources> = {}): ResolvedHubSources 
   ...over,
 });
 
+vi.mock('~/server/search-index/retired-indexes', async (importOriginal) =>
+  (await import('~/__tests__/mocks/unretire-feeds-index')).unretireFeedsIndex(importOriginal)
+);
+
 vi.mock('../../../../event-engine-common/feeds', () => ({
   ImagesFeed: class {
     populatedQuery = vi.fn();

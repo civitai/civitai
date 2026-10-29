@@ -45,7 +45,7 @@ import type { ListingMediaSplitDecision } from '~/shared/utils/listing-media-spl
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
 // appsDb/pg stay out of this module's static graph (mirrors the (3b) mapper).
-import { newBlockIdHyphenRunError, sanitizeAppSlug } from '~/server/utils/apps-slug';
+import { newBlockIdError, sanitizeAppSlug } from '~/server/utils/apps-slug';
 // Pure const (no env/Prisma). THE SAME threshold the owner-facing UI uses to call
 // a deploy "stalled" — shared so the mod retrigger gate and the badge can never
 // disagree about whether a build is stuck.
@@ -113,9 +113,18 @@ export type ManifestDiffSummary =
       changed: Array<{ field: string; from: unknown; to: unknown }>;
     };
 
+/** `submitVersion`'s refusal of a version of an existing app the submitter may not ship. */
+export const appOwnedByAnotherUser = (slug: string) =>
+  `app ${slug} is owned by another user; choose a different blockId`;
+
 export type SubmitVersionParams = {
   bundleBuffer: Buffer;
   submittedByUserId: number;
+  /**
+   * The submitter is a moderator: may queue a version of any existing app. Everyone else may
+   * only queue one of an app they own or are an accepted editor of (`resolveAppAccess`).
+   */
+  submitterIsModerator: boolean;
   /**
    * #4059 build provenance — an UNTRUSTED CLIENT CLAIM about the tree the bundle
    * was built from. Shape-validated by `submitVersionSchema` (lowercase 40-hex)
@@ -981,7 +990,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
       import('~/server/utils/app-block-ids'),
       import('~/server/schema/blocks/publish-request.schema'),
     ]);
-  const { bundleBuffer, submittedByUserId, sourceCommit, sourceDirty } = params;
+  const { bundleBuffer, submittedByUserId, submitterIsModerator, sourceCommit, sourceDirty } =
+    params;
 
   if (bundleBuffer.length > MAX_BUNDLE_SIZE_BYTES) {
     throw new Error(`bundle is ${bundleBuffer.length} bytes (max ${MAX_BUNDLE_SIZE_BYTES})`);
@@ -1071,6 +1081,27 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // other-user collision wording avoids leaking the request id (which is
   // useless to a non-owner — only the original submitter or a mod can
   // act on it).
+  // 🔴 OWNER GATE for a version of an app that already exists (`mayShipAppVersion`, in
+  // app-access.service with the other access predicates). Its owner is `AppBlock.app.userId` (the
+  // OauthClient's), the same authority `resolveAppAccess` and the version-commit path use; an
+  // ACCEPTED editor of it may ship a version too, as on that path. Anyone else (a moderator aside)
+  // would otherwise queue a version of someone else's app and block its owner's own submission via
+  // one-pending-per-slug. Checked BEFORE the pending-conflict check, so a non-owner learns nothing
+  // about pending state, and the refusal names no one.
+  //
+  // 🔴 ONE READ: the row gated here is the row the request links to below (`appBlockId`), so the
+  // gate and the linkage cannot disagree (an app approved between two reads would otherwise be
+  // linked without having been gated).
+  const existingApp = await dbRead.appBlock.findFirst({
+    where: { blockId: slug },
+    select: { id: true, appId: true },
+  });
+  if (existingApp && !submitterIsModerator) {
+    const { mayShipAppVersion } = await import('./app-access.service');
+    if (!(await mayShipAppVersion(existingApp.id, submittedByUserId)))
+      throw new Error(appOwnedByAnotherUser(slug));
+  }
+
   const conflicting = await dbRead.appBlockPublishRequest.findFirst({
     where: { slug, status: 'pending' },
     select: { id: true, submittedByUserId: true },
@@ -1126,11 +1157,7 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     );
   }
 
-  // For subsequent versions, link to the existing app row.
-  const existingApp = await dbRead.appBlock.findFirst({
-    where: { blockId: slug },
-    select: { id: true, appId: true },
-  });
+  // For subsequent versions, the request links to the existing app row read (and gated) above.
 
   // (submit-draft pre-check) W13 draft-at-submit — a FIRST-version submit now also
   // mints the on-site store `AppListing` as a pre-approval DRAFT (kind='onsite',
@@ -1164,8 +1191,8 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // treated as TAKEN, exactly like any other foreign listing on the slug.
   let createDraftListing = false;
   if (existingApp == null) {
-    const hyphenRunError = newBlockIdHyphenRunError(slug);
-    if (hyphenRunError) throw new Error(hyphenRunError);
+    const blockIdError = newBlockIdError(slug);
+    if (blockIdError) throw new Error(blockIdError);
 
     const existingSlugListing = await dbRead.appListing.findFirst({
       where: { slug },
@@ -2745,8 +2772,8 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   let repoUrl: string;
 
   if (isFirstVersion) {
-    const hyphenRunError = newBlockIdHyphenRunError(request.slug);
-    if (hyphenRunError) throw new Error(`Cannot approve: ${hyphenRunError}`);
+    const blockIdError = newBlockIdError(request.slug);
+    if (blockIdError) throw new Error(`Cannot approve: ${blockIdError}`);
 
     // (1) Auto-create OauthClient — public client scoped to the per-app
     // subdomain so the existing git-push manifest validator passes the

@@ -1,4 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as EndpointHelpers from '~/server/utils/endpoint-helpers';
+import type * as BrowsingLevelUtils from '~/server/utils/browsing-level';
+import {
+  allBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 
@@ -18,8 +24,13 @@ const populateNotificationDetails = vi.fn(async (..._a: unknown[]) => undefined)
 
 vi.mock('~/server/notifications/client', () => ({ notifications: { queryNotifications } }));
 vi.mock('~/server/notifications/detail-fetchers', () => ({ populateNotificationDetails }));
+const getRequestBrowsingLevel = vi.fn((..._a: unknown[]): number => sfwBrowsingLevelsFlag);
+vi.mock('~/server/utils/browsing-level', async (importOriginal) => ({
+  ...(await importOriginal<typeof BrowsingLevelUtils>()),
+  getRequestBrowsingLevel,
+}));
 vi.mock('~/server/utils/endpoint-helpers', async (importOriginal) => ({
-  ...(await importOriginal<typeof import('~/server/utils/endpoint-helpers')>()),
+  ...(await importOriginal<typeof EndpointHelpers>()),
   // Unwrap the auth wrapper: the session is not what is under test, the ownership check is.
   AuthedEndpoint: (handler: unknown) => handler,
 }));
@@ -68,6 +79,28 @@ const post = (body: unknown) => {
 beforeEach(() => {
   vi.clearAllMocks();
   queryNotifications.mockResolvedValue([OWN]);
+  getRequestBrowsingLevel.mockReturnValue(sfwBrowsingLevelsFlag);
+});
+
+describe('POST /api/notification/getDetails — the reader’s model face', () => {
+  it('asks for the .com face for a reader who sees no mature content', async () => {
+    await post({ id: 1 }).promise;
+
+    expect(populateNotificationDetails).toHaveBeenCalledTimes(1);
+    expect(populateNotificationDetails).toHaveBeenCalledWith(expect.any(Array), {
+      showSfwFace: true,
+    });
+  });
+
+  it('keeps the stored name for a reader who sees mature content', async () => {
+    getRequestBrowsingLevel.mockReturnValue(allBrowsingLevelsFlag);
+    await post({ id: 1 }).promise;
+
+    expect(populateNotificationDetails).toHaveBeenCalledTimes(1);
+    expect(populateNotificationDetails).toHaveBeenCalledWith(expect.any(Array), {
+      showSfwFace: false,
+    });
+  });
 });
 
 describe('POST /api/notification/getDetails', () => {
@@ -90,9 +123,10 @@ describe('POST /api/notification/getDetails', () => {
     // A caller naming their own notification id, with someone else's comment id in the body.
     await post({ id: 1, type: 'new-comment', details: { commentId: 999999, version: 2 } }).promise;
 
-    expect(populateNotificationDetails).toHaveBeenCalledWith([
-      { id: 1, type: 'new-comment', details: { commentId: 500, version: 2 } },
-    ]);
+    expect(populateNotificationDetails).toHaveBeenCalledWith(
+      [{ id: 1, type: 'new-comment', details: { commentId: 500, version: 2 } }],
+      expect.anything()
+    );
   });
 
   it('rejects a body that is not a notification at all', async () => {
@@ -136,9 +170,10 @@ describe('POST /api/notification/getDetails — ids as they arrive on the wire',
     await call.promise;
 
     expect(call.status(), 'a well-formed signal payload must not be refused').toBe(200);
-    expect(populateNotificationDetails).toHaveBeenCalledWith([
-      { id: WIRE_ID, type: 'new-comment', details: { commentId: 731, version: 2 } },
-    ]);
+    expect(populateNotificationDetails).toHaveBeenCalledWith(
+      [{ id: WIRE_ID, type: 'new-comment', details: { commentId: 731, version: 2 } }],
+      expect.anything()
+    );
   });
 
   it('matches a numeric posted id against a string stored id', async () => {
@@ -170,9 +205,10 @@ describe('POST /api/notification/getDetails — ids as they arrive on the wire',
     await call.promise;
 
     expect(call.status()).toBe(200);
-    expect(populateNotificationDetails).toHaveBeenCalledWith([
-      { id: WIRE_ID, type: 'new-comment', details: { commentId: 731, version: 2 } },
-    ]);
+    expect(populateNotificationDetails).toHaveBeenCalledWith(
+      [{ id: WIRE_ID, type: 'new-comment', details: { commentId: 731, version: 2 } }],
+      expect.anything()
+    );
   });
 
   it('reads stored ids with the same grammar as posted ones, not with a looser coercion', async () => {
@@ -187,9 +223,10 @@ describe('POST /api/notification/getDetails — ids as they arrive on the wire',
     await call.promise;
 
     expect(call.status()).toBe(200);
-    expect(populateNotificationDetails).toHaveBeenCalledWith([
-      { id: WIRE_ID, type: 'new-comment', details: { commentId: 731, version: 2 } },
-    ]);
+    expect(populateNotificationDetails).toHaveBeenCalledWith(
+      [{ id: WIRE_ID, type: 'new-comment', details: { commentId: 731, version: 2 } }],
+      expect.anything()
+    );
   });
 
   it.each([

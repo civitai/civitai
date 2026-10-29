@@ -3,6 +3,7 @@ import {
   HOLD_UNKNOWN_REFUSAL,
   LEGAL_HOLD_REFUSAL,
   LEGAL_HOLD_STOPPED,
+  LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE,
   type DeleteHold,
 } from '$lib/legal-hold';
 import { PURGE_UNCONFIRMED_ACTIVITY } from '$lib/mod-activity';
@@ -1553,9 +1554,13 @@ export async function purgeAllContent(input: {
     if (result.status === 403 && result.reason === HOLD_UNKNOWN_REFUSAL)
       return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
     // A hold stopped it part-way, after some of the account was deleted: that is recorded.
-    if (result.status === 409 && result.reason === LEGAL_HOLD_STOPPED) {
+    if (
+      result.status === 409 &&
+      (result.reason === LEGAL_HOLD_STOPPED ||
+        result.reason === LEGAL_HOLD_STOPPED_REFUNDS_INCOMPLETE)
+    ) {
       await logAction('purgeAllContent', input.userId, input.moderatorId);
-      return { ok: false, error: LEGAL_HOLD_STOPPED };
+      return { ok: false, error: result.reason };
     }
     // The wipe runs to completion on the main app whether or not this side is still waiting, so a
     // lost answer is reported as started, never as failed: a failure invites a second purge.
@@ -1726,6 +1731,10 @@ export async function deleteAccount(input: {
   // window the operator reads as a failed deletion.
   const result = await callModEndpoint('user/delete', body, 'Account deletion', 60_000);
   if (!result.ok) {
+    if (result.status === 403 && result.reason === LEGAL_HOLD_REFUSAL)
+      return { ok: false, error: LEGAL_HOLD_REFUSAL };
+    if (result.status === 403 && result.reason === HOLD_UNKNOWN_REFUSAL)
+      return { ok: false, error: HOLD_UNKNOWN_REFUSAL };
     // 🔴 ONE QUESTION: could this request have reached the handler?
     //
     // `deleteUser` commits before an unbounded post-commit step, so a lost response does NOT mean

@@ -19,9 +19,7 @@ export default defineModeratorEndpoint('user.messageAsCivitai', {
     userId,
     message: z.string().trim().min(1).max(MAX_CHAT_MESSAGE_LENGTH),
     idempotencyKey: z.string().min(8).max(128).optional(),
-    context: z
-      .object({ reportId: z.number().int().optional(), appealId: z.number().int().optional() })
-      .optional(),
+    context: z.object({ reportId: z.number().int().optional() }).optional(),
   }),
   async handler(input, ctx) {
     if (!(await hasModeratorGrant(ctx.actor, 'user.message.asCivitai')))

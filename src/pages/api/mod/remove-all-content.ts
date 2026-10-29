@@ -25,8 +25,9 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
       targetUserId: userId,
     });
   let incomplete: string[];
+  let keptModelIds: number[];
   try {
-    ({ incomplete } = await removeAllContent({
+    ({ incomplete, keptModelIds } = await removeAllContent({
       id: userId,
       claimedModeratorId: moderatorId ?? null,
     }));
@@ -35,6 +36,8 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
     // Part of the account was deleted, so it is recorded like a wipe that finished.
     const stopped = e instanceof LegalHoldStoppedError;
     if (stopped) track();
+    if (stopped && e.incomplete.length)
+      return res.status(409).json({ message: legalHoldMessage(e), incomplete: e.incomplete });
     return handleEndpointError(
       res,
       new TRPCError({ code: stopped ? 'CONFLICT' : 'FORBIDDEN', message: legalHoldMessage(e) })
@@ -45,5 +48,6 @@ export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse)
   return res.status(200).json({
     userId,
     incomplete,
+    keptModelIds,
   });
 });

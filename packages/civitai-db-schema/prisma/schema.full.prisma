@@ -434,6 +434,8 @@ model User {
   eligibilityChangedAt    DateTime?
   // Payment provider related
   customerId              String?                @unique // Stripe
+  // Legacy Stripe subscription id; the account scrub clears it.
+  subscriptionId          String?
   paddleCustomerId        String?                @unique
 
   profile              UserProfile?
@@ -671,6 +673,9 @@ model User {
   gameFrameGames          GameFrameGame[]
 
   @@index([deletedAt])
+  /// Partial in the database (WHERE "bannedAt" IS NOT NULL), as it exists in prod; Prisma cannot
+  /// express the predicate.
+  @@index([bannedAt], map: "User_banned")
 }
 
 model CustomerSubscription {
@@ -1140,6 +1145,22 @@ model Model {
 
   @@index([name])
   @@index([status, nsfw])
+}
+
+/// Every owner a model has had, including its first. Read by the legal hold so a transfer cannot
+/// move data out of it. Append-only (a trigger refuses UPDATE and DELETE); no foreign keys, so rows
+/// outlive the model and user.
+model ModelOwnership {
+  id        Int      @id @default(autoincrement())
+  modelId   Int
+  userId    Int
+  /// 'create' | 'transfer' | 'account-delete' | 'restore' | 'baseline' (a CHECK in SQL)
+  reason    String
+  actorId   Int?
+  createdAt DateTime @default(now())
+
+  @@index([modelId])
+  @@index([userId])
 }
 
 /// A model's licensing permissions as they stood from `effectiveAt` until its next row, so a merge can
@@ -2208,6 +2229,7 @@ model Image {
   crucibleEntries        CrucibleEntry[]
   storylineCovers        Storyline[]            @relation("StorylineCoverImage")
   storylineHeroes        Storyline[]            @relation("StorylineHeroImage")
+  storylineCoverUploads  StorylineCoverUpload[]
   caption                ImageCaption?
 
   @@index([featuredAt])
@@ -2881,6 +2903,7 @@ model ApiKey {
 
   @@index([clientId])
   @@index([workerDeviceId])
+  @@index([userId])
 }
 
 model OauthClient {
@@ -4944,6 +4967,8 @@ model Comment {
   locked       Boolean? @default(false)
   hidden       Boolean? @default(false)
   pinnedAt     DateTime?
+  /// Kept hidden for a hold when its author deleted it; a ToS restore leaves it hidden.
+  removedByAuthor Boolean @default(false)
 
   comments  Comment[]         @relation("ParentComments")
   reactions CommentReaction[]
@@ -6720,6 +6745,25 @@ model CsamReport {
   sendClaimId      String?        @db.Uuid
   sendClaimedAt    DateTime?
   // modelVersionIds  Int[]     @default([])
+}
+
+enum CsamQueueSetAsideOutcome {
+  AfterReport
+  Dismissed
+}
+
+/// An image a moderator took out of the CSAM review queue without changing the image. Whether the row
+/// still counts is decided when the queue is read; a changed flag or a new report deletes it.
+model CsamQueueSetAside {
+  imageId      Int                      @id
+  userId       Int
+  outcome      CsamQueueSetAsideOutcome
+  /// The report an `AfterReport` row follows. Nothing writes `AfterReport` rows yet.
+  csamReportId Int?
+  moderatorId  Int
+  createdAt    DateTime                 @default(now())
+
+  @@index([userId])
 }
 
 /// Written by a trigger on `CsamReport`: one row per change to a sent report and per deleted report.
@@ -10344,6 +10388,7 @@ model Storyline {
   pendingChapters StorylinePendingChapter[]
   collaborators StorylineCollaborator[]
   reports       StorylineReport[]
+  coverUploads  StorylineCoverUpload[]
   /// The storyline's own discussion (commentsv2 entity type `storyline`), separate from chapter 1's post thread.
   thread        Thread?
 
@@ -10514,6 +10559,19 @@ model StorylineEarlyAccessSignup {
   createdAt   DateTime @default(now())
 
   @@index([createdAt])
+}
+
+/// An image uploaded through a storyline's Manage as its card cover or banner. A no-chapter cover
+/// must be listed here as uploaded for its storyline.
+model StorylineCoverUpload {
+  storylineId Int
+  storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
+  imageId     Int
+  image       Image     @relation(fields: [imageId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+
+  @@id([storylineId, imageId])
+  @@index([imageId])
 }
 
 model StorylineReport {

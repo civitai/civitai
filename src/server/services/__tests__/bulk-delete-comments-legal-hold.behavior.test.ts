@@ -1,4 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
+import { createRequire } from 'node:module';
+import { pathToFileURL } from 'node:url';
+import { Worker } from 'node:worker_threads';
 import { Prisma } from '@prisma/client';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -12,7 +15,8 @@ import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
-const { holder, metrics, notify, reward } = vi.hoisted(() => ({
+const { holder, metrics, notify, reward, pointsRemoved } = vi.hoisted(() => ({
+  pointsRemoved: vi.fn(async (_comments: { userId: number; threadId: number }[]) => undefined),
   holder: { db: null as unknown as PGlite },
   metrics: {
     model: { queueUpdate: vi.fn<(id: unknown) => Promise<undefined>>() },
@@ -36,6 +40,10 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   createNotification: notify,
 }));
+vi.mock('~/server/events/points/hooks', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  onCommentsRemoved: pointsRemoved,
+}));
 vi.mock('~/server/rewards', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   reportAcceptedReward: { apply: reward },
@@ -44,9 +52,17 @@ vi.mock('~/server/rewards', async (importOriginal) => ({
 import {
   bulkClearCommentTosViolation,
   bulkDeleteComments,
+  deleteCommentById,
 } from '~/server/services/comment.service';
-import { bulkClearCommentV2TosViolation } from '~/server/services/commentsv2.service';
-import { isLegalHoldAbort } from '~/server/services/legal-hold.service';
+import {
+  bulkClearCommentV2TosViolation,
+  deleteComment,
+} from '~/server/services/commentsv2.service';
+import {
+  isLegalHoldAbort,
+  logHoldRetained,
+  OWNER_CONTENT_KEPT,
+} from '~/server/services/legal-hold.service';
 
 const CLEAN = 1;
 const HELD = 2; // named on a pending report
@@ -55,16 +71,14 @@ const MARKED = 3; // held by the marker view
 const ids = (...authors: number[]) => authors.flatMap((a) => [a * 10 + 1, a * 10 + 2]);
 
 /** Runs just before the first statement whose text includes `on`. */
-let hook: { on: string; run: () => Promise<unknown> } | null = null;
+let hook: { on: string; run: (sql: Prisma.Sql) => Promise<unknown> } | null = null;
 
 const asSql = (first: TemplateStringsArray | Prisma.Sql, values: unknown[]) =>
   Array.isArray(first)
     ? Prisma.sql(first as TemplateStringsArray, ...(values as never[]))
     : (first as Prisma.Sql);
 
-beforeAll(async () => {
-  holder.db = new PGlite();
-  await holder.db.exec(`
+const SCHEMA = `
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
       details jsonb NOT NULL DEFAULT '{}', images jsonb NOT NULL DEFAULT '[]'
@@ -76,15 +90,18 @@ beforeAll(async () => {
     CREATE TABLE "Comment" (
       id int PRIMARY KEY, "userId" int NOT NULL, "modelId" int NOT NULL, content text NOT NULL,
       "parentId" int REFERENCES "Comment"(id) ON DELETE CASCADE,
-      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now()
+      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now(),
+      "removedByAuthor" boolean NOT NULL DEFAULT false
     );
     CREATE TABLE "CommentV2" (
       id int PRIMARY KEY, "userId" int NOT NULL, "threadId" int NOT NULL, content text NOT NULL,
-      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now()
+      "tosViolation" boolean NOT NULL DEFAULT false, "updatedAt" timestamp(3) NOT NULL DEFAULT now(),
+      metadata jsonb
     );
     -- A comment's reply thread; deleting the comment only unlinks it, as in production.
     CREATE TABLE "Thread" (
-      id int PRIMARY KEY, "commentId" int UNIQUE REFERENCES "CommentV2"(id) ON DELETE SET NULL
+      id int PRIMARY KEY, "commentId" int UNIQUE REFERENCES "CommentV2"(id) ON DELETE SET NULL,
+      "parentThreadId" int, "rootThreadId" int
     );
     CREATE TABLE "Model" (id int PRIMARY KEY, "userId" int NOT NULL);
     CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Dismissed');
@@ -92,7 +109,11 @@ beforeAll(async () => {
     CREATE TABLE "Report" (id int PRIMARY KEY, status "ReportStatus" NOT NULL, reason "ReportReason" NOT NULL);
     CREATE TABLE "CommentReport" ("commentId" int NOT NULL, "reportId" int NOT NULL);
     CREATE TABLE "CommentV2Report" ("commentV2Id" int NOT NULL, "reportId" int NOT NULL);
-  `);
+`;
+
+beforeAll(async () => {
+  holder.db = new PGlite();
+  await holder.db.exec(SCHEMA);
 });
 
 beforeEach(async () => {
@@ -119,7 +140,7 @@ beforeEach(async () => {
     if (hook && sql.text.includes(hook.on)) {
       const { run } = hook;
       hook = null;
-      await run();
+      await run(sql);
     }
     return (await holder.db.query(sql.text, sql.values)).rows;
   };
@@ -188,6 +209,90 @@ async function state(table: 'Comment' | 'CommentV2') {
     `SELECT id, "tosViolation" FROM "${table}" ORDER BY id`
   );
   return Object.fromEntries(rows.map((r) => [r.id, r.tosViolation ? 'hidden' : 'public']));
+}
+
+/**
+ * The most times one statement ran a per-account hold check that cannot be hashed (the
+ * blocked-image leg, aliased `bi`) when the first DELETE on `table` ran. The EXPLAIN is rolled
+ * back, so the delete itself still runs after it.
+ */
+async function mostHoldChecksPerStatement(table: 'Comment' | 'CommentV2', commentIds: number[]) {
+  let loops = -1;
+  hook = {
+    on: `DELETE FROM "${table}"`,
+    run: async (sql) => {
+      await holder.db.query('SAVEPOINT explain');
+      const { rows } = await holder.db.query<{ 'QUERY PLAN': { Plan: PlanNode }[] }>(
+        `EXPLAIN (ANALYZE, FORMAT JSON) ${sql.text}`,
+        sql.values
+      );
+      await holder.db.query('ROLLBACK TO SAVEPOINT explain');
+      loops = maxLoops(rows[0]['QUERY PLAN'][0].Plan, /^bi(_\d+)?$/);
+    },
+  };
+  await bulkDeleteComments(
+    table === 'Comment'
+      ? { commentIds, commentV2Ids: [] }
+      : { commentIds: [], commentV2Ids: commentIds }
+  );
+  return loops;
+}
+
+type PlanNode = { Alias?: string; 'Actual Loops'?: number; Plans?: PlanNode[] };
+const maxLoops = (node: PlanNode, alias: RegExp): number =>
+  Math.max(
+    node.Alias && alias.test(node.Alias) ? node['Actual Loops'] ?? 0 : 0,
+    ...(node.Plans ?? []).map((child) => maxLoops(child, alias))
+  );
+
+/**
+ * Runs `sql` on a copy of the stand-in in a worker, so a statement that never ends fails the test
+ * rather than hanging it: PGlite ignores statement_timeout, and blocks the thread it runs on.
+ */
+async function runBounded(sql: Prisma.Sql, ms: number) {
+  const seed = [SCHEMA];
+  for (const table of ['CsamReport', 'Image', 'CommentV2', 'Thread', 'Comment', 'Model']) {
+    const { rows } = await holder.db.query(`SELECT * FROM "${table}"`);
+    if (rows.length)
+      seed.push(
+        `INSERT INTO "${table}" SELECT * FROM json_populate_recordset(NULL::"${table}", '${JSON.stringify(
+          rows
+        ).replace(/'/g, "''")}')`
+      );
+  }
+  const worker = new Worker(
+    `const { parentPort, workerData } = require('node:worker_threads');
+    (async () => {
+      const { PGlite } = await import(workerData.pglite);
+      const db = new PGlite();
+      await db.exec(workerData.seed);
+      const { rows } = await db.query(workerData.text, workerData.values);
+      parentPort.postMessage({ deleted: rows.length });
+    })().catch((e) => parentPort.postMessage({ error: e.message }));`,
+    {
+      eval: true,
+      workerData: {
+        pglite: pathToFileURL(createRequire(import.meta.url).resolve('@electric-sql/pglite')).href,
+        seed: seed.join(';\n'),
+        text: sql.text,
+        values: sql.values,
+      },
+    }
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    return await Promise.race([
+      new Promise<{ deleted?: number; error?: string }>((resolve) =>
+        worker.once('message', resolve)
+      ),
+      new Promise<{ timedOutAfterMs: number }>((resolve) => {
+        timer = setTimeout(() => resolve({ timedOutAfterMs: ms }), ms);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+    await worker.terminate();
+  }
 }
 
 const retainedLogs = () =>
@@ -350,6 +455,168 @@ describe('a legacy comment with replies', () => {
     });
     expect(await state('Comment')).not.toHaveProperty('51');
   });
+
+  it('checks each author below it once, however many replies they wrote', async () => {
+    await holder.db.exec(`
+      DELETE FROM "Comment" WHERE id = 41;
+      INSERT INTO "Comment" (id, "userId", "modelId", content, "parentId")
+        SELECT 1000 + g, 4 + g % 3, 100, 'zzfixture', CASE WHEN g = 0 THEN 11 ELSE 1000 + (g - 1) / 3 END
+        FROM generate_series(0, 29) g;
+    `);
+    expect(await mostHoldChecksPerStatement('Comment', [11])).toBe(3);
+  });
+});
+
+describe('a member deleting their own legacy comment', () => {
+  beforeEach(async () => {
+    vi.mocked(dbMock.dbWrite.comment.findUnique).mockResolvedValue({
+      modelId: 100,
+      model: { userId: CLEAN + 50 },
+    } as never);
+    // What the delete was before it learned about holds: a plain row delete, cascading its replies.
+    vi.mocked(dbMock.dbWrite.comment.delete).mockImplementation(
+      (async (args: { where: { id: number } }) =>
+        (await holder.db.query(`DELETE FROM "Comment" WHERE id = $1 RETURNING *`, [args.where.id]))
+          .rows[0]) as never
+    );
+    await holder.db.exec(`
+      INSERT INTO "Comment" (id, "userId", "modelId", content, "parentId") VALUES
+        (41, ${HELD}, 100, 'zzfixture', 11);
+    `);
+  });
+
+  it('is kept, hidden, with the held reply under it', async () => {
+    await expect(deleteCommentById({ id: 11 })).resolves.toEqual({ id: 11 });
+    expect(await state('Comment')).toMatchObject({ 11: 'hidden', 41: 'public' });
+  });
+
+  it('is kept, hidden, when its author is held', async () => {
+    await expect(deleteCommentById({ id: 21 })).resolves.toEqual({ id: 21 });
+    expect(await state('Comment')).toMatchObject({ 21: 'hidden' });
+  });
+
+  it('goes when nothing under it is held (control)', async () => {
+    await expect(deleteCommentById({ id: 12 })).resolves.toEqual({ id: 12 });
+    expect(await state('Comment')).not.toHaveProperty('12');
+  });
+
+  it('is not found when it does not exist', async () => {
+    await expect(deleteCommentById({ id: 999 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+  });
+
+  // Once the held reply goes, nothing holds the comment any more: only its author's delete keeps it
+  // down.
+  describe("and a moderator's ToS restore after the hold no longer covers it", () => {
+    const liftHold = () => holder.db.exec(`DELETE FROM "Comment" WHERE id = 41`);
+
+    it('leaves the comment its author deleted hidden', async () => {
+      await deleteCommentById({ id: 11, byAuthor: true });
+      await liftHold();
+      await expect(bulkClearCommentTosViolation({ ids: [11] })).resolves.toMatchObject({
+        count: 0,
+      });
+      expect(await state('Comment')).toMatchObject({ 11: 'hidden' });
+    });
+
+    it('restores one a moderator deleted (control)', async () => {
+      await deleteCommentById({ id: 11 });
+      await liftHold();
+      await expect(bulkClearCommentTosViolation({ ids: [11] })).resolves.toMatchObject({
+        count: 1,
+      });
+      expect(await state('Comment')).toMatchObject({ 11: 'public' });
+    });
+  });
+});
+
+describe('a member deleting their own CommentV2', () => {
+  beforeEach(() => {
+    vi.mocked(dbMock.dbWrite.commentV2.findUnique).mockImplementation(
+      (async (args: { where: { id: number } }) =>
+        (await holder.db.query(`SELECT * FROM "CommentV2" WHERE id = $1`, [args.where.id]))
+          .rows[0]) as never
+    );
+  });
+
+  // The author sees the same either way: the comment gone from every read they get (the reads
+  // filter ToS-hidden comments for non-moderators), the same row back, and its points taken back.
+  it.each([
+    ['is deleted', 11, CLEAN, 'gone'],
+    ['is kept, hidden, when its author is held', 21, HELD, 'hidden'],
+  ])('%s, and takes its points back as a delete does', async (_, id, author, after) => {
+    await expect(deleteComment({ id })).resolves.toMatchObject({ id, userId: author });
+    expect((await state('CommentV2'))[id] ?? 'gone').toBe(after);
+    expect(pointsRemoved).toHaveBeenCalledTimes(1);
+    expect(pointsRemoved).toHaveBeenCalledWith([
+      expect.objectContaining({ userId: author, threadId: author * 100 }),
+    ]);
+  });
+
+  it('marks a comment it keeps as removed by its author, which a moderator bulk delete does not', async () => {
+    await deleteComment({ id: 21, byAuthor: true });
+    await bulkDeleteComments({ commentIds: [], commentV2Ids: [22] });
+    const { rows } = await holder.db.query<{ id: number; metadata: unknown }>(
+      `SELECT id, metadata FROM "CommentV2" WHERE id IN (21, 22) ORDER BY id`
+    );
+    expect(rows).toEqual([
+      { id: 21, metadata: { removedByAuthor: true } },
+      { id: 22, metadata: null },
+    ]);
+  });
+
+  it("does not mark a comment it keeps on a delete that is not its author's", async () => {
+    await deleteComment({ id: 21 });
+    const { rows } = await holder.db.query<{ metadata: unknown }>(
+      `SELECT metadata FROM "CommentV2" WHERE id = 21`
+    );
+    expect(await state('CommentV2')).toMatchObject({ 21: 'hidden' });
+    expect(rows).toEqual([{ metadata: null }]);
+  });
+
+  it('keeps a comment whose author only the hold marker covers', async () => {
+    await createMarker();
+    await deleteComment({ id: 31 });
+    expect(await state('CommentV2')).toMatchObject({ 31: 'hidden' });
+  });
+
+  it('refuses, deleting nothing, when the view goes after the read', async () => {
+    await createMarker();
+    hook = { on: 'DELETE FROM', run: () => holder.db.query(`DROP VIEW "EvidenceHeldUser"`) };
+    await expect(deleteComment({ id: 11 })).rejects.toThrow(OWNER_CONTENT_KEPT);
+    expect(await state('CommentV2')).toMatchObject({ 11: 'public' });
+  });
+
+  it('is kept, hidden, while a held author replied under it', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "commentId") VALUES (500, 11);
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (51, ${HELD}, 500, 'zzfixture');
+    `);
+    await deleteComment({ id: 11 });
+    expect(await state('CommentV2')).toMatchObject({ 11: 'hidden', 51: 'public' });
+  });
+
+  // Once the held reply goes, only its author's delete keeps the comment down.
+  it.each([
+    ['leaves the one its author deleted hidden', true, 0, 'hidden'],
+    ['restores one a moderator deleted (control)', false, 1, 'public'],
+  ])(
+    'and a ToS restore after the hold no longer covers it %s',
+    async (_, byAuthor, count, after) => {
+      await holder.db.exec(`
+        INSERT INTO "Thread" (id, "commentId") VALUES (500, 11);
+        INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (51, ${HELD}, 500, 'zzfixture');
+      `);
+      await deleteComment({ id: 11, byAuthor });
+      await holder.db.exec(`DELETE FROM "CommentV2" WHERE id = 51`);
+      await expect(bulkClearCommentV2TosViolation({ ids: [11] })).resolves.toMatchObject({ count });
+      expect(await state('CommentV2')).toMatchObject({ 11: after });
+    }
+  );
+
+  it('is not found when it does not exist', async () => {
+    await expect(deleteComment({ id: 999 })).resolves.toBeNull();
+    expect(pointsRemoved).not.toHaveBeenCalled();
+  });
 });
 
 describe('a CommentV2 with replies', () => {
@@ -413,6 +680,115 @@ describe('a CommentV2 with replies', () => {
     });
     expect(await state('CommentV2')).toMatchObject({ 72: 'public' });
     expect(await state('CommentV2')).not.toHaveProperty('11');
+  });
+
+  it('checks each author below it once, however many replies they wrote', async () => {
+    // 30 replies by three authors, each in the reply thread of the one before.
+    await holder.db.exec(`
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content)
+        SELECT 1000 + g, 4 + g % 3, CASE WHEN g = 0 THEN 900 ELSE 2000 + g - 1 END, 'zzfixture'
+        FROM generate_series(0, 29) g;
+      INSERT INTO "Thread" (id, "commentId") SELECT 2000 + g, 1000 + g FROM generate_series(0, 29) g;
+    `);
+    expect(await mostHoldChecksPerStatement('CommentV2', [11])).toBe(3);
+  });
+
+  it.each([
+    ['keeps it for a held reply in the loop', HELD, 0],
+    ['deletes it when no reply in the loop is held', CLEAN, 1],
+  ])('ends on a reply chain that loops back on itself, and %s', async (_, author, deleted) => {
+    // 11 sits in thread 100, so thread 100 hanging off reply 72 closes a loop: 11 → 900 → 72 → 100.
+    await holder.db.exec(`
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES
+        (72, ${CLEAN}, 900, 'zzfixture'), (76, ${author}, 100, 'zzfixture');
+      INSERT INTO "Thread" (id, "commentId") VALUES (100, 72);
+    `);
+    let outcome: unknown;
+    hook = {
+      on: 'DELETE FROM "CommentV2"',
+      run: async (sql) => {
+        outcome = await runBounded(sql, 20_000);
+        throw new Error('ran in the worker');
+      },
+    };
+
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11] })).rejects.toThrow(
+      'ran in the worker'
+    );
+    expect(outcome).toEqual({ deleted });
+  });
+
+  it('goes when the held reply is in a thread already unlinked from it', async () => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "commentId") VALUES (902, NULL);
+      INSERT INTO "CommentV2" (id, "userId", "threadId", content) VALUES (77, ${HELD}, 902, 'zzfixture');
+    `);
+
+    await expect(bulkDeleteComments({ commentIds: [], commentV2Ids: [11] })).resolves.toEqual({
+      commentDeleted: 0,
+      commentV2Deleted: 1,
+      retainedHidden: 0,
+    });
+  });
+});
+
+describe('logging the authors whose rows were kept', () => {
+  const loggedLegs = () =>
+    Object.fromEntries(
+      vi
+        .mocked(loggingMock.logToAxiom)
+        .mock.calls.map(
+          ([entry]) => (entry as { details?: { userId?: number; legs?: unknown } }).details
+        )
+        .filter((d) => d?.userId !== undefined)
+        .map((d) => [d!.userId, d!.legs])
+    );
+
+  it('reads every author’s holds in one statement', async () => {
+    await logHoldRetained('test', [CLEAN, HELD, MARKED, CLEAN, HELD, 4, 5, 6]);
+
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(loggedLegs()).toEqual({
+      [CLEAN]: [],
+      [HELD]: ['report'],
+      [MARKED]: [],
+      4: [],
+      5: [],
+      6: [],
+    });
+  });
+
+  it('adds one statement for the marker, whatever the number of authors', async () => {
+    await createMarker();
+
+    await logHoldRetained('test', [CLEAN, HELD, MARKED, 4, 5, 6]);
+
+    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
+    expect(loggedLegs()).toMatchObject({
+      [CLEAN]: [],
+      [HELD]: ['report'],
+      [MARKED]: ['hold-marker'],
+    });
+  });
+
+  it('logs at most 200 authors, and counts the rest', async () => {
+    await logHoldRetained(
+      'test',
+      Array.from({ length: 205 }, (_, i) => 1000 + i)
+    );
+
+    expect(Object.keys(loggedLegs())).toHaveLength(200);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ message: 'test: rows retained for 5 more authors' })
+    );
+  });
+
+  it('logs every author as held when the marker table stands without its view', async () => {
+    await createMarker(false);
+
+    await logHoldRetained('test', [CLEAN, HELD]);
+
+    expect(loggedLegs()).toEqual({ [CLEAN]: ['hold-marker'], [HELD]: ['report', 'hold-marker'] });
   });
 });
 

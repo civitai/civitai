@@ -1,5 +1,4 @@
 import { negate } from 'lodash-es';
-import { v4 as uuidv4 } from 'uuid';
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 
@@ -178,7 +177,7 @@ export const useS3UploadStore = create<StoreProps>()(
 
       registerCatchNavigation();
       return new Promise((resolve) => {
-        let uuid = uuidv4();
+        let uuid = crypto.randomUUID();
         const waiter: GroupWaiter = {
           grant: () => {
             if (!get().items.some((x) => x.uuid === uuid)) return resolve(null);
@@ -328,7 +327,7 @@ export const useS3UploadStore = create<StoreProps>()(
           // The server sizes chunks against the file so the part count stays bounded;
           // slicing by anything else would send parts that don't match what it signed.
           const chunkSize = data.chunkSize ?? FILE_CHUNK_SIZE;
-          const uuid = uuidv4();
+          const uuid = crypto.randomUUID();
 
           // let currentXhr: XMLHttpRequest;
           // const abort = () => {
@@ -418,6 +417,7 @@ export const useS3UploadStore = create<StoreProps>()(
                 type,
                 uploadId,
                 backend,
+                fileSize: size,
                 ...(failure ? { failure } : {}),
               }),
             });

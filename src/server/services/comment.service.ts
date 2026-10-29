@@ -1,8 +1,8 @@
+import { heldLegacyReplyBelowSql } from '~/server/services/comment-thread-hold';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
 import { isEqual, omit } from 'lodash-es';
-import { v4 as uuid } from 'uuid';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
 import { createNotification } from '~/server/services/notification.service';
@@ -436,21 +436,29 @@ export const togglePinComment = async ({
   await preventReplicationLag('commentModel', comment.modelId);
 };
 
-export const deleteCommentById = async ({ id }: GetByIdInput) => {
+export const deleteCommentById = async ({
+  id,
+  byAuthor = false,
+}: GetByIdInput & { byAuthor?: boolean }) => {
   const { modelId, model } =
     (await dbWrite.comment.findUnique({
       where: { id },
       select: { modelId: true, model: { select: { userId: true } } },
     })) ?? {};
 
-  const deleted = await dbWrite.comment.delete({ where: { id } });
-  if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
+  // Its replies go with it, so one kept for a held reply below it is hidden instead, as in the
+  // moderator bulk delete.
+  const markerView = await holdMarkerViewExists();
+  const { deleted, retained } = await dbWrite.$transaction((tx) =>
+    deleteLegacyCommentsUnlessHeld(tx, [id], markerView, { byAuthor })
+  );
+  if (!deleted.length && !retained.length) throw throwNotFoundError(`No comment with id ${id}`);
   await preventReplicationLag('commentModel', modelId);
 
   if (model?.userId) await userMetrics.queueUpdate(model.userId);
   if (modelId) await modelMetrics.queueUpdate(modelId);
 
-  return deleted;
+  return { id };
 };
 
 export const updateCommentById = async ({
@@ -496,6 +504,14 @@ export const updateCommentReportStatusByReason = ({
   `;
 };
 
+/**
+ * Whether a legacy comment is already hidden for ToS: one its author deleted may be kept that way for
+ * a hold, and its author must not hear about a comment they removed.
+ */
+export const isLegacyCommentHidden = async (id: number) =>
+  !!(await dbWrite.comment.findUnique({ where: { id }, select: { tosViolation: true } }))
+    ?.tosViolation;
+
 export async function bulkSetCommentTosViolation({
   ids,
   actor,
@@ -516,6 +532,7 @@ export async function bulkSetCommentTosViolation({
   let count = 0;
 
   for (const id of ids) {
+    const wasHidden = await isLegacyCommentHidden(id);
     const comment = await updateCommentById({ id, data: { tosViolation: true } }).catch(() => null);
     if (!comment) continue;
     count += 1;
@@ -534,11 +551,12 @@ export async function bulkSetCommentTosViolation({
       )
     );
 
+    if (wasHidden) continue;
     await createNotification({
       userId: comment.user.id,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:comment:${uuid()}`,
+      key: `tos-violation:comment:${crypto.randomUUID()}`,
       details: { modelName: comment.model?.name ?? '', entity: 'comment' },
     })
       .then(() => {
@@ -590,30 +608,26 @@ export async function bulkDeleteComments({
   };
 }
 
-async function deleteLegacyCommentsUnlessHeld(
+export async function deleteLegacyCommentsUnlessHeld(
   tx: Prisma.TransactionClient,
   ids: number[],
-  markerView: boolean
+  markerView: boolean,
+  { byAuthor = false }: { byAuthor?: boolean } = {}
 ) {
   if (ids.length === 0) return { deleted: [], retained: [] };
   // A reply goes with its parent (the foreign key cascades), so a comment is also kept while any
-  // reply under it, at any depth, is held.
+  // reply under it, at any depth, is held. Checked once per author: its cost grows with the number
+  // of holding reports.
   const deleted = await tx.$queryRaw<{ modelId: number }[]>`
     DELETE FROM "Comment" c
     WHERE c.id = ANY(${ids}::int[])
       AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
-      AND NOT EXISTS (
-        WITH RECURSIVE below AS (
-          SELECT r.id, r."userId" FROM "Comment" r WHERE r."parentId" = c.id
-          UNION
-          SELECT r.id, r."userId" FROM "Comment" r JOIN below b ON r."parentId" = b.id
-        )
-        SELECT 1 FROM below WHERE ${accountHoldSql(Prisma.sql`below."userId"`, markerView)}
-      )
+      AND NOT ${heldLegacyReplyBelowSql(Prisma.raw('c.id'), markerView)}
     RETURNING c."modelId"
   `;
   const retained = await tx.$queryRaw<{ userId: number }[]>`
     UPDATE "Comment" SET "tosViolation" = true, "updatedAt" = now()
+      ${byAuthor ? Prisma.sql`, "removedByAuthor" = true` : Prisma.empty}
     WHERE id = ANY(${ids}::int[])
     RETURNING "userId"
   `;

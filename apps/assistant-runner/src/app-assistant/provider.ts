@@ -1,7 +1,11 @@
 import {
+  CREATE_APP,
   NO_APP_REFUSAL,
+  REPORT_READY,
   SET_CHECKLIST,
   START_PREVIEW,
+  SUBMIT_FOR_REVIEW,
+  USE_OPEN_APP,
   appAssistantSubagents,
   assistantSystemPrompt,
   buildAssistantInstructions,
@@ -85,9 +89,12 @@ const REPORTED_OUTPUT_CHARS = 200;
  * preview's are the runner's own (`RunnerPreview`), which drive the tunnel themselves.
  */
 const RUNNER_PAGE_TOOLS = [
-  'create_app',
-  'set_checklist',
-  'report_ready',
+  CREATE_APP,
+  USE_OPEN_APP,
+  SET_CHECKLIST,
+  REPORT_READY,
+  // Offers the user the page's Submit for review button; the page, not the runner, submits.
+  SUBMIT_FOR_REVIEW,
   'start_preview',
   'stop_preview',
 ] as const;
@@ -210,6 +217,8 @@ export class AppAssistantTools implements ToolProvider {
         currentApp: () => sandbox.active?.name ?? null,
         // Each checklist says which app it was for, so a later reply carries only this app's.
         checklistApp: () => sandbox.active?.app ?? null,
+        // A chat changes only the app it made or chose: a new chat never builds over the open one.
+        openApp: () => sandbox.active?.app ?? null,
       });
       core.restore({
         conversationId,
@@ -227,7 +236,12 @@ export class AppAssistantTools implements ToolProvider {
           ? { keepaliveMs: this.#options.previewKeepaliveMs }
           : {}),
       });
-      if (this.#options.devTunnels) openPreviewAfterDevServer(sandboxTools, preview, context);
+      if (this.#options.devTunnels) {
+        openPreviewAfterDevServer(sandboxTools, preview, context);
+        // The app's preview stays up while the run works, whoever opened it (this run, the page's
+        // Restart preview): a hidden tab sends the tunnel no activity of its own.
+        preview.keepWhileRunning();
+      }
       // An app on an older @civitai/sdk than the host's is upgraded by the runner itself, before the
       // assistant's first step, so none of its calls runs meanwhile (never throws; rolls back on failure).
       const livePreview = preview;

@@ -82,6 +82,15 @@ beforeAll(async () => {
       "blockedFor" text,
       "needsReview" text
     );
+    CREATE TABLE "Thread" (
+      id int PRIMARY KEY, "postId" int UNIQUE REFERENCES "Post"(id) ON DELETE CASCADE,
+      "imageId" int, "parentThreadId" int, "rootThreadId" int, "commentId" int,
+      metadata jsonb NOT NULL DEFAULT '{}'
+    );
+    CREATE TABLE "CommentV2" (
+      id int PRIMARY KEY, "userId" int NOT NULL,
+      "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE
+    );
     CREATE TABLE "CsamReport" (
       id serial PRIMARY KEY,
       "userId" int,
@@ -144,7 +153,7 @@ beforeEach(async () => {
   );
 
   await holder.db.exec(`
-    TRUNCATE "User", "Post", "Image", "CsamReport";
+    TRUNCATE "User", "Thread", "Post", "Image", "CsamReport" CASCADE;
     INSERT INTO "User" (id, "deletedAt", meta) VALUES
       (${HELD}, now() - interval '1 day', '{}'),
       (${UNHELD}, now() - interval '1 day', '{}');
@@ -255,6 +264,24 @@ describe('remove-deleted-user-images under a legal hold', () => {
     // The control: the unheld account in the same run is drained.
     expect(await imagesOf(UNHELD)).toBe(0);
     expect(await postsOf(UNHELD)).toBe(0);
+  });
+});
+
+describe("a held author's comment on a drained user's post", () => {
+  it.each([
+    ['keeps', MARKED, [1]],
+    ['takes, as a control,', UNHELD, []],
+  ])('%s a comment by an author on its thread', async (_, author, left) => {
+    await holder.db.exec(`
+      INSERT INTO "Thread" (id, "postId") VALUES (100, 902);
+      INSERT INTO "CommentV2" VALUES (1, ${author}, 100);
+    `);
+
+    await run();
+
+    expect(await postsOf(UNHELD)).toBe(0);
+    const { rows } = await holder.db.query<{ id: number }>(`SELECT id FROM "CommentV2"`);
+    expect(rows.map((r) => r.id)).toEqual(left);
   });
 });
 

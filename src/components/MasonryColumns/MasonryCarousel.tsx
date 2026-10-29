@@ -1,5 +1,3 @@
-import OneKeyMap from '@essentials/one-key-map';
-import trieMemoize from 'trie-memoize';
 import type { MasonryRenderItemProps } from '~/components/MasonryColumns/masonry.types';
 import { useMasonryContext } from '~/components/MasonryColumns/MasonryProvider';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
@@ -7,7 +5,9 @@ import clsx from 'clsx';
 
 type Props<TData> = {
   data: TData[];
-  render: React.ComponentType<MasonryRenderItemProps<TData>>;
+  render: React.ComponentType<
+    Omit<MasonryRenderItemProps<TData>, 'width' | 'height'> & { height?: number }
+  >;
   extra?: React.ReactNode;
   height?: number;
   itemId?: (data: TData) => string | number;
@@ -35,9 +35,10 @@ export function MasonryCarousel<TData>({
   return data.length ? (
     <Embla
       key={id}
-      // The viewport clips at the first slide's edge: event hats get no room there, nor to grow.
+      // Allowance matches the page gutter (left) and full bleed (top); the layer hangs hats into it.
+      hatLayer
       className={clsx(
-        '[--event-decoration-allowance:0px] [--event-decoration-grow:1]',
+        '[--event-decoration-allowance-top:36px] [--event-decoration-allowance:16px] [--event-decoration-grow:1] md:[--event-decoration-allowance:36px]',
         viewportClassName
       )}
       align={totalItems <= columnCount ? 'start' : 'end'}
@@ -65,7 +66,7 @@ export function MasonryCarousel<TData>({
                 index={index}
                 className={clsx('pl-4', columnCount > 1 ? 'flex-[0_0_336px]' : 'flex-[0_0_100%]')}
               >
-                {createRenderElement(RenderComponent, index, item, height)}
+                <RenderComponent index={index} data={item} height={height} />
               </Embla.Slide>
             );
           })}
@@ -84,11 +85,3 @@ export function MasonryCarousel<TData>({
     <div style={{ height: columnWidth }}>{empty}</div>
   );
 }
-
-// supposedly ~5.5x faster than createElement without the memo
-const createRenderElement = trieMemoize(
-  [OneKeyMap, {}, WeakMap, OneKeyMap],
-  (RenderComponent, index, data, height) => (
-    <RenderComponent index={index} data={data} height={height} />
-  )
-);

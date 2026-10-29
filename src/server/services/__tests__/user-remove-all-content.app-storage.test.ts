@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /**
@@ -190,6 +191,12 @@ vi.mock('~/server/metrics', async (importOriginal) => {
   const m = { queueUpdate: vi.fn(async () => undefined) };
   return { ...actual, userMetrics: m, articleMetrics: m };
 });
+// The mocked raw reads answer every query, so the wipe finds models to soft-delete; that path is
+// not this suite's.
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  deleteModelById: vi.fn(async () => null),
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   deleteImages: vi.fn(async () => []),
@@ -248,6 +255,10 @@ beforeEach(() => {
   );
   dbMock.dbWrite.appListingModerationEvent.update.mockResolvedValue({});
 });
+
+/** A tagged-template `$executeRaw` call as the one statement it sends, nested fragments flattened. */
+const flatten = ([strings, ...values]: unknown[]) =>
+  Prisma.sql(strings as TemplateStringsArray, ...(values as never[]));
 
 describe('removeAllContent → App Blocks per-user storage', () => {
   it('destroys the wiped account rows and leaves every other account alone', async () => {
@@ -327,6 +338,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
 
     expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
       incomplete: ['app-storage'],
+      keptModelIds: [],
     });
 
     const lines = warn.mock.calls.map((c) => String(c[0]));
@@ -352,6 +364,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
 
     expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
       incomplete: ['app-storage-truncated'],
+      keptModelIds: [],
     });
 
     const truncated = warn.mock.calls
@@ -383,7 +396,10 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // Positive control for the guard above: the warning must not fire on the
     // happy path, or it is noise that trains an operator to ignore it.
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
-    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({ incomplete: [] });
+    expect(await removeAllContent({ id: TARGET, actorUserId: MOD })).toEqual({
+      incomplete: [],
+      keptModelIds: [],
+    });
     expect(
       warn.mock.calls.map((c) => String(c[0])).filter((l) => l.includes('[removeAllContent]'))
     ).toEqual([]);
@@ -411,6 +427,7 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     // Must RESOLVE, not reject.
     await expect(removeAllContent({ id: TARGET, actorUserId: MOD })).resolves.toEqual({
       incomplete: ['app-storage'],
+      keptModelIds: [],
     });
 
     // 🔴 Same anti-vacuity point: a build that never calls the purge also never
@@ -427,11 +444,9 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     });
     // The evidence deletes are raw, so each can carry the legal hold in its own statement.
     for (const table of ['Model', 'Image', 'Post', 'Article', 'Comment']) {
-      const deleted = dbMock.dbWrite.$executeRaw.mock.calls.some(
-        ([strings, ...values]) =>
-          (strings as unknown as string[]).join('?').includes(`DELETE FROM "${table}"`) &&
-          values.includes(TARGET)
-      );
+      const deleted = dbMock.dbWrite.$executeRaw.mock.calls
+        .map(flatten)
+        .some((sql) => sql.text.includes(`DELETE FROM "${table}"`) && sql.values.includes(TARGET));
       expect(deleted, table).toBe(true);
     }
   });
@@ -455,13 +470,12 @@ describe('removeAllContent — bounties with a payout in flight', () => {
       })
     );
     expect(settleBountyPayout.mock.calls).toEqual([[3], [4], [5]]);
-    const calls = dbMock.dbWrite.$executeRaw.mock.calls as [string[], ...unknown[]][];
-    const bountyDelete = calls.findIndex(([strings]) =>
-      strings.join('?').includes('DELETE FROM "Bounty"\n')
-    );
+    const statements = dbMock.dbWrite.$executeRaw.mock.calls.map(flatten);
+    const bountyDelete = statements.findIndex((sql) => sql.text.includes('DELETE FROM "Bounty"'));
     expect(bountyDelete).toBeGreaterThanOrEqual(0);
-    const [, ...values] = calls[bountyDelete];
-    expect(values.slice(0, 2)).toEqual([TARGET, [4]]);
+    const { text, values } = statements[bountyDelete];
+    const match = /b\."userId" = \$(\d+) AND b\.id <> ALL\(\$(\d+)::int\[\]\)/.exec(text);
+    expect([match![1], match![2]].map((n) => values[Number(n) - 1])).toEqual([TARGET, [4]]);
     expect(settleBountyPayout.mock.invocationCallOrder[1]).toBeLessThan(
       dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[bountyDelete]
     );

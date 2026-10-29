@@ -122,8 +122,10 @@ makes, which `WORKFLOW_VERSION` protects.
   - **The gate is App Assistant's own** (`@civitai/app-assistant`, the same code the page runs): 150
     parent calls per reply (a subagent's are not counted), then the reply ends with Continue;
     `report_ready` refused until, since the last file change or other command, the parent's
-    `sandbox__preview_check`, test run and typecheck passed and every checklist item is done;
-    `set_checklist` and `create_app` as on the page. What is verified, and the checklist, belong to the
+    `sandbox__preview_check`, test run and typecheck passed and every checklist item is done, and
+    until it declares the app's `data` (`civitai`, `sample` or `none`): `sample` only under a checklist
+    the user was shown with `data: 'sample'` and a preview check whose visible text shows "Sample
+    data", and `none` never under a checklist that promised `civitai`; `set_checklist` and `create_app` as on the page. What is verified, and the checklist, belong to the
     app: `create_app` opening another app starts both over, as the page does, and each checklist the
     runner shows records its app, so a later reply carries over only the open app's. A reply carried on
     from saved steps starts its count and checks from those steps; a new reply keeps the app's checklist
@@ -155,10 +157,15 @@ makes, which `WORKFLOW_VERSION` protects.
        `/api/apps/assistant/preview?blockId=`, which finds the user's live tunnel by itself. The
        tunnel's id never leaves the run's memory: not in a result, the journal, the head or DBOS.
     3. While the run lives, the runner calls civitai's `keepalive` every 5 minutes (civitai's idle
-       window is 30; a failed call is retried at the next tick, and each one re-judges the gates);
-       a `NOT_FOUND`, refusal or dead grant stops it. When the run ends it stops keeping the tunnel
-       alive and civitai's normal idle expiry applies, so the user keeps the preview for a while.
-       The 8-hour cap never moves.
+       window is 30; a failed call is retried at the next tick, and each one re-judges the gates)
+       for the open app's preview, whoever opened it: this run, an earlier reply, or the page's
+       Restart preview. It names the host the app's sandbox is connected to (`tunnel_status`), and
+       civitai keeps the grant's user's tunnel at that host, never another user's; a sandbox with
+       no tunnel running (paused, disconnected) keeps nothing alive. A `NOT_FOUND` is asked again
+       at the next tick; a refusal or dead grant stops it, and so does `stop_preview` until the
+       next start. Each tick's `tunnel_status` request is activity for the app too, so a live run
+       also keeps its app from pausing as idle. When the run ends it stops keeping the tunnel alive and civitai's normal idle expiry
+       applies, so the user keeps the preview for a while. The 8-hour cap never moves.
     4. `stop_preview` closes the run's own tunnel at civitai (`stop`) and the sandbox's side
        (`tunnel_disconnect`); a preview an earlier reply started is closed from the sandbox's side
        and idles out at civitai.
@@ -367,8 +374,9 @@ Known gaps:
   preview route on load was tried and dropped: civitai keeps a tunnel's record up to its idle
   window after the sandbox side is gone (a pause, a `stop_preview` of an earlier reply's
   preview), so it would show a dead preview.
-- A run recovered after a crash has lost its preview's tunnel id (it is kept in memory only): it stops
-  keeping that tunnel alive, which idles out; the assistant's next `start_preview` opens another.
+- A run recovered after a crash has lost its preview's tunnel id (it is kept in memory only); it
+  still keeps the app's preview alive by its host, but `stop_preview` then closes only the
+  sandbox's side, and civitai's side idles out.
 
 - A model call cut by a crash is not streamed again: once its workflow ends, its whole answer
   arrives at once (orchestration has no reattach to a stream in flight). One cut before

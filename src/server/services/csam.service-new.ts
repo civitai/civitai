@@ -8,6 +8,10 @@ import type {
 } from '~/server/schema/csam.schema';
 import { csamCapabilitiesDictionary, csamContentsDictionary } from '~/server/schema/csam.schema';
 import { clickhouse } from '~/server/clickhouse/client';
+import {
+  getImageUploadIpEvents,
+  UPLOAD_REQUEST_IP_NOTE,
+} from '~/server/services/image-upload-action.service';
 import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isDefined } from '~/utils/type-guards';
 import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
@@ -105,7 +109,7 @@ type CsamReportUserActivity = {
   ip: string;
   time: string;
   details?: {
-    type: 'post' | 'model-version';
+    type: 'post' | 'model-version' | 'image-upload-request';
     id: number;
   };
 };
@@ -382,6 +386,9 @@ export async function getUserIpInfo(report: Partial<CsamReportProps>) {
         }));
         captureEvents = captureEvents.concat(postCaptureEvents);
       }
+      captureEvents = captureEvents.concat(
+        await getImageUploadIpEvents({ userId: report.userId, imageIds })
+      );
       break;
     case 'TrainingData':
       const modelVersionId = report.details?.modelVersionIds?.[0];
@@ -562,6 +569,49 @@ export async function processCsamReport(runStart: CsamReportProps) {
   }
 }
 
+export function getReportedUserAdditionalInfo(
+  email: string | null,
+  userActivity: CsamReportUserActivity[]
+) {
+  return (
+    [
+      email ? `Email: ${email}` : null,
+      userActivity.some((a) => a.details?.type === 'image-upload-request')
+        ? UPLOAD_REQUEST_IP_NOTE
+        : null,
+    ]
+      .filter(Boolean)
+      .join('\n') || undefined
+  );
+}
+
+const activityKey = (a: CsamReportUserActivity) =>
+  [a.type, a.ip, a.time, a.details?.type, a.details?.id].join('|');
+
+function mergeUserActivity(stored: CsamReportUserActivity[], live: CsamReportUserActivity[]) {
+  const seen = new Set(stored.map(activityKey));
+  return stored.concat(live.filter((a) => !seen.has(activityKey(a))));
+}
+
+/**
+ * The report's IP events: those stored on it plus any ClickHouse still holds, written back to the
+ * report before it is sent. Every unsent report passes here on each send run, so its IPs are kept
+ * on the report from its first run on, though the ClickHouse rows expire (upload requests after 12
+ * months). Undefined when the claim was lost.
+ */
+async function snapshotUserActivity(claim: SendClaim) {
+  const stored = claim.report.details?.userActivity ?? [];
+  const merged = mergeUserActivity(stored, await getUserIpInfo(claim.report));
+  if (isProd && merged.length > stored.length) {
+    const written = await updateUnderClaim(claim, 'ip-snapshot', {}, (current) => ({
+      ...current,
+      userActivity: mergeUserActivity(current.userActivity ?? [], merged),
+    }));
+    if (!written) return;
+  }
+  return merged;
+}
+
 async function getInitialReportData(claim: SendClaim) {
   const { report } = claim;
   const reportingUser = await getReportingUser(report.reportedById);
@@ -569,7 +619,8 @@ async function getInitialReportData(claim: SendClaim) {
   if (!reportingUser || !reportedUser)
     return await deleteUnderClaim(claim, 'no reporting or reported user');
 
-  const userActivity = await getUserIpInfo(report);
+  const userActivity = await snapshotUserActivity(claim);
+  if (!userActivity) return;
 
   return {
     incidentSummary: {
@@ -596,7 +647,7 @@ async function getInitialReportData(claim: SendClaim) {
           dateTime: new Date(Date.UTC(year, month - 1, day, hour, minute, second)),
         };
       }),
-      additionalInfo: reportedUser.email ? `Email: ${reportedUser.email}` : undefined,
+      additionalInfo: getReportedUserAdditionalInfo(reportedUser.email, userActivity),
     },
   } satisfies Report;
 }

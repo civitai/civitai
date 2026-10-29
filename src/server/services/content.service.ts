@@ -1,7 +1,7 @@
 import { createHash } from 'crypto';
 import { readFile } from 'fs/promises';
 import { access } from 'fs/promises';
-import matter from 'gray-matter';
+import { parseFrontmatter } from '~/utils/frontmatter';
 import { join, resolve } from 'path';
 import { sysRedis, REDIS_SYS_KEYS, withSysReadDeadline } from '~/server/redis/client';
 import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
@@ -20,7 +20,7 @@ type StaticContentResult = {
   hash: string;
 };
 
-// Hash the rendered body, not the raw file or re-serialized doc — gray-matter
+// Hash the rendered body, not the raw file or re-serialized doc — parseFrontmatter
 // has already stripped the frontmatter, so `lastmod`/`title` never feed the hash.
 // Normalize line endings + trailing whitespace so cosmetic/EOL churn is inert.
 function hashContent(content: string) {
@@ -31,7 +31,7 @@ function hashContent(content: string) {
 // Static-content files are bundled into the image and read-only at runtime — they
 // change only on deploy (new deploy = new process = fresh cache). `getStaticContent`
 // is now on the SSR critical path (ToS metadata is resolved on every full render
-// via `getTosMeta`), so an uncached `readFile` + gray-matter
+// via `getTosMeta`), so an uncached `readFile` + frontmatter
 // parse per call is wasteful. Cache parsed results in-memory with a short TTL; keyed
 // by slug + domain so domain-specific variants (e.g. tos.green.md) don't collide. The
 // key set is bounded by the (small, fixed) number of static-content files × domains.
@@ -74,7 +74,7 @@ export async function getStaticContent({ slug, ctx }: { slug: string[]; ctx?: Co
       // Check if file exists
       await access(resolvedPath);
       const fileContent = await readFile(resolvedPath, 'utf-8');
-      const { data: frontmatter, content } = matter(fileContent);
+      const { data: frontmatter, content } = parseFrontmatter(fileContent);
       const value: StaticContentResult = {
         title: frontmatter.title as string,
         description: frontmatter.description as string,
@@ -119,7 +119,7 @@ export const tosHashFieldMap = {
 // tos.red.md, so it falls back to tos.md → same hash as blue.)
 //
 // IMPORTANT: these must equal `hashContent(<deployed body>)` for each domain at
-// rollout. Regenerate (gray-matter body → CRLF→LF → trimEnd → sha256) ONLY if you
+// rollout. Regenerate (parseFrontmatter body → CRLF→LF → trimEnd → sha256) ONLY if you
 // deliberately intend a body change to re-prompt the not-yet-hash-backed users.
 export const tosBaselineHashMap = {
   green: '8dd1cc867cdd5f320ca139243c4533871f0e5a1dbd8c23df3770f77020a6b293',
@@ -222,7 +222,7 @@ export async function getMarkdownContent({ key }: { key: string }) {
     );
     if (!content) throw throwNotFoundError('Content not found');
 
-    const { data: frontmatter, content: markdown } = matter(content);
+    const { data: frontmatter, content: markdown } = parseFrontmatter(content);
     return {
       title: frontmatter.title as string,
       description: frontmatter.description as string,

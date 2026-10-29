@@ -1,3 +1,5 @@
+import { bountyThreadParents, detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import type * as z from 'zod';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -37,6 +39,7 @@ import {
   withTextScanDecision,
 } from '~/server/services/text-scan/flag-snapshot';
 import {
+  checkEntityImageKeys,
   createEntityImages,
   updateEntityImages,
   enqueueImageIngestion,
@@ -247,6 +250,7 @@ export const createBounty = async ({
   ]);
 
   let imagesToIngest: IngestImageInput[] = [];
+  const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
@@ -292,6 +296,7 @@ export const createBounty = async ({
           images,
           tx,
           userId,
+          keysCheckedFor,
           entityId: bounty.id,
           entityType: 'Bounty',
         });
@@ -391,6 +396,7 @@ export const updateBountyById = async ({
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
   let imagesToIngest: IngestImageInput[] = [];
+  const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
@@ -512,6 +518,7 @@ export const updateBountyById = async ({
           entityId: bounty.id,
           entityType: 'Bounty',
           userId,
+          keysCheckedFor,
         });
       }
 
@@ -809,8 +816,12 @@ export const deleteBountyById = async ({
       });
   }
 
+  const markerView = await holdMarkerViewExists();
   return dbWrite.$transaction(async (tx) => {
     if (!(await lockBountyForPayout(tx, id))) return null;
+    await tx.$executeRaw(
+      detachHeldThreadsSql(bountyThreadParents(Prisma.sql`SELECT ${id}::int`), markerView)
+    );
     const deletedBounty = await tx.bounty.delete({ where: { id } });
     await tx.file.deleteMany({ where: { entityId: id, entityType: 'Bounty' } });
     return deletedBounty;

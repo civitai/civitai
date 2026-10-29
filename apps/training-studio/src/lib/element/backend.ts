@@ -29,6 +29,10 @@ export interface StudioElementHost {
   checkTrainingText?(input: {
     triggerWord: string;
   }): Promise<{ ok: true } | { ok: false; error: string }>;
+  /** Whether the run's model still counts for this user (not missing, not deleted by its owner),
+   *  answered by the host's server; it should settle (time out) on its own. Omit and a run links
+   *  its stored modelId unchecked. */
+  modelLive?(modelId: number): Promise<boolean>;
   /** Spendable balances for the pricing UI; omit (or resolve null) to hide balances. */
   getBuzzBalances?(): Promise<{ yellow: number; green: number; blue: number } | null>;
   /** The main app's `training.getStatus` (available + moderator message). Omit (or resolve null)
@@ -143,6 +147,9 @@ export function elementBackend(host: StudioElementHost): StudioBackend {
         if (!detail) throw new Error('Training not found.');
         return detail;
       }),
+
+    // No hook: the stored link stands unchecked.
+    modelLive: (modelId) => (host.modelLive ? host.modelLive(modelId) : Promise.resolve(true)),
 
     getRunDataset: (workflowId) => call((client) => orch.getRunDataset(client, workflowId)),
 

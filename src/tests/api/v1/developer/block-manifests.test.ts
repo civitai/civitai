@@ -111,7 +111,21 @@ describe('POST /api/v1/developer/block-manifests', () => {
       expect(mockDbWrite.appBlock.upsert).not.toHaveBeenCalled();
     });
 
-    it.each(['my-app', 'a-b-c', 'plainapp'])('accepts a new block %s', async (blockId) => {
+    it('422s a new block with a reserved blockId without writing', async () => {
+      const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
+      const res = makeRes();
+      await handler(makeReq({ body: bodyFor('dev-0123456789abcdef') }), res);
+      expect(res._status).toBe(422);
+      expect(res._body).toEqual({
+        error: 'Invalid manifest',
+        details: [
+          `blockId "dev-0123456789abcdef" is reserved: ids starting with "dev-" are used for dev tunnel hosts, so the app's address would never reach it. Choose a different blockId.`,
+        ],
+      });
+      expect(mockDbWrite.appBlock.upsert).not.toHaveBeenCalled();
+    });
+
+    it.each(['my-app', 'ab-c-d', 'plainapp'])('accepts a new block %s', async (blockId) => {
       const { default: handler } = await import('~/pages/api/v1/developer/block-manifests');
       const res = makeRes();
       await handler(makeReq({ body: bodyFor(blockId) }), res);

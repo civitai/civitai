@@ -50,6 +50,8 @@ function makeCtx() {
 beforeEach(() => {
   vi.clearAllMocks();
   mockToggleReaction.mockResolvedValue('created');
+  // A live comment, so the comment cases reach the reaction.
+  dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: false } as never);
 });
 
 async function react(entityType: ReactionEntityType, entityId: number) {

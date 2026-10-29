@@ -87,6 +87,7 @@ import type {
   BountyEntryMode,
   BountyEngagementType,
   CsamReportType,
+  CsamQueueSetAsideOutcome,
   Availability,
   PaidAccessEntityType,
   SaleDiscountType,
@@ -2578,6 +2579,10 @@ export type Comment = {
   locked: Generated<boolean | null>;
   hidden: Generated<boolean | null>;
   pinnedAt: Timestamp | null;
+  /**
+   * Kept hidden for a hold when its author deleted it; a ToS restore leaves it hidden.
+   */
+  removedByAuthor: Generated<boolean>;
 };
 export type CommentMute = {
   userId: number;
@@ -2937,6 +2942,17 @@ export type CsamFlagRelease = {
    */
   overriddenLegs: unknown;
   imageCount: number;
+  createdAt: Generated<Timestamp>;
+};
+export type CsamQueueSetAside = {
+  imageId: number;
+  userId: number;
+  outcome: CsamQueueSetAsideOutcome;
+  /**
+   * The report an `AfterReport` row follows. Nothing writes `AfterReport` rows yet.
+   */
+  csamReportId: number | null;
+  moderatorId: number;
   createdAt: Generated<Timestamp>;
 };
 export type CsamReport = {
@@ -4057,6 +4073,17 @@ export type ModelMetricDaily = {
   type: string;
   date: Timestamp;
   count: number;
+};
+export type ModelOwnership = {
+  id: Generated<number>;
+  modelId: number;
+  userId: number;
+  /**
+   * 'create' | 'transfer' | 'account-delete' | 'restore' | 'baseline' (a CHECK in SQL)
+   */
+  reason: string;
+  actorId: number | null;
+  createdAt: Generated<Timestamp>;
 };
 export type ModelPermissionSnapshot = {
   id: Generated<number>;
@@ -5496,6 +5523,11 @@ export type StorylineCollaborator = {
   userId: number;
   createdAt: Generated<Timestamp>;
 };
+export type StorylineCoverUpload = {
+  storylineId: number;
+  imageId: number;
+  createdAt: Generated<Timestamp>;
+};
 export type StorylineCreateClick = {
   userId: number;
   parentChapterId: number;
@@ -5847,6 +5879,7 @@ export type User = {
   rewardsEligibility: Generated<RewardsEligibility>;
   eligibilityChangedAt: Timestamp | null;
   customerId: string | null;
+  subscriptionId: string | null;
   paddleCustomerId: string | null;
   profilePictureId: number | null;
   settings: Generated<unknown | null>;
@@ -6411,6 +6444,7 @@ export type DB = {
   CryptoTransaction: CryptoTransaction;
   CryptoWallet: CryptoWallet;
   CsamFlagRelease: CsamFlagRelease;
+  CsamQueueSetAside: CsamQueueSetAside;
   CsamReport: CsamReport;
   CsamReportArchiveObject: CsamReportArchiveObject;
   CsamReportAudit: CsamReportAudit;
@@ -6496,6 +6530,7 @@ export type DB = {
   ModelInterest: ModelInterest;
   ModelMetric: ModelMetric;
   ModelMetricDaily: ModelMetricDaily;
+  ModelOwnership: ModelOwnership;
   ModelPermissionSnapshot: ModelPermissionSnapshot;
   ModelReport: ModelReport;
   ModelReportStat: ModelReportStat;
@@ -6598,6 +6633,7 @@ export type DB = {
   StorylineChapter: StorylineChapter;
   StorylineChapterEdge: StorylineChapterEdge;
   StorylineCollaborator: StorylineCollaborator;
+  StorylineCoverUpload: StorylineCoverUpload;
   StorylineCreateClick: StorylineCreateClick;
   StorylineEarlyAccessSignup: StorylineEarlyAccessSignup;
   StorylinePendingChapter: StorylinePendingChapter;

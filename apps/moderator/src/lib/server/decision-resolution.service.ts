@@ -240,7 +240,9 @@ export async function recordResolution(
       );
     const status = moderatorDbStatus(e);
     if (status === 'no-schema')
-      throw new Error(`decision_resolution does not exist — apply ${SCHEMA_FILE}`, { cause: e });
+      throw new Error(`decision_resolution is missing or out of date — apply ${SCHEMA_FILE}`, {
+        cause: e,
+      });
     if (status === 'no-grant')
       throw new Error(
         `this role cannot write decision_resolution — re-run ${SCHEMA_FILE} as the application ` +

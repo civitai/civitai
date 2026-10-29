@@ -1,5 +1,5 @@
 import { Prisma } from '@prisma/client';
-import { deleteUnlessHeld, ownerHeldSql } from '~/server/services/legal-hold.service';
+import { deleteUnlessHeld, modelRowHeldSql } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL, constants, KEY_VALUE_KEYS } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
@@ -348,13 +348,14 @@ async function replaceFileContent({
         AND mv.id = mf."modelVersionId"
         AND m.id = mv."modelId"
         ${isModerator ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
-        AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+        AND NOT ${modelRowHeldSql()}
     `,
       {
         expected: 1,
         isModerator,
         db: tx,
         ownerFrom: fileOwnerSql(file.id, isModerator ? undefined : userId),
+        held: modelRowHeldSql(),
       }
     );
     // Another writer replaced or removed the file since we read it.
@@ -524,7 +525,7 @@ export async function deleteFile({
     AND mv."modelId" = m.id
     AND mf.id = ${id}
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
-    AND NOT ${ownerHeldSql(Prisma.raw('m."userId"'))}
+    AND NOT ${modelRowHeldSql()}
     ${
       // Repeats the check above at delete time, in case the run was moved to review in between.
       isModerator
@@ -544,6 +545,7 @@ export async function deleteFile({
       isModerator,
       db: dbWrite,
       ownerFrom: fileOwnerSql(id, isModerator ? undefined : userId),
+      held: modelRowHeldSql(),
     }
   );
 

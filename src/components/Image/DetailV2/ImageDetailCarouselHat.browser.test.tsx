@@ -27,7 +27,7 @@ const svg = (w: number, h: number, fill: string) =>
 const HAT = svg(10, 10, '#e64980');
 
 const mocks = vi.hoisted(() => ({
-  state: { cover: false },
+  state: { cover: false, tall: false },
   image: (hatted: boolean, width = 2000, height = 1000, id = 1) => ({
     id,
     nsfwLevel: 1,
@@ -60,7 +60,12 @@ vi.mock('~/components/EdgeMedia/EdgeMedia', () => ({
       <img src={HAT} className={className} alt="" />
     ) : (
       <div {...wrapperProps}>
-        <img src={svg(2000, 1000, '#228be6')} className={className} data-testid="picture" alt="" />
+        <img
+          src={mocks.state.tall ? svg(1000, 2000, '#228be6') : svg(2000, 1000, '#228be6')}
+          className={className}
+          data-testid="picture"
+          alt=""
+        />
       </div>
     ),
 }));
@@ -161,6 +166,7 @@ async function expectOnPictureCorner() {
 beforeEach(() => {
   onClose.mockClear();
   mocks.state.cover = false;
+  mocks.state.tall = false;
 });
 
 describe('the image detail wears the image hat on the picture', () => {
@@ -179,6 +185,18 @@ describe('the image detail wears the image hat on the picture', () => {
       expect(rect(document.querySelector('[data-testid="picture"]')).width).toBeLessThan(510)
     );
     await expectOnPictureCorner();
+  });
+
+  test('on a picture flush with the slot top, the hat reaches over the header like a feed card', async () => {
+    mocks.state.tall = true;
+    renderWithProviders(<Viewer image={mocks.image(true, 1000, 2000)} />);
+    await vi.waitFor(() => expect(hat()).not.toBeNull());
+    const picture = rect(document.querySelector('[data-testid="picture"]'));
+    const slot = rect(document.querySelector('[data-testid="picture"]')!.closest('.relative'));
+    // A 1:2 picture fills an 800x600 slot's height: nothing above it but the header.
+    expect(picture.top - slot.top).toBeLessThan(2);
+    // The same reach as a feed card's hat (ShowcaseGridHats asserts 34 for the feed).
+    await vi.waitFor(() => expect(picture.top - rect(hat()).top).toBeGreaterThanOrEqual(34));
   });
 
   test('the feed-card hat, smaller on a narrower picture', async () => {
