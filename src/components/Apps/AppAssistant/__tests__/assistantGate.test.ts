@@ -244,7 +244,7 @@ describe('set_checklist', () => {
       updated: true,
       open: 1,
     });
-    expect(await setChecklist(gate, [{ label: 'a', done: true }])).toMatchObject({
+    expect(await setChecklist(gate, [{ label: 'a' }])).toMatchObject({
       awaitsUser: true,
     });
   });
@@ -267,7 +267,7 @@ describe('set_checklist', () => {
   it('accepts a JSON string of the items and rejects anything else', async () => {
     const gate = gateInConversation();
     expect(
-      await gate.tools[SET_CHECKLIST].execute({ items: '[{"label":"a","done":true}]' }, toolCtx)
+      await gate.tools[SET_CHECKLIST].execute({ items: '[{"label":"a"}]' }, toolCtx)
     ).toMatchObject({ awaitsUser: true });
     for (const items of [[], 'not json', [{ label: '' }], [{}], undefined])
       expect(() => gate.tools[SET_CHECKLIST].execute({ items }, toolCtx)).toThrow(

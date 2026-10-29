@@ -91,7 +91,7 @@ vi.mock('~/components/Post/Detail/PostContestCollectionInfoAlert', () => ({
 }));
 
 const { PostImages } = await import('~/components/Post/Detail/PostImages');
-const { getEventDecorationClearLeftCss, getHatLayout } = await import(
+const { getEventDecorationClearLeftCss, HAT_PLAIN_CARD_NUDGE } = await import(
   '~/components/Cosmetics/EventDecoration/event-decoration-placement'
 );
 
@@ -124,7 +124,14 @@ const badgeGroup = (imageId: number) =>
 const badgeClearance = (imageId: number) =>
   badgeGroup(imageId)?.style.getPropertyValue('--event-decoration-clear-left');
 
+// happy-dom has no layout, so the hat layer draws nothing without this.
+const rectOf = { x: 0, y: 0, left: 0, top: 0, right: 400, bottom: 300, width: 400, height: 300 };
+
 beforeEach(() => {
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+    ...rectOf,
+    toJSON: () => rectOf,
+  });
   h.linkClicks.count = 0;
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -142,14 +149,15 @@ describe('the post page wears each image hat on that image, as the cards do', ()
     expect(hats()).toHaveLength(1);
     const hat = hats()[0];
     expect(hat.closest('[data-worn-on]')?.getAttribute('data-worn-on')).toBe('2');
-    expect(frameOf(2)?.contains(hat)).toBe(true);
-    // Inside the corner, not hanging off it: the image's frame clips at its edge.
+    const layer = hat.closest('[data-testid="hat-layer"]');
+    expect(layer).not.toBeNull();
+    expect(layer?.parentElement?.contains(frameOf(2) ?? null)).toBe(true);
+    expect(frameOf(2)?.contains(hat)).toBe(false);
     const hatData = h.image(2, true).eventDecoration!.data;
-    const hatLeft = (hat as HTMLElement).style.left;
-    expect(hatLeft).toMatch(/^[0-9.]+px$/);
-    expect(parseFloat(hatLeft)).toBeCloseTo(getHatLayout('inside', undefined).left, 3);
-    expect(badgeClearance(2)).toBe(getEventDecorationClearLeftCss(hatData, 'inside'));
-    expect(badgeClearance(2)).toMatch(/^[1-9][0-9]*px$/);
+    expect(badgeClearance(2)).toBe(
+      getEventDecorationClearLeftCss(hatData, 'corner', HAT_PLAIN_CARD_NUDGE)
+    );
+    expect(badgeClearance(2)).toMatch(/^calc\(/);
     // The clearance only moves the badges if their position reads it.
     expect(badgeGroup(2)?.className).toContain('var(--event-decoration-clear-left');
     expect(badgeClearance(1)).toBe('');
