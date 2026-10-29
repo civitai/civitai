@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
@@ -22,6 +22,9 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await pg.close();
+});
+afterEach(() => {
+  vi.restoreAllMocks();
 });
 beforeEach(async () => {
   await pg.exec(
@@ -65,8 +68,19 @@ const seedSettledVote = (playerId: number, settledAt = '2026-12-16 10:00:00') =>
 
 const everyone = async (ids: number[]) => ids;
 
-/** What the main app's endpoint would list as the opt-out types. */
-const SILENCE_TYPES = ['type-a', 'type-b', 'type-c'];
+/** What the main app's endpoint lists: each opt-out type with when anyone first switched it off. */
+const SILENCE_TYPES = [
+  { type: 'type-a', firstSeen: new Date('2026-01-01T00:00:00Z') },
+  { type: 'type-b', firstSeen: new Date('2026-01-01T00:00:00Z') },
+  { type: 'type-c', firstSeen: new Date('2026-06-01T00:00:00Z') },
+];
+
+/** A settings row, dated; a row means the player turned the type off. */
+const seedSetting = (userId: number, type: string, at: string) =>
+  pg.query(
+    `INSERT INTO "UserNotificationSettings" ("userId","type","disabledAt") VALUES ($1,$2,$3)`,
+    [userId, type, at]
+  );
 
 function runner({
   blocked = [] as number[],
@@ -369,25 +383,51 @@ describe('sendNotifications', () => {
     expect([...received().keys()]).toEqual([1]);
   });
 
-  it('sends nothing to a player who turned everything off, but still reaches one who muted a few types', async () => {
+  it('keeps a player silenced who turned everything off before a newer type existed', async () => {
     await seedPlayer(pg, 1);
-    await seedPlayer(pg, 2);
     await enqueueImage();
-    for (const type of SILENCE_TYPES) {
-      await pg.query(`INSERT INTO "UserNotificationSettings" ("userId","type") VALUES (1,$1)`, [
-        type,
-      ]);
-    }
-    for (const type of SILENCE_TYPES.slice(1)) {
-      await pg.query(`INSERT INTO "UserNotificationSettings" ("userId","type") VALUES (2,$1)`, [
-        type,
-      ]);
-    }
+    await seedSetting(1, 'type-a', '2026-02-01');
+    await seedSetting(1, 'type-b', '2026-02-01');
     const { run, received } = runner();
 
     await run(at(12));
 
-    expect([...received().keys()]).toEqual([2]);
+    expect(received().size).toBe(0);
+  });
+
+  it('does not treat a player as silenced who is missing a type that existed when they last changed settings', async () => {
+    await seedPlayer(pg, 1);
+    await enqueueImage();
+    await seedSetting(1, 'type-a', '2026-02-01');
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect([...received().keys()]).toEqual([1]);
+  });
+
+  it('stops treating a player as silenced once they changed settings after a newer type appeared', async () => {
+    await seedPlayer(pg, 1);
+    await enqueueImage();
+    await seedSetting(1, 'type-a', '2026-02-01');
+    await seedSetting(1, 'type-b', '2026-07-01');
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect([...received().keys()]).toEqual([1]);
+  });
+
+  it('still reaches a player who muted only some types, or none', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await enqueueImage();
+    await seedSetting(2, 'type-c', '2026-12-01');
+    const { run, received } = runner();
+
+    await run(at(12));
+
+    expect([...received().keys()].sort()).toEqual([1, 2]);
   });
 
   it('does not re-announce verdicts that settled while the run was sending them', async () => {
@@ -467,5 +507,43 @@ describe('sendNotifications', () => {
 
     expect(result).toMatchObject({ skipped: true });
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('stops the run after the notifications app rate limits a batch, releasing its players', async () => {
+    await seedPlayer(pg, 1);
+    await seedPlayer(pg, 2);
+    await seedSettledVote(1);
+    await optOut(2, 'verdicts');
+    await enqueueImage();
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const limited = vi
+      .fn()
+      .mockRejectedValue(new BatchRejected('slow down', { rateLimited: true }));
+
+    const first = await sendNotifications(db, {
+      now: at(12),
+      send: limited,
+      accessible: everyone,
+      silenceTypes: SILENCE_TYPES,
+    });
+
+    expect(limited).toHaveBeenCalledTimes(1);
+    expect(first).toMatchObject({ halted: true, failed: 1 });
+
+    const { run, received } = runner();
+    await run(at(13));
+    expect([...received().keys()].sort()).toEqual([1, 2]);
+  });
+
+  it('reports claims it could not confirm', async () => {
+    await seedPlayer(pg, 1);
+    await seedSettledVote(1);
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    vi.spyOn(db, 'updateTable').mockImplementation(() => {
+      throw new Error('db down');
+    });
+    const { run } = runner();
+
+    await expect(run(at(12))).resolves.toMatchObject({ confirmFailed: 1 });
   });
 });

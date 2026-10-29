@@ -63,6 +63,10 @@ export function liveStreak(before: StreakState, today: Day): number {
   return missed === 1 && state.shields > 0 ? state.streak : 0;
 }
 
+/** A Watch completed before the career reset (`startAt`) no longer counts. */
+export const watchStands = (completedAt: Date | null, startAt: Date) =>
+  completedAt !== null && completedAt >= startAt;
+
 /** A career reset ends the streak; shields are kept. */
 export const voidStreak = (state: StreakState): StreakState => ({
   ...state,
@@ -83,7 +87,9 @@ export function streakAfterReset(
   const startDay = utcDay(startAt);
   if (state.lastWatchDay > startDay) return state;
   if (state.lastWatchDay < startDay) return voidStreak(state);
-  return lastWatchCompletedAt && lastWatchCompletedAt < startAt ? voidStreak(state) : state;
+  return lastWatchCompletedAt !== null && !watchStands(lastWatchCompletedAt, startAt)
+    ? voidStreak(state)
+    : state;
 }
 
 /** Whether a shield would keep the streak alive if today's Watch is missed. */

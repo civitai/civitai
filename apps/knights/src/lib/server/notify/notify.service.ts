@@ -7,6 +7,7 @@ import { liveStreak, shieldCoversToday, streakAfterReset } from '../daily/streak
 import { servableItems } from '../queue/queue.service';
 import { stagesWorkedBy } from '../queue/ranks';
 import { RANKS } from '../ranks';
+import type { SilenceType } from './silence-types';
 import { NOTIFY, NOTIFY_KINDS, typeOf, type NotifyKind } from './config';
 
 const dateOf = (day: Day) => sql<Date>`${day}::date`;
@@ -17,9 +18,13 @@ export type SendBatch = (batch: NotificationBatch) => Promise<void>;
 
 /** Thrown by a sender when the notifications app certainly did not accept the batch, so its claims can be released. */
 export class BatchRejected extends Error {
-  constructor(message: string, options?: { cause?: unknown }) {
+  /** The app is rate limiting this sender, so the rest of the run would be refused too. */
+  readonly rateLimited: boolean;
+
+  constructor(message: string, options?: { cause?: unknown; rateLimited?: boolean }) {
     super(message, options);
     this.name = 'BatchRejected';
+    this.rateLimited = options?.rateLimited ?? false;
   }
 }
 
@@ -29,17 +34,35 @@ export type NotifyResult = {
   failed: number;
   /** Players whose batch may or may not have been saved; their slot is kept. */
   unconfirmed: number;
-  /** A batch had an unknown outcome, so the run sent nothing further. */
+  /** A batch had an unknown outcome or the app rate limited the sender, so the run sent nothing further. */
   halted: boolean;
+  /** Claims that were sent but could not be marked confirmed, so verdicts may be announced again. */
+  confirmFailed: number;
   /** The types to check for "turned everything off" were unavailable, so nothing was sent. */
   skipped: boolean;
+};
+
+/**
+ * Turning everything off writes a row only for each type that exists then, so judge a player against
+ * the types that existed at their latest change (`disabledAt` is when a row was made): silenced means
+ * a row for each of them, and at least one row. A type added later never counts against them.
+ */
+const notSilenced = (silenceTypes: SilenceType[]) => {
+  const types = sql.join(silenceTypes.map((t) => sql`${t.type}`));
+  const known = sql.join(silenceTypes.map((t) => sql`(${t.type}, ${utc(t.firstSeen)}::timestamp)`));
+  const latest = sql`(select max(o."disabledAt") from "UserNotificationSettings" o where o."userId" = pl."userId" and o."type" in (${types}))`;
+  return sql<boolean>`not (${latest} is not null and not exists (
+    select 1 from (values ${known}) as known("type", "firstSeen")
+    where known."firstSeen" <= ${latest}
+      and not exists (select 1 from "UserNotificationSettings" r where r."userId" = pl."userId" and r."type" = known."type")
+  ))`;
 };
 
 /**
  * Players who joined the game (they have a `NewOrderPlayer` row), have not turned `kind` off (a settings
  * row means off) and have not been sent anything on `day`.
  */
-const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day, silenceTypes: string[]) =>
+const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day, silenceTypes: SilenceType[]) =>
   db
     .selectFrom('NewOrderPlayer as pl')
     .where(
@@ -47,12 +70,7 @@ const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day, silenceTypes: st
         kind
       )})`
     )
-    // Turning everything off writes rows only for the types that existed then, so a newer type has no row for them.
-    .where(
-      sql<boolean>`(select count(*) from "UserNotificationSettings" o where o."userId" = pl."userId" and o."type" in (${sql.join(
-        silenceTypes
-      )})) < ${silenceTypes.length}`
-    )
+    .where(notSilenced(silenceTypes))
     .where(
       sql<boolean>`not exists (select 1 from "KnightsNotificationSend" n where n."playerId" = pl."userId" and n."day" = ${dateOf(
         day
@@ -64,7 +82,7 @@ async function withNewVerdicts(
   db: Kysely<DB>,
   day: Day,
   now: Date,
-  silenceTypes: string[]
+  silenceTypes: SilenceType[]
 ): Promise<number[]> {
   const day_ms = 86_400_000;
   const searchFrom = new Date(now.getTime() - NOTIFY.voteSearchDays * day_ms);
@@ -93,7 +111,7 @@ async function withNewVerdicts(
 async function withStreakAtRisk(
   db: Kysely<DB>,
   day: Day,
-  silenceTypes: string[]
+  silenceTypes: SilenceType[]
 ): Promise<number[]> {
   const rows = await recipients(db, 'streak', day, silenceTypes)
     .innerJoin('KnightsPlayer as k', 'k.playerId', 'pl.userId')
@@ -133,7 +151,7 @@ async function withStreakAtRisk(
 async function withImagesWaiting(
   db: Kysely<DB>,
   day: Day,
-  silenceTypes: string[]
+  silenceTypes: SilenceType[]
 ): Promise<number[]> {
   // A vote cannot predate its item, so no open item has votes before the oldest one; the constant
   // bound on the partition key lets Postgres skip older monthly partitions (a bound that references
@@ -178,7 +196,7 @@ async function withImagesWaiting(
 export async function planNotifications(
   db: Kysely<DB>,
   now: Date,
-  silenceTypes: string[]
+  silenceTypes: SilenceType[]
 ): Promise<Record<NotifyKind, number[]>> {
   const day = utcDay(now);
   const warningOpen =
@@ -230,7 +248,13 @@ const release = (db: Kysely<DB>, kind: NotifyKind, day: Day, ids: number[]) =>
  * claims count as having told the player, and that time is the point later verdicts are compared to.
  * Tried twice: a missed confirmation would announce the same verdicts again tomorrow.
  */
-async function confirm(db: Kysely<DB>, kind: NotifyKind, day: Day, ids: number[], sentAt: Date) {
+async function confirm(
+  db: Kysely<DB>,
+  kind: NotifyKind,
+  day: Day,
+  ids: number[],
+  sentAt: Date
+): Promise<boolean> {
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       await db
@@ -240,11 +264,12 @@ async function confirm(db: Kysely<DB>, kind: NotifyKind, day: Day, ids: number[]
         .where('kind', '=', kind)
         .where('playerId', 'in', ids)
         .execute();
-      return;
+      return true;
     } catch (error) {
       console.error(`knights: could not confirm ${kind} claims (attempt ${attempt})`, error);
     }
   }
+  return false;
 }
 
 /** The same chunk of players always gets the same key, so a retry of it can be recognised server-side. */
@@ -273,7 +298,7 @@ export async function sendNotifications(
      * The opt-out types a user who turned everything off has a row for, from the main app. Without
      * it every player would look as if they had not, so an empty list sends nothing.
      */
-    silenceTypes: string[];
+    silenceTypes: SilenceType[];
     /** When a batch was actually sent; `now` is when the run started. */
     clock?: () => Date;
   }
@@ -284,6 +309,7 @@ export async function sendNotifications(
     failed: 0,
     unconfirmed: 0,
     halted: false,
+    confirmFailed: 0,
     skipped: false,
   };
   if (silenceTypes.length === 0) {
@@ -319,6 +345,7 @@ export async function sendNotifications(
           try {
             await release(db, kind, day, claimed);
             result.failed += claimed.length;
+            if (error.rateLimited) result.halted = true;
           } catch (releaseError) {
             // The slots stay taken, which is the safe side; the database is unwell, so go no further.
             console.error(`knights: could not release ${kind} claims`, releaseError);
@@ -333,7 +360,9 @@ export async function sendNotifications(
         continue;
       }
       result.sent[kind] += claimed.length;
-      await confirm(db, kind, day, claimed, clock());
+      if (!(await confirm(db, kind, day, claimed, clock()))) {
+        result.confirmFailed += claimed.length;
+      }
     }
   }
   return result;

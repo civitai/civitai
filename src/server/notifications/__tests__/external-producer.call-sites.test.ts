@@ -8,8 +8,8 @@ import { notificationProcessors } from '~/server/notifications/utils.notificatio
  * and the access rule. `createNotification` applies none of that (and, for an `optIn` type, would
  * drop exactly the subscribers), so only the owning app's bulk send may deliver it.
  *
- * A source scan, so it sees a literal type name next to a `createNotification(` call and nothing
- * built at runtime.
+ * A source scan: it catches only a literal type name in a file that calls `createNotification(`,
+ * not a type held in a variable or built at runtime.
  */
 const ROOTS = ['src', 'apps/notifications/src'];
 

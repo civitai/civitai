@@ -7,12 +7,15 @@ describe('isDefinitiveRejection', () => {
     ['a 400', new NotificationsClientError('bad', 400, false)],
     ['a 401', new NotificationsClientError('auth', 401, false)],
     ['a 429', new NotificationsClientError('slow down', 429, true)],
-    ['a missing endpoint', new NotificationsClientError('no endpoint', undefined, false)],
   ])('treats %s as not accepted', (_, error) => {
     expect(isDefinitiveRejection(error)).toBe(true);
   });
 
   it.each([
+    [
+      'a client error with no status, even when not retryable',
+      new NotificationsClientError('no endpoint', undefined, false),
+    ],
     ['a timeout or dropped connection', new NotificationsClientError('aborted', undefined, true)],
     ['a 500', new NotificationsClientError('boom', 500, true)],
     ['a 503', new NotificationsClientError('down', 503, true)],

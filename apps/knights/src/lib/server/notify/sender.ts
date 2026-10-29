@@ -1,10 +1,15 @@
 import {
   createNotificationsBulkInput,
+  type NotificationsClientError,
   type CreateNotificationRow,
   type NotificationsClientConfig,
 } from '@civitai/notifications';
 import { BatchRejected, type SendBatch } from './notify.service';
 import { isDefinitiveRejection } from './rejection';
+
+/** Both are needed to send at all; checked before a run claims anything. */
+export const notificationsConfigured = (env: Record<string, string | undefined>) =>
+  Boolean(env.NOTIFICATIONS_ENDPOINT && env.NOTIFICATIONS_TOKEN);
 
 /**
  * No retries inside the client: it would report only the last error of several attempts, and a
@@ -45,8 +50,12 @@ export const makeSendBatch =
     try {
       await post(rows);
     } catch (error) {
-      if (isDefinitiveRejection(error))
-        throw new BatchRejected('batch not accepted', { cause: error });
+      if (isDefinitiveRejection(error)) {
+        throw new BatchRejected('batch not accepted', {
+          cause: error,
+          rateLimited: (error as NotificationsClientError).status === 429,
+        });
+      }
       throw error;
     }
   };

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { NotificationsClientError } from '@civitai/notifications';
 import { BatchRejected, type NotificationBatch } from './notify.service';
-import { clientConfig, makeSendBatch } from './sender';
+import { clientConfig, makeSendBatch, notificationsConfigured } from './sender';
 
 const batch: NotificationBatch = {
   kind: 'new-images',
@@ -31,9 +31,18 @@ describe('makeSendBatch', () => {
   });
 
   it('reports a refusal as not accepted', async () => {
+    const post = vi.fn().mockRejectedValue(new NotificationsClientError('bad', 400, false));
+
+    await expect(makeSendBatch(post)(batch)).rejects.toMatchObject({ rateLimited: false });
+  });
+
+  it('marks a 429 as rate limiting', async () => {
     const post = vi.fn().mockRejectedValue(new NotificationsClientError('slow down', 429, true));
 
-    await expect(makeSendBatch(post)(batch)).rejects.toBeInstanceOf(BatchRejected);
+    await expect(makeSendBatch(post)(batch)).rejects.toMatchObject({
+      name: 'BatchRejected',
+      rateLimited: true,
+    });
   });
 
   it('lets a timeout through unchanged, because the batch may have been saved', async () => {
@@ -41,6 +50,16 @@ describe('makeSendBatch', () => {
     const post = vi.fn().mockRejectedValue(timeout);
 
     await expect(makeSendBatch(post)(batch)).rejects.toBe(timeout);
+  });
+});
+
+describe('notificationsConfigured', () => {
+  it('needs both the endpoint and the token', () => {
+    expect(
+      notificationsConfigured({ NOTIFICATIONS_ENDPOINT: 'http://x', NOTIFICATIONS_TOKEN: 't' })
+    ).toBe(true);
+    expect(notificationsConfigured({ NOTIFICATIONS_ENDPOINT: 'http://x' })).toBe(false);
+    expect(notificationsConfigured({ NOTIFICATIONS_TOKEN: 't' })).toBe(false);
   });
 });
 

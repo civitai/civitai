@@ -10,6 +10,7 @@ import {
   newPlayerState,
   shieldCoversToday,
   streakAfterReset,
+  watchStands,
   type StreakState,
 } from './streak';
 
@@ -42,10 +43,6 @@ async function startAtOf(db: Executor, playerId: number): Promise<Date> {
     .executeTakeFirst();
   return player?.startAt ?? new Date(0);
 }
-
-/** A Watch counts only if it was completed at or after the player's last career reset. */
-const watchStands = (completedAt: Date | null, startAt: Date) =>
-  completedAt !== null && completedAt >= startAt;
 
 /**
  * The streak a career reset has not ended. Everything recorded before `startAt` is void: the last
