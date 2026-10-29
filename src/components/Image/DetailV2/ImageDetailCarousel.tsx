@@ -16,6 +16,7 @@ import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { UnstyledButton } from '@mantine/core';
 import { isAdjacent } from '~/components/Image/DetailV2/image-detail-carousel.utils';
+import { imageDetailMediaProps } from '~/components/Image/DetailV2/image-detail-main-media';
 import type { MediaType } from '~/shared/utils/prisma/enums';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { EmblaCarouselType } from 'embla-carousel';
@@ -339,10 +340,11 @@ function ImageContent({
             </div>
           ) : (
             <EdgeMedia
-              src={image.url}
-              name={image.name ?? image.id.toString()}
+              // `src`, `name`, `type`, `anim` and `original`: the props that shape the request,
+              // shared with the shell's preload of this image (see `image-detail-main-media`) so
+              // the two cannot ask for different URLs.
+              {...imageDetailMediaProps(image)}
               alt={image.name ?? undefined}
-              type={image.type}
               imageId={image.id}
               className={`max-h-full w-auto max-w-full ${!safe ? 'invisible' : ''}`}
               wrapperProps={{
@@ -354,11 +356,8 @@ function ImageContent({
                 },
               }}
               // No `width`: EdgeImage turns one into an inline `maxWidth` that beats `max-w-full`,
-              // and the aspect-ratio wrapper then clips the image's height.
-              // `anim` and `original` feed the CDN URL — an inactive slide has to
-              // request the same URL the active one will, or it warms nothing
-              anim
-              original={isVideo ? true : undefined}
+              // and the aspect-ratio wrapper then clips the image's height. A `width` would also
+              // change the URL, which `imageDetailMediaProps` owns.
               html5Controls={
                 active && (features.nativeVideoControls || shouldDisplayHtmlControls(image))
               }

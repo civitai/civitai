@@ -3,6 +3,11 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import type { ImageReferenceInput, ImageSchema } from '~/server/schema/image.schema';
 import { createImage } from '~/server/services/image.service';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+  COVER_IMAGE_UNAVAILABLE_MESSAGE,
+} from '~/server/services/image-url-ownership';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import { checkFileExists, getImageUploadBackend } from '~/utils/s3-utils';
 
@@ -41,9 +46,7 @@ import { checkFileExists, getImageUploadBackend } from '~/utils/s3-utils';
  * well beyond the bug.
  */
 
-/** Shown to the user when the uploaded object is definitively gone. Keep it actionable. */
-export const COVER_IMAGE_UNAVAILABLE_MESSAGE =
-  'This cover image is no longer available. Please re-upload it.';
+export { COVER_IMAGE_UNAVAILABLE_MESSAGE };
 
 /**
  * The subset of an `Image` row needed to decide whether it can be safely re-pointed at a new
@@ -111,6 +114,8 @@ export type CoverImageDeps = {
   }) => Promise<number | null>;
   /** `true` present · `false` definitively absent · `null` bucket could not be consulted. */
   objectExists: (url: string) => Promise<boolean | null>;
+  /** Throws {@link COVER_IMAGE_UNAVAILABLE_MESSAGE} when the caller may not use this url. */
+  assertUrlUsable: (args: { url: string; userId: number; uploaderId?: number }) => Promise<void>;
   createImage: (args: ImageSchema & { userId: number }) => Promise<{ id: number }>;
   /**
    * Called when the existence check came back indeterminate and we therefore proceeded
@@ -138,11 +143,8 @@ async function findReusableImageId({
   // or local database. On a database without it this is a sequential scan of `Image`; keep that
   // in mind before adding a call site on a hotter path than "the user saved a cover with no id".
   //
-  // 🔴 Scoped to `userId` on purpose. `Image.url` is the bare object key and it is visible in
-  // every public image URL, so an unscoped url→row reuse would let anyone attach somebody
-  // else's (possibly unpublished, blocked or moderated) image as their own cover just by
-  // reading a key off the site. Scoping to the caller keeps the outcome identical to what
-  // `createImage` would have produced — a row owned by the caller — minus the duplicate.
+  // Keep this scoped to `userId`: a reused cover must be a row the caller owns, the same
+  // outcome `createImage` would have produced, minus the duplicate.
   const candidates = await dbWrite.image.findMany({
     where: { url, userId },
     select: {
@@ -220,6 +222,10 @@ function logExistenceUnknown({ userId }: { userId: number }) {
 export const productionCoverImageDeps: CoverImageDeps = {
   findReusableImageId,
   objectExists: objectExistsInUploads,
+  assertUrlUsable: async ({ url, userId, uploaderId }) => {
+    await assertClientImageUrlsUsable({ urls: [url], userId });
+    await assertClientKeysIssuedToCaller({ urls: [url], userId, alsoIssuedTo: uploaderId });
+  },
   logExistenceUnknown,
   // 🔴 Wrapped, not referenced directly. Reading `createImage` here would read it at MODULE
   // LOAD, and this module is now in the import graph of the article + challenge services —
@@ -235,9 +241,12 @@ export async function resolveCoverImageId(
     userId,
     currentCoverId,
     assertOwnership,
+    uploaderId,
   }: {
     coverImage: ImageReferenceInput;
     userId: number;
+    /** Who uploaded a new cover, when not `userId` (a moderator editing another user's entity). */
+    uploaderId?: number;
     /** The entity's existing `coverId`, when the caller already has it loaded. */
     currentCoverId?: number | null;
     /** The call site's own ownership rule for an `id` the client supplied. Must throw to deny. */
@@ -276,6 +285,8 @@ export async function resolveCoverImageId(
     deps.logExistenceUnknown({ userId });
   }
 
+  // After the bucket check, so both refusals cost the same round-trip.
+  await deps.assertUrlUsable({ url: image.url, userId, uploaderId });
   const created = await deps.createImage({ ...pickClientImageColumns(image), userId });
   return created.id;
 }

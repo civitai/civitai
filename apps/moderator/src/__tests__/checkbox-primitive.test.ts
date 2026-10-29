@@ -198,6 +198,7 @@ describe('destructive surfaces carry the touch-target marker', () => {
     'lib/components/BanConfirmForm.svelte',
     'lib/components/ConfirmSubmit.svelte',
     'lib/components/ImageActionBar.svelte',
+    'lib/components/RulingForm.svelte',
     'routes/audit/training-data/[versionId]/CsamReportForm.svelte',
     // The "reviewed it another way" tick that unlocks Approve on a dataset this app cannot preview.
     'routes/audit/training-data/workflow/[workflowId]/WorkflowReviewActions.svelte',
@@ -207,6 +208,12 @@ describe('destructive surfaces carry the touch-target marker', () => {
     'routes/retool/user-lookup/ReviewsPanel.svelte',
     'routes/text-scan/model-rules/AliasBackfill.svelte',
     'routes/text-scan/model-rules/SuggestAliases.svelte',
+    'routes/tickets/TicketAccountAction.svelte',
+    'routes/tickets/TicketEscalate.svelte',
+    'routes/tickets/TicketRatingRuling.svelte',
+    'routes/tickets/TicketReply.svelte',
+    'routes/tickets/TicketRestrictionRuling.svelte',
+    'routes/tickets/TicketStatusMenu.svelte',
   ];
 
   it('is exactly the declared set of files', () => {

@@ -158,6 +158,9 @@ const featureFlags = createFeatureFlags({
   // switch for everyone, never a per-user rollout. `[]`: dark, and fails CLOSED when the key is
   // absent or Flipt is down — a shell is an optimisation, so losing it costs only CPU.
   shellMaster: { availability: [], fliptKey: 'shell-master' },
+  // Per-user opt-in to the standalone tRPC server (routing cookie: `~/server/trpc/trpc-pool-cookie`).
+  // `[]`: dark, and fails CLOSED when the key is absent or Flipt is down.
+  trpcPoolRoute: { availability: [], fliptKey: 'trpc-pool-route' },
   // The two-pane /user/account shell. `['mod']` is the staging cohort while it bakes — it is the
   // static fallback only, so it decides nothing while Flipt answers; the `account-settings-v2`
   // rollout is still the on-switch, and OFF serves the legacy single-column page byte-identically.

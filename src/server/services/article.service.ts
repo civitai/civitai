@@ -1,6 +1,7 @@
+import { detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
 import type { EventViewer } from '~/server/events/event-access';
 import { Prisma } from '@prisma/client';
-import { accountHoldSql } from '~/server/services/legal-hold.service';
+import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
 import { PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import type { ManipulateType } from 'dayjs';
@@ -56,6 +57,7 @@ import {
   getEventDecorationsForEntity,
 } from '~/server/services/cosmetic.service';
 import { resolveCoverImageId } from '~/server/services/cover-image.service';
+import { shopArtworkUrls } from '~/server/services/image-url-ownership';
 import {
   deleteImageById,
   enqueueImageIngestion,
@@ -95,6 +97,14 @@ import { getFilesByEntity } from './file.service';
 import { generateJSON } from '~/server/utils/tiptap-generate-json';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
+import {
+  ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE,
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+  COVER_IMAGE_UNAVAILABLE_MESSAGE,
+  imageUrlUnavailableError,
+  keyIssuers,
+} from '~/server/services/image-url-ownership';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
 import { submitTextModeration } from '~/server/services/text-moderation.service';
@@ -893,6 +903,15 @@ export const upsertArticle = async ({
       if (!isOwner) throw throwAuthorizationError('You cannot perform this action');
     }
 
+    if (data.content) {
+      await assertArticleContentUrlsUsable({
+        content: data.content,
+        storedContent: article?.content,
+        userId,
+        ownerId: article?.userId ?? userId,
+      });
+    }
+
     enforceLockedProperties({
       data,
       storedLockedProperties: article?.lockedProperties,
@@ -941,6 +960,7 @@ export const upsertArticle = async ({
     // The guard at the top of this function saw the CLIENT's html. Blurb bodies were
     // spliced in above, so the string about to be written is one it never checked.
     await throwOnBlockedUserContent(data.content, { isModerator, surface: 'article' });
+    await assertNoShopArtworkInContent(data.content, article?.content);
 
     // TODO make coverImage required here and in db
     // create image entity to be attached to article
@@ -1625,7 +1645,24 @@ export const unusedAuthorImage = (ownerId: number) =>
     crucibleEntries: { none: {} },
     storylineCovers: { none: {} },
     storylineHeroes: { none: {} },
+    storylineCoverUploads: { none: {} },
   } satisfies Prisma.ImageWhereInput);
+
+/**
+ * Deleting an orphaned image deletes its object, so one whose key shop artwork uses stays: an
+ * article saved before shop keys were refused can hold one.
+ */
+async function withoutShopArtwork(
+  db: Prisma.TransactionClient | typeof dbWrite,
+  images: { id: number; url: string }[]
+) {
+  if (!images.length) return [];
+  const shopUrls = await shopArtworkUrls(
+    images.map((image) => image.url),
+    db
+  );
+  return images.filter((image) => !shopUrls.has(image.url)).map((image) => image.id);
+}
 
 /**
  * Drops images used as a service offering's cover. That column has no Prisma relation, so
@@ -1691,7 +1728,11 @@ export const deleteArticleById = async ({
     // Before the transaction: `CollectionItem.articleId` cascades from `Article`.
     const collectionsToRebuild = await getCollectionIdsForArticle({ articleId: id });
 
+    const markerView = await holdMarkerViewExists();
     const deleted = await dbWrite.$transaction(async (tx) => {
+      await tx.$executeRaw(
+        detachHeldThreadsSql({ articleId: Prisma.sql`SELECT ${id}::int` }, markerView)
+      );
       const article = await tx.article.delete({
         where: { id },
         select: { coverId: true },
@@ -1724,12 +1765,12 @@ export const deleteArticleById = async ({
       if (imageIds.length > 0 && !(await ownerUnderSafetyReport(dbWrite, article.userId))) {
         const trulyOrphanedImages = await dbWrite.image.findMany({
           where: { id: { in: imageIds }, ...unusedAuthorImage(article.userId) },
-          select: { id: true },
+          select: { id: true, url: true },
         });
 
         const deletable = await withoutOfferingCovers(
           dbWrite,
-          trulyOrphanedImages.map((img) => img.id)
+          await withoutShopArtwork(dbWrite, trulyOrphanedImages)
         );
         // Per image, so one failed delete does not stop the rest.
         for (const imageId of deletable) {
@@ -1880,6 +1921,109 @@ export async function unpublishArticleById({
 
 // --- Article Image Scanning Functions ---
 
+/** The content image urls of `content` with no `Image` row. */
+async function contentUrlsWithoutRows(content: string) {
+  const urls = [...new Set(getContentMedia(content).map((media) => media.url))];
+  if (!urls.length) return [];
+  const existing = await dbWrite.image.findMany({
+    where: { url: { in: urls } },
+    select: { url: true },
+  });
+  const existingUrls = new Set(existing.map((image) => image.url));
+  return urls.filter((url) => !existingUrls.has(url));
+}
+
+/**
+ * The content urls `linkArticleContentImages` would create rows for, checked against the article's
+ * owner. A url this save adds must pass the client image url checks; one already in the stored
+ * content is refused only when its row or upload key belongs to another user.
+ */
+export async function assertArticleContentUrlsUsable({
+  content,
+  storedContent,
+  userId,
+  ownerId,
+}: {
+  content: string;
+  storedContent?: string | null;
+  userId: number;
+  ownerId: number;
+}) {
+  const missing = await contentUrlsWithoutRows(content);
+  const stored = new Set(storedContent ? getContentMedia(storedContent).map((m) => m.url) : []);
+  try {
+    for (const urls of urlChunks(missing.filter((url) => !stored.has(url)))) {
+      await assertClientImageUrlsUsable({ urls, userId: ownerId });
+      await assertClientKeysIssuedToCaller({ urls, userId: ownerId, alsoIssuedTo: userId });
+    }
+    for (const urls of urlChunks(missing.filter((url) => stored.has(url)))) {
+      await assertClientImageUrlsUsable({ urls, userId: ownerId, shopArtwork: false });
+      const { issuedToOthers } = await keyIssuers({ urls, userId: ownerId, alsoIssuedTo: userId });
+      if (issuedToOthers.length) throw imageUrlUnavailableError();
+    }
+  } catch (error) {
+    if (error instanceof TRPCError && error.message === COVER_IMAGE_UNAVAILABLE_MESSAGE)
+      throw imageUrlUnavailableError(ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE);
+    throw error;
+  }
+}
+
+/** Each check takes a bounded number of keys; an article can hold more images than that. */
+const CONTENT_URLS_PER_CHECK = 16;
+function urlChunks(urls: string[]) {
+  const chunks: string[][] = [];
+  for (let i = 0; i < urls.length; i += CONTENT_URLS_PER_CHECK) {
+    chunks.push(urls.slice(i, i + CONTENT_URLS_PER_CHECK));
+  }
+  return chunks;
+}
+
+/**
+ * For content already saved: `assertClientImageUrlsUsable` on the urls with no row, and the keys
+ * among them that were issued to another user or have no issue record, reported, not refused.
+ */
+export async function checkSavedArticleContentUrls({
+  content,
+  ownerId,
+}: {
+  content: string;
+  ownerId: number;
+}) {
+  const result = {
+    issuedToOthers: [] as string[],
+    unrecorded: [] as string[],
+    lookupFailed: false,
+  };
+  for (const urls of urlChunks(await contentUrlsWithoutRows(content))) {
+    await assertClientImageUrlsUsable({ urls, userId: ownerId, shopArtwork: false });
+    const issuers = await keyIssuers({ urls, userId: ownerId });
+    result.issuedToOthers.push(...issuers.issuedToOthers);
+    result.unrecorded.push(...issuers.unrecorded);
+    result.lookupFailed ||= issuers.recordReadFailed || issuers.requestLogReadFailed;
+  }
+  return result;
+}
+
+/**
+ * Content images become `Image` rows, and deleting one removes its object, so an article may not
+ * embed a key that shop artwork uses. Checked before the write: linking runs after it, and must
+ * create and scan a row for every image the content holds. Only images new to this save count, so
+ * an article that already holds one can still be edited.
+ */
+async function assertNoShopArtworkInContent(
+  content: string | null | undefined,
+  storedContent: string | null | undefined
+) {
+  if (!content) return;
+  const stored = new Set(storedContent ? getContentMedia(storedContent).map((m) => m.url) : []);
+  const added = getContentMedia(content)
+    .map((media) => media.url)
+    .filter((url) => !stored.has(url));
+  if (!added.length) return;
+  const shopUrls = await shopArtworkUrls(added);
+  if (shopUrls.size) throw imageUrlUnavailableError(ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE);
+}
+
 /**
  * Link article content images to article entity
  * Creates Image entities and ImageConnections for all embedded images
@@ -2021,11 +2165,11 @@ export async function linkArticleContentImages({
     if (orphanedIds.length > 0) {
       const trulyOrphaned = await tx.image.findMany({
         where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
-        select: { id: true },
+        select: { id: true, url: true },
       });
       trulyOrphanedIds = await withoutOfferingCovers(
         tx,
-        trulyOrphaned.map((img) => img.id)
+        await withoutShopArtwork(tx, trulyOrphaned)
       );
     }
 
@@ -2676,6 +2820,13 @@ export async function rescanArticle({
     },
   });
   if (!article) throw throwNotFoundError(`No article with id ${id}`);
+  if (article.content)
+    await assertArticleContentUrlsUsable({
+      content: article.content,
+      storedContent: article.content,
+      userId: article.userId,
+      ownerId: article.userId,
+    });
 
   // --- Reset ingestion state ---
   // Raw SQL to avoid bumping Article.updatedAt — a rescan is not a user-edit

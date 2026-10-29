@@ -233,7 +233,11 @@ export const createPostWithImagesHandler = async ({
     };
   } catch (error) {
     // Roll back the orphan draft so no empty/partial post lingers.
-    await deletePost({ id: post.id, isModerator: ctx.user.isModerator }).catch(handleLogError);
+    await deletePost({
+      id: post.id,
+      isModerator: ctx.user.isModerator,
+      deletedById: ctx.user.id,
+    }).catch(handleLogError);
     if (error instanceof TRPCError) throw error;
     throw throwDbError(error);
   }
@@ -650,7 +654,7 @@ export const deletePostHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    const result = await deletePost({ ...input });
+    const result = await deletePost({ ...input, deletedById: ctx.user.id });
     if (result) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
       await closeAppealsDeletedByOwner({

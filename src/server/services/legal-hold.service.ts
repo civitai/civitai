@@ -3,6 +3,7 @@ import { TRPCError } from '@trpc/server';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import {
+  PLACEHOLDER_OWNER_ID,
   reportHolds,
   userNamedOnHoldingReportSql,
   userUnderLegalHoldSql,
@@ -94,16 +95,17 @@ function holdLegsSql(id: Prisma.Sql) {
     // Any image of theirs listed in a report that still holds, whoever the report names. Walks the
     // reports' image lists rather than the user's images: the lists are short, an account's images
     // are not. Compared as bigint so an id past int range still matches rather than being skipped.
-    'reported-image': Prisma.sql`EXISTS (
-      SELECT 1
+    // Uncorrelated, so Postgres builds the set once per statement rather than once per row.
+    'reported-image': Prisma.sql`((${id}) IN (
+      SELECT ri."userId"
       FROM "CsamReport" rr
       CROSS JOIN LATERAL jsonb_array_elements(
         CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
       ) re
       JOIN "Image" ri
         ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
-      WHERE ri."userId" = ${id} AND ${reportHolds('rr')}
-    )`,
+      WHERE ${reportHolds('rr')}
+    ))`,
   } satisfies Partial<Record<AccountHoldLeg, Prisma.Sql>>;
 }
 
@@ -152,18 +154,19 @@ export function ownerHeldSql(owner: Prisma.Sql): Prisma.Sql {
  */
 export async function ownerHeld(
   db: Pick<Prisma.TransactionClient, '$queryRaw'>,
-  from: Prisma.Sql
+  from: Prisma.Sql,
+  held: Prisma.Sql = ownerHeldSql(Prisma.raw('m."userId"'))
 ): Promise<boolean> {
-  const rows = await db.$queryRaw<{ held: unknown }[]>`SELECT ${ownerHeldSql(
-    Prisma.raw('m."userId"')
-  )} AS held ${from}`.catch((e: unknown) => {
-    logToAxiom({
-      type: 'error',
-      name: 'content-legal-hold-check-failed',
-      message: (e as Error).message,
-    }).catch(() => undefined);
-    return null;
-  });
+  const rows = await db.$queryRaw<{ held: unknown }[]>`SELECT ${held} AS held ${from}`.catch(
+    (e: unknown) => {
+      logToAxiom({
+        type: 'error',
+        name: 'content-legal-hold-check-failed',
+        message: (e as Error).message,
+      }).catch(() => undefined);
+      return null;
+    }
+  );
   if (!rows) return true;
   return rows.some((r) => r.held !== false);
 }
@@ -189,11 +192,14 @@ export async function deleteUnlessHeld(
     isModerator,
     db,
     ownerFrom,
+    held,
   }: {
     expected: number;
     isModerator: boolean | undefined;
     db: Pick<Prisma.TransactionClient, '$queryRaw'>;
     ownerFrom: Prisma.Sql;
+    /** What the DELETE was guarded by, over `ownerFrom`'s aliases. */
+    held: Prisma.Sql;
   }
 ): Promise<'deleted' | 'short'> {
   const removed = await statement.catch((e: unknown) => {
@@ -206,7 +212,7 @@ export async function deleteUnlessHeld(
     throw contentKeptError(isModerator);
   });
   if (removed >= expected) return 'deleted';
-  if (await ownerHeld(db, ownerFrom)) throw contentKeptError(isModerator);
+  if (await ownerHeld(db, ownerFrom, held)) throw contentKeptError(isModerator);
   return 'short';
 }
 
@@ -228,6 +234,111 @@ export async function holdMarkerTableExists(): Promise<boolean> {
     SELECT to_regclass(${`"${HOLD_MARKER_TABLE}"`}) IS NOT NULL AS present
   `;
   return row?.present === true;
+}
+
+export type ModelOwnershipReason = 'create' | 'transfer' | 'account-delete' | 'restore';
+
+/**
+ * Records `userId` as an owner of every model `where` matches (over `"Model" m`). Run it in the same
+ * transaction as the owner write, so the hold reads every owner a model has had.
+ */
+export function recordModelOwnershipSql({
+  where,
+  userId,
+  reason,
+  actorId = null,
+}: {
+  where: Prisma.Sql;
+  userId: number;
+  reason: ModelOwnershipReason;
+  actorId?: number | null;
+}): Prisma.Sql {
+  return Prisma.sql`
+    INSERT INTO "ModelOwnership" ("modelId", "userId", "reason", "actorId")
+    SELECT m.id, ${userId}::int, ${reason}, ${actorId}::int FROM "Model" m WHERE ${where}
+  `;
+}
+
+/**
+ * Records the current owner of every model `where` matches (over `"Model" m`) that has no row for that
+ * owner yet, as a baseline: a model created before its history began, or before the backfill reached
+ * it, still keeps its owner on record when it moves. Run before the owner write.
+ */
+export function recordCurrentModelOwnersSql(where: Prisma.Sql): Prisma.Sql {
+  return Prisma.sql`
+    INSERT INTO "ModelOwnership" ("modelId", "userId", "reason")
+    SELECT m.id, m."userId", 'baseline' FROM "Model" m
+    WHERE ${where}
+      AND NOT EXISTS (
+        SELECT 1 FROM "ModelOwnership" o WHERE o."modelId" = m.id AND o."userId" = m."userId"
+      )
+  `;
+}
+
+/**
+ * Whether the "ModelOwnership" row `ho` is a placeholder row that still holds its model. An account
+ * deletion's placeholder holds until the model is restored; then its owner's own holds apply. A
+ * backfilled one always holds: who owned the model before it is not fully recorded.
+ */
+const placeholderRowHoldsSql = Prisma.sql`(ho."userId" = ${Prisma.raw(
+  String(PLACEHOLDER_OWNER_ID)
+)} AND (ho.reason <> 'account-delete' OR NOT EXISTS (
+  SELECT 1 FROM "ModelOwnership" hrs
+  WHERE hrs."modelId" = ho."modelId" AND hrs.reason = 'restore' AND hrs.id > ho.id
+)))`;
+
+/**
+ * Whether a model's data is held: its owner is the placeholder or under an account hold, or so is any
+ * owner it had before. A placeholder that an account deletion put there stops holding once the model
+ * is restored to an owner; one recorded by the backfill always holds. `modelId` is an int SQL
+ * expression. Names "ModelOwnership": without the table the statement fails, and so deletes nothing.
+ */
+export function modelDataHeldSql(modelId: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  const placeholder = Prisma.raw(String(PLACEHOLDER_OWNER_ID));
+  return Prisma.sql`(EXISTS (
+    SELECT 1 FROM "Model" hm
+    WHERE hm.id = ${modelId}
+      AND (hm."userId" = ${placeholder} OR ${accountHoldSql(Prisma.raw('hm."userId"'), markerView)})
+  ) OR EXISTS (
+    SELECT 1 FROM "ModelOwnership" ho
+    WHERE ho."modelId" = ${modelId}
+      AND (${placeholderRowHoldsSql} OR ${accountHoldSql(Prisma.raw('ho."userId"'), markerView)})
+  ))`;
+}
+
+/**
+ * Whether the data of the model aliased `m` is held, by its owner's holds or by any owner it had: the
+ * guard for a DELETE of its files or versions.
+ */
+export function modelRowHeldSql(): Prisma.Sql {
+  return Prisma.sql`(${ownerHeldSql(Prisma.raw('m."userId"'))} OR ${modelDataHeldSql(
+    Prisma.raw('m.id'),
+    true
+  )})`;
+}
+
+/**
+ * The ids, among the model ids `modelIds` selects, whose data `modelDataHeldSql` holds, as a query.
+ * For a statement over many models: each owner, present or past, is checked once, not once per row.
+ */
+export function heldModelIdsSql(modelIds: Prisma.Sql, markerView: boolean): Prisma.Sql {
+  const placeholder = Prisma.raw(String(PLACEHOLDER_OWNER_ID));
+  return Prisma.sql`
+    WITH owners AS MATERIALIZED (
+      SELECT hm.id AS "modelId", hm."userId" FROM "Model" hm WHERE hm.id IN (${modelIds})
+      UNION
+      SELECT ho."modelId", ho."userId" FROM "ModelOwnership" ho WHERE ho."modelId" IN (${modelIds})
+    ), held_owners AS MATERIALIZED (
+      SELECT a."userId" FROM (SELECT DISTINCT "userId" FROM owners) a
+      WHERE ${accountHoldSql(Prisma.raw('a."userId"'), markerView)}
+    )
+    SELECT ow."modelId" FROM owners ow WHERE ow."userId" IN (SELECT "userId" FROM held_owners)
+    UNION
+    SELECT hm.id FROM "Model" hm WHERE hm.id IN (${modelIds}) AND hm."userId" = ${placeholder}
+    UNION
+    SELECT ho."modelId" FROM "ModelOwnership" ho
+    WHERE ho."modelId" IN (${modelIds}) AND ${placeholderRowHoldsSql}
+  `;
 }
 
 /** Authors one call logs at most; a bulk delete can retain rows from every author it touched. */

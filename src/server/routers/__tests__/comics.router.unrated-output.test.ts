@@ -61,6 +61,7 @@ import { comicsRouter } from '../comics.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { OnboardingSteps } from '~/server/common/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { NSFW_CAPPED, NSFW_CAPPED_MESSAGE } from '~/shared/orchestrator/workflow-data';
 
 const USER_ID = 7;
@@ -309,5 +310,69 @@ describe('comics.unlockPanelGeneration - an output that has not been rated yet',
     expect(candidates[1]).not.toHaveProperty('key');
     expect(fetch).toHaveBeenCalledTimes(1);
     expect(mocks.s3Send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('comics - a stored output key is recorded as issued to the user', () => {
+  const storedKeys = () =>
+    mocks.s3Send.mock.calls.map((c) => (c[0] as { input: { Key: string } }).input.Key);
+  const recordedOwners = () =>
+    vi
+      .mocked(redisMock.sysRedis.set)
+      .mock.calls.filter((c) => String(c[0]).startsWith('system:upload-key-owner:'));
+  const expectEachStoredKeyRecorded = (count: number) => {
+    expect(storedKeys()).toHaveLength(count);
+    expect(recordedOwners()).toEqual(
+      storedKeys().map((key) => [
+        `system:upload-key-owner:${key}`,
+        String(USER_ID),
+        { EX: 30 * 24 * 60 * 60 },
+      ])
+    );
+  };
+
+  it('by the poll of a single-image panel', async () => {
+    givenPanel();
+    givenWorkflow([output('b1', { nsfwLevel: 'pg' })]);
+
+    await caller().pollPanelStatus({ panelId: PANEL_ID });
+
+    expectEachStoredKeyRecorded(1);
+  });
+
+  it('by the poll of a multi-image panel', async () => {
+    givenPanel({ metadata: { quantity: 2 } });
+    givenWorkflow([output('b1', { nsfwLevel: 'pg' }), output('b2', { nsfwLevel: 'pg' })]);
+
+    await caller().pollPanelStatus({ panelId: PANEL_ID });
+
+    expectEachStoredKeyRecorded(2);
+  });
+
+  it('by the unlock of a single-image panel', async () => {
+    givenPanel({ status: 'RequireUnlock', metadata: { quantity: 1, blockedReason: 'canUpgrade' } });
+    givenWorkflow([output('b1', { nsfwLevel: 'pg' })]);
+
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expectEachStoredKeyRecorded(1);
+  });
+
+  it('by the unlock of a multi-image panel', async () => {
+    givenPanel({
+      status: 'AwaitingSelection',
+      metadata: {
+        quantity: 2,
+        candidateImages: [
+          { requiresUnlock: true, blockedReason: 'canUpgrade' },
+          { requiresUnlock: true, blockedReason: 'canUpgrade' },
+        ],
+      },
+    });
+    givenWorkflow([output('b1', { nsfwLevel: 'pg' }), output('b2', { nsfwLevel: 'pg' })]);
+
+    await caller().unlockPanelGeneration({ panelId: PANEL_ID });
+
+    expectEachStoredKeyRecorded(2);
   });
 });

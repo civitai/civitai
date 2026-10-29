@@ -7,15 +7,19 @@ import {
   REPORTED,
   createModelHoldDb,
   accessRowsOf,
+  commentsLeft,
   dropMarkerView,
   failDeletesFrom,
+  FORMER_CLEAN,
   holdOwner,
+  ownedBefore,
   realTransactions,
   fileIds,
   fileOf,
   modelOf,
   routeToDb,
   seedModelHoldDb,
+  seedReviewThread,
   versionIds,
   versionOf,
 } from './model-legal-hold.fixture';
@@ -150,6 +154,25 @@ describe('deleteVersionById', () => {
     expect(await fileIds(db)).toContain(fileOf(id));
     expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
     expect(mockDeregisterFileLocations).not.toHaveBeenCalled();
+  });
+
+  it('keeps a version of a model a held account owned before, and deletes no bytes', async () => {
+    const id = stubVersion(CLEAN);
+    await ownedBefore(db, CLEAN, REPORTED);
+
+    await expect(deleteVersionById({ id, isModerator: false })).rejects.toThrow(OWNER_CONTENT_KEPT);
+
+    expect(await versionIds(db)).toContain(id);
+    expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
+  });
+
+  it('deletes a version of a model only unheld accounts owned (control)', async () => {
+    const id = stubVersion(CLEAN);
+    await ownedBefore(db, CLEAN, FORMER_CLEAN);
+
+    await deleteVersionById({ id, isModerator: false });
+
+    expect(await versionIds(db)).not.toContain(id);
   });
 
   it('rolls back the access rows it removed before the refusal, in a real transaction', async () => {
@@ -317,6 +340,40 @@ describe('mergeVersions', () => {
     for (const id of sourceVersionIds) expect(left).toContain(id);
   });
 
+  it('refuses the merge of a model a held account owned before, before the transaction', async () => {
+    stubModel(CLEAN);
+    await ownedBefore(db, CLEAN, MARKED);
+
+    await expect(merge(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  // The record lands after the check before the transaction, so only the DELETE's own guard sees it.
+  it('refuses at the delete when an earlier held owner is recorded after the first check', async () => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    let changed = false;
+    routeToDb(db, async (sql) => {
+      if (changed || !sql.includes('FOR UPDATE')) return;
+      changed = true;
+      await ownedBefore(db, CLEAN, REPORTED);
+    });
+
+    await expect(merge(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
+    expect(changed).toBe(true);
+    const left = await versionIds(db);
+    for (const id of sourceVersionIds) expect(left).toContain(id);
+  });
+
+  it('merges the versions of a model only unheld accounts owned (control)', async () => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    await ownedBefore(db, CLEAN, FORMER_CLEAN);
+
+    await merge(CLEAN);
+
+    const left = await versionIds(db);
+    for (const id of sourceVersionIds) expect(left).not.toContain(id);
+  });
+
   it('refuses a held owner before the transaction starts', async () => {
     stubModel(REPORTED);
 
@@ -352,5 +409,74 @@ describe('mergeVersions', () => {
     await expect(merge(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
     const left = await versionIds(db);
     for (const id of sourceVersionIds) expect(left).toContain(id);
+  });
+});
+
+// A review cascades with its version, and its comment threads with it.
+describe("a held author's comment on a review the version takes with it", () => {
+  it('keeps the comment when the version is deleted', async () => {
+    const id = stubVersion(CLEAN);
+    await seedReviewThread(db, {
+      reviewId: 1,
+      versionId: id,
+      reviewer: CLEAN,
+      commenter: REPORTED,
+    });
+
+    await deleteVersionById({ id, isModerator: false });
+
+    expect(await versionIds(db)).not.toContain(id);
+    expect(await commentsLeft(db)).toEqual([{ id: 1, onReview: false }]);
+  });
+
+  it('takes an unheld comment with the version (control)', async () => {
+    const id = stubVersion(CLEAN);
+    await seedReviewThread(db, { reviewId: 1, versionId: id, reviewer: CLEAN, commenter: CLEAN });
+
+    await deleteVersionById({ id, isModerator: false });
+
+    expect(await commentsLeft(db)).toEqual([]);
+  });
+
+  // A reviewer's review of a source version goes when they also reviewed the target, or another
+  // source with a higher review id.
+  it.each([
+    ['the target', 0],
+    ['a later source', 2],
+  ])('keeps the comment when a merge drops a review superseded by one on %s', async (_, n) => {
+    const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
+    const keeper = n === 0 ? targetVersionId : sourceVersionIds[1];
+    await seedReviewThread(db, {
+      reviewId: 1,
+      versionId: sourceVersionIds[0],
+      reviewer: 9,
+      // Both legs of the hold: a pending report, and the marker.
+      commenter: n === 0 ? REPORTED : MARKED,
+    });
+    await seedReviewThread(db, { reviewId: 2, versionId: keeper, reviewer: 9, commenter: CLEAN });
+
+    await merge(CLEAN);
+
+    expect(await commentsLeft(db)).toContainEqual({ id: 1, onReview: false });
+  });
+
+  it('takes an unheld comment on a superseded review with the merge (control)', async () => {
+    const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
+    await seedReviewThread(db, {
+      reviewId: 1,
+      versionId: sourceVersionIds[0],
+      reviewer: 9,
+      commenter: CLEAN,
+    });
+    await seedReviewThread(db, {
+      reviewId: 2,
+      versionId: targetVersionId,
+      reviewer: 9,
+      commenter: CLEAN,
+    });
+
+    await merge(CLEAN);
+
+    expect((await commentsLeft(db)).map((c) => c.id)).not.toContain(1);
   });
 });

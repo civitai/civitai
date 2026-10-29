@@ -13,3 +13,11 @@ export type AppAccessRequestDecision = (typeof APP_ACCESS_REQUEST_DECISIONS)[num
 /** "What do you want to build?" — long enough to say something, short enough to read in a queue. */
 export const APP_ACCESS_WHAT_TO_BUILD_MIN = 20;
 export const APP_ACCESS_WHAT_TO_BUILD_MAX = 2000;
+
+/**
+ * Where the moderator queue lives: the "Access requests" tab on `/apps/review`. Read by the old
+ * `/moderator/app-access-requests` route (which redirects here) and the moderation nav, so the two
+ * cannot point at different places. The tab value must stay in `/apps/review`'s `TAB_VALUES`, or
+ * the link lands on Pending.
+ */
+export const APP_ACCESS_REQUESTS_REVIEW_HREF = '/apps/review?tab=access-requests';

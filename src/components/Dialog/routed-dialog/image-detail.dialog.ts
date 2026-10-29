@@ -11,6 +11,17 @@ const ImageDetailModal = dynamic(() => import('~/components/Image/Detail/ImageDe
   ssr: false,
 });
 
+// A history entry inherits the previous entry's state, so a detail opened from inside another
+// one (the remix card) would otherwise arrive with the first one's feed. Cleared unless named.
+const FEED_STATE_RESET = {
+  images: undefined,
+  postTail: undefined,
+  filters: undefined,
+  collectionId: undefined,
+  hideReactionCount: undefined,
+  hideReactions: undefined,
+};
+
 const imageDetailDialog = routedDialogDictionary.addItem('imageDetail', {
   component: ImageDetailModal,
   target: '#main',
@@ -36,7 +47,7 @@ const imageDetailDialog = routedDialogDictionary.addItem('imageDetail', {
       asPath: storylineChapterId
         ? storylineReadHref({ imageId, chapterId: storylineChapterId, via })
         : `/images/${imageId}`,
-      state,
+      state: { ...FEED_STATE_RESET, ...state },
     };
   },
 });

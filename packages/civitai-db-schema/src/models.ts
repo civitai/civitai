@@ -164,6 +164,8 @@ export type BountyEngagementType = "Favorite" | "Track";
 
 export type CsamReportType = "Image" | "TrainingData" | "GeneratedImage" | "ExternalLink";
 
+export type CsamQueueSetAsideOutcome = "AfterReport" | "Dismissed";
+
 export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess";
 
 export type PaidAccessEntityType = "ModelVersion" | "ComicChapter";
@@ -1031,6 +1033,15 @@ export interface Model {
   permissionSnapshots?: ModelPermissionSnapshot[];
 }
 
+export interface ModelOwnership {
+  id: number;
+  modelId: number;
+  userId: number;
+  reason: string;
+  actorId: number | null;
+  createdAt: Date;
+}
+
 export interface ModelPermissionSnapshot {
   id: number;
   modelId: number;
@@ -1742,6 +1753,7 @@ export interface Image {
   crucibleEntries?: CrucibleEntry[];
   storylineCovers?: Storyline[];
   storylineHeroes?: Storyline[];
+  storylineCoverUploads?: StorylineCoverUpload[];
   caption?: ImageCaption | null;
 }
 
@@ -2939,6 +2951,7 @@ export interface Comment {
   locked: boolean | null;
   hidden: boolean | null;
   pinnedAt: Date | null;
+  removedByAuthor: boolean;
   comments?: Comment[];
   reactions?: CommentReaction[];
   reports?: CommentReport[];
@@ -4123,6 +4136,15 @@ export interface CsamReport {
   type: CsamReportType;
   sendClaimId: string | null;
   sendClaimedAt: Date | null;
+}
+
+export interface CsamQueueSetAside {
+  imageId: number;
+  userId: number;
+  outcome: CsamQueueSetAsideOutcome;
+  csamReportId: number | null;
+  moderatorId: number;
+  createdAt: Date;
 }
 
 export interface CsamReportAudit {
@@ -6609,6 +6631,7 @@ export interface Storyline {
   pendingChapters?: StorylinePendingChapter[];
   collaborators?: StorylineCollaborator[];
   reports?: StorylineReport[];
+  coverUploads?: StorylineCoverUpload[];
   thread?: Thread | null;
 }
 
@@ -6694,6 +6717,14 @@ export interface StorylineEarlyAccessSignup {
   userId: number;
   user?: User;
   storylineId: number | null;
+  createdAt: Date;
+}
+
+export interface StorylineCoverUpload {
+  storylineId: number;
+  storyline?: Storyline;
+  imageId: number;
+  image?: Image;
   createdAt: Date;
 }
 

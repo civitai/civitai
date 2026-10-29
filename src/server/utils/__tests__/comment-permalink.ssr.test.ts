@@ -2,10 +2,12 @@ import type * as CommentPermalink from '~/server/utils/comment-permalink';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 // Module scope, not a test body: from a body this transform is charged to one test's 60s
 // budget. See vitest.config.mts.
-import { getServerSideProps } from '~/pages/comments/v2/[id]';
+import { getServerSideProps } from '~/pages/comments/[id]';
+import { getServerSideProps as legacyGetServerSideProps } from '~/pages/comments/v2/[id]';
 
 /**
- * `/comments/v2/<id>` — the SSR WIRING, as distinct from the resolution logic.
+ * `/comments/<id>` (and its alias `/comments/v2/<id>`): the SSR WIRING, as distinct from the
+ * resolution logic.
  *
  * `comment-permalink.test.ts` proves the resolver builds the right URL. This file proves the page
  * actually TURNS that URL into a 302, and a null into a 404 — the seam between them, which no
@@ -24,8 +26,9 @@ vi.mock('~/server/utils/comment-permalink', async (importOriginal) => ({
 
 // The page's `createServerSideProps` wrapper resolves a session; stub it so the test exercises the
 // resolver rather than auth.
-vi.mock('~/server/utils/get-server-auth-session', () => ({
-  getServerAuthSession: vi.fn(async () => null),
+const getSession = vi.hoisted(() => vi.fn());
+vi.mock('~/server/auth/get-server-auth-session', () => ({
+  getServerAuthSession: getSession,
 }));
 
 const COMMENT_ID = 8123;
@@ -45,18 +48,19 @@ const row = (over: Record<string, unknown>) => ({
 const run = async () => {
   return (await (getServerSideProps as any)({
     params: { id: String(COMMENT_ID) },
-    req: { url: `/comments/v2/${COMMENT_ID}`, headers: {}, cookies: {} },
+    req: { url: `/comments/${COMMENT_ID}`, headers: {}, cookies: {} },
     res: { setHeader: vi.fn(), getHeader: vi.fn() },
     query: {},
-    resolvedUrl: `/comments/v2/${COMMENT_ID}`,
+    resolvedUrl: `/comments/${COMMENT_ID}`,
   })) as any;
 };
 
 beforeEach(() => {
   getRow.mockReset();
+  getSession.mockReset().mockResolvedValue(null);
 });
 
-describe('/comments/v2/<id> — getServerSideProps wiring', () => {
+describe('/comments/<id> — getServerSideProps wiring', () => {
   it('turns a resolved app-listing permalink into a 302 to the WHOLE expected url', async () => {
     getRow.mockResolvedValue(row({ entityType: 'appListing', appListingSlug: SLUG }));
     expect(await run()).toEqual({
@@ -110,12 +114,28 @@ describe('/comments/v2/<id> — getServerSideProps wiring', () => {
     // `Number(id)` — a string id would silently miss every row and read as "comment not found".
     getRow.mockResolvedValue(undefined);
     await run();
-    expect(getRow).toHaveBeenCalledWith(COMMENT_ID);
+    expect(getRow).toHaveBeenCalledWith(COMMENT_ID, { includeHidden: false });
+  });
+
+  it('reads a comment hidden for ToS for a moderator, and only for a moderator', async () => {
+    getRow.mockResolvedValue(undefined);
+    getSession.mockResolvedValue({ user: { id: 1, isModerator: true } });
+    await run();
+    getSession.mockResolvedValue({ user: { id: 2, isModerator: false } });
+    await run();
+    expect(getRow.mock.calls).toEqual([
+      [COMMENT_ID, { includeHidden: true }],
+      [COMMENT_ID, { includeHidden: false }],
+    ]);
   });
 
   it('positive control: the mock is actually consulted (it is not answering from nothing)', async () => {
     getRow.mockResolvedValue(row({}));
     await run();
     expect(getRow).toHaveBeenCalledTimes(1);
+  });
+
+  it('the /comments/v2/<id> links already shared still resolve through the same page', () => {
+    expect(legacyGetServerSideProps).toBe(getServerSideProps);
   });
 });

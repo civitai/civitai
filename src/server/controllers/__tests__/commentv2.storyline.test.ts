@@ -103,6 +103,8 @@ const EMPTY = { chapters: [], maxNsfwLevel: NsfwLevel.PG };
 
 const reset = () => {
   vi.clearAllMocks();
+  // A live comment, so a reply or edit reaches the storyline checks.
+  dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: false } as never);
   blockedPair.ids = [];
   hidden.ids = [];
   flags.storylines = true;

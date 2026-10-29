@@ -90,7 +90,7 @@ describe('getTicketDescription', () => {
     );
     expect(await getTicketDescription('40017')).toEqual({
       status: 'unavailable',
-      reason: "Freshdesk's rate limit is reached — try again in 37s.",
+      reason: "Freshdesk's rate limit is reached — retry in 37s.",
     });
   });
 

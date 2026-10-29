@@ -55,6 +55,15 @@ describe('deleteImageHandler', () => {
     expect(closeMock).toHaveBeenCalledWith({ entityType: 'Image', entityIds: [55], ownerId: 7 });
   });
 
+  // Who deletes decides whether an object shop artwork still uses may be kept.
+  it('tells the delete who is deleting', async () => {
+    deleteImageByIdMock.mockResolvedValue(undefined);
+
+    await deleteImageHandler({ input: { id: 55 }, ctx: ctx(7) });
+
+    expect(deleteImageByIdMock).toHaveBeenCalledWith(expect.objectContaining({ deletedById: 7 }));
+  });
+
   it('closes nothing when nothing was deleted', async () => {
     deleteImageByIdMock.mockResolvedValue(undefined);
 
@@ -76,6 +85,14 @@ describe('deletePostHandler', () => {
       entityIds: [10, 11],
       ownerId: 8,
     });
+  });
+
+  it('tells the delete who is deleting', async () => {
+    deletePostMock.mockResolvedValue(undefined);
+
+    await deletePostHandler({ input: { id: 3 }, ctx: ctx(8) });
+
+    expect(deletePostMock).toHaveBeenCalledWith(expect.objectContaining({ deletedById: 8 }));
   });
 
   it('closes nothing when the post was not deleted', async () => {

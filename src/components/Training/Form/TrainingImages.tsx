@@ -45,7 +45,6 @@ import {
   IconZoomOut,
 } from '@tabler/icons-react';
 import { clsx } from 'clsx';
-import { saveAs } from 'file-saver';
 import { capitalize, isEqual } from 'lodash-es';
 import dynamic from 'next/dynamic';
 import pLimit from 'p-limit';
@@ -101,6 +100,7 @@ import {
   useTrainingImageStore,
 } from '~/store/training.store';
 import type { TrainingModelData } from '~/types/router';
+import { downloadBlob } from '~/utils/file-utils';
 import { createImageElement } from '~/utils/image-utils';
 import { getJSZip } from '~/utils/lazy';
 import {
@@ -1139,7 +1139,7 @@ export const TrainingFormImages = ({ model }: { model: NonNullable<TrainingModel
     const fileName = `${thisModelVersion.id}_training_data.zip`;
 
     if (dlOnly) {
-      saveAs(content, fileName);
+      downloadBlob(content, fileName);
       setZipping(false);
       return;
     }

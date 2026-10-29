@@ -1,3 +1,4 @@
+import { Prisma } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
@@ -39,6 +40,12 @@ vi.mock('~/server/metrics', async (importOriginal) => {
   const m = { queueUpdate: vi.fn(async () => undefined) };
   return { ...actual, userMetrics: m, articleMetrics: m };
 });
+// The mocked raw reads answer every query, so the wipe finds models to soft-delete; that path is
+// not this suite's.
+vi.mock('~/server/services/model.service', async (importOriginal) => ({
+  ...((await importOriginal()) as Record<string, unknown>),
+  deleteModelById: vi.fn(async () => null),
+}));
 vi.mock('~/server/services/image.service', async (importOriginal) => ({
   ...((await importOriginal()) as Record<string, unknown>),
   deleteImages: vi.fn(async () => []),
@@ -87,18 +94,21 @@ const BOUNTIES = [701, 702];
 
 /** The kept-bounty list the account's bounty delete was given. */
 function keptByBountyDelete() {
-  const call = vi
+  const statement = vi
     .mocked(dbMock.dbWrite.$executeRaw)
-    .mock.calls.find(([strings]) =>
-      (strings as unknown as string[]).join('?').includes('DELETE FROM "Bounty"\n')
-    );
-  if (!call) throw new Error('no bounty delete was issued');
+    .mock.calls.map(flatten)
+    .find((sql) => sql.text.includes('DELETE FROM "Bounty"'));
+  if (!statement) throw new Error('no bounty delete was issued');
   // The kept list is what the statement excludes, not just a value it was handed.
-  expect((call[0] as unknown as string[]).join('?')).toContain('id <> ALL(');
-  const [, userId, kept] = call;
+  const match = /b\."userId" = \$(\d+) AND b\.id <> ALL\(\$(\d+)::int\[\]\)/.exec(statement.text);
+  expect(match, 'the bounty delete excludes a kept list').not.toBeNull();
+  const [userId, kept] = [match![1], match![2]].map((n) => statement.values[Number(n) - 1]);
   expect(userId).toBe(USER);
   return kept;
 }
+/** A tagged-template `$executeRaw` call as the one statement it sends, nested fragments flattened. */
+const flatten = ([strings, ...values]: unknown[]) =>
+  Prisma.sql(strings as TemplateStringsArray, ...(values as never[]));
 
 beforeEach(() => {
   vi.clearAllMocks();

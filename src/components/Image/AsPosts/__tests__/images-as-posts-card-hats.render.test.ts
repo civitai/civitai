@@ -119,6 +119,10 @@ vi.mock('~/components/TrackView/useTrackImpression', () => ({
 }));
 
 const { ImagesAsPostsCard } = await import('~/components/Image/AsPosts/ImagesAsPostsCard');
+const { getEventDecorationClearLeftCss, HAT_PLAIN_CARD_NUDGE } = await import(
+  '~/components/Cosmetics/EventDecoration/event-decoration-placement'
+);
+const hatData = { type: 'hat', event: 'birthday2026', url: 'hat.png' };
 
 type Image = ReturnType<typeof h.image>;
 const images = (n: number, hattedId?: number) =>
@@ -142,14 +146,14 @@ async function renderCard(seed: Image[], imageCount?: number) {
 
 const shownId = () =>
   container.querySelector('[data-testid="slide"]')?.getAttribute('data-image-id') ?? null;
-// The image wearing the drawn hat, prefixed 'card:' when it is drawn outside the media.
+// The image wearing the drawn hat, prefixed 'outside:' when it is not in the card's hat layer.
 const hatOn = () => {
   const hats = container.querySelectorAll('button[data-event-decoration="hat"]');
   if (hats.length > 1) return `${hats.length} hats`;
   const hat = hats[0];
   if (!hat) return null;
   const id = hat.closest('[data-worn-on]')?.getAttribute('data-worn-on') ?? '?';
-  return hat.closest('.flex-1.overflow-hidden') ? id : `card:${id}`;
+  return hat.closest('[data-testid="hat-layer"]') ? id : `outside:${id}`;
 };
 const badgeClearance = () =>
   (
@@ -164,7 +168,14 @@ const clickNext = () =>
     next.click();
   });
 
+// happy-dom has no layout, so the hat layer draws nothing without this.
+const rectOf = { x: 0, y: 0, left: 0, top: 0, right: 400, bottom: 300, width: 400, height: 300 };
+
 beforeEach(() => {
+  vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+    ...rectOf,
+    toJSON: () => rectOf,
+  });
   h.tail.items = [];
   container = document.createElement('div');
   document.body.appendChild(container);
@@ -180,14 +191,18 @@ describe('a gallery post card wears a hat only on the image that wears it', () =
     await renderCard(images(1, 1));
     expect(shownId()).toBe('1');
     expect(hatOn()).toBe('1');
-    expect(badgeClearance()).toMatch(/^[1-9][0-9]*px$/);
+    expect(badgeClearance()).toBe(
+      getEventDecorationClearLeftCss(hatData, 'corner', HAT_PLAIN_CARD_NUDGE)
+    );
   });
 
   it('hat on the cover: shown on the cover, gone when another slide shows', async () => {
     await renderCard(images(3, 1));
     expect(shownId()).toBe('1');
     expect(hatOn()).toBe('1');
-    expect(badgeClearance()).toMatch(/^[1-9][0-9]*px$/);
+    expect(badgeClearance()).toBe(
+      getEventDecorationClearLeftCss(hatData, 'corner', HAT_PLAIN_CARD_NUDGE)
+    );
 
     await clickNext();
     expect(shownId()).toBe('2');

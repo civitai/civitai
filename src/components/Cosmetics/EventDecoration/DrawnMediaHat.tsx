@@ -2,11 +2,11 @@ import { useLayoutEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import type { WornDecoration } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
 import { ImageMediaHat } from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
-import { getHatRoom } from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
+import {
+  HAT_ALLOWANCE,
+  getHatRoom,
+} from '~/components/Cosmetics/EventDecoration/event-decoration-placement';
 import { MEDIA_OVERLAY_ATTR, useDrawnMediaBox } from '~/components/EdgeMedia/useDrawnMediaBox';
-
-/** top: the header row's `p-3` bottom padding in ImageDetail2; left: the carousel starts at the window. */
-const SLOT_BLEED = { left: 0, top: 12 };
 
 /**
  * An image's hat on the box its picture is drawn in, portalled into `layer` because the carousel
@@ -74,8 +74,11 @@ export function DrawnMediaHat({
               decoration={decoration}
               cardWidth={box.width}
               allowance={{
-                left: getHatRoom(box.left + SLOT_BLEED.left),
-                top: getHatRoom(box.top + SLOT_BLEED.top),
+                // The carousel starts at the window's edge, so beside the picture the hat reaches only as
+                // far as the letterbox. Above it, the hat takes a feed card's reach even where it covers
+                // the header's buttons: it takes the pointer only in its own outline.
+                left: getHatRoom(box.left),
+                top: HAT_ALLOWANCE.corner,
               }}
             />
           </div>,

@@ -78,6 +78,8 @@ type UserModActivity = {
     | 'unmute'
     | 'revokeTimedMute'
     | 'createSystemAccount'
+    | 'mintSystemAccountApiKey'
+    | 'setSystemAccountProfile'
     // Written from /api/admin/reaction-abuse so the moderator app can show that an account was
     // dropped from reaction metrics/ranking, and by whom. Named for WHAT happened, not who did it —
     // `userId` carries the actor (the -1 sentinel for the scheduled poller, a real moderator id when
@@ -157,7 +159,8 @@ export type StorylineModActivity = {
     | 'moveChapter'
     | 'linkChapter'
     | 'setCanon'
-    | 'removeCollaborator';
+    | 'removeCollaborator'
+    | 'delete';
 };
 
 type SiteAlertModActivity = {

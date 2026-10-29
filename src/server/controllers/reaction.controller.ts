@@ -11,7 +11,13 @@ import { isReactionAllowedForEntity } from '~/server/schema/reaction.schema';
 import { getContestsFromEntity } from '~/server/services/collection.service';
 import { getMetricExcludedUserIds } from '~/server/services/metric-excluded-users.service';
 import { createNotification } from '~/server/services/notification.service';
-import { handleLogError, throwBadRequestError, throwDbError } from '~/server/utils/errorHandling';
+import {
+  handleLogError,
+  throwBadRequestError,
+  throwDbError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
+import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
 import { updateEntityMetric } from '~/server/utils/metric-helpers';
 import {
   getNsfwLevelDeprecatedReverseMapping,
@@ -21,6 +27,14 @@ import { isFutureDate } from '~/utils/date-helpers';
 import { isDefined } from '~/utils/type-guards';
 import type { ReactionType } from '../clickhouse/client';
 import { dbRead, dbWrite } from '../db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readImageNsfwLevelAndOwnerViaKysely,
+  readImageNsfwLevelAndOwnerViaPrisma,
+  readImagePostIdViaKysely,
+  readImagePostIdViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import { toggleReaction } from './../services/reaction.service';
 import { hasEntityAccess } from '~/server/services/common.service';
 
@@ -55,15 +69,14 @@ async function getTrackerEvent(
   const action = result === 'created' ? 'Create' : 'Delete';
   switch (input.entityType) {
     case 'image':
-      const image = await dbRead.image.findFirst({
-        where: {
-          id: input.entityId,
-        },
-        select: {
-          nsfwLevel: true,
-          userId: true,
-        },
-      });
+      const image = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+        ? await readImageNsfwLevelAndOwnerViaKysely(
+            (
+              await loadKyselyDb()
+            ).kyselyRead,
+            input.entityId
+          )
+        : await readImageNsfwLevelAndOwnerViaPrisma(dbRead, input.entityId);
 
       if (image) {
         return {
@@ -266,6 +279,13 @@ export const toggleReactionHandler = async ({
       );
     }
 
+    if (
+      input.entityType === 'comment' &&
+      !ctx.user.isModerator &&
+      (await isCommentGoneForMembers(input.entityId))
+    )
+      throw throwNotFoundError(`No comment with id ${input.entityId}`);
+
     if (input.entityType === 'image') {
       // We are only doing this for image contests for now. Because the user
       // gets an instant feedback, this shouldn't have too bad an impact if any at all.
@@ -291,12 +311,16 @@ export const toggleReactionHandler = async ({
     // the door for private models.
     const checkAccess = ['image', 'post'];
     if (checkAccess.includes(input.entityType)) {
+      // A missing image runs the Prisma read, so its not-found throw is unchanged.
+      const readImagePostId = async (imageId: number) => {
+        if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5)) {
+          const row = await readImagePostIdViaKysely((await loadKyselyDb()).kyselyRead, imageId);
+          if (row) return row.postId;
+        }
+        return readImagePostIdViaPrisma(dbRead, imageId);
+      };
       const entityId =
-        input.entityType === 'post'
-          ? input.entityId
-          : await dbRead.image
-              .findUniqueOrThrow({ where: { id: input.entityId } })
-              .then((image) => image?.postId);
+        input.entityType === 'post' ? input.entityId : await readImagePostId(input.entityId);
 
       if (entityId) {
         const [access] = await hasEntityAccess({

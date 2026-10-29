@@ -9,6 +9,7 @@ import {
   MODEL_FLAGS_PATH,
 } from '$lib/minor-flags/paths';
 import { MODEL_RULE_MATCHES_PATH } from '$lib/model-rule-holds';
+import { TICKET_COUNT_KEYS } from '$lib/tickets/counts';
 import { needsReviewCountKey, needsReviewSources } from '$lib/minor-flags/needs-review';
 import { reportCountKey, reportEntities, reportEntityLabels, reportPath } from '$lib/reports';
 import { SITE_APPEAL_QUEUES, siteAppealCountKey, siteAppealQueuePath } from '$lib/site-appeals';
@@ -28,6 +29,11 @@ export type Role = string;
 export const SUPER_ROLE: Role = 'moderator:admin';
 
 export const isStorableRole = (value: string): boolean => value !== SUPER_ROLE;
+
+// The hub's catalogue for this app is exactly its prefix (`listAppRoles`), so a stored role carrying the
+// prefix but missing from the catalogue is retired. A role without it belongs to another system (a service
+// account's) and is never this app's to remove.
+export const isAppRole = (value: string): boolean => value.startsWith(`${APP}:`);
 
 // Reachable by every authenticated moderator. The gate bounces a denied user here, so making it grantable
 // would let an admin build an infinite redirect.
@@ -51,6 +57,10 @@ export type NavLink = {
   // The children are grant-aware tab routes of one page: still granted one by one (and listed on /admin), but
   // the sidebar renders the group as a single entry and the page draws its own tab bar.
   tabs?: true;
+  // A second listing of a page that lives elsewhere in the tree, for a page moderators look for in two
+  // sections. Reached and granted by the page's own entry, and kept out of this section's badge and the
+  // dashboard so its count is not summed twice.
+  shortcut?: true;
   children?: NavLink[];
 };
 
@@ -99,6 +109,13 @@ export const NAVIGATION: NavLink[] = [
       },
       { path: '/images/re-removals', label: 'Re-removals', countKey: 'reRemovals' },
       { path: '/images/csam', label: 'CSAM', countKey: 'csam' },
+      // Image Reports is the image queues' card grid, so it is looked for here as well as under Reports.
+      {
+        path: reportPath('image'),
+        label: 'Image Reports',
+        countKey: reportCountKey('image'),
+        shortcut: true,
+      },
       // Linked from the expiry alert email, which never names the policy: keep it out of /csam.
       { path: '/evidence-holds', label: 'Evidence Holds', countKey: 'evidenceHoldsEnding' },
       { path: '/images/scan-labels', label: 'Scan Labels', noPreload: true },
@@ -265,6 +282,19 @@ export const NAVIGATION: NavLink[] = [
   // `/decisions/support/ticket/<id>`), resolved here by prefix like `/abuse`. Recording a ruling is a
   // separate permission (`decisions.rule`), checked in the action.
   { path: '/decisions', label: 'Decisions' },
+  // No path of its own, so each view is granted on its own: whoever works moderation tickets need not
+  // see the support queue. Acting on a ticket is separate (`tickets.reply`, `tickets.escalate`).
+  {
+    label: 'Tickets',
+    children: [
+      {
+        path: '/tickets/moderation',
+        label: 'Moderation tickets',
+        countKey: TICKET_COUNT_KEYS.moderation,
+      },
+      { path: '/tickets/support', label: 'Support tickets', countKey: TICKET_COUNT_KEYS.support },
+    ],
+  },
   { path: '/blocklists', label: 'Blocklists' },
   // No path of its own, so each child carries its own grant (like Users). `/assistant` covers the
   // moderator's own chats, the playbooks and the tool requests by prefix; the audit reads every
@@ -352,6 +382,7 @@ function collectGrants(
   acc: { path: string; roles: Set<Role> }[] = []
 ): { path: string; roles: Set<Role> }[] {
   for (const link of links) {
+    if (link.shortcut) continue;
     const own = link.path ? stored[link.path] ?? [] : [];
     if (link.sharedAccess) {
       if (link.path) acc.push({ path: link.path, roles: new Set(own) });
@@ -395,7 +426,8 @@ function withViewerCountKey(link: NavLink, user: RoleUser): NavLink {
 function pruneNav(links: NavLink[], user: RoleUser): NavLink[] {
   const out: NavLink[] = [];
   for (const link of links) {
-    if (link.path && !allows(link.path, user)) continue;
+    if (link.shortcut ? !canAccess(user, link.path!) : link.path && !allows(link.path, user))
+      continue;
     if (link.sharedAccess) {
       out.push({ ...link });
       continue;
@@ -529,6 +561,12 @@ export function pageAccessState(edit?: {
   granted: Record<string, Role[]>;
   /** Every routable path in the tree, groups included — what `whoami` reports verdicts for. */
   paths: string[];
+  /**
+   * Stored roles the editor has no column for, by key: `kept` is carried through a save, `retired` (this
+   * app's own roles missing from the catalogue, the super role included) is dropped by it. Shown read-only
+   * so neither changes unannounced.
+   */
+  outside: Record<string, { kept: Role[]; retired: Role[] }>;
 } {
   const from = edit
     ? Object.fromEntries(
@@ -538,12 +576,23 @@ export function pageAccessState(edit?: {
         ])
       )
     : { ...stored, ...storedPermissions };
+  const outside: Record<string, { kept: Role[]; retired: Role[] }> = {};
+  for (const [key, roles] of Object.entries(edit?.grants ?? {})) {
+    // Deduped: the row renders these as keyed chips, and a stored array can repeat a role.
+    const unlisted = [...new Set(roles)].filter((role) => !edit?.roles.includes(role));
+    if (unlisted.length)
+      outside[key] = {
+        kept: unlisted.filter((role) => !isAppRole(role)),
+        retired: unlisted.filter(isAppRole),
+      };
+  }
   const granted: Record<string, Role[]> = {};
   const paths: string[] = [];
 
   const walk = (links: NavLink[]): AccessNode[] => {
     const out: AccessNode[] = [];
     for (const link of links) {
+      if (link.shortcut) continue;
       const group = !!link.children && !link.sharedAccess;
       const children = link.children && !link.sharedAccess ? walk(link.children) : [];
       if (!link.path || link.external) {
@@ -579,7 +628,7 @@ export function pageAccessState(edit?: {
       return { key, label: permission.label, kind: 'permission', children: [] };
     });
 
-  return { tree: walk([...NAVIGATION].sort(byNavOrder)), actions, granted, paths };
+  return { tree: walk([...NAVIGATION].sort(byNavOrder)), actions, granted, paths, outside };
 }
 
 /** A permission is grantable exactly when it is declared and the page it sits under is itself grantable. */
