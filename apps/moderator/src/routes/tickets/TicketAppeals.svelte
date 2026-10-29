@@ -8,6 +8,7 @@
   import { APPEAL_KIND_LABEL, APPEAL_WINDOW_DAYS } from '$lib/tickets/appeals';
   import TicketAccountAction from './TicketAccountAction.svelte';
   import TicketAppealRuling from './TicketAppealRuling.svelte';
+  import TicketFlagAppealRuling from './TicketFlagAppealRuling.svelte';
 
   let {
     ticketId,
@@ -63,7 +64,9 @@
               {/if}{#if a.resolvedMessage}“{a.resolvedMessage}”{/if}
             </div>
           {/if}
-          {#if a.rulable}
+          {#if a.rulable && a.kind === 'modelFlag'}
+            <TicketFlagAppealRuling {ticketId} userId={appeals.userId} appealId={a.id} {ondone} />
+          {:else if a.rulable}
             <TicketAppealRuling
               {ticketId}
               userId={appeals.userId}

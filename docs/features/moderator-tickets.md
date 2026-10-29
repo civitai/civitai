@@ -43,7 +43,9 @@ is its own page grant. Acting on a ticket is a separate permission:
   appeal can be ruled on from the card under its own queue's grant: image (`/images/appeals`, still flagged
   for appeal review), removed content (`/images/removed-appeals`, also "closed: the user deleted it"; a
   failed fee refund is a warning), and Article / Model / Other site forms (`/appeals/<slug>`, with a message
-  to the user). Account appeals are history-only here and are ruled in the Account card. Each action
+  to the user), and model minor / real-person flags (`/models/flags/appeals`: keep flagged or unflag; the
+  action also takes the queue's per-label splits, the card does not offer them; the model is the row's, via
+  the queue's shared `ruleFlagAppeal`). Account appeals are history-only here and are ruled in the Account card. Each action
   re-checks that the appeal is the linked user's, pending and of that kind, decides with the row's ids, and
   adds a private note naming the moderator. If the ruling closed a different appeal than the one posted, it is reported as a
   warning and the note names the appeal actually closed. Cards are declared in the

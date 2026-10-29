@@ -75,7 +75,7 @@ describe('appealsSectionFor', () => {
     expect(res.status === 'ok' && res.appeals.map((a) => a.id)).toEqual([2, 4]);
   });
 
-  it('offers a ruling on pending image, removed-content and Article/Model/Other form appeals', async () => {
+  it('offers a ruling on pending image, removed-content, model flag and Article/Model/Other form appeals', async () => {
     appealsOf.mockResolvedValue([
       { ...base, id: 1 },
       { ...base, id: 2, status: 'Approved' },
@@ -90,7 +90,7 @@ describe('appealsSectionFor', () => {
     expect(res.status === 'ok' && res.appeals.map((a) => [a.id, a.rulable])).toEqual([
       [1, true],
       [2, false],
-      [3, false],
+      [3, true],
       [4, true],
       [5, true],
       [6, true],

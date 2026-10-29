@@ -26,7 +26,7 @@ export type TicketAppeal = {
   mentioned: boolean;
   /** The form category of a site-form appeal. */
   category: string | null;
-  /** Pending and either a removed-content appeal, an Article/Model/Other form, or a plain image appeal still flagged `appeal`. An Account appeal is decided in the Account card. */
+  /** Pending and either a removed-content appeal, a model flag appeal, an Article/Model/Other form, or a plain image appeal still flagged `appeal`. An Account appeal is decided in the Account card. */
   rulable: boolean;
 };
 
@@ -113,6 +113,7 @@ const liveReads: AppealReads = {
 function isRulable(kind: AppealKind, row: AppealRow, flagged: Set<number>): boolean {
   if (kind === 'image') return flagged.has(row.entityId);
   if (kind === 'removed') return true;
+  if (kind === 'modelFlag') return true;
   return kind === 'site' && row.category !== 'Account';
 }
 
