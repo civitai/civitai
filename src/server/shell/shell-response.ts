@@ -5,6 +5,7 @@ import { getCookies } from 'cookies-next';
 import type { ShellRouteName } from '~/server/shell/shell-mode';
 import { shellRouteByName } from '~/server/shell/shell-mode';
 import { SHELL_EDGE_HEADERS, SHELL_RENDER_HEADER } from '~/shared/constants/shell.constants';
+import { appendSetCookie } from '~/server/utils/set-cookie';
 
 /**
  * What a static shell response carries, and the route cookie that opts a viewer into it.
@@ -74,16 +75,6 @@ export function applyShellBounceHeaders(res: ServerResponse) {
 }
 
 const COOKIE_MAX_AGE_S = 60 * 60 * 24 * 7;
-
-function appendSetCookie(res: ServerResponse, cookie: string) {
-  const existing = res.getHeader('Set-Cookie');
-  const all = Array.isArray(existing)
-    ? existing.map(String)
-    : existing != null
-    ? [String(existing)]
-    : [];
-  res.setHeader('Set-Cookie', [...all, cookie]);
-}
 
 /**
  * Keeps the route cookie in step with the viewer's flag, from a PRIVATE response only (a full

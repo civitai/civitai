@@ -767,6 +767,15 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     hasAuthCookie = false;
   }
 
+  // Skipped when degraded: the viewer is unknown, so the cookie must stay as it is.
+  if (typeof window === 'undefined') {
+    const { res } = appContext.ctx;
+    if (res && !settingsDegraded) {
+      const { syncTrpcPoolCookie } = await import('~/server/trpc/trpc-pool-cookie');
+      syncTrpcPoolCookie(request, res, !!session?.user && flags.trpcPoolRoute === true);
+    }
+  }
+
   // Auth route guards, moved off the edge middleware (the thin hub civ-token can't resolve the full user in the
   // edge runtime — see preview-access.ts / route-guards). Runs here in Node with the resolved session, catching
   // direct/SSR loads. A non-mod can't client-nav to these (the nav isn't shown to them) and the tRPC procedures
