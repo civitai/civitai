@@ -231,6 +231,8 @@ import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { isDefined } from '~/utils/type-guards';
 import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 import type { BountyDetailsSchema } from '../schema/bounty.schema';
+import { withoutRemovedWithOwner } from '~/server/services/model-removed-with-owner.service';
+import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 import {
   getResourceData,
   resolveCanGenerateForVersions,
@@ -908,7 +910,11 @@ export const publishModelHandler = async ({
       throw throwBadRequestError('Model is already published');
 
     const { isModerator } = ctx.user;
-    if (!isModerator && constants.modPublishOnlyStatuses.includes(model.status))
+    // A model a content wipe kept is publishable by a moderator only, whatever its status.
+    if (
+      !isModerator &&
+      (constants.modPublishOnlyStatuses.includes(model.status) || isRemovedWithOwner(model.meta))
+    )
       throw throwAuthorizationError('You are not authorized to publish this model');
     // The model's status says nothing about its versions: one a moderator took down while the
     // model stayed public must not come back because its id was in this list. Refused here, before
@@ -936,8 +942,10 @@ export const publishModelHandler = async ({
     });
     await assertNotCrossOwnerDuplicate({ modelId: input.id, ownerId: model.userId, isModerator });
 
-    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...meta } =
+    const { needsReview, unpublishedReason, unpublishedAt, unpublishedBy, customMessage, ...rest } =
       modelMeta || {};
+    // A moderator publishing a model a content wipe hid ends that removal: its record goes too.
+    const meta = withoutRemovedWithOwner(rest);
     const updatedModel = await publishModelById({
       ...input,
       meta: withModelRulesClearance(meta, modelMeta, isModerator),

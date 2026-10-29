@@ -3,6 +3,7 @@ import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import type { SiteAppealContext, SubmitSiteAppealInput } from '~/server/schema/site-appeal.schema';
 import { isPrismaUniqueViolation, throwBadRequestError } from '~/server/utils/errorHandling';
+import type { RemovedWithOwnerMeta } from '~/server/services/model-removed-with-owner.service';
 import {
   AppealCategory,
   AppealStatus,
@@ -61,13 +62,19 @@ function getRemovedArticles(userId: number) {
   });
 }
 
-function getRemovedModels(userId: number) {
-  return dbRead.model.findMany({
+// A model a content wipe kept is in the same status but was not taken down for what it is: there is
+// no decision on it to appeal.
+const removedWithOwner = (meta: unknown) =>
+  (meta as RemovedWithOwnerMeta | null)?.removedWithOwner === true;
+
+async function getRemovedModels(userId: number) {
+  const models = await dbRead.model.findMany({
     where: { userId, status: ModelStatus.UnpublishedViolation, deletedAt: null },
-    select: { id: true, name: true },
+    select: { id: true, name: true, meta: true },
     orderBy: { id: 'desc' },
     take: 100,
   });
+  return models.filter((m) => !removedWithOwner(m.meta)).map(({ id, name }) => ({ id, name }));
 }
 
 /** Everything the appeal page renders for its user: what they may appeal, and what they filed. */
@@ -130,12 +137,13 @@ async function assertEligible(input: SubmitSiteAppealInput, userId: number) {
     case AppealCategory.Model: {
       const model = await dbWrite.model.findUnique({
         where: { id: input.entityId },
-        select: { userId: true, status: true, deletedAt: true },
+        select: { userId: true, status: true, deletedAt: true, meta: true },
       });
       if (
         model?.userId !== userId ||
         model.deletedAt ||
-        model.status !== ModelStatus.UnpublishedViolation
+        model.status !== ModelStatus.UnpublishedViolation ||
+        removedWithOwner(model.meta)
       )
         throw throwBadRequestError(SITE_APPEAL_NOT_REMOVED);
       return { entityId: input.entityId, context: null };

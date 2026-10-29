@@ -9,7 +9,9 @@ import {
   accessRowsOf,
   dropMarkerView,
   failDeletesFrom,
+  FORMER_CLEAN,
   holdOwner,
+  ownedBefore,
   realTransactions,
   fileIds,
   fileOf,
@@ -150,6 +152,25 @@ describe('deleteVersionById', () => {
     expect(await fileIds(db)).toContain(fileOf(id));
     expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
     expect(mockDeregisterFileLocations).not.toHaveBeenCalled();
+  });
+
+  it('keeps a version of a model a held account owned before, and deletes no bytes', async () => {
+    const id = stubVersion(CLEAN);
+    await ownedBefore(db, CLEAN, REPORTED);
+
+    await expect(deleteVersionById({ id, isModerator: false })).rejects.toThrow(OWNER_CONTENT_KEPT);
+
+    expect(await versionIds(db)).toContain(id);
+    expect(mockDeleteModelFileObjects).not.toHaveBeenCalled();
+  });
+
+  it('deletes a version of a model only unheld accounts owned (control)', async () => {
+    const id = stubVersion(CLEAN);
+    await ownedBefore(db, CLEAN, FORMER_CLEAN);
+
+    await deleteVersionById({ id, isModerator: false });
+
+    expect(await versionIds(db)).not.toContain(id);
   });
 
   it('rolls back the access rows it removed before the refusal, in a real transaction', async () => {
@@ -315,6 +336,40 @@ describe('mergeVersions', () => {
     expect((error as Error).message).toContain('deadlock detected');
     const left = await versionIds(db);
     for (const id of sourceVersionIds) expect(left).toContain(id);
+  });
+
+  it('refuses the merge of a model a held account owned before, before the transaction', async () => {
+    stubModel(CLEAN);
+    await ownedBefore(db, CLEAN, MARKED);
+
+    await expect(merge(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+  });
+
+  // The record lands after the check before the transaction, so only the DELETE's own guard sees it.
+  it('refuses at the delete when an earlier held owner is recorded after the first check', async () => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    let changed = false;
+    routeToDb(db, async (sql) => {
+      if (changed || !sql.includes('FOR UPDATE')) return;
+      changed = true;
+      await ownedBefore(db, CLEAN, REPORTED);
+    });
+
+    await expect(merge(CLEAN)).rejects.toThrow(OWNER_CONTENT_KEPT);
+    expect(changed).toBe(true);
+    const left = await versionIds(db);
+    for (const id of sourceVersionIds) expect(left).toContain(id);
+  });
+
+  it('merges the versions of a model only unheld accounts owned (control)', async () => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    await ownedBefore(db, CLEAN, FORMER_CLEAN);
+
+    await merge(CLEAN);
+
+    const left = await versionIds(db);
+    for (const id of sourceVersionIds) expect(left).not.toContain(id);
   });
 
   it('refuses a held owner before the transaction starts', async () => {
