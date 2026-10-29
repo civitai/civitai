@@ -1,3 +1,4 @@
+import type { ModelMeta } from '~/server/schema/model.schema';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type * as DuplicateHash from '~/server/services/duplicate-model-hash.service';
@@ -123,18 +124,21 @@ describe('an owner publishing a draft model a content wipe kept', () => {
 
 describe('a moderator publishing a model a content wipe kept', () => {
   it('drops the removal marker from its meta', async () => {
+    const stored = {
+      note: 1,
+      removedWithOwner: true,
+      statusBeforeRemoval: 'Published',
+      versionsUnpublishedByRemoval: [{ id: 10, status: 'Published' }],
+    };
     dbMock.dbRead.model.findUnique.mockResolvedValue({
       status: KEPT_MODEL_STATUS,
-      meta: {
-        note: 1,
-        removedWithOwner: true,
-        statusBeforeRemoval: 'Published',
-        versionsUnpublishedByRemoval: [{ id: 10, status: 'Published' }],
-      },
+      meta: stored,
       nsfw: false,
       userId: 5,
     } as never);
     await publish([10], true);
-    expect(publishModelById).toHaveBeenCalledWith(expect.objectContaining({ meta: { note: 1 } }));
+    // The publish builds its meta from the row it locks; here, the row as read.
+    const { meta } = vi.mocked(publishModelById).mock.calls[0][0];
+    expect(typeof meta === 'function' && meta(stored as ModelMeta)).toEqual({ note: 1 });
   });
 });

@@ -140,8 +140,24 @@ const storedModel = {
   status: 'Draft' as string,
 };
 
+// The row the flow's transaction locks: the same as the first read unless a test says otherwise.
+let lockedRow: Partial<typeof storedModel> | null = null;
+let lockHeld = false;
+const isModelLock = (strings: TemplateStringsArray, values: unknown[]) =>
+  Array.isArray(strings) &&
+  /FROM "Model"\s+WHERE id = \?\s+FOR NO KEY UPDATE/.test(strings.join('?')) &&
+  values[0] === MODEL_ID;
+
 function mockStored(overrides: Partial<typeof storedModel> = {}) {
-  mockDbWrite.model.findUnique.mockResolvedValue({ ...storedModel, ...overrides });
+  const firstRow = { ...storedModel, ...overrides };
+  lockedRow = firstRow;
+  mockDbWrite.model.findUnique.mockImplementation((async ({ where }: { where: { id: number } }) =>
+    where.id === MODEL_ID ? (lockHeld ? lockedRow : firstRow) : null) as never);
+}
+
+/** What a write that landed after the flow's first read left in the row it then locks. */
+function mockLocked(overrides: Partial<typeof storedModel>) {
+  lockedRow = { ...lockedRow, ...overrides };
 }
 
 const baseInput = {
@@ -169,6 +185,7 @@ function updateData() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  lockHeld = false;
   // clearAllMocks keeps a one-shot transaction a test queued but never reached; drop it.
   mockDbWrite.$transaction.mockReset();
   mockDbWrite.$transaction.mockImplementation((async (arg: unknown) =>
@@ -179,7 +196,13 @@ beforeEach(() => {
   mockDbRead.model.count.mockResolvedValue(0);
   mockGetHighestTierSubscription.mockResolvedValue({ tier: 'gold' });
   mockDbWrite.modelVersion.findMany.mockResolvedValue([]);
-  mockDbWrite.$queryRaw.mockResolvedValue([]);
+  mockDbWrite.$queryRaw.mockImplementation((async (
+    strings: TemplateStringsArray,
+    ...values: unknown[]
+  ) => {
+    if (isModelLock(strings, values)) lockHeld = true;
+    return [];
+  }) as never);
   mockDbWrite.model.create.mockResolvedValue({
     id: MODEL_ID,
     nsfwLevel: 1,
@@ -405,6 +428,61 @@ describe('cannotPromote across a private cycle', () => {
     await privateFromTraining({ user: owner, meta: { restoreCannotPromote: true } as never });
 
     expect(writtenMeta()).not.toHaveProperty('restoreCannotPromote');
+  });
+});
+
+describe('privateModelFromTraining — the locked row', () => {
+  it('refuses the owner a model a content wipe kept after it was read, writing nothing', async () => {
+    mockStored({ status: 'Training' });
+    mockLocked({ meta: { removedWithOwner: true, statusBeforeRemoval: 'Training' } });
+
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow(/not authorized/);
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('refuses the owner when publishing was blocked after it was read, writing nothing', async () => {
+    mockStored({});
+    mockLocked({ meta: { cannotPublish: true } });
+
+    await expect(privateFromTraining({ user: owner })).rejects.toThrow();
+    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('keeps a moderation-owned key written after it was read', async () => {
+    mockStored({ meta: { trainingStudioWorkflowId: 'wf-1' } });
+    mockLocked({
+      meta: { trainingStudioWorkflowId: 'wf-1', minorFlagSnapshot: { source: 'auto' } },
+    });
+
+    await privateFromTraining({ user: owner });
+
+    expect(writtenMeta()).toMatchObject({
+      trainingStudioWorkflowId: 'wf-1',
+      minorFlagSnapshot: { source: 'auto' },
+    });
+  });
+
+  it("records a moderator's cannotPromote set after it was read", async () => {
+    mockStored({});
+    mockLocked({ meta: { cannotPromote: true } });
+
+    await privateFromTraining({ user: owner });
+
+    expect(writtenMeta()).toMatchObject({ cannotPromote: true, restoreCannotPromote: true });
+  });
+
+  it('writes the meta it was sent when the locked row is the one it read (control)', async () => {
+    mockStored({ meta: { trainingStudioWorkflowId: 'wf-1' } });
+
+    await privateFromTraining({ user: owner, meta: { commentsLocked: true } });
+
+    expect(writtenMeta()).toEqual({
+      commentsLocked: true,
+      trainingStudioWorkflowId: 'wf-1',
+      cannotPromote: true,
+    });
   });
 });
 
