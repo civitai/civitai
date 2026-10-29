@@ -24,7 +24,6 @@ export function useEdgeUrl(
   options: Omit<EdgeUrlProps, 'src'> | undefined,
   hiDpi?: boolean
 ) {
-  // Pure; it lives in `edge-url` so code outside React can compute the same URL.
   return resolveEdgeUrl(src, options, hiDpi);
 }
 
