@@ -6,7 +6,7 @@
   let { data, form }: { data: PageData; form: ActionData } = $props();
   const gold = (n: number) => n.toLocaleString('en-US');
   const balance = $derived(data.balance);
-  const canConvert = $derived(balance.buzzOnConvert > 0);
+  const canConvert = $derived(data.conversionOpen && balance.buzzOnConvert > 0);
   let converting = $state(false);
 </script>
 
@@ -56,6 +56,10 @@
 <p class="muted">
   {gold(balance.goldPerBuzz)} gold is 1 Yellow Buzz, converted in whole Buzz, at least {balance.minBuzz} at a time.
 </p>
+
+{#if !data.conversionOpen}
+  <p class="muted">Converting gold to Buzz isn't open yet. Your gold keeps accruing.</p>
+{/if}
 
 <form
   method="POST"

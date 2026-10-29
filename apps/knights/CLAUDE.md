@@ -96,6 +96,7 @@ Migration `20261218120000_knights_v2_conversion` (applied by hand): `NewOrderPla
   - `paid`: the Buzz transaction id is stored and never overwritten; a 409 (key already paid) leaves it empty.
   - Unknown outcome (timeout, network, 5xx, 408, 429): the row stays `pending` with the gold reserved. The player's next Convert, or the tick (`retryPendingConversions`: not held, bounded by count and time, skipped with a warning when `BUZZ_ENDPOINT` is unset), sends the same key. Retries take the least recently attempted first and skip rows tried within the retry age, so a stuck one cannot hold up the rest; none is started that could not finish inside the tick's budget. Convert is refused, and nothing reserved, while `BUZZ_ENDPOINT` is unset.
   - `failed`: any other 4xx. The reservation is released in the same transaction, the player sees a failure message and it is logged.
+- Switch: `KNIGHTS_CONVERSION_ENABLED` (`conversionEnabled()` in `runtime.ts`) must be exactly `true` for gold to convert; it is off by default. Off: `/gold` shows balances but refuses Convert (403, nothing reserved), `/play` hides the link and the tick skips conversion retries; gold still accrues and the post-detection pass still clears it and writes labels.
 - Logging goes through `src/lib/server/axiom.ts`, a forwarding file in the datastream ledger test. The pass logs `knights-post-detection-pass` with the Buzz converted per UTC day.
 - Tests: `convert.pglite.test.ts`, `pass.pglite.test.ts` (boots the real label store migration via `bootLabelStore`).
 

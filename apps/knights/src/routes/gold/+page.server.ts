@@ -1,11 +1,13 @@
 import { fail } from '@sveltejs/kit';
 import { getGoldBalance } from '$lib/server/conversion/balance';
 import { convertGold, type ConvertResult } from '$lib/server/conversion/convert';
-import { buzzConfigured, getBuzzPort } from '$lib/server/conversion/runtime';
+import { buzzConfigured, conversionEnabled, getBuzzPort } from '$lib/server/conversion/runtime';
 import { logToAxiom } from '$lib/server/axiom';
 import { db } from '$lib/server/db';
 import { getPlayerStatusOrNew } from '$lib/server/player-status';
 import type { Actions, PageServerLoad } from './$types';
+
+const CLOSED_TEXT = "Converting gold to Buzz isn't open yet. Your gold keeps accruing.";
 
 const REFUSAL_TEXT = {
   'no-player': 'You have not joined the Order yet.',
@@ -18,13 +20,14 @@ export const load: PageServerLoad = async ({ locals }) => {
     getPlayerStatusOrNew(db, locals.user.id),
     getGoldBalance(db, locals.user.id),
   ]);
-  return { status, balance };
+  return { status, balance, conversionOpen: conversionEnabled() };
 };
 
 let warnedNoEndpoint = false;
 
 export const actions: Actions = {
   convert: async ({ locals }) => {
+    if (!conversionEnabled()) return fail(403, { message: CLOSED_TEXT });
     if (!buzzConfigured()) {
       if (!warnedNoEndpoint) {
         warnedNoEndpoint = true;

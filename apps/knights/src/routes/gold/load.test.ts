@@ -8,9 +8,14 @@ vi.mock('$lib/server/player-status', () => ({ getPlayerStatusOrNew }));
 vi.mock('$lib/server/conversion/balance', () => ({ getGoldBalance }));
 vi.mock('$lib/server/conversion/convert', () => ({ convertGold }));
 const buzzConfigured = vi.hoisted(() => vi.fn());
+const conversionEnabled = vi.hoisted(() => vi.fn());
 const logToAxiom = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
-vi.mock('$lib/server/conversion/runtime', () => ({ getBuzzPort: () => ({}), buzzConfigured }));
+vi.mock('$lib/server/conversion/runtime', () => ({
+  getBuzzPort: () => ({}),
+  buzzConfigured,
+  conversionEnabled,
+}));
 
 const { load, actions } = await import('./+page.server');
 const locals = { user: { id: 7 } };
@@ -20,6 +25,8 @@ beforeEach(() => {
   convertGold.mockReset();
   buzzConfigured.mockReset();
   buzzConfigured.mockReturnValue(true);
+  conversionEnabled.mockReset();
+  conversionEnabled.mockReturnValue(true);
   logToAxiom.mockReset();
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
@@ -32,8 +39,27 @@ describe('gold page', () => {
     expect(await load({ locals } as never)).toEqual({
       status: { rank: 'Knight' },
       balance: { convertible: 5000, frozen: 0 },
+      conversionOpen: true,
     });
     expect(getGoldBalance).toHaveBeenCalledWith({}, 7);
+  });
+
+  it('refuses Convert while conversion is switched off, reserving nothing', async () => {
+    conversionEnabled.mockReturnValue(false);
+
+    expect(await actions.convert({ locals } as never)).toMatchObject({
+      status: 403,
+      data: { message: expect.stringContaining("isn't open yet") },
+    });
+    expect(convertGold).not.toHaveBeenCalled();
+  });
+
+  it('tells the page conversion is closed while it is switched off', async () => {
+    conversionEnabled.mockReturnValue(false);
+    getPlayerStatusOrNew.mockResolvedValue({});
+    getGoldBalance.mockResolvedValue({});
+
+    expect(await load({ locals } as never)).toMatchObject({ conversionOpen: false });
   });
 
   it('converts for the signed-in player only', async () => {

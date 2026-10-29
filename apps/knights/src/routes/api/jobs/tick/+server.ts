@@ -3,7 +3,7 @@ import { logToAxiom } from '$lib/server/axiom';
 import { retryPendingConversions } from '$lib/server/conversion/convert';
 import { runPostDetectionPass } from '$lib/server/conversion/pass';
 import { TICK_CONVERSION_RETRY } from '$lib/server/conversion/config';
-import { buzzConfigured, getBuzzPort } from '$lib/server/conversion/runtime';
+import { buzzConfigured, conversionEnabled, getBuzzPort } from '$lib/server/conversion/runtime';
 import { db } from '$lib/server/db';
 import { isJobRequest } from '$lib/server/jobs-auth';
 import { applyPendingResolutions, escalateExpired } from '$lib/server/queue/queue.service';
@@ -31,6 +31,7 @@ export const POST: RequestHandler = async ({ request }) => {
     settleFinalItems(db, { now: new Date(), mirror: queueDeps.mirrorXp })
   );
   const conversions = await settle('conversion retries', async () => {
+    if (!conversionEnabled()) return { retried: 0, paid: 0, failed: 0 };
     if (!buzzConfigured()) {
       await logToAxiom({
         type: 'warning',

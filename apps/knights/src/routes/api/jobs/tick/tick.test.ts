@@ -8,8 +8,13 @@ const runPostDetectionPass = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const logToAxiom = vi.hoisted(() => vi.fn());
 const buzzConfigured = vi.hoisted(() => vi.fn());
+const conversionEnabled = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/axiom', () => ({ logToAxiom }));
-vi.mock('$lib/server/conversion/runtime', () => ({ getBuzzPort: () => ({}), buzzConfigured }));
+vi.mock('$lib/server/conversion/runtime', () => ({
+  getBuzzPort: () => ({}),
+  buzzConfigured,
+  conversionEnabled,
+}));
 vi.mock('$lib/server/conversion/convert', () => ({ retryPendingConversions }));
 vi.mock('$lib/server/conversion/pass', () => ({ runPostDetectionPass }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
@@ -32,6 +37,8 @@ beforeEach(() => {
   logToAxiom.mockReset();
   buzzConfigured.mockReset();
   buzzConfigured.mockReturnValue(true);
+  conversionEnabled.mockReset();
+  conversionEnabled.mockReturnValue(true);
   retryPendingConversions.mockReset();
   retryPendingConversions.mockResolvedValue({ retried: 0, paid: 0, failed: 0 });
   runPostDetectionPass.mockReset();
@@ -78,6 +85,19 @@ describe('POST /api/jobs/tick', () => {
       {},
       expect.objectContaining({ limit: expect.any(Number), budgetMs: expect.any(Number) })
     );
+  });
+
+  it('skips the conversion retries without a warning while conversion is switched off, and still clears gold', async () => {
+    conversionEnabled.mockReturnValue(false);
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+
+    const response = await run();
+
+    expect(response.status).toBe(200);
+    expect(retryPendingConversions).not.toHaveBeenCalled();
+    expect(logToAxiom).not.toHaveBeenCalled();
+    expect(runPostDetectionPass).toHaveBeenCalled();
   });
 
   it('skips the conversion retries with a warning when Buzz is not configured, and still answers 200', async () => {

@@ -3,6 +3,7 @@ import { db } from '$lib/server/db';
 import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
 import { imageUrl } from '$lib/server/image-url';
 import { getPlayerStatusOrNew } from '$lib/server/player-status';
+import { conversionEnabled } from '$lib/server/conversion/runtime';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { trialDeps } from '$lib/server/trials/runtime';
@@ -32,6 +33,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     const trial = await getTrial(db, locals.user.id, trialDeps);
     if (trial.kind !== 'not-acolyte') {
       return {
+        conversionOpen: conversionEnabled(),
         mode: 'trials' as const,
         status,
         trial:
@@ -62,10 +64,22 @@ export const load: PageServerLoad = async ({ locals }) => {
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
   ]);
-  if (!feed) return { mode: 'queue' as const, status, daily, recap, question: null, item: null };
+  const conversionOpen = conversionEnabled();
+  if (!feed) {
+    return {
+      conversionOpen,
+      mode: 'queue' as const,
+      status,
+      daily,
+      recap,
+      question: null,
+      item: null,
+    };
+  }
 
   const [item] = feed.items;
   return {
+    conversionOpen,
     mode: 'queue' as const,
     status,
     daily,

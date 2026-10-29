@@ -37,7 +37,7 @@
   {/snippet}
   {#snippet links()}
     · <a href="/judgments">Your judgments</a>
-    · <a href="/gold">Convert gold</a>
+    {#if data.conversionOpen}· <a href="/gold">Convert gold</a>{/if}
     {#if dev}· <a href="/dev/simulate">Simulate other voters</a>{/if}
   {/snippet}
 </StatusBar>
