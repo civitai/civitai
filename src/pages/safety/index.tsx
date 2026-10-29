@@ -1,7 +1,7 @@
 import { Accordion, Box, Container, Group, Stack, Text, Title } from '@mantine/core';
 import { IconList } from '@tabler/icons-react';
 import fs from 'fs';
-import matter from 'gray-matter';
+import { parseFrontmatter } from '~/utils/frontmatter';
 import type { InferGetServerSidePropsType } from 'next';
 import rehypeRaw from 'rehype-raw';
 import remarkGfm from 'remark-gfm';
@@ -23,7 +23,7 @@ export const getServerSideProps = createServerSideProps({
   resolver: async () => {
     const content = files.reduce((acc, file) => {
       const fileName = fs.readFileSync(`${contentRoot}/${file}.md`, 'utf-8');
-      const { content } = matter(fileName);
+      const { content } = parseFrontmatter(fileName);
       acc[file] = content;
       return acc;
     }, {} as Record<string, string>);
