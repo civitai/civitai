@@ -12,7 +12,8 @@ open item across the rest, judged in the middle and ruled from a sidebar on the 
 | **Decision** | `TriageDecisionBar` and `InlineReasonFields` with `compact`: buttons two to a row, reason and note on one line. A full-width bar in a sidebar stacks into a block that hides the sidebar on a 1080p screen. An action the viewer lacks the grant for is shown disabled with `denied(...)`, not left out — an absent button reads as the page having none. |
 
 On it: Model Flags (all three tabs, via `ModelFlagDetailFrame`), rating disputes, generator
-restrictions (`RestrictionTriage`) and CSAM text holds. Still on the single-column `TriageDetailFrame`: site
+restrictions (`RestrictionTriage`), CSAM text holds and the moderation and support ticket views
+(`TicketTriage`; `docs/features/moderator-tickets.md`). Still on the single-column `TriageDetailFrame`: site
 appeals. Scam restrictions is deliberately not a triage page: nearly every row is banned,
 so it is a bulk review — a reading column of each account's scanned text, all ticked, one submit that bans
 the ticked as spam and lifts the rest (`$lib/server/scam-review.ts`).
