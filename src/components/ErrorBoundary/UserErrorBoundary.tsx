@@ -27,6 +27,7 @@ interface State {
 class UserErrorBoundary extends Component<Props, State> {
   state: State = {
     hasError: false,
+    resetKey: this.props.resetKey,
   };
 
   // Defaults, not the viewer's saved layout: this renders after something already threw, and a

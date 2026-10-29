@@ -17,7 +17,9 @@ const FALLBACK = 'Something went wrong :(';
 
 /** Throws while `broken.now` is set, so a test can mend the page between routes. */
 const broken = { now: true };
+let renders = 0;
 function Page() {
+  renders++;
   if (broken.now) throw new Error('page broke');
   return <p>page content</p>;
 }
@@ -31,11 +33,29 @@ const at = (resetKey: string) => (
 beforeEach(() => {
   reported.mockClear();
   broken.now = true;
+  renders = 0;
   // React logs every caught error; the throws here are the point of the test.
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
 describe('UserErrorBoundary reset', () => {
+  // The boundary's own first render is where a stored key and the prop could
+  // disagree; a reset there would retry the page that just threw, forever.
+  test('a page that throws on first mount settles on the fallback, then recovers', async () => {
+    const screen = await renderWithProviders(at('/images/1'));
+    await expect.element(page.getByText(FALLBACK)).toBeInTheDocument();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    // React retries a throwing render, and dev mode doubles renders; a loop
+    // would be far past this or hit the update-depth limit.
+    expect(renders).toBeLessThanOrEqual(8);
+    expect(reported).toHaveBeenCalledTimes(1);
+
+    broken.now = false;
+    await screen.rerender(at('/images'));
+    await expect.element(page.getByText('page content')).toBeInTheDocument();
+  });
+
   test('navigating away clears the fallback', async () => {
     const screen = await renderWithProviders(at('/images/1'));
     await expect.element(page.getByText(FALLBACK)).toBeInTheDocument();
