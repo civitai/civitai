@@ -1,8 +1,8 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { fail } from '@sveltejs/kit';
 import { db } from '$lib/server/db';
 import { dismissRecap, getDailyStatus, getRecap } from '$lib/server/daily/daily.service';
 import { imageUrl } from '$lib/server/image-url';
-import { getPlayerStatus } from '$lib/server/player-status';
+import { requireMember } from '$lib/server/membership';
 import { castVote, getFeed, type RejectReason } from '$lib/server/queue/queue.service';
 import { voteLockUntil } from '$lib/server/queue/vote-rate';
 import { queueDeps } from '$lib/server/queue/runtime';
@@ -21,14 +21,15 @@ const REJECTION_TEXT: Record<RejectReason, string> = {
 };
 
 const TRIAL_REJECTION_TEXT = {
+  'no-player': 'You have not joined the Order yet.',
   'no-run': 'You have no trial under way.',
   'not-current': 'That is not the image before you now.',
   'bad-answer': 'That answer is not on offer.',
 } as const;
 
-export const load: PageServerLoad = async ({ locals }) => {
-  const status = await getPlayerStatus(db, locals.user.id);
-  if (!status) redirect(303, '/');
+export const load: PageServerLoad = async ({ locals, depends }) => {
+  depends('app:play');
+  const status = await requireMember(db, locals.user.id);
 
   if (status.rank === 'Acolyte') {
     const trial = await getTrial(db, locals.user.id, trialDeps);
@@ -68,9 +69,19 @@ export const load: PageServerLoad = async ({ locals }) => {
     getDailyStatus(db, { playerId: locals.user.id, rank: status.rank, now }),
     getRecap(db, { playerId: locals.user.id, now }),
   ]);
-  const lockout = lockedUntil?.toISOString() ?? null;
+  const lockoutSeconds = lockedUntil
+    ? Math.max(1, Math.ceil((lockedUntil.getTime() - now.getTime()) / 1000))
+    : null;
   if (!feed) {
-    return { mode: 'queue' as const, status, daily, recap, question: null, item: null, lockout };
+    return {
+      mode: 'queue' as const,
+      status,
+      daily,
+      recap,
+      question: null,
+      item: null,
+      lockoutSeconds,
+    };
   }
 
   const [item] = feed.items;
@@ -79,7 +90,7 @@ export const load: PageServerLoad = async ({ locals }) => {
     status,
     daily,
     recap,
-    lockout,
+    lockoutSeconds,
     question: feed.question,
     item: {
       id: item.id,
@@ -106,7 +117,13 @@ export const actions: Actions = {
         queueDeps
       );
       if (result.status === 'limited') {
-        return fail(429, { message: 'You are judging too quickly. Rest a little.' });
+        return fail(429, {
+          message: 'You are judging too quickly. Rest a little.',
+          lockoutSeconds: Math.max(
+            1,
+            Math.ceil((result.until.getTime() - queueDeps.now().getTime()) / 1000)
+          ),
+        });
       }
       if (result.status === 'rejected') {
         return fail(409, { message: REJECTION_TEXT[result.reason] });

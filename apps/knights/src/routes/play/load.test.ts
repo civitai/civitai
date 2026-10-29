@@ -25,7 +25,9 @@ vi.mock('$lib/server/trials/trials.service', () => ({ answerTrial: vi.fn(), getT
 const { load, actions } = await import('./+page.server');
 
 const run = (user: Record<string, unknown> = {}) =>
-  load({ locals: { user: { id: 7, ...user } } } as never) as Promise<Record<string, any>>;
+  load({ locals: { user: { id: 7, ...user } }, depends: vi.fn() } as never) as Promise<
+    Record<string, any>
+  >;
 
 beforeEach(() => {
   getPlayerStatus.mockReset();
@@ -103,7 +105,7 @@ describe('play load vote pacing', () => {
 
     const page = await run();
 
-    expect(page.lockout).toBe(until.toISOString());
+    expect(page.lockoutSeconds).toBe(30);
     expect(page.item).toBeNull();
     expect(getFeed).not.toHaveBeenCalled();
     expect(voteLockUntil).toHaveBeenCalledWith(expect.anything(), 7, NOW, limits);
@@ -111,7 +113,7 @@ describe('play load vote pacing', () => {
 
   it('serves the feed when the player is not paced', async () => {
     voteLockUntil.mockResolvedValue(null);
-    expect((await run()).lockout).toBeNull();
+    expect((await run()).lockoutSeconds).toBeNull();
     expect(getFeed).toHaveBeenCalled();
   });
 

@@ -1,10 +1,10 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
   import { dev } from '$app/environment';
-  import { invalidateAll } from '$app/navigation';
+  import { invalidate } from '$app/navigation';
   import type { SubmitFunction } from '@sveltejs/kit';
   import DailyPanel from './DailyPanel.svelte';
-  import VoteLockout from './VoteLockout.svelte';
+  import Countdown from '$lib/Countdown.svelte';
   import { recapLines } from './recap-text';
   import StatusBar from '$lib/StatusBar.svelte';
   import type { ActionData, PageData } from './$types';
@@ -20,7 +20,7 @@
       try {
         await update();
         // A refused answer doesn't re-run `load`; refetch or the refused item stays on screen.
-        if (result.type === 'failure') await invalidateAll();
+        if (result.type === 'failure') await invalidate('app:play');
       } finally {
         submitting = false;
       }
@@ -112,8 +112,13 @@
   {:else}
     <p>The trials are not set out yet. Return later.</p>
   {/if}
-{:else if data.mode === 'queue' && data.lockout}
-  <VoteLockout until={data.lockout} />
+{:else if data.mode === 'queue' && data.lockoutSeconds}
+  <section class="lockout" role="status" aria-label="Judging paused">
+    <h2>A moment of rest</h2>
+    <p>You have been judging faster than the Order can trust. Rest a little; the queue will wait.</p>
+    <Countdown seconds={data.lockoutSeconds} label="Time until judging resumes" />
+    <p class="muted">Judging resumes by itself.</p>
+  </section>
 {:else if data.item && data.question}
   <p class="prompt">{data.question.prompt}</p>
   {#key data.item.id}
@@ -146,6 +151,12 @@
 <p><a href="/">Back</a></p>
 
 <style>
+  .lockout {
+    padding: 1rem 1.5rem;
+    border: 1px solid var(--border);
+    background: var(--panel);
+    text-align: center;
+  }
   .recap {
     display: flex;
     flex-wrap: wrap;

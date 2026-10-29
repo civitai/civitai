@@ -32,7 +32,7 @@ export type TrialView =
     };
 
 export type AnswerResult =
-  | { status: 'rejected'; reason: 'no-run' | 'not-current' | 'bad-answer' }
+  | { status: 'rejected'; reason: 'no-player' | 'no-run' | 'not-current' | 'bad-answer' }
   | {
       status: 'recorded';
       correct: boolean;
@@ -288,6 +288,13 @@ export async function answerTrial(
   const now = deps.now();
 
   return db.transaction().execute(async (trx): Promise<AnswerResult> => {
+    const member = await trx
+      .selectFrom('NewOrderPlayer')
+      .select('userId')
+      .where('userId', '=', userId)
+      .executeTakeFirst();
+    if (!member) return { status: 'rejected', reason: 'no-player' };
+
     const locked = await trx
       .selectFrom('KnightsTrialRun')
       .select(['id', 'questionKey', 'itemIds'])

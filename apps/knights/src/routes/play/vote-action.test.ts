@@ -3,7 +3,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const castVote = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
-vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: {} }));
+vi.mock('$lib/server/queue/runtime', () => ({
+  queueDeps: { now: () => new Date('2026-12-15T12:00:00Z') },
+}));
 vi.mock('$lib/server/daily/daily.service', () => ({}));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote, getFeed: vi.fn() }));
 
@@ -63,7 +65,7 @@ describe('vote action', () => {
     castVote.mockResolvedValue({ status: 'limited', until: new Date('2026-12-15T12:00:30Z') });
     expect(await submit({ itemId: '3', answer: '4' })).toMatchObject({
       status: 429,
-      data: { message: expect.stringMatching(/too quickly/i) },
+      data: { message: expect.stringMatching(/too quickly/i), lockoutSeconds: 30 },
     });
   });
 

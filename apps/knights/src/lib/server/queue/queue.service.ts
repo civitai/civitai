@@ -266,16 +266,15 @@ const rankOrder = sql`CASE "i"."minRank" ${sql.join(
   sql` `
 )} ELSE 0 END`;
 
+/** First key of the per-player advisory lock that serialises a player's paced votes. */
+const VOTE_PACING_LOCK_NAMESPACE = 7_301;
+
 export async function castVote(
   db: Kysely<DB>,
   input: { userId: number; itemId: number; answer: string; isModerator?: boolean },
   deps: QueueDeps
 ): Promise<CastVoteResult> {
   const now = deps.now();
-  if (deps.voteLimits && !input.isModerator) {
-    const until = await voteLockUntil(db, input.userId, now, deps.voteLimits);
-    if (until) return { status: 'limited', until };
-  }
   await ensureMonthPartition(db, { year: now.getUTCFullYear(), month: now.getUTCMonth() + 1 });
 
   const { result, settledItemId, xp } = await db
@@ -285,6 +284,17 @@ export async function castVote(
         const rejected = (reason: RejectReason) => ({
           result: { status: 'rejected', reason } as const,
         });
+
+        // Pacing must hold across parallel requests, so one player's votes queue on this lock before they
+        // count the ledger. It is taken ahead of every row lock below, and nothing else waits on it while
+        // holding a lock of its own, so it cannot join a deadlock cycle.
+        if (deps.voteLimits && !input.isModerator) {
+          await sql`SELECT pg_advisory_xact_lock(${VOTE_PACING_LOCK_NAMESPACE}, ${input.userId})`.execute(
+            trx
+          );
+          const until = await voteLockUntil(trx, input.userId, now, deps.voteLimits);
+          if (until) return { result: { status: 'limited', until } as const };
+        }
 
         // The item row lock serialises every vote on one item: it is what keeps one vote per player
         // (the partitioned ledger cannot carry that unique key) and lets only one vote resolve the item.
