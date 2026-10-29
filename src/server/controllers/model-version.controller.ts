@@ -93,6 +93,8 @@ import {
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
 import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
 import {
   Availability,
   LicensingFeeSettlementCurrency,
@@ -179,6 +181,7 @@ const loadModelVersion = async ({
           select: {
             id: true,
             name: true,
+            sfwName: true,
             type: true,
             status: true,
             mode: true,
@@ -278,8 +281,10 @@ const loadModelVersion = async ({
     );
 
     const recommendedResourceIds = regularResources.map((x) => x.resource.id);
+    const browsingLevel = getRequestBrowsingLevel(ctx);
     const generationResources = await getResourceData(recommendedResourceIds, {
       user: ctx?.user,
+      browsingLevel,
     }).then((data) =>
       data.map((item) => {
         return withPairedStrength(
@@ -354,10 +359,18 @@ const loadModelVersion = async ({
     const editorModelMeta: ModelMeta | null = isOwnerOrMod
       ? { metricVisibility: getMetaMetricVisibility(modelMeta) }
       : null;
+    // As on the model page: owners and moderators keep the .red listing, since this seeds the editor.
+    const withSfwFace = !isOwnerOrMod && model.sfwName != null && showsSfwFace(browsingLevel);
 
     return {
       ...version,
-      model: { ...model, meta: editorModelMeta, ownerMetricPrivacyDefaults },
+      // A .com face has no per-version description; the .red one is not shown in its place.
+      description: withSfwFace ? null : version.description,
+      model: {
+        ...resolveModelFace(model, withSfwFace),
+        meta: editorModelMeta,
+        ownerMetricPrivacyDefaults,
+      },
       licensingFee,
       canGenerate,
       wildcardSetId,

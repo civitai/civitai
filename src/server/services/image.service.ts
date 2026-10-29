@@ -192,6 +192,9 @@ import type {
   EventDecorationCosmetic,
 } from '~/server/selectors/cosmetic.selector';
 import type { ImageResourceHelperModel } from '~/server/selectors/image.selector';
+import { getSfwModelNames } from '~/server/services/model-sfw-face.service';
+import { getRequestBrowsingLevel } from '~/server/utils/browsing-level';
+import { showsSfwFace, withSfwModelNames } from '~/shared/utils/model-sfw-face';
 import {
   imageSelect,
   publishedImageWhere,
@@ -281,12 +284,12 @@ import type {
   ReportReason,
   ReviewReactions,
   TagType,
+  CollectionItemStatus,
 } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   BlockImageReason,
   CosmeticEntity,
-  CollectionItemStatus,
   CollectionMode,
   AppealStatus,
   EntityType,
@@ -4854,7 +4857,7 @@ export async function getImagesFromSearchPreFilter(input: ImageSearchInput) {
         actor,
       })
     );
-    let results = mainResult.results;
+    const results = mainResult.results;
 
     let nextCursor: number | undefined;
     if (results.length > limit) {
@@ -6264,7 +6267,9 @@ export const getImage = async ({
 };
 
 export const getImageResources = async ({ id }: GetByIdInput) => {
-  const resources = await dbRead.$queryRaw<ImageResourceHelperModel[]>`
+  const resources = await dbRead.$queryRaw<
+    (ImageResourceHelperModel & { sfwName: string | null })[]
+  >`
     SELECT
       irh."imageId",
       irh."reviewId",
@@ -6283,7 +6288,8 @@ export const getImageResources = async ({ id }: GetByIdInput) => {
       irh."modelCommentCount",
       irh."modelType",
       irh."modelVersionBaseModel",
-      irh."detected"
+      irh."detected",
+      m."sfwName"
     FROM
       "ImageResourceHelper" irh
     JOIN "Model" m ON m.id = irh."modelId" AND m."status" = 'Published'
@@ -6523,6 +6529,7 @@ type CachedImagesForModelVersions = {
   modelVersionId: number;
   images: ImagesForModelVersions[];
 };
+// eslint-disable-next-line local-rules/no-module-scope-cache -- exported and used by many callers; making it lazy is out of scope here
 export const imagesForModelVersionsCache = createCachedObject<CachedImagesForModelVersions>({
   key: REDIS_KEYS.CACHES.IMAGES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
@@ -8603,8 +8610,13 @@ export async function getImageGenerationData({ id, viewer }: { id: number; viewe
   const tools = image.tools.map(({ notes, tool }) => ({ ...tool, notes }));
   const techniques = image.techniques.map(({ notes, technique }) => ({ ...technique, notes }));
 
-  const cachedResources = await imageResourcesCache.fetch([id]);
-  const resources = (cachedResources[id]?.resources ?? []).map((r) => ({
+  const cachedResources = (await imageResourcesCache.fetch([id]))[id]?.resources ?? [];
+  // The cache is per image, so a model's .com face is looked up here rather than stored in it.
+  const sfwModelNames = await getSfwModelNames(
+    cachedResources.map((r) => r.modelId),
+    showsSfwFace(getRequestBrowsingLevel(viewer))
+  );
+  const resources = withSfwModelNames(cachedResources, sfwModelNames).map((r) => ({
     imageId: r.imageId,
     modelVersionId: r.modelVersionId,
     strength: r.strength,

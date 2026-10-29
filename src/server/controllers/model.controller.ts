@@ -374,6 +374,7 @@ export const getModelHandler = async ({
       ) ?? [];
     const generationResources = await getResourceData(regularResourceIds, {
       user: ctx?.user,
+      browsingLevel: getRequestBrowsingLevel(ctx),
     });
 
     // Batch-fetch file data for linked components to enrich sizeKB/fileName at read time

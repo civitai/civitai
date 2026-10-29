@@ -42,6 +42,7 @@ export const getModelVersionApiSelect = Prisma.validator<Prisma.ModelVersionSele
   model: {
     select: {
       name: true,
+      sfwName: true,
       type: true,
       nsfw: true,
       poi: true,
