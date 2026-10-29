@@ -1,6 +1,6 @@
 /**
  * The tRPC routing cookie (`~/server/trpc/trpc-pool-cookie`): exact host-only attributes when set,
- * an exact clear, and one entry per response.
+ * an exact clear, one entry per response, and nothing on a response a shared cache may store.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import { describe, expect, it } from 'vitest';
@@ -88,4 +88,32 @@ describe('syncTrpcPoolCookie', () => {
     syncTrpcPoolCookie(makeReq(), res, true);
     expect(setCookies()).toEqual(['ref=1; Path=/', SET]);
   });
+
+  it.each([
+    'public, max-age=86400, must-revalidate',
+    'max-age=0, s-maxage=60',
+    'S-MAXAGE=60',
+    ['no-transform', 'public'],
+  ])('a response a shared cache may store (Cache-Control: %s): never set, never cleared', (cc) => {
+    const on = makeRes({ 'Cache-Control': cc });
+    syncTrpcPoolCookie(makeReq(), on.res, true);
+    expect(on.setCookies()).toEqual([]);
+
+    const off = makeRes({ 'Cache-Control': cc });
+    syncTrpcPoolCookie(makeReq({ cookie: 'civ-trpc-pool=1' }), off.res, false);
+    expect(off.setCookies()).toEqual([]);
+  });
+
+  it.each(['private, no-cache, no-store, max-age=0, must-revalidate', 'max-age=60', 'no-cache'])(
+    'a private or non-shared Cache-Control (%s): still set and cleared',
+    (cc) => {
+      const on = makeRes({ 'Cache-Control': cc });
+      syncTrpcPoolCookie(makeReq(), on.res, true);
+      expect(on.setCookies()).toEqual([SET]);
+
+      const off = makeRes({ 'Cache-Control': cc });
+      syncTrpcPoolCookie(makeReq({ cookie: 'civ-trpc-pool=1' }), off.res, false);
+      expect(off.setCookies()).toEqual([CLEAR]);
+    }
+  );
 });

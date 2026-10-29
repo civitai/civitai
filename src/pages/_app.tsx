@@ -767,7 +767,8 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
   // The tRPC routing cookie follows the viewer's flag (`~/server/trpc/trpc-pool-cookie`). A degraded
   // bootstrap does not know the viewer, so it leaves the cookie as it is. `typeof window` block:
   // see the bootstrap above.
-  // Private: the edge-cached shell returned above, and no page's gSSP (run after this) caches publicly.
+  // Not every response here is private: next.config marks the sitemap routes `Cache-Control: public`
+  // before this runs, so the helper itself skips a shared-cacheable or already-sent response.
   if (typeof window === 'undefined') {
     const { res } = appContext.ctx;
     if (res && !settingsDegraded) {

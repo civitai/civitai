@@ -2,7 +2,8 @@
  * `_app.getInitialProps` keeps the tRPC routing cookie (`civ-trpc-pool`) in step with the
  * viewer's `trpcPoolRoute` flag on a full render: set for a signed-in viewer the flag is on for,
  * cleared once it is off, never set for an anonymous viewer, and left alone when the settings
- * bootstrap could not say who the viewer is.
+ * bootstrap could not say who the viewer is, on a response a shared cache may store, or on one
+ * whose headers are already sent.
  *
  * The flag mock answers `true` for EVERY evaluation, with or without a user, so a case where the
  * cookie is not set is decided by `_app`, not by the flag.
@@ -46,8 +47,12 @@ const ANONYMOUS = { session: null };
 const SET = 'civ-trpc-pool=1; Path=/; Max-Age=604800; Secure; HttpOnly; SameSite=Lax';
 const CLEAR = 'civ-trpc-pool=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax';
 
-async function render({ cookie }: { cookie?: string } = {}) {
-  const url = '/models';
+async function render({
+  cookie,
+  url = '/models',
+  preset = {},
+  sent = false,
+}: { cookie?: string; url?: string; preset?: Record<string, string>; sent?: boolean } = {}) {
   const { req, res } = createRealApiPair({
     url,
     headers: { host: 'civitai.com', ...(cookie ? { cookie } : {}) },
@@ -55,6 +60,10 @@ async function render({ cookie }: { cookie?: string } = {}) {
   // `createRealApiPair` gives the request a parsed jar; a page request carries only the header.
   delete (req as unknown as { cookies?: unknown }).cookies;
   const response = res as unknown as ServerResponse;
+  // Headers the router writes before the page renders (next.config `headers()`).
+  for (const [name, value] of Object.entries(preset)) response.setHeader(name, value);
+  // A response already sent, as on `_app`'s second run after a redirect, `notFound` or throw.
+  if (sent) response.end();
   const noop = () => null;
   await getInitialProps({
     Component: noop,
@@ -97,6 +106,35 @@ describe('_app: the tRPC routing cookie follows the viewer flag', () => {
   it('anonymous, cookie left from a signed-in visit: cleared', async () => {
     h.bootstrap.mockImplementation(async () => ANONYMOUS);
     expect(poolCookies(await render({ cookie: 'civ-trpc-pool=1' }))).toEqual([CLEAR]);
+  });
+
+  // next.config `headers()` gives `/sitemap(-\\w+)?.xml` this value, and the router writes it onto
+  // the response before `_app` runs.
+  const SITEMAP_CACHE = { 'Cache-Control': 'public, max-age=86400, must-revalidate' };
+
+  it('a sitemap route marked public by next.config: never set', async () => {
+    h.bootstrap.mockImplementation(async () => SIGNED_IN);
+    const all = await render({
+      cookie: '__Secure-civ-token=t',
+      url: '/sitemap-models.xml',
+      preset: SITEMAP_CACHE,
+    });
+    expect(poolCookies(all)).toEqual([]);
+  });
+
+  it('a sitemap route marked public by next.config: never cleared', async () => {
+    h.bootstrap.mockImplementation(async () => ANONYMOUS);
+    const all = await render({
+      cookie: 'civ-trpc-pool=1',
+      url: '/sitemap-models.xml',
+      preset: SITEMAP_CACHE,
+    });
+    expect(poolCookies(all)).toEqual([]);
+  });
+
+  it('headers already sent (a second run on one response): no throw, no Set-Cookie', async () => {
+    h.bootstrap.mockImplementation(async () => SIGNED_IN);
+    expect(poolCookies(await render({ cookie: '__Secure-civ-token=t', sent: true }))).toEqual([]);
   });
 
   it('a degraded bootstrap (viewer unknown): left as it is', async () => {
