@@ -10,12 +10,8 @@ import { UPLOAD_FIXTURE, uploadImage } from './preview-upload';
  * dropzone, which re-uploads each one to object storage and then persists it via
  * post.create -> post.addImage, where `url` is the object key the upload endpoint minted.
  *
- * post.addImage only accepts a key that the server issued to the caller: the upload endpoint
- * records each key it mints against the session's user (recordUploadKeyOwner), and image
- * creation refuses any other key with "This cover image is no longer available. Please
- * re-upload it." (assertClientKeysIssuedToCaller in image-url-ownership.ts). A fabricated
- * UUID is therefore refused. So this test first uploads a real image through the upload
- * endpoint (tests/preview-upload.ts, shared with preview-post-upload) and attaches the key it
+ * post.addImage only accepts a key the server issued to the caller (see tests/preview-upload.ts),
+ * so a fabricated UUID is refused. This test uploads a real image first and attaches the key it
  * was issued.
  *
  * Scope (honest): this covers the SERVER contract (key issue -> post.create ->

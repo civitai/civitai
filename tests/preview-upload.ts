@@ -14,10 +14,6 @@ import { expect } from '@playwright/test';
  *      upload endpoint.
  *   2. PUT the bytes to object storage via the presigned URL.
  *
- * The post dropzone, which the generator "Post" action hands its images to, uploads through
- * the multipart sibling (/api/v1/image-upload/multipart). That endpoint mints and records the
- * key with the same recordUploadKeyOwner call; only the byte transfer differs.
- *
  * Pass `page.request` (it carries the test's storageState auth cookie) after navigating the
  * page to the preview origin.
  */
