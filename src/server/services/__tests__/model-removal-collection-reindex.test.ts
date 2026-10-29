@@ -335,7 +335,30 @@ describe('deleteModelById — soft delete', () => {
     await expect(
       deleteModelById({ id: MODEL_ID, userId: 77, isModerator: true, onBidRefundFailed: vi.fn() })
     ).rejects.toThrow('cache down');
+    expect(mockDeleteBidsForModel).toHaveBeenCalledTimes(1);
     expect(mockDeleteBidsForModel).toHaveBeenCalledWith({ modelId: MODEL_ID });
+  });
+
+  it('throws a refund that failed when its caller takes no refund failures', async () => {
+    mockDeleteBidsForModel.mockRejectedValueOnce(new Error('buzz down'));
+    mockDbWrite.$transaction.mockImplementationOnce((async (fn: (t: unknown) => unknown) =>
+      fn({
+        $executeRaw: vi.fn(async () => 1),
+        model: {
+          update: vi.fn(async () => ({
+            id: MODEL_ID,
+            userId: OWNER_ID,
+            nsfwLevel: 1,
+            modelVersions: [{ id: VERSION_ID }],
+          })),
+        },
+      })) as never);
+
+    await expect(deleteModelById({ id: MODEL_ID, userId: 77, isModerator: true })).rejects.toThrow(
+      'buzz down'
+    );
+    // The steps after the refund still ran.
+    expect(userModelCountCache.refresh).toHaveBeenCalledWith(OWNER_ID);
   });
 
   it('records no deleter when no person ordered the delete', async () => {

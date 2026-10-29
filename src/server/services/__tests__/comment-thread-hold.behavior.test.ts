@@ -615,6 +615,22 @@ describe('the production delete paths keep held threads', () => {
     expect(await commentIds()).toEqual([1, 2, 3]);
   });
 
+  // The shop-artwork check reads these off the deleted row: missing, a blocked image reads as a
+  // plain owner delete and its object is kept.
+  it('returns the block markers of the image it deletes', async () => {
+    await db.exec(`
+      INSERT INTO "Image" (id, "userId", ingestion, "needsReview", "blockedFor")
+      VALUES (50, ${OWNER}, 'Blocked', 'csam', 'tos')
+    `);
+
+    expect(await deleteImageById({ id: 50, updatePost: false })).toMatchObject({
+      userId: OWNER,
+      ingestion: 'Blocked',
+      needsReview: 'csam',
+      blockedFor: 'tos',
+    });
+  });
+
   it('leaves an image the hold marker trigger keeps with its thread on it', async () => {
     await db.exec(`INSERT INTO "Image" (id, "userId") VALUES (50, ${MARKED})`);
     await seedNested('imageId', 50, HELD);
