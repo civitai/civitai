@@ -142,12 +142,11 @@ const INSERT_SITE_LEDGER: Record<string, InsertSite> = {
         ' if (owned !== new Set(linkIds).size) throw throwAuthorizationError();',
     ],
   },
-  // `where` looks up an existing cover by id, which any collection manager may set (unchanged
-  // from main); the `create` branch writes client columns only.
+  // An existing cover is connected by id; the `create` branch writes client columns only.
   'src/server/services/collection.service.ts#upsertCollection': {
     sites: 1,
     spreads: ['pickClientImageColumns(image)'],
-    serverColumns: ['id: image.id ?? -1', 'id: undefined'],
+    serverColumns: ['id: undefined'],
     guards: [COLLECTION_MANAGE_GUARD],
   },
   // Only reached when the client sent no `id`, so `where` is always `-1`.

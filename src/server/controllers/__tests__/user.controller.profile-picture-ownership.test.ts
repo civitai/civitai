@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as UserService from '~/server/services/user.service';
 
 /**
@@ -51,6 +51,7 @@ vi.mock('~/server/search-index', () => ({ usersSearchIndex: { queueUpdate: vi.fn
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(() => ({ catch: vi.fn() })) }));
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
 import { updateUserHandler } from '~/server/controllers/user.controller';
 
 const CALLER_ID = 5;
@@ -156,6 +157,66 @@ describe('profile picture updates are scoped to the caller', () => {
     await saveProfilePicture();
 
     expect(queuedImageIds()).toEqual([CURRENT_PICTURE_ID]);
+  });
+
+  describe('a new picture whose url is owned', () => {
+    // clearAllMocks keeps implementations; the fake must not reach the other cases.
+    afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+
+    it('by another user is refused before writing', async () => {
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        imageUrlOwnersFake([{ url: AVATAR_KEY, userId: OTHER_USER_ID }])
+      );
+
+      await expect(saveProfilePicture()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockUpdateUserById).not.toHaveBeenCalled();
+    });
+
+    it('by the caller is written', async () => {
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        imageUrlOwnersFake([{ url: AVATAR_KEY, userId: CALLER_ID }])
+      );
+
+      await saveProfilePicture();
+      expect(mockUpdateUserById.mock.calls[0][0].data.profilePicture.create).toMatchObject({
+        url: AVATAR_KEY,
+      });
+    });
+  });
+
+  describe('a new `image` (legacy avatar) whose url is owned', () => {
+    afterEach(() => dbMock.dbWrite.$queryRaw.mockReset());
+    const saveImage = () =>
+      updateUserHandler({
+        ctx: { user: { id: CALLER_ID } },
+        input: { id: CALLER_ID, image: AVATAR_KEY },
+      } as never);
+
+    it('by another user is refused before writing', async () => {
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        imageUrlOwnersFake([{ url: AVATAR_KEY, userId: OTHER_USER_ID }])
+      );
+
+      await expect(saveImage()).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(mockUpdateUserById).not.toHaveBeenCalled();
+    });
+
+    it('by the caller, or already the current one, is written', async () => {
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        imageUrlOwnersFake([{ url: AVATAR_KEY, userId: CALLER_ID }])
+      );
+      await saveImage();
+      expect(mockUpdateUserById.mock.calls[0][0].data.image).toBe(AVATAR_KEY);
+
+      vi.clearAllMocks();
+      dbMock.dbWrite.$queryRaw.mockImplementation(
+        imageUrlOwnersFake([{ url: AVATAR_KEY, userId: OTHER_USER_ID }])
+      );
+      mockGetUserById.mockResolvedValue({ profilePictureId: null, image: AVATAR_KEY });
+      mockUpdateUserById.mockResolvedValue({ id: CALLER_ID });
+      await saveImage();
+      expect(mockUpdateUserById).toHaveBeenCalled();
+    });
   });
 
   it('changes nothing when the current picture is re-saved', async () => {
