@@ -73,7 +73,8 @@ export function applyShellBounceHeaders(res: ServerResponse) {
   res.setHeader(SHELL_CDN_CACHE_CONTROL_HEADER, SHELL_BOUNCE_CDN_CACHE_CONTROL);
 }
 
-const COOKIE_MAX_AGE_S = 60 * 60 * 24 * 7;
+/** A route cookie's lifetime. A full render sets it when absent; the page-data endpoint re-sets it. */
+export const ROUTE_COOKIE_MAX_AGE_S = 60 * 60 * 24 * 7;
 
 function appendSetCookie(res: ServerResponse, cookie: string) {
   const existing = res.getHeader('Set-Cookie');
@@ -101,7 +102,10 @@ export function syncShellRouteCookie(
   const { cookie } = shellRouteByName(route);
   const present = getCookies({ req: req as never })[cookie] !== undefined;
   if (enabled && (refresh || !present)) {
-    appendSetCookie(res, `${cookie}=1; Path=/; Max-Age=${COOKIE_MAX_AGE_S}; Secure; SameSite=Lax`);
+    appendSetCookie(
+      res,
+      `${cookie}=1; Path=/; Max-Age=${ROUTE_COOKIE_MAX_AGE_S}; Secure; SameSite=Lax`
+    );
   } else if (!enabled && present) {
     appendSetCookie(res, `${cookie}=; Path=/; Max-Age=0; Secure; SameSite=Lax`);
   }

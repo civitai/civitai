@@ -137,6 +137,12 @@ const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
     reason:
       'the static-shell decision and its viewer-independent seeds (flags with no user, ToS, browsing addons, liveNow), read before the bootstrap is.',
   },
+  {
+    file: 'src/pages/_app.tsx',
+    spec: '~/server/trpc/trpc-pool-cookie',
+    reason:
+      'the tRPC routing cookie, synced from the viewer flag on a private full render (it reads the session cookie Domain helper and the shell cookie lifetime).',
+  },
 ];
 
 /**

@@ -41,7 +41,8 @@ vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
   getFeatureFlagsAsync: vi.fn(async (ctx: { user?: unknown; req?: unknown } = {}) => ({
     shellMaster: true,
     shellImages: true,
-    ...(ctx.user ? { perUserFlagLeak: true } : {}),
+    // `trpcPoolRoute` would set the tRPC routing cookie on a per-user full render.
+    ...(ctx.user ? { perUserFlagLeak: true, trpcPoolRoute: true } : {}),
     ...(ctx.req ? { perRequestFlagLeak: true } : {}),
   })),
 }));
@@ -302,6 +303,8 @@ describe('the /images/[imageId] shell is one object for every viewer and every U
     );
     expect(base.headers['cache-tag']).toMatch(/^shell,shell-images,build-[\w-]+$/);
     expect(base.headers['cache-control']).toBe('private, no-store');
+    // No cookie of any kind, the tRPC routing cookie included: a cached Set-Cookie reaches everyone.
+    expect(base.headers).not.toHaveProperty('set-cookie');
     expect(base.html).toContain('data-testid="image-detail-shell-skeleton"');
     expect(base.html).toContain('<meta name="robots" content="noindex,nofollow"');
     expect(base.html).toContain('window.__civShell=p');
