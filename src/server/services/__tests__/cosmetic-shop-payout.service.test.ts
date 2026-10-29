@@ -224,6 +224,17 @@ describe('purchaseCosmeticShopItem payouts', () => {
 
   // Civitai selling a resellable item from its own shop is not a resale: no
   // reseller made the sale, so the seller share is the creator's, not the platform's.
+  // A creator can't be their own reseller, even if a resale row names them.
+  it('own-storefront purchase with a resale row under the creator still pays one 7000 leg', async () => {
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
+
+    await purchase(CREATOR_ID);
+
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
+    ]);
+  });
+
   it('official Civitai shop sale of a resellable item pays the creator the full pool: 7000', async () => {
     await purchase(-1);
 

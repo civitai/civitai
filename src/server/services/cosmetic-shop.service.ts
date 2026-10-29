@@ -1575,11 +1575,8 @@ export const purchaseCosmeticShopItem = async ({
         // We do this last mainly because we don't want to fail the purchase if this fails.
         // We can divide the funds later if needed.
         // Creator Shop items pay the cosmetic's creator (cosmetic.createdById)
-        // their 70% share directly. When another creator (the seller = addedById)
-        // lists a sellable-by-others cosmetic, that 70% pool is split by the
-        // seller share that seller listed under (% of price they keep; creator
-        // gets the rest). Official items keep the legacy meta.paidToUserIds
-        // distribution.
+        // their 70% pool, split with a reseller only as below. Official items
+        // keep the legacy meta.paidToUserIds distribution.
         const price = unitAmount;
         const creatorId = singleCosmetic.createdById;
 
@@ -1595,7 +1592,11 @@ export const purchaseCosmeticShopItem = async ({
         // were offered. The listing row is also the permission, so it outlives
         // `sellableByOthers` going false.
         const resale =
-          creatorId && resaleListing && viaShopUserId && viaShopUserId !== userId
+          creatorId &&
+          resaleListing &&
+          viaShopUserId &&
+          viaShopUserId !== userId &&
+          viaShopUserId !== creatorId
             ? { resellerId: viaShopUserId, share: resaleListing.sellerShare }
             : null;
         const { creatorPool, sellerAmount, creatorAmount } = computeCreatorShopSplit(
