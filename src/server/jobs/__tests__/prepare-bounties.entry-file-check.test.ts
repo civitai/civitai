@@ -26,6 +26,7 @@ vi.mock('~/server/clickhouse/client', () => ({
 vi.mock('~/server/services/bounty.service', () => ({
   settleBountyPayout: mockSettle,
   retryUnsettledBountyPayouts: vi.fn(),
+  deleteSettledKeptBounties: vi.fn(),
 }));
 vi.mock('~/server/search-index', () => ({ bountiesSearchIndex: { queueUpdate: vi.fn() } }));
 vi.mock('~/server/email/templates', () => {

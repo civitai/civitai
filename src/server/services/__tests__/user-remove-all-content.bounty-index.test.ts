@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
- * `removeAllContent` drops the account's bounties from the bounty search index: the bounties it
- * deleted, by bounty id, and not a bounty it kept because its payout is unsettled.
+ * `removeAllContent` drops the account's bounties from the bounty search index, by bounty id: the
+ * bounties it deleted, then those it kept, hidden, because their payout is unsettled.
  */
 
 const { bountiesIndex, collectionsIndex, bountyService } = vi.hoisted(() => ({
@@ -113,8 +113,12 @@ const flatten = ([strings, ...values]: unknown[]) =>
 beforeEach(() => {
   vi.clearAllMocks();
   unsettled = [];
-  // The wipe's re-check after its evidence deletes: still unheld.
-  vi.mocked(dbMock.dbWrite.$queryRaw).mockResolvedValue([{ held: false }] as never);
+  // The wipe's re-check after its evidence deletes: still unheld. Every kept bounty was hidden.
+  vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (...args: unknown[]) => {
+    const sql = flatten(args);
+    if (!sql.text.includes(`'removedWithOwner' = 'true'`)) return [{ held: false }];
+    return (sql.values[0] as number[]).map((id) => ({ id }));
+  }) as never);
   bountyService.settleBountyPayout.mockImplementation(async () => false);
   bountyService.refundUnpayableBountyAward.mockImplementation(async () => false);
   // Ids distinct per table and per database, so an index fed from the wrong one is visible.
@@ -149,16 +153,16 @@ describe('removeAllContent and the bounty index', () => {
     expect(queued(collectionsIndex)).toEqual(del(991));
   });
 
-  it('keeps a bounty whose payout could not be settled in the index', async () => {
+  it('removes a bounty kept for its unsettled payout after the deleted ones', async () => {
     unsettled = [702];
 
     await removeAllContent({ id: USER });
 
     expect(keptByBountyDelete()).toEqual([702]);
-    expect(queued(bountiesIndex)).toEqual(del(701));
+    expect(queued(bountiesIndex)).toEqual(del(701, 702));
   });
 
-  it('removes an unsettled bounty from the index once its payout settles, and only then', async () => {
+  it('deletes an unsettled bounty once its payout settles, and keeps the rest', async () => {
     unsettled = [701, 702];
     bountyService.settleBountyPayout.mockImplementation(async (id: number) => id === 701);
 
@@ -167,16 +171,16 @@ describe('removeAllContent and the bounty index', () => {
     expect(bountyService.refundUnpayableBountyAward).toHaveBeenCalledWith(702);
     expect(bountyService.refundUnpayableBountyAward).not.toHaveBeenCalledWith(701);
     expect(keptByBountyDelete()).toEqual([702]);
-    expect(queued(bountiesIndex)).toEqual(del(701));
+    expect(queued(bountiesIndex)).toEqual(del(701, 702));
   });
 
-  it('removes a bounty from the index once its award is refunded', async () => {
+  it('deletes a bounty once its award is refunded, and keeps the rest', async () => {
     unsettled = [701, 702];
     bountyService.refundUnpayableBountyAward.mockImplementation(async (id: number) => id === 702);
 
     await removeAllContent({ id: USER });
 
     expect(keptByBountyDelete()).toEqual([701]);
-    expect(queued(bountiesIndex)).toEqual(del(702));
+    expect(queued(bountiesIndex)).toEqual(del(702, 701));
   });
 });

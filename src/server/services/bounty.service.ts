@@ -1,5 +1,10 @@
-import { bountyThreadParents, detachHeldThreadsSql } from '~/server/services/comment-thread-hold';
-import { holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import {
+  bountyThreadParents,
+  detachHeldThreadsCte,
+  detachHeldThreadsSql,
+} from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists, ownerHeldSql } from '~/server/services/legal-hold.service';
+import { isRemovedWithOwner } from '~/server/utils/legal-hold';
 import type * as z from 'zod';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
@@ -440,6 +445,8 @@ export const updateBountyById = async ({
         ]);
 
       if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
+      if (liftedTextScanPoi && isRemovedWithOwner(existing.meta))
+        throw throwBadRequestError('This bounty is kept hidden until its payout settles');
 
       if (
         entryLimit &&
@@ -1361,6 +1368,28 @@ export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
     if (due.length < BOUNTY_PAYOUT_RETRY_BATCH_SIZE) break;
   }
   return { settled };
+}
+
+/**
+ * Deletes each bounty a content wipe kept for its unsettled payout, now settled, unless its owner is
+ * held: such a bounty stays hidden and is deleted on the first run after the hold ends.
+ */
+export async function deleteSettledKeptBounties() {
+  const markerView = await holdMarkerViewExists();
+  const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b
+    WHERE b.meta ->> 'removedWithOwner' = 'true' AND b."payoutSettledAt" IS NOT NULL
+      AND NOT ${ownerHeldSql(Prisma.raw('b."userId"'))}`;
+  const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
+    WITH ${detachHeldThreadsCte(bountyThreadParents(doomed), markerView)}
+    DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id`;
+  if (!deleted.length) return 0;
+  const ids = deleted.map((b) => b.id);
+  await dbWrite.file.deleteMany({ where: { entityType: 'Bounty', entityId: { in: ids } } });
+  await SearchIndexUpdate.queueUpdate({
+    indexName: BOUNTIES_SEARCH_INDEX,
+    items: ids.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Delete })),
+  });
+  return ids.length;
 }
 
 export const refundBounty = async ({

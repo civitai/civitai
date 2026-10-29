@@ -464,6 +464,14 @@ describe('updateBountyById — a moderator clearing a text-scan poi flag', () =>
     });
   });
 
+  it('refuses, writing nothing, on a bounty a content wipe kept until its payout settles', async () => {
+    mockStored({ poi: true, meta: { ...flagged, removedWithOwner: true } });
+    await expect(updateBountyById(moderatorEdit as never)).rejects.toMatchObject({
+      message: 'This bounty is kept hidden until its payout settles',
+    });
+    expect(mockDbWrite.bounty.update).not.toHaveBeenCalled();
+  });
+
   it('touches neither availability nor meta for a poi the text scan did not set', async () => {
     mockStored({ poi: true, meta: null });
     await updateBountyById(moderatorEdit as never);

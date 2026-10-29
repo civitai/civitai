@@ -7,6 +7,11 @@ import {
   bountyVisibilityWhere,
   canViewBounty,
 } from '~/server/services/bounty-visibility';
+import {
+  createBountyInputSchema,
+  updateBountyInputSchema,
+  upsertBountyInputSchema,
+} from '~/server/schema/bounty.schema';
 import { Availability } from '~/shared/utils/prisma/enums';
 
 const priv = { availability: Availability.Private, userId: 5 };
@@ -45,6 +50,18 @@ describe('bountyVisibilityWhere', () => {
     expect(bountyVisibilityWhere({ id: 5 })).toEqual({
       OR: [{ availability: { not: Availability.Private } }, { userId: 5 }],
     });
+  });
+});
+
+// Only a moderator path may change a bounty's availability: a bounty a content wipe kept stays
+// private until its payout settles.
+describe('an owner create or edit', () => {
+  it.each([
+    ['create', createBountyInputSchema],
+    ['update', updateBountyInputSchema],
+    ['upsert', upsertBountyInputSchema],
+  ])('cannot carry availability (%s)', (_, schema) => {
+    expect(Object.keys(schema.shape)).not.toContain('availability');
   });
 });
 
