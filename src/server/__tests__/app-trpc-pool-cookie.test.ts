@@ -6,19 +6,24 @@
  * whose headers are already sent.
  *
  * The flag mock answers `true` for EVERY evaluation, with or without a user, so a case where the
- * cookie is not set is decided by `_app`, not by the flag.
+ * cookie is not set is decided by `_app`, not by the flag. The Flipt-outage cases instead run the
+ * REAL `getFeatureFlagsAsync` and stub only Flipt's answer.
  *
  * Lives outside `src/pages` deliberately: Next treats every file under there as a route.
  */
 import type { ServerResponse } from 'node:http';
 import type { AppContext } from 'next/app';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as FliptClientModule from '~/server/flipt/client';
 import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
 import { createRealApiPair } from '~/server/utils/__tests__/real-api-response';
 
 const h = vi.hoisted(() => ({
   bootstrap: vi.fn<(req: unknown) => Promise<unknown>>(),
   flagOn: { current: true },
+  realFlags: { current: false },
+  // Flipt's per-flag answer; `null` is what `@civitai/flipt` gives while it is unreachable.
+  flipt: vi.fn<(flag: string) => boolean | null>(),
 }));
 
 // Wholesale on purpose, as in app-settings-bootstrap.test.ts: `_app` uses only this export.
@@ -30,10 +35,27 @@ vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => null),
 }));
 
-vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
-  ...(await importOriginal<typeof FeatureFlagsService>()),
-  getFeatureFlagsAsync: vi.fn(async () => (h.flagOn.current ? { trpcPoolRoute: true } : {})),
+// The outage shape of `@civitai/flipt` (pinned in its own client.test.ts): a failed init is
+// swallowed, so `ensureInitialized` resolves, and `isEnabledSync` answers `null`.
+vi.mock('~/server/flipt/client', async (importOriginal) => ({
+  ...(await importOriginal<typeof FliptClientModule>()),
+  ensureFliptInitialized: vi.fn(async () => undefined),
+  isFliptSync: vi.fn((flag: string) => h.flipt(flag)),
 }));
+
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => {
+  const actual = await importOriginal<typeof FeatureFlagsService>();
+  return {
+    ...actual,
+    getFeatureFlagsAsync: vi.fn(async (ctx: Parameters<typeof actual.getFeatureFlagsAsync>[0]) =>
+      h.realFlags.current
+        ? actual.getFeatureFlagsAsync(ctx)
+        : h.flagOn.current
+        ? { trpcPoolRoute: true }
+        : {}
+    ),
+  };
+});
 
 import AppWithTRPC from '~/pages/_app';
 
@@ -79,6 +101,9 @@ const poolCookies = (all: string[]) => all.filter((c) => c.startsWith('civ-trpc-
 beforeEach(() => {
   h.bootstrap.mockReset();
   h.flagOn.current = true;
+  h.realFlags.current = false;
+  h.flipt.mockReset();
+  h.flipt.mockReturnValue(null);
   vi.stubGlobal(
     'fetch',
     vi.fn(async () => new Response(null, { status: 503 }))
@@ -144,5 +169,33 @@ describe('_app: the tRPC routing cookie follows the viewer flag', () => {
     h.flagOn.current = false;
     const cookie = '__Secure-civ-token=t; civ-trpc-pool=1';
     expect(poolCookies(await render({ cookie }))).toEqual([]);
+  });
+});
+
+describe('_app: Flipt down, through the real flag evaluation', () => {
+  // The flag evaluation cannot reject on an outage: it resolves with the flag off, the render
+  // completes, and the cookie is cleared. Each case has its own viewer id because the evaluation
+  // memoizes per viewer for a few seconds.
+  const signedIn = (id: number) => ({ session: { user: { id, username: `trpc-pool-${id}` } } });
+
+  beforeEach(() => {
+    h.realFlags.current = true;
+  });
+
+  it('positive control: Flipt on for the viewer sets it', async () => {
+    h.bootstrap.mockImplementation(async () => signedIn(5101));
+    h.flipt.mockImplementation((flag) => (flag === 'trpc-pool-route' ? true : null));
+    expect(poolCookies(await render({ cookie: '__Secure-civ-token=t' }))).toEqual([SET]);
+  });
+
+  it('Flipt down, cookie present: the render completes and the cookie is cleared', async () => {
+    h.bootstrap.mockImplementation(async () => signedIn(5102));
+    const cookie = '__Secure-civ-token=t; civ-trpc-pool=1';
+    expect(poolCookies(await render({ cookie }))).toEqual([CLEAR]);
+  });
+
+  it('Flipt down, no cookie: never set', async () => {
+    h.bootstrap.mockImplementation(async () => signedIn(5103));
+    expect(poolCookies(await render({ cookie: '__Secure-civ-token=t' }))).toEqual([]);
   });
 });

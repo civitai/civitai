@@ -767,11 +767,7 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     hasAuthCookie = false;
   }
 
-  // The tRPC routing cookie follows the viewer's flag (`~/server/trpc/trpc-pool-cookie`). A degraded
-  // bootstrap does not know the viewer, so it leaves the cookie as it is. `typeof window` block:
-  // see the bootstrap above.
-  // Not every response here is private: next.config marks the sitemap routes `Cache-Control: public`
-  // before this runs, so the helper itself skips a shared-cacheable or already-sent response.
+  // Skipped when degraded: the viewer is unknown, so the cookie must stay as it is.
   if (typeof window === 'undefined') {
     const { res } = appContext.ctx;
     if (res && !settingsDegraded) {
