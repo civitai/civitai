@@ -324,6 +324,8 @@ export async function createRatingReview({
   assertOwner(subject.ownerId, userId);
 
   if (subject.disputeRestriction) throw throwBadRequestError(subject.disputeRestriction);
+  // Before eligibility: a clean re-scan after filing would otherwise answer with the wrong reason.
+  if (existingPending) throw throwBadRequestError(PENDING_MESSAGE);
   if (entityType !== 'Article' && !scan?.raised && !lastResolved && !subject.systemNsfwLock)
     throw throwBadRequestError('Only a rating raised by our text scan can be disputed.');
   if (entityType !== 'Article' && !subject.currentLevel)
@@ -334,7 +336,6 @@ export async function createRatingReview({
     );
   if (!ratingReviewOwnerLevels(entityType, subject.currentLevel).includes(suggestedLevel))
     throw throwBadRequestError('Choose one of the offered ratings.');
-  if (existingPending) throw throwBadRequestError(PENDING_MESSAGE);
   if (
     lastResolved &&
     !textChangedSinceResolution(lastResolved, subject.updatedAt, scan?.textHash ?? null)
