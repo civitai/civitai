@@ -1,8 +1,10 @@
 import { PANELS, type PanelContext, type PanelKey } from '$lib/tickets/panels';
 import { accountSectionFor, type TicketAccount } from './account';
+import { appealsSectionFor, type TicketAppeals } from './appeals';
 
 export type PanelSections = {
   account: TicketAccount;
+  appeals: TicketAppeals;
 };
 
 export type CanRead = (path: string) => boolean;
@@ -17,7 +19,10 @@ type Loaders = {
 };
 
 export const liveLoaders: Loaders = {
-  account: (ticket) => accountSectionFor({ ...ticket, canView: true }),
+  account: ({ view, cfFeature, routerTopic, civitaiUserId }) =>
+    accountSectionFor({ view, cfFeature, routerTopic, civitaiUserId, canView: true }),
+  appeals: (ticket, canRead) =>
+    appealsSectionFor({ userId: ticket.civitaiUserId, text: ticket.text ?? '', canRead }),
 };
 
 /**
@@ -52,6 +57,9 @@ export async function loadPanels(
   canRead: CanRead,
   loaders: Loaders = liveLoaders
 ): Promise<Partial<PanelSections>> {
-  const account = await sectionFor('account', ticket, canRead, loaders);
-  return { ...(account ? { account } : {}) };
+  const [account, appeals] = await Promise.all([
+    sectionFor('account', ticket, canRead, loaders),
+    sectionFor('appeals', ticket, canRead, loaders),
+  ]);
+  return { ...(account ? { account } : {}), ...(appeals ? { appeals } : {}) };
 }

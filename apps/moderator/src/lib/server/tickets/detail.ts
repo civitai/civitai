@@ -137,7 +137,16 @@ export async function loadTicketPayload(
   // The address is resolved here even without the grant, and never leaves the server without it.
   const civitaiUserId = await linkedCivitaiUserId(ticket, routed);
   const panels = await loadPanels(
-    { view, cfFeature: ticket.cfFeature, routerTopic: routed?.topic ?? null, civitaiUserId },
+    {
+      view,
+      cfFeature: ticket.cfFeature,
+      routerTopic: routed?.topic ?? null,
+      civitaiUserId,
+      text: [
+        ticket.subject,
+        ticket.description.status === 'found' ? ticket.description.text : '',
+      ].join('\n'),
+    },
     canRead
   );
 

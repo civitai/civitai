@@ -26,6 +26,11 @@ vi.mock('../tickets/account', () => ({
   accountSectionFor: (...a: unknown[]) => accountSectionFor(...a),
 }));
 
+const appealsSectionFor = vi.fn();
+vi.mock('../tickets/appeals', () => ({
+  appealsSectionFor: (...a: unknown[]) => appealsSectionFor(...a),
+}));
+
 const none = () => false;
 const all = () => true;
 
@@ -56,6 +61,7 @@ beforeEach(() => {
   patch.mockReset().mockResolvedValue(undefined);
   sentByTickets.mockReset().mockResolvedValue(new Map());
   accountSectionFor.mockReset().mockResolvedValue(undefined);
+  appealsSectionFor.mockReset().mockResolvedValue({ status: 'ok', userId: 99, appeals: [] });
 });
 
 describe('loadTicketPayload', () => {
@@ -87,6 +93,10 @@ describe('loadTicketPayload', () => {
       canRead: all,
     });
     expect(withAccount).toMatchObject({ account: { status: 'ok', userId: 99 } });
+    expect(withAccount).toHaveProperty('appeals');
+    expect(appealsSectionFor).toHaveBeenLastCalledWith(
+      expect.objectContaining({ userId: 99, text: expect.stringContaining('Banned') })
+    );
     expect(accountSectionFor).toHaveBeenLastCalledWith({
       view: 'moderation',
       cfFeature: 'Account Restriction or Banned Account',
