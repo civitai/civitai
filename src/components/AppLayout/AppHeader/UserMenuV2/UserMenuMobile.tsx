@@ -41,13 +41,13 @@ import { BrowsingModeMenu } from '~/components/BrowsingMode/BrowsingMode';
 import { useBuyBuzz } from '~/components/Buzz/buzz.utils';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
-import { NextLink } from '~/components/NextLink/NextLink';
 import { SupportChip } from '~/components/SupportButton/SupportButton';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { isPinnable, type ResolvedMenuItem, type ResolvedMenuNode } from './resolveUserMenu';
 import {
+  ACCOUNT_CARD_FRAME,
   BadgeMuteCtx,
   canMuteBadge,
   MenuItemLabel,
@@ -335,12 +335,29 @@ export function MobileHeaderRows({
     <div
       tabIndex={-1}
       data-autofocus
-      className="m-1 flex flex-col gap-3 rounded-xl bg-gray-1 p-2 outline-none dark:bg-dark-6"
+      // The top-left corner follows the 56px avatar: its radius plus the card's padding.
+      className={clsx(
+        ACCOUNT_CARD_FRAME,
+        'relative m-1 flex flex-col gap-2 rounded-tl-[36px] p-2 outline-none'
+      )}
     >
+      {onTogglePin && (
+        <LegacyActionIcon
+          size="lg"
+          variant="subtle"
+          color="gray"
+          className="absolute -right-0.5 -top-0.5 z-[1]"
+          aria-label={`${pinned ? 'Unpin' : 'Pin'} ${PROFILE_PIN.label}`}
+          aria-pressed={pinned}
+          onClick={onTogglePin}
+        >
+          <PinGlyph pinned={pinned} touch />
+        </LegacyActionIcon>
+      )}
       <div className="flex items-center gap-1">
         <MenuItemLink
           href={`/user/${currentUser.username}`}
-          className="min-w-0 flex-1 rounded-lg"
+          className="min-w-0 flex-1 rounded-lg !p-0"
           onClick={() => {
             trackHeader('profile');
             handleClose();
@@ -356,59 +373,46 @@ export function MobileHeaderRows({
               withUsername
               textSize="lg"
               subText={
-                currentUser.tier ? <MembershipTierBadge tier={currentUser.tier} /> : undefined
+                currentUser.tier ? (
+                  <MembershipTierBadge tier={currentUser.tier} />
+                ) : (
+                  <SupportChip onClick={handleClose} />
+                )
               }
               withHoverCard={false}
             />
           </div>
         </MenuItemLink>
-        {!currentUser.tier && <SupportChip onClick={handleClose} />}
-        {onTogglePin && (
-          <LegacyActionIcon
-            size="lg"
-            variant="subtle"
-            color="gray"
-            className="shrink-0"
-            aria-label={`${pinned ? 'Unpin' : 'Pin'} ${PROFILE_PIN.label}`}
-            aria-pressed={pinned}
-            onClick={onTogglePin}
-          >
-            <PinGlyph pinned={pinned} touch />
-          </LegacyActionIcon>
-        )}
       </div>
       {features.buzz && (
-        <>
-          <NextLink
-            href="/user/buzz-dashboard"
-            className="block rounded-lg px-1"
-            onClick={() => {
-              trackHeader('buzz-dashboard');
-              handleClose();
-            }}
-          >
-            <BuzzBalances
-              labelled
-              animated={features.buzzSpendPop}
-              iconSize={16}
-              textSize="md"
-              withAbbreviation={false}
-            />
-          </NextLink>
-          <Button
-            variant="light"
-            radius="md"
-            fullWidth
-            leftSection={<IconPlus size={16} />}
-            onClick={() => {
-              // The sheet covers the screen and holds focus, so it closes before the purchase opens.
-              handleClose();
-              onBuyBuzz({});
-            }}
-          >
-            Buy Buzz
-          </Button>
-        </>
+        <BuzzBalances
+          labelled
+          animated={features.buzzSpendPop}
+          iconSize={16}
+          textSize="md"
+          href="/user/buzz-dashboard"
+          onOpen={() => {
+            trackHeader('buzz-dashboard');
+            handleClose();
+          }}
+          action={
+            <LegacyActionIcon
+              variant="light"
+              color="blue"
+              radius="md"
+              size={24}
+              aria-label="Buy Buzz"
+              title="Buy Buzz"
+              onClick={() => {
+                // The sheet covers the screen and holds focus, so it closes before the purchase opens.
+                handleClose();
+                onBuyBuzz({});
+              }}
+            >
+              <IconPlus size={16} />
+            </LegacyActionIcon>
+          }
+        />
       )}
     </div>
   );

@@ -1,5 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // Correctness tests for the SQL statement `updateUserProfile` emits for
 // `creatorCardStatsPreferences`.
@@ -199,6 +200,7 @@ describe('updateUserProfile — the creator-card stats preferences statement', (
 
 describe('updateUserProfile — a new cover image', () => {
   it('creates the cover row from client columns only', async () => {
+    redisMock.sysRedis.mGet.mockResolvedValue([String(USER_ID)] as never);
     await updateUserProfile({
       userId: USER_ID,
       coverImage: {
@@ -246,6 +248,34 @@ describe('updateUserProfile — a new cover image', () => {
         mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: KEY, userId: USER_ID }]));
 
         await updateUserProfile({ userId: USER_ID, [slot]: cover });
+        expect(tx.userProfile.update).toHaveBeenCalled();
+      });
+    }
+  });
+
+  describe('whose key was issued to another user', () => {
+    const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
+    const OTHER = 77;
+    const cover = { url: KEY, type: 'image' } as never;
+    beforeEach(() => {
+      mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
+    });
+    afterEach(() => redisMock.sysRedis.mGet.mockReset());
+
+    for (const slot of ['coverImage', 'sfwCoverImage'] as const) {
+      it(`refuses ${slot} before writing`, async () => {
+        redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+
+        await expect(
+          updateUserProfile({ userId: USER_ID, sessionUserId: USER_ID, [slot]: cover })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(tx.userProfile.update).not.toHaveBeenCalled();
+      });
+
+      it(`writes ${slot} when that user saved it for the profile`, async () => {
+        redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+
+        await updateUserProfile({ userId: USER_ID, sessionUserId: OTHER, [slot]: cover });
         expect(tx.userProfile.update).toHaveBeenCalled();
       });
     }

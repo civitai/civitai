@@ -67,6 +67,16 @@ describe('createModelVersionPostFromTraining', () => {
     expect(addPostImageMock).toHaveBeenCalledTimes(1);
   });
 
+  it('adds the samples as server-minted urls', async () => {
+    givenSamples([SAMPLE]);
+
+    await createModelVersionPostFromTraining({ modelVersionId: 7, user: USER });
+
+    expect(addPostImageMock).toHaveBeenCalledExactlyOnceWith(
+      expect.objectContaining({ serverMintedUrl: true })
+    );
+  });
+
   it('creates no post when every sample in the epoch failed', async () => {
     givenSamples(['', '']);
 

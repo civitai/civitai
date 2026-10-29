@@ -343,7 +343,10 @@ import {
   storedSourceImageIds,
 } from '~/server/services/orchestrator/remix-provenance';
 import { probeCreatedImageMedia } from '~/server/utils/created-image-media-probe';
-import { assertClientImageUrlsUsable } from '~/server/services/image-url-ownership';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+} from '~/server/services/image-url-ownership';
 
 // Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
 const model3dService = () => import('~/server/services/model3d.service');
@@ -6925,6 +6928,7 @@ export async function createImage({
   verifiedSourceImageIds,
   blockProvenance,
   assertPostOwnedBy = createPostOwnerCheck(),
+  clientUrl,
   ...image
 }: ImageSchema & {
   userId: number;
@@ -6945,6 +6949,11 @@ export async function createImage({
    * images to one post passes one so the post is looked up once; without it, each call checks.
    */
   assertPostOwnedBy?: AssertPostOwnedBy;
+  /**
+   * `url` came from the client: each upload key in it must have been issued to `userId`, or to
+   * `alsoIssuedTo` when the client is acting on another user's behalf.
+   */
+  clientUrl?: true | { alsoIssuedTo: number };
 }) {
   if (blockProvenance && !blockProvenance.appId) {
     throw new Error('createImage: blockProvenance requires an appId');
@@ -7038,6 +7047,13 @@ export async function createImage({
    */
   const mediaVerdict = await probeCreatedImageMedia(image.url);
   await assertClientImageUrlsUsable({ urls: [image.url], userId: image.userId });
+  if (clientUrl) {
+    await assertClientKeysIssuedToCaller({
+      urls: [image.url],
+      userId: image.userId,
+      alsoIssuedTo: clientUrl === true ? undefined : clientUrl.alsoIssuedTo,
+    });
+  }
 
   /**
    * Logged on EVERY call, whatever the verdict, so the `absent` rate has a denominator:
@@ -7213,18 +7229,41 @@ export async function fillVideoDimensions({ id, url }: { id: number; url: string
   return dimensions;
 }
 
+const uncheckedUrls = (images: { url: string }[], checked: string[] = []) =>
+  images.map((i) => i.url).filter((url) => !checked.includes(url));
+
+/**
+ * Checks the upload keys of the images an entity write will create, so the lookups run before
+ * the caller opens its transaction. Pass the result to `createEntityImages` or
+ * `updateEntityImages` as `keysCheckedFor`.
+ */
+export async function checkEntityImageKeys({
+  images,
+  userId,
+}: {
+  images?: ImageReferenceInput[] | null;
+  userId: number;
+}) {
+  const urls = (images ?? []).filter((i) => !i.id).map((i) => i.url);
+  await assertClientKeysIssuedToCaller({ urls, userId });
+  return urls;
+}
+
 export const createEntityImages = async ({
   tx,
   entityId,
   entityType,
   images,
   userId,
+  keysCheckedFor,
 }: {
   tx?: Prisma.TransactionClient;
   entityId?: number;
   entityType?: string;
   images: ImageReferenceInput[];
   userId: number;
+  /** Urls already passed through `assertClientKeysIssuedToCaller` for `userId`. */
+  keysCheckedFor?: string[];
 }) => {
   const dbClient = tx ?? dbWrite;
 
@@ -7233,6 +7272,11 @@ export const createEntityImages = async ({
   }
 
   await assertClientImageUrlsUsable({ urls: images.map((i) => i.url), userId, db: dbClient });
+  await assertClientKeysIssuedToCaller({
+    urls: uncheckedUrls(images, keysCheckedFor),
+    userId,
+    db: dbClient,
+  });
   await dbClient.image.createMany({
     data: images.map((image) => ({
       ...pickClientImageColumns(image),
@@ -7666,12 +7710,15 @@ export const updateEntityImages = async ({
   entityType,
   images,
   userId,
+  keysCheckedFor,
 }: {
   tx?: Prisma.TransactionClient;
   entityId: number;
   entityType: string;
   images: ImageReferenceInput[];
   userId: number;
+  /** Urls already passed through `assertClientKeysIssuedToCaller` for `userId`. */
+  keysCheckedFor?: string[];
 }) => {
   const dbClient = tx ?? dbWrite;
   const connections = await dbClient.imageConnection.findMany({
@@ -7713,6 +7760,11 @@ export const updateEntityImages = async ({
 
   if (newImages.length > 0) {
     await assertClientImageUrlsUsable({ urls: newImages.map((i) => i.url), userId, db: dbClient });
+    await assertClientKeysIssuedToCaller({
+      urls: uncheckedUrls(newImages, keysCheckedFor),
+      userId,
+      db: dbClient,
+    });
     await dbClient.image.createMany({
       data: newImages.map((image) => ({
         ...pickClientImageColumns(image),
@@ -8829,6 +8881,7 @@ export async function setVideoThumbnail({
       ...pickClientImageColumns(customThumbnail),
       userId: image.userId,
       metadata: { parentId: image.id },
+      clientUrl: { alsoIssuedTo: userId },
     });
     thumbnailId = thumbnail.id;
   }
