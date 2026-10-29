@@ -1,8 +1,8 @@
 /**
  * `_app.getInitialProps` keeps the tRPC routing cookie (`civ-trpc-pool`) in step with the
  * viewer's `trpcPoolRoute` flag on a full render: set for a signed-in viewer the flag is on for,
- * cleared once it is off, never set for an anonymous viewer or on a response already marked
- * cacheable, and left alone when the settings bootstrap could not say who the viewer is.
+ * cleared once it is off, never set for an anonymous viewer, and left alone when the settings
+ * bootstrap could not say who the viewer is.
  *
  * The flag mock answers `true` for EVERY evaluation, with or without a user, so a case where the
  * cookie is not set is decided by `_app`, not by the flag.
@@ -43,15 +43,10 @@ const getInitialProps = (
 const SIGNED_IN = { session: { user: { id: 4242, username: 'trpc-pool-viewer' } } };
 const ANONYMOUS = { session: null };
 
-const SET =
-  'civ-trpc-pool=1; Path=/; Domain=civitai.com; Max-Age=604800; Secure; HttpOnly; SameSite=Lax';
-const CLEAR =
-  'civ-trpc-pool=; Path=/; Domain=civitai.com; Max-Age=0; Secure; HttpOnly; SameSite=Lax';
+const SET = 'civ-trpc-pool=1; Path=/; Max-Age=604800; Secure; HttpOnly; SameSite=Lax';
+const CLEAR = 'civ-trpc-pool=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax';
 
-async function render({
-  cookie,
-  preset = {},
-}: { cookie?: string; preset?: Record<string, string> } = {}) {
+async function render({ cookie }: { cookie?: string } = {}) {
   const url = '/models';
   const { req, res } = createRealApiPair({
     url,
@@ -60,7 +55,6 @@ async function render({
   // `createRealApiPair` gives the request a parsed jar; a page request carries only the header.
   delete (req as unknown as { cookies?: unknown }).cookies;
   const response = res as unknown as ServerResponse;
-  for (const [name, value] of Object.entries(preset)) response.setHeader(name, value);
   const noop = () => null;
   await getInitialProps({
     Component: noop,
@@ -103,15 +97,6 @@ describe('_app: the tRPC routing cookie follows the viewer flag', () => {
   it('anonymous, cookie left from a signed-in visit: cleared', async () => {
     h.bootstrap.mockImplementation(async () => ANONYMOUS);
     expect(poolCookies(await render({ cookie: 'civ-trpc-pool=1' }))).toEqual([CLEAR]);
-  });
-
-  it('a response already marked cacheable: never set', async () => {
-    h.bootstrap.mockImplementation(async () => SIGNED_IN);
-    const all = await render({
-      cookie: '__Secure-civ-token=t',
-      preset: { 'Cache-Control': 'public, max-age=60' },
-    });
-    expect(poolCookies(all)).toEqual([]);
   });
 
   it('a degraded bootstrap (viewer unknown): left as it is', async () => {

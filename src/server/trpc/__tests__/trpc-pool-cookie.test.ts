@@ -1,13 +1,13 @@
 /**
- * The tRPC routing cookie (`~/server/trpc/trpc-pool-cookie`): exact attributes when set, an exact
- * clear, nothing on a response a shared cache may store, and one entry per response.
+ * The tRPC routing cookie (`~/server/trpc/trpc-pool-cookie`): exact host-only attributes when set,
+ * an exact clear, and one entry per response.
  */
 import type { IncomingMessage, ServerResponse } from 'http';
 import { describe, expect, it } from 'vitest';
 import {
-  isSharedCacheableResponse,
   syncTrpcPoolCookie,
   TRPC_POOL_COOKIE,
+  TRPC_POOL_COOKIE_MAX_AGE_S,
 } from '~/server/trpc/trpc-pool-cookie';
 
 function makeReq({ host = 'civitai.com', cookie }: { host?: string; cookie?: string } = {}) {
@@ -26,35 +26,37 @@ function makeRes(preset: Record<string, unknown> = {}) {
   return { res, setCookies };
 }
 
-const SET_COM =
-  'civ-trpc-pool=1; Path=/; Domain=civitai.com; Max-Age=604800; Secure; HttpOnly; SameSite=Lax';
-const CLEAR_COM =
-  'civ-trpc-pool=; Path=/; Domain=civitai.com; Max-Age=0; Secure; HttpOnly; SameSite=Lax';
+const SET = 'civ-trpc-pool=1; Path=/; Max-Age=604800; Secure; HttpOnly; SameSite=Lax';
+const CLEAR = 'civ-trpc-pool=; Path=/; Max-Age=0; Secure; HttpOnly; SameSite=Lax';
 
 describe('syncTrpcPoolCookie', () => {
-  it('names the cookie the edge matches on', () => {
+  it('names the cookie the edge matches on, with a seven-day lifetime', () => {
     expect(TRPC_POOL_COOKIE).toBe('civ-trpc-pool');
+    expect(TRPC_POOL_COOKIE_MAX_AGE_S).toBe(7 * 24 * 60 * 60);
   });
 
   it('flag on, no cookie: sets it with the exact attributes', () => {
     const { res, setCookies } = makeRes();
     syncTrpcPoolCookie(makeReq(), res, true);
-    expect(setCookies()).toEqual([SET_COM]);
+    expect(setCookies()).toEqual([SET]);
   });
 
-  it('takes the session cookie Domain from the request host: .red, a subdomain, localhost', () => {
-    const red = makeRes();
-    syncTrpcPoolCookie(makeReq({ host: 'civitai.red' }), red.res, true);
-    expect(red.setCookies()).toEqual([SET_COM.replace('Domain=civitai.com', 'Domain=civitai.red')]);
+  it.each(['civitai.com', 'civitai.red', 'www.civitai.red:443', 'localhost:3000'])(
+    'is host-only on %s: no Domain attribute, set or clear',
+    (host) => {
+      const on = makeRes();
+      syncTrpcPoolCookie(makeReq({ host }), on.res, true);
+      expect(on.setCookies()).toEqual([SET]);
 
-    const sub = makeRes();
-    syncTrpcPoolCookie(makeReq({ host: 'www.civitai.red:443' }), sub.res, true);
-    expect(sub.setCookies()).toEqual([SET_COM.replace('Domain=civitai.com', 'Domain=civitai.red')]);
+      const off = makeRes();
+      syncTrpcPoolCookie(makeReq({ host, cookie: 'civ-trpc-pool=1' }), off.res, false);
+      expect(off.setCookies()).toEqual([CLEAR]);
 
-    const local = makeRes();
-    syncTrpcPoolCookie(makeReq({ host: 'localhost:3000' }), local.res, true);
-    expect(local.setCookies()).toEqual([SET_COM.replace(' Domain=civitai.com;', '')]);
-  });
+      expect([...on.setCookies(), ...off.setCookies()].join(';').toLowerCase()).not.toContain(
+        'domain='
+      );
+    }
+  );
 
   it('flag on, cookie already present: writes nothing', () => {
     const { res, setCookies } = makeRes();
@@ -65,13 +67,13 @@ describe('syncTrpcPoolCookie', () => {
   it('flag on, cookie present with another value: re-sets it', () => {
     const { res, setCookies } = makeRes();
     syncTrpcPoolCookie(makeReq({ cookie: 'civ-trpc-pool=0' }), res, true);
-    expect(setCookies()).toEqual([SET_COM]);
+    expect(setCookies()).toEqual([SET]);
   });
 
-  it('flag off, cookie present: clears it over the same Domain', () => {
+  it('flag off, cookie present: clears it', () => {
     const { res, setCookies } = makeRes();
     syncTrpcPoolCookie(makeReq({ cookie: 'civ-trpc-pool=1; other=x' }), res, false);
-    expect(setCookies()).toEqual([CLEAR_COM]);
+    expect(setCookies()).toEqual([CLEAR]);
   });
 
   it('flag off, no cookie: writes nothing', () => {
@@ -84,35 +86,6 @@ describe('syncTrpcPoolCookie', () => {
     const { res, setCookies } = makeRes({ 'Set-Cookie': ['ref=1; Path=/'] });
     syncTrpcPoolCookie(makeReq(), res, true);
     syncTrpcPoolCookie(makeReq(), res, true);
-    expect(setCookies()).toEqual(['ref=1; Path=/', SET_COM]);
-  });
-
-  it.each([
-    ['Cache-Control: public', { 'Cache-Control': 'public, max-age=60' }],
-    ['Cache-Control: s-maxage', { 'Cache-Control': 'max-age=0, s-maxage=60' }],
-    ['the edge cache header', { 'Cloudflare-CDN-Cache-Control': 'public, max-age=60' }],
-    ['a purge tag', { 'Cache-Tag': 'shell' }],
-  ])('a cacheable response (%s): never set, never cleared', (_, preset) => {
-    const on = makeRes(preset);
-    syncTrpcPoolCookie(makeReq(), on.res, true);
-    expect(on.setCookies()).toEqual([]);
-
-    const off = makeRes(preset);
-    syncTrpcPoolCookie(makeReq({ cookie: 'civ-trpc-pool=1' }), off.res, false);
-    expect(off.setCookies()).toEqual([]);
-  });
-});
-
-describe('isSharedCacheableResponse', () => {
-  it.each([
-    [{}, false],
-    [{ 'Cache-Control': 'private, no-store' }, false],
-    [{ 'Cache-Control': 'private, no-cache, no-store, max-age=0, must-revalidate' }, false],
-    [{ 'Cache-Control': 'public' }, true],
-    [{ 'Cache-Control': ['no-cache', 'public'] }, true],
-    [{ 'Cache-Control': 's-maxage=1' }, true],
-    [{ 'X-Civ-Render': 'shell' }, true],
-  ])('%j -> %s', (preset, expected) => {
-    expect(isSharedCacheableResponse(makeRes(preset).res)).toBe(expected);
+    expect(setCookies()).toEqual(['ref=1; Path=/', SET]);
   });
 });

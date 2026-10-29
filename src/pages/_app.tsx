@@ -764,10 +764,10 @@ MyApp.getInitialProps = async (appContext: AppContext) => {
     hasAuthCookie = false;
   }
 
-  // The tRPC routing cookie follows the viewer's flag (`~/server/trpc/trpc-pool-cookie`). This is a
-  // full, per-viewer render — the shell returned above — so the response is private. A degraded
+  // The tRPC routing cookie follows the viewer's flag (`~/server/trpc/trpc-pool-cookie`). A degraded
   // bootstrap does not know the viewer, so it leaves the cookie as it is. `typeof window` block:
   // see the bootstrap above.
+  // Private: the edge-cached shell returned above, and no page's gSSP (run after this) caches publicly.
   if (typeof window === 'undefined') {
     const { res } = appContext.ctx;
     if (res && !settingsDegraded) {

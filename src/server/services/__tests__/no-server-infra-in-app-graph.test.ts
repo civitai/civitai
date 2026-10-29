@@ -141,7 +141,7 @@ const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
     file: 'src/pages/_app.tsx',
     spec: '~/server/trpc/trpc-pool-cookie',
     reason:
-      'the tRPC routing cookie, synced from the viewer flag on a private full render (it reads the session cookie Domain helper and the shell cookie lifetime).',
+      'the tRPC routing cookie, synced from the viewer flag on a private full render; server-only because it writes a response header.',
   },
 ];
 
