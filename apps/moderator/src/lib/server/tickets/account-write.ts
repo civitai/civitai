@@ -1,21 +1,13 @@
 import { fail, type RequestEvent } from '@sveltejs/kit';
-import { z } from 'zod';
-import type { WriteResult } from '../freshdesk-write.service';
-import { int4Id, parseForm } from '../query';
 import { parseRestrictionRuling, rulingReason } from '../restriction-ruling';
 import type { ActionResult } from '../user-actions.service';
 import { unwiredRulingReason } from '$lib/restriction-types';
+import { addTicketNote, checkTicketTarget, type TicketActionDeps } from './panel-write';
 
 /** A shared action: `requiresGrant` hands back a refusal directly, the others a promise. */
 type Action = (event: RequestEvent) => unknown;
 
-export type LinkedUser =
-  | { status: 'ok'; userId: number | null }
-  | { status: 'refused'; code: number; message: string };
-
-export type AccountWriteDeps = {
-  /** The Civitai user the ticket is linked to, after checking the ticket is one this page may act on. */
-  linkedUser: (ticketId: string) => Promise<LinkedUser>;
+export type AccountWriteDeps = TicketActionDeps & {
   inner: { setBanned: Action; setMuted: Action };
   /** The `/users` page grant, checked as the User Lookup actions do. */
   canAct: (user: App.Locals['user']) => boolean;
@@ -29,10 +21,7 @@ export type AccountWriteDeps = {
     moderatorId: number;
   }) => Promise<ActionResult>;
   restrictionOf: (id: number) => Promise<{ userId: number; type: string; status: string } | null>;
-  note: (ticketId: string, text: string) => Promise<WriteResult>;
 };
-
-const target = z.object({ ticketId: z.string().regex(/^\d+$/, 'No such ticket.'), userId: int4Id });
 
 const NOT_PERMITTED = 'Not permitted.';
 
@@ -57,43 +46,9 @@ const succeeded = (result: unknown): boolean =>
  * A failed note after the change is a `warning` on a success, never a failure.
  */
 export function createTicketAccountActions(deps: AccountWriteDeps) {
-  async function checked(event: RequestEvent) {
-    const form = await event.request.clone().formData();
-    const ids = parseForm(target, form);
-    if (typeof ids === 'string') return { refused: fail(400, { error: ids }) };
-    const linked = await deps.linkedUser(ids.ticketId);
-    if (linked.status === 'refused')
-      return { refused: fail(linked.code, { error: linked.message }) };
-    if (linked.userId === null || linked.userId !== ids.userId)
-      return {
-        refused: fail(409, {
-          error: 'That account is not the one linked to this ticket — nothing was changed.',
-        }),
-      };
-    return { ticketId: ids.ticketId, userId: ids.userId, form };
-  }
-
-  async function noted(event: RequestEvent, ticketId: string, what: string) {
-    const { id, username } = event.locals.user;
-    const text = `${what} by ${username ?? 'unknown'} (user ${id}) from the moderator app.`;
-    let res: WriteResult;
-    try {
-      res = await deps.note(ticketId, text);
-    } catch (e) {
-      res = {
-        status: 'error',
-        httpStatus: null,
-        certain: false,
-        message: e instanceof Error ? e.message : String(e),
-      };
-    }
-    if (res.status === 'ok') return { success: true as const };
-    const why = res.status === 'error' ? res.message : 'the Freshdesk write key is not configured';
-    return {
-      success: true as const,
-      warning: `The change was made, but the note on the ticket failed: ${why}`,
-    };
-  }
+  const checked = (event: RequestEvent) => checkTicketTarget(deps.linkedUser, event);
+  const noted = (event: RequestEvent, ticketId: string, what: string) =>
+    addTicketNote(deps.note, event, ticketId, what);
 
   async function viaInner(
     event: RequestEvent,

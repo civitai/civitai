@@ -4,7 +4,9 @@
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
   import { denied } from '$lib/permissions';
   import type { TicketAccount } from '$lib/server/tickets/account';
+  import { BAN_PERMISSION_NEEDED } from '$lib/site-appeals';
   import TicketAccountAction from './TicketAccountAction.svelte';
+  import TicketAppealRuling from './TicketAppealRuling.svelte';
   import TicketRestrictionRuling from './TicketRestrictionRuling.svelte';
 
   let {
@@ -25,6 +27,15 @@
 
   const NEEDS_USERS = 'This action requires access to the Users page.';
   const unbanWhy = denied('user.ban');
+
+  // Approving an Account appeal lifts the ban and the mute through the same service as the queue.
+  const approvalText = $derived.by(() => {
+    if (account.status !== 'ok') return '';
+    const lifts = [account.banned && 'the ban', account.muted && 'the mute'].filter(Boolean);
+    return lifts.length
+      ? `Approving lifts ${lifts.join(' and ')}.`
+      : 'The account is no longer restricted, so approving lifts nothing.';
+  });
 </script>
 
 <TriageCard title="Account" dense>
@@ -79,6 +90,28 @@
           </li>
         {/each}
       </ul>
+    {/if}
+
+    {#if account.pendingAppeal}
+      {@const appeal = account.pendingAppeal}
+      <div class="mt-2 flex flex-col gap-1.5 border-t border-dark-4 pt-2">
+        <h4 class="m-0 text-[11px] font-semibold tracking-[0.5px] text-dark-2 uppercase">
+          Pending appeal #{appeal.id}
+          <span class="font-normal normal-case" title={dateTime(appeal.createdAt)}>
+            · filed {relativeTime(appeal.createdAt)}
+          </span>
+        </h4>
+        <p class="m-0 min-w-0 break-words whitespace-pre-wrap text-white">{appeal.message}</p>
+        <p class="m-0 text-dark-2">{approvalText}</p>
+        <TicketAppealRuling
+          {ticketId}
+          userId={account.userId}
+          appealId={appeal.id}
+          kind="account"
+          blocked={account.banned && !canUnban ? BAN_PERMISSION_NEEDED : null}
+          {ondone}
+        />
+      </div>
     {/if}
 
     {#if account.banned || account.muted || account.restrictions.some((r) => r.rulable)}
