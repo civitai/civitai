@@ -1,7 +1,9 @@
 import {
+  CREATE_APP,
   NO_APP_REFUSAL,
   SET_CHECKLIST,
   START_PREVIEW,
+  USE_OPEN_APP,
   appAssistantSubagents,
   assistantSystemPrompt,
   buildAssistantInstructions,
@@ -85,7 +87,8 @@ const REPORTED_OUTPUT_CHARS = 200;
  * preview's are the runner's own (`RunnerPreview`), which drive the tunnel themselves.
  */
 const RUNNER_PAGE_TOOLS = [
-  'create_app',
+  CREATE_APP,
+  USE_OPEN_APP,
   'set_checklist',
   'report_ready',
   'start_preview',
@@ -210,6 +213,8 @@ export class AppAssistantTools implements ToolProvider {
         currentApp: () => sandbox.active?.name ?? null,
         // Each checklist says which app it was for, so a later reply carries only this app's.
         checklistApp: () => sandbox.active?.app ?? null,
+        // A chat changes only the app it made or chose: a new chat never builds over the open one.
+        openApp: () => sandbox.active?.app ?? null,
       });
       core.restore({
         conversationId,

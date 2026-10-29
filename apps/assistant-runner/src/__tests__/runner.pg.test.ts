@@ -51,6 +51,8 @@ const describePg = TEST_DATABASE_URL ? describe : describe.skip;
 if (process.env.CI && !TEST_DATABASE_URL)
   throw new Error('ASSISTANT_RUNNER_TEST_DATABASE_URL is not set in CI');
 
+/** A step choosing the open app for the chat: a chat changes no app it neither made nor chose. */
+const CHOOSE_MY_APP = { calls: [{ toolName: 'use_open_app', input: { app: 'my-app' } }] };
 const LONG_TEXT = 'The quick brown fox jumps over the lazy dog, again and again. '.repeat(10);
 // TEST-ONLY keys standing in for civitai's: every start carries a grant signed with them.
 const keys = testKeys();
@@ -113,10 +115,13 @@ describePg('assistant-runner on DBOS + Postgres', () => {
         }
         return { text: 'Recovered.' };
       }),
-    // App Assistant on the runner: a command that runs until the reply stops.
+    // App Assistant on the runner: a command that runs until the reply stops. Each sandbox model
+    // first chooses the open app, as a new chat must before it may change it (`use_open_app`).
     'sandbox-hang': () =>
       scriptedModel((prompt) =>
         toolResults(prompt) === 0
+          ? CHOOSE_MY_APP
+          : toolResults(prompt) === 1
           ? {
               text: 'Installing. ',
               calls: [{ toolName: 'sandbox__run_command', input: { command: 'hang' } }],
@@ -126,9 +131,10 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     // A read (meanwhile the user opens another app), then a write the paused app refuses.
     'sandbox-pause': () =>
       scriptedModel((prompt) => {
-        if (toolResults(prompt) === 0)
-          return { calls: [{ toolName: 'sandbox__read_file', input: { path: 'my-app/a.ts' } }] };
+        if (toolResults(prompt) === 0) return CHOOSE_MY_APP;
         if (toolResults(prompt) === 1)
+          return { calls: [{ toolName: 'sandbox__read_file', input: { path: 'my-app/a.ts' } }] };
+        if (toolResults(prompt) === 2)
           return {
             calls: [
               { toolName: 'sandbox__write_file', input: { path: 'my-app/a.ts', content: 'y' } },
@@ -139,7 +145,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
     // A file written, then the model fails once: the retry carries on after the write.
     'sandbox-flaky': () =>
       scriptedModel((prompt) => {
-        if (toolResults(prompt) === 0)
+        if (toolResults(prompt) === 0) return CHOOSE_MY_APP;
+        if (toolResults(prompt) === 1)
           return {
             calls: [
               { toolName: 'sandbox__write_file', input: { path: 'my-app/a.ts', content: 'x' } },
@@ -1661,6 +1668,7 @@ describePg('assistant-runner on DBOS + Postgres', () => {
         event.type === 'tool-reported' ? [event.result] : []
       );
       expect(reported).toMatchObject([
+        { name: 'use_open_app', output: { app: 'my-app' }, isError: false },
         { name: 'sandbox__write_file', output: 'wrote 1 bytes', isError: false },
       ]);
 

@@ -25,6 +25,21 @@ describe('the set_checklist card', () => {
     ).toBeUndefined();
   });
 
+  test('tells the user a list planned on sample data is not real Civitai data, and only then', () => {
+    const items = [{ label: 'Search models' }];
+    const card = (data?: string) =>
+      renderChecklist({
+        name: 'set_checklist',
+        input: { items, ...(data ? { data } : {}) },
+        state: 'done',
+      });
+    expect(card('sample')?.textContent).toBe(
+      'Feature checklist☐ Search models⚠ Sample data: this app will show made-up examples, not real Civitai data.'
+    );
+    for (const data of [undefined, 'civitai', 'none'])
+      expect(card(data)?.textContent).toBe('Feature checklist☐ Search models');
+  });
+
   test('is the view the tool carries', () => {
     const call = {
       name: 'set_checklist',
@@ -126,6 +141,56 @@ describe('Build it under the checklist', () => {
     );
     expect(again).not.toHaveProperty('awaitsUser');
   });
+
+  test('a first list offers Build it even with every item done', async () => {
+    const done = [{ label: 'Ask questions', done: true }];
+    const gate = createAssistantGate({ onBuild: vi.fn() });
+    gate.beforeToolCall('set_checklist', { items: done }, conv);
+    const output = await gate.tools.set_checklist.execute({ items: done }, ctx);
+    expect(output).toMatchObject({ shown: true, awaitsUser: true });
+    const card = gate.tools.set_checklist.render!({
+      name: 'set_checklist',
+      input: { items: done },
+      state: 'done',
+      output,
+    }) as HTMLElement;
+    expect(buildButton(card)).not.toBeNull();
+  });
+
+  test('a changed list with every item done offers no Build it, from the page or from a server runner', async () => {
+    const done = [{ label: 'Ask questions well', done: true }];
+    const gate = createAssistantGate({ onBuild: vi.fn() });
+    gate.beforeToolCall('set_checklist', { items }, conv);
+    await gate.tools.set_checklist.execute({ items }, ctx);
+    const output = await gate.tools.set_checklist.execute({ items: done }, ctx);
+    expect(output).toEqual({ updated: true, open: 0 });
+    const card = (input: unknown, shown: unknown) =>
+      gate.tools.set_checklist.render!({
+        name: 'set_checklist',
+        input,
+        state: 'done',
+        output: shown,
+      }) as HTMLElement;
+    expect(buildButton(card({ items: done }, output))).toBeNull();
+
+    // A runner's report that says it waits (a runner without the rule) is not taken for a done list.
+    const reported = { shown: true, awaitsUser: true, checklist: 'runner-1' };
+    gate.onToolResult({
+      name: 'set_checklist',
+      input: { items: done },
+      output: reported,
+      isError: false,
+    });
+    expect(buildButton(card({ items: done }, reported))).toBeNull();
+    // Control: the same report for a list with an item open offers it.
+    gate.onToolResult({
+      name: 'set_checklist',
+      input: { items },
+      output: reported,
+      isError: false,
+    });
+    expect(buildButton(card({ items }, reported))).not.toBeNull();
+  });
 });
 
 describe('the report_ready card', () => {
@@ -139,6 +204,18 @@ describe('the report_ready card', () => {
     expect(card?.getAttribute('role')).toBe('status');
     expect(card?.textContent).toBe(
       '✓ Checked: the app renders in a test browser, the tests and the typecheck pass, and every checklist item is done.'
+    );
+  });
+
+  test('says so when the app shows sample data', () => {
+    const card = renderReady({
+      name: 'report_ready',
+      input: { data: 'sample' },
+      state: 'done',
+      output: { ready: true, data: 'sample', note: 'x' },
+    });
+    expect(card?.textContent).toBe(
+      '✓ Checked: the app renders in a test browser, the tests and the typecheck pass, and every checklist item is done. ⚠ This app shows sample data, not real Civitai data.'
     );
   });
 

@@ -131,3 +131,14 @@ describe('EdgeVideo — standby', () => {
     await vi.waitFor(() => expect(play).toHaveBeenCalled());
   });
 });
+
+describe('EdgeVideo — autoplay', () => {
+  test('survives a browser whose play() returns undefined (old iOS Safari)', async () => {
+    play.mockReturnValue(undefined);
+
+    renderWithProviders(<EdgeVideo src={SRC} autoPlay />);
+
+    await vi.waitFor(() => expect(play).toHaveBeenCalled());
+    expect(document.querySelector('video')).toBeTruthy();
+  });
+});

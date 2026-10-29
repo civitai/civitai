@@ -102,3 +102,15 @@ describe('elementBackend auto-label payer', () => {
     expect(getOrchestratorToken).not.toHaveBeenCalled();
   });
 });
+
+describe('elementBackend modelLive', () => {
+  it("answers with the host's check", async () => {
+    const modelLive = vi.fn(async () => false);
+    await expect(elementBackend({ ...host(), modelLive }).modelLive(77)).resolves.toBe(false);
+    expect(modelLive).toHaveBeenCalledWith(77);
+  });
+
+  it('keeps the link on a host without the hook', async () => {
+    await expect(elementBackend(host()).modelLive(77)).resolves.toBe(true);
+  });
+});
