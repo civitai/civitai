@@ -6,6 +6,7 @@ const {
   mockQueueUpdate,
   mockSettle,
   mockRetry,
+  mockDeleteKept,
 } = vi.hoisted(() => {
   const executedStatements: string[] = [];
   return {
@@ -14,6 +15,7 @@ const {
     mockQueueUpdate: vi.fn(),
     mockSettle: vi.fn(async () => true),
     mockRetry: vi.fn(async () => ({ settled: 0 })),
+    mockDeleteKept: vi.fn(async () => 0),
   };
 });
 
@@ -44,6 +46,7 @@ vi.mock('~/server/services/buzz.service', () => ({
 vi.mock('~/server/services/bounty.service', () => ({
   settleBountyPayout: mockSettle,
   retryUnsettledBountyPayouts: mockRetry,
+  deleteSettledKeptBounties: mockDeleteKept,
 }));
 vi.mock('~/server/search-index', () => ({
   bountiesSearchIndex: { queueUpdate: mockQueueUpdate },
@@ -227,10 +230,14 @@ describe('prepare-bounties auto-award', () => {
 });
 
 describe('bounty-payout-retry', () => {
-  it('is an hourly bounty job that retries unsettled payouts', async () => {
+  it('is an hourly bounty job that retries unsettled payouts, then deletes the kept ones settled', async () => {
     const job = jobNamed('bounty-payout-retry');
     expect(job.cron).toBe('41 * * * *');
     await job.run();
     expect(mockRetry).toHaveBeenCalledOnce();
+    expect(mockDeleteKept).toHaveBeenCalledOnce();
+    expect(mockRetry.mock.invocationCallOrder[0]).toBeLessThan(
+      mockDeleteKept.mock.invocationCallOrder[0]
+    );
   });
 });

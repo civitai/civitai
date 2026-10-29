@@ -24,7 +24,11 @@ import {
   questionThreadParents,
   type ThreadParents,
 } from '~/server/services/comment-thread-hold';
-import { KEPT_MODEL_STATUS, PLACEHOLDER_OWNER_ID } from '~/server/utils/legal-hold';
+import {
+  KEPT_MODEL_STATUS,
+  notRemovedWithOwnerSql,
+  PLACEHOLDER_OWNER_ID,
+} from '~/server/utils/legal-hold';
 import { TRPCError } from '@trpc/server';
 import { uniq } from 'lodash-es';
 import dayjs from '~/shared/utils/dayjs';
@@ -1496,6 +1500,13 @@ async function goneIds(table: 'Model' | 'Article' | 'Collection' | 'Bounty', ids
   return ids.filter((i) => !kept.has(i));
 }
 
+/** The listed bounties a wipe kept and hid, read on the primary. */
+async function hiddenKeptBounties(ids: number[]) {
+  if (!ids.length) return [];
+  return dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "Bounty" WHERE id = ANY(${ids}::int[]) AND meta ->> 'removedWithOwner' = 'true'`;
+}
+
 /** The listed models that no longer exist or are no longer published, read on the primary. */
 async function modelsOffSite(ids: number[]) {
   if (!ids.length) return [];
@@ -1698,7 +1709,7 @@ export const removeAllContent = async ({
       logToAxiom({
         name: 'remove-all-content',
         type: 'error',
-        message: 'Kept bounties whose payout is not settled',
+        message: 'Kept bounties whose payout is not settled, hidden until it settles',
         userId: id,
         bountyIds: keptBountyIds,
       }).catch(() => undefined);
@@ -1735,6 +1746,17 @@ export const removeAllContent = async ({
     await dbWrite.$executeRaw`
       WITH ${detach(bountyThreadParents(doomedBounties))}
       DELETE FROM "Bounty" WHERE id IN (${doomedBounties})`;
+    // Keep the first record: a second wipe must not overwrite availabilityBeforeRemoval with Private.
+    if (keptBountyIds.length)
+      await dbWrite.$executeRaw`
+        UPDATE "Bounty" b
+        SET availability = 'Private'::"Availability",
+            meta = ${asJsonbObjectSql('b.meta')} || jsonb_build_object(
+              'removedWithOwner', true,
+              'availabilityBeforeRemoval', b.availability
+            )
+        WHERE b.id = ANY(${keptBountyIds}::int[]) AND ${notRemovedWithOwnerSql('b.meta')}
+          AND ${unlessHeld}`;
     const owned = (table: string) =>
       Prisma.sql`SELECT o.id FROM ${Prisma.raw(
         `"${table}"`
@@ -1855,6 +1877,11 @@ export const removeAllContent = async ({
       [bountiesSearchIndex, 'Bounty', bounties],
     ])
       .then(async () => {
+        const hidden = await hiddenKeptBounties(keptBountyIds);
+        if (hidden.length)
+          await bountiesSearchIndex.queueUpdate(
+            hidden.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+          );
         // A stop after the hide leaves hidden models: they leave search with the deleted ones.
         const offSite = await modelsOffSite(models.map((m) => m.id));
         if (offSite.length)
@@ -1943,6 +1970,13 @@ export const removeAllContent = async ({
   await unindex('index-articles', articlesSearchIndex, articles);
   await unindex('index-collections', collectionsSearchIndex, collections);
   await unindex('index-bounties', bountiesSearchIndex, bounties);
+  await runStep('index-kept-bounties', async () => {
+    const hidden = await hiddenKeptBounties(keptBountyIds);
+    if (hidden.length)
+      await bountiesSearchIndex.queueUpdate(
+        hidden.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Delete }))
+      );
+  });
   await unindex('index-user', usersSearchIndex, [{ id }]);
 
   await runStep('user-metrics', () => userMetrics.queueUpdate(id));
