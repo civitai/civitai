@@ -1,5 +1,4 @@
 import { TRPCError } from '@trpc/server';
-import { v4 as uuid } from 'uuid';
 import {
   BlockedReason,
   ImageSort,
@@ -160,7 +159,7 @@ export const deleteImageHandler = async ({
       .filter((tag) => tag.concrete)
       .map((tag) => ({ tagName: tag.tagName }));
 
-    const image = await deleteImageById(input);
+    const image = await deleteImageById({ ...input, deletedById: ctx.user.id });
 
     if (image) {
       // The deleter, not the content's owner: a moderator delete must not close the owner's appeal.
@@ -252,7 +251,7 @@ export const setTosViolationHandler = async ({
       userId: image.userId,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:image:${uuid()}`,
+      key: `tos-violation:image:${crypto.randomUUID()}`,
       details: {
         modelName: image.post?.title ?? `post #${image.postId as number}`,
         entity: 'image',

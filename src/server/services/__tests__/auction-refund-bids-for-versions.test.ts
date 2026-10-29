@@ -35,7 +35,7 @@ vi.mock('~/server/services/buzz.service', () => ({
   getMultiAccountTransactionsByPrefix,
 }));
 
-import { refundBidsForVersions } from '~/server/services/auction.service';
+import { deleteBidsForModel, refundBidsForVersions } from '~/server/services/auction.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 
 const AUCTION = 5;
@@ -140,6 +140,22 @@ describe('refundBidsForVersions', () => {
   it('refunds nothing a second time when run again', async () => {
     await run();
     await run();
+    expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(refundTransaction).toHaveBeenCalledTimes(1);
+  });
+
+  // A content wipe refunds a model it keeps by version; deleting that model later goes through
+  // deleteBidsForModel, which must find nothing left to refund.
+  it('refunds nothing when a model whose bids a wipe refunded is deleted later', async () => {
+    await run();
+    dbMock.dbWrite.model.findFirst.mockResolvedValue({
+      name: 'zzfixture',
+      modelVersions: [{ id: VERSION }],
+    } as never);
+
+    const later = await deleteBidsForModel({ modelId: 7 });
+
+    expect(later.bidsDeleted).toEqual([]);
     expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     expect(refundTransaction).toHaveBeenCalledTimes(1);
   });

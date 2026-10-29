@@ -164,6 +164,8 @@ export type BountyEngagementType = "Favorite" | "Track";
 
 export type CsamReportType = "Image" | "TrainingData" | "GeneratedImage" | "ExternalLink";
 
+export type CsamQueueSetAsideOutcome = "AfterReport" | "Dismissed";
+
 export type Availability = "Public" | "Unsearchable" | "Private" | "EarlyAccess";
 
 export type PaidAccessEntityType = "ModelVersion" | "ComicChapter";
@@ -1029,6 +1031,15 @@ export interface Model {
   flags?: ModelFlag[];
   coveredCheckpoints?: CoveredCheckpoint[];
   permissionSnapshots?: ModelPermissionSnapshot[];
+}
+
+export interface ModelOwnership {
+  id: number;
+  modelId: number;
+  userId: number;
+  reason: string;
+  actorId: number | null;
+  createdAt: Date;
 }
 
 export interface ModelPermissionSnapshot {
@@ -4124,6 +4135,15 @@ export interface CsamReport {
   type: CsamReportType;
   sendClaimId: string | null;
   sendClaimedAt: Date | null;
+}
+
+export interface CsamQueueSetAside {
+  imageId: number;
+  userId: number;
+  outcome: CsamQueueSetAsideOutcome;
+  csamReportId: number | null;
+  moderatorId: number;
+  createdAt: Date;
 }
 
 export interface CsamReportAudit {

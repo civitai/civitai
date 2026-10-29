@@ -5,6 +5,7 @@ import type { ImageReferenceInput, ImageSchema } from '~/server/schema/image.sch
 import { createImage } from '~/server/services/image.service';
 import {
   assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
 } from '~/server/services/image-url-ownership';
 import { pickClientImageColumns } from '~/server/utils/image-columns';
@@ -114,7 +115,7 @@ export type CoverImageDeps = {
   /** `true` present · `false` definitively absent · `null` bucket could not be consulted. */
   objectExists: (url: string) => Promise<boolean | null>;
   /** Throws {@link COVER_IMAGE_UNAVAILABLE_MESSAGE} when the caller may not use this url. */
-  assertUrlUsable: (args: { url: string; userId: number }) => Promise<void>;
+  assertUrlUsable: (args: { url: string; userId: number; uploaderId?: number }) => Promise<void>;
   createImage: (args: ImageSchema & { userId: number }) => Promise<{ id: number }>;
   /**
    * Called when the existence check came back indeterminate and we therefore proceeded
@@ -221,7 +222,10 @@ function logExistenceUnknown({ userId }: { userId: number }) {
 export const productionCoverImageDeps: CoverImageDeps = {
   findReusableImageId,
   objectExists: objectExistsInUploads,
-  assertUrlUsable: ({ url, userId }) => assertClientImageUrlsUsable({ urls: [url], userId }),
+  assertUrlUsable: async ({ url, userId, uploaderId }) => {
+    await assertClientImageUrlsUsable({ urls: [url], userId });
+    await assertClientKeysIssuedToCaller({ urls: [url], userId, alsoIssuedTo: uploaderId });
+  },
   logExistenceUnknown,
   // 🔴 Wrapped, not referenced directly. Reading `createImage` here would read it at MODULE
   // LOAD, and this module is now in the import graph of the article + challenge services —
@@ -237,9 +241,12 @@ export async function resolveCoverImageId(
     userId,
     currentCoverId,
     assertOwnership,
+    uploaderId,
   }: {
     coverImage: ImageReferenceInput;
     userId: number;
+    /** Who uploaded a new cover, when not `userId` (a moderator editing another user's entity). */
+    uploaderId?: number;
     /** The entity's existing `coverId`, when the caller already has it loaded. */
     currentCoverId?: number | null;
     /** The call site's own ownership rule for an `id` the client supplied. Must throw to deny. */
@@ -279,7 +286,7 @@ export async function resolveCoverImageId(
   }
 
   // After the bucket check, so both refusals cost the same round-trip.
-  await deps.assertUrlUsable({ url: image.url, userId });
+  await deps.assertUrlUsable({ url: image.url, userId, uploaderId });
   const created = await deps.createImage({ ...pickClientImageColumns(image), userId });
   return created.id;
 }

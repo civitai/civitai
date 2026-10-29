@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import type { PGlite } from '@electric-sql/pglite';
 import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
@@ -52,6 +53,15 @@ CREATE TABLE "CsamReport" (
   "images" JSONB NOT NULL DEFAULT '[]', "type" TEXT NOT NULL DEFAULT 'Image'
 );
 `;
+
+// The migration itself, so the trigger it installs is the one under test.
+const SET_ASIDE_MIGRATION = readFileSync(
+  new URL(
+    '../../../../../../packages/civitai-db-schema/prisma/migrations/20261209120000_csam_queue_set_aside/migration.sql',
+    import.meta.url
+  ),
+  'utf8'
+);
 
 // Every level, Blocked included, so the browsing-level filter is not what decides a row.
 const ALL_LEVELS = 63;
@@ -287,5 +297,173 @@ describe('the CSAM queue filtered to one user', () => {
       limit: 50,
     });
     expect(items.map((i) => i.id)).toEqual([3, 2, 1]);
+  });
+});
+
+describe('images set aside from the CSAM queue', () => {
+  // 301 is not held: dismissed 400 days ago (61), set aside after a report (63), no row (64). 302 is
+  // held, with the same two rows (65, 66): a hold changes nothing here.
+  beforeAll(async () => {
+    await db.exec(SET_ASIDE_MIGRATION);
+    await db.exec(`
+      CREATE TABLE "EvidenceHold" ("id" SERIAL PRIMARY KEY, "userId" INTEGER NOT NULL);
+      CREATE VIEW "EvidenceHeldUser" AS SELECT "userId" FROM "EvidenceHold" GROUP BY "userId";
+      INSERT INTO "EvidenceHold" ("userId") VALUES (302);
+      INSERT INTO "User" ("id", "username") VALUES (301, 's'), (302, 't');
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES
+        (61, 301, 'csam', 'Blocked'), (63, 301, 'csam', 'Blocked'), (64, 301, 'csam', 'Blocked'),
+        (65, 302, 'csam', 'Blocked'), (66, 302, 'csam', 'Blocked');
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId", "createdAt") VALUES
+        (61, 301, 'Dismissed', 1, (now() AT TIME ZONE 'UTC') - interval '400 days'),
+        (63, 301, 'AfterReport', 1, now() AT TIME ZONE 'UTC'),
+        (65, 302, 'Dismissed', 1, (now() AT TIME ZONE 'UTC') - interval '400 days'),
+        (66, 302, 'AfterReport', 1, now() AT TIME ZONE 'UTC');
+    `);
+  });
+
+  afterAll(async () => {
+    await db.exec(`
+      DROP VIEW IF EXISTS "EvidenceHeldUser"; DROP TABLE IF EXISTS "EvidenceHold";
+      DROP TRIGGER IF EXISTS "Image_csam_queue_set_aside_end" ON "Image";
+      DROP FUNCTION IF EXISTS csam_queue_set_aside_end();
+      DROP TABLE IF EXISTS "CsamQueueSetAside"; DROP TYPE IF EXISTS "CsamQueueSetAsideOutcome";
+      DELETE FROM "Image" WHERE "userId" IN (301, 302, 303);
+      DELETE FROM "User" WHERE id IN (301, 302, 303);
+    `);
+  });
+
+  const pendingOf = async (userId: number) =>
+    (await getCsamQueueByUser({ browsingLevel: ALL_LEVELS })).users.find((u) => u.userId === userId)
+      ?.pending;
+  const listed = async (userId: number) =>
+    (
+      await getImageReviewQueue({
+        needsReview: 'csam',
+        browsingLevel: ALL_LEVELS,
+        userId,
+        limit: 50,
+      })
+    ).items.map((i) => i.id);
+
+  it('keeps a dismissal out for good, and counts nothing else', async () => {
+    expect(await pendingOf(301)).toBe(2);
+    expect(await listed(301)).toEqual([64, 63]);
+    expect(await pendingOf(302)).toBe(1);
+    expect(await listed(302)).toEqual([66]);
+  });
+
+  it('offers to dismiss only the removed images not yet dismissed', async () => {
+    const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+    expect(users.find((u) => u.userId === 301)?.removed).toBe(2);
+  });
+
+  // A report of an image already flagged writes the same flag: only the version says it happened.
+  it('shows a new version of an image, and of its owner’s removed images, once it is written', async () => {
+    const shown = async () => ({
+      image: (
+        await getImageReviewQueue({
+          needsReview: 'csam',
+          browsingLevel: ALL_LEVELS,
+          userId: 301,
+          limit: 50,
+        })
+      ).items.find((i) => i.id === 64)?.version,
+      user: (await getCsamQueueByUser({ browsingLevel: ALL_LEVELS })).users.find(
+        (u) => u.userId === 301
+      )?.removedVersion,
+    });
+    const before = await shown();
+    expect(before.image).toEqual(expect.any(String));
+    expect(before.user).toEqual(expect.any(String));
+    expect(await shown()).toEqual(before);
+
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 64`);
+    const after = await shown();
+    expect(after.image).not.toBe(before.image);
+    expect(after.user).not.toBe(before.user);
+  });
+
+  it('badges what the by-user page shows as pending', async () => {
+    const { users } = await getCsamQueueByUser({ browsingLevel: ALL_LEVELS });
+    const pending = users.reduce((n, u) => n + u.pending, 0);
+    expect(Number((await getImageReviewCounts()).csam)).toBe(pending);
+  });
+
+  const setAsideIds = async (ids: number[]) =>
+    (
+      await db.query<{ imageId: number }>(
+        `SELECT "imageId" FROM "CsamQueueSetAside" WHERE "imageId" = ANY($1) ORDER BY 1`,
+        [ids]
+      )
+    ).rows.map((r) => r.imageId);
+
+  it('ends a set-aside when the flag changes, so an image flagged again is pending again', async () => {
+    await db.exec(`
+      INSERT INTO "User" ("id", "username") VALUES (303, 'u');
+      INSERT INTO "Image" ("id", "userId", "needsReview", "ingestion") VALUES
+        (67, 303, 'csam', 'Blocked'), (68, 303, 'csam', 'Blocked');
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId") VALUES
+        (67, 303, 'Dismissed', 1), (68, 303, 'Dismissed', 1);
+    `);
+    expect(await listed(303)).toEqual([]);
+
+    await db.exec(`UPDATE "Image" SET "needsReview" = NULL WHERE id = 67`);
+    expect(await setAsideIds([67, 68])).toEqual([68]);
+
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'csam' WHERE id = 67`);
+    expect(await listed(303)).toEqual([67]);
+    expect(await pendingOf(303)).toBe(1);
+  });
+
+  it('keeps a set-aside through a write that leaves the flag as it was', async () => {
+    await db.exec(`UPDATE "Image" SET "needsReview" = 'csam', "nsfwLevel" = 16 WHERE id = 68`);
+    expect(await setAsideIds([68])).toEqual([68]);
+    expect(await listed(303)).toEqual([67]);
+  });
+
+  it('ends a set-aside once the image is no longer removed, so a new block shows it', async () => {
+    await db.exec(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 68`);
+    expect(await listed(303)).toEqual([68, 67]);
+    expect(await setAsideIds([68])).toEqual([]);
+
+    await db.exec(`UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 68`);
+    expect(await listed(303)).toEqual([68, 67]);
+    expect(await pendingOf(303)).toBe(2);
+  });
+
+  it('keeps a set-aside through a write that leaves the image removed', async () => {
+    await db.exec(`
+      INSERT INTO "CsamQueueSetAside" ("imageId", "userId", "outcome", "moderatorId") VALUES
+        (68, 303, 'Dismissed', 1);
+      UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 68;
+    `);
+    expect(await setAsideIds([68])).toEqual([68]);
+  });
+
+  it('counts a dismissal only while the image is removed, even with the row left behind', async () => {
+    await db.exec(`ALTER TABLE "Image" DISABLE TRIGGER "Image_csam_queue_set_aside_end"`);
+    try {
+      await db.exec(`UPDATE "Image" SET ingestion = 'Scanned' WHERE id = 68`);
+      expect(await setAsideIds([68])).toEqual([68]);
+      expect(await listed(303)).toEqual([68, 67]);
+      expect(await pendingOf(303)).toBe(2);
+    } finally {
+      await db.exec(`
+        UPDATE "Image" SET ingestion = 'Blocked' WHERE id = 68;
+        ALTER TABLE "Image" ENABLE TRIGGER "Image_csam_queue_set_aside_end";
+      `);
+    }
+  });
+
+  it('shows every image while the table is missing', async () => {
+    await db.exec(`ALTER TABLE "CsamQueueSetAside" RENAME TO "CsamQueueSetAsideAway"`);
+    try {
+      expect(await pendingOf(301)).toBe(3);
+      expect(await pendingOf(302)).toBe(2);
+      expect(await listed(301)).toEqual([64, 63, 61]);
+      expect(Number((await getImageReviewCounts()).csam)).toBeGreaterThan(0);
+    } finally {
+      await db.exec(`ALTER TABLE "CsamQueueSetAsideAway" RENAME TO "CsamQueueSetAside"`);
+    }
   });
 });

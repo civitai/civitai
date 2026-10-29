@@ -5,11 +5,13 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
 import { sanitizeStepErrors } from './provider-errors';
 import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
 import { WorkflowData } from '~/shared/orchestrator/workflow-data';
 import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 
 /**
  * Translate the orchestrator's string nsfwLevel ("pg", "pg13", "r", ...)
@@ -61,6 +63,7 @@ async function downloadAndUploadImage(
       })
     );
     registerMediaLocation(s3Key, backend, imageBuffer.length);
+    await recordUploadKeyOwner(s3Key, userId);
 
     const image = await createImage({
       url: s3Key,
@@ -243,7 +246,7 @@ function blockedReasonToMessage(blockedReason: string | undefined): string | und
     case 'NSFWLevel':
       return 'One or more resources used here cannot generate mature content. Try a different model or a tamer prompt.';
     case 'NSFWLevelSourceImageRestricted':
-      return 'Source image lacks valid metadata, so generation is restricted to PG / PG-13. Use a clean source image to lift the restriction.';
+      return UNMARKED_SOURCE_IMAGE_MESSAGE;
     default:
       return `Generation failed: ${blockedReason}.`;
   }

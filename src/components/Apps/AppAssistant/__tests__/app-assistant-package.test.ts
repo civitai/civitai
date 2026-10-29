@@ -97,7 +97,7 @@ describe('the shared gate and subagents’ calls', () => {
     core.beforeToolCall('sandbox__list_dir', {}, ctx);
     await core.tools.set_checklist.execute({ items: [{ label: 'Tips', done: true }] });
     for (const result of results) core.onToolResult(result);
-    return core.beforeToolCall(shared.REPORT_READY, {}, ctx);
+    return core.beforeToolCall(shared.REPORT_READY, { data: 'civitai' }, ctx);
   }
 
   it('the parent’s checks make report_ready pass (the control)', async () => {
@@ -138,6 +138,160 @@ describe('the shared gate and subagents’ calls', () => {
       output: { awaitsUser: true, checklist: 'x' },
       isError: false,
       subagent: child,
+    });
+    expect(other.awaiting()).toBeNull();
+  });
+});
+
+/**
+ * Build it is for a list the user has not confirmed yet. The list the assistant shows as it ticks items
+ * off, or once the app is finished, is no such list: on the server runner every reply is a new run, so
+ * the gate starts from the conversation's last checklist (`restore`), and a changed list with every
+ * item done never waits for the user. A conversation's first list always waits: no build starts before
+ * the user confirms one.
+ */
+describe('which checklists wait for Build it', () => {
+  const conv = 'c-1';
+  const ctx = { conversationId: conv, reply: 2 };
+  const SHOWN = ['Split the bill', 'Round up the tip'];
+  const items = (done: boolean[]) => SHOWN.map((label, i) => ({ label, done: done[i] }));
+  /** The `set_checklist` call an earlier reply made, as the runner showed it for `tip-calc`. */
+  const shownEarlier: shared.ToolResult = {
+    name: shared.SET_CHECKLIST,
+    input: { items: items([false, false]) },
+    output: { shown: true, awaitsUser: true, checklist: 'old-1', note: 'shown', app: 'tip-calc' },
+    isError: false,
+  };
+
+  /** A runner gate on `tip-calc`, started from what the conversation already did. */
+  function runnerGate(earlier: shared.ToolResult[]) {
+    const core = shared.createGateCore({
+      checklistPrefix: 'run2',
+      currentApp: () => 'sb-tip',
+      checklistApp: () => 'tip-calc',
+    });
+    core.restore({ conversationId: conv, earlier, current: [], app: 'tip-calc' });
+    core.beforeToolCall(shared.SET_CHECKLIST, {}, ctx);
+    return core;
+  }
+
+  it('a later reply ticking off the shown list’s items is progress, not a list to confirm', async () => {
+    const core = runnerGate([shownEarlier]);
+    expect(await core.tools.set_checklist.execute({ items: items([true, false]) })).toEqual({
+      updated: true,
+      open: 1,
+      app: 'tip-calc',
+    });
+    expect(await core.tools.set_checklist.execute({ items: items([true, true]) })).toEqual({
+      updated: true,
+      open: 0,
+      app: 'tip-calc',
+    });
+    expect(core.awaiting()).toBeNull();
+  });
+
+  it('a first list waits for Build it even with every item done', async () => {
+    const core = runnerGate([]);
+    expect(await core.tools.set_checklist.execute({ items: items([true, true]) })).toMatchObject({
+      shown: true,
+      awaitsUser: true,
+      checklist: 'run2-1',
+      app: 'tip-calc',
+    });
+    expect(core.awaiting()).toEqual({ id: 'run2-1', app: 'sb-tip' });
+  });
+
+  it('a changed list with every item done does not wait: there is nothing left to build', async () => {
+    const relabelled = runnerGate([shownEarlier]);
+    expect(
+      await relabelled.tools.set_checklist.execute({
+        items: [
+          { label: 'Split the bill evenly', done: true },
+          { label: 'Round up the tip', done: true },
+        ],
+      })
+    ).toEqual({ updated: true, open: 0, app: 'tip-calc' });
+    expect(relabelled.awaiting()).toBeNull();
+  });
+
+  it('a new list, with other labels and an item open, still waits for Build it', async () => {
+    const core = runnerGate([shownEarlier]);
+    expect(
+      await core.tools.set_checklist.execute({
+        items: [{ label: 'Split the bill' }, { label: 'Pick a currency' }],
+      })
+    ).toMatchObject({ shown: true, awaitsUser: true, checklist: 'run2-1', app: 'tip-calc' });
+    expect(core.awaiting()).toEqual({ id: 'run2-1', app: 'sb-tip' });
+    // And with no earlier list at all.
+    const fresh = runnerGate([]);
+    expect(await fresh.tools.set_checklist.execute({ items: items([true, false]) })).toMatchObject({
+      awaitsUser: true,
+      checklist: 'run2-1',
+    });
+  });
+
+  it('the page takes no Build it from a runner for a list with every item done', () => {
+    const core = shared.createGateCore({ currentApp: () => 'sb-tip' });
+    // As a runner without the all-done rule reports it.
+    core.onToolResult({
+      name: shared.SET_CHECKLIST,
+      input: { items: items([true, true]) },
+      output: { shown: true, awaitsUser: true, checklist: 'runner-7' },
+      isError: false,
+    });
+    expect(core.awaiting()).toBeNull();
+    // Control: the same report with an item open is the one waiting.
+    core.onToolResult({
+      name: shared.SET_CHECKLIST,
+      input: { items: items([true, false]) },
+      output: { shown: true, awaitsUser: true, checklist: 'runner-8' },
+      isError: false,
+    });
+    expect(core.awaiting()).toEqual({ id: 'runner-8', app: 'sb-tip' });
+  });
+
+  // A finished list that newly says sample data still waits: the user must agree to sample data
+  // before report_ready takes it. A data change needing no agreement on a finished list is progress.
+  it('a finished list that newly says sample data waits for the user', async () => {
+    const core = runnerGate([shownEarlier]);
+    expect(
+      await core.tools.set_checklist.execute({ items: items([true, true]), data: 'sample' })
+    ).toMatchObject({ shown: true, awaitsUser: true, checklist: 'run2-1', app: 'tip-calc' });
+    expect(core.awaiting()).toEqual({ id: 'run2-1', app: 'sb-tip' });
+    // Once it says sample data, ticking the same list again does not wait.
+    expect(
+      await core.tools.set_checklist.execute({ items: items([true, true]), data: 'sample' })
+    ).toEqual({ updated: true, open: 0, app: 'tip-calc' });
+  });
+
+  it('a finished list that newly says civitai or none does not wait', async () => {
+    for (const data of ['civitai', 'none']) {
+      const core = runnerGate([shownEarlier]);
+      expect(await core.tools.set_checklist.execute({ items: items([true, true]), data })).toEqual({
+        updated: true,
+        open: 0,
+        app: 'tip-calc',
+      });
+      expect(core.awaiting()).toBeNull();
+    }
+  });
+
+  it('the page takes a runner’s Build it for a finished list that asks to agree to sample data', () => {
+    const core = shared.createGateCore({ currentApp: () => 'sb-tip' });
+    core.onToolResult({
+      name: shared.SET_CHECKLIST,
+      input: { items: items([true, true]), data: 'sample' },
+      output: { shown: true, awaitsUser: true, checklist: 'runner-9' },
+      isError: false,
+    });
+    expect(core.awaiting()).toEqual({ id: 'runner-9', app: 'sb-tip' });
+    // Control: the same report saying civitai takes none, as #7153 has it.
+    const other = shared.createGateCore({ currentApp: () => 'sb-tip' });
+    other.onToolResult({
+      name: shared.SET_CHECKLIST,
+      input: { items: items([true, true]), data: 'civitai' },
+      output: { shown: true, awaitsUser: true, checklist: 'runner-10' },
+      isError: false,
     });
     expect(other.awaiting()).toBeNull();
   });

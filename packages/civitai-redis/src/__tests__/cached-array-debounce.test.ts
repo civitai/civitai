@@ -49,7 +49,10 @@ function build({ debounceTime, swr = false }: { debounceTime?: number; swr?: boo
         }
       ),
     },
-    del: vi.fn(async () => 1),
+    del: vi.fn(async (keys: RedisKeyTemplateCache | RedisKeyTemplateCache[]) => {
+      for (const k of [keys].flat()) store.delete(k);
+      return 1;
+    }),
     setNxKeepTtlWithEx: vi.fn(async () => true),
   };
   const noop = () => undefined;
@@ -70,12 +73,15 @@ function build({ debounceTime, swr = false }: { debounceTime?: number; swr?: boo
     clearByPattern: async () => undefined,
   });
   let version = 0;
-  // Ids >= 100 have no row. `duringLookup` runs inside the lookup, e.g. to move the clock.
+  // Ids >= 100 have no row until `addRow`. `duringLookup` runs inside the lookup, e.g. to move the clock.
+  const added = new Set<number>();
   let duringLookup: () => void = () => undefined;
   const lookupFn = vi.fn(async (ids: number[]) => {
     duringLookup();
     return Object.fromEntries(
-      ids.filter((id) => id < 100).map((id) => [id, { id, v: `db-${id}-v${version}` }])
+      ids
+        .filter((id) => id < 100 || added.has(id))
+        .map((id) => [id, { id, v: `db-${id}-v${version}` }])
     );
   });
   const cache = createCachedObject<Row>({
@@ -104,6 +110,7 @@ function build({ debounceTime, swr = false }: { debounceTime?: number; swr?: boo
     valueWrites,
     notFoundWrites,
     bumpOrigin: () => version++,
+    addRow: (id: number) => added.add(id),
     onLookup: (fn: () => void) => (duringLookup = fn),
   };
 }
@@ -224,6 +231,70 @@ describe('builder default bust window', () => {
     vi.setSystemTime(T0 + 11_000);
     await t.cache.fetch([1]);
     expect(t.lookupFn).toHaveBeenCalledTimes(2);
+  });
+});
+
+// A post read before its PostMetric row existed was negatively cached; the metrics job then wrote
+// the row and busted. On an SWR cache that bust used to backdate the notFound marker, which fetch()
+// never revalidates, so it only renewed the marker for a full ttl + tail and the counts stayed blank.
+describe('bust of a negatively cached id', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(T0);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  // swr:false is the control: bust() already overwrote the marker before this fix.
+  it.each([{ swr: true }, { swr: false }])(
+    'the row that appeared is served once the window passes (swr: $swr)',
+    async ({ swr }) => {
+      const t = build({ swr });
+      expect(await t.cache.fetch([100])).toEqual({});
+      expect(t.read(keyFor(100))).toMatchObject({ id: 100, notFound: true });
+
+      t.addRow(100);
+      await t.cache.bust(100);
+      const window = swr ? 10 : 2;
+      expect(t.redis.packed.set.mock.calls.at(-1)?.[2]).toEqual({ EX: window });
+
+      // Inside the window: origin, not written back.
+      vi.setSystemTime(T0 + 1_000);
+      expect(await t.cache.fetch([100])).toEqual({ 100: { id: 100, v: 'db-100-v0' } });
+      expect(t.valueWrites().filter((k) => k === keyFor(100))).toHaveLength(1); // the marker only
+
+      // Past it: a plain miss, cached.
+      vi.setSystemTime(T0 + (window + 1) * 1_000);
+      expect(await t.cache.fetch([100])).toEqual({ 100: { id: 100, v: 'db-100-v0' } });
+      expect(t.read(keyFor(100))).toMatchObject({ id: 100, v: 'db-100-v0' });
+    }
+  );
+
+  // resource-residency busts with debounceTime: 0. Redis rejects EX 0, and the throw would skip the
+  // backdate of every real entry in the batch.
+  it('a zero-window SWR bust drops the marker rather than writing EX 0', async () => {
+    const t = build({ swr: true });
+    await t.cache.fetch([1, 100]);
+    t.addRow(100);
+    await t.cache.bust([1, 100], { debounceTime: 0 });
+
+    expect(t.redis.packed.set.mock.calls.map(([, , opts]) => opts?.EX)).not.toContain(0);
+    expect(t.read(keyFor(100))).toBeNull();
+    expect(await t.cache.fetch([100])).toEqual({ 100: { id: 100, v: 'db-100-v0' } });
+    expect(t.read(keyFor(100))).toMatchObject({ id: 100, v: 'db-100-v0' });
+  });
+
+  it('an SWR bust still backdates real entries in the same batch', async () => {
+    const t = build({ swr: true });
+    await t.cache.fetch([1, 100]);
+    await t.cache.bust([1, 100]);
+
+    expect(t.read(keyFor(1))).toMatchObject({ id: 1, v: 'db-1-v0' });
+    expect(new Date((t.read(keyFor(1)) as { cachedAt: Date }).cachedAt).getTime()).toBe(
+      T0 - 3600_000 + 10_000
+    );
+    expect(t.read(keyFor(100))).toMatchObject({ id: 100, debounce: true });
   });
 });
 

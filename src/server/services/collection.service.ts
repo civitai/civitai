@@ -5,7 +5,6 @@ import { getAutoFeatureUserId, isAutoFeaturedRow } from '~/server/common/auto-fe
 import { uniq, uniqBy } from 'lodash-es';
 import type { SessionUser } from '~/types/session';
 import type { CoverageAudience } from '~/server/services/generation/coverage-source';
-import { v4 as uuid } from 'uuid';
 import { FEATURED_MODEL_COLLECTION_ID } from '~/server/common/constants';
 import {
   ArticleSort,
@@ -71,6 +70,7 @@ import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provena
 import { pickClientImageColumns } from '~/server/utils/image-columns';
 import {
   assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
   imageUrlUnavailableError,
 } from '~/server/services/image-url-ownership';
 import type { PostsInfiniteModel } from '~/server/services/post.service';
@@ -958,7 +958,7 @@ async function notifyCollectionSubmissionReceived({
           userIds: recipients,
           type: 'collection-submission-received',
           category: NotificationCategory.Update,
-          key: `collection-submission-received:${collection.id}:${uuid()}`,
+          key: `collection-submission-received:${collection.id}:${crypto.randomUUID()}`,
           details: { collectionId: collection.id, collectionName: collection.name },
         });
       })
@@ -1456,6 +1456,9 @@ export const upsertCollection = async ({
     //   }
     // }
 
+    const newCoverUrl = !imageId && image && image.id == null ? image.url : undefined;
+    if (newCoverUrl) await assertClientKeysIssuedToCaller({ urls: [newCoverUrl], userId });
+
     const updated = await dbWrite.$transaction(async (tx) => {
       // Decided in the transaction: a cover row deleted after this read fails the `connect`
       // rather than turning it into an unchecked create.
@@ -1474,8 +1477,11 @@ export const upsertCollection = async ({
         !isModerator
       )
         throw imageUrlUnavailableError();
-      if (!imageId && image && !existingCover)
+      if (!imageId && image && !existingCover) {
         await assertClientImageUrlsUsable({ urls: [image.url], userId, db: tx });
+        if (image.url !== newCoverUrl)
+          await assertClientKeysIssuedToCaller({ urls: [image.url], userId, db: tx });
+      }
 
       if (tags) {
         // Attempt to run this first, collides with create/connect
@@ -2796,7 +2802,7 @@ export const updateCollectionItemsStatus = async ({
           type: notificationType,
           userId: item.addedById,
           category: NotificationCategory.Update,
-          key: `${notificationType}:${item.id}:${uuid()}`,
+          key: `${notificationType}:${item.id}:${crypto.randomUUID()}`,
           details: {
             status,
             reason,

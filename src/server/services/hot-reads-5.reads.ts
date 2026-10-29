@@ -30,11 +30,9 @@ import { DomainColor, EntityType } from '~/shared/utils/prisma/enums';
  * text, `null` where Prisma gives `null`).
  */
 
-// ---------------------------------------------------------------------------------------------
 // A `KeyValue` row by key (`getPlacementConfig`, placement.service.ts; the announcement allowance
 // config, announcement-allowance.service.ts).
 
-/** The Prisma read, unchanged. */
 export function readKeyValueViaPrisma(db: PrismaClient, key: string) {
   return db.keyValue.findUnique({ where: { key } });
 }
@@ -47,10 +45,8 @@ export async function readKeyValueViaKysely(
   return row ? { key: row.key, value: row.value as Prisma.JsonValue } : null;
 }
 
-// ---------------------------------------------------------------------------------------------
 // A post's linked Model3D (`getVisibleModel3DIdForPost`, model3d.service.ts).
 
-/** The Prisma read, unchanged. */
 export function readPostModel3dViaPrisma(db: PrismaClient, postId: number) {
   return db.post.findUnique({
     where: { id: postId },
@@ -79,7 +75,6 @@ export async function readPostModel3dViaKysely(
   };
 }
 
-// ---------------------------------------------------------------------------------------------
 // The ids of the live announcements a user dismissed (`getDismissedAnnouncementIds`,
 // announcement.service.ts). "Live" is `activeAnnouncementWhere(now)` (announcement-window.ts); the
 // Kysely conditions are its twin, and the parity suite pins the two on the same rows.
@@ -90,7 +85,7 @@ export type DismissedAnnouncementIdsInput = {
   domain?: DomainColor;
 };
 
-/** The Prisma read, unchanged (its `new Date()` is the caller's `now`). */
+/** Its `new Date()` is the caller's `now`. */
 export async function readDismissedAnnouncementIdsViaPrisma(
   db: PrismaClient,
   { userId, now, domain }: DismissedAnnouncementIdsInput
@@ -121,10 +116,9 @@ export async function readDismissedAnnouncementIdsViaKysely(
   return rows.map((x) => x.announcementId);
 }
 
-// ---------------------------------------------------------------------------------------------
 // A post's owner and its collaborators (`getEntityCollaborators`, entity-collaborator.service.ts).
 
-/** The Prisma reads, unchanged: the post's owner, then (for an existing post) its collaborators. */
+/** The post's owner, then (for an existing post) its collaborators. */
 export async function readPostCollaboratorsViaPrisma(db: PrismaClient, postId: number) {
   const entity = await db.post.findUnique({
     where: { id: postId },
@@ -187,7 +181,6 @@ export async function readPostCollaboratorsViaKysely(
   return { entity, collaborators };
 }
 
-// ---------------------------------------------------------------------------------------------
 // A home block row (`getHomeBlockById`, home-block.service.ts).
 
 export const homeBlockByIdSelect = {
@@ -198,7 +191,7 @@ export const homeBlockByIdSelect = {
   sourceId: true,
 } as const;
 
-/** The Prisma read, unchanged (it throws for a missing row, and for a missing `id`). */
+/** Throws for a missing row, and for a missing `id`. */
 export function readHomeBlockViaPrisma(db: PrismaClient, id: number | undefined) {
   return db.homeBlock.findUniqueOrThrow({ select: homeBlockByIdSelect, where: { id } });
 }
@@ -221,10 +214,8 @@ export async function readHomeBlockViaKysely(
   };
 }
 
-// ---------------------------------------------------------------------------------------------
 // The unclaimed prize count (`countUnclaimedPrizes`, prize.service.ts).
 
-/** The Prisma read, unchanged. */
 export function countUnclaimedPrizesViaPrisma(db: PrismaClient, userId: number) {
   return db.prize.count({ where: { userId, claimedAt: null, voidedAt: null } });
 }
@@ -233,10 +224,8 @@ export function countUnclaimedPrizesViaKysely(db: Kysely<DB>, userId: number) {
   return countUnclaimedPrizes(db, userId);
 }
 
-// ---------------------------------------------------------------------------------------------
 // A model's version ids (`getUserEngagedModelVersionsHandler`, user.controller.ts).
 
-/** The Prisma read, unchanged. */
 export function readModelVersionIdsViaPrisma(db: PrismaClient, modelId: number) {
   return db.modelVersion.findMany({
     where: { modelId },
@@ -251,7 +240,6 @@ export function readModelVersionIdsViaKysely(
   return listModelVersionIds(db, modelId);
 }
 
-// ---------------------------------------------------------------------------------------------
 // A user's reviews of a model (`getUserResourceReview`, resourceReview.service.ts).
 
 export type UserResourceReviewInput = {
@@ -260,7 +248,6 @@ export type UserResourceReviewInput = {
   userId: number;
 };
 
-/** The Prisma read, unchanged. */
 export function readUserResourceReviewsViaPrisma(
   db: PrismaClient | Prisma.TransactionClient,
   { modelId, modelVersionId, userId }: UserResourceReviewInput
@@ -278,10 +265,8 @@ export function readUserResourceReviewsViaKysely(
   return listUserResourceReviews(db, input);
 }
 
-// ---------------------------------------------------------------------------------------------
 // The model version a download resolves (`getFileForModelVersion`, file.service.ts).
 
-/** The Prisma read, unchanged. */
 export function readModelVersionForFileViaPrisma(db: PrismaClient, modelVersionId: number) {
   return db.modelVersion.findFirst({
     // `model: { is: {} }` requires the (required) `model` relation to exist.
@@ -354,13 +339,11 @@ export async function readModelVersionForFileViaKysely(
   };
 }
 
-// ---------------------------------------------------------------------------------------------
 // The three image reads of `reaction.toggle` (reaction.service.ts `getReaction`,
 // reaction.controller.ts `getTrackerEvent` and the access check).
 
 export type ImageReactionKey = { userId: number; reaction: ReviewReactions; imageId: number };
 
-/** The Prisma read, unchanged. */
 export function readImageReactionIdViaPrisma(
   db: PrismaClient,
   { userId, reaction, imageId }: ImageReactionKey
@@ -378,7 +361,6 @@ export async function readImageReactionIdViaKysely(
   return (await getImageReactionId(db, key)) ?? null;
 }
 
-/** The Prisma read, unchanged. */
 export function readImageNsfwLevelAndOwnerViaPrisma(db: PrismaClient, id: number) {
   return db.image.findFirst({
     where: {
@@ -399,8 +381,7 @@ export async function readImageNsfwLevelAndOwnerViaKysely(
 }
 
 /**
- * The Prisma read, unchanged: the whole image row, of which the caller keeps `postId`. It throws for
- * a missing image.
+ * The whole image row, of which the caller keeps `postId`. Throws for a missing image.
  */
 export function readImagePostIdViaPrisma(db: PrismaClient, id: number) {
   return db.image.findUniqueOrThrow({ where: { id } }).then((image) => image?.postId);
@@ -417,7 +398,6 @@ export async function readImagePostIdViaKysely(
   return getImagePostId(db, id);
 }
 
-// ---------------------------------------------------------------------------------------------
 // A model's `meta` (`getModelCollectionShowcaseHandler`, model.controller.ts, through `getModel`).
 
 /** The Prisma read `getModel({ id, select: { id: true, meta: true } })` makes (`findModel`). */

@@ -29,11 +29,17 @@ import { AppAssistantPreview } from '~/components/Apps/AppAssistant/AppAssistant
 import {
   AppExportError,
   EXPORT_FAILED,
+  EXPORT_GONE,
   EXPORT_NOTE,
   exportAppZip,
   exportFileName,
   saveBlob,
 } from '~/components/Apps/AppAssistant/appExport';
+import type { PreparedSubmit } from '~/components/Apps/AppAssistant/assistantSubmit';
+import {
+  sendForReview,
+  submitBundleFromExport,
+} from '~/components/Apps/AppAssistant/assistantSubmit';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import { mostRecentApp } from '~/components/Apps/AppAssistant/appLifecycle';
 import {
@@ -405,6 +411,13 @@ export function AppAssistantWorkspace({
         onReply: appTools.newReply,
         onBuild: () => void buildRef.current(),
         currentApp: () => live.current.active?.name ?? null,
+        // Submit for review: the user's press sends the app's export to the review queue as them.
+        submit: {
+          prepare: (name) => prepareSubmitRef.current(name),
+          send: (prepared) => sendForReview(prepared),
+        },
+        // A chat changes only the app it made or chose: a new chat never builds over the open one.
+        openApp: () => live.current.active?.app ?? null,
       }),
     [appTools]
   );
@@ -450,7 +463,8 @@ export function AppAssistantWorkspace({
         getSession: () => live.current.session,
         setSession: showPreview,
       }),
-      ...appTools.tools,
+      // A reloaded chat keeps the app it made or chose: its saved calls tell the gate as they show.
+      ...gate.restoringChoices(appTools.tools, () => chatIdRef.current),
       ...gate.tools,
       ...(remoteRunner ? {} : coverTools),
     }),
@@ -820,6 +834,9 @@ export function AppAssistantWorkspace({
   // user to send instead, so it is never pressed twice. The chat puts it in an empty box, or offers it
   // back beside what the user has there.
   const buildWent = useRef(false);
+  const prepareSubmitRef = useRef<(name: string) => Promise<PreparedSubmit>>(() =>
+    Promise.reject(new AppExportError(EXPORT_FAILED, 'failed'))
+  );
   const buildRef = useRef(async () => {
     buildWent.current = false;
     const chat = chatRef.current;
@@ -1037,6 +1054,18 @@ export function AppAssistantWorkspace({
   removeRef.current = sandboxes.remove.mutateAsync;
   const onRemovedRef = useRef(onRemoved);
   onRemovedRef.current = onRemoved;
+  // The bundle a Submit for review press sends: the app's export (started first if it is paused).
+  prepareSubmitRef.current = async (name: string) => {
+    const target = live.current.apps?.find((s) => s.name === name);
+    if (!sandboxClient || !target) throw new AppExportError(EXPORT_GONE, 'gone');
+    const blob = await exportAppZip({
+      client: sandboxClient,
+      sandbox: target,
+      start: startApp,
+      discard: (gone) => removeRef.current(gone).then(() => onRemovedRef.current(gone)),
+    });
+    return submitBundleFromExport(blob, target.app);
+  };
   /** The free-a-slot card's delete, once confirmed: then the message that hit the limit goes again. */
   const freeSlot = (target: Sandbox) =>
     confirmDeleteApp(target.app, async () => {

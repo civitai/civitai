@@ -186,8 +186,10 @@ const FULL_CREDENTIAL = 'full credential';
 const OUTSIDE_WRAPPERS: Record<string, string> = {
   'media/ingest/[mediaId]': FULL_CREDENTIAL,
   'testing/model3d-seed': FULL_CREDENTIAL,
-  'admin/system-account-api-key':
-    'reads the target account’s moderator status to refuse it; not a caller gate',
+  'blocks/submit-version':
+    'App Blocks author submit: moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
+  'v1/blocks/submit-version':
+    'App Blocks author submit (CLI): moderators may queue a version of an app they do not own (the owner gate in submitVersion)',
   'download/[...key]': 'key scoped to the caller’s own upload prefix; moderators may fetch any key',
   'download/attachments/[fileId]': 'file access check that also admits owners and public files',
   'download/training/[modelVersionId]': 'owner-or-moderator access to training data',
@@ -509,6 +511,8 @@ const FULL_SCOPE_SESSION_ROUTES = [
   'apps/assistant/runner-viewer-token',
   'apps/assistant/token',
   'auth/freshdesk',
+  // Session submit (App Assistant's Submit for review): no OAuth-client token reaches submitVersion here.
+  'blocks/submit-version',
   'media/ingest/[mediaId]',
   'testing/model3d-seed',
   'user/orchestrator-key',

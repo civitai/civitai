@@ -4,6 +4,7 @@ import { ModalsProvider } from '@mantine/modals';
 import type { ReactNode } from 'react';
 import type { ChatTool } from '@civitai/components-chat/civitai-chat';
 import { gateToolSet } from '@civitai/components-chat/core';
+import { openAppNotChosen } from '@civitai/app-assistant';
 import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
 import type * as NotificationsMod from '~/utils/notifications';
@@ -2188,7 +2189,7 @@ describe('AppAssistantWorkspace hold while the app starts', () => {
 });
 
 describe('AppAssistantWorkspace tool gate', () => {
-  test('offers create_app, generate_app_cover, report_ready and set_checklist beside the preview tools, and refuses an unchecked ready', async () => {
+  test('offers create_app, generate_app_cover, report_ready, set_checklist and submit_for_review beside the preview tools, and refuses an unchecked ready', async () => {
     await mount();
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
       'create_app',
@@ -2197,8 +2198,11 @@ describe('AppAssistantWorkspace tool gate', () => {
       'set_checklist',
       'start_preview',
       'stop_preview',
+      'submit_for_review',
+      'use_open_app',
     ]);
     expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse');
+    expect(m.chat!.beforeToolCall!('submit_for_review', {}, conv)).toHaveProperty('refuse');
   });
 
   /** What the sandbox reports when the app was checked: a passing preview, tests and typecheck. */
@@ -2226,12 +2230,57 @@ describe('AppAssistantWorkspace tool gate', () => {
     await openFirst();
     m.chat!.beforeToolCall!('sandbox__list_dir', {}, conv);
     await checkEverything();
-    expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toEqual({ allow: true });
+    expect(m.chat!.beforeToolCall!('report_ready', { data: 'civitai' }, conv)).toEqual({
+      allow: true,
+    });
 
     await openFromSwitcher('app-bbbb');
     await vi.waitFor(() =>
-      expect(m.chat!.beforeToolCall!('report_ready', {}, conv)).toHaveProperty('refuse')
+      expect(m.chat!.beforeToolCall!('report_ready', { data: 'civitai' }, conv)).toHaveProperty(
+        'refuse'
+      )
     );
+  });
+
+  test('a new chat beside the open app may not change it until it chooses it, and another app is not chosen', async () => {
+    await mount();
+    await openFirst();
+    const write = (chat: typeof conv) =>
+      m.chat!.beforeToolCall!('sandbox__write_file', { path: 'app-aaaa/src/block.ts' }, chat);
+    // The page hands the gate the open app: the change is refused, naming it.
+    expect(write(conv)).toEqual({ refuse: openAppNotChosen('app-aaaa') });
+    // Choosing it (the user asked to change it) lets the chat change it.
+    const chosen = await m.chat!.tools.use_open_app.execute({ app: 'app-aaaa' }, ctx);
+    m.chat!.onToolResult!({ name: 'use_open_app', input: {}, output: chosen, isError: false });
+    expect(write(conv)).toEqual({ allow: true });
+    // Another chat (New chat) chose nothing.
+    expect(write({ conversationId: 'c-new', reply: 1 })).toEqual({
+      refuse: openAppNotChosen('app-aaaa'),
+    });
+    // The user switches app: this chat chose the first one, not this one.
+    await openFromSwitcher('app-bbbb');
+    await vi.waitFor(() =>
+      expect(m.chat!.beforeToolCall!('sandbox__write_file', {}, { ...conv, reply: 2 })).toEqual({
+        refuse: openAppNotChosen('app-bbbb'),
+      })
+    );
+  });
+
+  test('a reloaded chat that made the open app may change it once its saved create_app shows', async () => {
+    await mount();
+    await openFirst();
+    const saved = { conversationId: 'chat-1', reply: 1 };
+    const write = () =>
+      m.chat!.beforeToolCall!('sandbox__write_file', { path: 'app-aaaa/a' }, saved);
+    m.chat!.onChatChange!('chat-1');
+    expect(write()).toEqual({ refuse: openAppNotChosen('app-aaaa') });
+    m.chat!.tools.create_app.render!({
+      name: 'create_app',
+      input: { name: 'App aaaa' },
+      state: 'done',
+      output: { app: 'app-aaaa', state: 'running', note: 'n' },
+    });
+    expect(write()).toEqual({ allow: true });
   });
 
   test('hands the chat a gate that ends a reply at the tool-call limit, and counts each reply afresh', async () => {
@@ -2402,6 +2451,8 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
       'set_checklist',
       'start_preview',
       'stop_preview',
+      'submit_for_review',
+      'use_open_app',
     ]);
   });
 
@@ -3232,5 +3283,136 @@ describe('AppAssistantWorkspace keeps the app awake while the user works in its 
     await page.getByRole('radio', { name: 'Preview' }).click();
     pressInPane();
     await vi.waitFor(() => expect(pings()).toHaveLength(before + 1));
+  });
+});
+
+describe('AppAssistantWorkspace Submit for review', () => {
+  /** The sandbox service's export of app-aaaa (a real zip, as the gateway streams it), and the review route. */
+  function stubSubmit(answer: () => Response) {
+    const submits: { url: string; init?: RequestInit }[] = [];
+    const exports: string[] = [];
+    const fetchSpy = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      const href = input instanceof Request ? input.url : String(input);
+      if (href === '/api/blocks/submit-version') {
+        submits.push({ url: href, init });
+        return answer();
+      }
+      const url = new URL(href);
+      const exported = /^\/s\/([a-z0-9-]+)\/export$/.exec(url.pathname);
+      if (url.origin === BASE && exported) {
+        exports.push(`${exported[1]} ${url.searchParams.get('app')}`);
+        const { default: JSZip } = await import('jszip');
+        const zip = new JSZip();
+        zip.file(
+          'app-aaaa/block.manifest.json',
+          JSON.stringify({ blockId: 'app-aaaa', name: 'Avatar Maker', version: '0.2.0' })
+        );
+        zip.file('app-aaaa/src/main.ts', 'export {};');
+        return new Response(await zip.generateAsync({ type: 'blob' }), { status: 200 });
+      }
+      throw new Error(`unexpected fetch ${href}`);
+    });
+    onTestFinished(() => fetchSpy.mockRestore());
+    return { submits, exports };
+  }
+
+  const offer = { awaitsUser: true, submit: 'runner-submit-1', note: 'x' };
+  const card = () =>
+    m.chat!.tools.submit_for_review.render!({
+      name: 'submit_for_review',
+      input: {},
+      state: 'done',
+      output: offer,
+    }) as HTMLElement;
+  const button = (el: HTMLElement) =>
+    [...el.querySelectorAll('button')].find((b) => b.textContent === 'Submit for review') ?? null;
+
+  test('on the server runner: the runner’s offer shows the open app’s name and version, and the press submits it as the user', async () => {
+    const { submits, exports } = stubSubmit(() =>
+      Response.json({ publishRequestId: 'pubreq_1', slug: 'app-aaaa', version: '0.2.0' })
+    );
+    await page.viewport(1440, 900);
+    renderWithProviders(
+      <ModalsProvider>
+        <AppAssistantWorkspace canPreview sandboxUrl={BASE} remoteRunner />
+      </ModalsProvider>
+    );
+    await expect.element(page.getByTestId('chat')).toBeInTheDocument();
+    await openFirst();
+    // The runner journaled its submit_for_review; the chat hands it to the page.
+    m.chat!.onToolResult!({ name: 'submit_for_review', input: {}, output: offer, isError: false });
+    const shown = card();
+    document.body.append(shown);
+    onTestFinished(() => shown.remove());
+    await vi.waitFor(() => expect(button(shown)).not.toBeNull());
+    expect(exports).toEqual(['sbx-aaaaaaaaaaaa app-aaaa']);
+    expect(shown.textContent).toContain('Avatar Maker 0.2.0 (app-aaaa)');
+    expect(submits).toEqual([]);
+
+    button(shown)!.click();
+    await vi.waitFor(() =>
+      expect(shown.querySelector('[role="status"]')?.textContent).toMatch(
+        /^Submitted Avatar Maker 0\.2\.0 for review\./
+      )
+    );
+    expect(submits).toHaveLength(1);
+    expect(submits[0].init).toMatchObject({ method: 'POST', credentials: 'same-origin' });
+    const { default: JSZip } = await import('jszip');
+    const sent = await JSZip.loadAsync(
+      (JSON.parse(String(submits[0].init!.body)) as { bundleBase64: string }).bundleBase64,
+      { base64: true }
+    );
+    // The app's files at the root, as `civitai app submit` packages them.
+    expect(
+      Object.keys(sent.files)
+        .filter((path) => !sent.files[path].dir)
+        .sort()
+    ).toEqual(['block.manifest.json', 'src/main.ts']);
+  });
+
+  test('in the browser: refused until checked, and a refused account submits nothing more than its one try', async () => {
+    const { submits } = stubSubmit(() =>
+      Response.json({ message: 'Apps are restricted to the Civitai team' }, { status: 403 })
+    );
+    await mount();
+    await openFirst();
+    expect(m.chat!.beforeToolCall!('submit_for_review', {}, conv)).toHaveProperty('refuse');
+    // This chat works on the open app (as one that made it would): a new chat could not submit it.
+    const chosen = await m.chat!.tools.use_open_app.execute({ app: 'app-aaaa' }, ctx);
+    m.chat!.onToolResult!({ name: 'use_open_app', input: {}, output: chosen, isError: false });
+    await m.chat!.tools.set_checklist.execute({ items: [{ label: 'Avatar', done: true }] }, ctx);
+    for (const [name, input, output] of [
+      ['sandbox__preview_check', {}, 'render: ok'],
+      ['sandbox__run_command', { command: 'cd app-aaaa && npm test' }, 'exit_code: 0'],
+      ['sandbox__run_command', { command: 'cd app-aaaa && npx tsc --noEmit' }, 'exit_code: 0'],
+    ] as const)
+      m.chat!.onToolResult!({ name, input, output, isError: false });
+    // Every check passed, but readiness is report_ready's to say.
+    expect(m.chat!.beforeToolCall!('submit_for_review', {}, conv)).toHaveProperty('refuse');
+    const ready = await m.chat!.tools.report_ready.execute({ data: 'civitai' }, ctx);
+    m.chat!.onToolResult!({
+      name: 'report_ready',
+      input: { data: 'civitai' },
+      output: ready,
+      isError: false,
+    });
+    expect(m.chat!.beforeToolCall!('submit_for_review', {}, conv)).toEqual({ allow: true });
+    const output = await m.chat!.tools.submit_for_review.execute({}, ctx);
+    m.chat!.onToolResult!({ name: 'submit_for_review', input: {}, output, isError: false });
+    const shown = m.chat!.tools.submit_for_review.render!({
+      name: 'submit_for_review',
+      input: {},
+      state: 'done',
+      output,
+    }) as HTMLElement;
+    await vi.waitFor(() => expect(button(shown)).not.toBeNull());
+    button(shown)!.click();
+    await vi.waitFor(() =>
+      expect(shown.querySelector('[role="alert"]')?.textContent).toBe(
+        'Not submitted: Apps are restricted to the Civitai team. Your account cannot submit apps for review.'
+      )
+    );
+    expect(button(shown)).toBeNull();
+    expect(submits).toHaveLength(1);
   });
 });

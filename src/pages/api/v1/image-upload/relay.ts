@@ -11,6 +11,7 @@ import { isAllowedOriginRequest } from '~/server/utils/origin-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { uploadImageBufferToStore } from '~/utils/s3-utils';
 import { trackImageUpload } from '~/server/services/image-upload-action.service';
+import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
 import {
   IMAGE_UPLOAD_RELAY_PRODUCER_HEADER,
   sanitizeImageUploadRelayProducer,
@@ -284,8 +285,9 @@ async function runRelay(
   // ⚠ NOT cookie-only, and the distinction matters. `getServerAuthSession` also
   // accepts `Authorization: Bearer <api key>` and `?token=`, and this route lives
   // under the public `/api/v1/` namespace. `blocks/submit-version.ts` uses the same
-  // expression but IS cookie-only (`ModEndpoint`), which is why its comment says no
-  // bearer exemption is needed — that justification does NOT transfer here.
+  // expression and is not cookie-only either (a signed-in session or a full-access
+  // personal key, `requireFullScopeSession`); it too 403s a prod bearer client that
+  // sends no Origin, rather than exempting it.
   // 🔴 FULL PATH, because there are two: `src/pages/api/blocks/submit-version.ts` is
   // the one meant. Its `/api/v1/` sibling is BEARER-only and deliberately OMITS the
   // origin guard entirely (it would break the headless CLI, which sends no Origin) —
@@ -366,6 +368,7 @@ async function runRelay(
       // calls the same value `id` in its response, so keep the wire shape identical.
       const { key } = await uploadImageBufferToStore(body, { contentType });
       trackImageUpload(req, res, key);
+      await recordUploadKeyOwner(key, userId);
       res.status(200).json({ id: key });
       // One event per relayed upload. The usage counter (below) says THAT relays
       // happen; this says WHO — the only signal that can size the population of
