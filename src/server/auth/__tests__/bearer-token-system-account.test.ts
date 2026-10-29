@@ -16,7 +16,7 @@ const { getSessionFromBearerToken } = await import('~/server/auth/bearer-token')
 const USER_ID = 5;
 const SYSTEM_META = { systemAccount: true };
 
-/** The primary's view of the key owner; the session copy below stays clean throughout. */
+/** The primary's view of the key owner; the session copy below is clean unless a test says otherwise. */
 let owner: { isModerator: boolean; roles: string[] } | null;
 let access: { app: string; roles: string[] }[];
 
@@ -81,6 +81,15 @@ describe('a bearer key owned by a system account', () => {
       expect.objectContaining({ name: 'system-account-bearer-refused', userId: USER_ID }),
       'auth'
     );
+  });
+
+  it.each([
+    ['the moderator flag', { isModerator: true, roles: [] }],
+    ['the moderator:admin role', { isModerator: false, roles: ['moderator:admin'] }],
+    ['a role a moderator-app page grants', { isModerator: false, roles: ['dispute-agent'] }],
+  ])('is refused while only the session copy still holds %s', async (_, held) => {
+    getSessionUserById.mockResolvedValue({ id: USER_ID, meta: SYSTEM_META, ...held });
+    await expect(getSessionFromBearerToken('k')).resolves.toBeNull();
   });
 
   it('is refused when the account row is gone', async () => {

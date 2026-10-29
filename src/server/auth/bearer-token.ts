@@ -85,8 +85,7 @@ export async function getSessionFromBearerToken(key: string, options: BearerToke
   // OAuth token or personal API key can't keep hitting any /api/v1 handler that forgets to re-check.
   if (user.bannedAt) return null;
   if (refuseModerationAccountSession(user, 'bearer-token')) return null;
-  // Read from the primary, not the session copy.
-  if (isSystemAccountMeta(user.meta) && (await userHoldsModeratorAccess(user.id))) {
+  if (isSystemAccountMeta(user.meta) && (await userHoldsModeratorAccess(user.id, user))) {
     logToAxiom(
       {
         name: 'system-account-bearer-refused',
