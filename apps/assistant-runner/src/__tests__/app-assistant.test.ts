@@ -630,14 +630,9 @@ describe('the kept-apps limit, as the page is told of it', () => {
   });
 });
 
-/**
- * The incident: a tester had buzz-dashboard open, pressed New chat, asked for a LoRA explorer and
- * pressed Build it; the reply deleted and rewrote buzz-dashboard's files. A chat now changes only an
- * app it made (`create_app`) or chose (`use_open_app`).
- */
+/** A chat changes only an app it made (create_app) or chose (use_open_app). */
 describe('a new chat beside an open app', () => {
   const OPEN = 'buzz-dashboard';
-  /** Every sandbox tool that can change an app, as the incident's reply used them and more. */
   const CHANGES: readonly (readonly [string, Record<string, unknown>])[] = [
     ['sandbox__delete_path', { path: `${OPEN}/src/block.ts` }],
     ['sandbox__write_file', { path: `${OPEN}/src/block.ts`, content: 'explorer' }],
@@ -650,7 +645,6 @@ describe('a new chat beside an open app', () => {
   /** The calls that changed (or could have changed) the open app, as its sandbox saw them. */
   const changesTo = (sandbox: string) =>
     fake.calls.filter((c) => c.sandbox === sandbox && MUTATING.has(c.tool));
-  /** The incident's first reply in the new chat: a checklist, shown while the dashboard was open. */
   const checklistShown = () =>
     messagesOf([
       [
@@ -667,19 +661,16 @@ describe('a new chat beside an open app', () => {
       page: { app: OPEN },
       history: { earlier: checklistShown(), current: [] },
     });
-    // Reading it is not changing it.
     expect(await call(tools.tools, 'sandbox__list_dir', { path: OPEN })).toBe('src/');
     for (const [name, input] of CHANGES)
       expect(await call(tools.tools, name, input), name).toMatchObject({
         error: openAppNotChosen(OPEN),
       });
     expect(changesTo(dashboard.name)).toEqual([]);
-    // The page is told of each refusal too.
     expect(reported.filter((r) => r.refused === openAppNotChosen(OPEN))).toHaveLength(
       CHANGES.length
     );
 
-    // What the refusal says to do: make the new app. It opens under its own key.
     expect(await call(tools.tools, 'create_app', { name: 'LoRA explorer' })).toMatchObject({
       app: 'lora-explorer',
     });
@@ -720,7 +711,6 @@ describe('a new chat beside an open app', () => {
   it('once the user asks to change the open app, use_open_app chooses it and the change runs', async () => {
     const dashboard = fake.add(OPEN);
     const { tools } = await open({ page: { app: OPEN }, history: NEW_CHAT });
-    // Another app's key chooses nothing.
     expect(await call(tools.tools, 'use_open_app', { app: 'lora-explorer' })).toMatchObject({
       error: expect.stringMatching(/open now is buzz-dashboard/),
     });

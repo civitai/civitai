@@ -73,7 +73,6 @@ export interface AppToolsOptions {
   open: (app: string) => Promise<{ sandbox: Sandbox; created: boolean }>;
 }
 
-/** `existed`: no new app was made, so the chat has not chosen this one (the gate's `openApp`). */
 /** What a create_app that made no new app adds: it does not choose the app for the chat. */
 const CHOOSE_FIRST =
   'Changes to it are refused until it is chosen: call use_open_app first if this chat has not, and only if the user asked to change it.';

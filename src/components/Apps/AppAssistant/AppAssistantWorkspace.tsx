@@ -452,7 +452,8 @@ export function AppAssistantWorkspace({
         getSession: () => live.current.session,
         setSession: showPreview,
       }),
-      ...appTools.tools,
+      // A reloaded chat keeps the app it made or chose: its saved calls tell the gate as they show.
+      ...gate.restoringChoices(appTools.tools, () => chatIdRef.current),
       ...gate.tools,
       ...(remoteRunner ? {} : coverTools),
     }),

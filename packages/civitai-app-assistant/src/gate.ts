@@ -207,6 +207,11 @@ export interface GateCore {
   clearAwaiting(): void;
   /** Starts from what the conversation already did; call before the first call of the reply. */
   restore(state: GateRestore): void;
+  /**
+   * A saved call of `conversationId` as a reopened chat shows it (the page, which keeps no history):
+   * what it chose counts, as `restore` reads it on the runner, unless this page load chose since.
+   */
+  restoreChoice(conversationId: string, result: ToolResult): void;
 }
 
 /**
@@ -223,13 +228,16 @@ export function createGateCore({
   openApp,
 }: GateCoreOptions = {}): GateCore {
   let conversationId: string | null = null;
-  // The app each conversation made or chose, which it may change, by conversation id: the page's one
-  // gate serves every chat the user moves between. Not cleared by `reset`: the page resets as the app
-  // it just made opens, after the `create_app` result chose it.
+  // Keyed by conversation: the page's one gate serves every chat. Not cleared by reset: the page resets
+  // as the new app opens, after create_app's result chose it.
   const chosenApps = new Map<string, string>();
+  // Chosen by a call made since this gate began, which a saved call shown later never overrides.
+  const chosenLive = new Set<string>();
   const choose = (result: ToolResult) => {
     const app = chosenAppOf(result);
-    if (app !== null && conversationId !== null) chosenApps.set(conversationId, app);
+    if (app === null || conversationId === null) return;
+    chosenApps.set(conversationId, app);
+    chosenLive.add(conversationId);
   };
   // The chat numbers every reply, Continue and Retry included.
   let reply: number | null = null;
@@ -443,6 +451,7 @@ export function createGateCore({
       conversationId = id;
       reset();
       chosenApps.delete(id);
+      chosenLive.delete(id);
       for (const result of [...earlier, ...current]) choose(result);
       // Without app tags (the page), every checklist counts, as it did before.
       const forThisApp = (result: ToolResult) =>
@@ -458,6 +467,10 @@ export function createGateCore({
         if (result.refused === undefined && !result.stopped) verify(result);
       }
       carriedCalls = current.filter((result) => result.subagent === undefined).length;
+    },
+    restoreChoice(id, result) {
+      const app = chosenAppOf(result);
+      if (app !== null && !chosenLive.has(id)) chosenApps.set(id, app);
     },
   };
 }

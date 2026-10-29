@@ -11,11 +11,6 @@ import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
 import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
 import { buildAssistantInstructions } from '~/components/Apps/AppAssistant/assistantInstructions';
 
-/**
- * The incident (server runner, 2026-10-29): buzz-dashboard was open, the tester pressed New chat and
- * asked for a LoRA explorer, and the reply deleted and rewrote buzz-dashboard's files. These wire the
- * page's gate and app tools as `AppAssistantWorkspace` does, and drive them as the chat does.
- */
 const OPEN = 'buzz-dashboard';
 
 const sandbox = (app: string): Sandbox => ({
@@ -28,7 +23,7 @@ const sandbox = (app: string): Sandbox => ({
   expiresAt: null,
 });
 
-/** Every sandbox call the incident's reply made that changed the app, and more. */
+/** Sandbox calls that can change the app. */
 const CHANGES: readonly (readonly [string, Record<string, unknown>])[] = [
   ['sandbox__delete_path', { path: `${OPEN}/src/block.ts` }],
   ['sandbox__write_file', { path: `${OPEN}/src/block.ts`, content: 'explorer' }],
@@ -93,7 +88,13 @@ function workspace({
     gate.onToolResult(result);
     return result.isError ? { error: (result.output as { error: string }).error } : decision;
   };
-  return { live, gate, call, open };
+  /** The open chat, as `chat-change` names it. */
+  const shown = { chatId: null as string | null };
+  const tools = gate.restoringChoices(appTools.tools, () => shown.chatId);
+  /** A saved call as a reopened chat renders it. */
+  const render = (name: string, state: 'done' | 'error', output: unknown) =>
+    tools[name].render?.({ name, input: {}, state, output });
+  return { live, gate, call, open, shown, render };
 }
 
 const NEW_CHAT = { conversationId: 'chat-new', reply: 1 };
@@ -147,7 +148,6 @@ describe('a new chat beside an open app', () => {
     expect(await call('sandbox__write_file', { path: `${OPEN}/a` }, another)).toEqual({
       refuse: openAppNotChosen(OPEN),
     });
-    // Control: the first chat still may.
     expect(
       await call('sandbox__write_file', { path: `${OPEN}/a` }, { ...NEW_CHAT, reply: 2 })
     ).toEqual({ allow: true });
@@ -241,8 +241,7 @@ describe('at the kept-apps limit', () => {
 });
 
 describe('what the assistant is told about the open app', () => {
-  // Instruction text alone did not stop the incident (it already said to call create_app for a new
-  // app); the gate above is what holds. This pins the sentence that names the gate, whole.
+  // Instructions alone are not the control; the gate is.
   it.each(['browser', 'remote'] as const)('on the %s runner', (runner) => {
     const text = buildAssistantInstructions({
       sandbox: { name: 'sbx-1', app: OPEN, state: 'running' },
@@ -254,5 +253,61 @@ describe('what the assistant is told about the open app', () => {
     expect(text).toContain(
       'When the user asks for a different, new app, call create_app; the open one is paused and kept. A chat changes only an app it made or chose with use_open_app (other changes are refused): choose the open app only when the user clearly asks to change it, and when unsure, ask "Make a new app, or replace buzz-dashboard?" first.'
     );
+  });
+});
+
+describe('a reloaded chat', () => {
+  const SAVED = { conversationId: 'chat-saved', reply: 1 };
+  const made = (app: string) => ({ app, state: 'running', note: 'n' });
+
+  it('that made the open app may change it once its saved create_app shows', async () => {
+    const { call, shown, render } = workspace();
+    shown.chatId = SAVED.conversationId;
+    render('create_app', 'done', made(OPEN));
+    expect(await call('sandbox__write_file', { path: `${OPEN}/a` }, SAVED)).toEqual({
+      allow: true,
+    });
+  });
+
+  it('that chose the open app may change it once its saved use_open_app shows', async () => {
+    const { call, shown, render } = workspace();
+    shown.chatId = SAVED.conversationId;
+    render('use_open_app', 'done', { app: OPEN, note: 'n' });
+    expect(await call('sandbox__write_file', { path: `${OPEN}/a` }, SAVED)).toEqual({
+      allow: true,
+    });
+  });
+
+  it('that never made or chose the open app is still refused', async () => {
+    const { call, shown, render } = workspace();
+    shown.chatId = SAVED.conversationId;
+    render('create_app', 'error', { error: KEEP_LIMIT });
+    render('create_app', 'done', { ...made(OPEN), existed: true });
+    render('create_app', 'done', made('another-app'));
+    expect(await call('sandbox__write_file', { path: `${OPEN}/a` }, SAVED)).toEqual({
+      refuse: openAppNotChosen(OPEN),
+    });
+  });
+
+  it('a saved choice counts only for the chat it was shown in', async () => {
+    const { call, shown, render } = workspace();
+    render('create_app', 'done', made(OPEN));
+    shown.chatId = 'chat-other';
+    render('create_app', 'done', made(OPEN));
+    expect(await call('sandbox__write_file', { path: `${OPEN}/a` }, SAVED)).toEqual({
+      refuse: openAppNotChosen(OPEN),
+    });
+  });
+
+  it('a saved call shown again never undoes a choice made since the reload', async () => {
+    const { call, shown, render, live } = workspace({ apps: [sandbox('other-app')] });
+    shown.chatId = SAVED.conversationId;
+    render('create_app', 'done', made(OPEN));
+    expect(await call('use_open_app', { app: 'other-app' }, SAVED)).toEqual({ allow: true });
+    render('create_app', 'done', made(OPEN));
+    expect(live.active?.app).toBe('other-app');
+    expect(await call('sandbox__write_file', { path: 'other-app/a' }, SAVED)).toEqual({
+      allow: true,
+    });
   });
 });

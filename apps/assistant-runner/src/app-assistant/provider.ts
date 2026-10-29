@@ -1,7 +1,9 @@
 import {
+  CREATE_APP,
   NO_APP_REFUSAL,
   SET_CHECKLIST,
   START_PREVIEW,
+  USE_OPEN_APP,
   appAssistantSubagents,
   assistantSystemPrompt,
   buildAssistantInstructions,
@@ -85,8 +87,8 @@ const REPORTED_OUTPUT_CHARS = 200;
  * preview's are the runner's own (`RunnerPreview`), which drive the tunnel themselves.
  */
 const RUNNER_PAGE_TOOLS = [
-  'create_app',
-  'use_open_app',
+  CREATE_APP,
+  USE_OPEN_APP,
   'set_checklist',
   'report_ready',
   'start_preview',

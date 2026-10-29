@@ -2260,6 +2260,23 @@ describe('AppAssistantWorkspace tool gate', () => {
     );
   });
 
+  test('a reloaded chat that made the open app may change it once its saved create_app shows', async () => {
+    await mount();
+    await openFirst();
+    const saved = { conversationId: 'chat-1', reply: 1 };
+    const write = () =>
+      m.chat!.beforeToolCall!('sandbox__write_file', { path: 'app-aaaa/a' }, saved);
+    m.chat!.onChatChange!('chat-1');
+    expect(write()).toEqual({ refuse: openAppNotChosen('app-aaaa') });
+    m.chat!.tools.create_app.render!({
+      name: 'create_app',
+      input: { name: 'App aaaa' },
+      state: 'done',
+      output: { app: 'app-aaaa', state: 'running', note: 'n' },
+    });
+    expect(write()).toEqual({ allow: true });
+  });
+
   test('hands the chat a gate that ends a reply at the tool-call limit, and counts each reply afresh', async () => {
     await mount();
     for (let i = 0; i < 150; i++)
