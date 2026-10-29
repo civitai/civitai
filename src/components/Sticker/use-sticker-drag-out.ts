@@ -37,11 +37,9 @@ export function useStickerDragOut(maxScale: number) {
   // behind and could drop a sticker onto an image nobody is looking at any more.
   useEffect(() => () => endGrab.current?.(), []);
 
-  // 🔴 ON THE SHELF FROM MOUNT, NOT ADDED AT THE LONG PRESS. Browsers decide when
-  // a touch starts whether its moves can be cancelled at all; a listener added
-  // mid-gesture gets `cancelable: false` and the page scrolls anyway. Held
-  // until the finger lifts, not just until the draft exists: the same touch
-  // goes on to move the draft, still under the tile's `pan-y`.
+  // Bound to the shelf from mount: whether a touch's moves can be cancelled is
+  // decided when it starts. Held until the finger lifts, because the same touch
+  // goes on to move the new draft.
   const holding = useRef(false);
   const shelfCleanup = useRef<(() => void) | null>(null);
   const shelfRef = useCallback((node: HTMLElement | null) => {

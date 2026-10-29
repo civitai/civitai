@@ -99,7 +99,7 @@ const renderTray = async () => {
       <StickerPlacementTray imageId={IMAGE_ID} imageNsfwLevel={NsfwLevel.PG} />
     </IsClientProvider>
   );
-  await expect.element(page.getByText('Drag a sticker onto the image.')).toBeInTheDocument();
+  await expect.element(page.getByText('Tap or drag a sticker onto the image.')).toBeInTheDocument();
 };
 
 describe('sticker placement tray overflow', () => {
@@ -160,9 +160,8 @@ describe('sticker placement tray overflow', () => {
 });
 
 describe('sticker placement tray on a phone', () => {
-  // `touch-action: none` on every tile meant no swipe on the shelf could ever
-  // scroll it. (The iOS callout setting cannot be read back in Chromium.)
-  test('a swipe on a sticker tile scrolls the shelf', async () => {
+  // The iOS callout setting cannot be read back in Chromium, so it is not asserted.
+  test('sticker tiles leave vertical swipes to the shelf and select no text', async () => {
     await renderTray();
     const tile = document.querySelector('img[alt=":letter-0:"]')?.closest('button');
     expect(tile).not.toBeNull();

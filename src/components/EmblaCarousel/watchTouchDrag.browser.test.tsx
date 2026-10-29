@@ -5,13 +5,7 @@ import { renderWithProviders } from '../../../test/component-setup';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { STICKER_EDITOR_ATTR, watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
 
-/**
- * A finger dragging a sticker that is being placed must not swipe the carousel.
- *
- * Embla starts a drag from a native `touchstart` on its own root. The draft's
- * React `onPointerDown → stopPropagation()` handles a different event, so it
- * cannot stop that one — the exclusion has to live in `watchDrag`.
- */
+/** A touch swipe from right to left, starting on `target`. */
 const swipe = (target: Element) => {
   const at = (x: number) =>
     new Touch({ identifier: 1, target, clientX: x, clientY: 50, pageX: x, pageY: 50 });
@@ -64,6 +58,8 @@ async function renderCarousel() {
   return () => embla as EmblaCarouselType;
 }
 
+// The draft also stops pointerdown, as the real one does: that must not be what
+// keeps the carousel still.
 describe('watchTouchDrag', () => {
   test('a swipe on the image changes slide', async () => {
     const embla = await renderCarousel();

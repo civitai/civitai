@@ -246,7 +246,7 @@ export function StickerPlacementTray({
   // Before that it is an instruction about nothing.
   const instruction = drafts.length
     ? 'Drag out as many as you like, then pay to place the ones you want.'
-    : 'Drag a sticker onto the image.';
+    : 'Tap or drag a sticker onto the image.';
 
   return (
     // Measured as the obstacle the buy button avoids, and deliberately measured
