@@ -2,43 +2,17 @@ import { createNotificationsClient } from '@civitai/notifications';
 import { env } from '$env/dynamic/private';
 import { db } from '../db';
 import { accessibleIds } from '../access';
-import { BatchRejected, type SendBatch } from './notify.service';
-import { isDefinitiveRejection } from './rejection';
+import type { SendBatch } from './notify.service';
+import { clientConfig, makeSendBatch } from './sender';
 
 // Lazy so a missing NOTIFICATIONS_ENDPOINT fails on the first send, not at boot.
 let client: ReturnType<typeof createNotificationsClient> | undefined;
 
-function notifications() {
-  client ??= createNotificationsClient({
-    endpoint: env.NOTIFICATIONS_ENDPOINT,
-    token: env.NOTIFICATIONS_TOKEN,
-    onFailure: (failure) =>
-      console.error('knights: notifications-request-failed', {
-        path: failure.path,
-        status: failure.status,
-        message: failure.message,
-      }),
-  });
-  return client;
-}
+const notifications = () => (client ??= createNotificationsClient(clientConfig(env)));
 
-export const sendBatch: SendBatch = async (batch) => {
-  try {
-    await notifications().createNotificationsBulk([
-      {
-        key: batch.key,
-        type: batch.type,
-        category: 'Other',
-        users: batch.userIds,
-        details: {},
-      },
-    ]);
-  } catch (error) {
-    if (isDefinitiveRejection(error))
-      throw new BatchRejected('batch not accepted', { cause: error });
-    throw error;
-  }
-};
+export const sendBatch: SendBatch = makeSendBatch((rows) =>
+  notifications().createNotificationsBulk(rows)
+);
 
 const MODERATOR_LOOKUP_CHUNK = 5000;
 

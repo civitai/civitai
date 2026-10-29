@@ -8,10 +8,6 @@ describe('isDefinitiveRejection', () => {
     ['a 401', new NotificationsClientError('auth', 401, false)],
     ['a 429', new NotificationsClientError('slow down', 429, true)],
     ['a missing endpoint', new NotificationsClientError('no endpoint', undefined, false)],
-    [
-      'a payload the client refused to send',
-      Object.assign(new Error('invalid'), { name: 'ZodError' }),
-    ],
   ])('treats %s as not accepted', (_, error) => {
     expect(isDefinitiveRejection(error)).toBe(true);
   });
@@ -22,6 +18,10 @@ describe('isDefinitiveRejection', () => {
     ['a 503', new NotificationsClientError('down', 503, true)],
     ['an error of unknown origin', new Error('socket hang up')],
     ['a non-error throw', 'boom'],
+    [
+      'an error of unknown origin that looks like a validation error',
+      Object.assign(new Error('x'), { name: 'ZodError' }),
+    ],
   ])('treats %s as unknown', (_, error) => {
     expect(isDefinitiveRejection(error)).toBe(false);
   });
