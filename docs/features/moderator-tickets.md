@@ -33,6 +33,13 @@ is its own page grant. Acting on a ticket is a separate permission:
   Lookup's page grant; each action keeps the grant it needs there (`user.ban`, or the `/users` page) and
   re-checks that the posted user is the ticket's linked user. A private note names the moderator. Lifting
   only: no ban, new restriction or strike from a ticket.
+- A moderation ticket whose Feature is "Moderation Decision" or "Account Restriction or Banned Account" and
+  that links to a Civitai user shows an Appeals card: the user's pending appeals and those filed or decided
+  in the last 30 days, each typed once (removed content, site form, model flag, image) and shown only when
+  the moderator holds that queue's page grant. Appeals on an entity the ticket links to are marked. A pending
+  image appeal can be ruled on from the card under `/images/appeals`; the action re-checks that the appeal is
+  the linked user's, still pending, and adds a private note naming the moderator. Cards are declared in the
+  panel registry (`$lib/tickets/panels.ts`).
 - Both views read one shared Redis snapshot of every live ticket (subject, status, Feature, tags, dates,
   requester name; never a body or an email address), not Freshdesk, so a page load costs no Freshdesk calls. The snapshot
   is rebuilt in full from the status searches when missing or six hours old (Freshdesk search returns at most
