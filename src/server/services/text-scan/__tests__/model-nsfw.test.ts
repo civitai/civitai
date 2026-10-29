@@ -39,9 +39,18 @@ const model = (over: Record<string, unknown> = {}) => ({
   userId: 99,
   ...over,
 });
+// Nested `Prisma.raw` fragments are inlined so an assertion sees the SQL that runs; bound values stay `?`.
 const flipSql = () =>
   dbMock.dbWrite.$executeRaw.mock.calls
-    .map((c: unknown[]) => (c[0] as readonly string[]).join('?'))
+    .map(([strings, ...values]: [readonly string[], ...unknown[]]) =>
+      strings.reduce((sql, part, i) => {
+        if (i === 0) return part;
+        const v = values[i - 1];
+        const raw = (v as { sql?: unknown } | null)?.sql;
+        const inlined = typeof raw === 'string' ? raw : '?';
+        return sql + inlined + part;
+      }, '')
+    )
     .find((sql: string) => sql.includes('SET nsfw = TRUE'));
 
 beforeEach(() => {
@@ -56,7 +65,9 @@ describe('applyModelNsfwTextScan', () => {
     await applyModelNsfwTextScan(args(true));
     expect(flipSql()).toContain('array_append(');
     // Merged into meta in the same guarded write as the lock, never written back from a read.
-    expect(flipSql()).toMatch(/meta = \? \|\| jsonb_build_object\(\s*'systemNsfwLock'/);
+    expect(flipSql()).toMatch(
+      /meta = \(CASE WHEN jsonb_typeof\(m\.meta\) = 'object' THEN m\.meta ELSE '\{\}'::jsonb END\) \|\| jsonb_build_object\(\s*'systemNsfwLock'/
+    );
     const flipCall = dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
       (c[0] as readonly string[]).join('?').includes('SET nsfw = TRUE')
     );

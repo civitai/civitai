@@ -341,7 +341,12 @@ describe('upsertModel — profanity lock', () => {
     const data = updateData();
     expect(data.nsfw).toBe(true);
     expect(data.lockedProperties).toEqual(['nsfw']);
-    expect(data.meta).toEqual(expect.objectContaining({ profanityMatches: ['badword'] }));
+    expect(data.meta).toEqual(
+      expect.objectContaining({
+        profanityMatches: ['badword'],
+        systemNsfwLock: { source: 'profanity-filter', at: expect.any(String) },
+      })
+    );
   });
 
   it('does not let a client-claimed nsfw lock suppress the profanity flag', async () => {
@@ -400,6 +405,32 @@ describe('upsertModel — profanity lock', () => {
     );
     expect(data).not.toHaveProperty('nsfw');
     expect(data).not.toHaveProperty('lockedProperties');
+    expect(data.meta).not.toHaveProperty('systemNsfwLock');
+  });
+});
+
+describe('upsertModel — system nsfw lock marker', () => {
+  const marker = { source: 'text-scan', at: '2026-09-05T00:00:00.000Z' };
+
+  it("keeps the stored marker through the owner's clean edit", async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: { systemNsfwLock: marker } });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, name: 'Cleaned', meta: {} } as never);
+
+    expect(updateData().meta).toEqual(expect.objectContaining({ systemNsfwLock: marker }));
+  });
+
+  it('ignores a marker the client sends', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'], meta: null });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: OWNER_ID,
+      name: 'Cleaned',
+      meta: { systemNsfwLock: marker },
+    } as never);
+
+    expect(updateData().meta ?? {}).not.toHaveProperty('systemNsfwLock');
   });
 });
 

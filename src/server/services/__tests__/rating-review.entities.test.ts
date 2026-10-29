@@ -133,6 +133,22 @@ describe('loadRatingReviewSubject', () => {
       );
     });
 
+    it('counts every moderator action that locks nsfw, including SFW-only', async () => {
+      await systemLock(locked());
+      const [{ where }] = dbMock.dbRead.modActivity.findFirst.mock.calls[0];
+      expect(where.activity.in).toEqual(
+        expect.arrayContaining([
+          'lockProperty:nsfw',
+          'setSfwOnly',
+          'setMinor',
+          'setMinorAutoHash',
+          'setMinorTextScan',
+          'setPoi',
+          'setPoiAutoHash',
+        ])
+      );
+    });
+
     it('fails closed when a later write dropped the marker', async () => {
       expect(await systemLock(locked({ meta: {} }))).toBe(false);
       expect(await systemLock(locked({ meta: null }))).toBe(false);
