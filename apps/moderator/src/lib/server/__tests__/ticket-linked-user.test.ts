@@ -21,7 +21,8 @@ vi.mock('../user-actions.service', () => ({
 }));
 vi.mock('../tickets/detail', () => ({ resolveTicketView, linkedCivitaiUserId }));
 
-const { linkedUser } = await import('../tickets/account-actions');
+const { linkedUser, linkedUserFor } = await import('../tickets/account-actions');
+const { appealsPanelFor } = await import('$lib/tickets/panels');
 
 const ticket = { cfFeature: ACCOUNT_RESTRICTION_FEATURE };
 
@@ -58,5 +59,27 @@ describe('linkedUser', () => {
     expect(getTicketDetail).not.toHaveBeenCalled();
     getTicketDetail.mockResolvedValue({ status: 'unavailable', reason: 'timeout' });
     expect(await linkedUser('5')).toMatchObject({ status: 'refused', code: 503 });
+  });
+});
+
+describe('linkedUserFor the appeals panel', () => {
+  const forAppeals = linkedUserFor(appealsPanelFor, 'not an appeals ticket');
+
+  it('accepts a Moderation Decision ticket, which the account panel does not', async () => {
+    getTicketDetail.mockResolvedValue({
+      status: 'found',
+      ticket: { cfFeature: 'Moderation Decision' },
+    });
+    expect(await forAppeals('5')).toEqual({ status: 'ok', userId: 7 });
+    expect(await linkedUser('5')).toMatchObject({ status: 'refused', code: 409 });
+  });
+
+  it('refuses a ticket of any other feature with the message it was given', async () => {
+    getTicketDetail.mockResolvedValue({ status: 'found', ticket: { cfFeature: 'Billing' } });
+    expect(await forAppeals('5')).toEqual({
+      status: 'refused',
+      code: 409,
+      message: 'not an appeals ticket',
+    });
   });
 });

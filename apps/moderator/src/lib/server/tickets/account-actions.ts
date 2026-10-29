@@ -5,15 +5,33 @@ import { addPrivateNote } from '../freshdesk-write.service';
 import { getTicketDetail, isFreshdeskId } from '../freshdesk.service';
 import { revokeTimedMute, resolveRestriction } from '../user-actions.service';
 import { accountPanelFor } from '$lib/tickets/account-panel';
+import type { PanelContext, PanelVisibility } from '$lib/tickets/panels';
 import { plainTextToHtml } from '$lib/tickets/reply-html';
 import { linkedCivitaiUserId, resolveTicketView } from './detail';
 import { createTicketAccountActions, type LinkedUser } from './account-write';
 
 /**
- * The user a ticket links to, read live right before a write. The ticket must still be a moderation
- * ticket about an account: the same rule that decides whether the page shows the panel.
+ * The user a ticket links to, read live right before a write. The ticket must still be one the panel
+ * the action belongs to shows for (`visibility`, the same rule that decides whether the page shows it).
  */
-export async function linkedUser(ticketId: string): Promise<LinkedUser> {
+export function linkedUserFor(
+  visibility: (ticket: PanelContext) => PanelVisibility,
+  notShown: string
+) {
+  return (ticketId: string): Promise<LinkedUser> => readLinkedUser(ticketId, visibility, notShown);
+}
+
+/** For the account panel: a moderation ticket about an account. */
+export const linkedUser = linkedUserFor(
+  accountPanelFor,
+  'This is not an account ticket — nothing was changed.'
+);
+
+async function readLinkedUser(
+  ticketId: string,
+  visibility: (ticket: PanelContext) => PanelVisibility,
+  notShown: string
+): Promise<LinkedUser> {
   if (!isFreshdeskId(ticketId)) return { status: 'refused', code: 404, message: 'No such ticket.' };
   const res = await getTicketDetail(ticketId);
   if (res.status !== 'found')
@@ -30,18 +48,13 @@ export async function linkedUser(ticketId: string): Promise<LinkedUser> {
       message: `This ticket now belongs to the ${routesTo} view — nothing was changed.`,
     };
   const userId = await linkedCivitaiUserId(res.ticket, routed);
-  const panel = accountPanelFor({
+  const panel = visibility({
     view: 'moderation',
     cfFeature: res.ticket.cfFeature,
     routerTopic: routed?.topic ?? null,
     civitaiUserId: userId,
   });
-  if (panel === 'hidden')
-    return {
-      status: 'refused',
-      code: 409,
-      message: 'This is not an account ticket — nothing was changed.',
-    };
+  if (panel === 'hidden') return { status: 'refused', code: 409, message: notShown };
   return { status: 'ok', userId };
 }
 

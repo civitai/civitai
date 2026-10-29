@@ -5,8 +5,17 @@
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
   import type { TicketAppeal, TicketAppeals } from '$lib/server/tickets/appeals';
   import { APPEAL_KIND_LABEL, APPEAL_WINDOW_DAYS } from '$lib/tickets/appeals';
+  import TicketAppealRuling from './TicketAppealRuling.svelte';
 
-  let { appeals }: { appeals: TicketAppeals } = $props();
+  let {
+    ticketId,
+    appeals,
+    ondone,
+  }: {
+    ticketId: string;
+    appeals: TicketAppeals;
+    ondone: (what: string, data: Record<string, unknown> | undefined) => void;
+  } = $props();
 
   function entityHref(a: TicketAppeal): string | null {
     if (a.entityType === 'Image') return imageLookupUrl(a.entityId);
@@ -48,6 +57,9 @@
                 ·
               {/if}{#if a.resolvedMessage}“{a.resolvedMessage}”{/if}
             </div>
+          {/if}
+          {#if a.rulable && appeals.status === 'ok'}
+            <TicketAppealRuling {ticketId} userId={appeals.userId} appealId={a.id} {ondone} />
           {/if}
         </li>
       {/each}

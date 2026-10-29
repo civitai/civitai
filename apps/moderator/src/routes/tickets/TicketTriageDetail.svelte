@@ -195,7 +195,7 @@
     <TicketAccount ticketId={row.id} {account} canAct={canAccountAct} {canUnban} ondone={accountDone} />
   {/if}
   {#if appeals}
-    <TicketAppeals {appeals} />
+    <TicketAppeals ticketId={row.id} {appeals} ondone={accountDone} />
   {/if}
   <TriageCard title="Requester" dense>
     <dl class="m-0 grid grid-cols-[max-content_1fr] gap-x-3 gap-y-1">

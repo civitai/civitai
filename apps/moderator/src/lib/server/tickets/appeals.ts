@@ -23,6 +23,8 @@ export type TicketAppeal = {
   resolvedMessage: string | null;
   /** The ticket's subject or description links to this appeal's content. */
   mentioned: boolean;
+  /** Pending and a plain image appeal, which the image appeals grant already shown it for: the only rows the card offers a ruling for. */
+  rulable: boolean;
 };
 
 export type TicketAppeals =
@@ -144,6 +146,7 @@ export async function appealsSectionFor(
       resolvedReason: row.resolvedReason,
       resolvedMessage: row.resolvedMessage,
       mentioned: mentioned(row.entityType, row.entityId),
+      rulable: kind === 'image' && row.status === 'Pending',
     })),
   };
 }

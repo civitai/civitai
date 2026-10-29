@@ -49,6 +49,59 @@ const succeeded = (result: unknown): boolean =>
   (result as { success?: unknown }).success === true;
 
 /**
+ * The ticket and user a ticket action was posted for, once the user is confirmed to be the one the
+ * ticket links to. Shared by every action a ticket panel offers.
+ */
+export async function checkTicketTarget(
+  linkedUser: AccountWriteDeps['linkedUser'],
+  event: RequestEvent
+) {
+  const form = await event.request.clone().formData();
+  const ids = parseForm(target, form);
+  if (typeof ids === 'string') return { refused: fail(400, { error: ids }) };
+  const linked = await linkedUser(ids.ticketId);
+  if (linked.status === 'refused') return { refused: fail(linked.code, { error: linked.message }) };
+  if (linked.userId === null || linked.userId !== ids.userId)
+    return {
+      refused: fail(409, {
+        error: 'That account is not the one linked to this ticket — nothing was changed.',
+      }),
+    };
+  return { ticketId: ids.ticketId, userId: ids.userId, form };
+}
+
+/**
+ * The private note naming the moderator, left after a change. A failed note is a `warning` on a
+ * success, never a failure: the change is already made.
+ */
+export async function addTicketNote(
+  note: AccountWriteDeps['note'],
+  event: RequestEvent,
+  ticketId: string,
+  what: string
+) {
+  const { id, username } = event.locals.user;
+  const text = `${what} by ${username ?? 'unknown'} (user ${id}) from the moderator app.`;
+  let res: WriteResult;
+  try {
+    res = await note(ticketId, text);
+  } catch (e) {
+    res = {
+      status: 'error',
+      httpStatus: null,
+      certain: false,
+      message: e instanceof Error ? e.message : String(e),
+    };
+  }
+  if (res.status === 'ok') return { success: true as const };
+  const why = res.status === 'error' ? res.message : 'the Freshdesk write key is not configured';
+  return {
+    success: true as const,
+    warning: `The change was made, but the note on the ticket failed: ${why}`,
+  };
+}
+
+/**
  * 🔴 THE ACCOUNT ACTED ON IS THE TICKET'S, NEVER THE FORM'S. The posted `userId` must equal the user the
  * ticket links to, and a restriction must belong to that user, or a forged post would act on anyone
  * through a page whose grant says nothing about that account. Grants are not widened: each action keeps
@@ -57,43 +110,9 @@ const succeeded = (result: unknown): boolean =>
  * A failed note after the change is a `warning` on a success, never a failure.
  */
 export function createTicketAccountActions(deps: AccountWriteDeps) {
-  async function checked(event: RequestEvent) {
-    const form = await event.request.clone().formData();
-    const ids = parseForm(target, form);
-    if (typeof ids === 'string') return { refused: fail(400, { error: ids }) };
-    const linked = await deps.linkedUser(ids.ticketId);
-    if (linked.status === 'refused')
-      return { refused: fail(linked.code, { error: linked.message }) };
-    if (linked.userId === null || linked.userId !== ids.userId)
-      return {
-        refused: fail(409, {
-          error: 'That account is not the one linked to this ticket — nothing was changed.',
-        }),
-      };
-    return { ticketId: ids.ticketId, userId: ids.userId, form };
-  }
-
-  async function noted(event: RequestEvent, ticketId: string, what: string) {
-    const { id, username } = event.locals.user;
-    const text = `${what} by ${username ?? 'unknown'} (user ${id}) from the moderator app.`;
-    let res: WriteResult;
-    try {
-      res = await deps.note(ticketId, text);
-    } catch (e) {
-      res = {
-        status: 'error',
-        httpStatus: null,
-        certain: false,
-        message: e instanceof Error ? e.message : String(e),
-      };
-    }
-    if (res.status === 'ok') return { success: true as const };
-    const why = res.status === 'error' ? res.message : 'the Freshdesk write key is not configured';
-    return {
-      success: true as const,
-      warning: `The change was made, but the note on the ticket failed: ${why}`,
-    };
-  }
+  const checked = (event: RequestEvent) => checkTicketTarget(deps.linkedUser, event);
+  const noted = (event: RequestEvent, ticketId: string, what: string) =>
+    addTicketNote(deps.note, event, ticketId, what);
 
   async function viaInner(
     event: RequestEvent,

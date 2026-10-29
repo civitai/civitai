@@ -207,7 +207,7 @@ async function reportIdsByImage(reportIds: number[]): Promise<Map<number, number
   return byImage;
 }
 
-function parseResolutionReason(form: FormData, status: ResolutionVerdict<'appeal'>) {
+export function parseResolutionReason(form: FormData, status: ResolutionVerdict<'appeal'>) {
   const input = parseForm(z.object(resolutionReasonFields), form);
   return typeof input === 'string' ? input : checkedResolutionReason('appeal', status, input);
 }

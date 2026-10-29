@@ -73,6 +73,24 @@ describe('appealsSectionFor', () => {
     expect(res.status === 'ok' && res.appeals.map((a) => a.id)).toEqual([2, 4]);
   });
 
+  it('offers a ruling only on a pending image appeal', async () => {
+    appealsOf.mockResolvedValue([
+      { ...base, id: 1 },
+      { ...base, id: 2, status: 'Approved' },
+      { ...base, id: 3, entityType: 'Model' },
+      { ...base, id: 4, entityRemovedAt: new Date('2026-10-02T00:00:00Z') },
+      { ...base, id: 5, category: 'Other' },
+    ]);
+    const res = await appealsSectionFor(ticket(), reads);
+    expect(res.status === 'ok' && res.appeals.map((a) => [a.id, a.rulable])).toEqual([
+      [1, true],
+      [2, false],
+      [3, false],
+      [4, false],
+      [5, false],
+    ]);
+  });
+
   it('carries the decision of a decided appeal', async () => {
     appealsOf.mockResolvedValue([
       {
