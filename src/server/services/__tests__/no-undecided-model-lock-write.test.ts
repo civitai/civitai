@@ -14,6 +14,11 @@ import { describe, expect, it } from 'vitest';
  * it writes the `Model` table and assigns `lockedProperties`. Each in-scope file is in the ledger
  * with its decision and the exact count of lock assignments it holds: a new file fails, a file that
  * gains or loses one fails, so every change to a lock write gets a decision.
+ *
+ * Limits, all failing OPEN (a writer the guard does not see): the decision is per file, so a new
+ * unmarked write inside a `clears` file passes once its count is bumped; a file that forwards a
+ * `data` object built elsewhere, with no `lockedProperties` literal of its own, is out of scope; so
+ * is SQL that names the table any other way than the patterns below.
  */
 const repoRoot = path.resolve(__dirname, '../../../..');
 const ROOTS = ['src', 'apps', 'packages', 'scripts'];
@@ -21,7 +26,7 @@ const SKIP =
   /node_modules|__tests__|\.test\.|\.spec\.|\/dist\/|\/build\/|\.svelte-kit|\/generated\//;
 
 const MODEL_WRITE =
-  /UPDATE\s+"Model"|\.model\.(update|updateMany|upsert|create)\b|updateTable\(\s*['"]Model['"]\s*\)|insertInto\(\s*['"]Model['"]\s*\)/;
+  /UPDATE\s+(?:ONLY\s+)?(?:public\.)?"Model"|\.model\.(update|updateMany|upsert|create)\b|updateTable\(\s*['"]Model(?:\s+as\s+\w+)?['"]\s*\)|insertInto\(\s*['"]Model['"]\s*\)/;
 // Assignments only: a `select { lockedProperties: true }` or a type annotation is not a write.
 const LOCK_WRITE =
   /"lockedProperties"\s*=(?!=)|\blockedProperties\s*:(?!\s*(?:true\b|string|boolean|readonly|Array\b|\w+\[\]))|(?<![.'"\w$])lockedProperties\s*[,}]|addLock\(/g;
@@ -29,14 +34,22 @@ const MARKER = /systemNsfwLock|SYSTEM_NSFW_LOCK_META_KEY|withoutSystemNsfwLock/;
 
 type Decision =
   /** Clears the marker where a moderator or rollback changes the lock. */
-  | { kind: 'clears' }
+  | { kind: 'clears'; except?: string }
   /** A system check that sets the marker with the lock it adds. */
   | { kind: 'sets' }
   /** Writes locks without touching the marker, and why that is safe. */
   | { kind: 'exempt'; why: string };
 
 const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
-  'src/server/services/model.service.ts': { lockWrites: 12, decision: { kind: 'clears' } },
+  'src/server/services/model.service.ts': {
+    lockWrites: 11,
+    decision: {
+      kind: 'clears',
+      except:
+        'setModelMinor / setModelSfwOnly / setModelPoi: each logs an activity the dispute reader treats as a moderator ruling',
+    },
+  },
+  'src/server/services/auto-nsfw.ts': { lockWrites: 2, decision: { kind: 'sets' } },
   'src/server/services/poi-hash.service.ts': { lockWrites: 4, decision: { kind: 'clears' } },
   'src/server/services/minor-hash.service.ts': { lockWrites: 1, decision: { kind: 'clears' } },
   'apps/moderator/src/lib/server/rating-reviews.service.ts': {
@@ -101,6 +114,8 @@ describe('no-undecided-model-lock-write', () => {
   it('sees raw, Prisma, Kysely and shorthand lock writes, and not a select', () => {
     const files: Record<string, string> = {
       'raw.ts': 'sql`UPDATE "Model" SET "lockedProperties" = ${x}`',
+      'qualified.ts': 'sql`UPDATE ONLY public."Model" SET "lockedProperties" = ${x}`',
+      'aliased.ts': "trx.updateTable('Model as m').set({ lockedProperties: next })",
       'prisma.ts': 'tx.model.update({ data: { lockedProperties: next } })',
       'kysely.ts': "trx.updateTable('Model').set({ lockedProperties: addLock('nsfw') })",
       'shorthand.ts': 'tx.model.update({ data: { nsfw, lockedProperties } })',
@@ -108,6 +123,8 @@ describe('no-undecided-model-lock-write', () => {
     };
     expect(Object.keys(lockWriters(Object.keys(files), (f) => files[f]))).toEqual([
       'raw.ts',
+      'qualified.ts',
+      'aliased.ts',
       'prisma.ts',
       'kysely.ts',
       'shorthand.ts',

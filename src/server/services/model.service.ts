@@ -127,7 +127,7 @@ import {
 import { readModelWithDetailsViaKysely } from '~/server/services/model-details.reads';
 import { modelFileSelect } from '~/server/selectors/modelFile.selector';
 import { simpleUserSelect, userWithCosmeticsSelect } from '~/server/selectors/user.selector';
-import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
+import { evaluateAutoNsfw, writeAutoNsfw } from '~/server/services/auto-nsfw';
 import { deleteBidsForModel, getLastAuctionReset } from '~/server/services/auction.service';
 import { enforceBlockedBrowsingTagsForModels } from '~/server/services/blocked-browsing-tags.service';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
@@ -3257,17 +3257,24 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
   await tx.$queryRaw`SELECT id FROM "Model" WHERE id = ${id} FOR NO KEY UPDATE`;
   const row = await tx.model.findUnique({
     where: { id },
-    select: { status: true, availability: true, meta: true, lockedProperties: true },
+    select: { status: true, availability: true, meta: true, lockedProperties: true, nsfw: true },
   });
   return row && { ...row, meta: row.meta as ModelMeta | null };
 }
 
 /**
- * Whether a moderator's save adds or removes the nsfw lock. Such a save makes the lock the
- * moderator's, so it drops the `systemNsfwLock` marker that lets an owner dispute a system-set one.
+ * Whether a moderator's save rules on the nsfw rating: adds or removes the nsfw lock, or changes
+ * nsfw itself. Such a save makes the rating the moderator's, so it drops the `systemNsfwLock`
+ * marker that lets an owner dispute a system-set lock.
  */
-function changesNsfwLock(stored: string[] | null | undefined, next: string[] | undefined) {
-  return next !== undefined && (stored ?? []).includes('nsfw') !== next.includes('nsfw');
+function rulesOnNsfw(
+  stored: { nsfw: boolean; lockedProperties: string[] | null } | null | undefined,
+  next: { nsfw?: boolean; lockedProperties?: string[] }
+) {
+  const lockChanged =
+    next.lockedProperties !== undefined &&
+    (stored?.lockedProperties ?? []).includes('nsfw') !== next.lockedProperties.includes('nsfw');
+  return lockChanged || (next.nsfw !== undefined && next.nsfw !== stored?.nsfw);
 }
 
 function withoutSystemNsfwLock(meta: ModelMeta): ModelMeta {
@@ -3615,6 +3622,13 @@ export const upsertModel = async (
         const locked = await lockModelRow(tx, id);
         const prevMeta = locked?.meta ?? null;
         if (!isModerator && isRemovedWithOwner(prevMeta)) throw removedWithOwnerEditError();
+        // The profanity lock was decided off the read before this transaction. A lock that landed
+        // since (a moderator's) wins: this save neither rewrites it nor claims it as the system's.
+        if (profanityAutoNsfw && locked?.lockedProperties.includes('nsfw')) {
+          delete data.nsfw;
+          delete data.lockedProperties;
+          meta = withoutSystemNsfwLock(meta ?? {});
+        }
         if (
           !isModerator &&
           locked &&
@@ -3641,7 +3655,7 @@ export const upsertModel = async (
           select: { type: true, poi: true, minor: true, sfwOnly: true, lockedProperties: true },
         });
         typeBeforeUpdate = replaced?.type;
-        if (isModerator && changesNsfwLock(replaced?.lockedProperties, data.lockedProperties))
+        if (isModerator && rulesOnNsfw(locked, data))
           mergedMeta = withoutSystemNsfwLock(mergedMeta);
         // Read here rather than off `beforeUpdate` so the recorded "before" is the row this
         // transaction replaces. Only for a save that sends permissions at all.
@@ -4053,31 +4067,7 @@ export async function applyModelContentChange({
           lockedProperties: stored.lockedProperties,
         })
       : null;
-    if (flagged) {
-      // jsonb merges, never `stored.meta` written back: that read is stale by now, and writing it
-      // would drop whatever a moderator or a scan set since. `updatedAt` is bumped by hand, unlike the
-      // body write above: the model's rating actually changed.
-      const patch = JSON.stringify(flagged.metaPatch);
-      const locked = flagged.lock
-        ? await dbWrite.$executeRaw`
-            UPDATE "Model" m
-            SET nsfw = TRUE,
-                "lockedProperties" = array_append(COALESCE(m."lockedProperties", ARRAY[]::text[]), 'nsfw'),
-                meta = ${asJsonbObjectSql('m.meta')} || ${patch}::jsonb || jsonb_build_object(
-                  ${SYSTEM_NSFW_LOCK_META_KEY}::text,
-                  jsonb_build_object('source', 'profanity-filter', 'at', now())
-                ),
-                "updatedAt" = now()
-            WHERE m.id = ${id}
-              AND NOT ('nsfw' = ANY(COALESCE(m."lockedProperties", ARRAY[]::text[])))`
-        : 0;
-      // Nothing to lock, or a moderator's lock landed since the read: record the detection only.
-      if (!locked)
-        await dbWrite.$executeRaw`
-          UPDATE "Model" m
-          SET meta = ${asJsonbObjectSql('m.meta')} || ${patch}::jsonb, "updatedAt" = now()
-          WHERE m.id = ${id}`;
-    }
+    if (flagged) await writeAutoNsfw(dbWrite, { id, ...flagged });
   }
 
   // The description is carried in the cached public GET /api/v1/models/[id] body, so without
@@ -6238,8 +6228,7 @@ export const privateModelFromTraining = async ({
           throw error;
         }
         const storedMeta = locked.meta;
-        const moderatorChangesNsfwLock =
-          user.isModerator && changesNsfwLock(locked.lockedProperties, data.lockedProperties);
+        const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
         // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
         const restoreCannotPromote =
           locked.availability !== Availability.Private && storedMeta?.cannotPromote === true;
