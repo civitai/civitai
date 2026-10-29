@@ -43,15 +43,15 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *     un-scoped OAuth token is rejected 403.
  *   - Feature flag: `isAppBlocksEnabled({ user })` evaluated WITH the resolved
  *     user's context (mirrors the session route + `enforceAppBlocksFlag`).
- *   - Moderator: the resolved user must be `isModerator` and not banned, on BOTH
- *     the personal-key and OAuth-token paths. App Blocks is mod-only pre-GA; this
- *     route keeps that posture (same as the session route's `ModEndpoint`). When
- *     App Blocks goes GA, RELAX this gate in lockstep with the session route —
- *     not unilaterally.
+ *   - Author: the resolved user must not be banned and must hold the authoring
+ *     capability (`isAppBlocksAuthorEnabled`: the `app-blocks-author` Flipt cohort,
+ *     with moderators always in), on BOTH the personal-key and OAuth-token paths.
+ *     The session route applies the same capability to a signed-in session or a
+ *     full-access personal key.
  *
  * ## Why no CSRF / Origin check here (unlike the session route)
- * The session route guards Origin because it is COOKIE-authed: a logged-in mod's
- * browser would attach their session cookie to a cross-site form POST (CSRF).
+ * The session route guards Origin because it takes the session COOKIE: a logged-in
+ * author's browser would attach it to a cross-site form POST (CSRF).
  * THIS route is BEARER-authed — the credential travels in an `Authorization`
  * header that a cross-site HTML form cannot set and the browser never attaches
  * automatically, so there is no ambient-authority/CSRF surface. The Origin guard
@@ -113,8 +113,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // key.
   //
   //  - PERSONAL key (`subject.type !== 'oauth'`, i.e. clientId == null): pass.
-  //    This path is UNCHANGED from the launch-dark version — a logged-in mod's
-  //    own key publishes as before. The downstream mod + flag gates still apply.
+  //    The downstream author + flag gates still apply.
   //
   //  - OAUTH token (`subject.type === 'oauth'`): pass ONLY if the token carries
   //    the dedicated `TokenScope.AppBlocksSubmit` bit. `oauthClient.create` is an

@@ -50,8 +50,9 @@ export function cliLeavesOut(rel: string): boolean {
 }
 
 /**
- * The bundle `civitai app submit` would send, from the app's export: the export holds the app folder
- * (`<app>/…`), and a submission holds its contents at the root, less what `cliLeavesOut` drops.
+ * The bundle `civitai app submit` would send, from the app's export: a submission holds the app's
+ * files at the root, less what `cliLeavesOut` drops. The export holds them under the app folder
+ * (`<app>/…`), which is taken off; an export with `block.manifest.json` at its root is used as it is.
  *
  * 🔴 The sandbox export drops every `.env*` file except `.env.example` upstream (with dependencies,
  * build output, caches, logs and keys), so the bundle never carries one. That includes a root
@@ -61,7 +62,7 @@ export async function submitBundleFromExport(exported: Blob, app: string): Promi
   const { default: JSZip } = await import('jszip');
   const source = await JSZip.loadAsync(await exported.arrayBuffer());
   const out = new JSZip();
-  const prefix = `${app}/`;
+  const prefix = source.files[MANIFEST_FILE] ? '' : `${app}/`;
   let manifestText: string | null = null;
   for (const [path, entry] of Object.entries(source.files)) {
     if (entry.dir || !path.startsWith(prefix)) continue;
@@ -112,6 +113,9 @@ async function base64Of(blob: Blob): Promise<string> {
   return url.slice(url.indexOf(',') + 1);
 }
 
+/** Both submit routes' refusal of a user without the authoring capability, word for word. */
+const NOT_AN_AUTHOR = 'Apps are restricted to the Civitai team';
+
 /** The user's own submission for this app still waits for review (`submitVersion`'s refusal). */
 const OWN_PENDING = /^you already have a pending submission for slug /;
 export const PENDING_SUBMISSION =
@@ -126,10 +130,10 @@ function refusalMessage(status: number, message: string | null): string {
   // The service's messages are written for the CLI too; the card never shows a command to run.
   if (message && /\bcivitai app\b/.test(message)) return REFUSED_PLAINLY;
   if (status === 401) return 'You are signed out. Sign in again, then press Submit for review.';
-  if (status === 403)
-    return `Not submitted: ${
-      message ?? 'your account cannot submit apps'
-    }. Your account cannot submit apps for review.`;
+  if (status === 403 && (message === null || message === NOT_AN_AUTHOR))
+    return `Not submitted: ${NOT_AN_AUTHOR}. Your account cannot submit apps for review.`;
+  // Refused for how the request came (another site, a token without full access), not who sent it.
+  if (status === 403) return `Submitting was refused: ${message}`;
   if (status === 413) return 'Not submitted: this app is too large to submit.';
   if (status === 429)
     return 'Not submitted: too many submissions just now. Wait a minute, then press Submit for review again.';
@@ -200,6 +204,8 @@ type Phase = 'waiting' | 'preparing' | 'ready' | 'sending' | 'sent' | 'closed';
 interface Card {
   el: HTMLElement;
   phase: Phase;
+  /** The offer closed while it was being sent: a failed send gives no button back. */
+  withdrawn?: true;
 }
 
 const CARD_STYLE =
@@ -231,6 +237,7 @@ export function createSubmitCards({ prepare, send }: SubmitCardsDeps): SubmitCar
   };
 
   const close = (card: Card) => {
+    if (card.phase === 'sending') card.withdrawn = true;
     if (card.phase !== 'preparing' && card.phase !== 'ready') return;
     card.phase = 'closed';
     show(card, line(OFFER_CLOSED));
@@ -260,10 +267,16 @@ export function createSubmitCards({ prepare, send }: SubmitCardsDeps): SubmitCar
       show(card, line(submittedText(prepared.manifest), 'status'));
     } catch (error) {
       const message = error instanceof SubmitError ? error.message : SUBMIT_UNREACHABLE;
-      // Refused for who the user is: pressing again changes nothing.
+      // Refused for who the user is or how the request came: pressing again changes nothing.
       if (error instanceof SubmitError && (error.status === 403 || error.status === 401)) {
         card.phase = 'sent';
         show(card, line(message, 'alert'));
+        return;
+      }
+      // The conversation moved on while it was sent: the app may have changed since it was checked.
+      if (card.withdrawn) {
+        card.phase = 'closed';
+        show(card, line(message, 'alert'), line(OFFER_CLOSED));
         return;
       }
       card.phase = 'ready';

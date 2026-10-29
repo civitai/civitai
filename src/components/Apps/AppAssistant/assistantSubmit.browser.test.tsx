@@ -274,6 +274,57 @@ describe('Submit for review', () => {
     );
   });
 
+  test('a send that fails after the offer closed gives no button back', async () => {
+    let fail!: (error: unknown) => void;
+    const send = vi.fn<Send>(
+      () =>
+        new Promise((_, reject) => {
+          fail = reject;
+        })
+    );
+    const { gate } = setup({ send });
+    await passChecks(gate);
+    const card = render(gate, (await offer(gate)).output)!;
+    await expect.poll(() => submitButton(card)).not.toBeNull();
+    submitButton(card)!.click();
+    await expect.poll(() => send.mock.calls.length).toBe(1);
+    // The conversation moves on while the bundle is on its way.
+    gate.onToolResult(result('sandbox__write_file', 'ok'));
+    fail(new SubmitError('Civitai could not be reached. Try again in a moment.', 0));
+    await expect
+      .poll(() => card.querySelector('[role="alert"]')?.textContent)
+      .toBe('Civitai could not be reached. Try again in a moment.');
+    expect(submitButton(card)).toBeNull();
+    expect(card.textContent).toMatch(/Ask App Assistant to submit the app again\.$/);
+  });
+
+  test('a 403 for how the request came is shown as the server says it, not as the account', async () => {
+    for (const [body, shown] of [
+      [
+        { message: 'Cross-origin request blocked' },
+        'Submitting was refused: Cross-origin request blocked',
+      ],
+      [
+        { error: 'This action requires a signed-in session or a full-access personal API key' },
+        'Submitting was refused: This action requires a signed-in session or a full-access personal API key',
+      ],
+    ] as const) {
+      const fetchImpl = vi.fn<typeof fetch>(
+        async () => new Response(JSON.stringify(body), { status: 403 })
+      );
+      const { gate } = setup({
+        send: vi.fn((prepared: PreparedSubmit) => sendForReview(prepared, fetchImpl)),
+      });
+      await passChecks(gate);
+      const card = render(gate, (await offer(gate)).output)!;
+      await expect.poll(() => submitButton(card)).not.toBeNull();
+      submitButton(card)!.click();
+      await expect.poll(() => card.querySelector('[role="alert"]')?.textContent).toBe(shown);
+      expect(card.textContent).not.toMatch(/Your account cannot submit apps/);
+      expect(submitButton(card)).toBeNull();
+    }
+  });
+
   test('a failed submit says what went wrong and leaves the button to try again', async () => {
     const send = vi
       .fn<Send>()
@@ -352,6 +403,22 @@ describe('the bundle a press sends', () => {
     await expect(submitBundleFromExport(await exportOf(rest), APP)).rejects.toThrow(
       'Your app has no block.manifest.json, so it cannot be submitted. Ask App Assistant to add it.'
     );
+  });
+
+  test('takes the app folder off an export, and uses an export with the manifest at its root as it is', async () => {
+    const files = { ...APP_FILES, 'scratch/probe.ts': 'probe', 'old.zip': 'z' };
+    const rooted = new JSZip();
+    for (const [path, content] of Object.entries(files)) rooted.file(path, content);
+    for (const exported of [await exportOf(files), await rooted.generateAsync({ type: 'blob' })]) {
+      const { bundle, manifest } = await submitBundleFromExport(exported, APP);
+      expect(manifest).toEqual(MANIFEST);
+      const zip = await JSZip.loadAsync(bundle);
+      expect(
+        Object.keys(zip.files)
+          .filter((path) => !zip.files[path].dir)
+          .sort()
+      ).toEqual(['block.manifest.json', 'package.json', 'src/main.ts']);
+    }
   });
 
   test('keeps a nested scratch folder, which is the app’s own source', async () => {
