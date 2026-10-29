@@ -120,6 +120,10 @@ describe('a hat on a shelf card sits on its corner', () => {
     );
     const scroller = document.querySelector('[data-testid="scroller"]')!;
     expectOnCorner(scroller, { left: 12 });
+    // Bounding rects ignore clipping: the topmost thing inside the hat is the hat itself.
+    const r = rect(hats()[0]);
+    const hit = document.elementFromPoint(r.left + r.width / 2, r.top + r.height * 0.7);
+    expect(hit?.closest('button[data-event-decoration="hat"]')).toBe(hats()[0]);
     expect(rect(cards()[0]).left - rect(scroller).left).toBeCloseTo(20, 0);
   });
 

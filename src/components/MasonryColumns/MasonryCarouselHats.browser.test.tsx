@@ -96,7 +96,10 @@ describe('a hat on a masonry carousel card', () => {
       );
     // How far left of its card a hat sits at rest.
     const [first] = cards().filter(inView);
-    const resting = rect(first).left - rect(nearest(first)).left;
+    const own = nearest(first);
+    // The hat beside the first card at rest is its own, not a neighbour's.
+    expect(Math.abs(rect(own).left - rect(first).left)).toBeLessThan(80);
+    const resting = { x: rect(first).left - rect(own).left, y: rect(first).top - rect(own).top };
     for (const h of hats()) {
       expect(rect(h).left).toBeGreaterThanOrEqual(rect(root).left - 40);
       expect(rect(h).right).toBeLessThanOrEqual(rect(root).right + 40);
@@ -116,7 +119,12 @@ describe('a hat on a masonry carousel card', () => {
                 ? Math.max(
                     ...hats().map((h) =>
                       Math.min(
-                        ...cards().map((c) => Math.abs(rect(h).left - rect(c).left + resting))
+                        ...cards().map((c) =>
+                          Math.max(
+                            Math.abs(rect(h).left - rect(c).left + resting.x),
+                            Math.abs(rect(h).top - rect(c).top + resting.y)
+                          )
+                        )
                       )
                     )
                   )
