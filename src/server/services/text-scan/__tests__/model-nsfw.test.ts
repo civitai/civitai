@@ -66,7 +66,7 @@ describe('applyModelNsfwTextScan', () => {
     expect(flipSql()).toContain('array_append(');
     // Merged into meta in the same guarded write as the lock, never written back from a read.
     expect(flipSql()).toMatch(
-      /meta = \(CASE WHEN jsonb_typeof\(m\.meta\) = 'object' THEN m\.meta ELSE '\{\}'::jsonb END\) \|\| jsonb_build_object\(\s*'systemNsfwLock'/
+      /meta = \(CASE WHEN jsonb_typeof\(m\.meta\) = 'object' THEN m\.meta ELSE '\{\}'::jsonb END\) \|\| jsonb_build_object\(\s*'systemNsfwLock', jsonb_build_object\('source', \?::text, 'at', now\(\)\)/
     );
     const flipCall = dbMock.dbWrite.$executeRaw.mock.calls.find((c: unknown[]) =>
       (c[0] as readonly string[]).join('?').includes('SET nsfw = TRUE')

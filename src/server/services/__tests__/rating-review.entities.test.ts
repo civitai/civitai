@@ -109,8 +109,8 @@ describe('loadRatingReviewSubject', () => {
     };
 
     beforeEach(() => {
-      dbMock.dbRead.modActivity.findFirst.mockReset();
-      dbMock.dbRead.modActivity.findFirst.mockResolvedValue(null);
+      dbMock.dbWrite.modActivity.findFirst.mockReset();
+      dbMock.dbWrite.modActivity.findFirst.mockResolvedValue(null);
     });
 
     it('holds while a system-marked lock stands and no moderator has locked it since', async () => {
@@ -118,7 +118,7 @@ describe('loadRatingReviewSubject', () => {
     });
 
     it('yields to a moderator lock logged after the marker', async () => {
-      dbMock.dbRead.modActivity.findFirst.mockImplementation(
+      dbMock.dbWrite.modActivity.findFirst.mockImplementation(
         async (args: { where: { activity: { in: string[] }; createdAt: { gt: Date } } }) =>
           args.where.activity.in.includes('lockProperty:nsfw') &&
           args.where.createdAt.gt.getTime() === new Date(lockedAt).getTime()
@@ -126,16 +126,16 @@ describe('loadRatingReviewSubject', () => {
             : null
       );
       expect(await systemLock(locked())).toBe(false);
-      expect(dbMock.dbRead.modActivity.findFirst).toHaveBeenCalledWith(
+      expect(dbMock.dbWrite.modActivity.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({
           where: expect.objectContaining({ entityType: 'model', entityId: 1 }),
         })
       );
     });
 
-    it('counts every moderator action that locks nsfw, including SFW-only', async () => {
+    it('counts every moderator action that locks or unlocks nsfw, including SFW-only', async () => {
       await systemLock(locked());
-      const [{ where }] = dbMock.dbRead.modActivity.findFirst.mock.calls[0];
+      const [{ where }] = dbMock.dbWrite.modActivity.findFirst.mock.calls[0];
       expect(where.activity.in).toEqual(
         expect.arrayContaining([
           'lockProperty:nsfw',
@@ -145,6 +145,10 @@ describe('loadRatingReviewSubject', () => {
           'setMinorTextScan',
           'setPoi',
           'setPoiAutoHash',
+          'unlockProperty:nsfw',
+          'unsetSfwOnly',
+          'unsetMinor',
+          'unsetPoi',
         ])
       );
     });

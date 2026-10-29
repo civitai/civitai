@@ -7,8 +7,7 @@ import {
   type RatingReviewEntityType,
 } from '@civitai/shared/rating-review';
 import { isTextScanRaised } from '@civitai/shared/rated-entity-sql';
-import type { dbWrite } from '~/server/db/client';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { readSystemNsfwLockAt } from '~/server/utils/minor-flag-meta';
 import { ChallengeSource, EntityModerationStatus } from '~/shared/utils/prisma/enums';
 
@@ -34,27 +33,34 @@ export const FLAG_RESTRICTED_MESSAGE =
 export const FORCED_LEVEL_MESSAGE =
   "This collection's rating is fixed by Civitai, so it can't be disputed.";
 
-// Moderator actions that lock a model's nsfw flag. One logged after the system marker makes the lock
-// the moderator's.
+// Moderator actions that lock or unlock a model's nsfw flag. Any logged after the system marker makes
+// the lock that stands now the moderator's: an unlock means a later lock (a dispute resolution logs
+// none) is not the one the system set.
 const MODERATOR_NSFW_LOCK_ACTIVITIES = [
   'lockProperty:nsfw',
+  'unlockProperty:nsfw',
   'setSfwOnly',
+  'unsetSfwOnly',
   'setMinor',
   'setMinorAutoHash',
   'setMinorTextScan',
+  'unsetMinor',
+  'rollbackMinorAutoHash',
   'setPoi',
   'setPoiAutoHash',
+  'unsetPoi',
+  'revertPoiAutoHash',
 ];
 
 async function hasSystemNsfwLock(
   modelId: number,
-  m: { nsfw: boolean; lockedProperties: string[] | null; meta: unknown },
-  db: Db
+  m: { nsfw: boolean; lockedProperties: string[] | null; meta: unknown }
 ) {
   if (!m.nsfw || !m.lockedProperties?.includes('nsfw')) return false;
   const at = readSystemNsfwLockAt(m.meta);
   if (!at) return false;
-  const moderatorLock = await db.modActivity.findFirst({
+  // Primary: a moderator's lock that has not reached the replica would read as the system's.
+  const moderatorLock = await dbWrite.modActivity.findFirst({
     where: {
       entityType: 'model',
       entityId: modelId,
@@ -123,7 +129,7 @@ const loaders: Record<RatingReviewEntityType, Loader> = {
       override: null,
       overrideBasis: null,
       disputeRestriction: m.poi || m.minor ? FLAG_RESTRICTED_MESSAGE : undefined,
-      systemNsfwLock: await hasSystemNsfwLock(id, m, db),
+      systemNsfwLock: await hasSystemNsfwLock(id, m),
     };
   },
   Post: async (id, db) => {
