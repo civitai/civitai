@@ -34,6 +34,9 @@ const NOT_FLAG =
 const RESCAN =
   'The owner edited the text while the appeal was open, so the model will be scanned again.';
 
+const PENDING_STILL = (id: number) =>
+  `Appeal #${id} is still pending: the ruling decided another appeal on that model.`;
+
 /**
  * 🔴 THE MODEL RULED ON IS THE ROW'S, AND THE APPEAL IS THE TICKET USER'S. The main app's resolver is
  * keyed by model and checks nothing about who filed the appeal, so the row is read first: filed by the
@@ -47,7 +50,7 @@ export function createTicketFlagAppealActions(deps: FlagAppealWriteDeps) {
         return fail(403, { error: NOT_PERMITTED });
       const input = parseForm(ruling, await event.request.clone().formData());
       if (typeof input === 'string') return fail(400, { error: input });
-      const split = input.ruling;
+      const split = input.ruling || undefined;
       if (split !== undefined && (!isAppealSplit(split) || input.status !== 'Approved'))
         return fail(400, { error: 'Pick a decision.' });
       const ok = await checkTicketTarget(deps.linkedUser, event);
@@ -71,19 +74,27 @@ export function createTicketFlagAppealActions(deps: FlagAppealWriteDeps) {
       });
       if (!result.ok) return fail(400, { error: result.error });
 
+      // The ruling is keyed by model, so it may have closed another appeal on it and left the posted one open.
+      const stillPending = (await deps.appealOf(input.appealId))?.status === 'Pending';
       const res = await addTicketNote(
         deps.note,
         event,
         ok.ticketId,
-        `${input.status} model flag appeal #${input.appealId} (model ${appeal.entityId}${
-          split ? `, ${split}` : ''
-        }) of user ${ok.userId}`
+        stillPending
+          ? `Model flag ruling ${input.status} (decided another appeal on model ${appeal.entityId}; appeal #${input.appealId} of user ${ok.userId} is still pending)`
+          : `${input.status} model flag appeal #${input.appealId} (model ${appeal.entityId}${
+              split ? `, ${split}` : ''
+            }) of user ${ok.userId}`
       );
-      if (!result.rescanQueued) return { ...res, rescanQueued: false };
+      const warnings = [
+        stillPending ? PENDING_STILL(input.appealId) : null,
+        result.rescanQueued ? RESCAN : null,
+        'warning' in res ? res.warning : null,
+      ].filter((w) => w !== null);
       return {
-        ...res,
-        rescanQueued: true,
-        warning: 'warning' in res ? `${RESCAN} ${res.warning}` : RESCAN,
+        success: true as const,
+        rescanQueued: result.rescanQueued,
+        ...(warnings.length ? { warning: warnings.join(' ') } : {}),
       };
     },
   };

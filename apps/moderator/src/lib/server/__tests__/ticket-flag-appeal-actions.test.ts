@@ -47,7 +47,11 @@ const row = (over: Record<string, unknown> = {}) => ({
 beforeEach(() => {
   linkedUser.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
   canAct.mockReset().mockReturnValue(true);
-  appealOf.mockReset().mockResolvedValue(row());
+  // Pending when the action loads it, decided once the ruling has been made.
+  let reads = 0;
+  appealOf
+    .mockReset()
+    .mockImplementation(async () => row(reads++ === 0 ? {} : { status: 'Rejected' }));
   ruleAppeal.mockReset().mockResolvedValue({ ok: true, rescanQueued: false });
   note.mockReset().mockResolvedValue({ status: 'ok' });
 });
@@ -82,6 +86,26 @@ describe('appealResolveModelFlag', () => {
   ])('rules the labels of a %s split', async (ruling, decision) => {
     await run({ status: 'Approved', ruling, resolvedReason: 'not-a-real-person' });
     expect(ruleAppeal).toHaveBeenCalledWith(expect.objectContaining({ modelId: 300, decision }));
+  });
+
+  it('treats an empty ruling field as no split', async () => {
+    expect(await run({ status: 'Rejected', ruling: '' })).toEqual({
+      success: true,
+      rescanQueued: false,
+    });
+    expect(ruleAppeal).toHaveBeenCalledWith(expect.objectContaining({ decision: 'uphold' }));
+  });
+
+  it('warns, and never names the posted appeal as decided, when it is still pending afterwards', async () => {
+    appealOf.mockResolvedValue(row());
+    const res = (await run()) as { success: boolean; warning: string };
+    expect(res.success).toBe(true);
+    expect(res.warning).toContain('#12 is still pending');
+    expect(res.warning).toContain('another appeal');
+    const text = note.mock.calls[0][1] as string;
+    expect(text).toContain('another appeal on model 300');
+    expect(text).toContain('appeal #12 of user 7 is still pending');
+    expect(text).not.toMatch(/Rejected model flag appeal #12/);
   });
 
   it('refuses a split that is not an Approved ruling', async () => {
