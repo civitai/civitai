@@ -10,6 +10,8 @@ import { NOTIFY, NOTIFY_KINDS, typeOf, type NotifyKind } from './config';
 
 const dateOf = (day: Day) => sql<Date>`${day}::date`;
 const CLAIM_CHUNK = 1000;
+/** What `claim` stores in `KnightsNotificationSend.type`: the kind, not the notification type. */
+const VERDICTS_KIND: NotifyKind = 'verdicts';
 
 /** One bulk notification: the same message for every user in it. */
 export type NotificationBatch = { kind: NotifyKind; type: string; key: string; userIds: number[] };
@@ -45,9 +47,7 @@ async function withNewVerdicts(db: Kysely<DB>, day: Day, now: Date): Promise<num
     .groupBy('s.userId')
     .having(
       sql<boolean>`max(v."settledAt") > greatest(
-        coalesce((select max(n."sentAt") from "KnightsNotificationSend" n where n."playerId" = s."userId" and n."type" = ${typeOf(
-          'verdicts'
-        )}), '-infinity'::timestamp),
+        coalesce((select max(n."sentAt") from "KnightsNotificationSend" n where n."playerId" = s."userId" and n."type" = ${VERDICTS_KIND}), '-infinity'::timestamp),
         coalesce((select max(w."createdAt") from "KnightsVote" w where w."playerId" = s."userId" and w."createdAt" >= ${utc(
           searchFrom
         )}), '-infinity'::timestamp)
@@ -151,10 +151,16 @@ export async function planNotifications(
 }
 
 /** The send claim is the day's one slot: whoever inserts it sends, a rerun finds it taken. */
-async function claim(db: Kysely<DB>, kind: NotifyKind, day: Day, ids: number[]): Promise<number[]> {
+async function claim(
+  db: Kysely<DB>,
+  kind: NotifyKind,
+  day: Day,
+  ids: number[],
+  now: Date
+): Promise<number[]> {
   const rows = await db
     .insertInto('KnightsNotificationSend')
-    .values(ids.map((playerId) => ({ playerId, day: dateOf(day), type: kind })))
+    .values(ids.map((playerId) => ({ playerId, day: dateOf(day), type: kind, sentAt: utc(now) })))
     .onConflict((oc) => oc.columns(['playerId', 'day']).doNothing())
     .returning('playerId')
     .execute();
@@ -184,7 +190,7 @@ export async function sendNotifications(
   for (const { kind } of NOTIFY_KINDS) {
     const ids = plan[kind];
     for (let at = 0; at < ids.length; at += CLAIM_CHUNK) {
-      const claimed = await claim(db, kind, day, ids.slice(at, at + CLAIM_CHUNK));
+      const claimed = await claim(db, kind, day, ids.slice(at, at + CLAIM_CHUNK), now);
       if (claimed.length === 0) continue;
       const batch: NotificationBatch = {
         kind,

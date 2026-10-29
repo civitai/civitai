@@ -235,6 +235,19 @@ describe('sendNotifications', () => {
     expect(received().get(1)).toEqual(['new-images', 'verdicts']);
   });
 
+  it('does not repeat verdicts the next day when nothing new settled', async () => {
+    await seedPlayer(pg, 1);
+    await subscribe(1, 'verdicts', 'new-images');
+    await seedSettledVote(1);
+    await enqueueImage();
+    const { run, received } = runner();
+
+    await run(at(12));
+    await run(new Date('2026-12-18T09:30:00Z'));
+
+    expect(received().get(1)).toEqual(['verdicts', 'new-images']);
+  });
+
   it('gives the day back when a send fails, so the next run retries', async () => {
     await seedPlayer(pg, 1);
     await subscribe(1, 'new-images');
