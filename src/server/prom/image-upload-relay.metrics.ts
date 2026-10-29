@@ -56,8 +56,8 @@
 // `~/server/metrics/generation-model-substitution.metrics.ts` documents for the
 // unseeded case — do not "simplify" an alert by removing the seeding or its call.
 //
-// 🔴 CARDINALITY: TWO labels over two closed unions, each declared exactly once — 11
-// outcomes here, 4 producers in `~/utils/image-upload-relay-producer`. 11 x 4 = 44
+// 🔴 CARDINALITY: TWO labels over two closed unions, each declared exactly once — 16
+// outcomes here, 4 producers in `~/utils/image-upload-relay-producer`. 16 x 4 = 64
 // series, TOTAL, per pod — a fixed bound that no traffic can move. Deliberately NO
 // user id, NO object key, NO bucket, NO host, NO path, NO content type, NO byte size:
 // every one of those is caller-influenced or unbounded, and prom-client retains each
@@ -71,7 +71,7 @@
 // single-PUT path, which shipped first — read as evidence for BOTH. Grading the newer
 // multipart path on the undifferentiated counter returns a confident false positive, and
 // no amount of reading the number more carefully fixes that: the discriminating fact is
-// simply not in the series. 44 fixed series is a cheap price for a signal that can answer
+// simply not in the series. 64 fixed series is a cheap price for a signal that can answer
 // the question it is consulted for. See that module for the header and the sanitiser.
 //
 // prom-client GOTCHA (same as the neighbouring metric modules): Next can evaluate a
@@ -101,8 +101,21 @@ import {
  * removed stops being accepted, with no second list to forget.
  */
 export const IMAGE_UPLOAD_RELAY_OUTCOMES = [
-  /** 200 — bytes reached the store and the caller got a key. THE point of the route. */
+  /** 200 — bytes reached the store and the caller got a key. THE point of the route. For the
+   *  chunked relay (`relay-chunked.ts`) only its `complete` step can return this. */
   'success',
+  /** Chunked relay, 200 — a session was opened. Not a rescue: no object exists yet. */
+  'chunk_started',
+  /** Chunked relay, 200 — one piece was stored as a multipart part. */
+  'chunk_stored',
+  /** Chunked relay, 200 — the client abandoned its session and the multipart was aborted. */
+  'chunk_aborted',
+  /** Chunked relay, 404 — no session with that id belongs to the caller (unknown, expired or
+   *  someone else's; deliberately not told apart). */
+  'session_invalid',
+  /** Chunked relay, 400 — a malformed step: unknown action, bad size or part number, a piece
+   *  whose declared length does not match the plan, or a complete with parts missing. */
+  'bad_request',
   /** 405 — not a POST. */
   'method_not_allowed',
   /** 403 — production cross-origin guard refused it before the session lookup. */
@@ -119,7 +132,8 @@ export const IMAGE_UPLOAD_RELAY_OUTCOMES = [
   'empty',
   /** 400 — reading the body threw for some other reason. */
   'read_error',
-  /** The store write threw. `handleEndpointError` answered (500, or 499 on a client
+  /** The store write (or, for the chunked relay, the session store) threw.
+   *  `handleEndpointError` answered (500, or 499 on a client
    *  disconnect mid-write — the two are NOT separated here, deliberately: the wire
    *  status already distinguishes them and splitting the label would buy a series
    *  whose only reader is the same dashboard panel). */
@@ -153,19 +167,24 @@ export function isImageUploadRelayOutcome(value: unknown): value is ImageUploadR
 export const IMAGE_UPLOAD_RELAY_METRIC = 'civitai_image_upload_relay_total';
 
 const HELP =
-  'Invocations of the FALLBACK image-upload relay route, by terminal outcome and by the ' +
+  'Invocations of the FALLBACK image-upload relay routes (single-shot and chunked), by terminal outcome and by the ' +
   'client that claims to have produced them. ' +
   'The relay exists for clients that cannot reach the storage host directly, so a ' +
   'non-zero success count is the only evidence that fallback is rescuing real uploads: ' +
   'a relayed 200 is not retained in the request-log stream, traces are head-sampled, and ' +
   'the media-location registry records the same backend for relayed and direct uploads. ' +
   'Exactly one increment per handler invocation. ' +
-  'outcome: success = bytes stored and a key returned; method_not_allowed = not a POST; ' +
+  'outcome: success = bytes stored and a key returned (for the chunked relay, its complete ' +
+  'step); chunk_started / chunk_stored / chunk_aborted = a chunked-relay session opened, one ' +
+  'piece stored, a session abandoned (none of them is a rescue); session_invalid = ' +
+  'chunked-relay session unknown, expired or not the caller (404); bad_request = malformed ' +
+  'chunked-relay step (400); method_not_allowed = not a POST; ' +
   'forbidden_origin = production cross-origin guard; unauthorized = no session or banned; ' +
   'busy = shed by the per-pod in-flight cap (429); too_large = over the size cap (413); ' +
   'truncated = body ended short of its declared Content-Length (400, never stored); ' +
   'empty = zero-length body (400); read_error = reading the body threw (400); ' +
-  'store_error = the store write threw (500, or 499 on a client disconnect); ' +
+  'store_error = the store write or the chunked-relay session store threw (500, or 499 on a ' +
+  'client disconnect); ' +
   'handler_error = the invocation threw without naming an outcome — expected to stay 0, ' +
   'and a non-zero can be an upstream auth dependency failing rather than a bug in this route. ' +
   'producer: which client CLAIMS to have asked for the relay, sanitised server-side into ' +
@@ -190,7 +209,7 @@ const HELP =
   'that are alive right now. Do not alert on rate() of a single child.';
 
 /**
- * Seed all 44 series at 0 — the FULL CROSS PRODUCT of outcomes x producers.
+ * Seed all 64 series at 0 — the FULL CROSS PRODUCT of outcomes x producers.
  *
  * 🔴 THE CROSS PRODUCT IS THE POINT, not the outcome list. Seeding only the outcomes
  * (with some default producer) would restore the exact ambiguity this seeding exists to
@@ -210,7 +229,7 @@ const HELP =
  * every pod the honest, useful reading of this counter is a row of zeros. That reading
  * only exists if the zeros are emitted.
  *
- * Free by construction: 44 series is the counter's entire cardinality budget, so
+ * Free by construction: 64 series is the counter's entire cardinality budget, so
  * seeding costs exactly what a fully-exercised pod already costs and cannot grow.
  *
  * 🔴 SEEDING ALONE IS NOT ENOUGH. Something must CALL this at scrape time or the module

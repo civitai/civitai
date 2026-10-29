@@ -815,7 +815,7 @@ describe('image-upload relay', () => {
       // label, an absent header or an array, a naive re-read of the header produces the
       // same answer the sanitiser does. Without this line a mutant that re-reads
       // `req.headers[...]` in the log payload keeps the counter perfectly bounded (so the
-      // 44-row check above stays green) while putting an unbounded caller-controlled
+      // cross-product row-count check above stays green) while putting an unbounded caller-controlled
       // string into a structured log. Verified as a surviving mutant before this was added.
       expect(relayEvents()).toHaveLength(1);
       expect(relayEvents()[0]).toMatchObject({ producer: 'other' });
