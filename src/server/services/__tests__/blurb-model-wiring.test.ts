@@ -411,7 +411,10 @@ describe('applyModelContentChange — the auto-NSFW gate', () => {
     const [{ data }] = dbMock.dbWrite.model.update.mock.calls[0];
     expect(data.nsfw).toBe(true);
     expect(data.lockedProperties).toEqual(['nsfw']);
-    expect(data.meta).toMatchObject({ profanityMatches: ['x'] });
+    expect(data.meta).toMatchObject({
+      profanityMatches: ['x'],
+      systemNsfwLock: { source: 'profanity-filter', at: expect.any(String) },
+    });
   });
 
   it('records the detection but never overturns a moderator lock', async () => {
@@ -423,6 +426,7 @@ describe('applyModelContentChange — the auto-NSFW gate', () => {
     expect(data.nsfw).toBeUndefined();
     expect(data.lockedProperties).toBeUndefined();
     expect(data.meta).toMatchObject({ profanityMatches: ['x'] });
+    expect(data.meta).not.toHaveProperty('systemNsfwLock');
   });
 
   it('writes nothing when the gate does not fire', async () => {

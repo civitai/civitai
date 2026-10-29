@@ -30,7 +30,16 @@ export type ShellPageData = {
   region: RegionInfo;
   adsGated: boolean;
   trpcState: unknown;
+  /** See `SHELL_MAIN_IMAGE_URL_KEY`. Read by the inline head script only. */
+  mainImageUrl?: string;
 };
+
+/**
+ * The page-data member holding the URL of the page's main `<img>` for this viewer
+ * (`imageDetailPreloadUrl`), absent when the page will request none. The endpoint writes it under
+ * this name and the inline head script reads it under this name.
+ */
+export const SHELL_MAIN_IMAGE_URL_KEY = 'mainImageUrl' satisfies keyof ShellPageData;
 
 /**
  * Without any of these the body is not adopted and the page falls back to a full render. `region`
@@ -86,13 +95,29 @@ const PAGE_DATA_INIT: RequestInit = {
  * same URL and options as the fallback request there, built from the same constants. The no-op
  * `catch` only keeps a network failure from being reported as unhandled before the app attaches;
  * the app still reads the rejection.
+ *
+ * When a 200 arrives carrying `SHELL_MAIN_IMAGE_URL_KEY`, it also adds ONE
+ * `<link rel="preload" as="image" fetchpriority="high">` for that URL to `<head>`, so the main
+ * image downloads from then on rather than from when the page renders its `<img>`, after the
+ * bundles, the hydration and the adoption. It reads a `clone()` of the response, made before any
+ * other reader can have started on the body, so the app's own read is untouched. Anything else —
+ * another status, a network error, a body that is not JSON, no URL or a non-string one — adds
+ * nothing. Only the URL the private page data names is used; the shell HTML carries none.
  */
 export function shellPageDataPrefetchScript(): string {
   const prefix = JSON.stringify(shellPageDataUrl('', ''));
+  const key = JSON.stringify(SHELL_MAIN_IMAGE_URL_KEY);
   return (
     `try{var p=fetch(${prefix}+location.pathname+location.search,${JSON.stringify(
       PAGE_DATA_INIT
-    )});` + `p.catch(function(){});window.__civShell=p}catch(e){}`
+    )});` +
+    `p.catch(function(){});window.__civShell=p;` +
+    `p.then(function(r){if(r.status!==200)return;return r.clone().json().then(function(b){` +
+    `var u=b&&b[${key}];if(typeof u!=="string"||!u)return;` +
+    `var l=document.createElement("link");l.setAttribute("rel","preload");` +
+    `l.setAttribute("as","image");l.setAttribute("fetchpriority","high");` +
+    `l.setAttribute("href",u);document.head.appendChild(l)})})` +
+    `.catch(function(){})}catch(e){}`
   );
 }
 

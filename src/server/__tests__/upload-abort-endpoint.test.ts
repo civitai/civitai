@@ -428,3 +428,68 @@ describe('/api/upload/abort — relay fallback outcome', () => {
     expect(lastLogged().relayOutcome).toBe('unknown');
   });
 });
+
+/**
+ * The uploaded file's size, so failed uploads can be counted by size — in particular the ones
+ * over the relay fallback's size cap, which the relay could never have rescued. Caller-supplied
+ * JSON, so only a non-negative safe integer up to the S3 object ceiling (5 TiB) is logged.
+ */
+describe('/api/upload/abort — file size', () => {
+  const lastLogged = () => vi.mocked(logToAxiom).mock.calls.at(-1)?.[0] as Record<string, unknown>;
+  const S3_OBJECT_CEILING = 5 * 1024 ** 4;
+
+  // Regression cover: red before this change, where the handler never read `fileSize`.
+  it('logs the declared size on the s3-upload-abort event', async () => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq({ body: { fileSize: 12_345_678 } }), makeRes());
+
+    expect(lastLogged().name).toBe('s3-upload-abort');
+    expect(lastLogged().fileSize).toBe(12_345_678);
+  });
+
+  // Regression cover: the error-path event is a second, separate log site.
+  it('logs the declared size on the s3-upload-abort-error event', async () => {
+    mockAbortMultipartUpload.mockRejectedValue(
+      s3Error({ name: 'NoSuchUpload', $metadata: { httpStatusCode: 404 } })
+    );
+    await handler(makeReq({ body: { fileSize: 23_456_789 } }), makeRes());
+
+    expect(lastLogged().name).toBe('s3-upload-abort-error');
+    expect(lastLogged().fileSize).toBe(23_456_789);
+  });
+
+  // Boundary fixtures: each edge of the bound, last-accepted and first-rejected.
+  it.each([
+    ['zero bytes', 0],
+    ['the S3 object ceiling', S3_OBJECT_CEILING],
+  ])('keeps %s', async (_name, fileSize) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq({ body: { fileSize } }), makeRes());
+
+    expect(lastLogged().fileSize).toBe(fileSize);
+  });
+
+  it.each([
+    ['a negative size', -1],
+    ['one byte over the S3 object ceiling', S3_OBJECT_CEILING + 1],
+    ['a fractional size', 1.5],
+    ['NaN', Number.NaN],
+    ['Infinity', Number.POSITIVE_INFINITY],
+    ['a numeric string', '12345678'],
+    ['null', null],
+    ['an object', { size: 12_345_678 }],
+  ])('drops %s', async (_name, fileSize) => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq({ body: { fileSize } }), makeRes());
+
+    expect(lastLogged()).not.toHaveProperty('fileSize');
+  });
+
+  it('omits the field when the caller sends none (a bundle predating it)', async () => {
+    mockAbortMultipartUpload.mockResolvedValue(undefined);
+    await handler(makeReq(), makeRes());
+
+    expect(lastLogged().name).toBe('s3-upload-abort');
+    expect(lastLogged()).not.toHaveProperty('fileSize');
+  });
+});
