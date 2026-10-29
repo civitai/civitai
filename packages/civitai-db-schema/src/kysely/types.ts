@@ -5380,6 +5380,11 @@ export type ShadowTagsOnImage = {
   tagId: number;
   confidence: number;
 };
+export type ShopArtworkKeyOwner = {
+  key: string;
+  userId: number;
+  recordedAt: Generated<Timestamp>;
+};
 export type ShopifyCustomerLink = {
   id: Generated<number>;
   shopifyCustomerId: string;
@@ -6622,6 +6627,7 @@ export type DB = {
   Session: Session;
   SessionInvalidation: SessionInvalidation;
   ShadowTagsOnImage: ShadowTagsOnImage;
+  ShopArtworkKeyOwner: ShopArtworkKeyOwner;
   ShopifyCustomerLink: ShopifyCustomerLink;
   ShopifyMerchOrder: ShopifyMerchOrder;
   Storyline: Storyline;

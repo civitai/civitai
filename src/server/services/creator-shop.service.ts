@@ -150,7 +150,10 @@ import type {
 } from '~/server/schema/creator-shop.schema';
 import { type ModelVersionTerms } from '@civitai/buzz';
 import { getPaidAccess, getViewerMonetization } from '~/server/services/paid-access.service';
-import { assertClientImageUrlsUsable } from '~/server/services/image-url-ownership';
+import {
+  assertClientImageUrlsUsable,
+  assertShopArtworkKeysIssued,
+} from '~/server/services/image-url-ownership';
 
 // Shop surfaces hide stickers until the flag is on. Rendering is never gated —
 // an owned sticker in a comment or DM shows for everyone regardless.
@@ -584,6 +587,7 @@ export const submitCreatorShopItem = async ({
   if (!allPassed)
     throw throwBadRequestError('Artwork does not meet the requirements for this cosmetic type');
   await assertClientImageUrlsUsable({ urls: [imageUrl], userId, shopRow: {} });
+  await assertShopArtworkKeysIssued({ urls: [imageUrl], userId });
 
   // Reject duplicate artwork before charging the fee.
   if (await findDuplicateArtwork(imageHash))
@@ -876,6 +880,11 @@ export const updateCreatorShopItem = async ({
       urls: [imageUrl],
       userId: existing.cosmetic.createdById ?? userId,
       shopRow: { cosmeticId: existing.cosmeticId },
+    });
+    await assertShopArtworkKeysIssued({
+      urls: [imageUrl],
+      userId,
+      alsoIssuedTo: isModerator ? existing.cosmetic.createdById ?? undefined : undefined,
     });
     if (await findDuplicateArtwork(imageHash, id))
       throw throwBadRequestError('This artwork has already been submitted to the shop.');

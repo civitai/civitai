@@ -4571,6 +4571,12 @@ export interface ImageCdnModeratorDelete {
   deletedAt: Date;
 }
 
+export interface ShopArtworkKeyOwner {
+  key: string;
+  userId: number;
+  recordedAt: Date;
+}
+
 export interface ImageCdnAccessClaim {
   url: string;
   token: string;
