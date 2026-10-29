@@ -80,42 +80,88 @@ describe('a hat on a masonry carousel card', () => {
     expect(rect(h).left).toBeGreaterThanOrEqual(rect(root).left - 40);
   });
 
-  test('only the slides in view have a hat, and none while they move', async () => {
+  test('only the slides in view have a hat, and it rides its card while they move', async () => {
     await carousel();
     const root = document.querySelector('[data-testid="root"]')!;
+    const cards = () => [...document.querySelectorAll('[data-testid="card"]')];
+    const inView = (c: Element) =>
+      rect(c).left >= rect(root).left && rect(c).left + rect(c).width / 2 < rect(root).right;
+    const nearest = (c: Element) =>
+      hats().reduce(
+        (best, h) =>
+          Math.abs(rect(h).left - rect(c).left) < Math.abs(rect(best).left - rect(c).left)
+            ? h
+            : best,
+        hats()[0]
+      );
+    // How far left of its card a hat sits at rest.
+    const [first] = cards().filter(inView);
+    const own = nearest(first);
+    // The hat beside the first card at rest is its own, not a neighbour's.
+    expect(Math.abs(rect(own).left - rect(first).left)).toBeLessThan(80);
+    const resting = { x: rect(first).left - rect(own).left, y: rect(first).top - rect(own).top };
     for (const h of hats()) {
       expect(rect(h).left).toBeGreaterThanOrEqual(rect(root).left - 40);
       expect(rect(h).right).toBeLessThanOrEqual(rect(root).right + 40);
     }
-    // Sampled every frame, so the hidden stretch is recorded rather than polled for.
-    let fewest = Infinity;
+    // Sampled once every frame, after the frame's other callbacks, so each hat is compared with the
+    // cards as painted: how far it is from where its card would put it. No hat drawn counts as 99.
+    const moving: number[] = [];
+    let last = NaN;
     let sampling = true;
-    const sample = () => {
-      fewest = Math.min(fewest, hats().length);
-      if (sampling) requestAnimationFrame(sample);
-    };
+    const sample = () =>
+      requestAnimationFrame(() =>
+        setTimeout(() => {
+          const at = rect(first).left;
+          if (at !== last && !Number.isNaN(last)) {
+            moving.push(
+              hats().length
+                ? Math.max(
+                    ...hats().map((h) =>
+                      Math.min(
+                        ...cards().map((c) =>
+                          Math.max(
+                            Math.abs(rect(h).left - rect(c).left + resting.x),
+                            Math.abs(rect(h).top - rect(c).top + resting.y)
+                          )
+                        )
+                      )
+                    )
+                  )
+                : 99
+            );
+          }
+          last = at;
+          if (sampling) sample();
+        }, 0)
+      );
     sample();
     try {
+      const start = rect(first).left;
       await userEvent.click(document.querySelector<HTMLElement>('button.right-3')!);
-      await vi.waitFor(() => expect(fewest).toBe(0));
+      await vi.waitFor(() => expect(rect(first).left).not.toBe(start));
       // The scroll has stopped when the first card has not moved for a few frames.
       let still = 0;
-      let last = NaN;
+      let prev = NaN;
       await vi.waitFor(
         () => {
-          const left = rect(document.querySelector('[data-testid="card"]')).left;
-          still = left === last ? still + 1 : 0;
-          last = left;
+          const left = rect(first).left;
+          still = left === prev ? still + 1 : 0;
+          prev = left;
           expect(still).toBeGreaterThanOrEqual(5);
         },
         { timeout: 10000, interval: 100 }
       );
-      await vi.waitFor(() => expect(hats().length).toBeGreaterThan(0), {
-        timeout: HAT_SETTLE_FALLBACK_MS + 1000,
-      });
     } finally {
       sampling = false;
     }
+    // Hats were drawn on the cards for the whole move, to the pixel.
+    expect(moving.length).toBeGreaterThan(10);
+    // The first frame's `scroll` can trail the slide's first step by a frame.
+    expect(Math.max(...moving.slice(1))).toBeLessThanOrEqual(1);
+    await vi.waitFor(() => expect(hats().length).toBeGreaterThan(0), {
+      timeout: HAT_SETTLE_FALLBACK_MS + 1000,
+    });
     expect(hats().length).toBeLessThan(items.length);
     for (const h of hats()) {
       expect(rect(h).left).toBeGreaterThanOrEqual(rect(root).left - 40);
