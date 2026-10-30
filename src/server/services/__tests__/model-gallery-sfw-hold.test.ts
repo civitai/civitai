@@ -125,6 +125,8 @@ describe('getGallerySettingsByModelId — entries cached before the SFW hold', (
     stored({ gallerySettings: null });
     await getGallerySettingsByModelId({ id: MODEL });
     const marker = redisMock.redis.set.mock.calls[0][1];
+    // A build without the hold reads the marker as settings and maps its hidden lists.
+    expect(JSON.parse(String(marker))).toMatchObject({ hiddenTags: [], hiddenUsers: [] });
     vi.clearAllMocks();
     redisMock.redis.get.mockResolvedValue(marker as never);
 

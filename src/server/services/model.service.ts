@@ -5416,7 +5416,9 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
     ]);
     settings = { ...preferences, creatorHiddenUserIds, sfwHeld };
   }
-  await redis.set(cacheKey, toJson(settings ?? { none: true, sfwHeld }), { EX: CacheTTL.week });
+  // A build without the hold serves this marker as settings, so it carries their empty lists.
+  const none = { none: true, hiddenTags: [], hiddenUsers: [], hiddenImages: {}, pinnedPosts: {} };
+  await redis.set(cacheKey, toJson(settings ?? none), { EX: CacheTTL.week });
 
   return settings;
 };
