@@ -850,7 +850,9 @@ describe('setModelMinor — reapplying side effects', () => {
     expect(mockBustGallerySettings).not.toHaveBeenCalled();
   });
 
-  it('still flips minor when no snapshot survived', async () => {
+  // The gallery serves a held level while the model is minor, so the flag the fan-out never carried
+  // drops the cached settings even with the stored level unchanged.
+  it('still flips minor, and drops the cached gallery settings, when no snapshot survived', async () => {
     mockBefore(flaggedBefore);
     mockDbWrite.model.findUnique
       .mockResolvedValueOnce({ ...baseModelRow, ...flaggedBefore })
@@ -864,7 +866,7 @@ describe('setModelMinor — reapplying side effects', () => {
     });
 
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
-    expect(mockBustGallerySettings).not.toHaveBeenCalled();
+    expect(mockBustGallerySettings).toHaveBeenCalledWith([MODEL_ID]);
   });
 });
 
