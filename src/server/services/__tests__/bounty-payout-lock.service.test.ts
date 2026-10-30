@@ -125,6 +125,10 @@ let rowLock = mutex();
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const find = (userId: number) => benefactors.find((b) => b.userId === userId);
 
+type AwardedAtFilter = { not: null } | { gt: Date };
+const matchesAwardedAt = (b: Benefactor, filter: AwardedAtFilter) =>
+  b.awardedAt != null && (!('gt' in filter) || b.awardedAt > filter.gt);
+
 function transactionClient(held: (() => void)[]) {
   return {
     // The comment-thread detach ahead of a delete; nothing here has threads.
@@ -189,16 +193,31 @@ function transactionClient(held: (() => void)[]) {
         await tick();
         return benefactors.map((b) => ({ ...b }));
       },
-      count: async ({ where }: { where: { awardedAt?: unknown } }) => {
+      count: async ({ where }: { where: { awardedAt?: AwardedAtFilter } }) => {
         await tick();
         return benefactors.filter((b) =>
-          where.awardedAt ? b.awardedAt != null : b.awardedToId !== null
+          where.awardedAt ? matchesAwardedAt(b, where.awardedAt) : b.awardedToId !== null
         ).length;
       },
-      updateMany: async ({ data }: { data: Partial<Benefactor> }) => {
+      updateMany: async ({
+        where,
+        data,
+      }: {
+        where: { OR?: { awardedAt: null | { gt: Date } }[] };
+        data: Partial<Benefactor>;
+      }) => {
         await tick();
-        benefactors.forEach((b) => Object.assign(b, data));
-        return { count: benefactors.length };
+        const rows = benefactors.filter(
+          (b) =>
+            !where.OR ||
+            where.OR.some(({ awardedAt }) =>
+              awardedAt === null
+                ? b.awardedAt == null
+                : b.awardedAt != null && b.awardedAt > awardedAt.gt
+            )
+        );
+        rows.forEach((b) => Object.assign(b, data));
+        return { count: rows.length };
       },
     },
     bounty: {
@@ -376,6 +395,25 @@ describe('an award racing a refund', () => {
 });
 
 describe('refundBounty', () => {
+  it('refuses while an award is still being paid, and moves no Buzz', async () => {
+    Object.assign(benefactors[1], { awardedToId: null, awardedAt: new Date(1000) });
+    Object.assign(bounty!, { payoutRecordedAt: new Date(1000), payoutWinnerUserId: 8 });
+    await expect(refundBounty({ id: 4, isModerator: true })).rejects.toThrow('still being paid');
+    expect(bounty?.refunded).toBe(false);
+    expect(moved('refund')).toBe(0);
+  });
+
+  it('refuses a bounty whose award stands after its entry was deleted', async () => {
+    Object.assign(benefactors[1], { awardedToId: null, awardedAt: new Date(1000) });
+    Object.assign(bounty!, {
+      payoutRecordedAt: new Date(1000),
+      payoutSettledAt: new Date(1000),
+      payoutWinnerUserId: 8,
+    });
+    await expect(refundBounty({ id: 4, isModerator: true })).rejects.toThrow('not refundable');
+    expect(bounty?.refunded).toBe(false);
+  });
+
   it('claims under the lock before any refund, then marks the refund settled', async () => {
     await refundBounty({ id: 4, isModerator: true });
     expect(events).toEqual(['claim', 'commit', 'refund', 'refund']);
@@ -965,6 +1003,19 @@ describe('a moderator going past an award no retry can pay', () => {
     expect(moved('refund')).toBe(0);
   });
 
+  it('keeps the marks of an award an earlier settlement paid, so the refund leaves it out', async () => {
+    recordAward({ payoutWinnerUserId: null, payoutRecordedAt: new Date(3000) });
+    Object.assign(benefactors[0], { awardedToId: null, awardedAt: new Date(1000) });
+    bounty!.payoutSettledAt = new Date(2000);
+    Object.assign(benefactors[1], { awardedToId: 11, awardedAt: new Date(3000) });
+
+    await deleteBountyById({ id: 4, isModerator: true });
+
+    // Only supporter 6's unpaid award is refunded; supporter 5 was paid.
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(bounty).toBeNull();
+  });
+
   it('gives an owner no override', async () => {
     recordAward({ payoutWinnerUserId: null });
     await expect(deleteBountyById({ id: 4, isModerator: false })).rejects.toThrow('not deleted');
@@ -1044,6 +1095,17 @@ describe('several awards on one bounty', () => {
       ['bounty-award-b4-u6-yellow', 9, 50],
     ]);
     expect(isPayoutPending(bounty!)).toBe(false);
+  });
+
+  it('counts an award settled in the same millisecond it was recorded as paid', async () => {
+    Object.assign(benefactors[0], { awardedToId: 10, awardedAt: new Date(2000) });
+    Object.assign(bounty!, {
+      payoutRecordedAt: new Date(2000),
+      payoutSettledAt: new Date(2000),
+      payoutWinnerUserId: 8,
+    });
+    await awardBountyEntry({ id: 11, userId: 6 });
+    expect(attempts).toEqual(['bounty-award-b4-u6-yellow']);
   });
 
   it('settles a kept bounty whose award was recorded after an earlier settlement', async () => {

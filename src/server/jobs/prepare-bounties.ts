@@ -248,6 +248,16 @@ async function settleExpiredBounty({
     if (!mainBenefactor) return null;
     const { currency } = mainBenefactor;
 
+    // Every supporter has awarded, and those awards were paid before the pending check above.
+    const unawarded = await tx.$queryRaw<unknown[]>`
+        SELECT 1 FROM "BountyBenefactor" bf
+        WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL AND bf."awardedAt" IS NULL LIMIT 1;
+      `;
+    if (!unawarded.length) {
+      await tx.$executeRawUnsafe(`UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${id};`);
+      return { kind: 'complete' as const };
+    }
+
     if (isTextScanPoiHidden(locked)) {
       await tx.$executeRawUnsafe(`
           UPDATE "Bounty" b SET "complete" = true, "refunded" = true, "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL} WHERE b.id = ${id};
@@ -291,21 +301,21 @@ async function settleExpiredBounty({
 
     // Settlement pays from these marks; see the invariant on `refundUnpayableBountyAward`.
     // A supporter who already awarded keeps that award, even after its entry was deleted.
-    const awarded = await tx.$executeRawUnsafe(`
+    await tx.$executeRawUnsafe(`
         UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntry.id}, "awardedAt" = (SELECT ${NEXT_PAYOUT_RECORDED_AT_SQL} FROM "Bounty" b WHERE b.id = ${id}) WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL AND bf."awardedAt" IS NULL;
       `);
-    await tx.$executeRawUnsafe(
-      awarded
-        ? `
+    await tx.$executeRawUnsafe(`
         UPDATE "Bounty" b SET "complete" = true, "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL}, "payoutWinnerUserId" = ${winnerEntry.userId} WHERE b.id = ${id};
-      `
-        : `UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${id};`
-    );
+      `);
     return { kind: 'award' as const, currency, winnerEntry };
   });
 
   if (!claim) {
     log(` Bounty ${id} was already claimed; skipped`);
+    return;
+  }
+  if (claim.kind === 'complete') {
+    log(` Bounty ${id} was fully awarded; marked complete`);
     return;
   }
   if (claim.kind === 'awardPending') {

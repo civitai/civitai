@@ -62,6 +62,7 @@ vi.mock('~/server/email/templates', () => {
 });
 
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
+import { bountyAutomaticallyAwardedEmail } from '~/server/email/templates';
 import { NEXT_PAYOUT_RECORDED_AT_SQL } from '~/server/services/bounty-payout-lock';
 
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -172,15 +173,17 @@ describe('prepare-bounties auto-award', () => {
     );
   });
 
-  it('completes without recording a payout when every supporter has already awarded', async () => {
-    dbMock.dbWrite.$executeRawUnsafe.mockImplementation(async (sql: string) => {
-      executedStatements.push(sql);
-      return sql.includes('UPDATE "BountyBenefactor"') ? 0 : 1;
-    });
+  it('completes a bounty every supporter has awarded, without an award or its email', async () => {
+    const answer = mockDbWrite.$queryRaw.getMockImplementation()!;
+    mockDbWrite.$queryRaw.mockImplementation(async (strings: TemplateStringsArray, ...rest) =>
+      strings.join('').includes('bf."awardedAt" IS NULL LIMIT 1') ? [] : answer(strings, ...rest)
+    );
     await runPrepareBounties();
-    const bountyUpdate = executedStatements.find((sql) => sql.includes('UPDATE "Bounty" b'));
-    expect(bountyUpdate).toContain('"complete" = true');
-    expect(bountyUpdate).not.toContain('payoutRecordedAt');
+    expect(executedStatements).toEqual([
+      `UPDATE "Bounty" b SET "complete" = true WHERE b.id = ${BOUNTY_ID};`,
+    ]);
+    expect(mockSettle).not.toHaveBeenCalled();
+    expect(bountyAutomaticallyAwardedEmail.send).not.toHaveBeenCalled();
   });
 
   it('leaves a bounty whose award is still being paid to a later run', async () => {
@@ -223,6 +226,7 @@ describe('prepare-bounties auto-award', () => {
       const sql = strings.join('');
       if (sql.includes('FOR UPDATE')) return [{ ...lockedBounty }];
       if (sql.includes('SELECT currency FROM "BountyBenefactor"')) return [{ currency: 'BUZZ' }];
+      if (sql.includes('bf."awardedAt" IS NULL LIMIT 1')) return [{ one: 1 }];
       return [];
     });
     await runPrepareBounties();

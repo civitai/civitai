@@ -1394,12 +1394,18 @@ export async function refundUnpayableBountyAward(bountyId: number) {
   const converted = await dbWrite.$transaction(async (tx) => {
     const locked = await lockBountyForPayout(tx, bountyId);
     if (!locked || locked.refunded || !isPayoutPending(locked)) return false;
+    const settledAt = locked.payoutSettledAt;
     const unpayable =
       !locked.payoutWinnerUserId ||
-      !(await tx.bountyBenefactor.count({ where: { bountyId, awardedAt: { not: null } } }));
+      !(await tx.bountyBenefactor.count({
+        where: { bountyId, awardedAt: settledAt ? { gt: settledAt } : { not: null } },
+      }));
     if (!unpayable) return false;
+    // An award an earlier settlement paid keeps its marks, so the refund below leaves it out.
     await tx.bountyBenefactor.updateMany({
-      where: { bountyId },
+      where: settledAt
+        ? { bountyId, OR: [{ awardedAt: null }, { awardedAt: { gt: settledAt } }] }
+        : { bountyId },
       data: { awardedToId: null, awardedAt: null },
     });
     await tx.bounty.update({
@@ -1509,12 +1515,15 @@ export const refundBounty = async ({
     if (!locked) throw throwNotFoundError('Bounty not found');
     if (locked.complete || locked.refunded)
       throw throwBadRequestError('This bounty has already been awarded or refunded');
+    if (isPayoutPending(locked))
+      throw throwBadRequestError('An award on this bounty is still being paid. Try again later.');
 
     const benefactors = await tx.bountyBenefactor.findMany({
       where: { bountyId: id },
-      select: { userId: true, currency: true, awardedToId: true },
+      select: { userId: true, currency: true, awardedToId: true, awardedAt: true },
     });
-    if (benefactors.some((b) => b.awardedToId !== null))
+    // `awardedAt` outlives the awarded entry.
+    if (benefactors.some((b) => b.awardedToId != null || b.awardedAt != null))
       throw throwBadRequestError(
         'At least one benefactor has awarded an entry. This bounty is not refundable.'
       );
