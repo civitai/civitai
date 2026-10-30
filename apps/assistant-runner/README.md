@@ -356,7 +356,7 @@ pnpm --filter @civitai/assistant-runner-app test
 ```
 
 The `*.pg.test.ts` suites need `ASSISTANT_RUNNER_TEST_DATABASE_URL`, a Postgres server they may
-create and drop databases on; without it they skip. CI's `App suites` workflow provides one.
+create and drop databases on; without it they skip. CI's `App unit tests` job provides one.
 
 ## Not built yet
 

@@ -365,7 +365,7 @@ Two things it is worth being precise about, because both are easy to overstate:
 - **It is not an interlock.** `main` has branch protection but no `required_status_checks`, so
   a red `Package unit tests` does not prevent a merge. It renders red rather than
   red-but-ignored, which is the real difference from the `Unit tests` job.
-- **`apps/*` runs in a sibling job**, `App unit tests + typecheck` (the `App suites` workflow), closed the same way: another
+- **`apps/*` runs in a sibling job**, `App unit tests + typecheck`, closed the same way: another
   glob in the same `projects` array, and the ledger script takes the workspace (`packages` or
   `apps`) as an argument rather than hardcoding one.
 

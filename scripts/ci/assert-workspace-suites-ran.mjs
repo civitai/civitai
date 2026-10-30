@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * Positive control for the `Package unit tests` CI job (lint.yml) and the app suites (apps.yml).
+ * Positive control for the `Package unit tests` and `App unit tests` CI jobs.
  *
  * A green vitest run is not evidence that anything ran. Ways either job could report success
  * having tested nothing, EXIT CODE 0 AND ALL:

@@ -44,7 +44,7 @@ import {
 import { scriptedModel, toolResults } from '../core/test-support/scripted-model';
 import { readEvents, type ReadEntry } from '../core/test-support/sse';
 
-// Runs against a real Postgres (CI's `App suites` workflow provides one). Without
+// Runs against a real Postgres (CI's `App unit tests` job provides one). Without
 // ASSISTANT_RUNNER_TEST_DATABASE_URL the whole file skips.
 const describePg = TEST_DATABASE_URL ? describe : describe.skip;
 // In CI a lost URL must fail, not skip: the other suites would keep the app's job green.
