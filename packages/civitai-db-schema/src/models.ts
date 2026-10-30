@@ -3785,6 +3785,18 @@ export interface Article {
   collectionItems?: CollectionItem[];
   rewardsBonusEvents?: RewardsBonusEvent[];
   ratingReviews?: ArticleRatingReview[];
+  contentLinkHold?: ArticleContentLinkHold | null;
+}
+
+export interface ArticleContentLinkHold {
+  articleId: number;
+  article?: Article;
+  deferred: string[];
+  refused: string[];
+  editorId: number;
+  deferredSince: Date | null;
+  reportedAt: Date | null;
+  checkedAt: Date;
 }
 
 export interface PressMention {

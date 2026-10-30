@@ -363,6 +363,8 @@ type CreateReportProps = CreateReportInput & {
    * re-appends the reporter to `alsoReportedBy` and pays them twice.
    */
   tx?: Prisma.TransactionClient;
+  /** Fold only into a report still waiting for a moderator, never one already closed. */
+  foldIntoPendingOnly?: boolean;
 };
 /**
  * A sticker report names the placement it is about, and the placement has to be
@@ -408,6 +410,7 @@ export const createReport = async ({
   emailVerificationRequired,
   type,
   tx: callerTx,
+  foldIntoPendingOnly,
   ...data
 }: CreateReportProps) => {
   // Add report type to details for notifications
@@ -497,7 +500,7 @@ export const createReport = async ({
           reason: data.reason,
           details,
           // Post NSFW reports were filed Actioned: folding into one would never reach the queue.
-          pendingOnly: castsNoTagVotes || reportsStorylineChapter,
+          pendingOnly: castsNoTagVotes || reportsStorylineChapter || foldIntoPendingOnly,
           tx: callerTx,
         })
       : null;

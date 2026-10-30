@@ -98,6 +98,16 @@ import { generateJSON } from '~/server/utils/tiptap-generate-json';
 import { tiptapExtensions } from '~/shared/tiptap/extensions';
 import { getContentMedia } from '~/server/services/article-content-cleanup.service';
 import {
+  assertContentLinkHoldWritable,
+  classifyUnlinkedContentUrls,
+  contentLinkHoldCounter,
+  type ContentLinkHold,
+  getContentLinkHold,
+  nextContentLinkHold,
+  sameContentLinkHold,
+  writeContentLinkHold,
+} from '~/server/services/article-content-link-hold';
+import {
   ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE,
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
@@ -1080,6 +1090,12 @@ export const upsertArticle = async ({
         } catch (e) {
           // Non-blocking: continue even if image linking fails, but log the error
           const error = e as Error;
+          await keepOffPublicAfterLinkFailure({
+            articleId: result.id,
+            content: result.content,
+            editorId: userId,
+            ingestion: ArticleIngestionStatus.Pending,
+          });
           logToAxiom({
             type: 'error',
             name: 'article-image-linking',
@@ -1526,6 +1542,13 @@ export async function applyArticleContentChange({
       } catch (e) {
         // Non-blocking: continue even if image linking fails, but log the error
         const error = e as Error;
+        if (scanContent)
+          await keepOffPublicAfterLinkFailure({
+            articleId: id,
+            content,
+            editorId: userId,
+            ingestion: ArticleIngestionStatus.Rescan,
+          });
         logToAxiom({
           type: 'error',
           name: 'article-image-linking',
@@ -1921,6 +1944,46 @@ export async function unpublishArticleById({
 
 // --- Article Image Scanning Functions ---
 
+/**
+ * Content whose images failed to link is shown with none of them scanned. Its urls with no row are
+ * deferred, so the recompute keeps the article off public and the settle job links them later; the
+ * article leaves public now. Raw SQL: this is not an edit.
+ */
+export async function keepOffPublicAfterLinkFailure({
+  articleId,
+  content,
+  editorId,
+  ingestion,
+  now = new Date(),
+}: {
+  articleId: number;
+  content: string;
+  editorId: number;
+  ingestion: ArticleIngestionStatus;
+  now?: Date;
+}) {
+  try {
+    const unlinked = await contentUrlsWithoutRows(content);
+    if (unlinked.length) {
+      // Repeated failures keep what is refused and when the deferral started, so the backstop fires.
+      const previous = await getContentLinkHold(dbWrite, articleId);
+      const wasRefused = new Set(previous?.refused ?? []);
+      const refused = unlinked.filter((url) => wasRefused.has(url));
+      const deferred = unlinked.filter((url) => !wasRefused.has(url));
+      await writeContentLinkHold(dbWrite, {
+        articleId,
+        content,
+        hold: nextContentLinkHold(previous, { deferred, refused, editorId }, now),
+      });
+    }
+  } catch (error) {
+    handleLogError(error as Error, 'article-image-linking-hold', { articleId });
+  }
+  await dbWrite.$executeRaw`
+    UPDATE "Article" SET ingestion = ${ingestion}::"ArticleIngestionStatus" WHERE id = ${articleId}
+  `.catch((error) => handleLogError(error, 'article-image-linking-hold', { articleId }));
+}
+
 /** The content image urls of `content` with no `Image` row. */
 async function contentUrlsWithoutRows(content: string) {
   const urls = [...new Set(getContentMedia(content).map((media) => media.url))];
@@ -1952,6 +2015,8 @@ export async function assertArticleContentUrlsUsable({
   const missing = await contentUrlsWithoutRows(content);
   const stored = new Set(storedContent ? getContentMedia(storedContent).map((m) => m.url) : []);
   try {
+    // Linking may hold any of these rather than link it, so the hold must be readable first.
+    if (missing.length) await assertContentLinkHoldWritable();
     for (const urls of urlChunks(missing.filter((url) => !stored.has(url)))) {
       await assertClientImageUrlsUsable({ urls, userId: ownerId });
       await assertClientKeysIssuedToCaller({ urls, userId: ownerId, alsoIssuedTo: userId });
@@ -2043,6 +2108,8 @@ export async function linkArticleContentImages({
   ownerId,
   coverId,
   cleanupOnly,
+  now = new Date(),
+  relinks = 0,
 }: {
   articleId: number;
   content: string;
@@ -2050,131 +2117,188 @@ export async function linkArticleContentImages({
   ownerId: number;
   coverId?: number | null;
   cleanupOnly?: boolean;
+  now?: Date;
+  /** How many times this call has re-run over content a later save wrote. */
+  relinks?: number;
 }): Promise<{ orphanedImageIds: number[] }> {
   const contentImages = getContentMedia(content);
 
-  const { orphanedImageIds, imagesToIngest } = await dbWrite.$transaction(async (tx) => {
-    const imageUrls = contentImages.map((img) => img.url);
-
-    // Track content image IDs for orphan detection
-    let contentImageIds: number[] = [];
-    let imagesToIngest: { id: number; url: string; ingestion?: ImageIngestionStatus }[] = [];
-
-    if (!cleanupOnly) {
-      // Batch query: Get all existing images in one query
-      const existingImages = await tx.image.findMany({
-        where: { url: { in: imageUrls } },
-        select: { id: true, url: true, ingestion: true },
+  // A url whose key's issuer is unknown or someone else gets no row; the article is held instead.
+  let hold: ContentLinkHold | null = null;
+  let previousHold: ContentLinkHold | null = null;
+  if (!cleanupOnly) {
+    previousHold = await getContentLinkHold(dbWrite, articleId);
+    const unlinked = await contentUrlsWithoutRows(content);
+    if (unlinked.length) {
+      const classified = await classifyUnlinkedContentUrls({
+        urls: unlinked,
+        ownerId,
+        editorId: userId,
+        wasHeld: new Set([...(previousHold?.deferred ?? []), ...(previousHold?.refused ?? [])]),
+        now,
       });
+      hold = nextContentLinkHold(previousHold, { ...classified, editorId: userId }, now);
+    }
+  }
+  const held = new Set([...(hold?.deferred ?? []), ...(hold?.refused ?? [])]);
+  const holdChanged = !cleanupOnly && !sameContentLinkHold(previousHold, hold);
 
-      const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
+  const { orphanedImageIds, imagesToIngest, holdWritten } = await dbWrite.$transaction(
+    async (tx) => {
+      const imageUrls = contentImages.map((img) => img.url);
 
-      // Batch create: Missing images (upsert with unique constraint handles races)
-      const missingMedia = contentImages.filter((media) => !existingUrlMap.has(media.url));
-      const newlyCreatedImages: { id: number; url: string }[] = [];
+      // Track content image IDs for orphan detection
+      let contentImageIds: number[] = [];
+      let imagesToIngest: { id: number; url: string; ingestion?: ImageIngestionStatus }[] = [];
 
-      if (missingMedia.length > 0) {
-        const newImages = await tx.image.createManyAndReturn({
-          data: missingMedia.map((media) => ({
-            url: media.url,
-            userId,
-            type: media.type,
-            name: media.alt,
-            ingestion: ImageIngestionStatus.Pending,
-            scanRequestedAt: new Date(),
-          })),
-          select: { id: true, url: true },
-          skipDuplicates: true,
+      if (!cleanupOnly) {
+        // Batch query: Get all existing images in one query
+        const existingImages = await tx.image.findMany({
+          where: { url: { in: imageUrls } },
+          select: { id: true, url: true, ingestion: true },
         });
 
-        newImages.forEach((img) => {
-          existingUrlMap.set(img.url, { ...img, ingestion: ImageIngestionStatus.Pending });
-          newlyCreatedImages.push(img);
-        });
-      }
+        const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
 
-      // Batch upsert: ImageConnections
-      for (const url of imageUrls) {
-        const image = existingUrlMap.get(url);
-        if (!image) continue;
+        // Batch create: Missing images (upsert with unique constraint handles races)
+        const missingMedia = contentImages.filter(
+          (media) => !existingUrlMap.has(media.url) && !held.has(media.url)
+        );
+        const newlyCreatedImages: { id: number; url: string }[] = [];
 
-        await tx.imageConnection.upsert({
-          where: {
-            imageId_entityType_entityId: {
+        if (missingMedia.length > 0) {
+          const newImages = await tx.image.createManyAndReturn({
+            data: missingMedia.map((media) => ({
+              url: media.url,
+              userId,
+              type: media.type,
+              name: media.alt,
+              ingestion: ImageIngestionStatus.Pending,
+              scanRequestedAt: new Date(),
+            })),
+            select: { id: true, url: true },
+            skipDuplicates: true,
+          });
+
+          newImages.forEach((img) => {
+            existingUrlMap.set(img.url, { ...img, ingestion: ImageIngestionStatus.Pending });
+            newlyCreatedImages.push(img);
+          });
+        }
+
+        // Batch upsert: ImageConnections
+        for (const url of imageUrls) {
+          const image = existingUrlMap.get(url);
+          if (!image) continue;
+
+          await tx.imageConnection.upsert({
+            where: {
+              imageId_entityType_entityId: {
+                imageId: image.id,
+                entityType: ImageConnectionType.Article,
+                entityId: articleId,
+              },
+            },
+            create: {
               imageId: image.id,
               entityType: ImageConnectionType.Article,
               entityId: articleId,
             },
-          },
-          create: {
-            imageId: image.id,
-            entityType: ImageConnectionType.Article,
-            entityId: articleId,
-          },
-          update: {},
+            update: {},
+          });
+        }
+
+        contentImageIds = Array.from(existingUrlMap.values()).map((img) => img.id);
+
+        // Queue images for ingestion
+        const pendingExistingImages = existingImages.filter(
+          (img) => img.ingestion === ImageIngestionStatus.Pending
+        );
+        imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
+      } else {
+        // In cleanupOnly mode, we still need to know which images are in the current content
+        // so we can detect orphans. Query by URL to get their IDs.
+        const existingImages = await tx.image.findMany({
+          where: { url: { in: imageUrls } },
+          select: { id: true },
         });
+        contentImageIds = existingImages.map((img) => img.id);
       }
 
-      contentImageIds = Array.from(existingUrlMap.values()).map((img) => img.id);
+      // --- Orphan detection (always runs) ---
 
-      // Queue images for ingestion
-      const pendingExistingImages = existingImages.filter(
-        (img) => img.ingestion === ImageIngestionStatus.Pending
-      );
-      imagesToIngest = [...newlyCreatedImages, ...pendingExistingImages];
-    } else {
-      // In cleanupOnly mode, we still need to know which images are in the current content
-      // so we can detect orphans. Query by URL to get their IDs.
-      const existingImages = await tx.image.findMany({
-        where: { url: { in: imageUrls } },
-        select: { id: true },
-      });
-      contentImageIds = existingImages.map((img) => img.id);
-    }
+      // Build exclusion list: content images + cover image
+      const excludeImageIds = [...contentImageIds];
+      if (coverId) excludeImageIds.push(coverId);
 
-    // --- Orphan detection (always runs) ---
-
-    // Build exclusion list: content images + cover image
-    const excludeImageIds = [...contentImageIds];
-    if (coverId) excludeImageIds.push(coverId);
-
-    // Get orphaned connections for this article
-    const orphanedConnections = await tx.imageConnection.findMany({
-      where: {
-        entityType: ImageConnectionType.Article,
-        entityId: articleId,
-        imageId: { notIn: excludeImageIds },
-      },
-      select: { imageId: true },
-    });
-
-    const orphanedIds = orphanedConnections.map((conn) => conn.imageId);
-
-    // Delete the orphaned connections
-    if (orphanedIds.length > 0) {
-      await tx.imageConnection.deleteMany({
+      // Get orphaned connections for this article
+      const orphanedConnections = await tx.imageConnection.findMany({
         where: {
           entityType: ImageConnectionType.Article,
           entityId: articleId,
-          imageId: { in: orphanedIds },
+          imageId: { notIn: excludeImageIds },
         },
+        select: { imageId: true },
       });
-    }
 
-    let trulyOrphanedIds: number[] = [];
-    if (orphanedIds.length > 0) {
-      const trulyOrphaned = await tx.image.findMany({
-        where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
-        select: { id: true, url: true },
+      const orphanedIds = orphanedConnections.map((conn) => conn.imageId);
+
+      // Delete the orphaned connections
+      if (orphanedIds.length > 0) {
+        await tx.imageConnection.deleteMany({
+          where: {
+            entityType: ImageConnectionType.Article,
+            entityId: articleId,
+            imageId: { in: orphanedIds },
+          },
+        });
+      }
+
+      let trulyOrphanedIds: number[] = [];
+      if (orphanedIds.length > 0) {
+        const trulyOrphaned = await tx.image.findMany({
+          where: { id: { in: orphanedIds }, ...unusedAuthorImage(ownerId) },
+          select: { id: true, url: true },
+        });
+        trulyOrphanedIds = await withoutOfferingCovers(
+          tx,
+          await withoutShopArtwork(tx, trulyOrphaned)
+        );
+      }
+
+      // In the same transaction as the rows, so a failed write leaves held urls without rows.
+      const holdWritten =
+        holdChanged && (await writeContentLinkHold(tx, { articleId, content, hold }));
+
+      return { orphanedImageIds: trulyOrphanedIds, imagesToIngest, holdWritten };
+    }
+  );
+
+  // The article's content changed under this run, so its hold was not stored: link what it holds now,
+  // whoever wrote it, or a url in it could be left with neither a row nor a hold.
+  if (holdChanged && !holdWritten && relinks < 2) {
+    const current = await dbWrite.article.findUnique({
+      where: { id: articleId },
+      select: { content: true },
+    });
+    if (current && (current.content ?? '') !== content)
+      return linkArticleContentImages({
+        articleId,
+        content: current.content ?? '',
+        userId,
+        ownerId,
+        coverId,
+        now,
+        relinks: relinks + 1,
       });
-      trulyOrphanedIds = await withoutOfferingCovers(
-        tx,
-        await withoutShopArtwork(tx, trulyOrphaned)
-      );
-    }
+  }
 
-    return { orphanedImageIds: trulyOrphanedIds, imagesToIngest };
-  });
+  if (holdWritten) {
+    if (hold?.deferred.length) contentLinkHoldCounter.inc({ outcome: 'deferred' });
+    if (hold?.refused.length) contentLinkHoldCounter.inc({ outcome: 'refused' });
+    if (!hold) contentLinkHoldCounter.inc({ outcome: 'settled' });
+    await recomputeArticleIngestion(articleId);
+  }
 
   // After the commit: the hold read must not be able to roll back the edit's image linking.
   const deletable =
@@ -2513,6 +2637,7 @@ export async function recomputeArticleIngestionInTx(
       moderatorNsfwLevel: true,
     },
   });
+  const hold = await getContentLinkHold(tx, articleId);
 
   const coverIngestion = current.coverId
     ? (
@@ -2535,7 +2660,8 @@ export async function recomputeArticleIngestionInTx(
     (s) => s === ImageIngestionStatus.Error || s === ImageIngestionStatus.NotFound
   ).length;
 
-  const imageBlocked = blockedImages > 0;
+  // A refused content url counts as a blocked image; a deferred one is applied below.
+  const imageBlocked = blockedImages > 0 || !!hold?.refused.length;
   const imageError = errorImages > 0;
   const imageDone =
     totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages;
@@ -2567,7 +2693,7 @@ export async function recomputeArticleIngestionInTx(
   // --- Derive ingestion state (precedence documented on deriveArticleIngestionState) ---
   const hasModeratorOverride = current.moderatorNsfwLevel != null;
 
-  const next = deriveArticleIngestionState({
+  const derived = deriveArticleIngestionState({
     imageBlocked,
     imageError,
     imageDone,
@@ -2576,6 +2702,12 @@ export async function recomputeArticleIngestionInTx(
     textDone,
     hasModeratorOverride,
   });
+  // A deferred url keeps the article off public, a moderator's rating included: it covers the
+  // images it was given, not a url still waiting to be proved.
+  const next =
+    hold?.deferred.length && derived === ArticleIngestionStatus.Scanned
+      ? ArticleIngestionStatus.Pending
+      : derived;
 
   const flipToPublished =
     next === ArticleIngestionStatus.Scanned && current.status === ArticleStatus.Processing;
