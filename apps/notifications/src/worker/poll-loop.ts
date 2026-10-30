@@ -46,6 +46,9 @@ type RetData = {
 const appRunDelay = 5000;
 const tooOld = '30min';
 const rowsToFetch = 3000;
+// Rows with more recipients than this run in their own lane, so a follower fan-out that takes minutes
+// to signal cannot hold up the rows queued behind it.
+const bulkRecipients = 1000;
 const insertBatchSize = 5000;
 const signalBatchSize = 500;
 const signalDelay = 500;
@@ -77,6 +80,8 @@ async function bumpCounter(userId: number, category: NotificationCategory): Prom
   }
 }
 
+type Lane = 'normal' | 'bulk';
+
 // Batch-claim query for due PendingNotification rows. `FOR UPDATE SKIP LOCKED` on the inner SELECT is the
 // load-bearing concurrency guard: without it, two workers' CTE SELECTs can pick the SAME rows (the SELECT
 // takes no locks), and the outer UPDATE's `WHERE r.id = pn.id` does NOT re-check `claimedAt IS NULL` — so
@@ -86,7 +91,7 @@ async function bumpCounter(userId: number, category: NotificationCategory): Prom
 // two workers run concurrently in normal operation; SKIP LOCKED makes the claim correct regardless of
 // replica count (an accidental scale-up or a future HA change can't cause double fan-out). With a single
 // worker there is zero contention, so this clause is a no-op on the happy path.
-export const PENDING_CLAIM_QUERY = `
+const claimQuery = (lane: Lane) => `
   WITH
     return_data AS (
       SELECT
@@ -99,8 +104,9 @@ export const PENDING_CLAIM_QUERY = `
           "debounceSeconds" IS NULL
           OR ("debounceSeconds" IS NOT NULL AND NOW() >= "nextSendAt")
         )
+        AND cardinality(users) ${lane === 'bulk' ? '>' : '<='} ${bulkRecipients}
       ORDER BY id
-      LIMIT ${rowsToFetch}
+      LIMIT ${lane === 'bulk' ? 1 : rowsToFetch}
       FOR UPDATE SKIP LOCKED
     )
   UPDATE "PendingNotification" pn
@@ -110,9 +116,16 @@ export const PENDING_CLAIM_QUERY = `
   RETURNING *
 `;
 
-const getPending = async (): Promise<PendingReturnRow[]> => {
+export const PENDING_CLAIM_QUERY = claimQuery('normal');
+// One row per claim: each bulk row takes minutes, so the tail of a batch claim would sit claimed past the
+// stale-claim window before its turn came.
+export const BULK_CLAIM_QUERY = claimQuery('bulk');
+
+const getPending = async (lane: Lane): Promise<PendingReturnRow[]> => {
   try {
-    const query = await notifDbWrite().cancellableQuery<PendingReturnRow>(PENDING_CLAIM_QUERY);
+    const query = await notifDbWrite().cancellableQuery<PendingReturnRow>(
+      lane === 'bulk' ? BULK_CLAIM_QUERY : PENDING_CLAIM_QUERY
+    );
     return await query.result();
   } catch (e) {
     logAxiomError(e as Error);
@@ -278,12 +291,13 @@ export const create = async (row: PendingReturnRow): Promise<RetData[] | undefin
 };
 
 // Exported for behavioral unit tests. Export-for-test only — logic unchanged.
-export const run = async () => {
-  const rows = await getPending();
+export const run = async (lane: Lane = 'normal') => {
+  const rows = await getPending(lane);
   let counterFailures = 0;
   for (const row of rows) {
+    const start = Date.now();
     const affectedUsers = await create(row);
-    health.markWorkerProgress();
+    health.markWorkerProgress(lane);
     if (!affectedUsers) {
       workerPendingProcessedTotal.inc({ outcome: 'errored' });
       continue;
@@ -322,20 +336,39 @@ export const run = async () => {
             logAxiomError(e as Error);
           });
       }
-      health.markWorkerProgress();
+      health.markWorkerProgress(lane);
       if (i < affectBatches.length - 1) await sleep(signalDelay);
     }
+
+    if (lane === 'bulk')
+      logToAxiom({
+        type: 'info',
+        name: 'Bulk fan-out',
+        details: {
+          key: row.key,
+          type: row.type,
+          recipients: affectedUsers.length,
+          ms: Date.now() - start,
+        },
+      }).catch(() => {});
   }
 };
 
 /**
- * Start the self-rescheduling poll loop. Each tick fully awaits run() before scheduling the next — a
- * plain setInterval would fire regardless of in-flight work and pile ticks up, starving the write pool.
- * Returns a stop() that halts scheduling after the current tick settles.
+ * Start the self-rescheduling poll loop, one per lane. Each tick fully awaits run() before scheduling the
+ * next — a plain setInterval would fire regardless of in-flight work and pile ticks up, starving the write
+ * pool. Returns a stop() that halts scheduling of every lane after its current tick settles.
  */
 export function startWorker(): { stop: () => void } {
+  const lanes = (['normal', 'bulk'] as const).map(startLane);
+  return {
+    stop: () => lanes.forEach((lane) => lane.stop()),
+  };
+}
+
+function startLane(lane: Lane): { stop: () => void } {
   let stopped = false;
-  health.markWorkerStarted();
+  health.markWorkerStarted(lane);
 
   const scheduleTick = () => {
     if (stopped) return;
@@ -343,12 +376,12 @@ export function startWorker(): { stop: () => void } {
       if (stopped) return;
       const end = workerTickSeconds.startTimer();
       try {
-        await run();
+        await run(lane);
       } catch (e) {
         logAxiomError(e as Error);
       } finally {
         end();
-        health.markWorkerProgress();
+        health.markWorkerProgress(lane);
         const w = notifDbWrite();
         writePoolActive.set(w.totalCount - w.idleCount);
       }

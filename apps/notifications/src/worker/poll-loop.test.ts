@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest';
 // same "assert the SQL string" approach as operations.test.ts. The single load-bearing invariant here is
 // `FOR UPDATE SKIP LOCKED`: dropping it silently reintroduces the two-worker double-claim race (see the
 // comment on PENDING_CLAIM_QUERY). This test is the regression guard against that edit.
-import { PENDING_CLAIM_QUERY } from './poll-loop';
+import { BULK_CLAIM_QUERY, PENDING_CLAIM_QUERY } from './poll-loop';
 
 // Collapse all runs of whitespace so assertions are insensitive to indentation/line-wrapping.
 const sql = PENDING_CLAIM_QUERY.replace(/\s+/g, ' ').trim();
@@ -43,5 +43,18 @@ describe('PENDING_CLAIM_QUERY — dedupeKey', () => {
   it('selects dedupeKey so the fan-out can stamp it onto UserNotification', () => {
     // Omitting it here makes the column silently undefined at fan-out and cross-type dedup a no-op.
     expect(sql).toContain('"dedupeKey"');
+  });
+});
+
+describe('BULK_CLAIM_QUERY', () => {
+  const bulk = BULK_CLAIM_QUERY.replace(/\s+/g, ' ').trim();
+
+  it('claims with the same SKIP LOCKED guard as the normal lane', () => {
+    expect(bulk).toMatch(/LIMIT 1 FOR UPDATE SKIP LOCKED \)/);
+  });
+
+  it('splits rows between the lanes on recipient count, so every row belongs to exactly one', () => {
+    expect(sql).toContain('cardinality(users) <= 1000');
+    expect(bulk).toContain('cardinality(users) > 1000');
   });
 });
