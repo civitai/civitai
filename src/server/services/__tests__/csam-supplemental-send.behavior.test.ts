@@ -252,6 +252,17 @@ describe('a supplemental image report', () => {
     expect(viewedByName()).toEqual({ 'upload-501.png': true, 'upload-502.png': true });
   });
 
+  it('adds what the report lacks after the agreed words', async () => {
+    await view(501);
+    await view(502);
+
+    await processCsamReport(supplementalReport([501, 502, 503], []));
+
+    expect(sentTip().additionalInfo).toBe(
+      'A Civitai reviewer confirmed the attached image(s).\n1 file(s) named in this report are no longer stored and are not included.'
+    );
+  });
+
   it('opens no CyberTip while one of its files has no view record', async () => {
     await view(501);
 

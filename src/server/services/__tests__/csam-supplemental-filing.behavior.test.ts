@@ -229,6 +229,7 @@ describe('a supplemental report', () => {
   it('lists every sent report number on the user, of any type', async () => {
     await report({ reportId: 905, type: 'TrainingData' });
     await report({ reportId: null });
+    await report({ sent: false, reportId: 901 }); // a CyberTip opened, then cancelled
     await report({ userId: OTHER, reportId: 950 });
     await image(101);
     await view(101);
@@ -288,6 +289,7 @@ describe('a supplemental report', () => {
 
   it.each([
     ['unsent', { sent: false, reportId: null }],
+    ['opened but never sent', { sent: false, reportId: 901 }],
     ['sent with no NCMEC number', { reportId: null }],
     ['on another user', { userId: OTHER }],
     ['not an image report', { type: 'TrainingData' }],
@@ -308,6 +310,16 @@ describe('a supplemental report', () => {
 
     await expect(file([102])).rejects.toThrow('is waiting to send');
     expect((await filed()).map((r) => r.images)).toEqual([[{ id: 101 }]]);
+  });
+
+  it('is not held back by a supplemental report already sent', async () => {
+    await report({ reportId: 910, images: [99], details: { supplemental: {} } });
+    await image(101);
+    await view(101);
+
+    await file([101]);
+
+    expect(await filed()).toHaveLength(2);
   });
 
   it('is its own report beside an unsent ordinary one', async () => {

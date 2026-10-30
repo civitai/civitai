@@ -34,6 +34,7 @@ import {
 } from '~/server/schema/csam.schema';
 import { getModelUrl } from '~/utils/string-helpers';
 import type { RouterOutput } from '~/types/router';
+import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 
@@ -61,18 +62,24 @@ export function CsamDetailsForm({
     defaultValues,
   });
 
+  const imageIds = useCsamImageSelectStore.getState().getSelected(userId);
+  const supplemental = trpc.csam.getSupplementalPreview.useQuery(
+    { userId, imageIds, supplementalOf: supplementalOf ?? 0 },
+    { enabled: !!supplementalOf, retry: false, refetchOnMount: 'always' }
+  );
+
   const { mutate: createReport, isPending: isLoading } = trpc.csam.createReport.useMutation({
     onSuccess: () => {
       closeModal('csam-confirm');
       onSuccess?.();
     },
+    onError: (error) => {
+      closeModal('csam-confirm');
+      showErrorNotification({ error, title: 'The report was not filed', autoClose: false });
+      // Views recorded at submit can change what a supplemental report may attach.
+      if (supplementalOf) supplemental.refetch();
+    },
   });
-
-  const imageIds = useCsamImageSelectStore.getState().getSelected(userId);
-  const supplemental = trpc.csam.getSupplementalPreview.useQuery(
-    { userId, imageIds, supplementalOf: supplementalOf ?? 0 },
-    { enabled: !!supplementalOf, retry: false }
-  );
 
   const handleSubmit = (data: z.infer<typeof schema>) => {
     openConfirmModal({
@@ -110,6 +117,7 @@ export function CsamDetailsForm({
                   data={supplemental.data}
                   isLoading={supplemental.isLoading}
                   error={supplemental.error}
+                  onRetry={() => supplemental.refetch()}
                 />
               )}
               <InputRadioGroup name="minorDepiction" label="Minor depiction">
@@ -251,10 +259,12 @@ function SupplementalPreview({
   data,
   isLoading,
   error,
+  onRetry,
 }: {
   data?: RouterOutput['csam']['getSupplementalPreview'];
   isLoading: boolean;
   error?: { message: string } | null;
+  onRetry: () => void;
 }) {
   if (isLoading)
     return (
@@ -265,7 +275,12 @@ function SupplementalPreview({
   if (!data)
     return (
       <Alert color="red" title="This supplemental report cannot be filed">
-        <Text size="sm">{error?.message}</Text>
+        <Stack gap="xs" align="flex-start">
+          <Text size="sm">{error?.message}</Text>
+          <Button size="xs" variant="default" onClick={onRetry}>
+            Check again
+          </Button>
+        </Stack>
       </Alert>
     );
   const { priorReportNumbers, text } = data;

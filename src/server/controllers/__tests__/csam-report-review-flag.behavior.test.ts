@@ -219,6 +219,7 @@ describe('fileCsamReport', () => {
   it('files a supplemental report without removing the account again, and hands its image to the hold', async () => {
     // The earlier report removed the account.
     await pg.query(`UPDATE "Image" SET ingestion = 'Blocked' WHERE "userId" = $1`, [OWNER]);
+    dbMock.dbWrite.user.findUnique.mockResolvedValueOnce({ bannedAt: new Date() } as never);
 
     await fileCsamReport({
       userId: OWNER,
@@ -232,6 +233,20 @@ describe('fileCsamReport', () => {
     expect(createCsamReport).not.toHaveBeenCalled();
     expect(softDeleteUser).not.toHaveBeenCalled();
     expect(await flag(OWNED)).toBeNull();
+  });
+
+  it('removes an account restored since its earlier report when a supplemental report is filed', async () => {
+    dbMock.dbWrite.user.findUnique.mockResolvedValueOnce({ bannedAt: null } as never);
+
+    await fileCsamReport({
+      userId: OWNER,
+      imageIds: [OWNED],
+      type: 'Image',
+      reportedById: 2,
+      supplementalOf: 1,
+    });
+
+    expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: 2 });
   });
 
   it('fails loudly with the flag still on when removing the account fails', async () => {

@@ -104,8 +104,12 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     await reviewConsumerStrikes({ consumerId: `civitai-${userId}`, moderatorId: reportedById });
   }
 
-  // A supplemental report follows one that already removed the account.
-  if (userId !== -1 && !supplementalOf) {
+  // A supplemental report follows one that removed the account; one restored since is removed again.
+  const removed =
+    !!supplementalOf &&
+    !!(await dbWrite.user.findUnique({ where: { id: userId }, select: { bannedAt: true } }))
+      ?.bannedAt;
+  if (userId !== -1 && !removed) {
     await softDeleteUser({ id: userId, userId: reportedById });
   }
 
