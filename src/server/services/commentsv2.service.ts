@@ -1372,9 +1372,8 @@ export async function getCommentsInfinite({
  *    moment it is being restored.
  */
 export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0 };
+  if (ids.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0, failed: 0 };
 
-  const enums = await import('~/shared/utils/prisma/enums');
   const markerView = await holdMarkerViewExists();
 
   let reopenedReports = 0;
@@ -1383,32 +1382,22 @@ export async function bulkClearCommentV2TosViolation({ ids }: { ids: number[] })
   let count = 0;
   const retained: number[] = [];
   let retainedHidden = 0;
+  let failed = 0;
 
   for (const id of ids) {
     const outcome = await clearTosOrKeep('CommentV2', id, markerView);
+    if (outcome?.failed) failed += 1;
     if (outcome?.held) {
       retainedHidden += 1;
       if (outcome.userId !== null) retained.push(outcome.userId);
     }
     if (!outcome?.cleared) continue;
     count += 1;
-
-    // Only `Actioned` rows: a report someone Dismissed for its own reasons was not closed by this flag,
-    // and reopening it would put a ruled-on report back in the queue.
-    const reports = await dbWrite.$queryRaw<{ id: number }[]>`
-      UPDATE "Report" r SET status = ${enums.ReportStatus.Pending}::"ReportStatus"
-      FROM "CommentV2Report" c
-      WHERE c."reportId" = r.id
-        AND c."commentV2Id" = ${id}
-        AND r.reason = ${enums.ReportReason.TOSViolation}::"ReportReason"
-        AND r.status = ${enums.ReportStatus.Actioned}::"ReportStatus"
-      RETURNING id
-    `;
-    reopenedReports += reports.length;
+    reopenedReports += outcome.reopened;
   }
 
   if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
-  return { count, reopenedReports, retainedHidden };
+  return { count, reopenedReports, retainedHidden, failed };
 }
 
 /**
@@ -1435,18 +1424,28 @@ const removedByAuthorSql = {
   CommentV2: Prisma.sql`(c.metadata ->> 'removedByAuthor')::boolean`,
 };
 
+const reportLinkOf = {
+  Comment: { table: Prisma.raw('"CommentReport"'), key: Prisma.raw('"commentId"') },
+  CommentV2: { table: Prisma.raw('"CommentV2Report"'), key: Prisma.raw('"commentV2Id"') },
+};
+
 /**
  * Clears the ToS flag on the flagged comment `id` unless a moderator's delete would keep it: its
  * author, or anyone who replied below it, is held. Such a comment stays hidden. The hold is read in
- * the same statement as the write. Null when there is no such flagged comment, or when its author
- * deleted it: clearing that would republish it.
+ * the same statement as the write, and the reports the flag actioned reopen in it too, so a clear
+ * never lands without them. Null when there is no such flagged comment, or when its author deleted
+ * it: clearing that would republish it.
  */
 export async function clearTosUnlessHeld(
   table: 'Comment' | 'CommentV2',
   id: number,
   markerView: boolean
 ) {
-  const [row] = await dbWrite.$queryRaw<{ userId: number; held: boolean; cleared: boolean }[]>`
+  const { ReportReason, ReportStatus } = await import('~/shared/utils/prisma/enums');
+  const link = reportLinkOf[table];
+  const [row] = await dbWrite.$queryRaw<
+    { userId: number; held: boolean; cleared: boolean; reopened: number }[]
+  >`
     WITH target AS (
       SELECT c.id, c."userId",
         (${accountHoldSql(Prisma.raw('c."userId"'), markerView)}
@@ -1455,18 +1454,28 @@ export async function clearTosUnlessHeld(
         AND ${removedByAuthorSql[table]} IS NOT TRUE
     ), cleared AS (
       UPDATE ${Prisma.raw(`"${table}"`)} c SET "tosViolation" = false, "updatedAt" = now()
-      FROM target t WHERE c.id = t.id AND t.held IS FALSE
+      FROM target t WHERE c.id = t.id AND t.held IS FALSE AND c."tosViolation"
       RETURNING c.id
+    ), reopened AS (
+      -- Only Actioned: a report someone Dismissed was not closed by this flag.
+      UPDATE "Report" r SET status = ${ReportStatus.Pending}::"ReportStatus"
+      FROM ${link.table} link
+      WHERE link."reportId" = r.id
+        AND link.${link.key} IN (SELECT id FROM cleared)
+        AND r.reason = ${ReportReason.TOSViolation}::"ReportReason"
+        AND r.status = ${ReportStatus.Actioned}::"ReportStatus"
+      RETURNING r.id
     )
-    SELECT t."userId", t.held IS NOT FALSE AS held, EXISTS (SELECT 1 FROM cleared) AS cleared
+    SELECT t."userId", t.held IS NOT FALSE AS held, EXISTS (SELECT 1 FROM cleared) AS cleared,
+      (SELECT count(*) FROM reopened)::int AS reopened
     FROM target t
   `;
   return row ?? null;
 }
 
 /**
- * `clearTosUnlessHeld`, where a statement that fails leaves the comment hidden, as a hold would: the
- * rest of the batch still runs and reports what it did.
+ * `clearTosUnlessHeld`, where a statement that fails leaves the comment hidden and is reported as
+ * `failed`, not as held: the rest of the batch still runs and reports what it did.
  */
 export async function clearTosOrKeep(
   table: 'Comment' | 'CommentV2',
@@ -1474,7 +1483,8 @@ export async function clearTosOrKeep(
   markerView: boolean
 ) {
   try {
-    return await clearTosUnlessHeld(table, id, markerView);
+    const row = await clearTosUnlessHeld(table, id, markerView);
+    return row && { ...row, failed: false };
   } catch (e) {
     logToAxiom({
       type: 'error',
@@ -1482,6 +1492,6 @@ export async function clearTosOrKeep(
       message: 'Clearing a ToS flag failed; the comment stays hidden',
       details: { table, id, error: (e as Error)?.message },
     }).catch(() => undefined);
-    return { userId: null, held: true, cleared: false };
+    return { userId: null, held: false, cleared: false, reopened: 0, failed: true };
   }
 }
