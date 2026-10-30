@@ -164,6 +164,19 @@ jobs:
             if [ "${{ matrix.order }}" = ts59-first ]; then ts59; ts7; else ts7; ts59; fi
           done
 
+      # Untimed. Equal diagnostics only mean something if both compilers checked
+      # the same program, so compare the file sets they load (TS 7 defaults
+      # `types` to [] where 5.9 auto-included every @types package).
+      - name: Compare program file lists (root)
+        run: |
+          set -uo pipefail
+          norm() { sed "s#^$GITHUB_WORKSPACE/##" | grep -v '^$' | sort -u; }
+          node --max-old-space-size=8192 node_modules/typescript/lib/tsc.js --noEmit -p tsconfig.json --listFilesOnly | norm > "$OUT/files-ts59.txt"
+          "$TS7" --noEmit -p tsconfig.json --listFilesOnly | norm > "$OUT/files-ts7.txt"
+          echo "files: ts59=$(wc -l < "$OUT/files-ts59.txt") ts7=$(wc -l < "$OUT/files-ts7.txt") only-ts59=$(comm -23 "$OUT/files-ts59.txt" "$OUT/files-ts7.txt" | wc -l) only-ts7=$(comm -13 "$OUT/files-ts59.txt" "$OUT/files-ts7.txt" | wc -l)" | tee -a "$OUT/timings.txt"
+          echo "only in 5.9 (first 30):"; comm -23 "$OUT/files-ts59.txt" "$OUT/files-ts7.txt" | head -30
+          echo "only in 7 (first 30):"; comm -13 "$OUT/files-ts59.txt" "$OUT/files-ts7.txt" | head -30
+
       - name: Diff diagnostics
         run: |
           set -euo pipefail
