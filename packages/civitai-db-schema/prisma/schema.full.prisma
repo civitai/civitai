@@ -11156,6 +11156,12 @@ model Crucible {
   // Lowercase labels a moderator sets so a homepage Feed block can pick the crucible up. Never
   // shown to non-moderators.
   eventTags         String[]       @default([])
+  // A moderator takedown: the page is gone for everyone but moderators. Null on an owner's cancel.
+  takenDownAt       DateTime?
+  takenDownById     Int?
+  takedownReason    String?
+  // Decided when it is taken down, so every re-run (and a re-cancel) pays the creator the same way.
+  takedownRefundsCreator Boolean @default(false)
 
   entries     CrucibleEntry[]
   reports     CrucibleReport[]
