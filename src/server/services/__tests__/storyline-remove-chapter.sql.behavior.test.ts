@@ -5,7 +5,14 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 
-const { trackModActivity } = vi.hoisted(() => ({ trackModActivity: vi.fn() }));
+const { trackModActivity, bustFetchThroughCache } = vi.hoisted(() => ({
+  trackModActivity: vi.fn(),
+  bustFetchThroughCache: vi.fn(async () => undefined),
+}));
+vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  bustFetchThroughCache,
+}));
 vi.mock('~/server/services/moderator.service', () => ({ trackModActivity }));
 vi.setConfig({ hookTimeout: 60_000, testTimeout: 60_000 });
 
@@ -97,6 +104,7 @@ beforeAll(async () => {
     '20260809041000_validate_placement_removed_by_check',
     '20261214120000_placement_removed_by_placer',
     '20261214121000_validate_placement_removed_by_placer',
+    '20261216120000_storyline_chapter_removal_hold',
   ])
     await db.pg.exec(migration(name));
   await db.pg.exec(`
@@ -132,8 +140,9 @@ afterAll(async () => {
   await db.pg.close();
 });
 
-beforeEach(async () => {
-  await db.pg.exec(`
+const cleanTables = () =>
+  db.pg.exec(`
+    DELETE FROM "StorylineChapterRemovalHold";
     DELETE FROM "Appeal";
     DELETE FROM "CommentV3";
     DELETE FROM "CommentTopic";
@@ -155,6 +164,9 @@ beforeEach(async () => {
       (1, ${OWNER}, 'A story with no story', 1, now()),
       (2, ${OWNER}, 'Someone else is reading this one', 1, now());
   `);
+
+beforeEach(async () => {
+  await cleanTables();
   const raw = pgliteRaw(db.pg);
   w.$transaction.mockImplementation(runTransaction as never);
   w.$queryRaw.mockImplementation(raw.queryRaw as never);
@@ -178,8 +190,8 @@ const remove = (userId: number, isModerator = false) =>
 
 describe('removeStorylineChapter', () => {
   // Chapter 2 continues chapter 1 through a paid, approved and settled placement, on published posts.
-  beforeEach(async () => {
-    await db.pg.exec(`
+  const seed = () =>
+    db.pg.exec(`
       INSERT INTO "Post" (id, "userId", "nsfwLevel", "publishedAt") VALUES
         (501, ${OWNER}, 1, '2026-10-01'), (502, ${CONTRIBUTOR}, 1, '2026-10-02');
       INSERT INTO "StorylineChapter" (id, "storylineId", "userId", depth, "postId", "placementId")
@@ -192,7 +204,11 @@ describe('removeStorylineChapter', () => {
         (900, 'holdPrincipal', 100, 'placement-900-holdPrincipal'),
         (900, 'toOwner', 100, 'placement-900-toOwner');
     `);
-  });
+  const resetFixture = async () => {
+    await cleanTables();
+    await seed();
+  };
+  beforeEach(() => seed());
 
   it('its author removes it: the post is untouched and the placement records who', async () => {
     const before = await posts();
@@ -210,6 +226,15 @@ describe('removeStorylineChapter', () => {
   });
 
   // A tombstone, as a placement takedown leaves: the row keeps holding its post.
+  // The parent's fork shares change once a way on from it is gone.
+  it("refreshes the parent's reader split", async () => {
+    bustFetchThroughCache.mockClear();
+    await remove(CONTRIBUTOR);
+    expect(bustFetchThroughCache.mock.calls.map((c) => String(c[0]))).toEqual([
+      expect.stringMatching(/:10$/),
+    ]);
+  });
+
   it('a moderator removes it as a tombstone, logged as a moderator action', async () => {
     await remove(MODERATOR, true);
     expect(
@@ -293,33 +318,96 @@ describe('removeStorylineChapter', () => {
     expect((await placement900()).status).toBe('approved');
   });
 
-  it('keeps a chapter under an open report for a moderator', async () => {
-    await db.pg.exec(`
-      INSERT INTO "Report" (id, status) VALUES (70, 'Pending'), (71, 'Actioned');
-      INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 70);
-    `);
-    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.moderatorOnly);
-    await db.pg.exec(`UPDATE "Placement" SET amount = 0 WHERE id = 900`);
-    await expect(remove(OWNER)).rejects.toThrow(REFUSED.moderatorOnly);
-    expect(await chapterIds()).toEqual([10, 11]);
+  describe('during an open report', () => {
+    const holds = () =>
+      rows(
+        `SELECT "storylineId", "chapterId", "postId", "chapterUserId", depth, "placementId",
+          "parentChapterIds", "removedById", "removedByRole", "reportIds" FROM "StorylineChapterRemovalHold"`
+      );
+    const openPostReport = () =>
+      db.pg.exec(`
+        INSERT INTO "Report" (id, status) VALUES (70, 'Pending');
+        INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 70);
+      `);
 
-    // An answered report does not hold it; nor does a report about the storyline once answered.
-    await db.pg.exec(`
-      UPDATE "Report" SET status = 'Actioned' WHERE id = 70;
-      INSERT INTO "StorylineReport" ("reportId", "storylineId") VALUES (71, 1);
-    `);
-    await remove(CONTRIBUTOR);
-    expect(await chapterIds()).toEqual([10]);
-  });
+    it("an author's removal is held for moderator review: removed as usual, and recorded", async () => {
+      await openPostReport();
+      expect(await remove(CONTRIBUTOR)).toEqual({ storylineId: 1, chapterId: CHAPTER_2 });
+      expect(await chapterIds()).toEqual([10]);
+      expect(await holds()).toEqual([
+        {
+          storylineId: 1,
+          chapterId: CHAPTER_2,
+          postId: 502,
+          chapterUserId: CONTRIBUTOR,
+          depth: 1,
+          placementId: 900,
+          parentChapterIds: [10],
+          removedById: CONTRIBUTOR,
+          removedByRole: 'author',
+          reportIds: [70],
+        },
+      ]);
+    });
 
-  it('keeps every chapter of a storyline under an open report for a moderator', async () => {
-    await db.pg.exec(`
-      INSERT INTO "Report" (id, status) VALUES (72, 'Processing');
-      INSERT INTO "StorylineReport" ("reportId", "storylineId") VALUES (72, 1);
-    `);
-    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.moderatorOnly);
-    await remove(MODERATOR, true);
-    expect(trackModActivity).toHaveBeenCalled();
+    it('records a report on the storyline too, for the owner', async () => {
+      await db.pg.exec(`
+        UPDATE "Placement" SET amount = 0 WHERE id = 900;
+        INSERT INTO "Report" (id, status) VALUES (72, 'Processing');
+        INSERT INTO "StorylineReport" ("reportId", "storylineId") VALUES (72, 1);
+      `);
+      await remove(OWNER);
+      expect(await holds()).toMatchObject([{ removedByRole: 'owner', reportIds: [72] }]);
+    });
+
+    it('records nothing when no report is open', async () => {
+      await db.pg.exec(`
+        INSERT INTO "Report" (id, status) VALUES (71, 'Actioned');
+        INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 71);
+      `);
+      await remove(CONTRIBUTOR);
+      expect(await holds()).toEqual([]);
+    });
+
+    // Everything any view of the storyline reads is the same, and so is the answer.
+    it('leaves the storyline exactly as an unreported removal does', async () => {
+      const state = () =>
+        Promise.all([
+          rows(
+            `SELECT id, "storylineId", "postId", "userId", depth, "placementId", "removedAt"
+             FROM "StorylineChapter" ORDER BY id`
+          ),
+          rows(
+            `SELECT "chapterId", "parentChapterId", canon FROM "StorylineChapterEdge"
+             ORDER BY "chapterId", "parentChapterId"`
+          ),
+          rows(`SELECT id, status, "removedBy", "takenDownById" FROM "Placement" ORDER BY id`),
+          rows(`SELECT * FROM "Post" ORDER BY id`),
+        ]);
+      const unreported = { response: await remove(CONTRIBUTOR), state: await state() };
+      await resetFixture();
+      await openPostReport();
+      const reported = { response: await remove(CONTRIBUTOR), state: await state() };
+      expect(reported).toEqual(unreported);
+      expect(await holds()).toHaveLength(1);
+    });
+
+    it('leaves the post free to be added again, as after any removal', async () => {
+      await openPostReport();
+      await remove(CONTRIBUTOR);
+      await db.pg.exec(`
+        INSERT INTO "StorylineChapter" (id, "storylineId", "userId", depth, "postId")
+          VALUES (12, 1, ${CONTRIBUTOR}, 1, 502);
+        INSERT INTO "StorylineChapterEdge" ("chapterId", "storylineId", "parentChapterId") VALUES (12, 1, 10);
+      `);
+      expect(await chapterIds()).toEqual([10, 12]);
+    });
+
+    it("leaves a moderator's removal unrecorded, a tombstone as always", async () => {
+      await openPostReport();
+      await remove(MODERATOR, true);
+      expect(await holds()).toEqual([]);
+    });
   });
 
   // The settlement refusal must not depend on a report, or retrying would reveal one opening.

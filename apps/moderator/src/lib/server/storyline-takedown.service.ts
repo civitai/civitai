@@ -30,26 +30,51 @@ export type PostStorylineChapter = {
   removed: boolean;
   tosViolation: boolean;
   minorByScan: boolean;
+  /** Its owner or author removed it from the storyline while a report was open. */
+  heldRemoval: { by: string; at: Date } | null;
 };
 
-/** The storyline chapter a post is, if any. A post is a chapter of at most one storyline. */
+/**
+ * The storyline chapter a post is, or was until its owner or author removed it during an open
+ * report. A post is a chapter of at most one storyline.
+ */
 export async function getPostStorylineChapter(
   postId: number
 ): Promise<PostStorylineChapter | null> {
-  const row = await dbRead
-    .selectFrom('StorylineChapter as c')
-    .innerJoin('Storyline as s', 's.id', 'c.storylineId')
-    .select(['s.id', 's.title', 's.tosViolation', 's.minorByScan', 'c.depth', 'c.removedAt'])
-    .where('c.postId', '=', postId)
-    .executeTakeFirst();
-  if (!row) return null;
+  const [row, hold] = await Promise.all([
+    dbRead
+      .selectFrom('StorylineChapter as c')
+      .innerJoin('Storyline as s', 's.id', 'c.storylineId')
+      .select(['s.id', 's.title', 's.tosViolation', 's.minorByScan', 'c.depth', 'c.removedAt'])
+      .where('c.postId', '=', postId)
+      .executeTakeFirst(),
+    dbRead
+      .selectFrom('StorylineChapterRemovalHold as h')
+      .innerJoin('Storyline as s', 's.id', 'h.storylineId')
+      .select([
+        's.id',
+        's.title',
+        's.tosViolation',
+        's.minorByScan',
+        'h.depth',
+        'h.removedByRole',
+        'h.createdAt',
+      ])
+      .where('h.postId', '=', postId)
+      .orderBy('h.id', 'desc')
+      .executeTakeFirst(),
+  ]);
+  const heldRemoval = hold ? { by: hold.removedByRole, at: hold.createdAt } : null;
+  const source = row ?? hold;
+  if (!source) return null;
   return {
-    storylineId: row.id,
-    title: row.title,
-    number: row.depth + 1,
-    removed: row.removedAt !== null,
-    tosViolation: row.tosViolation,
-    minorByScan: row.minorByScan,
+    storylineId: source.id,
+    title: source.title,
+    number: source.depth + 1,
+    removed: row ? row.removedAt !== null : true,
+    tosViolation: source.tosViolation,
+    minorByScan: source.minorByScan,
+    heldRemoval,
   };
 }
 

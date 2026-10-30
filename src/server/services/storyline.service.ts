@@ -1058,10 +1058,7 @@ export const STORYLINE_CHAPTER_REMOVE_REFUSALS = {
   hasChildren: 'Other chapters continue from this one, so it cannot be removed',
   waiting: 'This chapter has a continuation waiting for review; answer it first',
   paidContinuation: "This chapter's payment hasn't settled yet. Try again once it has",
-  /**
-   * A taken-down storyline, a report open on the chapter or the storyline, and (for its owner) a
-   * chapter someone paid to add, in one text, so a caller cannot tell them apart by retrying.
-   */
+  /** A taken-down storyline, and (for its owner) a chapter someone paid to add. */
   moderatorOnly:
     "You can't remove this chapter yourself. A moderator can remove it for you; contact support",
   removed: 'This chapter was already removed',
@@ -1119,9 +1116,10 @@ export async function removeStorylineChapter({
         postId: number | null;
         placementId: number | null;
         removedAt: Date | null;
+        createdAt: Date;
       }[]
     >`
-      SELECT "userId", depth, "postId", "placementId", "removedAt" FROM "StorylineChapter"
+      SELECT "userId", depth, "postId", "placementId", "removedAt", "createdAt" FROM "StorylineChapter"
       WHERE id = ${chapterId} AND "storylineId" = ${storylineId} FOR UPDATE
     `;
     if (!chapter) throw throwNotFoundError('Chapter not found');
@@ -1159,27 +1157,23 @@ export async function removeStorylineChapter({
     `;
     if (hasChildren) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.hasChildren);
     if (waiting) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.waiting);
-    // Before the report check, as in `deleteStoryline`: a retryable refusal that came back only
-    // when no report is open would tell the caller when one is.
     if (placement?.inFlight)
       throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.paidContinuation);
-    // As `deleteStoryline`: what is under report stays for the moderator to see.
-    if (role !== 'moderator') {
-      const open = Prisma.sql`r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")`;
-      const [{ reported }] = await tx.$queryRaw<{ reported: boolean }[]>`
-        SELECT (
-          EXISTS (
-            SELECT 1 FROM "PostReport" pr JOIN "Report" r ON r.id = pr."reportId"
-            WHERE pr."postId" = ${chapter.postId} AND ${open}
-          )
-          OR EXISTS (
-            SELECT 1 FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
-            WHERE sr."storylineId" = ${storylineId} AND ${open}
-          )
-        ) AS reported
-      `;
-      if (reported) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
-    }
+    // An owner's or author's removal during an open report is held for moderator review.
+    const openReportIds =
+      role === 'moderator'
+        ? []
+        : (
+            await tx.$queryRaw<{ id: number }[]>`
+              SELECT r.id FROM "PostReport" pr JOIN "Report" r ON r.id = pr."reportId"
+              WHERE pr."postId" = ${chapter.postId}
+                AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+              UNION
+              SELECT r.id FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
+              WHERE sr."storylineId" = ${storylineId}
+                AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+            `
+          ).map((r) => r.id);
 
     if (chapter.placementId != null) {
       // The contributor paid the owner to add it; the owner cannot take it back out for free.
@@ -1200,6 +1194,17 @@ export async function removeStorylineChapter({
     if (role === 'moderator')
       await tx.$executeRaw`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = ${chapterId}`;
     else await tx.$executeRaw`DELETE FROM "StorylineChapter" WHERE id = ${chapterId}`;
+    if (openReportIds.length)
+      await tx.$executeRaw`
+        INSERT INTO "StorylineChapterRemovalHold" ("storylineId", "chapterId", "postId",
+          "chapterUserId", depth, "placementId", "parentChapterIds", "chapterCreatedAt",
+          "removedById", "removedByRole", "reportIds")
+        VALUES (${storylineId}, ${chapterId}, ${chapter.postId}, ${chapter.userId}, ${
+        chapter.depth
+      },
+          ${chapter.placementId}, ${parents.map((p) => p.parentChapterId)}::int[],
+          ${chapter.createdAt}, ${userId}, ${role}, ${openReportIds}::int[])
+      `;
     if (role === 'moderator')
       await trackModActivity(
         userId,

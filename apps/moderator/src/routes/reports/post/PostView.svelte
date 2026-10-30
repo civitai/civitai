@@ -134,7 +134,11 @@
           </span>
           {#if chapter.minorByScan}<Badge variant="destructive">storyline minor-flagged</Badge>{/if}
           {#if chapter.tosViolation}<Badge variant="destructive">storyline taken down</Badge>{/if}
-          {#if chapter.removed}<Badge variant="secondary">removed from storyline</Badge>{/if}
+          {#if chapter.heldRemoval}
+            <Badge variant="destructive" title={dateTime(chapter.heldRemoval.at)}>
+              removed by its {chapter.heldRemoval.by} while reported
+            </Badge>
+          {:else if chapter.removed}<Badge variant="secondary">removed from storyline</Badge>{/if}
         </p>
       {/if}
     </header>

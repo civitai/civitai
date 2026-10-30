@@ -8,13 +8,19 @@ const mocks = vi.hoisted(() => ({
   currentUser: null as null | { id: number; isModerator?: boolean },
   leave: vi.fn(),
   removed: null as null | (() => void),
+  remove: vi.fn(),
 }));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.currentUser }));
 vi.mock('~/components/Storyline/storyline.data', () => ({
   useRemoveStorylineChapter: ({ onSuccess }: { onSuccess?: () => void }) => {
     mocks.removed = onSuccess ?? null;
-    return { isPending: false, mutate: vi.fn() };
+    return { isPending: false, mutate: mocks.remove };
   },
+}));
+// Confirms at once.
+vi.mock('@mantine/modals', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  openConfirmModal: ({ onConfirm }: { onConfirm: () => void }) => onConfirm(),
 }));
 
 const OWNER = 10;
@@ -58,6 +64,7 @@ beforeEach(() => {
   mocks.currentUser = null;
   mocks.leave.mockReset();
   mocks.removed = null;
+  mocks.remove.mockReset();
 });
 
 describe('Remove from storyline in the reader', () => {
@@ -74,6 +81,15 @@ describe('Remove from storyline in the reader', () => {
       mocks.removed?.();
       expect(mocks.leave).toHaveBeenCalledTimes(1);
     });
+
+  test('removes the chapter of the image being read, and no other', async () => {
+    mocks.currentUser = { id: AUTHOR };
+    renderItem(2);
+    await page.getByRole('menuitem', { name: /Remove from storyline/ }).click();
+    expect(mocks.remove).toHaveBeenCalledTimes(1);
+    expect(mocks.remove).toHaveBeenCalledWith(101);
+    expect(mocks.remove).not.toHaveBeenCalledWith(100);
+  });
 
   test('is not offered to any other reader', async () => {
     mocks.currentUser = { id: 77 };

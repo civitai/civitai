@@ -3,6 +3,16 @@ import { freshPglite } from '../../../test/pglite';
 import { Kysely } from 'kysely';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { pgliteDialect } from './abuse-detection-pglite.harness';
+import { readFileSync } from 'fs';
+import { join } from 'path';
+
+const holdMigration = readFileSync(
+  join(
+    __dirname,
+    '../../../../../../packages/civitai-db-schema/prisma/migrations/20261216120000_storyline_chapter_removal_hold/migration.sql'
+  ),
+  'utf8'
+);
 
 /** The storyline around a reported post, as the post report queue shows it, on the real SQL. */
 
@@ -51,6 +61,7 @@ let pg: PGlite;
 beforeEach(async () => {
   pg = await freshPglite();
   await pg.exec(SCHEMA);
+  await pg.exec(holdMigration);
   dbHandle.current = new Kysely({ dialect: pgliteDialect(pg) });
 });
 
@@ -68,6 +79,7 @@ describe('the storyline around a reported post', () => {
       removed: true,
       tosViolation: false,
       minorByScan: true,
+      heldRemoval: null,
     });
     expect(await getPostStorylineChapter(500)).toMatchObject({
       storylineId: 1,
@@ -75,6 +87,21 @@ describe('the storyline around a reported post', () => {
       removed: false,
       tosViolation: true,
       minorByScan: false,
+    });
+  });
+
+  it('shows a chapter its owner or author removed while it was reported', async () => {
+    await pg.exec(`
+      INSERT INTO "StorylineChapterRemovalHold" ("storylineId", "chapterId", "postId", "chapterUserId",
+        depth, "parentChapterIds", "chapterCreatedAt", "removedById", "removedByRole", "reportIds")
+        VALUES (2, 14, 602, 9, 1, '{12}', now(), 9, 'author', '{70}');
+    `);
+    expect(await getPostStorylineChapter(602)).toMatchObject({
+      storylineId: 2,
+      title: 'Second story',
+      number: 2,
+      removed: true,
+      heldRemoval: { by: 'author', at: expect.any(Date) },
     });
   });
 

@@ -5523,6 +5523,30 @@ export type StorylineChapterEdge = {
   canon: Generated<boolean>;
   createdAt: Generated<Timestamp>;
 };
+export type StorylineChapterRemovalHold = {
+  id: Generated<number>;
+  storylineId: number;
+  /**
+   * The removed chapter's id, its post and its author, as they were.
+   */
+  chapterId: number;
+  postId: number | null;
+  chapterUserId: number;
+  depth: number;
+  placementId: number | null;
+  parentChapterIds: number[];
+  chapterCreatedAt: Timestamp;
+  removedById: number;
+  /**
+   * 'owner' or 'author'.
+   */
+  removedByRole: string;
+  /**
+   * The reports open when it was removed.
+   */
+  reportIds: number[];
+  createdAt: Generated<Timestamp>;
+};
 export type StorylineCollaborator = {
   storylineId: number;
   userId: number;
@@ -6638,6 +6662,7 @@ export type DB = {
   StorylineBranchChoice: StorylineBranchChoice;
   StorylineChapter: StorylineChapter;
   StorylineChapterEdge: StorylineChapterEdge;
+  StorylineChapterRemovalHold: StorylineChapterRemovalHold;
   StorylineCollaborator: StorylineCollaborator;
   StorylineCoverUpload: StorylineCoverUpload;
   StorylineCreateClick: StorylineCreateClick;

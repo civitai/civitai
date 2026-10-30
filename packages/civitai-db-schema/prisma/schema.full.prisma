@@ -10498,6 +10498,32 @@ model StorylineChapterEdge {
   @@index([parentChapterId, createdAt])
 }
 
+/// A record kept when a storyline's owner or a chapter's author removes a chapter while a report
+/// on it (its post or the storyline) is open: the removal itself is the ordinary one, and this row
+/// is what moderators see of it in the report's context. It changes nothing for anyone else.
+/// Not related to its storyline or post, so it outlives them.
+model StorylineChapterRemovalHold {
+  id               Int      @id @default(autoincrement())
+  storylineId      Int
+  /// The removed chapter's id, its post and its author, as they were.
+  chapterId        Int
+  postId           Int?
+  chapterUserId    Int
+  depth            Int
+  placementId      Int?
+  parentChapterIds Int[]
+  chapterCreatedAt DateTime
+  removedById      Int
+  /// 'owner' or 'author'.
+  removedByRole    String
+  /// The reports open when it was removed.
+  reportIds        Int[]
+  createdAt        DateTime @default(now())
+
+  @@index([postId])
+  @@index([storylineId])
+}
+
 /// The post author's note on one image of a storyline chapter, shown to readers under the
 /// image. No row means no caption: an empty caption deletes it.
 model ImageCaption {
