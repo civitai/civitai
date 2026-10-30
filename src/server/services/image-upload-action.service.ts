@@ -26,9 +26,8 @@ export function trackImageUpload(req: NextApiRequest, res: NextApiResponse, key:
 }
 
 /**
- * Records an upload key the server minted itself for `userId`, in both issue stores, so the
- * ownership check can read it while either one is down. `tracker` is the request's, for its IP.
- * Never throws.
+ * Records an upload key the server minted itself for `userId`, in the issue record and the upload
+ * request log, as a client upload is. `tracker` is the request's, for its IP. Never throws.
  */
 export async function recordMintedUploadKey(
   key: string,

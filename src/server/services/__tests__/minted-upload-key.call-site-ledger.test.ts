@@ -4,11 +4,10 @@ import { describe, expect, it } from 'vitest';
 import { scanSource } from '../../../../test/source-scan';
 
 /**
- * Every upload key issued to a user is recorded in both issue stores, the Redis issue record and
- * the ClickHouse upload request log, so the ownership check can still read it while one is down.
- * The upload API routes record the Redis half with `recordUploadKeyOwner` and the log half with
+ * Every upload key issued to a user is recorded in the issue record and the upload request log.
+ * The upload API routes write the first with `recordUploadKeyOwner` and the second with
  * `trackImageUpload`; a key the server mints itself goes through `recordMintedUploadKey`, which
- * does both. A new direct `recordUploadKeyOwner` caller would write only the Redis half.
+ * writes both.
  */
 
 const scan = scanSource(process.cwd(), {
