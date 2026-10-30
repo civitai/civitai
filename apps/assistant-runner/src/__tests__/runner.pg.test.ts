@@ -70,6 +70,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       calls.record++;
       return 'recorded';
     },
+    // Changes what the reply's tools are: the reply carries on with them built again.
+    reopen: async () => ({ reopenTools: true }),
     wait: async (_input, { abortSignal }) => {
       calls.wait++;
       const how = await untilAborted(abortSignal);
@@ -77,6 +79,16 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       return how;
     },
   });
+  const rebuildGate: {
+    hold?: Promise<void>;
+    waiting?: () => void;
+    /** While set, closing a reply's first set of tools (opened as it starts) waits on it. */
+    firstClose?: Promise<void>;
+    /** While set, each set closed, in order: `<conversation>:first` or `<conversation>:rebuilt`. */
+    closed?: string[];
+    /** Called as a reply's first set starts closing (the Stop reached the run). */
+    firstClosing?: () => void;
+  } = {};
   /** What `echo` was asked with: every user message's words, per request. */
   const echoed: string[][] = [];
   const scripts: Record<string, () => ReturnType<typeof scriptedModel>> = {
@@ -94,6 +106,14 @@ describePg('assistant-runner on DBOS + Postgres', () => {
         return { text: `Heard: ${users.at(-1)!.split('\n\n').at(-1)}` };
       }),
     long: () => scriptedModel(() => ({ text: LONG_TEXT }), { chunkDelayMs: 1 }),
+    reopen: () =>
+      scriptedModel((prompt) =>
+        toolResults(prompt) === 0
+          ? { text: 'Making it. ', calls: [{ toolName: 'reopen', input: {} }] }
+          : toolResults(prompt) === 1
+          ? { text: 'Building. ', calls: [{ toolName: 'record', input: {} }] }
+          : { text: 'Built.' }
+      ),
     tools: () =>
       scriptedModel((prompt) =>
         toolResults(prompt) === 0
@@ -255,7 +275,30 @@ describePg('assistant-runner on DBOS + Postgres', () => {
   };
   const deps: RunnerDeps = {
     models,
-    tools: tools.provider,
+    // A rebuild (`reopenTools`, with the reply's progress) waits on `rebuildGate.hold` while one is set.
+    tools: {
+      open: async (context) => {
+        const rebuilds = (context.history?.current.length ?? 0) > 0;
+        if (rebuildGate.hold && rebuilds) {
+          rebuildGate.waiting?.();
+          await rebuildGate.hold;
+        }
+        const opened = await tools.provider.open(context);
+        const held = rebuilds ? undefined : rebuildGate.firstClose;
+        const closed = rebuildGate.closed;
+        if (!held && !closed) return opened;
+        const which = `${context.conversationId}:${rebuilds ? 'rebuilt' : 'first'}`;
+        return {
+          ...opened,
+          close: async () => {
+            if (!rebuilds) rebuildGate.firstClosing?.();
+            await held;
+            await opened.close();
+            closed?.push(which);
+          },
+        };
+      },
+    },
     store,
     // Set in beforeAll, before the runner is made: it needs the test database.
     grants: undefined as unknown as RunGrants,
@@ -557,6 +600,75 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       startBody({ conversationId: 'c-stale', model: 'tools', seq: 3 })
     );
     expect(stale).toMatchObject({ status: 409, body: { error: 'stale-turn' } });
+  });
+
+  it('a reply whose tool says reopenTools carries on with its tools built again, and closes both sets', async () => {
+    const user = 'u-reopen';
+    const before = { ...tools.stats, record: calls.record };
+    const start = await post(
+      '/runs',
+      as(user),
+      startBody({ conversationId: 'c-reopen', model: 'reopen' })
+    );
+    const all = await events(start.body!.runId as string, user);
+    expect(ended(all).status).toBe('done');
+    expect(calls.record).toBe(before.record + 1);
+    // Opened at the start and again for the rebuild; each set closed once.
+    expect(tools.stats.opened).toBe(before.opened + 2);
+    expect(tools.stats.closed).toBe(before.closed + 2);
+  });
+
+  it('a Stop while the tools are being rebuilt closes the new set too', async () => {
+    const user = 'u-reopen-stop';
+    const before = { ...tools.stats };
+    let release!: () => void;
+    let releaseFirstClose!: () => void;
+    rebuildGate.hold = new Promise<void>((resolve) => (release = resolve));
+    // The first set's close (begun by the Stop) does not finish until the end: the new set must be
+    // closed by the rebuild itself, not left to the pass's end-of-run cleanup after it.
+    rebuildGate.firstClose = new Promise<void>((resolve) => (releaseFirstClose = resolve));
+    const closed: string[] = [];
+    rebuildGate.closed = closed;
+    const waiting = new Promise<void>((resolve) => (rebuildGate.waiting = resolve));
+    try {
+      const start = await post(
+        '/runs',
+        as(user),
+        startBody({ conversationId: 'c-reopen-stop', model: 'reopen' })
+      );
+      const runId = start.body!.runId as string;
+      await waiting;
+      const stopReached = new Promise<void>((resolve) => (rebuildGate.firstClosing = resolve));
+      expect((await post(`/runs/${runId}/stop`, as(user), { v: 1 })).status).toBe(202);
+      // Only once the Stop has reached the run (it began closing the first set) does the rebuild's
+      // open finish: the set it opens arrives after the Stop, and only the rebuild can close it.
+      await stopReached;
+      release();
+      // The set opened during the Stop is closed while the first set's close is still under way.
+      const closedBy = Date.now() + 5_000;
+      while (closed.length === 0 && Date.now() < closedBy)
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(closed, 'the new set, closed by the rebuild itself').toEqual([
+        'c-reopen-stop:rebuilt',
+      ]);
+      releaseFirstClose();
+      expect(ended(await events(runId, user)).status).toBe('stopped');
+      expect(closed).toEqual(['c-reopen-stop:rebuilt', 'c-reopen-stop:first']);
+    } finally {
+      rebuildGate.hold = undefined;
+      rebuildGate.waiting = undefined;
+      rebuildGate.firstClose = undefined;
+      rebuildGate.closed = undefined;
+      rebuildGate.firstClosing = undefined;
+      release();
+      releaseFirstClose();
+    }
+    // Every set opened, the one opened during the Stop included, is closed.
+    expect(tools.stats.opened).toBe(before.opened + 2);
+    const deadline = Date.now() + 5_000;
+    while (tools.stats.closed < before.closed + 2 && Date.now() < deadline)
+      await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(tools.stats.closed).toBe(before.closed + 2);
   });
 
   it('stops a running reply gracefully: run-ended stopped, the tool aborted and closed, the head saved stopped', async () => {

@@ -14,7 +14,7 @@
   "dependencies": {
     "@ai-sdk/openai-compatible": "2.0.77",
     "@civitai/app-assistant": "workspace:*",
-    "@civitai/components-chat": "0.34.0",
+    "@civitai/components-chat": "0.35.0",
     "@dbos-inc/dbos-sdk": "5.3.0",
     "@modelcontextprotocol/sdk": "1.32.1",
     "ai": "6.0.289",

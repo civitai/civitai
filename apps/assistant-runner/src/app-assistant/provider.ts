@@ -11,9 +11,11 @@ import {
   buildAssistantInstructions,
   createAppTools,
   createGateCore,
+  chosenAppOf,
   createSandboxClient,
   openApp,
   type Sandbox,
+  type ToolResult,
 } from '@civitai/app-assistant';
 import {
   DISPATCH_AGENT,
@@ -165,22 +167,24 @@ export class AppAssistantTools implements ToolProvider {
       getToken: ({ refresh } = {}) => sandboxToken(refresh),
       ...(this.#options.fetch ? { fetch: this.#options.fetch } : {}),
     });
-    const sandbox = new AppSandbox({
-      client,
-      baseUrl: sandboxUrl,
-      // Not ended by a Stop (the mint has its own bound): a Stop does not cut short an upgrade of
-      // the app's packages, which must still finish or roll back (`SdkUpgrades`).
-      token: () => tokens('sandbox'),
-      signal,
-      log,
-      runId,
-      ...(context.endReply ? { endReply: context.endReply } : {}),
-      ...(this.#options.fetch ? { fetch: this.#options.fetch } : {}),
-      ...(this.#options.wakeTimeoutMs !== undefined
-        ? { wakeTimeoutMs: this.#options.wakeTimeoutMs }
-        : {}),
-      ...(this.#options.wakePollMs !== undefined ? { wakePollMs: this.#options.wakePollMs } : {}),
-    });
+    const newSandbox = (endReply?: (message: string) => void) =>
+      new AppSandbox({
+        client,
+        baseUrl: sandboxUrl,
+        // Not ended by a Stop (the mint has its own bound): a Stop does not cut short an upgrade of
+        // the app's packages, which must still finish or roll back (`SdkUpgrades`).
+        token: () => tokens('sandbox'),
+        signal,
+        log,
+        runId,
+        ...(endReply ? { endReply } : {}),
+        ...(this.#options.fetch ? { fetch: this.#options.fetch } : {}),
+        ...(this.#options.wakeTimeoutMs !== undefined
+          ? { wakeTimeoutMs: this.#options.wakeTimeoutMs }
+          : {}),
+        ...(this.#options.wakePollMs !== undefined ? { wakePollMs: this.#options.wakePollMs } : {}),
+      });
+    const sandbox = newSandbox(context.endReply);
 
     let preview: RunnerPreview | undefined;
     let apps: Sandbox[] | undefined;
@@ -192,13 +196,22 @@ export class AppAssistantTools implements ToolProvider {
       log.warn({ err: (error as Error)?.name, runId }, 'listing the user’s apps failed');
     }
     try {
-      const pageApp = readPageState(context.page).app;
+      // Built again mid-reply (`reopenTools`, `rebuild`): the app this reply made or chose, which the
+      // page may not have opened yet. Otherwise, a reply's start, Retry and Continue included, the app
+      // open in the page: what the user has open wins.
+      const pageApp =
+        (context.rebuild ? appChosenIn(toolResultsOf(context.history?.current ?? [])) : null) ??
+        readPageState(context.page).app;
       await sandbox.open(pageApp, apps ?? []);
       const sandboxTools = await sandbox.tools();
 
       const appTools = createAppTools({
         apps: () => apps,
         current: () => sandbox.active,
+        // Ready once the app it made runs with its tools, as the rebuild will open it (`appChosenIn`):
+        // a sandbox of its own opens it (waking it, and waiting as long as a reply's start does) and
+        // lists its tools. Not running in time, or listing none, it is not ready.
+        toolsReady: (app) => sandboxReady(newSandbox(), client, app, log, runId),
         open: async (app) => {
           const before = sandbox.active?.name ?? null;
           const opened = await openApp(client, app);
@@ -215,7 +228,6 @@ export class AppAssistantTools implements ToolProvider {
           // Features are planned for an app, so not before one exists.
           name === SET_CHECKLIST && !sandbox.active ? NO_APP_REFUSAL : appTools.refusal(name),
         onReply: appTools.newReply,
-        currentApp: () => sandbox.active?.name ?? null,
         // Each checklist says which app it was for, so a later reply carries only this app's.
         checklistApp: () => sandbox.active?.app ?? null,
         // A chat changes only the app it made or chose: a new chat never builds over the open one.
@@ -435,5 +447,42 @@ class ReportingTracker extends SubagentTracker {
   override set(id: string, progress: SubagentProgress | undefined): void {
     super.set(id, progress);
     this.#report?.(id, progress ?? null);
+  }
+}
+
+/**
+ * The app the reply's own calls chose so far: the last one the gate counts as chosen (`chosenAppOf`:
+ * a `create_app` that made a new app, or a `use_open_app`; never a subagent's, nor one that found an
+ * app the user already had), as the reply's tools are built again mid-reply; `null` when none did.
+ */
+export function appChosenIn(results: readonly ToolResult[]): string | null {
+  for (const result of [...results].reverse()) {
+    const app = chosenAppOf(result);
+    if (app) return app;
+  }
+  return null;
+}
+
+/**
+ * Whether `app` runs with its tools now: `probe` (a sandbox of its own) opens it among the user's apps,
+ * waking it and waiting as a reply's start does, and lists its tools. `false` when the list fails, the
+ * app is not in it, it does not run in time, or it lists no tools. The probe's connection is closed.
+ */
+export async function sandboxReady(
+  probe: AppSandbox,
+  client: { list(): Promise<Sandbox[]> },
+  app: string,
+  log: Logger,
+  runId: string
+): Promise<boolean> {
+  try {
+    await probe.open(app, await client.list());
+    if (probe.active?.app !== app || probe.active.state !== 'running') return false;
+    return Object.keys(await probe.tools()).length > 0;
+  } catch (error) {
+    log.warn({ err: (error as Error)?.name, runId }, 'checking the new app runs failed');
+    return false;
+  } finally {
+    await probe.close().catch(() => undefined);
   }
 }
