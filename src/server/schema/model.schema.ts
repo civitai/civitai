@@ -432,7 +432,7 @@ export type ModelMeta = Partial<{
   /** What an owner's minor/POI declaration replaced when it cleared a locked nsfw. */
   ownerFlagOverride: {
     at: string;
-    flag: 'minor' | 'poi';
+    flags: ('minor' | 'poi')[];
     prevNsfw: boolean;
     prevSfwOnly: boolean;
     prevLockedProperties: string[];

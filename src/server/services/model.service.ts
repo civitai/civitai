@@ -3387,7 +3387,7 @@ function applyRaisedRestrictions(
   ]);
   return {
     at: new Date().toISOString(),
-    flag: raised[0],
+    flags: raised,
     prevNsfw: stored.nsfw,
     prevSfwOnly: stored.sfwOnly,
     prevLockedProperties: storedLocks,

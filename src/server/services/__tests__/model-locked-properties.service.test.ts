@@ -932,7 +932,7 @@ describe('upsertModel — content flags the row ends up with', () => {
       expect.objectContaining({
         ownerFlagOverride: {
           at: expect.any(String),
-          flag: 'minor',
+          flags: ['minor'],
           prevNsfw: true,
           prevSfwOnly: false,
           prevLockedProperties: ['nsfw'],
@@ -955,14 +955,44 @@ describe('upsertModel — content flags the row ends up with', () => {
       })
     );
     expect(updateData().meta).toEqual(
-      expect.objectContaining({ ownerFlagOverride: expect.objectContaining({ flag: 'poi' }) })
+      expect.objectContaining({ ownerFlagOverride: expect.objectContaining({ flags: ['poi'] }) })
     );
+  });
+
+  it('takes both lock sets when an owner marks minor and poi over a locked nsfw', async () => {
+    mockStored({ nsfw: true, lockedProperties: ['nsfw'] });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true, poi: true, sfwOnly: false });
+
+    expect(updateData().lockedProperties).toEqual(['nsfw', 'minor', 'sfwOnly', 'poi']);
+    expect(updateData().meta).toEqual(
+      expect.objectContaining({
+        ownerFlagOverride: expect.objectContaining({ flags: ['minor', 'poi'] }),
+      })
+    );
+  });
+
+  it('creates an owner model marking minor with nsfw sent SFW', async () => {
+    await upsert({ userId: OWNER_ID, minor: true, nsfw: true, sfwOnly: false });
+
+    expect(createData()).toEqual(
+      expect.objectContaining({ minor: true, nsfw: false, sfwOnly: true })
+    );
+  });
+
+  it('refuses a moderator private flow on an nsfw model, leaving it published', async () => {
+    mockStored({ nsfw: true });
+
+    await expect(
+      privateFromTraining({ user: { id: MODERATOR_ID, isModerator: true }, sfwOnly: undefined })
+    ).rejects.toThrow('Mature content on a model marked as SFW is not permitted.');
+    expect(mockDbWrite.model.updateMany).not.toHaveBeenCalled();
   });
 
   it('never takes an owner-flag override record from the client', async () => {
     const forged = {
       at: '2026-01-01T00:00:00.000Z',
-      flag: 'minor',
+      flags: ['minor'],
       prevNsfw: true,
       prevSfwOnly: false,
       prevLockedProperties: [],
