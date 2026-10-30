@@ -23,21 +23,27 @@ function imageDetailId(params: ParsedUrlQuery | undefined) {
   return isNumber(id) ? id : null;
 }
 
-/**
- * The image row the page shows as its main media, and the rating a contest forces on it, read
- * exactly as the page reads them — through the page's own procedures, with their access rules
- * (`image.get`: visibility, blocks, media visibility), into the same SSG cache. ONE
- * implementation, two callers: the page data (`resolveImageDetailPageData`), and the main-image
- * lookup (`resolveImageDetailMainImageUrl`), so the URL that lookup names is built from the row
- * the page renders and cannot drift from it.
- *
- * The forced level is the one the page's first render reads — from the contest details in its
- * cache, which are not prefetched (so hold nothing) for a signed-out viewer.
+/*
+ * The two reads the page's main image is decided from, made exactly as the page makes them —
+ * through the page's own procedures, with their access rules (`image.get`: visibility, blocks,
+ * media visibility), into the same SSG cache. ONE implementation each, two callers: the page data
+ * (`resolveImageDetailPageData`), and the main-image lookup (`resolveImageDetailMainImageUrl`), so
+ * the URL that lookup names is built from the row the page renders and cannot drift from it.
  *
  * `fetch(...).catch` leaves the cache exactly as `prefetch` would (prefetch is fetch with the
  * error swallowed); it is a `fetch` only to read the answer back.
  */
-async function fetchImageDetailMainImage({
+
+/** The image row the page shows as its main media, or `null` when the viewer gets none. */
+async function readImageDetailImage({ id, ssg }: { id: number; ssg?: Ssg }) {
+  return (await ssg?.image.get.fetch({ id }).catch(() => null)) ?? null;
+}
+
+/**
+ * The rating a contest forces on the image, as the page's first render reads it — from the
+ * contest details in its cache, which are not prefetched (so hold nothing) for a signed-out viewer.
+ */
+async function readImageDetailForcedBrowsingLevel({
   id,
   ssg,
   session,
@@ -46,15 +52,10 @@ async function fetchImageDetailMainImage({
   ssg?: Ssg;
   session?: Session | null;
 }) {
-  const [image, contestDetails] = await Promise.all([
-    ssg?.image.get.fetch({ id }).catch(() => null),
-    session ? ssg?.image.getContestCollectionDetails.fetch({ id }).catch(() => null) : null,
-  ]);
-  return {
-    image: image ?? null,
-    forcedBrowsingLevel:
-      contestDetails?.collectionItems?.[0]?.collection?.metadata?.forcedBrowsingLevel ?? null,
-  };
+  const contestDetails = session
+    ? await ssg?.image.getContestCollectionDetails.fetch({ id }).catch(() => null)
+    : null;
+  return contestDetails?.collectionItems?.[0]?.collection?.metadata?.forcedBrowsingLevel ?? null;
 }
 
 /**
@@ -71,9 +72,11 @@ export async function resolveImageDetailPageData({ ctx, ssg, session }: ImageDet
   const id = imageDetailId(ctx.params);
   if (id === null) return { notFound: true as const };
 
-  const [{ image }] = await Promise.all([
-    fetchImageDetailMainImage({ id, ssg, session }),
+  // In this order: it is the order of the queries in `trpcState`.
+  const [image] = await Promise.all([
+    readImageDetailImage({ id, ssg }),
     ssg?.image.getGenerationData.prefetch({ id }),
+    readImageDetailForcedBrowsingLevel({ id, ssg, session }),
     ssg?.hiddenPreferences.getHidden.prefetch(),
   ]);
 
@@ -108,8 +111,9 @@ function mainImageFromImageGet(query: ParsedUrlQuery) {
  * not visible to the viewer, a feed or storyline query). `notFound` where the page is a 404.
  *
  * Reads nothing when the query alone rules a preload out. Otherwise reads only the main image's
- * row and the contest rating, by `fetchImageDetailMainImage` — the page data's own reads — and
- * decides by `imageDetailPreloadUrl`, the page's own visibility rules.
+ * row and the contest rating, by `readImageDetailImage` and `readImageDetailForcedBrowsingLevel` —
+ * the page data's own reads — and decides by `imageDetailPreloadUrl`, the page's own visibility
+ * rules.
  */
 export async function resolveImageDetailMainImageUrl({
   query,
@@ -126,11 +130,11 @@ export async function resolveImageDetailMainImageUrl({
   if (id === null) return { notFound: true };
   if (!mainImageFromImageGet(query)) return { url: undefined };
 
-  const { image, forcedBrowsingLevel } = await fetchImageDetailMainImage({
-    id,
-    ssg: await ssg(),
-    session,
-  });
+  const helpers = await ssg();
+  const [image, forcedBrowsingLevel] = await Promise.all([
+    readImageDetailImage({ id, ssg: helpers }),
+    readImageDetailForcedBrowsingLevel({ id, ssg: helpers, session }),
+  ]);
   return {
     url: imageDetailPreloadUrl({
       image,
