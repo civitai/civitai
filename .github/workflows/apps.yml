@@ -68,7 +68,7 @@ name: App suites
 on:
   pull_request:
     branches: [main, release]
-    types: [opened, synchronize, reopened, ready_for_review, labeled]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - 'apps/**'
       - 'packages/**'
