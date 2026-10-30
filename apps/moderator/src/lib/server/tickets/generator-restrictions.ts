@@ -1,10 +1,6 @@
 import type { getBlockedPrompts } from '../user-signals.service';
 import type { getGenerationRestrictions } from '../user-restriction.service';
-import {
-  GENERATOR_RESTRICTIONS_PATH,
-  GENERATOR_RESTRICTION_TYPES,
-  unwiredRulingReason,
-} from '$lib/restriction-types';
+import { GENERATOR_RESTRICTIONS_PATH, unwiredRulingReason } from '$lib/restriction-types';
 import { BLOCKED_PROMPTS_PATH, GENERATOR_ROWS } from '$lib/tickets/generator-panel';
 import type { HistorySection } from './history';
 
@@ -54,12 +50,11 @@ export type GeneratorReads = {
 
 // Imported when read, so loading the ticket detail module opens no database or ClickHouse connection.
 const liveReads: GeneratorReads = {
-  // `any` type, like the queue's by-id reads: the generator page's own types are applied afterwards.
   restrictions: async (userId, limit) =>
     (await import('../user-restriction.service')).getGenerationRestrictions({
       page: 1,
       limit,
-      type: 'any',
+      type: 'generation',
       userId,
     }),
   blockedPrompts: async (userId, limit) =>
@@ -94,12 +89,9 @@ export async function generatorSectionFor(
     canRead(GENERATOR_RESTRICTIONS_PATH)
       ? section('restrictions', async () => {
           const { items } = await reads.restrictions(userId, GENERATOR_ROWS + 1);
-          const rows = items.filter((r) =>
-            (GENERATOR_RESTRICTION_TYPES as readonly string[]).includes(r.type)
-          );
           return {
             truncated: items.length > GENERATOR_ROWS,
-            rows: rows.slice(0, GENERATOR_ROWS).map(
+            rows: items.slice(0, GENERATOR_ROWS).map(
               (r): GeneratorRestriction => ({
                 id: r.id,
                 type: r.type,

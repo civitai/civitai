@@ -2,6 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../db', () => ({ dbRead: {}, dbWrite: {} }));
 
+// The restriction table as the live read sees it: newest first, filtered by the `type` it is asked for.
+const table: { id: number; type: string }[] = [];
+vi.mock('../user-restriction.service', () => ({
+  getGenerationRestrictions: async (q: { type?: string; limit: number }) => {
+    const items = table
+      .filter((r) => q.type === 'any' || r.type === (q.type ?? 'generation'))
+      .slice(0, q.limit)
+      .map((r) => ({ ...restriction(r.id, { type: r.type }) }));
+    return { items, totalCount: items.length };
+  },
+}));
+
 const { generatorSectionFor } = await import('../tickets/generator-restrictions');
 
 const restrictions = vi.fn();
@@ -141,5 +153,33 @@ describe('generatorSectionFor', () => {
       [2, false],
       [3, false],
     ]);
+  });
+});
+
+describe('generatorSectionFor against the live restriction read', () => {
+  const liveSection = async () => {
+    const res = await generatorSectionFor({
+      userId: 7,
+      canRead: (p) => p === '/audit/generator-restrictions',
+    });
+    if (res.restrictions?.status !== 'ok') throw new Error('expected ok');
+    return res.restrictions;
+  };
+
+  it('is not crowded out by newer restrictions of other types', async () => {
+    table.length = 0;
+    table.push(...Array.from({ length: 11 }, (_, i) => ({ id: 100 + i, type: 'scam' })));
+    table.push({ id: 1, type: 'generation' });
+    const section = await liveSection();
+    expect(section.rows.map((r) => r.id)).toEqual([1]);
+    expect(section.truncated).toBe(false);
+  });
+
+  it('says it was cut when generation restrictions outnumber the rows shown', async () => {
+    table.length = 0;
+    table.push(...Array.from({ length: 11 }, (_, i) => ({ id: i + 1, type: 'generation' })));
+    const section = await liveSection();
+    expect(section.rows).toHaveLength(10);
+    expect(section.truncated).toBe(true);
   });
 });
