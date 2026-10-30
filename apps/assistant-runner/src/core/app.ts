@@ -251,6 +251,7 @@ export function buildRunApp(options: RunAppOptions): FastifyInstance {
           'refused',
           `This start needs a current run grant for this chat in ${GRANT_HEADER}.`
         );
+      if (!acceptsModel(body.data.model)) return refuse(reply, 'bad-request', MODEL_REFUSAL);
       const outcome = await service.start(request.userId, body.data, grant);
       if (!outcome.ok) return refuse(reply, outcome.error, outcome.message, outcome.runId);
       return reply.code(201).send({ ...outcome.response, features: [...RUNNER_FEATURES] });
