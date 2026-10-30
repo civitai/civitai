@@ -175,7 +175,7 @@ export const getContentTotals = createCache({
 // numbers only, hence a name rather than a flag.
 export type TopPool = 'top' | 'recent';
 export const getTopMedia = createCache({
-  name: 'analytics:top-media:v6',
+  name: 'analytics:top-media:v7',
   fetch: ({
     userId,
     from,
@@ -225,7 +225,7 @@ export const getArticleViewDetail = createCache({
 }).get;
 
 export const getTopArticles = createCache({
-  name: 'analytics:top-articles:v4',
+  name: 'analytics:top-articles:v5',
   fetch: ({
     userId,
     from,
@@ -394,7 +394,7 @@ async function fetchTopArticles(
   // Recent swaps the pool: the creator's newest published articles, whether or not anyone viewed or reacted to
   // them in the range. Re-sorting the most-viewed pool by date would drop exactly the article the creator
   // posted today.
-  const newestIds = pool === 'recent' ? await newestArticleIds(uid) : null;
+  const newestIds = pool === 'recent' ? await newestArticleIds(uid, from, to) : null;
   if (newestIds && !newestIds.length) return [];
 
   const ch = getClickhouse();
@@ -461,13 +461,14 @@ async function fetchTopArticles(
     .sort((x, y) => y.views - x.views);
 }
 
-// The creator's newest published articles, newest first. Bounded to the page's 100-row cap in Postgres, so the
-// ClickHouse lookups that follow take a literal id list of at most 100.
-async function newestArticleIds(uid: number): Promise<number[]> {
+// The creator's newest published articles created within the range, newest first. Bounded to the page's 100-row
+// cap in Postgres, so the ClickHouse lookups that follow take a literal id list of at most 100.
+async function newestArticleIds(uid: number, from: string, to: string): Promise<number[]> {
   const rows = await dbRead
     .selectFrom('Article')
     .where('userId', '=', uid)
     .where('status', '=', 'Published')
+    .where(sql<boolean>`"createdAt" >= ${from}::date AND "createdAt" < (${to}::date + 1)`)
     .orderBy(sql`"createdAt" desc nulls last`)
     .orderBy('id', 'desc')
     .limit(TOP_MEDIA_PER_TYPE)
@@ -657,10 +658,10 @@ async function fetchTopMedia(
   return enrichTopImages(raw, from, to);
 }
 
-// Recent's pool: the newest published images and the newest published videos (N of each, the same per-type cap),
-// each carrying its reactions over the range — zero when nobody reacted, which the reaction pool can never
-// contain. `Image.id` is the creation order and `(userId, id)` is indexed, so this reads 2N rows rather than
-// sorting every image the creator has. Unpublished images (no post, or a post not yet live) are not content
+// Recent's pool: the newest published images and the newest published videos created within the range (N of each,
+// the same per-type cap), each carrying its reactions over the range — zero when nobody reacted, which the
+// reaction pool can never contain. Ordering by `(createdAt, id)` lets `Image_userId_createdAt` serve the window
+// and the cap. Unpublished images (no post, or a post not yet live) are not content
 // the audience can see, so they stay out, matching the reaction pool, which only knows images people reacted to.
 async function newestMediaReactions(
   uid: number,
@@ -675,8 +676,9 @@ async function newestMediaReactions(
         JOIN "Post" p ON p.id = i."postId"
         WHERE i."userId" = ${uid}
           AND i.type = ${type}::"MediaType"
+          AND i."createdAt" >= ${from}::date AND i."createdAt" < (${to}::date + 1)
           AND p."publishedAt" IS NOT NULL AND p."publishedAt" <= now()
-        ORDER BY i.id DESC
+        ORDER BY i."createdAt" DESC, i.id DESC
         LIMIT ${TOP_MEDIA_PER_TYPE}
       `.execute(dbRead)
     ).rows.map((r) => Number(r.id));

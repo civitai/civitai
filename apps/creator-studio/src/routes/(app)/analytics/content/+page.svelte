@@ -217,6 +217,8 @@
   <div class="placeholder">
     {#if is3d}
       You haven't published a 3D model yet.
+    {:else if sort === 'recent'}
+      No {active.singular}s created {formatRange(data.range)}.
     {:else if isComics}
       You haven't published a comic yet.
     {:else if isArticles}
@@ -234,14 +236,18 @@
       </span>
     {:else if isComics}
       Your comics {sort === 'recent'
-        ? 'newest first'
+        ? `created ${formatRange(data.range)}, newest first`
         : `by ${sort === 'views' ? 'views' : 'chapter reads'}`}
       <span class="text-xs text-dark-3">
-        {trackingLive ? `· ${periodLabel}` : '· by readers, not views'}
+        {trackingLive
+          ? sort === 'recent'
+            ? '· up to 100'
+            : `· ${periodLabel}`
+          : '· by readers, not views'}
       </span>
     {:else}
       {#if sort === 'recent'}
-        Newest {tab}
+        Newest {tab} created {formatRange(data.range)}
       {:else}
         Top {tab} by {sort === 'views'
           ? 'views'
@@ -250,11 +256,11 @@
             : 'reactions'}
       {/if}
       <span class="text-xs text-dark-3">
-        {periodLabel}{sort === 'recent'
-          ? ' · your 100 newest'
-          : isMedia && sort !== 'reactions'
-            ? ' · within your 100 most-reacted'
-            : ''}
+        {#if sort === 'recent'}
+          · up to 100
+        {:else}
+          {periodLabel}{isMedia && sort !== 'reactions' ? ' · within your 100 most-reacted' : ''}
+        {/if}
       </span>
     {/if}
   </p>
