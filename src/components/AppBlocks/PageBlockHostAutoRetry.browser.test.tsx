@@ -1123,13 +1123,20 @@ describe('PageBlockHost dev-tunnel Retry — loads a FRESH entry URL', () => {
     return { fn, resolveNext: (src: string) => pending.shift()?.(src) };
   }
 
+  /**
+   * Reach the dev-tunnel `timeout` terminal; returns the `src` the frame loaded
+   * BEFORE it (the terminal fallback replaces the frame in the DOM, so it cannot
+   * be read afterwards).
+   */
   async function driveToDevTimeout() {
     await awaitIframeMount();
+    const loadedSrc = iframeEl()?.getAttribute('src');
     await advance(DEV_TUNNEL_WINDOW_MS + 200);
     expect(
       await reaches(() => fallbackEl() !== null),
       'dev-tunnel must time out at the 30 s limit'
     ).toBe(true);
+    return loadedSrc;
   }
 
   test('dev-tunnel: a manual Retry after a timeout fetches a fresh entry URL and loads IT', async () => {
@@ -1145,17 +1152,14 @@ describe('PageBlockHost dev-tunnel Retry — loads a FRESH entry URL', () => {
         onRefreshEntryUrl={onRefreshEntryUrl}
       />
     );
-    await driveToDevTimeout();
-    const stale = iframeEl();
-    expect(stale?.getAttribute('src')).toBe(SAME_ORIGIN_SRC);
+    expect(await driveToDevTimeout()).toBe(SAME_ORIGIN_SRC);
     expect(onRefreshEntryUrl).not.toHaveBeenCalled();
 
     retryButton()?.click();
     await pollFor('retry loading surface', () => loadingEl() !== null);
 
     expect(onRefreshEntryUrl).toHaveBeenCalledTimes(1);
-    // A NEW frame element, on the FRESH url — never the expired one.
-    expect(iframeEl()).not.toBe(stale);
+    // The remounted frame is on the FRESH url — never the expired one.
     expect(iframeEl()?.getAttribute('src')).toBe(freshSrc(1));
 
     // …and the fresh frame is a working one: the handshake completes on it.
@@ -1206,15 +1210,16 @@ describe('PageBlockHost dev-tunnel Retry — loads a FRESH entry URL', () => {
       />
     );
     await driveToDevTimeout();
-    const stale = iframeEl();
 
     retryButton()?.click();
     retryButton()?.click();
     await advance(0);
     expect(refresh.fn).toHaveBeenCalledTimes(1);
-    // Nothing remounted on the expired URL while the fresh one is on its way.
-    expect(iframeEl()).toBe(stale);
+    // Nothing remounted on the expired URL while the fresh one is on its way:
+    // the fallback is still up and no loading surface (or frame) replaced it.
     expect(fallbackEl()).not.toBeNull();
+    expect(loadingEl()).toBeNull();
+    expect(iframeEl()).toBeNull();
 
     refresh.resolveNext(freshSrc(7));
     await pollFor('retry loading surface', () => loadingEl() !== null);
@@ -1264,12 +1269,10 @@ describe('PageBlockHost dev-tunnel Retry — loads a FRESH entry URL', () => {
       />
     );
     await driveToDevTimeout();
-    const stale = iframeEl();
 
     retryButton()?.click();
     await pollFor('retry loading surface', () => loadingEl() !== null);
     expect(onRefreshEntryUrl).toHaveBeenCalledTimes(1);
-    expect(iframeEl()).not.toBe(stale);
     expect(iframeEl()?.getAttribute('src')).toBe(SAME_ORIGIN_SRC);
   });
 
@@ -1293,11 +1296,9 @@ describe('PageBlockHost dev-tunnel Retry — loads a FRESH entry URL', () => {
         />
       );
       await driveToFatal();
-      const before = iframeEl();
 
       retryButton()?.click();
       await pollFor('retry loading surface', () => loadingEl() !== null);
-      expect(iframeEl()).not.toBe(before);
       expect(iframeEl()?.getAttribute('src')).toBe(SAME_ORIGIN_SRC);
       expect(onRefreshEntryUrl).not.toHaveBeenCalled();
     }
