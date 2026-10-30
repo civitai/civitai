@@ -144,7 +144,6 @@ function renderPage({ user, imageId, host }: Fixture) {
   } as unknown as GetServerSidePropsContext);
 }
 
-/** The handler, started and not awaited: `done` settles when it returns. */
 function startPageData(
   { user, imageId, host }: Fixture,
   {
@@ -578,7 +577,6 @@ describe('page-data flushes its headers before the body', () => {
     seeds.release();
     await done;
     expect(res.events).toEqual(['flush', 'end']);
-    // The body that follows is the whole page data, with the page's own trpcState.
     const ssr = await renderPage(fixture);
     expect(jsonRoundTrip((res.body as Record<string, unknown>)?.trpcState)).toEqual(
       jsonRoundTrip(ssr.props?.trpcState)
@@ -669,7 +667,7 @@ describe('page-data flushes its headers before the body', () => {
       const failed = await adopt(
         new Response(res.wire ?? null, { status: res.flushed?.statusCode })
       );
-      expect(failed.ok).toBe(false);
+      expect(failed).toEqual({ ok: false, status: 500 });
       const adopted = await adopt(new Response(whole.res.wire ?? null, { status: 200 }));
       expect(adopted.ok).toBe(true);
     } finally {

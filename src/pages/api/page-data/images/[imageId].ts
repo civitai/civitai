@@ -49,7 +49,7 @@ import {
  *   - a 404 (flag off, non-numeric id) is decided before the flush, and never flushes;
  *   - a failure after the flush ENDS the response with no body: the shell's client reads a 200
  *     whose body is not page data (`readShellResponse`) as unusable and falls back to a full
- *     render — a half-written or error JSON body would be no different, but none is sent;
+ *     render;
  *   - no header can be written after the flush, so the body goes out with `res.end`, not
  *     `res.json` (which sets headers).
  *
@@ -82,7 +82,6 @@ const jsonRoundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
   res.setHeader('Cache-Control', CACHE_CONTROL);
-  /** A whole answer, headers and body at once — for every answer that is not the flushed 200. */
   const send = (status: number, body: unknown) => {
     res.setHeader('Cache-Control', CACHE_CONTROL);
     res.status(status).json(body);
@@ -131,9 +130,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if ('notFound' in pageData) return send(404, { error: 'Not found' });
 
     // The seeds, from the exact request a server render's bootstrap reads (the internal bootstrap
-    // host), so the host-derived ones — ToS, announcements — are the page's. In parallel with the
-    // page's prefetches. Awaited below; a failure that lands before the flush is a 500, and the
-    // handler here only keeps it from being an unhandled rejection meanwhile.
+    // host), so the host-derived ones — ToS, announcements — are the page's.
     let bootstrapFailed = false;
     const bootstrapSeeds = resolveSettingsBootstrapSeeds(settingsBootstrapRequest(req), session);
     bootstrapSeeds.catch(() => {
@@ -145,9 +142,7 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     const mainImage = await pageData.mainImage;
     if (bootstrapFailed) await bootstrapSeeds; // throws: still a 500, nothing flushed yet
 
-    // The exact URL the page's main `<img>` will request for THIS viewer, or no header when it
-    // will request none (video, gated, blur-dependent, hidden, a feed or storyline query). Here and
-    // never in the cached shell HTML, which is the same for every viewer.
+    // Per viewer, so a response header and never part of the cached shell HTML.
     const mainImageUrl = imageDetailMainImageUrlFor({
       query: req.query,
       mainImage,
@@ -212,8 +207,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       message: e instanceof Error ? e.message : String(e),
     }).catch(() => undefined);
     if (!res.headersSent) send(500, { error: 'Page data unavailable' });
-    // Headers flushed as a 200: end it with NO body, which the shell's client cannot adopt and
-    // falls back to a full render on — never an error JSON it would try to read as page data.
     else if (!res.writableEnded) res.end();
   }
 }

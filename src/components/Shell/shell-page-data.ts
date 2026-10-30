@@ -40,9 +40,8 @@ export type ShellPageData = {
  * A header rather than a body member so the head script has it as soon as the response's headers
  * arrive: a body member is only readable once the whole body (the page's `trpcState` included)
  * has downloaded and been parsed, and the app renders its `<img>` at about that moment anyway.
- * The endpoint flushes its headers as soon as the main image is decided, before the rest of the
- * body is computed, so the header arrives well ahead of the body. A failure after that flush ends
- * the 200 with no body, which `readShellResponse` does not adopt.
+ * A failure after the endpoint's early flush ends the 200 with no body, which `readShellResponse`
+ * does not adopt.
  */
 export const SHELL_MAIN_IMAGE_HEADER = 'X-Civ-Main-Image';
 
@@ -80,13 +79,19 @@ function isShellPageData(body: unknown): body is ShellPageData {
 }
 
 async function readShellResponse(pending: Promise<Response>): Promise<ShellPageDataResult> {
+  let res: Response;
   try {
-    const res = await pending;
-    if (res.status !== 200) return { ok: false, status: res.status };
+    res = await pending;
+  } catch {
+    return { ok: false, status: 0 };
+  }
+  if (res.status !== 200) return { ok: false, status: res.status };
+  try {
     const body: unknown = await res.json();
     return isShellPageData(body) ? { ok: true, data: body } : { ok: false, status: 500 };
   } catch {
-    return { ok: false, status: 0 };
+    // A 200 whose body is not JSON (e.g. ended empty after a late server failure): unusable.
+    return { ok: false, status: 500 };
   }
 }
 

@@ -103,10 +103,8 @@ export function startImageDetailPageData({ ctx, ssg, session }: ImageDetailResol
 
 /**
  * The server data for `/images/[imageId]`: what it prefetches into `trpcState`, and the content
- * rating that decides `adsGated`. ONE implementation (`startImageDetailPageData`), two callers —
- * the page's `getServerSideProps` (this) and `GET /api/page-data/images/[imageId]`, which a static
- * shell of the page reads instead — so the two cannot prefetch different queries for the same
- * viewer.
+ * rating that decides `adsGated`. Shared by the page and the page-data endpoint
+ * (`startImageDetailPageData`) so they cannot prefetch different queries for the same viewer.
  *
  * Every prefetch is viewer-dependent (`image.get` checks owner/moderator, blocks and media
  * visibility; `getGenerationData` reads the viewer), so the result is never shareable between
@@ -131,11 +129,8 @@ function mainImageFromImageGet(query: ParsedUrlQuery) {
 }
 
 /**
- * The exact URL the page's main `<img>` requests on its first render for THIS viewer, for the
- * shell to preload; `undefined` when it requests none (video, gated, blur-dependent, hidden, not
- * visible to the viewer, a feed or storyline query). Decided by `imageDetailPreloadUrl`, the
- * page's own visibility rules, from the page's own reads (`startImageDetailPageData`'s
- * `mainImage`).
+ * The URL the page's main `<img>` requests for THIS viewer, for the shell to preload; `undefined`
+ * when it requests none.
  */
 export function imageDetailMainImageUrlFor({
   query,
