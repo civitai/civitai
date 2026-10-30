@@ -1,0 +1,209 @@
+name: TS 7 typecheck trial
+
+# TEMPORARY. Measures whether the TypeScript 7 native compiler could replace
+# TypeScript 5.9 for this repo's typecheck: wall time, peak memory, and whether
+# the diagnostics are identical. Do not merge.
+#
+# It runs only on a PR that changes this file, so it never runs on anyone
+# else's PR. It does not touch the repo's `typescript` dependency: TS 7 is
+# installed into the runner's temp dir and invoked by path.
+#
+# Two jobs, each running BOTH compilers on the same runner, in opposite orders.
+# Same runner = no hardware variance between the two compilers inside a job;
+# opposite orders = whatever the first leg pays (cold page cache) is paid once
+# by each compiler. So each run yields two timings per compiler.
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/ts7-trial.yml'
+
+permissions:
+  contents: read
+
+env:
+  TS7_VERSION: 7.0.2
+  # tsc apps only. The SvelteKit apps typecheck through svelte-check, which
+  # needs the compiler's JS API; TS 7.0 ships none, so they cannot use it.
+  TSC_APPS: assistant-runner event-engine notifications orchestrator-gateway storage
+
+jobs:
+  trial:
+    name: trial (${{ matrix.order }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        order: [ts59-first, ts7-first]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      - name: Install TS ${{ env.TS7_VERSION }} outside the workspace
+        run: |
+          set -euo pipefail
+          command -v /usr/bin/time >/dev/null || { sudo apt-get update -qq && sudo apt-get install -y -qq time; }
+          mkdir -p "$RUNNER_TEMP/ts7"
+          npm install --prefix "$RUNNER_TEMP/ts7" --no-save --no-audit --no-fund "typescript@${TS7_VERSION}"
+          TS7="$RUNNER_TEMP/ts7/node_modules/.bin/tsc"
+          echo "TS7=$TS7" >> "$GITHUB_ENV"
+          echo "OUT=$RUNNER_TEMP/out" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/out"
+          echo "TS 7:   $("$TS7" --version)"
+          echo "TS 5.9: $(node node_modules/typescript/bin/tsc --version)"
+          for a in $TSC_APPS; do echo "  apps/$a: $(cd "apps/$a" && node_modules/.bin/tsc --version)"; done
+          echo "nproc=$(nproc)  mem=$(free -g | awk '/Mem:/{print $2}')G"
+          # The TS 7 tsc must be the native binary, not a JS compiler.
+          file -L "$(find "$RUNNER_TEMP/ts7/node_modules/@typescript" -path '*/lib/tsc' -type f | head -1)"
+
+      - name: Write helpers
+        run: |
+          set -euo pipefail
+          # Normalise tsc output to one line per diagnostic: `file:line:col TSnnnn message`,
+          # paths repo-relative, continuation lines joined, sorted. Arg 2 is the dir tsc ran
+          # in, relative to the repo root.
+          cat > "$RUNNER_TEMP/normalize.mjs" <<'EOF'
+          import { readFileSync } from 'node:fs';
+          import { posix } from 'node:path';
+          const [file, base = '.'] = process.argv.slice(2);
+          const ws = (process.env.GITHUB_WORKSPACE || process.cwd()).replace(/\/$/, '') + '/';
+          // `f.ts(1,2): error TS…` (plain) or `f.ts:1:2 - error TS…` (pretty).
+          const located = /^(.+?)(?:\((\d+),(\d+)\):|:(\d+):(\d+) -) (?:error|warning) (TS\d+): (.*)$/;
+          const global = /^(?:error|warning) (TS\d+): (.*)$/;
+          const out = [];
+          let cur = null;
+          for (const raw of readFileSync(file, 'utf8').replace(/\x1b\[[0-9;]*m/g, '').split('\n')) {
+            const line = raw.replace(/\r$/, '');
+            let m;
+            if ((m = located.exec(line))) {
+              let p = m[1].startsWith(ws) ? m[1].slice(ws.length) : posix.join(base, m[1]);
+              p = posix.normalize(p);
+              cur = { head: `${p}:${m[2] ?? m[4]}:${m[3] ?? m[5]} ${m[6]}`, msg: [m[7].trim()] };
+              out.push(cur);
+            } else if ((m = global.exec(line))) {
+              cur = { head: `<global:${base}> ${m[1]}`, msg: [m[2].trim()] };
+              out.push(cur);
+            } else if (cur && /^\s+\S/.test(line) && !/^\s*\d+ /.test(line) && !/^\s+~+\s*$/.test(line)) {
+              cur.msg.push(line.trim());
+            } else {
+              cur = null;
+            }
+          }
+          for (const d of out.map((d) => `${d.head} ${d.msg.join(' | ')}`).sort()) console.log(d);
+          EOF
+
+          # time_leg <name> <dir> <cmd...> : run under /usr/bin/time -v, keep raw log,
+          # normalised diagnostics and a one-line timing record.
+          cat > "$RUNNER_TEMP/leg.sh" <<'EOF'
+          #!/usr/bin/env bash
+          set -uo pipefail
+          name=$1; dir=$2; shift 2
+          # A stale .tsbuildinfo from the other compiler must not seed this run.
+          find . \( -name node_modules -o -name .git \) -prune -o -name '*.tsbuildinfo' -exec rm -f {} +
+          ( cd "$dir" && /usr/bin/time -v -o "$OUT/$name.time" "$@" ) > "$OUT/$name.raw.log" 2>&1
+          rc=$?
+          node "$RUNNER_TEMP/normalize.mjs" "$OUT/$name.raw.log" "$dir" > "$OUT/$name.diag.txt"
+          wall=$(sed -n 's/.*Elapsed (wall clock) time (h:mm:ss or m:ss): //p' "$OUT/$name.time")
+          rss=$(sed -n 's/.*Maximum resident set size (kbytes): //p' "$OUT/$name.time")
+          ndiag=$(wc -l < "$OUT/$name.diag.txt")
+          # Instrument check: the normaliser must find every raw `error TS` line.
+          nraw=$(grep -ac 'error TS' "$OUT/$name.raw.log" || true)
+          verdict=ok
+          if [ "$rc" -ne 0 ] && [ "$ndiag" -eq 0 ]; then verdict=CRASHED; fi
+          if [ "$rc" -eq 0 ] && [ "$ndiag" -ne 0 ]; then verdict=CONTRADICTORY; fi
+          printf '%-22s rc=%-3s wall=%-9s peakRSS=%6s MB  diagnostics=%-5s raw-error-lines=%-5s %s\n' \
+            "$name" "$rc" "$wall" "$((rss / 1024))" "$ndiag" "$nraw" "$verdict" | tee -a "$OUT/timings.txt"
+          if [ "$verdict" = CRASHED ]; then tail -40 "$OUT/$name.raw.log"; fi
+          exit 0
+          EOF
+          chmod +x "$RUNNER_TEMP/leg.sh"
+
+      - name: Generate Next route types (shared by both root legs)
+        run: node node_modules/next/dist/bin/next typegen
+
+      - name: Root typecheck
+        run: |
+          set -euo pipefail
+          L="$RUNNER_TEMP/leg.sh"
+          # TS 5.9: the repo's own wrapper (V8 heap cap, crash classification, typegen).
+          ts59() { "$L" ts59-root . pnpm run typecheck; }
+          # TS 7: native binary. The V8 heap flag does not apply to it. The wrapper
+          # regenerates .next/types, so regenerate here too to keep the inputs equal.
+          ts7() {
+            node node_modules/next/dist/bin/next typegen > /dev/null
+            "$L" ts7-root . "$TS7" --noEmit --pretty false -p tsconfig.json
+          }
+          if [ "${{ matrix.order }}" = ts59-first ]; then ts59; ts7; else ts7; ts59; fi
+          # Not a timing leg: TS 7 with the two 6.0 default changes most likely to
+          # move diagnostics put back, to separate default changes from checker changes.
+          "$L" ts7-root-olddefaults . "$TS7" --noEmit --pretty false -p tsconfig.json \
+            --types '*' --noUncheckedSideEffectImports false
+
+      - name: App typechecks (tsc apps)
+        run: |
+          set -euo pipefail
+          L="$RUNNER_TEMP/leg.sh"
+          for a in $TSC_APPS; do
+            # Same args as the app's own `typecheck` script, with `tsc` swapped.
+            script=$(node -p "require('./apps/$a/package.json').scripts.typecheck")
+            case "$script" in tsc\ *) args=${script#tsc } ;; *) echo "apps/$a: unexpected typecheck script: $script"; exit 1 ;; esac
+            ts59() { "$L" "ts59-app-$a" "apps/$a" node_modules/.bin/tsc $args --pretty false; }
+            ts7() { "$L" "ts7-app-$a" "apps/$a" "$TS7" $args --pretty false; }
+            if [ "${{ matrix.order }}" = ts59-first ]; then ts59; ts7; else ts7; ts59; fi
+          done
+
+      - name: Diff diagnostics
+        run: |
+          set -euo pipefail
+          cd "$OUT"
+          cat ts59-app-*.diag.txt | sort > ts59-apps.diag.txt
+          cat ts7-app-*.diag.txt | sort > ts7-apps.diag.txt
+          {
+            echo "## TS 7 trial (${{ matrix.order }})"
+            echo '```'
+            cat timings.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          report() {
+            local label=$1 a=$2 b=$3
+            # Full = location + code + message. Key = location + code only, so a
+            # reworded message is told apart from a diagnostic that moved or vanished.
+            cut -d' ' -f1,2 "$a" | sort > "$a.key"; cut -d' ' -f1,2 "$b" | sort > "$b.key"
+            comm -23 "$a" "$b" > "$label.only-ts59.txt"; comm -13 "$a" "$b" > "$label.only-ts7.txt"
+            comm -23 "$a.key" "$b.key" > "$label.only-ts59.key.txt"; comm -13 "$a.key" "$b.key" > "$label.only-ts7.key.txt"
+            local line
+            line=$(printf '%-24s ts59=%-5s ts7=%-5s | full: common=%-5s only-ts59=%-5s only-ts7=%-5s | key: only-ts59=%-5s only-ts7=%s' \
+              "$label" "$(wc -l < "$a")" "$(wc -l < "$b")" "$(comm -12 "$a" "$b" | wc -l)" \
+              "$(wc -l < "$label.only-ts59.txt")" "$(wc -l < "$label.only-ts7.txt")" \
+              "$(wc -l < "$label.only-ts59.key.txt")" "$(wc -l < "$label.only-ts7.key.txt")")
+            echo "$line" | tee -a diff-summary.txt
+            for f in "$label.only-ts59.txt" "$label.only-ts7.txt"; do
+              if [ -s "$f" ]; then echo "--- $f (first 25)"; head -25 "$f"; fi
+            done
+          }
+          report root ts59-root.diag.txt ts7-root.diag.txt
+          report root-olddefaults ts59-root.diag.txt ts7-root-olddefaults.diag.txt
+          report apps ts59-apps.diag.txt ts7-apps.diag.txt
+          for a in $TSC_APPS; do report "app-$a" "ts59-app-$a.diag.txt" "ts7-app-$a.diag.txt" > /dev/null; done
+          echo; echo "TS7 diagnostic codes by count (root):"; cut -d' ' -f2 ts7-root.diag.txt | sort | uniq -c | sort -rn | head -20
+          { echo '```'; cat diff-summary.txt; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ts7-trial-${{ matrix.order }}
+          path: ${{ runner.temp }}/out
+          retention-days: 14
