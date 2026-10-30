@@ -258,3 +258,45 @@ describe('toggleReactionHandler — which reactions may be created', () => {
     }
   });
 });
+
+describe('toggleReactionHandler — a comment on a crucible', () => {
+  const crucible = (takenDownAt: Date | null) => ({
+    userId: 4,
+    nsfwLevel: 1,
+    textNsfw: false,
+    ingestion: 'Scanned',
+    image: { ingestion: 'Scanned' },
+    takenDownAt,
+  });
+  beforeEach(() => {
+    // Serves both lookups on the comment: not detached, and in crucible 17's thread.
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ detached: false, crucibleId: 17 }] as never);
+  });
+
+  it('is refused once the crucible is taken down', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucible(new Date()) as never);
+
+    await expect(react('comment', 55)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockToggleReaction).not.toHaveBeenCalled();
+  });
+
+  it('still lets a moderator react on a taken-down crucible', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucible(new Date()) as never);
+    const ctx = { ...makeCtx(), user: { id: REACTOR_ID, isModerator: true } } as never;
+
+    await toggleReactionHandler({
+      ctx,
+      input: { entityType: 'comment', entityId: 55, reaction: 'Like' },
+    });
+
+    expect(mockToggleReaction).toHaveBeenCalled();
+  });
+
+  it('goes through on a crucible the reactor can open (control)', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucible(null) as never);
+
+    await react('comment', 55);
+
+    expect(mockToggleReaction).toHaveBeenCalled();
+  });
+});

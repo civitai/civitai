@@ -190,3 +190,59 @@ describe('crucible-entry-removed copy', () => {
     );
   });
 });
+
+describe('crucible takedown notification messages', () => {
+  const removed = crucibleNotifications['crucible-removed'];
+  const takenDown = crucibleNotifications['crucible-taken-down'];
+
+  it('promises entrants a refund only when one was made', () => {
+    const message = (details: Record<string, unknown>) =>
+      removed.prepareMessage({ details: { crucibleId: 7, crucibleName: 'Neon', ...details } })!
+        .message;
+
+    expect(message({ refunded: true, refundPending: false })).toContain('have been refunded');
+    expect(message({ refunded: true, refundPending: true })).toContain('being processed');
+    expect(message({ refunded: false, refundPending: false })).not.toMatch(/refund/i);
+  });
+
+  it('links entrants to the crucible list, since the page is gone for them', () => {
+    expect(
+      removed.prepareMessage({ details: { crucibleId: 7, crucibleName: 'Neon', refunded: true } })!
+        .url
+    ).toBe('/crucibles');
+  });
+
+  it('tells the creator the reason and what happened to their Buzz', () => {
+    const message = takenDown.prepareMessage({
+      details: {
+        crucibleId: 7,
+        crucibleName: 'Neon',
+        reason: 'Off-topic',
+        creatorFunds: 'forfeited',
+      },
+    })!.message;
+
+    expect(message).toContain('Neon');
+    expect(message).toContain('Reason: Off-topic');
+    expect(message).toContain('was not refunded');
+  });
+
+  it.each([
+    ['refunded', 'was refunded'],
+    ['pending', 'is being refunded'],
+    ['held', 'held pending review'],
+    ['forfeited', 'was not refunded'],
+  ])('says the creator Buzz %s', (creatorFunds, text) => {
+    const message = takenDown.prepareMessage({
+      details: { crucibleId: 7, crucibleName: 'Neon', reason: 'Off-topic', creatorFunds },
+    })!.message;
+    expect(message).toContain(text);
+  });
+
+  it('says nothing about creator Buzz when there was none', () => {
+    const message = takenDown.prepareMessage({
+      details: { crucibleId: 7, crucibleName: 'Neon', reason: 'Off-topic', creatorFunds: 'none' },
+    })!.message;
+    expect(message).not.toMatch(/Buzz/);
+  });
+});

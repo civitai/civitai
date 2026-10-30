@@ -7014,6 +7014,10 @@ export interface Crucible {
   textNsfw: boolean;
   timeAdjustedPlacement: boolean;
   eventTags: string[];
+  takenDownAt: Date | null;
+  takenDownById: number | null;
+  takedownReason: string | null;
+  takedownRefundsCreator: boolean;
   entries?: CrucibleEntry[];
   reports?: CrucibleReport[];
   engagements?: CrucibleEngagement[];

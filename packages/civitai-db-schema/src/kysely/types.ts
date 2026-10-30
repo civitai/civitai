@@ -2871,6 +2871,10 @@ export type Crucible = {
   textNsfw: Generated<boolean>;
   timeAdjustedPlacement: Generated<boolean>;
   eventTags: Generated<string[]>;
+  takenDownAt: Timestamp | null;
+  takenDownById: number | null;
+  takedownReason: string | null;
+  takedownRefundsCreator: Generated<boolean>;
 };
 export type CrucibleEngagement = {
   userId: number;

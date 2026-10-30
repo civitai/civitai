@@ -37,6 +37,7 @@ import {
 } from '~/server/services/hot-reads-5.reads';
 import { toggleReaction } from './../services/reaction.service';
 import { hasEntityAccess } from '~/server/services/common.service';
+import { assertCommentCrucibleVisible } from '~/server/controllers/commentv2.controller';
 
 /**
  * The exact payload `Tracker.reaction` accepts.
@@ -285,6 +286,7 @@ export const toggleReactionHandler = async ({
       (await isCommentGoneForMembers(input.entityId))
     )
       throw throwNotFoundError(`No comment with id ${input.entityId}`);
+    if (input.entityType === 'comment') await assertCommentCrucibleVisible(input.entityId, ctx);
 
     if (input.entityType === 'image') {
       // We are only doing this for image contests for now. Because the user

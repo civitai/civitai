@@ -1,7 +1,13 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import type { Prisma } from '@prisma/client';
-import { storylineOfCommentSql, storylineOfThreadSql } from '~/server/services/commentsv2.service';
+import { dbMock } from '~/__tests__/mocks';
+import {
+  getCommentCrucibleId,
+  crucibleOfCommentSql,
+  storylineOfCommentSql,
+  storylineOfThreadSql,
+} from '~/server/services/commentsv2.service';
 
 /** Runs the real storyline lookup the reply gate depends on against an in-process Postgres. */
 
@@ -24,7 +30,7 @@ beforeAll(async () => {
   // 20 has a reply thread 21.
   await db.exec(`
     CREATE TABLE "Thread"(id int PRIMARY KEY, "storylineId" int, "imageId" int,
-      "commentId" int, "rootThreadId" int);
+      "commentId" int, "rootThreadId" int, "crucibleId" int);
     CREATE TABLE "CommentV2"(id int PRIMARY KEY, "threadId" int);
     INSERT INTO "Thread" VALUES (10, 1, NULL, NULL, NULL), (20, NULL, 5, NULL, NULL);
     INSERT INTO "CommentV2" VALUES (100, 10), (200, 20);
@@ -34,6 +40,11 @@ beforeAll(async () => {
     INSERT INTO "CommentV2" VALUES (102, 12), (103, 13);
     INSERT INTO "Thread" VALUES (14, NULL, NULL, 103, NULL);
     INSERT INTO "CommentV2" VALUES (104, 14);
+    -- Crucible 7's thread 30 > comment 300 > reply thread 31 (no rootThreadId) > comment 301.
+    INSERT INTO "Thread"(id, "crucibleId") VALUES (30, 7);
+    INSERT INTO "CommentV2" VALUES (300, 30);
+    INSERT INTO "Thread"(id, "commentId") VALUES (31, 300);
+    INSERT INTO "CommentV2" VALUES (301, 31);
   `);
 });
 
@@ -70,5 +81,31 @@ describe('storyline above a comment thread', () => {
     expect(await ofThread(20)).toBeNull();
     expect(await ofComment(201)).toBeNull();
     expect(await ofComment(999)).toBeNull();
+  });
+});
+
+describe('crucibleOfCommentSql', () => {
+  const crucibleOf = async (commentId: number) => {
+    const sql = crucibleOfCommentSql(commentId);
+    const { rows } = await db.query<{ crucibleId: number }>(sql.text, sql.values);
+    return rows[0]?.crucibleId ?? null;
+  };
+
+  it('finds the crucible above a reply, through a thread with no rootThreadId', async () => {
+    expect(await crucibleOf(300)).toBe(7);
+    expect(await crucibleOf(301)).toBe(7);
+  });
+
+  it('finds none above a comment outside any crucible', async () => {
+    expect(await crucibleOf(201)).toBeNull();
+  });
+
+  it('is what getCommentCrucibleId answers', async () => {
+    dbMock.dbRead.$queryRaw.mockImplementation(
+      (async (sql: Prisma.Sql) => (await db.query(sql.text, sql.values)).rows) as never
+    );
+
+    expect(await getCommentCrucibleId(301)).toBe(7);
+    expect(await getCommentCrucibleId(201)).toBeNull();
   });
 });
