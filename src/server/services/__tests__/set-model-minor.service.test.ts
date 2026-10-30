@@ -127,6 +127,7 @@ import type { Tracker } from '~/server/clickhouse/client';
 import { MINOR_LOCKED_PROPERTIES, setModelMinor } from '~/server/services/model.service';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { rowChangesBeforeLock, sqlOf as sqlText } from './model-row-lock.fake';
 import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
@@ -149,8 +150,13 @@ const baseModelRow = {
 };
 
 function mockBefore(overrides: Partial<typeof baseModelRow>) {
-  mockDbRead.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
+  mockDbWrite.model.findUnique.mockResolvedValue({ ...baseModelRow, ...overrides });
 }
+
+const sqlOf = (call: unknown[]) => (call[0] as TemplateStringsArray).join('?');
+/** The fan-out's raw reads, without the row lock the setter takes first. */
+const fanOutQueries = () =>
+  mockDbWrite.$queryRaw.mock.calls.filter((call) => !sqlOf(call).includes('FOR NO KEY UPDATE'));
 
 function mockTracker() {
   return { entityChanges: vi.fn().mockResolvedValue(undefined) };
@@ -267,7 +273,7 @@ describe('setModelMinor — set', () => {
 
     expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(fanOutQueries()).toHaveLength(1);
     expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalled();
   });
 
@@ -363,7 +369,7 @@ describe('setModelMinor — unset', () => {
 
     expect(mockModelTagRefresh).toHaveBeenCalledWith(MODEL_ID);
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
-    expect(mockDbWrite.$queryRaw).toHaveBeenCalledTimes(1);
+    expect(fanOutQueries()).toHaveLength(1);
     expect(mockQueueImageSearchIndexUpdate).toHaveBeenCalled();
   });
 
@@ -412,7 +418,7 @@ describe('setModelMinor — unset on a model that stays poi', () => {
 
 describe('setModelMinor — not found', () => {
   it('throws a not-found error when the model does not exist', async () => {
-    mockDbRead.model.findUnique.mockResolvedValue(null);
+    mockDbWrite.model.findUnique.mockResolvedValue(null);
 
     await expect(
       setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID })
@@ -438,8 +444,9 @@ describe('setModelMinor — pre-state snapshot', () => {
 
     await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
 
-    expect(mockDbWrite.$executeRaw).toHaveBeenCalled();
-    expect(mockDbWrite.$executeRaw.mock.invocationCallOrder[0]).toBeLessThan(
+    const at = mockDbWrite.$executeRaw.mock.calls.indexOf(snapshotCall()!);
+    expect(at).toBeGreaterThanOrEqual(0);
+    expect(mockDbWrite.$executeRaw.mock.invocationCallOrder[at]).toBeLessThan(
       mockDbWrite.model.update.mock.invocationCallOrder[0]
     );
   });
@@ -508,12 +515,20 @@ describe('setModelMinor — pre-state snapshot', () => {
 
   it('still flags when the snapshot write fails — losing it must not block the flag', async () => {
     mockBefore({});
-    mockDbWrite.$executeRaw.mockRejectedValueOnce(new Error('db exploded'));
+    mockDbWrite.$executeRaw.mockImplementation((...call: unknown[]) =>
+      sqlOf(call).includes('UPDATE "Model"')
+        ? Promise.reject(new Error('db exploded'))
+        : Promise.resolve(0)
+    );
 
     await expect(
       setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID })
     ).resolves.toEqual(expect.objectContaining({ id: MODEL_ID }));
     expect(mockDbWrite.model.update).toHaveBeenCalled();
+    // In Postgres a failed statement aborts the transaction; only the savepoint lets the flag land.
+    expect(mockDbWrite.$executeRaw.mock.calls.map(sqlOf)).toContainEqual(
+      expect.stringContaining('ROLLBACK TO SAVEPOINT minor_flag_snapshot')
+    );
     expect(mockLogToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ name: 'minor-flag-snapshot', modelId: MODEL_ID })
     );
@@ -809,9 +824,12 @@ describe('setModelMinor — reapplying side effects', () => {
 
   it('busts the gallery settings from the snapshot level, which a minor-only diff would skip', async () => {
     mockBefore(flaggedBefore);
-    mockDbWrite.model.findUnique.mockResolvedValue({
-      meta: { minorFlagSnapshot: { prevGalleryLevel: 31, prevSfwOnly: false, prevNsfw: true } },
-    });
+    // The first read is the locked row; the one after the write is the snapshot.
+    mockDbWrite.model.findUnique
+      .mockResolvedValueOnce({ ...baseModelRow, ...flaggedBefore })
+      .mockResolvedValue({
+        meta: { minorFlagSnapshot: { prevGalleryLevel: 31, prevSfwOnly: false, prevNsfw: true } },
+      });
 
     await setModelMinor({
       id: MODEL_ID,
@@ -834,7 +852,9 @@ describe('setModelMinor — reapplying side effects', () => {
 
   it('still flips minor when no snapshot survived', async () => {
     mockBefore(flaggedBefore);
-    mockDbWrite.model.findUnique.mockResolvedValue({ meta: {} });
+    mockDbWrite.model.findUnique
+      .mockResolvedValueOnce({ ...baseModelRow, ...flaggedBefore })
+      .mockResolvedValue({ meta: {} });
 
     await setModelMinor({
       id: MODEL_ID,
@@ -845,5 +865,91 @@ describe('setModelMinor — reapplying side effects', () => {
 
     expect(mockModelsQueueUpdate).toHaveBeenCalled();
     expect(mockBustGallerySettings).not.toHaveBeenCalled();
+  });
+});
+
+// A flag or lock another moderator or a job sets after an earlier read of the model is in the row
+// the setter locks, and the write is built from that row.
+describe('setModelMinor — decides from the row it locks', () => {
+  const written = () => mockDbWrite.model.update.mock.calls[0][0].data;
+
+  it('keeps a poi lock set since an earlier read when the minor flag is lifted', async () => {
+    rowChangesBeforeLock(
+      { ...baseModelRow, minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] },
+      {
+        ...baseModelRow,
+        minor: true,
+        poi: true,
+        lockedProperties: [...MINOR_LOCKED_PROPERTIES, 'poi'],
+      }
+    );
+
+    await setModelMinor({ id: MODEL_ID, minor: false, userId: MODERATOR_ID });
+
+    expect(written().lockedProperties).toEqual(['poi']);
+  });
+
+  it('keeps the locks and gallery settings written since an earlier read when flagging', async () => {
+    rowChangesBeforeLock(baseModelRow, {
+      ...baseModelRow,
+      gallerySettings: { level: 1, users: [9], tags: [] },
+      lockedProperties: ['poi'],
+    });
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect([...written().lockedProperties].sort()).toEqual(['minor', 'nsfw', 'poi', 'sfwOnly']);
+    expect(written().gallerySettings).toEqual({
+      level: sfwBrowsingLevelsFlag,
+      users: [9],
+      tags: [],
+    });
+  });
+
+  it('records the change against the row it locked', async () => {
+    rowChangesBeforeLock(baseModelRow, { ...baseModelRow, sfwOnly: true, nsfw: false });
+    const tracker = mockTracker();
+
+    await setModelMinor({
+      id: MODEL_ID,
+      minor: true,
+      userId: MODERATOR_ID,
+      tracker: tracker as unknown as Tracker,
+    });
+
+    expect(changeRowsFrom(tracker).map(({ field }) => field)).not.toContain('sfwOnly');
+  });
+
+  // On its own connection the snapshot would wait on the row lock the flag's transaction holds.
+  it('takes the snapshot on the transaction that holds the row lock', async () => {
+    const { tx } = rowChangesBeforeLock(baseModelRow, baseModelRow);
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    const snapshots = tx.$executeRaw.mock.calls.filter(([strings]) =>
+      sqlText(strings).includes('UPDATE "Model"')
+    );
+    expect(snapshots).toHaveLength(1);
+    expect(mockLogToAxiom).not.toHaveBeenCalled();
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+  });
+
+  it('does all of its follow-up work after the write commits', async () => {
+    rowChangesBeforeLock(baseModelRow, baseModelRow);
+    let committed = false;
+    const transaction = mockDbWrite.$transaction.getMockImplementation()!;
+    mockDbWrite.$transaction.mockImplementation((async (callback: never) => {
+      const result = await transaction(callback);
+      committed = true;
+      return result;
+    }) as never);
+    const commitSeen: boolean[] = [];
+    for (const fn of [mockTrackModActivity, mockPreventReplicationLag, mockModelsQueueUpdate])
+      fn.mockImplementation(async () => void commitSeen.push(committed));
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect(commitSeen).toHaveLength(3);
+    expect(commitSeen.every(Boolean)).toBe(true);
   });
 });
