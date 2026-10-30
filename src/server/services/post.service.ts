@@ -1185,17 +1185,7 @@ export async function unpublishPostAsModerator({
   const post = rows[0];
   if (!post) return { unpublished: false };
 
-  const images = await dbWrite.image.findMany({
-    where: { postId: id },
-    select: { id: true },
-  });
-  if (images.length)
-    await queueImageSearchIndexUpdate({
-      ids: images.map((image) => image.id),
-      action: SearchIndexUpdateQueueAction.Delete,
-    });
-  await userPostCountCache.refresh(post.userId);
-  await userImageVideoCountCaches.refresh(post.userId);
+  await afterPostsUnpublish([{ postId: post.id, userId: post.userId }]);
   return { unpublished: true };
 }
 
@@ -1222,6 +1212,23 @@ export async function afterPostsPublish(posts: { postId: number; userId: number 
       action: SearchIndexUpdateQueueAction.Update,
     });
   }
+  await userImageVideoCountCaches.refresh(userIds);
+}
+
+/** Everything an unpublish needs besides the write: the images leave search, the counts drop. */
+export async function afterPostsUnpublish(posts: { postId: number; userId: number }[]) {
+  if (!posts.length) return;
+  const images = await dbWrite.image.findMany({
+    where: { postId: { in: posts.map((post) => post.postId) } },
+    select: { id: true },
+  });
+  if (images.length)
+    await queueImageSearchIndexUpdate({
+      ids: images.map((image) => image.id),
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+  const userIds = uniq(posts.map((post) => post.userId));
+  await userPostCountCache.refresh(userIds);
   await userImageVideoCountCaches.refresh(userIds);
 }
 

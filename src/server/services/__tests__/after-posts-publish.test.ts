@@ -19,7 +19,7 @@ vi.mock('~/server/services/image.service', async (importOriginal) => ({
   queueImageSearchIndexUpdate,
 }));
 
-const { afterPostsPublish } = await import('~/server/services/post.service');
+const { afterPostsPublish, afterPostsUnpublish } = await import('~/server/services/post.service');
 
 const findImages = dbMock.dbWrite.image.findMany;
 
@@ -69,5 +69,21 @@ describe('afterPostsPublish', () => {
     expect(findImages).not.toHaveBeenCalled();
     expect(postCountRefresh).not.toHaveBeenCalled();
     expect(imageVideoCountRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe('afterPostsUnpublish', () => {
+  it("takes every post's images out of search and refreshes each owner's counts once", async () => {
+    await afterPostsUnpublish([
+      { postId: 300, userId: 10 },
+      { postId: 301, userId: 10 },
+    ]);
+
+    expect(queueImageSearchIndexUpdate).toHaveBeenCalledWith({
+      ids: [7, 8, 9],
+      action: SearchIndexUpdateQueueAction.Delete,
+    });
+    expect(postCountRefresh).toHaveBeenCalledWith([10]);
+    expect(imageVideoCountRefresh).toHaveBeenCalledWith([10]);
   });
 });

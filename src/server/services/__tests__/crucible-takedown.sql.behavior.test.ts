@@ -55,6 +55,9 @@ vi.mock('~/server/redis/crucible-elo.redis', async (importOriginal) => ({
   crucibleEloRedis: { setTTL: vi.fn(async () => undefined) },
 }));
 
+// post.service and image.service import each other: loaded first, post.service binds to the mocked
+// image.service rather than the original that image.service's own factory is still loading.
+await import('~/server/services/post.service');
 const { takeDownCrucible, cancelCrucible } = await import('~/server/services/crucible.service');
 
 let db: PGlite;

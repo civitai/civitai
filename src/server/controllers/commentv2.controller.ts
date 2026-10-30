@@ -42,7 +42,6 @@ import {
   isCommentDetached,
   isCommentGoneForMembers,
   isThreadDetached,
-  getCommentThreadCrucibleId,
   getCommentCrucibleId,
   getCommentStorylineId,
   getCommentThreadStorylineId,
@@ -103,14 +102,21 @@ export async function assertCommentEntityVisible(
     });
 }
 
-/** For a write on one comment: the crucible above it gates it as it gates the thread's reads. */
-export async function assertCommentCrucibleVisible(
+/**
+ * For a member's action on one comment: a comment they cannot see answers as gone, and the crucible
+ * above it gates it as it gates the thread's reads.
+ */
+export async function assertCommentActionable(
   commentId: number,
   ctx: Pick<Context, 'user' | 'features'>
 ) {
   const { user } = ctx;
   if (user?.isModerator) return;
-  const crucibleId = await getCommentCrucibleId(commentId);
+  const [gone, crucibleId] = await Promise.all([
+    isCommentGoneForMembers(commentId),
+    getCommentCrucibleId(commentId),
+  ]);
+  if (gone) throw throwNotFoundError(`No comment with id ${commentId}`);
   if (!crucibleId) return;
   await assertCrucibleVisible(crucibleId, {
     viewerId: user?.id,
@@ -129,10 +135,7 @@ export const getCommentHandler = async ({ ctx, input }: { ctx: Context; input: G
       const [detached, bounty, crucibleId, storylineId] = await Promise.all([
         isThreadDetached(comment.threadId),
         getCommentThreadBounty(comment.threadId),
-        // Some reply threads carry no rootThreadId, so the thread alone can miss its crucible.
-        getCommentThreadCrucibleId(comment.threadId).then(
-          (id) => id ?? getCommentCrucibleId(comment.id)
-        ),
+        getCommentCrucibleId(comment.id),
         getCommentThreadStorylineId(comment.threadId),
       ]);
       if (detached) throw throwNotFoundError(`No comment with id ${input.id}`);
@@ -383,9 +386,7 @@ export const toggleHideCommentHandler = async ({
   const { id } = input;
 
   try {
-    if (!isModerator && (await isCommentGoneForMembers(id)))
-      throw throwNotFoundError(`No comment with id ${id}`);
-    await assertCommentCrucibleVisible(id, ctx);
+    await assertCommentActionable(id, ctx);
     const { hidden, ownerId } = await getContentOwnerIdForComment(id);
     if (!isModerator && ownerId !== userId) throw throwAuthorizationError();
 
@@ -409,9 +410,7 @@ export const togglePinnedCommentHandler = async ({
   const { id } = input;
 
   try {
-    if (!isModerator && (await isCommentGoneForMembers(id)))
-      throw throwNotFoundError(`No comment with id ${id}`);
-    await assertCommentCrucibleVisible(id, ctx);
+    await assertCommentActionable(id, ctx);
     const { ownerId } = await getContentOwnerIdForComment(id);
     if (!isModerator && ownerId !== userId) throw throwAuthorizationError();
 

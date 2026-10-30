@@ -108,14 +108,14 @@ import {
   isImageHiddenFromGreenViewer,
 } from '~/server/games/daily-challenge/challenge-visibility';
 import { checkCrucibleSettings } from '~/server/schema/crucible.schema';
-import { createPost, afterPostPublish, afterPostsPublish } from '~/server/services/post.service';
-import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import {
-  imageResourcesCache,
-  userImageVideoCountCaches,
-  userPostCountCache,
-} from '~/server/redis/caches';
-import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+  createPost,
+  afterPostPublish,
+  afterPostsPublish,
+  afterPostsUnpublish,
+} from '~/server/services/post.service';
+import { NotificationCategory } from '~/server/common/enums';
+import { imageResourcesCache } from '~/server/redis/caches';
 import {
   areCrucibleEntriesClosed,
   getCrucibleLiveMinVotes,
@@ -5015,18 +5015,7 @@ async function hideCrucibleEntryPosts(crucibleId: number) {
   // re-run finds these posts already drafted, so a failure here is only fixed by a reindex.
   const postIds = posts.map((post) => post.id);
   try {
-    const images = await dbWrite.image.findMany({
-      where: { postId: { in: postIds } },
-      select: { id: true },
-    });
-    if (images.length)
-      await queueImageSearchIndexUpdate({
-        ids: images.map((image) => image.id),
-        action: SearchIndexUpdateQueueAction.Delete,
-      });
-    const userIds = [...new Set(posts.map((post) => post.userId))];
-    await userPostCountCache.refresh(userIds);
-    await userImageVideoCountCaches.refresh(userIds);
+    await afterPostsUnpublish(posts.map((post) => ({ postId: post.id, userId: post.userId })));
   } catch (error) {
     logToAxiom({
       type: 'error',
