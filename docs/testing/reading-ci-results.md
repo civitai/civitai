@@ -22,8 +22,10 @@ gh run list --branch <branch> --json headSha,name,conclusion
 
 **A healthy internal PR here has 5 `Lint` check-runs at head and a `success` combined status**
 carrying `tekton / typecheck` and `tekton / fixture-bootstrap`. Two of the five are `skipped` by
-design: `Typecheck` (Tekton's covers an internal PR) and `Unit tests` (runs on `main` and on
-dispatch only; it is one skipped check, not four shards). A PR that touches `apps/`, `packages/` or
+design: `Typecheck` (Tekton's covers an internal PR) and `Unit tests` (runs on `main`, on
+dispatch and on a PR with the `full-ci` label; skipped, it is one check, not four shards). With the
+`full-ci` label the `Unit tests` check expands to 4 shard check-runs (`Unit tests (1)` .. `(4)`), so
+the same PR has 8 `Lint` check-runs, one of them (`Typecheck`) skipped. A PR that touches `apps/`, `packages/` or
 the root files the app suites read also gets 1 `App suites` check-run (`App unit tests + typecheck`);
 any other PR gets none, and that is by design, not a missing run (the list is the `paths:` filter in
 `.github/workflows/apps.yml`). Expect `pr-review` on top, plus a check per job of any other workflow
@@ -39,8 +41,11 @@ contains Actions results but no Tekton status does not cover the thing that gate
 `ESLint + Prettier (changed files)` is `skipped`, and the `App suites`, tRPC parity and schema drift
 jobs skip too. (The Windows dev-env smoke never runs on PRs; it runs on pushes to `main` and on
 dispatch: `gh workflow run windows-dev-env.yml -R civitai/civitai --ref <branch>`.) That is the draft gate, not a broken run: the jobs start when the PR is
-marked ready (`gh pr ready <pr>`). To get a verdict while it is still a draft, dispatch one on the
-branch, which runs against the branch head rather than the merge with `main`:
+marked ready (`gh pr ready <pr>`). To get a verdict while it is still a draft, add the `full-ci`
+label (`gh pr edit <pr> --add-label full-ci`): it runs every Lint job, the unit shards included, and
+the app suites if the PR's paths reach them, on this and every later push until it is removed. It
+does not lift the draft gate on schema drift or tRPC parity. Or dispatch one on the branch, which
+runs against the branch head rather than the merge with `main`:
 
 ```bash
 gh workflow run lint.yml -R civitai/civitai --ref <branch> -f only=<job>   # typecheck, unit, packages, component, ...
