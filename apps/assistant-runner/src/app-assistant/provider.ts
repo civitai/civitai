@@ -14,6 +14,7 @@ import {
   createSandboxClient,
   openApp,
   type Sandbox,
+  type ToolResult,
 } from '@civitai/app-assistant';
 import {
   DISPATCH_AGENT,
@@ -192,13 +193,20 @@ export class AppAssistantTools implements ToolProvider {
       log.warn({ err: (error as Error)?.name, runId }, 'listing the user’s apps failed');
     }
     try {
-      const pageApp = readPageState(context.page).app;
+      // Built again mid-reply (`reopenTools`): the app this reply made or chose, which the page may not
+      // have opened yet; else the app open in the page.
+      const pageApp =
+        appChosenIn(toolResultsOf(context.history?.current ?? [])) ??
+        readPageState(context.page).app;
       await sandbox.open(pageApp, apps ?? []);
       const sandboxTools = await sandbox.tools();
 
       const appTools = createAppTools({
         apps: () => apps,
         current: () => sandbox.active,
+        // The reply's tools are built again at once, for the app it made (see `appChosenIn`), which
+        // `sandbox.open` wakes and waits for.
+        toolsReady: async () => true,
         open: async (app) => {
           const before = sandbox.active?.name ?? null;
           const opened = await openApp(client, app);
@@ -215,7 +223,6 @@ export class AppAssistantTools implements ToolProvider {
           // Features are planned for an app, so not before one exists.
           name === SET_CHECKLIST && !sandbox.active ? NO_APP_REFUSAL : appTools.refusal(name),
         onReply: appTools.newReply,
-        currentApp: () => sandbox.active?.name ?? null,
         // Each checklist says which app it was for, so a later reply carries only this app's.
         checklistApp: () => sandbox.active?.app ?? null,
         // A chat changes only the app it made or chose: a new chat never builds over the open one.
@@ -436,4 +443,18 @@ class ReportingTracker extends SubagentTracker {
     super.set(id, progress);
     this.#report?.(id, progress ?? null);
   }
+}
+
+/**
+ * The app the reply's own calls made or chose so far (the last `create_app` or `use_open_app` that
+ * named one), as the reply's tools are built again mid-reply; `null` when none did.
+ */
+export function appChosenIn(results: readonly ToolResult[]): string | null {
+  for (const { name, output, isError, refused, stopped } of [...results].reverse()) {
+    if (name !== CREATE_APP && name !== USE_OPEN_APP) continue;
+    if (isError || refused !== undefined || stopped) continue;
+    const app = (output as { app?: unknown } | null)?.app;
+    if (typeof app === 'string' && app) return app;
+  }
+  return null;
 }

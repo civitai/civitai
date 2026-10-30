@@ -73,13 +73,34 @@ export interface AppToolsOptions {
   current: () => Sandbox | null;
   /** Creates (or, when it exists after all, resumes) the app's sandbox and makes it the open app. */
   open: (app: string) => Promise<{ sandbox: Sandbox; created: boolean }>;
+  /**
+   * Resolves `true` once the reply can be given a new app's own tools by building its tools again
+   * (`reopenTools`): the page, once the app runs and its tools are handed to the chat; the server
+   * runner at once, as it opens the app the reply chose when it builds them. `false` (or unset): they
+   * arrive with the next reply.
+   */
+  toolsReady?: (app: string) => Promise<boolean>;
 }
+
+/** A new app whose tools the reply gets now (`reopenTools`): it goes straight on to plan and build. */
+const newAppReady = (app: string, intro: string) =>
+  `${intro} ${app} is also its blockId. Its tools are ready for this reply: call set_checklist with the features the user asked for, as your plan, then build it straight away. Ask the user only if their request is ambiguous or needs a decision from them.`;
+/** A new app whose tools come only with the next reply. */
+const newAppNotReady = (app: string, intro: string) =>
+  `${intro} ${app} is also its blockId. It is still starting, so its tools arrive with your next reply: call set_checklist with the features the user asked for, as your plan, then tell the user in one short sentence that their app is starting and you will build it as soon as they reply.`;
 
 /** What a create_app that made no new app adds: it does not choose the app for the chat. */
 const CHOOSE_FIRST =
   'Changes to it are refused until it is chosen: call use_open_app first if this chat has not, and only if the user asked to change it.';
 
-type CreateResult = { app: string; state: Sandbox['state']; existed?: true; note: string };
+type CreateResult = {
+  app: string;
+  state: Sandbox['state'];
+  existed?: true;
+  note: string;
+  /** The reply carries on with its tools built again, the new app's included (components-chat). */
+  reopenTools?: true;
+};
 
 export interface AppTools {
   tools: Record<string, AssistantTool>;
@@ -94,7 +115,7 @@ export interface AppTools {
   forget(name: string): void;
 }
 
-export function createAppTools({ apps, current, open }: AppToolsOptions): AppTools {
+export function createAppTools({ apps, current, open, toolsReady }: AppToolsOptions): AppTools {
   // The chat runs a step's calls together; a second create must not race the first to the service,
   // which would make two apps under one name.
   let pending: Promise<CreateResult> | null = null;
@@ -112,6 +133,18 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
   const recordedBase = (sandbox: Sandbox) => {
     const record = askedFor.get(sandbox.name);
     return record && record.createdAt === sandbox.createdAt ? record.base : undefined;
+  };
+
+  /** What a new app's create_app answers: its tools now (`reopenTools`) when they are ready. */
+  const madeNew = async (
+    app: string,
+    state: Sandbox['state'],
+    intro: string
+  ): Promise<CreateResult> => {
+    const ready = (await toolsReady?.(app).catch(() => false)) === true;
+    return ready
+      ? { app, state, note: newAppReady(app, intro), reopenTools: true }
+      : { app, state, note: newAppNotReady(app, intro) };
   };
 
   const openOrExplain = async (app: string) => {
@@ -146,11 +179,11 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
       // The list can be a minute old; a paused app it still showed may have been deleted since.
       if (resumed.created) {
         recordCreated(resumed.sandbox, base);
-        return {
-          app: openNow.app,
-          state: resumed.sandbox.state,
-          note: `The app ${openNow.app} had been deleted after it was paused, so a new, empty app was made under the same name. Tell the user its files are gone and ask them to tap Build it or say what to change, then call set_checklist with the features they asked for; its tools arrive with your next reply.`,
-        };
+        return madeNew(
+          openNow.app,
+          resumed.sandbox.state,
+          `The app ${openNow.app} had been deleted after it was paused, so a new, empty app was made under the same name: tell the user its files are gone.`
+        );
       }
       return {
         app: openNow.app,
@@ -175,11 +208,7 @@ export function createAppTools({ apps, current, open }: AppToolsOptions): AppToo
         existed: true,
         note: `The user already had an app called ${app}, made somewhere else after this page last listed their apps, and it is now open instead of a new one. Ask the user whether to keep working on it; do not build over it before they answer, and call use_open_app only if they say yes.`,
       };
-    return {
-      app,
-      state: sandbox.state,
-      note: `The app ${app} is starting, and ${app} is also its blockId. Its tools arrive with your next reply, so now write one short sentence asking the user to tap Build it or say what to change, then call set_checklist with the features they asked for; that ends this reply.`,
-    };
+    return madeNew(app, sandbox.state, `The app ${app} was made.`);
   };
 
   const create_app: AssistantTool = {

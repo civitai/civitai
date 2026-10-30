@@ -875,7 +875,10 @@ export class Runner implements RunService {
       outcome = await core.run({
         seq,
         ...(from ? { from } : {}),
-        tools: async () => {
+        // Built again mid-reply when a tool's result says `reopenTools` (a new app's tools): then from
+        // where the reply is, and the tools built before are closed.
+        tools: async (sofar?: { messages: ModelMessage[] }) => {
+          const before = tools;
           tools = await this.#deps.tools.open({
             userId,
             runId,
@@ -886,7 +889,7 @@ export class Runner implements RunService {
               earlier: (head?.turns ?? [])
                 .filter((saved) => saved.seq < seq)
                 .flatMap((saved) => turnFrom(saved).assistant.messages),
-              current: from?.messages ?? [],
+              current: sofar?.messages ?? from?.messages ?? [],
             },
             subagents: input.subagents === true,
             model: () => this.#model(input, stop, carriesOn, (buzz) => progress.charged(buzz)),
@@ -903,6 +906,9 @@ export class Runner implements RunService {
             subagentProgress: (toolCallId, progress) =>
               emitter.emit({ type: 'subagent-progress', toolCallId, progress }),
           });
+          await before
+            ?.close()
+            .catch((error) => log.warn({ err: error, runId }, 'closing the earlier tools failed'));
           return runAfterSaved(tools.tools, (toolCallId) => progress.callSaved(toolCallId));
         },
         request: (toolSet) =>

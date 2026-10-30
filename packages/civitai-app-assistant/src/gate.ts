@@ -173,15 +173,6 @@ export function normalizeChecklist(raw: unknown): ChecklistItem[] | null {
 }
 
 /**
- * Whether a changed checklist waits on the user's Build it: one whose items are all done does not,
- * since there is nothing left to build (the list the assistant shows once the app is finished). The
- * first checklist a gate knows waits whatever it says (`set_checklist`).
- */
-export function checklistAwaitsBuild(items: readonly ChecklistItem[]): boolean {
-  return items.some((item) => !item.done);
-}
-
-/**
  * Where what the app shows comes from, as `report_ready` must declare it: `civitai` (from Civitai,
  * through @civitai/sdk), `sample` (made-up data in place of Civitai's) or `none` (no Civitai data).
  */
@@ -218,29 +209,12 @@ const unverified = (): Verification => ({
   typecheck: null,
 });
 
-/** What Build it sends as the user. */
-export const BUILD_IT_MESSAGE = 'Looks good — build it.';
-
-/** The `set_checklist` call that ended a reply and waits for the user, and the app it was shown for. */
-export interface AwaitingChecklist {
-  id: string;
-  app: string | null;
-  /**
-   * The key of the app a server runner made the checklist for (its result's `app` tag). The page may
-   * still show the app it had open when the runner reports the checklist, and opens the new one only
-   * once its list has it: this, not `app`, says which app the checklist belongs to.
-   */
-  appKey?: string;
-}
-
 export interface GateCoreOptions {
   /** A refusal of the caller's own for a call, if any; counted against the per-reply limit like any call. */
   refuse?: (name: string) => string | null;
   /** Told when a new reply makes its first tool call, before that call's refusal is asked. */
   onReply?: () => void;
-  /** The app open now; a checklist belongs to the app it was shown for. */
-  currentApp?: () => string | null;
-  /** Ids the checklists this gate shows are named by; per gate, so one from elsewhere never matches. */
+  /** Ids the Submit for review offers this gate makes are named by; per gate, so one from elsewhere never matches. */
   checklistPrefix?: string;
   /**
    * The key of the app open now, written into every `set_checklist` result (`app`) so a later reply
@@ -292,10 +266,6 @@ export interface GateCore {
     [REPORT_READY]: AssistantTool;
     [SUBMIT_FOR_REVIEW]: AssistantTool;
   };
-  /** The checklist waiting for the user's Build it, if one is. */
-  awaiting(): AwaitingChecklist | null;
-  /** The user answered the checklist another way: nothing waits for Build it any more. */
-  clearAwaiting(): void;
   /** Starts from what the conversation already did; call before the first call of the reply. */
   restore(state: GateRestore): void;
   /**
@@ -313,7 +283,6 @@ export interface GateCore {
 export function createGateCore({
   refuse,
   onReply,
-  currentApp,
   checklistPrefix = Math.random().toString(36).slice(2, 10),
   checklistApp,
   openApp,
@@ -344,8 +313,6 @@ export function createGateCore({
   // a step together, so a write in the same step as report_ready could land after it said ready. A
   // dispatch_agent counts until its subagent returns.
   let running = 0;
-  let checklistCalls = 0;
-  let awaiting: AwaitingChecklist | null = null;
 
   // What the last report_ready that passed declared (`data`), this conversation and app; undefined
   // before one passed. submit_for_review is judged on it, as report_ready would be now.
@@ -434,7 +401,6 @@ export function createGateCore({
       turnCalls = carriedCalls;
       carriedCalls = 0;
       running = 0;
-      awaiting = null;
       onReply?.();
     }
     if (context.subagent === undefined) {
@@ -475,35 +441,13 @@ export function createGateCore({
   };
 
   const onToolResult = (result: ToolResult) => {
-    const { name, output, isError, refused, stopped, subagent } = result;
+    const { name, refused, stopped } = result;
     // Neither ran. One its ended reply did not run stays counted in `running`; the next reply starts at 0.
     if (refused !== undefined || stopped) return;
     if (!READS_CHECKS.has(name)) running = Math.max(0, running - 1);
     choose(result);
     verify(result);
     noteReady(result);
-    // A checklist a server runner showed: its Build it is the one waiting (the page shows the card).
-    // Never for an all-done list, even if the runner reports awaitsUser, unless it asks the user to
-    // agree to sample data.
-    const shown = output as { awaitsUser?: unknown; checklist?: unknown } | null | undefined;
-    const items = normalizeChecklist((result.input as { items?: unknown } | null)?.items);
-    if (
-      name === SET_CHECKLIST &&
-      !isError &&
-      subagent === undefined &&
-      shown?.awaitsUser === true &&
-      typeof shown.checklist === 'string' &&
-      (!items ||
-        checklistAwaitsBuild(items) ||
-        (result.input as { data?: unknown } | null)?.data === 'sample')
-    )
-      awaiting = {
-        id: shown.checklist,
-        app: currentApp?.() ?? null,
-        ...(typeof (shown as { app?: unknown }).app === 'string'
-          ? { appKey: (shown as { app: string }).app }
-          : {}),
-      };
   };
 
   /** A report_ready that passed: what it declared is what submit_for_review is judged on. */
@@ -530,7 +474,7 @@ export function createGateCore({
 
   const set_checklist: AssistantTool = {
     description:
-      "Show the user the list of features they asked for, as a checklist with a Build it button. Call it before you scaffold, with every requested feature and nothing they did not ask for, and in the same message, before the call, write one short sentence asking the user to tap Build it or say what to change. Call it again with done: true on an item once it works and has a passing test. Changing the labels or data while an item is still open shows the user the new list and ends your reply. Set data: 'civitai' when the app shows Civitai data, and 'sample' only once the user agreed to sample data: the card then tells them it is not real Civitai data, and shows them the list again even when every item is done.",
+      "Show the user the list of features they asked for, as a checklist that is your build plan. Call it before you scaffold, with every requested feature and nothing they did not ask for, then go straight on to building it: do not wait for the user to confirm the list. Call it again with done: true on an item once it works and has a passing test. Set data: 'civitai' when the app shows Civitai data, and 'sample' only once the user agreed to sample data: the card then tells them it is not real Civitai data and your reply ends there, so they can confirm it or say what to change.",
     activity: 'Writing the feature checklist…',
     inputSchema: {
       properties: {
@@ -565,27 +509,25 @@ export function createGateCore({
       // conversation's earlier replies; the page knows only this page load's. Marking items done is
       // progress, not a new list.
       const previous = checklist;
-      const changed =
-        !previous ||
-        previous.length !== items.length ||
-        previous.some((item, i) => item.label !== items[i].label) ||
-        data !== checklistData;
-      // Sample data is the user's to agree to, so a list newly saying it waits even when all done.
+      // Sample data is the user's to agree to, so a list newly saying it ends the reply for their answer.
       const newlySample = data === 'sample' && checklistData !== 'sample';
       checklist = items;
       checklistData = data;
       const tag = checklistApp ? { app: checklistApp() } : {};
-      // A first list waits even with every item done: nothing is built before the user confirms it.
-      if (!previous || (changed && checklistAwaitsBuild(items)) || newlySample) {
-        awaiting = { id: `${checklistPrefix}-${++checklistCalls}`, app: currentApp?.() ?? null };
+      if (newlySample)
         return {
           shown: true,
           awaitsUser: true,
-          checklist: awaiting.id,
-          note: 'The user now sees this list with a Build it button. Your reply ends here: wait for them to press it or say what to change.',
+          note: 'The user now sees this list and that the app would show sample data, not real Civitai data. Your reply ends here: wait for them to agree or say what to change.',
           ...tag,
         };
-      }
+      // The first list is the plan the user watches being built: the reply goes straight on to build it.
+      if (!previous)
+        return {
+          shown: true,
+          note: 'The user now sees this list as your plan. Go straight on to building it, and tick each item off as it works.',
+          ...tag,
+        };
       return { updated: true, open: items.filter((item) => !item.done).length, ...tag };
     },
   };
@@ -633,10 +575,6 @@ export function createGateCore({
       [SET_CHECKLIST]: set_checklist,
       [REPORT_READY]: report_ready,
       [SUBMIT_FOR_REVIEW]: submit_for_review,
-    },
-    awaiting: () => awaiting,
-    clearAwaiting: () => {
-      awaiting = null;
     },
     restore({ conversationId: id, earlier, current, app = null }) {
       conversationId = id;
