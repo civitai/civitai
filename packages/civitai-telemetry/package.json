@@ -10,14 +10,14 @@
   },
   "dependencies": {
     "@opentelemetry/api": "^1.9.0",
-    "@opentelemetry/api-logs": "^0.211.0",
+    "@opentelemetry/api-logs": "^0.219.0",
     "@opentelemetry/resources": "2.9.0",
-    "@opentelemetry/sdk-logs": "^0.211.0",
+    "@opentelemetry/sdk-logs": "^0.219.0",
     "prom-client": "^14.2.0"
   },
   "devDependencies": {
     "@opentelemetry/context-async-hooks": "^2.5.0",
     "@opentelemetry/core": "2.9.0",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.11"
   }
 }

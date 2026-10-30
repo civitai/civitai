@@ -19,23 +19,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
  * `null` — is still served from cache.
  */
 
-const getMock = vi.fn();
-const setMock = vi.fn().mockResolvedValue(undefined);
-const setNxMock = vi.fn().mockResolvedValue(true);
-const delMock = vi.fn().mockResolvedValue(undefined);
-
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: {
-      get: (...args: unknown[]) => getMock(...args),
-      set: (...args: unknown[]) => setMock(...args),
-    },
-    setNxKeepTtlWithEx: (...args: unknown[]) => setNxMock(...args),
-    del: (...args: unknown[]) => delMock(...args),
-  },
-  sysRedis: {},
-  REDIS_KEYS: { CACHE_LOCKS: 'caches:lock', TAG: 'caches:tag' },
-}));
+const getMock = redisMock.redis.packed.get;
+const setMock = redisMock.redis.packed.set;
+const setNxMock = redisMock.redis.setNxKeepTtlWithEx;
+const delMock = redisMock.redis.del;
 
 vi.mock('~/server/redis/fail-open-log', () => ({
   logSysRedisFailOpen: vi.fn(),
@@ -50,6 +37,10 @@ vi.mock('~/server/prom/client', () => ({
 }));
 
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+redisMock.redis.packed.set.mockResolvedValue(undefined);
+redisMock.redis.setNxKeepTtlWithEx.mockResolvedValue(true);
+redisMock.redis.del.mockResolvedValue(undefined);
 
 const KEY = 'caches:official-models' as Parameters<typeof fetchThroughCache>[0];
 const TTL = 300;

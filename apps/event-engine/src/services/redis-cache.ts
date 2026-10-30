@@ -1,21 +1,22 @@
-import { createCluster, RedisClusterType } from 'redis'
+import { createEngineCluster, type EngineRedisCluster } from '@/services/redis-cluster-client'
 import { CacheUpdate, MetricEvent } from '@/types/events'
 import { logger } from '@/utils/logger'
 import { cacheKeys } from '@/common/utils/cache-keys'
 import { EntityType } from '@/common/types/metric-types'
 import { RedisWithHelpers, withRedisHelpers } from '@/common/utils/query-utils'
 import { chunk } from '@/common/utils/basic'
-import { redisCacheMetrics } from '@/metrics'
+import { excludedUsersMetrics, redisCacheMetrics } from '@/metrics'
 import { config } from '@/config'
+import type { ExcludedUserLookup } from '@/services/metric-excluded-users'
 
 /**
  * Manages Redis cache updates for real-time metrics
  */
 export class RedisCache {
-  private client: RedisWithHelpers<RedisClusterType> | null = null
+  private client: RedisWithHelpers<EngineRedisCluster> | null = null
   private isConnected: boolean = false
 
-  constructor(private redisUrl: string) {}
+  constructor(private redisUrl: string, private excludedUsers: ExcludedUserLookup) {}
 
   /**
    * Connect to Redis
@@ -25,13 +26,7 @@ export class RedisCache {
 
     try {
       const url = new URL(this.redisUrl);
-      const redis: RedisClusterType = createCluster({
-        rootNodes: [{url: `${url.protocol}//${url.host}`}],
-        defaults: {
-          username: url.username === '' ? undefined : url.username,
-          password: url.password
-        }
-      })
+      const redis = createEngineCluster(url)
       this.client = withRedisHelpers(redis)
 
       this.client.on('error', (err) => {
@@ -63,7 +58,7 @@ export class RedisCache {
   /**
    * Get the Redis client instance
    */
-  async getClient(): Promise<RedisWithHelpers<RedisClusterType>> {
+  async getClient(): Promise<RedisWithHelpers<EngineRedisCluster>> {
     if (!this.client || !this.isConnected) {
       await this.connect()
     }
@@ -76,14 +71,16 @@ export class RedisCache {
   async increment(update: CacheUpdate | CacheUpdate[]): Promise<void> {
     if (!config.redis.cacheUpdatesEnabled) return
 
+    const requested = Array.isArray(update) ? update : [update]
+    const counted = this.dropExcluded(requested, 'increment')
+    if (counted.length === 0) return
+
     if (!this.client || !this.isConnected) {
       await this.connect()
     }
 
-    update = Array.isArray(update) ? update : [update]
-
     // Use a pipeline for batch updates
-    const batches = chunk(update, 1000); // Process in batches of 1000
+    const batches = chunk(counted, 1000);
     for (const batch of batches) {
       // Using concurrent commands (node redis pipelines)
       try {
@@ -115,6 +112,10 @@ export class RedisCache {
   ): Promise<void> {
     if (!config.redis.cacheUpdatesEnabled) return
     if (event.entityId == null) return
+    if (this.excludedUsers.has(event.userId)) {
+      excludedUsersMetrics.skipped.inc({ operation: 'increment_once' })
+      return
+    }
 
     if (!this.client || !this.isConnected) {
       await this.connect()
@@ -263,6 +264,13 @@ export class RedisCache {
       logger.error({ err, entityType, entityId }, 'Failed to check cache existence')
       return false
     }
+  }
+
+  private dropExcluded(updates: CacheUpdate[], operation: string): CacheUpdate[] {
+    const kept = updates.filter((upd) => !this.excludedUsers.has(upd.userId))
+    const skipped = updates.length - kept.length
+    if (skipped > 0) excludedUsersMetrics.skipped.inc({ operation }, skipped)
+    return kept
   }
 
   /**

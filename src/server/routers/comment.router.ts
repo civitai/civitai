@@ -14,19 +14,21 @@ import {
   upsertCommentHandler,
 } from '~/server/controllers/comment.controller';
 import { toggleReactionHandler } from '~/server/controllers/reaction.controller';
-import { dbRead } from '~/server/db/client';
+import { dbRead, dbWrite } from '~/server/db/client';
 import { rateLimit } from '~/server/middleware.trpc';
 import { getByIdSchema } from '~/server/schema/base.schema';
 import type { CommentUpsertInput } from '~/server/schema/comment.schema';
+import { reactionRateLimits } from '~/server/schema/reaction.schema';
 import {
   commentRateLimits,
   commentUpsertInput,
   getAllCommentsSchema,
   getCommentCountByModelSchema,
+  getCommentCountsByModelSchema,
   getCommentReactionsSchema,
   toggleReactionInput,
 } from '~/server/schema/comment.schema';
-import { getCommentCountByModel } from '~/server/services/comment.service';
+import { getVisibleCommentCount, getVisibleCommentCounts } from '~/server/services/comment.service';
 import {
   guardedProcedure,
   middleware,
@@ -35,21 +37,36 @@ import {
   publicProcedure,
   router,
 } from '~/server/trpc';
-import { throwAuthorizationError } from '~/server/utils/errorHandling';
+import { throwAuthorizationError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { SITE_REACTION_RATE_LIMIT_KEY } from '~/shared/constants/block-reaction.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input }) => {
   if (!ctx?.user) throw new TRPCError({ code: 'UNAUTHORIZED' });
 
-  const { id } = input as { id: number };
+  const { id, parentId } = input as { id?: number; parentId?: number | null };
   const userId = ctx.user.id;
+  const isModerator = ctx.user.isModerator;
   let ownerId: number = userId;
   if (id) {
-    const isModerator = ctx?.user?.isModerator;
-    ownerId = (await dbRead.comment.findUnique({ where: { id } }))?.userId ?? 0;
+    // The primary: an author's delete that just hid it must hold against their edit right after.
+    const comment = await dbWrite.comment.findUnique({
+      where: { id },
+      select: { userId: true, tosViolation: true },
+    });
+    ownerId = comment?.userId ?? 0;
     if (!isModerator && ownerId) {
       if (ownerId !== userId) throw throwAuthorizationError();
+      // Hidden for ToS is gone to its author too: their own delete keeps a comment that way for a hold.
+      if (comment?.tosViolation) throw throwNotFoundError(`No comment with id ${id}`);
     }
+  }
+  if (parentId && !isModerator) {
+    const parent = await dbWrite.comment.findUnique({
+      where: { id: parentId },
+      select: { tosViolation: true },
+    });
+    if (parent?.tosViolation) throw throwNotFoundError(`No comment with id ${parentId}`);
   }
 
   return next({
@@ -76,10 +93,23 @@ const isLocked = middleware(async ({ ctx, next, input }) => {
     });
 
   const { id, modelId } = input as CommentUpsertInput;
-  const model = await dbRead.model.findUnique({ where: { id: modelId } });
-  if (model?.locked) throw new TRPCError({ code: 'FORBIDDEN', message: 'Model is locked' });
+  const comment = id
+    ? await dbRead.comment.findFirst({ where: { id }, select: { locked: true, modelId: true } })
+    : null;
 
-  const comment = await dbRead.comment.findFirst({ where: { id } });
+  // Both the model the request names and the one the comment is stored under. An edit writes
+  // `modelId` through from the request while being scoped by comment id alone, so checking only
+  // the named model lets an edit under a locked model be judged against a different one — and
+  // then re-homes the comment there.
+  const modelIds = [...new Set([modelId, comment?.modelId].filter((x) => x != null))] as number[];
+  const lockedModel = modelIds.length
+    ? await dbRead.model.findFirst({
+        where: { id: { in: modelIds }, locked: true },
+        select: { id: true },
+      })
+    : null;
+  if (lockedModel) throw new TRPCError({ code: 'FORBIDDEN', message: 'Model is locked' });
+
   return next({
     ctx: {
       ...ctx,
@@ -110,10 +140,16 @@ export const commentRouter = router({
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
     .query(getCommentCommentsCountHandler),
-  getCommentCountByModel: publicProcedure
+  getVisibleCountByModel: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCommentCountByModelSchema)
-    .query(({ input }) => getCommentCountByModel(input)),
+    .query(({ input, ctx }) => getVisibleCommentCount({ input, user: ctx.user })),
+  // Both of the model page's counts (the plain and the hidden view) in one call. The single-count
+  // procedure above stays for client bundles that still call it.
+  getVisibleCountsByModel: publicProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(getCommentCountsByModelSchema)
+    .query(({ input, ctx }) => getVisibleCommentCounts({ input, user: ctx.user })),
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(commentUpsertInput)
@@ -126,9 +162,11 @@ export const commentRouter = router({
     .input(getByIdSchema)
     .use(isOwnerOrModerator)
     .mutation(deleteUserCommentHandler),
-  toggleReaction: protectedProcedure
+  toggleReaction: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleReactionInput)
+    // One reaction quota per user, shared with reaction.toggle.
+    .use(rateLimit(reactionRateLimits, undefined, { sharedKey: SITE_REACTION_RATE_LIMIT_KEY }))
     .mutation(({ input, ctx }) =>
       toggleReactionHandler({
         ctx,

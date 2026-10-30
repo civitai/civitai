@@ -14,8 +14,6 @@ import type { Currency } from '~/shared/utils/prisma/enums';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
 import { IconFiles } from '@tabler/icons-react';
 import { Reactions } from '~/components/Reaction/Reactions';
-import { truncate } from 'lodash-es';
-import { constants } from '~/server/common/constants';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import clsx from 'clsx';
@@ -40,6 +38,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
 
   return (
     <FeedCard
+      impressions={[{ entityType: 'BountyEntry', entityId: data.id }]}
       aspectRatio="portrait"
       href={`/bounties/${data.bountyId}/entries/${data.id}`}
       pos="relative"
@@ -128,11 +127,7 @@ export function BountyEntryCard({ data, currency, renderActions }: Props) {
                       name={image.name ?? image.id.toString()}
                       type={image.type}
                       imageId={image.id}
-                      alt={
-                        image.meta
-                          ? truncate(image.meta.prompt, { length: constants.altTruncateLength })
-                          : image.name ?? undefined
-                      }
+                      alt={image.name ?? undefined}
                       width={IMAGE_CARD_WIDTH}
                       className={cardClasses.image}
                       wrapperProps={{ style: { height: 'calc(100% - 60px)' } }}

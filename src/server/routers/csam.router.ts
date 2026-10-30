@@ -6,8 +6,10 @@ import { paginationSchema } from '~/server/schema/base.schema';
 import {
   createCsamReportSchema,
   createExternalCsamReportSchema,
+  getCsamSupplementalPreviewSchema,
   getImageResourcesSchema,
 } from '~/server/schema/csam.schema';
+import { getCsamSupplementalPreview } from '~/server/services/csam-supplemental.service';
 import {
   getCsamReportStats,
   getCsamReportsPaged,
@@ -21,6 +23,9 @@ export const csamRouter = router({
     .input(getImageResourcesSchema)
     .query(({ input }) => getImageResources(input)),
   createReport: moderatorProcedure.input(createCsamReportSchema).mutation(createCsamReportHandler),
+  getSupplementalPreview: moderatorProcedure
+    .input(getCsamSupplementalPreviewSchema)
+    .query(({ input, ctx }) => getCsamSupplementalPreview({ ...input, reportedById: ctx.user.id })),
   createExternalReport: moderatorProcedure
     .input(createExternalCsamReportSchema)
     .mutation(createExternalCsamReportHandler),

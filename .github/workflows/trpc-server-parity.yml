@@ -1,0 +1,310 @@
+name: tRPC server parity
+
+# Boots ONE production image — the one the PR-preview pipeline already built and pushed for this
+# PR's head commit, not a rebuild (a production `next build` does not fit a hosted runner) — with
+# ONE environment: once as Next (`server.js`, the default
+# CMD) and once as the standalone tRPC server (`node -- trpc-server/server.cjs`). Then it sends the
+# same requests to both and fails on any response difference that is not declared in
+# `scripts/trpc-server/parity/cases.mjs`. It also:
+#   - checks the standalone server registered instrumentation at BOOT (liveness heartbeat written
+#     and the instrumentation log lines present before it received any request);
+#   - fails if the standalone server stops emitting the request span an external latency alert
+#     keys on by name (`assert-spans.mjs`), with Next's own export as the positive control;
+#   - runs the same requests against a copy of the standalone server with its internal-header
+#     strip removed, and fails unless that break shows up as a red case — the negative control
+#     that proves this harness can see a broken server at all.
+#
+# Runs when anything that can change either server's answers changes: the server itself, the
+# image, Next/tRPC (package.json / lockfile / patches), the route modules it serves, and the
+# request policy the tRPC route applies.
+#
+# Report-only: not a required check. It needs the preview image, which the preview pipeline builds
+# only for some PRs, so a PR that will get no image fails in seconds with the reason instead of
+# waiting for one.
+on:
+  pull_request:
+    branches: [main]
+    # `labeled`: adding the `preview` label is what makes a PR get an image, so it re-runs this.
+    # `ready_for_review`: the job skips draft PRs (see lint.yml's header), so marking the PR
+    # ready has to start it.
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
+    paths:
+      - 'scripts/trpc-server/**'
+      - 'scripts/ci/assert-standalone-boot-graph.mjs'
+      - 'Dockerfile'
+      - 'next.config.mjs'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'patches/**'
+      - 'src/pages/api/trpc/**'
+      - 'src/pages/api/live.ts'
+      - 'src/pages/api/health.ts'
+      - 'src/pages/api/ready.ts'
+      - 'src/pages/api/metrics.ts'
+      - 'src/proxy.ts'
+      - 'src/server/middleware/**'
+      - 'src/instrumentation.ts'
+      - 'src/instrumentation.node.ts'
+      - 'src/env/**'
+      - '.env-example'
+      - '.github/workflows/trpc-server-parity.yml'
+  workflow_dispatch:
+    inputs:
+      image:
+        description: Full image reference to test (a dispatch has no PR to derive it from).
+        required: true
+        type: string
+
+# `packages: read` lets the job's token pull the preview image, if the package grants this
+# repository read access.
+permissions:
+  contents: read
+  packages: read
+
+concurrency:
+  group: trpc-server-parity-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  parity:
+    name: Next vs standalone tRPC server
+    runs-on: ubuntu-latest
+    # Draft PRs run ESLint only (lint.yml's header). Dispatch is unaffected.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
+    timeout-minutes: 75
+    services:
+      # Throwaway stores, empty. DB-backed procedures therefore fail — on both servers alike,
+      # which is still compared.
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 2s --health-timeout 2s --health-retries 15
+    env:
+      # The tag the PR-preview pipeline pushes for a PR head: pr-<number>-<first 7 of the sha>.
+      IMAGE: ${{ inputs.image || format('ghcr.io/civitai/civitai-web:pr-{0}-{1}', github.event.pull_request.number, github.event.pull_request.head.sha) }}
+      MUTANT_IMAGE: trpc-server-parity:mutant
+    steps:
+      # The `runner` context is not available in job-level env, so the work dir is set here.
+      - name: Work directory
+        run: echo "WORK=$RUNNER_TEMP/parity" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+
+      # Dependencies only for `fill-required-env.ts`, which loads the app's env schemas.
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install
+        run: pnpm install --frozen-lockfile
+
+      # Whether the preview pipeline will build an image for this PR at all: the head branch is in
+      # this repository (pushing one needs write access, so a fork PR is the only no-write path)
+      # AND the PR carries the `preview` label or its author is on the auto-deploy list. The list
+      # is the repository variable PREVIEW_AUTO_DEPLOY_USERS (space-separated logins), kept out of
+      # this file. Read live from the API, so a label added after the push counts.
+      #
+      # `author_association` is deliberately NOT used, unlike the pipeline's own check: Actions
+      # sees CONTRIBUTOR for a private org member (in the API and in the event payload alike), so
+      # it would fail PRs that do get an image.
+      - name: Will a preview image be built for this PR?
+        id: gate
+        if: github.event_name == 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          AUTO_DEPLOY_USERS: ${{ vars.PREVIEW_AUTO_DEPLOY_USERS }}
+        run: |
+          pr=$(gh api "repos/${{ github.repository }}/pulls/$PR")
+          login=$(jq -r '.user.login | ascii_downcase' <<< "$pr")
+          head_repo=$(jq -r .head.repo.full_name <<< "$pr")
+          labelled=$(jq -r '[.labels[].name] | index("preview") != null' <<< "$pr")
+          auto=false
+          for u in $(tr '[:upper:],' '[:lower:] ' <<< "$AUTO_DEPLOY_USERS"); do
+            [ "$u" = "$login" ] && auto=true
+          done
+          same_repo=false
+          [ "$head_repo" = "${{ github.repository }}" ] && same_repo=true
+          echo "same-repo=$same_repo preview-label=$labelled auto-deploy=$auto"
+          if [ "$same_repo" != true ] || { [ "$labelled" != true ] && [ "$auto" != true ]; }; then
+            echo "::error::No preview image will be built for this PR. Add the \`preview\` label to run the Mode R parity check."
+            exit 1
+          fi
+
+      # The image is usually there before this job starts, and is waited for (up to 40 minutes)
+      # otherwise. Its build runs the Dockerfile's boot-graph gate, which now also loads the
+      # standalone server's requires.
+      - name: Pull the preview image for this head commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # The template above puts the full sha in the tag; the pipeline uses the first 7.
+          case "$IMAGE" in
+            *:pr-*-*) IMAGE="${IMAGE%-*}-$(cut -c1-7 <<< "${IMAGE##*-}")" ;;
+          esac
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+          echo "image: $IMAGE"
+          echo "$GH_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          for _ in $(seq 1 80); do
+            if out=$(docker pull "$IMAGE" 2>&1); then echo "$out" | tail -3; exit 0; fi
+            echo "$out" | tail -1
+            if grep -qiE 'denied|unauthorized|forbidden' <<< "$out"; then
+              echo "::error::this workflow's token may not read the image package; it must grant this repository read access"
+              exit 1
+            fi
+            sleep 30
+          done
+          echo "::error::$IMAGE did not appear within 40 minutes"
+          exit 1
+
+      - name: Write the shared environment
+        run: |
+          mkdir -p "$WORK"
+          node scripts/trpc-server/parity/make-env.mjs .env-example "$WORK/parity.env"
+          # Every key the env schemas require in production, filled with a schema-shaped dummy.
+          # A clean environment, so the runner's own variables cannot satisfy a package loader.
+          env -i PATH="$PATH" HOME="$HOME" NODE_ENV=production \
+            pnpm exec tsx scripts/trpc-server/parity/fill-required-env.ts "$WORK/parity.env"
+
+      - name: Start the OTLP receiver
+        run: |
+          nohup node scripts/trpc-server/parity/otlp-stub.mjs --port 4318 --out "$WORK/spans.json" \
+            --watch 'executing api route (pages) /api/trpc/[trpc]' --watch 'test-span' \
+            > "$WORK/otlp-stub.log" 2>&1 &
+          echo $! > "$WORK/otlp-stub.pid"
+
+      # The negative control: the standalone server with ONE line removed — the strip of
+      # client-sent internal headers. The anchor must match exactly once, or the control would
+      # be testing nothing.
+      - name: Build the mutant image
+        run: |
+          mkdir -p "$WORK/mutant"
+          cp scripts/trpc-server/server.cjs "$WORK/mutant/server.cjs"
+          anchor='^    compat.filterInternalHeaders(req.headers);$'
+          n=$(grep -c "$anchor" "$WORK/mutant/server.cjs" || true)
+          if [ "$n" != 1 ]; then echo "mutation anchor matched $n lines, expected 1"; exit 2; fi
+          sed -i "s|$anchor|    // MUTANT: internal-header strip removed|" "$WORK/mutant/server.cjs"
+          diff scripts/trpc-server/server.cjs "$WORK/mutant/server.cjs" || true
+          if cmp -s scripts/trpc-server/server.cjs "$WORK/mutant/server.cjs"; then echo "mutant is identical"; exit 2; fi
+          # The same image with only that file replaced: no app rebuild.
+          printf 'FROM %s\nCOPY --chown=1001:1001 server.cjs /app/trpc-server/server.cjs\n' "$IMAGE" > "$WORK/mutant/Dockerfile"
+          docker build -q -t "$MUTANT_IMAGE" "$WORK/mutant"
+          # The image's own copy must be the PR's file, or the "candidate" is not this commit.
+          docker run --rm --entrypoint cat "$IMAGE" /app/trpc-server/server.cjs | cmp - scripts/trpc-server/server.cjs
+          docker run --rm --entrypoint cat "$MUTANT_IMAGE" /app/trpc-server/server.cjs | cmp - "$WORK/mutant/server.cjs"
+
+      - name: Start the servers
+        run: |
+          common=(--detach --add-host host.docker.internal:host-gateway --env-file "$WORK/parity.env")
+          docker run "${common[@]}" --name next -p 3000:3000 "$IMAGE"
+          docker run "${common[@]}" --name trpc -p 3001:3000 "$IMAGE" node -- trpc-server/server.cjs
+          docker run "${common[@]}" --name mutant -p 3002:3000 "$MUTANT_IMAGE" node -- trpc-server/server.cjs
+
+      # Instrumentation must have REGISTERED on both servers, or the reference is not a control:
+      #   - trpc: before ANY request reaches it (its own boot runs register() and gates requests);
+      #   - next: after it has served one warm-up request, in case it registers lazily.
+      # Each must show the same instrumentation log lines, no instrumentation load error, a
+      # running container, and an advancing liveness heartbeat.
+      - name: Instrumentation ran on both servers
+        run: |
+          token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
+          running() { [ "$(docker inspect -f '{{.State.Running}}' "$1")" = true ]; }
+          check() {
+            c=$1; shift
+            logs=$(docker logs "$c" 2>&1)
+            for line in '[instrumentation] Running in nodejs runtime' '[instrumentation.node] OTEL SDK started' "$@"; do
+              grep -qF "$line" <<< "$logs" || { echo "$c: missing log line: $line"; tail -80 <<< "$logs"; exit 1; }
+              echo "$c: found: $line"
+            done
+            if grep -qF 'An error occurred while loading instrumentation hook' <<< "$logs"; then
+              echo "$c: instrumentation failed to load"; tail -80 <<< "$logs"; exit 1
+            fi
+            running "$c" || { echo "$c is not running"; tail -80 <<< "$logs"; exit 1; }
+            a=$(docker exec "$c" cat /tmp/heartbeat 2>/dev/null || true)
+            sleep 5
+            b=$(docker exec "$c" cat /tmp/heartbeat 2>/dev/null || true)
+            echo "$c: heartbeat $a -> $b"
+            [ -n "$a" ] && [ -n "$b" ] && [ "$b" -gt "$a" ] || { echo "$c: liveness heartbeat is not advancing"; exit 1; }
+          }
+
+          for _ in $(seq 1 180); do
+            docker logs trpc 2>&1 | grep -q '\[trpc-server\] ready' && break
+            running trpc || { echo "trpc exited"; docker logs trpc 2>&1 | tail -100; exit 1; }
+            sleep 2
+          done
+          check trpc '[trpc-server] instrumentation registered' '[trpc-server] ready'
+
+          ok=
+          for _ in $(seq 1 150); do
+            if curl -fsS -o /dev/null "http://127.0.0.1:3000/api/live?token=$token"; then ok=1; break; fi
+            running next || { echo "next exited"; docker logs next 2>&1 | tail -100; exit 1; }
+            sleep 2
+          done
+          [ -n "$ok" ] || { echo "next never answered its warm-up request"; docker logs next 2>&1 | tail -100; exit 1; }
+          sleep 3
+          check next
+
+      - name: Wait for all three to answer
+        run: |
+          token=$(grep '^WEBHOOK_TOKEN=' "$WORK/parity.env" | cut -d= -f2-)
+          for port in 3000 3001 3002; do
+            ok=
+            for _ in $(seq 1 150); do
+              if curl -fsS -o /dev/null "http://127.0.0.1:$port/api/live?token=$token"; then ok=1; break; fi
+              sleep 2
+            done
+            [ -n "$ok" ] || { echo "port $port never answered /api/live"; docker logs next 2>&1 | tail -60; docker logs trpc 2>&1 | tail -60; exit 1; }
+            echo "port $port is up"
+          done
+
+      - name: Parity (Next vs standalone)
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3001 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/parity.json"
+
+      - name: Negative control (Next vs mutant must be red)
+        if: always() && steps.gate.outcome != 'failure'
+        run: |
+          node scripts/trpc-server/parity/compare.mjs --a http://127.0.0.1:3000 --b http://127.0.0.1:3002 \
+            --env-file "$WORK/parity.env" --redis 127.0.0.1:6379 --report "$WORK/mutant.json" \
+            --expect-red client-sent-internal-headers --expect-red-diff '+ x-nextjs-matched-path:'
+
+      - name: The alerted span is still emitted
+        if: always() && steps.gate.outcome != 'failure'
+        run: |
+          # The batch span processor flushes every 500ms here; give it a few cycles.
+          sleep 5
+          kill -TERM "$(cat "$WORK/otlp-stub.pid")"
+          sleep 2
+          ip() { docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$1"; }
+          node scripts/trpc-server/parity/assert-spans.mjs --spans "$WORK/spans.json" \
+            --reference-ip "$(ip next)" --candidate-ip "$(ip trpc)"
+
+      - name: Server logs
+        if: always()
+        run: |
+          for c in next trpc mutant; do echo "::group::$c"; docker logs "$c" 2>&1 | tail -300; echo "::endgroup::"; done
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trpc-server-parity
+          path: |
+            ${{ runner.temp }}/parity/*.json
+            ${{ runner.temp }}/parity/otlp-stub.log
+          if-no-files-found: ignore

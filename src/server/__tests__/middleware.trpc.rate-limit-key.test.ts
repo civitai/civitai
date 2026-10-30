@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest } from 'next';
-import requestIp from 'request-ip';
+import { resolveClientIpOrNull } from '~/server/utils/client-ip';
 
 /**
  * Guards the BUCKET KEY the generic tRPC `rateLimit()` middleware writes to.
@@ -24,12 +24,17 @@ import requestIp from 'request-ip';
  * user ids and client addresses — written into ONE redis hash, so those two key
  * spaces must be disjoint for every value either side can take.
  *
- * Fixture fidelity: `ctx.ip` is built here with the same call `createContext`
- * uses (`requestIp.getClientIp(req) ?? ''`, src/server/createContext.ts:30) so
- * the synthetic context is faithful to the real one rather than to whatever
- * value would make the test convenient. The `request-ip` dependency edge on
- * createContext is itself pinned by
- * `src/server/utils/__tests__/client-ip-ledger.test.ts`.
+ * Fixture fidelity: `ctx.ip` is built here with the same expression
+ * `createContext` uses (`resolveClientIpOrNull(req) ?? ''`) so the synthetic
+ * context is faithful to the real one rather than to whatever value would make
+ * the test convenient. 🔴 That coupling is REAL and has bitten: this fixture
+ * previously open-coded the library derivation, and when createContext moved to
+ * the shared predicate the fixture kept building a value production no longer
+ * produces — a test drifting away from the thing it claims to model, silently
+ * and while green. Which predicate each site binds is pinned by
+ * `src/server/utils/__tests__/client-ip-ledger.test.ts`; if that ledger says
+ * createContext binds something other than what this line calls, this comment
+ * is stale again.
  *
  * Harness shape is copied from `middleware.trpc.test.ts` — intercept
  * `~/server/trpc`'s `middleware()` to capture the handler the factory passes
@@ -39,22 +44,16 @@ import requestIp from 'request-ip';
  * be vacuous.
  */
 
-const { mockHSetWithTTL, mockHGet, capturedHandler } = vi.hoisted(() => {
+const { mockHSetWithTTL, capturedHandler } = vi.hoisted(() => {
   const captured: { handler: ((arg: unknown) => Promise<unknown>) | null } = { handler: null };
   return {
     mockHSetWithTTL: vi.fn(),
-    mockHGet: vi.fn(),
     capturedHandler: captured,
   };
 });
 
 vi.mock('~/server/redis/atomic', () => ({ hSetWithTTL: mockHSetWithTTL }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-
-vi.mock('~/server/redis/client', () => ({
-  redis: { packed: { hGet: mockHGet } },
-  REDIS_KEYS: { TRPC: { LIMIT: { BASE: 'trpc:rate-limit' } } },
-}));
 
 vi.mock('~/server/trpc', () => ({
   middleware: (fn: (arg: unknown) => Promise<unknown>) => {
@@ -74,7 +73,6 @@ vi.mock('~/server/services/user-preferences.service', () => ({
   })),
 }));
 vi.mock('~/server/cloudflare/client', () => ({ purgeCache: vi.fn(async () => undefined) }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(async () => undefined) }));
 vi.mock('~/server/utils/server-domain', () => ({
   getRequestDomainColor: vi.fn(() => 'blue'),
   getRequestBoardDomainColor: vi.fn(() => 'blue'),
@@ -96,6 +94,9 @@ vi.mock('~/env/client', () => ({
 }));
 
 import { rateLimit } from '../middleware.trpc';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockHGet = redisMock.redis.packed.hGet;
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -116,7 +117,7 @@ function reqWith(headers: Record<string, string | string[]>): NextApiRequest {
  */
 function anonCtx(headers: Record<string, string | string[]>) {
   const req = reqWith(headers);
-  return { user: undefined, ip: requestIp.getClientIp(req) ?? '', req };
+  return { user: undefined, ip: resolveClientIpOrNull(req) ?? '', req };
 }
 
 /**
@@ -241,7 +242,7 @@ describe('rateLimit bucket key — other principals', () => {
     const req = reqWith({ 'cf-connecting-ip': '203.0.113.7', 'x-client-ip': '198.51.100.1' });
     const field = await bucketFieldFor({
       user: { id: 42, isModerator: false },
-      ip: requestIp.getClientIp(req) ?? '',
+      ip: resolveClientIpOrNull(req) ?? '',
       req,
     });
     // Namespaced: the id is written under `user:`, never bare, so it occupies a
@@ -258,7 +259,7 @@ describe('rateLimit bucket key — other principals', () => {
     const req = reqWith({ 'cf-connecting-ip': EDGE_IP });
     const field = await bucketFieldFor({
       user: { id: 0, isModerator: false },
-      ip: requestIp.getClientIp(req) ?? '',
+      ip: resolveClientIpOrNull(req) ?? '',
       req,
     });
     expect(
@@ -301,7 +302,7 @@ describe('rateLimit bucket key — key-space separation', () => {
     const req = reqWith({});
     return bucketFieldFor({
       user: { id: userId, isModerator: false },
-      ip: requestIp.getClientIp(req) ?? '',
+      ip: resolveClientIpOrNull(req) ?? '',
       req,
     });
   }

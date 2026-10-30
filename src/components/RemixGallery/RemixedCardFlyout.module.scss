@@ -1,0 +1,91 @@
+/* A real slide, not a reveal.
+ *
+ * The panel starts displaced by its own full height, which puts it entirely
+ * within its card's footprint — and the card paints above it, so it is simply
+ * hidden there. Animating the displacement to zero walks it out from behind the
+ * card's edge, and the card does the masking. No clip-path is involved.
+ *
+ * The earlier version wiped a `clip-path` open over a 6px nudge, which is a
+ * reveal: every part of the panel arrived where it would finally sit and was
+ * uncovered in place. Nothing travelled, so it read as appearing.
+ *
+ * Easing is a strong ease-out (quint): most of the distance is covered early and
+ * it settles, which is what a drawer being pulled feels like. A symmetric curve
+ * reads as mechanical.
+ */
+
+.slideDown {
+  animation: remixSlideDown 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.slideUp {
+  animation: remixSlideUp 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes remixSlideDown {
+  from {
+    transform: translateY(-100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes remixSlideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* The same drawer, pulled sideways. Home-block shelves clip vertically, so the
+ * strip leaves through the card's left or right edge instead. */
+.slideRight {
+  animation: remixSlideRight 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.slideLeft {
+  animation: remixSlideLeft 260ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes remixSlideRight {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes remixSlideLeft {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .slideDown,
+  .slideUp,
+  .slideRight,
+  .slideLeft {
+    animation-duration: 1ms;
+  }
+}
+
+/* EdgeVideo's play overlay is a fixed 80px circle with 20px of padding, which is
+ * wider than a tile — a video entry came out with a play button larger than the
+ * thumbnail under it. Scaled down here rather than in EdgeVideo, because every
+ * other consumer draws that overlay on a full-size card where 80px is correct.
+ *
+ * Targeted through the global utility class rather than the module's own
+ * `playButton`, whose name is hashed and not reachable from here. */
+.tile :global(.absolute-center) {
+  width: 22px;
+  height: 22px;
+  padding: 4px;
+}

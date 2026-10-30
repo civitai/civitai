@@ -1,13 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 
-// Mocked for the EXIT CODE, not the assertions. Reached transitively, this
-// module instantiates Prisma — and in a worktree without the repo's flake
-// dev-shell that leaves an unhandled rejection which fails no test but still
-// sets rc=1, so a mutation sweep reading rc scores every mutant as killed.
-// Nothing below touches a database. See civitai#3576.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
 import { classifyDecision } from '~/server/games/new-order/consensus-backfill';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 describe('classifyDecision', () => {
   it('same level', () => expect(classifyDecision(4, 4)).toBe('same_level'));

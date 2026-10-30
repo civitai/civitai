@@ -1,6 +1,12 @@
-import { uniq } from 'instantsearch.js/es/lib/utils';
 import { uniqBy } from 'lodash-es';
 import { ModelType } from '~/shared/utils/prisma/enums';
+
+// Inlined from `instantsearch.js/es/lib/utils` to keep that barrel out of the graph for one
+// four-line function. First index wins, and it drops every NaN (indexOf(NaN) is -1). Do not
+// rewrite as `new Set` — that keeps one NaN, and every test still passes.
+function uniq<T>(array: T[]): T[] {
+  return array.filter((value, index, self) => self.indexOf(value) === index);
+}
 
 export const getRandom = <T>(array: T[]) => array[Math.floor(Math.random() * array.length)];
 
@@ -80,6 +86,29 @@ export function sortByModelTypes<T extends { modelType: ModelType | null }>(data
 export function indexOfOr<T>(array: T[], value: T, or: number) {
   const index = array.indexOf(value);
   return index === -1 ? or : index;
+}
+
+/**
+ * Ids split into request-sized chunks, deduped, **in insertion order**.
+ *
+ * Sorting would make the key independent of the order ids arrive in, which is
+ * worth a little when two components ask for the same set differently ordered —
+ * and costs a lot to any consumer whose list GROWS. A feed appends older, lower
+ * ids as it pages; sorted, each one lands mid-list, shifts every chunk boundary
+ * after it, changes every chunk key, and refetches the whole surface.
+ *
+ * Every id lands in exactly one chunk, so no collection is silently truncated to
+ * the first.
+ *
+ * A caller that never appends may sort before calling — `reactionQueryChunks` does, to make its
+ * key repeat across mounts. That belongs at the caller, not here: the paging callers need the
+ * order they hand over left alone.
+ */
+export function chunkIds(ids: number[], size: number): number[][] {
+  const unique = [...new Set(ids)];
+  const result: number[][] = [];
+  for (let i = 0; i < unique.length; i += size) result.push(unique.slice(i, i + size));
+  return result;
 }
 
 export function shuffle<T>(array: T[]) {

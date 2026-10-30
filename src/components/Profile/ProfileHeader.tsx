@@ -5,7 +5,11 @@ import { trpc } from '~/utils/trpc';
 import React, { useMemo } from 'react';
 
 import { MediaHash } from '~/components/ImageHash/ImageHash';
+import { CreatorAnnouncementsCarousel } from '~/components/Announcements/CreatorAnnouncementsCarousel';
+import { CreatorAnnouncementsEntry } from '~/components/Announcements/CreatorAnnouncementsEntry';
+import { useQueryCreatorAnnouncements } from '~/components/Announcements/creator-announcements.utils';
 import { ProfileSidebar } from '~/components/Profile/ProfileSidebar';
+import { shouldShowProfileMessage } from '~/components/Profile/profile.utils';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
@@ -24,6 +28,11 @@ export function ProfileHeader({ username }: { username: string }) {
     username,
   });
   const isMobile = useContainerSmallerThan('sm');
+  const {
+    announcements,
+    isLoading: announcementsLoading,
+    isError: announcementsErrored,
+  } = useQueryCreatorAnnouncements(user?.id);
 
   const cover = user?.profile?.coverImage;
   const images = useMemo(
@@ -91,7 +100,13 @@ export function ProfileHeader({ username }: { username: string }) {
   };
 
   const renderMessage = () => {
-    if (!profile.message || user.muted) {
+    if (
+      !shouldShowProfileMessage({
+        message: profile.message,
+        userMuted: user.muted,
+        announcementCount: announcements.length,
+      })
+    ) {
       return;
     }
 
@@ -125,6 +140,15 @@ export function ProfileHeader({ username }: { username: string }) {
   if (isMobile) {
     return (
       <div className="flex flex-col gap-3">
+        {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
+        <CreatorAnnouncementsEntry
+          userId={user.id}
+          userMuted={user.muted}
+          announcementCount={announcements.length}
+          announcementsLoading={announcementsLoading}
+          announcementsErrored={announcementsErrored}
+          className="container"
+        />
         {renderMessage()}
         <div className="flex flex-col">
           {renderCoverImage()}
@@ -143,6 +167,15 @@ export function ProfileHeader({ username }: { username: string }) {
   return (
     <Stack>
       {renderCoverImage()}
+      {!user.muted && <CreatorAnnouncementsCarousel userId={user.id} className="container" />}
+      <CreatorAnnouncementsEntry
+        userId={user.id}
+        userMuted={user.muted}
+        announcementCount={announcements.length}
+        announcementsLoading={announcementsLoading}
+        announcementsErrored={announcementsErrored}
+        className="container"
+      />
       {renderMessage()}
     </Stack>
   );

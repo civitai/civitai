@@ -16,9 +16,10 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *  - dev short-circuits to 200 with no insert.
  */
 
-const { mockSearch, mockAction, devStore } = vi.hoisted(() => ({
+const { mockSearch, mockAction, mockImpressions, devStore } = vi.hoisted(() => ({
   mockSearch: vi.fn(),
   mockAction: vi.fn(),
+  mockImpressions: vi.fn(),
   devStore: { isDev: false },
 }));
 
@@ -44,6 +45,7 @@ vi.mock('~/server/clickhouse/client', () => ({
   Tracker: class {
     search = mockSearch;
     action = mockAction;
+    impressions = mockImpressions;
   },
 }));
 
@@ -91,6 +93,18 @@ const actionEvent = {
   data: { type: 'Tip_Click' as const, details: { toUserId: 7 } },
 };
 
+const impressionEvent = {
+  kind: 'impression' as const,
+  data: {
+    sessionKey: 'abc123',
+    surface: 'images' as const,
+    entities: [
+      { entityType: 'Image' as const, entityId: 11 },
+      { entityType: 'Model' as const, entityId: 22 },
+    ],
+  },
+};
+
 async function importHandler() {
   return (await import('~/pages/api/track/batch')).default;
 }
@@ -103,7 +117,10 @@ describe('POST /api/track/batch', () => {
 
   it('dispatches every event via the matching Tracker method, in order, with the exact payload', async () => {
     const handler = await importHandler();
-    const req = makeReq({ origin: 'https://civitai.com', body: [searchEvent, actionEvent, searchEvent] });
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [searchEvent, actionEvent, searchEvent],
+    });
     const res = makeRes();
 
     await handler(req as any, res);
@@ -124,6 +141,57 @@ describe('POST /api/track/batch', () => {
 
     expect(mockSearch).toHaveBeenCalledTimes(1);
     expect(mockSearch).toHaveBeenCalledWith(searchEvent.data);
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('dispatches an impression event as ONE Tracker.impressions call carrying every entity', async () => {
+    const handler = await importHandler();
+    const req = makeReq({ origin: 'https://civitai.com', body: [impressionEvent] });
+    const res = makeRes();
+
+    await handler(req as any, res);
+
+    // One call, not one per entity. A route that looped the array and called per
+    // entity would still produce the right rows, and would still pass a
+    // row-shape assertion — it would just quietly restore the per-event insert
+    // rate the batching exists to remove.
+    expect(mockImpressions).toHaveBeenCalledTimes(1);
+    expect(mockImpressions).toHaveBeenCalledWith(impressionEvent.data);
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  it('rejects an impression batch whose entity list exceeds the cap', async () => {
+    const handler = await importHandler();
+    const entities = Array.from({ length: 251 }, (_, i) => ({
+      entityType: 'Image' as const,
+      entityId: i + 1,
+    }));
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [{ ...impressionEvent, data: { ...impressionEvent.data, entities } }],
+    });
+    const res = makeRes();
+
+    await handler(req as any, res);
+
+    expect(mockImpressions).not.toHaveBeenCalled();
+    expect(res.status).toHaveBeenCalledWith(400);
+  });
+
+  it('falls back to the "other" surface instead of rejecting an unknown one', async () => {
+    const handler = await importHandler();
+    const req = makeReq({
+      origin: 'https://civitai.com',
+      body: [{ ...impressionEvent, data: { ...impressionEvent.data, surface: 'not-a-surface' } }],
+    });
+    const res = makeRes();
+
+    await handler(req as any, res);
+
+    // A batch is all-or-nothing at the schema layer, so a hard reject here would
+    // discard every good event travelling with it.
+    expect(mockImpressions).toHaveBeenCalledTimes(1);
+    expect(mockImpressions.mock.calls[0][0].surface).toBe('other');
     expect(res.status).toHaveBeenCalledWith(200);
   });
 

@@ -1,6 +1,7 @@
 import type { GroupProps } from '@mantine/core';
 import {
   IconBrush,
+  IconBusinessplan,
   IconCurrencyDollar,
   IconGitMerge,
   IconLicense,
@@ -13,6 +14,7 @@ import {
   type PermissionBadge,
 } from '~/components/PermissionIndicator/PermissionIndicatorBase';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { allowsDifferentLicenseOnMerges } from '~/server/common/constants';
 import { CommercialUse } from '~/shared/utils/prisma/enums';
 
 /**
@@ -36,12 +38,13 @@ export const PermissionIndicator = ({
   const currentUser = useCurrentUser();
   const isModerator = currentUser?.isModerator ?? false;
 
-  const { allowNoCredit, allowCommercialUse, allowDerivatives, allowDifferentLicense, sfwOnly } =
-    permissions;
+  const { allowNoCredit, allowCommercialUse, allowDerivatives, sfwOnly } = permissions;
+  const allowDifferentLicense = allowsDifferentLicenseOnMerges(permissions);
   const canSellImages = allowCommercialUse.includes(CommercialUse.Image);
   const canRentCivit = allowCommercialUse.includes(CommercialUse.RentCivit);
   const canRent = allowCommercialUse.includes(CommercialUse.Rent);
   const canSell = allowCommercialUse.includes(CommercialUse.Sell);
+  const canSellMerge = allowCommercialUse.includes(CommercialUse.SellMerge);
 
   const explanation = {
     'Use the model without crediting the creator': allowNoCredit,
@@ -49,7 +52,8 @@ export const PermissionIndicator = ({
     'Run on services that generate for money': canRent,
     'Run on Civitai': canRentCivit,
     'Share merges using this model': allowDerivatives,
-    'Sell this model or merges using this model': canSell,
+    'Sell this model': canSell,
+    'Sell merges using this model': canSellMerge,
     'Have different permissions when sharing merges': allowDifferentLicense,
     ...(isModerator && { 'Create NSFW generations': !sfwOnly }),
   };
@@ -57,9 +61,10 @@ export const PermissionIndicator = ({
   const iconSize = Math.round(size / 2);
   const badges: PermissionBadge[] = [
     {
-      label: canSellImages || canSell ? 'Commercial use allowed' : 'No commercial use',
+      label:
+        canSellImages || canSell || canSellMerge ? 'Commercial use allowed' : 'No commercial use',
       icon: <IconCurrencyDollar size={iconSize} stroke={1.5} />,
-      allowed: canSellImages || canSell,
+      allowed: canSellImages || canSell || canSellMerge,
     },
     {
       label: canRentCivit || canRent ? 'Generation services allowed' : 'No generation services',
@@ -75,6 +80,11 @@ export const PermissionIndicator = ({
       label: allowDerivatives ? 'Merges allowed' : 'No merges allowed',
       icon: <IconGitMerge size={iconSize} stroke={1.5} />,
       allowed: allowDerivatives,
+    },
+    {
+      label: canSellMerge ? 'Merge sales allowed' : 'No merge sales',
+      icon: <IconBusinessplan size={iconSize} stroke={1.5} />,
+      allowed: canSellMerge,
     },
     {
       label: allowDifferentLicense

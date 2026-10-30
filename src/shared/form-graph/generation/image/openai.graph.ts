@@ -1,0 +1,147 @@
+import { z } from 'zod';
+import { branch, defineGraph } from 'form-graph';
+import { checkpointDef } from '../checkpoint';
+import {
+  optionFallback,
+  img2imgImages,
+  SEED,
+  aspectRatioDef,
+  boolDef,
+  type ResourceData,
+} from '../defs';
+import { familyScope, modelIdOf, promptOnlyTextBlock, type FamilyExt } from '../shared';
+
+/**
+ * OpenAI (v1.5 / v2 / 2.5 flare + sunburst). GPT-1 builds expose a
+ * transparency toggle; both variants
+ * expose quality. Seed lives at the top level even though GPT-2 and 2.5 ignore
+ * it (keeps the ctx union shape consistent). No negative prompt.
+ */
+
+export const openaiVersionIds = {
+  v1: 1733399,
+  'v1.5': 2512167,
+  v2: 2880272,
+  'v2.5-flare': 3311434,
+  'v2.5-sunburst': 3311436,
+} as const;
+
+/**
+ * Versions OpenAI has shut off, and the build that replaces each. Without this a
+ * remix carrying v1 would hit the model-locked clamp and land on the v2 default,
+ * a different variant (no transparency, other aspect ratios).
+ */
+export const retiredOpenaiVersionIds = new Map<number, number>([
+  [openaiVersionIds.v1, openaiVersionIds['v1.5']],
+]);
+
+const openaiModeVersionOptions = [
+  { label: 'v1.5', value: openaiVersionIds['v1.5'] },
+  { label: 'v2', value: openaiVersionIds.v2 },
+  { label: 'v2.5 Flare', value: openaiVersionIds['v2.5-flare'] },
+  { label: 'v2.5 Sunburst', value: openaiVersionIds['v2.5-sunburst'] },
+];
+
+const defaultOpenaiVersionId = openaiVersionIds.v2;
+
+type OpenAIVariant = 'gpt1' | 'gpt2';
+
+const versionIdToVariant = new Map<number, OpenAIVariant>([
+  [openaiVersionIds['v1.5'], 'gpt1'],
+  [openaiVersionIds.v2, 'gpt2'],
+  [openaiVersionIds['v2.5-flare'], 'gpt2'],
+  [openaiVersionIds['v2.5-sunburst'], 'gpt2'],
+]);
+
+export const openaiGpt1AspectRatios = [
+  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+  { label: '3:2', value: '3:2', width: 1536, height: 1024 },
+  { label: '2:3', value: '2:3', width: 1024, height: 1536 },
+];
+
+export const openaiGpt2AspectRatios = [
+  { label: '21:9', value: '21:9', width: 1680, height: 720 },
+  { label: '16:9', value: '16:9', width: 1536, height: 864 },
+  { label: '3:2', value: '3:2', width: 1536, height: 1024 },
+  { label: '4:3', value: '4:3', width: 1344, height: 1008 },
+  { label: '5:4', value: '5:4', width: 1280, height: 1024 },
+  { label: '1:1', value: '1:1', width: 1024, height: 1024 },
+  { label: '4:5', value: '4:5', width: 1024, height: 1280 },
+  { label: '3:4', value: '3:4', width: 1008, height: 1344 },
+  { label: '2:3', value: '2:3', width: 1024, height: 1536 },
+  { label: '9:16', value: '9:16', width: 864, height: 1536 },
+  { label: '9:21', value: '9:21', width: 720, height: 1680 },
+];
+
+export const qualityOptions = ['high', 'medium', 'low'] as const;
+type OpenAIQuality = (typeof qualityOptions)[number];
+
+const QUALITY = {
+  input: z.enum(qualityOptions).optional(),
+  output: z.enum(qualityOptions),
+  default: 'high' as OpenAIQuality,
+  correct: optionFallback(qualityOptions, 'high' as OpenAIQuality),
+  meta: {
+    options: qualityOptions.map((q) => ({
+      label: q.charAt(0).toUpperCase() + q.slice(1),
+      value: q,
+    })),
+  },
+};
+
+type OpenAIModeExt = FamilyExt & { model?: unknown };
+
+const variantOf = (ext: OpenAIModeExt): OpenAIVariant => {
+  const id = modelIdOf(ext.model);
+  return (id != null ? versionIdToVariant.get(id) : undefined) ?? 'gpt2';
+};
+
+const gpt1 = defineGraph<OpenAIModeExt>()
+  .field('aspectRatio', aspectRatioDef({ options: openaiGpt1AspectRatios, default: '1:1' }))
+  .field('transparent', boolDef(false))
+  .field('quality', QUALITY);
+
+const gpt2 = defineGraph<OpenAIModeExt>()
+  .field(
+    'aspectRatio',
+    aspectRatioDef({
+      options: openaiGpt2AspectRatios,
+      default: '1:1',
+      priorityOptions: ['16:9', '3:2', '1:1', '2:3', '9:16'],
+    })
+  )
+  .field('quality', QUALITY);
+
+/** Tagged: the picked key is stamped into state as `openaiVariant`. */
+const variants = branch('openaiVariant', variantOf, { gpt1, gpt2 });
+
+export const openai = defineGraph<FamilyExt>({ scope: familyScope })
+  .field('images', img2imgImages({ max: 7 }))
+  .field('model', ({ _ext }) => {
+    const base = checkpointDef({
+      ecosystem: _ext.ecosystem,
+      workflow: _ext.workflow,
+      ext: _ext,
+      versions: { options: openaiModeVersionOptions },
+      defaultModelId: defaultOpenaiVersionId,
+    });
+    return {
+      ...base,
+      correct: (value: ResourceData | undefined) => {
+        const replacement = value?.id != null ? retiredOpenaiVersionIds.get(value.id) : undefined;
+        if (replacement != null) {
+          return {
+            value: { id: replacement, model: { type: 'Checkpoint' } } as ResourceData,
+            reason: 'retired_version_remap',
+            detail: { ecosystem: _ext.ecosystem, requested: value!.id },
+          };
+        }
+        return base.correct?.(value);
+      },
+    };
+  })
+  .field('seed', SEED)
+  .use(variants)
+  .use(promptOnlyTextBlock);
+
+export { openaiModeVersionOptions };

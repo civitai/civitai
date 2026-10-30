@@ -8,10 +8,13 @@ import {
 } from '../services/subscriptions.service';
 import { syncActiveBadgeMetadata } from '../services/product-badge.service';
 import { refreshSession } from '~/server/auth/session-invalidation';
+import { isCanonicalTierProduct } from '~/shared/utils/buzz-membership';
 import type {
   SubscriptionMetadata,
   SubscriptionProductMetadata,
 } from '~/server/schema/subscriptions.schema';
+
+const PAID_TIERS = ['bronze', 'silver', 'gold'];
 
 /**
  * Unlock prepaid tokens based on the subscription's currentPeriodStart day-of-month matching today.
@@ -59,17 +62,22 @@ export const processPrepaidMembershipTransitions = createJob(
             interval: 'month',
           },
           take: 1,
+          orderBy: { id: 'asc' },
         },
       },
+      orderBy: { id: 'asc' },
     });
 
-    // Create a map for quick tier lookup
+    // Create a map for quick tier lookup. Skip the Buzz-purchase and referral variants —
+    // they share the tier but have the perks zeroed out — and keep the first match rather
+    // than the last so an unexpected duplicate can't silently change which product wins.
     const productsByTier = new Map<string, (typeof tierProducts)[0]>();
     tierProducts.forEach((product) => {
       const meta = product.metadata as SubscriptionProductMetadata;
-      if (meta?.tier && ['bronze', 'silver', 'gold'].includes(meta.tier)) {
-        productsByTier.set(meta.tier, product);
-      }
+      if (!meta?.tier || !PAID_TIERS.includes(meta.tier)) return;
+      if (!isCanonicalTierProduct(product.metadata)) return;
+      if (productsByTier.has(meta.tier)) return;
+      productsByTier.set(meta.tier, product);
     });
 
     // Find all Civitai memberships expiring today. Referral-granted subs use
@@ -158,13 +166,12 @@ export const processPrepaidMembershipTransitions = createJob(
         // For tier TRANSITIONS (period expired), find the best available tier to switch to.
         // Check both tokens AND prorated days per tier — a tier with only prorated days
         // still wins over a lower tier with tokens (e.g., 10 Silver prorated days > 2 Bronze tokens).
-        const paidTiers = ['bronze', 'silver', 'gold'];
         let nextTier: string | null = null;
         let nextMonths = 0;
         let nextProratedDays = 0;
 
-        for (let i = paidTiers.length - 1; i >= 0; i--) {
-          const tier = paidTiers[i];
+        for (let i = PAID_TIERS.length - 1; i >= 0; i--) {
+          const tier = PAID_TIERS[i];
           const tierTokenCount = futureTokens.filter((t) => t.tier === tier).length;
           const tierProratedDays = proratedDays[tier as keyof typeof proratedDays] || 0;
 
@@ -207,10 +214,16 @@ export const processPrepaidMembershipTransitions = createJob(
           proratedDays: updatedProratedDays,
         };
 
+        // A rollover that stays on the same product has no reason to touch productId/priceId.
+        // Leaving them alone keeps a rollover from rewriting a row it isn't transitioning,
+        // while a row already sitting on the wrong product still gets corrected here.
+        const productChanged = nextTierProduct.id !== membership.product.id;
+
         membershipUpdates.push({
           id: membership.id,
-          productId: nextTierProduct.id,
-          priceId: nextTierProduct.prices[0].id,
+          ...(productChanged
+            ? { productId: nextTierProduct.id, priceId: nextTierProduct.prices[0].id }
+            : {}),
           currentPeriodStart: newPeriodStart.toDate(),
           currentPeriodEnd: newPeriodEnd.toDate(),
           metadata: updatedMeta,

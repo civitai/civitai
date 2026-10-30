@@ -1,4 +1,8 @@
 import { describe, expect, it } from 'vitest';
+import {
+  assertMembersResellable,
+  isBundlableBy,
+} from '~/server/services/creator-shop-pack.service';
 import { cosmeticShopItemMeta } from '~/server/schema/cosmetic-shop.schema';
 import {
   computePackOwnershipDiscount,
@@ -197,6 +201,54 @@ describe('submitCreatorShopPackSchema', () => {
   it('defaults blue Buzz to off, since it is granted only if every member accepts', () => {
     const result = submitCreatorShopPackSchema.parse(valid);
     expect(result.acceptsBlueBuzz).toBe(false);
+  });
+});
+
+describe('pack member resale consent', () => {
+  const OWNER = 700;
+  const OTHER = 701;
+  const resolved = (over: { createdById: number; sellableByOthers: boolean; name?: string }) =>
+    ({ name: 'Item', ...over } as Parameters<typeof assertMembersResellable>[0][number]);
+
+  it('lets a creator bundle their own work regardless of the resale flag', () => {
+    expect(isBundlableBy({ createdById: OWNER, sellableByOthers: false }, OWNER)).toBe(true);
+  });
+
+  it('lets a creator bundle another creator item that opted into resale', () => {
+    expect(isBundlableBy({ createdById: OTHER, sellableByOthers: true }, OWNER)).toBe(true);
+  });
+
+  it('refuses another creator item that did not opt into resale', () => {
+    expect(isBundlableBy({ createdById: OTHER, sellableByOthers: false }, OWNER)).toBe(false);
+  });
+
+  it('exempts a platform item with no creator, like the official shop does', () => {
+    expect(isBundlableBy({ createdById: null, sellableByOthers: false }, OWNER)).toBe(true);
+  });
+
+  it('names the forbidden members it rejects', () => {
+    expect(() =>
+      assertMembersResellable(
+        [
+          resolved({ createdById: OWNER, sellableByOthers: false, name: 'Mine' }),
+          resolved({ createdById: OTHER, sellableByOthers: false, name: 'Off Limits' }),
+          resolved({ createdById: OTHER, sellableByOthers: true, name: 'Sellable' }),
+        ],
+        OWNER
+      )
+    ).toThrow(/Off Limits/);
+  });
+
+  it('passes a pack of only own and resale-enabled members', () => {
+    expect(() =>
+      assertMembersResellable(
+        [
+          resolved({ createdById: OWNER, sellableByOthers: false }),
+          resolved({ createdById: OTHER, sellableByOthers: true }),
+        ],
+        OWNER
+      )
+    ).not.toThrow();
   });
 });
 

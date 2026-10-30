@@ -1,9 +1,9 @@
 import type { ButtonProps } from '@mantine/core';
 import { Button, Card, Center, Divider, Group, Select, Stack, Text, Title } from '@mantine/core';
 import { IconChevronDown, IconGift } from '@tabler/icons-react';
-import { useCallback, useRef, useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { SpotlightGlow, SpotlightSurface } from '~/components/SpotlightCard/SpotlightBorderCard';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
   DowngradeFeedbackModal,
@@ -18,6 +18,7 @@ import type { SubscriptionProductMetadata } from '~/server/schema/subscriptions.
 import type { SubscriptionPlan, UserSubscription } from '~/server/services/subscriptions.service';
 import { capitalize, getStripeCurrencyDisplay } from '~/utils/string-helpers';
 import { getPlanDetails } from '~/components/Subscriptions/getPlanDetails';
+import { useSelectedPriceId } from '~/components/Subscriptions/useSelectedPriceId';
 import { PaymentProvider } from '~/shared/utils/prisma/enums';
 import { getBuzzMembershipPrice, isMembershipActive } from '~/shared/utils/buzz-membership';
 import { numberWithCommas } from '~/utils/number-helpers';
@@ -78,11 +79,21 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
   const defaultPriceId = _isActivePlan
     ? subscription?.price.id ?? product.defaultPriceId
     : product.defaultPriceId;
-  const [priceId, setPriceId] = useState<string | null>(
-    product.prices.find((p) => p.id === defaultPriceId)?.id ??
-      product.prices.find((p) => p.currency.toLowerCase() === 'usd')?.id ??
-      product.prices[0].id
-  );
+  const [priceId, setPriceId] = useSelectedPriceId({
+    prices: product.prices,
+    defaultPriceId,
+    // Stripe pins a customer to one billing currency on their first invoice, and it cannot
+    // change. We cannot read that pin client-side, but an existing subscription's price is
+    // proof of it: Stripe accepted that price, so its currency is the pinned one. Preselect
+    // the sibling in that currency so the amount shown is the amount charged — the server
+    // substitutes it either way, and the plan-change path charges with no confirmation
+    // screen in between.
+    //
+    // `subscription` arrives LATE on /pricing — the plans are prefetched server-side, the
+    // subscription is a plain client query — so this hook derives the selection on every
+    // render rather than freezing it at mount. See useSelectedPriceId for why.
+    pinnedCurrency: subscription?.price.currency,
+  });
   const price = product.prices.find((p) => p.id === priceId) ?? product.prices[0];
   const siteBuzzType = features.isGreen ? 'green' : 'yellow';
   const buzzPrice = getBuzzMembershipPrice({
@@ -153,51 +164,9 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
       }),
   });
 
-  // Spotlight + border glow tracking
-  const cardRef = useRef<HTMLDivElement>(null);
-  const spotlightRef = useRef<HTMLDivElement>(null);
-  const borderGlowRef = useRef<HTMLDivElement>(null);
-
-  const handleMouseMove = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const y = e.clientY - rect.top;
-
-    // Inner spotlight on top section
-    const el = spotlightRef.current;
-    if (el) {
-      el.style.background = `radial-gradient(250px circle at ${x}px ${y}px, rgba(190,75,219,0.12), transparent 70%)`;
-      el.style.opacity = '1';
-    }
-
-    // Border glow
-    const border = borderGlowRef.current;
-    if (border) {
-      border.style.background = `radial-gradient(400px circle at ${x}px ${y}px, rgba(190,75,219,0.15), transparent 70%)`;
-      border.style.opacity = '1';
-    }
-  }, []);
-
-  const handleMouseLeave = useCallback(() => {
-    const el = spotlightRef.current;
-    if (el) el.style.opacity = '0';
-    const border = borderGlowRef.current;
-    if (border) border.style.opacity = '0';
-  }, []);
-
   return (
-    <div
-      ref={cardRef}
-      className="relative h-full"
-      onMouseMove={handleMouseMove}
-      onMouseLeave={handleMouseLeave}
-    >
-      {/* Border glow overlay */}
-      <div
-        ref={borderGlowRef}
-        className="pointer-events-none absolute -inset-px rounded-xl transition-opacity duration-500"
-        style={{ opacity: 0 }}
-      />
+    <SpotlightSurface className="h-full">
+      <SpotlightGlow className="-inset-px rounded-xl" color="rgba(190,75,219,0.15)" size={400} />
 
       <Card className="relative z-[1] h-full overflow-hidden rounded-xl border border-dark-4 p-0 dark:bg-dark-7">
         <Stack justify="space-between" className="h-full">
@@ -212,12 +181,7 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                     'linear-gradient(135deg, rgba(190,75,219,0.1) 0%, rgba(190,75,219,0.02) 100%)',
                 }}
               />
-              {/* Spotlight glow */}
-              <div
-                ref={spotlightRef}
-                className="pointer-events-none absolute inset-0 transition-opacity duration-500"
-                style={{ opacity: 0 }}
-              />
+              <SpotlightGlow local color="rgba(190,75,219,0.12)" size={250} />
 
               <Stack gap="md" className="relative">
                 <Title className="text-center text-xl @sm:text-2xl" order={2} mb="sm">
@@ -243,7 +207,14 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                   </Group>
                   {!isBuzzPurchase && (
                     <Select
-                      data={product.prices.map((p) => ({ label: p.currency, value: p.id }))}
+                      // Upper-cased in the data, not only by the `uppercase` class below:
+                      // the two payment providers spell the same currency differently
+                      // (Stripe lower-case, the other upper-case), so the label a user sees
+                      // should not depend on which catalog the product came from.
+                      data={product.prices.map((p) => ({
+                        label: p.currency.toUpperCase(),
+                        value: p.id,
+                      }))}
                       value={priceId}
                       onChange={(val) => val && setPriceId(val)}
                       allowDeselect={false}
@@ -252,12 +223,13 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                       withCheckIcon={false}
                       rightSection={<IconChevronDown size={14} />}
                       rightSectionWidth={20}
-                      comboboxProps={{ width: 80, position: 'bottom' }}
+                      // The card's sections are overflow-hidden and would clip the dropdown.
+                      comboboxProps={{ width: 80, position: 'bottom', withinPortal: true }}
                       classNames={{
                         root: 'mt-[2px] border-b-2 border-b-current',
                         input: 'h-[20px] min-h-[20px] text-start uppercase',
                         option:
-                          'px-[4px] text-center uppercase data-[checked]:bg-dark-5 data-[checked]:font-bold',
+                          'justify-center whitespace-nowrap px-[4px] text-center uppercase data-[checked]:bg-dark-5 data-[checked]:font-bold',
                         section: 'mr-0',
                       }}
                     />
@@ -397,6 +369,6 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
           </Stack>
         </Stack>
       </Card>
-    </div>
+    </SpotlightSurface>
   );
 }

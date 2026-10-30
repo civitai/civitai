@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
 import {
@@ -60,6 +60,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
   const config = await getChallengeConfig();
   const metadata = parseChallengeMetadata(challenge.metadata);
   const themeElements = metadata.themeElements;
+  const resourceConcept = metadata.resourceConcept;
 
   // Resolve dynamic judging categories + nsfw once for all entries — mirrors the gate in
   // reviewEntriesForChallenge so re-review scores use the same rubric as the original review.
@@ -74,12 +75,11 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
     SELECT ci."imageId", i."userId", u."username", i."url",
       (ci."tagId" = ${config.judgedTagId}) as "hasJudgedTag",
       (
-        SELECT cv2.id
-        FROM "Thread" t
-        JOIN "CommentV2" cv2 ON cv2."threadId" = t.id
-        WHERE t."imageId" = ci."imageId"
-          AND cv2."userId" = ${judgingConfig.userId}
-        ORDER BY cv2."createdAt" DESC
+        SELECT cm.id
+        FROM "CommentV3" cm
+        WHERE cm."entityType" = 'image' AND cm."entityId" = ci."imageId" AND cm."parentId" IS NULL
+          AND cm."deletedAt" IS NULL AND cm."userId" = ${judgingConfig.userId}
+        ORDER BY cm."createdAt" DESC
         LIMIT 1
       ) as "judgeCommentId"
     FROM "CollectionItem" ci
@@ -127,6 +127,7 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
             imageUrl: getEdgeUrl(entry.url, { width: 1200, optimized: true }),
             config: judgingConfig,
             themeElements,
+            resourceConcept,
             categories,
             nsfw,
           }),
@@ -152,11 +153,13 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
 
       // Update existing judge comment in-place, or create if none exists
       await upsertComment({
-        ...(entry.judgeCommentId !== null ? { id: entry.judgeCommentId } : {}),
+        // Its comment is edited even when hidden for ToS; the text is still checked like any author's.
+        ...(entry.judgeCommentId !== null ? { id: entry.judgeCommentId, includeHidden: true } : {}),
         userId: judgingConfig.userId,
         entityType: 'image',
         entityId: entry.imageId,
         content: review.comment,
+        eventPoints: false,
       });
 
       successes++;

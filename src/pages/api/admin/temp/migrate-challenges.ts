@@ -2,6 +2,7 @@ import type { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { challengeJudgingEngineForCreate } from '~/server/services/challenge-judge.service';
 import {
   ChallengeSource,
   ChallengeStatus,
@@ -99,6 +100,10 @@ async function migrateChallenge(
       modelVersionIds = versions.map((v) => v.id);
     }
 
+    const judgingEngine = await challengeJudgingEngineForCreate(
+      dailyChallengeConfig.defaultJudgeId
+    );
+
     // Create Challenge record
     const challenge = await dbWrite.challenge.create({
       data: {
@@ -130,6 +135,7 @@ async function migrateChallenge(
           challengeType: 'world-morph',
           migratedAt: new Date().toISOString(),
         } as Prisma.InputJsonValue,
+        ...judgingEngine,
       },
       select: { id: true },
     });

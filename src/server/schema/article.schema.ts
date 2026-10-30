@@ -1,4 +1,4 @@
-import { ArticleStatus, MetricTimeframe, ReportStatus } from '~/shared/utils/prisma/enums';
+import { ArticleStatus, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import * as z from 'zod';
 
 import { CacheTTL, constants } from '~/server/common/constants';
@@ -12,14 +12,24 @@ import { baseFileSchema } from '~/server/schema/file.schema';
 import { tagSchema } from '~/server/schema/tag.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
 import { commaDelimitedNumberArray } from '~/utils/zod-helpers';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageReferenceInputSchema } from '~/server/schema/image.schema';
 import type { RateLimit } from '~/server/middleware.trpc';
 import { isBetweenToday } from '~/utils/date-helpers';
-import type { UnpublishReason } from '~/server/common/moderation-helpers';
-import { unpublishReasons } from '~/server/common/moderation-helpers';
+import type { ArticleUnpublishReason } from '~/server/common/moderation-helpers';
+import { articleUnpublishReasons } from '~/server/common/moderation-helpers';
 import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
+import { creatorScoreFromMeta } from '~/shared/utils/creator-score';
 
-const UnpublishReasons = Object.keys(unpublishReasons) as [UnpublishReason, ...UnpublishReason[]];
+const UnpublishReasons = Object.keys(articleUnpublishReasons) as [
+  ArticleUnpublishReason,
+  ...ArticleUnpublishReason[]
+];
+
+export const dailyArticleTiers = [
+  { minScore: 1000, limit: 5 },
+  { minScore: 5000, limit: 10 },
+  { minScore: 10000, limit: 20 },
+];
 
 export const articleRateLimits: RateLimit[] = [
   {
@@ -33,21 +43,13 @@ export const articleRateLimits: RateLimit[] = [
     limit: 3,
     period: CacheTTL.day,
   },
-  {
-    limit: 5,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 1000,
-  },
-  {
-    limit: 10,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 5000,
-  },
-  {
-    limit: 20,
-    period: CacheTTL.day,
-    userReq: (user) => (user.meta?.scores?.articles ?? 0) >= 10000,
-  },
+  ...dailyArticleTiers.map(
+    ({ minScore, limit }): RateLimit => ({
+      limit,
+      period: CacheTTL.day,
+      userReq: (user) => creatorScoreFromMeta(user.meta) >= minScore,
+    })
+  ),
 ];
 
 export const userPreferencesForArticlesSchema = z.object({
@@ -95,17 +97,22 @@ export type UpsertArticleInput = z.infer<typeof upsertArticleInput>;
 export const upsertArticleInput = z.object({
   id: z.number().optional(),
   title: z.string().min(1).max(100),
-  content: getSanitizedStringSchema().refine((data) => {
+  content: getSanitizedStringSchema({ allowBlurbs: true }).refine((data) => {
     return data && data.length > 0 && data !== '<p></p>';
   }, 'Cannot be empty'),
-  coverImage: imageSchema.nullish(),
+  coverImage: imageReferenceInputSchema.nullish(),
   tags: z.array(tagSchema).nullish(),
   userNsfwLevel: z.enum(NsfwLevel).default(NsfwLevel.PG),
   moderatorNsfwLevel: z.enum(NsfwLevel).nullish(),
   publishedAt: z.date().nullish(),
+  // A date schedules a never-published draft to go live then; null cancels; omitted leaves it.
+  scheduledAt: z.date().nullish(),
   attachments: z.array(baseFileSchema).optional(),
   lockedProperties: z.string().array().optional(),
   status: z.enum(ArticleStatus).optional(),
+  // Moderator-only. `upsertArticleHandler` DROPS this field for everyone else rather
+  // than refusing the save — see the comment there for why refusing is the wrong shape.
+  isOfficial: z.boolean().optional(),
 });
 
 export type ResolveArticleImageScanInput = z.infer<typeof resolveArticleImageScanSchema>;
@@ -147,54 +154,16 @@ export type ArticleMetadata = {
 
 export const unpublishArticleSchema = z.object({
   id: z.number(),
-  reason: z.custom<UnpublishReason>((x) => UnpublishReasons.includes(x as any)).optional(),
+  reason: z
+    .custom<ArticleUnpublishReason>((x) => UnpublishReasons.includes(x as ArticleUnpublishReason))
+    .optional(),
   customMessage: z.string().optional(),
 });
 
 export type UnpublishArticleSchema = z.infer<typeof unpublishArticleSchema>;
 
-export const restoreArticleSchema = z.object({
+export type SetArticleOfficialInput = z.infer<typeof setArticleOfficialSchema>;
+export const setArticleOfficialSchema = z.object({
   id: z.number(),
-});
-
-export type RestoreArticleSchema = z.infer<typeof restoreArticleSchema>;
-
-export const getModeratorArticlesSchema = infiniteQuerySchema.extend({
-  username: z.string().optional(),
-  status: z.nativeEnum(ArticleStatus).optional(),
-});
-
-export type GetModeratorArticlesSchema = z.infer<typeof getModeratorArticlesSchema>;
-
-// --- Article rating review / dispute ---
-
-export type CreateArticleRatingReviewInput = z.infer<typeof createArticleRatingReviewSchema>;
-export const createArticleRatingReviewSchema = z.object({
-  articleId: z.number(),
-  suggestedLevel: z.number().int().positive(),
-  userComment: z.string().max(500).optional(),
-});
-
-export type GetArticleRatingReviewsInput = z.infer<typeof getArticleRatingReviewsSchema>;
-export const getArticleRatingReviewsSchema = z.object({
-  limit: z.number().min(1).max(100).default(50),
-  cursor: z.number().optional(),
-  status: z.nativeEnum(ReportStatus).default(ReportStatus.Pending),
-});
-
-export type ResolveArticleRatingReviewInput = z.infer<typeof resolveArticleRatingReviewSchema>;
-// Single-action resolution: every resolve pins the article at `appliedLevel`
-// (override). The Actioned/Unactioned status is no longer a client input — the
-// server derives it from `appliedLevel` vs the review's `suggestedLevel`
-// (granted vs overrode-differently). See
-// docs/superpowers/specs/2026-06-25-article-rating-review-single-action-design.md
-export const resolveArticleRatingReviewSchema = z.object({
-  reviewId: z.number(),
-  appliedLevel: z.number().int().positive(),
-  modComment: z.string().max(1000).optional(),
-});
-
-export type GetMyArticleRatingReviewInput = z.infer<typeof getMyArticleRatingReviewSchema>;
-export const getMyArticleRatingReviewSchema = z.object({
-  articleId: z.number(),
+  isOfficial: z.boolean(),
 });

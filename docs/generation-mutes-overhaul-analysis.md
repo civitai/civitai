@@ -152,10 +152,12 @@ The regex audit system has several layers that can produce false positives:
 | NSFW blocklist (`blocklist-nsfw.json`) | Exact word match with leetspeak variants | A word that has innocent uses in context |
 | POI names (`words-poi.json`) | Celebrity name match | Common name that happens to be a celebrity |
 | Young words (`words-young.json`) | Young-related nouns in NSFW context | Non-sexual use of "school" in NSFW prompt |
-| Harmful combinations (`harmful-combinations.ts`) | Regex patterns for dangerous combos | Pattern too broad, catches innocent phrasing |
+| Harmful combinations (`harmfulCombinations`) | Regex patterns for dangerous combos | Pattern too broad, catches innocent phrasing |
 | External moderation | OpenAI category scores > threshold | Model over-flags certain art styles |
 
-The external moderation service already has a rudimentary false-positive system (hardcoded replacements in `moderation.ts`), but it's static and limited to 5 patterns.
+> All four regex-audit sources moved to `packages/civitai-mod-utils/src/prompt-audit/lists/` (PR #5154), consumed via the `@civitai/mod-utils/prompt-audit/lists` barrel. The file and export names are unchanged; only the location is.
+
+The external moderation service already has a rudimentary false-positive system — a static rewrite map (`EXTERNAL_CLASSIFIER_REWRITES` in `packages/civitai-mod-utils/src/prompt-audit/lists/external-classifier-rewrites.ts`) that `removeFalsePositiveTriggers` in `src/server/integrations/moderation.ts` applies before the call — but it is a fixed table, not moderator-editable.
 
 #### Proposed: `PromptAllowlist` Table
 
@@ -230,8 +232,8 @@ Over time, this builds an allowlist that systematically reduces false positives 
 #### Handling External Moderation False Positives
 
 The external moderation service (OpenAI) returns category-level flags, not specific words. False positives here are harder to handle at the word level. Options:
-- Add prompt text patterns to the existing `removeFalsePositiveTriggers` in `moderation.ts` (requires deployment)
-- Raise the `EXTERNAL_MODERATION_THRESHOLD` for specific categories
+- Add prompt text patterns to the external-classifier rewrite map (`EXTERNAL_CLASSIFIER_REWRITES`, `packages/civitai-mod-utils/src/prompt-audit/lists/external-classifier-rewrites.ts`), applied by `removeFalsePositiveTriggers` in `moderation.ts` (requires deployment; that file states the sign-off rule for additions)
+- Tune the external classifier's blocking configuration via its env vars (see `EXTERNAL_MODERATION_CATEGORIES` / `EXTERNAL_MODERATION_THRESHOLD` in `src/env/server-schema.ts` — the two are mutually exclusive modes)
 - Add category-level overrides to the allowlist (e.g., allow `external:sexual` for specific prompt patterns)
 
 @dev: External moderation false positives may need a different strategy. For now, the allowlist focuses on regex-based blocks which are the easier win.
@@ -329,4 +331,4 @@ The allowlist system works well for regex-based blocks (word-level granularity).
 | Notification system | `src/server/notifications/` | Add new notification categories |
 | Confirm mutes job | `src/server/jobs/confirm-mutes.ts` | May need updates for new flow |
 | Generate page UI | `src/pages/generate/index.tsx` | Replace lock screen with appeal UI |
-| External moderation | `src/server/integrations/moderation.ts` | Existing false-positive pre-processing to extend |
+| External moderation | `src/server/integrations/moderation.ts` (call + rewrite application) · `@civitai/mod-utils/prompt-audit/lists` (`EXTERNAL_CLASSIFIER_REWRITES`) | Existing false-positive pre-processing to extend |

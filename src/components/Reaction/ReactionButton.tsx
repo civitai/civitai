@@ -1,5 +1,5 @@
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
-import { cloneElement, useCallback, useMemo } from 'react';
+import { cloneElement, useCallback, useMemo, useRef } from 'react';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { immer } from 'zustand/middleware/immer';
@@ -23,6 +23,11 @@ type ReactionStore = {
 
 const getReactionKey = ({ entityType, entityId }: Omit<ToggleReactionInput, 'reaction'>) =>
   `${entityType}_${entityId}`;
+
+// Per entity and reaction, across every button: requests in flight, and server answers received.
+const pending = new Map<string, number>();
+const answers = new Map<string, number>();
+const answerKey = (input: ToggleReactionInput) => `${getReactionKey(input)}_${input.reaction}`;
 
 const useStore = create<ReactionStore>()(
   devtools(
@@ -50,15 +55,18 @@ export const useReactionsStore = ({
 export type ReactionButtonProps = ToggleReactionInput & {
   userReaction?: { userId: number; reaction: ReviewReactions };
   count?: number;
+  countUnknown?: boolean;
   noEmpty?: boolean;
   children: ({
     hasReacted,
     count,
+    countUnknown,
     reaction,
     canClick,
   }: {
     hasReacted: boolean;
     count: number;
+    countUnknown: boolean;
     reaction: ReviewReactions;
     canClick: boolean;
   }) => React.ReactElement;
@@ -69,6 +77,7 @@ export type ReactionButtonProps = ToggleReactionInput & {
 export function ReactionButton({
   userReaction,
   count: initialCount = 0,
+  countUnknown = false,
   entityType,
   entityId,
   reaction,
@@ -91,28 +100,55 @@ export function ReactionButton({
     } else return hasReacted ? initialCount + 1 : initialCount;
   }, [hasReactedInitial, hasReacted, initialCount]);
 
-  const { mutate, isPending: isLoading } = trpc.reaction.toggle.useMutation();
+  // What the store held when this button last toggled, and how many server answers had landed.
+  const snapshot = useRef<{ previous: boolean; answers: number } | undefined>(undefined);
+  // Mutation-level callbacks (not the ones passed to `mutate`) still run after this button unmounts.
+  const settle = (input: ToggleReactionInput, result?: string) => {
+    const k = answerKey(input);
+    pending.set(k, Math.max(0, (pending.get(k) ?? 0) - 1));
+    // The server applies whichever request claims the toggle first, so its answer is the truth.
+    if (result === 'created' || result === 'removed' || result === 'noop') {
+      answers.set(k, (answers.get(k) ?? 0) + 1);
+      toggleReaction({ ...input, value: result === 'created' });
+      return;
+    }
+    // Ignored or failed: undo our own change, unless a sibling's answer has landed since or one is
+    // still on its way to say what the server holds.
+    const taken = snapshot.current;
+    if (!taken || pending.get(k) || (answers.get(k) ?? 0) !== taken.answers) return;
+    toggleReaction({ ...input, value: taken.previous });
+  };
+  // `isPending` lands a render late, so two clicks in one frame both passed it.
+  const inFlight = useRef(false);
+  const { mutate, isPending: isLoading } = trpc.reaction.toggle.useMutation({
+    onSuccess(result, variables) {
+      settle(variables, result);
+    },
+    onError(_error, variables) {
+      settle(variables);
+    },
+    onSettled() {
+      inFlight.current = false;
+    },
+  });
 
   const handleClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
-    mutate(
-      {
-        entityId,
-        entityType,
-        reaction,
-      }
-      // {
-      //   onError(error) {
-      //     toggleReaction({ entityType, entityId, reaction, value: !hasReacted });
-      //   },
-      // }
-    );
+    if (inFlight.current) return;
+    inFlight.current = true;
+    // Read the store, not the rendered value: a sibling button for the same entity may have toggled
+    // in this same frame.
+    const previous = useStore.getState().reactions[key]?.[reaction] ?? hasReactedInitial;
+    const k = answerKey({ entityType, entityId, reaction });
+    snapshot.current = { previous, answers: answers.get(k) ?? 0 };
+    pending.set(k, (pending.get(k) ?? 0) + 1);
+    toggleReaction({ entityType, entityId, reaction, value: !previous });
+    mutate({ entityId, entityType, reaction });
   };
 
   const canClick = !!currentUser && !readonly && !isLoading;
-  const child = children({ hasReacted, count, reaction, canClick });
+  const child = children({ hasReacted, count, countUnknown, reaction, canClick });
 
   if (noEmpty && count < 1)
     return invisibleEmpty ? cloneElement(child, { className: 'invisible' }) : null;

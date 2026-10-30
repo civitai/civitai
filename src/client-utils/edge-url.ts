@@ -1,5 +1,6 @@
 import { MediaType } from '~/shared/utils/prisma/enums';
 import { env } from '~/env/client';
+import { isEdgeUrlPassthrough } from '~/shared/utils/edge-url-passthrough';
 import { isDefined } from '~/utils/type-guards';
 
 /**
@@ -33,6 +34,8 @@ export type EdgeUrlProps = {
   type?: MediaType;
   original?: boolean;
   skip?: number;
+  /** The stored image's own width. Bounds the hi-DPI `srcSet` candidate; never emitted into the URL. */
+  sourceWidth?: number | null;
 };
 
 const typeExtensions: Record<MediaType, string> = {
@@ -53,19 +56,28 @@ const typeExtensions: Record<MediaType, string> = {
 export const COMMON_IMAGE_WIDTHS = [96, 320, 450, 512, 800, 1200, 1600, 2200] as const;
 
 /**
- * Below (and at) this requested width the render path forces `optimized=true`.
- *
- * 🔴 Load-bearing and deliberately shared: `useEdgeUrl` decides the `optimized` flag
- * from this number, so anything that has to reproduce a URL the browser actually
- * requests (e.g. `~/components/Announcements/announcement-image`, whose health monitor
- * would otherwise probe a variant nobody loads and report a false failure) must read
- * this constant rather than hardcoding the threshold.
+ * `resolveOptimized` has to reach this answer BEFORE `getEdgeUrl` infers it: the cacher ignores
+ * `optimized` on an original request, but emitting it still changes the URL — and therefore the
+ * CDN cache key — for every download.
  */
-export const OPTIMIZED_WIDTH_THRESHOLD = 450;
+export function resolvesToOriginal({
+  width,
+  height,
+  original,
+}: Pick<EdgeUrlProps, 'width' | 'height' | 'original'>) {
+  return original ?? (!width && !height);
+}
 
-/** Whether the render path forces `optimized=true` for a given requested width. */
-export function shouldForceOptimized(width?: number | null) {
-  return !!width && width <= OPTIMIZED_WIDTH_THRESHOLD;
+/**
+ * Every derived variant is compressed. The only request that is not is an original, where the
+ * cacher ignores the flag anyway — emitting it there would just split the CDN key.
+ */
+export function resolveOptimized({
+  width,
+  height,
+  original,
+}: Pick<EdgeUrlProps, 'width' | 'height' | 'original'>) {
+  return !resolvesToOriginal({ width, height, original });
 }
 
 /**
@@ -76,7 +88,7 @@ export function shouldForceOptimized(width?: number | null) {
  *  - Otherwise, return the first ladder value strictly greater than `width`.
  *  - If no ladder value is greater (i.e. the request exceeds the ladder top),
  *    return the original width unchanged so callers that explicitly oversized
- *    aren't capped here. The existing 1800 cap in `getEdgeUrl` still applies.
+ *    aren't capped here. `clampEdgeWidth` still applies.
  */
 export function snapWidthToCommonSize(width: number): number {
   for (const size of COMMON_IMAGE_WIDTHS) {
@@ -84,6 +96,120 @@ export function snapWidthToCommonSize(width: number): number {
     if (size > width) return size;
   }
   return width;
+}
+
+/** Ceiling `getEdgeUrl` applies to a requested width, after the ladder snap. */
+export const MAX_EDGE_WIDTH = 1800;
+
+export function clampEdgeWidth(width: number) {
+  return Math.min(width, MAX_EDGE_WIDTH);
+}
+
+/**
+ * Device-pixel-ratio the hi-DPI `srcSet` targets.
+ *
+ * 3x is deliberately not offered: at the widths these surfaces request it clears the ladder
+ * top and lands on `MAX_EDGE_WIDTH`, so a 3x candidate would buy 1800px over 1600px — 12%
+ * more pixels for a whole extra variant to generate, cache and download.
+ */
+export const SRCSET_DPR = 2;
+
+/**
+ * `srcSet` pairing the 1x variant with one sized for a `SRCSET_DPR` display.
+ *
+ * x-descriptors rather than a `devicePixelRatio` read: the ratio is unknown during SSR, so
+ * choosing a width from it would emit different markup on server and client — a hydration
+ * mismatch, and a second download of whichever variant lost. The browser resolves a
+ * descriptor list itself, before React runs.
+ *
+ * Returns undefined when no ladder rung fits between the 1x variant and the lower of
+ * `SRCSET_DPR * base` and the source's own width — so the attribute is omitted rather than
+ * listing one URL twice or promising pixels the source has not got.
+ */
+export function getEdgeUrlSrcSet(src: string, options: Omit<EdgeUrlProps, 'src'> = {}) {
+  const { width, original, sourceWidth } = options;
+  if (isEdgeUrlPassthrough(src)) return undefined;
+  if (!width || original) return undefined;
+
+  const base = clampEdgeWidth(snapWidthToCommonSize(width));
+  const scaled = hiDpiCandidateWidth(base, sourceWidth);
+  if (!scaled) return undefined;
+
+  // Floored, never rounded up: a descriptor that overstates a candidate's density tells the
+  // browser it has pixels it does not have.
+  const density = Math.floor((scaled / base) * 100) / 100;
+
+  return [
+    `${srcSetSafe(getEdgeUrl(src, { ...options, width: base }))} 1x`,
+    `${srcSetSafe(getEdgeUrl(src, { ...options, width: scaled }))} ${density}x`,
+  ].join(', ');
+}
+
+/**
+ * The widest ladder rung above `base` that exceeds neither `SRCSET_DPR * base` nor the source.
+ *
+ * NOT `snapWidthToCommonSize(base * SRCSET_DPR)`: that rounds UP when 2x lands between rungs, so a
+ * 450 card asks for 1200 — which the cacher serves identically to `width=1200`, ~5x the bytes of
+ * the 450 rung for a box rendering ~318 CSS px.
+ *
+ * 🔴 The source bound is separate and equally load-bearing: the cacher UPSCALES rather than
+ * refusing, so an unbounded 2x candidate bills real bytes for interpolated pixels on any image
+ * narrower than the candidate — which most generated images are. When no rung fits, the attribute
+ * is omitted and the browser keeps the 1x variant.
+ */
+export function hiDpiCandidateWidth(base: number, sourceWidth?: number | null) {
+  const ceiling = Math.min(base * SRCSET_DPR, sourceWidth || Infinity);
+  for (let i = COMMON_IMAGE_WIDTHS.length - 1; i >= 0; i--) {
+    const rung = clampEdgeWidth(COMMON_IMAGE_WIDTHS[i]);
+    if (rung > base && rung <= ceiling) return rung;
+  }
+  return undefined;
+}
+
+/**
+ * A delivery URL ends in the image's `name`, which routinely contains spaces
+ * ("..._Unstable Bastard_312879214.png"). `src` tolerates that — the browser encodes it — but
+ * in `srcset` whitespace TERMINATES the URL, so the rest of the filename is read as the
+ * descriptor, found invalid, and the candidate is silently dropped. Every candidate drops and
+ * the browser falls back to `src`, i.e. the 1x variant, with no error anywhere.
+ *
+ * Only ASCII whitespace needs escaping, and each character is encoded as itself: the srcset
+ * parser ends a URL at whitespace alone, so the commas `getEdgeUrl` puts in the params segment
+ * are already safe where they sit, and a non-breaking space is not a terminator — rewriting one
+ * to %20 would request a different object than `src` does.
+ */
+function srcSetSafe(url: string) {
+  return url.replace(
+    /[\t\n\f\r ]/g,
+    (c) => `%${c.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`
+  );
+}
+
+/** Asks the cacher for a JPEG still of a video instead of the video itself. */
+export const videoStillEdgeOptions = {
+  type: MediaType.image,
+  anim: false,
+  transcode: true,
+} satisfies Omit<EdgeUrlProps, 'src'>;
+
+/**
+ * The `original=true` form of an image-CDN delivery URL, e.g. the resized variant a page
+ * shows and a drag hands over. A variant's re-encode drops a PNG's generation text chunks,
+ * so a reader of generation metadata needs the stored file. Video variants (`transcode`,
+ * `skip`) are frames of an MP4 whose original is not an image, and pass through, as does
+ * any URL not on the image CDN.
+ */
+export function toOriginalEdgeUrl(url: string) {
+  const base = env.NEXT_PUBLIC_IMAGE_LOCATION;
+  if (!base || !url.startsWith(`${base}/`)) return url;
+
+  const [path] = url.slice(base.length + 1).split(/[?#]/);
+  const segments = path.split('/');
+  if (segments.length < 2 || segments.length > 3 || segments.some((s) => !s)) return url;
+
+  const [key, params, name] = segments.length === 3 ? segments : [segments[0], '', segments[1]];
+  if (/(^|,)(transcode=true|skip=)/.test(params)) return url;
+  return [base, key, 'original=true', name].join('/');
 }
 
 export function getEdgeUrl(
@@ -107,7 +233,8 @@ export function getEdgeUrl(
     skip,
   }: Omit<EdgeUrlProps, 'src'> = {}
 ) {
-  if (!src || src.startsWith('http') || src.startsWith('blob')) return src;
+  // Shared with the image-scan ingestion allowlist — see edge-url-passthrough.ts.
+  if (isEdgeUrlPassthrough(src)) return src;
 
   if (!width && !height && original === undefined) original = true;
   if (original) {
@@ -118,8 +245,7 @@ export function getEdgeUrl(
   // Snap width to the cacher's CommonSizes ladder *before* the 1800 cap so the cap
   // remains the final word for over-ladder values. Height is not snapped — the
   // cacher only snaps width.
-  if (width) width = snapWidthToCommonSize(width);
-  if (width && width > 1800) width = 1800;
+  if (width) width = clampEdgeWidth(snapWidthToCommonSize(width));
   if (height && height > 1000) height = 1000;
 
   const modifiedParams = {
@@ -151,6 +277,116 @@ export function getEdgeUrl(
   else name = name + extension;
 
   return [env.NEXT_PUBLIC_IMAGE_LOCATION, src, params.toString(), name].filter(Boolean).join('/');
+}
+
+/**
+ * What `useEdgeUrl` returns, outside React: the URL (and hi-DPI `srcSet`) an element is handed for
+ * `src` under `options`. `useEdgeUrl` is this function and nothing else, so a caller that has to
+ * know the exact request ahead of the element (the image page's preload) reads the same answer.
+ */
+export function resolveEdgeUrl(
+  src: string,
+  options: Omit<EdgeUrlProps, 'src'> | undefined,
+  hiDpi?: boolean
+) {
+  const inferredType = getInferredMediaType(src, options);
+  let type = options?.type ?? inferredType;
+
+  // Same passthrough boundary as getEdgeUrl — one predicate, see edge-url-passthrough.ts.
+  if (isEdgeUrlPassthrough(src)) return { url: src, srcSet: undefined, type: inferredType };
+
+  let { anim, transcode } = options ?? {};
+
+  if (inferredType === 'video' && type === 'image') {
+    transcode = true;
+    anim = false;
+  } else if (type === 'video') {
+    transcode = true;
+    anim = anim ?? true;
+  }
+
+  if (!anim) type = 'image';
+  // Single source for `optimized`; do not re-derive it elsewhere.
+  const optimized = resolveOptimized({
+    width: options?.width,
+    height: options?.height,
+    original: options?.original,
+  });
+
+  const resolved = {
+    ...options,
+    anim,
+    transcode,
+    type,
+    optimized: optimized ? true : undefined,
+  };
+
+  return {
+    url: getEdgeUrl(src, resolved),
+    srcSet: hiDpi ? getEdgeUrlSrcSet(src, resolved) : undefined,
+    type,
+  };
+}
+
+/** The props of `EdgeMedia` that shape the request URL. */
+export type EdgeMediaUrlProps = Omit<EdgeUrlProps, 'src' | 'metadata'>;
+
+/**
+ * The `options` `EdgeMedia` hands `EdgeImage`/`EdgeVideo` for its props: the width capped at 4096,
+ * every other URL-shaping prop as given.
+ */
+export function edgeMediaOptions({
+  name,
+  width,
+  sourceWidth,
+  height,
+  fit,
+  blur,
+  quality,
+  gravity,
+  transcode,
+  type,
+  original,
+  skip,
+  anim,
+  optimized,
+}: EdgeMediaUrlProps) {
+  if (width && typeof width === 'number') width = Math.min(width, 4096);
+  return {
+    name,
+    width,
+    sourceWidth,
+    height,
+    fit,
+    blur,
+    quality,
+    gravity,
+    transcode,
+    type,
+    original,
+    skip,
+    anim,
+    optimized,
+  };
+}
+
+/** What `EdgeImage` hands `useEdgeUrl` for the `options` `EdgeMedia` built. */
+export function edgeImageUrlOptions(options: Omit<EdgeUrlProps, 'src'> | undefined) {
+  // TODO - determine how we can animate cosmetics
+  const { anim, ...rest } = options ?? {};
+  return anim !== false ? rest : { ...rest, anim: false };
+}
+
+/**
+ * The URL (and `srcSet`) `EdgeImage` puts on its `<img>` for the `options` `EdgeMedia` built:
+ * the same two steps `EdgeImage` takes, `useEdgeUrl` being `resolveEdgeUrl`.
+ */
+export function resolveEdgeImageUrl(
+  src: string,
+  options: Omit<EdgeUrlProps, 'src'> | undefined,
+  hiDpi?: boolean
+) {
+  return resolveEdgeUrl(src, edgeImageUrlOptions(options), hiDpi);
 }
 
 const videoTypeExtensions = ['.gif', '.mp4', '.webm'];

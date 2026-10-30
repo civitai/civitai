@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  * deadline so a silent half-open rejects instead of parking ~11min while the
  * generation context is built.
  *
- * getGenerationEcosystemConfig + getGateRules are imported from generation.service
+ * resolveTestingAccess + getGateRules are imported from generation.service
  * and mocked here, so the ONLY withSysReadDeadline call is the local status read
  * under test. The SLOW test is fail-on-revert (hGet never settles).
  */
@@ -33,10 +33,7 @@ vi.mock('~/server/redis/client', () => {
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: mockLogSysRedisFailOpen }));
 
-// Keep the DB / infra layer inert (avoids booting Prisma / kysely / pools at
-// import — buildGenerationContext never touches them on the status path).
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   getDbWithoutLagBatch: vi.fn(),
@@ -45,16 +42,16 @@ vi.mock('~/server/db/db-lag-helpers', () => ({
 vi.mock('~/server/db/datapacketDb', () => ({ datapacketDbRead: {}, datapacketDbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/search-index', () => ({}));
-vi.mock('@civitai/db', () => ({ createLagTracker: vi.fn(() => ({})), loadDbEnv: vi.fn(() => ({})) }));
+vi.mock('@civitai/db', () => ({
+  createLagTracker: vi.fn(() => ({})),
+  loadDbEnv: vi.fn(() => ({})),
+}));
 
 // The two sibling readers buildGenerationContext composes — mock so the only
 // deadline-wrapped read is the local getGenerationStatus under test, and so the
 // heavy generation.service graph doesn't load.
 vi.mock('~/server/services/generation/generation.service', () => ({
-  getGenerationEcosystemConfig: vi.fn(async () => ({
-    experimentalEcosystems: [],
-    hasTestingAccess: false,
-  })),
+  resolveTestingAccess: vi.fn(async () => false),
   getGateRules: vi.fn(async () => []),
   getSelfHostedDisabledEcosystems: vi.fn(() => [] as string[]),
 }));
@@ -69,6 +66,7 @@ vi.mock('~/server/services/image.service', () => ({
 }));
 
 import { buildGenerationContext } from '~/server/services/orchestrator/orchestration-new.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -77,11 +75,14 @@ beforeEach(() => {
 
 describe('buildGenerationContext → local getGenerationStatus — sysRedis soft-dependency', () => {
   it('happy path: reads status through withSysReadDeadline, resolves, no fail-open', async () => {
-    mockHGet.mockResolvedValue(JSON.stringify({ available: true }));
+    mockHGet.mockResolvedValue(
+      JSON.stringify({ mode: 'disabled', message: 'maintenance', selfHostedMode: 'memberOnly' })
+    );
 
     const result = await buildGenerationContext('free', {}, {}, 'onsite');
 
-    expect(result).toBeDefined();
+    expect(result.status).toEqual({ mode: 'disabled', message: 'maintenance' });
+    expect(result.externalCtx.selfHostedMode).toBe('memberOnly');
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).not.toHaveBeenCalled();
   });
@@ -91,7 +92,8 @@ describe('buildGenerationContext → local getGenerationStatus — sysRedis soft
 
     const result = await buildGenerationContext('free', {}, {}, 'onsite');
 
-    expect(result).toBeDefined(); // did NOT throw
+    expect(result.status).toEqual({ mode: 'enabled', message: undefined });
+    expect(result.externalCtx.selfHostedMode).toBe('enabled');
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     const [subtype, fn] = mockLogSysRedisFailOpen.mock.calls[0];
     expect(subtype).toBe('defaults-firing');
@@ -104,7 +106,7 @@ describe('buildGenerationContext → local getGenerationStatus — sysRedis soft
 
     const result = await buildGenerationContext('free', {}, {}, 'onsite');
 
-    expect(result).toBeDefined();
+    expect(result.status).toEqual({ mode: 'enabled', message: undefined });
     expect(mockWithSysReadDeadline).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen).toHaveBeenCalledTimes(1);
     expect(mockLogSysRedisFailOpen.mock.calls[0][0]).toBe('defaults-firing');

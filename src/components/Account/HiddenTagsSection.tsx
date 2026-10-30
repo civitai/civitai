@@ -3,14 +3,21 @@ import { useDebouncedValue } from '@mantine/hooks';
 import { IconSearch, IconX } from '@tabler/icons-react';
 import { uniqBy } from 'lodash-es';
 import { useMemo, useRef, useState } from 'react';
-import { BasicMasonryGrid } from '~/components/MasonryGrid/BasicMasonryGrid';
+import { VirtualGrid } from '~/components/VirtualGrid/VirtualGrid';
 import { useHiddenPreferencesData, useToggleHiddenPreferences } from '~/hooks/hidden-preferences';
 import { getTagDisplayName } from '~/libs/tags';
 import { TagSort } from '~/server/common/enums';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { SettingsSection } from '~/components/Account/SettingsLayout';
 
-export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean }) {
+export function HiddenTagsSection({
+  withTitle = true,
+  flat,
+}: {
+  withTitle?: boolean;
+  flat?: boolean;
+}) {
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [debouncedSearch] = useDebouncedValue(search, 300);
@@ -41,6 +48,47 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
     await toggleHiddenMutation.mutateAsync({ kind: 'tag', data: [tag] });
     setSearch('');
   };
+
+  const searchField = (
+    <Autocomplete
+      name="tag"
+      ref={searchInputRef}
+      placeholder="Search tags to hide"
+      data={modelTags}
+      value={search}
+      onChange={setSearch}
+      leftSection={isLoading ? <Loader size="xs" /> : <IconSearch size={14} />}
+      onOptionSubmit={(value: string) => {
+        const record = modelTags.find((x) => x.value === value);
+        if (!record) return;
+        handleToggleBlockedTag({ id: record.id, name: record.value });
+        searchInputRef.current?.focus();
+      }}
+      limit={10}
+    />
+  );
+
+  if (flat)
+    return (
+      <SettingsSection
+        title="Hidden tags"
+        description="Content with these tags is hidden from you."
+      >
+        <div className="flex flex-col gap-3">
+          {searchField}
+          <VirtualGrid
+            items={hiddenTags}
+            render={TagBadge}
+            getKey={getId}
+            maxHeight={250}
+            gap={4}
+            columnWidth={140}
+            maxColumnCount={4}
+            estimateRowHeight={20}
+          />
+        </div>
+      </SettingsSection>
+    );
 
   return (
     <Card withBorder>
@@ -73,12 +121,15 @@ export function HiddenTagsSection({ withTitle = true }: { withTitle?: boolean })
       </Card.Section>
       <Card.Section inheritPadding py="md">
         <Stack gap={5}>
-          <BasicMasonryGrid
+          <VirtualGrid
             items={hiddenTags}
             render={TagBadge}
+            getKey={getId}
             maxHeight={250}
-            columnGutter={4}
+            gap={4}
             columnWidth={140}
+            maxColumnCount={4}
+            estimateRowHeight={20}
           />
           <Text c="dimmed" size="xs">
             {`We'll hide content with these tags throughout the site.`}
@@ -117,3 +168,5 @@ function TagBadge({ data, width }: { data: { id: number; name: string }; width: 
     </Badge>
   );
 }
+
+const getId = ({ id }: { id: number }) => id;

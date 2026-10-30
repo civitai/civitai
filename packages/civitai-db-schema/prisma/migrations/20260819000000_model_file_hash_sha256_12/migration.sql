@@ -1,0 +1,43 @@
+-- A1111/Forge write sha256[0:12] into image metadata for LoRAs. AutoV2 is sha256[0:10] and
+-- AutoV3 is a different (tensor-only) algorithm, so no stored width matches that value and
+-- resource detection silently fails for those uploads. Storing the 12-char prefix lets the
+-- existing exact-match join in get_image_resources() resolve it with no change to that function.
+--
+-- It appears in /api/v1/model-versions responses alongside the other types, the same way
+-- AutoV2 (also a sha256 truncation) already does.
+--
+-- No trigger. The value is produced in the scan webhook path alongside the AutoV3 truncation --
+-- see normalizeScanHashes() in src/server/services/model-file-scan.service.ts. This migration
+-- only adds the enum value; everything else is application code plus a one-time backfill.
+
+-- AlterEnum
+ALTER TYPE "ModelHashType" ADD VALUE IF NOT EXISTS 'SHA256_12';
+
+-- Backfill is NOT run here. ADD VALUE cannot be referenced in the same transaction that adds it,
+-- and this is ~1.5M rows.
+--
+-- The backfill HAS been applied to production (2026-08-19): every SHA256 row whose ModelFile
+-- still exists carries a SHA256_12 sibling, and detection resolves 12-char LoRA hashes. It ran
+-- from a throwaway endpoint that was deliberately never committed, so there is nothing in the
+-- repo to point at and nothing to re-run here.
+--
+-- Any OTHER environment still needs it. The value is derivable from rows already present — no
+-- file access, no orchestrator, no re-scan — so it is a plain INSERT ... SELECT, batched by
+-- fileId to keep each statement bounded:
+--
+--   INSERT INTO "ModelFileHash" ("fileId", type, hash, "createdAt")
+--   SELECT src."fileId", 'SHA256_12', LEFT(src.hash::text, 12), NOW()
+--   FROM "ModelFileHash" src
+--   WHERE src.type = 'SHA256'
+--     AND src."fileId" >= $from AND src."fileId" < $to
+--     AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf.id = src."fileId")
+--   ON CONFLICT ("fileId", type) DO NOTHING;
+--
+-- 🔴 The EXISTS guard is required, not defensive. ModelFileHash holds rows whose ModelFile is
+-- gone (70 in prod, despite the FK being ON DELETE CASCADE and reporting convalidated), so
+-- selecting from ModelFileHash does not guarantee the FK will accept the derived row. Without
+-- it, one orphan aborts the whole statement with a 23503.
+--
+-- Until it runs in a given environment, files scanned after the release that ships
+-- normalizeScanHashes() get their SHA256_12 from the scan path; older files keep failing 12-char
+-- LoRA detection. That is the pre-fix behaviour, not a broken half-state.

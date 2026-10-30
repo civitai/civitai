@@ -2,7 +2,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 import * as z from 'zod';
 import { toggleModelVersionOnVault } from '~/server/services/vault.service';
-import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
 
 const schema = z.object({
@@ -27,7 +27,10 @@ export default AuthedEndpoint(
         })
       );
     } catch (error) {
-      return res.status(500).json({ message: 'An unexpected error occurred', error });
+      // civitai#3845 (population B). This is the one WRITE among the vault
+      // routes, so it is also the one that can raise a real unique-constraint
+      // violation — the class whose driver payload carries actual row data.
+      return handleEndpointError(res, error);
     }
   },
   ['POST']

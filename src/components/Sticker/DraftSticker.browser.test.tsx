@@ -1,0 +1,948 @@
+import { describe, expect, test, vi, beforeEach } from 'vitest';
+import { page } from 'vitest/browser';
+import type * as PlacementUtil from '~/components/Sticker/placement.util';
+import type * as StickerUtil from '~/components/Sticker/sticker.util';
+import type * as CosmeticShopUtil from '~/components/CosmeticShop/cosmetic-shop.util';
+import type * as Trpc from '~/utils/trpc';
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { renderWithProviders } from '../../../test/component-setup';
+import { resolveTreatment } from '~/components/Sticker/treatments/sticker-treatments';
+import { stickerArtworkStyle } from '~/components/Sticker/placement-appearance';
+import type { StickerDraft } from '~/store/sticker-placement-draft.store';
+import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
+
+/**
+ * What the buttons on a draft actually SEND.
+ *
+ * `isPlacingFree` is well covered as a function; nothing covered the component
+ * using it to fill the payload. Deleting `free: placingFree` from the mutation
+ * input left every test in this PR green while every free press charged Buzz —
+ * so what is asserted here is the value on the wire, not that a prop of the right
+ * type exists.
+ */
+const IMAGE_ID = 74;
+const COSMETIC_ID = 85;
+const PRICE = 700;
+
+/** Every press, with its variables, in order. */
+const placed: { imageId: number; free: boolean; data: Record<string, unknown> }[] = [];
+
+vi.mock('~/components/Sticker/placement.util', async (importOriginal) => ({
+  ...(await importOriginal<typeof PlacementUtil>()),
+  useCreateStickerPlacement: () => ({
+    mutate: (variables: (typeof placed)[number]) => placed.push(variables),
+    isPending: false,
+  }),
+}));
+
+/**
+ * Mocked because it is a dependency, not the thing under test: the real one
+ * renders a currency badge and an account picker and wants the Buzz providers.
+ * Reduced to a button that calls what it is given, so a paid press is still
+ * observable here — the free press goes through a real Mantine `Button`.
+ */
+vi.mock('~/components/Buzz/BuzzTransactionButton', () => ({
+  BuzzTransactionButton: ({
+    label,
+    onPerformTransaction,
+  }: {
+    label: string;
+    onPerformTransaction: () => void;
+  }) => (
+    // `data-buzz-button` is load-bearing. Without it the stub is
+    // indistinguishable from a plain Mantine `Button` by name alone, so swapping
+    // the free option TO a BuzzTransactionButton left all ten tests green — the
+    // component's own docstring argues at length that it must not be one, and
+    // nothing held that argument.
+    <button type="button" data-buzz-button onClick={onPerformTransaction}>
+      {label}
+    </button>
+  ),
+}));
+
+vi.mock('~/components/Buzz/useAvailableBuzz', () => ({ useAvailableBuzz: () => ['yellow'] }));
+
+// `EdgeImage` resolves its URL through `useCurrentUser`, which reads a session
+// context this tree does not mount — and the throw happens inside render, so the
+// whole draft comes back empty rather than failing on the missing provider.
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => ({ id: 7 }) }));
+
+// Every one of these spreads the real module rather than listing its exports. A
+// hand-listed mock couples this file to the whole transitive graph of the draft
+// and nothing warns when that graph grows — the wholesale `~/utils/trpc` version
+// of this file collected ZERO tests, because another module in the graph imports
+// `setTrpcBatchingEnabled` and the stub did not provide it.
+vi.mock('~/components/CosmeticShop/cosmetic-shop.util', async (importOriginal) => ({
+  ...(await importOriginal<typeof CosmeticShopUtil>()),
+  useMutateCosmeticShop: () => ({ purchaseShopItem: vi.fn(), purchasingShopItem: false }),
+}));
+vi.mock('~/components/Sticker/sticker.util', async (importOriginal) => ({
+  ...(await importOriginal<typeof StickerUtil>()),
+  useBuyStickerUses: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  const actual = await importOriginal<typeof Trpc>();
+  return {
+    ...actual,
+    trpc: {
+      ...actual.trpc,
+      useUtils: () => ({ cosmetic: { getStickerBalances: { invalidate: vi.fn() } } }),
+    },
+  };
+});
+
+const draft: StickerDraft = {
+  id: 'draft-1',
+  imageId: IMAGE_ID,
+  cosmeticId: COSMETIC_ID,
+  x: 0.5,
+  // Mid-height and small, so the buy cluster is reachable whichever side of the
+  // sticker it settles on. It is absolutely positioned and flips above the
+  // sticker when the space below is obstructed, and a cluster that lands outside
+  // the harness iframe cannot be scrolled to — Playwright then reports "visible,
+  // enabled and stable", fails to scroll, and burns the whole click budget on
+  // something that reads as actionable. The container is sized under the default
+  // 414x896 viewport for the same reason; 800 wide put it off the right edge.
+  y: 0.6,
+  scale: 0.25,
+  rotation: 15,
+  flip: false,
+  opacity: 1,
+};
+
+const art = { id: COSMETIC_ID, name: 'Star', slug: 'star', url: 'star.png' };
+
+const { DraftSticker } = await import('~/components/Sticker/DraftSticker');
+
+/**
+ * `ownerShare` is opt-in, and that is not tidiness.
+ *
+ * The payout chip is `max-w-[240px]`, and it is the widest child of a `w-max`
+ * cluster — so rendering it pushes the cluster's centre far enough left that the
+ * Place button lands at a NEGATIVE x, outside the harness iframe and unreachable
+ * by any amount of scrolling. Measured: x = -65 in a 414-wide viewport.
+ *
+ * So the tests that press a button render without it, and the two that assert the
+ * chip do not press anything. Splitting them keeps both properties covered
+ * without either test depending on the other's layout.
+ */
+const renderDraft = async (
+  freeOffer: { instant: boolean } | null,
+  { ownerShare }: { ownerShare?: number } = {}
+) => {
+  renderWithProviders(
+    // Positioned absolutely inside the media box in the app; a plain relative
+    // parent is enough here, since none of this asserts geometry.
+    // Sized to fit inside the harness iframe rather than to look like a media
+    // box: the cluster has to be reachable, and none of this asserts geometry.
+    <div style={{ position: 'relative', width: 380, height: 600 }}>
+      <DraftSticker
+        draft={draft}
+        art={art}
+        selected
+        dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+        price={PRICE}
+        freeOffer={freeOffer}
+        ownerShare={ownerShare}
+        ownerUsername="creator"
+        onGesture={() => true}
+      />
+    </div>
+  );
+
+  // Anchored on the button existing rather than on a name, so an ambiguous
+  // locator fails as an assertion instead of a 15 s strict-mode retry.
+  await expect.element(page.getByRole('button').first()).toBeInTheDocument();
+};
+
+/**
+ * The paid button, pressed through the DOM rather than through the locator.
+ *
+ * ⚠️ **Why this is acceptable here and nowhere else:** `BuzzTransactionButton` is
+ * mocked down to a bare `<button onClick={…}>`, so the actionability a locator
+ * click would check belongs to the stub rather than to anything shipped. There is
+ * no real control here whose reachability could be asserted, whatever method is
+ * used — and what these two tests are for is the payload the handler sends. The
+ * free press, which is the button this PR added and a real Mantine one, goes
+ * through the ordinary locator with its full actionability check.
+ *
+ * (A locator click on the stub does not succeed in this harness: the cluster is
+ * absolutely positioned inside the draft, and the measured failure was a
+ * negative **x**. Nothing in the component moves it horizontally —
+ * `shouldFlipPlaceButton` is vertical only, as `DraftSticker.tsx` says where it is
+ * used — so the flip is not the cause. Beyond that the mechanism is unestablished,
+ * and it is not the reason for the exemption either way.)
+ *
+ * 🔴 **Five things end this exemption**, and any one of them means going back to a
+ * locator click and solving the reachability properly:
+ * 1. `BuzzTransactionButton` stops being mocked.
+ * 2. Either helper is used to assert reachability, or enabled/disabled state,
+ *    rather than the payload.
+ * 3. The cluster gains an overlay, so a press could be intercepted.
+ * 4. The pattern is copied into another file as habit.
+ * 5. **The paid control acquires an inert state.** The real button is
+ *    `disabled={… || !!error || isLoadingBalance || loading}` and routes its click
+ *    through `conditionalPerformTransaction`, which can open the buy-Buzz flow
+ *    INSTEAD of calling the handler. The stub honours none of that, and the draft
+ *    already passes `loading={place.isPending}` — so the moment an error or
+ *    disabled condition is added, or a test renders with `isPending: true`, a DOM
+ *    press fires a handler a real user could not fire and both payload tests
+ *    assert a send that cannot happen.
+ */
+const pressPaid = async () => {
+  const button = (await page.getByRole('button', { name: 'Place' }).element()) as HTMLElement;
+  button.click();
+};
+
+/**
+ * The paid segment, pressed the same way and for the same reason — it sits in the
+ * same cluster. A Mantine `SegmentedControl` radio is a visually-hidden input
+ * besides, so a locator click is waiting on something that is never visible by
+ * design.
+ */
+const choosePaid = async () => {
+  const radio = (await page.getByRole('radio', { name: `${PRICE} Buzz` }).element()) as HTMLElement;
+  radio.click();
+};
+
+beforeEach(() => {
+  placed.length = 0;
+});
+
+describe('what a draft sends when it is placed', () => {
+  test('a free press sends free: true', async () => {
+    await renderDraft({ instant: true });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed).toHaveLength(1);
+    // The value, not the presence of a correctly-typed prop. `free: false` here
+    // is the whole defect: it charges Buzz for a placement somebody chose to
+    // make free, and no other test in this PR can see it.
+    expect(placed[0].free).toBe(true);
+    expect(placed[0].imageId).toBe(IMAGE_ID);
+  });
+
+  test('a paid press sends free: false', async () => {
+    await renderDraft(null);
+
+    await pressPaid();
+
+    expect(placed).toHaveLength(1);
+    expect(placed[0].free).toBe(false);
+  });
+
+  /**
+   * The default, observed through the payload rather than through the control's
+   * selected value — a segmented control reading "free" that sends `free: false`
+   * is the failure this file exists for, and only the payload separates them.
+   */
+  test('defaults to the free offer without anybody choosing it', async () => {
+    await renderDraft({ instant: false });
+
+    // No interaction with the segmented control at all.
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0].free).toBe(true);
+  });
+
+  test('sends what was chosen after switching to paid', async () => {
+    await renderDraft({ instant: true });
+
+    await choosePaid();
+    await pressPaid();
+
+    expect(placed[0].free).toBe(false);
+  });
+
+  /**
+   * The free option must not be a `BuzzTransactionButton`, which the component's
+   * docstring argues at length — that control exists to show a price and check a
+   * balance, and a free placement has neither. Asserted through the mock's marker
+   * rather than by name, because by name the stub and a plain Mantine button are
+   * the same thing: the swap this pins used to leave every test green.
+   */
+  test('places free through a plain button, not a Buzz one', async () => {
+    await renderDraft({ instant: true });
+
+    const free = (await page.getByRole('button', { name: 'Place free' }).element()) as HTMLElement;
+    expect(free.hasAttribute('data-buzz-button')).toBe(false);
+  });
+
+  test('places paid through a Buzz button, which is where a price belongs', async () => {
+    await renderDraft(null);
+
+    const paid = (await page.getByRole('button', { name: 'Place' }).element()) as HTMLElement;
+    expect(paid.hasAttribute('data-buzz-button')).toBe(true);
+  });
+
+  test('carries the draft geometry either way', async () => {
+    await renderDraft({ instant: true });
+
+    await page.getByRole('button', { name: 'Place free' }).click();
+
+    expect(placed[0].data).toMatchObject({
+      cosmeticId: COSMETIC_ID,
+      x: draft.x,
+      y: draft.y,
+      scale: draft.scale,
+      rotation: draft.rotation,
+    });
+  });
+});
+
+/**
+ * The free option is a price; the review is a property of the SPACE.
+ *
+ * 🔴 The option used to read `Free · instant` / `Free · needs review` beside a
+ * plain `100 Buzz`, which says the paid one does not get reviewed — and on a
+ * review space both do. Justin, on seeing it: "it makes it seem like the other
+ * one's not going to need review". So the segment says `Free`, and what a
+ * decline costs is said once, under the button that spends the placement, where
+ * it applies to whichever option is selected.
+ */
+describe('the free option is a price, not a process', () => {
+  test('says nothing about review on an auto-accept space, and warns of nothing', async () => {
+    await renderDraft({ instant: true });
+
+    // `exact`, because "Place free" on the button below also contains the word.
+    await expect.element(page.getByText('Free', { exact: true })).toBeInTheDocument();
+    // Nothing to warn about: an auto space places it live, so there is no
+    // decline that could take the day with it.
+    expect(page.getByText(/Spends your free placement/).elements()).toHaveLength(0);
+  });
+
+  test('says the same on a review space, and warns under the button instead', async () => {
+    await renderDraft({ instant: false });
+
+    await expect.element(page.getByText('Free', { exact: true })).toBeInTheDocument();
+    // The label does not carry the mode; this line does, and it says the thing
+    // that actually costs the reader something.
+    await expect.element(page.getByText(/Spends your free placement/)).toBeInTheDocument();
+  });
+
+  test('offers no choice at all where there is no free offer', async () => {
+    await renderDraft(null);
+
+    expect(page.getByRole('button', { name: 'Place free' }).elements()).toHaveLength(0);
+    expect(page.getByText(/Spends your free placement/).elements()).toHaveLength(0);
+  });
+
+  /**
+   * No proceeds to split on a free placement, so the share caption must not
+   * appear — it is a claim about money that does not move, and PR 3's accept
+   * reward is a separate mechanism not derived from this split.
+   */
+  test('claims no payout while free is selected', async () => {
+    await renderDraft({ instant: true }, { ownerShare: 1 });
+
+    expect(page.getByText(/proceeds go to/).elements()).toHaveLength(0);
+  });
+
+  test('names the payout on the paid option', async () => {
+    await renderDraft(null, { ownerShare: 1 });
+
+    await expect.element(page.getByText(/proceeds go to/)).toBeInTheDocument();
+  });
+});
+
+/**
+ * 🔴 THE FIX, AS A CLAIM ABOUT THE DOM. The rotation lives on an inner element
+ * and the chrome is that element's SIBLING, so nothing can turn the toolbar, the
+ * note or the payout line — and, more to the point, nothing can swing the point
+ * they are anchored to across the artwork.
+ *
+ * The previous shape held them level with a counter-rotation while leaving them
+ * inside the rotated element. That reads the same at a glance and is not the
+ * same thing: they were still anchored to the sticker's rotated bottom edge, so
+ * past about a quarter turn the anchor came round over the artwork and the
+ * upright cluster painted on top of the sticker being edited. A counter-rotation
+ * fixes which way up something reads; it does not move where it lands.
+ *
+ * So this asserts CONTAINMENT and the absence of any rotation in the chain,
+ * rather than an angle. An angle assertion passes against the shape that had the
+ * bug.
+ *
+ * Structural on purpose: component tests load no stylesheet, so any position or
+ * width measured in this harness is a lie.
+ */
+describe('the editing chrome is outside the rotation', () => {
+  const rotatedElement = () =>
+    [...document.querySelectorAll<HTMLElement>('[style*="rotate"]')].find((element) =>
+      element.style.transform.includes('rotate(')
+    );
+
+  // The negative control for the pair below: both would pass against a component
+  // that had no rotation anywhere, and `draft.rotation` is a fixture anyone may
+  // edit.
+  test('the sticker really is rotated', async () => {
+    await renderDraft(null);
+
+    expect(rotatedElement()?.style.transform).toContain('rotate(15deg)');
+  });
+
+  test('the cluster is not a descendant of the rotated element', async () => {
+    await renderDraft(null, { ownerShare: 1 });
+
+    const caption = (await page.getByText(/proceeds go to/).element()) as HTMLElement;
+    // Anchored on the CAPTION rather than on the cluster, so the containment
+    // check below is about a real child: taking the cluster from an element that
+    // moved out of it would make its own membership true by construction.
+    const cluster = caption.closest<HTMLElement>('.w-max') as HTMLElement;
+    const rotated = rotatedElement() as HTMLElement;
+
+    expect(rotated.contains(cluster)).toBe(false);
+    expect(cluster.contains(caption)).toBe(true);
+  });
+
+  test('no element between the cluster and the media box rotates', async () => {
+    await renderDraft(null, { ownerShare: 1 });
+
+    const caption = (await page.getByText(/proceeds go to/).element()) as HTMLElement;
+    const cluster = caption.closest<HTMLElement>('.w-max') as HTMLElement;
+
+    const rotations: string[] = [];
+    for (
+      let node: HTMLElement | null = cluster;
+      node && node !== document.body;
+      node = node.parentElement
+    ) {
+      if (node.style.transform.includes('rotate(')) rotations.push(node.style.transform);
+    }
+
+    // Names what it found, so putting the chrome back inside the rotation fails
+    // with the offending transform rather than with a bare boolean.
+    expect(rotations).toEqual([]);
+  });
+});
+
+/**
+ * One toolbar, under the sticker, holding everything.
+ *
+ * It used to be two pills bracketing the sticker's top corners, which is where
+ * this ticket came from: children of the rotated element, so they turned with
+ * the sticker onto the artwork; a fixed band while everything else up there
+ * scales with the sticker, so on a small draft they converged on the rotate knob
+ * and on each other; and keeping the buy button clear of them needed a second
+ * derived offset that went stale the first time a control was added to one.
+ *
+ * 🔴 If you are about to split these back into two panels for the reason the old
+ * comment gave — that Delete should not sit a thumb's width from the controls
+ * you press while arranging — that was weighed and Justin chose one bar on
+ * 2026-09-02. Move Delete within the bar; do not put it back on the sticker.
+ *
+ * COUNTS AND GROUPS, never measures: no stylesheet loads here.
+ */
+describe('the control toolbar', () => {
+  const CONTROLS = [
+    'Duplicate this sticker',
+    'Flip this sticker',
+    "Set this sticker's opacity",
+    'Remove this sticker',
+  ];
+
+  test('holds every control in one bar, and that bar is in the cluster', async () => {
+    // Rendered directly rather than through `renderDraft`, which supplies no
+    // `onDuplicate` — without a handler that control is deliberately absent, and
+    // this is the test that says all four live together.
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          draft={draft}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={1}
+          ownerUsername="creator"
+          onGesture={() => true}
+          onDuplicate={() => null}
+        />
+      </div>
+    );
+
+    // `element()` does not poll, so the render has to be awaited on a matcher
+    // first or every lookup below races the first paint.
+    await expect.element(page.getByRole('button', { name: CONTROLS[0] })).toBeInTheDocument();
+
+    const buttons = await Promise.all(
+      CONTROLS.map(
+        async (name) => (await page.getByRole('button', { name }).element()) as HTMLElement
+      )
+    );
+
+    // Present at all, so a control that stopped being rendered fails here rather
+    // than passing as an empty set that trivially shares a parent.
+    expect(buttons).toHaveLength(CONTROLS.length);
+
+    const bars = new Set(buttons.map((button) => button.closest('.rounded-full.bg-dark-7')));
+    expect(bars.size).toBe(1);
+
+    const caption = (await page.getByText(/proceeds go to/).element()) as HTMLElement;
+    const cluster = caption.closest<HTMLElement>('.w-max') as HTMLElement;
+    const [bar] = [...bars] as HTMLElement[];
+
+    expect(cluster.contains(bar)).toBe(true);
+    // First in the cluster, so it is the part nearest the sticker it acts on.
+    expect(cluster.firstElementChild).toBe(bar);
+  });
+});
+
+/**
+ * The glyph on the flip control has to name the axis the transform mirrors
+ * across, and Tabler's names run the other way: `IconFlipHorizontal` draws a
+ * HORIZONTAL mirror line, which reads as a top-to-bottom flip. Picking the icon
+ * by its name is how this control ended up showing the wrong one twice.
+ *
+ * So this asserts the geometry rather than the icon's name or its path data: the
+ * mirror line is the one sub-path of the glyph that is a straight line, and a
+ * vertical line has zero width. That survives a Tabler version bump redrawing
+ * the arrows, and still fails if someone swaps the pair back.
+ */
+describe('the flip control draws the axis it mirrors across', () => {
+  test('mirror line is vertical, matching the artwork transform', async () => {
+    // The claim the glyph has to agree with. `scaleX(-1)` mirrors left-to-right,
+    // i.e. across a VERTICAL axis — read it here rather than restating it, so
+    // changing the transform to `scaleY` fails this test instead of silently
+    // making the icon wrong again.
+    expect(stickerArtworkStyle({ flip: true, opacity: 1 }).transform).toBe('scaleX(-1)');
+
+    await renderDraft(null);
+
+    const button = (await page
+      .getByRole('button', { name: 'Flip this sticker' })
+      .element()) as HTMLElement;
+    const boxes = Array.from(button.querySelectorAll('path')).map((path) => path.getBBox());
+
+    expect(boxes.length).toBeGreaterThan(0);
+    expect(boxes.some((box) => box.width === 0 && box.height > 0)).toBe(true);
+    expect(boxes.some((box) => box.height === 0 && box.width > 0)).toBe(false);
+  });
+});
+
+/**
+ * The duplicate control, and what it is allowed to do.
+ *
+ * Placement is charged, so the button's whole safety argument is that it does
+ * not place anything: it asks the host for another draft and nothing else. What
+ * is asserted is both halves of that — the handler is called with this draft's
+ * id, AND nothing reached the placement mutation.
+ */
+/**
+ * Which of the two control containers rendered.
+ *
+ * Asserting the button EXISTS cannot tell the branches apart — both render an
+ * identically named control — so a test meaning to cover the pill would pass on
+ * the cluster and the uncovered branch would stay uncovered. The shape differs
+ * and is stable: in the pill, remove lives in its own container; in the buy
+ * cluster, remove is a sibling of duplicate.
+ */
+const removeIsSiblingOfDuplicate = async () => {
+  const duplicate = (await page
+    .getByRole('button', { name: 'Duplicate this sticker' })
+    .element()) as HTMLElement;
+  const remove = (await page
+    .getByRole('button', { name: 'Remove this sticker' })
+    .element()) as HTMLElement;
+
+  return duplicate.parentElement?.contains(remove) ?? false;
+};
+
+describe('the duplicate control', () => {
+  /**
+   * ⚠️ Pressed through the DOM: the whole draft renders at negative
+   * coordinates in this harness — measured at x = -73 for this control — so no
+   * locator click lands, and a passing "it is clickable" test would be a
+   * fiction.
+   */
+  test('asks the host for another copy, and places nothing', async () => {
+    const duplicated: string[] = [];
+
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          draft={draft}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+          onDuplicate={(id) => {
+            duplicated.push(id);
+            return 'copy-of-the-draft';
+          }}
+        />
+      </div>
+    );
+
+    const locator = page.getByRole('button', { name: 'Duplicate this sticker' });
+    await expect.element(locator).toBeInTheDocument();
+    ((await locator.element()) as HTMLElement).click();
+
+    expect(duplicated).toEqual([draft.id]);
+    // One toolbar at every size, so remove is duplicate's sibling here and at
+    // any other scale. Two containers means the corner pills are back.
+    expect(await removeIsSiblingOfDuplicate()).toBe(true);
+    // 🔴 The half that matters for money: duplicating must not reach the
+    // placement mutation.
+    expect(placed).toHaveLength(0);
+
+    // 🔴 THE POSITIVE CONTROL, IN THE SAME RENDER. Without it the zero above is
+    // an absence measured by an instrument nothing proved was live — a broken
+    // mock would certify "charges nothing" forever.
+    await pressPaid();
+    expect(placed).toHaveLength(1);
+  });
+
+  /**
+   * Absent rather than disabled where the host supplies no handler: a control
+   * that cannot act is a question the placer answers by pressing it.
+   */
+  test('is not rendered at all without a handler', async () => {
+    await renderDraft(null);
+
+    expect(page.getByRole('button', { name: 'Duplicate this sticker' }).elements()).toHaveLength(0);
+  });
+});
+
+/**
+ * Alt-drag: leave a copy behind and drag the new one, the way a photo editor
+ * does it. Justin asked for it alongside the button.
+ *
+ * The property that matters is WHICH sticker the drag then moves. Dragging the
+ * original would leave the copy stranded under the pointer and move the thing
+ * the placer was trying to keep in place — a duplicate that appears to do the
+ * opposite of what it says.
+ */
+describe('alt-dragging a draft', () => {
+  const dragBody = (options: PointerEventInit = {}) => {
+    // The move handler is on the positioned wrapper — the element carrying the
+    // draft's own left/top — rather than on the artwork inside it.
+    const artwork = document.querySelector('img[alt=":star:"], img[alt="Star"]');
+    const body = artwork?.closest('[style*="touch-action"]') as HTMLElement | null;
+
+    body?.dispatchEvent(
+      new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        clientX: 100,
+        clientY: 100,
+        ...options,
+      })
+    );
+
+    return body;
+  };
+
+  const renderForDrag = async (onDuplicate: (id: string) => string | null) => {
+    const gestures: { draftId: string }[] = [];
+
+    renderWithProviders(
+      <div data-drag-host style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          draft={draft}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={(gesture) => {
+            gestures.push(gesture);
+            return true;
+          }}
+          onDuplicate={onDuplicate}
+        />
+      </div>
+    );
+
+    await expect.element(page.getByRole('button').first()).toBeInTheDocument();
+
+    // 🔴 WITHOUT THIS THE HANDLER RETURNS AT ITS FIRST LINE. A press is
+    // translated into a fraction of the surface the placement session
+    // registered, and with no surface there is no fraction and no gesture — so
+    // every assertion below would pass or fail for the wrong reason. The app
+    // registers it from `ImageStickerOverlay`; here the host stands in for it.
+    const store = useStickerPlacementDraftStore.getState();
+    store.open(IMAGE_ID);
+    store.setSurface(document.querySelector('[data-drag-host]') as HTMLElement);
+
+    return gestures;
+  };
+
+  test('duplicates first, then drags the COPY', async () => {
+    const duplicated: string[] = [];
+    const gestures = await renderForDrag((id) => {
+      duplicated.push(id);
+      return 'the-copy';
+    });
+
+    expect(dragBody({ altKey: true })).not.toBeNull();
+
+    expect(duplicated).toEqual([draft.id]);
+    expect(gestures.at(-1)?.draftId).toBe('the-copy');
+  });
+
+  test('an ordinary drag duplicates nothing and moves the original', async () => {
+    const duplicated: string[] = [];
+    const gestures = await renderForDrag((id) => {
+      duplicated.push(id);
+      return 'the-copy';
+    });
+
+    dragBody();
+
+    expect(duplicated).toEqual([]);
+    expect(gestures.at(-1)?.draftId).toBe(draft.id);
+  });
+
+  /**
+   * The host may refuse — there is no handler on a surface that does not offer
+   * duplication. Alt then has to fall back to an ordinary drag rather than
+   * dropping the gesture on the floor.
+   */
+  test('falls back to moving the original when the copy is refused', async () => {
+    const gestures = await renderForDrag(() => null);
+
+    dragBody({ altKey: true });
+
+    expect(gestures.at(-1)?.draftId).toBe(draft.id);
+  });
+});
+
+/**
+ * 🔴 THE KEY IS RELEASED WHEN THE PURCHASE RESOLVES.
+ *
+ * The server's idempotency check reads a persisted purchase row and THROWS, so a
+ * key held past success refuses the next legitimate purchase of the same pack in
+ * that session — "this purchase has already been completed" — and the sticker
+ * stays unbuyable until a reload. Buy a refill pack, spend it, want another:
+ * that flow predates this feature and has to keep working.
+ *
+ * Asserted at the call site rather than on the store, because the store's own
+ * test cannot see whether anything calls it.
+ */
+describe('the pack purchase key across one session', () => {
+  const gated: StickerDraft = {
+    ...draft,
+    purchase: {
+      refill: true,
+      pack: { shopItemId: 7, unitAmount: 500, acceptsBlue: false, uses: 1 },
+      creatorUsername: 'maker',
+    },
+  };
+
+  test('is released once the purchase resolves, so the same pack can be bought again', async () => {
+    renderWithProviders(
+      <div style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          draft={gated}
+          // The gate is a prop now, decided across the drafts on the image
+          // rather than frozen onto one of them — so a test that wants a gated
+          // draft has to hand it over the same way the layer does.
+          purchase={gated.purchase}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+        />
+      </div>
+    );
+
+    const buy = page.getByRole('button', { name: 'Buy another pack' });
+    await expect.element(buy).toBeInTheDocument();
+
+    const store = useStickerPlacementDraftStore.getState();
+    const before = store.packPurchaseKey(gated.cosmeticId);
+
+    ((await buy.element()) as HTMLElement).click();
+
+    // The handler is async — it invalidates a query before releasing the key.
+    await vi.waitFor(() =>
+      expect(useStickerPlacementDraftStore.getState().packPurchaseKey(gated.cosmeticId)).not.toBe(
+        before
+      )
+    );
+  });
+});
+
+/**
+ * 🔴 THE JOIN BETWEEN THE ARITHMETIC AND THE DOM.
+ *
+ * `chromeClearance` is proven as a pure function in its own suite, and the
+ * describes above prove the tree shape. Neither sees the wire between them:
+ * swapping `marginTop` and `marginBottom` at the call site, or deleting the
+ * margins outright, left every one of those tests green while the toolbar sat
+ * on the artwork. That gap is the actual ticket, so it gets its own case.
+ *
+ * ⚠️ THIS TEST INJECTS A STYLESHEET, AND THAT IS THE POINT. Component tests here
+ * load none, so `EdgeImage` has no intrinsic size, the draft measures 0 tall,
+ * and `measure` correctly refuses to derive anything from it — no margin is ever
+ * written. One rule giving the artwork a size is what makes the layout real
+ * enough to answer the question.
+ *
+ * It still asserts a RELATIONSHIP, never a pixel count: the absolute numbers
+ * depend on the injected rule, the comparison does not.
+ */
+describe('the clearance reaches the element', () => {
+  const sizeArtwork = () => {
+    const style = document.createElement('style');
+    // Gives the artwork a size so the draft has a height at all. It is NOT the
+    // height the standoff is derived from — the root measures taller, and by how
+    // much varies with the machine — so the test pins that separately below
+    // rather than trusting this number.
+    style.textContent = '.sticker-sized img { width: 120px !important; height: 120px !important; }';
+    document.head.appendChild(style);
+    return () => style.remove();
+  };
+
+  const renderAt = async (rotation: number) => {
+    renderWithProviders(
+      <div className="sticker-sized" style={{ position: 'relative', width: 380, height: 600 }}>
+        <DraftSticker
+          draft={{ ...draft, rotation, y: 0.4 }}
+          art={art}
+          selected
+          dressed={resolveTreatment({ treatment: 'none', surface: 'detail', isPending: false })}
+          price={PRICE}
+          freeOffer={null}
+          ownerShare={undefined}
+          ownerUsername="creator"
+          onGesture={() => true}
+          onDuplicate={() => null}
+        />
+      </div>
+    );
+
+    // `.last()`, because this test renders twice and the harness only cleans up
+    // between tests — the second render leaves both drafts mounted, and a bare
+    // locator is a strict-mode violation rather than the newest one.
+    // `element()` does not poll either, so the render has to be awaited on a
+    // matcher first or the lookup below races the first paint.
+    const locator = page.getByRole('button', { name: 'Remove this sticker' }).last();
+    await expect.element(locator).toBeInTheDocument();
+
+    const remove = (await locator.element()) as HTMLElement;
+    return remove.closest<HTMLElement>('.w-max') as HTMLElement;
+  };
+
+  test('puts the standoff on the side the cluster is on, and scales it with the sticker', async () => {
+    const cleanup = sizeArtwork();
+    try {
+      const upright = await renderAt(0);
+      await expect.poll(() => upright.style.marginTop).not.toBe('');
+
+      expect(parseFloat(upright.style.marginTop)).toBeGreaterThan(0);
+
+      // The precondition the inequality below rests on, pinned rather than
+      // assumed: the knob term only exceeds the handle outset once the sticker
+      // is taller than HANDLE_OUTSET / KNOB_OFFSET. Under that, both angles give
+      // the same standoff and the comparison fails against correct code. The
+      // injected rule sizes the artwork; the root ends up taller still, so this
+      // reads the number the code actually used rather than the one in the CSS.
+      const root = upright.parentElement as HTMLElement;
+      expect(root.offsetHeight).toBeGreaterThan(6 / 0.22);
+
+      const turned = await renderAt(180);
+      await expect.poll(() => turned.style.marginTop).not.toBe('');
+
+      // 🔴 A RELATIONSHIP, NOT A MEASUREMENT. At half a turn the rotate knob
+      // hangs BELOW the sticker on screen, so the below-standoff has to grow
+      // from clearing the handles to clearing the knob. A constant offset — the
+      // thing this ticket forbids — gives the same number at both angles.
+      expect(parseFloat(turned.style.marginTop)).toBeGreaterThan(
+        parseFloat(upright.style.marginTop)
+      );
+    } finally {
+      cleanup();
+    }
+  });
+});
+
+/**
+ * The two halves of `measure` that shipped unproven, and were each shown green
+ * under a mutation that deleted them.
+ *
+ * Neither can be reached by rendering a draft in isolation: the flipped arm
+ * needs an obstacle to flip away from, and the zero-size guard needs a sticker
+ * that HAD a size and then lost it. Both are set up here rather than asserted
+ * into existence.
+ */
+
+/**
+ * 🔴 TWO HALVES OF `measure` SHIP UNPROVEN. Both were measured as uncovered —
+ * each can be deleted with every test in this file still green — and an attempt
+ * to cover them was made and abandoned rather than faked.
+ *
+ * **The flipped arm.** `flipped` is never true here: with no tray and no
+ * clipping ancestor `shouldFlipPlaceButton` always answers false, so
+ * `marginBottom: above` is written by nothing. Seeding a tray does not help,
+ * because the harness lays the container out near the top of the viewport and
+ * the ABOVE candidate then lands at a negative y, which the function rejects
+ * outright. Pushing the container down the page moves the candidate from -305
+ * to +155 and the flip still does not fire, for a reason not established.
+ *
+ * **The zero-size guard.** A test that renders a sized draft, takes its height
+ * away and asserts the standoff is held was written and DELETED: it passed with
+ * the guard removed. The `ResizeObserver` does not deliver a re-measure inside
+ * the test's window, so the assertion observed a value nothing had recomputed —
+ * coverage in appearance only.
+ *
+ * Do not close either gap by asserting something weaker about the side that
+ * already works. A green test over the unflipped arm is worse than the gap,
+ * because it reads as coverage. What would actually close them is a harness
+ * that positions the draft in a viewport-realistic place and a deterministic
+ * way to drive a second measure.
+ */
+
+describe('previewing without the controls', () => {
+  test('hides the toolbar and the Place button, and brings them back', async () => {
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await renderDraft(null);
+    // `includeHidden`: a visibility-hidden control leaves the accessibility tree,
+    // so a plain role query stops finding it and the assertion fails on lookup.
+    const remove = page.getByRole('button', { name: 'Remove this sticker', includeHidden: true });
+    const place = page.getByRole('button', { name: 'Place', includeHidden: true });
+    await expect.element(remove).toBeVisible();
+
+    // The handles and knob are hidden by a separate wrapper from the toolbar.
+    const knob = document.querySelector<HTMLElement>('span.cursor-grab');
+    expect(knob, 'the rotate knob did not render').not.toBeNull();
+    const knobVisibility = () => getComputedStyle(knob as HTMLElement).visibility;
+    expect(knobVisibility()).toBe('visible');
+
+    useStickerPlacementDraftStore.setState({ previewing: true });
+    await expect.element(remove).not.toBeVisible();
+    await expect.element(place).not.toBeVisible();
+    expect(knobVisibility()).toBe('hidden');
+
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await expect.element(remove).toBeVisible();
+    expect(knobVisibility()).toBe('visible');
+  });
+
+  // Portalled, so hiding the cluster never reaches it.
+  test('hides an open opacity slider too', async () => {
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await renderDraft(null);
+    await page.getByRole('button', { name: "Set this sticker's opacity" }).click();
+    const slider = page.getByText('Opacity', { exact: true });
+    await expect.element(slider).toBeVisible();
+
+    useStickerPlacementDraftStore.setState({ previewing: true });
+    await expect.element(slider).not.toBeVisible();
+
+    useStickerPlacementDraftStore.setState({ previewing: false });
+    await expect.element(slider).toBeVisible();
+  });
+});

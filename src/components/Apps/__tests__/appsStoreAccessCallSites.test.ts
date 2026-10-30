@@ -1,0 +1,713 @@
+import fs from 'fs';
+import path from 'path';
+import ts from 'typescript';
+import { describe, it, expect } from 'vitest';
+
+/**
+ * 🔒 THE CALL-SITE LEDGER for the App-store visibility gate.
+ *
+ * WHY THIS FILE EXISTS — measured, not hypothetical. The PR that extracted
+ * `hasAppsStoreAccess` converted SIX sites, but only TWO of them
+ * (`resolveAppsPageAccess`, `useAppsNavSections`) had behavioural tests that could
+ * observe the conversion. An adversarial audit reverted the other four to
+ * `!!features.appBlocks` and re-ran the ENTIRE cited suite — 93/93 component +
+ * 21/21 unit still GREEN. The mutant survived completely. A consolidation that
+ * nothing pins is a comment, not an invariant.
+ *
+ * So this asserts the RELATIONSHIP rather than any one component: the exact set
+ * of modules that decide "may this viewer see the /apps store", that each one
+ * routes through the shared predicate, and that none of them re-inlines the
+ * boolean. It fails when the ledger GROWS (a new store surface that forgot the
+ * predicate) and when it SHRINKS (a site reverted to open-coding).
+ *
+ * 🔴 A STRUCTURAL CHECK IS NOT A BEHAVIOURAL ONE. This proves each site CALLS
+ * the predicate; it cannot prove the call was passed the right argument, and it
+ * would type-check past `hasAppsStoreAccess(someOtherObject)`. Behavioural
+ * coverage lives alongside it and is deliberately NOT replaced by this file:
+ *   - `AppsRailNav.storeGate.browser.test.tsx`     — the rail's rendered output
+ *   - `AppListingsMarketplaceBody.storeGate.browser.test.tsx` — the grid query gate
+ *   - `hasAppsStoreAccess.test.ts`                 — the predicate + the SSR seam
+ *
+ * THREE of the eight sites are pinned STRUCTURALLY ONLY — `pages/apps/index.tsx`
+ * and `pages/apps/store-preview/[slug].tsx` (Next pages, no component harness) and
+ * `components/Apps/RelatedListings.tsx` (its only existing test covers the pure
+ * selection helper and never mounts the component, so it never touches
+ * `useFeatureFlags` / `canSeeStore`). Those three are covered against REVERSION,
+ * not against a wrong-argument call. Stated rather than implied. The seventh —
+ * `appsNavVisibility.ts` — has behavioural cover in the same unit project
+ * (`AppHeader/appsNavVisibility.test.ts`, which asserts the external-only and
+ * catalog-only cohorts resolve `marketplace: true`), so its own argument IS
+ * checked. The eighth — `nav-registry.ts` — has behavioural cover in
+ * `HomeContentToggle/__tests__/nav-defaults.characterization.test.ts`, which drives
+ * `resolveNavItems` over the per-flag cohorts (listings-only, blocks-only,
+ * external-only, none) against the REAL registry.
+ *
+ * ⚠️ THE SEAM THIS PARAGRAPH USED TO CALL UNTESTED IS NOW HALF-COVERED, and the
+ * remaining half is named rather than implied. It said: "that `useGetMenuItems`
+ * hands it the real `useFeatureFlags()` object and wires `appsNav.marketplace` to
+ * the right menu item" was untested for both nav entries. The two entries are now
+ * ONE (`/apps` with store access, `/apps/get-started` without), and
+ * `AppHeader/appsMenuEntry.test.ts` — also in this blocking unit project — extracts
+ * that row's `href` / `visible` expressions from the real `hooks.tsx` source and
+ * EVALUATES them across every combination of the two booleans. So the WIRING half is
+ * covered. What is still not: that the object `useGetMenuItems` passes into
+ * `appsNavVisibility(...)` is the real `useFeatureFlags()` result rather than some
+ * other object — a source scan cannot see that, and no render-level test mounts this
+ * hook.
+ *
+ * 🔴 AND THE SCOPE THAT MATTERS IN THE NODE TIER: five of the eight sites are pinned
+ * STRUCTURALLY ONLY there, by this file — which is why a hole in its masker (see below) still
+ * matters. (`appsNavVisibility`, `nav-registry` and `resolveAppsPageAccess` are the exceptions:
+ * their behavioural tests are unit tests too — the resolver's cover is the two
+ * `resolveAppsPageAccess` describe blocks inside `hasAppsStoreAccess.test.ts`. Two more are
+ * browser-covered (`AppsRailNav`, `AppListingsMarketplaceBody`) and have no node-tier pin:
+ * enumerated, 3 + 2 + 3 = 8.)
+ *
+ * 🔴 TWO MEASURED LIMITS OF THIS FILE — issue #3932, not fixed here. Read them
+ * before treating a green run as "no site re-inlines the gate":
+ *   1. `INLINED_GATE` matches two flag names in PROXIMITY inside ONE expression.
+ *      Four re-inlining shapes evade it and were verified green: hoisted locals
+ *      (`const a = features.appListings; … a || b`), names split across a `;` (the
+ *      `[^;{}]` class stops there by design), a ternary, and
+ *      `[features.appListings, features.appBlocks].some(Boolean)`. Widening the
+ *      NAME list (as the external-only term did) does not touch the SHAPE.
+ *   2. The "EXACT" assertion below pins DIRECT importers only, so a site that
+ *      reaches the gate transitively is invisible to it — including
+ *      `pages/apps/[appBlockId]/index.tsx`, which routes through
+ *      `resolveLegacyAppRoute` → `resolveAppsPageAccess`. That is the site a real
+ *      disclosure defect appeared at, so the blindness is not academic.
+ */
+
+const SRC = path.resolve(__dirname, '../../..');
+
+/**
+ * Every module INSIDE {@link SCAN_ROOTS} that decides store VISIBILITY. Adding a
+ * store surface under those roots means adding it here — that is the point, not
+ * an inconvenience.
+ *
+ * ── NOT in this ledger, on purpose ──────────────────────────────────────────
+ *
+ * 1. The block-RUNTIME surfaces (`/apps/activity`, `/apps/review`,
+ *    `/apps/my-submissions`, `/apps/revenue`, `/apps/run/<slug>`) gate on the
+ *    RUNTIME flags because they need the runtime, not just the catalog.
+ *    Sweeping them in here would be a silent access widening. (`/apps/activity`
+ *    takes `appBlocks || appBlocksPages` via `canAccessAppsActivity` rather than
+ *    `appBlocks` alone — a second RUNTIME flag, not the store predicate, so the
+ *    distinction this paragraph draws is unaffected.)
+ *
+ *    🔴 `pages/apps/activity.tsx` IS NEVERTHELESS IN THE LEDGER, AND THAT IS NOT A
+ *    CONTRADICTION — read the distinction rather than "fixing" it. Its PAGE gate is
+ *    still `canAccessAppsActivity`; what is store-gated is ONE affordance inside it,
+ *    the empty state's `/apps` anchor. `/apps` gates on `hasAppsStoreAccess`, and
+ *    `appBlocksPages` is not one of that predicate's three disjuncts — so once this
+ *    page widened to `appBlocks || appBlocksPages`, an ungated anchor became a link
+ *    into a `notFound` for the newly-admitted cohort. Same shape, same reason, as
+ *    `components/Apps/AppActivityPanel.tsx` below. A page can be gated on the runtime
+ *    and still contain a link that must be gated on the store.
+ *
+ * 2. The user-menu entry is IN the ledger now (#3907, resolved), and its module
+ *    lives outside `components/Apps` — `components/AppLayout/AppHeader/
+ *    appsNavVisibility.ts` — which is why `SCAN_ROOTS` carries that directory
+ *    too. Earlier revisions of this comment recorded it as deliberately NOT
+ *    converted and therefore structurally invisible here; both halves are now
+ *    false, and the reason it changed is worth keeping:
+ *
+ *    that entry was the ONLY in-product route TO `/apps` when it was converted —
+ *    the top-nav pill (`components/HomeContentToggle/nav-registry.ts`, the eighth
+ *    ledger site) is the second. (The sub-nav's Marketplace tab still only appears
+ *    once you are already on `/apps/*`.) It read
+ *    `!!features.appBlocks`. So `{appListings, NOT appBlocks}` — the documented
+ *    shape of the store launch — and `{appListingsPublicExternal, NOT appBlocks,
+ *    NOT appListings}` — the live external-only tester cohort — both passed the
+ *    other six gates onto a store they could reach only by direct URL. Reachable
+ *    is not findable. Widening it moves DISCOVERY only: every runtime surface
+ *    behind `/apps` keeps its own `appBlocks` gate (see 1).
+ */
+const STORE_GATE_SITES = [
+  'components/AppLayout/AppHeader/appsNavVisibility.ts',
+  // 🔴 THE TOP-NAV PILL — the `apps` entry in `navRegistry` (`/apps`, store access only).
+  // Same defect class as the user-menu entry above: a pill visible under different flags
+  // is a menu entry into the `notFound` the `/apps` SSR resolver answers for an
+  // ineligible viewer. Its behavioural cover is the per-flag cohort vectors in
+  // `HomeContentToggle/__tests__/nav-defaults.characterization.test.ts`.
+  'components/HomeContentToggle/nav-registry.ts',
+  // 🔴 THE `App` COLUMN'S NAME LINK ON `/apps/activity`. It points at
+  // `/apps/store-preview/<slug>`, which `getServerSideProps`-gates on
+  // `resolveAppsPageAccess` and answers `notFound` for — so an UNGATED link there is a
+  // 404 affordance, the #4668 defect class. The panel renders a plain `<Text>` instead
+  // for an ineligible viewer, and reads the flags through `useOptionalFeatureFlags` so
+  // the absence of a provider fails CLOSED. Note this file is NOT a store SURFACE: its
+  // own page gate is `canAccessAppsActivity`, and only this one affordance inside it is
+  // store-gated.
+  'components/Apps/AppActivityPanel.tsx',
+  'components/Apps/AppListingsMarketplaceBody.tsx',
+  'components/Apps/useAppsNavSections.ts',
+  'components/Apps/RelatedListings.tsx',
+  'components/Apps/resolveAppsPageAccess.ts',
+  // 🔴 THE EMPTY-STATE `/apps` ANCHOR ON `/apps/activity` — the sibling of the panel
+  // entry above, and the reason note 1 in this header carries an explicit carve-out. The
+  // page itself is runtime-gated; this ONE anchor points at a store-gated route.
+  'pages/apps/activity.tsx',
+  'pages/apps/index.tsx',
+  'pages/apps/store-preview/[slug].tsx',
+] as const;
+
+/** The ONE module allowed to spell the boolean out — it defines it. */
+const DEFINING_MODULE = 'shared/utils/app-blocks-access.ts';
+
+/**
+ * Directories scanned for a re-inlined gate. The definition lives outside them.
+ *
+ * `components/AppLayout/AppHeader` is here for ONE file — `appsNavVisibility.ts`,
+ * the user-menu route to the store (#3907). Scanning the whole directory rather
+ * than allowlisting that file is deliberate: the header is where a future "show
+ * the Apps entry when …" tweak would most plausibly open-code the gate, and the
+ * re-inline scan below only has teeth over directories it walks.
+ * `components/HomeContentToggle` is here for ONE file — `nav-registry.ts`, the top-nav
+ * pill's `visible` gate. Same deliberate whole-directory scan as AppHeader: the toggle
+ * is where a future "show the Apps pill when …" tweak would most plausibly open-code
+ * the gate.
+ */
+const SCAN_ROOTS = [
+  'components/AppLayout/AppHeader',
+  'components/HomeContentToggle',
+  'components/Apps',
+  'pages/apps',
+];
+
+/**
+ * 🔴 MASKING RUNS THROUGH THE REAL TypeScript PARSER, NOT A QUOTE SCANNER.
+ *
+ * Masking is load-bearing, not hygiene: the shared predicate's own doc comment and
+ * `resolveAppsPageAccess`'s header both contain the literal text
+ * `features.appListings || features.appBlocks`, so an UNMASKED scan reports the
+ * very files that were fixed. But a hand-rolled masker is worse than none, because
+ * it fails SILENTLY and in one direction — toward a reassuring zero.
+ *
+ * The previous version treated every `'` as a string delimiter. An ASCII
+ * apostrophe in JSX TEXT (`The app's data…`, `installed.tsx:132`) therefore opened
+ * a phantom string that ran to EOF, blanking 71% of that file (14,229 / 20,037
+ * chars) and 17% of `my-submissions.tsx`. Measured with a discriminating control,
+ * not inferred: an open-coded `f.appListings || f.appBlocks` planted AFTER the
+ * apostrophe was INVISIBLE (suite 14/14 green); the identical probe planted BEFORE
+ * it was caught. A live store gate could have shipped through the hole.
+ *
+ * JSX text, template-literal chunks, regex literals and nested quotes are exactly
+ * the cases an ad-hoc lexer gets wrong, so the parser owns it now: parse as TSX,
+ * blank the ranges the AST says are literals, then strip comments from the result
+ * (safe at that point — every string is already blanked, so no `//` inside one can
+ * be misread). Expression holes inside `${...}` are children of the template node
+ * and are deliberately LEFT LIVE: they are real code.
+ */
+function parseTsx(fileName: string, text: string): ts.SourceFile {
+  return ts.createSourceFile(fileName, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+}
+
+function blankRanges(text: string, ranges: Array<[number, number]>): string {
+  const out = text.split('');
+  for (const [from, to] of ranges) {
+    for (let i = Math.max(from, 0); i < Math.min(to, out.length); i++) {
+      if (out[i] !== '\n') out[i] = ' ';
+    }
+  }
+  return out.join('');
+}
+
+/** Ranges the PARSER classifies as literal text — never live code. */
+function literalRanges(sf: ts.SourceFile): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+  const visit = (node: ts.Node) => {
+    switch (node.kind) {
+      case ts.SyntaxKind.StringLiteral:
+      case ts.SyntaxKind.NoSubstitutionTemplateLiteral:
+      case ts.SyntaxKind.TemplateHead:
+      case ts.SyntaxKind.TemplateMiddle:
+      case ts.SyntaxKind.TemplateTail:
+      case ts.SyntaxKind.RegularExpressionLiteral:
+      case ts.SyntaxKind.JsxText:
+        ranges.push([node.getStart(sf), node.getEnd()]);
+        break;
+    }
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  return ranges;
+}
+
+/** Blank comments AND literals. Use for anything that scans for live code. */
+function maskNonCode(code: string, fileName = 'probe.tsx'): string {
+  const withoutLiterals = blankRanges(code, literalRanges(parseTsx(fileName, code)));
+  // Safe now: every string/template/JSX-text range is spaces, so a `//` or `/*`
+  // that survives can only be a real comment.
+  return stripComments(withoutLiterals);
+}
+
+/**
+ * Blank COMMENT contents only, leaving string literals intact. Needed for the
+ * import assertions: a module specifier IS a string (`from '~/shared/...'`), so
+ * the full masker blanks the very path being asserted — which is exactly how the
+ * first version of this file failed all six site checks while the code was
+ * correct. Comment ranges come from the parser, so an apostrophe cannot desync it.
+ */
+function maskComments(code: string, fileName = 'probe.tsx'): string {
+  const sf = parseTsx(fileName, code);
+  const ranges: Array<[number, number]> = [];
+  const seen = new Set<string>();
+  const add = (found: ts.CommentRange[] | undefined) => {
+    for (const c of found ?? []) {
+      const key = `${c.pos}:${c.end}`;
+      if (!seen.has(key)) {
+        seen.add(key);
+        ranges.push([c.pos, c.end]);
+      }
+    }
+  };
+  const visit = (node: ts.Node) => {
+    add(ts.getLeadingCommentRanges(code, node.getFullStart()));
+    add(ts.getTrailingCommentRanges(code, node.getEnd()));
+    node.forEachChild(visit);
+  };
+  visit(sf);
+  add(ts.getLeadingCommentRanges(code, 0));
+  return blankRanges(code, ranges);
+}
+
+/** Line + block comment strip, run only on text whose literals are already blank. */
+function stripComments(code: string): string {
+  const ranges: Array<[number, number]> = [];
+  let i = 0;
+  while (i < code.length) {
+    const two = code.slice(i, i + 2);
+    if (two === '//') {
+      const end = code.indexOf('\n', i);
+      const stop = end === -1 ? code.length : end;
+      ranges.push([i, stop]);
+      i = stop;
+    } else if (two === '/*') {
+      const end = code.indexOf('*/', i + 2);
+      const stop = end === -1 ? code.length : end + 2;
+      ranges.push([i, stop]);
+      i = stop;
+    } else {
+      i++;
+    }
+  }
+  return blankRanges(code, ranges);
+}
+
+/**
+ * The flag names the store gate is built from. The predicate is
+ * `appListings || appBlocks || appListingsPublicExternal` — the third term admits
+ * the EXTERNAL-ONLY cohort, who reach the store and are then scoped SERVER-side to
+ * `kind='offsite'` listings. Any TWO of these joined by a logical operator in live
+ * code under SCAN_ROOTS is a re-inlined gate.
+ *
+ * 🔴 Kept as data, not baked into one literal regex, because the gate GREW: a
+ * two-name regex would have gone on reporting a clean zero for a site that
+ * re-inlined `appListings || appListingsPublicExternal` — the newest and least
+ * familiar half of the rule, i.e. the one most likely to be open-coded by someone
+ * who has not read this file.
+ */
+const STORE_FLAG_NAMES = ['appListingsPublicExternal', 'appListings', 'appBlocks'] as const;
+
+/**
+ * An open-coded store gate in LIVE code.
+ *
+ * Deliberately matched on PROXIMITY + a logical operator rather than one literal
+ * shape. The previous single-line `X || Y` regex was evaded by every form the
+ * codebase can actually produce: a prettier-wrapped multi-line OR (the formatter
+ * inserts the newline for you), a De Morgan negation
+ * (`!features.appListings && !features.appBlocks`), and a `??` chain. Whitespace is
+ * collapsed first so line wrapping is irrelevant, and `[^;{}]` keeps a match inside
+ * one expression rather than spanning statements.
+ *
+ * `\b` after each flag name matters twice over: it stops `appBlocksPages` /
+ * `appBlocksAuthor` — different flags with their own rules — from being read as
+ * `appBlocks`, and it stops `appListingsPublicExternal` from being read as
+ * `appListings`. Both directions are pinned by the masker controls below.
+ */
+const INLINED_GATE = new RegExp(
+  STORE_FLAG_NAMES.flatMap((a) =>
+    STORE_FLAG_NAMES.filter((b) => b !== a).map(
+      (b) => `${a}\\b[^;{}]{0,120}?(?:\\|\\||&&|\\?\\?)[^;{}]{0,120}?${b}\\b`
+    )
+  ).join('|')
+);
+
+/** Collapse whitespace so a prettier line-wrap cannot hide a gate from the regex. */
+function flatten(code: string): string {
+  return code.replace(/\s+/g, ' ');
+}
+
+function read(rel: string): string {
+  return fs.readFileSync(path.join(SRC, rel), 'utf8');
+}
+
+function walk(dir: string, out: string[] = []): string[] {
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const full = path.join(dir, entry.name);
+    if (entry.isDirectory()) walk(full, out);
+    else if (/\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name)) out.push(full);
+  }
+  return out;
+}
+
+const SCANNED = SCAN_ROOTS.flatMap((root) => walk(path.join(SRC, root))).map((file) => {
+  const raw = fs.readFileSync(file, 'utf8');
+  const rel = path.relative(SRC, file).split(path.sep).join('/');
+  return { rel, raw, code: maskNonCode(raw, file), comments: maskComments(raw, file) };
+});
+
+describe('the masker (validate the instrument before reading its verdict)', () => {
+  it('blanks a gate written in a line comment, a block comment and a string', () => {
+    expect(maskNonCode('// features.appListings || features.appBlocks')).not.toMatch(INLINED_GATE);
+    expect(maskNonCode('/* a = features.appListings || features.appBlocks; */')).not.toMatch(
+      INLINED_GATE
+    );
+    expect(maskNonCode("const s = 'features.appListings || features.appBlocks';")).not.toMatch(
+      INLINED_GATE
+    );
+  });
+
+  it('🔴 POSITIVE CONTROL: it does NOT blank real code (else every scan below is vacuous)', () => {
+    // If this ever stops matching, the "no re-inlined gate" test becomes a probe
+    // wired to nothing and would report a reassuring zero forever.
+    expect(maskNonCode('if (!(features.appListings || features.appBlocks)) return null;')).toMatch(
+      INLINED_GATE
+    );
+    expect(maskNonCode('enabled: !!(features.appBlocks || features.appListings),')).toMatch(
+      INLINED_GATE
+    );
+    expect(maskNonCode('const x = hasAppsStoreAccess(features);')).toContain('hasAppsStoreAccess');
+  });
+
+  it('preserves line count so a reported offender can be located', () => {
+    const src = 'a\n// x\n/* y\nz */\nb\n';
+    expect(maskNonCode(src).split('\n')).toHaveLength(src.split('\n').length);
+  });
+
+  /**
+   * 🔴 THE REGRESSION THAT MOTIVATED THE PARSER REWRITE.
+   *
+   * The old quote-scanner treated every `'` as a delimiter, so an APOSTROPHE IN
+   * JSX TEXT opened a phantom string to EOF and blanked 71% of `installed.tsx`.
+   * The masker's controls at the time were all synthetic one-liners, which is
+   * exactly why they could not see it — none of them contained JSX. These use
+   * REALISTIC shapes, per the rule that a scanner allowlists its own examples.
+   */
+  it('🔴 an apostrophe in JSX TEXT does not desync the masker (71%-blind regression)', () => {
+    const src = [
+      'export function C() {',
+      '  return (',
+      '    <Text>',
+      "      The app's data and any other installs of it are untouched.",
+      '    </Text>',
+      '  );',
+      '}',
+      'const gate = features.appListings || features.appBlocks;',
+    ].join('\n');
+    const masked = maskNonCode(src, 'probe.tsx');
+    // Code AFTER the apostrophe must survive — this is the whole bug.
+    expect(masked).toMatch(INLINED_GATE);
+    // …and the JSX prose itself is still treated as non-code.
+    expect(masked).not.toContain('any other installs');
+  });
+
+  it('🔴 the real activity.tsx keeps its post-apostrophe code visible', () => {
+    // Anchored on the FILE that broke it, not a fixture: a synthetic case can be
+    // fixed while the real one still desyncs (different JSX nesting, entities…).
+    // 🔴 THE FILE MOVED, THE ANCHOR DID NOT: this was `pages/apps/installed.tsx` until
+    // the `/apps/activity` rename. Same file, same apostrophe, same trigger — repointed
+    // rather than deleted, because the defect it pins is about THIS file's JSX.
+    const raw = read('pages/apps/activity.tsx');
+    const masked = maskNonCode(raw, 'activity.tsx');
+    expect(raw).toMatch(/app's/); // the trigger is still present upstream
+    // The live gate sits AFTER it and must remain readable.
+    expect(masked.match(/features\.appBlocks/g) ?? []).toHaveLength(
+      (raw.match(/features\.appBlocks/g) ?? []).length
+    );
+    // Blanking must be bounded: the file cannot be mostly spaces.
+    //
+    // 🔴 THE BOUND MOVED 0.55 → 0.65, AND THE OLD NUMBER WAS NOT A MARGIN — IT WAS A
+    // COINCIDENCE. Measured on `origin/main`'s copy of this file the ratio was 0.5486
+    // against a 0.55 bound, i.e. 0.0014 of headroom: adding a few lines of DOCUMENTATION
+    // to the page (or one longer JSX string, which masks as blanks too) tripped it, which
+    // is a fact about comment density and nothing to do with the masker. Measured here
+    // after the `/apps/activity` rename: 0.5648.
+    //
+    // 🔴 AND IT MOVED AGAIN, 0.65 → 0.70, FOR THE CAUSE THE PARAGRAPH ABOVE PREDICTS —
+    // BUT NOT MOSTLY BECAUSE OF THE CHANGE THAT TRIPPED IT. ⚠️ The `0.5648` above is STALE
+    // (it dates from #4699). Measured with this file's own masker at the moment of the
+    // re-cut: `origin/main` ALREADY read ≈0.645 — under 0.005 of headroom on the old 0.65
+    // bound — and the permissions-copy widening moved it by ≈0.01, not by the ≈0.09 an
+    // earlier revision of this paragraph claimed by differencing against the stale figure.
+    // So the bound was going to trip for whoever added the next comment either way, which
+    // is exactly the failure the paragraph above describes. (Point-in-time, and rounded on
+    // purpose — see the next paragraph on why exact ratios do not survive in prose here.)
+    //
+    // 🔴 RE-CUT AGAINST THE CONTROL, NOT AGAINST THE NEW VALUE — the control sits far above
+    // the bound while the live value sits below it, which is the property that matters.
+    //
+    // ⚠️ DELIBERATELY NOT QUOTING THE TWO MEASUREMENTS AS PINNED NUMBERS, because they DRIFT
+    // WITH THIS FILE AND KEEP FALSIFYING THE COMMENT. Three successive revisions quoted a
+    // control figure and each was stale within one edit (0.8510 — an uncommitted
+    // intermediate — then 0.8482, then 0.8499 after one more paragraph landed here); every
+    // line added to `activity.tsx`, code or comment, moves both. The BOUNDS are asserted in
+    // code below and cannot go stale; the ratios are outputs. Re-derive rather than trusting
+    // a number in prose — run this from the repo root:
+    //   node -e "const f=require('fs').readFileSync('src/pages/apps/activity.tsx','utf8'),
+    //     r=t=>t.split('').filter(c=>c===' ').length/t.length,
+    //     i=f.indexOf(String.fromCharCode(97,112,112,39,115));
+    //     console.log(r(f.slice(0,i)+f.slice(i).replace(/[^\n]/g,' ')))"
+    // ⚠️ THE `String.fromCharCode` IS NOT AFFECTATION — it spells the apostrophe in `app's`,
+    // and an earlier revision of this command wrote that literal inside a SINGLE-quoted
+    // `node -e '…'`. The apostrophe closed the shell string, so pasting it gave
+    // `unexpected EOF` and printed nothing: a re-derivation instruction that could not be
+    // run, replacing figures that were merely stale. Verified by RUNNING the form above, as
+    // written, in both bash and zsh — test the pasted form, not the program.
+    // That prints the CONTROL; the live masked ratio is whatever this test reports when the
+    // bound below fails. A bound set just above whatever the file currently reads would
+    // repeat the no-headroom mistake — for the 0.55 bound that margin was 0.0014 (see five
+    // paragraphs up); against 0.65 on `origin/main` it was ≈0.0049, per the measurement
+    // above. (An earlier revision wrote 0.0018 here, which is the margin at THIS PR's own
+    // round-1 commit — a tree this comment never names, and irreconcilable with the ≈0.645
+    // figure 25 lines up.)
+    //
+    // ⚠️ KNOWN COST, recorded rather than discovered later: 0.70 is less sensitive to a
+    // PARTIAL, late-file desync than 0.65 was — a blanking confined to the tail can now
+    // pass. Measured at `775abdfe34` by two independent re-implementations of the masker:
+    // a trailing desync must cover ≈19.6% of the file before it trips 0.70. POINT-IN-TIME
+    // — it moves with `L` and with the tail's own density, exactly like the ratios above,
+    // so re-measure rather than trusting it.
+    // ⚠️ Do NOT re-derive it from `L + p(1−L) = 0.70`; that model gives ≈11.8% because it
+    // assumes the blanked tail becomes ALL spaces, whereas this file's tail is comment- and
+    // JSX-dense and already ≈0.77 spaces after masking. One earlier revision of this clause
+    // carried the naive figure (`≲13%`) for that reason.
+    // Accepted regardless: 0.65 was unusable at the headroom above, and the functional
+    // check in this test is the `features.appBlocks` occurrence count, not the ratio.
+    //
+    // 🔴 0.70 → 0.73, AND THIS TIME THE RE-CUT IS NOT THE POINT — THE PAIR IS CONVERGING AND
+    // THE RATIO IS NEARLY OUT OF DISCRIMINATING POWER. Every previous re-cut here was "the
+    // live value drifted up, move the bound up". Measured across the phase-3 revoke-UI change
+    // to `activity.tsx`, the SEPARATION collapsed:
+    //     base  a5a34418b6 : live ≈0.645, control ≈0.7213  → gap ≈0.076
+    //     head  253c0d0d12 : live ≈0.7221, control ≈0.7395 → gap ≈0.017
+    // So the bound now has to fit inside a 0.017-wide window and 0.73 leaves ≈0.008 either
+    // side. That is WORSE headroom than the 0.0049 this file already calls out as the mistake
+    // not to repeat, and it will trip again on the next comment added anywhere in
+    // `activity.tsx`. Recorded rather than quietly nudged.
+    //
+    // 🔴 THE MECHANISM, because it says why nudging cannot fix it. The masker blanks COMMENTS,
+    // so every comment line added to `activity.tsx` pushes the LIVE masked ratio up fast. The
+    // control blanks everything after the `app's` apostrophe regardless, so comment added
+    // BEFORE that apostrophe barely moves it (+0.018 against the live +0.077 here). This
+    // repo's idiom actively rewards comment density, so the live ratio chases the control by
+    // construction and the two meet. A ratio bound cannot survive that; it is not a tuning
+    // problem.
+    //
+    // 🔴 TWO REAL REMEDIES FOR WHOEVER TRIPS THIS NEXT — pick one instead of nudging to 0.74:
+    //   (a) RE-POINT THE CONTROL EARLIER. The desync trigger is the FIRST `app's`, at ≈32% of
+    //       the file. A trigger nearer the top blanks more and lifts the control well clear of
+    //       the live value, restoring separation. The `expect(apostrophe, 'the trigger moved;
+    //       re-point this control')` assertion below already exists for exactly this.
+    //   (b) RETIRE THE RATIO. This test's own comment three paragraphs up already concedes the
+    //       functional check is the `features.appBlocks` OCCURRENCE COUNT, not the ratio. A
+    //       desync that blanks live code fails that count directly, without a proxy that has
+    //       to be re-cut every few PRs.
+    // ⚠️ I did neither, deliberately: both change what this test MEASURES, and this change is
+    // a revoke-UI change that merely tripped the bound. Moving it is the minimum that keeps a
+    // gate green without silently redefining someone else's instrument — but it is a stopgap
+    // and the numbers above are why.
+    const spaceRatio = (text: string) =>
+      text.split('').filter((c) => c === ' ').length / text.length;
+    expect(spaceRatio(masked)).toBeLessThan(0.73);
+
+    // 🔴 NEGATIVE CONTROL, ON THE REAL FILE: a bound nobody has watched fire is a claim
+    // about a number. Reproduce the historical desync — everything after the apostrophe
+    // blanked — and confirm it exceeds the bound the live value passes.
+    const apostrophe = raw.indexOf("app's");
+    expect(apostrophe, 'the trigger moved; re-point this control').toBeGreaterThan(-1);
+    const desynced = raw.slice(0, apostrophe) + raw.slice(apostrophe).replace(/[^\n]/g, ' ');
+    // 🔴 THE SAME NUMBER AS THE LIVE BOUND, DELIBERATELY. If this stayed at 0.65 while the
+    // bound above moved to 0.70, the control would no longer prove separation — a desync
+    // measuring 0.66 would satisfy BOTH, so the pair would assert nothing. Move the two
+    // together or the control stops being one. (No measured ratio quoted here either — see
+    // the paragraph above on why those figures drift.)
+    // 🔴 MOVED TO 0.73 WITH THE LIVE BOUND. Leaving it at 0.70 while the bound above went to 0.73
+    // BROKE THE CONTROL in exactly the way the paragraph directly above it forbids ("Move the two
+    // together or the control stops being one"): the pair then admitted a 0.03-wide overlap where
+    // BOTH assertions hold, and — measured — the LIVE masked ratio 0.7221 already exceeded 0.70, so
+    // the non-desynced text satisfied the desync control. That is the control being dead, not weak.
+    // Caught by the test-review lane in the same round that introduced it.
+    //
+    // ⚠️ THE LANE'S RECOMMENDATION IS TO RETIRE THE RATIO ENTIRELY, and it is recorded here rather
+    // than acted on. Its case: the bound has been re-cut four times (0.55 → 0.65 → 0.70 → 0.73), the
+    // separation window is now 0.017 wide (live 0.7221 vs control 0.7395) and narrows with every
+    // comment added to `activity.tsx`, and this test's own functional claim — the
+    // `features.appBlocks` occurrence-count equality — fails directly on a desync that blanks live
+    // code, with no proxy to re-cut. Not done here because retiring another change's instrument is
+    // wider than a revoke-UI phase should reach; the numbers are recorded so the next person to trip
+    // it can act instead of nudging again.
+    expect(spaceRatio(desynced)).toBeGreaterThan(0.73);
+  });
+
+  it('nested quotes, templates and regex literals do not desync it either', () => {
+    const src = [
+      'const a = "it\'s fine";',
+      'const b = `a ${features.appListings} b`;',
+      "const c = /don't/.test(x);",
+      'const gate = features.appListings || features.appBlocks;',
+    ].join('\n');
+    const masked = maskNonCode(src, 'probe.ts');
+    expect(masked).toMatch(INLINED_GATE);
+    // The template EXPRESSION hole is live code and must survive. (Its delimiters
+    // `${` and `}` belong to the TemplateHead/Tail TOKENS and are correctly
+    // blanked — only the expression between them is code.)
+    expect(masked).toContain('features.appListings');
+    // …while the literal chunks around it are blanked, apostrophe and all.
+    expect(masked).not.toContain("it's fine");
+    expect(masked).not.toContain("don't");
+  });
+
+  it('🔴 catches the evasions the single-line regex missed', () => {
+    const cases: Record<string, string> = {
+      'prettier-wrapped multi-line OR':
+        'const ok =\n  features.appListings ||\n  features.appBlocks;',
+      'De Morgan negation': 'if (!features.appListings && !features.appBlocks) return null;',
+      'nullish chain': 'const ok = features.appListings ?? features.appBlocks;',
+      destructured: 'const ok = appListings || appBlocks;',
+      'reversed order': 'const ok = features.appBlocks || features.appListings;',
+    };
+    for (const [label, src] of Object.entries(cases)) {
+      expect(flatten(maskNonCode(src, 'probe.ts')), label).toMatch(INLINED_GATE);
+    }
+  });
+
+  it('does NOT confuse sibling flags that have their own rules', () => {
+    // `appBlocksPages` / `appBlocksAuthor` are different gates; a `\b`-less regex
+    // would read them as `appBlocks` and flag legitimate code.
+    expect(
+      flatten(maskNonCode('const x = features.appListings || features.appBlocksPages;', 'p.ts'))
+    ).not.toMatch(INLINED_GATE);
+    expect(
+      flatten(maskNonCode('const x = features.appListings || features.appBlocksAuthor;', 'p.ts'))
+    ).not.toMatch(INLINED_GATE);
+  });
+
+  /**
+   * 🔴 THE THIRD TERM. `appListingsPublicExternal` admits the EXTERNAL-ONLY cohort
+   * and is now part of the gate, so a site re-inlining a pair that includes it must
+   * be caught — while `appListingsPublicExternal` alone must NOT be mistaken for
+   * `appListings` (they are different flags with different meanings, and the prefix
+   * relationship makes that the easy mistake for a `\b`-less regex).
+   */
+  it('🔴 catches a re-inlined gate built from the EXTERNAL-only term', () => {
+    const cases: Record<string, string> = {
+      'external OR listings':
+        'const ok = features.appListings || features.appListingsPublicExternal;',
+      'external OR blocks': 'const ok = features.appListingsPublicExternal || features.appBlocks;',
+      'external first, wrapped':
+        'const ok =\n  features.appListingsPublicExternal ||\n  features.appListings;',
+      'De Morgan with external':
+        'if (!features.appBlocks && !features.appListingsPublicExternal) return null;',
+      'destructured external': 'const ok = appListingsPublicExternal || appBlocks;',
+    };
+    for (const [label, src] of Object.entries(cases)) {
+      expect(flatten(maskNonCode(src, 'probe.ts')), label).toMatch(INLINED_GATE);
+    }
+  });
+
+  it('🔴 does NOT read appListingsPublicExternal as appListings (prefix collision)', () => {
+    // A single mention of the longer name, OR-ed with an unrelated flag, is not a
+    // store gate. Without `\b` the `appListings` alternative would match its prefix
+    // and report a false offender at every external-cohort call site.
+    expect(
+      flatten(
+        maskNonCode('const x = features.appListingsPublicExternal || features.canViewNsfw;', 'p.ts')
+      )
+    ).not.toMatch(INLINED_GATE);
+    expect(
+      flatten(maskNonCode('const x = features.appListingsPublicExternal;', 'p.ts'))
+    ).not.toMatch(INLINED_GATE);
+    // The sharp case: a hypothetical SIBLING of the longest name. Only the `\b` on
+    // `appListingsPublicExternal` itself rejects this — every other guard in this
+    // file passes it either way, so this is the one assertion that dies for that
+    // specific reason.
+    expect(
+      flatten(
+        maskNonCode(
+          'const x = features.appListingsPublicExternalOverride || features.appBlocksPages;',
+          'p.ts'
+        )
+      )
+    ).not.toMatch(INLINED_GATE);
+  });
+
+  it('🔴 maskComments keeps STRINGS (the import-path regression this file already hit)', () => {
+    // The first version of this file masked strings too, so `from '~/shared/...'`
+    // was blanked and all six site checks failed against correct code.
+    const line = "import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';";
+    expect(maskComments(line)).toContain('~/shared/utils/app-blocks-access');
+    expect(maskNonCode(line)).not.toContain('~/shared/utils/app-blocks-access');
+    // …while still blanking a commented-out import (the false-positive it prevents).
+    expect(maskComments(`// ${line}`)).not.toContain('~/shared/utils/app-blocks-access');
+  });
+});
+
+describe('the scan itself (a zero must be earned, not assumed)', () => {
+  it('walked a plausible number of store modules', () => {
+    // Floor deliberately well below the live count so retiring one file does not
+    // red the guard; the point is that the walk is not returning an empty set.
+    expect(SCANNED.length).toBeGreaterThanOrEqual(40);
+  });
+
+  it('every ledger site was actually reached by the walk', () => {
+    const seen = new Set(SCANNED.map((f) => f.rel));
+    expect(STORE_GATE_SITES.filter((s) => !seen.has(s))).toEqual([]);
+  });
+});
+
+describe('🔒 every store-visibility site routes through the shared predicate', () => {
+  for (const rel of STORE_GATE_SITES) {
+    it(`${rel} imports AND calls hasAppsStoreAccess`, () => {
+      const raw = read(rel);
+      // The import — so a call cannot be satisfied by a same-named local helper.
+      // Comment-masked only: the module specifier is a string literal.
+      expect(flatten(maskComments(raw, rel))).toMatch(
+        /import\s*\{[^}]*\bhasAppsStoreAccess\b[^}]*\}\s*from\s*['"]~\/shared\/utils\/app-blocks-access['"]/
+      );
+      // …and a real invocation, not merely a mention in prose.
+      expect(maskNonCode(raw, rel)).toMatch(/\bhasAppsStoreAccess\s*\(/);
+    });
+  }
+
+  /**
+   * 🔴 THE MUTANT THAT SURVIVED. Reverting any of the four unpinned sites to
+   * `!!features.appBlocks` left the whole cited suite green. It cannot now: the
+   * revert deletes the call, so that site's case above goes red, and the site
+   * disappears from the ledger below.
+   */
+  it('the ledger is EXACT — it fails if a site is added OR silently reverted', () => {
+    const importers = SCANNED.filter((f) =>
+      /import\s*\{[^}]*\bhasAppsStoreAccess\b[^}]*\}\s*from\s*['"]~\/shared\/utils\/app-blocks-access['"]/.test(
+        flatten(f.comments)
+      )
+    ).map((f) => f.rel);
+    // ⚠️ "EXACT" is scoped to SCAN_ROOTS — three directories now, the third
+    // added for the user-menu entry (#3907). A store-visibility decision made
+    // OUTSIDE those roots is still invisible here; the scoping is the limit, not
+    // the file list.
+    expect(importers.sort()).toEqual([...STORE_GATE_SITES].sort());
+  });
+});
+
+describe('🔴 no store surface re-inlines the gate', () => {
+  it('the boolean is spelled out in exactly one module — the one that defines it', () => {
+    const offenders = SCANNED.filter((f) => INLINED_GATE.test(flatten(f.code))).map((f) => f.rel);
+    expect(offenders).toEqual([]);
+    // The definition itself lives OUTSIDE the scanned roots and is where the
+    // expression belongs; assert it is still there so "zero offenders" cannot be
+    // achieved by the rule having evaporated entirely.
+    expect(flatten(maskNonCode(read(DEFINING_MODULE), DEFINING_MODULE))).toMatch(INLINED_GATE);
+  });
+});

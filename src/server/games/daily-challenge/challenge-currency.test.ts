@@ -1,21 +1,19 @@
 import { describe, it, expect, vi } from 'vitest';
 
-// Mocked for the EXIT CODE, not the assertions. Reached transitively, this
-// module instantiates Prisma — and in a worktree without the repo's flake
-// dev-shell that leaves an unhandled rejection which fails no test but still
-// sets rc=1, so a mutation sweep reading rc scores every mutant as killed.
-// Nothing below touches a database. See civitai#3576.
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
 import { NsfwLevel } from '~/server/common/enums';
-import { nsfwBrowsingLevelsFlag, sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import {
+  nsfwBrowsingLevelsFlag,
+  sfwBrowsingLevelsFlag,
+} from '~/shared/constants/browsingLevel.constants';
 import { ChallengeSource } from '~/shared/utils/prisma/enums';
 import {
   deriveDomainCurrency,
   isNonSfwForGreen,
   isChallengeHiddenByDomainCurrency,
   computeNsfwEscalation,
+  nsfwEscalationBits,
 } from './challenge-currency';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 describe('deriveDomainCurrency', () => {
   it('returns green on the green domain', () => {
@@ -42,22 +40,38 @@ describe('isChallengeHiddenByDomainCurrency', () => {
   const user = ChallengeSource.User;
   it('hides a yellow user challenge on the green domain', () => {
     expect(
-      isChallengeHiddenByDomainCurrency({ source: user, buzzType: 'yellow', createdById: 5 }, true, 99)
+      isChallengeHiddenByDomainCurrency(
+        { source: user, buzzType: 'yellow', createdById: 5 },
+        true,
+        99
+      )
     ).toBe(true);
   });
   it('shows a green user challenge on the green domain', () => {
     expect(
-      isChallengeHiddenByDomainCurrency({ source: user, buzzType: 'green', createdById: 5 }, true, 99)
+      isChallengeHiddenByDomainCurrency(
+        { source: user, buzzType: 'green', createdById: 5 },
+        true,
+        99
+      )
     ).toBe(false);
   });
   it('hides a green user challenge off the green domain', () => {
     expect(
-      isChallengeHiddenByDomainCurrency({ source: user, buzzType: 'green', createdById: 5 }, false, 99)
+      isChallengeHiddenByDomainCurrency(
+        { source: user, buzzType: 'green', createdById: 5 },
+        false,
+        99
+      )
     ).toBe(true);
   });
   it('exempts the creator from the domain gate', () => {
     expect(
-      isChallengeHiddenByDomainCurrency({ source: user, buzzType: 'yellow', createdById: 5 }, true, 5)
+      isChallengeHiddenByDomainCurrency(
+        { source: user, buzzType: 'yellow', createdById: 5 },
+        true,
+        5
+      )
     ).toBe(false);
   });
   it('exempts non-user (System) challenges — yellow daily shows on the green domain', () => {
@@ -133,5 +147,62 @@ describe('computeNsfwEscalation', () => {
     expect(r.cancel).toBe(false);
     expect(r.allowedNsfwLevel).toBe(alreadyR);
     expect(r.nsfwLevel).toBe(NsfwLevel.R);
+  });
+
+  it.each([
+    [NsfwLevel.X, NsfwLevel.X, PG_PG13 | NsfwLevel.R | NsfwLevel.X],
+    [NsfwLevel.XXX, NsfwLevel.XXX, PG_PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX],
+  ])(
+    'yellow challenge + %s verdict: rated %s, every rung up to it allowed',
+    (level, rated, allowed) => {
+      const r = computeNsfwEscalation({
+        allowedNsfwLevel: PG_PG13,
+        buzzType: 'yellow',
+        source: ChallengeSource.User,
+        isNsfw: true,
+        level,
+      });
+      expect(r.nsfwLevel).toBe(rated);
+      expect(r.allowedNsfwLevel).toBe(allowed);
+    }
+  );
+
+  it('never lowers a challenge already rated above the verdict', () => {
+    const upToXxx = PG_PG13 | NsfwLevel.R | NsfwLevel.X | NsfwLevel.XXX;
+    const r = computeNsfwEscalation({
+      allowedNsfwLevel: upToXxx,
+      buzzType: 'yellow',
+      source: ChallengeSource.User,
+      isNsfw: true,
+      level: NsfwLevel.R,
+    });
+    expect(r.allowedNsfwLevel).toBe(upToXxx);
+    expect(r.nsfwLevel).toBe(NsfwLevel.XXX);
+  });
+});
+
+describe('nsfwEscalationBits', () => {
+  const { R, X, XXX } = NsfwLevel;
+
+  it.each([
+    ['R', R, R],
+    ['X', X, R | X],
+    ['XXX', XXX, R | X | XXX],
+  ])('fills every rung from R up to a %s verdict', (_, level, bits) => {
+    expect(nsfwEscalationBits(level)).toBe(bits);
+  });
+
+  it('fills a Blocked verdict up to XXX rather than falling back to R', () => {
+    expect(nsfwEscalationBits(NsfwLevel.Blocked)).toBe(R | X | XXX);
+  });
+
+  it.each([
+    ['missing', undefined],
+    ['null', null],
+    ['below R', NsfwLevel.PG13],
+    ['a composite', R | X],
+    ['out of range', 64],
+  ])('falls back to R for a %s level', (_, level) => {
+    expect(nsfwEscalationBits(level)).toBe(R);
   });
 });

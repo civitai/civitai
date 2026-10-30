@@ -201,18 +201,52 @@ describe('isAppBlocksAuthorEnabled — author capability (developer soft-launch)
     await expect(isAppBlocksAuthorEnabled({ user })).resolves.toBe(false);
   });
 
-  it('resolves OFF for an anonymous / vanished user (no floor, global eval never matches)', async () => {
-    await expect(isAppBlocksAuthorEnabled({ user: undefined })).resolves.toBe(false);
-    await expect(isAppBlocksAuthorEnabled()).resolves.toBe(false);
-    expect(mockIsFlipt).toHaveBeenCalledWith('app-blocks-author');
+  /**
+   * 🔴 THE UNDEFINED-USER CASE IS NOT TESTED AT RUNTIME, ON PURPOSE.
+   *
+   * There used to be a test here asserting that an undefined user resolved `false`
+   * because the helper "fell through to a global eval, which can never match a
+   * segment". The premise is true and the conclusion was not — a global eval returns
+   * the flag's BASE value — so that test passed only because this file's fake has a
+   * false base, and would have gone green over a real authz bypass under a base-true
+   * flag.
+   *
+   * `isAppBlocksAuthorEnabled`'s `user` parameter is now REQUIRED and non-nullable, so
+   * the undefined case is a COMPILE error, not a runtime branch. The guard is
+   * `pnpm typecheck` (and CI's `tekton / typecheck` + `App unit tests + typecheck`).
+   * Re-adding a runtime assertion here would need an `as never` cast to compile — i.e.
+   * it could only test a path the type system already forbids, while reading as
+   * coverage.
+   *
+   * The one runtime claim left is the residual the helper's docblock states, and it is
+   * pinned below: a caller who DEFEATS the type with a cast gets a crash, never a pass.
+   */
+  it('a cast-defeated undefined subject THROWS — it never returns true (the documented residual)', async () => {
+    mockIsFlipt.mockImplementation(async () => true); // base-`enabled: true`
+    await expect(
+      isAppBlocksAuthorEnabled(undefined as unknown as { user: SessionUser })
+    ).rejects.toThrow(TypeError);
+    await expect(
+      isAppBlocksAuthorEnabled({ user: undefined } as unknown as { user: SessionUser })
+    ).rejects.toThrow(TypeError);
+    // The flag was never consulted, so the throw cannot be mistaken for an eval result.
+    expect(mockIsFlipt).not.toHaveBeenCalled();
+    // POSITIVE CONTROL — same base-true stub, same call, a real subject. Without this
+    // the rejections above are indistinguishable from a helper that is simply broken.
+    await expect(isAppBlocksAuthorEnabled({ user: makeUser({ id: 555 }) })).resolves.toBe(true);
+    expect(mockIsFlipt).toHaveBeenCalledWith(
+      'app-blocks-author',
+      '555',
+      expect.objectContaining({ userId: '555' })
+    );
   });
 
   it('Flipt-down / flag absent → mods only (static fallback), non-mods denied', async () => {
     // isFlipt returns false for everything (flag absent or Flipt unreachable).
     mockIsFlipt.mockImplementation(async () => false);
-    await expect(
-      isAppBlocksAuthorEnabled({ user: makeUser({ isModerator: true }) })
-    ).resolves.toBe(true); // mod floor
+    await expect(isAppBlocksAuthorEnabled({ user: makeUser({ isModerator: true }) })).resolves.toBe(
+      true
+    ); // mod floor
     await expect(
       isAppBlocksAuthorEnabled({ user: makeUser({ id: 777, isModerator: false }) })
     ).resolves.toBe(false); // cohort denied when flag absent

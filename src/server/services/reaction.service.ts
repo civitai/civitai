@@ -1,7 +1,12 @@
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import type { ToggleReactionInput, ReactionEntityType } from './../schema/reaction.schema';
 import { dbWrite } from '~/server/db/client';
-import { getDbWithoutLag } from '~/server/db/db-lag-helpers';
+import { getDbWithoutLag, getKyselyWithoutLag } from '~/server/db/db-lag-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readImageReactionIdViaKysely,
+  readImageReactionIdViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import {
   answerMetrics,
   articleMetrics,
@@ -11,6 +16,53 @@ import {
 } from '~/server/metrics';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 import { throwIfBlockedByEntityOwner } from '~/server/services/block-check.service';
+import { onReactionCreated, onReactionRemoved } from '~/server/events/points/hooks';
+import { logToAxiom } from '~/server/logging/client';
+import { REDIS_KEYS, redis } from '~/server/redis/client';
+
+// A second toggle on the same reaction this soon after the first is a client double-fire, not a
+// decision: double-fires land under 50 ms, while people clicking twice mostly take 300 ms or more.
+export const REVERSE_TOGGLE_WINDOW_MS = 150;
+const TOGGLE_GUARD_TIMEOUT_MS = 100;
+
+let toggleGuardErrorLogged = false;
+// False when another toggle on this tuple arrived inside the window. Fails open: a Redis error or
+// stall lets the toggle through, and the unique key and `deleted > 0` still prevent double counts.
+async function claimToggleWindow({
+  entityType,
+  entityId,
+  userId,
+  reaction,
+}: ToggleReactionInput & { userId: number }) {
+  const key =
+    `${REDIS_KEYS.REACTION.TOGGLE_GUARD}:${userId}:${entityType}:${entityId}:${reaction}` as const;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const set = await Promise.race([
+      redis.set(key, '1', { NX: true, PX: REVERSE_TOGGLE_WINDOW_MS }),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`timed out after ${TOGGLE_GUARD_TIMEOUT_MS}ms`)),
+          TOGGLE_GUARD_TIMEOUT_MS
+        );
+      }),
+    ]);
+    toggleGuardErrorLogged = false;
+    return set !== null;
+  } catch (error) {
+    // Logged once until the guard works again: while Redis is down every toggle lands here.
+    if (!toggleGuardErrorLogged)
+      logToAxiom({
+        type: 'error',
+        name: 'reaction-toggle-guard',
+        message: (error as Error).message,
+      }).catch(() => undefined);
+    toggleGuardErrorLogged = true;
+    return true;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 export const toggleReaction = async ({
   entityType,
@@ -18,15 +70,25 @@ export const toggleReaction = async ({
   userId,
   reaction,
   isModerator,
-}: ToggleReactionInput & { userId: number; isModerator?: boolean }) => {
+  eventPoints = true,
+}: ToggleReactionInput & {
+  userId: number;
+  isModerator?: boolean;
+  // False for automated accounts (the challenge judge): event points are for people engaging.
+  eventPoints?: boolean;
+}) => {
+  if (!(await claimToggleWindow({ entityType, entityId, userId, reaction }))) return 'ignored';
+
   const existing = await getReaction({ entityType, entityId, userId, reaction });
   if (existing) {
     const deleted = await deleteReaction({ entityType, entityId, userId, reaction });
+    if (deleted > 0 && eventPoints) void onReactionRemoved({ entityType, entityId, userId });
     return deleted > 0 ? 'removed' : 'noop';
   } else {
     // Enforce on create only — a user blocked after reacting can still un-react.
     await throwIfBlockedByEntityOwner({ userId, entityType, entityId, isModerator });
     await createReaction({ entityType, entityId, userId, reaction });
+    if (eventPoints) void onReactionCreated({ entityType, entityId, userId });
     return 'created';
   }
 };
@@ -66,10 +128,13 @@ const getReaction = async ({
         select: { id: true },
       });
     case 'image':
-      return await db.imageReaction.findFirst({
-        where: { userId, reaction, imageId: entityId },
-        select: { id: true },
-      });
+      if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+        return await readImageReactionIdViaKysely(await getKyselyWithoutLag(), {
+          userId,
+          reaction,
+          imageId: entityId,
+        });
+      return await readImageReactionIdViaPrisma(db, { userId, reaction, imageId: entityId });
     case 'post':
       return await db.postReaction.findFirst({
         where: { userId, reaction, postId: entityId },

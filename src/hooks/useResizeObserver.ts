@@ -7,7 +7,22 @@ type ObserverCallback = {
 
 let resizeObserver: ResizeObserver | undefined;
 const callbackMap = new WeakMap<Element, ObserverCallback[]>();
+// Merge batches across observer callbacks: a dropped entry is not redelivered until the element
+// resizes again.
+const pendingEntries = new Map<Element, ResizeObserverEntry>();
 let frameId = 0;
+
+function flushPendingEntries() {
+  frameId = 0;
+  const entries = [...pendingEntries.values()];
+  pendingEntries.clear();
+  for (const entry of entries) {
+    const callbacks = callbackMap.get(entry.target) ?? [];
+    for (const cbRef of callbacks) {
+      cbRef.current(entry);
+    }
+  }
+}
 
 export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
   callback: ResizeFunc,
@@ -25,15 +40,8 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
 
     if (!resizeObserver)
       resizeObserver = new ResizeObserver((entries: ResizeObserverEntry[]) => {
-        if (entries.length > 0) cancelAnimationFrame(frameId);
-        frameId = requestAnimationFrame(() => {
-          for (const entry of entries) {
-            const callbacks = callbackMap.get(entry.target) ?? [];
-            for (const cbRef of callbacks) {
-              cbRef.current(entry);
-            }
-          }
-        });
+        for (const entry of entries) pendingEntries.set(entry.target, entry);
+        if (!frameId && pendingEntries.size) frameId = requestAnimationFrame(flushPendingEntries);
       });
   }, []);
 
@@ -97,10 +105,6 @@ export const useResizeObserver = <T extends HTMLElement = HTMLElement>(
         unobserveElements(observedElements);
       } else {
         unobserveElements([node]);
-      }
-
-      if (frameId) {
-        cancelAnimationFrame(frameId);
       }
     };
   }, [observeChildren]);

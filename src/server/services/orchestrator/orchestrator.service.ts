@@ -1,26 +1,40 @@
 import type {
   MediaHashStep,
   MediaHashStepTemplate,
+  MediaHashType,
   Priority,
   WorkflowStepTemplate,
   WorkflowTemplate,
   XGuardModerationStepTemplate,
-} from '@civitai/client';
-import { submitWorkflow } from '@civitai/client';
+} from '@civitai/orchestration-client';
+import { submitWorkflow } from '@civitai/orchestration-client';
 import { randomUUID } from 'crypto';
 import { Prisma } from '@prisma/client';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { env } from '~/env/server';
 import { isProd } from '~/env/other';
-import { logToAxiom } from '~/server/logging/client';
+import { logToAxiom, safeError } from '~/server/logging/client';
 import { internalOrchestratorClient } from '~/server/services/orchestrator/client';
 import { submitWorkflowWithRetry } from '~/server/services/orchestrator/workflows';
+import { getRetryAfterSeconds } from '~/server/services/orchestrator/retry-after';
+import { submitVideoAudioScan } from '~/server/services/video-audio-scan.service';
 import { hashContent } from '~/server/services/entity-moderation.service';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
 import type { MediaType, ModelType } from '~/shared/utils/prisma/enums';
 import { EntityModerationStatus, ModelHashType, ScanResultCode } from '~/shared/utils/prisma/enums';
-import { stringifyAIR } from '~/shared/utils/air';
-import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { modelFileScanAir } from '~/shared/utils/model-file-scan-air';
+import {
+  DeliveryWorkerError,
+  StorageResolverError,
+  isDefiniteNotFound,
+  resolveDownloadUrl,
+} from '~/utils/delivery-worker';
+import {
+  ImageIngestionUrlBlockedError,
+  isAllowedImageScanUrl,
+  normalizeImageScanUrl,
+} from '~/server/utils/image-scan-url';
 
 // Per-attempt backstop for the image-ingestion orchestrator SUBMIT (enqueue only —
 // this returns a workflow id immediately, it does NOT wait for the scan to finish).
@@ -37,6 +51,69 @@ import { resolveDownloadUrl } from '~/utils/delivery-worker';
 // explicitly wants to block for the workflow, so we must not abort it early).
 const IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS = 15_000;
 
+/**
+ * The scan submit passes no `wait`, so this is an enqueue: the orchestrator accepts the workflow and
+ * returns. Without a signal it inherits undici's 300s default, and every caller awaits it — the
+ * upload response, and the import job inside its own lock. Sized like its sibling above rather than
+ * to a measured P99, which nothing records for this call.
+ *
+ * A fired timeout throws, which every caller already treats as a transient failure: `scanRequestedAt`
+ * stays null and `scanFilesFallbackJob` re-submits within five minutes.
+ */
+const MODEL_FILE_SCAN_SUBMIT_TIMEOUT_MS = 15_000;
+
+const IMAGE_TAGGING_MODEL =
+  'urn:air:siglip2:repository:huggingface:cella110n/cl_tagger_v2@b57909b8e9c63f71e208a26473e7aabdf45ed6b6.tar';
+const IMAGE_TAGGING_THRESHOLD = 0.55;
+
+/** Axiom `name` for a failed ingestion submit, per scan pipeline. */
+export function imageIngestionLogName(useImageScanning: boolean) {
+  return useImageScanning ? 'image-scanning-ingestion' : 'image-ingestion';
+}
+
+type MediaUrlRef = { $ref: string; path: string };
+
+function imageScanSteps({
+  mediaUrl,
+  metadata,
+  priority,
+  useImageScanning,
+}: {
+  mediaUrl: MediaUrlRef;
+  metadata: Record<string, unknown>;
+  priority: Priority;
+  useImageScanning: boolean;
+}) {
+  if (useImageScanning)
+    return [
+      { $type: 'imageScanning', name: 'scan', metadata, priority, input: { image: mediaUrl } },
+    ];
+
+  return [
+    {
+      $type: 'wdTagging',
+      name: 'tags',
+      metadata,
+      priority,
+      input: { mediaUrl, model: IMAGE_TAGGING_MODEL, threshold: IMAGE_TAGGING_THRESHOLD },
+    },
+    {
+      $type: 'mediaRating',
+      name: 'rating',
+      metadata,
+      priority,
+      input: {
+        mediaUrl,
+        engine: 'civitai',
+        includeAgeClassification: true,
+        includeAIRecognition: false,
+        includeFaceRecognition: false,
+        includeAnimeRecognition: false,
+      },
+    },
+  ];
+}
+
 export async function createImageIngestionRequest({
   imageId,
   url,
@@ -52,12 +129,68 @@ export async function createImageIngestionRequest({
   priority?: Priority;
   type?: MediaType;
 }) {
+  // 🔴 This is the funnel for the image-scan INGESTION path. `getEdgeUrl` forwards
+  // absolute http(s)/blob: URLs through unmodified, so without this guard every path that
+  // reaches `Image.url` from caller input (comics procs, article content media nodes, …)
+  // is an SSRF primitive. `ingestImage` pre-checks the same predicate so it can route the
+  // rejection through the submit-failure machinery; this throw is the backstop for direct
+  // callers.
+  //
+  // It is not the only place a caller-supplied URL reaches a fetcher, and the others are
+  // now on this same predicate rather than left ungated: `getPerceptualHash` below,
+  // `resizeBadgeImage` (product-badge.service.ts) and `validateArtwork`
+  // (creator-shop.service.ts — a fetch from the WEB pod, not the orchestrator). The full
+  // ledger is asserted by `media-fetch-funnel-ledger.test.ts`, which fails when a new
+  // funnel appears un-gated, so do not maintain that list by hand here.
+  if (!isAllowedImageScanUrl(url)) throw new ImageIngestionUrlBlockedError(url);
+
   const metadata = { imageId };
-  const edgeUrl = getEdgeUrl(url, { type });
+  // Submit the NORMALIZED form: an absolute url goes out as its parsed `href`, so the host
+  // this guard validated is the host a downstream RFC-3986 client resolves.
+  const edgeUrl = getEdgeUrl(normalizeImageScanUrl(url), { type });
   // Idempotency key: if a submit returns 500 but actually created the workflow
   // server-side, re-submitting with the same `externalId` returns the existing
   // workflow instead of duplicating it (orchestrator dedupes on (userId, externalId)).
   const externalId = randomUUID();
+  const useImageScanning = await isFlipt(
+    FLIPT_FEATURE_FLAGS.IMAGE_INGESTION_IMAGE_SCANNING,
+    String(imageId)
+  );
+  const mediaUrl = { $ref: '$arguments', path: 'mediaUrl' };
+
+  const steps =
+    type === 'image'
+      ? [
+          ...imageScanSteps({ mediaUrl, metadata, priority, useImageScanning }),
+          {
+            $type: 'mediaHash',
+            name: 'hash',
+            metadata,
+            priority,
+            input: { mediaUrl, hashTypes: ['perceptual'] },
+          },
+        ]
+      : [
+          {
+            $type: 'videoFrameExtraction',
+            name: 'videoFrames',
+            metadata,
+            priority,
+            input: { videoUrl: mediaUrl, frameRate: 1, uniqueThreshold: 0.9, maxFrames: 50 },
+          },
+          ...imageScanSteps({
+            mediaUrl: { $ref: 'frame', path: 'url' },
+            metadata,
+            priority,
+            useImageScanning,
+          }).map((template) => ({
+            $type: 'repeat',
+            input: {
+              for: { $ref: 'videoFrames', path: 'output.frames', as: 'frame' },
+              template,
+            },
+          })),
+        ];
 
   const body: WorkflowTemplate = {
     externalId,
@@ -66,110 +199,8 @@ export async function createImageIngestionRequest({
       mediaUrl: edgeUrl,
     },
     currencies: [],
-    steps:
-      type === 'image'
-        ? [
-            {
-              $type: 'wdTagging',
-              name: 'tags',
-              metadata,
-              priority,
-              input: {
-                mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                model: 'wd14-vit.v1',
-                threshold: 0.5,
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'mediaRating',
-              name: 'rating',
-              metadata,
-              priority,
-              input: {
-                mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                engine: 'civitai',
-                includeAgeClassification: true,
-                includeAIRecognition: false,
-                includeFaceRecognition: false,
-                includeAnimeRecognition: false,
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'mediaHash',
-              name: 'hash',
-              metadata,
-              priority,
-              input: {
-                mediaUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                hashTypes: ['perceptual'],
-              },
-            } as WorkflowStepTemplate,
-          ]
-        : [
-            {
-              $type: 'videoFrameExtraction',
-              name: 'videoFrames',
-              metadata,
-              priority,
-              input: {
-                videoUrl: { $ref: '$arguments', path: 'mediaUrl' },
-                frameRate: 1,
-                uniqueThreshold: 0.9,
-                maxFrames: 50,
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'repeat',
-              input: {
-                for: {
-                  $ref: 'videoFrames',
-                  path: 'output.frames',
-                  as: 'frame',
-                },
-                template: {
-                  $type: 'wdTagging',
-                  name: 'tags',
-                  metadata,
-                  priority,
-                  input: {
-                    mediaUrl: {
-                      $ref: 'frame',
-                      path: 'url',
-                    },
-                    model: 'wd14-vit.v1',
-                    threshold: 0.5,
-                  },
-                },
-              },
-            } as WorkflowStepTemplate,
-            {
-              $type: 'repeat',
-              input: {
-                for: {
-                  $ref: 'videoFrames',
-                  path: 'output.frames',
-                  as: 'frame',
-                },
-                template: {
-                  $type: 'mediaRating',
-                  name: 'rating',
-                  metadata,
-                  priority,
-                  input: {
-                    mediaUrl: {
-                      $ref: 'frame',
-                      path: 'url',
-                    },
-                    engine: 'civitai',
-                    includeAgeClassification: true,
-                    includeAIRecognition: false,
-                    includeFaceRecognition: false,
-                    includeAnimeRecognition: false,
-                  },
-                },
-              },
-            } as WorkflowStepTemplate,
-          ],
+    // WorkflowTemplate is @civitai/orchestration-client's, which predates the imageScanning step.
+    steps: steps as unknown as WorkflowStepTemplate[],
     callbacks: callbackUrl
       ? [
           {
@@ -195,13 +226,21 @@ export async function createImageIngestionRequest({
 
   // Re-submit transient infra failures (5xx / no-response), reusing the same
   // `externalId` so a 500 that actually created the workflow isn't duplicated.
+  const submitStartedAt = Date.now();
   const result = await submitWorkflowWithRetry(
     {
       client: internalOrchestratorClient,
       query: wait ? { wait } : undefined,
       body,
     },
-    wait ? undefined : { perAttemptTimeoutMs: IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS }
+    // `source` labels every submit metric this call produces. Image ingestion is the ONE submit funnel
+    // that calls the retry wrapper directly instead of going through `submitWorkflow`, so without this
+    // label its submits would be indistinguishable from the generate leg on the shared histogram — and
+    // that histogram exists specifically to be compared against generateFromGraph's own wall time.
+    {
+      ...(wait ? {} : { perAttemptTimeoutMs: IMAGE_INGEST_SUBMIT_ATTEMPT_TIMEOUT_MS }),
+      source: 'imageIngest' as const,
+    }
   );
   const { data, response, attempts } = result;
   // `error` isn't present on every member of the result union — narrow with `in`.
@@ -209,21 +248,39 @@ export async function createImageIngestionRequest({
 
   const serverTiming = response?.headers.get('Server-Timing') ?? null;
 
+  // Not awaited: the shadow audio scan must not slow or fail the visual submit.
+  if (data && type === 'video' && callbackUrl)
+    void submitVideoAudioScan({ imageId, mediaUrl: edgeUrl, priority });
+
   if (!data) {
     logToAxiom({
       type: 'error',
-      name: 'image-ingestion',
+      name: imageIngestionLogName(useImageScanning),
       imageId,
       url,
       externalId,
       attempts,
       responseStatus: response?.status,
       serverTiming,
-      error,
+      // JSON.stringify(new Error()) is `{}` — Error carries no enumerable own
+      // properties — so logging the error directly recorded nothing at all, and
+      // a no-response submit is exactly the case where its name is the whole
+      // diagnosis (an abort is not a connection reset).
+      error: safeError(error),
+      // Wall time across every attempt. Distinguishes three per-attempt aborts
+      // (~45s) from a fast rejection, which the attempt count alone does not.
+      elapsedMs: Date.now() - submitStartedAt,
     });
   }
 
-  return { data, body, error, status: response?.status };
+  return {
+    data,
+    body,
+    error,
+    status: response?.status,
+    retryAfter: getRetryAfterSeconds(response),
+    useImageScanning,
+  };
 }
 
 const PERCEPTUAL_HASH_WAIT_SECONDS = 30;
@@ -249,12 +306,46 @@ export function computePerceptualHash(perceptual?: string) {
  * error to signal it. Verified against prod: same-lane rows matched exactly,
  * legacy rows were uncorrelated.
  *
- * Returns `undefined` on any failure — a hash is a signal, not a gate, so
- * callers persist what they get and leave the rest for a backfill sweep. Note
- * `0n` is a legitimate hash (a solid-colour image); test against `undefined`.
+ * Returns the raw hex the orchestrator produced, or `undefined` on any failure —
+ * a hash is a signal, not a gate, so callers persist what they get and leave the
+ * rest for a sweep. An all-zero hash is a legitimate result (a flat or
+ * mostly-transparent image), so test against `undefined`, not falsiness.
+ *
+ * `hashType` selects the lane. Widths and algorithms differ between lanes and
+ * their outputs are not comparable, so whatever a caller stores it must also
+ * record which lane produced it.
  */
-export async function getPerceptualHash(url: string): Promise<bigint | undefined> {
-  const mediaUrl = url.startsWith('http') ? url : getEdgeUrl(url, { type: 'image' });
+export async function getPerceptualHash(
+  url: string,
+  hashType: MediaHashType = 'perceptual'
+): Promise<string | undefined> {
+  // 🔴 Same SSRF boundary as `createImageIngestionRequest` above, and it is reached from a
+  // LOWER rung than that one: `queueCosmeticPerceptualHash` is called from
+  // creator-shop's submit path (any signed-in user with the `creatorShop` flag), and the
+  // `cosmetic-phash-sweep` cron replays whatever was stored in `Cosmetic.data.url`, so an
+  // off-allowlist URL that got persisted once is re-submitted on a schedule.
+  //
+  // Unlike the ingestion funnel this returns `undefined` rather than throwing: every other
+  // failure here is already soft ("a hash is a signal, not a gate" — see the docblock), and
+  // the sweep counts a thrown error as a dead row it will retry forever. A refusal is
+  // logged so it is not a silent zero.
+  if (!isAllowedImageScanUrl(url)) {
+    logToAxiom({
+      type: 'error',
+      name: 'perceptual-hash',
+      message: 'Refusing to hash an off-allowlist media url',
+      reason: 'url-not-allowed',
+      url,
+    }).catch(() => null);
+    return undefined;
+  }
+
+  // The old `url.startsWith('http') ? url : getEdgeUrl(url, …)` ternary was a no-op —
+  // `getEdgeUrl` forwards a passthrough src unmodified on exactly that predicate — and it
+  // was a fourth open-coded spelling of it. Submit the NORMALIZED form for the same reason
+  // `createImageIngestionRequest` does: the host this guard validated is then the host a
+  // downstream RFC-3986 client resolves.
+  const mediaUrl = getEdgeUrl(normalizeImageScanUrl(url), { type: 'image' });
 
   // getEdgeUrl drops a missing NEXT_PUBLIC_IMAGE_LOCATION from the join instead
   // of failing, yielding a relative path the orchestrator can't fetch. Outside
@@ -284,7 +375,7 @@ export async function getPerceptualHash(url: string): Promise<bigint | undefined
         steps: [
           {
             $type: 'mediaHash',
-            input: { mediaUrl, hashTypes: ['perceptual'] },
+            input: { mediaUrl, hashTypes: [hashType] },
           } as MediaHashStepTemplate,
         ],
       },
@@ -296,7 +387,8 @@ export async function getPerceptualHash(url: string): Promise<bigint | undefined
     const step = data?.steps?.[0] as MediaHashStep | undefined;
     if (data?.status !== 'succeeded' || step?.status !== 'succeeded') return undefined;
 
-    return computePerceptualHash(step.output?.hashes?.perceptual);
+    const hex = step.output?.hashes?.[hashType];
+    return hex ? hex.toLowerCase() : undefined;
   } catch (error) {
     logToAxiom({
       type: 'error',
@@ -306,6 +398,28 @@ export async function getPerceptualHash(url: string): Promise<bigint | undefined
     }).catch(() => null);
     return undefined;
   }
+}
+
+export type XGuardLabelOverride = {
+  label: string;
+  action: string;
+  threshold: number;
+  policy: string;
+};
+
+/**
+ * Overrides are part of what was scanned, so they belong in the dedup key: the check below
+ * answers a request from an earlier workflow scored under whatever policy was in force
+ * then, and leaving them out answers the first request under a new policy with the old
+ * one's verdict. Empty when absent, so hashes already written stay valid.
+ */
+function labelOverrideHashSuffix(overrides: XGuardLabelOverride[] | undefined) {
+  if (!overrides?.length) return '';
+  const canonical = overrides
+    .map((o) => [o.label, o.action, o.threshold, o.policy].join('\u0001'))
+    .sort()
+    .join('\u0002');
+  return `\u0000${canonical}`;
 }
 
 type XGuardModerationArgs = {
@@ -323,15 +437,10 @@ type XGuardModerationArgs = {
   userId?: number;
   labels?: string[];
   /** Per-label policy/threshold/action overrides for this single request.
-   * Merges with the orchestrator's default registry. Useful for debug /
-   * policy-tuning paths (e.g. `/api/testing/xguard-test`) where we want to
-   * evaluate a candidate policy without modifying the live registry. */
-  labelOverrides?: Array<{
-    label: string;
-    action: string;
-    threshold: number;
-    policy: string;
-  }>;
+   * Merges with the orchestrator's default registry. Lets a debug path
+   * (`/api/testing/xguard-test`) or a single surface run a candidate policy
+   * without editing the registry every text consumer shares. */
+  labelOverrides?: XGuardLabelOverride[];
   /** Override the default audit-result callback URL. Omit to use the standard
    * `/api/webhooks/text-moderation-result` endpoint (which is what makes audit
    * rows land in `scanner_label_results`). Pass `null` to suppress the
@@ -355,6 +464,11 @@ type XGuardModerationArgs = {
    * Only meaningful when `entityType` + `entityId` are set.
    */
   forceRescan?: boolean;
+  /**
+   * A fresh submit, not a retry: reset the row's retry budget. Without it a row the retry cron
+   * parked at its cap stays excluded, so a lost callback for this workflow is never retried.
+   */
+  rearmRetries?: boolean;
 } & (
   | { mode: 'text'; content: string }
   | {
@@ -376,6 +490,7 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
     wait,
     priority = 'normal',
     recordForReview = false,
+    rearmRetries = false,
   } = args;
 
   // Default callback fires the standard text-moderation webhook, which is
@@ -410,7 +525,10 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
   //     can't return a meaningful id from those; treat as cache miss.
   //   - `!forceRescan`: caller-side escape hatch for moderator-initiated
   //     rechecks (`rescanArticle`, policy-version-bump rescans, etc.).
-  const contentHash = args.mode === 'text' ? hashContent(args.content) : undefined;
+  const contentHash =
+    args.mode === 'text'
+      ? hashContent(args.content + labelOverrideHashSuffix(labelOverrides))
+      : undefined;
   if (!args.forceRescan && entityType && entityId !== undefined && contentHash) {
     const existing = await dbRead.entityModeration.findUnique({
       where: { entityType_entityId: { entityType, entityId } },
@@ -552,8 +670,13 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
           contentHash,
           status,
           ...(submitSucceeded
-            ? { blocked: null, triggeredLabels: [], result: Prisma.JsonNull }
-            : { retryCount: { increment: 1 } }),
+            ? {
+                blocked: null,
+                triggeredLabels: [],
+                result: Prisma.JsonNull,
+                ...(rearmRetries ? { retryCount: 0 } : {}),
+              }
+            : { retryCount: rearmRetries ? 1 : { increment: 1 } }),
         },
       })
       .catch((e) =>
@@ -577,11 +700,15 @@ export async function createXGuardModerationRequest(args: XGuardModerationArgs) 
 /**
  * Thrown by createModelFileScanRequest when submission can't proceed. The
  * `code` lets callers branch their recovery:
- *   - 'not-found': pre-flight download-URL resolution failed twice (storage
- *     resolver + delivery worker both can't locate the file). Caller should
- *     mark ModelFile.exists=false to exit the scan retry loop.
- *   - 'transient': submitWorkflow itself failed (5xx, network, auth, etc.).
- *     Caller should leave `exists` alone and rely on retry.
+ *   - 'not-found': pre-flight download-URL resolution failed twice AND the retry
+ *     failed with an absence status (404/410) reported by the authority that can
+ *     actually see the file — i.e. absence was positively established. Caller may mark ModelFile.exists=false to exit the scan retry loop.
+ *     🔴 That tombstone is PERMANENT and also permanently exempts the file from
+ *     scanning, so this code must mean "absence was proven", never "we could not
+ *     ask". It is emitted only via `isDefiniteNotFound`.
+ *   - 'transient': submitWorkflow itself failed (5xx, network, auth, etc.), OR
+ *     pre-flight failed in any way that does not prove absence. Caller should
+ *     leave `exists` alone and rely on retry.
  *
  * Why pre-flight (not orchestrator response): submitWorkflow only enqueues —
  * orchestrator validates the AIR-fetchable file later, asynchronously, in
@@ -595,7 +722,9 @@ export class ModelFileScanSubmissionError extends Error {
     message: string,
     public readonly code: 'not-found' | 'transient',
     public readonly status?: number,
-    public readonly orchestratorMessages?: string[]
+    public readonly orchestratorMessages?: string[],
+    /** Seconds from a 429's Retry-After. */
+    public readonly retryAfter?: number
   ) {
     super(message);
     this.name = 'ModelFileScanSubmissionError';
@@ -658,49 +787,86 @@ export async function createModelFileScanRequest({
   //   1) try storage-resolver / delivery-worker (resolveDownloadUrl)
   //   2) on failure, wait 60s and retry once (covers registration sync lag
   //      for recently-uploaded files)
-  //   3) on second failure, throw 'not-found' so the caller can tombstone
+  //   3) on second failure, classify via isDefiniteNotFound: absence must be
+  //      POSITIVELY reported (404/410) by the authority that can see the file
+  //      ('not-found', caller tombstones). Everything else — 5xx, auth, rate
+  //      limit, timeout, transport reject — is 'transient' and gets retried.
   //
-  // This is the file-gone signal we used in the legacy scanner; orchestrator
-  // submitWorkflow doesn't surface one synchronously.
+  // 🔴 Step 3 used to treat EVERY second failure as 'not-found'. That is how a
+  // resolver outage became a permanent `ModelFile.exists=false` tombstone, which
+  // `scanFilesFallbackJob` then excludes from its retry query forever — leaving a
+  // Published, Public file downloadable and permanently unscanned. Measured
+  // 2026-08-20: 41 of 41 readable tombstoned files were still fully downloadable
+  // (across 51 uploaders), and the tombstones arrived in bursts (top 5 hours held
+  // 52% of them) rather than spread out as independent file losses would be.
   if (preflight) {
     try {
-      await resolveDownloadUrl(fileId, url);
+      await resolveDownloadUrl(fileId, url, undefined, {
+        caller: 'orchestrator-preflight',
+        actor: 'internal',
+      });
     } catch (firstError) {
       await new Promise((r) => setTimeout(r, 60_000));
       try {
-        await resolveDownloadUrl(fileId, url);
+        await resolveDownloadUrl(fileId, url, undefined, {
+          caller: 'orchestrator-preflight',
+          actor: 'internal',
+        });
       } catch (retryError) {
+        // Classify on the RETRY's failure: it is the most recent evidence, and
+        // the first failure may have been the transient one that the retry
+        // exists to absorb.
+        const code = isDefiniteNotFound(retryError) ? 'not-found' : 'transient';
+        // The verdict turns on WHICH component reported what, and both message
+        // fields below carry the DELIVERY WORKER's text — so without these the
+        // decision input is invisible in production and no one can confirm after
+        // the fact whether a given tombstone was justified.
+        const resolverFailure =
+          retryError instanceof DeliveryWorkerError ? retryError.resolverError : undefined;
+        // Status only exists when the resolver answered with one. A pod outage
+        // rejects at the transport layer instead, which is the very case this
+        // change is about — so log the error itself too, or that case arrives
+        // with no resolver signal at all.
+        const resolverStatus =
+          resolverFailure instanceof StorageResolverError ? resolverFailure.statusCode : undefined;
+        const resolverError =
+          resolverFailure === undefined
+            ? undefined
+            : resolverFailure instanceof Error
+            ? `${resolverFailure.name}: ${resolverFailure.message}`
+            : String(resolverFailure);
         logToAxiom({
           type: 'error',
           name: 'model-file-scan',
           message: `Pre-flight download URL resolution failed for file ${fileId}`,
           fileId,
           modelVersionId,
-          submissionErrorCode: 'not-found',
+          submissionErrorCode: code,
+          deliveryWorkerStatus:
+            retryError instanceof DeliveryWorkerError ? retryError.statusCode : undefined,
+          resolverStatus,
+          resolverError,
           firstError: firstError instanceof Error ? firstError.message : String(firstError),
           retryError: retryError instanceof Error ? retryError.message : String(retryError),
         });
         throw new ModelFileScanSubmissionError(
-          `Pre-flight resolution failed for file ${fileId}; treating as not-found`,
-          'not-found'
+          code === 'not-found'
+            ? `Pre-flight resolution reported the file absent for file ${fileId}`
+            : `Pre-flight resolution failed for file ${fileId} without proving absence; treating as transient`,
+          code
         );
       }
     }
   }
 
-  const air = stringifyAIR({
-    baseModel,
-    type: modelType,
-    modelId,
-    id: modelVersionId,
-    fileId,
-  });
+  const air = modelFileScanAir({ fileId, modelVersionId, modelId, modelType, baseModel });
 
   const metadata = { fileId, modelVersionId };
   const callbackUrl = `${env.NEXTAUTH_URL}/api/webhooks/model-file-scan-result?token=${env.WEBHOOK_TOKEN}`;
 
   const { data, error, response } = await submitWorkflow({
     client: internalOrchestratorClient,
+    signal: AbortSignal.timeout(MODEL_FILE_SCAN_SUBMIT_TIMEOUT_MS),
     body: {
       metadata,
       currencies: [],
@@ -765,7 +931,9 @@ export async function createModelFileScanRequest({
       `Failed to submit model file scan workflow for file ${fileId}` +
         (response?.status ? ` (status ${response.status})` : ''),
       'transient',
-      response?.status
+      response?.status,
+      undefined,
+      getRetryAfterSeconds(response)
     );
   }
 

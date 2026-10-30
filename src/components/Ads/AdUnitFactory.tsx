@@ -1,11 +1,11 @@
 import { SupportUs } from '~/components/Ads/SupportUs';
 import { Text } from '@mantine/core';
 import React, { forwardRef, useCallback, useEffect, useRef, useState } from 'react';
-import { useAdsContext } from '~/components/Ads/AdsProvider';
+import { useAdPageNsfwLevel, useAdsContext } from '~/components/Ads/AdsProvider';
 import clsx from 'clsx';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import { AdUnitRenderable } from '~/components/Ads/AdUnitRenderable';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useInView } from '~/components/IntersectionObserver/IntersectionObserverProvider';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useAdUnitImpressionTracked } from '~/components/Ads/useAdUnitImpressionTracked';
@@ -16,7 +16,6 @@ import {
 } from '~/components/ContainerProvider/ContainerProvider';
 import { useInView as useInViewStandalone } from 'react-intersection-observer';
 import { env } from '~/env/client';
-import { v4 as uuidv4 } from 'uuid';
 import { isDev } from '~/env/other';
 import { usePausableInterval } from '~/utils/timer.utils';
 import { getMatchingPathname } from '~/shared/constants/pathname.constants';
@@ -42,7 +41,7 @@ function AdUnitContent({
   // Generate the id at first render (not in an effect) so the placement div is in
   // the DOM before the auction is queued — otherwise a late-mounting slot can push
   // startAuction before its <div id> exists and the slot never fills.
-  const [id] = useState(() => initialId ?? uuidv4());
+  const [id] = useState(() => initialId ?? crypto.randomUUID());
 
   useEffect(() => {
     if (!adUnitDictionary[adUnit]) adUnitDictionary[adUnit] = id;
@@ -122,7 +121,13 @@ function AdWrapper({
   const content = (
     <>
       {useDirectAds ? (
-        <CivitaiAdUnit adUnit={adUnit} id={id} />
+        adSizes !== undefined && (
+          <CivitaiAdUnit
+            adUnit={adUnit}
+            id={id}
+            maxHeight={getDirectAdMaxHeight(adSizes, maxHeight)}
+          />
+        )
       ) : inView && ready && adSizes !== undefined ? (
         <AdUnitContent
           // key={key}
@@ -229,6 +234,12 @@ function getMaxHeight(sizes: AdSize[], args?: { maxHeight?: number; maxWidth?: n
   const filteredSizes = maxWidth ? sizes.filter(([w]) => w <= maxWidth) : sizes;
   const height = Math.max(...filteredSizes.map(([_, height]) => Math.max(height)));
   return maxHeight ? Math.min(maxHeight, height) : height;
+}
+
+// [1, 1] and [8, 1] are Snigel fluid markers, not creative sizes the direct ad server can match.
+function getDirectAdMaxHeight(sizes: AdSize[] | null, maxHeight?: number) {
+  const heights = (sizes ?? []).map(([, h]) => h).filter((h) => h > 1);
+  return heights.length ? Math.max(...heights) : maxHeight;
 }
 
 function useAdSizes({
@@ -354,13 +365,16 @@ const AdunitSizesStyles = forwardRef<
 AdunitSizesStyles.displayName = 'AdunitSizesStyles';
 
 const civitaiAdvertisingUrl = isDev ? 'http://localhost:5173' : 'https://advertising.civitai.com';
-function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
+function CivitaiAdUnit(props: { adUnit: string; id?: string; maxHeight?: number }) {
   const [id, setId] = useState(props.id);
   const [imgLoaded, setImgLoaded] = useState(false);
   const { nodeRef } = useContainerContext();
   const containerWidth = useContainerWidth();
   const node = useScrollAreaRef();
-  const browsingLevel = useBrowsingLevelDebounced();
+  // Two facts for the ad server, which combines them: what the viewer allows (domain cap
+  // included) and the rating of the content on the page, when the page has one
+  const browsingLevel = useViewerBrowsingLevelDebounced();
+  const pageNsfwLevel = useAdPageNsfwLevel();
   const fetchingRef = React.useRef(false);
   const impressionRef = React.useRef(false);
   const [data, setData] = useState<{
@@ -381,7 +395,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
   containerWidthRef.current = containerWidth ?? 0;
 
   const handleServe = useCallback(() => {
-    const id = props.id ?? uuidv4();
+    const id = props.id ?? crypto.randomUUID();
     if (!props.id) setId(id);
     if (fetchingRef.current || document.visibilityState !== 'visible') return;
     if (!containerWidthRef.current) return;
@@ -390,6 +404,8 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
     const searchParams = new URLSearchParams(
       `placement=${id}&name=${type}&container=${containerWidthRef.current}&browsingLevel=${browsingLevel}`
     );
+    if (pageNsfwLevel) searchParams.append('nsfwLevel', String(pageNsfwLevel));
+    if (props.maxHeight) searchParams.append('maxHeight', String(props.maxHeight));
     if (traceRef.current) searchParams.append('trace', traceRef.current);
     fetch(`${civitaiAdvertisingUrl}/api/v1/serve?${searchParams.toString()}`, {
       credentials: 'include',
@@ -409,7 +425,7 @@ function CivitaiAdUnit(props: { adUnit: string; id?: string }) {
         fetchingRef.current = false;
         impressionRef.current = false;
       });
-  }, [browsingLevel, props.adUnit, props.id]);
+  }, [browsingLevel, pageNsfwLevel, props.adUnit, props.id, props.maxHeight]);
 
   const interval = usePausableInterval(handleServe, 30 * 1000);
 

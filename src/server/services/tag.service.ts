@@ -14,6 +14,7 @@ import {
   listModelTagVotes,
 } from '@civitai/db-queries/tag';
 import { CacheTTL, constants } from '~/server/common/constants';
+import { publicBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
 import { NsfwLevel, TagSort } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { kyselyRead } from '~/server/db/kyselyDb';
@@ -26,13 +27,16 @@ import { redis, REDIS_KEYS } from '~/server/redis/client';
 import type {
   AdjustTagsSchema,
   DeleteTagsSchema,
-  GetTagsForReviewInput,
   GetTagsInput,
   GetVotableTagsSchema,
   GetVotableTagsSchema2,
-  ModerateTagsSchema,
 } from '~/server/schema/tag.schema';
-import { getCategoryTags, getReplacedTagIds, getSystemTags } from '~/server/services/system-cache';
+import {
+  clearFeedTagBarTagsCache,
+  getCategoryTags,
+  getReplacedTagIds,
+  getSystemTags,
+} from '~/server/services/system-cache';
 import { upsertTagsOnImageNew } from '~/server/services/tagsOnImageNew.service';
 import {
   HiddenImages,
@@ -44,6 +48,7 @@ import { Flags } from '~/shared/utils/flags';
 import { TagSource, TagTarget, TagType } from '~/shared/utils/prisma/enums';
 import { bustCacheTag, fetchThroughCache, queryCache } from '~/server/utils/cache-helpers';
 import { removeEmpty } from '~/utils/object-helpers';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 
 const alwaysIncludeTags = [...styleTags, ...subjectTags];
 
@@ -56,7 +61,13 @@ export const GET_TAGS_CACHE_TAG = 'getTags';
 const getTagsListingCache = queryCache(dbRead, 'getTags', 'v1');
 export const bustGetTagsCache = () => bustCacheTag(GET_TAGS_CACHE_TAG);
 
-type TagWithModelCount = { id: number; name: string; unfeatured: boolean; count: number };
+type TagWithModelCount = {
+  id: number;
+  name: string;
+  displayName: string | null;
+  unfeatured: boolean;
+  count: number;
+};
 
 // Cache key for `getTagWithModelCount`. `Tag.name` is `citext` (case-insensitive), so
 // `WHERE "name" = $1` matches case-insensitively in the DB. We normalize the key to
@@ -77,11 +88,12 @@ const queryTagWithModelCount = ({ name }: { name: string }) =>
   dbRead.$queryRaw<[TagWithModelCount]>`
     SELECT "id",
            "name",
+           "displayName",
            "unfeatured",
            0 as count
     FROM "Tag"
     WHERE "name" = ${name}
-    GROUP BY "id", "name"
+    GROUP BY "id", "name", "displayName"
     LIMIT 1 OFFSET 0;
   `;
 
@@ -142,6 +154,12 @@ const bustTagWithModelCountCache = async (name: string) => {
 
 export type TagPageSeoData = {
   count: number;
+  /** Set only for `safeOnly` reads: whether the tag has any published model at all. */
+  hasModels?: boolean;
+  /** Set only for red reads: how many of `count` green cannot show. */
+  matureCount?: number;
+  /** `Tag.nsfwTerm`: the term itself is adult, whatever its models are rated. */
+  nsfwTerm?: boolean;
   models: {
     id: number;
     name: string;
@@ -151,22 +169,66 @@ export type TagPageSeoData = {
   }[];
 };
 
-export async function getTagPageSeoData({ name }: { name: string }): Promise<TagPageSeoData> {
-  const cacheKey = `${
-    REDIS_KEYS.CACHES.TAG_PAGE_SEO
+// Mature-only tags are canonical on red; on green their grid is empty. `hasModels` is absent on
+// red reads, so this can only ever fire for a green read.
+export const shouldDeIndexMatureOnlyTag = (seoData: TagPageSeoData) =>
+  seoData.hasModels === true && seoData.count === 0;
+
+// Green does not publish a page for an adult TERM, however its models happen to be rated — the
+// content rules cannot see this, because a term like `blowjob` can carry a handful of PG models.
+export const shouldDeIndexAdultTermOnGreen = (seoData: TagPageSeoData) => seoData.nsfwTerm === true;
+
+// Red de-indexes a tag green fully covers, so the two domains don't compete for it. `=== 0` is
+// load-bearing: `matureCount` is absent on green reads, where `!matureCount` would fire.
+export const shouldDeIndexSafeOnlyTag = (seoData: TagPageSeoData) =>
+  seoData.matureCount === 0 && seoData.count > 0;
+
+// A mixed tag is publishable on both domains, so the majority side takes the canonical; a tie stays
+// red. An adult term never hands over: green does not want to rank for the word at all.
+export const shouldPointTagCanonicalAtGreen = (seoData: TagPageSeoData) =>
+  !seoData.nsfwTerm &&
+  seoData.matureCount !== undefined &&
+  seoData.count > 0 &&
+  seoData.count - seoData.matureCount > seoData.count / 2;
+
+/**
+ * `safeOnly` restricts the count and the listed models to what green can show, so the meta
+ * description and CollectionPage schema never advertise mature models there. The two variants
+ * are cached separately.
+ */
+export async function getTagPageSeoData({
+  name,
+  safeOnly = false,
+}: {
+  name: string;
+  safeOnly?: boolean;
+}): Promise<TagPageSeoData> {
+  // Bump on every cached-shape change: entries live an hour, and a v1 red entry has no `matureCount`.
+  // The variant segment precedes the name because the name is raw user text: with the name first,
+  // a tag literally called "anime:safe" would answer from — and poison — green's entry for "anime".
+  const cacheKey = `${REDIS_KEYS.CACHES.TAG_PAGE_SEO}:v3:${
+    safeOnly ? 'safe' : 'all'
   }:${name.toLowerCase()}` as `${typeof REDIS_KEYS.CACHES.TAG_PAGE_SEO}:${string}`;
+
+  // Keep in step with the green rule in sitemap-models.xml, or the two disagree about indexing.
+  const safeFilter = safeOnly
+    ? Prisma.sql`AND m."nsfw" = false AND (m."nsfwLevel" & ${publicBrowsingLevelsFlag}) != 0`
+    : Prisma.empty;
 
   return fetchThroughCache(
     cacheKey,
     async () => {
       const tag = await dbRead.tag.findFirst({
         where: { name },
-        select: { id: true },
+        select: { id: true, nsfwTerm: true },
       });
 
-      if (!tag) return { count: 0, models: [] };
+      if (!tag)
+        return safeOnly
+          ? { count: 0, hasModels: false, models: [] }
+          : { count: 0, matureCount: 0, models: [] };
 
-      const [countResult, models] = await Promise.all([
+      const [countResult, models, anyResult, matureResult] = await Promise.all([
         dbRead.$queryRaw<[{ count: bigint }]>`
           SELECT COUNT(*) as count
           FROM "TagsOnModels" tom
@@ -174,6 +236,7 @@ export async function getTagPageSeoData({ name }: { name: string }): Promise<Tag
           WHERE tom."tagId" = ${tag.id}
             AND m."status" = 'Published'::"ModelStatus"
             AND m."availability" != 'Unsearchable'::"Availability"
+            ${safeFilter}
         `,
         dbRead.$queryRaw<
           {
@@ -199,13 +262,41 @@ export async function getTagPageSeoData({ name }: { name: string }): Promise<Tag
           WHERE tom."tagId" = ${tag.id}
             AND m."status" = 'Published'::"ModelStatus"
             AND m."availability" != 'Unsearchable'::"Availability"
+            ${safeFilter}
           ORDER BY COALESCE(mm."downloadCount", 0) DESC
           LIMIT 20
         `,
+        // Tells "no models at all" apart from "only mature models" once the count is filtered.
+        safeOnly
+          ? dbRead.$queryRaw<[{ exists: boolean }]>`
+              SELECT EXISTS (
+                SELECT 1
+                FROM "TagsOnModels" tom
+                JOIN "Model" m ON m."id" = tom."modelId"
+                WHERE tom."tagId" = ${tag.id}
+                  AND m."status" = 'Published'::"ModelStatus"
+                  AND m."availability" != 'Unsearchable'::"Availability"
+              ) AS "exists"
+            `
+          : undefined,
+        safeOnly
+          ? undefined
+          : dbRead.$queryRaw<[{ count: bigint }]>`
+              SELECT COUNT(*) as count
+              FROM "TagsOnModels" tom
+              JOIN "Model" m ON m."id" = tom."modelId"
+              WHERE tom."tagId" = ${tag.id}
+                AND m."status" = 'Published'::"ModelStatus"
+                AND m."availability" != 'Unsearchable'::"Availability"
+                AND (m."nsfw" = true OR (m."nsfwLevel" & ${publicBrowsingLevelsFlag}) = 0)
+            `,
       ]);
 
       return {
         count: Number(countResult[0]?.count ?? 0),
+        nsfwTerm: tag.nsfwTerm,
+        ...(anyResult ? { hasModels: anyResult[0]?.exists ?? false } : {}),
+        ...(matureResult ? { matureCount: Number(matureResult[0]?.count ?? 0) } : {}),
         models: models.map((m) => ({
           id: m.id,
           name: m.name,
@@ -220,6 +311,24 @@ export async function getTagPageSeoData({ name }: { name: string }): Promise<Tag
     },
     { ttl: CacheTTL.day }
   );
+}
+
+// The edge-cache handle for `tag.getFeedTagBar`. Without it the chip list — including the
+// nsfwLevel the client gates chips on — is unpurgeable for an hour.
+export const FEED_TAG_BAR_EDGE_TAG = 'feed-tag-bar';
+
+/**
+ * Drops the chip list everywhere it is held: the per-pod memo, the redis blob, and the
+ * edge response. Called alongside `bustGetTagsCache` on every taxonomy change, because a
+ * `TagsOnTags` edge is what moves a chip's effective nsfwLevel.
+ */
+export async function bustFeedTagBarTagsCache() {
+  await clearFeedTagBarTagsCache();
+
+  // Deferred, not a top-level import: `~/server/cloudflare/client` pulls the `cloudflare`
+  // SDK at module load, and `tag.service` is imported widely. Only the bust path needs it.
+  const { purgeCache } = await import('~/server/cloudflare/client');
+  await purgeCache({ tags: [FEED_TAG_BAR_EDGE_TAG] });
 }
 
 export const getTag = ({ id }: { id: number }) => {
@@ -792,6 +901,7 @@ export const addTags = async ({ tags, entityIds, entityType, relationship }: Adj
     // Adding a TagsOnTags edge changes category membership + the nsfwLevel rollup
     // that the cached `getTags` listings compute — bust the listing cache.
     await bustGetTagsCache();
+    await bustFeedTagBarTagsCache();
   }
 };
 
@@ -813,6 +923,8 @@ export const findOrCreateTagsByName = async (tags: string[]) => {
     .filter(([, id]) => id === undefined)
     .map((t) => t[0]);
   if (newTags.length > 0) {
+    // Only names no Tag row has: attaching an existing tag is not new text.
+    await throwOnBlockedUserContent(newTags, { surface: 'post' });
     // prisma...my dude. you really can't return the created rows?
     await dbWrite.tag.createMany({
       data: newTags.map((x) => ({
@@ -881,37 +993,7 @@ export const disableTags = async ({ tags, entityIds, entityType }: AdjustTagsSch
     // Removing a TagsOnTags edge changes category membership + the nsfwLevel rollup
     // that the cached `getTags` listings compute — bust the listing cache.
     await bustGetTagsCache();
-  }
-};
-
-export const moderateTags = async ({ entityIds, entityType, disable }: ModerateTagsSchema) => {
-  if (entityType === 'model') {
-    // We aren't doing user model tagging quite yet...
-    throw new Error('Not implemented');
-    // await dbWrite.$executeRawUnsafe(`
-    //   UPDATE "TagsOnModels"
-    //   SET "disabled" = ${disable}, "needsReview" = false
-    //   WHERE "needsReview" = true AND "modelId" IN (${entityIds.join(', ')})
-    // `);
-  } else if (entityType === 'image') {
-    const toUpdate = await dbWrite.$queryRawUnsafe<{ imageId: number; tagId: number }[]>(`
-      SELECT "imageId", "tagId"
-      FROM "TagsOnImageDetails"
-      WHERE "needsReview" = true
-        AND "imageId" IN (${entityIds.join(', ')});
-    `);
-
-    await upsertTagsOnImageNew(
-      toUpdate.map(({ imageId, tagId }) => ({
-        imageId,
-        tagId,
-        automated: false,
-        disabled: disable,
-        needsReview: false,
-      }))
-    );
-
-    await imageTagsCache.bust(entityIds);
+    await bustFeedTagBarTagsCache();
   }
 };
 
@@ -979,6 +1061,7 @@ export const deleteTags = async ({ tags }: DeleteTagsSchema) => {
   // Deleting a Tag removes it from the cached `getTags` listings (and cascades its
   // TagsOnTags edges, changing category membership / nsfwLevel rollup) — bust.
   await bustGetTagsCache();
+  await bustFeedTagBarTagsCache();
 };
 
 // unused
@@ -1001,30 +1084,3 @@ export const getTypeCategories = async ({
 
   return categories;
 };
-
-export async function getTagsForReview({ limit, page, reviewType }: GetTagsForReviewInput) {
-  const pagination = getPagination(limit, page);
-  const fromClause = Prisma.sql`
-    FROM "ImageTagForReview" it
-      JOIN "Tag" t ON it."tagId" = t.id
-      JOIN "Image" i ON it."imageId" = i.id
-    WHERE i."needsReview" = ${reviewType}
-  `;
-
-  const [tags, { count }] = await dbRead.$transaction([
-    dbRead.$queryRaw<{ id: number; name: string }[]>`
-      SELECT DISTINCT ON (t.name)
-        t.id, t.name
-      ${fromClause}
-      ORDER BY t.name
-      LIMIT ${pagination.take} OFFSET ${pagination.skip}
-    `,
-    dbRead.$queryRaw<{ count: number }>`
-      SELECT
-        COUNT(DISTINCT t.id) AS count
-      ${fromClause}
-    `,
-  ]);
-
-  return getPagingData({ items: tags, count }, pagination.take, page);
-}

@@ -30,7 +30,13 @@ export const transactionMetadataSchema = z.discriminatedUnion('type', [buzzPurch
 
 export type TransactionCreateInput = z.infer<typeof transactionCreateSchema>;
 export const transactionCreateSchema = z.object({
-  unitAmount: z.number().min(constants.buzz.minChargeAmount).max(constants.buzz.maxChargeAmount),
+  // Whole minor units, same rule as the Stripe and Coinbase routes — the purchase form's
+  // Buzz-to-cents division is the shared source of a fraction. See `coinbase.schema.ts`.
+  unitAmount: z
+    .number()
+    .int('The transaction amount must be a whole number of cents')
+    .min(constants.buzz.minChargeAmount)
+    .max(constants.buzz.maxChargeAmount),
   currency: z
     .string()
     .default('USD')
@@ -49,23 +55,4 @@ export const transactionWithSubscriptionCreateSchema = transactionCreateSchema.o
 export type UpdateSubscriptionInputSchema = z.infer<typeof updateSubscriptionInputSchema>;
 export const updateSubscriptionInputSchema = z.object({
   priceId: z.string(),
-});
-
-export const AdjustmentAction = [
-  'credit',
-  'credit_reverse',
-  'refund',
-  'chargeback',
-  'chargeback_reverse',
-  'chargeback_warning',
-] as const;
-
-export type GetPaddleAdjustmentsSchema = z.infer<typeof getPaddleAdjustmentsSchema>;
-export const getPaddleAdjustmentsSchema = z.object({
-  limit: z.number().optional().default(50),
-  cursor: z.string().optional(),
-  customerId: z.array(z.string()).optional(),
-  subscriptionId: z.array(z.string()).optional(),
-  transactionId: z.array(z.string()).optional(),
-  action: z.enum(AdjustmentAction).optional(),
 });

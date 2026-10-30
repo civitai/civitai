@@ -1,21 +1,53 @@
+import { heldLegacyReplyBelowSql } from '~/server/services/comment-thread-hold';
 import { Prisma } from '@prisma/client';
 import { TRPCError } from '@trpc/server';
 import type { SessionUser } from '~/types/session';
-import { v4 as uuid } from 'uuid';
+import { isEqual, omit } from 'lodash-es';
 import { NotificationCategory } from '~/server/common/enums';
 import { reportAcceptedReward } from '~/server/rewards';
 import { createNotification } from '~/server/services/notification.service';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  accountHoldSql,
+  holdMarkerViewExists,
+  logHoldRetained,
+} from '~/server/services/legal-hold.service';
+import {
+  afterCommentsV2Deleted,
+  deleteCommentsV2UnlessHeld,
+} from '~/server/services/commentsv2.service';
 import { recordStickerUsage, spendStickerUses } from '~/server/services/sticker.service';
 
-import { ReviewFilter, ReviewSort } from '~/server/common/enums';
+import { ReviewFilter } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { getDbWithoutLag, preventReplicationLag } from '~/server/db/db-lag-helpers';
+import {
+  getDbWithoutLag,
+  getKyselyWithoutLag,
+  preventReplicationLag,
+} from '~/server/db/db-lag-helpers';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  countTopLevelCommentsByHiddenViaKysely,
+  countTopLevelCommentsByHiddenViaPrisma,
+  countTopLevelCommentsViaKysely,
+  countTopLevelCommentsViaPrisma,
+  findPinnedCommentsViaPrisma,
+  findTopLevelCommentsViaPrisma,
+  listPinnedCommentsViaKysely,
+  listTopLevelCommentsViaKysely,
+  type CommentCountsByHidden,
+  type KyselyCommentListSort,
+  type PinnedScope,
+  type TopLevelCommentsBaseFilter,
+  type TopLevelCommentsFilter,
+} from '~/server/services/hot-reads-4.reads';
 import { modelMetrics, userMetrics } from '~/server/metrics';
 import type { GetByIdInput } from '~/server/schema/base.schema';
 import type {
   CommentUpsertInput,
   GetAllCommentsSchema,
   GetCommentCountByModelInput,
+  GetCommentCountsByModelInput,
   GetCommentReactionsSchema,
 } from '~/server/schema/comment.schema';
 import { getAllCommentsSelect } from '~/server/selectors/comment.selector';
@@ -29,18 +61,72 @@ import { throwNotFoundError } from '~/server/utils/errorHandling';
 import { boundExcludedUserIds } from '~/server/utils/excluded-user-ids';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 import type { ReportReason, ReportStatus, ReviewReactions } from '~/shared/utils/prisma/enums';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
+
+type ModelCommentsFilterInput = Pick<GetAllCommentsSchema, 'modelId' | 'userId' | 'hidden'>;
+
+type ViewerExclusionLists = {
+  hiddenUsers: number[];
+  blockedByUsers: number[];
+  blockedUsers: number[];
+};
+
+async function getViewerExclusionLists(
+  user: SessionUser | undefined
+): Promise<ViewerExclusionLists> {
+  const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
+  return { hiddenUsers, blockedByUsers, blockedUsers };
+}
+
+/**
+ * The filter shared by the comment list, the pinned list and the visible count so they can't drift.
+ * Both the Prisma where (`topLevelCommentsWhere`) and the Kysely statements behind
+ * `kysely-hot-reads-4` are pure functions of it (hot-reads-4.reads.ts).
+ * Pass `lists` when building more than one filter for the same viewer, so the lists are read once.
+ */
+async function getTopLevelCommentsFilter(
+  { modelId, userId, hidden = false }: ModelCommentsFilterInput,
+  user: SessionUser | undefined,
+  { ownerSeesBlockers }: { ownerSeesBlockers: boolean },
+  lists?: ViewerExclusionLists
+): Promise<TopLevelCommentsFilter> {
+  const isMod = user?.isModerator ?? false;
+
+  const { hiddenUsers, blockedByUsers, blockedUsers } =
+    lists ?? (await getViewerExclusionLists(user));
+  // If the viewer owns the model, don't hide a blocker's comments from them (the owner must
+  // still see + report engagement on their own content) — drop blockedByUsers only then; keep
+  // the anti-harassment exclusion for every non-owner viewer. Skip the lookup unless the
+  // viewer actually has a blocked-by list, since that's the only case it can change anything.
+  let isContentOwner = false;
+  if (ownerSeesBlockers && user?.id && blockedByUsers.length) {
+    const model = await dbRead.model.findUnique({
+      where: { id: modelId },
+      select: { userId: true },
+    });
+    isContentOwner = model?.userId === user.id;
+  }
+  // De-dupe + cap the exclusion list so the `userId NOT IN (...)` negation stays under the
+  // Postgres bind-parameter limit (a heavily-blocked viewer's combined list can otherwise
+  // overflow → Prisma P2029 → 500). Ordering is a load-bearing safety priority — see
+  // boundExcludedUserIds.
+  const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers, {
+    isContentOwner,
+  });
+
+  return {
+    modelId,
+    userId: userId ? userId : undefined,
+    excludedUserIds,
+    excludeTosViolations: !isMod,
+    hidden,
+  };
+}
 
 export const getComments = async <TSelect extends Prisma.CommentSelect>({
-  input: {
-    limit = DEFAULT_PAGE_SIZE,
-    page,
-    cursor,
-    modelId,
-    userId,
-    filterBy,
-    sort,
-    hidden = false,
-  },
+  input: { limit = DEFAULT_PAGE_SIZE, page, cursor, filterBy, sort, ...filter },
   select,
   user,
 }: {
@@ -49,67 +135,17 @@ export const getComments = async <TSelect extends Prisma.CommentSelect>({
   user?: SessionUser;
 }) => {
   const skip = page ? (page - 1) * limit : undefined;
-  const isMod = user?.isModerator ?? false;
-
-  const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
-  const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
-  const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
-  // If the viewer owns the model, don't hide a blocker's comments from them (the owner must
-  // still see + report engagement on their own content) — drop blockedByUsers only then; keep
-  // the anti-harassment exclusion for every non-owner viewer. Skip the lookup unless the
-  // viewer actually has a blocked-by list, since that's the only case it can change anything.
-  let isContentOwner = false;
-  if (user?.id && blockedByUsers.length) {
-    const model = await dbRead.model.findUnique({
-      where: { id: modelId },
-      select: { userId: true },
-    });
-    isContentOwner = model?.userId === user.id;
-  }
-  // De-dupe + cap the exclusion list so the `userId: { notIn: [...] }` negation below stays
-  // under the Postgres bind-parameter limit (a heavily-blocked viewer's combined list can
-  // otherwise overflow → Prisma P2029 → 500). Ordering is a load-bearing safety priority —
-  // see boundExcludedUserIds.
-  const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers, {
-    isContentOwner,
-  });
 
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  const db = await getDbWithoutLag('commentModel', modelId);
-  const comments = await db.comment.findMany({
-    take: limit,
-    skip,
-    cursor: cursor ? { id: cursor } : undefined,
-    where: {
-      modelId,
-      userId: userId ? userId : excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-      parentId: { equals: null },
-      tosViolation: !isMod ? false : undefined,
-      hidden,
-      pinnedAt: null,
-      // OR: [
-      //   {
-      //     userId: { not: user?.id },
-      //     nsfw: canViewNsfw ? (filterBy?.includes(ReviewFilter.NSFW) ? true : undefined) : false,
-      //   },
-      //   { userId: user?.id },
-      // ],
-    },
-    orderBy: {
-      createdAt:
-        sort === ReviewSort.Oldest ? 'asc' : sort === ReviewSort.Newest ? 'desc' : undefined,
-      reactions: sort === ReviewSort.MostLiked ? { _count: 'desc' } : undefined,
-      comments: sort === ReviewSort.MostComments ? { _count: 'desc' } : undefined,
-    },
-    select,
-  });
+  const topLevel = await getTopLevelCommentsFilter(filter, user, { ownerSeesBlockers: true });
 
-  return comments;
+  const db = await getDbWithoutLag('commentModel', filter.modelId);
+  return findTopLevelCommentsViaPrisma(db, topLevel, { limit, skip, cursor, sort }, select);
 };
 
 export const getPinnedComments = async <TSelect extends Prisma.CommentSelect>({
-  input: { modelId, userId, filterBy, hidden = false },
+  input: { filterBy, ...filter },
   select,
   user,
 }: {
@@ -117,27 +153,137 @@ export const getPinnedComments = async <TSelect extends Prisma.CommentSelect>({
   select: TSelect;
   user?: SessionUser;
 }) => {
-  const isMod = user?.isModerator ?? false;
   if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
 
-  const hiddenUsers = (await HiddenUsers.getCached({ userId: user?.id })).map((x) => x.id);
-  const blockedByUsers = (await BlockedByUsers.getCached({ userId: user?.id })).map((x) => x.id);
-  const blockedUsers = (await BlockedUsers.getCached({ userId: user?.id })).map((x) => x.id);
-  const excludedUserIds = boundExcludedUserIds(hiddenUsers, blockedByUsers, blockedUsers);
+  const topLevel = await getTopLevelCommentsFilter(filter, user, { ownerSeesBlockers: false });
 
-  const db = await getDbWithoutLag('commentModel', modelId);
-  return db.comment.findMany({
-    where: {
-      modelId,
-      userId: userId ? userId : excludedUserIds.length ? { notIn: excludedUserIds } : undefined,
-      parentId: { equals: null },
-      tosViolation: !isMod ? false : undefined,
-      hidden,
-      pinnedAt: { not: null },
-    },
-    orderBy: { pinnedAt: 'desc' },
-    select,
-  });
+  const db = await getDbWithoutLag('commentModel', filter.modelId);
+  return findPinnedCommentsViaPrisma(db, topLevel, select);
+};
+
+/**
+ * `getComments` with the `comment.getAll` select, through Kysely (`kysely-hot-reads-4` on), for a
+ * page `isKyselyCommentListPage` accepts: the first page, newest or oldest first. Same filter, same
+ * lag decision (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
+ */
+export const getCommentsViaKysely = async ({
+  input: { limit = DEFAULT_PAGE_SIZE, page, filterBy, sort, ...filter },
+  user,
+}: {
+  input: GetAllCommentsSchema & { cursor?: undefined; sort: KyselyCommentListSort };
+  user?: SessionUser;
+}) => {
+  const skip = page ? (page - 1) * limit : undefined;
+
+  if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
+
+  const topLevel = await getTopLevelCommentsFilter(filter, user, { ownerSeesBlockers: true });
+
+  const db = await getKyselyWithoutLag('commentModel', filter.modelId);
+  return listTopLevelCommentsViaKysely(db, topLevel, { limit, skip, sort });
+};
+
+/** `getPinnedComments` with the `comment.getAll` select, through Kysely (`kysely-hot-reads-4` on). */
+export const getPinnedCommentsViaKysely = async ({
+  input: { filterBy, ...filter },
+  user,
+}: {
+  input: GetAllCommentsSchema;
+  user?: SessionUser;
+}) => {
+  if (filterBy?.includes(ReviewFilter.IncludesImages)) return [];
+
+  const topLevel = await getTopLevelCommentsFilter(filter, user, { ownerSeesBlockers: false });
+
+  const db = await getKyselyWithoutLag('commentModel', filter.modelId);
+  return listPinnedCommentsViaKysely(db, topLevel);
+};
+
+/** How many top-level comments `getComments` + `getPinnedComments` can return to this viewer. */
+export const getVisibleCommentCount = async ({
+  input,
+  user,
+}: {
+  input: GetCommentCountByModelInput;
+  user?: SessionUser;
+}) => {
+  // `kysely-hot-reads-4` on: the same counts through Kysely, on the client the same lag decision
+  // picks (`getKyselyWithoutLag` is `getDbWithoutLag`'s twin).
+  let count: (filter: TopLevelCommentsFilter, pinned: PinnedScope) => Promise<number>;
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_4)) {
+    const db = await getKyselyWithoutLag('commentModel', input.modelId);
+    count = (filter, pinned) => countTopLevelCommentsViaKysely(db, filter, pinned);
+  } else {
+    const db = await getDbWithoutLag('commentModel', input.modelId);
+    count = (filter, pinned) => countTopLevelCommentsViaPrisma(db, filter, pinned);
+  }
+  const lists = await getViewerExclusionLists(user);
+  const [unpinnedFilter, pinnedFilter] = await Promise.all([
+    getTopLevelCommentsFilter(input, user, { ownerSeesBlockers: true }, lists),
+    getTopLevelCommentsFilter(input, user, { ownerSeesBlockers: false }, lists),
+  ]);
+  // The two filters differ only when the viewer owns the model AND has a blocked-by list (the
+  // unpinned list then lets the owner see blockers' comments; the pinned list does not). In
+  // every other case they are identical, and `pinnedAt IS NULL` / `IS NOT NULL` partition the
+  // rows, so one COUNT over the shared filter equals the sum of the two. Don't fold the
+  // differing case into a single OR: it would bind both `notIn` lists in one statement, and
+  // each is capped just under the bind-parameter limit on its own (boundExcludedUserIds).
+  if (isEqual(unpinnedFilter, pinnedFilter)) return count(unpinnedFilter, 'any');
+  const [unpinned, pinned] = await Promise.all([
+    count(unpinnedFilter, 'unpinned'),
+    count(pinnedFilter, 'pinned'),
+  ]);
+  return unpinned + pinned;
+};
+
+/**
+ * `getVisibleCommentCount` for the plain view (`visible`) and the hidden view (`hidden`) at once,
+ * for `comment.getVisibleCountsByModel`: each equals the single count with `hidden: false` /
+ * `hidden: true` for the same viewer, from ONE statement where the two calls issued two (two where
+ * they issued four, for a model owner with a blocked-by list). With `includeVisible: false` (the
+ * client already holds every visible comment) only the hidden count runs, and `visible` is `null`.
+ */
+export const getVisibleCommentCounts = async ({
+  input: { modelId, includeVisible },
+  user,
+}: {
+  input: GetCommentCountsByModelInput;
+  user?: SessionUser;
+}): Promise<{ visible: number | null; hidden: number }> => {
+  if (!includeVisible)
+    return {
+      visible: null,
+      hidden: await getVisibleCommentCount({ input: { modelId, hidden: true }, user }),
+    };
+
+  // `kysely-hot-reads-4` on: through Kysely, on the client the same lag decision picks.
+  let count: (
+    filter: TopLevelCommentsBaseFilter,
+    pinned: PinnedScope
+  ) => Promise<CommentCountsByHidden>;
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_4)) {
+    const db = await getKyselyWithoutLag('commentModel', modelId);
+    count = (filter, pinned) => countTopLevelCommentsByHiddenViaKysely(db, filter, pinned);
+  } else {
+    const db = await getDbWithoutLag('commentModel', modelId);
+    count = (filter, pinned) => countTopLevelCommentsByHiddenViaPrisma(db, filter, pinned);
+  }
+  const lists = await getViewerExclusionLists(user);
+  // `hidden` is the only part of the filter the two views differ by, so the filters below are the
+  // single counts' filters without it, and the equal/differing split is the one each single count
+  // makes.
+  const [unpinnedFilter, pinnedFilter] = (
+    await Promise.all([
+      getTopLevelCommentsFilter({ modelId }, user, { ownerSeesBlockers: true }, lists),
+      getTopLevelCommentsFilter({ modelId }, user, { ownerSeesBlockers: false }, lists),
+    ])
+  ).map((filter) => omit(filter, 'hidden'));
+  if (isEqual(unpinnedFilter, pinnedFilter)) return count(unpinnedFilter, 'any');
+  const [unpinned, pinned] = await Promise.all([
+    count(unpinnedFilter, 'unpinned'),
+    count(pinnedFilter, 'pinned'),
+  ]);
+  return { visible: unpinned.visible + pinned.visible, hidden: unpinned.hidden + pinned.hidden };
 };
 
 export const getCommentById = <TSelect extends Prisma.CommentSelect>({
@@ -233,6 +379,7 @@ export const createOrUpdateComment = async ({
     entityId: result.id,
   });
   await preventReplicationLag('commentModel', input.modelId);
+  queueScamScan({ entityType: 'Comment', entityId: result.id });
   return result;
 };
 
@@ -289,21 +436,29 @@ export const togglePinComment = async ({
   await preventReplicationLag('commentModel', comment.modelId);
 };
 
-export const deleteCommentById = async ({ id }: GetByIdInput) => {
+export const deleteCommentById = async ({
+  id,
+  byAuthor = false,
+}: GetByIdInput & { byAuthor?: boolean }) => {
   const { modelId, model } =
     (await dbWrite.comment.findUnique({
       where: { id },
       select: { modelId: true, model: { select: { userId: true } } },
     })) ?? {};
 
-  const deleted = await dbWrite.comment.delete({ where: { id } });
-  if (!deleted) throw throwNotFoundError(`No comment with id ${id}`);
+  // Its replies go with it, so one kept for a held reply below it is hidden instead, as in the
+  // moderator bulk delete.
+  const markerView = await holdMarkerViewExists();
+  const { deleted, retained } = await dbWrite.$transaction((tx) =>
+    deleteLegacyCommentsUnlessHeld(tx, [id], markerView, { byAuthor })
+  );
+  if (!deleted.length && !retained.length) throw throwNotFoundError(`No comment with id ${id}`);
   await preventReplicationLag('commentModel', modelId);
 
   if (model?.userId) await userMetrics.queueUpdate(model.userId);
   if (modelId) await modelMetrics.queueUpdate(modelId);
 
-  return deleted;
+  return { id };
 };
 
 export const updateCommentById = async ({
@@ -326,15 +481,20 @@ export const updateCommentReportStatusByReason = ({
   id,
   reason,
   status,
+  actorId,
 }: {
   id: number;
   reason: ReportReason;
   status: ReportStatus;
+  actorId: number;
 }) => {
   // Skip reports that are already in the target status so re-running the
   // bulk TOS handler does not double-fire reportAcceptedReward.
   return dbWrite.$queryRaw<{ id: number; userId: number }[]>`
-    UPDATE "Report" r SET status = ${status}::"ReportStatus"
+    UPDATE "Report" r SET
+      status = ${status}::"ReportStatus",
+      "statusSetAt" = now(),
+      "statusSetBy" = ${actorId}
     FROM "CommentReport" c
     WHERE c."reportId" = r.id
       AND c."commentId" = ${id}
@@ -343,6 +503,14 @@ export const updateCommentReportStatusByReason = ({
     RETURNING id, "userId"
   `;
 };
+
+/**
+ * Whether a legacy comment is already hidden for ToS: one its author deleted may be kept that way for
+ * a hold, and its author must not hear about a comment they removed.
+ */
+export const isLegacyCommentHidden = async (id: number) =>
+  !!(await dbWrite.comment.findUnique({ where: { id }, select: { tosViolation: true } }))
+    ?.tosViolation;
 
 export async function bulkSetCommentTosViolation({
   ids,
@@ -359,15 +527,21 @@ export async function bulkSetCommentTosViolation({
 
   let rewardedReports = 0;
   let notified = 0;
+  // Rows actually flagged, NOT ids submitted: the loop skips a row whose update threw, and the caller
+  // writes an audit row from this number.
+  let count = 0;
 
   for (const id of ids) {
+    const wasHidden = await isLegacyCommentHidden(id);
     const comment = await updateCommentById({ id, data: { tosViolation: true } }).catch(() => null);
     if (!comment) continue;
+    count += 1;
 
     const reports = await updateCommentReportStatusByReason({
       id,
       reason: ReportReason.TOSViolation,
       status: ReportStatus.Actioned,
+      actorId: actor.id,
     });
     rewardedReports += reports.length;
 
@@ -377,49 +551,144 @@ export async function bulkSetCommentTosViolation({
       )
     );
 
+    if (wasHidden) continue;
     await createNotification({
       userId: comment.user.id,
       type: 'tos-violation',
       category: NotificationCategory.System,
-      key: `tos-violation:comment:${uuid()}`,
+      key: `tos-violation:comment:${crypto.randomUUID()}`,
       details: { modelName: comment.model?.name ?? '', entity: 'comment' },
     })
       .then(() => {
         notified += 1;
       })
-      .catch(() => {});
+      .catch(() => undefined); // best-effort notification; a failure must not fail the action
   }
 
-  return { count: ids.length, notified, rewardedReports };
+  return { count, notified, rewardedReports };
 }
 
-export async function bulkDeleteComments({ ids }: { ids: number[] }) {
-  if (ids.length === 0) return { count: 0 };
-  // Capture affected models/users before delete so we can queue metric updates.
-  const affected = await dbWrite.comment.findMany({
-    where: { id: { in: ids } },
-    select: { modelId: true, model: { select: { userId: true } } },
-  });
-  const result = await dbWrite.comment.deleteMany({ where: { id: { in: ids } } });
+/**
+ * The moderator bulk delete, over both comment tables in one transaction, so a hold abort in either
+ * undoes both and nothing is deleted that the moderator app does not record.
+ *
+ * A held author's comments are kept, and taken off the page. The hold is in each DELETE itself, so
+ * one that lands after this read still counts; what a DELETE left of its ids is what it kept.
+ */
+export async function bulkDeleteComments({
+  commentIds,
+  commentV2Ids,
+}: {
+  commentIds: number[];
+  commentV2Ids: number[];
+}) {
+  const markerView = await holdMarkerViewExists();
+  const { v1, v2 } = await dbWrite.$transaction(async (tx) => ({
+    v1: await deleteLegacyCommentsUnlessHeld(tx, commentIds, markerView),
+    v2: await deleteCommentsV2UnlessHeld(tx, commentV2Ids, markerView),
+  }));
+  // The deletes have committed, so a failing follow-up is logged and never reported as a failed
+  // delete: the moderator app records only what the endpoint reports as done.
+  const followUps = await Promise.allSettled([
+    afterLegacyCommentsDeleted(v1),
+    afterCommentsV2Deleted(v2),
+  ]);
+  for (const f of followUps)
+    if (f.status === 'rejected')
+      logToAxiom({
+        type: 'error',
+        name: 'comment-bulk-delete',
+        message: 'A follow-up to a committed bulk comment delete failed',
+        details: { error: (f.reason as Error)?.message },
+      }).catch(() => undefined);
+  return {
+    commentDeleted: v1.deleted.length,
+    commentV2Deleted: v2.deleted.length,
+    retainedHidden: v1.retained.length + v2.retained.length,
+  };
+}
 
-  const modelIds = Array.from(
-    new Set(affected.map((c) => c.modelId).filter((v): v is number => !!v))
-  );
-  const userIds = Array.from(
-    new Set(affected.map((c) => c.model?.userId).filter((v): v is number => !!v))
-  );
+export async function deleteLegacyCommentsUnlessHeld(
+  tx: Prisma.TransactionClient,
+  ids: number[],
+  markerView: boolean,
+  { byAuthor = false }: { byAuthor?: boolean } = {}
+) {
+  if (ids.length === 0) return { deleted: [], retained: [] };
+  // A reply goes with its parent (the foreign key cascades), so a comment is also kept while any
+  // reply under it, at any depth, is held. Checked once per author: its cost grows with the number
+  // of holding reports.
+  const deleted = await tx.$queryRaw<{ modelId: number }[]>`
+    DELETE FROM "Comment" c
+    WHERE c.id = ANY(${ids}::int[])
+      AND NOT ${accountHoldSql(Prisma.sql`c."userId"`, markerView)}
+      AND NOT ${heldLegacyReplyBelowSql(Prisma.raw('c.id'), markerView)}
+    RETURNING c."modelId"
+  `;
+  const retained = await tx.$queryRaw<{ userId: number }[]>`
+    UPDATE "Comment" SET "tosViolation" = true, "updatedAt" = now()
+      ${byAuthor ? Prisma.sql`, "removedByAuthor" = true` : Prisma.empty}
+    WHERE id = ANY(${ids}::int[])
+    RETURNING "userId"
+  `;
+  return { deleted, retained };
+}
+
+async function afterLegacyCommentsDeleted({
+  deleted,
+  retained,
+}: Awaited<ReturnType<typeof deleteLegacyCommentsUnlessHeld>>) {
+  if (retained.length)
+    await logHoldRetained(
+      'comment.bulkDelete',
+      retained.map((r) => r.userId)
+    );
+
+  const modelIds = Array.from(new Set(deleted.map((c) => c.modelId)));
+  const owners = modelIds.length
+    ? await dbWrite.model.findMany({ where: { id: { in: modelIds } }, select: { userId: true } })
+    : [];
+  const userIds = Array.from(new Set(owners.map((m) => m.userId)));
   await Promise.all([
     ...modelIds.map((id) => preventReplicationLag('commentModel', id)),
     ...modelIds.map((id) => modelMetrics.queueUpdate(id)),
     ...userIds.map((id) => userMetrics.queueUpdate(id)),
   ]);
-
-  return { count: result.count };
 }
 
-export const getCommentCountByModel = ({
-  modelId,
-  hidden = false,
-}: GetCommentCountByModelInput) => {
-  return dbRead.comment.count({ where: { modelId, hidden } });
+/**
+ * The legacy twin of `bulkClearCommentV2TosViolation` — see that function for why an unflag exists at
+ * all and for the two steps it deliberately does not mirror (rewards are not clawed back, and no
+ * notification is sent).
+ *
+ * Does NOT reuse `updateCommentReportStatusByReason`: that helper guards on `status <> target`, which
+ * when the target is `Pending` also sweeps up reports a moderator DISMISSED on their own judgement and
+ * puts them back in the queue. Reopening is only ever correct for the ones this flag actioned.
+ */
+export const bulkClearCommentTosViolation = async ({ ids }: { ids: number[] }) => {
+  if (ids.length === 0) return { count: 0, reopenedReports: 0, retainedHidden: 0, failed: 0 };
+
+  const { clearTosOrKeep } = await import('~/server/services/commentsv2.service');
+  const markerView = await holdMarkerViewExists();
+
+  let reopenedReports = 0;
+  let count = 0;
+  const retained: number[] = [];
+  let retainedHidden = 0;
+  let failed = 0;
+
+  for (const id of ids) {
+    const outcome = await clearTosOrKeep('Comment', id, markerView);
+    if (outcome?.failed) failed += 1;
+    if (outcome?.held) {
+      retainedHidden += 1;
+      if (outcome.userId !== null) retained.push(outcome.userId);
+    }
+    if (!outcome?.cleared) continue;
+    count += 1;
+    reopenedReports += outcome.reopened;
+  }
+
+  if (retained.length) await logHoldRetained('comment.restoreFromTos', retained);
+  return { count, reopenedReports, retainedHidden, failed };
 };

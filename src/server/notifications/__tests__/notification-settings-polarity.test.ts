@@ -27,6 +27,9 @@ const queryFor = async (type: string) => {
 };
 
 const OPT_OUT_CLAUSE = 'NOT EXISTS (SELECT 1 FROM "UserNotificationSettings"';
+
+/** Types that render a toggle and ignore it. Pinned empty — see the guard below. */
+const KNOWN_INERT: string[] = [];
 /** A LEFT JOIN would satisfy a bare `JOIN` substring test while restricting nothing. */
 const DERIVES_RECIPIENTS = /(?<!LEFT )(?<!LEFT OUTER )JOIN "UserNotificationSettings"/;
 
@@ -58,6 +61,56 @@ describe('notification settings polarity', () => {
         );
       }
     }
+  });
+
+  /**
+   * The test above branches on the query MENTIONING the table, so a processor
+   * that omits the clause entirely matches neither arm and passes vacuously.
+   * That is how `remix-gallery-resolved` shipped unmuteable: it rendered a
+   * checkbox, saved the row, and kept sending, because nothing on this path
+   * filters recipients centrally — `createNotificationsBulk` does no settings
+   * lookup at all, unlike the event path's `create.ts`.
+   *
+   * Scoped to types that RENDER a toggle. A processor with `toggleable: false`
+   * is entitled to ignore the table; one that draws a checkbox is not.
+   */
+  it('a rendered toggle is never inert', async () => {
+    const inert: string[] = [];
+    for (const type of notificationTypes) {
+      const query = await queryFor(type);
+      // No query means the event path, where create.ts applies the filter.
+      if (!query) continue;
+      if (!query.includes(OPT_OUT_CLAUSE)) inert.push(type);
+    }
+
+    // Joined rather than compared as an array: vitest truncates a long array in
+    // the failure line, and the whole value of this guard is naming every type
+    // that is inert rather than the first one or two.
+    //
+    // Pinned to the exact known set rather than allowed to grow, so this fails
+    // in both directions — a new inert type appears, or a listed one is fixed
+    // and must be struck off here.
+    expect(inert.join(', ')).toBe(KNOWN_INERT.join(', '));
+  });
+
+  it('the shop earnings type honours its own checkbox', async () => {
+    // Asserted positively as well as by absence from KNOWN_INERT, where an empty
+    // expected string passes for several reasons and only one is the fix.
+    //
+    // Scoped to `sold_items."ownerId"`: gating on the buyer's `cp."userId"`, also
+    // in scope, would silence the seller's notification for whoever the BUYER
+    // muted — and every other assertion here passes straight through that.
+    expect(await queryFor('cosmetic-shop-item-sold')).toContain(
+      `WHERE NOT EXISTS (SELECT 1 FROM "UserNotificationSettings" WHERE "userId" = sold_items."ownerId" AND type = 'cosmetic-shop-item-sold')`
+    );
+  });
+
+  it('that check is capable of failing', () => {
+    // Guards the loop above from passing because the predicate is unsatisfiable
+    // — the shape it must reject, which is what the real defect looked like.
+    const clauseless = `SELECT 'x' "key", u.id "userId" FROM "User" u`;
+
+    expect(clauseless.includes(OPT_OUT_CLAUSE)).toBe(false);
   });
 
   it('actually reaches the async processors', async () => {
@@ -123,9 +176,36 @@ describe('notification settings polarity', () => {
     expect(toggle).toMatch(/mutate\(\{\s*toggle:\s*!isEnabled/);
   });
 
-  it('both toggle callers share one optimistic update', () => {
+  it('the auto-space pointer asks for the state it is NOT in, too', () => {
+    // A THIRD caller of updateUserSettings, and the first to bypass the shared hook. It has to:
+    // the hook lives in the module that pulls all 36 notification processors, and this component
+    // is statically reachable from a public route, so importing it put 43 KB gzipped into that
+    // page's chunk. Bypassing the hook means bypassing the guard above, so the same property is
+    // pinned here.
+    //
+    // Passing `subscribedToAuto` straight through is a click that does nothing in either
+    // direction -- the exact bug the /shop bell shipped.
+    //
+    // Asserted here AND behaviourally in PlacementSpaceSection.freeSlots.browser.test.tsx, which is
+    // the stronger of the two. The duplication is deliberate. The cost of keeping it is that
+    // renaming `subscribedToAuto` reddens a test in this file, which the rename is not looking at
+    // -- the failure message names the file to fix.
+    const section = readFileSync('src/components/Account/PlacementSpaceSection.tsx', 'utf8');
+    // Anchored on the CALL, exactly like the /shop bell's assertion four tests down. Without
+    // `mutate({` the positive is satisfied by the string appearing anywhere -- including in the
+    // four-line comment above that call, which explains this very polarity -- and the negative
+    // reddens when someone rewords that comment. Both failures are one documentation edit away.
+    expect(section).toMatch(/mutate\(\{\s*toggle:\s*!subscribedToAuto/);
+    expect(section).not.toMatch(/mutate\(\{\s*toggle:\s*subscribedToAuto/);
+  });
+
+  it('the two callers that CAN share one optimistic update do', () => {
     // They used to hand-roll it separately; updating one left the /shop bell writing correctly to
     // the server while its own cache patch no-opped, so the control looked inert in both directions.
+    //
+    // Two, not all three: `PlacementSpaceSection` is deliberately outside this list for the bundle
+    // reason above, and writes no optimistic state at all -- it invalidates, which cannot silently
+    // no-op the way an inverted cache patch can. Its polarity is pinned by the test above instead.
     for (const path of [
       'src/components/Account/NotificationsCard.tsx',
       'src/components/Notifications/NotificationToggle.tsx',

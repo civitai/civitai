@@ -5,8 +5,13 @@ import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-tok
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
 import { createImage } from '~/server/services/image.service';
 import { registerMediaLocation } from '~/server/services/storage-resolver';
+import { recordUploadKeyOwner } from '~/server/services/image-url-ownership';
 import { orchestratorNsfwLevelMap } from '~/shared/constants/browsingLevel.constants';
-import { extractStepErrors, sanitizeProviderError } from './provider-errors';
+import { sanitizeStepErrors } from './provider-errors';
+import { formatGenerationResponse2 } from '~/server/services/orchestrator/orchestration-new.service';
+import { WorkflowData } from '~/shared/orchestrator/workflow-data';
+import { colorDomainNames, type ColorDomain } from '~/shared/constants/domain.constants';
+import { UNMARKED_SOURCE_IMAGE_MESSAGE } from '~/shared/constants/mature-source.constants';
 
 /**
  * Translate the orchestrator's string nsfwLevel ("pg", "pg13", "r", ...)
@@ -58,6 +63,7 @@ async function downloadAndUploadImage(
       })
     );
     registerMediaLocation(s3Key, backend, imageBuffer.length);
+    await recordUploadKeyOwner(s3Key, userId);
 
     const image = await createImage({
       url: s3Key,
@@ -91,8 +97,6 @@ export async function pollIterationWorkflow({
 
   const steps = workflow.steps ?? [];
   const firstStep = steps[0] as any;
-  const rawImages: any[] = firstStep?.output?.images ?? firstStep?.output?.blobs ?? [];
-  const outputImages: string[] = rawImages.map((img) => img?.url).filter(Boolean) as string[];
 
   // Mirror the queue item's `errored` logic: any terminal status (succeeded /
   // failed / expired / canceled) where the worker finished without producing a
@@ -104,13 +108,41 @@ export async function pollIterationWorkflow({
   const stepReachedTerminal = !!stepStatus && TERMINAL_STATUSES.includes(stepStatus as any);
   const workflowReachedTerminal =
     !!workflowStatus && TERMINAL_STATUSES.includes(workflowStatus as any);
+  const succeeded = workflowStatus === 'succeeded' || stepStatus === 'succeeded';
 
-  // On the SFW domain, mature outputs come back with `available: false` and a
-  // `siteRestricted` blocked reason — the URL is suppressed. Hand off to a
+  // Raw orchestrator output carries only its own blocks; the mature gates are derived by BlobData
+  // from the rating, domain and viewer settings. Built only once succeeded: the formatter reads
+  // resources on every call, and the client polls on an interval.
+  let rawImages: any[] = firstStep?.output?.images ?? firstStep?.output?.blobs ?? [];
+  if (succeeded) {
+    const [normalized] = await formatGenerationResponse2([workflow as any], ctx?.user);
+    const domainFlags = colorDomainNames.reduce(
+      (acc, c) => ({ ...acc, [c]: c === ctx?.domain }),
+      {} as Record<ColorDomain, boolean>
+    );
+    const wfData = new WorkflowData(normalized as any, {
+      domain: domainFlags,
+      nsfwEnabled: !!ctx?.user?.showNsfw,
+      holdUnrated: true,
+    });
+    rawImages = wfData.steps[0]?.output ?? [];
+
+    // Succeeded can precede the rating, and every gate below keys on it.
+    if (rawImages.some((img) => img?.pendingRating))
+      return { status: 'processing' as const, imageUrl: null, images: [] };
+  }
+  // The orchestrator writes 'none' for no block; WorkflowData already normalises it.
+  const blocked = (img: any) => !!img?.blockedReason && img.blockedReason !== 'none';
+  const outputImages: string[] = rawImages
+    .filter((img) => !blocked(img))
+    .map((img) => img?.url)
+    .filter(Boolean) as string[];
+
+  // A mature output on the SFW domain is `siteRestricted`. Hand off to a
   // mature-content domain so the user can use the workflow they already paid
   // for.
   if (
-    (workflowStatus === 'succeeded' || stepStatus === 'succeeded') &&
+    succeeded &&
     outputImages.length === 0 &&
     rawImages.some((img) => img?.blockedReason === 'siteRestricted')
   ) {
@@ -122,12 +154,8 @@ export async function pollIterationWorkflow({
     };
   }
 
-  // Look for a non-siteRestricted blocked reason on the output. We surface a
-  // tailored failure message so the user knows whether the Buzz was refunded
-  // or is simply held pending an unlock action they can take in the queue.
-  const blockedReason = rawImages.find((img) => img?.blockedReason)?.blockedReason as
-    | string
-    | undefined;
+  // Any blocked reason on the output; `blockedReasonToMessage` turns it into the failure text.
+  const blockedReason = rawImages.find(blocked)?.blockedReason as string | undefined;
 
   if (workflowStatus === 'succeeded' && outputImages.length > 0) {
     const imgWidth = width ?? 512;
@@ -166,13 +194,9 @@ export async function pollIterationWorkflow({
     };
   }
 
-  // Prefer a blockedReason message; otherwise surface the sanitized provider error
-  // (external-provider failures land in step.jobs[].reason, previously dropped).
   const engine =
     (firstStep?.metadata?.params as { engine?: string })?.engine ?? firstStep?.input?.engine;
-  const providerErrors = extractStepErrors(firstStep).map((msg) =>
-    sanitizeProviderError(msg, engine)
-  );
+  const providerErrors = sanitizeStepErrors(firstStep, engine);
   const providerErrorMessage = providerErrors.length > 0 ? providerErrors.join('\n') : undefined;
 
   // Hard failure: workflow itself terminated without success.
@@ -206,12 +230,7 @@ export async function pollIterationWorkflow({
   return { status: 'processing' as const, imageUrl: null, images: [] };
 }
 
-/**
- * Map an output's blockedReason to something useful for the iterative editor.
- * Mirrors the queue's blocked-reason cards but as plain text — the editor
- * doesn't yet have a full unlock-in-place UI, so we point users at the queue
- * for the actions that need to happen there.
- */
+/** Map an output's blockedReason to plain text for the iterative editor, which has no unlock-in-place UI. */
 function blockedReasonToMessage(blockedReason: string | undefined): string | undefined {
   if (!blockedReason) return undefined;
   switch (blockedReason) {
@@ -219,13 +238,15 @@ function blockedReasonToMessage(blockedReason: string | undefined): string | und
       return 'Mature content was generated. Open the Generator queue to unlock it with yellow Buzz — your Buzz is held, not lost.';
     case 'membershipRequired':
       return 'This image requires a membership upgrade to view. Upgrade your membership to unlock it.';
+    case 'siteRestricted':
+      return 'This image was rated mature and is not available on this site. Open it on civitai.red to use it.';
     case 'enableNsfw':
       return 'This image was rated mature. Enable mature content in your settings to view it.';
     case 'NsfwLevel':
     case 'NSFWLevel':
       return 'One or more resources used here cannot generate mature content. Try a different model or a tamer prompt.';
     case 'NSFWLevelSourceImageRestricted':
-      return 'Source image lacks valid metadata, so generation is restricted to PG / PG-13. Use a clean source image to lift the restriction.';
+      return UNMARKED_SOURCE_IMAGE_MESSAGE;
     default:
       return `Generation failed: ${blockedReason}.`;
   }

@@ -21,6 +21,7 @@ export function PostCard({ data }: Props) {
 
   return (
     <AspectRatioImageCard
+      impression={{ entityType: 'Post', entityId: data.id }}
       href={`/posts/${data.id}`}
       alt={data.title || 'View post'}
       aspectRatio="square"
@@ -34,6 +35,7 @@ export function PostCard({ data }: Props) {
             className="ml-auto"
             image={image}
             context="post"
+            postImageCount={data.imageCount}
             additionalMenuItems={
               isOwner ? (
                 <AddArtFrameMenuItem

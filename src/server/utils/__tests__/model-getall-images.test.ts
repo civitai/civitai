@@ -8,6 +8,7 @@ import {
   selectSlimGetAllModelImages,
   stripGetAllModelImage,
 } from '~/server/utils/model-getall-images';
+import { browsingLevels } from '~/shared/constants/browsingLevel.constants';
 
 // The browse-feed (`model.getAll`) response is the #1 serialize-freeze source.
 // Its image trim has two parts: an ALWAYS-ON per-image field drop
@@ -45,12 +46,12 @@ const makeFullImage = (id: number) => ({
 });
 
 describe('model-getall-images — cap', () => {
-  it('pins the default (12) and slim (6) caps', () => {
-    // Default raised 3 → 8 → 12 across the browsing-level feed-drop reviews; slim
-    // is the flag-gated material lever. See the constant docs.
-    expect(GET_ALL_IMAGES_PER_MODEL).toBe(12);
-    expect(GET_ALL_IMAGES_PER_MODEL_SLIM).toBe(6);
-    expect(GET_ALL_IMAGES_PER_MODEL_SLIM).toBeLessThan(GET_ALL_IMAGES_PER_MODEL);
+  it('keeps room for one representative of every browsing level', () => {
+    // What makes the slim cap safe is `selectSlimGetAllModelImages` fitting a
+    // representative of every distinct nsfwLevel bit, so a viewer who had a visible
+    // image still has one. Below this the guarantee is silently gone, and the two
+    // home blocks that rely on it have no flag to fall back to.
+    expect(GET_ALL_IMAGES_PER_MODEL_SLIM).toBeGreaterThanOrEqual(browsingLevels.length);
   });
 
   it('caps to at most the default limit', () => {
@@ -213,9 +214,7 @@ describe('model-getall-images — nsfw-biased slim slice', () => {
   it('(b2) covers all 6 distinct bits when exactly 6 are present', () => {
     const imgs = makeLeveled([XXX, XXX, XXX, XXX, XXX, XXX, PG, PG13, R, X, XXX, BLOCKED]);
     const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
-    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(
-      new Set([PG, PG13, R, X, XXX, BLOCKED])
-    );
+    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(new Set([PG, PG13, R, X, XXX, BLOCKED]));
     expect(out).toHaveLength(GET_ALL_IMAGES_PER_MODEL_SLIM);
   });
 
@@ -231,9 +230,7 @@ describe('model-getall-images — nsfw-biased slim slice', () => {
     ];
     const out = selectSlimGetAllModelImages(imgs, GET_ALL_IMAGES_PER_MODEL_SLIM);
     expect(out).toHaveLength(GET_ALL_IMAGES_PER_MODEL_SLIM);
-    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(
-      new Set([PG, PG13, R, X, XXX, BLOCKED])
-    );
+    expect(new Set(out.map((i) => i.nsfwLevel))).toEqual(new Set([PG, PG13, R, X, XXX, BLOCKED]));
   });
 
   it('(b4) a falsy-level lead IS kept when the real bits leave a free slot', () => {

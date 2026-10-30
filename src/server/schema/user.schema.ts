@@ -1,4 +1,5 @@
 import * as z from 'zod';
+import { banReasonDetails } from '~/server/common/constants';
 import { BanReasonCode, OnboardingSteps } from '~/server/common/enums';
 import { getAllQuerySchema, paginationSchema } from '~/server/schema/base.schema';
 import { userSettingsChat } from '~/server/schema/chat.schema';
@@ -6,6 +7,11 @@ import type { ModelGallerySettingsSchema } from '~/server/schema/model.schema';
 // import { modelGallerySettingsSchema } from '~/server/schema/model.schema';
 import { featureFlagKeys, userTiers } from '~/server/services/feature-flags.service';
 import { allBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
+import { NAV_KEYS } from '~/shared/constants/nav.constants';
+import {
+  USER_MENU_BADGE_ITEM_IDS,
+  USER_MENU_ITEM_IDS,
+} from '~/shared/constants/user-menu.constants';
 import {
   ArticleEngagementType,
   BountyEngagementType,
@@ -13,9 +19,14 @@ import {
   ModelEngagementType,
   TagEngagementType,
 } from '~/shared/utils/prisma/enums';
-import { usernameSchema } from '~/shared/zod/username.schema';
+import {
+  usernameSchema,
+  USERNAME_MAX_LENGTH,
+  USERNAME_MIN_LENGTH,
+} from '~/shared/zod/username.schema';
 import { removeEmpty } from '~/utils/object-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
+import { stripBlockProvenanceMetadata } from '~/shared/utils/block-provenance-metadata';
 import {
   commaDelimitedEnumArray,
   commaDelimitedNumberArray,
@@ -54,8 +65,8 @@ export const userPageQuerySchema = z
   });
 
 export const usernameInputSchema = usernameSchema
-  .min(3, 'Your username must be at least 3 characters long')
-  .max(25, 'Your username must be at most 25 characters long')
+  .min(USERNAME_MIN_LENGTH, `Your username must be at least ${USERNAME_MIN_LENGTH} characters long`)
+  .max(USERNAME_MAX_LENGTH, `Your username must be at most ${USERNAME_MAX_LENGTH} characters long`)
   .transform((v) => v.trim());
 
 export const getUserByUsernameSchema = z.object({
@@ -88,7 +99,10 @@ export const profilePictureSchema = z.object({
   width: z.number().nullish(),
   sizeKB: z.number().optional(),
   mimeType: z.string().optional(),
-  metadata: z.looseObject({}).optional(),
+  metadata: z
+    .looseObject({})
+    .transform((metadata) => stripBlockProvenanceMetadata(metadata))
+    .optional(),
   type: z.enum(MediaType).default(MediaType.image),
 });
 
@@ -112,12 +126,15 @@ export const userUpdateSchema = z.object({
   nameplateId: z.number().nullish(),
   profileDecorationId: z.number().nullish(),
   profileBackgroundId: z.number().nullish(),
+  cardDecorationId: z.number().nullish(),
   autoplayGifs: z.boolean().optional(),
   filePreferences: z
     .object({
       format: z.string().optional(),
       size: z.string().optional(),
       fp: z.string().optional(),
+      // Accepted but unread: the media-quality control is gone, and a cached client still
+      // sending its stored value must not 400 the whole preferences save.
       imageFormat: z.string().optional(),
       quantType: z.string().max(64).optional(),
     })
@@ -247,6 +264,9 @@ const tourSettingsSchema = z.record(
   z.object({
     completed: z.boolean().optional(),
     currentStep: z.number().optional(),
+    // How the tour ended: `closed` (X/Esc), `skipped`, or `finished` — the last one also
+    // covers a tour forced to finish because its last step's target went missing.
+    reason: z.enum(['finished', 'skipped', 'closed']).optional(),
   })
 );
 
@@ -271,8 +291,66 @@ export type UserContentSettings = UserSettingsSchema & {
   blurNsfw?: boolean;
   autoplayGifs?: boolean | null;
 };
+const navZone = z.array(z.enum(NAV_KEYS)).max(NAV_KEYS.length);
+
+/**
+ * A user's sub-nav layout. `bar` and `more` are GROUP MEMBERSHIP plus order — every item belongs
+ * to exactly one. `hidden` is visibility and is orthogonal, so an item switched off keeps its
+ * place in its group and comes back where the user left it.
+ *
+ * Bounded deliberately. This rides `User.settings`, which is Redis-cached per user and serialised
+ * into the HTML of every logged-in SSR render, so an unbounded user-writable array here is an
+ * amplification on the hot render path rather than a private preference.
+ */
+export type NavigationSettingsSchema = z.infer<typeof navigationSettingsSchema>;
+export const navigationSettingsSchema = z
+  .object({
+    bar: navZone,
+    more: navZone,
+    hidden: navZone,
+    showLabels: z.boolean().optional(),
+    keepProfileLabels: z.boolean().optional(),
+  })
+  .superRefine((value, ctx) => {
+    // A key in both groups makes "the nearest placed sibling" ambiguous during resolution and
+    // reaches React as a duplicate `key` prop. `hidden` deliberately OVERLAPS the groups — it is
+    // a visibility set, not a third group — so it is only checked against itself.
+    const grouped = [...value.bar, ...value.more];
+    if (new Set(grouped).size !== grouped.length)
+      ctx.addIssue({
+        code: 'custom',
+        message: 'A navigation item cannot appear in more than one group',
+      });
+    if (new Set(value.hidden).size !== value.hidden.length)
+      ctx.addIssue({ code: 'custom', message: 'A navigation item cannot be hidden twice' });
+  });
+
+/**
+ * Bounded and allow-listed for the same reason as
+ * `navigationSettingsSchema`: settings ride every signed-in SSR render. An object, not a bare
+ * array: `splitSettingsPatch` drops a top-level empty array, which would turn "no pins" back into
+ * the defaults.
+ */
+export const userMenuSettingsSchema = z.object({
+  // Absent until the viewer edits their pins, so a viewer who only muted a count keeps following
+  // the default pins.
+  pinned: z
+    .array(z.enum(USER_MENU_ITEM_IDS))
+    .max(USER_MENU_ITEM_IDS.length)
+    .refine((ids) => new Set(ids).size === ids.length, 'An item cannot be pinned twice')
+    .optional(),
+  // Absent for everyone who never muted a count: every count counts.
+  mutedBadges: z
+    .array(z.enum(USER_MENU_BADGE_ITEM_IDS))
+    .max(USER_MENU_BADGE_ITEM_IDS.length)
+    .refine((ids) => new Set(ids).size === ids.length, 'A count cannot be muted twice')
+    .optional(),
+});
+
 export const userSettingsSchema = z.object({
   newsletterDialogLastSeenAt: z.coerce.date().nullish(),
+  navigation: navigationSettingsSchema.optional(),
+  userMenu: userMenuSettingsSchema.optional(),
   features: z.record(z.string(), z.boolean()).optional(),
   newsletterSubscriber: z.boolean().optional(),
   dismissedAlerts: z.array(z.string()).optional(),
@@ -283,9 +361,35 @@ export const userSettingsSchema = z.object({
   cosmeticStoreLastViewed: z.coerce.date().nullish(),
   allowAds: z.boolean().optional(),
   disableHidden: z.boolean().optional(),
+  // Opt-in: receive in-progress features ahead of general release. Unlike every
+  // other key here this one is PROJECTED ONTO THE SESSION (auth hub
+  // `shapeSessionUser` → `SessionUser.isEarlyAdopter` → `buildFliptContext`), so
+  // Flipt can segment on it. That projection is cached, which is why the write
+  // path re-produces the session on CHANGE — see `setUserSettingHandler`.
+  isEarlyAdopter: z.boolean().optional(),
   // Opt-in: horizontal drag on multi-image gallery post cards. Off by default —
   // the feed mounts hundreds of cards and each one costs an embla engine.
   swipeGalleryCards: z.boolean().optional(),
+  // Web-push soft-ask dismissals. Server-side, not localStorage — a cache clear must not re-nag
+  // the same person. Re-ask cadence and lifetime cap are enforced client-side in PushSoftAsk.
+  pushPromptDismissedCount: z.number().optional(),
+  pushPromptDismissedAt: z.coerce.date().nullish(),
+  // Opt-in: leave blue buzz out of the header badge, which otherwise adds blue and the domain's
+  // main type into one number. Blue is granted and non-transferable, so a creator watching what
+  // they hold is reading one of the two, not the sum. NOT a filter for earned buzz — yellow and
+  // green are `purchasable`, so the remaining balance still mixes earned and bought.
+  hideBlueBuzzInHeader: z.boolean().optional(),
+  fitPostImagesToScreen: z.boolean().optional(),
+  hideFromCreatorShowcase: z.boolean().optional(),
+  // Opt-out: leave me out of every "who reacted" / "who collected" list shown to someone else (image and
+  // comment reactions, Creator Studio). Counts still include me. Filtered in SQL via HIDE_FROM_REACTION_LISTS_KEY.
+  hideFromReactionLists: z.boolean().optional(),
+  // Opt-in: list my image reactions from before "who reacted" lists launched. Read in SQL via
+  // SHOW_PRE_LAUNCH_REACTIONS_KEY; hideFromReactionLists still wins.
+  showPreLaunchReactions: z.boolean().optional(),
+  // Opt-in, per event name: list me on my team's roster (events/points/roster.ts). The durable record
+  // the Redis roster is rebuilt from; absent means hidden. Written only by event.setRosterOptIn.
+  eventRosterOptIn: z.record(z.string(), z.boolean()).optional(),
   // Opt-out: the arrival pop and idle sway on placed stickers. Animation that
   // never ends is the kind a viewer wants a way out of, and `prefers-reduced-motion`
   // only covers people who set it at the OS level.
@@ -293,6 +397,10 @@ export const userSettingsSchema = z.object({
   // Creator opt-out: when true, the public donation-goal display (progress + collected
   // amount) is hidden from non-owner/non-mod viewers on all of this user's models.
   hideDonationGoals: z.boolean().optional(),
+  // The two sticker book opt-outs. Both absent means a visible book showing the
+  // stickers the creator owns; the rules are in `shared/utils/sticker-book.ts`.
+  hideStickerBook: z.boolean().optional(),
+  hidePurchasedStickers: z.boolean().optional(),
   // Creator Controls defaults: baseline metric-privacy for all of this user's
   // models. Effective only while the user holds a valid Creator Program
   // membership (see server/utils/model-metric-privacy.ts).
@@ -309,7 +417,6 @@ export const userSettingsSchema = z.object({
   ).optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
-  redBrowsingLevel: z.number().optional(),
   tosLastSeenDate: z.date().optional(),
   tosGreenLastSeenDate: z.date().optional(),
   tosRedLastSeenDate: z.date().optional(),
@@ -352,15 +459,30 @@ export type SetUserSettingsInput = z.infer<typeof setUserSettingsInput>;
 export const setUserSettingsInput = z.object({
   creatorsProgramCodeOfConductAccepted: z.date().optional(),
   cosmeticStoreLastViewed: z.date().optional(),
+  pushPromptDismissedCount: z.number().int().min(0).optional(),
+  pushPromptDismissedAt: z.date().optional(),
   allowAds: z.boolean().optional(),
+  isEarlyAdopter: z.boolean().optional(),
   swipeGalleryCards: z.boolean().optional(),
   disableStickerMotion: z.boolean().optional(),
+  hideBlueBuzzInHeader: z.boolean().optional(),
+  fitPostImagesToScreen: z.boolean().optional(),
+  hideFromCreatorShowcase: z.boolean().optional(),
+  hideFromReactionLists: z.boolean().optional(),
+  showPreLaunchReactions: z.boolean().optional(),
   hideDonationGoals: z.boolean().optional(),
+  hideStickerBook: z.boolean().optional(),
+  hidePurchasedStickers: z.boolean().optional(),
   hideModelBuzz: z.boolean().optional(),
   hideModelDownloads: z.boolean().optional(),
   hideModelGenerations: z.boolean().optional(),
   tourSettings: tourSettingsSchema.optional(),
   generation: generationSettingsSchema.optional(),
+  // Whole-object writes only: `splitSettingsPatch` routes this to `set`, which replaces the key
+  // outright. The modal must send every zone, not a delta.
+  navigation: navigationSettingsSchema.optional(),
+  // Whole-object writes, like `navigation`: the menu always sends the full pin order and muted counts.
+  userMenu: userMenuSettingsSchema.optional(),
   creatorProgramToSAccepted: z.date().optional(),
   assistantPersonality: userAssistantPersonality.optional(),
   tosLastSeenDate: z.date().optional(),
@@ -385,7 +507,9 @@ export const userOnboardingSchema = z.discriminatedUnion('step', [
   z.object({
     step: z.literal(OnboardingSteps.Profile),
     username: usernameInputSchema,
-    email: z.string(),
+    // `.email()`, not a bare string: this is the only writer of `User.email` that was unvalidated,
+    // so a tRPC caller could post `x@!!!` and have it stored verbatim.
+    email: z.string().email(),
   }),
   z.object({ step: z.literal(OnboardingSteps.BrowsingLevels) }),
   z.object({
@@ -420,6 +544,7 @@ export const userScoreMetaSchema = z.object({
   users: z.number().optional(),
   reportsActioned: z.number().optional(),
   reportsAgainst: z.number().optional(),
+  staffAwarded: z.number().optional(),
 });
 
 export const userMeta = z.object({
@@ -441,7 +566,28 @@ export const userMeta = z.object({
   membershipChangedAt: z.date().optional(),
   strikeFlaggedForReview: z.boolean().optional(),
   strikeFlaggedAt: z.date().optional(),
+  // Set by the moderator mute (free text) and by strike escalation (`STRIKE_MUTE_REASON`); automatic
+  // mutes leave it unset, which is how the ToS gate refuses them. Cleared with `mutedBy` as one unit
+  // by `clearedMuteFields`.
+  muteReason: z.string().optional(),
+  mutedBy: z.number().optional(),
   imageRemoval: z.enum(['grace', 'immediate']).optional(),
+  // Stamped at onboarding when the account ends up without a verified address. Read by
+  // `requiresEmailVerification`; see the 🔴 there for why the gate is a stamp and not a date.
+  emailVerificationRequired: z.boolean().optional(),
+  // Retry state for the Stripe scrub of a deleted account, so one account that keeps failing
+  // cannot consume every run. Removed with `customerId` once the scrub finishes.
+  gdprStripeScrub: z
+    .object({
+      attempts: z.number(),
+      lastAttemptAt: z.string(),
+      lastError: z.string().optional(),
+    })
+    .optional(),
+  // Cleared whenever a ban or deletion is applied anew.
+  tokenRevocation: z
+    .object({ confirmedAt: z.string().optional(), alertedAt: z.string().optional() })
+    .optional(),
 });
 export type UserMeta = z.infer<typeof userMeta>;
 
@@ -453,18 +599,23 @@ export const updateContentSettingsSchema = z.object({
   disableHidden: z.boolean().optional(),
   allowAds: z.boolean().optional(),
   autoplayGifs: z.boolean().optional(),
-  domain: z.enum(['green', 'blue', 'red']).optional(),
 });
+
+/** A reason a moderator can ban for. A system-only reason is set by its own flow, never by hand. */
+export const handBanReasonSchema = z
+  .enum(BanReasonCode)
+  .refine((code) => !banReasonDetails[code].systemOnly, 'This reason is set only by the system');
 
 export type ToggleBanUser = z.infer<typeof toggleBanUserSchema>;
 export const toggleBanUserSchema = z.object({
   id: z.number(),
-  reasonCode: z.enum(BanReasonCode).optional(),
+  reasonCode: handBanReasonSchema.optional(),
   detailsInternal: z.string().optional(),
   detailsExternal: z.string().optional(),
   type: z.enum(['universal', 'contest']).default('universal').optional(),
   removeMedia: z.boolean().optional(),
   removeModels: z.boolean().optional(),
+  removeComments: z.boolean().optional(),
 });
 
 export type GetBanContentPreviewInput = z.infer<typeof getBanContentPreviewSchema>;
@@ -492,3 +643,14 @@ export type ValidateEmailTokenInput = z.infer<typeof validateEmailTokenSchema>;
 export const validateEmailTokenSchema = z.object({
   token: z.string().min(1),
 });
+
+/**
+ * Bounded on purpose: this is a public endpoint taking an array, and the caller is a
+ * search page. `SearchLayout` asks for 50 hits, `CollectionSelectModal` for 20, and one
+ * InstantSearch render can issue several requests — so a real page never approaches this,
+ * and anything that does is not a search.
+ */
+export const getUserSearchHydrationSchema = z.object({
+  ids: z.array(z.number()).min(1).max(200),
+});
+export type GetUserSearchHydrationInput = z.infer<typeof getUserSearchHydrationSchema>;

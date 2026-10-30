@@ -1,0 +1,137 @@
+import {
+  moderatorArticleLookupPath,
+  moderatorBulkImageManagerPath,
+  moderatorImageLookupPath,
+  moderatorModelLookupPath,
+  moderatorModelVersionLookupPath,
+  moderatorUserLookupPath,
+} from '@civitai/shared/moderator-paths';
+
+// Entity type → the main app's URL segment for it. Shared because the dashboard and User Lookup both
+// render moderator-activity rows, and their private copies had already drifted: the lookup's was missing
+// `post`, so a post action rendered as unlinked text there and as a link on the dashboard.
+const ENTITY_PATH: Record<string, string> = {
+  image: 'images',
+  model: 'models',
+  post: 'posts',
+  article: 'articles',
+  bounty: 'bounties',
+  // The report pages knew these four and this map did not, so a Collection or ResourceReview report
+  // rendered as a working link on /reports and as dead grey text in User Lookup.
+  collection: 'collections',
+  resourcereview: 'reviews',
+  comicproject: 'comics',
+  model3d: '3d-models',
+  crucible: 'crucibles',
+  storyline: 'storylines',
+  challenge: 'challenges',
+};
+
+// Callers disagree on casing — ModActivity stores 'image', the report joins label rows 'Image', and
+// thread resolution yields 'bountyEntry'. Matching case-sensitively silently returned null for one of
+// them, which reads as "no link exists" rather than "the key was spelled differently".
+//
+// Types with no standalone page (comments, bounty entries, questions, answers, accounts)
+// have no entry and correctly return null.
+export function entityUrl(
+  civitaiUrl: string,
+  entityType: string | null,
+  entityId: number | null
+): string | null {
+  const segment = entityType ? ENTITY_PATH[entityType.toLowerCase()] : undefined;
+  return entityId && segment ? `${civitaiUrl}/${segment}/${entityId}` : null;
+}
+
+// Linking a comment to its ENTITY leaves the moderator scrolling a thread for the row they were already
+// looking at. Both comment tables have a deep link and neither is derivable from `entityUrl`.
+
+/** Legacy `Comment` (model threads): opens the thread dialog with the row highlighted. */
+export const modelCommentUrl = (civitaiUrl: string, modelId: number, commentId: number) =>
+  `${civitaiUrl}/models/${modelId}?dialog=commentThread&highlight=${commentId}`;
+
+/** `CommentV2` (image, article, post, bounty, …). The main app resolves the thread server-side and
+ *  redirects with the comment pinned, so this works for entity types that have no standalone page and
+ *  for replies buried past the first page of a thread — neither of which a built URL can reach. */
+export const commentV2Url = (civitaiUrl: string, commentId: number) =>
+  `${civitaiUrl}/comments/v2/${commentId}`;
+
+/** A user's profile, optionally a section of it (`models`, `images`, `posts`, …). Encoded — usernames
+ *  allow characters that change the path when left raw, which the previous `$lib/articles` copy did. */
+export function userUrl(civitaiUrl: string, username: string, section?: string | null): string {
+  const base = `${civitaiUrl}/user/${encodeURIComponent(username)}`;
+  return section ? `${base}/${section}` : base;
+}
+
+/** The main site's account-level CSAM report for a user. */
+export const csamReportUrl = (civitaiUrl: string, userId: number) =>
+  `${civitaiUrl}/moderator/csam/${userId}`;
+
+/** The same page filing a report that supplements `priorReportId`, with `imageIds` preselected. */
+export function csamSupplementalReportUrl(
+  civitaiUrl: string,
+  userId: number,
+  priorReportId: number,
+  imageIds: number[] = []
+): string {
+  const params = new URLSearchParams({ supplementalOf: String(priorReportId) });
+  if (imageIds.length) params.set('imageIds', imageIds.join(','));
+  return `${csamReportUrl(civitaiUrl, userId)}?${params}`;
+}
+
+/** A workflow-only training run's review page. */
+export const trainingWorkflowReviewUrl = (workflowId: string) =>
+  `/audit/training-data/workflow/${encodeURIComponent(workflowId)}`;
+
+// The `/retool/*` builders live in `@civitai/shared/moderator-paths` so this app and the main app read
+// ONE definition. They were two, each carrying a comment telling the reader to keep them in step, and
+// they had already diverged on whether user-lookup takes a `section`. When the transitional namespace
+// moves, the copy nobody updated is the one that becomes a dead link.
+export const userLookupUrl = moderatorUserLookupPath;
+export const bulkBanUrl = (ids: number[]) =>
+  `/retool/bulk-ban?ids=${encodeURIComponent(ids.join('\n'))}`;
+export const bulkImageManagerUrl = moderatorBulkImageManagerPath;
+export const imageLookupUrl = moderatorImageLookupPath;
+export const modelLookupUrl = moderatorModelLookupPath;
+export const modelVersionLookupUrl = moderatorModelVersionLookupPath;
+export const articleLookupUrl = moderatorArticleLookupPath;
+
+/** The user report queue opened on one account. The account and its tab are the PATH so the queue — a
+ *  layout — keeps its data while a moderator moves between them; `details` is the bare path. */
+export const userReportUrl = (userId: number, tab?: string) =>
+  `/reports/user/${userId}${tab && tab !== 'details' ? `/${tab}` : ''}`;
+
+/** The post report queue opened on one post and tab — both the path, as on the user queue; `images` is the
+ *  bare path. */
+export const postReportUrl = (postId: number, tab?: string) =>
+  `/reports/post/${postId}${tab && tab !== 'images' ? `/${tab}` : ''}`;
+
+export const chatAuditChatUrl = (chatId: number) => `/retool/chat-audit/chats?chat=${chatId}`;
+
+/**
+ * Chat Audit searched for one account's chats.
+ *
+ * The leading `@` is a contract with `classifySearch`, not decoration: a bare term is classified by
+ * SHAPE, so an all-digit username reads as a chat id and a non-matching one falls through to
+ * message-content search.
+ *
+ * 🔴 This finds chats the account **posted in**, not chats it is a member of — the search joins
+ * `ChatMessage`, while membership lives in `ChatMember`. An account that received DMs and never
+ * replied is in N chats and matches none of them, so do not label a link to this "every chat".
+ */
+export const chatAuditUserUrl = (username: string) =>
+  `/retool/chat-audit/chats?q=${encodeURIComponent('@' + username)}`;
+
+/** A model page pinned to one version. Built inline at four sites before this; the version is the whole
+ *  point on the moderation pages, and dropping it lands the reviewer on whichever version is current. */
+export const modelVersionUrl = (civitaiUrl: string, modelId: number, versionId: number) =>
+  `${civitaiUrl}/models/${modelId}?modelVersionId=${versionId}`;
+
+/** A bounty entry on the site. Entries have no page of their own outside their bounty, so `entityUrl`
+ *  has no entry for them. */
+export const bountyEntryUrl = (civitaiUrl: string, bountyId: number, entryId: number) =>
+  `${civitaiUrl}/bounties/${bountyId}/entries/${entryId}`;
+
+/** The public Known Issues board. 🔴 THERE IS NO DEEP LINK — `src/pages/issues/index.tsx` reads no
+ *  id, so a link naming a specific issue still lands on the index. Here so that stays one claim in
+ *  one place, and so a future deep link is one edit. */
+export const issuesUrl = (civitaiUrl: string) => `${civitaiUrl}/issues`;

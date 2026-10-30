@@ -22,10 +22,13 @@ import type { DetailActionMode } from '~/components/Apps/appListingDetailView';
 // with a missing key, so adding a 5th mode fails to typecheck HERE. A plain
 // `readonly DetailActionMode[]` would NOT — it accepts any subset, which would
 // let the distinctness tests below silently under-cover a newly added mode.
+// 🔴 `connect` is deliberately ABSENT (#4208 removed the mode). `satisfies` is
+// exact both ways here: re-adding the key without re-adding the union member is
+// an excess-property error, so this literal is also the tripwire for the dead
+// Connect CTA coming back.
 const DETAIL_MODES = Object.keys({
   open: true,
   visit: true,
-  connect: true,
   info: true,
 } satisfies Record<DetailActionMode, true>) as DetailActionMode[];
 
@@ -44,7 +47,6 @@ describe('detailActionGlyph', () => {
   test('maps each detail mode to its named glyph', () => {
     expect(detailActionGlyph('open')).toBe('launch');
     expect(detailActionGlyph('visit')).toBe('external');
-    expect(detailActionGlyph('connect')).toBe('connect');
     expect(detailActionGlyph('info')).toBe('info');
   });
 
@@ -81,8 +83,18 @@ describe('cardActionGlyph', () => {
   test('agrees with the detail page on every shared action name', () => {
     // The two view-models use the same words for the same meaning; a card and
     // the detail it links to must not disagree about what the CTA is.
-    for (const shared of ['open', 'visit', 'connect'] as const) {
-      expect(cardActionGlyph(shared)).toBe(detailActionGlyph(shared));
+    //
+    // 🔴 `connect` LEFT this list because it is no longer shared — #4208 removed
+    // the detail mode, so `detailActionGlyph('connect')` does not type-check.
+    // The set is derived, not hand-written, so it cannot silently under-cover:
+    // it is every card action that is ALSO a detail mode.
+    const shared = CARD_ACTIONS.filter((a): a is DetailActionMode =>
+      (DETAIL_MODES as string[]).includes(a)
+    );
+    // Anti-vacuity: a filter that matched nothing would pass this loop trivially.
+    expect(shared).toEqual(['open', 'visit']);
+    for (const action of shared) {
+      expect(cardActionGlyph(action), action).toBe(detailActionGlyph(action));
     }
   });
 });

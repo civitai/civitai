@@ -1,7 +1,7 @@
-import fs from 'fs';
 import { expect, test } from '@playwright/test';
 import { storageStatePath } from './preview-fixtures';
 import { trpcMutation, trpcQuery, uniqueToken } from './preview-trpc';
+import { UPLOAD_FIXTURE, uploadImage } from './preview-upload';
 
 /**
  * Direct-image-upload e2e for a deployed PR preview.
@@ -21,14 +21,11 @@ import { trpcMutation, trpcQuery, uniqueToken } from './preview-trpc';
  * bucket (a tiny PNG is written each run — harmless).
  *
  * Scope ceiling (honest): asserts the upload + attach + PUBLISH DB path. It does NOT
- * assert public-feed visibility — image ingestion/scan is unreachable in preview
- * (placeholder IMAGE_SCANNING_ENDPOINT), so the row stays ingestion:Pending. That does
- * NOT block row creation, attach, or publish.
+ * assert public-feed visibility — image ingestion never completes in preview, so the row
+ * stays ingestion:Pending. That does NOT block row creation, attach, or publish.
  *
  * Role: tester (free member, passes the gate; guardedProcedure cleared via onboarding=15).
  */
-
-const PREVIEW_URL = process.env.PREVIEW_URL ?? '';
 
 test.describe('post an image via direct upload (tester)', () => {
   test.use({ storageState: storageStatePath('tester') });
@@ -40,47 +37,29 @@ test.describe('post an image via direct upload (tester)', () => {
     await page.goto('/', { waitUntil: 'domcontentloaded' });
 
     const token = uniqueToken('post-upload');
-    const png = fs.readFileSync('tests/fixtures/e2e-pixel.png'); // CWD = repo root (see preview-fixtures)
 
-    // 1. Get an upload URL. The server mints the object key + a presigned B2 PUT URL
-    //    (it ignores the request body — randomUUID() key), authed via the cookie.
-    const up = await page.request.post('/api/v1/image-upload', {
-      headers: {
-        'content-type': 'application/json',
-        origin: PREVIEW_URL,
-        referer: `${PREVIEW_URL}/`,
-      },
-      data: {},
-    });
-    expect(up.ok(), `/api/v1/image-upload -> HTTP ${up.status()}`).toBeTruthy();
-    const { id: key, uploadURL } = (await up.json()) as { id: string; uploadURL: string };
-    expect(typeof key, 'image-upload returns a string object key').toBe('string');
-    expect(uploadURL, 'image-upload returns a presigned PUT url').toContain('http');
-
-    // 2. PUT the bytes straight to B2 via the presigned URL — the load-bearing
-    //    integration. The presigned PutObjectCommand pins only Bucket+Key (no signed
-    //    ContentType), so the content-type header is free. Absolute URL overrides
-    //    page.request's baseURL.
-    const put = await page.request.fetch(uploadURL, {
-      method: 'PUT',
-      headers: { 'content-type': 'image/png' },
-      data: png,
-    });
-    expect(put.status(), `B2 presigned PUT -> HTTP ${put.status()}`).toBe(200);
+    // 1+2. Get an upload URL (the server mints the key and records it as issued to the
+    //    tester), then PUT the bytes straight to B2 via the presigned URL — the
+    //    load-bearing integration. See tests/preview-upload.ts.
+    const key = await uploadImage(page.request);
 
     // 3+4. Attach the uploaded image (url = the B2 key) + publish in one guarded call.
     //    post.createWithImages' internal publish bypasses post.update's verified gate,
     //    so a tester can publish. No Buzz, no GPU.
-    const post = await trpcMutation<{ id: number } | null>(
-      page.request,
-      'post.createWithImages',
-      {
-        title: token,
-        detail: token,
-        publish: true,
-        images: [{ url: key, type: 'image', width: 1, height: 1, index: 0 }],
-      }
-    );
+    const post = await trpcMutation<{ id: number } | null>(page.request, 'post.createWithImages', {
+      title: token,
+      detail: token,
+      publish: true,
+      images: [
+        {
+          url: key,
+          type: 'image',
+          width: UPLOAD_FIXTURE.width,
+          height: UPLOAD_FIXTURE.height,
+          index: 0,
+        },
+      ],
+    });
     expect(typeof post?.id, 'post.createWithImages returns a numeric post id').toBe('number');
 
     // 5. Read the owner edit-detail back: the post is published and carries the image.

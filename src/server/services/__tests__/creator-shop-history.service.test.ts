@@ -14,19 +14,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique, findFirst: vi.fn() },
-    // Reviewing anything other than an approval runs the D14 pack delist
-    // cascade, which reads the join table.
-    cosmeticShopItemCosmetic: { findMany: vi.fn().mockResolvedValue([]) },
-  },
-  dbWrite: {
-    cosmeticShopItem: { update: mocks.shopItemUpdate, updateMany: vi.fn() },
-    cosmetic: { update: vi.fn() },
-    userCosmetic: { createMany: mocks.userCosmeticCreateMany },
-  },
-}));
 vi.mock('sharp', () => ({ default: () => ({ metadata: mocks.sharpMetadata }) }));
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: vi.fn(),
@@ -42,6 +29,26 @@ vi.mock('~/server/redis/caches', async (importOriginal) => ({
 }));
 
 import { reviewCreatorShopItem, updateCreatorShopItem } from '../creator-shop.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+
+// Shop artwork is a bare upload key; this one's issue record names the creator (user 11).
+const ART_KEY = '1a2b3c4d-0000-4000-8000-0000000000bb';
+beforeEach(() => {
+  redisMock.sysRedis.mGet.mockResolvedValue(['11'] as never);
+});
+dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmetic.createMany.mockImplementation((...args: unknown[]) =>
+  (mocks.userCosmeticCreateMany as (...a: unknown[]) => unknown)(...args)
+);
 
 // The item as it stands after the moderator asked for changes: approved once at
 // 500 Buzz, currently sitting in RequestedChanges with the mod's note.
@@ -116,7 +123,11 @@ describe('creator shop item history', () => {
     });
     vi.stubGlobal(
       'fetch',
-      vi.fn().mockResolvedValue({ ok: true, arrayBuffer: async () => new ArrayBuffer(8) })
+      vi.fn().mockResolvedValue({
+        ok: true,
+        headers: { get: () => null },
+        arrayBuffer: async () => new ArrayBuffer(8),
+      })
     );
   });
 
@@ -145,7 +156,12 @@ describe('creator shop item history', () => {
       unitAmount: 900,
       meta: { ...requestedChangesItem.meta, history: afterEdit },
     });
-    await reviewCreatorShopItem({ id: 42, reviewerId: 99, action: 'approve' });
+    await reviewCreatorShopItem({
+      id: 42,
+      reviewerId: 99,
+      action: 'approve',
+      stickersEnabled: false,
+    });
 
     const afterApproval = historyOf(1);
     expect(afterApproval).toHaveLength(4);
@@ -170,13 +186,13 @@ describe('creator shop item history', () => {
       // A moderator swap doesn't re-affirm the rights, so the edit doesn't need
       // a `rightsAffirmed` flag it would otherwise be rejected without.
       isModerator: true,
-      imageUrl: 'new-art',
+      imageUrl: ART_KEY,
     });
 
     expect(historyOf(0)[2].changes).toContainEqual({
       field: 'artwork',
       from: 'old-art',
-      to: 'new-art',
+      to: ART_KEY,
     });
   });
 
@@ -190,6 +206,7 @@ describe('creator shop item history', () => {
     await reviewCreatorShopItem({
       id: 42,
       reviewerId: 99,
+      stickersEnabled: false,
       action: 'reject',
       rejectionReason: 'Traced artwork',
     });

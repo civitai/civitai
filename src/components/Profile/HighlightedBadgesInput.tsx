@@ -72,6 +72,7 @@ export function HighlightedBadgesInput({
                   width={64}
                   alt={badge.name ?? 'Badge'}
                   className="h-full w-full object-contain"
+                  optimized
                 />
               )}
               {selected && (

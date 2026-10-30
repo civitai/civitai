@@ -51,6 +51,16 @@ export type LruCacheOptions<K, V extends NonNullable<unknown>> = {
   sizeCalculation?: (value: V, key: string) => number;
   /** TTL in milliseconds (default: 5 minutes). Set to 0 for no TTL. */
   ttl?: number;
+  /**
+   * When `fetchFn` REJECTS, `fetch()` serves this key's EXPIRED value instead of propagating the error;
+   * it still throws when nothing was ever cached. Off by default — a caller with no safe stale answer
+   * must see the failure. Enabling it also keeps an expired entry alive through a normal `get`
+   * (`noDeleteOnStaleGet`), which is what leaves a value to fall back to.
+   *
+   * For a cache whose miss value is indistinguishable from a legitimate empty answer — page-access
+   * grants, permission maps — this is the difference between a Redis blip and a lockout.
+   */
+  allowStale?: boolean;
   /** Name for metrics tracking */
   name: string;
   /** Function to generate cache key from input */
@@ -85,6 +95,7 @@ export function createLruCache<K, V extends NonNullable<unknown>>(options: LruCa
     maxSize,
     sizeCalculation,
     ttl = DEFAULT_TTL_MS,
+    allowStale = false,
     name,
     keyFn,
     fetchFn,
@@ -94,6 +105,10 @@ export function createLruCache<K, V extends NonNullable<unknown>>(options: LruCa
   const cache = new LRUCache<string, V>({
     max,
     ttl: ttl > 0 ? ttl : undefined,
+    // A normal `get` prunes an expired entry as it reports the miss, which would throw away the very
+    // value the fetch-rejection fallback needs. Only enabled with `allowStale`, so nothing else changes
+    // its eviction behavior.
+    ...(allowStale ? { noDeleteOnStaleGet: true } : {}),
     // Byte cap (deterministic heap bound), enabled only when maxSize is set — lru-cache requires a
     // sizeCalculation whenever maxSize is present. Clamp the estimator to a positive integer.
     ...(maxSize
@@ -117,9 +132,18 @@ export function createLruCache<K, V extends NonNullable<unknown>>(options: LruCa
       }
 
       metrics?.miss(name);
-      const value = await fetchFn(input);
-      cache.set(key, value);
-      return value;
+      try {
+        const value = await fetchFn(input);
+        cache.set(key, value);
+        return value;
+      } catch (err) {
+        if (!allowStale) throw err;
+        // Read stale explicitly rather than via the constructor flag: a constructor-level `allowStale`
+        // would make the `get` above serve expired values too, and the entry would never refresh.
+        const stale = cache.get(key, { allowStale: true });
+        if (stale === undefined) throw err;
+        return stale;
+      }
     },
 
     /** Get a value from cache without fetching */

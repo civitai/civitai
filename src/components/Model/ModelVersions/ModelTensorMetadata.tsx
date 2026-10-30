@@ -15,7 +15,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { IconChevronDown, IconChevronRight } from '@tabler/icons-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { getPrimaryFile } from '~/server/utils/model-helpers';
+import { resolveActiveFile } from '~/server/utils/model-helpers';
 import type { ModelById } from '~/types/router';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
 import {
@@ -52,15 +52,12 @@ export function ModelTensorMetadata({ files, userPreferences, enabled, selectedF
     () => files.filter((file) => inferTensorMetadataFormat(file)),
     [files]
   );
-  const defaultFile = useMemo(
-    () => getPrimaryFile(supportedFiles, { metadata: userPreferences }) ?? supportedFiles[0],
-    [supportedFiles, userPreferences]
+  // Only tensor-parseable files are offered here, so the shared download
+  // selection is ignored when it points at anything else.
+  const selectedFile = useMemo(
+    () => resolveActiveFile(supportedFiles, selectedFileId, { metadata: userPreferences }),
+    [supportedFiles, selectedFileId, userPreferences]
   );
-
-  // Follow the shared download selection when it points at a tensor-parseable
-  // file; otherwise fall back to this version's primary/default file.
-  const selectedFile =
-    supportedFiles.find((file) => file.id === selectedFileId) ?? defaultFile ?? null;
 
   // Summary is always fetched (cheap, server-cached) so the closed header can
   // show the VRAM range at a glance. The full tensor list is only fetched once

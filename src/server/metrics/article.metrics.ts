@@ -14,7 +14,14 @@ import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { createLogger } from '~/utils/logging';
 import type { Task } from '~/server/utils/concurrency-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
-import { executeRefresh, getAffected, getEntityMetricTasks } from '~/server/metrics/metric-helpers';
+import {
+  executeRefresh,
+  getAffected,
+  reactionCountKeys,
+  snippets,
+} from '~/server/metrics/metric-helpers';
+import { getCollectionItemCountTasks } from '~/server/metrics/collection-item-counts';
+import { getMetricExcludedUserIdsOrThrow } from '~/server/services/metric-excluded-users.service';
 import type { ArticleMetric } from '~/shared/utils/prisma/models';
 import { templateHandler } from '~/server/db/db-helpers';
 
@@ -99,12 +106,12 @@ export const articleMetrics = createMetricProcessor({
   rank: {
     table: 'ArticleRank',
     primaryKey: 'articleId',
-    indexes: ['reactionCountMonthRank'],
   },
 });
 
 async function getReactionTasks(ctx: MetricContext) {
   log('getReactionTasks', ctx.lastUpdate);
+  const excludedFilter = snippets.excludedReactorFilter(await getMetricExcludedUserIdsOrThrow());
   const affected = await getAffected(ctx)`
     -- get recent article reactions
     SELECT
@@ -116,6 +123,15 @@ async function getReactionTasks(ctx: MetricContext) {
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
     ctx.jobContext.checkIfCanceled();
     log('getReactionTasks', i + 1, 'of', tasks.length);
+    // An entity whose remaining reactions are all excluded yields NO ROW from the
+    // aggregate below, and a missing row means "no change" to every writer downstream —
+    // so the pre-exclusion total would survive even a full recompute. Seeding zeros
+    // first makes the absence of a row mean zero; the aggregate overwrites whatever it
+    // does return.
+    for (const id of ids) {
+      const row = (ctx.updates[id] ??= { [ctx.idKey]: id });
+      for (const key of reactionCountKeys) row[key] ??= 0;
+    }
     await getMetrics(ctx)`
       -- get article reaction metrics
       SELECT
@@ -129,6 +145,7 @@ async function getReactionTasks(ctx: MetricContext) {
       FROM "ArticleReaction" r
       WHERE r."articleId" IN (${ids})
         AND r."articleId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
+        ${excludedFilter}
       GROUP BY r."articleId"
     `;
     log('getReactionTasks', i + 1, 'of', tasks.length, 'done');
@@ -140,10 +157,9 @@ async function getReactionTasks(ctx: MetricContext) {
 async function getCommentTasks(ctx: MetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent article comments
-    SELECT t."articleId" as id
-    FROM "Thread" t
-    JOIN "CommentV2" c ON c."threadId" = t.id
-    WHERE t."articleId" IS NOT NULL AND c."createdAt" > ${ctx.lastUpdate}
+    SELECT c."entityId" as id
+    FROM "CommentV3" c
+    WHERE c."entityType" = 'article' AND c."parentId" IS NULL AND c."createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, 1000).map((ids, i) => async () => {
@@ -152,14 +168,15 @@ async function getCommentTasks(ctx: MetricContext) {
     await getMetrics(ctx)`
       -- get article comment metrics
       SELECT
-        t."articleId",
+        c."entityId" AS "articleId",
         'AllTime'::"MetricTimeframe" AS timeframe,
         COUNT(c.id)::int AS "commentCount"
-      FROM "Thread" t
-      JOIN "CommentV2" c ON c."threadId" = t.id
-      WHERE t."articleId" IN (${ids})
-        AND t."articleId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
-      GROUP BY t."articleId"
+      FROM "CommentV3" c
+      WHERE c."entityType" = 'article' AND c."parentId" IS NULL AND c."deletedAt" IS NULL
+        AND c."tosViolation" = false
+        AND c."entityId" IN (${ids})
+        AND c."entityId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
+      GROUP BY c."entityId"
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
   });
@@ -168,7 +185,7 @@ async function getCommentTasks(ctx: MetricContext) {
 }
 
 async function getCollectionTasks(ctx: MetricContext) {
-  return getEntityMetricTasks(ctx)('Article', 'collectedCount');
+  return getCollectionItemCountTasks(ctx)('Article');
 }
 
 async function getBuzzTasks(ctx: MetricContext) {

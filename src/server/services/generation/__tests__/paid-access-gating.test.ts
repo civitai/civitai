@@ -7,10 +7,9 @@ const { mockGetPaidAccess, mockHasEntityAccess, mockGetViewerMonetization } = vi
   mockGetViewerMonetization: vi.fn(),
 }));
 
-// Rows reach the gate through getViewerMonetization, which prices them; this stub hands back the stored
-// rows so these tests stay about the ACCESS decision. Pricing has its own tests in paid-access.service.
 vi.mock('~/server/services/paid-access.service', () => ({
   getViewerMonetization: mockGetViewerMonetization,
+  bustModelSaleCache: vi.fn(),
 }));
 vi.mock('~/server/services/common.service', () => ({ hasEntityAccess: mockHasEntityAccess }));
 
@@ -48,14 +47,15 @@ const gate = (over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
-  vi.clearAllMocks();
+  // reset, not clear: a once-value a test queued but never consumed would leak into the next test.
+  vi.resetAllMocks();
   mockGetPaidAccess.mockResolvedValue({});
   mockHasEntityAccess.mockResolvedValue([]);
   mockGetViewerMonetization.mockImplementation(
     async ({ versions }: { versions: { id: number }[] }) => {
       const rows = await mockGetPaidAccess(versions.map((v) => v.id));
       return Object.fromEntries(
-        versions.map((v) => [v.id, { paidAccess: rows[v.id], licensingFee: null }])
+        versions.map((v) => [v.id, { paidAccess: rows[v.id], sale: null, licensingFee: null }])
       );
     }
   );
@@ -157,10 +157,11 @@ describe('applyPaidAccessGating — the sole paid generation gate', () => {
     expect(r.canGenerate).toBe(false);
   });
 
-  it('purchase lookup is scoped to covered && non-owner && non-free gated ids only', async () => {
-    const bundledCovered = resource({ id: 1 });
+  it('purchase lookup is scoped to non-owner && non-free gated ids only', async () => {
+    const bundled = resource({ id: 1 });
     const freeNonOwner = resource({ id: 2 });
     const ownedBundled = resource({ id: 3 });
+    // The raw live-rule column, which an expansion-covered version reads false.
     const notCovered = resource({ id: 4, covered: false });
     mockGetPaidAccess.mockResolvedValueOnce({
       1: gate({ entityId: 1, terms: BUNDLED }),
@@ -169,18 +170,85 @@ describe('applyPaidAccessGating — the sole paid generation gate', () => {
       4: gate({ entityId: 4, terms: BUNDLED }),
     });
 
-    await applyPaidAccessGating([bundledCovered, freeNonOwner, ownedBundled, notCovered], {
+    await applyPaidAccessGating([bundled, freeNonOwner, ownedBundled, notCovered], {
       id: 1,
     });
 
-    // Only id 1 qualifies for the purchase check.
     expect(mockHasEntityAccess).toHaveBeenCalledTimes(1);
-    expect(mockHasEntityAccess).toHaveBeenCalledWith(expect.objectContaining({ entityIds: [1] }));
+    expect(mockHasEntityAccess).toHaveBeenCalledWith(
+      expect.objectContaining({ entityIds: [1, 4] })
+    );
+  });
+
+  it('lets a BUYER through on a version the live coverage column reads false', async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+    mockHasEntityAccess.mockResolvedValueOnce([{ entityId: 1, hasAccess: true }]);
+    const r = resource({ covered: false });
+
+    await applyPaidAccessGating([r], { id: 1 });
+
+    expect(r.hasAccess).toBe(true);
   });
 });
 
-describe('applyPaidAccessGating — pricing is delegated, not reimplemented', () => {
-  it('forwards the VIEWER so the owner keeps their stored prices (a dropped arg caps them)', async () => {
+describe('applyPaidAccessGating — every copy of a version is gated', () => {
+  // Two objects can share an id: a version substituting for itself, or two epochs of one version.
+  const pair = () => [resource(), resource()];
+
+  it('BLOCKS a non-buyer on every copy of a must-buy version', async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+    const copies = pair();
+
+    await applyPaidAccessGating(copies, { id: 1 });
+
+    expect(copies.map((r) => [r.hasAccess, r.canGenerate])).toEqual([
+      [false, false],
+      [false, false],
+    ]);
+  });
+
+  it('lets a buyer through on every copy, with one purchase lookup for the id', async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+    mockHasEntityAccess.mockResolvedValueOnce([{ entityId: 1, hasAccess: true }]);
+    const copies = pair();
+
+    await applyPaidAccessGating(copies, { id: 1 });
+
+    expect(copies.map((r) => r.hasAccess)).toEqual([true, true]);
+    expect(mockHasEntityAccess).toHaveBeenCalledWith(expect.objectContaining({ entityIds: [1] }));
+  });
+
+  it.each([
+    ['FREE', FREE],
+    ['TRIAL', TRIAL],
+  ])('keeps %s generation open to a non-buyer on every copy', async (_name, terms) => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms }) });
+    const copies = pair();
+
+    await applyPaidAccessGating(copies, { id: 1 });
+
+    expect(copies.map((r) => [r.hasAccess, r.canGenerate])).toEqual([
+      [true, true],
+      [true, true],
+    ]);
+  });
+
+  it.each([
+    ['owner', { id: OWNER }],
+    ['moderator', { id: 1, isModerator: true }],
+  ])('lets the %s through on every copy', async (_name, viewer) => {
+    mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
+    const copies = pair();
+
+    await applyPaidAccessGating(copies, viewer);
+
+    expect(copies.map((r) => r.hasAccess)).toEqual([true, true]);
+    expect(mockHasEntityAccess).not.toHaveBeenCalled();
+  });
+});
+
+describe('applyPaidAccessGating — the gate rows it asks for', () => {
+  it('asks for the versions it is gating', async () => {
     mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
 
     await applyPaidAccessGating([resource()], { id: OWNER, isModerator: false });
@@ -191,9 +259,9 @@ describe('applyPaidAccessGating — pricing is delegated, not reimplemented', ()
     });
   });
 
-  it('puts the PRICED terms on the wire, not the stored ones', async () => {
-    mockGetViewerMonetization.mockResolvedValueOnce({
-      1: { paidAccess: gate({ terms: { download: { price: 500 } } }), licensingFee: null },
+  it('puts the stored terms on the wire', async () => {
+    mockGetPaidAccess.mockResolvedValueOnce({
+      1: gate({ terms: { download: { price: 500 } } }),
     });
 
     const r = resource();
@@ -201,16 +269,14 @@ describe('applyPaidAccessGating — pricing is delegated, not reimplemented', ()
 
     expect(r.paidAccess?.terms).toEqual({ download: { price: 500 } });
   });
-});
 
-describe('applyPaidAccessGating — the wire price is resolved per version', () => {
-  it("forwards each version's baseModel, so a video gate is not priced at the image ceiling", async () => {
+  it('dedupes repeated resources into one version entry', async () => {
     mockGetPaidAccess.mockResolvedValueOnce({ 1: gate({ terms: BUNDLED }) });
 
-    await applyPaidAccessGating([resource({ baseModel: 'Hunyuan Video' })], { id: 2 });
+    await applyPaidAccessGating([resource(), resource()], { id: 2 });
 
     expect(mockGetViewerMonetization).toHaveBeenCalledWith({
-      versions: [{ id: 1, baseModel: 'Hunyuan Video' }],
+      versions: [{ id: 1 }],
       viewer: { id: 2 },
     });
   });

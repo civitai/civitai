@@ -141,9 +141,9 @@ The differ is pure so it can be driven from fixtures, including deliberately dam
 pnpm --filter @civitai/db-schema test
 ```
 
-`__tests__/fixtures/` holds a small curated schema and two catalogs — one aligned with it,
-one carrying exactly one seeded defect per drift class. A dump of the real catalog would be
-226 KB and would make the expectations unreadable.
+`__tests__/fixtures/` holds a small curated schema and two curated catalogs — one aligned
+with it, one carrying exactly one seeded defect per drift class — plus two real production
+captures used by `production-snapshot.test.ts` and the gate.
 
 The suite includes both controls at two levels — the differ and the command people
 actually run — because a detector that returns nothing is indistinguishable from one wired
@@ -167,7 +167,94 @@ already-parsed JavaScript arrays, which is precisely how the `name[]` bug above 
 invisible to it — so a green suite here is not a claim that the queries behave correctly
 against a real server. Check that by running the tool.
 
-## Measured against the committed snapshot, 2026-08-05
+## The current snapshot, 2026-10-20
+
+`__tests__/fixtures/catalog-production-2026-10-20.json` is what the CI gate compares against
+(`gate-cli.ts`'s default). It was captured read-only with `drift --dump-catalog` after the
+`Model` .com face migration (`20261016120000_model_sfw_face`) was applied in production. It
+differs from the 2026-10-19 capture it replaces only in those four nullable `Model` columns,
+which that capture reported missing; every relation, nullability and uniqueness finding is the
+same, so `drift-baseline.json` is unchanged. Reproduce with:
+
+```bash
+pnpm --filter @civitai/db-schema drift \
+  --catalog src/schema-drift/__tests__/fixtures/catalog-production-2026-10-20.json
+```
+
+```
+declared owning-side relations : 611
+checked against the database   : 582
+skipped (view / absent table)  : 29
+MISSING foreign key            : 32
+wrong referential action       : 67  (all ON UPDATE; ON DELETE agrees on every one)
+MISSING column                 : 0
+nullability checked            : 3343
+nullability drift              : 11
+uniqueness declarations checked: 159
+missing unique index           : 2
+```
+
+That makes 112 findings, and `drift-baseline.json` accepts all 112. The 2026-10-19 capture had
+followed the `Thread` entity-FK cascade migration (`20261101120000_thread_entity_fk_cascade`,
+#6155); against the baseline as it stood before that recapture (119 entries), 16 dropped out and
+9 were added:
+
+- **Dropped (16).** The 15 `Thread` entity relations that were declared `ON DELETE Cascade`
+  against a database `SetNull`, and `missing-foreign-key|Thread|challengeId`, which never had a
+  foreign key. The cascade migration flipped the 15 and added the sixteenth; all are validated.
+- **Added (9).** All `referential-action`, all `ON UPDATE` only (`Cascade` declared, `NoAction`
+  in the database), on the hand-written mystery-box keys (`BoxTier`, `BoxRevision`,
+  `BoxOddsSnapshot`, three on `BoxContent`, `ItemDefinition.cosmeticId`,
+  `Item.itemDefinitionId`, `CosmeticShopItem.itemDefinitionId`). Same inert class as the App
+  Blocks batch below; `ON DELETE` agrees on every one.
+
+The 2026-10-16 capture that the 2026-10-19 one replaced is not kept: it lagged the schema on nothing the
+2026-08-03 fixture does not already cover, and a 640 KB fixture earns its place only by
+exercising a path.
+
+## The previous snapshot, 2026-10-16
+
+The 2026-10-16 capture was the first to include `ON DELETE`/`ON UPDATE` and `validated` for
+each foreign key. Its report:
+
+```
+declared owning-side relations : 600
+checked against the database   : 571
+skipped (view / absent table)  : 29
+MISSING foreign key            : 33
+wrong referential action       : 58  (all ON UPDATE; ON DELETE agrees on every one)
+MISSING column                 : 0
+nullability checked            : 3200
+nullability drift              : 11
+uniqueness declarations checked: 155
+missing unique index           : 2
+```
+
+That makes 104 findings, and `drift-baseline.json` accepts all 104. Against the 2026-08-03
+baseline (67 entries), 22 dropped out and 59 were added:
+
+- **Dropped (22).** Five missing foreign keys are now in place, each one validated:
+  `ImageTagForReview.imageId`, `ImageTool.imageId`, `ImageTechnique.imageId`,
+  `Thread.imageId` and `UserProfile.sfwCoverImageId`. Fourteen were missing columns that have
+  since been migrated. The last three were nullability findings that no longer reproduce:
+  `Chat.hash`, `CosmeticShopItem.cosmeticId` and `UserCosmeticShopPurchases.cosmeticId`.
+- **Added (59).** 58 are `referential-action` findings that the old snapshot could not
+  measure. Each one is declared `ON UPDATE Cascade` while the database has `NoAction`, on the
+  hand-written App Blocks tables. Ids are never updated, so these are inert in practice
+  (see "Referential actions: measured since 2026-10-16" below). The other one is
+  `AnnouncementSpend(announcementId)`. Its migration creates a partial unique index
+  (`WHERE "announcementId" IS NOT NULL`), the schema comment calls that deliberate, and the
+  differ reads only total unique indexes. Postgres treats NULLs as distinct, so duplicates
+  are still rejected. It is not the same as a full index, though: `ON CONFLICT
+("announcementId")` cannot use a partial index, so a Prisma `upsert` keyed on
+  `announcementId` would type-check and then fail at runtime. The only writer today is a
+  plain `create`.
+
+The 2026-08-03 capture below is kept as a test fixture. It is the only real catalog that
+lags the schema, so it is the only one that exercises the pending tier, the escalation
+guard and the "referential actions not compared" path. Tests for those use it explicitly.
+
+## Measured against the previous snapshot, 2026-08-05
 
 `__tests__/fixtures/catalog-production-2026-08-03.json` is a point-in-time capture of the
 production constraint catalogs — table and column names, nullability, foreign-key and
@@ -180,25 +267,27 @@ pnpm --filter @civitai/db-schema drift \
 ```
 
 ```
-declared owning-side relations : 485
-checked against the database   : 445
-skipped (view / absent table)  : 40
-MISSING foreign key            : 37
+declared owning-side relations : 509
+checked against the database   : 448
+skipped (view / absent table)  : 61
+MISSING foreign key            : 40
 wrong referential action       : 0   <- see below
-MISSING column                 : 12
-nullability checked            : 2383
+MISSING column                 : 18
+nullability checked            : 2348
 nullability drift              : 13
 uniqueness declarations checked: 122
 missing unique index           : 1
 ```
 
-63 findings in total. The 13 nullability findings are `Purchase.userId`,
+72 findings in total. The 13 nullability findings are `Purchase.userId`,
 `ChallengeEvent.createdById`, nine `*Metric.updatedAt` columns, and
 `CosmeticShopItem.cosmeticId` / `UserCosmeticShopPurchases.cosmeticId`. Those last two are
 artefacts of the snapshot's age, not live drift: the packs migration made them nullable on
-2026-08-04 and the database has it. A recapture drops them. The 12 missing columns are
-`ModelFlag.sfwOnly`, `UserCosmeticShopPurchases.meta`, and ten
-`UserRank.thumbs{Up,Down}Count*Rank`. The single uniqueness finding is
+2026-08-04 and the database has it. A recapture drops them. The 18 missing columns are
+`ModelFlag.sfwOnly`, `UserCosmeticShopPurchases.meta`, `Challenge.judgingEngine`,
+`ChallengeJudge.judgingEngine`, `Collection.collaborationDisabledAt`,
+`CollectionItem.rejectionDetail`, three `Announcement.*`, three `Cosmetic.pHash*`,
+four `UserProfile.sfw*`, and two `app_block_publish_requests.source*`. The single uniqueness finding is
 `ImageResource(modelVersionId, name, imageId)`.
 
 **Nullability was 246 when this tool shipped.** #3592 then marked the seven `*Rank` families'
@@ -221,7 +310,7 @@ a **dev bootstrap DDL, not a production mirror**. It defines 195 tables against 
 342, omits 178 production foreign keys, and — the part that matters — declares 25 foreign
 keys production does **not** have.
 
-Compared against the 37 missing foreign keys documented above, that dump would:
+Compared against the 37 missing foreign keys in the 2026-08-03 baseline, that dump would:
 
 |                | count |                                                  |
 | -------------- | ----- | ------------------------------------------------ |
@@ -262,7 +351,7 @@ They now run in the `Package unit tests` job, from the `packages/*/vitest.config
 the root `vitest.config.mts`:
 
 ```bash
-pnpm run test:packages:run          # all nine package suites
+pnpm run test:packages:run          # every package suite
 pnpm --filter @civitai/db-schema test   # just this one
 ```
 
@@ -276,11 +365,9 @@ Two things it is worth being precise about, because both are easy to overstate:
 - **It is not an interlock.** `main` has branch protection but no `required_status_checks`, so
   a red `Package unit tests` does not prevent a merge. It renders red rather than
   red-but-ignored, which is the real difference from the `Unit tests` job.
-- **The workspace gap is not closed, only the `packages/*` part of it.** `apps/*` has four
-  more vitest configs and ~43 test files that still no CI job runs. Same one-line fix — another
-  glob in the same `projects` array — plus teaching the ledger script about `apps/`, which
-  currently hardcodes `packages/`. Deliberately left to a follow-up rather than widened into
-  the change that closed the first part.
+- **`apps/*` runs in a sibling job**, `App unit tests + typecheck` (the `App suites` workflow), closed the same way: another
+  glob in the same `projects` array, and the ledger script takes the workspace (`packages` or
+  `apps`) as an argument rather than hardcoding one.
 
 ## Gating a pull request
 
@@ -320,24 +407,26 @@ signal, not an interlock. Adding `Schema drift gate` to the required checks is w
 
 ### Why a baseline and not `--strict`
 
-`--strict` fails on any finding, and there are 63 on `main` today. A gate red on every run
+`--strict` fails on any finding, and there are 112 on `main` today. A gate red on every run
 teaches everyone to click through it, so it would be switched off within a week — the same
 reasoning behind the report-only ESLint and Prettier steps in `.github/workflows/lint.yml`.
 
-`drift-baseline.json`, next to this README, records those 63 as accepted. The gate reports
+`drift-baseline.json`, next to this README, records those 112 as accepted. The gate reports
 only what is **not** in it. The baseline is committed, so accepting new drift is a reviewable
 act: the gate tells you the exact command, and the resulting diff shows a reviewer precisely
 which constraint the change gave up on.
 
 The fingerprint excludes the `declared`/`actual` prose — #3589 corrected eight declared
 referential actions and touched no constraint, and folding that in would have retired eight
-entries and raised eight identical-looking new ones. Two things are deliberately folded back
+entries and raised eight identical-looking new ones. Three things are deliberately folded back
 in, because they _are_ the finding rather than prose about it:
 
 - **nullability direction**, so flipping a field to required against a NULLABLE column cannot
   inherit the old entry's pass;
 - **a missing foreign key's referenced table**, so repointing a relation from `Image` to `Post`
-  — same model, same field, same constrained column — cannot either.
+  — same model, same field, same constrained column — cannot either;
+- **a referential-action finding's declared and actual actions**, so changing `onDelete` on a
+  relation already accepted for an inert `ON UPDATE` mismatch is a new finding, not a match.
 
 The file is in `.prettierignore`. Prettier and the generator disagree about its formatting by
 246 lines, so with both formatting it a no-op refresh produced a ~250-line reformat that buried
@@ -377,11 +466,11 @@ compares the current tier against the tier recorded in the baseline and reports
 `pending -> enforced` as a failure. Without that, the escalation is absorbed into the matched
 count and the run exits 0.
 
-That guard is **nearly forward-looking**. Escalation needs an entry that is both `pending` and
-`missing-foreign-key`; the baseline has exactly **one** — `UserProfile.sfwCoverImageId`, added
-with the profile SFW override columns. Every other pending entry is a `missing-column`, which is
-hardcoded `pending` and can never rise. So the guard fires on that one relation, and on ones
-accepted from here on, and on nothing else already in the baseline.
+That guard is **entirely forward-looking**. Escalation needs an entry that is both `pending`
+and `missing-foreign-key`. Since the 2026-10-16 recapture the baseline has **no** pending
+entries at all. The only one it ever had, `UserProfile.sfwCoverImageId`, went away because the
+column and its foreign key both landed. So the guard can fire only on entries accepted from
+here on.
 
 It also has a bypass worth knowing about: a catalog only gains a column via a **recapture**,
 and the documented procedure for a recapture is to refresh the baseline in the same commit —
@@ -393,19 +482,25 @@ An enforced finding is a hazard the moment it merges: declaring `@unique` on a l
 with no unique index, or flipping a live NULLABLE column to required, makes Prisma hand
 callers a type the database does not back.
 
-### What this gate does not measure
+### Referential actions: measured since 2026-10-16
 
-**Referential actions.** The committed snapshot carries no `ON DELETE`/`ON UPDATE` data, so
-all ~408 comparable foreign keys read as "not comparable" and this gate can produce no
-`referential-action` finding at all. A live run does measure them and found **45** — every one
-an `ON UPDATE` `Cascade`-vs-`NoAction` on a hand-written App Blocks foreign key, with zero
-`ON DELETE` mismatches. Since `id` is never updated, they are inert in practice.
+Until the 2026-10-16 recapture, the committed snapshot had no `ON DELETE`/`ON UPDATE` data.
+All ~408 comparable foreign keys read as "not comparable", and the gate could not produce a
+`referential-action` finding. The recapture includes those actions, so they are now compared.
+There are **58** findings, up from 45 on the first live run, and every one is the same shape:
+`ON UPDATE` is declared `Cascade` but the database has `NoAction`, on a hand-written App
+Blocks foreign key. `ON DELETE` matches on all of them. Ids are never updated, so they are
+inert in practice.
 
-They are absorbed here by being structurally unmeasurable, not by being waved through, and the
-verdict prints the count of what it could not compare on its own line rather than a clean
-zero. Recapturing the snapshot from a live database — `drift --dump-catalog` — would bring
-them into scope, at which point all 45 need a baseline entry or a fix before the gate can
-stay green.
+All 58 are accepted in the baseline. That was a triage decision, not a bulk accept, and two
+things keep it from hiding a live `ON DELETE` hazard:
+
+- **At PR time:** a referential-action fingerprint includes both action pairs. Changing
+  `onDelete` on one of these relations therefore produces a NEW enforced finding, and the gate
+  exits 1.
+- **At recapture time:** `production-snapshot.test.ts` asserts that every referential-action
+  finding in the current snapshot differs on `ON UPDATE` only. That test is pinned to this
+  snapshot, so the next recapture has to carry it over to the new fixture.
 
 ### What a developer sees
 
@@ -422,7 +517,12 @@ the PR description.
 - **After the drift is genuinely fixed:** the gate lists the entry under "no longer reports"
   without failing; `drift:baseline` prunes it.
 - **After the catalog snapshot is recaptured:** `drift:baseline` in the same commit. The
-  catalog and the baseline are a pair and the gate enforces that they stay one. Budget for it:
-  a recapture from a live database brings referential actions into scope for the first time,
-  which is ~45 new `enforced` findings arriving at once. Triage them — they are the inert
-  `ON UPDATE` batch described above — rather than accepting the batch in one commit.
+  catalog and the baseline are a pair and the gate enforces that they stay one. Diff the old
+  baseline against the new one and list what dropped and what was added in the PR. Explain
+  every addition: drift that appeared since the previous capture, drift the old capture
+  could not measure, or a finding the differ cannot read correctly (the 2026-10-16 recapture
+  had all three). Move the current-snapshot block in `production-snapshot.test.ts` (the ON
+  UPDATE-only check and the `capturedAt` pin) onto the new fixture, re-point
+  `dump-catalog-stamp.test.ts`, the two capture-date regexes in `gate.test.ts` and
+  `DEFAULT_CATALOG` in `gate-cli.ts`, and delete the superseded fixture. Keep the 2026-08-03
+  fixture: the backlog tests need a catalog that lags the schema.

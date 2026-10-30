@@ -12,6 +12,9 @@ import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import readline from 'readline';
+import { resolveDaemonUrl } from './scripts/daemon-port.mjs';
+import { daemonFetch } from './scripts/daemon-http.mjs';
+import { resolveDaemonHome } from './scripts/paths.mjs';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -25,11 +28,17 @@ function findProjectRoot(startDir) {
 }
 
 const projectRoot = findProjectRoot(__dirname);
-const pidFile = resolve(__dirname, 'daemon.pid');
-const serverScript = resolve(__dirname, 'scripts/daemon.mjs');
 
-const DAEMON_PORT = 9444;
-const DAEMON_URL = `http://127.0.0.1:${DAEMON_PORT}`;
+// The daemon runs from the primary checkout, never from the worktree this console was launched in
+// — see resolveDaemonHome. The console spawns it too, so it has to agree with cli.mjs about where
+// the daemon lives, or the two put different daemons' pids in different pid files.
+const daemonHome = resolveDaemonHome(__dirname, projectRoot);
+const pidFile = resolve(daemonHome.skillDir, 'daemon.pid');
+const serverScript = resolve(daemonHome.skillDir, 'scripts/daemon.mjs');
+
+// The whole decision — port included — is made in scripts/daemon-port.mjs, the same module the
+// daemon reads, so this file does no arithmetic on a port and cannot drift from it.
+const DAEMON_URL = resolveDaemonUrl();
 
 // ── ANSI ──────────────────────────────────────────────────────────────────────
 const C = {
@@ -67,7 +76,7 @@ function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 async function daemonRequest(path, options = {}) {
   const url = `${DAEMON_URL}${path}`;
   try {
-    const response = await fetch(url, {
+    const response = await daemonFetch(url, {
       ...options,
       headers: { 'Content-Type': 'application/json', ...options.headers },
     });
@@ -84,9 +93,9 @@ async function isDaemonRunning() {
 }
 
 async function startDaemon() {
-  const command = `"${process.execPath}" "${serverScript}"`;
-  const child = spawn(command, [], {
-    detached: true, stdio: 'ignore', cwd: projectRoot, windowsHide: true, shell: true,
+  // No shell — see cli.mjs startDaemon.
+  const child = spawn(process.execPath, [serverScript], {
+    detached: true, stdio: 'ignore', cwd: daemonHome.home, windowsHide: true,
   });
   child.unref();
   writeFileSync(pidFile, String(child.pid));
@@ -123,6 +132,7 @@ async function listSessionsCli() {
     log(`  ${C.cyn}${i + 1}.${C.r} [${s.id}] ${s.branch}`);
     log(`     ${C.dim}Port:${C.r} ${s.port}  ${C.dim}Status:${C.r} ${status}  ${C.dim}Ready:${C.r} ${ready}`);
     log(`     ${C.dim}URL:${C.r} ${s.url}`);
+    if (s.envModeSummary) log(`     ${C.dim}Env:${C.r} ${s.envModeSummary}`);
     log('');
   });
   return sessions;
@@ -153,7 +163,6 @@ async function stopSessionCli(sessionId) {
 // Preset text filters — number keys toggle these
 const PRESETS = [
   { key: '1', label: 'errors', match: (entry) => entry.level === 'error' || entry.level === 'warn' || /error|Error|ERR|WARN/i.test(entry.message) },
-  { key: '2', label: 'bitdex', match: (entry) => /bitdex|BitDex|BITDEX/i.test(entry.message) },
   { key: '3', label: 'trpc', match: (entry) => /trpc|tRPC/i.test(entry.message) },
   { key: '4', label: 'api', match: (entry) => /\bapi\b|\/api\//i.test(entry.message) },
   { key: '5', label: 'prisma', match: (entry) => /prisma|Prisma/i.test(entry.message) },
@@ -178,18 +187,36 @@ async function cmdDashboard(initialWorktree) {
   });
 
   let sessionId;
+  let attachNotice = null;
   if (startResult.ok) {
     sessionId = startResult.data.session.id;
+  } else if (startResult.data?.session?.id) {
+    // A refusal that names the session it refused for — a session already running this worktree
+    // with env modes a bare start would not reproduce. Watching it is what was asked for, but the
+    // dashboard must say so: the request and the session it attaches to disagree. Held for the
+    // alternate screen rather than logged here, where the dashboard's first repaint erases it.
+    attachNotice = startResult.data.error ?? 'Attached to a session with different env modes';
+    sessionId = startResult.data.session.id;
   } else {
-    // Try to find an existing session
+    // Scoped to THIS worktree. An unfiltered `find` opened the dashboard on whichever session came
+    // first in the map — another tree, another branch, its logs, and nothing saying so.
+    const sameTree = (s) =>
+      process.platform === 'win32'
+        ? resolve(s.worktree ?? '').toLowerCase() === cwd.toLowerCase()
+        : resolve(s.worktree ?? '') === cwd;
     const listResult = await daemonRequest('/sessions');
-    if (listResult.ok && listResult.data.sessions?.length) {
-      const running = listResult.data.sessions.find(s => s.status === 'running');
-      sessionId = running ? running.id : listResult.data.sessions[0].id;
-    } else {
-      log(`${C.red}No session available${C.r}`);
+    const mine = listResult.ok ? (listResult.data.sessions ?? []).filter(sameTree) : [];
+    const running = mine.find((s) => s.status === 'running');
+    sessionId = running ? running.id : mine[0]?.id;
+    if (!sessionId) {
+      log(`${C.red}No session available for ${cwd}${C.r}`);
+      if (startResult.data?.error) log(`${C.dim}${startResult.data.error}${C.r}`);
       process.exit(1);
     }
+    // The start was refused — a malformed env-modes.local carries no session in the body — and the
+    // session found here predates that edit. Repainting a healthy dashboard over it would read as
+    // the edit having taken effect.
+    if (startResult.data?.error) attachNotice = startResult.data.error;
   }
 
   const write = (s) => process.stdout.write(s);
@@ -225,6 +252,8 @@ async function cmdDashboard(initialWorktree) {
 
   // Enter alternate screen
   write(ALT_ON + CUR_HIDE);
+
+  if (attachNotice) flash(attachNotice);
 
   // Raw mode
   process.stdin.setRawMode(true);
@@ -323,7 +352,14 @@ async function cmdDashboard(initialWorktree) {
       case 'r':
         flash('Restarting session...');
         try {
-          await daemonRequest(`/sessions/${sessionId}/restart`, { method: 'POST' });
+          // daemonRequest resolves for every response, so a refusal arrives here as ok:false.
+          // Reporting it as a restart would clear the log pane as confirmation of something that
+          // did not happen — pressing `r` during a restart is exactly when that reads as damage.
+          const restart = await daemonRequest(`/sessions/${sessionId}/restart`, { method: 'POST' });
+          if (!restart.ok) {
+            flash(restart.data?.error || `Restart refused (${restart.status})`);
+            break;
+          }
           logCursor = -1;
           logLines = [];
           flash('Session restarted');
@@ -508,7 +544,16 @@ async function cmdDashboard(initialWorktree) {
       const statusStr = s.status === 'running' ? `${C.grn}running${C.r}` : `${C.ylw}${s.status}${C.r}`;
       const readyStr = s.ready ? `${C.grn}ready${C.r}` : `${C.ylw}starting${C.r}`;
       const uptimeStr = s.startedAt ? fmtUptime(Math.floor((Date.now() - new Date(s.startedAt).getTime()) / 1000)) : '';
-      info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}`;
+      // `base` counts as production here: it means no section applied and the .env value stands,
+      // and this repo's .env is production for everything it does not override.
+      const prodGroups = Object.entries(s.envModes ?? {})
+        .filter(([, mode]) => mode !== 'dev')
+        .map(([group, mode]) => (mode === 'prod' ? group : `${group}(${mode})`));
+      const modeStr = prodGroups.length ? `  ${C.ylw}prod:${prodGroups.join(',')}${C.r}` : '';
+      // Sticky, not a 3s flash: this says the session is NOT what the dashboard asked to start, and
+      // after the flash cleared a mismatched dashboard looked exactly like a healthy one.
+      const noticeStr = attachNotice ? `  ${C.ylw}!env${C.r}` : '';
+      info = `${s.branch || '?'}  ${C.dim}port${C.r} ${s.port}  ${statusStr}  ${readyStr}  ${C.dim}up${C.r} ${uptimeStr}${modeStr}${noticeStr}`;
     }
     // Session counter, top-right. `n/N` so you know where you are in the rotation.
     if (allSessions.length) {
@@ -738,7 +783,7 @@ Usage:
   npm run dev:daemon -- --kill          ${C.dim}Shutdown daemon${C.r}
 
 ${C.b}Dashboard Keys:${C.r}
-  ${C.b}1${C.r} errors   ${C.b}2${C.r} bitdex   ${C.b}3${C.r} trpc   ${C.b}4${C.r} api   ${C.b}5${C.r} prisma   ${C.b}6${C.r} stdout   ${C.b}7${C.r} stderr   ${C.b}8${C.r} info
+  ${C.b}1${C.r} errors   ${C.b}3${C.r} trpc   ${C.b}4${C.r} api   ${C.b}5${C.r} prisma   ${C.b}6${C.r} stdout   ${C.b}7${C.r} stderr   ${C.b}8${C.r} info
   ${C.b}/${C.r} search   ${C.b}a${C.r} all   ${C.b}r${C.r} restart   ${C.b}c${C.r} clear logs   ${C.b}x${C.r} stop   ${C.b}R${C.r} RGB toggle   ${C.b}A${C.r} auth toggle   ${C.b}q${C.r} quit   ${C.b}K${C.r} kill daemon
 `);
 } else {

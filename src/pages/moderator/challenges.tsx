@@ -1,3 +1,4 @@
+import { challengeEndedMessage } from '~/components/Challenge/challenge-messages';
 import {
   ActionIcon,
   Badge,
@@ -220,9 +221,7 @@ export default function ModeratorChallengesPage() {
   const endAndPickWinnersMutation = trpc.challenge.endAndPickWinners.useMutation({
     onSuccess: (data) => {
       queryUtils.challenge.getModeratorList.invalidate();
-      showSuccessNotification({
-        message: `Challenge ended. ${data.winnersCount} winner(s) selected.`,
-      });
+      showSuccessNotification({ message: challengeEndedMessage(data) });
     },
     onError: (error) => {
       showErrorNotification({ error: new Error(error.message) });

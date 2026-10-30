@@ -1,0 +1,94 @@
+import { defineGraph } from 'form-graph';
+import { SEED, boolDef, enumDef, imagesDef, sliderDef, textDef } from '../defs';
+import { familyScope, type FamilyExt } from '../shared';
+
+/** Hunyuan3D (via Comfy). Image-to-3D only. */
+
+export const hunyuan3dModelVersionOptions = [
+  { label: 'v2.1', value: 'v2.1' as const },
+  { label: 'v2', value: 'v2' as const },
+  { label: 'v2 Mini', value: 'v2-mini' as const },
+];
+
+export const hunyuan3dOctreeResolutionOptions = [
+  { label: '256', value: 256 },
+  { label: '384', value: 384 },
+  { label: '512', value: 512 },
+];
+
+const HUNYUAN3D_MIN_STEPS = 10;
+const HUNYUAN3D_MAX_STEPS = 50;
+const HUNYUAN3D_DEFAULT_STEPS = 30;
+
+const HUNYUAN3D_MIN_CFG_SCALE = 0;
+const HUNYUAN3D_MAX_CFG_SCALE = 20;
+const HUNYUAN3D_DEFAULT_CFG_SCALE = 5;
+
+const HUNYUAN3D_MAX_PROMPT_LENGTH = 600;
+
+const withInfo = <D extends { meta: object }>(def: D, info: string) => ({
+  ...def,
+  meta: { ...def.meta, info },
+});
+
+export const hunyuan3d = defineGraph<FamilyExt>({ scope: familyScope })
+  .field('images', imagesDef({ min: 1, max: 1 }))
+  .field('prompt', {
+    ...textDef('prompt', HUNYUAN3D_MAX_PROMPT_LENGTH),
+    meta: {
+      info: 'Optional. A short style/texture hint — Hunyuan3D derives geometry from the source image.',
+      placeholder: 'Optional style/texture hint…',
+    },
+  })
+  .field('version', {
+    ...enumDef({ options: hunyuan3dModelVersionOptions, default: 'v2.1' }),
+    meta: {
+      options: hunyuan3dModelVersionOptions,
+      info: 'Hunyuan3D model revision. v2.1 is the latest; v2 Mini is faster and lighter.',
+    },
+  })
+  .field('shouldTexture', boolDef(true))
+  .field('shouldRemesh', boolDef(true))
+  .field('enablePbr', boolDef(false))
+  .field(
+    'steps',
+    withInfo(
+      sliderDef({
+        min: HUNYUAN3D_MIN_STEPS,
+        max: HUNYUAN3D_MAX_STEPS,
+        step: 1,
+        default: HUNYUAN3D_DEFAULT_STEPS,
+      }),
+      'Number of diffusion steps. More steps can improve detail at the cost of speed.'
+    )
+  )
+  .field(
+    'cfgScale',
+    withInfo(
+      sliderDef({
+        min: HUNYUAN3D_MIN_CFG_SCALE,
+        max: HUNYUAN3D_MAX_CFG_SCALE,
+        step: 0.5,
+        default: HUNYUAN3D_DEFAULT_CFG_SCALE,
+      }),
+      'How strongly the generation follows the guidance. Higher values adhere more closely.'
+    )
+  )
+  .field(
+    'octreeResolution',
+    withInfo(
+      enumDef({ options: hunyuan3dOctreeResolutionOptions, default: 256 }),
+      'Voxel grid resolution for mesh extraction. Higher values capture finer geometry.'
+    )
+  )
+  .field('seed', SEED);
+
+export {
+  HUNYUAN3D_MIN_STEPS,
+  HUNYUAN3D_MAX_STEPS,
+  HUNYUAN3D_DEFAULT_STEPS,
+  HUNYUAN3D_MIN_CFG_SCALE,
+  HUNYUAN3D_MAX_CFG_SCALE,
+  HUNYUAN3D_DEFAULT_CFG_SCALE,
+  HUNYUAN3D_MAX_PROMPT_LENGTH,
+};

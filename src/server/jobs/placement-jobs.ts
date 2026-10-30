@@ -6,7 +6,18 @@ import {
   sweepUnpaidLegs,
   sweepUnplannedSettlements,
 } from '~/server/services/placement-escrow.service';
+import {
+  countAbandonedPlacements,
+  sweepUncountedPlacements,
+} from '~/server/services/placement-metrics.service';
 import { sweepDeletedRemixGallerySubmissions } from '~/server/services/remix-gallery-sweep.service';
+import { startReadyRemixSubmissionClocks } from '~/server/services/remix-gallery.service';
+import {
+  settleOrphanedContinuations,
+  settleStaleUnfundedContinuations,
+  startReadyStorylineContinuations,
+} from '~/server/services/storyline-placement.service';
+import { promoteReadyPendingChapters } from '~/server/services/storyline-publish.service';
 
 const BATCH = 100;
 
@@ -52,6 +63,128 @@ const sum = <T>(runs: T[], pick: (run: T) => number) =>
  * answers has done none of the work the decline fee pays for, so both holds
  * return in full. Nothing else releases a placement nobody actioned.
  */
+/**
+ * Submissions paid for before their image was finished, resolved once it is.
+ *
+ * Runs more often than the expiry sweep because it is the thing standing between
+ * a published image and the owner ever seeing the submission: until this runs the
+ * row is invisible to them, and its deadline is still counting down the
+ * submitter's drafting window rather than the owner's answering one.
+ */
+export const startReadyRemixSubmissionClocksJob = createJob(
+  'remix-gallery-readiness',
+  '*/5 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'remix-gallery-readiness',
+      jobContext,
+      () => startReadyRemixSubmissionClocks({ limit: BATCH }),
+      // Drains on rows that LEFT the set, not on rows that were selected — the
+      // same rule `sweepDeletedRemixGallerySubmissionsJob` below states.
+      //
+      // There are THREE ways out, and all three have to be counted. Clock
+      // started, escrow settled, and MARKED undeliverable: the selection SQL
+      // excludes a needsReview row once it carries the marker, so a marked row
+      // has left the set too. Draining on `considered` re-reads the identical
+      // lowest-100 ids on all ten passes whenever settlement is down; omitting
+      // `marked` fails the other way, stopping after one batch whenever any row
+      // took the review branch, which is the common outcome for those rows.
+      (result) => result.started + result.refunded + result.marked
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      started: sum(runs, (run) => run.started),
+      refunded: sum(runs, (run) => run.refunded),
+      marked: sum(runs, (run) => run.marked),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
+export const startReadyStorylineContinuationsJob = createJob(
+  'storyline-continuation-readiness',
+  '*/5 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'storyline-continuation-readiness',
+      jobContext,
+      () => startReadyStorylineContinuations({ limit: BATCH }),
+      // Drains on rows that left the set, not rows selected:
+      // see `startReadyRemixSubmissionClocksJob`.
+      (result) => result.started + result.refunded
+    );
+    // The owner's drafts wait for the same readiness, and are written as chapters here.
+    const owner = await drain(
+      'storyline-pending-chapters',
+      jobContext,
+      () => promoteReadyPendingChapters({ limit: BATCH }),
+      (result) => result.promoted + result.dropped
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      started: sum(runs, (run) => run.started),
+      refunded: sum(runs, (run) => run.refunded),
+      hitCap,
+      ownerChapters: {
+        considered: sum(owner.runs, (run) => run.considered),
+        promoted: sum(owner.runs, (run) => run.promoted),
+        dropped: sum(owner.runs, (run) => run.dropped),
+        hitCap: owner.hitCap,
+      },
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
+export const settleStaleUnfundedContinuationsJob = createJob(
+  'storyline-continuation-unfunded',
+  '*/10 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'storyline-continuation-unfunded',
+      jobContext,
+      () => settleStaleUnfundedContinuations({ limit: BATCH }),
+      // Rows that left the set. A row skipped this pass must not keep the drain going.
+      (result) => result.settled
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      settled: sum(runs, (run) => run.settled),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
+/**
+ * A takedown settles these itself; this job finishes what a failed run left, and covers
+ * deleted posts.
+ */
+export const settleOrphanedContinuationsJob = createJob(
+  'storyline-continuation-orphaned',
+  '*/10 * * * *',
+  async (jobContext) => {
+    const { runs, hitCap } = await drain(
+      'storyline-continuation-orphaned',
+      jobContext,
+      () => settleOrphanedContinuations({ limit: BATCH }),
+      // Rows that left the set. A row skipped this pass must not keep the drain going.
+      (result) => result.settled
+    );
+
+    return {
+      considered: sum(runs, (run) => run.considered),
+      settled: sum(runs, (run) => run.settled),
+      hitCap,
+    };
+  },
+  { lockExpiration: 10 * 60 }
+);
+
 export const expirePlacementsJob = createJob(
   'placement-expire',
   '*/10 * * * *',
@@ -152,9 +285,83 @@ export const sweepDeletedRemixGallerySubmissionsJob = createJob(
   { lockExpiration: 10 * 60 }
 );
 
+/**
+ * Approved placements whose Buzz never reached the target's counter.
+ *
+ * Drains on `counted`, not on `considered` — rows leave this set only by being
+ * counted, and a run that cannot emit (ClickHouse down) would otherwise re-claim
+ * the same hundred every pass and burn the cap without reaching row 101.
+ *
+ * `emitted` is shared across the whole drain because the sweep's collision
+ * guarantee is per page: two pages of one (image, placer) would emit twice
+ * within the same second and the pipeline would keep one. The second page's
+ * group is left for the next tick instead, which is what `deferred` counts.
+ *
+ * A run that claimed work and counted none of it is reported — that reads
+ * identically to a quiet run otherwise — but a run that only *deferred* is not,
+ * because deferring is this design working.
+ */
+export const sweepUncountedPlacementsJob = createJob(
+  'placement-sweep-uncounted',
+  '*/5 * * * *',
+  async (jobContext) => {
+    const emitted = new Set<string>();
+    const { runs, hitCap } = await drain(
+      'placement-sweep-uncounted',
+      jobContext,
+      () => sweepUncountedPlacements({ limit: BATCH, alreadyEmitted: emitted }),
+      (result) => result.counted
+    );
+
+    const considered = sum(runs, (run) => run.considered);
+    const counted = sum(runs, (run) => run.counted);
+    const deferred = sum(runs, (run) => run.deferred);
+    const undelivered = sum(runs, (run) => run.undelivered);
+
+    // A collision defer is the design working and must not alarm — it is this
+    // sweep's own intended path, and an alarm that fires there stops being read.
+    // An UNDELIVERED defer is the opposite: the sweep could not emit at all, so
+    // it counts toward the alarm rather than excusing it.
+    if (considered > deferred && counted === 0)
+      await logToAxiom({
+        name: 'placement-jobs',
+        type: 'warning',
+        message: 'placement-sweep-uncounted claimed work and counted none of it',
+        considered,
+        undelivered,
+      }).catch(() => null);
+
+    return {
+      considered,
+      counted,
+      amount: sum(runs, (run) => run.amount),
+      deferred,
+      undelivered,
+      // Rows the sweep has given up on. Past the attempt ceiling they are never
+      // selected again, so this is the only thing that says the counter is short
+      // and by how much.
+      //
+      // Read only when it could have changed. `metricAttempts` is not in the
+      // sweep's index, so this is a scan of it — cheap on the queue it is sized
+      // for, and pointless to pay every five minutes to be told zero.
+      abandoned: counted === 0 && considered > deferred ? await countAbandonedPlacements() : null,
+      // The flag is off, so nothing was even looked at. Distinct from a run that
+      // found nothing to do.
+      skipped: runs.every((run) => run.skipped),
+      hitCap,
+    };
+  },
+  { lockExpiration: 30 * 60 }
+);
+
 export const placementJobs = [
   expirePlacementsJob,
+  startReadyRemixSubmissionClocksJob,
+  startReadyStorylineContinuationsJob,
+  settleStaleUnfundedContinuationsJob,
+  settleOrphanedContinuationsJob,
   sweepUnpaidPlacementLegsJob,
   sweepUnplannedPlacementSettlementsJob,
   sweepDeletedRemixGallerySubmissionsJob,
+  sweepUncountedPlacementsJob,
 ];

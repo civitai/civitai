@@ -1,4 +1,4 @@
-import { Stack, Center, Loader, Title, Text, ThemeIcon } from '@mantine/core';
+import { Stack, Center, Loader, Title, Text, ThemeIcon, Checkbox } from '@mantine/core';
 import { useInstantSearch } from 'react-instantsearch';
 
 import {
@@ -9,9 +9,10 @@ import {
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
-import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
+import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
+import { ModelCardContextProvider, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
 import { SearchHeader } from '~/components/Search/SearchHeader';
 import { TimeoutLoader } from '~/components/Search/TimeoutLoader';
 import { IconCloudOff } from '@tabler/icons-react';
@@ -25,10 +26,15 @@ import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApp
 import { MasonryGrid } from '~/components/MasonryColumns/MasonryGrid';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelsPrefetch } from '~/hooks/useEngagedModelMembership';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { paidModelsSearchFilterClause } from '~/components/Search/paid-model-search-filter';
 import { Availability } from '~/shared/utils/prisma/enums';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import { isDefined } from '~/utils/type-guards';
+import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
+import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
 
 export default function ModelsSearch() {
@@ -45,17 +51,22 @@ export default function ModelsSearch() {
 const RenderFilters = () => {
   const currentUser = useCurrentUser();
   const browsingSettingsAddons = useBrowsingSettingsAddons();
+  const features = useFeatureFlags();
+  const [hidePaid, setHidePaid] = useState(false);
 
   const filters = [
     browsingSettingsAddons.settings.disablePoi
       ? `poi != true${currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''}`
       : null,
-    browsingSettingsAddons.settings.disableMinor
-      ? `minor != true${currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''}`
-      : null,
+    buildMinorExclusionFilter({
+      targetIndex: 'models',
+      addons: browsingSettingsAddons.settings,
+      currentUser,
+    }),
     `availability != ${Availability.Private}${
       currentUser?.id ? ` OR user.id = ${currentUser.id}` : ''
     }`,
+    paidModelsSearchFilterClause(features.paidModelSearchFilter, hidePaid),
     `NOT (nsfwLevel IN [${nsfwBrowsingLevelsArray.join(
       ', '
     )}] AND version.baseModel IN [${nsfwRestrictedBaseModels
@@ -65,7 +76,7 @@ const RenderFilters = () => {
 
   return (
     <>
-      <BrowsingLevelFilter filters={filters} attributeName="nsfwLevel" />
+      <BrowsingLevelFilter indexKey="models" filters={filters} />
       <SortBy
         title="Sort models by"
         items={[
@@ -85,6 +96,7 @@ const RenderFilters = () => {
         sortBy={['name']}
         limit={100}
         searchable
+        renderOption={renderBaseModelOption}
       />
       <ChipRefinementList
         title="Filter by Model Type"
@@ -112,6 +124,13 @@ const RenderFilters = () => {
         operator="and"
         searchable
       />
+      {features.paidModelSearchFilter && (
+        <Checkbox
+          label="Hide Early Access & paid models"
+          checked={hidePaid}
+          onChange={(event) => setHidePaid(event.currentTarget.checked)}
+        />
+      )}
       <ClearRefinements />
     </>
   );
@@ -140,6 +159,13 @@ export function ModelsHitList() {
       showMore?.();
     }
   }, [modelId, status, showMore, isLastPage, hits]);
+
+  // Must stay above every early return below — a hook called after one changes the hook
+  // count between the loading and loaded renders (React error #310).
+  const itemIds = (items as { id: number }[]).map((x) => x.id);
+  const salesByModelId = useModelSaleBadges(itemIds);
+  useEngagedModelsPrefetch(itemIds);
+  const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Model' });
 
   if (hits.length === 0) {
     const NotFound = (
@@ -202,9 +228,11 @@ export function ModelsHitList() {
       <ModelCardContextProvider
         activeBaseModels={activeBaseModels}
         useModelVersionRedirect={activeBaseModels.length > 0}
+        hasSaleProvider
+        salesByModelId={salesByModelId}
       >
         <MasonryGrid
-          data={items as any}
+          data={decorated as any}
           render={ModelCard}
           itemId={(x) => x.id}
           empty={<NoContent />}
@@ -240,8 +268,3 @@ ModelsSearch.getLayout = function getLayout(page: React.ReactNode) {
     </SearchLayout>
   );
 };
-
-// const createRenderElement = trieMemoize(
-//   [OneKeyMap, {}, WeakMap],
-//   (RenderComponent, index, model) => <RenderComponent index={index} data={model} />
-// );

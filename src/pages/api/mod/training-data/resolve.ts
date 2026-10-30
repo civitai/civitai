@@ -1,0 +1,76 @@
+import * as z from 'zod';
+import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import { pickBestTrainingFile } from '~/server/schema/model-file.schema';
+import { defineModeratorEndpoint } from '~/server/utils/moderator-endpoint';
+import { isTrustedOrchestratorUrl } from '~/server/services/orchestrator/trusted-blob-url';
+import { throwNotFoundError } from '~/server/utils/errorHandling';
+import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { resolveActorFor } from '~/utils/resolve-attribution';
+
+export default defineModeratorEndpoint('trainingData.resolve', {
+  summary: "Resolve a version's training data to a signed download URL.",
+  returns: '{ url, name }',
+  notes: [
+    'Scoped to `Training Data` on the named version — it cannot be used to reach model weights.',
+    'The URL is short-lived and grants whoever holds it the bytes; treat it as the evidence itself.',
+  ],
+  rateLimit: { max: 60, windowSeconds: 60 },
+  input: z.object({
+    modelVersionId: z.coerce
+      .number()
+      .int()
+      .positive()
+      .describe('The version whose training data to resolve.'),
+  }),
+  async handler(input, { actor }) {
+    const files = await dbRead.modelFile.findMany({
+      where: { modelVersionId: input.modelVersionId, type: 'Training Data', dataPurged: false },
+      select: {
+        id: true,
+        url: true,
+        name: true,
+        metadata: true,
+        modelVersion: { select: { model: { select: { meta: true } } } },
+      },
+    });
+
+    // The same scoring the review pages use, so the bytes match the workflow the page is showing.
+    const file = pickBestTrainingFile(files);
+    // Thrown, not returned: the wrapper maps a TRPCError to its status, and a returned `{error}` would
+    // be sent as a 200 with an error-shaped body.
+    if (!file) throw throwNotFoundError('No training data on this version');
+    // A Training Studio `Training Data` row points at the trained epoch until the dataset archive job
+    // swaps in the zip. Keyed on the server-owned model meta and the url itself because the row's own
+    // metadata is the owner's to edit.
+    const studioWorkflowId = (
+      file.modelVersion.model.meta as { trainingStudioWorkflowId?: string } | null
+    )?.trainingStudioWorkflowId;
+    const { selectedEpochUrl } = (file.metadata ?? {}) as { selectedEpochUrl?: string };
+    if (studioWorkflowId && (file.url === selectedEpochUrl || isTrustedOrchestratorUrl(file.url)))
+      throw throwNotFoundError(
+        'This version was trained in the Training Studio and its dataset has not been archived yet. Open it on the training data review page.'
+      );
+
+    try {
+      const { url } = await resolveDownloadUrl(file.id, file.url, file.name, {
+        caller: 'training-data',
+        actor: resolveActorFor(actor),
+      });
+      return { url, name: file.name, affected: { modelVersionIds: [input.modelVersionId] } };
+    } catch (e) {
+      // Storage resolver and delivery-worker fallback both rejected it: registered but not deliverable.
+      // Logged because the two causes are indistinguishable to the caller — a genuinely broken key and
+      // a storage outage both read as "this version could not be resolved", and only one of them is
+      // every version at once.
+      logToAxiom({
+        name: 'training-data-resolve',
+        type: 'error',
+        modelVersionId: input.modelVersionId,
+        fileId: file.id,
+        error: (e as Error)?.message,
+      }).catch(() => undefined);
+      throw throwNotFoundError('Training data could not be resolved');
+    }
+  },
+});

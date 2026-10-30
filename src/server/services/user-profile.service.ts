@@ -1,5 +1,7 @@
 import { Prisma } from '@prisma/client';
 import { dbRead, dbWrite } from '~/server/db/client';
+import type { EventViewer } from '~/server/events/event-access';
+import { withoutHiddenEventDecorations } from '~/server/events/event-decoration-access';
 import { userWithProfileSelect } from '~/server/selectors/user.selector';
 import type {
   GetUserProfileSchema,
@@ -14,7 +16,17 @@ import { isDefined } from '~/utils/type-guards';
 import { enqueueImageIngestion } from '~/server/services/image.service';
 import type { UserMeta } from '~/server/schema/user.schema';
 import { getUserBanDetails } from '~/utils/user-helpers';
-import { throwBadRequestError, throwNotFoundError } from '~/server/utils/errorHandling';
+import { sanitizeProvenance } from '~/server/services/orchestrator/remix-provenance';
+import { pickClientImageColumns } from '~/server/utils/image-columns';
+import {
+  assertClientImageUrlsUsable,
+  assertClientKeysIssuedToCaller,
+} from '~/server/services/image-url-ownership';
+import {
+  throwAuthorizationError,
+  throwBadRequestError,
+  throwNotFoundError,
+} from '~/server/utils/errorHandling';
 import {
   getUserContentOverview as getUserContentOverviewFromCache,
   getUserContentOverviewPublic as getUserContentOverviewPublicFromCache,
@@ -24,6 +36,8 @@ import { userUpdateCounter } from '~/server/prom/client';
 import { usersSearchIndex } from '~/server/search-index';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import type { ColorDomain } from '~/shared/constants/domain.constants';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { queueScamScan } from '~/server/services/text-scan/scam-scan-queue';
 
 export type UserContentOverviewVariant = 'public' | 'sfw' | 'all';
 
@@ -75,11 +89,14 @@ export const getUserWithProfile = async ({
   tx,
   isModerator,
   sessionUserId,
+  eventViewer = { id: sessionUserId, isModerator },
   domain,
 }: GetUserProfileSchema & {
   tx?: Prisma.TransactionClient;
   isModerator?: boolean;
   sessionUserId?: number;
+  /** Who the event preview gate is asked about; the request's `eventViewerOf` where there is one. */
+  eventViewer?: EventViewer;
   domain?: ColorDomain;
 }) => {
   const dbClient = tx ?? dbWrite;
@@ -151,12 +168,24 @@ export const getUserWithProfile = async ({
       (user.settings as { creatorShop?: { enabled?: boolean } } | null)?.creatorShop?.enabled ===
       true;
 
+    // Only the fact, never the settings blob. The tab is hidden from visitors
+    // when it is set — the book's own payload refuses the content separately, so
+    // this decides a nav item and nothing else.
+    const stickerBookHidden =
+      (user.settings as { hideStickerBook?: boolean } | null)?.hideStickerBook === true;
+
     return {
       ...user,
+      // Claim keys are owner-only; withheld from every other viewer, moderators included.
+      cosmetics: (await withoutHiddenEventDecorations(user.cosmetics, eventViewer)).map((c) => ({
+        ...c,
+        claimKey: sameUser ? c.claimKey : null,
+      })),
       meta: undefined,
       // Never leak the private settings blob; expose only whether the shop is public.
       settings: undefined,
       creatorShopEnabled,
+      stickerBookHidden,
       ...getUserBanDetails({
         meta: userMeta,
         isModerator: isModerator ?? false,
@@ -210,8 +239,57 @@ export const getUserWithProfile = async ({
   return user;
 };
 
+const isSameShowcaseItem = (a: ShowcaseItemSchema, b: ShowcaseItemSchema) =>
+  a.entityType === b.entityType && a.entityId === b.entityId;
+
+// Items already on the stored showcase are not re-checked: a model can be transferred away after
+// it was showcased, and refusing it would make the whole profile form unsaveable.
+export const assertShowcaseItemsOwned = async ({
+  userId,
+  isModerator,
+  showcaseItems,
+  currentShowcaseItems,
+}: {
+  userId: number;
+  isModerator?: boolean;
+  showcaseItems: ShowcaseItemSchema[];
+  currentShowcaseItems: ShowcaseItemSchema[];
+}) => {
+  const addedItems = showcaseItems.filter(
+    (item) => !currentShowcaseItems.some((current) => isSameShowcaseItem(current, item))
+  );
+  if (!addedItems.length) return;
+
+  if (addedItems.some((item) => item.entityType !== 'Model' && item.entityType !== 'Image'))
+    throw throwBadRequestError('Only models and images can be added to a showcase');
+
+  if (isModerator) return;
+
+  const idsOf = (entityType: ShowcaseItemSchema['entityType']) => [
+    ...new Set(
+      addedItems.filter((item) => item.entityType === entityType).map((item) => item.entityId)
+    ),
+  ];
+  const imageIds = idsOf('Image');
+  const modelIds = idsOf('Model');
+
+  // Primary, not replica: an image posted moments ago is the one most likely to be showcased.
+  const [ownedImages, ownedModels] = await Promise.all([
+    imageIds.length
+      ? dbWrite.image.findMany({ where: { id: { in: imageIds }, userId }, select: { id: true } })
+      : [],
+    modelIds.length
+      ? dbWrite.model.findMany({ where: { id: { in: modelIds }, userId }, select: { id: true } })
+      : [],
+  ]);
+
+  if (ownedImages.length !== imageIds.length || ownedModels.length !== modelIds.length)
+    throw throwAuthorizationError('You can only add your own models and images to your showcase');
+};
+
 export const updateUserProfile = async ({
   // profileImage,
+  isModerator,
   socialLinks,
   sponsorshipLinks,
   // badgeId,
@@ -223,12 +301,49 @@ export const updateUserProfile = async ({
   // profilePicture,
   creatorCardStatsPreferences,
   domain,
+  sessionUserId,
   ...profile
-}: UserProfileUpdateSchema & { userId: number; domain?: ColorDomain }) => {
+}: UserProfileUpdateSchema & {
+  userId: number;
+  isModerator?: boolean;
+  domain?: ColorDomain;
+  /** Who saved it: a moderator may save another user's profile, and is answered as a viewer. */
+  sessionUserId: number;
+}) => {
+  // Both domain variants, not just the field being edited: the SFW override and the field it
+  // overrides are independently writable and independently rendered, so checking one leaves the
+  // other as an unchecked way to put the same text on a profile page.
+  //
+  // 🔴 `isModerator` is load-bearing here, not decoration. `updateUserProfileHandler` routes a
+  // moderator to ANOTHER user's profile, and this form round-trips every stored field — so
+  // without it, a moderator clearing a spam bio is refused over a field they were not editing,
+  // and no path through this service can clear it. The guard would block the cleanup it exists
+  // to prompt.
+  await throwOnBlockedUserContent(
+    [
+      profile.bio,
+      profile.sfwBio,
+      profile.message,
+      profile.sfwMessage,
+      profile.location,
+      ...(socialLinks?.map((link) => link.url) ?? []),
+      ...(sponsorshipLinks?.map((link) => link.url) ?? []),
+    ],
+    { isModerator, surface: 'userProfile' }
+  );
+
   // `sessionUserId` is what populates the `default*`/`sfw*` fields compared below — they are
   // withheld from anyone who can't edit the profile. Drop it and both read back null, so every
   // save looks like a changed announcement and re-stamps `messageAddedAt`.
   const current = await getUserWithProfile({ id: userId, sessionUserId: userId }); // Ensures user exists && has a profile record.
+
+  if (profile.showcaseItems)
+    await assertShowcaseItemsOwned({
+      userId,
+      isModerator,
+      showcaseItems: profile.showcaseItems,
+      currentShowcaseItems: (current.profile?.showcaseItems ?? []) as ShowcaseItemSchema[],
+    });
 
   // We can safely update creatorCardStatsPreferences out of the transaction as it's not critical
   if (creatorCardStatsPreferences) {
@@ -250,6 +365,16 @@ export const updateUserProfile = async ({
     userUpdateCounter?.inc({ location: 'user-profile.service:updateProfile' });
   }
 
+  // A cover with no `id` is created from its client url below.
+  const newCoverUrls = [coverImage, sfwCoverImage].map((image) =>
+    image && !image.id ? image.url : null
+  );
+  await assertClientImageUrlsUsable({ urls: newCoverUrls, userId });
+  await assertClientKeysIssuedToCaller({
+    urls: newCoverUrls,
+    userId,
+    alsoIssuedTo: sessionUserId,
+  });
   const buildCoverImageUpdate = (image: UserProfileUpdateSchema['coverImage']) =>
     image !== undefined && !image?.id
       ? image === null
@@ -258,8 +383,11 @@ export const updateUserProfile = async ({
             connectOrCreate: {
               where: { id: image.id ?? -1 },
               create: {
-                ...image,
-                meta: (image?.meta as Prisma.JsonObject) ?? Prisma.JsonNull,
+                ...pickClientImageColumns(image),
+                meta:
+                  (sanitizeProvenance(image?.meta as Record<string, unknown> | null | undefined) as
+                    | Prisma.JsonObject
+                    | undefined) ?? Prisma.JsonNull,
                 metadata: { coverImage: true, userId },
                 userId,
                 resources: undefined,
@@ -414,6 +542,10 @@ export const updateUserProfile = async ({
   }
 
   await usersSearchIndex.queueUpdate([{ id: userId, action: SearchIndexUpdateQueueAction.Update }]);
+  if (
+    [profile.bio, profile.message, profile.sfwBio, profile.sfwMessage].some((v) => v !== undefined)
+  )
+    queueScamScan({ entityType: 'UserProfile', entityId: userId });
 
-  return getUserWithProfile({ id: userId, sessionUserId: userId, domain });
+  return getUserWithProfile({ id: userId, sessionUserId, domain });
 };

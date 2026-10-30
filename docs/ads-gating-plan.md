@@ -26,18 +26,18 @@ pages currently serving no ads or very low CPMs.
 ## Scope is narrower than it first looks
 
 **`Gated` already does its job for in-page units.** `side_1`, `side_2`, and `incontent_*`
-live inside `{children}` ([`Gated.tsx:218`](../src/components/Gated/Gated.tsx#L218) only
-renders children for `state === 'page'`), so on a gated page they are never defined as GPT
-slots and never auctioned. The control page defines three slots; the gated page defines one.
+live inside `{children}` ([`Gated.tsx`](../src/components/Gated/Gated.tsx) only renders
+children for `state === 'page'`), so on a gated page they are never defined as GPT slots and
+never auctioned. The control page defines three slots; the gated page defines one.
 
 The sole leak is **`adhesive`**, rendered from
-[`AppLayout.tsx:95`](../src/components/AppLayout/AppLayout.tsx#L95) — *outside* `{children}`,
-so the gate cannot reach it:
+[`AppLayout.tsx`](../src/components/AppLayout/AppLayout.tsx) — *outside* `{children}`, so the
+gate cannot reach it:
 
 ```tsx
-{children}          // line 85  ← Gated lives in here
+{children}                       // ← Gated lives in here
 ...
-{footer && <AdhesiveFooter />}   // line 95  ← not gated
+{footer && <AdhesiveFooter />}   // ← not gated
 ```
 
 Since a prebid auction only runs for a defined slot, removing the adhesive slot removes both
@@ -138,7 +138,7 @@ contest collection can still see the old flash.
 Run `node scripts/ad-request-check.mjs [origin]`.
 
 **This cannot be verified locally.** `adsEnabled` is hard-`false` when `isDev`
-([`AdsProvider.tsx:125`](../src/components/Ads/AdsProvider.tsx#L125)), so a dev server never
+(the `adsEnabled` expression in [`AdsProvider.tsx`](../src/components/Ads/AdsProvider.tsx)), so a dev server never
 requests ads at all and would pass the gated check for the wrong reason. Point the script at
 a preview or production deploy.
 
@@ -204,7 +204,7 @@ representation of the second thing.
 
 ### What already exists
 
-[`entity-moderation.ts:201-204`](../src/server/jobs/entity-moderation.ts#L201-L204) already
+[`entity-moderation.ts:131-134`](../src/server/jobs/entity-moderation.ts#L131-L134) already
 queues and scans `Model.name` and `Model.description` through
 [`text-moderation.service.ts`](../src/server/services/text-moderation.service.ts), with
 policies managed via the XGuard scanner services. This is a tuning and coverage problem, not
@@ -224,7 +224,7 @@ a greenfield build — resist writing a parallel scanner.
 #### Close coverage gaps
 
 - [ ] `ModelVersion.name` is unscanned — there's a `// TODO possibly add modelVersion` at
-      [`entity-moderation.ts:180`](../src/server/jobs/entity-moderation.ts#L180). Version
+      [`entity-moderation.ts:110`](../src/server/jobs/entity-moderation.ts#L110). Version
       names render on the page and reach the `<title>`
 - [ ] Tags and trigger words — both render on the page, neither is in the queue config
 - [ ] Description behind "Show more" — confirm we scan the full field, not a truncated

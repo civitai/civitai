@@ -1,5 +1,6 @@
 import type { Logger } from '@civitai/next-axiom';
 import { withAxiom } from '@civitai/next-axiom';
+import { hostSessionCookieName, legacySessionCookieName, sessionCookieName } from '@civitai/auth';
 import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
 import dayjs from '~/shared/utils/dayjs';
@@ -14,15 +15,71 @@ import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import { generateSecretHash } from '~/server/utils/key-generator';
 import { getAllServerHosts } from '~/server/utils/server-domain';
 import type { Partner } from '~/shared/utils/prisma/models';
-import { instrumentApiResponse } from '~/server/prom/http-errors';
-import { isClientAbortError } from '~/server/utils/errorHandling';
+import { instrumentApiResponse, reconstructApiRoute } from '~/server/prom/http-errors';
+import {
+  BANNED_ACCOUNT_MESSAGE,
+  isClientAbortError,
+  isDriverAuthoredMessage,
+} from '~/server/utils/errorHandling';
 import { isDefined } from '~/utils/type-guards';
+import { PRIVATE_CACHE_CONTROL } from '~/server/middleware/middleware-utils';
+import { isConfiguredSecret } from '~/server/utils/configured-secret';
+import { timingSafeEqualStrings } from '~/server/utils/timing-safe-equal';
+import { requestCarriesQueryToken } from '~/server/utils/request-query-token';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { logToAxiom, buildCentralErrorLog, wasServerFaultLogged } from '~/server/logging/client';
 import {
+  GENERIC_CLIENT_ERROR_BY_STATUS,
   GENERIC_SERVER_ERROR_MESSAGE,
   REST_ERROR_CODE,
   restErrorBody,
 } from '~/server/utils/rest-error-envelope';
+import { rateLimitMetaOf } from '~/server/utils/rate-limit-error';
+import type { RateLimitMeta } from '~/shared/utils/rate-limit-meta';
+
+/**
+ * The normalized route of the request this response belongs to, or `undefined`.
+ *
+ * 🔴 WHY THIS EXISTS. Until this was added, every line these two helpers emit
+ * carried `source:'handleEndpointError'` and NOTHING identifying the route — so a
+ * REST 500 was counted (by `instrumentApiResponse`) and logged, and still could not
+ * be attributed to an endpoint from Loki. Measured on dp-prod 2026-09-29: 10 lines
+ * in 24h reading `value "…" is out of range for type integer` (Postgres SQLSTATE
+ * 22003), every one of them `source:handleEndpointError` with no `path`, `url` or
+ * `route` field, so "which endpoint is doing this" was unanswerable. The tRPC
+ * formatter has always logged its `path`; this is the REST side of the same claim.
+ *
+ * 🔴 READS `res.req` RATHER THAN TAKING A `req` PARAMETER, deliberately.
+ * `handleEndpointError(res, e)` is called from **57 files** under `src/pages/api`
+ * (counted, not estimated); threading a second argument through all of them makes
+ * attribution depend on every current AND FUTURE caller remembering to pass it, and a
+ * caller that forgets produces exactly the un-attributable line this change exists to
+ * remove — silently, because a missing route looks identical to an underivable one.
+ * Node's
+ * `ServerResponse` exposes the request it was created for, and Next's API layer
+ * passes the same object it populated `req.query` on, so this is the real
+ * `NextApiRequest`. That makes the route a property of the HELPER, which is the
+ * only version of this that cannot be forgotten.
+ *
+ * The cast is needed because `@types/node` types `ServerResponse.req` as the base
+ * `IncomingMessage` (no `query`). `reconstructApiRoute` reads only `method`, `url`
+ * and `query`, and already tolerates a missing `url` and a missing `query`.
+ *
+ * Returns `undefined` rather than throwing or guessing when there is no request —
+ * a hand-built `res` in a unit test is the common case, and telemetry must never be
+ * able to break an error response (the same contract the `.catch`es below keep).
+ * `JSON.stringify` drops an `undefined` value, so the field is simply absent then,
+ * which is honest: absent means "not derivable", never "route unknown to us".
+ */
+function restRouteFor(res: NextApiResponse): string | undefined {
+  const req = (res as unknown as { req?: NextApiRequest }).req;
+  if (!req) return undefined;
+  try {
+    return reconstructApiRoute(req);
+  } catch {
+    return undefined;
+  }
+}
 
 // Fire-and-forget structured, cause-walked error log for a REST 500 produced by
 // `handleEndpointError`. logToAxiom's stderr write is synchronous (→ Alloy → Loki),
@@ -31,12 +88,65 @@ import {
 // un-masked `.cause` chain + severity `type:'error'` (queryable as
 // detected_level="error"); client-fault 4xx and SERVICE_UNAVAILABLE 503s are gated
 // out at the call site so they never hit the error stream.
-function logRestServerFault(e: unknown) {
+function logRestServerFault(e: unknown, res: NextApiResponse) {
   // Skip if a router/service already logged this exact fault before re-throwing.
   if (wasServerFaultLogged(e)) return;
-  logToAxiom({ ...buildCentralErrorLog(e), source: 'handleEndpointError' }, 'civitai-prod').catch(
-    () => undefined
-  );
+  // Spread CONDITIONALLY, the idiom `buildCentralErrorLog` itself uses for `code`.
+  //
+  // ⚠️ NOT because it could otherwise clobber an existing `route`: it could not. Both
+  // branches of `buildCentralErrorLog` produce a FIXED key set — `safeError` returns
+  // exactly name/message/stack/code/causeMessage/inner*, and the TRPCError branch adds
+  // code/name/message/stack/cause — so `route` can never already be present, whatever
+  // properties the error object happens to carry. (Checked, after a first draft of this
+  // comment asserted the opposite and a test written against that claim failed.)
+  //
+  // The real reason is narrower: it keeps the key ABSENT rather than present-and-
+  // undefined when no route is derivable. `logToAxiom` does not only `JSON.stringify` —
+  // it also feeds a structured sink — and an explicit `undefined` can surface there as a
+  // null field, which reads as "we looked and there is no route" instead of "not
+  // derivable". Costs nothing, so prefer the honest shape.
+  const route = restRouteFor(res);
+  logToAxiom(
+    { ...buildCentralErrorLog(e), source: 'handleEndpointError', ...(route ? { route } : null) },
+    'civitai-prod'
+  ).catch(() => undefined);
+}
+
+/**
+ * Same log, forced to INFO severity — for a 4xx whose message we genericized.
+ *
+ * The entry must still be emitted: genericizing is only defensible because it
+ * RELOCATES the driver text rather than destroying it. But it must not land on
+ * the error board, and one status makes that concrete rather than theoretical.
+ *
+ * 🔴 The only Prisma codes that reach **408** are `P1008` / `P2024` — connection
+ * pool exhaustion. That is wave-shaped: during an incident every affected public
+ * request would add an error-severity line, on routes that previously logged
+ * nothing at all. It is the same "fires in high-volume waves" property for which
+ * `isRestServerFault` excludes 503 from the error stream.
+ *
+ * `classifyErrorFault` treats `TIMEOUT` as a SERVER fault, and that is correct
+ * for the repo at large (a timeout usually IS ours), so this does NOT change the
+ * global classification — it overrides `type`/`level` for this arm only. `type`
+ * is the load-bearing field: Alloy extracts it into Loki's `detected_level`.
+ *
+ * 400/404/409 already classify as client faults, so for those this is a no-op and
+ * the uniform treatment is the point — "a genericized 4xx is logged for forensics,
+ * never as an incident" is one rule rather than three.
+ */
+function logRestGenericizedClientFault(e: unknown, res: NextApiResponse) {
+  if (wasServerFaultLogged(e)) return;
+  const route = restRouteFor(res); // conditional spread — see logRestServerFault
+  logToAxiom(
+    {
+      ...buildCentralErrorLog(e),
+      type: 'info',
+      level: 'info',
+      source: 'handleEndpointError',
+      ...(route ? { route } : null),
+    },
+    'civitai-prod'
+  ).catch(() => undefined);
 }
 
 /**
@@ -53,8 +163,21 @@ function logRestServerFault(e: unknown) {
  *   the log — so genericizing can never destroy the only copy of a message.
  *
  * Two exclusions, both load-bearing:
- *   - **4xx** is client feedback the caller is meant to read (zod issues, "not
- *     found", rate-limit hints). Never logged as a fault, never genericized.
+ *   - **4xx** is *usually* client feedback the caller is meant to read (zod
+ *     issues, "not found", rate-limit hints), so it is not a server fault and is
+ *     not genericized HERE.
+ *
+ *     🔴 That used to be stated without the "usually", and as written it was
+ *     FALSE — civitai#3845 investigation 3. `throwDbError` maps a large slice of
+ *     Prisma codes to 4xx (P2000→400, P2025→404, P2003→409, P2024→408) while
+ *     copying the driver's own `message` verbatim, so a 4xx body could be a raw
+ *     `Invalid \`prisma.<model>.<method>()\` invocation` dump disclosing the table,
+ *     the column or the constraint name. Those are now caught by a SECOND
+ *     predicate, `isDriverAuthoredMessage`, applied inside the 4xx arm below: it
+ *     asks who WROTE the text rather than how severe the status is, keeps the
+ *     status, and — crucially — logs the un-redacted text on the way out, so the
+ *     "genericized exactly when logged" invariant holds for it too. A 4xx whose
+ *     message is ours is still passed through byte-identically.
  *   - **503** is the retryable transient-upstream mapping
  *     (`throwServiceUnavailableError`, the Meili/ClickHouse/orchestrator brownout
  *     guards). It fires in high-volume waves, so it is excluded from the error
@@ -73,6 +196,84 @@ function logRestServerFault(e: unknown) {
  */
 function isRestServerFault(status: number): boolean {
   return status >= 500 && status !== 503;
+}
+
+/**
+ * Mark an error response uncacheable. Applied to EVERY response this helper
+ * writes — there is no such thing as an error worth serving from a shared cache.
+ *
+ * 🔴 `PublicEndpoint` sets `Cache-Control: public, s-maxage=300,
+ * stale-while-revalidate=150` on EVERY response, unconditionally, BEFORE the
+ * handler runs — errors included. That was survivable while every failure on
+ * those routes was a 5xx, because shared caches do not cache 5xx by default. It
+ * stops being survivable the moment an error answers **404**: 404 IS in the
+ * default cacheable set, so a `NOT_FOUND` from a transient condition (replica
+ * lag, a `throwDbError`-mapped P2001/P2025) would be pinned at the edge for 300s
+ * + 150s SWR — serving "no such thing" for five minutes after the thing exists.
+ *
+ * 🔴 **An earlier version of this scoped the opt-out to the GENERICIZED arms, and
+ * that missed the case it was written for.** Measured, per arm, against a `res`
+ * pre-stamped with `PublicEndpoint`'s header:
+ *
+ *   pass-through 404 (`throwNotFoundError`)  →  public, s-maxage=300   ← the hazard
+ *   non-TRPCError 500 (else-branch)          →  public, s-maxage=300
+ *   genericized 5xx                          →  no-store
+ *
+ * The routes this change touches answer 404 mostly via `throwNotFoundError`,
+ * whose message is OURS — so it takes the pass-through arm and never reached the
+ * genericized one. Scoping by "did we rewrite the body" was the wrong axis; the
+ * right axis is "is this a response a cache should keep", and for an error the
+ * answer is always no.
+ *
+ * **Accepted trade.** 🔴 **Do not trust a list here — three successive attempts to
+ * enumerate the affected routes were each wrong, in the same way.** v1 asserted
+ * without checking ("these routes are not under that kind of load"); v2 gave a
+ * "measured" count of ONE, having surveyed only `PublicEndpoint`; v3 added the
+ * `MixedAuthEndpoint` by-id routes but missed `v1/models/index.ts` and then made a
+ * false blanket claim about rate limiters. Each version was more precise and more
+ * quotable than the last, and wrong.
+ *
+ * So: the RULE, and how to re-derive the set yourself.
+ *
+ * **Rule** — a route loses 404 edge absorption iff (a) its wrapper stamps the
+ * public cache header, and (b) its 404 reaches THIS helper.
+ *   (a) `PublicEndpoint` stamps it unconditionally; `MixedAuthEndpoint` stamps it
+ *       on every ANONYMOUS request (`if (!session) addPublicCacheHeaders(...)`
+ *       below) — that second one is what keeps getting missed.
+ *   (b) a route that answers 404 itself (`res.status(404).json(...)`) is
+ *       unaffected. `v1/models/[id]` — the highest-traffic caller — does exactly
+ *       that at `:197`, so it keeps its edge cache.
+ *
+ * **Re-derive:** grep `handleEndpointError` under `src/pages/api`, keep the
+ * `PublicEndpoint`/`MixedAuthEndpoint` ones, and check which can reach a
+ * `throwNotFoundError` (directly or through a service).
+ *
+ * Known examples at time of writing, NOT a complete set: `v1/content/[[...slug]]`
+ * (PublicEndpoint), `v1/articles/[id]`, `v1/collections/[id]`, and
+ * `v1/models/index.ts` — the last via `?username=<nonexistent>`, which reaches
+ * `throwNotFoundError('User not found')` in `model.service.ts`.
+ *
+ * **Rate limiting is NOT a blanket reassurance.** Measured: the six
+ * `PublicEndpoint` callers have none, so edge absorption was the only thing in
+ * front of them. Of the seven `MixedAuthEndpoint` callers, six are limited
+ * (`checkPublicApiRateLimit`, `enforceAppsCatalogRateLimit`) and
+ * **`v1/models/index.ts` is not** — which makes it the sharp case: unlimited,
+ * anonymous, and its miss costs two user lookups, the second against the PRIMARY
+ * (`model.service.ts` falls back to `dbWrite` when the read misses, and a
+ * nonexistent username always misses).
+ *
+ * Uniform application also removes a **fault-classification oracle**: with the
+ * narrower version, `no-store` vs `s-maxage=300` on the same status told a caller
+ * whether the message had been rewritten — one bit of exactly the kind the 5xx
+ * arm's own comment says genericizing exists to remove.
+ *
+ * `v1/users/index.ts` and `v1/images/index.ts` already do this at their 503 arms.
+ * They emit bare `no-store` where this emits `no-store, max-age=0`; both are
+ * correct, and their tests pin the exact string, so they are left alone.
+ */
+function noStore(res: NextApiResponse) {
+  if (!res.headersSent) res.setHeader('Cache-Control', 'no-store, max-age=0');
+  return res;
 }
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
@@ -94,12 +295,65 @@ function withApiMetrics(
   });
 }
 
+/**
+ * 🔴 EMPTY IS NOT CONFIGURED. A secret that is set but blank is refused rather than compared, and
+ * whitespace-only counts as blank. Without this, a blank secret leaves every endpoint on this wrapper
+ * reachable without a working credential — and a bare key added to a ConfigMap arrives as an empty
+ * string, so that is a configuration typo rather than a decision.
+ *
+ * Emptiness is tested on a trimmed copy; the comparison below trims neither side, or two distinct
+ * configured secrets would collapse into one.
+ *
+ * 503 rather than 401 so an operator reading logs sees a deployment problem rather than a caller with
+ * a bad token, and so `withApiMetrics` records it as a 5xx.
+ *
+ * apps/moderator/src/lib/server/webhook-endpoint.ts applies the same blank-secret rule and status
+ * code, but trims both the secret and the presented token — so a secret carrying a trailing newline
+ * authenticates there and not here. Not a template for this file beyond the blank case.
+ */
 export function TokenSecuredEndpoint(
   token: string,
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    if (!isConfiguredSecret(token)) {
+      res.status(503).json({ error: 'Endpoint not configured' });
+      return;
+    }
+
     if (req.query.token !== token) {
+      res.status(401).json({ error: 'Unauthorized' });
+      return;
+    }
+
+    await handler(req, res);
+  });
+}
+
+const MIN_HEADER_TOKEN_LENGTH = 32;
+
+export function HeaderTokenSecuredEndpoint(
+  getToken: () => string | undefined,
+  handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void>
+) {
+  return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    const token = getToken();
+    if (
+      !isConfiguredSecret(token) ||
+      token !== token.trim() ||
+      token.length < MIN_HEADER_TOKEN_LENGTH
+    ) {
+      res.status(503).json({ error: 'Endpoint not configured' });
+      return;
+    }
+
+    if (req.url?.includes('?') || Object.keys(req.query ?? {}).length) {
+      res.status(400).json({ error: 'This endpoint takes no query string' });
+      return;
+    }
+
+    const presented = req.headers['x-admin-token'];
+    if (typeof presented !== 'string' || !timingSafeEqualStrings(token, presented)) {
       res.status(401).json({ error: 'Unauthorized' });
       return;
     }
@@ -128,23 +382,44 @@ const allowedOrigins = [env.NEXTAUTH_URL, ...env.TRPC_ORIGINS, ...getAllServerHo
     if (!origin.startsWith('http')) return `https://${origin}`;
     return origin;
   });
+// Exact, so `https://civitai.com.example` is not taken for `https://civitai.com`.
+function sameOrigin(a: string, b: string): boolean {
+  try {
+    return new URL(a).origin === new URL(b).origin;
+  } catch {
+    return false;
+  }
+}
+
+// A `*` in Allow-Headers covers every header except Authorization, which has to be named.
+const CORS_ALLOW_HEADERS = 'Authorization, Content-Type, *';
+// Chrome caps a cached preflight at two hours; Firefox allows a day.
+const CORS_MAX_AGE_SECONDS = 7200;
+
+/**
+ * `allowCredentials` grants cookies to civitai's own origins only. Any other
+ * origin gets `*` without credentials: browsers never send it civitai cookies,
+ * so it can only authenticate with a token it already holds.
+ */
 export const addCorsHeaders = (
   req: NextApiRequest,
   res: NextApiResponse,
   allowedMethods: string[] = ['GET'],
   { allowCredentials = false }: { allowCredentials?: boolean } = {}
 ) => {
-  if (allowCredentials) {
-    const origin = req.headers.origin;
-    const allowedOrigin = allowedOrigins.find((o) => origin?.startsWith(o)) ?? allowedOrigins[0];
-    res.setHeader('Access-Control-Allow-Origin', allowedOrigin);
+  const origin = req.headers.origin;
+  if (allowCredentials && origin && allowedOrigins.some((o) => sameOrigin(o, origin))) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
     res.setHeader('Access-Control-Allow-Credentials', 'true');
+    const vary = res.getHeader('Vary');
+    res.setHeader('Vary', vary ? `${vary}, Origin` : 'Origin');
   } else {
     res.setHeader('Access-Control-Allow-Origin', '*');
   }
-  res.setHeader('Access-Control-Allow-Headers', '*');
+  res.setHeader('Access-Control-Allow-Headers', CORS_ALLOW_HEADERS);
   res.setHeader('Access-Control-Allow-Methods', allowedMethods.join(', '));
   if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Max-Age', String(CORS_MAX_AGE_SECONDS));
     res.status(200).end();
     return true;
   }
@@ -162,6 +437,108 @@ const addPublicCacheHeaders = (
   );
 };
 
+/**
+ * `Vary` for a response that carries the PUBLIC cache header — i.e. one produced
+ * for a request that presented no credential.
+ *
+ * 🔴 `Vary` is DOCUMENTATION here, not the control. What keeps a caller-specific
+ * body out of a shared cache is `Cache-Control: private` on the other arm; this
+ * header only describes which request dimension the wrapper branched on. Do not
+ * read it as enforcement, and do not weaken the `Cache-Control` split on the
+ * strength of it.
+ *
+ * `Authorization` only, deliberately. It is stable per caller and has tiny
+ * cardinality (present / absent for practically every caller of these routes), so
+ * declaring it costs nothing. `Cookie` does not belong on this arm: an ordinary
+ * logged-out browser carries analytics and bot-management cookies whose values
+ * change per pageview and rotate on a timer, so keying a shared cache on the
+ * whole `Cookie` header would give roughly one entry per browser per rotation
+ * window — the anonymous hit rate would collapse, and cheap 304 revalidations
+ * would turn into full 200s. The anonymous body is by construction the same for
+ * every caller who presented nothing, so there is nothing to fragment for.
+ */
+const ANONYMOUS_VARY = 'Authorization';
+
+/**
+ * `Vary` for a response that carries the PRIVATE cache header — i.e. one produced
+ * for a request that presented a credential.
+ *
+ * `Cookie` is added here and only here. This arm is already `private, no-cache`,
+ * so there is no shared-cache entry for the extra dimension to fragment; naming
+ * it is free, and it states honestly that the body was shaped by the cookie the
+ * caller sent.
+ */
+const CREDENTIALED_VARY = 'Authorization, Cookie';
+
+/**
+ * Cookie names that can carry a session, hence make a response caller-dependent.
+ *
+ * 🔴 DERIVED, never spelled out. `@civitai/auth` owns the naming, and it varies
+ * along three axes: the host-only `__Host-` session cookie, the shared thin-session
+ * cookie, and the legacy next-auth one (all still honoured by `getServerAuthSession`,
+ * whatever this app's cookie mode), plus the secure prefix, which is applied when
+ * serving over https and dropped for http dev. All five spellings are enumerated by calling the helpers with an explicit boolean,
+ * rather than letting the env-derived default pick one — the guard must hold in
+ * dev and prod alike, and it must not silently narrow if a deploy's env changes.
+ *
+ * A hardcoded literal here is the precise failure mode this list exists to avoid:
+ * it keeps matching, keeps looking correct, and stops meaning anything the moment
+ * the cookie is renamed. `packages/civitai-auth/src/__tests__/cookies.test.ts`
+ * pins the values on the other side.
+ */
+const SESSION_COOKIE_NAMES = Array.from(
+  new Set([
+    hostSessionCookieName(true),
+    sessionCookieName(true),
+    sessionCookieName(false),
+    legacySessionCookieName(true),
+    legacySessionCookieName(false),
+  ])
+);
+
+/**
+ * Does this request carry a credential that can change the response body?
+ *
+ * Intentionally CHEAP and PESSIMISTIC: it inspects headers only — no session
+ * decode, no db/redis hop — and answers "yes" for a credential that turns out to
+ * be expired or bogus. The cost of a false positive is one uncached response;
+ * the cost of a false negative is a caller-specific body marked publicly
+ * cacheable. Those are not symmetric, so the cheap over-approximation is the
+ * right one.
+ *
+ * `req.cookies` is what Next populates for an API route and is the primary read.
+ * The raw `Cookie` header is parsed as a fallback so the check cannot quietly
+ * degrade to "no credentials" in any context that skips that parsing.
+ *
+ * 🔴 The `?token=` query parameter is a credential HERE because
+ * `getServerAuthSession` treats it as one — it reads `req.url`'s `token` param
+ * and resolves it through `getSessionFromBearerToken`, exactly as it would an
+ * `Authorization` header. Omitting it would make `MixedAuthEndpoint` call an
+ * api-key request anonymous and hand it the public header, which is the arm it
+ * has never been on. The set of credential spellings this predicate recognises
+ * must stay a superset of the set `getServerAuthSession` accepts; when one grows,
+ * so must the other.
+ */
+export function requestCarriesCallerCredentials(req: NextApiRequest): boolean {
+  if (req.headers?.authorization) return true;
+
+  const parsed = req.cookies as Record<string, string | undefined> | undefined;
+  if (parsed) {
+    for (const name of SESSION_COOKIE_NAMES) if (parsed[name]) return true;
+  }
+
+  const raw = req.headers?.cookie;
+  if (raw) {
+    for (const pair of raw.split(';')) {
+      const eq = pair.indexOf('=');
+      const name = (eq === -1 ? pair : pair.slice(0, eq)).trim();
+      if (name && SESSION_COOKIE_NAMES.includes(name)) return true;
+    }
+  }
+
+  return requestCarriesQueryToken(req);
+}
+
 export function PublicEndpoint(
   handler: (req: AxiomAPIRequest, res: NextApiResponse) => Promise<void | NextApiResponse>,
   allowedMethods: string[] = ['GET'],
@@ -171,9 +548,45 @@ export function PublicEndpoint(
   { maxAge }: { maxAge?: number } = {}
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
-    const shouldStop = addCorsHeaders(req, res, allowedMethods);
-    addPublicCacheHeaders(req, res, maxAge);
-    if (shouldStop) return;
+    const credentialed = requestCarriesCallerCredentials(req);
+
+    // Set BEFORE `addCorsHeaders`: that helper ends an OPTIONS preflight itself,
+    // and once a response is ended `setHeader` throws `ERR_HTTP_HEADERS_SENT`
+    // rather than quietly doing nothing. A preflight therefore has exactly one
+    // window in which a header can be declared, and this is it.
+    res.setHeader('Vary', credentialed ? CREDENTIALED_VARY : ANONYMOUS_VARY);
+
+    // 🔴 The early return belongs HERE, above the `Cache-Control` write — not
+    // below it. `addCorsHeaders` answers an OPTIONS preflight with
+    // `res.status(200).end()`, so every header write placed after it runs against
+    // an already-sent response and throws. That has always been true of whatever
+    // sat in this position (it is not introduced by the cache split below); the
+    // client still got its 200, at the cost of a thrown exception per preflight.
+    // A preflight carries no body, so it needs no cache directive at all.
+    if (addCorsHeaders(req, res, allowedMethods)) return;
+
+    // 🔴 `public, s-maxage` is a claim that ANY caller may be served this exact
+    // body. Several routes on this wrapper resolve the session themselves and
+    // shape their response around it (`user/settings`, `user/getHiddenPreferences`,
+    // `v1/images`, `download/models/[modelVersionId]`, …), so that claim is only
+    // true for a request that presented no credential. Make the header follow the
+    // claim instead of asserting it unconditionally.
+    //
+    // The fallback is the platform default rather than nothing. `apiCacheMiddleware`
+    // already sets exactly this string, but it covers only `/api/v1/*` (`/api/trpc/*`
+    // is outside the proxy matcher in `src/proxy.ts`; that route sets it itself) — and this
+    // wrapper is used well outside those prefixes (`/api/user/*`, `/api/generation/*`,
+    // `/api/track/*`, `/api/download/*`, `/api/internal/*`). Relying on the proxy
+    // would leave those with no `Cache-Control` at all, which is a weaker
+    // statement than the one they need, so state it here too.
+    //
+    // A handler that sets its own `Cache-Control` still wins either way: headers
+    // are not flushed until it responds, and last write wins. That is what keeps
+    // the `no-store` error arms (`handleEndpointError`, and the 503 sheds in
+    // `v1/images`/`v1/users`) authoritative.
+    if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
+    else addPublicCacheHeaders(req, res, maxAge);
+
     await handler(req, res);
   });
 }
@@ -208,13 +621,40 @@ export function MixedAuthEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return withApiMetrics(async (req: AxiomAPIRequest, res: NextApiResponse) => {
+    // Same two properties as `PublicEndpoint`, for the same reasons — see the
+    // comments there. Two differences worth naming, because this wrapper used to
+    // decide on a different axis:
+    //
+    //  1. **The branch is on the CREDENTIAL, not on the resolved session.** This
+    //     used to read `if (!session) addPublicCacheHeaders(...)`, which asks
+    //     whether the credential WORKED. Those two questions have different
+    //     answers whenever a credential is presented and does not resolve — an
+    //     expired cookie, a revoked token, a redis miss — and only one of them is
+    //     conservative. `requestCarriesCallerCredentials` is a header-only read,
+    //     so it also runs before any session work.
+    //  2. **The credentialed arm now states a header.** It previously stated
+    //     nothing and left the response to `apiCacheMiddleware`, whose matcher
+    //     covers `/api/v1/*` only. Two of the twelve routes on
+    //     this wrapper sit outside that: `/api/auth/freshdesk`, which answered
+    //     with no `Cache-Control` at all, and
+    //     `/api/blocks/screenshot/[appBlockId]/[file]`, whose 200 arm sets its
+    //     own header (and still wins) but whose 404 arms did not.
+    const credentialed = requestCarriesCallerCredentials(req);
+    res.setHeader('Vary', credentialed ? CREDENTIALED_VARY : ANONYMOUS_VARY);
+
+    // Early return above every later header write — see `PublicEndpoint`. This
+    // also stops a preflight doing a pointless session resolve after the 200 has
+    // already gone out.
+    if (addCorsHeaders(req, res, allowedMethods)) return;
+
+    // Below the preflight: an OPTIONS is never in `allowedMethods`, and a 405 fails it.
     if (!req.method || !allowedMethods.includes(req.method))
       return res.status(405).json({ error: 'Method not allowed' });
 
-    const shouldStop = addCorsHeaders(req, res, allowedMethods);
+    if (credentialed) res.setHeader('Cache-Control', PRIVATE_CACHE_CONTROL);
+    else addPublicCacheHeaders(req, res);
+
     const session = await getServerAuthSession({ req, res });
-    if (!session) addPublicCacheHeaders(req, res);
-    if (shouldStop) return;
 
     if (!!req.query?.etag && req.query.etag !== '') {
       const isNotUpToDate = await checkNotUpToDate(
@@ -270,9 +710,26 @@ export function ModEndpoint(
     const session = await getServerAuthSession({ req, res });
     if (!session || !session.user?.isModerator || !!session.user.bannedAt)
       return res.status(401).json({ error: 'Unauthorized' });
+    if (!requireFullScopeSession(req, res)) return;
 
     await handler(req, res, session.user);
   });
+}
+
+/**
+ * A 429 carrying retry metadata: `Retry-After` plus the envelope with `rateLimit`. `message`
+ * (and the legacy `error`) stay the refusal's own prose, so a consumer that only reads text
+ * sees what it saw before.
+ */
+export function sendRestRateLimited(
+  res: NextApiResponse,
+  message: string,
+  rateLimit: RateLimitMeta
+) {
+  res.setHeader('Retry-After', String(rateLimit.retryAfterSeconds));
+  return noStore(res)
+    .status(429)
+    .json({ ...restErrorBody(REST_ERROR_CODE.TOO_MANY_REQUESTS, message), rateLimit });
 }
 
 export function handleEndpointError(res: NextApiResponse, e: unknown) {
@@ -281,7 +738,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // navigated away), cancelling the request signal. Not a server fault: respond
     // 499 (client closed request) so it stays out of the 5xx SLO + the
     // civitai_app_http_errors_total counter and isn't logged as a spurious 500.
-    if (!res.headersSent) res.status(499).end();
+    if (!res.headersSent) noStore(res).status(499).end();
     return;
   }
   if (e instanceof TRPCError) {
@@ -312,11 +769,42 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // The un-redacted error is fully preserved by `logRestServerFault` above —
     // this genericizes the RESPONSE only, never the LOG.
     if (isRestServerFault(status)) {
-      logRestServerFault(apiError);
-      return res
+      logRestServerFault(apiError, res);
+      return noStore(res)
         .status(status)
         .json(restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE));
     }
+    // ── DRIVER-AUTHORED 4xx — status kept, MESSAGE genericized ────────────────
+    // 🔴 civitai#3845 investigation 3. The arm below this one is correct for a
+    // message we wrote and wrong for one Postgres wrote. `throwDbError` forwards
+    // the driver's `message` verbatim and `prismaErrorToTrpcCode` sends a large
+    // slice of codes to 4xx, so `P2000 → 400` shipped the offending COLUMN,
+    // `P2003 → 409` the CONSTRAINT name and `P2025 → 404` the model + method.
+    //
+    // The discriminator is message IDENTITY against a driver error in the cause
+    // chain — NOT "is a driver error present". The chain test has a real false
+    // positive: `throwBadRequestError('That slug is already taken', dbError)`
+    // attaches the driver as `cause` while writing a message FOR the caller, and
+    // genericizing that would destroy good client feedback to redact nothing.
+    //
+    // Logged BEFORE genericizing, on purpose: this arm buys into exactly the same
+    // invariant as the 5xx arm — the un-redacted text leaves the wire precisely
+    // when it enters the log, so no message is ever destroyed outright.
+    //
+    // 503 needs no explicit exclusion here: `GENERIC_CLIENT_ERROR_BY_STATUS` has
+    // no 503 key, so `generic` is already undefined for it, and
+    // `rest-error-envelope-ledger.test.ts` FAILS if a 503 key is ever added
+    // (its key set must equal the 4xx statuses `prismaErrorToTrpcCode` reaches).
+    // An earlier draft carried a `status !== 503` clause; it was dead — removing
+    // it left the whole suite green — and a test comment claimed it was what
+    // enforced the exclusion, which was false. The map's key set is.
+    const generic = GENERIC_CLIENT_ERROR_BY_STATUS[status];
+    if (generic && isDriverAuthoredMessage(apiError.message, apiError)) {
+      logRestGenericizedClientFault(apiError, res);
+      return noStore(res).status(status).json(restErrorBody(generic.code, generic.message));
+    }
+    const rateLimit = rateLimitMetaOf(apiError);
+    if (rateLimit) return sendRestRateLimited(res, apiError.message, rateLimit);
     // ── CLIENT FEEDBACK (4xx) + 503 — passed through BYTE-IDENTICALLY ──────────
     // Older Zod-validation TRPCErrors stuff a JSON-encoded issue array into
     // `message`; many newer call sites (incl. `withMeili`'s
@@ -331,7 +819,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     } catch {
       body = { message: apiError.message };
     }
-    return res.status(status).json(body);
+    return noStore(res).status(status).json(body);
   } else {
     const error = e as Error;
     // This branch increments the http-errors counter (via the wrapper's
@@ -341,7 +829,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // find one such silent 500). Emit the structured, cause-walked `_axiom` error
     // log (name + message + stack, un-masked cause) so the next one is attributable
     // from Loki the normal way. safeError keeps it PII-light (primitive fields only).
-    logRestServerFault(error);
+    logRestServerFault(error, res);
     // 🔴 civitai#3845 — do NOT put `error.message` (or any other driver-derived
     // text) in this body. `handleEndpointError` is the shared 500 chokepoint for
     // 14 REST routes — 10 on the public `/api/v1` surface, plus 3 `mod/*` and
@@ -356,7 +844,7 @@ export function handleEndpointError(res: NextApiResponse, e: unknown) {
     // above (structured, cause-walked, queryable in `_axiom`) — this genericizes
     // the RESPONSE only, never the LOG. Pinned by
     // `src/server/utils/__tests__/endpoint-helpers-error-envelope.test.ts`.
-    return res
+    return noStore(res)
       .status(500)
       .json(restErrorBody(REST_ERROR_CODE.INTERNAL_SERVER_ERROR, GENERIC_SERVER_ERROR_MESSAGE));
   }
@@ -372,7 +860,16 @@ export function OrchestratorEndpoint(
   allowedMethods: string[] = ['GET']
 ) {
   return AuthedEndpoint(async (req, res, user) => {
-    const token = await getOrchestratorToken(user.id, { req, res });
+    if (user.bannedAt) return res.status(403).json({ error: BANNED_ACCOUNT_MESSAGE });
+    let token: string;
+    try {
+      token = await getOrchestratorToken(user.id, { req, res });
+    } catch (error) {
+      // The mint reads the ban from the primary, so it can refuse a session whose cached user predates the ban.
+      if (error instanceof TRPCError && error.code === 'FORBIDDEN')
+        return res.status(403).json({ error: error.message });
+      throw error;
+    }
     return await handler(req, res, user, token);
   }, allowedMethods);
 }

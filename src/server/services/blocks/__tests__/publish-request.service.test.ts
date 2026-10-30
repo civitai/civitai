@@ -28,6 +28,11 @@ const dbMocks = vi.hoisted(() => ({
   // W13 draft-at-submit — the pre-approval draft AppListing pre-check (read) + create (write).
   appListingFindFirst: vi.fn(),
   appListingCreate: vi.fn(),
+  // The cross-queue submit guard: `one_pending_per_slug` is partial-unique on
+  // AppBlockPublishRequest only, so submitVersion also asks whether a NON-SHADOW
+  // listing review is open for the slug. Null = no listing review, the shape every
+  // test in this file assumes.
+  listingReqFindFirst: vi.fn(async () => null),
 }));
 
 vi.mock('~/server/db/client', () => ({
@@ -35,6 +40,7 @@ vi.mock('~/server/db/client', () => ({
     appBlockPublishRequest: { findFirst: dbMocks.pubReqFindFirst },
     appBlock: { findFirst: dbMocks.appBlockFindFirst },
     appListing: { findFirst: dbMocks.appListingFindFirst },
+    appListingPublishRequest: { findFirst: dbMocks.listingReqFindFirst },
     user: { findUnique: dbMocks.userFindUnique },
   },
   dbWrite: {
@@ -44,7 +50,7 @@ vi.mock('~/server/db/client', () => ({
 }));
 
 vi.mock('~/env/server', () => ({
-  env: { APPS_DOMAIN: 'civit.ai', DISCORD_WEBHOOK_MOD_ALERTS: undefined },
+  env: { APPS_DOMAIN: 'civit.ai' },
 }));
 
 vi.mock('~/utils/bundle-s3', () => ({
@@ -617,7 +623,12 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
   it('does NOT create a draft on a SUBSEQUENT-version submit (an AppBlock already exists)', async () => {
     dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_existing', appId: 'app_1' });
     const buf = await makeBundle({ ...baseManifest, version: '0.2.0', scopes: [] });
-    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+    await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 1,
+      // A moderator: the owner gate on an existing app is pinned in publish-request.orchestration.test.ts.
+      submitterIsModerator: true,
+    });
 
     expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
     expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
@@ -690,5 +701,154 @@ describe('submitVersion — sensitive-scope justification gate (enforced AT SUBM
     // Fail-fast: neither the request nor the draft is inserted.
     expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
     expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // #4059 build provenance — the service must PERSIST the client's claim into
+  // the publish-request row, and must not invent one when the client sent
+  // nothing. Asserted against the mocked `create` call args with literal values.
+  // ---------------------------------------------------------------------------
+  const SHA = '4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3';
+
+  function createData() {
+    const call = dbMocks.createPublishRequest.mock.calls[0][0] as {
+      data: Record<string, unknown>;
+    };
+    return call.data;
+  }
+
+  it('#4059 PERSISTS sourceCommit + sourceDirty into the publish-request row', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 1,
+      sourceCommit: SHA,
+      sourceDirty: true,
+    });
+
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+    const data = createData();
+    expect(data.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    expect(data.sourceDirty).toBe(true);
+  });
+
+  it('#4059 persists sourceDirty:false as FALSE (a CLAIM of clean, not an absence)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 1,
+      sourceCommit: SHA,
+      sourceDirty: false,
+    });
+
+    const data = createData();
+    // 🔴 `toBe(false)` and not a falsy check — `undefined` here would mean
+    // UNKNOWN, the opposite claim.
+    expect(data.sourceDirty).toBe(false);
+  });
+
+  it('#4059 writes NEITHER column when the client sends nothing (NULL = unknown)', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({ bundleBuffer: buf, submittedByUserId: 1 });
+
+    const data = createData();
+    // Prisma omits an `undefined` field, so the column lands NULL. The service
+    // must NOT default `sourceDirty` to false — that would turn "nobody looked"
+    // into "someone looked and it was clean".
+    expect(data.sourceCommit).toBeUndefined();
+    expect(data.sourceDirty).toBeUndefined();
+  });
+
+  it('#4059 does NOT conflate sourceCommit with forgejoCommitSha', async () => {
+    const buf = await makeBundle({ ...baseManifest, scopes: [] });
+    await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: 1,
+      sourceCommit: SHA,
+      sourceDirty: false,
+    });
+
+    const data = createData();
+    expect(data.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    // The submit path never mints a Forgejo commit — that happens on approve. A
+    // fallback between the two would show up here as the sha leaking across.
+    expect(data.forgejoCommitSha).toBeUndefined();
+  });
+});
+
+describe('submitVersion — consecutive hyphens in a NEW blockId', () => {
+  async function makeBundle(blockId: string): Promise<Buffer> {
+    const zip = new JSZip();
+    zip.file(
+      'block.manifest.json',
+      JSON.stringify({ blockId, version: '0.3.0', name: 'Fixture App', scopes: [] })
+    );
+    zip.file('index.html', '<!doctype html><html><body>hi</body></html>');
+    return Buffer.from(await zip.generateAsync({ type: 'nodebuffer' }));
+  }
+
+  const SUBMITTER = 61;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMocks.pubReqFindFirst.mockResolvedValue(null);
+    dbMocks.listingReqFindFirst.mockResolvedValue(null);
+    dbMocks.appBlockFindFirst.mockResolvedValue(null);
+    dbMocks.createPublishRequest.mockResolvedValue({});
+    dbMocks.appListingFindFirst.mockResolvedValue(null);
+    dbMocks.appListingCreate.mockResolvedValue({ id: 'apl_fixture' });
+  });
+
+  it.each(['my--app', 'a---b'])('refuses a first version of %s', async (blockId) => {
+    const buf = await makeBundle(blockId);
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER })
+    ).rejects.toThrow(
+      `blockId "${blockId}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`
+    );
+    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
+    expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  it.each(['my-app', 'ab-c-d', 'plainapp'])('accepts a first version of %s', async (blockId) => {
+    const buf = await makeBundle(blockId);
+    const result = await submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER });
+    expect(result.slug).toBe(blockId);
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a new version of an EXISTING app whose blockId contains consecutive hyphens', async () => {
+    dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_legacy', appId: 'app_9' });
+    const buf = await makeBundle('old--name');
+    const result = await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: SUBMITTER,
+      // A moderator: the owner gate on an existing app is pinned in publish-request.orchestration.test.ts.
+      submitterIsModerator: true,
+    });
+    expect(result.slug).toBe('old--name');
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it('refuses a first version with a reserved blockId', async () => {
+    const buf = await makeBundle('dev-0123456789abcdef');
+    await expect(
+      submitVersion({ bundleBuffer: buf, submittedByUserId: SUBMITTER })
+    ).rejects.toThrow('blockId "dev-0123456789abcdef" is reserved: ids starting with "dev-"');
+    expect(dbMocks.createPublishRequest).not.toHaveBeenCalled();
+    expect(dbMocks.appListingCreate).not.toHaveBeenCalled();
+  });
+
+  it('accepts a new version of an EXISTING app whose blockId is now reserved', async () => {
+    dbMocks.appBlockFindFirst.mockResolvedValue({ id: 'apb_legacy', appId: 'app_9' });
+    const buf = await makeBundle('dev-legacy');
+    const result = await submitVersion({
+      bundleBuffer: buf,
+      submittedByUserId: SUBMITTER,
+      // A moderator: the owner gate on an existing app is pinned in publish-request.orchestration.test.ts.
+      submitterIsModerator: true,
+    });
+    expect(result.slug).toBe('dev-legacy');
+    expect(dbMocks.createPublishRequest).toHaveBeenCalledTimes(1);
   });
 });

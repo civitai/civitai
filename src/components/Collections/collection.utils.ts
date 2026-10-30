@@ -11,8 +11,13 @@ import {
   IconWorld,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useMemo } from 'react';
+import { useCallback, useMemo } from 'react';
 import * as z from 'zod';
+import {
+  MY_COLLECTIONS_LIST_INPUT,
+  decrementPendingReviewForCollection,
+  decrementPendingReviewTotal,
+} from '~/components/Collections/collection-review-counts';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
@@ -185,7 +190,7 @@ export const collectionReadPrivacyData: Record<CollectionReadConfiguration, Priv
     icon: IconLock,
     label: 'Private',
     value: CollectionReadConfiguration.Private,
-    description: 'Only you and contributors for this collection can see this',
+    description: 'Only you and the collaborators you invite can see this',
   },
   [CollectionReadConfiguration.Public]: {
     icon: IconWorld,
@@ -204,22 +209,21 @@ export const collectionReadPrivacyData: Record<CollectionReadConfiguration, Priv
 export const collectionWritePrivacyData: Record<CollectionWriteConfiguration, PrivacyData> = {
   [CollectionWriteConfiguration.Private]: {
     icon: IconLock,
-    label: 'Private - only the owner can add content',
+    label: 'Me and my collaborators',
     value: CollectionWriteConfiguration.Private,
-    description: 'No one will be able to add content to this collection',
+    description: 'Only you and the collaborators you invite can add to this collection',
   },
   [CollectionWriteConfiguration.Public]: {
     icon: IconWorld,
-    label: 'Public - No review required',
+    label: 'Anyone, no review',
     value: CollectionWriteConfiguration.Public,
-    description: 'Anyone can add content to this collection. No review required.',
+    description: 'Anyone can add to this collection and their entries appear right away',
   },
   [CollectionWriteConfiguration.Review]: {
     icon: IconEyeOff,
-    label: 'Public - Review required',
+    label: 'Anyone, with review',
     value: CollectionWriteConfiguration.Review,
-    description:
-      'Anyone can add content to this collection, but content needs to be reviewed before it is visible.',
+    description: 'Anyone can submit, and you or a Manager approves entries before they appear',
   },
 };
 
@@ -329,22 +333,31 @@ export const useCollection = (
     enabled?: boolean;
   }
 ) => {
-  const { data: { collection, permissions, collaborators, pendingReviewCount } = {}, ...rest } =
-    trpc.collection.getById.useQuery(
-      {
-        id: collectionId,
-      },
-      {
-        enabled: true,
-        ...opts,
-      }
-    );
+  const {
+    data: {
+      collection,
+      permissions,
+      collaborators,
+      pendingReviewCount,
+      redPendingReviewCount,
+    } = {},
+    ...rest
+  } = trpc.collection.getById.useQuery(
+    {
+      id: collectionId,
+    },
+    {
+      enabled: true,
+      ...opts,
+    }
+  );
 
   return {
     collection,
     permissions,
     collaborators,
     pendingReviewCount,
+    redPendingReviewCount,
     ...rest,
   };
 };
@@ -378,6 +391,32 @@ export const contestCollectionReactionsHidden = (
   );
 };
 
+/**
+ * Bring the pending-review badges down when a reviewer decides items.
+ *
+ * Decrement first so the number moves before the network settles, then invalidate so it ends up
+ * right. Neither half is sufficient: the decrement alone drifts from the database across a session,
+ * and the invalidation alone leaves the badge visibly lagging every click.
+ */
+export const useOnCollectionItemsReviewed = () => {
+  const queryUtils = trpc.useUtils();
+
+  return useCallback(
+    ({ collectionId, reviewed }: { collectionId: number; reviewed: number }) => {
+      queryUtils.user.checkNotifications.setData(undefined, (old) =>
+        decrementPendingReviewTotal(old, reviewed)
+      );
+      queryUtils.collection.getAllUser.setData(MY_COLLECTIONS_LIST_INPUT, (old) =>
+        decrementPendingReviewForCollection(old, collectionId, reviewed)
+      );
+
+      queryUtils.user.checkNotifications.invalidate();
+      queryUtils.collection.getAllUser.invalidate(MY_COLLECTIONS_LIST_INPUT);
+    },
+    [queryUtils]
+  );
+};
+
 export const useMutateCollection = () => {
   const queryUtils = trpc.useUtils();
   const removeCollectionItemMutation = trpc.collection.removeFromCollection.useMutation({
@@ -395,6 +434,10 @@ export const useMutateCollection = () => {
 
       if (res.type === CollectionType.Image) {
         await queryUtils.image.getInfinite.invalidate();
+      }
+
+      if (res.type === CollectionType.Model3D) {
+        await queryUtils.model3d.getInfinite.invalidate();
       }
 
       await queryUtils.collection.getById.invalidate({ id: req.collectionId as number });

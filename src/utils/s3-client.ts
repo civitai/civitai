@@ -13,7 +13,6 @@ import {
   ListObjectsV2Command,
 } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
-import { env } from '~/env/server';
 
 const DOWNLOAD_EXPIRATION = 60 * 60 * 24; // 24 hours
 const UPLOAD_EXPIRATION = 60 * 60 * 12; // 12 hours
@@ -251,19 +250,7 @@ export class S3Bucket implements HasKeys<S3Client> {
   }
 }
 
-// Legacy DO Spaces image client — only used for deleting old images.
-// Lazy-initialized because the env vars are now optional.
-let _imageS3Client: S3Client | null = null;
-export function getImageS3Client(): S3Client {
-  if (!_imageS3Client) {
-    _imageS3Client = new S3Client({
-      name: 'image-s3-client',
-      uploadKey: env.S3_IMAGE_UPLOAD_KEY,
-      uploadSecret: env.S3_IMAGE_UPLOAD_SECRET,
-      uploadEndpoint: env.S3_IMAGE_UPLOAD_ENDPOINT,
-      uploadRegion: env.S3_IMAGE_UPLOAD_REGION,
-      forcePathStyle: env.S3_IMAGE_FORCE_PATH_STYLE,
-    });
-  }
-  return _imageS3Client;
-}
+// The legacy DO Spaces image client lived here. Its last caller was deleteImageFromS3's fallback
+// branch, which pointed at a decommissioned bucket — every delete routed through it failed.
+// Nothing constructs an S3 client from S3_IMAGE_UPLOAD_* any more; those vars are inert and can be
+// dropped from prod config independently of this change.

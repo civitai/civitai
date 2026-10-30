@@ -3,7 +3,6 @@ import { useDisclosure } from '@mantine/hooks';
 import { openConfirmModal } from '@mantine/modals';
 import {
   Text,
-  Card,
   Stack,
   Group,
   Title,
@@ -25,13 +24,13 @@ import {
   Alert,
   Anchor,
 } from '@mantine/core';
+import { CardOrSection } from '~/components/Account/SettingsLayout';
 import {
   IconPlus,
   IconTrash,
   IconEdit,
   IconRefresh,
   IconCheck,
-  IconClipboard,
   IconCalendar,
   IconKey,
   IconHash,
@@ -43,10 +42,15 @@ import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import {
+  COPY_BODY_PADDING_RIGHT,
+  CopyAffordance,
+} from '~/components/CopyAffordance/CopyAffordance';
+import {
   TokenScope,
   TokenScopePresets,
   tokenScopePresetLabels,
   tokenScopeGrid,
+  toggleGridScope,
 } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
 import classes from './OAuthAppsCard.module.css';
@@ -78,7 +82,7 @@ function ScopeSelector({
   };
 
   const handleToggleFlag = (flag: number) => {
-    onChange(Flags.toggleFlag(tokenScope, flag));
+    onChange(toggleGridScope(tokenScope, flag));
   };
 
   return (
@@ -158,7 +162,15 @@ function ScopeSelector({
   );
 }
 
-function SecretDisplay({
+/**
+ * The post-registration panel. Props-only — no hooks, no tRPC.
+ *
+ * EXPORTED FOR `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx`, which
+ * measures that its two credential bodies reserve the copy control's width. Nothing else
+ * imports it. The alternative was a fixture re-typing this JSX, which would have measured the
+ * fixture; the other two bodies in this family sit behind a tRPC mutation and are not mounted.
+ */
+export function SecretDisplay({
   clientId,
   clientSecret,
   onClose,
@@ -177,22 +189,33 @@ function SecretDisplay({
         <Text size="sm" fw={500} mb={4}>
           Client ID
         </Text>
-        <CopyButton value={clientId}>
-          {({ copied, copy }) => (
-            <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-              <Code block color={copied ? 'green' : undefined}>
-                {copied ? 'Copied' : clientId}
-              </Code>
-              <LegacyActionIcon
-                className="absolute right-2 top-1/2 -translate-y-1/2"
-                variant="transparent"
-                color="gray"
-              >
-                {copied ? <IconCheck /> : <IconClipboard />}
-              </LegacyActionIcon>
-            </Box>
+        {/* Three hand-rolled copies of `CopyAffordance`'s shell lived in this file — this
+            one, the client secret below, and the rotated secret at the bottom — and all
+            three rendered an `ActionIcon` with no `aria-label` and no text. Two of them
+            copy a credential. See `CopyAffordance`'s header for why the fix is the
+            component's required `label` rather than three hand-written attributes. */}
+        <CopyAffordance value={clientId} label="Copy the client ID">
+          {({ copied }) => (
+            // `paddingRight` on all three bodies in this file: the control is a SIBLING of the
+            // body, not inside it — `CopyAffordance` renders
+            // `<Box pos="relative">{children}<LegacyActionIcon …/></Box>`, so the control is
+            // positioned against that wrapper and merely OVERLAPS the body. It could not be
+            // inside it: `Code` computes `overflow: auto`, so a control genuinely inside would
+            // scroll away with the text. The overlap is why the body reserves the control's
+            // width. Measured without it, the value's last characters sat 26px under the
+            // clipboard icon at 390 and at
+            // 360. `src/components/CopyAffordance/CopyAffordance.geometry.test.tsx` measures
+            // this one and the secret below; the rotated secret further down is the same
+            // spelling and is not separately mounted.
+            <Code
+              block
+              color={copied ? 'green' : undefined}
+              style={{ paddingRight: COPY_BODY_PADDING_RIGHT }}
+            >
+              {copied ? 'Copied' : clientId}
+            </Code>
           )}
-        </CopyButton>
+        </CopyAffordance>
       </Box>
       {isPublic ? (
         <Box>
@@ -226,22 +249,17 @@ function SecretDisplay({
             <Text size="sm" fw={500} mb={4}>
               Client Secret
             </Text>
-            <CopyButton value={clientSecret}>
-              {({ copied, copy }) => (
-                <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                  <Code block color={copied ? 'green' : undefined}>
-                    {copied ? 'Copied' : clientSecret}
-                  </Code>
-                  <LegacyActionIcon
-                    className="absolute right-2 top-1/2 -translate-y-1/2"
-                    variant="transparent"
-                    color="gray"
-                  >
-                    {copied ? <IconCheck /> : <IconClipboard />}
-                  </LegacyActionIcon>
-                </Box>
+            <CopyAffordance value={clientSecret} label="Copy the client secret">
+              {({ copied }) => (
+                <Code
+                  block
+                  color={copied ? 'green' : undefined}
+                  style={{ paddingRight: COPY_BODY_PADDING_RIGHT }}
+                >
+                  {copied ? 'Copied' : clientSecret}
+                </Code>
               )}
-            </CopyButton>
+            </CopyAffordance>
           </Box>
           <Text size="xs" fw={500} c="red.5">
             Save the client secret now — you will not be able to see it again.
@@ -258,9 +276,7 @@ function SecretDisplay({
 // Origin entries are exact-matched against the browser's `Origin` header, so
 // they must be a bare scheme://host[:port]. We pre-validate on the client to
 // give a fast inline error; the server enforces the same rule.
-function parseOriginList(
-  text: string
-): { value: string[]; error: string | null } {
+function parseOriginList(text: string): { value: string[]; error: string | null } {
   const lines = text
     .split('\n')
     .map((line) => line.trim())
@@ -563,9 +579,7 @@ function EditAppModal({
   const [name, setName] = useState(client.name);
   const [description, setDescription] = useState(client.description ?? '');
   const [redirectUrisText, setRedirectUrisText] = useState(client.redirectUris.join('\n'));
-  const [allowedOriginsText, setAllowedOriginsText] = useState(
-    client.allowedOrigins.join('\n')
-  );
+  const [allowedOriginsText, setAllowedOriginsText] = useState(client.allowedOrigins.join('\n'));
   const [tokenScope, setTokenScope] = useState(client.allowedScopes);
   const [uriError, setUriError] = useState<string | null>(null);
   const [originError, setOriginError] = useState<string | null>(null);
@@ -621,7 +635,8 @@ function EditAppModal({
       description: description.trim(),
       redirectUris: uris,
       allowedOrigins: originsParsed.value,
-      allowedScopes: tokenScope,
+      // Opt-in bits above `Full` aren't editable here.
+      allowedScopes: tokenScope & TokenScope.Full,
     });
   };
 
@@ -689,7 +704,7 @@ function EditAppModal({
   );
 }
 
-export function OAuthAppsCard() {
+export function OAuthAppsCard({ flat }: { flat?: boolean } = {}) {
   const utils = trpc.useUtils();
   const [registerOpened, { open: openRegister, close: closeRegister }] = useDisclosure(false);
   const [editClient, setEditClient] = useState<{
@@ -739,6 +754,10 @@ export function OAuthAppsCard() {
           <Text size="sm" c="red">
             This will revoke all tokens and disconnect all users.
           </Text>
+          <Text size="sm">
+            Any store items other creators listed through this app will also be removed from the
+            store. To list them again they would need to be republished and reviewed.
+          </Text>
         </Stack>
       ),
       centered: true,
@@ -769,26 +788,37 @@ export function OAuthAppsCard() {
     });
   };
 
+  const registerButton = (
+    <Button
+      size="compact-sm"
+      leftSection={<IconPlus size={14} stroke={1.5} />}
+      onClick={openRegister}
+    >
+      Register App
+    </Button>
+  );
+
   return (
     <>
-      <Card withBorder>
-        <Stack gap={0}>
-          <Group align="start" justify="space-between">
-            <Title order={2}>OAuth Applications</Title>
-            <Button
-              size="compact-sm"
-              leftSection={<IconPlus size={14} stroke={1.5} />}
-              onClick={openRegister}
-            >
-              Register App
-            </Button>
-          </Group>
-          <Text c="dimmed" size="sm">
-            Register OAuth applications to allow third-party integrations to access the Civitai API
-            on behalf of users.
-          </Text>
-        </Stack>
-        <Box mt="md" style={{ position: 'relative' }}>
+      <CardOrSection
+        flat={flat}
+        title="OAuth applications"
+        description="Let third-party apps call the API on a user's behalf."
+        action={flat ? registerButton : undefined}
+      >
+        {!flat && (
+          <Stack gap={0}>
+            <Group align="start" justify="space-between">
+              <Title order={2}>OAuth Applications</Title>
+              {registerButton}
+            </Group>
+            <Text c="dimmed" size="sm">
+              Register OAuth applications to allow third-party integrations to access the Civitai
+              API on behalf of users.
+            </Text>
+          </Stack>
+        )}
+        <Box mt={flat ? 0 : 'md'} style={{ position: 'relative' }}>
           <LoadingOverlay visible={isLoading} />
           {clients.length > 0 ? (
             <Stack gap="sm">
@@ -923,7 +953,7 @@ export function OAuthAppsCard() {
             </Paper>
           )}
         </Box>
-      </Card>
+      </CardOrSection>
 
       <RegisterAppModal opened={registerOpened} onClose={closeRegister} />
 
@@ -944,22 +974,17 @@ export function OAuthAppsCard() {
       >
         {rotatedSecret && (
           <Stack>
-            <CopyButton value={rotatedSecret}>
-              {({ copied, copy }) => (
-                <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                  <Code block color={copied ? 'green' : undefined}>
-                    {copied ? 'Copied' : rotatedSecret}
-                  </Code>
-                  <LegacyActionIcon
-                    className="absolute right-2 top-1/2 -translate-y-1/2"
-                    variant="transparent"
-                    color="gray"
-                  >
-                    {copied ? <IconCheck /> : <IconClipboard />}
-                  </LegacyActionIcon>
-                </Box>
+            <CopyAffordance value={rotatedSecret} label="Copy the new client secret">
+              {({ copied }) => (
+                <Code
+                  block
+                  color={copied ? 'green' : undefined}
+                  style={{ paddingRight: COPY_BODY_PADDING_RIGHT }}
+                >
+                  {copied ? 'Copied' : rotatedSecret}
+                </Code>
               )}
-            </CopyButton>
+            </CopyAffordance>
             <Text size="xs" c="red.5" fw={500}>
               Save the new client secret now — you will not be able to see it again.
             </Text>

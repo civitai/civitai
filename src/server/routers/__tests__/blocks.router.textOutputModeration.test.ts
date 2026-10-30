@@ -34,13 +34,9 @@ const {
   mockGetUserById,
   mockCheckBlockCatalogRateLimit,
   mockGetSessionUser,
-  mockDbRead,
-  mockRedis,
-  mockSysRedis,
   mockIsAppBlocksEnabled,
   mockIsAppBlocksAuthorEnabled,
   mockCreateXGuardModerationRequest,
-  mockLogToAxiom,
 } = vi.hoisted(() => ({
   mockVerifyBlockToken: vi.fn(),
   mockParseSubjectUserId: vi.fn(),
@@ -52,36 +48,11 @@ const {
   mockGetUserById: vi.fn(),
   mockCheckBlockCatalogRateLimit: vi.fn(async () => ({ allowed: true })),
   mockGetSessionUser: vi.fn(),
-  mockDbRead: {
-    modelVersion: { findUnique: vi.fn(), findFirst: vi.fn(), findMany: vi.fn() },
-    modelBlockInstall: { findUnique: vi.fn() },
-    blockUserSettings: { findUnique: vi.fn() },
-    modelMetric: { findFirst: vi.fn() },
-  },
-  mockRedis: {
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    incr: vi.fn(async () => 1),
-    incrBy: vi.fn(async () => 1),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-    exists: vi.fn(async () => 0),
-  },
-  mockSysRedis: {
-    get: vi.fn(async () => null),
-    incrBy: vi.fn(async () => 0),
-    decrBy: vi.fn(async () => 0),
-    expire: vi.fn(async () => true),
-    ttl: vi.fn(async () => -1),
-  },
   mockIsAppBlocksEnabled: vi.fn(async () => true),
   mockIsAppBlocksAuthorEnabled: vi.fn(
     async (opts?: { user?: { isModerator?: boolean } }) => !!opts?.user?.isModerator
   ),
   mockCreateXGuardModerationRequest: vi.fn(),
-  mockLogToAxiom: vi.fn(async () => undefined),
 }));
 
 vi.mock('~/server/middleware/block-scope.middleware', () => ({
@@ -110,15 +81,6 @@ vi.mock('~/server/services/user.service', () => ({ getUserById: mockGetUserById 
 vi.mock('~/server/auth/session-client', () => ({
   sessionClient: { getSessionUserById: (...args: unknown[]) => mockGetSessionUser(...args) },
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: {
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: vi.fn() },
-    user: { findUnique: vi.fn() },
-  },
-}));
-
 const { completeKeys } = vi.hoisted(() => {
   const group = (explicit: Record<string, string>, name: string): Record<string, string> =>
     new Proxy(explicit, {
@@ -140,18 +102,15 @@ const { completeKeys } = vi.hoisted(() => {
     });
   return { completeKeys };
 });
-vi.mock('~/server/redis/client', () => ({
-  redis: mockRedis,
-  sysRedis: mockSysRedis,
-  REDIS_KEYS: completeKeys({ BLOCKS: { POPULAR_CHECKPOINT: 'blocks:popular-checkpoint' } }),
-  REDIS_SYS_KEYS: completeKeys({ BLOCKS: { BUZZ_CAP: 'system:blocks:buzz-cap' } }),
-}));
 vi.mock('~/server/services/app-blocks-flag', () => ({
   isAppBlocksEnabled: mockIsAppBlocksEnabled,
   isAppBlocksAuthorEnabled: mockIsAppBlocksAuthorEnabled,
 }));
 vi.mock('~/server/utils/block-catalog-rate-limit', () => ({
   checkBlockCatalogRateLimit: (...args: unknown[]) => mockCheckBlockCatalogRateLimit(...args),
+  // `pollWorkflow` charges the DEDICATED `:poll:` bucket; declared so the poll cases here reach
+  // the moderation path instead of failing on a missing mock export.
+  checkBlockPollRateLimit: async () => ({ allowed: true }),
 }));
 vi.mock('~/server/middleware.trpc', async () => {
   const { middleware } = await import('~/server/trpc');
@@ -163,11 +122,6 @@ vi.mock('~/server/services/orchestrator/orchestrator.service', async (importOrig
   const actual = await importOriginal<Record<string, unknown>>();
   return { ...actual, createXGuardModerationRequest: mockCreateXGuardModerationRequest };
 });
-vi.mock('~/server/logging/client', async (importOriginal) => {
-  const actual = await importOriginal<Record<string, unknown>>();
-  return { ...actual, logToAxiom: mockLogToAxiom };
-});
-
 // 🔴 A `'textOutput'` STEP IS INJECTED INTO THE REGISTRY LOOKUP so these cases
 // own their fixture instead of riding on whichever real entry happens to declare
 // the posture (`chat-completion` does today — this file predates it and asserted
@@ -188,6 +142,13 @@ vi.mock('~/server/services/blocks/steps', async (importOriginal) => {
 
 import * as z from 'zod';
 import { blocksRouter } from '../blocks.router';
+// 🔴 STRUCTURALLY BLIND TO THE VIEWER HALF OF THE WORKFLOW SCOPE. This file never sets
+// `ORCHESTRATOR_MODE`, so it runs under the schema default `'dev'` — the one mode in which
+// `assertBlockWorkflowMintedForViewer` short-circuits. That is why ids like `wf_1` are fine here
+// and would be refused in prod. A `pollWorkflow`/`cancelWorkflow` case cloned out of this file
+// inherits that blindness while looking like coverage: set the mode explicitly, as
+// blocks.router.workflowScope.test.ts does.
+
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import {
   allBrowsingLevelsFlag,
@@ -199,6 +160,23 @@ import {
   TEXT_OUTPUT_WITHHELD_MESSAGE,
   __clearTextOutputVerdictCacheForTests,
 } from '~/server/services/blocks/steps/text-output-moderation';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.incr.mockImplementation(async () => 1);
+redisMock.redis.incrBy.mockImplementation(async () => 1);
+redisMock.redis.decrBy.mockImplementation(async () => 0);
+redisMock.redis.expire.mockImplementation(async () => true);
+redisMock.redis.ttl.mockImplementation(async () => -1);
+redisMock.sysRedis.incrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.decrBy.mockImplementation(async () => 0);
+redisMock.sysRedis.expire.mockImplementation(async () => true);
+redisMock.sysRedis.ttl.mockImplementation(async () => -1);
+const mockDbRead = dbMock.dbRead;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 const CHAT_TYPE = 'fixtureChat';
 const GENERATED_TEXT = 'the model wrote this exact sentence';
@@ -257,6 +235,8 @@ function chatWorkflow(content = GENERATED_TEXT) {
   return {
     id: 'wf_1',
     status: 'succeeded',
+    // The producing app's provenance tag — `pollWorkflow`/`cancelWorkflow` scope on it.
+    tags: [`app-block:${APP_ID}`],
     createdAt: '2026-01-01T00:00:00.000Z',
     cost: { total: 7 },
     steps: [
@@ -375,6 +355,12 @@ beforeEach(() => {
   registryOverride.clear();
   registryOverride.set(CHAT_TYPE, textStep);
 });
+// `authorizeBlockBridgeToken` resolves the backing app_blocks row on every bridge proc and
+// refuses a missing or non-approved one. The shared db mock answers `null` by default, so
+// without this every call here would 404 on a condition none of these tests is about.
+beforeEach(() => {
+  dbMock.dbRead.appBlock.findUnique.mockResolvedValue({ status: 'approved' });
+});
 
 describe('blocks.pollWorkflow — textOutput moderation is WIRED', () => {
   it('the injected fixture is a genuinely registrable entry (the suite CONTROL)', () => {
@@ -466,6 +452,7 @@ describe('blocks.pollWorkflow — textOutput moderation is WIRED', () => {
     mockGetWorkflow.mockResolvedValue({
       id: 'wf_1',
       status: 'succeeded',
+      tags: [`app-block:${APP_ID}`],
       cost: { total: 10 },
       steps: [
         {

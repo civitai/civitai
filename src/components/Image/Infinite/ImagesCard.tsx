@@ -3,7 +3,7 @@ import { IconAlertTriangle, IconBrush, IconClock2, IconInfoCircle } from '@table
 import { useCallback, useMemo, memo } from 'react';
 import cardClasses from '~/components/Cards/Cards.module.css';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
-import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
+import { RoutedDialogLink, triggerRoutedDialog } from '~/components/Dialog/RoutedDialogLink';
 import { DurationBadge } from '~/components/DurationBadge/DurationBadge';
 import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBadge';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -27,11 +27,16 @@ import type { ImagesInfiniteModel } from '~/server/services/image.service';
 import { getIsPublicBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { CollectionItemStatus, ImageIngestionStatus, MediaType } from '~/shared/utils/prisma/enums';
 import { RemixMenu, isRemixMenuVisible } from '~/components/Image/Remix/RemixMenu';
-import { tourOverlayZIndex } from '~/shared/constants/app-layout.constants';
+import { REMIX_FRAME } from '~/components/RemixGallery/remix-card-state';
+import { useRemixCardData } from '~/components/RemixGallery/use-remix-card-data';
+import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
+import { tourClickThroughZIndex } from '~/shared/constants/app-layout.constants';
 import { useImageStore } from '~/store/image.store';
 import { useTourContext } from '~/components/Tours/ToursProvider';
 import { BlockedReason } from '~/server/common/enums';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useStorylineForPost } from '~/components/Storyline/StorylineBatchProvider';
+import { StorylinePill } from '~/components/Storyline/StorylinePill';
 import clsx from 'clsx';
 import classes from './ImagesCard.module.scss';
 
@@ -53,6 +58,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
   const currentUser = useCurrentUser();
 
   const image = useImageStore(data);
+  const storyline = useStorylineForPost(image.postId);
 
   const isBlocked = image.ingestion === ImageIngestionStatus.Blocked || !!image.blockedFor;
   const isPending = image.ingestion === ImageIngestionStatus.Pending;
@@ -78,21 +84,35 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
     e.stopPropagation();
   }, []);
 
-  const handleRemixAction = useCallback(() => {
-    // Go to next step in tour when clicking
+  // The content-gen tour spends two steps here — one on the button, one on the
+  // options it opens — so both the open and the choice move it on by one.
+  const advanceTour = useCallback(() => {
     if (running) helpers?.next();
   }, [running, helpers]);
 
+  // The owner's own cosmetic wins; the remix frame is only a fallback.
+  // The hook is called first and unconditionally — inside the `??` it sits after
+  // a short-circuit, which is a conditional hook call.
+  const remix = useRemixCardData(image.id);
+  const cosmetic = image.cosmetic?.data ?? (remix.count ? REMIX_FRAME : undefined);
+
   const twCardStyle = useMemo(() => {
-    return !image.cosmetic?.data ? { height } : undefined;
-  }, [image.cosmetic, height]);
+    return !cosmetic ? { height } : undefined;
+  }, [cosmetic, height]);
 
   return (
     <TwCosmeticWrapper
-      cosmetic={image.cosmetic?.data}
-      style={image.cosmetic?.data ? { height } : undefined}
+      cosmetic={cosmetic}
+      eventDecoration={image.eventDecoration?.data}
+      eventDecorationOn={{ entityType: 'Image', entityId: image.id }}
+      style={cosmetic ? { height } : undefined}
     >
-      <ElementInView component={TwCard} style={twCardStyle} className="border">
+      <ElementInView
+        component={TwCard}
+        style={twCardStyle}
+        className="border"
+        impressions={[{ entityType: 'Image', entityId: image.id }]}
+      >
         <ImageGuard2 image={image}>
           {(safe) => (
             <>
@@ -119,6 +139,8 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                       type={image.type}
                       wrapperProps={{ className: 'flex-1 h-full' }}
                       width={450}
+                      hiDpi={features.hiDpiPreviews}
+                      sourceWidth={image.width}
                       placeholder="empty"
                       contain
                       loading="lazy"
@@ -129,10 +151,35 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     <MediaHash {...image} />
                   )}
                 </RoutedDialogLink>
-                {safe && features.stickerPlacement && <CardStickerOverlay imageId={image.id} />}
-                <div className="absolute left-2 top-2">
+                {safe && features.stickerPlacement && (
+                  <CardStickerOverlay
+                    imageId={image.id}
+                    revealStickers={contextProps.revealStickers}
+                  />
+                )}
+                {/* Steps clear of an event decoration sitting on the corner. */}
+                <div className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2">
                   <div className="flex flex-nowrap items-center gap-1">
                     <ImageGuard2.BlurToggle radius="xl" h={26} style={{ pointerEvents: 'auto' }} />
+                    {safe && storyline && (
+                      <StorylinePill
+                        title={storyline.title}
+                        depth={storyline.depth}
+                        onClick={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          triggerRoutedDialog({
+                            name: 'imageDetail',
+                            state: {
+                              imageId: image.id,
+                              images: getDialogState(image.id, getImages()),
+                              ...contextProps,
+                              storylineChapterId: storyline.chapterId,
+                            },
+                          });
+                        }}
+                      />
+                    )}
                     {safe &&
                       image.type === MediaType.video &&
                       image.metadata &&
@@ -172,11 +219,12 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                       <RemixMenu
                         image={image}
                         source="remix:image-card"
-                        onAction={handleRemixAction}
-                        // The content-gen tour's remix step can only be advanced
-                        // by clicking through to an option, and its overlay both
-                        // dims and swallows clicks below it.
-                        zIndex={running ? tourOverlayZIndex + 1 : undefined}
+                        onAction={advanceTour}
+                        onOpen={advanceTour}
+                        tourTarget={image.type === MediaType.image ? 'gen:remix-menu' : undefined}
+                        // The first of those has no footer, so the menu has to
+                        // clear the layers Joyride draws over it.
+                        zIndex={running ? tourClickThroughZIndex : undefined}
                       >
                         <HoverActionButton
                           label="Remix"
@@ -207,6 +255,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     )}
                   </div>
                 )}
+                {safe && <RemixedCardFlyout imageId={image.id} />}
 
                 {showVotes ? (
                   <div className={classes.footer}>
@@ -237,7 +286,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                     </div>
                   ) : (
                     <div className="absolute bottom-1 right-1">
-                      {data.hasMeta && (
+                      {features.imageCardInfoButton && data.hasMeta && (
                         <ImageMetaPopover2 imageId={data.id} type={data.type}>
                           <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
                             <IconInfoCircle
@@ -305,7 +354,7 @@ function ImagesCardContent({ data, height }: { data: ImagesInfiniteModel; height
                 // would still change this card's layout for everyone while
                 // adding nothing — a visual regression with no feature behind
                 // it, on the surface the flag exists to keep clear of.
-                (features.stickerPlacement ? (
+                (features.stickerPlacement && !contextProps.hideStickerBadge ? (
                   <div className="flex items-center">
                     <div className="min-w-0 flex-1">
                       <ImageReactions image={image} readonly={!safe || (isScanned && isBlocked)} />
@@ -349,6 +398,7 @@ function ImageReactions({ image, readonly }: { image: ImagesInfiniteModel; reado
           entityType="image"
           reactions={image.reactions}
           metrics={metrics}
+          metricsUnknown={image.stats?.statsUnknown}
           targetUserId={image.user.id}
           readonly={readonly}
           className="justify-between p-2"

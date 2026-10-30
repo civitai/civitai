@@ -10,6 +10,7 @@ import {
   Title,
   Tooltip,
 } from '@mantine/core';
+import { IconDiamond } from '@tabler/icons-react';
 import produce from 'immer';
 import { useCurrentUserSettings, useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -19,17 +20,38 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 // import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { constants } from '~/server/common/constants';
 import type { UserAssistantPersonality } from '~/server/schema/user.schema';
-import { type FeatureAccess, toggleableFeatures } from '~/server/services/feature-flags.service';
+import {
+  type FeatureAccess,
+  fliptGatedToggleableKeys,
+  toggleableFeatures,
+} from '~/server/services/feature-flags.service';
+import {
+  HIDE_FROM_REACTION_LISTS_DESCRIPTION,
+  HIDE_FROM_REACTION_LISTS_LABEL,
+  SHOW_PRE_LAUNCH_REACTIONS_DESCRIPTION,
+  SHOW_PRE_LAUNCH_REACTIONS_LABEL,
+} from '~/shared/constants/reaction-privacy.constants';
 import { UNQUANTIZED_QUANT_TYPE } from '~/utils/file-display-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
 const validModelFormats = constants.modelFileFormats.filter((format) => format !== 'Other');
-const normalizedToggleableFeatures = toggleableFeatures.filter(
+export const normalizedToggleableFeatures = toggleableFeatures.filter(
   (feature) => feature.key !== 'assistant'
 );
-const assistantToggleableFeatures = toggleableFeatures.filter(
+export const assistantToggleableFeatures = toggleableFeatures.filter(
   (feature) => feature.key === 'assistant'
+);
+
+const mediaFeatureKeys: string[] = ['largerGenerationImages', 'nativeVideoControls'];
+export const mediaToggleableFeatures = toggleableFeatures.filter((feature) =>
+  mediaFeatureKeys.includes(feature.key)
+);
+
+// Denylist, not an allowlist: a flag added to `featureFlags` and routed to no section still shows
+// up in Features rather than silently vanishing from the pane.
+export const otherToggleableFeatures = normalizedToggleableFeatures.filter(
+  (feature) => !mediaFeatureKeys.includes(feature.key)
 );
 
 export function SettingsCard() {
@@ -57,33 +79,12 @@ export function SettingsCard() {
         <Title order={2}>Browsing Settings</Title>
 
         <Divider label="Image Preferences" mb={-12} />
-        <Group wrap="nowrap" grow>
-          <AutoplayGifsToggle />
-          <Select
-            label="Preferred Format"
-            name="imageFormat"
-            data={[
-              {
-                value: 'optimized',
-                label: 'Optimized (avif, webp)',
-              },
-              {
-                value: 'metadata',
-                label: 'Unoptimized (jpeg, png)',
-              },
-            ]}
-            value={user.filePreferences?.imageFormat ?? 'metadata'}
-            onChange={(value: string | null) =>
-              mutate({
-                id: user.id,
-                filePreferences: { ...user.filePreferences, imageFormat: value as ImageFormat },
-              })
-            }
-            disabled={isLoading}
-          />
-        </Group>
+        <AutoplayGifsToggle />
         <SwipeGalleryCardsToggle />
         <StickerMotionToggle />
+
+        <Divider label="Privacy" mb={-12} />
+        <HideFromReactionListsToggle />
 
         <Divider label="Model File Preferences" mb={-12} />
         <Group wrap="nowrap" grow>
@@ -190,18 +191,25 @@ export function SettingsCard() {
           </>
         )}
 
-        {normalizedToggleableFeatures.length > 0 && (
+        {flags.buzz && (
           <>
-            <Divider label="Features" />
-            <ToggleableFeatures data={normalizedToggleableFeatures} />
+            <Divider label="Buzz Preferences" mb={-12} />
+            <HideBlueBuzzToggle />
           </>
+        )}
+
+        <Divider label="Features" />
+        <FitPostImagesToggle />
+        <EarlyAdopterToggle />
+        {normalizedToggleableFeatures.length > 0 && (
+          <ToggleableFeatures data={normalizedToggleableFeatures} />
         )}
       </Stack>
     </Card>
   );
 }
 
-function AutoplayGifsToggle() {
+export function AutoplayGifsToggle() {
   const autoplayGifs = useBrowsingSettings((x) => x.autoplayGifs);
   const setState = useBrowsingSettings((x) => x.setState);
 
@@ -215,7 +223,7 @@ function AutoplayGifsToggle() {
   );
 }
 
-function SwipeGalleryCardsToggle() {
+export function SwipeGalleryCardsToggle() {
   const { swipeGalleryCards } = useCurrentUserSettings();
   const { mutate, isPending } = useMutateUserSettings();
 
@@ -223,7 +231,7 @@ function SwipeGalleryCardsToggle() {
     <Switch
       name="swipeGalleryCards"
       label="Swipe between images on gallery cards"
-      description="Drag left or right on a gallery post to move through its images instead of using the arrows. May feel slower on long feeds or older devices."
+      description="Swipe through a post's images instead of using the arrows."
       checked={swipeGalleryCards ?? false}
       disabled={isPending}
       onChange={(e) => mutate({ swipeGalleryCards: e.target.checked })}
@@ -232,7 +240,7 @@ function SwipeGalleryCardsToggle() {
   );
 }
 
-function StickerMotionToggle() {
+export function StickerMotionToggle() {
   const features = useFeatureFlags();
   const { disableStickerMotion } = useCurrentUserSettings();
   const { mutate, isPending } = useMutateUserSettings();
@@ -246,7 +254,7 @@ function StickerMotionToggle() {
     <Switch
       name="stickerMotion"
       label="Animate stickers placed on images"
-      description="Placed stickers pop in and drift gently. Turn this off to keep them still — they stay visible either way. Already off if your device asks for reduced motion."
+      description="Off keeps them still; they stay visible either way."
       // Stored as an opt-out so the default costs no row, and so a creator who
       // never opens this page gets the animation rather than a silent no.
       checked={!(disableStickerMotion ?? false)}
@@ -257,9 +265,108 @@ function StickerMotionToggle() {
   );
 }
 
-function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
+export function HideFromReactionListsToggle() {
+  const { hideFromReactionLists, showPreLaunchReactions } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Stack id="hide-reaction-lists" gap="sm">
+      <Switch
+        name="hideFromReactionLists"
+        label={HIDE_FROM_REACTION_LISTS_LABEL}
+        description={HIDE_FROM_REACTION_LISTS_DESCRIPTION}
+        checked={hideFromReactionLists ?? false}
+        disabled={isPending}
+        onChange={(e) => mutate({ hideFromReactionLists: e.target.checked })}
+        styles={{ track: { flex: '0 0 1em' } }}
+      />
+      <Switch
+        name="showPreLaunchReactions"
+        label={SHOW_PRE_LAUNCH_REACTIONS_LABEL}
+        description={SHOW_PRE_LAUNCH_REACTIONS_DESCRIPTION}
+        checked={showPreLaunchReactions ?? false}
+        disabled={isPending || !!hideFromReactionLists}
+        onChange={(e) => mutate({ showPreLaunchReactions: e.target.checked })}
+        styles={{ track: { flex: '0 0 1em' } }}
+      />
+    </Stack>
+  );
+}
+
+export function HideBlueBuzzToggle() {
+  const { hideBlueBuzzInHeader } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Switch
+      name="hideBlueBuzzInHeader"
+      label="Hide Blue Buzz in the header"
+      description="Leaves it out of the header balance. You can still spend it."
+      checked={hideBlueBuzzInHeader ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ hideBlueBuzzInHeader: e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
+  );
+}
+
+export function FitPostImagesToggle() {
+  const { fitPostImagesToScreen } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Switch
+      name="fitPostImagesToScreen"
+      label="Fit post images to screen"
+      description="Shows each image in a post whole, sized to fit your screen, instead of at full width."
+      checked={fitPostImagesToScreen ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ fitPostImagesToScreen: e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
+  );
+}
+
+export function EarlyAdopterToggle() {
+  const { isEarlyAdopter } = useCurrentUserSettings();
+  const currentUser = useCurrentUser();
+  // The value is carried on the SESSION (see user.schema `isEarlyAdopter`), and the server
+  // busts the shared session cache on change. Re-pull the session here too so this tab's
+  // own `SessionUser` — and therefore its Flipt context — updates without a reload, rather
+  // than waiting on the `session:refresh` signal. Mirrors CreatorProgramV2, which does the
+  // same belt-and-braces refresh at the call site.
+  const { mutate, isPending } = useMutateUserSettings({
+    onSuccess: () => {
+      currentUser?.refresh();
+    },
+  });
+
+  return (
+    <Switch
+      name="isEarlyAdopter"
+      label="Join the early-adopter program"
+      description="Features before they roll out. They may be rough or change without notice."
+      checked={isEarlyAdopter ?? false}
+      disabled={isPending}
+      onChange={(e) => mutate({ isEarlyAdopter: e.target.checked })}
+      styles={{ track: { flex: '0 0 1em' } }}
+    />
+  );
+}
+
+export function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
   const flags = useFeatureFlags();
   const queryUtils = trpc.useUtils();
+  // Flipt-gated toggles only exist for granted users: the overlay withholds the key for everyone
+  // else, so its absence distinguishes "not granted" (hide the row) from "toggled off" (show it).
+  const { data: userFeatures } = trpc.user.getFeatureFlags.useQuery(undefined, {
+    gcTime: Infinity,
+    staleTime: Infinity,
+  });
+  const visible = data.filter(
+    (feature) =>
+      !fliptGatedToggleableKeys.has(feature.key) || (userFeatures && feature.key in userFeatures)
+  );
   const toggleFeatureFlagMutation = trpc.user.toggleFeature.useMutation({
     async onMutate(payload) {
       await queryUtils.user.getFeatureFlags.cancel();
@@ -293,11 +400,22 @@ function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
 
   return (
     <>
-      {data.map((feature) => (
+      {visible.map((feature) => (
         <Switch
           name={feature.key}
           key={feature.key}
-          label={feature.displayName}
+          label={
+            feature.badge ? (
+              <Group gap={6} component="span" display="inline-flex">
+                {feature.displayName}
+                <Badge size="xs" variant="light" color="yellow">
+                  {feature.badge}
+                </Badge>
+              </Group>
+            ) : (
+              feature.displayName
+            )
+          }
           checked={flags[feature.key]}
           onChange={(e) => toggleFlag(feature.key, e.target.checked)}
           description={feature.description}
@@ -305,5 +423,115 @@ function ToggleableFeatures({ data }: { data: typeof toggleableFeatures }) {
         />
       ))}
     </>
+  );
+}
+
+/**
+ * The selects below are exported so the flat settings panes and the legacy card render the same
+ * control rather than two copies that can drift while the `accountSettingsV2` flag is alive.
+ * They carry no label of their own — the pane's `SettingRow` supplies it.
+ */
+function useFilePreferenceUpdate({ onError }: { onError?: () => void } = {}) {
+  const user = useCurrentUser();
+  const queryUtils = trpc.useUtils();
+  const { mutate, isPending } = trpc.user.update.useMutation({
+    async onSuccess() {
+      await queryUtils.model.getAll.invalidate();
+      await user?.refresh();
+      showSuccessNotification({ message: 'User profile updated' });
+    },
+    // Nothing handles a rejected mutation globally, so without this a failed save is silent and any
+    // control holding an optimistic value keeps showing a preference that was never persisted.
+    onError() {
+      showErrorNotification({
+        title: 'Failed to update preferences',
+        error: new Error('Something went wrong, please try again later.'),
+      });
+      onError?.();
+    },
+  });
+
+  const update = (filePreferences: Record<string, unknown>) => {
+    if (!user) return;
+    mutate({ id: user.id, filePreferences: { ...user.filePreferences, ...filePreferences } });
+  };
+
+  return { user, update, isPending };
+}
+
+export function ModelFileFormatSelect() {
+  const { user, update, isPending } = useFilePreferenceUpdate();
+  if (!user) return null;
+  return (
+    <Select
+      aria-label="Preferred model file format"
+      data={validModelFormats}
+      value={user.filePreferences?.format ?? 'SafeTensor'}
+      onChange={(value: string | null) => update({ format: value })}
+      disabled={isPending}
+    />
+  );
+}
+
+export function ModelPrecisionSelect() {
+  const { user, update, isPending } = useFilePreferenceUpdate();
+  const { precisions } = useModelFileOptions();
+  if (!user) return null;
+  return (
+    <Select
+      aria-label="Preferred precision"
+      data={precisions.map((value) => ({ value, label: value.toUpperCase() }))}
+      value={user.filePreferences?.fp ?? 'fp16'}
+      onChange={(value: string | null) => update({ fp: value })}
+      disabled={isPending}
+    />
+  );
+}
+
+/** Only meaningful for GGUF, which is the one format that ships quantised builds. */
+export function ModelQuantTypeSelect() {
+  const { user, update, isPending } = useFilePreferenceUpdate();
+  const { quantTypes } = useModelFileOptions();
+  if (!user || user.filePreferences?.format !== 'GGUF') return null;
+  return (
+    <Select
+      aria-label="Preferred quant type"
+      data={quantTypes.filter((x) => x !== UNQUANTIZED_QUANT_TYPE)}
+      allowDeselect={false}
+      value={user.filePreferences?.quantType ?? 'Q4_K_M'}
+      onChange={(value: string | null) => update({ quantType: value })}
+      disabled={isPending}
+    />
+  );
+}
+
+export function AssistantPersonalitySelect() {
+  const flags = useFeatureFlags();
+  const { assistantPersonality } = useCurrentUserSettings();
+  const { mutate, isPending } = useMutateUserSettings();
+
+  return (
+    <Tooltip
+      withArrow
+      label="Available to subscribers only"
+      disabled={flags.assistantPersonality}
+      offset={-10}
+    >
+      <div>
+        <Select
+          aria-label="Assistant personality"
+          disabled={isPending || !flags.assistantPersonality}
+          data={[
+            { value: 'civbot', label: 'CivBot' },
+            { value: 'civchan', label: 'CivChan' },
+          ]}
+          value={assistantPersonality ?? 'civbot'}
+          onChange={(value: string | null) => {
+            if (flags.assistantPersonality)
+              mutate({ assistantPersonality: value as UserAssistantPersonality });
+          }}
+        />
+      </div>
+    </Tooltip>
   );
 }

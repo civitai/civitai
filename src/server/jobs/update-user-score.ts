@@ -1,5 +1,5 @@
 import type { PrismaClient } from '@prisma/client';
-import { chunk } from 'lodash-es';
+import { chunk, partition } from 'lodash-es';
 import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import { clickhouse } from '~/server/clickhouse/client';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -8,6 +8,35 @@ import { templateHandler } from '~/server/db/db-helpers';
 import { pgDbWrite } from '~/server/db/pgDb';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import type { CreatorScoreUnlock } from '~/shared/utils/creator-score-unlocks';
+import { CREATOR_SCORE_CATEGORIES } from '~/shared/utils/creator-score';
+import { REPORTS_AGAINST_EVENT } from '~/shared/constants/creator-journey.constants';
+import {
+  countRemovalsByOwner,
+  getOwnersWithReversalsSince,
+  reportsAgainstScore,
+} from '~/server/services/creator-removals.service';
+import {
+  buildCreatorScoreUnlocks,
+  compiledCreatorScoreUnlockInputs,
+  getCreatorScoreUnlocks,
+} from '~/server/services/creator-score-unlocks.service';
+import type {
+  ScoreTierCrossing,
+  ScoreTotalTransition,
+} from '~/server/services/creator-milestone-grant.service';
+import {
+  grantScoreTierMilestones,
+  markMilestonesSeen,
+  notifyScoreTierCrossings,
+} from '~/server/services/creator-milestone-grant.service';
+import { isMilestoneAnnounced } from '~/server/services/creator-milestone-registry';
+import { alertNewLegends } from '~/server/services/creator-legend-alert.service';
+import {
+  CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
+  creatorJourneyAudience,
+} from '~/server/services/creator-journey-flag.service';
+import { allInjectableResourceIds } from '~/shared/constants/generation.constants';
 import { createLogger } from '~/utils/logging';
 import type { JobContext } from './job';
 import { createJob, getJobDate } from './job';
@@ -36,6 +65,8 @@ export const updateUserScore = createJob(
       scoreMultipliers: await getScoreMultipliers(),
       lastUpdate: legacyLastUpdate,
       toUpdate: {},
+      tierUnlocks: [],
+      tierGrantErrors: [],
       setScore: (id, category, score) => {
         if (!ctx.toUpdate[id]) ctx.toUpdate[id] = {};
         ctx.toUpdate[id][category] = Number(score);
@@ -49,20 +80,11 @@ export const updateUserScore = createJob(
     // and advance — one broken category can't freeze all six (as images did nightly
     // from 2026-06-22). Failures are collected and re-thrown after the good work is
     // committed, so the run still surfaces as failed for alerting.
-    const scoreFetchers = {
-      models: getModelScore,
-      articles: getArticleScore,
-      users: getUserScore,
-      reportsActioned: getReportedActionedScore,
-      reportsAgainst: getReportAgainstScore,
-      images: getImageScore,
-    } as const;
-
     const advanceCheckpoint: Array<() => Promise<void>> = [];
     const failures: Array<{ category: string; error: unknown }> = [];
     for (const [category, fetcher] of Object.entries(scoreFetchers)) {
       const [lastUpdate, setLastUpdate] = await getJobDate(
-        `${jobKey}:${category}`,
+        checkpointKey(category),
         legacyLastUpdate
       );
       ctx.lastUpdate = lastUpdate;
@@ -76,6 +98,13 @@ export const updateUserScore = createJob(
       }
     }
 
+    try {
+      ctx.tierUnlocks = await getCreatorScoreUnlocks();
+    } catch (e) {
+      failures.push({ category: 'tierUnlocks', error: e });
+      ctx.tierUnlocks = buildCreatorScoreUnlocks(compiledCreatorScoreUnlockInputs);
+    }
+
     // Update score totals
     //-------------------------------------
     const totalTasks = await getUpdateTotalTasks(ctx);
@@ -87,6 +116,11 @@ export const updateUserScore = createJob(
     // for the five absolute categories, but a double-count for the incremental
     // `images` category (see getImageScore). Accepted; force-backfill reconciles.
     for (const setLastUpdate of advanceCheckpoint) await setLastUpdate();
+
+    await settleTierGrants(ctx.tierGrantErrors, failures, async () => {
+      const [, setTierGrantsCheckpoint] = await getJobDate(checkpointKey(TIER_GRANTS_CHECKPOINT));
+      await setTierGrantsCheckpoint();
+    });
 
     // Re-throw so the run still surfaces as failed. Each category's original stack
     // is embedded into the thrown error's own stack: the job runner logs
@@ -122,21 +156,234 @@ type Context = {
   toUpdate: Record<number, Partial<Record<ScoreCategory, number>>>;
   setScore: (id: number, category: ScoreCategory, score: number) => void;
   lastUpdate: Date;
+  tierUnlocks: CreatorScoreUnlock[];
+  tierGrantErrors: unknown[];
 };
 
-async function getModelScore(ctx: Context) {
+const scoreFetchers = {
+  models: getModelScore,
+  articles: getArticleScore,
+  users: getUserScore,
+  reportsActioned: getReportedActionedScore,
+  reportsAgainst: getReportAgainstScore,
+  images: getImageScore,
+} as const;
+
+const TIER_GRANTS_CHECKPOINT = 'tierGrants';
+const checkpointKey = (name: string) => `${jobKey}:${name}`;
+
+/**
+ * One per category, advanced only by a run in which that category scored cleanly, plus one advanced
+ * only by a run in which every tier grant succeeded.
+ */
+export const userScoreCheckpointKeys = [...Object.keys(scoreFetchers), TIER_GRANTS_CHECKPOINT].map(
+  checkpointKey
+);
+
+// A model taken down by anyone but its owner stops counting; one the owner unpublished or deleted
+// keeps its points. A missing actor counts as the owner: nothing shows a moderator acted.
+const unpublishedByOther = `COALESCE(m.meta->>'unpublishedBy' <> m."userId"::text, false)`;
+const LIVE_MODEL_COUNTS = `(m.status IN ('Published', 'Scheduled')
+  OR (m.status = 'Unpublished' AND NOT ${unpublishedByOther}))`;
+// An owner can delete a model a moderator already took down, so a delete keeps only what the model
+// held when it was deleted: `statusAtDelete` where the delete recorded it, else the takedown marks.
+const DELETED_MODEL_COUNTS = `(m.status = 'Deleted'
+  AND COALESCE(m."deletedBy" = m."userId", true)
+  AND CASE WHEN m.meta ? 'statusAtDelete'
+    THEN m.meta->>'statusAtDelete' IN ('Published', 'Scheduled')
+      OR (m.meta->>'statusAtDelete' = 'Unpublished' AND NOT ${unpublishedByOther})
+    ELSE NOT (m.meta ? 'unpublishedReason') AND NOT ${unpublishedByOther}
+  END)`;
+export const MODEL_COUNTS_TOWARD_SCORE = `(${LIVE_MODEL_COUNTS} OR ${DELETED_MODEL_COUNTS})`;
+
+export async function getModelScore(ctx: Context) {
+  const refreshed = await refreshRecentSelfGenerations(ctx);
+  await scoreModelOwners(ctx, { alsoRescore: refreshed });
+}
+
+type SelfGenerationRow = { modelId: number; userId: number; generationCount: number };
+
+/**
+ * The `models` score of every owner whose models changed since `lastUpdate`, plus `alsoRescore`.
+ * `selfGenerations` replaces the stored self-generation table, so a dry run can score rows it has
+ * not written.
+ */
+export async function scoreModelOwners(
+  ctx: Pick<Context, 'pg' | 'jobContext' | 'scoreMultipliers' | 'lastUpdate' | 'setScore'>,
+  {
+    alsoRescore = [],
+    selfGenerations,
+  }: { alsoRescore?: number[]; selfGenerations?: SelfGenerationRow[] } = {}
+) {
+  const { reviews, downloads, generations } = ctx.scoreMultipliers.models;
+  const selfSource = selfGenerations
+    ? `(SELECT * FROM jsonb_to_recordset('${JSON.stringify(
+        selfGenerations.map(({ modelId, userId, generationCount }) => ({
+          modelId: +modelId,
+          userId: +userId,
+          generationCount: +generationCount,
+        }))
+      )}') AS x("modelId" int, "userId" int, "generationCount" bigint))`
+    : `"ModelSelfGeneration"`;
+  // A takedown writes `Model`, not `ModelMetric`, so owners whose models changed are re-scored too.
+  // Every model of a re-scored owner is summed, so one who no longer has any counting model gets 0.
   await getScores(ctx, 'models')`
+    WITH changed AS (
+      SELECT "userId" FROM "ModelMetric" WHERE "updatedAt" > '${ctx.lastUpdate}'
+      UNION
+      SELECT "userId" FROM "Model"
+      WHERE "updatedAt" > '${ctx.lastUpdate}' OR "deletedAt" > '${ctx.lastUpdate}'
+      UNION
+      SELECT unnest('{${alsoRescore.map(Number).join(',')}}'::int[])
+    )
     SELECT
-      mm."userId",
+      s."userId",
       (
-          SUM(mm."thumbsUpCount") * ${ctx.scoreMultipliers.models.reviews}
-        + SUM(mm."downloadCount") * ${ctx.scoreMultipliers.models.downloads}
-        + SUM(mm."generationCount") * ${ctx.scoreMultipliers.models.generations}
+          COALESCE(SUM(s."thumbsUpCount") FILTER (WHERE s.counts), 0) * ${reviews}
+        + COALESCE(SUM(s."downloadCount") FILTER (WHERE s.counts), 0) * ${downloads}
+        + COALESCE(SUM(GREATEST(s."generationCount" - s."selfGenerations", 0)) FILTER (WHERE s.counts), 0) * ${generations}
       ) as score
-    FROM "ModelMetric" mm
+    FROM (
+      SELECT mm."userId", mm."thumbsUpCount", mm."downloadCount", mm."generationCount",
+        COALESCE(sg."generationCount", 0) AS "selfGenerations",
+        ${MODEL_COUNTS_TOWARD_SCORE} AS counts
+      FROM "ModelMetric" mm
+      JOIN "Model" m ON m.id = mm."modelId"
+      LEFT JOIN ${selfSource} sg ON sg."modelId" = mm."modelId" AND sg."userId" = m."userId"
+      WHERE mm."userId" IN (SELECT "userId" FROM changed)
+    ) s
     GROUP BY 1
-    HAVING BOOL_OR(mm."updatedAt" > '${ctx.lastUpdate}')
   `;
+}
+
+// Job rows can reach ClickHouse well after their `createdAt`; a re-read owner is just recounted.
+const SELF_GENERATION_LOOKBACK_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Recounts the self-generations of every owner who generated with one of their own models since
+ * `lastUpdate`, and returns those owners.
+ */
+async function refreshRecentSelfGenerations(ctx: Context) {
+  const since = new Date(ctx.lastUpdate.getTime() - SELF_GENERATION_LOOKBACK_MS);
+  const pairs = await ctx.ch.$query<{ userId: number; modelVersionId: number }>`
+    SELECT DISTINCT userId, r AS modelVersionId
+    FROM orchestration.jobs
+    ARRAY JOIN resourcesUsed AS r
+    WHERE createdAt > ${since} AND length(resourcesUsed) > 0
+  `;
+  const versionOwners = await getVersionOwners(
+    ctx.pg,
+    pairs.map((p) => Number(p.modelVersionId))
+  );
+  const owners = [
+    ...new Set(
+      pairs
+        .filter((p) => versionOwners.get(Number(p.modelVersionId))?.userId === Number(p.userId))
+        .map((p) => Number(p.userId))
+    ),
+  ];
+  for (const batch of chunk(owners, SELF_GENERATION_OWNER_BATCH)) {
+    const rows = await countSelfGenerations(ctx.ch, ctx.pg, batch);
+    await writeSelfGenerations(ctx.pg, batch, rows);
+  }
+  return owners;
+}
+
+// A lifetime count scans all of `orchestration.jobs` whatever the owner count, so keep batches wide.
+export const SELF_GENERATION_OWNER_BATCH = 5000;
+
+const injectedVersionIds = new Set<number>(allInjectableResourceIds);
+
+/** Each version's model and owner, leaving out injected versions, which no score counts. */
+async function getVersionOwners(pg: AugmentedPool, versionIds: number[]) {
+  const owners = new Map<number, { modelId: number; userId: number }>();
+  const ids = [...new Set(versionIds)].filter((id) => id > 0 && !injectedVersionIds.has(id));
+  for (const batch of chunk(ids, 10000)) {
+    const query = await pg.cancellableQuery<{ id: number; modelId: number; userId: number }>(
+      `SELECT mv.id, mv."modelId", m."userId"
+       FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
+       WHERE mv.id = ANY($1::int[])`,
+      [batch]
+    );
+    for (const { id, modelId, userId } of await query.result()) owners.set(id, { modelId, userId });
+  }
+  return owners;
+}
+
+/**
+ * Every image each of `ownerIds` generated with their own models, over all time, per model. Counts
+ * images the way `orchestration.daily_resource_generation_counts` (the source of
+ * `ModelMetric.generationCount`) does.
+ */
+export async function countSelfGenerations(
+  ch: CustomClickHouseClient,
+  pg: AugmentedPool,
+  ownerIds: number[]
+): Promise<SelfGenerationRow[]> {
+  if (!ownerIds.length) return [];
+  const generated = await ch.$query<{ userId: number; modelVersionId: number; images: number }>`
+    SELECT userId, r AS modelVersionId, sum(coalesce(blobsCount, 1)) AS images
+    FROM orchestration.jobs
+    ARRAY JOIN resourcesUsed AS r
+    WHERE userId IN (${ownerIds})
+    GROUP BY userId, r
+  `;
+  const versionOwners = await getVersionOwners(
+    pg,
+    generated.map((g) => Number(g.modelVersionId))
+  );
+  return selfGenerationsByModel(generated, versionOwners);
+}
+
+export function selfGenerationsByModel(
+  generated: { userId: number; modelVersionId: number; images: number }[],
+  versionOwners: Map<number, { modelId: number; userId: number }>
+): SelfGenerationRow[] {
+  const byModel = new Map<number, SelfGenerationRow>();
+  for (const { userId, modelVersionId, images } of generated) {
+    const owner = versionOwners.get(Number(modelVersionId));
+    if (!owner || owner.userId !== Number(userId)) continue;
+    const row = byModel.get(owner.modelId) ?? {
+      modelId: owner.modelId,
+      userId: owner.userId,
+      generationCount: 0,
+    };
+    row.generationCount += Number(images);
+    byModel.set(owner.modelId, row);
+  }
+  return [...byModel.values()];
+}
+
+/** Replaces every stored self-generation row of `ownerIds` with `rows`. */
+export async function writeSelfGenerations(
+  pg: AugmentedPool,
+  ownerIds: number[],
+  rows: SelfGenerationRow[]
+) {
+  if (!ownerIds.length) return;
+  const stampedAt = new Date().toISOString();
+  await pg
+    .cancellableQuery(
+      `INSERT INTO "ModelSelfGeneration" ("modelId", "userId", "generationCount", "updatedAt")
+       SELECT * , $4::timestamp FROM unnest($1::int[], $2::int[], $3::bigint[])
+       ON CONFLICT ("modelId", "userId") DO UPDATE
+         SET "generationCount" = EXCLUDED."generationCount", "updatedAt" = EXCLUDED."updatedAt"`,
+      [
+        rows.map((r) => r.modelId),
+        rows.map((r) => r.userId),
+        rows.map((r) => r.generationCount),
+        stampedAt,
+      ]
+    )
+    .then((q) => q.result());
+  await pg
+    .cancellableQuery(
+      `DELETE FROM "ModelSelfGeneration"
+       WHERE "userId" = ANY($1::int[])
+         AND ("modelId", "userId") NOT IN (SELECT * FROM unnest($2::int[], $3::int[]))`,
+      [ownerIds, rows.map((r) => r.modelId), rows.map((r) => r.userId)]
+    )
+    .then((q) => q.result());
 }
 
 async function getArticleScore(ctx: Context) {
@@ -168,19 +415,32 @@ async function getArticleScore(ctx: Context) {
 // re-applies the same delta window next run (double count). Accepted per the
 // incident decision — a full recompute (`admin/temp/backfill-image-scores?force=true`)
 // re-establishes the baseline.
+/**
+ * When the nightly `images` score started leaving out owners' own engagement: the checkpoint its
+ * first such run read from. The one-off recompute subtracts own engagement from before it only.
+ */
+export const SELF_EXCLUSION_SINCE_KEY = `${jobKey}:selfExclusionSince`;
+
 export async function getImageScore(ctx: Context) {
-  // 1. Net engagement delta per image since the checkpoint. `metricValue` is
-  // signed (un-likes / removed comments are negative), so this is the exact change
-  // in each image's reaction/comment totals — no catalog read needed.
+  await ctx.pg
+    .cancellableQuery(
+      `INSERT INTO "KeyValue" (key, value) VALUES ($1, to_jsonb($2::bigint)) ON CONFLICT (key) DO NOTHING`,
+      [SELF_EXCLUSION_SINCE_KEY, ctx.lastUpdate.getTime()]
+    )
+    .then((q) => q.result());
+  // 1. Net engagement delta per image and acting user since the checkpoint.
+  // `metricValue` is signed (un-likes / removed comments are negative), so this is
+  // the exact change in each image's reaction/comment totals — no catalog read
+  // needed. The actor is kept so the owner's own engagement can be left out.
   const deltas = await ctx.ch.$query<ImageEngagementDelta>`
-    SELECT entityId AS imageId,
+    SELECT entityId AS imageId, userId,
       sumIf(metricValue, metricType IN ('Like', 'Heart', 'Laugh', 'Cry')) AS dReactions,
       sumIf(metricValue, metricType = 'commentCount') AS dComments
     FROM entityMetricEvents_month
     WHERE entityType = 'Image'
     AND metricType IN ('Like', 'Heart', 'Laugh', 'Cry', 'commentCount')
     AND createdAt > ${ctx.lastUpdate}
-    GROUP BY entityId
+    GROUP BY entityId, userId
     HAVING dReactions != 0 OR dComments != 0
   `;
   if (!deltas.length) return;
@@ -193,7 +453,7 @@ export async function getImageScore(ctx: Context) {
   // accumulator (bounded by affected owners) survives across batches.
   const scoreDeltaByUser = new Map<number, number>();
   for (const batch of chunk(deltas, 10000)) {
-    const ids = batch.map((d) => d.imageId);
+    const ids = [...new Set(batch.map((d) => d.imageId))];
     const query = await ctx.pg.cancellableQuery<{ id: number; userId: number }>(
       `SELECT id, "userId" FROM "Image" WHERE id = ANY($1::int[]) AND "userId" IS NOT NULL`,
       [ids]
@@ -230,7 +490,13 @@ export async function getImageScore(ctx: Context) {
   }
 }
 
-export type ImageEngagementDelta = { imageId: number; dReactions: number; dComments: number };
+export type ImageEngagementDelta = {
+  imageId: number;
+  /** Who reacted or commented. */
+  userId: number;
+  dReactions: number;
+  dComments: number;
+};
 
 // Roll per-image engagement deltas up per owner. Images missing from
 // `ownerByImage` (deleted, or null userId) are dropped — their owner can't be
@@ -241,9 +507,9 @@ export function rollupImageScoreDeltas(
   multipliers: { reactions: number; comments: number }
 ): Map<number, number> {
   const byUser = new Map<number, number>();
-  for (const { imageId, dReactions, dComments } of deltas) {
-    const userId = ownerByImage.get(imageId);
-    if (!userId) continue;
+  for (const { imageId, userId: actorId, dReactions, dComments } of deltas) {
+    const userId = ownerByImage.get(Number(imageId));
+    if (!userId || userId === Number(actorId)) continue;
     const delta =
       Number(dReactions) * multipliers.reactions + Number(dComments) * multipliers.comments;
     byUser.set(userId, (byUser.get(userId) ?? 0) + delta);
@@ -251,7 +517,7 @@ export function rollupImageScoreDeltas(
   return byUser;
 }
 
-// New absolute images score = stored (or 0) + this run's delta. Keeps `images`
+// New absolute images score = max(stored (or 0) + this run's delta, 0). Keeps `images`
 // in the shared absolute-score persist path so `total` is recomputed there.
 export function foldImageDeltasOntoStored(
   scoreDeltaByUser: Map<number, number>,
@@ -259,7 +525,7 @@ export function foldImageDeltasOntoStored(
 ): Map<number, number> {
   const result = new Map<number, number>();
   for (const [userId, delta] of scoreDeltaByUser) {
-    result.set(userId, (storedByUser.get(userId) ?? 0) + delta);
+    result.set(userId, Math.max((storedByUser.get(userId) ?? 0) + delta, 0));
   }
   return result;
 }
@@ -287,70 +553,213 @@ async function getReportedActionedScore(ctx: Context) {
   `;
 }
 
-async function getReportAgainstScore(ctx: Context) {
-  const affected = await ctx.ch.$query<{ id: number; violations: number }>`
-    WITH affected AS (
-      SELECT DISTINCT
-        ownerId
-      FROM images
-      WHERE type = 'DeleteTOS'
-      AND time > ${ctx.lastUpdate}
-    )
-    SELECT
-      ownerId as id,
-      uniq(imageId) as violations
+// Absolute per owner, so every re-scored owner is set, including to 0 once nothing counts.
+export async function getReportAgainstScore(
+  ctx: Pick<Context, 'ch' | 'lastUpdate' | 'scoreMultipliers' | 'setScore'>
+) {
+  const removed = await ctx.ch.$query<{ ownerId: number }>`
+    SELECT DISTINCT ownerId
     FROM images
-    WHERE type = 'DeleteTOS'
-    AND ownerId IN (SELECT ownerId FROM affected)
-    GROUP BY 1;
+    WHERE type = '${REPORTS_AGAINST_EVENT}'
+    AND time > ${ctx.lastUpdate}
   `;
+  const owners = [
+    ...new Set([
+      ...removed.map((r) => Number(r.ownerId)),
+      ...(await getOwnersWithReversalsSince(ctx.ch, ctx.lastUpdate)),
+    ]),
+  ];
 
-  for (const { id, violations } of affected) {
-    const score = violations * ctx.scoreMultipliers.reportsAgainst;
+  const violations = await countRemovalsByOwner(ctx.ch, owners);
+  for (const id of owners) {
+    const score = reportsAgainstScore(violations.get(id), ctx.scoreMultipliers.reportsAgainst);
     ctx.setScore(id, 'reportsAgainst', score);
   }
 }
 
 async function getUpdateTotalTasks(ctx: Context) {
-  const tasks = chunk(Object.entries(ctx.toUpdate), BATCH_SIZE).map((records) => async () => {
-    ctx.jobContext.checkIfCanceled();
-    await applyUserScoreUpdates(ctx.pg, records, (cancel) => ctx.jobContext.on('cancel', cancel));
-    userUpdateCounter?.inc({ location: 'job:update-user-score' }, records.length);
-  });
-
-  return tasks;
+  return chunk(Object.entries(ctx.toUpdate), BATCH_SIZE).map(
+    (records) => () => persistScoreBatch(ctx, records)
+  );
 }
 
-// Persist per-category scores and recompute `total` for a batch of users in one
-// statement. `records` are `[userId, { category: score }]` entries; each total is
-// the sum of the six categories, taking the freshly-supplied value when present
-// and otherwise the user's previously-stored value. Shared by the cron job and
-// the `testing/user-score` debug endpoint.
+export async function settleTierGrants(
+  tierGrantErrors: unknown[],
+  failures: { category: string; error: unknown }[],
+  advanceCheckpoint: () => Promise<void>
+) {
+  if (tierGrantErrors.length) failures.push({ category: 'tierGrants', error: tierGrantErrors[0] });
+  else await advanceCheckpoint();
+}
+
+export async function persistScoreBatch(
+  ctx: Pick<Context, 'pg' | 'jobContext' | 'tierUnlocks' | 'tierGrantErrors'>,
+  records: [string, Partial<Record<ScoreCategory, number>>][],
+  options: { grantsRequireFlag?: boolean; now?: Date } = {}
+) {
+  ctx.jobContext.checkIfCanceled();
+  const onCancel = (cancel: () => Promise<void>) => ctx.jobContext.on('cancel', cancel);
+  const transitions = await applyUserScoreUpdates(ctx.pg, records, onCancel);
+  userUpdateCounter?.inc({ location: 'job:update-user-score' }, records.length);
+  await grantScoreTierCrossings(ctx, transitions, { ...options, onCancel });
+}
+
+/**
+ * Tier grants, notifications and Legend alerts for totals already written. Scores are committed by
+ * then, so a failed grant is pushed onto `tierGrantErrors` rather than thrown: the next run that
+ * touches these users grants silently, and the backfill endpoint reconciles everyone else.
+ */
+export async function grantScoreTierCrossings(
+  ctx: Pick<Context, 'pg' | 'tierUnlocks' | 'tierGrantErrors'>,
+  transitions: ScoreTotalTransition[],
+  {
+    grantsRequireFlag = CREATOR_JOURNEY_GRANTS_REQUIRE_FLAG,
+    now = new Date(),
+    onCancel,
+  }: {
+    grantsRequireFlag?: boolean;
+    now?: Date;
+    onCancel?: (cancel: () => Promise<void>) => void;
+  } = {}
+) {
+  let crossings: ScoreTierCrossing[];
+  let audience: Set<number>;
+  try {
+    audience = await creatorJourneyAudience(
+      ctx.pg,
+      transitions.map((t) => t.userId)
+    );
+    const grantable = grantsRequireFlag
+      ? transitions.filter((t) => audience.has(t.userId))
+      : transitions;
+    crossings = await grantScoreTierMilestones(ctx.pg, grantable, onCancel);
+  } catch (e) {
+    log('tier grant failed for batch', e);
+    ctx.tierGrantErrors.push(e);
+    return;
+  }
+  const audienceCrossings = crossings.filter((crossing) => audience.has(crossing.userId));
+  const [announced, silenced] = partition(audienceCrossings, (crossing) =>
+    isMilestoneAnnounced(crossing.milestoneKey, now)
+  );
+  try {
+    await markMilestonesSeen(ctx.pg, silenced, onCancel);
+  } catch (e) {
+    log('marking silent tier grants seen failed for batch', e);
+    ctx.tierGrantErrors.push(e);
+  }
+  // Notified here rather than after the run: a re-run's ON CONFLICT never returns these again.
+  await notifyScoreTierCrossings(announced, ctx.tierUnlocks);
+  // Staff hear about every alerted crossing, including one whose user-facing announcement is silenced.
+  await alertNewLegends(audienceCrossings).catch((e) => log('new-legend alert failed', e));
+}
+
+// total = sum of `CREATOR_SCORE_CATEGORIES`: the supplied value if present, else the stored
+// one, so a category this run did not fetch (`staffAwarded`) is carried forward. Returns each
+// user's total before and after; `prev` is a self-join, so it reads the pre-update row.
 export async function applyUserScoreUpdates(
   pg: AugmentedPool,
   records: [string, Partial<Record<ScoreCategory, number>>][],
-  onCancel?: (cancel: () => Promise<void>) => void
-) {
-  if (!records.length) return;
+  onCancel?: (cancel: () => Promise<void>) => void,
+  options: { stamp?: ScoreStamp } = {}
+): Promise<ScoreTotalTransition[]> {
+  if (!records.length) return [];
 
+  const updateQuery = await pg.cancellableQuery<UserScoreUpdateRow>(
+    userScoreUpdateSql(records, options)
+  );
+  onCancel?.(updateQuery.cancel);
+  return toScoreTotalTransitions(await updateQuery.result());
+}
+
+export type UserScoreUpdateRow = {
+  userId: number;
+  oldTotal: unknown;
+  newTotal: unknown;
+};
+
+export function toScoreTotalTransitions(rows: UserScoreUpdateRow[]): ScoreTotalTransition[] {
+  return rows.map((row) => ({
+    userId: row.userId,
+    oldTotal: row.oldTotal == null ? null : Number(row.oldTotal),
+    newTotal: Number(row.newTotal),
+  }));
+}
+
+const totalSql = (scores: string) =>
+  CREATOR_SCORE_CATEGORIES.map(
+    (category) =>
+      `COALESCE((${scores}->>'${category}')::numeric, (u.meta->'scores'->>'${category}')::numeric, 0)`
+  ).join(' + ');
+
+/** `meta.scores` keys set to one timestamp in the same statement as a score write. */
+export type ScoreStamp = { keys: readonly string[]; at: Date };
+
+function stampSql(stamp: ScoreStamp | undefined) {
+  if (!stamp) return '';
+  const at = stamp.at.toISOString();
+  return ` || jsonb_build_object(${stamp.keys
+    .map((key) => {
+      if (!/^[A-Za-z]+$/.test(key)) throw new Error(`invalid score stamp key: ${key}`);
+      return `'${key}', '${at}'`;
+    })
+    .join(', ')})`;
+}
+
+// Interpolated into SQL: records must hold only numeric scores.
+export function userScoreUpdateSql(
+  records: [string, Partial<Record<ScoreCategory, number>>][],
+  { stamp }: { stamp?: ScoreStamp } = {}
+) {
   const dataJson = JSON.stringify(records.map(([id, scores]) => ({ id: +id, scores })));
-  const updateQuery = await pg.cancellableQuery(`
+  return `
     WITH scores AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "scores" jsonb))
     UPDATE "User" u
-      SET meta = jsonb_set(COALESCE(meta, '{}'), '{scores}', COALESCE(meta->'scores', '{}') || s.scores || jsonb_build_object('total',
-          COALESCE((s.scores->>'models')::numeric, (u.meta->'scores'->>'models')::numeric, 0)
-          + COALESCE((s.scores->>'articles')::numeric, (u.meta->'scores'->>'articles')::numeric, 0)
-          + COALESCE((s.scores->>'images')::numeric, (u.meta->'scores'->>'images')::numeric, 0)
-          + COALESCE((s.scores->>'users')::numeric, (u.meta->'scores'->>'users')::numeric, 0)
-          + COALESCE((s.scores->>'reportsActioned')::numeric, (u.meta->'scores'->>'reportsActioned')::numeric, 0)
-          + COALESCE((s.scores->>'reportsAgainst')::numeric, (u.meta->'scores'->>'reportsAgainst')::numeric, 0)
-        )
+      SET meta = jsonb_set(COALESCE(u.meta, '{}'), '{scores}', COALESCE(u.meta->'scores', '{}') || s.scores || jsonb_build_object('total',
+          ${totalSql('s.scores')}
+        )${stampSql(stamp)}
       )
     FROM scores s
-    WHERE s.id = u.id;
+    JOIN "User" prev ON prev.id = s.id
+    WHERE s.id = u.id
+    RETURNING
+      u.id AS "userId",
+      (prev.meta->'scores'->>'total')::numeric AS "oldTotal",
+      (u.meta->'scores'->>'total')::numeric AS "newTotal";
+  `;
+}
+
+/**
+ * Takes `points` off each owner's `images` score (never below zero) and stamps `stampKey`, skipping
+ * owners already stamped. The score is read from the row being updated, so a write that lands
+ * between a caller's read and this one is kept, and two runs cannot both subtract.
+ */
+export async function subtractImagesScores(
+  pg: AugmentedPool,
+  rows: [number, number][],
+  stamp: { key: string; at: Date }
+): Promise<ScoreTotalTransition[]> {
+  if (!rows.length) return [];
+  const dataJson = JSON.stringify(rows.map(([id, points]) => ({ id: +id, points: +points })));
+  const stampKey = stamp.key;
+  if (!/^[A-Za-z]+$/.test(stampKey)) throw new Error(`invalid score stamp key: ${stampKey}`);
+  const scores = `jsonb_build_object('images', GREATEST(COALESCE((u.meta->'scores'->>'images')::numeric, 0) - d.points, 0))`;
+  const query = await pg.cancellableQuery<UserScoreUpdateRow>(`
+    WITH d AS (SELECT * FROM jsonb_to_recordset('${dataJson}') AS x("id" int, "points" numeric))
+    UPDATE "User" u
+      SET meta = jsonb_set(COALESCE(u.meta, '{}'), '{scores}', COALESCE(u.meta->'scores', '{}') || ${scores} || jsonb_build_object('total',
+          ${totalSql(scores)}
+        )${stampSql({ keys: [stampKey], at: stamp.at })}
+      )
+    FROM d
+    JOIN "User" prev ON prev.id = d.id
+    WHERE d.id = u.id AND (u.meta->'scores'->>'${stampKey}') IS NULL
+    RETURNING
+      u.id AS "userId",
+      (prev.meta->'scores'->>'total')::numeric AS "oldTotal",
+      (u.meta->'scores'->>'total')::numeric AS "newTotal";
   `);
-  onCancel?.(updateQuery.cancel);
-  await updateQuery.result();
+  return toScoreTotalTransitions(await query.result());
 }
 
 // #region [helpers]
@@ -376,7 +785,7 @@ type ScoreMultipliers = {
   reportsActioned: number;
   reportsAgainst: number;
 };
-type ScoreCategory = keyof ScoreMultipliers | 'total';
+export type ScoreCategory = keyof ScoreMultipliers | 'staffAwarded' | 'total';
 
 // The multipliers live in the `system:user-score-multipliers` key, stored both
 // in sysRedis (legacy/hot-override) and PG `KeyValue` (durable). Same key string
@@ -421,7 +830,7 @@ export async function getScoreMultipliers(): Promise<ScoreMultipliers> {
   return DEFAULT_SCORE_MULTIPLIERS;
 }
 
-function getScores(ctx: Context, category: ScoreCategory) {
+function getScores(ctx: Pick<Context, 'pg' | 'jobContext' | 'setScore'>, category: ScoreCategory) {
   return templateHandler(async (sql) => {
     const query = await ctx.pg.cancellableQuery<{ userId: number; score: number }>(sql);
     ctx.jobContext.on('cancel', query.cancel);

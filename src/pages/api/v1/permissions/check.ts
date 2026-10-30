@@ -1,10 +1,11 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { EntityAccessPermission } from '~/server/common/enums';
+import { dbRead } from '~/server/db/client';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
 import { hasEntityAccess } from '~/server/services/common.service';
 import { sessionClient } from '~/server/auth/session-client';
-import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
-import { isClientAbortError } from '~/server/utils/errorHandling';
+import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { commaDelimitedNumberArray, numericString } from '~/utils/zod-helpers';
 
 const schema = z.object({
@@ -50,13 +51,22 @@ export default PublicEndpoint(
         data[r.entityId] = r.hasAccess;
       });
 
+      const restricted = await dbRead.modelVersion.findMany({
+        where: { id: { in: entityIds }, model: { poi: true } },
+        select: { id: true, model: { select: { userId: true } } },
+      });
+      const viewer = userId != null ? { id: userId, isModerator: sessionUser?.isModerator } : null;
+      for (const version of restricted) {
+        if (version.id in data && !canViewPoiModel(true, version.model.userId, viewer))
+          data[version.id] = false;
+      }
+
       return res.json(data);
     } catch (error) {
-      if (isClientAbortError(error)) {
-        if (!res.headersSent) res.status(499).end();
-        return;
-      }
-      return res.status(500).json({ message: 'An unexpected error occurred', error });
+      // civitai#3845 (population B): this used to serialize the whole error
+      // OBJECT. `hasEntityAccess` runs `$queryRaw`, so a failure arrives as a
+      // Prisma P2010 whose enumerable own props carry the raw database message.
+      return handleEndpointError(res, error);
     }
   },
   ['GET']

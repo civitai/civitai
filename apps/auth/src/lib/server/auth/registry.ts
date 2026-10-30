@@ -1,9 +1,9 @@
 import {
+  SESSION_REGISTRY_KEYS,
   createSessionRegistry,
   type SessionRegistry,
   type SessionRegistryRedis,
 } from '@civitai/auth';
-import { REDIS_KEYS, REDIS_SYS_KEYS } from '@civitai/redis';
 import { env } from '$env/dynamic/private';
 import { getSysRedis } from '../redis';
 import { logToAxiom } from '../axiom';
@@ -37,11 +37,7 @@ function registry(): SessionRegistry {
     // sysRedis's methods are typed to the known-key union; the registry is namespace-agnostic
     // (plain string keys), so cast at this boundary — the main app does the same on these calls.
     redis: sysRedis as unknown as SessionRegistryRedis,
-    keys: {
-      tokenState: REDIS_SYS_KEYS.SESSION.TOKEN_STATE,
-      all: REDIS_SYS_KEYS.SESSION.ALL,
-      userTokens: REDIS_KEYS.SESSION.USER_TOKENS,
-    },
+    keys: SESSION_REGISTRY_KEYS,
     // Pass the deployment's real rolling-refresh interval so the registry can hold its eviction floor above
     // it. Without this it falls back to the documented default, and a deployment that lengthened the interval
     // would silently make live sessions evictable.

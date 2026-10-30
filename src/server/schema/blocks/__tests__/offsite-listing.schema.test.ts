@@ -1,11 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAX_EXTERNAL_URL_LENGTH } from '~/server/schema/blocks/external-app.schema';
 import {
+  MAX_EXTERNAL_URL_LENGTH,
+  MAX_REPOSITORY_URL_LENGTH,
+} from '~/server/schema/blocks/external-app.schema';
+import {
+  BETA_MESSAGE_MAX,
   OFFSITE_DESCRIPTION_MAX,
   approveExternalRequestSchema,
   rejectExternalRequestSchema,
   submitExternalListingSchema,
+  updateListingPatchSchema,
 } from '~/server/schema/blocks/offsite-listing.schema';
 
 /**
@@ -238,5 +243,156 @@ describe('rejectExternalRequestSchema', () => {
         rejectionReason: 'x'.repeat(1001),
       }).success
     ).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SOURCE REPOSITORY — the submit + patch schema boundaries
+// ---------------------------------------------------------------------------
+
+describe('sourceRepoUrl at the schema boundary', () => {
+  it('is OPTIONAL — omitting it parses (positive control for every reject below)', () => {
+    const parsed = submitExternalListingSchema.safeParse(base);
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.sourceRepoUrl).toBeUndefined();
+  });
+
+  it('accepts a repository root on each allowlisted host', () => {
+    for (const sourceRepoUrl of [
+      'https://github.com/o/r',
+      'https://gitlab.com/o/r',
+      'https://codeberg.org/o/r',
+      'https://github.com/o/r.git',
+    ]) {
+      const parsed = submitExternalListingSchema.safeParse({ ...base, sourceRepoUrl });
+      expect(parsed.success, sourceRepoUrl).toBe(true);
+    }
+  });
+
+  it.each([
+    ['http', 'http://github.com/o/r'],
+    ['a non-allowlisted host', 'https://gist.github.com/o/deadbeef'],
+    ['raw.githubusercontent.com', 'https://raw.githubusercontent.com/o/r/main/x.sh'],
+    ['www.', 'https://www.github.com/o/r'],
+    ['the host root', 'https://github.com'],
+    ['a deep path', 'https://github.com/o/r/tree/main'],
+    ['credentials', 'https://u:p@github.com/o/r'],
+  ])('REJECTS %s at the submit boundary, on the sourceRepoUrl path', (_label, sourceRepoUrl) => {
+    const parsed = submitExternalListingSchema.safeParse({ ...base, sourceRepoUrl });
+    expect(parsed.success).toBe(false);
+    if (parsed.success) return;
+    // The issue must be attributed to THIS field — a generic form-level error would
+    // leave the wizard unable to point at the input that is wrong.
+    expect(parsed.error.issues.some((i) => i.path.join('.') === 'sourceRepoUrl')).toBe(true);
+  });
+
+  it('rejects an over-length value (the repository bound, not the external-URL one)', () => {
+    const long = 'https://github.com/o/' + 'r'.repeat(MAX_REPOSITORY_URL_LENGTH);
+    expect(long.length).toBeGreaterThan(MAX_REPOSITORY_URL_LENGTH);
+    expect(long.length).toBeLessThan(MAX_EXTERNAL_URL_LENGTH);
+    const parsed = submitExternalListingSchema.safeParse({ ...base, sourceRepoUrl: long });
+    expect(parsed.success).toBe(false);
+  });
+});
+
+describe('updateListingPatchSchema — sourceRepoUrl is NULLABLE-optional', () => {
+  it('OMITTED is allowed (as long as some other field is present)', () => {
+    const parsed = updateListingPatchSchema.safeParse({ name: 'Renamed' });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect('sourceRepoUrl' in parsed.data).toBe(false);
+  });
+
+  it('an explicit NULL is allowed — and on its own satisfies the at-least-one-field refine', () => {
+    // This is how the field is CLEARED. If `null` were not accepted, the only way to
+    // remove a published link would be to also change something else.
+    const parsed = updateListingPatchSchema.safeParse({ sourceRepoUrl: null });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.sourceRepoUrl).toBeNull();
+  });
+
+  it('a value is accepted here and re-validated in the SERVICE (this bound is coarse)', () => {
+    // The patch schema deliberately bounds only the SHAPE — `buildListingPatchData`
+    // runs the real rule, so an invalid-but-short value parses here and is rejected
+    // there. Pinning that division stops someone "fixing" it in one place only.
+    expect(
+      updateListingPatchSchema.safeParse({ sourceRepoUrl: 'https://github.com/o/r' }).success
+    ).toBe(true);
+    expect(
+      updateListingPatchSchema.safeParse({ sourceRepoUrl: 'http://evil.example/x' }).success
+    ).toBe(true);
+  });
+
+  it('rejects an over-length value and an empty string', () => {
+    expect(
+      updateListingPatchSchema.safeParse({
+        sourceRepoUrl: 'https://github.com/o/' + 'r'.repeat(MAX_REPOSITORY_URL_LENGTH),
+      }).success
+    ).toBe(false);
+    expect(updateListingPatchSchema.safeParse({ sourceRepoUrl: '' }).success).toBe(false);
+  });
+});
+
+describe('updateListingPatchSchema — the BETA pair (TRIVIAL, bounded, nullable-optional)', () => {
+  it('`isBeta` alone satisfies the at-least-one-field refine', () => {
+    const parsed = updateListingPatchSchema.safeParse({ isBeta: true });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.isBeta).toBe(true);
+  });
+
+  it('`isBeta: false` is accepted — turning beta OFF is an edit, not an empty patch', () => {
+    // 🔴 THE `.refine` USES `v !== undefined`, NOT TRUTHINESS. A refine written as
+    // `Object.values(p).some(Boolean)` would reject this and leave an author unable to
+    // clear the flag they set — the one edit they are most likely to want.
+    const parsed = updateListingPatchSchema.safeParse({ isBeta: false });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.isBeta).toBe(false);
+  });
+
+  it('an explicit NULL betaMessage is allowed — that is how the note is CLEARED', () => {
+    const parsed = updateListingPatchSchema.safeParse({ betaMessage: null });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.betaMessage).toBeNull();
+  });
+
+  it('OMITTED keys stay absent (an untouched field is not silently defaulted)', () => {
+    const parsed = updateListingPatchSchema.safeParse({ name: 'Renamed' });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect('isBeta' in parsed.data).toBe(false);
+      expect('betaMessage' in parsed.data).toBe(false);
+    }
+  });
+
+  it('🔴 accepts a message of EXACTLY `BETA_MESSAGE_MAX` and rejects one character more', () => {
+    // The boundary, from both sides. A one-sided assertion passes on an off-by-one bound in
+    // whichever direction it does not test.
+    expect(
+      updateListingPatchSchema.safeParse({ betaMessage: 'x'.repeat(BETA_MESSAGE_MAX) }).success
+    ).toBe(true);
+    expect(
+      updateListingPatchSchema.safeParse({ betaMessage: 'x'.repeat(BETA_MESSAGE_MAX + 1) }).success
+    ).toBe(false);
+  });
+
+  it('an EMPTY betaMessage string is accepted (unlike sourceRepoUrl, which requires min 1)', () => {
+    // Deliberate asymmetry, pinned so it is not "tidied" into a `.min(1)`: an empty note is
+    // a meaningful instruction ("no note"), normalised to NULL by `buildListingPatchData`.
+    // A `.min(1)` here would force the client to send `null` for a cleared textarea, which
+    // is exactly the kind of shape mismatch that produces a silently-dropped edit.
+    expect(updateListingPatchSchema.safeParse({ betaMessage: '' }).success).toBe(true);
+  });
+
+  it('rejects a non-boolean isBeta (a string "true" must not slip through)', () => {
+    expect(updateListingPatchSchema.safeParse({ isBeta: 'true' }).success).toBe(false);
+  });
+
+  it('the bound is enforced HERE, at the request boundary — not only by the input maxLength', () => {
+    // 🔴 THE SAFETY CLAIM. `betaMessage` is unreviewed public copy, and a direct API or CLI
+    // caller never sees the form's `maxLength`. This is the enforcement point, so the
+    // rejection must come from the SCHEMA rather than from any UI.
+    const parsed = updateListingPatchSchema.safeParse({
+      betaMessage: 'x'.repeat(BETA_MESSAGE_MAX * 10),
+    });
+    expect(parsed.success).toBe(false);
   });
 });

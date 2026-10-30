@@ -5,11 +5,11 @@ import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useMemo, useState } from 'react';
 
+import { PRESET_MODEL_SIZES } from '~/shared/generation/preset-sizes';
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import {
   COMIC_MODEL_MAX_IMAGES,
   COMIC_MODEL_OPTIONS,
-  COMIC_MODEL_SIZES,
 } from '~/components/Comics/comic-project-constants';
 import { MentionTextarea } from '~/components/Comics/MentionTextarea';
 import { IterativeImageEditor } from '~/components/IterativeEditor/IterativeImageEditor';
@@ -26,7 +26,7 @@ import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { useServerDomains } from '~/providers/AppProvider';
 import { hasSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 
@@ -67,6 +67,7 @@ function ComicIteratePage() {
   const numericPanelId = panelId ? Number(panelId) : null;
   const numericPanelPosition = Number(panelPosition) || 0;
   const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
 
   // ── Fetch project data for references + cost ──
   // Iterate.tsx only needs `baseModel`, `references`, and `name` — no
@@ -129,7 +130,7 @@ function ComicIteratePage() {
     const h = typeof height === 'string' ? parseInt(height, 10) : 1024;
     return {
       url: imageUrl,
-      previewUrl: getEdgeUrl(imageUrl, { width: 400 }) ?? imageUrl,
+      previewUrl: getEdgeUrl(imageUrl, { width: 400, optimized: true }) ?? imageUrl,
       width: w,
       height: h,
     };
@@ -138,7 +139,7 @@ function ComicIteratePage() {
   const config: IterativeEditorConfig = useMemo(
     () => ({
       modelOptions: COMIC_MODEL_OPTIONS,
-      modelSizes: COMIC_MODEL_SIZES,
+      modelSizes: PRESET_MODEL_SIZES,
       modelMaxImages: COMIC_MODEL_MAX_IMAGES,
       defaultModel: project?.baseModel ?? DEFAULT_MODEL,
       defaultAspectRatio: '3:4',
@@ -275,6 +276,7 @@ function ComicIteratePage() {
       imageUrl,
       width,
       height,
+      syncAccount,
     ]
   );
 

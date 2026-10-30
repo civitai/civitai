@@ -52,7 +52,8 @@ import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Gated } from '~/components/Gated/Gated';
 import { Model3DPermissionIndicator } from '~/components/PermissionIndicator/Model3DPermissionIndicator';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
-import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
+import { AppealRemovalPrompt } from '~/components/Dialog/Common/AppealRemovalPrompt';
+import { isAppealableModel3D } from '~/shared/utils/appeal';
 import { Model3DComments } from '~/components/Model3D/Comments/Model3DComments';
 import { Model3DActionsMenu } from '~/components/Model3D/Actions/Model3DActionsMenu';
 import { Model3DThumbsUpButton } from '~/components/Model3D/ThumbsUp/Model3DThumbsUpButton';
@@ -63,11 +64,12 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
+import { TrackView } from '~/components/TrackView/TrackView';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
+import { CollectionType, EntityType, Model3DStatus } from '~/shared/utils/prisma/enums';
 import { formatDate } from '~/utils/date-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 import { getModel3DUrl } from '~/utils/string-helpers';
@@ -75,6 +77,7 @@ import { removeEmpty } from '~/utils/object-helpers';
 import { parseNumericString } from '~/utils/query-string-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { getModel3dDetailRows } from '~/shared/form-graph/generation/model3d/model3d-params';
 
 // Dynamic, ssr-disabled import — three.js needs WebGL which only exists in the browser.
 const Model3DVariantViewer = dynamic(
@@ -123,10 +126,27 @@ export const getServerSideProps = createServerSideProps({
 });
 
 /**
- * Derive a coarse sentiment label from the recommend percentage. Inlined
- * here — no shared helper exists for this on the AI-model side (they show
- * raw thumbs counts instead of a sentiment band). Bands mirror the common
- * Steam-style scale, scaled down to fit the typical Civitai review volume.
+ * Derive a coarse sentiment label from the recommend percentage. Bands mirror the
+ * common Steam-style scale, scaled down to fit the typical Civitai review volume.
+ *
+ * 🔴 DELIBERATELY NOT the shared ladder in `~/utils/rating-label` (used by the model
+ * version page and the app-store listing detail), and this is a decision that was
+ * measured rather than a helper nobody noticed. Two structural differences:
+ *
+ *   1. That ladder takes a 0–1 proportion; this takes an integer PERCENT, which is
+ *      what the caller already computes for the badge beside this label.
+ *   2. That ladder's WORD widens with the review COUNT — "Overwhelmingly …" is
+ *      withheld until 500 reviews. This one's word depends on the percentage alone,
+ *      with a single `< 5` insufficient-data floor ("Too few reviews", a label the
+ *      shared ladder has no band for).
+ *
+ * Across the whole `pct × count` grid the two agree except at the extremes, and they
+ * agree COMPLETELY once the count clears ~500 — so difference (2) is the entire
+ * divergence, and it only bites below the volume a 3D model reaches. Adopting the
+ * shared ladder here would re-word live verdicts (6/6 recommends: "Overwhelmingly
+ * positive" → "Positive"). The decision, the grid measurement and the reason it cannot
+ * be folded into one band set are recorded in `src/utils/__tests__/rating-label.test.ts`
+ * beside the allowlist entry that keeps this function visible to that guard.
  */
 function sentimentLabel(recommendPct: number, ratingCount: number): string {
   if (ratingCount < 5) return 'Too few reviews';
@@ -240,45 +260,19 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
   // (model3d goes from undefined → defined across the loading transition).
   const generationDetailItems = useMemo(() => {
     const params = (model3d?.generationParams ?? null) as Record<string, unknown> | null;
-    const surfaced: Array<[string, string]> = [];
-    const push = (label: string, value: unknown) => {
-      if (value === undefined || value === null || value === '') return;
-      if (typeof value === 'boolean') surfaced.push([label, value ? 'Yes' : 'No']);
-      else if (typeof value === 'number') surfaced.push([label, value.toLocaleString()]);
-      else surfaced.push([label, String(value)]);
-    };
-    if (params) {
-      push('Prompt', params.prompt);
-      push('Topology', params.topology);
-      push('Target polycount', params.targetPolycount);
-      push('Symmetry', params.symmetryMode);
-      push('PBR materials', params.enablePbr);
-      push('Mode', params.mode);
-      push('Seed', params.seed);
-      // `enableAnimation` reliably records whether the user *requested*
-      // animation, but Meshy can silently fail to animate a mesh — the
-      // request succeeds and returns only the base model, no animated /
-      // walking / running variants (observed on model 56). So when
-      // animation was requested we confirm against the actual output
-      // files and, if none arrived, say so rather than printing a
-      // misleading "Yes". `enableRigging` is intentionally not surfaced —
-      // it's derived from `enableAnimation` at submit time and never
-      // persisted with a real value in the params snapshot.
-      if (params.enableAnimation === true) {
+    if (!params) return [];
+    return getModel3dDetailRows(params).map(({ field, label, value }): [string, string] => {
+      // Meshy can accept an animation request and return only the base mesh,
+      // so confirm a requested animation against the output files.
+      if (field === 'enableAnimation' && params.enableAnimation === true) {
         const hasAnimationOutput = files.some((f) => {
           const variant = (f.variant ?? 'primary').replace(/-armature$/, '');
           return variant === 'animated' || variant === 'walking' || variant === 'running';
         });
-        surfaced.push([
-          'Animation',
-          hasAnimationOutput ? 'Yes' : 'Requested — Unable to animate model',
-        ]);
-      } else {
-        push('Animation', params.enableAnimation);
+        return [label, hasAnimationOutput ? 'Yes' : 'Requested — Unable to animate model'];
       }
-      push('Texture prompt', params.texturePrompt);
-    }
-    return surfaced;
+      return [label, value];
+    });
   }, [model3d?.generationParams, files]);
 
   if (isLoading) return <PageLoader />;
@@ -359,13 +353,14 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
         deIndex: isDraft || isUnpublished,
       }}
     >
+      <TrackView entityId={model3d.id} entityType="Model3D" type="Model3DView" />
       <Container size="xl" pos="relative" className="pb-8">
         <LoadingOverlay visible={isRefetching} />
 
         <Stack gap="md">
           {/* Mod-takedown appeal CTA — surfaces when the owner sees their own
               Unpublished/Deleted Model3D. Mirrors the Image appeal pattern. */}
-          {isOwner && (isUnpublished || model3d.status === Model3DStatus.Deleted) && (
+          {isOwner && isAppealableModel3D(model3d) && (
             <AlertWithIcon
               icon={<IconCube />}
               color="yellow"
@@ -373,20 +368,8 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               title="Removed by moderators"
               radius="md"
             >
-              This 3D model has been {isUnpublished ? 'unpublished' : 'removed'} by our moderators.
-              We can make mistakes — if you believe this was done in error,{' '}
-              <Anchor
-                type="button"
-                onClick={() =>
-                  dialogStore.trigger({
-                    component: AppealDialog,
-                    props: { entityId: model3d.id, entityType: EntityType.Model3D },
-                  })
-                }
-              >
-                appeal this removal
-              </Anchor>
-              .
+              This 3D model has been {isUnpublished ? 'unpublished' : 'removed'} by our moderators.{' '}
+              <AppealRemovalPrompt entityId={model3d.id} entityType={EntityType.Model3D} />
             </AlertWithIcon>
           )}
 
@@ -447,6 +430,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                 <ShareButton
                   url={getModel3DUrl({ id: model3d.id, name: model3d.name })}
                   title={model3d.name}
+                  collect={{ model3dId: model3d.id, type: CollectionType.Model3D }}
                 >
                   <LegacyActionIcon variant="light" size="lg" aria-label="Share">
                     <IconShare3 size={20} />
@@ -480,11 +464,7 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
               <Collection
                 items={model3d.tags ?? []}
                 renderItem={(tag) => (
-                  <Link
-                    legacyBehavior
-                    href={`/tag/${encodeURIComponent(tag.name.toLowerCase())}`}
-                    passHref
-                  >
+                  <Link legacyBehavior href={`/3d-models?tags=${tag.id}`} passHref>
                     <Badge
                       component="a"
                       size="sm"
@@ -596,22 +576,19 @@ function Model3DDetailsPage({ id }: InferGetServerSidePropsType<typeof getServer
                   })}
                 >
                   <Accordion.Item value="details">
-                    <Accordion.Control>
-                      <Group justify="space-between">
-                        Details
-                        <Button
-                          size="compact-xs"
-                          variant="light"
-                          leftSection={<IconWand size={12} />}
-                          onClick={(e: React.MouseEvent) => {
-                            e.stopPropagation();
-                            openReviewModal();
-                          }}
-                        >
-                          Write a review
-                        </Button>
-                      </Group>
-                    </Accordion.Control>
+                    {/* Beside the control, not inside it — the control is a <button>. */}
+                    <div className="flex items-center">
+                      <Accordion.Control className="flex-1">Details</Accordion.Control>
+                      <Button
+                        className="mr-3 shrink-0"
+                        size="compact-xs"
+                        variant="light"
+                        leftSection={<IconWand size={12} />}
+                        onClick={openReviewModal}
+                      >
+                        Write a review
+                      </Button>
+                    </div>
                     <Accordion.Panel p={0}>
                       <Stack
                         gap={0}

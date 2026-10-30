@@ -6,11 +6,22 @@ import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { notifications } from '~/server/notifications/client';
 import { populateNotificationDetails } from '~/server/notifications/detail-fetchers';
+import { DEFAULT_PUSH_TYPES } from '~/server/notifications/push.constants';
+import {
+  emailNotificationTypeList,
+  isEmailNotificationType,
+  isPushableNotificationType,
+} from '~/server/notifications/utils.notifications';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import {
   notificationSingleRowFull,
+  type DeletePushSubscriptionInput,
   type GetUserNotificationsSchema,
   type MarkReadNotificationInput,
   type ToggleNotificationSettingInput,
+  type ToggleEmailSettingInput,
+  type TogglePushSettingInput,
+  type UpsertPushSubscriptionInput,
 } from '~/server/schema/notification.schema';
 import { DEFAULT_PAGE_SIZE } from '~/server/utils/pagination-helpers';
 
@@ -65,13 +76,15 @@ export async function getUserNotifications({
   category,
   count = false,
   unread = false,
+  showSfwFace,
 }: Partial<GetUserNotificationsSchema> & {
   userId: number;
   count?: boolean;
+  showSfwFace: boolean;
 }) {
   // Base rows come from the app (notif DB); enrichment reads the MAIN db, so it stays here.
   const items = await notifications.queryNotifications({ userId, limit, cursor, category, unread });
-  await populateNotificationDetails(items);
+  await populateNotificationDetails(items, { showSfwFace });
 
   if (count) return { items, count: await getUserNotificationCount({ userId, unread }) };
 
@@ -149,4 +162,115 @@ export const deleteUserNotificationSetting = async ({
   userId,
 }: ToggleNotificationSettingInput & { userId: number }) => {
   return dbWrite.userNotificationSettings.deleteMany({ where: { type: { in: type }, userId } });
+};
+
+export const upsertPushSubscription = async ({
+  userId,
+  endpoint,
+  keys,
+  userAgent,
+}: UpsertPushSubscriptionInput & { userId: number; userAgent?: string }) => {
+  await dbWrite.$transaction(async (tx) => {
+    // Defaults materialize only while the user holds no other subscription — a grant from a second
+    // browser must not re-insert types the user has since turned off (deleted).
+    const existing = await tx.pushSubscription.count({ where: { userId } });
+    await tx.pushSubscription.upsert({
+      where: { endpoint },
+      // An endpoint can resurface under a different account (same browser, new login) — the upsert
+      // reassigns it, and resets the failure streak since the browser just proved it live.
+      update: {
+        userId,
+        p256dh: keys.p256dh,
+        auth: keys.auth,
+        userAgent,
+        lastSeenAt: new Date(),
+        failureCount: 0,
+      },
+      create: { userId, endpoint, p256dh: keys.p256dh, auth: keys.auth, userAgent },
+    });
+    if (existing === 0 && DEFAULT_PUSH_TYPES.length > 0) {
+      await tx.userPushSetting.createMany({
+        data: DEFAULT_PUSH_TYPES.map((type) => ({ userId, type })),
+        skipDuplicates: true,
+      });
+    }
+  });
+};
+
+export const deletePushSubscription = async ({
+  userId,
+  endpoint,
+}: DeletePushSubscriptionInput & { userId: number }) => {
+  return dbWrite.pushSubscription.deleteMany({ where: { endpoint, userId } });
+};
+
+export const getUserPushSubscriptions = async ({ userId }: { userId: number }) => {
+  return dbWrite.pushSubscription.findMany({
+    where: { userId },
+    select: {
+      id: true,
+      endpoint: true,
+      userAgent: true,
+      createdAt: true,
+      lastSeenAt: true,
+      lastSuccessAt: true,
+    },
+    orderBy: { createdAt: 'desc' },
+  });
+};
+
+export const getUserPushSettings = async ({ userId }: { userId: number }) => {
+  const rows = await dbWrite.userPushSetting.findMany({
+    where: { userId },
+    select: { type: true },
+  });
+  return rows.map((x) => x.type);
+};
+
+export const togglePushSetting = async ({
+  type,
+  enabled,
+  userId,
+}: TogglePushSettingInput & { userId: number }) => {
+  if (enabled) {
+    // Only the insert is gated — deleting a row is always allowed (a type could stop being
+    // pushable after rows for it exist, and those must remain removable).
+    const invalid = type.filter((t) => !isPushableNotificationType(t));
+    if (invalid.length > 0)
+      throw throwBadRequestError(`Not a push-capable notification type: ${invalid.join(', ')}`);
+    await dbWrite.userPushSetting.createMany({
+      data: type.map((t) => ({ userId, type: t })),
+      skipDuplicates: true,
+    });
+  } else {
+    await dbWrite.userPushSetting.deleteMany({ where: { userId, type: { in: type } } });
+  }
+};
+
+/** The email-capable types this user gets email for: all of them except the ones opted out of. */
+export const getUserEmailSettings = async ({ userId }: { userId: number }) => {
+  const optOuts = await dbWrite.userEmailNotificationOptOut.findMany({
+    where: { userId },
+    select: { type: true },
+  });
+  const off = new Set(optOuts.map((x) => x.type));
+  return emailNotificationTypeList.filter((type) => !off.has(type));
+};
+
+export const toggleEmailSetting = async ({
+  type,
+  enabled,
+  userId,
+}: ToggleEmailSettingInput & { userId: number }) => {
+  if (enabled) {
+    await dbWrite.userEmailNotificationOptOut.deleteMany({ where: { userId, type: { in: type } } });
+  } else {
+    const invalid = type.filter((t) => !isEmailNotificationType(t));
+    if (invalid.length > 0)
+      throw throwBadRequestError(`Not an email-capable notification type: ${invalid.join(', ')}`);
+    await dbWrite.userEmailNotificationOptOut.createMany({
+      data: type.map((t) => ({ userId, type: t })),
+      skipDuplicates: true,
+    });
+  }
 };

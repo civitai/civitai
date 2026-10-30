@@ -1,0 +1,104 @@
+import { z } from 'zod';
+import { defineGraph } from 'form-graph';
+import { checkpointDef } from '../checkpoint';
+import { optionFallback, SEED, aspectRatioDef, boolDef, imagesDef, workflowScoped } from '../defs';
+import { familyScope, textBlock, type FamilyExt } from '../shared';
+
+/**
+ * Veo 3. Fast/Standard version pick (same list
+ * on both workflows); ref2vid pins duration to 8s and takes up to 3
+ * references; img2vid derives its ratio from the source. Negative prompt
+ * registers at top level.
+ */
+
+const veo3BaseModel = 'Veo 3';
+
+export const veo3VersionIds = {
+  fast: 2827948,
+  standard: 2827945,
+} as const;
+
+const veo3VersionOptions = [
+  { label: 'Fast Mode', value: veo3VersionIds.fast, baseModel: veo3BaseModel },
+  { label: 'Standard', value: veo3VersionIds.standard, baseModel: veo3BaseModel },
+];
+
+const veo3AspectRatios = [
+  { label: '16:9', value: '16:9', width: 1920, height: 1080 },
+  { label: '1:1', value: '1:1', width: 1080, height: 1080 },
+  { label: '9:16', value: '9:16', width: 1080, height: 1920 },
+];
+
+const veo3Durations = [
+  { label: '4 seconds', value: 4 },
+  { label: '6 seconds', value: 6 },
+  { label: '8 seconds', value: 8 },
+];
+
+const veo3ApiVersions = ['3.1'] as const;
+type Veo3ApiVersion = (typeof veo3ApiVersions)[number];
+
+const veo3ApiVersionOptions = [{ label: 'Veo 3.1', value: '3.1' as Veo3ApiVersion }];
+
+const VEO3_DURATION_INPUT = z.coerce.number().optional();
+// ref2vid pins duration to 8s at the boundary
+const VEO3_REF2VID_DURATION_INPUT = VEO3_DURATION_INPUT.transform(() => 8);
+const VEO3_DURATION_OUTPUT = z.number();
+
+export const veo3 = defineGraph<FamilyExt>({ scope: familyScope })
+  .field(
+    'images',
+    workflowScoped(({ _ext }) => {
+      if (_ext.workflow === 'img2vid:ref2vid')
+        return imagesDef({ max: 3, warnOnMissingAiMetadata: true, aspectRatios: ['16:9', '9:16'] });
+      if (_ext.workflow === 'img2vid')
+        return imagesDef({ warnOnMissingAiMetadata: true, aspectRatios: ['16:9', '9:16'] });
+      return null;
+    })
+  )
+  .field('model', ({ _ext }) =>
+    // Both workflows share ONE option
+    // list, so the cross-workflow machinery is inert
+    checkpointDef({
+      ecosystem: _ext.ecosystem,
+      workflow: _ext.workflow,
+      ext: _ext,
+      versions: { options: veo3VersionOptions },
+      defaultModelId: veo3VersionIds.fast,
+    })
+  )
+  .field('seed', SEED)
+  .use(textBlock)
+  .field('aspectRatio', ({ _ext }) =>
+    _ext.workflow === 'txt2vid'
+      ? aspectRatioDef({ options: veo3AspectRatios, default: '16:9' })
+      : null
+  )
+  .field('duration', ({ _ext }) => {
+    const isRef2Vid = _ext.workflow === 'img2vid:ref2vid';
+    return {
+      input: isRef2Vid ? VEO3_REF2VID_DURATION_INPUT : VEO3_DURATION_INPUT,
+      output: VEO3_DURATION_OUTPUT,
+      default: 8,
+      meta: {
+        options: isRef2Vid ? [{ label: '8 seconds', value: 8 }] : veo3Durations,
+        disabled: isRef2Vid,
+      },
+    };
+  })
+  .field('generateAudio', boolDef(false))
+  .field('version', {
+    input: z.enum(veo3ApiVersions).optional(),
+    output: z.enum(veo3ApiVersions),
+    default: '3.1' as Veo3ApiVersion,
+    correct: optionFallback(veo3ApiVersions, '3.1' as Veo3ApiVersion),
+    meta: { options: veo3ApiVersionOptions },
+  });
+
+export {
+  veo3AspectRatios,
+  veo3Durations,
+  veo3VersionOptions,
+  veo3ApiVersions,
+  veo3ApiVersionOptions,
+};

@@ -33,7 +33,11 @@ import {
 } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
 import { AppListingCard } from '~/components/Apps/AppListingCard';
+import { ReviewListingMedia } from '~/components/Apps/ReviewListingMedia';
+import { ReviewMediaReveal } from '~/components/Apps/ReviewMediaReveal';
+import { mostMatureReviewImage } from '~/components/Apps/reviewMediaRevealRule';
 import { AppListingDetailBody } from '~/components/Apps/AppListingDetailBody';
+import { useOpenerFocusReturn } from '~/components/Apps/useOpenerFocusReturn';
 import {
   buildListingCardPreview,
   buildListingDetailPreview,
@@ -45,6 +49,7 @@ import {
   ReasonGatedSubmitButton,
   reasonMeetsMin,
 } from '~/components/Apps/ReasonGatedActionModal';
+import { EMBEDDED_KIND_LABEL, STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { getOffsiteReviewChecklist } from '~/components/Apps/offsiteReviewChecklist';
 import {
   assetSlotDriftLabel,
@@ -52,6 +57,7 @@ import {
   driftPanelState,
   identicalAssetsNotice,
   listingAssetSnapshot,
+  proposedWithUnstagedRedSlots,
   revisionApplyScope,
   screenshotDriftSummary,
   uncomparedApplyFieldsSentence,
@@ -74,14 +80,33 @@ import {
   type OffsiteContentRating,
 } from '~/server/schema/blocks/offsite-listing.schema';
 import { validateExternalUrl } from '~/server/schema/blocks/external-app.schema';
+import { OFFSITE_CONTENT_RATING_OPTIONS } from '~/components/Apps/offsiteSubmitFormConfig';
+import { RatingMismatchAlert } from '~/components/Apps/ListingRatingNotices';
 import {
-  deriveContentRatingFromAssets,
+  ListingMediaSplitControl,
+  MEDIA_SPLIT_UNREADABLE_COPY,
+  MEDIA_SPLIT_UNREADABLE_REVISION_COPY,
+} from '~/components/Apps/ListingMediaSplitControl';
+import {
+  ratingFloorAssets,
+  resolveListingMediaSplitDecision,
+  type ListingMediaSplitDecision,
+} from '~/shared/utils/listing-media-split';
+import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
+import {
   nsfwLevelFromContentRating,
+  offsiteContentRatingLabel,
 } from '~/shared/constants/browsingLevel.constants';
+import {
+  listingRatingAssetLabel,
+  listingRatingAssetsFromView,
+  summarizeListingRating,
+} from '~/shared/utils/listing-rating-display';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { formatDate as formatDateHelper } from '~/utils/date-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import type { ReviewSubmitterChip } from '~/components/Apps/unifiedReviewRow';
 
 /**
  * /apps/review — the OFF-SITE (external-link) pending review section (W13 P3a).
@@ -92,8 +117,6 @@ import { trpc } from '~/utils/trpc';
  * `rejectExternalRequest`). Data is `appListings.listPendingRequests`
  * (moderatorProcedure); the whole /apps/review page already requires isModerator.
  */
-
-type OffsiteUser = { id: number; username: string | null; image: string | null };
 
 export type OffsitePendingRow = {
   id: string;
@@ -129,7 +152,17 @@ export type OffsitePendingRow = {
      */
     revisionOfId?: string | null;
   } | null;
-  submittedBy: OffsiteUser | null;
+  /**
+   * 🔴 THE SHARED CHIP, not a local narrowing. This field used to be typed
+   * `{ id, username, image }` here while the SAME tRPC payload was read as
+   * `ReviewSubmitterChip` (with `deletedAt`) two files away — and the two meet in
+   * `unifiedReviewRow`, where assigning the wider object through a non-fresh reference is
+   * structurally legal, so nothing objected. The server now ships `deletedAt` on this
+   * payload; a type that discards it hands the next person who swaps this queue's plain-text
+   * submitter for `UserAvatar` a silent `undefined` ⇒ falsy ⇒ a closed account rendered live
+   * and linked. The on-site half of this very list already made that swap.
+   */
+  submittedBy: ReviewSubmitterChip;
 };
 
 function formatDate(d: string | Date | null | undefined): string {
@@ -143,8 +176,7 @@ function formatDate(d: string | Date | null | undefined): string {
  * review SUBMITTED timestamps — the modal's submitted line + the review queue's
  * "Submitted" column. A mod deciding on a submission cares about the calendar day,
  * not the minute. Audit-trail timestamps (report "Reported", moderation history)
- * keep the full local formatter above where time-of-day matters. Matches
- * `MySubmissionsList.formatSubmissionDate`.
+ * keep the full local formatter above where time-of-day matters.
  */
 function formatSubmittedDate(d: string | Date | null | undefined): string {
   if (!d) return '—';
@@ -195,8 +227,8 @@ export function OffsiteReviewQueue() {
         labelPosition="left"
       />
       <Text size="xs" c="dimmed">
-        Off-site apps — a lighter, content-only review (no code / bundle). Approving requires an
-        asset-complete draft (icon + cover + ≥1 screenshot).
+        {STANDALONE_KIND_LABEL} apps — a lighter, content-only review (no code / bundle). Approving
+        requires an asset-complete draft (icon + cover + ≥1 screenshot).
       </Text>
 
       {queue.isLoading ? (
@@ -241,7 +273,9 @@ export function OffsiteReviewQueue() {
                     </Text>
                   </Table.Td>
                   <Table.Td onClick={() => setSelected(r)}>
-                    <Text size="xs">{r.submittedBy?.username ?? `#${r.submittedBy?.id ?? '?'}`}</Text>
+                    <Text size="xs">
+                      {r.submittedBy?.username ?? `#${r.submittedBy?.id ?? '?'}`}
+                    </Text>
                   </Table.Td>
                   <Table.Td onClick={() => setSelected(r)}>
                     <Group gap={4}>
@@ -280,6 +314,28 @@ export function OffsiteReviewQueue() {
  * resetting its approve/reject UI state — mirrors `OnsiteReviewModal`). The body is
  * exported so the combined code+media review surface can re-host it WITHOUT this
  * `<Modal>` shell.
+ *
+ * 🔴 THE `Modal.Stack` WRAPPER IS LOAD-BEARING, NOT DECORATION, AND IT IS HALF OF A
+ * SEAM. The listing PREVIEW inside this modal renders `AppListingDetailBody`, whose
+ * screenshot gallery opens a full-screen `AppListingScreenshotViewer` — a second
+ * `<Modal>`, nested inside this one. Mantine's Esc handling is a per-Modal `window`
+ * keydown listener in CAPTURE phase (`ModalBase/use-modal.mjs`), so with no
+ * coordination BOTH handlers fire for one key: dismissing the lightbox also closed
+ * THIS modal, discarding the `rejectionReason` / `approvalNotes` the moderator was
+ * typing (local state in `OffsiteReviewModalBody`, and `keepMounted` is false so it is
+ * gone) along with their place in the queue. Measured, not theorised.
+ *
+ * `Modal.Stack` + `stackId` makes Mantine gate instead of race: `closeOnEscape` and
+ * `trapFocus` become `ctx.currentId === stackId` (`Modal.mjs:53-57`), so only the
+ * top-most member of the stack responds to Escape, and the key is handed back to this
+ * modal the moment the viewer closes.
+ *
+ * 🔴 BOTH HALVES ARE REQUIRED AND NEITHER ERRORS WITHOUT THE OTHER — the viewer's
+ * `stackId` is inert with no `Modal.Stack` ancestor, and this wrapper does nothing on
+ * its own. That is what makes it a seam rather than two settings, and it is pinned as
+ * one in `__tests__/appListingScreenshotViewerWiring.test.ts`. Do not remove the
+ * wrapper because "there is only one modal here" — the second one is three components
+ * down, inside the preview.
  */
 export function OffsiteReviewModal({
   request,
@@ -294,42 +350,51 @@ export function OffsiteReviewModal({
 }) {
   const busyRef = useRef(false);
   const isOnsite = request?.kind === 'onsite';
+  // Inside the stack Mantine's own focus return captures the wrong element and drops
+  // the moderator on `<body>` — measured. This restores the opener; the
+  // `returnFocus={false}` below leaves Mantine's inert so there is one owner.
+  // (Deleting that prop alone did NOT break the focus tests — see the hook's header.)
+  useOpenerFocusReturn(!!request);
   return (
-    <Modal
-      opened={!!request}
-      onClose={() => {
-        if (busyRef.current) return;
-        onClose();
-      }}
-      title={
-        request ? (
-          <Group gap={6}>
-            <Text fw={600}>{request.slug}</Text>
-            <Badge
-              color={isOnsite ? 'teal' : 'grape'}
-              size="sm"
-              variant="light"
-              data-testid="apps-offsite-kind-badge"
-            >
-              {isOnsite ? 'listing media' : 'external'}
-            </Badge>
-          </Group>
-        ) : null
-      }
-      size="lg"
-      centered
-    >
-      {request && (
-        <OffsiteReviewModalBody
-          key={request.id}
-          request={request}
-          onClose={onClose}
-          onActioned={onActioned}
-          readOnly={readOnly}
-          busyRef={busyRef}
-        />
-      )}
-    </Modal>
+    <Modal.Stack>
+      <Modal
+        stackId="offsite-review"
+        returnFocus={false}
+        opened={!!request}
+        onClose={() => {
+          if (busyRef.current) return;
+          onClose();
+        }}
+        title={
+          request ? (
+            <Group gap={6}>
+              <Text fw={600}>{request.slug}</Text>
+              <Badge
+                color={isOnsite ? 'teal' : 'grape'}
+                size="sm"
+                variant="light"
+                data-testid="apps-offsite-kind-badge"
+              >
+                {isOnsite ? 'listing media' : 'external'}
+              </Badge>
+            </Group>
+          ) : null
+        }
+        size="lg"
+        centered
+      >
+        {request && (
+          <OffsiteReviewModalBody
+            key={request.id}
+            request={request}
+            onClose={onClose}
+            onActioned={onActioned}
+            readOnly={readOnly}
+            busyRef={busyRef}
+          />
+        )}
+      </Modal>
+    </Modal.Stack>
   );
 }
 
@@ -377,6 +442,7 @@ export function OffsiteReviewModalBody({
   // Select shows the derived rating as its default); a non-null value is an explicit
   // override. The server FLOORS an under-rating override at the derived value.
   const [ratingOverride, setRatingOverride] = useState<OffsiteContentRating | null>(null);
+  const [mediaSplitChoice, setMediaSplitChoice] = useState<ListingMediaSplitDecision | null>(null);
 
   // Asset presence for the content checklist (author/mod-gated; a mod passes the
   // author floor). Only enabled once a row with a draft listing is open.
@@ -417,6 +483,7 @@ export function OffsiteReviewModalBody({
     setApprovalNotes('');
     setActionMode('view');
     setRatingOverride(null);
+    setMediaSplitChoice(null);
     onClose();
   }
 
@@ -431,17 +498,36 @@ export function OffsiteReviewModalBody({
   const hasCover = assetsQuery.data?.coverId != null;
 
   // Content rating: DERIVE from the assets' max detected nsfwLevel (icon + cover +
-  // screenshots), surface it ALONGSIDE the author-declared rating, and FLAG when the
+  // screenshots + the civitai.red icon / cover overrides, which a split leaves out), surface it
+  // ALONGSIDE the author-declared rating, and FLAG when the
   // assets are more mature than declared. The Select defaults to the derived value;
   // the mod may rate UP (an under-rating is floored server-side).
-  const assetLevels: (number | null | undefined)[] = [
-    (assetsQuery.data as { iconNsfwLevel?: number | null } | undefined)?.iconNsfwLevel,
-    (assetsQuery.data as { coverNsfwLevel?: number | null } | undefined)?.coverNsfwLevel,
-    ...screenshots.map((s) => s.nsfwLevel),
-  ];
-  const derivedRating = deriveContentRatingFromAssets(
-    assetLevels.map((nsfwLevel) => ({ nsfwLevel: nsfwLevel ?? null }))
-  );
+  // A split floors the rating by the civitai.com-eligible images only, so the default below
+  // follows the moderator's split choice rather than offering a value that would undo it.
+  const ratingAssets = listingRatingAssetsFromView(assetsQuery.data ?? {});
+  // Until the listing's media and split state have loaded, an approve would send a decision
+  // nobody has seen — and for a split listing, end its split.
+  // Same condition the asset query is enabled on, so a request it never reads is never blocked.
+  const splitStateUnknown = !!features?.appBlocks && !!request.appListingId && !assetsQuery.data;
+  // A `null` split is one this environment cannot read. No choice is offered and approve sends NO
+  // decision; any explicit decision would be refused. The server then reads the listing as unsplit:
+  // the approve floors its rating by all of its media (an on-site media revision rewrites no
+  // rating, and its next re-rate floors by all media), and a split stamped earlier stays in the
+  // record, not applied.
+  const splitUnreadable = assetsQuery.data?.mediaSplitApproved === null;
+  const resolvedMediaSplit = resolveListingMediaSplitDecision({
+    assets: ratingAssets,
+    currentlySplit: assetsQuery.data?.mediaSplitApproved === true,
+    choice: mediaSplitChoice,
+  }).value;
+  const mediaSplit: ListingMediaSplitDecision | undefined = splitUnreadable
+    ? undefined
+    : resolvedMediaSplit;
+  const ratingSummary = summarizeListingRating({
+    declaredRating: request.appListing?.contentRating,
+    assets: ratingFloorAssets(ratingAssets, mediaSplit === 'split'),
+  });
+  const derivedRating = ratingSummary.derived ?? 'g';
   // On-site listing-MEDIA revision: reviewed by this same shadow-asset + content
   // modal, but the rating discipline INVERTS. For an offsite listing the declared
   // rating is a FLOOR the assets must meet (rate UP; the server floors an under-
@@ -450,6 +536,21 @@ export function OffsiteReviewModalBody({
   // mod-REJECT reason, not an auto-derive. Both surface the same `ratingExceeds`
   // comparison; only the copy + the approve default differ.
   const isOnsite = request.kind === 'onsite';
+  // 🔴 `kind === 'onsite'` NO LONGER IMPLIES "a media revision". A second producer of
+  // on-site listing requests exists — the owner-republish asset-change re-review — and it
+  // is NON-shadow (`revisionOfId == null`), targeting the live listing itself rather than
+  // a shadow copy of it. The two are reviewed in this same modal but the server applies
+  // OPPOSITE rating rules to them, so telling them apart here is not cosmetic:
+  //
+  //   • on-site media REVISION  → `applyApprovedRevision`, assets-only, the app's rating
+  //     is preserved. Treating it as a CAP is right: media above the app's rating is a
+  //     reject reason, not something to auto-derive.
+  //   • on-site republish RE-REVIEW → `resolveOnsiteApprovalContentRating`, which FLOORS
+  //     the app's declared rating at the media-derived value — RAISE-only. Telling the
+  //     moderator "the media must not exceed the app's rating" states a policy the server
+  //     does not implement, and defaulting the approve control to the app's rating offers
+  //     a value the server will silently raise past.
+  const isOnsiteRepublishReview = isOnsite && (request.appListing?.revisionOfId ?? null) == null;
   const declaredRating = request.appListing?.contentRating ?? null;
   // The app's rating (the CAP for an on-site media revision), narrowed to a valid
   // enum value; null when unknown/invalid.
@@ -458,14 +559,20 @@ export function OffsiteReviewModalBody({
     (OFFSITE_CONTENT_RATINGS as readonly string[]).includes(declaredRating)
       ? (declaredRating as OffsiteContentRating)
       : null;
-  const ratingExceeds =
-    !assetsQuery.isLoading &&
-    nsfwLevelFromContentRating(derivedRating) > nsfwLevelFromContentRating(declaredRating);
+  const ratingExceeds = !assetsQuery.isLoading && ratingSummary.projected.raised;
   // Keep the offsite name for the unchanged offsite paths below.
   const ratingMismatch = ratingExceeds;
-  // Onsite approve defaults to the app's rating (the cap — media inherits it); the
-  // offsite approve defaults to the derived floor. Either way the mod may override.
-  const defaultRating: OffsiteContentRating = isOnsite ? appRating ?? derivedRating : derivedRating;
+  // Onsite media REVISION defaults to the app's rating (the cap — media inherits it); the
+  // offsite approve defaults to the derived floor. An onsite republish RE-REVIEW mirrors
+  // the server's raise-only floor — `max(declared, derived)` — so the control shows what
+  // approving would actually stamp instead of a value the server would override.
+  const defaultRating: OffsiteContentRating = isOnsiteRepublishReview
+    ? nsfwLevelFromContentRating(derivedRating) > nsfwLevelFromContentRating(appRating)
+      ? derivedRating
+      : appRating ?? derivedRating
+    : isOnsite
+    ? appRating ?? derivedRating
+    : derivedRating;
   const selectedRating: OffsiteContentRating = ratingOverride ?? defaultRating;
 
   // OAuth-CONNECT sub-kind (PR3): render the requested-scope panel + the sensitive-
@@ -497,8 +604,7 @@ export function OffsiteReviewModalBody({
     ? [!hasIcon ? 'icon' : null, !hasCover ? 'cover' : null].filter((v): v is string => v != null)
     : [];
   const belowFloor = missingFloor.length > 0;
-  const missingScreenshotsOnly =
-    !assetsQuery.isLoading && !belowFloor && screenshotCount < 1;
+  const missingScreenshotsOnly = !assetsQuery.isLoading && !belowFloor && screenshotCount < 1;
 
   // Scan-clean dimension (Item 1): the go-live `assertAssetsScanClean` gate refuses
   // to approve until EVERY attached asset is terminally `Scanned` (none pending, none
@@ -510,20 +616,27 @@ export function OffsiteReviewModalBody({
         iconScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
         coverScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
         screenshots?: { scanStatus?: 'scanned' | 'pending' | 'blocked' | null }[];
+        redIconScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
+        redCoverScanStatus?: 'scanned' | 'pending' | 'blocked' | null;
         hasBlockedAsset?: boolean;
         hasPendingScan?: boolean;
       }
     | undefined;
-  const blockedScanKinds = [
-    assetsData?.iconScanStatus === 'blocked' ? 'icon' : null,
-    assetsData?.coverScanStatus === 'blocked' ? 'cover' : null,
-    (assetsData?.screenshots ?? []).some((s) => s.scanStatus === 'blocked') ? 'screenshots' : null,
-  ].filter((v): v is string => v != null);
-  const pendingScanKinds = [
-    assetsData?.iconScanStatus === 'pending' ? 'icon' : null,
-    assetsData?.coverScanStatus === 'pending' ? 'cover' : null,
-    (assetsData?.screenshots ?? []).some((s) => s.scanStatus === 'pending') ? 'screenshots' : null,
-  ].filter((v): v is string => v != null);
+  const scanKinds = (status: 'blocked' | 'pending') =>
+    [
+      assetsData?.iconScanStatus === status ? 'icon' : null,
+      assetsData?.coverScanStatus === status ? 'cover' : null,
+      (assetsData?.screenshots ?? []).some((s) => s.scanStatus === status) ? 'screenshots' : null,
+      // The civitai.red overrides are held to the same go-live scan gate.
+      assetsData?.redIconScanStatus === status
+        ? listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: null })
+        : null,
+      assetsData?.redCoverScanStatus === status
+        ? listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: null })
+        : null,
+    ].filter((v): v is string => v != null);
+  const blockedScanKinds = scanKinds('blocked');
+  const pendingScanKinds = scanKinds('pending');
   const hasBlockedAsset = !assetsQuery.isLoading && (assetsData?.hasBlockedAsset ?? false);
   const hasPendingScan = !assetsQuery.isLoading && (assetsData?.hasPendingScan ?? false);
 
@@ -533,241 +646,253 @@ export function OffsiteReviewModalBody({
 
   return (
     <Stack gap="md">
-        {isOnsite && (
-          <Text size="xs" c="dimmed" data-testid="apps-offsite-onsite-note">
-            Listing media update — the on-site app’s media (icon / cover / screenshots)
-            changed. Content-only review; the media must not exceed the app’s rating.
-          </Text>
-        )}
-        <Group gap="xs">
-          <Text size="xs" c="dimmed">
-            Submitter:
-          </Text>
-          <Text size="xs">{request.submittedBy?.username ?? `#${request.submittedBy?.id ?? '?'}`}</Text>
-          <Text size="xs" c="dimmed">
-            · {formatSubmittedDate(request.submittedAt)}
-          </Text>
-        </Group>
+      {isOnsite && (
+        <Text size="xs" c="dimmed" data-testid="apps-offsite-onsite-note">
+          {isOnsiteRepublishReview
+            ? `Republish review — the owner unpublished this ${EMBEDDED_KIND_LABEL} app’s listing, changed its store imagery and asked for it back. Content review of the icon / cover / screenshots below. Approving RAISES the app’s rating if the imagery is more mature; it never lowers it.`
+            : `Listing media update — the ${EMBEDDED_KIND_LABEL} app’s media (icon / cover / screenshots) changed. Content-only review; the media must not exceed the app’s rating.`}
+        </Text>
+      )}
+      <Group gap="xs">
+        <Text size="xs" c="dimmed">
+          Submitter:
+        </Text>
+        <Text size="xs">
+          {request.submittedBy?.username ?? `#${request.submittedBy?.id ?? '?'}`}
+        </Text>
+        <Text size="xs" c="dimmed">
+          · {formatSubmittedDate(request.submittedAt)}
+        </Text>
+      </Group>
 
-        <Card withBorder p="sm">
-          <Stack gap={6}>
-            {request.appListing?.name && (
-              <Text size="md" fw={600}>
-                {request.appListing.name}
+      <Card withBorder p="sm">
+        <Stack gap={6}>
+          {request.appListing?.name && (
+            <Text size="md" fw={600}>
+              {request.appListing.name}
+            </Text>
+          )}
+          {request.appListing?.externalUrl && (
+            <Group gap={6}>
+              <Text size="xs" c="dimmed">
+                URL
               </Text>
-            )}
-            {request.appListing?.externalUrl && (
-              <Group gap={6}>
-                <Text size="xs" c="dimmed">
-                  URL
+              {validateExternalUrl(request.appListing.externalUrl).ok ? (
+                <Anchor
+                  href={request.appListing.externalUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  size="sm"
+                >
+                  <Group gap={4} wrap="nowrap">
+                    {request.appListing.externalUrl}
+                    <IconExternalLink size={12} />
+                  </Group>
+                </Anchor>
+              ) : (
+                // Non-https (defense-in-depth) → render as INERT text, never a
+                // clickable link on the moderator surface.
+                <Text size="sm" c="red">
+                  {request.appListing.externalUrl} (not a valid https link)
                 </Text>
-                {validateExternalUrl(request.appListing.externalUrl).ok ? (
-                  <Anchor
-                    href={request.appListing.externalUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    size="sm"
-                  >
-                    <Group gap={4} wrap="nowrap">
-                      {request.appListing.externalUrl}
-                      <IconExternalLink size={12} />
-                    </Group>
-                  </Anchor>
-                ) : (
-                  // Non-https (defense-in-depth) → render as INERT text, never a
-                  // clickable link on the moderator surface.
-                  <Text size="sm" c="red">
-                    {request.appListing.externalUrl} (not a valid https link)
-                  </Text>
-                )}
-              </Group>
-            )}
-            <Group gap={24}>
-              {request.appListing?.category && (
-                <Group gap={6}>
-                  <Text size="xs" c="dimmed">
-                    Category
-                  </Text>
-                  <Badge size="sm" variant="light">
-                    {request.appListing.category}
-                  </Badge>
-                </Group>
-              )}
-              {request.appListing?.contentRating && (
-                <Group gap={6}>
-                  <Text size="xs" c="dimmed">
-                    Content rating
-                  </Text>
-                  <Badge size="sm" color="gray" variant="light">
-                    {request.appListing.contentRating}
-                  </Badge>
-                  <Text size="xs" c="dimmed">
-                    {isOnsite ? 'app rating (cap)' : 'declared'}
-                  </Text>
-                </Group>
-              )}
-              {!assetsQuery.isLoading && (
-                <Group gap={6}>
-                  <Text size="xs" c="dimmed">
-                    Detected from assets
-                  </Text>
-                  <Badge
-                    size="sm"
-                    color={ratingMismatch ? 'red' : 'blue'}
-                    variant="light"
-                    data-testid="apps-offsite-derived-rating"
-                  >
-                    {derivedRating}
-                  </Badge>
-                </Group>
               )}
             </Group>
-            {request.changelog && (
-              <Stack gap={2}>
+          )}
+          <Group gap={24}>
+            {request.appListing?.category && (
+              <Group gap={6}>
                 <Text size="xs" c="dimmed">
-                  Submitter note
+                  Category
                 </Text>
-                <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
-                  {request.changelog}
-                </Text>
-              </Stack>
+                <Badge size="sm" variant="light">
+                  {marketplaceCategoryLabel(request.appListing.category)}
+                </Badge>
+              </Group>
             )}
-          </Stack>
-        </Card>
-
-        {/* 🔴 The BEFORE, immediately above the AFTER. Renders nothing unless the
-            request targets a shadow revision (`revisionOfId` set). */}
-        <RevisionDriftSection request={request} />
-
-        <ListingPreviewSection request={request} />
-
-        {isConnect && (
-          <ConnectScopesPanel
-            connectClientName={request.appListing?.connectClient?.name ?? null}
-            requestedScopes={request.appListing?.connectRequestedScopes ?? 0}
-            justifications={request.appListing?.connectScopeJustifications ?? null}
-          />
-        )}
-
-        <Stack gap={4}>
-          <Text size="sm" fw={600}>
-            Content review checklist
-          </Text>
-          <List spacing={4} size="sm" center>
-            {checklist.map((item) => (
-              <List.Item
-                key={item.id}
-                icon={
-                  <ThemeIcon
-                    size={18}
-                    radius="xl"
-                    color={item.status === 'ok' ? 'green' : item.status === 'warn' ? 'red' : 'gray'}
-                    variant={item.status === 'todo' ? 'light' : 'filled'}
-                  >
-                    {item.status === 'ok' ? (
-                      <IconCheck size={12} />
-                    ) : item.status === 'warn' ? (
-                      <IconX size={12} />
-                    ) : (
-                      <IconQuestionMark size={12} />
-                    )}
-                  </ThemeIcon>
-                }
-              >
-                <Text size="sm">{item.label}</Text>
+            {request.appListing?.contentRating && (
+              <Group gap={6}>
                 <Text size="xs" c="dimmed">
-                  {item.hint}
+                  Content rating
                 </Text>
-              </List.Item>
-            ))}
-          </List>
+                <Badge size="sm" color="gray" variant="light">
+                  {offsiteContentRatingLabel(request.appListing.contentRating)}
+                </Badge>
+                <Text size="xs" c="dimmed">
+                  {isOnsiteRepublishReview
+                    ? 'app rating (floor)'
+                    : isOnsite
+                    ? 'app rating (cap)'
+                    : 'declared'}
+                </Text>
+              </Group>
+            )}
+            {!assetsQuery.isLoading && (
+              <Group gap={6}>
+                <Text size="xs" c="dimmed">
+                  Detected from assets
+                </Text>
+                <Badge
+                  size="sm"
+                  color={ratingMismatch ? 'red' : 'blue'}
+                  variant="light"
+                  data-testid="apps-offsite-derived-rating"
+                >
+                  {offsiteContentRatingLabel(derivedRating)}
+                </Badge>
+              </Group>
+            )}
+          </Group>
+          {request.changelog && (
+            <Stack gap={2}>
+              <Text size="xs" c="dimmed">
+                Submitter note
+              </Text>
+              <Text size="sm" style={{ whiteSpace: 'pre-wrap' }}>
+                {request.changelog}
+              </Text>
+            </Stack>
+          )}
         </Stack>
+      </Card>
 
-        {belowFloor && (
-          <Alert
-            color="red"
-            variant="light"
-            icon={<IconAlertTriangle size={16} />}
-            data-testid="apps-offsite-assets-below-floor"
-          >
-            <Text size="sm">
-              Missing: {missingFloor.join(', ')}. Approve will be rejected by the server until an
-              icon and cover are attached (screenshots are optional).
-            </Text>
-          </Alert>
-        )}
+      {/* 🔴 The BEFORE, immediately above the AFTER. Renders nothing unless the
+            request targets a shadow revision (`revisionOfId` set). */}
+      <RevisionDriftSection request={request} />
 
-        {missingScreenshotsOnly && (
-          <Alert
-            color="blue"
-            variant="light"
-            icon={<IconInfoCircle size={16} />}
-            data-testid="apps-offsite-assets-missing-screenshots"
-          >
-            <Text size="sm">
-              Missing: screenshots. This is optional — you can approve now; the author can add
-              screenshots later.
-            </Text>
-          </Alert>
-        )}
+      <ListingPreviewSection request={request} rating={selectedRating} />
 
-        {hasBlockedAsset && (
-          <Alert
-            color="red"
-            variant="light"
-            icon={<IconAlertTriangle size={16} />}
-            data-testid="apps-offsite-assets-scan-blocked"
-          >
-            <Text size="sm">
-              Blocked media: {blockedScanKinds.join(', ')}. This media was rejected during scanning
-              (prohibited content). Approve will be rejected by the server until the author replaces
-              it — reject this submission and ask them to swap the blocked {blockedScanKinds.join(
-                ', '
-              )}
-              .
-            </Text>
-          </Alert>
-        )}
+      {isConnect && (
+        <ConnectScopesPanel
+          connectClientName={request.appListing?.connectClient?.name ?? null}
+          requestedScopes={request.appListing?.connectRequestedScopes ?? 0}
+          justifications={request.appListing?.connectScopeJustifications ?? null}
+        />
+      )}
 
-        {!hasBlockedAsset && hasPendingScan && (
-          <Alert
-            color="yellow"
-            variant="light"
-            icon={<IconInfoCircle size={16} />}
-            data-testid="apps-offsite-assets-scan-pending"
-          >
-            <Text size="sm">
-              Still scanning: {pendingScanKinds.join(', ')}. Approve will be rejected by the server
-              until every asset finishes scanning cleanly — wait a moment and retry.
-            </Text>
-          </Alert>
-        )}
-
-        {ratingMismatch && (
-          <Alert
-            color="red"
-            variant="light"
-            icon={<IconAlertTriangle size={16} />}
-            data-testid="apps-offsite-rating-mismatch"
-          >
-            {isOnsite ? (
-              <Text size="sm">
-                Media assets are rated higher ({derivedRating}) than the app’s rating (
-                {declaredRating ?? '—'}). Listing media must not exceed the app’s rating — reject
-                this revision or ask the author to trim the over-rated assets.
+      <Stack gap={4}>
+        <Text size="sm" fw={600}>
+          Content review checklist
+        </Text>
+        <List spacing={4} size="sm" center>
+          {checklist.map((item) => (
+            <List.Item
+              key={item.id}
+              icon={
+                <ThemeIcon
+                  size={18}
+                  radius="xl"
+                  color={item.status === 'ok' ? 'green' : item.status === 'warn' ? 'red' : 'gray'}
+                  variant={item.status === 'todo' ? 'light' : 'filled'}
+                >
+                  {item.status === 'ok' ? (
+                    <IconCheck size={12} />
+                  ) : item.status === 'warn' ? (
+                    <IconX size={12} />
+                  ) : (
+                    <IconQuestionMark size={12} />
+                  )}
+                </ThemeIcon>
+              }
+            >
+              <Text size="sm">{item.label}</Text>
+              <Text size="xs" c="dimmed">
+                {item.hint}
               </Text>
-            ) : (
-              <Text size="sm">
-                Assets contain higher-maturity content ({derivedRating}) than the declared rating (
-                {declaredRating ?? '—'}). The final rating defaults to the detected value; rate it at
-                least that high.
-              </Text>
-            )}
-          </Alert>
-        )}
+            </List.Item>
+          ))}
+        </List>
+      </Stack>
 
-        {!readOnly &&
-          (actionMode === 'reject' ? (
+      {belowFloor && (
+        <Alert
+          color="red"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+          data-testid="apps-offsite-assets-below-floor"
+        >
+          <Text size="sm">
+            Missing: {missingFloor.join(', ')}. Approve will be rejected by the server until an icon
+            and cover are attached (screenshots are optional).
+          </Text>
+        </Alert>
+      )}
+
+      {missingScreenshotsOnly && (
+        <Alert
+          color="blue"
+          variant="light"
+          icon={<IconInfoCircle size={16} />}
+          data-testid="apps-offsite-assets-missing-screenshots"
+        >
+          <Text size="sm">
+            Missing: screenshots. This is optional — you can approve now; the author can add
+            screenshots later.
+          </Text>
+        </Alert>
+      )}
+
+      {hasBlockedAsset && (
+        <Alert
+          color="red"
+          variant="light"
+          icon={<IconAlertTriangle size={16} />}
+          data-testid="apps-offsite-assets-scan-blocked"
+        >
+          <Text size="sm">
+            Blocked media: {blockedScanKinds.join(', ')}. This media was rejected during scanning
+            (prohibited content). Approve will be rejected by the server until the author replaces
+            it — reject this submission and ask them to swap the blocked{' '}
+            {blockedScanKinds.join(', ')}.
+          </Text>
+        </Alert>
+      )}
+
+      {!hasBlockedAsset && hasPendingScan && (
+        <Alert
+          color="yellow"
+          variant="light"
+          icon={<IconInfoCircle size={16} />}
+          data-testid="apps-offsite-assets-scan-pending"
+        >
+          <Text size="sm">
+            Still scanning: {pendingScanKinds.join(', ')}. Approve will be rejected by the server
+            until every asset finishes scanning cleanly — wait a moment and retry.
+          </Text>
+        </Alert>
+      )}
+
+      {ratingMismatch && (
+        <RatingMismatchAlert
+          testId="apps-offsite-rating-mismatch"
+          drivingAssets={ratingSummary.drivingAssets}
+        >
+          {isOnsiteRepublishReview ? (
+            <Text size="sm">
+              Store imagery is rated higher ({offsiteContentRatingLabel(derivedRating)}) than the
+              app’s rating ({declaredRating ? offsiteContentRatingLabel(declaredRating) : '—'}).
+              Approving RAISES the app to the detected rating — it is a floor here, not a cap. If
+              the app itself is not that mature, reject and ask the owner to change the imagery.
+            </Text>
+          ) : isOnsite ? (
+            <Text size="sm">
+              Media assets are rated higher ({offsiteContentRatingLabel(derivedRating)}) than the
+              app’s rating ({declaredRating ? offsiteContentRatingLabel(declaredRating) : '—'}).
+              Listing media must not exceed the app’s rating — reject this revision or ask the
+              author to trim the over-rated assets.
+            </Text>
+          ) : (
+            <Text size="sm">
+              Assets contain higher-maturity content ({offsiteContentRatingLabel(derivedRating)})
+              than the declared rating (
+              {declaredRating ? offsiteContentRatingLabel(declaredRating) : '—'}). The final rating
+              defaults to the detected value; rate it at least that high.
+            </Text>
+          )}
+        </RatingMismatchAlert>
+      )}
+
+      {!readOnly &&
+        (actionMode === 'reject' ? (
           <Stack gap="xs">
             <ReasonGatedField
               value={rejectionReason}
@@ -801,14 +926,34 @@ export function OffsiteReviewModalBody({
           </Stack>
         ) : actionMode === 'approve' ? (
           <Stack gap="xs">
+            {assetsQuery.data && !splitUnreadable && (
+              <ListingMediaSplitControl
+                assets={ratingAssets}
+                currentlySplit={assetsQuery.data.mediaSplitApproved === true}
+                value={resolvedMediaSplit}
+                // An on-site media REVISION records the decision but keeps the app's rating
+                // (`applyApprovedRevision` is assets-only), so it must not preview ratings.
+                appliesRating={!(isOnsite && !isOnsiteRepublishReview)}
+                onChange={(v) => {
+                  setMediaSplitChoice(v);
+                  setRatingOverride(null);
+                }}
+                disabled={busy}
+              />
+            )}
             <Select
               label="Final content rating"
               description={
-                isOnsite
+                isOnsiteRepublishReview
+                  ? 'Defaults to the higher of the app’s rating and the rating detected from the imagery. You may rate up; a lower choice is ignored — the server floors this at the app’s own rating and raises it to the detected value.'
+                  : isOnsite
                   ? 'Defaults to the app’s rating (the cap). Listing media must not exceed the app’s rating; assets rated higher are a reject reason.'
                   : 'Defaults to the rating detected from the assets. You may rate up; an under-rating is floored to the detected value on save.'
               }
-              data={OFFSITE_CONTENT_RATINGS.map((r) => ({ value: r, label: r }))}
+              // Same display map as the store rail and the submit form — the mod
+              // picks the rating a visitor will read, so it must be spelled the
+              // same. (Was `label: r`, i.e. the raw lowercase key.)
+              data={OFFSITE_CONTENT_RATING_OPTIONS}
               value={selectedRating}
               onChange={(v) => setRatingOverride((v as OffsiteContentRating) ?? null)}
               disabled={busy}
@@ -828,6 +973,20 @@ export function OffsiteReviewModalBody({
               disabled={busy}
               data-testid="apps-offsite-approve-notes"
             />
+            {splitUnreadable && (
+              <Text size="xs" c="dimmed" data-testid="apps-media-split-unreadable">
+                {isOnsite && !isOnsiteRepublishReview
+                  ? MEDIA_SPLIT_UNREADABLE_REVISION_COPY
+                  : MEDIA_SPLIT_UNREADABLE_COPY}
+              </Text>
+            )}
+            {splitStateUnknown && (
+              <Text size="xs" c="dimmed" data-testid="apps-media-split-unknown">
+                {assetsQuery.isError
+                  ? 'Could not load the listing’s media, so approve is unavailable. Close and reopen this request to retry.'
+                  : 'Approve is available once the listing’s media has loaded.'}
+              </Text>
+            )}
             <Group justify="flex-end" gap="xs">
               <Button variant="default" onClick={() => setActionMode('view')} disabled={busy}>
                 Cancel
@@ -840,9 +999,10 @@ export function OffsiteReviewModalBody({
                     publishRequestId: request.id,
                     approvalNotes: approvalNotes.trim() || undefined,
                     contentRating: selectedRating,
+                    ...(mediaSplit ? { mediaSplit } : {}),
                   })
                 }
-                disabled={busy}
+                disabled={busy || splitStateUnknown}
                 loading={approveMut.isPending}
                 data-testid="apps-offsite-approve-confirm"
               >
@@ -885,8 +1045,8 @@ export function OffsiteReviewModalBody({
               </Button>
             </Tooltip>
           </Group>
-          ))}
-      </Stack>
+        ))}
+    </Stack>
   );
 }
 
@@ -904,7 +1064,14 @@ export function OffsiteReviewModalBody({
  * row via the pure `reviewListingPreview` builders — so the review surface never
  * crashes or blanks.
  */
-function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
+function ListingPreviewSection({
+  request,
+  rating,
+}: {
+  request: OffsitePendingRow;
+  /** The rating this approve stamps, which decides where each image shows. */
+  rating?: string | null;
+}) {
   const features = useFeatureFlags();
   // Mod-only projection of the SHADOW listing's real media + scalars. Enabled only
   // once a row with a backing listing id is open.
@@ -916,6 +1083,21 @@ function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
   // from the row while loading / on error / when there's no listing id.
   const card = previewQuery.data?.card ?? buildListingCardPreview(request);
   const detail = previewQuery.data?.detail ?? buildListingDetailPreview(request);
+  const media = previewQuery.data?.media ?? null;
+  // 🔴 The store-layout preview shows every image as attached (moderator view), so on
+  // civitai.com the whole preview is held behind ONE reveal, by its most mature image — the
+  // card and the detail render that image in several places at once. The per-image reveal and
+  // audience labels are in the media panel above it.
+  const previewGuard = media
+    ? mostMatureReviewImage([
+        media.icon,
+        media.cover,
+        ...media.screenshots,
+        media.redIcon,
+        media.redCover,
+      ])
+    : null;
+  const name = request.appListing?.name ?? request.slug;
   return (
     <Stack gap="xs" data-testid="apps-listing-preview">
       <Divider
@@ -929,15 +1111,32 @@ function ListingPreviewSection({ request }: { request: OffsitePendingRow }) {
         }
         labelPosition="left"
       />
+      {media && (
+        <ReviewListingMedia
+          slug={request.slug}
+          name={name}
+          iconUrl={media.icon?.url ?? null}
+          coverUrl={media.cover?.url ?? null}
+          reviewMedia={media}
+          rating={rating}
+        />
+      )}
       <Text size="xs" c="dimmed">
         Listing preview — how it will appear in the store once approved.
       </Text>
-      <div style={{ maxWidth: 340 }} data-testid="apps-listing-preview-card">
-        <AppListingCard card={card} />
-      </div>
-      <Card withBorder p="md" data-testid="apps-listing-preview-detail">
-        <AppListingDetailBody detail={detail} preview />
-      </Card>
+      <ReviewMediaReveal image={previewGuard} testId="apps-listing-preview-reveal">
+        {/* 🔴 `preview` — the SAME posture the detail body below it takes. Without it
+            this card offers a moderator (which every viewer of this queue is) the `⋮`
+            menu's live takedown actions against a listing that is NOT approved and
+            whose `id` may be the publish REQUEST's rather than an `AppListing`'s. See
+            `appListingDetailModActions.detailListingStatus`. */}
+        <div style={{ maxWidth: 340 }} data-testid="apps-listing-preview-card">
+          <AppListingCard card={card} preview />
+        </div>
+        <Card withBorder p="md" data-testid="apps-listing-preview-detail">
+          <AppListingDetailBody detail={detail} preview />
+        </Card>
+      </ReviewMediaReveal>
     </Stack>
   );
 }
@@ -1005,7 +1204,13 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
   // `listingRevisionDrift`.
   const applyScope = revisionApplyScope(request.kind);
   const drift =
-    live && proposed ? computeListingRevisionDrift(live, proposed, { applyScope }) : null;
+    live && proposed
+      ? computeListingRevisionDrift(
+          live,
+          proposedWithUnstagedRedSlots(proposed, live, shadowAssetsQuery.data),
+          { applyScope }
+        )
+      : null;
   // 🔴 `retry: false` on both queries means an error is TERMINAL. Without this the
   // panel sat on an indefinite "Comparing with the live listing…" spinner — a mod
   // next to the destructive-replace case would see a spinner, not "could not load".
@@ -1124,6 +1329,38 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
                 {assetSlotDriftLabel(drift.cover)}
               </Badge>
             </Group>
+            {/* The civitai.red overrides: shown only when either side has one, so a listing
+                that never had one is not given two permanently-"Unchanged" badges. */}
+            {(drift.redIcon !== 'same' || live?.redIconId != null) && (
+              <Group gap={6}>
+                <Text size="xs" c="dimmed">
+                  {listingRatingAssetLabel({ kind: 'red-icon', nsfwLevel: null })}
+                </Text>
+                <Badge
+                  size="sm"
+                  variant="light"
+                  color={slotDriftColor(drift.redIcon)}
+                  data-testid="apps-listing-revision-drift-red-icon"
+                >
+                  {assetSlotDriftLabel(drift.redIcon)}
+                </Badge>
+              </Group>
+            )}
+            {(drift.redCover !== 'same' || live?.redCoverId != null) && (
+              <Group gap={6}>
+                <Text size="xs" c="dimmed">
+                  {listingRatingAssetLabel({ kind: 'red-cover', nsfwLevel: null })}
+                </Text>
+                <Badge
+                  size="sm"
+                  variant="light"
+                  color={slotDriftColor(drift.redCover)}
+                  data-testid="apps-listing-revision-drift-red-cover"
+                >
+                  {assetSlotDriftLabel(drift.redCover)}
+                </Badge>
+              </Group>
+            )}
             <Group gap={6}>
               <Text size="xs" c="dimmed">
                 Screenshots
@@ -1145,9 +1382,19 @@ function RevisionDriftSection({ request }: { request: OffsitePendingRow }) {
       )}
 
       {parentPreviewQuery.data && (
-        <div style={{ maxWidth: 340 }} data-testid="apps-listing-revision-drift-live-card">
-          <AppListingCard card={parentPreviewQuery.data.card} />
-        </div>
+        <ReviewMediaReveal
+          image={mostMatureReviewImage([
+            parentPreviewQuery.data.media?.icon,
+            parentPreviewQuery.data.media?.cover,
+            ...(parentPreviewQuery.data.media?.screenshots ?? []),
+          ])}
+          testId="apps-listing-revision-drift-live-reveal"
+        >
+          <div style={{ maxWidth: 340 }} data-testid="apps-listing-revision-drift-live-card">
+            {/* `preview` — read-only drift comparison; no live action belongs on it. */}
+            <AppListingCard card={parentPreviewQuery.data.card} preview />
+          </div>
+        </ReviewMediaReveal>
       )}
     </Stack>
   );
@@ -1221,7 +1468,7 @@ export function OffsiteReportsQueue() {
           <Group gap={6}>
             <IconFlag size={14} />
             <Text size="sm" fw={600}>
-              Off-site listing reports
+              {STANDALONE_KIND_LABEL} listing reports
             </Text>
             <Badge size="sm" variant="light" color={items.length > 0 ? 'red' : 'gray'}>
               {items.length}
@@ -1232,8 +1479,8 @@ export function OffsiteReportsQueue() {
       />
       <Group justify="space-between">
         <Text size="xs" c="dimmed">
-          User reports of approved off-site apps. Verify ownership out-of-band, then delist / relist
-          / purge and resolve or dismiss the report.
+          User reports of approved standalone apps. Verify ownership out-of-band, then delist /
+          relist / purge and resolve or dismiss the report.
         </Text>
         <SegmentedControl
           size="xs"
@@ -1264,6 +1511,12 @@ export function OffsiteReportsQueue() {
       ) : (
         <Card withBorder p={0}>
           <Table verticalSpacing="md" horizontalSpacing="md">
+            {/* 🔴 NO COLUMN LEDGER, DELIBERATELY — EXEMPT in `~/components/Apps/appsWideLayout`
+                as `no-surplus`. At 1200 this row's content wants App 240 + Reason 292 (to
+                reach its 260px details cap) + Reporter 94 + Reported 133 + Status 86 +
+                actions 414 = 1259px in 1168px of container, so SOMETHING is under-served
+                there whatever the split. Measured: every candidate ledger was either taller
+                than natural at 1200 or clipped the lineClamp-ed details harder. */}
             <Table.Thead>
               <Table.Tr>
                 <Table.Th>App</Table.Th>
@@ -1306,18 +1559,30 @@ export function OffsiteReportsQueue() {
                       )}
                     </Table.Td>
                     <Table.Td>
-                      <Text size="xs">
+                      {/* 🔴 `nowrap` — these three columns carry shrink-to-content shares, and
+                          a share below min-content only holds one line when min-content is the
+                          whole label. A username, a date and a status badge are each one
+                          token; wrapping them was what made these rows taller than the
+                          browser's own layout. */}
+                      <Text size="xs" style={{ whiteSpace: 'nowrap' }}>
                         {r.reporter?.username ?? `#${r.reporter?.id ?? '?'}`}
                       </Text>
                     </Table.Td>
                     <Table.Td>
-                      <Group gap={4}>
+                      <Group gap={4} wrap="nowrap">
                         <IconClock size={14} />
-                        <Text size="xs">{formatDate(r.createdAt)}</Text>
+                        <Text size="xs" style={{ whiteSpace: 'nowrap' }}>
+                          {formatDate(r.createdAt)}
+                        </Text>
                       </Group>
                     </Table.Td>
                     <Table.Td>
-                      <Badge size="sm" color={statusChip.color} variant="light">
+                      <Badge
+                        size="sm"
+                        color={statusChip.color}
+                        variant="light"
+                        style={{ whiteSpace: 'nowrap' }}
+                      >
                         {statusChip.label}
                       </Badge>
                     </Table.Td>
@@ -1430,7 +1695,8 @@ function ReportActionModal({
   const isClaim = action === 'claim';
   const destructive = isDestructiveAction(action);
   const trimmed = text.trim();
-  const validTarget = typeof targetUserId === 'number' && Number.isInteger(targetUserId) && targetUserId > 0;
+  const validTarget =
+    typeof targetUserId === 'number' && Number.isInteger(targetUserId) && targetUserId > 0;
 
   function reset() {
     setText('');
@@ -1496,8 +1762,9 @@ function ReportActionModal({
       destructive={destructive}
       destructiveWarning={
         <Text size="sm">
-          Purge PERMANENTLY deletes this listing and its screenshots + reports. The audit event
-          (with the slug snapshot) is kept. This cannot be undone.
+          Purge PERMANENTLY deletes this listing and its screenshots + reports, and{' '}
+          <b>releases its store address for anyone else to claim</b>. The audit event (with the slug
+          snapshot) is kept. This cannot be undone.
         </Text>
       }
       extraSlot={
@@ -1589,7 +1856,9 @@ function ModerationHistoryModal({
       title={
         <Group gap={6}>
           <IconHistory size={16} />
-          <Text fw={600}>Moderation history — {report.appListing?.slug ?? report.appListingId}</Text>
+          <Text fw={600}>
+            Moderation history — {report.appListing?.slug ?? report.appListingId}
+          </Text>
         </Group>
       }
       size="lg"

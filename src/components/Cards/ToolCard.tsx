@@ -45,7 +45,11 @@ export function ToolCard({ data }: Props) {
           <div className="flex flex-1 items-center gap-4">
             {data.icon ? (
               <Avatar
-                src={getEdgeUrl(data.icon ?? undefined, { type: 'image', width: 40 })}
+                src={getEdgeUrl(data.icon ?? undefined, {
+                  type: 'image',
+                  width: 40,
+                  optimized: true,
+                })}
                 size={40}
                 radius="xl"
               />

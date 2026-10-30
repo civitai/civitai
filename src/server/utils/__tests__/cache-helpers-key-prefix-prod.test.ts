@@ -1,6 +1,7 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RedisClientModule from '@civitai/redis/client';
 import type * as StringHelpers from '~/utils/string-helpers';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * PRODUCTION half of the environment-scoped cache-key prefixing coverage (the namespaced half is
@@ -73,8 +74,6 @@ vi.mock('~/server/prom/client', () => ({
   cacheFailOpenDegradedCounter: { inc: vi.fn() },
   cacheFailOpenOriginFetchCounter: { inc: vi.fn() },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
-
 describe('cache-helpers key prefixing — production', () => {
   const rows = [{ id: 1, name: 'anime' }];
   // `sql` stands in for a Prisma.Sql — hashifyObject is stubbed, so its contents don't matter.

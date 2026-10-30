@@ -2,6 +2,7 @@ import {
   challengeQuickActionSchema,
   checkEntryEligibilitySchema,
   deleteChallengeSchema,
+  moderatorDeleteChallengeSchema,
   getChallengeEventsSchema,
   getChallengeWinnersSchema,
   getCompletedChallengesWithWinnersSchema,
@@ -23,6 +24,7 @@ import {
   playgroundGenerateContentSchema,
   playgroundReviewImageSchema,
   playgroundPickWinnersSchema,
+  playgroundRunLadderSchema,
   upsertChallengeCategorySchema,
 } from '~/server/schema/challenge.schema';
 import { getByIdSchema } from '~/server/schema/base.schema';
@@ -70,6 +72,7 @@ import {
   playgroundGenerateContent,
   playgroundReviewImage,
   playgroundPickWinners,
+  playgroundRunLadder,
 } from '~/server/services/challenge.service';
 import {
   getChallengeCategoriesFull,
@@ -105,7 +108,9 @@ export const challengeRouter = router({
   getDaily: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(() => getDailyChallenges()),
+    .query(({ ctx }) =>
+      getDailyChallenges({ isGreen: ctx.features.isGreen, viewerId: ctx.user?.id })
+    ),
 
   // Current user's own challenges — entered or created — most-recent-activity first.
   getMyChallenges: protectedProcedure
@@ -333,22 +338,33 @@ export const challengeRouter = router({
 
   // Moderator: Delete a challenge
   delete: moderatorProcedure
-    .input(deleteChallengeSchema)
+    .input(moderatorDeleteChallengeSchema)
     .use(isFlagProtected('challengePlatform'))
-    .mutation(({ input }) => deleteChallenge(input.id)),
+    .mutation(({ input }) => deleteChallenge(input.id, { force: input.force })),
 
   // Public: Get active challenge events for featured section
   getActiveEvents: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .use(isFlagProtected('challengePlatform'))
-    .query(({ ctx }) => getActiveEvents(ctx.user?.id)),
+    .query(({ ctx }) =>
+      getActiveEvents(
+        { isGreen: ctx.features.isGreen, viewerId: ctx.user?.id },
+        ctx.features.userChallenges
+      )
+    ),
 
   // Public: Get single event by ID
   getEventById: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(z.object({ id: z.number() }))
     .use(isFlagProtected('challengePlatform'))
-    .query(({ input }) => getChallengeEventById(input.id)),
+    .query(({ input, ctx }) =>
+      getChallengeEventById(
+        input.id,
+        { isGreen: ctx.features.isGreen, viewerId: ctx.user?.id },
+        ctx.features.userChallenges
+      )
+    ),
 
   // Moderator: Get all challenge events
   getEvents: moderatorProcedure
@@ -400,6 +416,13 @@ export const challengeRouter = router({
     .input(playgroundReviewImageSchema)
     .use(isFlagProtected('challengePlatform'))
     .mutation(({ input }) => playgroundReviewImage(input)),
+
+  // Moderator: Playground — dry-run the pairwise ladder over a real field. Writes nothing, but
+  // every comparison is a paid LLM call, so it stays behind moderatorProcedure.
+  playgroundRunLadder: moderatorProcedure
+    .input(playgroundRunLadderSchema)
+    .use(isFlagProtected('challengePlatform'))
+    .mutation(({ input }) => playgroundRunLadder(input)),
 
   // Moderator: Playground — pick winners
   playgroundPickWinners: moderatorProcedure

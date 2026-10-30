@@ -1,11 +1,8 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const findMany = vi.fn();
-vi.mock('~/server/db/client', () => ({
-  dbRead: { challengeJudge: { findMany: (...args: unknown[]) => findMany(...args) } },
-}));
-
+const findMany = dbMock.dbRead.challengeJudge.findMany;
 import { getUserSelectableJudges } from '~/server/services/challenge-judge.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 beforeEach(() => findMany.mockReset());
 

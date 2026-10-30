@@ -4,13 +4,24 @@ import type { Readable } from 'node:stream';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
 import { dbWrite } from '~/server/db/client';
+import { bustAppListingCatalogCache } from '~/server/services/blocks/app-listing.service';
 import { redis, REDIS_KEYS } from '~/server/redis/client';
-import { isAppBlocksPipelineEnabled } from '~/server/services/app-blocks-flag';
+import {
+  isAppBlocksPerAppObjectsEnabled,
+  isAppBlocksPipelineEnabled,
+} from '~/server/services/app-blocks-flag';
 import { setCommitStatus } from '~/server/services/blocks/forgejo.service';
 import { triggerApply, waitForApplyJob } from '~/server/services/blocks/apps-pipeline.service';
 import { autogenerateScreenshotIfMissing } from '~/server/services/blocks/autogenerate-screenshot.service';
+import {
+  isSupersededRun,
+  recordBuildAttempt,
+} from '~/server/services/blocks/build-attempts.service';
 import { buildFailureDeployDetail } from '~/server/services/blocks/build-failure-reason';
+import { deriveFailureClass, parseBuildSignals } from '~/server/services/blocks/build-signals';
 import { markRequestDeployState } from '~/server/services/blocks/publish-request.service';
+import { recordAppBlockBuildOutcome } from '~/server/prom/app-block-build.metrics';
+import { DEPLOY_FAILURE_DETAIL } from '~/shared/constants/app-block-deploy.constants';
 
 /**
  * POST /api/internal/blocks/build-callback
@@ -18,10 +29,14 @@ import { markRequestDeployState } from '~/server/services/blocks/publish-request
  * Tekton PipelineRun finally task → civitai-web. Notified once the build
  * has either succeeded (image pushed to ghcr.io) or failed. We:
  *   1. Verify HMAC signature (BLOCK_BUILD_CALLBACK_SECRET).
- *   2. On success → create the apply Job in civitai-apps ns to roll the
- *      new image, update app_blocks.current_version_deployed_at.
+ *   2. On success → create the apply Job in civitai-apps ns, which smoke-tests
+ *      the image and publishes it to the shared static server (and, only while
+ *      the `app-blocks-per-app-objects` rollback flag is on, also rolls the
+ *      per-app Deployment); update app_blocks.current_version_deployed_at once
+ *      that Job succeeds.
  *   3. On failure → write commit status failure to Forgejo so the
- *      developer sees the result in the repo view.
+ *      developer sees the result in the repo view — skipped when a newer
+ *      recorded run has superseded the sender (stale-run guard).
  */
 
 // HMAC verification needs the exact bytes Tekton hashed; Next's bodyParser
@@ -52,7 +67,9 @@ type CallbackBody = {
   sha?: string;
   appBlockId?: string;
   imageRef?: string;
-  status?: string; // "Succeeded" / "Failed" / "Cancelled" / ... per Tekton
+  // "Succeeded" / "Failed" / "Cancelled" / ..., or "None" when the run failed
+  // before its final publish step (the reported status is that step's).
+  status?: string;
   // F5 — integer unix-epoch-SECONDS timestamp the SIGNER (the datapacket-talos
   // app-blocks-callback Tekton task) stamps INSIDE the body BEFORE the HMAC, so
   // it is covered by the signature. Validated for skew below. ABSENT/non-finite
@@ -69,6 +86,9 @@ type CallbackBody = {
   // server-side by `sanitizeBuildFailureReason` before being persisted — an HMAC
   // proves WHO sent the bytes, never that the bytes are safe.
   failureReason?: unknown;
+  // OPTIONAL structured signals (`failedStep`, `pipelineStatus`, `failedReason`, `runId`).
+  // Not typed here: `parseBuildSignals` reads them off the parsed body, validates each
+  // one on its own, and drops (and logs) an invalid one without rejecting the callback.
 };
 
 // F5 — allowed clock skew between the callback signer and this receiver, in
@@ -166,9 +186,11 @@ export function expectedImageRef(slug: string, sha: string): string {
   return `ghcr.io/civitai/app-block-${slug}:${sha}`;
 }
 
-// Replay guard (audit LOW). The callback payload carries no timestamp/nonce, so
-// a captured signature-valid request could be replayed to re-trigger the apply
-// Job. Dedup the apply path on (appBlockId, sha) with the redis client's
+// Replay guard (audit LOW). The payload's signed `ts` (see
+// `checkCallbackTimestamp`) rejects a replay older than ±TS_TOLERANCE_SECONDS, but
+// it is enforce-if-present and there is no nonce, so inside that window — or from
+// a sender that omits `ts` — a captured signature-valid request could still be
+// replayed to re-trigger the apply Job. Dedup the apply path on (appBlockId, sha) with the redis client's
 // purpose-built atomic primitive `setNxKeepTtlWithEx` — a single Lua
 // `SET NX` (+`EXPIRE`) that returns a typed `boolean` (true = newly set).
 // Deliberately NOT `redis.set(..., {NX,EX})` + a return-value check: the top-
@@ -179,17 +201,28 @@ export function expectedImageRef(slug: string, sha: string): string {
 //
 // TTL must outlast the WHOLE first attempt, not just the apply: the mark is set
 // before `triggerApply` (two k8s calls, ~60s of 30s-timeouts each) and
-// `waitForApplyJob` then runs a 6m budget — worst case ~7m. We use 10m so the
+// `waitForApplyJob` then runs APPLY_WATCH_TIMEOUT_MS (8m) — worst case ~9m. We use 10m so the
 // key can't expire mid-apply and let a late duplicate re-trigger (which would
 // delete + restart the in-flight Job). The longer TTL does NOT suppress
 // legitimate retries because every failure path frees the slot explicitly: the
 // watcher clears on a DEFINITIVE apply failure, and the `triggerApply` catch
 // clears on a Job-creation failure. The TTL is only the backstop for the
 // can't-clear cases (apply 'timeout' where the Job may still run, or a
-// watcher-crash / pod-restart). Durable cross-window replay protection still
-// needs a caller-supplied signed timestamp/nonce from the Tekton finally task
-// (infra follow-up).
-const APPLY_DEDUP_TTL_SECONDS = 10 * 60; // > worst-case first attempt (~60s trigger + 6m apply)
+// watcher-crash / pod-restart). Cross-window replay protection is the signed-`ts`
+// freshness check above, which, unlike this dedup, does not depend on Redis (but
+// allows a callback with no `ts`).
+const APPLY_DEDUP_TTL_SECONDS = 10 * 60; // > worst-case first attempt (~60s trigger + 8m apply)
+
+// How long the watcher waits for the apply Job. ONE attempt's slowest normal path is the smoke
+// test (~85s) plus a required publish, which may take up to its own 240s deadline plus 15s of
+// polling: ~5m40s, too close to the old 6m for a slow publish not to read as a timeout. A timeout
+// tells the author the deploy failed while the Job may still finish and serve it.
+// This budget covers one attempt, not the Job's retries: the Job retries a failed attempt
+// (backoffLimit 2), so a slow first attempt followed by a successful second one can still end
+// past it and be reported as timed out while its publish serves the new version. With the
+// per-app rollback flag on, the per-app rollout adds up to 180s to an attempt as well.
+// Must stay below APPLY_DEDUP_TTL_SECONDS minus the trigger time.
+const APPLY_WATCH_TIMEOUT_MS = 8 * 60 * 1000;
 function applyDedupKey(appBlockId: string, sha: string): string {
   // Reuse the block rate-limit key family (same convention as workflow-completed).
   return `${REDIS_KEYS.BLOCKS.TOKEN_RATE_LIMIT}:apply:${appBlockId}:${sha}`;
@@ -294,9 +327,54 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     return;
   }
 
+  const { signals, dropped } = parseBuildSignals(body as Record<string, unknown>);
+  if (dropped.length > 0) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[build-callback] dropped invalid optional field(s) ${dropped.join(', ')} for ${
+        body.slug
+      }@${body.sha.slice(0, 8)}`
+    );
+  }
+
   const succeeded = (body.status ?? '').toLowerCase() === 'succeeded';
 
   if (!succeeded) {
+    // Derived only from a REPORTED step. Without one (an older pipeline) the class stays
+    // unset on the attempt row, so the UI keeps its text fallback instead of being told
+    // `unknown` by a row that simply has no signal.
+    const failureClass = signals.failedStep
+      ? deriveFailureClass(signals.failedStep, signals.failedReason)
+      : null;
+    const attempt = {
+      mode: 'build' as const,
+      status: 'failed' as const,
+      slug: body.slug,
+      sha: body.sha,
+      runId: signals.runId,
+      failedStep: signals.failedStep,
+      failedReason: signals.failedReason,
+      failureClass,
+    };
+
+    // Stale-run guard. Failure callbacks are re-sent until one gets a 2xx, so one can land
+    // after a moderator has re-triggered the build. A failure from the OLDER run must not
+    // flip the newer run's `building` to `failed`, nor mark the commit red under it; it is
+    // logged and acknowledged, and writes nothing. Enforce-if-present: no `runId`, or no
+    // recorded trigger for it, proceeds exactly as before (see `isSupersededRun`).
+    if (
+      await isSupersededRun({ mode: 'build', slug: body.slug, sha: body.sha, runId: signals.runId })
+    ) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[build-callback] ignoring a failure from a superseded run for ${
+          body.slug
+        }@${body.sha.slice(0, 8)}`
+      );
+      res.status(200).json({ ok: true, applied: false, reason: 'superseded run' });
+      return;
+    }
+
     await safe(setCommitStatus, {
       slug: body.slug,
       sha: body.sha,
@@ -314,6 +392,17 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       'failed',
       buildFailureDeployDetail(body.status, body.failureReason)
     );
+    // After the deploy_state write, and best-effort: a missing attempts table (its
+    // migration is applied by hand) costs the history row, never the state above.
+    await recordBuildAttempt(attempt);
+    // Counted only once the failure is APPLIED: a superseded run's late report is ignored,
+    // and must not move a failure-rate alert.
+    recordAppBlockBuildOutcome({
+      mode: 'build',
+      outcome: 'failed',
+      failedStep: signals.failedStep ?? 'unreported',
+      failureClass: failureClass ?? 'unknown',
+    });
     // Response body unchanged — Tekton consumes nothing beyond `ok`.
     res.status(200).json({ ok: true, applied: false, reason: 'build failed' });
     return;
@@ -323,7 +412,9 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   // window. A replayed success callback short-circuits here before triggering
   // another apply Job or touching commit status.
   if (!(await markApplyTriggered(body.appBlockId, body.sha))) {
-    res.status(200).json({ ok: true, applied: false, reason: 'duplicate callback (replay-guarded)' });
+    res
+      .status(200)
+      .json({ ok: true, applied: false, reason: 'duplicate callback (replay-guarded)' });
     return;
   }
 
@@ -344,6 +435,20 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     description: 'Applying to civitai-apps',
   });
   await markRequestDeployState(body.slug, body.sha, 'deploying');
+  await recordBuildAttempt({
+    mode: 'build',
+    status: 'succeeded',
+    slug: body.slug,
+    sha: body.sha,
+    runId: signals.runId,
+    failedStep: signals.failedStep,
+  });
+  recordAppBlockBuildOutcome({
+    mode: 'build',
+    outcome: 'succeeded',
+    failedStep: 'none',
+    failureClass: 'none',
+  });
 
   let applyJob: { name: string };
   try {
@@ -352,6 +457,7 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       sha: body.sha,
       appBlockId: body.appBlockId,
       imageRef: body.imageRef,
+      perAppObjects: await isAppBlocksPerAppObjectsEnabled(),
     });
   } catch (e) {
     // Job creation failed — no watcher will run to clear the dedup mark, so
@@ -365,16 +471,25 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
       context: 'civitai/deploy',
       description: `Apply trigger failed: ${String(e).slice(0, 80)}`,
     });
-    await markRequestDeployState(body.slug, body.sha, 'failed', 'Deploy could not start');
+    recordApplyFailure();
+    await markRequestDeployState(
+      body.slug,
+      body.sha,
+      'failed',
+      DEPLOY_FAILURE_DETAIL.couldNotStart
+    );
     res.status(500).json({ error: 'Apply trigger failed', detail: String(e).slice(0, 240) });
     return;
   }
 
   // gotcha #39 fix (2026-05-30): defer the
   // `app_blocks.current_version_deployed_at` write until the apply Job
-  // actually succeeds. The previous shape wrote it the moment the Job
-  // was created — which meant a failed apply (smoke step / network
-  // policy / image perms) left the column saying "deployed at <now>"
+  // actually succeeds. The Job succeeds only once the smoke test passed and
+  // the build is published to the shared static server (its current pointer
+  // flipped), which is what serves the app, so `live` below means served.
+  // The previous shape wrote it the moment the Job was created — which
+  // meant a failed apply (smoke step / network policy / image perms) left
+  // the column saying "deployed at <now>"
   // while the live Deployment was still on the previous image. Now the
   // column reflects "what's actually serving" rather than "what built."
   //
@@ -407,12 +522,19 @@ async function watchApplyJobAndRecord(args: {
   jobName: string;
 }): Promise<void> {
   try {
-    const outcome = await waitForApplyJob(args.jobName);
+    const outcome = await waitForApplyJob(args.jobName, { timeoutMs: APPLY_WATCH_TIMEOUT_MS });
     if (outcome === 'succeeded') {
       await dbWrite.appBlock.update({
         where: { id: args.appBlockId },
         data: { currentVersionDeployedAt: new Date() },
       });
+      // 🔴 Catalog bust: `currentVersionDeployedAt` IS the onsite DEPLOY GATE in
+      // `listAvailableListings` (`al.kind <> 'onsite' OR ab.current_version_deployed_at IS
+      // NOT NULL`). This is the ONE non-tRPC writer of it, so without a bust here a
+      // freshly-deployed onsite app stays INVISIBLE in the store for the whole TTL —
+      // the deploy succeeds and the app simply is not there.
+      await bustAppListingCatalogCache().catch(() => undefined);
+
       await markRequestDeployState(args.slug, args.sha, 'live');
       await safe(setCommitStatus, {
         slug: args.slug,
@@ -440,7 +562,9 @@ async function watchApplyJobAndRecord(args: {
       if (outcome === 'failed') {
         await clearApplyMark(args.appBlockId, args.sha);
       }
-      const deployDetail = outcome === 'timeout' ? 'Deploy timed out' : 'Deploy failed';
+      const deployDetail =
+        outcome === 'timeout' ? DEPLOY_FAILURE_DETAIL.timedOut : DEPLOY_FAILURE_DETAIL.failed;
+      recordApplyFailure();
       // Flip commit status so the dev sees red.
       await safe(setCommitStatus, {
         slug: args.slug,
@@ -463,6 +587,16 @@ async function watchApplyJobAndRecord(args: {
       }`
     );
   }
+}
+
+/** The image built but the civitai-side deploy did not finish: a platform-class failure. */
+function recordApplyFailure(): void {
+  recordAppBlockBuildOutcome({
+    mode: 'build',
+    outcome: 'failed',
+    failedStep: 'apply',
+    failureClass: deriveFailureClass('apply'),
+  });
 }
 
 // Wrap a side-effect with a try/catch that logs but doesn't bubble.

@@ -1,4 +1,3 @@
-import { env } from '~/env/server';
 import dayjs from '~/shared/utils/dayjs';
 import { chunk } from 'lodash-es';
 import { clickhouse } from '~/server/clickhouse/client';
@@ -28,6 +27,12 @@ import {
   processFinalRatings,
   smitePlayer,
 } from '~/server/services/games/new-order.service';
+import { moderatorApp } from '~/server/services/moderator-app.service';
+import {
+  ABUSE_SCAN_WINDOW_HOURS,
+  buildAbuseReport,
+  type AbuseSuspect,
+} from '~/server/services/new-order-abuse-detection/report';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { handleLogError } from '~/server/utils/errorHandling';
 import { TransactionType } from '~/shared/constants/buzz.constants';
@@ -497,16 +502,35 @@ const newOrderChangeRateTarget = createJob(
 );
 
 // Periodic abuse detection: identify users with suspicious rating patterns.
-// Runs daily at 23:00 UTC, logs to Axiom and Discord for monitoring, and (when
-// `autoSmiteAbusers` is enabled in Redis config) auto-smites suspects matching
-// strict signals via the system actor.
+// Runs daily at 23:00 UTC, logs to Axiom, files every suspect on the moderator
+// app's abuse-detection board, and (when `autoSmiteAbusers` is enabled in Redis
+// config) auto-smites suspects matching strict signals via the system actor.
+//
+// 🔴 THE BOARD POST HAPPENS AFTER THE SMITE LOOP, AND THE ORDER IS LOAD-BEARING.
+// Each finding carries the contract's `actioned`/`action` pair, which is a claim
+// about what this run already DID — so the findings cannot be built until the
+// smiting is over and it is known which accounts it actually succeeded on. The
+// contract rejects a mispaired finding on the producer's side of the wire, and
+// one rejection loses the whole batch, not the offending row.
+//
+// Replaces the Discord webhook this scan used to post to: the board is durable,
+// reviewable, and the only surface that can represent "detected and deliberately
+// not acted on", which is most of what this scan produces.
 export async function runAbuseDetectionScan() {
+  // Captured before the first await so the board's "when did this run" reading is
+  // the producer's own start, not the instant the report happened to be built.
+  const startedAt = new Date();
   if (!clickhouse) return;
   log('AbuseDetection :: Scanning for suspicious rating patterns');
 
-  // All tunable thresholds live in Redis so the operational values aren't
-  // visible to anyone reading the public source tree. Defaults below are a
-  // first-boot fallback; once ops seeds the config, those take precedence.
+  // All tunable thresholds live in Redis, so the live operational values are not
+  // set from this file. ⚠️ That is a DEPLOYMENT fact, not a secrecy guarantee, and
+  // this comment used to claim the second: this repo is public, the fallbacks
+  // below are literals in it, a checked-in test of the smite path carries live
+  // values, and the observed numbers this scan now publishes on the abuse board
+  // bound the thresholds from above over a few runs. Treat them as operationally
+  // convenient to retune, not as hidden. Defaults below are a first-boot
+  // fallback; once ops seeds the config, those take precedence.
   // Every value is coerced to a finite number before being interpolated into
   // the ClickHouse query because `formatSqlType` passes strings through
   // unquoted — a non-numeric value sneaking into the config blob would
@@ -524,20 +548,13 @@ export async function runAbuseDetectionScan() {
   const smiteDominantPct = asFinite(det.smiteDominantPct, 100);
   const smiteMaxUniqueRatings = asFinite(det.smiteMaxUniqueRatings, 1);
 
-  const suspects = await clickhouse.$query<{
-    userId: number;
-    totalRatings: number;
-    uniqueRatings: number;
-    dominantRating: number;
-    dominantPct: number;
-    avgPerMinute: number;
-  }>`
+  const suspects = await clickhouse.$query<AbuseSuspect>`
       WITH user_dominant AS (
         SELECT
           userId,
           topK(1)(rating)[1] as dominantRating
         FROM knights_new_order_image_rating FINAL
-        WHERE createdAt >= now() - INTERVAL 24 HOUR
+        WHERE createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
           AND rank != 'Acolyte'
         GROUP BY userId
       )
@@ -550,7 +567,7 @@ export async function runAbuseDetectionScan() {
         count() / greatest(uniq(toStartOfMinute(r.createdAt)), 1) as avgPerMinute
       FROM knights_new_order_image_rating r FINAL
       JOIN user_dominant d ON r.userId = d.userId
-      WHERE r.createdAt >= now() - INTERVAL 24 HOUR
+      WHERE r.createdAt >= now() - INTERVAL ${ABUSE_SCAN_WINDOW_HOURS} HOUR
         AND r.rank != 'Acolyte'
       GROUP BY r.userId, d.dominantRating
       HAVING totalRatings >= ${minTotalRatings}
@@ -559,55 +576,30 @@ export async function runAbuseDetectionScan() {
       LIMIT 50
     `;
 
+  // The accounts this run wrote a smite ROW for — MEMBERSHIP, not selection, and keyed on the
+  // durable write rather than on the smite call returning. The loop below swallows a per-player
+  // failure and carries on; a target whose row was never written is still an open case and must not
+  // be filed on the board as one that was dealt with, and a target whose row WAS written must not be
+  // filed as open just because the non-durable tail of `smitePlayer` threw after it.
+  const smitedUserIds = new Set<number>();
+
   if (suspects.length > 0) {
     log(`AbuseDetection :: Found ${suspects.length} suspicious users`);
     await logToAxiom({
       type: 'warning',
       name: 'new-order-abuse-detection-scan',
+      // AGGREGATE ONLY. This used to carry a per-account array, which neither precedent does — both
+      // `reaction-withdrawal-detection` and `bot-account-detection` log run-level counts beside their
+      // board post and nothing else. The per-account detail now has a better home: the board renders
+      // all six columns per finding, plus attribution and reviewed-state, which a log line cannot.
+      // Keeping a second copy here duplicated the sensitive half of the payload into a surface with
+      // different retention and no review workflow, to say something the board already says better.
       details: {
         suspectCount: suspects.length,
-        suspects: suspects.map((s) => ({
-          userId: s.userId,
-          totalRatings: s.totalRatings,
-          uniqueRatings: s.uniqueRatings,
-          dominantRating: s.dominantRating,
-          dominantPct: Math.round(s.dominantPct),
-          avgPerMinute: Math.round(s.avgPerMinute * 10) / 10,
-        })),
+        ratings: suspects.reduce((sum, s) => sum + s.totalRatings, 0),
       },
-      message: `Abuse detection scan found ${suspects.length} suspicious users in the last 24 hours`,
+      message: `Abuse detection scan found ${suspects.length} suspicious users in the last ${ABUSE_SCAN_WINDOW_HOURS} hours`,
     }).catch(() => null);
-
-    // Alert moderators via Discord webhook
-    if (env.DISCORD_WEBHOOK_MOD_ALERTS) {
-      const suspectLines = suspects
-        .slice(0, 10) // Cap at 10 to keep the embed manageable
-        .map(
-          (s) =>
-            `• **User ${s.userId}** — ${s.totalRatings} votes, ${s.uniqueRatings} unique rating(s), ` +
-            `${Math.round(s.dominantPct)}% same value, ${(
-              Math.round(s.avgPerMinute * 10) / 10
-            ).toFixed(1)}/min`
-        )
-        .join('\n');
-
-      await fetch(env.DISCORD_WEBHOOK_MOD_ALERTS, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          embeds: [
-            {
-              title: `⚠️ KoN Abuse Detection (24h) — ${suspects.length} suspect(s)`,
-              description:
-                suspectLines +
-                (suspects.length > 10 ? `\n... and ${suspects.length - 10} more` : ''),
-              color: 0xff9800,
-              timestamp: new Date().toISOString(),
-            },
-          ],
-        }),
-      }).catch(() => null);
-    }
 
     // Auto-smite branch: gated by Redis config flag (off by default). Smite
     // filter applies the tighter `smite*` thresholds against the broader
@@ -636,6 +628,20 @@ export async function runAbuseDetectionScan() {
             modId: constants.system.user.id,
             reason,
             size: newOrderConfig.smiteSize * 50,
+            // 🔴 MEMBERSHIP IS RECORDED FROM THE DURABLE WRITE, NOT FROM THE CALL RETURNING.
+            //
+            // `smitePlayer` commits the smite row FIRST and then does a pile of non-durable work —
+            // an active-smite count, a possible career reset, a Redis counter increment, a signal,
+            // a notification. A throw anywhere in that tail leaves the penalty live in Postgres.
+            // Recording membership after the `await` would then omit an account that IS smited, and
+            // the board would file it as an open case with "No action was taken by this scan" on a
+            // player who had just been penalised — inviting a moderator to apply a second one.
+            //
+            // The hook fires the instant the row is committed, so the set means exactly "a smite
+            // row exists for this account because of this run". See `smitePlayer`'s own comment.
+            onSmiteCreated: () => {
+              smitedUserIds.add(s.userId);
+            },
           });
           await logToAxiom({
             type: 'warning',
@@ -644,19 +650,95 @@ export async function runAbuseDetectionScan() {
             message: `Auto-smite issued for player ${s.userId}`,
           }).catch(() => null);
         } catch (e) {
-          handleLogError(e as Error, `auto-smite failed for player ${s.userId}`);
+          // 🔴 A STABLE KEY, WITH THE ID IN THE DETAILS. `handleLogError`'s second argument becomes
+          // the Axiom `name`: an alert can match a key and cannot match a sentence, and an
+          // interpolated player id makes every failure its own unbounded, unmatchable name. Same
+          // rule, same spelling as `new-order-abuse-detection:report-failed` below.
+          //
+          // `smited` records whether the penalty landed anyway — the row can be written and the
+          // call still throw, and those two failures want different responses.
+          handleLogError(e as Error, 'new-order-abuse-detection:auto-smite-failed', {
+            playerId: s.userId,
+            smited: smitedUserIds.has(s.userId),
+          });
         }
       }
     }
   } else {
     log('AbuseDetection :: No suspicious users found');
   }
+
+  // Filed even with no suspects: a run row with zero findings is how the board says "this detector
+  // ran and found nothing", which is a different and necessary claim from the detector having gone
+  // quiet — and the counters carry the population it looked at either way.
+  //
+  // 🔴 RETHROWN WHEN THERE IS NOTHING TO PROTECT, SWALLOWED ONLY WHEN THERE IS.
+  //
+  // This report is the detector's only durable output. On a run that smited nobody — which is the
+  // overwhelming majority of runs, because enforcement here is rare — swallowing a failure means the
+  // run produced NOTHING and still reported success: the job's error counter stays flat, every
+  // success signal is unchanged, and the detector is dark with nothing anywhere to say so. That is
+  // the failure mode this branch exists to make visible, and the unconditional catch it replaces was
+  // paying it on nearly every run to cover a case that nearly never occurs.
+  //
+  // The swallow survives for the one genuinely awkward shape: smites are already written to the
+  // database, so failing the run asks for a retry of work whose enforcement half already happened.
+  // ⚠️ Whether a failed run is retried AT ALL could not be established — the scheduler that calls
+  // `/api/webhooks/run-jobs` lives outside this repo, and the route itself has no retry logic; it
+  // returns 500 and stops. So this branch is a precaution against a retry we have not confirmed
+  // exists, not a response to a measured one. If someone establishes the scheduler does not retry a
+  // 500, the right move is to delete the split and rethrow unconditionally.
+  //
+  // The log key is stable and opaque, in the precedents' style (`bot-account-detection:report-failed`)
+  // rather than the free-text sentence this used to pass: an alert can match a key and cannot match
+  // a sentence.
+  try {
+    await moderatorApp.abuseReport(
+      buildAbuseReport({ suspects, smitedUserIds, startedAt, finishedAt: new Date() })
+    );
+    log(
+      `AbuseDetection :: Filed ${suspects.length} finding(s) on the abuse board ` +
+        `(${smitedUserIds.size} auto-smited)`
+    );
+  } catch (e) {
+    if (smitedUserIds.size === 0) throw e;
+    handleLogError(e as Error, 'new-order-abuse-detection:report-failed', {
+      smited: smitedUserIds.size,
+      suspects: suspects.length,
+    });
+  }
 }
 
 const newOrderAbuseDetection = createJob(
   'new-order-abuse-detection',
   '0 23 * * *',
-  runAbuseDetectionScan
+  runAbuseDetectionScan,
+  // ⚠️ A WIDENING, NOT AN INTRODUCTION. `createJob` already defaults every job to a 5-minute
+  // `lockExpiration` (see `job.ts`), so this job was never unlocked — an earlier version of this
+  // comment and of the PR description both said it was, and that was wrong.
+  //
+  // Why 10 rather than the inherited 5: it matches the sibling detector that writes the same board,
+  // `reaction-withdrawal-detection`, and nothing more. NO measurement supports either number — this
+  // scan has never been observed running past 5 minutes, so the widening is precautionary and its
+  // size is borrowed, not derived. If a run ever does exceed the lock, the fix is to measure the run
+  // and size it from that, not to widen again by analogy.
+  //
+  // What the lock is worth, which is the part that IS established: the run-jobs route caps the hold
+  // at exactly this value and then releases it while the run continues, so past that point a retry
+  // can start a second concurrent run.
+  //
+  // 🔴 AND THE WORST CASE OF THAT IS DOUBLE ENFORCEMENT, NOT A DUPLICATED PAGE. An earlier version of
+  // this comment said a second run only means "a moderator sees the same cohort twice"; that is the
+  // cosmetic half and it understated the rest. `smitePlayer` is NOT idempotent — every call INSERTS
+  // another smite row, so a concurrent run smites the same cohort a second time, and on the account
+  // that the second row carries to the third-strike rule `smitePlayer` chains into `resetPlayer`,
+  // which wipes that player's New Order career and notifies them. That is an irreversible penalty
+  // applied because a lock expired, and nothing downstream de-duplicates it.
+  //
+  // The cosmetic half is real too: each run files its own board report, the receiving table's
+  // idempotency key is `(detector, started_at)`, and two different start instants APPEND a
+  // near-identical run rather than replacing the first.
+  { lockExpiration: 10 * 60 }
 );
 
 export const newOrderJobs = [

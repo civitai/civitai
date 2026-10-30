@@ -28,6 +28,11 @@ function sendView(input: AddViewSchema) {
   });
 }
 
+/**
+ * `delayMs` is the intent filter. Lower it where the component is already gated behind a slow
+ * query, which filters bounces on its own — but never to 0, because that gate only covers the
+ * first render, not a later entityId change within the same mount.
+ */
 export function TrackView({
   type,
   entityType,
@@ -35,7 +40,8 @@ export function TrackView({
   details,
   nsfw: nsfwOverride,
   nsfwLevel,
-}: AddViewSchema) {
+  delayMs = 1000,
+}: AddViewSchema & { delayMs?: number }) {
   const observedEntityId = useRef<number | null>(null);
   const { adsEnabled, adsBlocked, useDirectAds } = useAdsContext();
 
@@ -58,11 +64,11 @@ export function TrackView({
           nsfwLevel,
         });
       }
-    }, 1000);
+    }, delayMs);
     return () => {
       clearTimeout(timeout);
     };
-  }, [entityId, type, entityType, details]);
+  }, [entityId, type, entityType, details, delayMs]);
 
   return null;
 }

@@ -1,4 +1,4 @@
-import { purgeCache } from '~/server/cloudflare/client';
+import { bustUserCreator } from '~/server/services/user-creator.service';
 import { throwAuthorizationError, throwDbError } from '~/server/utils/errorHandling';
 import {
   getUserContentOverview,
@@ -13,6 +13,7 @@ import type {
   UserProfileUpdateSchema,
 } from '~/server/schema/user-profile.schema';
 import type { Context, ProtectedContext } from '~/server/createContext';
+import { eventViewerOf } from '~/server/events/event-viewer';
 import { TRPCError } from '@trpc/server';
 import { entityExists } from '~/server/services/util.service';
 import { constants } from '~/server/common/constants';
@@ -54,6 +55,7 @@ export const getUserProfileHandler = async ({
       username: input.username,
       isModerator: ctx.user?.isModerator,
       sessionUserId: ctx.user?.id,
+      eventViewer: eventViewerOf(ctx),
       domain: ctx.domain,
     });
 
@@ -121,10 +123,12 @@ export const updateUserProfileHandler = async ({
     const user = await updateUserProfile({
       ...input,
       userId,
+      isModerator: sessionUser.isModerator,
+      sessionUserId: sessionUser.id,
       domain: ctx.domain,
     });
 
-    purgeCache({ tags: [`user-creator-${userId}`] }).catch();
+    await bustUserCreator(userId);
 
     return user;
   } catch (error) {
@@ -140,10 +144,6 @@ export const addEntityToShowcaseHandler = async ({
   ctx: ProtectedContext;
 }) => {
   try {
-    if (input.entityType !== 'Model' && input.entityType !== 'Image') {
-      throw new Error('Invalid entity type. Only models and images are supported right now');
-    }
-
     await entityExists({
       entityType: input.entityType,
       entityId: input.entityId,
@@ -167,10 +167,12 @@ export const addEntityToShowcaseHandler = async ({
 
     const result = await updateUserProfile({
       userId: ctx.user.id,
+      isModerator: ctx.user.isModerator,
+      sessionUserId: ctx.user.id,
       showcaseItems: updatedShowcaseItems,
     });
 
-    purgeCache({ tags: [`user-creator-${ctx.user.id}`] }).catch();
+    await bustUserCreator(ctx.user.id);
 
     return result;
   } catch (error) {

@@ -25,7 +25,9 @@
 		"data-slot": "sidebar-menu-sub-button",
 		"data-sidebar": "menu-sub-button",
 		"data-size": size,
-		"data-active": isActive,
+		// Only present when active — the `data-active:` variant matches attribute PRESENCE, so a stringified
+		// `data-active="false"` would wrongly highlight every item (same fix as SidebarMenuButton).
+		"data-active": isActive || undefined,
 		...restProps,
 	});
 </script>

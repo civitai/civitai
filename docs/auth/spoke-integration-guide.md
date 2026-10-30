@@ -16,9 +16,12 @@ a re-derivation each time.
 
 - **The hub is the sole authority.** It is the only minter of session tokens (`civ-token`, thin ES256) and the
   sole producer of rich `SessionUser` data. Spokes never mint and never compute a user from the DB.
-- **A spoke owns its own cookie.** A spoke on a different registrable domain (`civitai.red`) can't read the
-  hub's `.civitai.com` cookie, so each spoke runs the OAuth authorization-code + PKCE flow against the hub and
-  sets **its own** `civ-token` cookie on its own domain. Same family domain or cross-site — identical flow.
+- **A spoke owns its own cookie — but only across registrable domains.** A spoke on a different registrable
+  domain (`civitai.red`) can't read the hub's `.civitai.com` cookie, so it runs the OAuth authorization-code
+  + PKCE flow and sets **its own** `civ-token` on its own domain. A spoke inside `*.civitai.com` — including
+  the main app — writes the **same cookie slot** the hub does (same name, `Domain=civitai.com` vs
+  `.civitai.com`, which RFC 6265 treats as one). The bridge is identical code; the cookie is not a separate
+  session. Anything that re-points that slot re-points civitai.com.
 - **Two trust tiers of client.** The hub treats *first-party* (trusted) spokes specially: they skip the consent
   screen and are the only clients allowed to exchange a code for a **session** (not just an API token). A host
   becomes first-party by being in the hub's `TrustedSpokeDomain` registry (see §6).
@@ -72,7 +75,7 @@ These live on the spoke's own origin. Paths are a hard contract where noted (the
 ### Group A — Login bridge (T1)
 | Endpoint | Method | Purpose | Calls on hub |
 |---|---|---|---|
-| `/api/auth/authorize` | GET | Initiate. Generate PKCE verifier + `state`, stash them + `returnUrl` in a short-lived httpOnly bridge cookie, 302 to the hub authorize URL with this spoke's `client_id` + exact `redirect_uri`. | redirect → `GET /api/auth/oauth/authorize` |
+| `/api/auth/authorize` | GET | Initiate. Generate PKCE verifier + `state`, stash them + `returnUrl` in a short-lived httpOnly bridge cookie, 302 to the hub authorize URL with this spoke's `client_id` + exact `redirect_uri`. **Path is fixed** (`SPOKE_AUTHORIZE_PATH`) — the hub matches on this exact string to recognise a cross-domain login hand-off; a spoke that mounts it elsewhere silently loses the hand-off. | redirect → `GET /api/auth/oauth/authorize` |
 | `/api/auth/callback` | GET | Receive `?code&state`. Verify `state` vs the bridge cookie, exchange the code **server-to-server**, set the `civ-token` cookie, continue to `returnUrl`. **Path is fixed** (`SPOKE_CALLBACK_PATH`). | `POST /api/auth/oauth/session` |
 
 ### Group B — Session read (T0)
@@ -144,7 +147,7 @@ Server-to-server unless marked *(browser redirect)*. All resolved off `AUTH_JWT_
 
 | Hub endpoint | Auth | Used by | Purpose |
 |---|---|---|---|
-| `GET /api/auth/oauth/authorize` *(browser redirect)* | user session (hub cookie) | `/api/auth/authorize` | OAuth authorize; first-party skips consent |
+| `GET /api/auth/oauth/authorize` *(browser redirect)* | user session (hub cookie), **or** a single-use `civ-pending` record when the login withheld the hub cookie — record wins, and fails closed | `/api/auth/authorize` | OAuth authorize; first-party skips consent |
 | `POST /api/auth/oauth/session` | code + PKCE verifier + client_id | `/api/auth/callback` | First-party code → **civ-token session** |
 | `GET /api/auth/identity` | Bearer = session token | `getSessionUser` (miss) | Fetch rich `SessionUser` |
 | `POST /api/auth/identity` | Bearer = `AUTH_INTERNAL_TOKEN` | `invalidate`/`refresh` | Bust/re-produce cache for any user |
@@ -157,7 +160,8 @@ Server-to-server unless marked *(browser redirect)*. All resolved off `AUTH_JWT_
 
 Package clients that wrap these: `createSessionClient` (identity read + invalidate), `createSessionTokenClient`
 (refresh + revoke), `createDeviceAccountClient` (accounts + switch), `createImpersonationClient`
-(impersonate/exit), and the first-party helpers (`firstPartyClientId`, `SPOKE_CALLBACK_PATH`) +
+(impersonate/exit), and the first-party helpers (`firstPartyClientId`, `SPOKE_CALLBACK_PATH`,
+`SPOKE_AUTHORIZE_PATH`) +
 `buildPostLoginRedirect` / `isCivitaiOrigin` for the redirect contract.
 
 ---
@@ -214,12 +218,36 @@ actually-served hosts) and the hub's CORS allowlist (`AUTH_CORS_ORIGINS`, env) r
 The framework-agnostic core now covers **both** the session-read side and the login bridge, so a spoke is thin
 per-framework wiring over the package:
 
-- **Session gate (read side):** `createSpokeGuard({ require?, isRevoked?, loginPath? })` — cookie header →
-  `{ status: 'ok' | 'login' | 'forbidden' }`. Resolves the rich user (so `require: u => u.isModerator` works)
-  and builds the hub login redirect. The Next adapter is `apps/moderator/proxy.ts`; the SvelteKit adapter is a
-  `handle` hook. **NOTE:** `createSpokeGuard` omits revocation by default (signature-only) — fine for a
-  redis-less POC, but a production spoke should pass `isRevoked` (the shared sysRedis `TOKEN_STATE` check, as
-  the main app does) so a banned/logged-out token is rejected before its TTL.
+- **Session gate (read side):** `createSpokeGuard({ isRevoked, require?, loginPath? })` — cookie header →
+  `{ status: 'ok' | 'login' | 'reauth' | 'forbidden' }`. Resolves the rich user (so
+  `require: u => u.isModerator` works) and builds the sign-in redirect. `isRevoked` is required (it throws
+  without it): build it with `createRevocationCheck` over the shared sys redis, so a sign-out, ban or
+  force-logout written anywhere ends the session here too. The check allows the request when the store can't
+  be reached, so pass `onError` and log it. The SvelteKit adapter is a `handle` hook; the reference wiring is
+  `apps/moderator/src/lib/server/auth.ts`:
+
+  ```ts
+  import { createRevocationCheck, createSpokeGuard, type SessionRegistryRedis } from '@civitai/auth';
+  import { logToAxiom, safeError } from './axiom'; // the app's Axiom logger
+  import { getSysRedis } from './redis';
+
+  // A sign-out, ban or force-logout written anywhere ends the session here. When the store can't be reached the
+  // check allows the request, so log each time it does.
+  export const isRevoked = createRevocationCheck({
+    redis: () => getSysRedis() as unknown as SessionRegistryRedis,
+    onError: (err) => {
+      logToAxiom({
+        ...safeError(err),
+        name: 'sysredis-fail-open',
+        type: 'warning',
+        subtype: 'read-degraded',
+        fn: 'spoke isRevoked',
+      }).catch(() => undefined);
+    },
+  });
+
+  export const guard = createSpokeGuard({ require: (u) => u.isModerator === true, isRevoked });
+  ```
 - **Login bridge (cross-domain):** `buildAuthorizeRedirect({ selfOrigin, returnUrl })` → `{ location, setCookie }`
   and `completeFirstPartyCallback({ selfOrigin, query, bridgeCookieValue })` → `{ token, returnUrl } | { error }`
   (+ `generatePkce`, `randomState`, `safePath`, `clearBridgeCookie`, `OAUTH_BRIDGE_COOKIE`). The main app's

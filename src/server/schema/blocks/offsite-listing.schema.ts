@@ -2,10 +2,14 @@ import * as z from 'zod';
 
 import {
   MAX_EXTERNAL_URL_LENGTH,
+  MAX_REPOSITORY_URL_LENGTH,
   assertNoOnPlatformSurface,
   validateExternalUrl,
+  validateRepositoryUrl,
 } from '~/server/schema/blocks/external-app.schema';
 import { SLUG_REGEX } from '~/server/schema/blocks/publish-request.schema';
+import { APP_LISTING_VISIBILITIES } from '~/shared/utils/app-listing-visibility';
+import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
 import {
   OFFSITE_MOD_REASON_MAX,
   OFFSITE_MOD_REASON_MIN,
@@ -48,6 +52,24 @@ export const OFFSITE_NAME_MAX = 120;
 export const OFFSITE_TAGLINE_MAX = 140;
 export const OFFSITE_DESCRIPTION_MAX = 2000;
 export const OFFSITE_CHANGELOG_MAX = 2000;
+
+/**
+ * Upper bound on the author-supplied BETA NOTE (`AppListing.betaMessage`).
+ *
+ * 🔴 IT LIVES HERE, beside `OFFSITE_TAGLINE_MAX`, AND NOT IN `app-listing-beta.service` —
+ * that module imports `TRPCError` from `@trpc/server`, and this schema file is reachable
+ * from the browser bundle (`offsiteEditConfig` imports `UpdateListingPatch` from it). One
+ * exported number read by the zod bound below, the form's `maxLength`, the client mirror
+ * validator and the tests, with no server-only module dragged along.
+ *
+ * 🔴 THE BOUND IS THE DETERMINISTIC HALF OF THIS FIELD'S SAFETY POSTURE. `betaMessage` is
+ * author-controlled public copy that NO moderator reviews before it goes live (beta is a
+ * TRIVIAL patch field). An input's `maxLength` attribute is a UI courtesy that any direct
+ * API or CLI caller ignores; this is enforced at the request boundary. Sized for one short
+ * sentence — long enough to be useful, short enough that it cannot become an unreviewed
+ * essay on a public store page.
+ */
+export const BETA_MESSAGE_MAX = 200;
 
 /** Mod-review note bounds (mirror the on-site approve/reject shapes). */
 export const OFFSITE_APPROVAL_NOTES_MAX = 2000;
@@ -106,7 +128,7 @@ export const submitExternalListingSchema = z
     // so bounding at Full could reject a valid subset. The per-client subset check still
     // lives in the service (it needs the client's `allowedScopes`).
     // OPTIONAL + IGNORED by the service. The listing's requested scopes are
-    // AUTO-DERIVED server-side from the client's CURRENT `allowedScopes` at submit
+    // AUTO-DERIVED server-side from the client's CURRENT consentable scopes at submit
     // time (server-authoritative snapshot — a form-supplied mask is never trusted).
     // Still bounded here (int/nonnegative/≤ALL_SCOPES) so a provided value can't
     // overflow int4, but the stored value comes from the client, not this field.
@@ -117,6 +139,12 @@ export const submitExternalListingSchema = z
     // OPTIONAL homepage / Visit link. Validated for the https-only shape only when present.
     externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH).optional(),
     tagline: z.string().max(OFFSITE_TAGLINE_MAX).optional(),
+    // OPTIONAL public SOURCE-REPOSITORY link ("this app is open source"). Bound loose
+    // here (length only) and validated for the https / host-allowlist / repo-root shape
+    // by the shared `validateRepositoryUrl` in the superRefine below — the SAME function
+    // the on-site manifest path uses, so the two store kinds cannot disagree about what
+    // a valid source link is. Omitted ⇒ no Source row on the detail page.
+    sourceRepoUrl: z.string().min(1).max(MAX_REPOSITORY_URL_LENGTH).optional(),
     description: z.string().max(OFFSITE_DESCRIPTION_MAX).optional(),
     // Validated against the shared taxonomy const so adding a category needs no
     // schema change (mirrors the read-path `listAppListingsSchema.category`).
@@ -137,6 +165,13 @@ export const submitExternalListingSchema = z
       const url = validateExternalUrl(val.externalUrl);
       if (!url.ok) {
         ctx.addIssue({ code: 'custom', message: url.error, path: ['externalUrl'] });
+      }
+    }
+    // sourceRepoUrl is OPTIONAL — validate the repo-root shape only when provided.
+    if (val.sourceRepoUrl != null) {
+      const repo = validateRepositoryUrl(val.sourceRepoUrl);
+      if (!repo.ok) {
+        ctx.addIssue({ code: 'custom', message: repo.error, path: ['sourceRepoUrl'] });
       }
     }
     const surface = assertNoOnPlatformSurface({
@@ -177,9 +212,46 @@ export const updateListingPatchSchema = z
     externalUrl: z.string().min(1).max(MAX_EXTERNAL_URL_LENGTH).optional(),
     name: z.string().min(1).max(OFFSITE_NAME_MAX).optional(),
     tagline: z.string().max(OFFSITE_TAGLINE_MAX).nullable().optional(),
+    // Public source-repository link. NULLABLE-optional, following this schema's
+    // established convention: OMITTED leaves it untouched, an explicit `null` CLEARS
+    // it. Re-validated (and normalised) by `buildListingPatchData` in the service —
+    // this bound is only a coarse request-size guard, exactly as for `externalUrl`.
+    //
+    // 🔴 A CHANGE TO THIS FIELD IS MATERIAL (see MATERIAL_PATCH_FIELDS): on an approved
+    // listing it routes through a shadow revision and re-enters moderator review,
+    // because it is an outbound link on a public store page.
+    sourceRepoUrl: z.string().min(1).max(MAX_REPOSITORY_URL_LENGTH).nullable().optional(),
     description: z.string().max(OFFSITE_DESCRIPTION_MAX).nullable().optional(),
     category: z.enum(MARKETPLACE_CATEGORIES).nullable().optional(),
     contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),
+    /**
+     * AUTHOR-DECLARED beta status + an optional short note.
+     *
+     * 🔴 TRIVIAL, NOT MATERIAL, and deliberately so. These keys are ABSENT from
+     * `MATERIAL_LISTING_PATCH_FIELDS`, so an edit applies IN PLACE with no moderator
+     * re-review — the same posture `tagline` / `description` / `category` already have. A
+     * beta label is a statement an author makes about their own app's maturity; routing it
+     * through a review queue would mean an app cannot say "we're still working on this"
+     * until a human agrees, which is the wrong shape for the fact being stated.
+     *
+     * 🔴 `betaMessage` IS UNREVIEWED PUBLIC COPY, so the mitigations here are the
+     * deterministic ones: a bounded length (`BETA_MESSAGE_MAX`, enforced at THIS boundary
+     * rather than only by the input's `maxLength`) and plain-text rendering downstream (the
+     * DTO field's docstring on `ListingDetail.betaMessage` states that and why). Nullable-
+     * optional following this schema's convention: OMITTED leaves it untouched, an explicit
+     * `null` CLEARS it.
+     */
+    isBeta: z.boolean().optional(),
+    betaMessage: z.string().max(BETA_MESSAGE_MAX).nullable().optional(),
+    /**
+     * AUTHOR OPT-IN: "Let others fork this app's source" (on-site listings only).
+     *
+     * 🔴 TRIVIAL, NOT MATERIAL — absent from `MATERIAL_LISTING_PATCH_FIELDS`, so it applies IN
+     * PLACE with no moderator review, like `isBeta`. It grants nothing a moderator approved: a
+     * fork is a separate app that passes its own publish review. Written to the LIVE listing
+     * only, never staged on a shadow revision (`updateRevisionDraft` refuses it).
+     */
+    forkable: z.boolean().optional(),
     // OAuth-connect scope disclosure edit (connect sub-kind only). The two travel
     // as a pair: the SERVICE re-runs the subset-of-ceiling + justification checks
     // (needs the listing's client `allowedScopes`) and rejects justifications
@@ -203,6 +275,30 @@ export const updateListingSchema = z.object({
 export type UpdateListingInput = z.infer<typeof updateListingSchema>;
 
 /**
+ * Set a listing's per-listing VISIBILITY LEVEL. ONE schema for BOTH the owner proc and the
+ * moderator proc, so the two cannot drift about what a level is.
+ *
+ * 🔴 `visibility` IS NOT A KEY OF `updateListingPatchSchema`, AND THAT IS THE DECISION, NOT
+ * AN OVERSIGHT. Routing it through the patch would force it into or out of
+ * `MATERIAL_LISTING_PATCH_FIELDS`, and BOTH answers are wrong. Material would stage a
+ * `public -> private` flip on a shadow revision and leave the listing publicly visible
+ * until a moderator approved the hiding — backwards — and would refuse the change outright
+ * on an owner-unpublished listing. Non-material would put an audience control in the same
+ * in-place bucket as `tagline`, with no moderator path and no audit row. Its own mutation
+ * gets both.
+ *
+ * 🔴 `z.enum` OVER THE RUNTIME TUPLE, never a hand-written list of the four strings. A
+ * second spelling of the value space is how a validator ends up accepting a level the
+ * resolver does not know, which `narrowListingVisibility` would then fail closed to
+ * `private` — i.e. the owner picks `testers`, the write succeeds, and their app goes dark.
+ */
+export const setListingVisibilitySchema = z.object({
+  listingId: z.string().min(1).max(64),
+  visibility: z.enum(APP_LISTING_VISIBILITIES),
+});
+export type SetListingVisibilityInput = z.infer<typeof setListingVisibilitySchema>;
+
+/**
  * AUTHOR: begin (or re-open) a shadow-draft revision of an APPROVED listing so
  * its MATERIAL fields / assets can be edited while the current version stays
  * live. Idempotent in the service (re-opening returns the existing shadow).
@@ -214,16 +310,23 @@ export type BeginListingRevisionInput = z.infer<typeof beginListingRevisionSchem
 
 /**
  * OWNER: resolve the caller's OWN listing by its backing `appBlockId`
- * (`AppListing.appBlockId` is `@unique`) — the entry read for the owner-facing
- * on-site listing-media page. Returns the `AppListing.id` (the target for
- * `beginListingRevision` + the asset procs). Owner-bound in the service
- * (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing row exists for the app).
+ * (`AppListing.appBlockId` is `@unique`) or by its public `slug`
+ * (`AppListing.slug` is `@unique` across BOTH kinds) — the entry read for the
+ * owner-facing listing-media page and for non-web clients. Returns the
+ * `AppListing.id` (the target for `beginListingRevision` + the asset procs).
+ * Owner-bound in the service (NOT_OWNED→FORBIDDEN, NOT_FOUND when no listing
+ * row exists for the app).
  */
 export const getMyListingForAppSchema = z
   .object({
     appBlockId: z.string().min(1).max(64).optional(),
-    // W13 draft-at-submit: a FIRST-version app has no AppBlock yet, so the
-    // owner-media page resolves its pre-approval draft BY SLUG while pending.
+    // The slug arm resolves ANY top-level listing (civitai/civitai#3984): the W13
+    // pre-approval draft of a FIRST-version on-site app (no AppBlock yet), and an
+    // OFF-SITE listing, which in practice carries no AppBlock to be keyed by (0 rows
+    // of the `kind:'offsite'` + non-null `appBlockId` shape in production, measured
+    // 2026-08-11 — empirical, not structural; `appBlockId` is NOT a kind
+    // discriminator, see schema.full.prisma). `appBlockId` takes precedence when
+    // both are supplied.
     slug: z.string().min(1).max(64).optional(),
   })
   .refine((v) => v.appBlockId != null || v.slug != null, {
@@ -279,6 +382,7 @@ export const approveExternalRequestSchema = z.object({
   // nsfwLevel; when provided the service FLOORS it at the derived value (never
   // publishes mature assets under a too-low rating). See `approveExternalRequest`.
   contentRating: z.enum(OFFSITE_CONTENT_RATINGS).optional(),
+  mediaSplit: z.enum(LISTING_MEDIA_SPLIT_DECISIONS).optional(),
 });
 export type ApproveExternalRequestInput = z.infer<typeof approveExternalRequestSchema>;
 

@@ -5,6 +5,7 @@ import {
   OG_IMAGE_MAX_BYTES,
   OG_IMAGE_FETCH_TIMEOUT_MS,
 } from '../og-image-helpers';
+import sharp from 'sharp';
 import { MediaType } from '~/shared/utils/prisma/enums';
 
 /**
@@ -26,11 +27,18 @@ function makeResponse(opts: {
   contentLength?: string | null;
   body?: Uint8Array;
 }): Response {
-  const { ok = true, contentType = 'image/png', contentLength = null, body = new Uint8Array([1, 2, 3]) } = opts;
+  const {
+    ok = true,
+    contentType = 'image/png',
+    contentLength = null,
+    body = new Uint8Array([1, 2, 3]),
+  } = opts;
   const headers = new Map<string, string>();
   if (contentType != null) headers.set('content-type', contentType);
   if (contentLength != null) headers.set('content-length', contentLength);
-  const arrayBuffer = vi.fn(async () => body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength));
+  const arrayBuffer = vi.fn(async () =>
+    body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength)
+  );
   return {
     ok,
     status: opts.status ?? (ok ? 200 : 500),
@@ -51,12 +59,44 @@ describe('fetchImageAsDataUri', () => {
     const bytes = new Uint8Array([0xde, 0xad, 0xbe, 0xef]);
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => makeResponse({ contentType: 'image/webp', body: bytes }))
+      vi.fn(async () => makeResponse({ contentType: 'image/gif', body: bytes }))
     );
 
-    const result = await fetchImageAsDataUri('https://edge.example/cover.webp');
+    const result = await fetchImageAsDataUri('https://edge.example/cover.gif');
     const expectedB64 = Buffer.from(bytes).toString('base64');
-    expect(result).toBe(`data:image/webp;base64,${expectedB64}`);
+    expect(result).toBe(`data:image/gif;base64,${expectedB64}`);
+  });
+
+  // satori throws on a WebP, and an optimized edge variant (a WebP) is the only resized badge that
+  // keeps its transparency: a plain resize is a JPEG, which drew tier badges on a black square.
+  it('re-encodes a WebP as a PNG that keeps its transparency', async () => {
+    const webp = await sharp({
+      create: { width: 4, height: 4, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 0 } },
+    })
+      .webp({ lossless: true })
+      .toBuffer();
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => makeResponse({ contentType: 'image/webp', body: new Uint8Array(webp) }))
+    );
+
+    const result = await fetchImageAsDataUri('https://edge.example/badge.webp');
+    expect(result?.slice(0, result.indexOf(','))).toBe('data:image/png;base64');
+    const png = Buffer.from(result!.slice(result!.indexOf(',') + 1), 'base64');
+    const { format, hasAlpha } = await sharp(png).metadata();
+    expect({ format, hasAlpha }).toEqual({ format: 'png', hasAlpha: true });
+    const [, , , alpha] = (await sharp(png).raw().toBuffer()).subarray(0, 4);
+    expect(alpha).toBe(0);
+  });
+
+  it('returns null when a WebP body cannot be decoded', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        makeResponse({ contentType: 'image/webp', body: new Uint8Array([1, 2, 3]) })
+      )
+    );
+    expect(await fetchImageAsDataUri('https://edge.example/broken.webp')).toBeNull();
   });
 
   it('strips content-type params and defaults to image/jpeg when absent', async () => {
@@ -68,12 +108,18 @@ describe('fetchImageAsDataUri', () => {
     expect(await fetchImageAsDataUri('https://x/y.png')).toMatch(/^data:image\/png;base64,/);
 
     // absent → fallback
-    vi.stubGlobal('fetch', vi.fn(async () => makeResponse({ contentType: null })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => makeResponse({ contentType: null }))
+    );
     expect(await fetchImageAsDataUri('https://x/y')).toMatch(/^data:image\/jpeg;base64,/);
   });
 
   it('returns null on a non-2xx response', async () => {
-    vi.stubGlobal('fetch', vi.fn(async () => makeResponse({ ok: false, status: 404 })));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => makeResponse({ ok: false, status: 404 }))
+    );
     expect(await fetchImageAsDataUri('https://x/missing.png')).toBeNull();
   });
 
@@ -131,14 +177,20 @@ describe('fetchImageAsDataUri', () => {
 
   it('passes the configured timeout to AbortSignal.timeout', async () => {
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
-    vi.stubGlobal('fetch', vi.fn(async () => makeResponse({})));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => makeResponse({}))
+    );
     await fetchImageAsDataUri('https://x/y.png', { timeoutMs: 1234 });
     expect(timeoutSpy).toHaveBeenCalledWith(1234);
   });
 
   it('defaults the timeout to OG_IMAGE_FETCH_TIMEOUT_MS', async () => {
     const timeoutSpy = vi.spyOn(AbortSignal, 'timeout');
-    vi.stubGlobal('fetch', vi.fn(async () => makeResponse({})));
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => makeResponse({}))
+    );
     await fetchImageAsDataUri('https://x/y.png');
     expect(timeoutSpy).toHaveBeenCalledWith(OG_IMAGE_FETCH_TIMEOUT_MS);
   });

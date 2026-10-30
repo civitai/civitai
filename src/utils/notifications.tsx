@@ -17,7 +17,7 @@ export function showErrorNotification({
   autoClose = 3000,
 }: {
   error: Error | { message: string } | { message: string }[];
-  reason?: string;
+  reason?: React.ReactNode;
   title?: string;
   autoClose?: number | false;
 }) {
@@ -77,15 +77,19 @@ export function showWarningNotification({
 }
 
 export function showInfoNotification({
+  id,
   message,
   title,
   autoClose = 3000,
 }: {
+  /** Showing an id that is already on screen is a no-op, so repeats don't stack. */
+  id?: string;
   message: string | React.ReactNode;
   title?: string;
   autoClose?: number | false;
 }) {
   showNotification({
+    id,
     icon: <IconInfoCircle size={18} />,
     color: 'blue',
     message,

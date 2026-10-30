@@ -8,6 +8,8 @@ import { isDefined } from '~/utils/type-guards';
 type DataProps = {
   url: string;
   meta?: Record<string, unknown>;
+  /** The generation this output came from — lets the server verify its provenance. */
+  generationWorkflowId?: string;
 };
 
 export const useOrchestratorUrlStore = create<{
@@ -37,7 +39,7 @@ export const orchestratorMediaTransmitter = {
     const data = useOrchestratorUrlStore.getState().getData(key) ?? [];
     const limit = pLimit(Infinity);
     return await Promise.all(
-      data.map(({ url, meta }) =>
+      data.map(({ url, meta, generationWorkflowId }) =>
         limit(async () => {
           const blob = await fetchBlob(url);
           if (!blob) return;
@@ -53,6 +55,7 @@ export const orchestratorMediaTransmitter = {
           return {
             file: new File([blob], name, { type: blob.type }),
             meta,
+            generationWorkflowId,
           };
         })
       )

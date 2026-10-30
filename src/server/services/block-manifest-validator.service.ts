@@ -1,9 +1,23 @@
+// `manifestWantsOauthToken` is the SAME predicate the two mint paths branch on
+// (`/api/v1/block-tokens` page mint and the dev-tunnel mint), so the gate below and the
+// runtime that would hand this app an opaque OAuth token cannot disagree about what
+// `auth: "oauth"` means. It is read from the SHARED module, not from
+// `~/server/services/blocks/block-oauth-scope` (which re-exports it), to keep this file
+// client-bundle-safe — see the notes on the imports below.
 import {
+  appStorageScopesIn,
   isKnownBlockScope,
+  manifestWantsOauthToken,
   sensitiveScopeJustificationError,
   unjustifiedSensitiveScopes,
   validateBlockScopesAgainstOauthClient,
 } from '~/shared/constants/block-scope.constants';
+import { parseManifestGoods } from '~/shared/constants/block-goods.constants';
+import { parseManifestAnalytics } from '~/shared/constants/block-analytics.constants';
+import {
+  appStorageScopeErrors,
+  parseManifestStorage,
+} from '~/shared/constants/block-storage.constants';
 import { isKnownSlotId, isPageSlot } from '~/shared/constants/slot-registry';
 import {
   MARKETPLACE_CATEGORIES,
@@ -14,6 +28,15 @@ import {
 // imported by `ManifestEditForm.tsx`). `safe-fetch.ts` imports the same helpers,
 // so the manifest validator and the fetch-time guard share ONE source of truth.
 import { isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
+// The manifest `repository` rule. `external-app.schema` is dependency-free (plain TS
+// over the WHATWG `URL`), so importing it keeps this module client-bundle-safe while
+// giving the manifest path and the off-site listing path ONE validator. See the
+// re-export block below MANIFEST_TAGLINE_MAX_LENGTH.
+import {
+  MAX_REPOSITORY_URL_LENGTH,
+  REPOSITORY_HOST_ALLOWLIST,
+  validateRepositoryUrl,
+} from '~/server/schema/blocks/external-app.schema';
 // Single source for the per-scope justification length bound — shared with the
 // OAuth-connect scope-review validator in @civitai/auth so the two can't drift.
 import { SCOPE_JUSTIFICATION_MAX_LENGTH } from '@civitai/auth/token-scope';
@@ -47,6 +70,8 @@ interface RawManifest {
   name?: unknown;
   contentRating?: unknown;
   renderMode?: unknown;
+  /** Credential the host hands the block; absent means `block-token`. */
+  auth?: unknown;
   trustTier?: unknown;
   scopes?: unknown;
   /**
@@ -67,6 +92,21 @@ interface RawManifest {
    * is fine (the store simply shows no tagline).
    */
   tagline?: unknown;
+  /**
+   * OPTIONAL public source-repository link ("this app is open source"), shown as a
+   * `Source` row on the app's `/apps` store DETAIL page. Manifest-governed for the
+   * same reason `tagline` is — an onsite listing has no other author surface — so it
+   * flows to the listing on approve and is re-synced on every subsequent approved
+   * version. When present it must pass {@link validateRepositoryUrl}: https, no
+   * credentials, no port, an exact-host match against
+   * {@link REPOSITORY_HOST_ALLOWLIST}, and a `/<owner>/<repo>` repository-root path.
+   * Absent is fine (the store simply shows no Source row).
+   *
+   * 🔴 NOT `AppBlock.repoUrl`. That column is the app's INTERNAL Forgejo repository
+   * and is platform-owned; this is an author-declared PUBLIC link, and the two must
+   * never be conflated in either direction.
+   */
+  repository?: unknown;
   iframe?: {
     src?: unknown;
     minHeight?: unknown;
@@ -92,6 +132,29 @@ interface RawManifest {
    * exposed.
    */
   publicSettingsKeys?: unknown;
+  /**
+   * Optional DIGITAL GOODS catalog — entitlements the platform sells to a
+   * viewer for Buzz on this app's behalf. Review-gated by construction: it
+   * rides the existing submit → review → approve pipeline, so the catalog a
+   * moderator approved is the only one that can be sold, and a price change
+   * needs a new version. Validated by `parseManifestGoods`, which the purchase
+   * endpoint also calls — a good that cannot be validated can never be bought.
+   */
+  goods?: unknown;
+  /**
+   * Optional CUSTOM EVENTS declaration — `analytics.events` names every event the
+   * app may send and the properties each may carry (`enum` / `number` /
+   * `boolean` only, no free text). Validated by `parseManifestAnalytics`; any
+   * later reader of the declaration must call that parser, not re-implement it.
+   */
+  analytics?: unknown;
+  /**
+   * Optional APP STORAGE declaration — `storage.collections` names every collection the
+   * app stores documents in, with its visibility, write policy, counters, marks and
+   * indexes. Validated by `parseManifestStorage` (and against `scopes` by
+   * `appStorageScopeErrors`); any later reader must call that parser.
+   */
+  storage?: unknown;
   /**
    * Slot targets the app installs into (model-page slots). Each entry's
    * `slotId` MUST be a known registered slot id — previously UN-validated
@@ -144,6 +207,42 @@ interface RawManifest {
 export const ALLOWED_CONTENT_RATINGS = new Set(['g', 'pg', 'pg13', 'r', 'x']);
 export const ALLOWED_RENDER_MODES = new Set(['iframe', 'inline', 'hybrid']);
 export const ALLOWED_TRUST_TIERS = new Set(['unverified', 'verified', 'internal']);
+export type ManifestAuthMode = 'block-token' | 'oauth';
+export const ALLOWED_AUTH_MODES = new Set<ManifestAuthMode>(['block-token', 'oauth']);
+
+/**
+ * The refusal for `auth: "oauth"` + any `apps:storage:*` scope.
+ *
+ * 🔴 THE MESSAGE IS THE FEATURE. Without the guard this combination is a SILENT
+ * catastrophic failure: `/api/v1/block-tokens` mints an opaque OAuth access token for an
+ * `auth: "oauth"` app ONLY when there is a signed-in viewer (`userId != null &&
+ * manifestWantsOauthToken(...)`), so an anonymous viewer still gets a block JWT and every
+ * storage path works — and then each app-storage resolver re-verifies the RAW bearer with
+ * `verifyBlockToken` (which requires a JWS `kid`), so the moment ANYONE signs in every read
+ * and every write 401s. The app looks healthy in exactly the state most authors test first.
+ * A bare "invalid" here would reproduce that problem one layer up, so the text names the
+ * conflicting scopes, the `auth` mode, WHY it fails, both ways out, and that the limitation
+ * is current rather than permanent.
+ *
+ * Built here rather than interpolated at the call site so a test can pin the WHOLE
+ * normalised string: a guard on individual WORDS is walkable by rewording, and this string
+ * is the entire user-visible product of the guard. See
+ * `block-manifest-validator.service.test.ts`.
+ */
+export function oauthAppStorageConflictError(conflictingScopes: readonly string[]): string {
+  const named = conflictingScopes.join(', ');
+  return (
+    `auth "oauth" cannot be combined with app storage: this manifest declares ${named}. ` +
+    `App storage is served to a BLOCK TOKEN only today — an auth "oauth" app is minted an ` +
+    `opaque OAuth access token instead of a block JWT, and the app-storage resolvers ` +
+    `re-verify that bearer as a block JWT, so every storage read and write returns 401 as ` +
+    `soon as a viewer signs in (it appears to work while signed out, because an anonymous ` +
+    `viewer is still minted a block JWT). Fix it either way: set "auth" to "block-token", ` +
+    `or remove ${named} from "scopes". This is a CURRENT limitation, not a permanent one — ` +
+    `teaching the app-storage resolvers to accept the claims the block-scope middleware ` +
+    `has already resolved is the intended fix, and this rule is expected to be lifted then.`
+  );
+}
 
 const SCOPE_RE = /^[a-z0-9_]+(?::[a-z0-9_]+){1,3}$/;
 
@@ -175,6 +274,23 @@ const VERSION_RE = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
  */
 export const MANIFEST_TAGLINE_MAX_LENGTH = 140;
 
+/**
+ * The manifest `repository` rule is IMPORTED, not re-declared.
+ *
+ * Unlike the tagline bound above (which is re-declared because
+ * `offsite-listing.schema` would drag zod into this client-bundle-safe module),
+ * `external-app.schema` has NO imports at all — it is plain TypeScript over the WHATWG
+ * `URL` — so importing it here costs the browser bundle nothing and buys ONE
+ * implementation of the rule instead of two plus a drift guard. The off-site listing
+ * path (`buildListingPatchData`, `submitExternalListing`) calls the same function, so
+ * an on-site manifest and an off-site listing form cannot disagree about what a valid
+ * repository link is.
+ *
+ * Re-exported so `ManifestEditForm.tsx` can import the bound + the host list from the
+ * validator it already imports, rather than reaching into the schema module directly.
+ */
+export { MAX_REPOSITORY_URL_LENGTH, REPOSITORY_HOST_ALLOWLIST, validateRepositoryUrl };
+
 // Config-as-code `buildCommand` shape allowlist (defense-in-depth — see the
 // field comment in RawManifest). The build sandbox is already isolated; this
 // keeps the command AUDITABLE + bounds it to a small, documented set of safe
@@ -189,8 +305,7 @@ export const MANIFEST_TAGLINE_MAX_LENGTH = 140;
 // is rejected. The separate SHELL_METACHAR_RE below is a redundant second gate
 // so the rejection reason is explicit when a metachar is what tripped it.
 export const BUILD_COMMAND_MAX_LENGTH = 128;
-export const BUILD_COMMAND_RE =
-  /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
+export const BUILD_COMMAND_RE = /^(?:(?:npm|pnpm|yarn) run [a-zA-Z0-9:_-]+|(?:npx )?vite build)$/;
 // Shell metacharacters that must never appear in a buildCommand. Checked first
 // so the error is specific ("contains shell metacharacters") rather than the
 // generic allowlist-miss message.
@@ -330,9 +445,7 @@ export class BlockManifestValidator {
     opts?: ManifestValidationOptions
   ): ValidationResult {
     const ctx: AppContext =
-      typeof app === 'number'
-        ? { allowedScopes: app, allowedOrigins: [] }
-        : app;
+      typeof app === 'number' ? { allowedScopes: app, allowedOrigins: [] } : app;
     const errors: string[] = [];
     const oauthClientAllowedScopes = ctx.allowedScopes;
 
@@ -383,6 +496,13 @@ export class BlockManifestValidator {
       errors.push('INLINE_REQUIRES_VERIFIED_TIER');
     }
 
+    if (
+      m.auth !== undefined &&
+      (typeof m.auth !== 'string' || !ALLOWED_AUTH_MODES.has(m.auth as ManifestAuthMode))
+    ) {
+      errors.push(`auth must be one of ${[...ALLOWED_AUTH_MODES].join(', ')}`);
+    }
+
     // Optional marketplace `category`. When present it must be one of the known
     // MARKETPLACE_CATEGORIES (referenced directly — never a second hardcoded
     // copy, so the validator, the const, and the published schema's `category`
@@ -414,6 +534,22 @@ export class BlockManifestValidator {
       }
     }
 
+    // Optional `repository` (the public source-repo link). Absent is fine. When
+    // present it goes through the SHARED `validateRepositoryUrl` — the same function
+    // the off-site listing form uses — rather than a second copy of the host allowlist
+    // and path rule here. The error is re-labelled to the MANIFEST key name, because
+    // an on-site author who typed this into `block.manifest.json` never saw a field
+    // called `sourceRepoUrl` and would have nothing to go on.
+    //
+    // 🔴 TRIMMED, matching the tagline convention above: the validator measures the
+    // trimmed value while the published JSON Schema's `maxLength` counts the raw
+    // string, so the schema stays no MORE permissive than the server. `validateRepositoryUrl`
+    // trims internally; passing the raw value keeps that single-sourced.
+    if (m.repository !== undefined) {
+      const repo = validateRepositoryUrl(m.repository);
+      if (!repo.ok) errors.push(repo.error.replace('sourceRepoUrl', 'repository'));
+    }
+
     if (!Array.isArray(m.scopes)) {
       errors.push('scopes must be an array of strings');
     } else {
@@ -434,17 +570,34 @@ export class BlockManifestValidator {
           errors.push(`scope "${scope}" is not a known block scope`);
         }
       }
-      const blockScopes = (m.scopes as unknown[]).filter(
-        (s): s is string => typeof s === 'string'
-      );
+      const blockScopes = (m.scopes as unknown[]).filter((s): s is string => typeof s === 'string');
       const scopeCheck = validateBlockScopesAgainstOauthClient(
         blockScopes,
         oauthClientAllowedScopes
       );
       if (!scopeCheck.valid) {
         errors.push(
-          `requested scopes exceed OAuth client allowedScopes: ${scopeCheck.rejectedScopes.join(', ')}`
+          `requested scopes exceed OAuth client allowedScopes: ${scopeCheck.rejectedScopes.join(
+            ', '
+          )}`
         );
+      }
+
+      // CROSS-FIELD: `auth: "oauth"` × any `apps:storage:*` scope is refused. Placed
+      // INSIDE the `Array.isArray(m.scopes)` arm, after the per-element checks, because it
+      // is a statement about the declared scope SET — a manifest whose `scopes` is not an
+      // array already has its own error and nothing to cross-check. Deliberately does NOT
+      // depend on `m.auth` being a VALID mode: `manifestWantsOauthToken` is an equality
+      // test, so a garbage `auth` value yields false here and is reported once, by the
+      // auth-mode check above, instead of twice.
+      //
+      // Why a refusal and not a downgrade to `block-token`: the `auth` mode is the author's
+      // declared credential shape and the whole OAuth surface (consent, refresh, the app's
+      // own REST calls) is built on it. Silently rewriting it would hand back a manifest the
+      // author did not write; refusing tells them which of the two things to change.
+      const storageScopes = appStorageScopesIn(m.scopes as unknown[]);
+      if (manifestWantsOauthToken(m) && storageScopes.length > 0) {
+        errors.push(oauthAppStorageConflictError(storageScopes));
       }
     }
 
@@ -460,7 +613,9 @@ export class BlockManifestValidator {
         typeof m.scopeJustifications !== 'object' ||
         Array.isArray(m.scopeJustifications)
       ) {
-        errors.push('scopeJustifications must be an object mapping scope-id to a justification string');
+        errors.push(
+          'scopeJustifications must be an object mapping scope-id to a justification string'
+        );
       } else {
         const declaredScopes = new Set(
           Array.isArray(m.scopes)
@@ -532,9 +687,7 @@ export class BlockManifestValidator {
         return;
       }
       if (!allowedOriginSet.has(origin)) {
-        errors.push(
-          `${field} rejected: origin ${origin} not in OauthClient.allowedOrigins`
-        );
+        errors.push(`${field} rejected: origin ${origin} not in OauthClient.allowedOrigins`);
       }
     }
 
@@ -570,6 +723,30 @@ export class BlockManifestValidator {
         }
       }
     }
+
+    // DIGITAL GOODS catalog. `parseManifestGoods` is the single rule: this gate
+    // and the purchase endpoint both call it, so a catalog entry that cannot be
+    // validated here is also unbuyable there rather than sellable on terms no
+    // moderator approved.
+    for (const goodsError of parseManifestGoods(m).errors) errors.push(goodsError);
+    // Declaring a catalog without the scope to sell it is a dead manifest, and
+    // silently accepting it means the author finds out from a 403 in production.
+    if (Array.isArray(m.goods) && m.goods.length > 0) {
+      const declared = Array.isArray(m.scopes) ? m.scopes : [];
+      if (!declared.includes('goods:purchase:self')) {
+        errors.push('goods requires the goods:purchase:self scope');
+      }
+    }
+
+    for (const analyticsError of parseManifestAnalytics(m).errors) errors.push(analyticsError);
+
+    // APP STORAGE declaration. `parseManifestStorage` is the single rule (shape, cross-field
+    // and the phase switch `APP_STORAGE_ENABLED_FEATURES`); `appStorageScopeErrors` ties it
+    // to the declared scopes. The storage routes will read the same parse, so a collection
+    // that cannot be validated here is unreachable there.
+    const storage = parseManifestStorage(m);
+    for (const storageError of storage.errors) errors.push(storageError);
+    for (const scopeError of appStorageScopeErrors(m.scopes, storage)) errors.push(scopeError);
 
     if (!m.iframe || typeof m.iframe !== 'object') {
       // For renderMode=inline+verified, iframe may be omitted in v2. v1: require iframe.
@@ -612,9 +789,10 @@ export class BlockManifestValidator {
       if (typeof iframe.resizable !== 'boolean') {
         errors.push('iframe.resizable must be a boolean');
       }
-      const tierForSandbox = (ALLOWED_TRUST_TIERS.has(trustTier)
-        ? trustTier
-        : 'unverified') as 'unverified' | 'verified' | 'internal';
+      const tierForSandbox = (ALLOWED_TRUST_TIERS.has(trustTier) ? trustTier : 'unverified') as
+        | 'unverified'
+        | 'verified'
+        | 'internal';
       if (typeof iframe.sandbox !== 'string' || iframe.sandbox.length === 0) {
         errors.push('iframe.sandbox must be a non-empty string');
       } else {
@@ -652,7 +830,9 @@ export class BlockManifestValidator {
           // slot — the page surface is declared via the `page` field, not a
           // `targets` entry.
           if (isPageSlot(slotId)) {
-            errors.push(`target slotId "${slotId}" is the page slot — declare a full page via the "page" field, not targets`);
+            errors.push(
+              `target slotId "${slotId}" is the page slot — declare a full page via the "page" field, not targets`
+            );
           }
         }
       }

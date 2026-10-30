@@ -2,11 +2,20 @@ import { Prisma } from '@prisma/client';
 import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest } from 'next';
 import { isProd } from '~/env/other';
+import { CURSOR_MIN, INT4_MAX } from '~/server/schema/base.schema';
 import type { PaginationInput } from '~/server/schema/base.schema';
 import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { QS } from '~/utils/qs';
 
 export const DEFAULT_PAGE_SIZE = 20;
+
+/**
+ * A cursor token that is entirely an integer, sign included. Used by
+ * `parseCursor` to pick the numeric branch BEFORE the `-`-means-a-date test, so
+ * a negative integer is range-checked rather than handed to `dayjs`. Anchored
+ * and unflagged — `.test` on it is stateless.
+ */
+const NUMERIC_CURSOR_TOKEN = /^-?\d+$/;
 
 export function getPagination(limit: number, page: number | undefined) {
   const take = limit > 0 ? limit : undefined;
@@ -116,8 +125,33 @@ function parseSortString(sortString: string): SortField[] {
 }
 
 function parseCursor(fields: SortField[], cursor: string | number | Date | bigint) {
-  if (typeof cursor === 'number' || typeof cursor === 'bigint' || cursor instanceof Date)
+  if (typeof cursor === 'number' || typeof cursor === 'bigint' || cursor instanceof Date) {
+    // A scalar cursor carries exactly ONE value, so it is only well-formed for a
+    // single-field sort. The arity guard below covers the string form; without
+    // the same guard here, a scalar silently bound to `fields[0]` and the
+    // remaining fields resolved to `undefined`.
+    //
+    // That was a live 500: `model.getAll` takes a JSON cursor, so a client can
+    // send a bare number (a model id, say) where the sort is Newest/Oldest —
+    // `mm."lastVersionAt" DESC NULLS LAST, mm|mbm."modelId" DESC`, two fields. The
+    // number bound to the TIMESTAMP head field and Postgres threw
+    // `date/time field value out of range: "165997"`, which surfaced as an
+    // INTERNAL_SERVER_ERROR for what is a malformed client input. Note the
+    // magnitude bound on the cursor schema cannot catch this — 165997 is a
+    // perfectly ordinary int; the value is simply not a timestamp.
+    //
+    // Rejecting it as a 400 matches how the string form has been handled since
+    // the `"|<id>"` NULL-token fix below. A legitimate cursor is always a value
+    // this server issued as `nextCursor`: a bare column value for a single-field
+    // sort, a `CONCAT(col, '|', …)` string otherwise — so no well-formed cursor
+    // reaches this branch with a multi-field sort.
+    if (fields.length !== 1) {
+      throwBadRequestError(
+        `Invalid cursor: expected ${fields.length} value(s) for this sort, received 1`
+      );
+    }
     return { [fields[0].field]: cursor };
+  }
 
   const values = cursor.split('|');
   // A cursor whose token count doesn't match the sort's field arity is
@@ -144,7 +178,31 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
     // unattributable INTERNAL_SERVER_ERROR (500). Reject the malformed cursor as a
     // 400 instead. (Well-formed cursors carry real DB values, so this only fires on a
     // genuinely unparseable token — never on a legitimate cursor.)
-    if (value.includes('-')) {
+    //
+    // The date-vs-numeric split is NUMERIC-FIRST: a fully-numeric token takes the
+    // numeric branch even when it contains `-`. It used to be a bare
+    // `value.includes('-')`, which is true of every negative integer, so `'-5'`
+    // took the date branch, `dayjs.utc('-5')` reported VALID, and the resulting
+    // Date was bound into a comparison against an `int` sort column — Postgres
+    // threw and the caller got a raw 500 for a malformed input. A REST query
+    // param is ALWAYS a string, so no bound on `keysetCursorSchema`'s numeric
+    // members could see it.
+    //
+    // Deliberately narrow: an ISO timestamp contains `-` but is not fully
+    // numeric, so it still takes the date branch, and a token with no `-` already
+    // took the numeric branch. The non-numeric fallback keeps `includes('-')`, so
+    // an empty or garbage token keeps the exact branch (and error) it had — the
+    // only tokens whose classification changes are fully-numeric ones containing
+    // `-`, i.e. negative integers.
+    //
+    // 🔴 This closes ONE SPELLING, not the class, and the test file pins the rest
+    // as an open gap. The date branch below still accepts `'0-'`, `'5-'`, `'1-2'`
+    // and `'--5'` as valid dates and still binds a Date to an `int` column. A
+    // structural fix requires the date branch to demand a date SHAPE and route
+    // everything else numeric; that needs the formats a real
+    // `CONCAT(timestamp, '|', id)` actually emits, which has not been observed
+    // against a database — guessing them would turn a 500 into broken pagination.
+    if (value.includes('-') && !NUMERIC_CURSOR_TOKEN.test(value)) {
       const parsed = dayjs.utc(value);
       if (!parsed.isValid())
         throwBadRequestError(`Invalid cursor: unparseable date value "${value}"`);
@@ -153,6 +211,38 @@ function parseCursor(fields: SortField[], cursor: string | number | Date | bigin
       const parsed = parseInt(value, 10);
       if (Number.isNaN(parsed))
         throwBadRequestError(`Invalid cursor: unparseable numeric value "${value}"`);
+      // `keysetCursorSchema` bounds only the number/bigint spellings, so a string
+      // token — every REST query param — needs the bound here. NOT redundant with it.
+      //
+      // Safe because every cursor-reachable sort column is int4: `i."index"`,
+      // `i."id"`, `ct."collectionItemId"`, `irr."imageId"` (`image.service.ts`),
+      // `ci."id"`, `mm|mbm."modelId"` and the `*Count` columns (`model.service.ts`).
+      // `ct."sortKey"` caps at 1e9 and only pairs with a sort that bypasses this;
+      // timestamps take the date branch. If a wider sort column is ever made
+      // cursor-reachable, this guard must move with it.
+      //
+      // The floor is `CURSOR_MIN`, the SAME constant `keysetCursorSchema` floors
+      // its numeric members at — so the same value is rejected as `-5` and as
+      // `'-5'`, rather than 400ing in one spelling and 500ing in the other, which
+      // is the defect this guard was widened for. Shared rather than restated
+      // because `base.schema.ts` records that the floor's VALUE is not settled;
+      // if it moves it must move in both spellings at once.
+      //
+      // 🔴 This floor does NOT establish that a negative cursor is impossible,
+      // and nothing here should be tightened on the strength of it — read the
+      // "WHAT IS STILL NOT ESTABLISHED" paragraph in `base.schema.ts`, which
+      // notes that `addPostImageSchema.index` is a bare `z.number()`, so a
+      // negative `i."index"` is writable and would be issuable as a nextCursor.
+      // No database was checked here either. What IS established is narrower and
+      // is all this guard rests on: a negative STRING token never had a working
+      // path — before this change it took the date branch and 500'd (or already
+      // 400'd as an Invalid Date), so rejecting it cannot regress a cursor that
+      // used to paginate. It also makes the open question observable: such a
+      // cursor now produces an attributable 400 instead of an unattributable 500,
+      // which is the trigger `base.schema.ts` names for moving the floor to the
+      // int4 minimum.
+      if (parsed < CURSOR_MIN || parsed > INT4_MAX)
+        throwBadRequestError(`Invalid cursor: numeric value out of range "${value}"`);
       result[fields[i].field] = parsed;
     }
   }
@@ -297,7 +387,9 @@ export function getCursorClauses(
   );
   const lastOperator = lastField.order === 'DESC' ? '<' : '>=';
   equalityParts.push(
-    Prisma.sql`${Prisma.raw(lastField.field)} ${Prisma.raw(lastOperator)} ${cursors[lastField.field]}`
+    Prisma.sql`${Prisma.raw(lastField.field)} ${Prisma.raw(lastOperator)} ${
+      cursors[lastField.field]
+    }`
   );
   const equality = Prisma.sql`(${Prisma.join(equalityParts, ' AND ')})`;
 

@@ -15,12 +15,12 @@ const schema = z.object({
   AUTH_JWT_ISSUER: z.string().optional(), // e.g. https://auth.civitai.com
   // SERVER-ONLY internal-routing override for the session-identity read (session-client.ts fetchIdentity).
   // When set, the identity fetch is sent to THIS base (the in-cluster hub svc, e.g.
-  // http://civitai-auth.civitai-auth.svc.cluster.local:3000) instead of hairpinning out to the public
+  // http://<auth-hub-service>.<namespace>.svc.cluster.local:3000) instead of hairpinning out to the public
   // AUTH_JWT_ISSUER origin (CF edge → Traefik → back to the same cluster). It ONLY changes the FETCH target —
   // the token's `iss` is STILL validated against the public trusted origin(s) first (trustedHubBase), so the
   // override can never be used to send a bearer to an untrusted issuer. Deliberately NOT a `NEXT_PUBLIC_*`
   // var: it is read on the server only and must never reach the client bundle.
-  AUTH_HUB_INTERNAL_URL: z.url().optional(), // e.g. http://civitai-auth.civitai-auth.svc.cluster.local:3000
+  AUTH_HUB_INTERNAL_URL: z.url().optional(), // e.g. http://<auth-hub-service>.<namespace>.svc.cluster.local:3000
   // Legacy symmetric secret — kept ONLY for the migration window so spokes can still
   // decode pre-cutover next-auth JWE cookies. Drop after the max old-token TTL.
   NEXTAUTH_SECRET: z.string().optional(),
@@ -33,6 +33,9 @@ const schema = z.object({
   AUTH_JWT_PUBLIC_KEY: z.string().optional(), // SPKI PEM, exported as a JWK at the endpoint
   AUTH_JWT_KID: z.string().optional(),
   AUTH_SESSION_MAX_AGE: z.coerce.number().default(30 * 24 * 60 * 60), // 30d, matches today
+  // Reject session tokens that carry no `iat0` (minted before the 90-day limit existed). Off until every live
+  // session has been re-minted with one.
+  AUTH_REQUIRE_IAT0: z.stringbool().default(false),
 });
 
 function buildEnv() {

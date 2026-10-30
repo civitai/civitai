@@ -4,6 +4,7 @@ import { IconAlertTriangle } from '@tabler/icons-react';
 import { isValidElement, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties } from 'react';
 import clsx from 'clsx';
+import { sliderZone, sliderZoneStyles } from '~/components/generation_v2/inputs/slider-zone';
 
 // =============================================================================
 // Types
@@ -27,6 +28,8 @@ export interface SliderInputProps extends Omit<InputWrapperProps, 'children' | '
   presets?: PresetOption[];
   disabled?: boolean;
   warning?: string;
+  /** An advisory band painted on the track in place of the filled bar, so the thumb is a position, not an amount. */
+  recommended?: { min: number; max: number };
 }
 
 // =============================================================================
@@ -88,6 +91,7 @@ export function SliderInput({
   label,
   disabled,
   warning,
+  recommended,
   ...inputWrapperProps
 }: SliderInputProps) {
   const numberRef = useRef<HTMLInputElement>(null);
@@ -157,6 +161,9 @@ export function SliderInput({
 
   const hasPresets = presets && presets.length > 0;
 
+  const zone = sliderZone({ min, max }, recommended);
+  const zoneStyles = zone ? sliderZoneStyles(zone) : undefined;
+
   // Derive an accessible name for the Slider thumb + NumberInput. The visible
   // `label` (rendered on Input.Wrapper) can't be programmatically associated
   // with either of the two inner controls, so a11y tooling reports both as
@@ -167,7 +174,7 @@ export function SliderInput({
     typeof label === 'string'
       ? label
       : isValidElement(label) && typeof (label.props as { label?: unknown })?.label === 'string'
-      ? ((label.props as { label: string }).label)
+      ? (label.props as { label: string }).label
       : undefined;
 
   return (
@@ -195,6 +202,7 @@ export function SliderInput({
       <div className={clsx('mt-1 flex items-center gap-2', { ['flex-row-reverse']: reverse })}>
         <Slider
           {...sliderProps}
+          styles={zoneStyles ? { ...sliderProps?.styles, ...zoneStyles } : sliderProps?.styles}
           thumbLabel={sliderProps?.thumbLabel ?? accessibleName}
           className={clsx('flex-1', sliderProps?.className)}
           min={min}

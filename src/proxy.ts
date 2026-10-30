@@ -18,8 +18,13 @@ export const config = {
     '/moderator/:path*',
     '/testing/:path*',
     '/api/testing/:path*',
-    '/api/trpc/:path*',
+    // `/api/trpc` is deliberately NOT matched: the tRPC route applies the API policy itself
+    // (`applyApiRequestPolicy`), so invoking the proxy there would only add per-call overhead.
+    // `proxy-trpc-matcher.test.ts` fails if any entry here, including the broad page pattern
+    // above, matches a tRPC path.
     '/api/v1/:path*',
+    // Viewer page data for static shells: needs the region block the page itself gets.
+    '/api/page-data/:path*',
     '/images/:path*', // Explicitly include image pages for region blocking
     // '/models/:path*',
     '/user/:path*',

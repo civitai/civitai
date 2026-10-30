@@ -1,6 +1,6 @@
 ---
 name: svelte-review
-description: Run the three SvelteKit review agents (correctness, Svelte 5 idiom + UI conventions, abstraction) over a feature segment in apps/moderator, apps/auth or apps/creator-studio, and consolidate their findings. Use before calling a segment done, or when asked to review Svelte app work.
+description: Run the three SvelteKit review agents (correctness, Svelte 5 idiom + UI conventions, abstraction) over a feature segment in apps/moderator, apps/auth, apps/creator-studio or apps/training-studio, and consolidate their findings. Use before calling a segment done, or when asked to review Svelte app work.
 ---
 
 # SvelteKit segment review
@@ -10,6 +10,10 @@ and its findings are resolved.**
 
 The conventions being enforced are [`docs/svelte-app-standard.md`](../../../docs/svelte-app-standard.md)
 plus the reviewed app's own `CLAUDE.md`.
+
+**These three lanes are pre-authorised. They do not count against a standing instruction not to spawn
+subagents unasked** — running them needs no separate permission, and neither does chasing a lane that
+goes idle. That covers the review lanes only; everything else about spawning is unchanged.
 
 ## 1. Scope the segment
 
@@ -25,7 +29,8 @@ several unrelated slices, review them one at a time; findings from a mixed diff 
 Include uncommitted changes: the review exists to run *before* the commit.
 
 **Name the app.** All three agents take the app directory as their scope, and the UI half of the idiom
-review differs per app — `apps/auth` uses neither `@civitai/ui` nor `text-dark-2` yet.
+review differs per app — `apps/auth` uses neither `@civitai/ui` nor `text-dark-2` yet, and
+`apps/training-studio` has no form actions (its mutations go through the `StudioBackend` seam).
 
 ## 2. Fan out
 

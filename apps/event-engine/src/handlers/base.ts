@@ -2,13 +2,13 @@ import {
   EventHandler,
   EventHandlerConfig,
   HandlerContext,
+  HandlerActions,
   DebugConfigFactory,
   OutboxHandlerConfig,
   OutboxHandler,
   ManualHandlerConfig,
   ManualHandler
 } from '../types/handlers'
-import { Operation } from '../types/events'
 
 /**
  * Base handler factory that provides common patterns for metric event processing
@@ -60,17 +60,29 @@ export function createReactionHandler<T = any>(config: ReactionConfig<T>) {
     tables: [config.table],
     operations: ['create', 'delete'],
     processor: async (ctx) => {
-      const { record, actions, operation } = ctx;
-      const metric = actions.forMetric(config.entityType, (record as any)[config.entityIdField]).as((record as any)[config.userIdField ?? 'userId'])
+      const { record, actions, operation, eventTimestamp } = ctx;
       const value = operation === 'create' ? 1 : -1;
-      metric.add((record as any).reaction, value);
+      // ClickHouse keeps `createdAt` to the second and per-user reaction state is argMax over it,
+      // so an un-like in the same second as its like ties and the like wins. A removal is stamped
+      // one second later so it sorts after; the milliseconds stay so the Redis dedupe key (ms)
+      // keeps two removals apart, and it derives from the commit time, so a replay still dedupes.
+      // Shortcut: a re-like in the second after an un-like now ties the other way, and one
+      // committed at exactly the stamped millisecond shares its Redis dedupe key. Remove this
+      // once `entityMetricEvents_month.createdAt` is DateTime64.
+      const timestamp = value < 0 ? new Date(+eventTimestamp + 1000) : undefined;
+      const forMetric: HandlerActions['forMetric'] = (entityType, entityId) =>
+        actions.forMetric(entityType, entityId, timestamp);
+      forMetric(config.entityType, (record as any)[config.entityIdField])
+        .as((record as any)[config.userIdField ?? 'userId'])
+        .add((record as any).reaction, value);
       // MUST await: postProcessing does the PG lookup + Post/User metric adds.
       // If it floats, (1) its errors escape processEvent's try/catch and become
       // unhandled rejections that bypass the poison/transient classifier and
       // kill the process, and (2) the Kafka offset can commit before those
       // metrics are queued, silently losing them on a restart. Awaiting ties
       // the message's full work to its offset.
-      await config.postProcessing?.(ctx, value);
+      // Its Post/User metrics tie the same way, so they get the same stamp.
+      await config.postProcessing?.({ ...ctx, actions: { ...actions, forMetric } }, value);
     },
     debug: config.debug
   })

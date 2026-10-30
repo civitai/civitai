@@ -6,13 +6,16 @@ import { featureFlagKeys } from '~/server/services/feature-flags.service';
 import { addSystemPermission, removeSystemPermission } from '~/server/services/system-cache';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { refreshSession } from '~/server/auth/session-invalidation';
-import { commaDelimitedStringArray } from '~/utils/zod-helpers';
+import { booleanString, commaDelimitedStringArray } from '~/utils/zod-helpers';
 
-const schema = z.object({
+export const schema = z.object({
   // Accepts a single key or a comma-delimited list (e.g. key=a,b,c).
   key: commaDelimitedStringArray(),
   usernames: commaDelimitedStringArray(),
-  revoke: z.coerce.boolean().optional(),
+  // booleanString, not z.coerce.boolean: this schema is parsed against req.query, where
+  // coerce runs JS Boolean() and makes `?revoke=false` TRUE — taking the REMOVE branch and
+  // invalidating each affected user's session.
+  revoke: booleanString().optional(),
 });
 
 export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {

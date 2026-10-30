@@ -13,6 +13,8 @@ import {
 import { IconArrowRight, IconBolt } from '@tabler/icons-react';
 
 import { useTrackEvent } from '../TrackView/track.utils';
+import { FEATURE_NOTICES } from '~/components/Alerts/notice-registry';
+import { useFeatureNotice } from '~/components/Alerts/useFeatureNotice';
 import { AvailableBuzzBadge } from '~/components/Buzz/AvailableBuzzBadge';
 import { BuzzPurchaseLayout } from '~/components/Buzz/BuzzPurchaseLayout';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
@@ -45,35 +47,25 @@ export type BuyBuzzModalProps = {
   attribution?: BlockAttribution;
 };
 
-const ALERT_ID = 'earn-blue-buzz-rewards';
-
-function EarnRewardsBanner({ initialBuzzType }: { initialBuzzType?: BuzzSpendType }) {
+/**
+ * Exported ONLY so `notice-callsite.browser.test.tsx` can mount it directly and
+ * assert which `alertId` its Dismiss control actually sends. Mounting the whole
+ * `BuyBuzzModal` to reach it would drag in the dialog context and the entire
+ * purchase layout, none of which the notice's wiring depends on. Pure export
+ * addition — no behaviour, props or rendering changed.
+ */
+export function EarnRewardsBanner({ initialBuzzType }: { initialBuzzType?: BuzzSpendType }) {
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const paymentProvider = usePaymentProvider();
   const isMember = currentUser?.isMember;
-  const showMemberUpsell =
-    !isMember && features.membershipsV2 && initialBuzzType === 'yellow';
+  const showMemberUpsell = !isMember && features.membershipsV2 && initialBuzzType === 'yellow';
 
-  const utils = trpc.useUtils();
-  const { data: settings, isLoading: settingsLoading } = trpc.user.getSettings.useQuery(
-    undefined,
-    { enabled: !!currentUser }
-  );
-  const dismissMutation = trpc.user.dismissAlert.useMutation({
-    onMutate: async () => {
-      await utils.user.getSettings.cancel();
-      const prev = utils.user.getSettings.getData();
-      utils.user.getSettings.setData(undefined, (old) => ({
-        ...old,
-        dismissedAlerts: [...(old?.dismissedAlerts ?? []), ALERT_ID],
-      }));
-      return { prev };
-    },
-    onError: (_err, _vars, ctx) => {
-      if (ctx?.prev) utils.user.getSettings.setData(undefined, ctx.prev);
-    },
-  });
+  const {
+    isDismissed,
+    isLoading: settingsLoading,
+    dismiss,
+  } = useFeatureNotice(FEATURE_NOTICES.earnBlueBuzzRewards);
 
   const { data: plans = [] } = trpc.subscriptions.getPlans.useQuery(
     { paymentProvider },
@@ -84,7 +76,11 @@ function EarnRewardsBanner({ initialBuzzType }: { initialBuzzType?: BuzzSpendTyp
     ...plans.map((p) => (p.metadata as SubscriptionProductMetadata)?.rewardsMultiplier ?? 1)
   );
 
-  const isDismissed = (settings?.dismissedAlerts ?? []).includes(ALERT_ID);
+  // 🔴 `settingsLoading`, not `hasSettings`: an ERRORED settings fetch settles
+  // `isLoading` to false while leaving the data undefined, so this banner can
+  // still be shown to someone who already dismissed it. Preserved as-is because
+  // it is pre-existing behaviour, not something this refactor should change
+  // silently — see the notice-consolidation PR for the decision.
   if (!currentUser || settingsLoading || isDismissed) return null;
 
   return (
@@ -92,7 +88,7 @@ function EarnRewardsBanner({ initialBuzzType }: { initialBuzzType?: BuzzSpendTyp
       color="blue"
       radius="md"
       py="sm"
-      onClose={() => dismissMutation.mutate({ alertId: ALERT_ID })}
+      onClose={() => dismiss()}
       withCloseButton
       closeButtonLabel="Dismiss"
     >
@@ -105,8 +101,8 @@ function EarnRewardsBanner({ initialBuzzType }: { initialBuzzType?: BuzzSpendTyp
             Did you know? You can earn Blue Buzz for free, every day.
           </Text>
           <Text size="sm" c="dimmed">
-            React to posts, follow creators, give generator feedback, and make your first daily
-            post — plus earn more as others react to your work.
+            React to posts, follow creators, give generator feedback, and make your first daily post
+            — plus earn more as others react to your work.
           </Text>
           <Group gap="sm" wrap="wrap" mt={4}>
             <Button

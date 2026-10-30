@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Regression guard for the "unblock leaves nsfwLevel stuck at Blocked" bug
 // (ClickUp 868kfwdzq). Blocking force-sets nsfwLevel=Blocked(32) and leaves the
@@ -20,17 +21,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // that, dbRead/dbWrite are permissive proxies that capture the raw SQL, and the
 // few fan-out helpers that actually run are overridden to no-ops.
 
-const { mockFindMany, mockAppealFindMany } = vi.hoisted(() => ({
-  mockFindMany: vi.fn(),
-  mockAppealFindMany: vi.fn(),
-}));
-
-// --- permissive DB proxy: any method resolves empty; specific seams captured ----------
 const capturedQueryRaw: string[] = [];
 const capturedExecRaw: string[] = [];
 const capturedExecUnsafe: string[] = [];
 const capturedClickhouse: string[] = [];
 
+// A permissive proxy is still needed for the clickhouse client, which has no canonical mock.
 function makePermissive(overrides: Record<string, unknown> = {}): any {
   const handler: ProxyHandler<any> = {
     get(target, prop) {
@@ -47,34 +43,46 @@ function makePermissive(overrides: Record<string, unknown> = {}): any {
   return new Proxy(function () {}, handler);
 }
 
-const dbWrite = makePermissive({
-  // handleUnblockImages emits the unblock UPDATE via a $queryRaw tagged template.
-  $queryRaw: (strings: TemplateStringsArray, ..._values: unknown[]) => {
-    capturedQueryRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
-    return Promise.resolve([]);
-  },
-  // updateNsfwLevel() runs the recompute via $executeRawUnsafe.
-  $executeRawUnsafe: (sql: string) => {
-    capturedExecUnsafe.push(String(sql));
-    return Promise.resolve(0);
-  },
-  // resetBlockedNsfwLevel() emits its reset+unlock UPDATE via a $executeRaw tagged template.
-  $executeRaw: (strings: TemplateStringsArray, ..._values: unknown[]) => {
-    capturedExecRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
-    return Promise.resolve(0);
-  },
-  // resolveEntityAppeal reads postId+pHash off the appeal image; seed a pHash so the
-  // approved-path phash unblock (bulkRemoveBlockedImages) has something to remove.
-  image: makePermissive({ update: async () => ({ postId: null, pHash: 999n }) }),
-});
+// dbRead/dbWrite come from the canonical mock (src/__tests__/setup.ts). It vivifies on property
+// access exactly like the hand-rolled proxy this replaces, so nothing has to enumerate Prisma's
+// surface — but it keeps the two clients DISTINCT, which the local pair also did. Every routing
+// claim below is a line in the service, not an inference from the old fixture:
+//
+//   dbRead.image.findMany       image.service.ts:668   (handleUnblockImages)
+//   dbWrite.$queryRaw           image.service.ts:692   (the unblock UPDATE)
+//   dbWrite.$executeRaw         image.service.ts:894   (resetBlockedNsfwLevel)
+//   dbWrite.$executeRawUnsafe   image.service.ts:878   (updateNsfwLevel, the recompute)
+//   dbWrite.appeal.updateManyAndReturn  report.service.ts  (resolveEntityAppeal claims the appeals)
+//   dbRead.user.findMany        report.service.ts:743
+//   dbWrite.image.update        report.service.ts:753
+const dbWrite = dbMock.dbWrite;
+const dbRead = dbMock.dbRead;
+const mockFindMany = dbRead.image.findMany;
 
-const dbRead = makePermissive({
-  image: makePermissive({ findMany: mockFindMany, findUnique: async () => null }),
-  appeal: makePermissive({ findMany: mockAppealFindMany }),
-  user: makePermissive({ findMany: async () => [] }),
+// The three raw-SQL seams every assertion in this file reads. Declared at module scope because
+// they are the file's instrument rather than per-case behaviour; `vi.clearAllMocks()` in the
+// beforeEach blocks clears call history without dropping an implementation.
+dbWrite.$queryRaw.mockImplementation((strings: TemplateStringsArray, ..._values: unknown[]) => {
+  capturedQueryRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
+  return Promise.resolve([]);
 });
-
-vi.mock('~/server/db/client', () => ({ dbRead, dbWrite }));
+dbWrite.$executeRawUnsafe.mockImplementation((sql: string) => {
+  capturedExecUnsafe.push(String(sql));
+  return Promise.resolve(0);
+});
+dbWrite.$executeRaw.mockImplementation((strings: TemplateStringsArray, ..._values: unknown[]) => {
+  capturedExecRaw.push(Array.isArray(strings) ? strings.join(' ? ') : String(strings));
+  return Promise.resolve(0);
+});
+// resolveEntityAppeal reads postId+pHash off the appeal image; seed a pHash so the
+// approved-path phash unblock (bulkRemoveBlockedImages) has something to remove. Restated
+// rather than inherited: the canonical mock has no default for `update`, so it would return
+// undefined and the destructure would throw.
+dbWrite.image.update.mockResolvedValue({ postId: null, pHash: 999n });
+// Canonical `findUnique` already answers null and `findMany` already answers []; pinned anyway so
+// what this file hands the service is readable here rather than in the shared defaults table.
+dbRead.image.findUnique.mockResolvedValue(null);
+dbRead.user.findMany.mockResolvedValue([]);
 
 // event-engine-common is a git submodule, not checked out by default.
 vi.mock('../../../../event-engine-common/services/metrics', () => ({
@@ -115,19 +123,11 @@ vi.mock('~/server/clickhouse/client', () => ({
   }),
 }));
 
-// redis/sysRedis are deeply path-accessed at module load and used by the caches the
-// fan-out touches (thumbnailCache.refresh). Permissive proxies keep every access safe.
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: makePermissive({ packed: makePermissive() }),
-    sysRedis: makePermissive(),
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-  };
-});
+// redis/sysRedis are deeply path-accessed at module load and used by the caches the fan-out
+// touches (thumbnailCache.refresh). The canonical mock (src/__tests__/setup.ts) vivifies to any
+// depth the same way the local proxies did, and additionally supplies the REAL REDIS_*_KEYS
+// tables — the local ones answered every lookup with the same placeholder. Nothing here asserts
+// a key.
 
 // Fan-out helpers that actually execute in the reduced unblock path (postId/pHash null,
 // no appeal, no moderatorId) — overridden to no-ops so only the SQL wiring is exercised.
@@ -149,6 +149,11 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   createNotification: vi.fn(),
 }));
+vi.mock('~/server/services/buzz.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  refundMultiAccountTransaction: vi.fn(async () => ({})),
+  refundTransaction: vi.fn(async () => ({})),
+}));
 vi.mock('~/server/search-index', async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
   imagesSearchIndex: { queueUpdate: vi.fn() },
@@ -157,11 +162,55 @@ vi.mock('~/server/search-index', async (importOriginal) => ({
 
 const { handleUnblockImages } = await import('../image.service');
 const { resolveEntityAppeal } = await import('../report.service');
+const { createNotification } = await import('../notification.service');
+const { refundMultiAccountTransaction } = await import('../buzz.service');
+const { logToAxiom } = await import('~/server/logging/client');
+const { isSafeToRetry } = await import('@civitai/buzz');
 
 const BLOCKED = 32;
 // Prisma string enums (member === value); literals avoid a vitest/tsserver alias artifact.
 const ENTITY_IMAGE = 'Image';
 const APPEAL_APPROVED = 'Approved';
+
+type AppealRow = {
+  id: number;
+  entityId: number;
+  entityType: string;
+  userId: number;
+  status: string;
+  buzzTransactionId: string | null;
+  createdAt: Date;
+};
+type AppealWhere = {
+  id?: { in: number[] };
+  entityId?: { in: number[] };
+  entityType?: string;
+  status?: string;
+};
+const matchesAppeal = (row: AppealRow, where: AppealWhere) =>
+  (!where.id || where.id.in.includes(row.id)) &&
+  (!where.entityId || where.entityId.in.includes(row.entityId)) &&
+  (!where.entityType || row.entityType === where.entityType) &&
+  (!where.status || row.status === where.status);
+
+// The Appeal table as rows behind both read-then-update (findMany + updateMany) and the claiming
+// update, so a revert to read-then-update is measured against the same data.
+function useAppealTable(rows: AppealRow[]) {
+  dbRead.appeal.findMany.mockImplementation(async ({ where }: { where: AppealWhere }) =>
+    rows.filter((row) => matchesAppeal(row, where)).map((row) => ({ ...row }))
+  );
+  const update = ({ where, data }: { where: AppealWhere; data: Partial<AppealRow> }) => {
+    const hit = rows.filter((row) => matchesAppeal(row, where));
+    for (const row of hit) Object.assign(row, data);
+    return hit.map((row) => ({ ...row }));
+  };
+  dbWrite.appeal.updateMany.mockImplementation(async (args: Parameters<typeof update>[0]) => ({
+    count: update(args).length,
+  }));
+  dbWrite.appeal.updateManyAndReturn.mockImplementation(
+    async (args: Parameters<typeof update>[0]) => update(args)
+  );
+}
 
 describe('handleUnblockImages — nsfwLevel reset+unlock on unblock (ClickUp 868kfwdzq)', () => {
   beforeEach(() => {
@@ -216,13 +265,15 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
     capturedExecRaw.length = 0;
     capturedExecUnsafe.length = 0;
     capturedClickhouse.length = 0;
-    mockAppealFindMany.mockResolvedValue([
+    useAppealTable([
       {
         id: 555,
         entityId: 128489949,
         entityType: ENTITY_IMAGE,
         userId: 1,
+        status: 'Pending',
         buzzTransactionId: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
       },
     ]);
   });
@@ -265,5 +316,150 @@ describe('resolveEntityAppeal — reset+unlock on appeal approval (ClickUp 868kf
     } as any);
 
     expect(capturedClickhouse.some((sql) => sql.includes('blocked_images'))).toBe(false);
+  });
+
+  // An image can be appealed again after a re-block, and a reopened appeal keeps its row. The
+  // notification service reuses the row for a repeated key, so a per-entity key would show the
+  // second decision as the first one.
+  it('keys the resolution notification by appeal, not only by image', async () => {
+    await resolveEntityAppeal({
+      ids: [128489949],
+      entityType: ENTITY_IMAGE,
+      status: 'Rejected',
+      userId: 2023372,
+    } as any);
+
+    expect(createNotification).toHaveBeenCalledWith(
+      expect.objectContaining({
+        key: `entity-appeal-resolved:Image:128489949:555:${Date.parse('2026-01-01T00:00:00Z')}`,
+      })
+    );
+  });
+
+  // With several appeals per image, only the pending one may be closed, refunded and notified.
+  it('resolves only the pending appeal when the image also has an earlier, decided one', async () => {
+    const rows = [
+      {
+        id: 554,
+        entityId: 128489949,
+        entityType: ENTITY_IMAGE,
+        userId: 1,
+        status: 'Approved',
+        buzzTransactionId: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      },
+      {
+        id: 555,
+        entityId: 128489949,
+        entityType: ENTITY_IMAGE,
+        userId: 1,
+        status: 'Pending',
+        buzzTransactionId: null,
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      },
+    ];
+    useAppealTable(rows);
+
+    await resolveEntityAppeal({
+      ids: [128489949],
+      entityType: ENTITY_IMAGE,
+      status: 'Rejected',
+      userId: 2023372,
+    } as any);
+
+    expect(rows.map(({ id, status }) => ({ id, status }))).toEqual([
+      { id: 554, status: 'Approved' },
+      { id: 555, status: 'Rejected' },
+    ]);
+    expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  // Two moderators (or a double submit) resolving one appeal both used to read it Pending, and
+  // each refunded it. Only the resolution whose update closes the row may refund.
+  it('refunds the fee once when two resolutions of one appeal race', async () => {
+    useAppealTable([
+      {
+        id: 555,
+        entityId: 128489949,
+        entityType: ENTITY_IMAGE,
+        userId: 1,
+        status: 'Pending',
+        buzzTransactionId: 'appeal-1-1790000000000-abcd1234',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      },
+    ]);
+    const resolve = () =>
+      resolveEntityAppeal({
+        ids: [128489949],
+        entityType: ENTITY_IMAGE,
+        status: APPEAL_APPROVED,
+        userId: 2023372,
+      } as any);
+
+    await Promise.all([resolve(), resolve()]);
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(createNotification).toHaveBeenCalledTimes(1);
+  });
+
+  // Decision, not an accident: a timed-out refund may still have landed, so retrying it can pay
+  // the fee back twice. Do not restore a blanket retry around this call.
+  it('retries an appeal refund only when the request never reached Buzz', async () => {
+    useAppealTable([
+      {
+        id: 555,
+        entityId: 128489949,
+        entityType: ENTITY_IMAGE,
+        userId: 1,
+        status: 'Pending',
+        buzzTransactionId: 'appeal-1-1790000000000-abcd1234',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      },
+    ]);
+
+    await resolveEntityAppeal({
+      ids: [128489949],
+      entityType: ENTITY_IMAGE,
+      status: APPEAL_APPROVED,
+      userId: 2023372,
+    } as any);
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ externalTransactionIdPrefix: 'appeal-1-1790000000000-abcd1234' }),
+      { shouldRetry: isSafeToRetry }
+    );
+  });
+
+  it('does not resend an appeal refund that timed out', async () => {
+    useAppealTable([
+      {
+        id: 555,
+        entityId: 128489949,
+        entityType: ENTITY_IMAGE,
+        userId: 1,
+        status: 'Pending',
+        buzzTransactionId: 'appeal-1-1790000000000-abcd1234',
+        createdAt: new Date('2026-01-01T00:00:00Z'),
+      },
+    ]);
+    vi.mocked(refundMultiAccountTransaction).mockRejectedValueOnce(
+      Object.assign(new Error('The operation was aborted due to timeout'), { name: 'TimeoutError' })
+    );
+
+    await resolveEntityAppeal({
+      ids: [128489949],
+      entityType: ENTITY_IMAGE,
+      status: APPEAL_APPROVED,
+      userId: 2023372,
+    } as any);
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'resolve-entity-appeal',
+        appealId: 555,
+        buzzTransactionId: 'appeal-1-1790000000000-abcd1234',
+      })
+    );
   });
 });

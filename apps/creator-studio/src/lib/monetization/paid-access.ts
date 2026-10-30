@@ -9,11 +9,11 @@ export const MIN_GENERATION_PRICE = 50;
 export const DEFAULT_GENERATION_TRIAL_LIMIT = 10;
 export const MAX_GENERATION_TRIAL_LIMIT = 1000;
 
-// Max early-access days unlock by the creator's *models* score — mirrors the main app's
+// Max early-access days unlock by the creator score (`scores.total`) — mirrors the main app's
 // EARLY_ACCESS_CONFIG.scoreTimeFrameUnlock (enforced by /api/v1/model-versions/early-access).
 // The 30-day feature-flag tier is intentionally omitted here.
 export const EARLY_ACCESS_SCORE_UNLOCK: ReadonlyArray<readonly [number, number]> = [
-  [40000, 3],
+  [10000, 3],
   [65000, 5],
   [90000, 7],
   [125000, 9],
@@ -21,11 +21,11 @@ export const EARLY_ACCESS_SCORE_UNLOCK: ReadonlyArray<readonly [number, number]>
   [250000, 15],
 ];
 
-// Highest early-access duration (days) the given models score unlocks. 0 = early access unavailable.
-export function earlyAccessDaysForScore(modelsScore: number): number {
+// Highest early-access duration (days) the given creator score unlocks. 0 = early access unavailable.
+export function earlyAccessDaysForScore(creatorScore: number): number {
   let days = 0;
   for (const [score, unlocked] of EARLY_ACCESS_SCORE_UNLOCK) {
-    if (modelsScore >= score) days = unlocked;
+    if (creatorScore >= score) days = unlocked;
   }
   return days;
 }
@@ -33,7 +33,7 @@ export function earlyAccessDaysForScore(modelsScore: number): number {
 // How many versions can be in early access *at the same time* — mirrors EARLY_ACCESS_CONFIG.scoreQuantityUnlock.
 // Separate from the duration unlock above: score gates both how long and how many. 30-day flag tier omitted.
 export const EARLY_ACCESS_QUANTITY_UNLOCK: ReadonlyArray<readonly [number, number]> = [
-  [40000, 1],
+  [10000, 1],
   [65000, 2],
   [90000, 4],
   [125000, 6],
@@ -41,28 +41,28 @@ export const EARLY_ACCESS_QUANTITY_UNLOCK: ReadonlyArray<readonly [number, numbe
   [250000, 20],
 ];
 
-// Concurrent early-access slots the given models score unlocks. 0 = early access unavailable.
-export function earlyAccessQuantityForScore(modelsScore: number): number {
+// Concurrent early-access slots the given creator score unlocks. 0 = early access unavailable.
+export function earlyAccessQuantityForScore(creatorScore: number): number {
   let quantity = 0;
   for (const [score, unlocked] of EARLY_ACCESS_QUANTITY_UNLOCK) {
-    if (modelsScore >= score) quantity = unlocked;
+    if (creatorScore >= score) quantity = unlocked;
   }
   return quantity;
 }
 
-// Per-tier paid-access caps. In @civitai/buzz because the onsite model-version form sets access too, and the
-// main app enforces the caps server-side.
+// The monthly pricing allowance. In @civitai/buzz because the onsite model-version form applies prices too,
+// and the main app enforces the allowance server-side.
 export {
-  maxPermanentAccessModels,
-  maxPaidAccessPrice,
-  tierCapRows,
-  shouldUpsellCap,
+  monthlyPricingAllowance,
+  pricingAllowanceLimits,
+  pricingEligibility,
+  tierAllowanceRows,
+  shouldUpsellAllowance,
   nextCapTier,
-  capUpsellRows,
   monetizationLimits,
   resolveCapTier,
 } from '@civitai/buzz';
-export type { TierCapAmounts, TierCapRow, CapTier } from '@civitai/buzz';
+export type { TierAllowanceRow, CapTier, PricingEligibility } from '@civitai/buzz';
 
 export type PaidAccessConfig = {
   timeframe: number;
@@ -98,7 +98,11 @@ export const CREATOR_USAGE_CONTROLS = [
 
 export type CreatorUsageControl = (typeof CREATOR_USAGE_CONTROLS)[number]['value'];
 
-export const GENERATION_ONLY_HINT = 'On-site-generation-only resources require a Gold membership.';
+// Split so the linked form (GenerationOnlyHint.svelte) renders the same words: the joined constant is
+// also a 403 body and a `title` attribute, neither of which can carry an anchor.
+export const GENERATION_ONLY_HINT_LEAD = 'On-site-generation-only resources require a';
+export const GENERATION_ONLY_HINT_LINK = 'Gold membership';
+export const GENERATION_ONLY_HINT = `${GENERATION_ONLY_HINT_LEAD} ${GENERATION_ONLY_HINT_LINK}.`;
 
 export const isCreatorUsageControl = (v: unknown): v is CreatorUsageControl =>
   CREATOR_USAGE_CONTROLS.some((o) => o.value === v);

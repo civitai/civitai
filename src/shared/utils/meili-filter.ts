@@ -24,6 +24,7 @@ export const ne = (field: string, value: FilterValue): FilterClause =>
 export const inArray = (field: string, values: ReadonlyArray<FilterValue>): FilterClause =>
   `${field} IN [${values.map(quote).join(', ')}]`;
 export const not = (clause: FilterClause): FilterClause => `NOT ${clause}`;
+export const exists = (field: string): FilterClause => `${field} EXISTS`;
 
 function combine(op: 'AND' | 'OR', clauses: MaybeClause[]): FilterClause | null {
   const valid = clauses.filter((c): c is FilterClause => typeof c === 'string' && c.length > 0);

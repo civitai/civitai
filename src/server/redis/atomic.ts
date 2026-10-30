@@ -155,18 +155,56 @@ export async function hSetMultiWithTTL(
   key: string,
   fields: Record<string, string | number | Buffer>,
   ttlMs: number,
-  onChunk?: (progress: {
-    durationSeconds: number;
-    fieldCount: number;
-    chunkIndex: number;
-    chunkTotal: number;
-  }) => void
+  onChunk?: HSetMultiChunkCallback
 ): Promise<void> {
   // See hSetWithTTL — HPEXPIRE with 0/negative ms removes the field.
   if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
     throw new Error(`hSetMultiWithTTL: ttlMs must be a positive finite number, got ${ttlMs}`);
   }
-  const allEntries = Object.entries(fields);
+  await writeHSetMultiChunks(
+    Object.entries(fields),
+    (entries) => evalHSetMultiChunk(client, key, entries, ttlMs),
+    onChunk
+  );
+}
+
+/**
+ * hSetMultiWithTTL, except a field whose current value is `keepValue` is left as it is, value and TTL.
+ * The check and the write run in the same EVAL, so a concurrent write of `keepValue` cannot be overwritten
+ * between them. Chunking and its partial-write caveat are the same as hSetMultiWithTTL's.
+ */
+export async function hSetMultiWithTTLUnlessValue(
+  client: EvalCapableClient,
+  key: string,
+  fields: Record<string, string | number | Buffer>,
+  ttlMs: number,
+  keepValue: string,
+  onChunk?: HSetMultiChunkCallback
+): Promise<void> {
+  if (!Number.isFinite(ttlMs) || ttlMs <= 0) {
+    throw new Error(
+      `hSetMultiWithTTLUnlessValue: ttlMs must be a positive finite number, got ${ttlMs}`
+    );
+  }
+  await writeHSetMultiChunks(
+    Object.entries(fields),
+    (entries) => evalHSetMultiChunk(client, key, entries, ttlMs, keepValue),
+    onChunk
+  );
+}
+
+type HSetMultiChunkCallback = (progress: {
+  durationSeconds: number;
+  fieldCount: number;
+  chunkIndex: number;
+  chunkTotal: number;
+}) => void;
+
+async function writeHSetMultiChunks(
+  allEntries: Array<[string, string | number | Buffer]>,
+  writeChunk: (entries: Array<[string, string | number | Buffer]>) => Promise<void>,
+  onChunk?: HSetMultiChunkCallback
+): Promise<void> {
   if (allEntries.length === 0) return;
 
   // Chunked, and the chunk size is a SAFETY property rather than a tuning knob — see HSET_MULTI_CHUNK.
@@ -180,7 +218,7 @@ export async function hSetMultiWithTTL(
   const chunkTotal = Math.ceil(allEntries.length / HSET_MULTI_CHUNK);
   for (let i = 0; i < allEntries.length; i += HSET_MULTI_CHUNK) {
     const startedAt = Date.now();
-    await evalHSetMultiChunk(client, key, allEntries.slice(i, i + HSET_MULTI_CHUNK), ttlMs);
+    await writeChunk(allEntries.slice(i, i + HSET_MULTI_CHUNK));
     onChunk?.({
       durationSeconds: (Date.now() - startedAt) / 1000,
       fieldCount: Math.min(HSET_MULTI_CHUNK, allEntries.length - i),
@@ -208,13 +246,16 @@ async function evalHSetMultiChunk(
   client: EvalCapableClient,
   key: string,
   entries: Array<[string, string | number | Buffer]>,
-  ttlMs: number
+  ttlMs: number,
+  keepValue?: string
 ): Promise<void> {
   const fieldNames = entries.map(([f]) => f);
-  // ARGV layout:
-  //   [0]      = ttlMs
-  //   [1..N]   = fields (also passed as the HPEXPIRE FIELDS list)
-  //   [N+1..]  = values, in the same order
+  // ARGV layout (Lua, 1-based):
+  //   [1]           = ttlMs
+  //   [2]           = N, the field count
+  //   [3..N+2]      = fields (also passed as the HPEXPIRE FIELDS list)
+  //   [N+3..2N+2]   = values, in the same order
+  //   [2N+3]        = keepValue, only for the conditional script
   //
   // We interleave field/value pairs for HSET via Lua table-building rather
   // than relying on Lua's # operator (which is unsafe with sparse / nil
@@ -225,6 +266,13 @@ async function evalHSetMultiChunk(
     ...fieldNames,
     ...entries.map(([, v]) => (typeof v === 'number' ? String(v) : v) as unknown as string),
   ];
+  if (keepValue !== undefined) {
+    await client.eval(HSET_MULTI_UNLESS_VALUE_SCRIPT, {
+      keys: [key],
+      arguments: [...args, keepValue],
+    });
+    return;
+  }
 
   const script = `
     local ttl = ARGV[1]
@@ -250,6 +298,37 @@ async function evalHSetMultiChunk(
     arguments: args,
   });
 }
+
+// Same ARGV layout as the unconditional script plus keepValue last. HMGET reads every field in the chunk in
+// one call; a missing field comes back as false, which never equals keepValue.
+const HSET_MULTI_UNLESS_VALUE_SCRIPT = `
+    local ttl = ARGV[1]
+    local n = tonumber(ARGV[2])
+    local keep = ARGV[3 + 2 * n]
+    local fields = {}
+    for i = 1, n do
+      fields[i] = ARGV[2 + i]
+    end
+    local current = redis.call('HMGET', KEYS[1], unpack(fields))
+    local hsetArgs = { KEYS[1] }
+    local hpexpireArgs = { KEYS[1], ttl, 'FIELDS', '0' }
+    local m = 0
+    for i = 1, n do
+      if current[i] ~= keep then
+        hsetArgs[#hsetArgs + 1] = fields[i]
+        hsetArgs[#hsetArgs + 1] = ARGV[2 + n + i]
+        hpexpireArgs[#hpexpireArgs + 1] = fields[i]
+        m = m + 1
+      end
+    end
+    if m == 0 then
+      return 0
+    end
+    hpexpireArgs[4] = tostring(m)
+    redis.call('HSET', unpack(hsetArgs))
+    redis.call('HPEXPIRE', unpack(hpexpireArgs))
+    return m
+  `;
 
 /**
  * Atomically add a member to a sorted set AND set the key's TTL.
@@ -403,4 +482,51 @@ export async function sAddWithExpireGe(
     arguments: [member, String(ttlSeconds)],
   });
   return typeof reply === 'number' ? reply : Number(reply) || 0;
+}
+
+/**
+ * `sAddWithExpireGe` with a size cap. Below `cap` it adds and floors the TTL exactly as that does.
+ * At the cap it writes nothing, not even a TTL floor for a member already present, so a full set
+ * always expires within `ttlSeconds` and recording resumes; a full set with no expiry gets one. One key, so it runs on the cache
+ * cluster client.
+ *
+ * @returns the set's remaining life in seconds when `member` is in it afterwards, else 0. Anything
+ *   recorded must not be cached for longer than this, or a later purge could no longer find it.
+ */
+export async function sAddCappedWithExpireGe(
+  client: EvalCapableClient,
+  key: string,
+  member: string,
+  ttlSeconds: number,
+  cap: number
+): Promise<number> {
+  if (!Number.isFinite(ttlSeconds) || ttlSeconds <= 0) {
+    throw new Error(
+      `sAddCappedWithExpireGe: ttlSeconds must be a positive finite number, got ${ttlSeconds}`
+    );
+  }
+  // KEYS[1]=tag set  ARGV[1]=member  ARGV[2]=ttlSeconds  ARGV[3]=cap
+  const script = `
+    if redis.call('SCARD', KEYS[1]) >= tonumber(ARGV[3]) then
+      local left = redis.call('TTL', KEYS[1])
+      if left < 0 then
+        redis.call('EXPIRE', KEYS[1], ARGV[2])
+        return 0
+      end
+      if redis.call('SISMEMBER', KEYS[1], ARGV[1]) == 0 then return 0 end
+      return left
+    end
+    redis.call('SADD', KEYS[1], ARGV[1])
+    local left = redis.call('TTL', KEYS[1])
+    if left < tonumber(ARGV[2]) then
+      redis.call('EXPIRE', KEYS[1], ARGV[2])
+      left = tonumber(ARGV[2])
+    end
+    return left
+  `;
+  const reply = await client.eval(script, {
+    keys: [key],
+    arguments: [member, String(ttlSeconds), String(cap)],
+  });
+  return Math.max(Number(reply) || 0, 0);
 }

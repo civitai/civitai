@@ -31,6 +31,7 @@ import {
 } from '~/server/services/games/new-order.service';
 import {
   guardedProcedure,
+  guardedProcedureAllowUnverifiedEmail,
   isFlagProtected,
   moderatorProcedure,
   protectedProcedure,
@@ -107,7 +108,9 @@ export const gamesRouter = router({
       .meta({ requiredScope: TokenScope.SocialWrite })
       .use(isFlagProtected('newOrderGame'))
       .mutation(({ ctx }) => joinGame({ userId: ctx.user.id })),
-    getPlayer: guardedProcedure
+    // Queries the New Order UI renders from; a refusal here blanks the page rather than
+    // refusing an action.
+    getPlayer: guardedProcedureAllowUnverifiedEmail
       .meta({ requiredScope: TokenScope.MediaRead })
       .use(isFlagProtected('newOrderGame'))
       .query(({ ctx }) => getPlayerById({ playerId: ctx.user.id })),
@@ -115,14 +118,14 @@ export const gamesRouter = router({
       .input(getPlayersInfiniteSchema)
       .use(isFlagProtected('newOrderGame'))
       .query(({ input }) => getPlayersInfinite({ ...input })),
-    getImagesQueue: guardedProcedure
+    getImagesQueue: guardedProcedureAllowUnverifiedEmail
       .meta({ requiredScope: TokenScope.MediaRead })
       .use(isFlagProtected('newOrderGame'))
       .input(getImagesQueueSchema.optional())
       .query(({ input, ctx }) =>
         getImagesQueue({ ...input, playerId: ctx.user.id, isModerator: ctx.user.isModerator })
       ),
-    getHistory: guardedProcedure
+    getHistory: guardedProcedureAllowUnverifiedEmail
       .meta({ requiredScope: TokenScope.MediaRead })
       .input(getHistorySchema)
       .use(isFlagProtected('newOrderGame'))

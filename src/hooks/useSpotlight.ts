@@ -9,7 +9,10 @@ export function useSpotlight(opts?: { size?: number; color?: string }) {
   const color = opts?.color ?? 'light-dark(rgba(0,0,0,0.03), rgba(255,255,255,0.05))';
   const spotlightRef = useRef<HTMLDivElement>(null);
   const handleMouseMove = useCallback(
-    (e: React.MouseEvent<HTMLDivElement>) => {
+    // `HTMLElement`, not `HTMLDivElement`: the handler only reads the event's
+    // own bounding rect, and the surface is a button wherever the spotlight
+    // dresses a control rather than a panel.
+    (e: React.MouseEvent<HTMLElement>) => {
       const el = spotlightRef.current;
       if (!el) return;
       const rect = e.currentTarget.getBoundingClientRect();

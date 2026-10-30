@@ -12,17 +12,23 @@ import {
   useComputedColorScheme,
   Alert,
   Text,
+  ActionIcon,
+  Modal,
 } from '@mantine/core';
+import { IconMaximize } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { NoContent } from '~/components/NoContent/NoContent';
-import { useCallback, useEffect, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { CsamHeldMedia, useHeldGridReport } from '~/components/Csam/CsamHeldMedia';
+import { recordShown } from '~/components/Csam/csam-shown';
 import { MasonryColumns } from '~/components/MasonryColumns/MasonryColumns';
 import type { ModerationImageModel } from '~/server/services/image.service';
+import type { ShownRendition } from '@civitai/shared/held-media';
 import { IsClient } from '~/components/IsClient/IsClient';
 import { MasonryCard } from '~/components/MasonryGrid/MasonryCard';
-import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { useInView } from '~/hooks/useInView';
 import { useCsamImageSelectStore } from '~/components/Csam/useCsamImageSelect.store';
+import { splitLinkedImages } from '~/components/Csam/csam-linked-image-ids';
 import { useCsamContext } from '~/components/Csam/CsamProvider';
 import { MasonryContainer } from '~/components/MasonryColumns/MasonryContainer';
 import { MasonryProvider } from '~/components/MasonryColumns/MasonryProvider';
@@ -32,11 +38,12 @@ import { trpc } from '~/utils/trpc';
 export function CsamImageSelection({
   onNext,
   onMissing,
-  imageId,
+  imageIds,
 }: {
   onNext: () => void;
   onMissing: () => void;
-  imageId?: number;
+  /** Images the link named: pinned above the grid and preselected. */
+  imageIds: number[];
 }) {
   const { userId } = useCsamContext();
 
@@ -47,18 +54,17 @@ export function CsamImageSelection({
     refetch,
   } = trpc.image.getImagesByUserIdForModeration.useQuery({ userId });
 
-  const linkedImage = useMemo(
-    () => (imageId ? images?.find((x) => x.id === imageId) : undefined),
-    [images, imageId]
-  );
-  const gridImages = useMemo(
-    () => (linkedImage ? images?.filter((x) => x.id !== linkedImage.id) : images),
-    [images, linkedImage]
+  const { linkedImages, missingImageIds, gridImages } = useMemo(
+    () => splitLinkedImages(images ?? [], imageIds),
+    [images, imageIds]
   );
 
   useEffect(() => {
-    if (linkedImage) useCsamImageSelectStore.getState().seedSelected(userId, linkedImage.id);
-  }, [linkedImage, userId]);
+    const store = useCsamImageSelectStore.getState();
+    for (const image of linkedImages) store.seedSelected(userId, image.id);
+  }, [linkedImages, userId]);
+
+  useHeldGridReport(userId, images?.length ?? 0);
 
   const hasSelected = useCsamImageSelectStore(
     useCallback(({ selected }) => !!Object.keys(selected[userId] ?? {}).length, [userId])
@@ -75,7 +81,7 @@ export function CsamImageSelection({
   // would tell a moderator their evidence was purged when it is merely unloaded.
   if (isError)
     return (
-      <div className="mx-auto flex max-w-md flex-col items-center gap-3 p-xl">
+      <div className="p-xl mx-auto flex max-w-md flex-col items-center gap-3">
         <Alert color="red" title="Could not load this user's media">
           <Text size="xs">
             The request failed, so we can&apos;t tell what this user has. Retry before concluding
@@ -86,12 +92,12 @@ export function CsamImageSelection({
       </div>
     );
 
-  const missingLinkedImage = !!imageId && !linkedImage;
+  const missingLinkedImages = missingImageIds.length > 0;
 
   if (!images?.length)
     return (
       <div className="flex flex-col items-center gap-3">
-        {missingLinkedImage && <MissingImageAlert imageId={imageId} />}
+        {missingLinkedImages && <MissingImageAlert imageIds={missingImageIds} />}
         <NoContent p="xl" message="No images found for this user" />
         <Button onClick={onMissing}>Next user</Button>
       </div>
@@ -108,20 +114,31 @@ export function CsamImageSelection({
           <Title className="text-center" mb="md">
             CSAM Image Selection
           </Title>
-          {missingLinkedImage && (
+          {missingLinkedImages && (
             <MasonryContainer mb="md">
-              <MissingImageAlert imageId={imageId} />
+              <MissingImageAlert imageIds={missingImageIds} />
             </MasonryContainer>
           )}
-          {linkedImage && (
+          {linkedImages.length > 0 && (
             <MasonryContainer mb="md">
-              <Alert color="blue" title={`Reported media (#${linkedImage.id})`}>
+              <Alert
+                color="blue"
+                title={
+                  linkedImages.length === 1
+                    ? `Reported media (#${linkedImages[0].id})`
+                    : `Linked media (${linkedImages.length})`
+                }
+              >
                 <Text size="xs" mb="xs">
                   Linked from the report and selected for you. The rest of this user&apos;s media is
                   below.
                 </Text>
-                <div style={{ maxWidth: 450 }}>
-                  <CsamImageCard data={linkedImage} height={pinnedCardHeight(linkedImage)} />
+                <div className="flex flex-wrap items-start gap-3">
+                  {linkedImages.map((image) => (
+                    <div key={image.id} style={{ width: 450, maxWidth: '100%' }}>
+                      <CsamImageCard data={image} height={pinnedCardHeight(image)} />
+                    </div>
+                  ))}
                 </div>
               </Alert>
             </MasonryContainer>
@@ -154,7 +171,7 @@ export function CsamImageSelection({
           </IsClient>
         </div>
       </MasonryProvider>
-      <Card className="sticky inset-x-0 bottom-0 z-30 rounded-none">
+      <Card className="sticky inset-x-0 bottom-0 z-30 rounded-none pb-[max(var(--mantine-spacing-md),var(--safe-area-inset-bottom))]">
         <Group justify="flex-end">
           {/* <Button variant="default">Cancel</Button> */}
           <Badge>
@@ -176,9 +193,15 @@ function pinnedCardHeight({ width, height }: { width: number | null; height: num
   return Math.min(Math.round((450 * height) / width), 600);
 }
 
-function MissingImageAlert({ imageId }: { imageId: number }) {
+function MissingImageAlert({ imageIds }: { imageIds: number[] }) {
+  const title =
+    imageIds.length === 1
+      ? `Media #${imageIds[0]} is no longer on this user`
+      : `${imageIds.length} linked media are no longer on this user: ${imageIds
+          .map((id) => `#${id}`)
+          .join(', ')}`;
   return (
-    <Alert color="red" title={`Media #${imageId} is no longer on this user`}>
+    <Alert color="red" title={title}>
       <Text size="xs">
         It was most likely purged after being blocked, or moved to another account. If you still
         have the file, submit it through the{' '}
@@ -199,14 +222,34 @@ function SelectedCount() {
   return <>{count.toString()}</>;
 }
 
-function CsamImageCard({ data: image, height }: { data: ModerationImageModel; height: number }) {
+export function CsamImageCard({
+  data: image,
+  height,
+}: {
+  data: ModerationImageModel;
+  height: number;
+}) {
   const { ref, inView } = useInView();
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const userId = image.userId;
   const imageId = image.id;
   const checked = useCsamImageSelectStore((state) => state.selected[userId]?.[imageId] ?? false);
-  const toggleSelected = () => useCsamImageSelectStore.getState().toggle(userId, imageId);
+  const preselected = useCsamImageSelectStore((state) => !!state.seeded[`${userId}:${imageId}`]);
+  const shownRow = useCsamImageSelectStore((state) => state.shownRows[`${userId}:${imageId}`]);
+  const record = (action: 'open' | 'select', rendition: ShownRendition) =>
+    void recordShown({ imageId, userId, action, rendition }).then((ok) =>
+      useCsamImageSelectStore.getState().setShownRow(userId, imageId, ok ? 'recorded' : 'refused')
+    );
+  // What the tile has put on screen so far; a selection made before then is not recorded.
+  const shown = useRef<ShownRendition | null>(null);
+  const [fullView, setFullView] = useState(false);
+  const toggleSelected = () => {
+    const store = useCsamImageSelectStore.getState();
+    const selecting = !store.selected[userId]?.[imageId];
+    store.toggle(userId, imageId);
+    if (selecting && shown.current) record('select', shown.current);
+  };
   return (
     <MasonryCard
       withBorder
@@ -221,16 +264,30 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
     >
       {inView && (
         <>
-          <EdgeMedia
-            src={image.url}
-            name={image.name ?? image.id.toString()}
-            alt={image.name ?? undefined}
-            type={image.type}
-            width={450}
-            placeholder="empty"
-            style={{ width: '100%' }}
+          <CsamHeldMedia
+            image={image}
             onClick={toggleSelected}
+            onShown={(rendition) => (shown.current = rendition)}
           />
+          <ActionIcon
+            variant="filled"
+            color="dark"
+            aria-label="View full size"
+            onClick={() => setFullView(true)}
+            style={{ position: 'absolute', top: 5, left: 5, zIndex: 9 }}
+          >
+            <IconMaximize size={16} />
+          </ActionIcon>
+          {checked && shownRow !== 'recorded' && (preselected || shownRow === 'refused') && (
+            <Button
+              size="compact-xs"
+              color="dark"
+              onClick={() => setFullView(true)}
+              style={{ position: 'absolute', bottom: 5, left: 5, zIndex: 9 }}
+            >
+              Open full view to confirm viewed
+            </Button>
+          )}
           <Checkbox
             checked={checked}
             onChange={toggleSelected}
@@ -244,6 +301,19 @@ function CsamImageCard({ data: image, height }: { data: ModerationImageModel; he
           />
         </>
       )}
+      <Modal
+        opened={fullView}
+        onClose={() => setFullView(false)}
+        size="xl"
+        title={`Media #${imageId}`}
+        closeButtonProps={{ 'aria-label': 'Close' }}
+      >
+        <CsamHeldMedia
+          image={image}
+          onClick={() => undefined}
+          onShown={(rendition) => record('open', rendition)}
+        />
+      </Modal>
     </MasonryCard>
   );
 }

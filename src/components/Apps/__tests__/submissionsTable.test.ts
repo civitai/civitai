@@ -12,7 +12,6 @@ import {
   filterGroups,
   groupSubmissionsByApp,
   matchesQuery,
-  MY_SUBMISSIONS_CONTAINER_SIZE,
   nextSortState,
   OWNER_STATUS_BUCKETS,
   sortGroups,
@@ -653,7 +652,7 @@ describe('toDate', () => {
  *     would come back.
  */
 describe('SUBMISSIONS_TABLE_MIN_WIDTH', () => {
-  it('is at least the onsite table’s measured natural width (1424 px)', () => {
+  it('is at least the seeded floor (1424 px, measured on the since-deleted onsite table)', () => {
     // Below this, the full six-button action row cannot be laid out without the
     // columns collapsing — the state the measurement was taken in.
     expect(SUBMISSIONS_TABLE_MIN_WIDTH).toBeGreaterThanOrEqual(1424);
@@ -665,41 +664,20 @@ describe('SUBMISSIONS_TABLE_MIN_WIDTH', () => {
   });
 });
 
-describe('MY_SUBMISSIONS_CONTAINER_SIZE', () => {
-  it('is wide enough that the table does NOT scroll at desktop width', () => {
-    // This is the invariant the scroll container alone did not give us. The page's
-    // old container (`AppsPageLayout` default `'xl'` = 1320) is a MAX-width, so the
-    // card was a CONSTANT 1286 px at every viewport >= 1320 — always below the
-    // floor, i.e. a permanent scrollbar on every desktop. The container must clear
-    // the floor plus the Container padding + Card border it loses on the way in.
-    expect(MY_SUBMISSIONS_CONTAINER_SIZE - SUBMISSIONS_CONTAINER_CHROME).toBeGreaterThanOrEqual(
-      SUBMISSIONS_TABLE_MIN_WIDTH
-    );
-  });
+/**
+ * 🔴 THE `MY_SUBMISSIONS_CONTAINER_SIZE` BLOCK THAT LIVED HERE IS GONE FOR GOOD.
+ * `/apps/my-submissions` merged into `/apps/mine` and 301s there; the alias became
+ * `MY_APPS_CONTAINER_SIZE` in `myAppsView.ts`, and that has now been deleted too — every
+ * `/apps/*` route renders in ONE container (`APPS_PAGE_CONTAINER_WIDTH`), so no page has a
+ * width of its own to alias. What the alias was really protecting — that this page is wide
+ * enough for the floor below — is asserted as a relationship in `appsPageWidths.test.ts`.
+ * The scroll-floor arithmetic below stays here because it is still about this table.
+ */
 
-  it('is a raw px number, not a Mantine size token (tokens cap at xl = 1320)', () => {
-    expect(typeof MY_SUBMISSIONS_CONTAINER_SIZE).toBe('number');
-    expect(Number.isFinite(MY_SUBMISSIONS_CONTAINER_SIZE)).toBe(true);
-  });
-});
-
-describe('/apps/my-submissions consumes the widened container (S3)', () => {
-  const PAGE = path.resolve(__dirname, '../../../pages/apps/my-submissions.tsx');
-  const src = () => readFileSync(PAGE, 'utf8');
-
-  it('passes MY_SUBMISSIONS_CONTAINER_SIZE to AppsPageLayout, not the layout default', () => {
-    // Dropping the prop silently falls back to the layout default `'xl'`, which is
-    // exactly the state that made the clip permanent — nothing else would fail.
-    // Anchored to the ELEMENT, not the file (see the `type="native"` guard below for
-    // why a whole-file regex is not a guard at all).
-    expect(src()).toMatch(/<AppsPageLayout\b[^>]*?\ssize=\{MY_SUBMISSIONS_CONTAINER_SIZE\}/s);
-  });
-});
-
-describe('both my-submissions tables scroll rather than clip (S3, structural)', () => {
+describe('the my-submissions table scrolls rather than clips (S3, structural)', () => {
   const APPS_DIR = path.resolve(__dirname, '..');
   const read = (file: string) => readFileSync(path.join(APPS_DIR, file), 'utf8');
-  const LISTS = ['MySubmissionsList.tsx', 'OffsiteSubmissionsList.tsx'] as const;
+  const LISTS = ['OffsiteSubmissionsList.tsx'] as const;
 
   /**
    * 🔴 EVERY assertion here is ANCHORED TO THE `<Table.ScrollContainer …>` OPENING
@@ -714,7 +692,8 @@ describe('both my-submissions tables scroll rather than clip (S3, structural)', 
    * this rewrite. Same trap for the negative `minWidth` assertion, which an
    * unrelated `minWidth={400}` anywhere in a ~700-line file would trip.
    */
-  const inTag = (prop: string) => new RegExp(String.raw`<Table\.ScrollContainer\b[^>]*?\s${prop}`, 's');
+  const inTag = (prop: string) =>
+    new RegExp(String.raw`<Table\.ScrollContainer\b[^>]*?\s${prop}`, 's');
 
   for (const file of LISTS) {
     describe(file, () => {

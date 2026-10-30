@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react';
 import clsx from 'clsx';
 import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import type { EmblaCarouselProviderProps } from '~/components/EmblaCarousel/EmblaCarouselProvider';
+import { HatLayerHost, useHatLayer } from '~/components/Cosmetics/EventDecoration/HatLayer';
 import {
   EmblaCarouselProvider,
   useEmblaStore,
@@ -19,6 +20,7 @@ export function Embla({
   withControls,
   withIndicators,
   controlSize,
+  hatLayer,
   ...args
 }: EmblaCarouselProps) {
   return (
@@ -29,6 +31,7 @@ export function Embla({
         withControls={withControls}
         withIndicators={withIndicators}
         controlSize={controlSize}
+        hatLayer={hatLayer}
       >
         {children}
       </EmblaCarouselWrapper>
@@ -43,7 +46,43 @@ type EmblaCarouselWrapperProps = {
   controlSize?: number;
   withIndicators?: boolean;
   withControls?: boolean;
+  hatLayer?: boolean;
 };
+
+// Fallback for when no settle event arrives; the hats settle on their slides at most this long after.
+export const HAT_SETTLE_FALLBACK_MS = 800;
+
+function EmblaHatMotion() {
+  const emblaApi = useEmblaStore((state) => state.emblaApi);
+  const hatLayer = useHatLayer();
+  const moved = hatLayer?.moved;
+  const remeasure = hatLayer?.remeasure;
+  useEffect(() => {
+    if (!emblaApi || !moved || !remeasure) return;
+    let fallback: ReturnType<typeof setTimeout> | undefined;
+    const settle = () => {
+      clearTimeout(fallback);
+      moved(true);
+    };
+    // Embla moves the slides before it emits `scroll`, so the hats read them where they are drawn.
+    const scroll = () => {
+      moved(false);
+      clearTimeout(fallback);
+      fallback = setTimeout(settle, HAT_SETTLE_FALLBACK_MS);
+    };
+    // A re-init moves the slides without resizing them, so the hats measure again.
+    const reInit = () => {
+      settle();
+      remeasure();
+    };
+    emblaApi.on('scroll', scroll).on('settle', settle).on('reInit', reInit);
+    return () => {
+      clearTimeout(fallback);
+      emblaApi.off('scroll', scroll).off('settle', settle).off('reInit', reInit);
+    };
+  }, [emblaApi, moved, remeasure]);
+  return null;
+}
 
 function EmblaCarouselWrapper({
   children,
@@ -51,6 +90,7 @@ function EmblaCarouselWrapper({
   controlSize,
   withIndicators,
   withControls,
+  hatLayer,
   ...rest
 }: EmblaCarouselWrapperProps) {
   const nextClick = useEmblaStore((state) => state.nextClick);
@@ -58,6 +98,8 @@ function EmblaCarouselWrapper({
   const withKeyboardEvents = useEmblaStore((state) => state.withKeyboardEvents);
   const handleKeyDown = useCallback(
     (event: React.KeyboardEvent<HTMLDivElement>) => {
+      // A hat drawn into the carousel's layer bubbles its keys here; its focus must not scroll away.
+      if ((event.target as Element).closest?.('[data-event-decoration="hat"]')) return;
       if (withKeyboardEvents) {
         if (event.key === 'ArrowRight') {
           event.preventDefault();
@@ -75,7 +117,17 @@ function EmblaCarouselWrapper({
 
   return (
     <div className={clsx('relative', className)} onKeyDownCapture={handleKeyDown} {...rest}>
-      {children}
+      {hatLayer ? (
+        <HatLayerHost>
+          {children}
+          <EmblaHatMotion />
+        </HatLayerHost>
+      ) : (
+        <>
+          {children}
+          <EmblaHatMotion />
+        </>
+      )}
       {withControls && <EmblaControls size={controlSize} />}
       {withIndicators && (
         <EmblaIndicators
@@ -183,7 +235,7 @@ function EmblaButton({
       {...props}
       style={style}
       className={clsx(
-        'flex size-[--control-size] items-center justify-center rounded-full bg-white text-black shadow-sm transition-opacity duration-150 hover:opacity-100 data-[disabled]:opacity-25 data-[disabled]:hover:opacity-25',
+        'flex size-[--control-size] items-center justify-center rounded-full bg-white text-black shadow-md ring-1 ring-black/30 transition-opacity duration-150 hover:opacity-100 data-[disabled]:opacity-25 data-[disabled]:hover:opacity-25',
         'opacity-85',
         'dark:opacity-65',
         className

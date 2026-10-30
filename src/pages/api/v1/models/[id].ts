@@ -3,9 +3,12 @@ import * as z from 'zod';
 import type { ModelHashType } from '~/shared/utils/prisma/enums';
 import { ModelFileVisibility, ModelModifier } from '~/shared/utils/prisma/enums';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { ModelSort } from '~/server/common/enums';
-import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import {
+  createModelFileDownloadUrl,
+  createSerializedFileDownloadUrl,
+} from '~/server/common/model-helpers';
 import { getDownloadFilename } from '~/server/services/file.service';
 import { getModelsWithVersions } from '~/server/services/model.service';
 import { publicModelResponseKey } from '~/server/services/model-version.service';
@@ -14,13 +17,9 @@ import type { BlockScopedNextApiRequest } from '~/server/middleware/block-scope.
 import { withBlockScope } from '~/server/middleware/block-scope.middleware';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { getBaseUrl } from '~/server/utils/url-helpers';
-import {
-  allBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
-import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
 import { env } from '~/env/server';
 import { CacheTTL } from '~/server/common/constants';
 import { fetchThroughCache } from '~/server/utils/cache-helpers';
@@ -115,17 +114,37 @@ async function buildPublicModelResponse(
           files: includeDownloadUrl
             ? castedFiles
                 .filter((file) => file.visibility === ModelFileVisibility.Public)
-                .map(({ hashes, metadata, ...file }) => ({
+                .map(({ hashes, metadata, modelVersionId, ...file }) => ({
                   ...file,
                   metadata: removeEmpty(metadata),
                   name: safeDecodeURIComponent(
-                    getDownloadFilename({ model, modelVersion: version, file })
+                    getDownloadFilename({
+                      model,
+                      modelVersion: version,
+                      file,
+                      versionFiles: castedFiles,
+                    })
                   ),
                   hashes: hashesAsObject(hashes),
-                  downloadUrl: `${baseUrl}${createModelFileDownloadUrl({
-                    versionId: version.id,
-                    type: file.type,
-                    meta: metadata,
+                  // Pin the URL to THIS file. Passing `type`/`meta`/`primary`
+                  // instead makes the download route re-resolve the file on its
+                  // own (caller's filePreferences + its own scoring) — and for
+                  // the elected primary it emits a bare, entirely unqualified
+                  // URL — so on a multi-file version the URL could serve a file
+                  // other than the one whose `hashes`/`sizeKB`/`name` are
+                  // serialized right here. `fileId` suppresses every soft
+                  // discriminator in createModelFileDownloadUrl, and the
+                  // download route skips its metadata-misalignment check
+                  // because the file is already exact.
+                  //
+                  // `version.files` is NOT all this version's own files:
+                  // getModelsWithVersions splices in the linked VAE version's
+                  // files (`files.push(...vaeFile)`), which keep their own
+                  // `modelVersionId`. createSerializedFileDownloadUrl pins ONLY
+                  // a file this version owns — see the invariant note there.
+                  downloadUrl: `${baseUrl}${createSerializedFileDownloadUrl({
+                    file: { id: file.id, modelVersionId, type: file.type, metadata },
+                    hostVersionId: version.id,
                     primary: primaryFile.id === file.id,
                   })}`,
                   primary: primaryFile.id === file.id ? true : undefined,
@@ -165,17 +184,32 @@ const baseHandler = PublicEndpoint(async function handler(
       error: z.prettifyError(parsedParams.error) ?? `Invalid id`,
     });
 
-  const region = getRegion(req);
-  const isRestricted = isRegionRestricted(region);
-  const browsingLevel = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  const browsingLevel = apiBrowsingLevel(req);
   const { id } = parsedParams.data;
 
   // Bypass the origin cache when this request is taking the block-scoped path
   // (a valid block JWT was verified and bound by withBlockScope, which sets
-  // req.blockClaims and marks the response `private, no-store`). Block-scoped
-  // responses may be identity-bearing / differ from the pure-public body, so we
-  // must never serve them a cached public body nor populate the public cache
-  // from a block call. Only the anonymous PublicEndpoint path is cached.
+  // req.blockClaims and marks the response `private, no-store`). Never serve a
+  // block call a cached public body, and never populate the public cache from
+  // one. Only the anonymous PublicEndpoint path is cached.
+  //
+  // 🔴 WHY, PRECISELY — this comment used to say block-scoped responses "may be
+  // identity-bearing / differ from the pure-public body", which reads as a claim that
+  // they DO differ today and contradicts the `onApprovalLookupFailure` rationale at the
+  // export below. They do NOT differ today: `browsingLevel` above is derived from the
+  // REGION alone, `isBlockScoped` is read at exactly one place (the `shouldCache`
+  // condition), and both branches call `buildPublicModelResponse(id, browsingLevel)` with
+  // the same arguments. The bypass is a STANDING invariant, not a description of a
+  // current divergence — it keeps a token-bearing call and the shared public cache
+  // decoupled so that a future change making this branch identity-bearing cannot
+  // retroactively poison entries already written by anonymous callers.
+  //
+  // 🔴 SO THE TWO ARE COUPLED, AND THE COUPLING IS THE THING TO REMEMBER: the opt-out at
+  // the export below rests on the bodies being identical. The day this branch is made to
+  // differ from the anonymous one — an identity-bearing field, a claims-derived
+  // browsingLevel, anything — that rationale dies with it, and
+  // `onApprovalLookupFailure: 'serve'` must be removed in the SAME change. The exposure
+  // ledger's classification of this route as READ_PUBLIC goes with it.
   const isBlockScoped = !!(req as BlockScopedNextApiRequest).blockClaims;
 
   try {
@@ -259,4 +293,10 @@ async function fetchModelResponseCached(
 export default withBlockScope(baseHandler, {
   endpoint: 'model_detail',
   requiredScope: 'models:read:self',
+  // DUAL-AUTH: with no block JWT this is a plain PublicEndpoint, and the block-JWT branch
+  // differs only in skipping the origin cache — same builder, same arguments, same body.
+  // So the body a block receives here is byte-for-byte what an anonymous caller already
+  // gets at 200, and refusing on an unreachable replica would turn that into a 503 while
+  // removing no exposure at all. The clearest no-exposure entry in the ledger.
+  onApprovalLookupFailure: 'serve',
 });

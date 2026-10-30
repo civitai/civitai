@@ -1,4 +1,6 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 
 // Correctness tests for the SQL statement `updateUserProfile` emits for
 // `creatorCardStatsPreferences`.
@@ -15,72 +17,56 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // literally (so the function, the path and the `::jsonb` cast can't drift), and the user data
 // appears only in the bound values.
 
-const { statements, mockDb } = vi.hoisted(() => {
-  const statements: { text: string; values: unknown[] }[] = [];
+const statements: { text: string; values: unknown[] }[] = [];
 
-  // Two call shapes reach the capture. The tagged template (`$executeRaw`…``) arrives as
-  // `(TemplateStringsArray, ...values)` — NOT a `Prisma.Sql` — and is rebuilt here into
-  // `$N`-placeholder text. A pre-built `Prisma.sql` passed as an argument arrives as an object
-  // exposing `.sql`/`.values`. The interpolating `$executeRawUnsafe` arrives as one finished
-  // string. All three reduce to the same {text, values} pair, so a statement can never go
-  // unrecorded and read as a pass.
-  const record = (first: any, rest: unknown[]) => {
-    if (Array.isArray(first) && Array.isArray(first.raw)) {
-      const text = first.reduce(
-        (acc: string, chunk: string, i: number) => acc + (i ? `$${i}` : '') + chunk,
-        ''
-      );
-      statements.push({ text, values: rest });
-    } else if (first && typeof first === 'object' && typeof first.sql === 'string') {
-      statements.push({ text: first.sql, values: Array.isArray(first.values) ? first.values : [] });
-    } else {
-      statements.push({ text: String(first), values: rest });
-    }
-  };
+// Two call shapes reach the capture. The tagged template (`$executeRaw`…``) arrives as
+// `(TemplateStringsArray, ...values)` — NOT a `Prisma.Sql` — and is rebuilt here into
+// `$N`-placeholder text. A pre-built `Prisma.sql` passed as an argument arrives as an object
+// exposing `.sql`/`.values`. The interpolating `$executeRawUnsafe` arrives as one finished
+// string. All three reduce to the same {text, values} pair, so a statement can never go
+// unrecorded and read as a pass.
+const record = (first: any, rest: unknown[]) => {
+  if (Array.isArray(first) && Array.isArray((first as { raw?: unknown }).raw)) {
+    const text = (first as string[]).reduce(
+      (acc: string, chunk: string, i: number) => acc + (i ? `$${i}` : '') + chunk,
+      ''
+    );
+    statements.push({ text, values: rest });
+  } else if (first && typeof first === 'object' && typeof first.sql === 'string') {
+    statements.push({ text: first.sql, values: Array.isArray(first.values) ? first.values : [] });
+  } else {
+    statements.push({ text: String(first), values: rest });
+  }
+};
 
-  const profileRow = { userId: 1, coverImage: null };
-  const tx = {
-    userLink: {
-      deleteMany: vi.fn(async () => ({ count: 0 })),
-      createMany: vi.fn(async () => ({ count: 0 })),
-      updateMany: vi.fn(async () => ({ count: 0 })),
-    },
-    userProfile: {
-      update: vi.fn(async () => profileRow),
-      upsert: vi.fn(async () => ({ userId: 1 })),
-    },
-  };
+// The whole path is on the WRITE client: `getUserWithProfile` reads through `tx ?? dbWrite`
+// (user-profile.service.ts:86), the preferences statement is `dbWrite.$executeRaw` (:242) and the
+// links/profile write is `dbWrite.$transaction` (:275). The one replica read on the path is the
+// stat lookup at :110. The mock this replaces aliased dbRead and dbWrite to a single object, so a
+// mis-attributed call could not have shown up.
+const profileRow = { userId: 1, coverImage: null };
 
-  const mockDb = {
-    $executeRaw: vi.fn(async (first: any, ...rest: unknown[]) => {
-      record(first, rest);
-      return 1;
-    }),
-    $executeRawUnsafe: vi.fn(async (first: any, ...rest: unknown[]) => {
-      record(first, rest);
-      return 1;
-    }),
-    $queryRaw: vi.fn(async () => []),
-    $transaction: vi.fn(async (fn: (client: unknown) => Promise<unknown>) => fn(tx)),
-    user: {
-      findUniqueOrThrow: vi.fn(async () => ({
-        id: 1,
-        meta: {},
-        settings: {},
-        publicSettings: {},
-        profile: { userId: 1, message: null, coverImage: null },
-      })),
-      findUnique: vi.fn(async () => ({ id: 1 })),
-    },
-    userStat: { findFirst: vi.fn(async () => null) },
-    userProfile: tx.userProfile,
-    userLink: tx.userLink,
-  };
+// 🔴 The transaction client stays a SEPARATE object rather than inheriting the canonical
+// `$transaction` default, which hands the callback dbWrite itself. Measured, not assumed:
+// switching the callback to `fn(mockDb)` reds all six cases on
+// `Cannot read properties of undefined (reading 'coverImage')`, because the canonical mock has no
+// default for `update` and the service reads the returned row. Keeping `tx` separate also keeps
+// "written inside the transaction" distinguishable from "written directly", which is the reason
+// the shared-mock recipe gives for not collapsing them.
+const tx = {
+  userLink: {
+    deleteMany: vi.fn(async () => ({ count: 0 })),
+    createMany: vi.fn(async () => ({ count: 0 })),
+    updateMany: vi.fn(async () => ({ count: 0 })),
+  },
+  userProfile: {
+    update: vi.fn(async () => profileRow),
+    upsert: vi.fn(async () => ({ userId: 1 })),
+  },
+};
 
-  return { statements, mockDb };
-});
+const mockDb = dbMock.dbWrite;
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
 // Cover-image ingestion makes a blocking external call; the profile write doesn't depend on it.
 vi.mock('~/server/services/image.service', () => ({
   enqueueImageIngestion: vi.fn(async () => undefined),
@@ -96,6 +82,7 @@ vi.mock('~/server/redis/caches', () => ({
   getUserContentOverviewSfw: vi.fn(async () => ({})),
 }));
 
+import { imageUrlOwnersFake } from '~/server/services/__tests__/image-url-ownership.fake';
 import { updateUserProfile } from '~/server/services/user-profile.service';
 
 const USER_ID = 4242;
@@ -114,6 +101,32 @@ const EXPECTED_SQL =
 beforeEach(() => {
   vi.clearAllMocks();
   statements.length = 0;
+
+  // Restated, not inherited. The canonical mock has no default for `$transaction`'s separate-tx
+  // shape, none for `findUniqueOrThrow` beyond null (which `getUserWithProfile` would throw on),
+  // and none for the raw-SQL capture — the seam these tests are entirely built out of.
+  mockDb.$executeRaw.mockImplementation(async (first: any, ...rest: unknown[]) => {
+    record(first, rest);
+    return 1;
+  });
+  mockDb.$executeRawUnsafe.mockImplementation(async (first: any, ...rest: unknown[]) => {
+    record(first, rest);
+    return 1;
+  });
+  mockDb.$queryRaw.mockResolvedValue([]);
+  mockDb.$transaction.mockImplementation(async (fn: (client: unknown) => Promise<unknown>) =>
+    fn(tx)
+  );
+  mockDb.user.findUniqueOrThrow.mockResolvedValue({
+    id: 1,
+    meta: {},
+    settings: {},
+    publicSettings: {},
+    cosmetics: [],
+    profile: { userId: 1, message: null, coverImage: null },
+  });
+  mockDb.user.findUnique.mockResolvedValue({ id: 1 });
+  dbMock.dbRead.userStat.findFirst.mockResolvedValue(null);
 });
 
 describe('updateUserProfile — the creator-card stats preferences statement', () => {
@@ -182,5 +195,89 @@ describe('updateUserProfile — the creator-card stats preferences statement', (
     await updateUserProfile({ userId: USER_ID });
 
     expect(statements).toHaveLength(0);
+  });
+});
+
+describe('updateUserProfile — a new cover image', () => {
+  it('creates the cover row from client columns only', async () => {
+    redisMock.sysRedis.mGet.mockResolvedValue([String(USER_ID)] as never);
+    await updateUserProfile({
+      userId: USER_ID,
+      coverImage: {
+        url: '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33',
+        type: 'image',
+        width: 640,
+        postId: 9_001,
+        index: 2,
+      } as never,
+    });
+
+    const { coverImage } = (tx.userProfile.update.mock.calls[0] as any[])[0].data;
+    expect(coverImage.connectOrCreate.create).toMatchObject({
+      url: '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33',
+      width: 640,
+      userId: USER_ID,
+    });
+    expect(coverImage.connectOrCreate.create).not.toHaveProperty('postId');
+    expect(coverImage.connectOrCreate.create).not.toHaveProperty('index');
+  });
+
+  describe('whose url is owned by another user', () => {
+    const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
+    const OTHER = 77;
+    const cover = { url: KEY, type: 'image' } as never;
+
+    for (const slot of ['coverImage', 'sfwCoverImage'] as const) {
+      it(`refuses ${slot} before writing`, async () => {
+        mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: KEY, userId: OTHER }]));
+
+        await expect(updateUserProfile({ userId: USER_ID, [slot]: cover })).rejects.toMatchObject({
+          code: 'BAD_REQUEST',
+        });
+        expect(tx.userProfile.update).not.toHaveBeenCalled();
+      });
+
+      it(`leaves ${slot} unchecked when it names an existing image by id`, async () => {
+        mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: KEY, userId: OTHER }]));
+
+        await updateUserProfile({ userId: USER_ID, [slot]: { id: 5, url: KEY, type: 'image' } });
+        expect(tx.userProfile.update).toHaveBeenCalled();
+      });
+
+      it(`writes ${slot} when the caller owns the url`, async () => {
+        mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([{ url: KEY, userId: USER_ID }]));
+
+        await updateUserProfile({ userId: USER_ID, [slot]: cover });
+        expect(tx.userProfile.update).toHaveBeenCalled();
+      });
+    }
+  });
+
+  describe('whose key was issued to another user', () => {
+    const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e33';
+    const OTHER = 77;
+    const cover = { url: KEY, type: 'image' } as never;
+    beforeEach(() => {
+      mockDb.$queryRaw.mockImplementation(imageUrlOwnersFake([]));
+    });
+    afterEach(() => redisMock.sysRedis.mGet.mockReset());
+
+    for (const slot of ['coverImage', 'sfwCoverImage'] as const) {
+      it(`refuses ${slot} before writing`, async () => {
+        redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+
+        await expect(
+          updateUserProfile({ userId: USER_ID, sessionUserId: USER_ID, [slot]: cover })
+        ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+        expect(tx.userProfile.update).not.toHaveBeenCalled();
+      });
+
+      it(`writes ${slot} when that user saved it for the profile`, async () => {
+        redisMock.sysRedis.mGet.mockResolvedValue([String(OTHER)] as never);
+
+        await updateUserProfile({ userId: USER_ID, sessionUserId: OTHER, [slot]: cover });
+        expect(tx.userProfile.update).toHaveBeenCalled();
+      });
+    }
   });
 });

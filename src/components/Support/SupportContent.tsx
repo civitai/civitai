@@ -3,19 +3,20 @@ import type { IconProps } from '@tabler/icons-react';
 import { IconMail, IconQuestionMark } from '@tabler/icons-react';
 import { IconBook, IconBrandDiscord } from '@tabler/icons-react';
 import { AssistantChat } from '~/components/Assistant/AssistantChat';
+import { SUPPORT_LINKS } from '~/components/Support/support.constants';
 
 const SUPPORT_OPTIONS = [
   {
     title: 'Education Hub',
     description: 'Explore our Civitai and Generative AI tutorials & guides!',
     icon: (props: IconProps) => <IconBook {...props} />,
-    link: { label: 'Visit the Education Hub', href: '/education' },
+    link: { label: 'Visit the Education Hub', href: SUPPORT_LINKS.educationHub },
   },
   {
     title: 'Discord Community',
     description: 'Get assistance from our knowledgeable Community!',
     icon: (props: IconProps) => <IconBrandDiscord {...props} />,
-    link: { label: 'Join our Discord Community', href: '/discord' },
+    link: { label: 'Join our Discord Community', href: SUPPORT_LINKS.discord },
   },
   {
     title: 'Frenquently Asked Questions',
@@ -23,14 +24,14 @@ const SUPPORT_OPTIONS = [
     icon: (props: IconProps) => <IconQuestionMark {...props} />,
     link: {
       label: 'Civitai FAQ and Known Issues',
-      href: 'https://education.civitai.com/civitai-faq',
+      href: SUPPORT_LINKS.faq,
     },
   },
   {
     title: 'Report a Bug',
     description: 'Questions, bugs or errors? Reach out!',
     icon: (props: IconProps) => <IconMail {...props} />,
-    link: { label: 'Ticket portal', href: '/bugs' },
+    link: { label: 'Ticket portal', href: SUPPORT_LINKS.bugTicket },
   },
 ];
 
@@ -68,7 +69,7 @@ export function SupportContent() {
       <Grid.Col>
         <Text size="md">
           Still unsure? Contact us through our{' '}
-          <Anchor href="/support-portal" td="underline">
+          <Anchor href={SUPPORT_LINKS.portal} td="underline">
             Support Portal
           </Anchor>
         </Text>

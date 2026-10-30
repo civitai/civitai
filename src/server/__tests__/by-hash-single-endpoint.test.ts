@@ -2,15 +2,10 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
 
 // Focused test for src/pages/api/v1/model-versions/by-hash/[hash].ts.
-// Kept in src/server/__tests__ (NOT under src/pages) per CLAUDE.md.
+// Kept in src/server/__tests__ (NOT under src/pages) per .claude/rules/testing.md.
 
-const { mockFindFirst, mockResDetails } = vi.hoisted(() => ({
-  mockFindFirst: vi.fn(),
+const { mockResDetails } = vi.hoisted(() => ({
   mockResDetails: vi.fn().mockResolvedValue(undefined),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { modelFile: { findFirst: mockFindFirst } },
 }));
 
 vi.mock('~/server/utils/endpoint-helpers', () => ({
@@ -27,6 +22,8 @@ vi.mock('~/server/selectors/modelVersion.selector', () => ({
 }));
 
 import handler from '~/pages/api/v1/model-versions/by-hash/[hash]';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockFindFirst = dbMock.dbRead.modelFile.findFirst;
 
 const HASH = 'a'.repeat(64);
 
@@ -69,6 +66,11 @@ describe('by-hash/[hash] endpoint', () => {
     const { promise } = runRequest({ hash: HASH });
     await promise;
 
-    expect(mockResDetails).toHaveBeenCalledWith(expect.anything(), expect.anything(), null);
+    expect(mockResDetails).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      null,
+      expect.any(Function)
+    );
   });
 });

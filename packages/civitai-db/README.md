@@ -25,7 +25,7 @@ directly (e.g. `import { sql } from 'kysely'`).
 | Import | Returns | Env | Use when |
 |---|---|---|---|
 | `@civitai/db` (`createPrismaClients`) | `{ dbRead, dbWrite }` Prisma clients | **Requires** the full DB env set (below) | App uses Prisma |
-| `@civitai/db/kysely` (`createKyselyClients<DB>`) | `{ dbRead, dbWrite }` or `{ db }` Kysely clients | **None** — connection config is explicit | App uses Kysely (lighter; no Prisma engine) |
+| `@civitai/db/kysely` (`createKyselyClients<DB>`) | `{ dbRead, dbWrite, pool }` or `{ db, pool }` Kysely clients — `pool` is the primary pg pool | **None** — connection config is explicit | App uses Kysely (lighter; no Prisma engine) |
 
 The `/kysely` subpath imports only `kysely` + `pg` (never Prisma), so a Vite/SSR app can use it without
 pulling the Prisma engine.
@@ -52,8 +52,12 @@ export const { dbRead, dbWrite } = createKyselyClients<DB>({
 });
 ```
 
-Other shapes: `singleClient: true` → `{ db }` (no replica / read-your-writes); or pass pre-built
+Other shapes: `singleClient: true` → `{ db, pool }` (no replica / read-your-writes); or pass pre-built
 `pool` / `readPool` (e.g. the main app's `getClient()` pools) for full control.
+
+The returned `pool` is the **primary** pg pool backing `dbWrite`, handed back for startup work that
+needs a pool rather than a Kysely instance — `registerEnumArrayTypeParsers` being the one that exists.
+Kysely does not expose its dialect's pool.
 
 ## Gotchas
 
@@ -64,5 +68,13 @@ Other shapes: `singleClient: true` → `{ db }` (no replica / read-your-writes);
   numbers, not strings. Registration is lazy (per-factory-call), so merely importing `@civitai/db`
   elsewhere (the Prisma path) never flips global pg parsing.
 - **`pg` is transitive**: declare it in the app only if you `import 'pg'` directly.
+- **Dropped connections**: a dropped pg connection emits `'error'`, which crashes the process when
+  nothing listens. `createPool`, `createClients` and `createKyselyClients` attach `guardPool`
+  (`src/pool-guard.ts`): pool-level for idle clients, per-client for checked-out ones. Pre-built pools
+  passed in are not guarded here (`createPool` pools already are). An ESLint rule
+  (`eslint-no-direct-pg-pool.cjs` at the repo root) bans `new Pool` / `new pg.Pool` outside this
+  package. CI blocks on it only in newly ADDED `.ts`/`.tsx` files under `src/`, `packages/` and
+  `apps/event-engine/`; in modified files there it only annotates, and in the other apps it fires only
+  when lint is run locally.
 
 Reference implementation: [apps/moderator/src/lib/server/db.ts](../../apps/moderator/src/lib/server/db.ts).

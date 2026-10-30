@@ -1,11 +1,44 @@
-import { createSpokeGuard } from '@civitai/auth';
+import { env } from '$env/dynamic/private';
+import {
+  createRevocationCheck,
+  createSpokeGuard,
+  isModerationAccountUser,
+  type SessionRegistryRedis,
+} from '@civitai/auth';
+import { logToAxiom, safeError } from './axiom';
+import { getSysRedis } from './redis';
 
-// SPOKE AUTH for the moderator app (a `*.civitai.com` subdomain). It shares the hub's `.civitai.com` session
-// cookie for free, so there is NO login UI and NO OAuth bridge here — it verifies the session, resolves the
-// rich user, gates on `isModerator`, and lets the framework adapter (hooks.server.ts) act on the result. The
-// framework-agnostic decision lives in @civitai/auth (`createSpokeGuard`); this file just binds the policy.
-//
-// No redis client here, so revocation is NOT injected — a signature-only gate. Acceptable because the token is
-// short-lived relative to ban-response needs, and any mutating action still flows through a server handler that
-// can re-check. For real-time revocation, give this app a @civitai/redis client and pass `isRevoked`.
-export const guard = createSpokeGuard({ require: (user) => user.isModerator === true });
+// Same event shape as the main app's logSysRedisFailOpen, so its sysredis-fail-open alerts also see this app.
+export const isRevoked = createRevocationCheck({
+  redis: () => getSysRedis() as unknown as SessionRegistryRedis,
+  onError: (err) => {
+    logToAxiom({
+      ...safeError(err),
+      name: 'sysredis-fail-open',
+      type: 'warning',
+      subtype: 'read-degraded',
+      fn: 'spoke isRevoked',
+    }).catch(() => undefined);
+  },
+});
+
+/** The shared Civitai Moderation account is a moderator that never signs in. */
+export function admitsModerator(user: {
+  id: number;
+  username?: string | null;
+  isModerator?: boolean;
+}): boolean {
+  if (user.isModerator !== true) return false;
+  if (isModerationAccountUser(user, env.CIVITAI_MODERATION_USER_ID)) {
+    logToAxiom({
+      name: 'moderation-account-session-refused',
+      type: 'error',
+      source: 'moderator-app',
+      userId: user.id,
+    }).catch(() => undefined);
+    return false;
+  }
+  return true;
+}
+
+export const guard = createSpokeGuard({ require: admitsModerator, isRevoked });

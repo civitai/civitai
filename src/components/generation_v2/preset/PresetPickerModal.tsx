@@ -19,7 +19,7 @@ import {
   getEcosystemDisplayItems,
   type EcosystemDisplayItem,
 } from '~/shared/constants/basemodel.constants';
-import { getWorkflowsForEcosystem } from '~/shared/data-graph/generation/config/workflows';
+import { getWorkflowsForEcosystem } from '~/shared/generation/config/workflows';
 import { useGenerationPresetStore, type PresetValues } from '~/store/generation-preset.store';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -45,13 +45,9 @@ function displayItemKeyForEcosystem(
 ): string | null {
   const eco = ecosystemByKey.get(ecosystemKey);
   if (!eco) return null;
-  const group = items.find(
-    (item) => item.type === 'group' && item.ecosystemIds?.includes(eco.id)
-  );
+  const group = items.find((item) => item.type === 'group' && item.ecosystemIds?.includes(eco.id));
   if (group) return group.key;
-  const standalone = items.find(
-    (item) => item.type === 'ecosystem' && item.key === ecosystemKey
-  );
+  const standalone = items.find((item) => item.type === 'ecosystem' && item.key === ecosystemKey);
   return standalone?.key ?? null;
 }
 
@@ -108,9 +104,7 @@ export function PresetPickerModal() {
   }) => {
     applyPreset(preset)
       .then(() => dialog.onClose())
-      .catch((err: Error) =>
-        showErrorNotification({ title: 'Failed to load preset', error: err })
-      );
+      .catch((err: Error) => showErrorNotification({ title: 'Failed to load preset', error: err }));
   };
 
   return (

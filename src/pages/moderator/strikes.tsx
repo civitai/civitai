@@ -58,8 +58,10 @@ function getEntityLink(entityType: string | null, entityId: number | null): stri
     BountyEntry: '/bounties/entries/',
     Collection: '/collections/',
     ModelVersion: '/models/',
-    Comment: '/comments/',
-    CommentV2: '/comments/v2/',
+    // No `Comment`: a v1 comment id is not a CommentV3 id, and `/comments/<id>` would open a
+    // different comment.
+    CommentV2: '/comments/',
+    CommentV3: '/comments/',
     User: '/user/',
   };
   const prefix = map[entityType];
@@ -685,7 +687,7 @@ function IssueStrikeModal({
       points: 1,
       description: '',
       internalNotes: '',
-      expiresInDays: 30,
+      expiresInDays: 365,
     },
   });
 
@@ -698,7 +700,7 @@ function IssueStrikeModal({
         points: 1,
         description: '',
         internalNotes: '',
-        expiresInDays: 30,
+        expiresInDays: 365,
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -780,7 +782,7 @@ function IssueStrikeModal({
           <InputNumber
             name="expiresInDays"
             label="Expires In (days)"
-            description="Default: 30 days"
+            description="Default: 365 days"
             min={1}
             max={365}
           />

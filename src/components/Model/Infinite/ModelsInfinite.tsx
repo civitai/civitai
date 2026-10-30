@@ -4,7 +4,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { useRef } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { ModelCard } from '~/components/Cards/ModelCard';
-import { ModelCardContextProvider } from '~/components/Cards/ModelCardContext';
+import { ModelCardContextProvider, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
 import { EndOfFeed } from '~/components/EndOfFeed/EndOfFeed';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { MasonryGridVirtual } from '~/components/MasonryColumns/MasonryGridVirtual';
@@ -12,6 +12,7 @@ import type { ModelQueryParams } from '~/components/Model/model.utils';
 import { useModelFilters, useQueryModels } from '~/components/Model/model.utils';
 import { NoContent } from '~/components/NoContent/NoContent';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useEngagedModelsPrefetch } from '~/hooks/useEngagedModelMembership';
 import type { ModelFilterSchema } from '~/providers/FiltersProvider';
 import { removeEmpty } from '~/utils/object-helpers';
 
@@ -49,11 +50,16 @@ export function ModelsInfinite({
     ...filters,
     browsingLevel,
   });
+  const modelIds = models.map((m) => m.id);
+  const salesByModelId = useModelSaleBadges(modelIds);
+  useEngagedModelsPrefetch(modelIds);
 
   return (
     <ModelCardContextProvider
       useModelVersionRedirect={(filters?.baseModels ?? []).length > 0}
       activeBaseModels={filters?.baseModels}
+      salesByModelId={salesByModelId}
+      hasSaleProvider
     >
       {!models.length && isFetching ? (
         <Center p="xl">

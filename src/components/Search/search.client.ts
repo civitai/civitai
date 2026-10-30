@@ -1,13 +1,10 @@
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
 import type { InstantSearchProps } from 'react-instantsearch';
-import { env } from '~/env/client';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
+import { withUserHydration } from '~/components/Search/userHydration';
+import { emptyMeiliResults } from '~/components/Search/emptySearchClient';
+import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id', keepZeroFacets: true }
-);
+const meilisearch = createInstantMeiliSearch({ primaryKey: 'id', keepZeroFacets: true });
 
 const baseSearchClient: InstantSearchProps['searchClient'] = {
   ...meilisearch,
@@ -19,19 +16,7 @@ const baseSearchClient: InstantSearchProps['searchClient'] = {
       requests.every(({ params }) => !params?.query)
       // && !location.pathname.startsWith('/search')
     ) {
-      return Promise.resolve({
-        results: requests.map(() => ({
-          hits: [],
-          nbHits: 0,
-          nbPages: 0,
-          page: 0,
-          processingTimeMS: 0,
-          hitsPerPage: 0,
-          exhaustiveNbHits: false,
-          query: '',
-          params: '',
-        })),
-      });
+      return Promise.resolve(emptyMeiliResults(requests));
     }
 
     return meilisearch.search(requests);
@@ -41,5 +26,6 @@ const baseSearchClient: InstantSearchProps['searchClient'] = {
 // Wrap so a Meili outage degrades to empty results instead of an uncaught
 // `MeiliSearchCommunicationError`. This client backs the header quick-search
 // dropdown (and other autocomplete surfaces), so it fails quietly — no banner.
-export const searchClient: InstantSearchProps['searchClient'] =
-  createResilientSearchClient(baseSearchClient);
+export const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
+  createResilientSearchClient(baseSearchClient)
+);

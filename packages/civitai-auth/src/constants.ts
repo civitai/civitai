@@ -14,10 +14,29 @@ export const DEVICE_COOKIE_BASE = 'civ-device';
 // (prod is `__Secure-civitai-token`, not `civitai-token`).
 export const LEGACY_SESSION_COOKIE_BASE = 'civitai-token';
 export const SECURE_COOKIE_PREFIX = '__Secure-';
+export const HOST_COOKIE_PREFIX = '__Host-';
+
+// Which slot this app writes its session and device cookies to, read per app from AUTH_SESSION_COOKIE_MODE
+// (`sessionCookieMode()`). `shared` is today's `__Secure-` cookie on the registrable domain; `host` is a
+// `__Host-` cookie that stays on the host that set it. Readers accept both slots during the move (cookies.ts).
+export const SESSION_COOKIE_MODES = ['shared', 'host'] as const;
+export type SessionCookieMode = (typeof SESSION_COOKIE_MODES)[number];
 
 // Cross-domain account sync query param — the single marker the hub re-attaches after login and the
 // destination's useDomainSync reads to kick off the auth-code flow (/api/auth/authorize).
 export const SYNC_PARAM = 'sync-account';
+
+// The SPOKE-side landing every first-party login is sent to: the hub's `/login?returnUrl=` points here, and
+// this endpoint then starts the authorization-code flow back at the hub. Sibling of `SPOKE_CALLBACK_PATH`
+// (first-party.ts), which is the other end of the same round trip.
+//
+// Shared because BOTH sides now depend on the exact string: the main app WRITES it (`buildHubLoginUrl`), and
+// the hub MATCHES on it to decide whether a login is a cross-domain spoke hand-off (`establishSession`). If
+// those drift, the hub silently stops handing off and falls back to writing its own `.civitai.com` session —
+// which is the cross-domain account-switch bug, returning with no error and no failing test. Lives here
+// rather than beside SPOKE_CALLBACK_PATH so it is reachable from `@civitai/auth/client` too (client.ts
+// re-exports this file; it does not re-export first-party.ts).
+export const SPOKE_AUTHORIZE_PATH = '/api/auth/authorize';
 
 // The registrable domains (eTLD+1) the Civitai family owns. The single source of truth for "is this one of
 // our hosts" — the post-login redirect guard (isCivitaiOrigin) and any other family-host check reference THIS

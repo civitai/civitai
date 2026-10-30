@@ -36,8 +36,6 @@ vi.mock('~/server/services/challenge.service', () => ({
   scanUserChallenge: vi.fn(),
   voidChallenge: vi.fn(),
 }));
-vi.mock('~/server/db/client', () => ({ dbWrite: { challenge: { findUnique: vi.fn() } } }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 // challenge-activation.ts builds `challengeActivationJob` at import time; stub the runner so the
 // test never reaches the real cron/redis wiring.
 vi.mock('~/server/jobs/job', () => ({
@@ -45,6 +43,8 @@ vi.mock('~/server/jobs/job', () => ({
 }));
 
 import { runChallengeActivation } from '~/server/jobs/challenge-activation';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 beforeEach(() => {
   vi.clearAllMocks();

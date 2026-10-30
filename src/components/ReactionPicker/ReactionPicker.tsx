@@ -8,6 +8,7 @@ import { createContext, useContext, useMemo } from 'react';
 
 import { constants } from '~/server/common/constants';
 import type { ReactionDetails } from '~/server/selectors/reaction.selector';
+import { HIDDEN_REACTOR_ID } from '~/shared/constants/reaction-privacy.constants';
 import type { CommentGetReactions } from '~/types/router';
 import { toStringList } from '~/utils/array-helpers';
 
@@ -70,10 +71,13 @@ function ReactionBadge({ reaction, reactions }: ReactionBadgeProps) {
   const { onEmojiClick, user, disabled } = useReactionPickerContext();
   const tooltip = toStringList(
     reactions.map((reaction) =>
-      reaction.user.username === user?.username ? 'You' : reaction.user.username ?? '<deleted user>'
+      reaction.user.id === user?.id
+        ? 'You'
+        : reaction.user.username ??
+          (reaction.user.id === HIDDEN_REACTOR_ID ? 'Someone' : '<deleted user>')
     )
   );
-  const reacted = reactions.findIndex((reaction) => reaction.user.username === user?.username) > -1;
+  const reacted = reactions.findIndex((reaction) => reaction.user.id === user?.id) > -1;
   const canClick = user && !disabled;
 
   return (

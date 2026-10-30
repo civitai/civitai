@@ -24,9 +24,12 @@ import type { EdgeUrlProps } from '~/client-utils/cf-images-utils';
 import { useEdgeUrl } from '~/client-utils/cf-images-utils';
 import { useScrollAreaRef } from '~/components/ScrollArea/ScrollAreaContext';
 import clsx from 'clsx';
+import { setMediaDragData } from '~/components/EdgeMedia/media-drag-data';
 import styles from './EdgeVideo.module.scss';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { useDialogId } from '~/components/Dialog/dialogId';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
+import { getVideoPosition, recordVideoPosition } from '~/store/video-playback.store';
 
 type VideoProps = Omit<
   React.DetailedHTMLProps<React.VideoHTMLAttributes<HTMLVideoElement>, HTMLVideoElement>,
@@ -47,6 +50,10 @@ type VideoProps = Omit<
   disablePoster?: boolean;
   /** Database image ID — included in drag data so drop targets can look up metadata server-side */
   imageId?: number;
+  /** Play after a second of hover when not autoplaying. */
+  hoverPlay?: boolean;
+  /** Mounted for preloading, not on screen: never plays, whatever the viewport says. */
+  standby?: boolean;
 };
 
 export type EdgeVideoRef = {
@@ -65,6 +72,8 @@ const getFullscreenServerSnapshot = () => false;
 // Safari needs special handling (forced width, eager preload). userAgent is stable, so compute once.
 const IN_SAFARI =
   typeof navigator !== 'undefined' && /Version\/[\d.]+.*Safari/.test(navigator.userAgent);
+
+export const GLOBAL_VOLUME_KEY = 'global-volume';
 
 export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
   (
@@ -86,6 +95,8 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       disableWebm,
       disablePoster,
       imageId,
+      hoverPlay = true,
+      standby = false,
       onLoad,
       onError,
       onLoadedData,
@@ -100,6 +111,9 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const [showPlayIndicator, setShowPlayIndicator] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
     const [autoplayFailed, setAutoplayFailed] = useState(false);
+    // The overlay marks a video that came up paused; once the viewer has toggled playback
+    // themselves, the control bar is the indicator.
+    const [userToggled, setUserToggled] = useState(false);
     // hide the audio control for videos with no audio track. Detected reactively from
     // the video's load/play events (hasAudio populates as metadata/decoded bytes become available).
     const [hasAudioState, setHasAudioState] = useState(false);
@@ -108,8 +122,12 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       getFullscreenSnapshot,
       getFullscreenServerSnapshot
     );
+    // The store is document-wide; fullscreen is requested on containerRef, so narrow it to
+    // this player before acting on it.
+    const isSelfFullscreen =
+      isFullscreen && !!containerRef.current && document.fullscreenElement === containerRef.current;
     const [volume, setVolume] = useLocalStorage({
-      key: 'global-volume',
+      key: GLOBAL_VOLUME_KEY,
       defaultValue: muted ? 0 : 0.5,
     });
 
@@ -124,16 +142,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       setMuted(shouldForceMute);
     }
 
-    // React only controls the muted *attribute* (the initial default), not the live `.muted`
-    // *property* — so a persisted unmute won't reach the element on its own, and autoplay/refresh
-    // can leave the video stuck muted. Sync the property imperatively whenever muted changes.
-    useEffect(() => {
-      if (ref.current) ref.current.muted = muted;
-    }, [muted]);
-
     useImperativeHandle(forwardedRef, () => ({
       stop: () => {
         if (ref.current) {
+          if (resumeId) recordVideoPosition(resumeId, ref.current.currentTime);
           ref.current.pause();
           ref.current.currentTime = 0;
         }
@@ -154,6 +166,7 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           ref.current.pause();
         }
 
+        setUserToggled(true);
         setShowPlayIndicator(true);
         // clear() then start() restarts the hide timer on rapid re-toggles.
         clearHideIndicator();
@@ -182,16 +195,11 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       setHasAudioState(hasAudio(video));
     }, []);
 
-    // Runs from the video's own load events (onLoadedMetadata/onLoadedData/onCanPlay/onPlaying).
-    // No effect needed: this component renders the <video>, so React hands us the events as props.
     const markVideoReady = useCallback(() => {
-      const video = ref.current;
-      if (!video) return;
+      if (!ref.current) return;
       setLoaded(true);
       detectAudio();
-      // Apply persisted volume on load for non-muted videos (replaces the old render-body write).
-      if (!initialMuted) video.volume = volume;
-    }, [detectAudio, initialMuted, volume]);
+    }, [detectAudio]);
 
     const handleLoadedData = useCallback(
       (e: React.SyntheticEvent<HTMLVideoElement>) => {
@@ -237,6 +245,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     );
 
     const showCustomControls = loaded && controls && !html5Controls;
+    // Navigating post -> image detail mounts a second player for the same media, so playback
+    // position is carried across. Only real players qualify; silent looping previews in feeds
+    // have nothing meaningful to resume.
+    const resumeId = imageId && (controls || html5Controls) ? imageId : undefined;
     // Drag-to-add is for control-less previews. Any controls (custom or native) take over pointer
     // interaction — disable drag so scrubbing/volume don't get hijacked into a video drag.
     const draggableEnabled = !!imageId && !controls && !html5Controls;
@@ -244,20 +256,53 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     const { url: videoUrl } = useEdgeUrl(src, { ...options, anim: true });
     const { url: coverUrl } = useEdgeUrl(thumbnailUrl ?? src, {
       width: options?.width,
-      optimized: options?.optimized,
+      // A `thumbnailUrl` poster is an image uuid, so `useEdgeUrl`'s video rule misses it.
+      optimized: true,
       skip: thumbnailUrl ? undefined : options?.skip,
       anim: thumbnailUrl ? undefined : false,
       transcode: thumbnailUrl ? undefined : true,
       original: thumbnailUrl ? undefined : false,
     });
 
+    // The <video> is server-rendered and starts loading before hydration; a cached file can fire
+    // every load event (and `playing`) before React attaches its listeners — Firefox does this
+    // routinely on reload. Those events are never replayed, so read the element's state on attach.
+    // `key={videoUrl}` attaches a fresh element for a new source, so per-element state starts over.
+    const setVideoRef = useCallback(
+      (video: HTMLVideoElement | null) => {
+        ref.current = video;
+        if (!video) return;
+        setLoaded(false);
+        setHasAudioState(false);
+        setAutoplayFailed(false);
+        setUserToggled(false);
+        if (video.readyState >= HTMLMediaElement.HAVE_METADATA) markVideoReady();
+        setIsPlaying(!video.paused);
+      },
+      [markVideoReady]
+    );
+
+    // `.volume` has no attribute, and React only sets the muted *attribute* (the initial default),
+    // not the live `.muted` property, so both are pushed imperatively. The element mirroring state
+    // is also what lets onVolumeChange tell a native-controls change apart from these writes.
+    // A 0 level is stored as muted instead.
+    useEffect(() => {
+      const video = ref.current;
+      if (!video) return;
+      video.muted = muted;
+      if (volume > 0) video.volume = volume;
+    }, [muted, volume, videoUrl]);
+
     const node = useScrollAreaRef();
 
     // ensure that video only plays when it is in the current view/dialog
-    const dialogCount = useDialogStore((state) => state.dialogs.length);
-    const stackRef = useRef<number | null>(null);
-    if (stackRef.current === null) stackRef.current = dialogCount;
-    const isCurrentStack = stackRef.current === dialogCount;
+    // Not a depth captured at mount: a player that mounts under an already-open dialog (the page
+    // behind the image detail remounts on a remix click) would take that depth as its own.
+    const dialogId = useDialogId();
+    const isCurrentStack = useDialogStore((state) => {
+      const top = state.dialogs[state.dialogs.length - 1];
+      return dialogId === undefined ? !top : top?.id === dialogId;
+    });
 
     const [canPlay, setCanPlay] = useState(false);
     useEffect(() => {
@@ -279,15 +324,25 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
     useEffect(() => {
       const videoElem = ref.current;
       if (!videoElem) return;
-      if (isCurrentStack && (canPlay || props.autoPlay)) {
-        videoElem.play().catch(() => {
+      if (!standby && isCurrentStack && (canPlay || props.autoPlay)) {
+        // Coming back from the detail dialog, this element is still paused where it was left;
+        // the other player kept the position moving.
+        const resumeAt = resumeId ? getVideoPosition(resumeId) : undefined;
+        if (resumeAt !== undefined && Math.abs(resumeAt - videoElem.currentTime) > 0.5) {
+          videoElem.currentTime = resumeAt;
+        }
+        // Some iOS Safari versions return undefined from play() instead of a promise.
+        videoElem.play()?.catch(() => {
           // Autoplay failed, user interaction required
           setAutoplayFailed(true);
         });
-      } else {
+      } else if (!isSelfFullscreen) {
+        // Fullscreen moves the element to the top layer, so it stops intersecting the
+        // observer's scroll-area root and canPlay goes false. Pausing on that would stop
+        // the video the moment it is maximized.
         videoElem.pause();
       }
-    }, [canPlay, isCurrentStack, props.autoPlay]);
+    }, [canPlay, isCurrentStack, standby, props.autoPlay, isSelfFullscreen, resumeId]);
 
     const { start: handleMouseEnter, clear } = useTimeout(
       (e: [React.MouseEvent<HTMLVideoElement>]) => {
@@ -310,24 +365,37 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
       <div
         ref={containerRef}
         {...wrapperProps}
+        onClick={(e) => {
+          // The post page wraps the media in a link, and fullscreen only repaints — clicks still
+          // bubble there and would route away mid-playback. preventDefault is needed alongside
+          // stopPropagation: the link's own handler is what suppresses the native navigation.
+          if (isSelfFullscreen) {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          wrapperProps?.onClick?.(e);
+        }}
         className={clsx(
           styles.iosScroll,
+          props.controlsList?.includes('nofullscreen') && styles.noFullscreenButton,
           wrapperProps?.className ? wrapperProps?.className : 'h-full',
           'relative flex flex-col items-center justify-center overflow-hidden'
         )}
       >
         <video
           key={videoUrl}
-          ref={ref}
+          ref={setVideoRef}
           // Drag is only enabled when no controls are shown (see draggableEnabled), so scrubbing/
           // volume on custom or native controls can never get hijacked into a video drag.
           draggable={draggableEnabled}
           onDragStart={
             draggableEnabled
               ? (e) => {
-                  e.dataTransfer.setData('text/uri-list', videoUrl);
-                  e.dataTransfer.setData('application/x-civitai-media-id', String(imageId));
-                  e.dataTransfer.setData('application/x-civitai-media-type', 'video');
+                  setMediaDragData(e.dataTransfer, {
+                    url: videoUrl,
+                    mediaId: imageId,
+                    type: 'video',
+                  });
                 }
               : undefined
           }
@@ -341,7 +409,17 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
             // reveal once loaded — declarative replacement for the old imperative opacity writes.
             ...(fadeIn ? { opacity: loaded ? 1 : 0 } : {}),
           }}
-          onLoadedMetadata={markVideoReady}
+          onLoadedMetadata={(e) => {
+            markVideoReady();
+            const resumeAt = resumeId ? getVideoPosition(resumeId) : undefined;
+            // Skip a position at the very end — that should start over, not resume a finished video.
+            if (resumeAt !== undefined && resumeAt < e.currentTarget.duration - 0.5) {
+              e.currentTarget.currentTime = resumeAt;
+            }
+          }}
+          onTimeUpdate={
+            resumeId ? (e) => recordVideoPosition(resumeId, e.currentTarget.currentTime) : undefined
+          }
           onLoadedData={handleLoadedData}
           onCanPlay={markVideoReady}
           onLoad={onLoad}
@@ -352,22 +430,27 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
             setAutoplayFailed(false);
             detectAudio();
           }}
+          onPlay={() => setIsPlaying(true)}
           onPause={() => setIsPlaying(false)}
           onVolumeChange={(e) => {
             // Native controls own the element's volume/mute here (custom slider/toggle update state
             // directly, so forwarding them would double-fire). Mirror BOTH volume and muted from the
             // element — deriving muted from volume alone fights the native mute button, which mutes
             // while keeping volume > 0.
-            if (!html5Controls || initialMuted) return;
+            if (!html5Controls) return;
             const video = e.currentTarget;
             const nextMuted = video.muted || video.volume === 0;
-            if (video.volume > 0) setVolume(video.volume); // remember level across mute
+            const volumeMoved = volume > 0 && Math.abs(video.volume - volume) > 0.001;
+            // Our own muted/volume syncs also fire this event; only a user change leaves the element
+            // out of step with state.
+            if (nextMuted === muted && !volumeMoved) return;
+            if (video.volume > 0) setVolume(video.volume);
             setMuted(nextMuted);
             onMutedChange?.(nextMuted);
           }}
           playsInline
-          onMouseOver={!options?.anim ? handleMouseEnter : undefined}
-          onMouseLeave={!options?.anim ? handleMouseLeave : undefined}
+          onMouseOver={!options?.anim && hoverPlay ? handleMouseEnter : undefined}
+          onMouseLeave={!options?.anim && hoverPlay ? handleMouseLeave : undefined}
           autoPlay={!!(options?.anim && disablePoster)}
           loop
           poster={!disablePoster ? coverUrl : undefined}
@@ -379,8 +462,10 @@ export const EdgeVideo = forwardRef<EdgeVideoRef, VideoProps>(
           {!disableWebm && <source src={videoUrl?.replace('.mp4', '.webm')} type="video/webm" />}
           <source src={videoUrl} type="video/mp4" />
         </video>
-        {((!options?.anim && !showCustomControls && !html5Controls && !isPlaying) ||
-          autoplayFailed) && (
+        {(autoplayFailed ||
+          (!html5Controls &&
+            !isPlaying &&
+            (showCustomControls ? !userToggled : !options?.anim))) && (
           <IconPlayerPlayFilled
             className={clsx(styles.playButton, 'pointer-events-none z-10 absolute-center')}
           />

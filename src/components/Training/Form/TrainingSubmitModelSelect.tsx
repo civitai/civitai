@@ -15,9 +15,10 @@ import { IconAlertCircle, IconExclamationCircle } from '@tabler/icons-react';
 import { openConfirmModal } from '@mantine/modals';
 import React from 'react';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
+import { StudioOnlyModelsNotice } from '~/components/Training/TrainingStudioSwitch';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import { ResourceSelect } from '~/components/ImageGeneration/GenerationForm/ResourceSelect';
-import { blockedCustomModels } from '~/components/Training/Form/TrainingCommon';
+import { blockedCustomModels } from '~/shared/constants/training.constants';
 import { useTrainingServiceStatus } from '~/components/Training/training.utils';
 import { trpc } from '~/utils/trpc';
 import type {
@@ -29,6 +30,9 @@ import {
   // trainingDetailsBaseModels35,
   trainingDetailsBaseModelsAcestep15,
   trainingDetailsBaseModelsAcestep15Xl,
+  trainingDetailsBaseModelsMing,
+  trainingDetailsBaseModelsQwen21,
+  trainingDetailsBaseModelsYue2,
   trainingDetailsBaseModelsAnima,
   trainingDetailsBaseModelsBoogu,
   trainingDetailsBaseModelsKrea2,
@@ -39,6 +43,7 @@ import {
   trainingDetailsBaseModelsFlux2Klein,
   trainingDetailsBaseModelsHiDreamO1,
   trainingDetailsBaseModelsHunyuan,
+  trainingDetailsBaseModelsIdeogram4,
   trainingDetailsBaseModelsLtx2,
   trainingDetailsBaseModelsLtx23,
   trainingDetailsBaseModelsLtx25,
@@ -61,7 +66,7 @@ import {
   getDefaultTrainingParams,
   trainingStore,
 } from '~/store/training.store';
-import { getAirModelLink, stringifyAIR } from '~/shared/utils/air';
+import { getCivitaiAirModelLink, stringifyAIR } from '~/shared/utils/air';
 import {
   type AudioSampleOverride,
   AI_TOOLKIT_EPOCHS,
@@ -88,6 +93,7 @@ const ModelSelector = ({
   isCustom = false,
   isVideo = false,
   allowedKeys,
+  customBaseModels,
 }: {
   selectedRun: TrainingRun;
   color: MantineColor;
@@ -99,6 +105,7 @@ const ModelSelector = ({
   isCustom?: boolean;
   isVideo?: boolean;
   allowedKeys?: string[];
+  customBaseModels?: string[];
 }) => {
   const baseTypes = Array.isArray(baseType) ? baseType : [baseType];
   const versions = Object.entries(trainingModelInfo).filter(
@@ -156,7 +163,13 @@ const ModelSelector = ({
                 {
                   type: ModelType.Checkpoint,
                   // nb: when adding here, make sure logic is added in castBase below
-                  baseModels: ['SD 1.4', 'SD 1.5', 'SDXL 1.0', 'Pony', 'Illustrious'],
+                  baseModels: customBaseModels ?? [
+                    'SD 1.4',
+                    'SD 1.5',
+                    'SDXL 1.0',
+                    'Pony',
+                    'Illustrious',
+                  ],
                 },
               ],
             }}
@@ -208,6 +221,8 @@ const ModelSelector = ({
                   ? 'flux2klein'
                   : ([...getBaseModelsByGroup('Chroma')] as string[]).includes(baseModel)
                   ? 'chroma'
+                  : ([...getBaseModelsByGroup('Anima')] as string[]).includes(baseModel)
+                  ? 'anima'
                   : 'sd15';
 
                 const cLink = stringifyAIR({
@@ -405,6 +420,13 @@ export const ModelSelect = ({
   const formBaseModel = selectedRun.base;
   const isCustomModel = !!selectedRun.customModel;
 
+  const baseModelInfo = !isCustomModel
+    ? trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]
+    : undefined;
+  const baseModelCivitaiLink = baseModelInfo?.air
+    ? getCivitaiAirModelLink(baseModelInfo.air)
+    : null;
+
   const baseModel15 =
     !!formBaseModel &&
     (trainingDetailsBaseModels15 as ReadonlyArray<string>).includes(formBaseModel)
@@ -490,6 +512,21 @@ export const ModelSelect = ({
     (trainingDetailsBaseModelsHiDreamO1 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
+  const baseModelMing =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsMing as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelQwen21 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsQwen21 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelYue2 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsYue2 as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
   const baseModelAnima =
     !!formBaseModel &&
     (trainingDetailsBaseModelsAnima as ReadonlyArray<string>).includes(formBaseModel)
@@ -508,6 +545,11 @@ export const ModelSelect = ({
   const baseModelMageFlow =
     !!formBaseModel &&
     (trainingDetailsBaseModelsMageFlow as ReadonlyArray<string>).includes(formBaseModel)
+      ? formBaseModel
+      : null;
+  const baseModelIdeogram4 =
+    !!formBaseModel &&
+    (trainingDetailsBaseModelsIdeogram4 as ReadonlyArray<string>).includes(formBaseModel)
       ? formBaseModel
       : null;
   const baseModelAcestep15 =
@@ -556,6 +598,7 @@ export const ModelSelect = ({
                   <CustomMarkdown>{announcement.message}</CustomMarkdown>
                 </AlertWithIcon>
               )}
+              {mediaType === 'image' && <StudioOnlyModelsNotice />}
               {mediaType === 'image' && (
                 <>
                   <ModelSelector
@@ -710,10 +753,54 @@ export const ModelSelect = ({
                       isNew={new Date() < new Date('2026-08-27')}
                     />
                   )}
+                  {features.mingTraining && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="teal"
+                      name="Ming Image"
+                      value={baseModelMing}
+                      baseType="ming"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
+                  {features.qwen21Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="teal"
+                      name="Qwen Image 2.1"
+                      value={baseModelQwen21}
+                      baseType="qwen21"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
+                  {features.ideogram4Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="grape"
+                      name="Ideogram 4"
+                      value={baseModelIdeogram4}
+                      baseType="ideogram4"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew={new Date() < new Date('2026-09-19')}
+                    />
+                  )}
                 </>
               )}
               {mediaType === 'audio' && (
                 <>
+                  {features.yue2Training && (
+                    <ModelSelector
+                      selectedRun={selectedRun}
+                      color="cyan"
+                      name="YuE2"
+                      value={baseModelYue2}
+                      baseType="yue2"
+                      makeDefaultParams={makeDefaultParams}
+                      isNew
+                    />
+                  )}
                   <ModelSelector
                     selectedRun={selectedRun}
                     color="violet"
@@ -811,6 +898,14 @@ export const ModelSelect = ({
                     baseType="sdxl" // unused
                     makeDefaultParams={makeDefaultParams}
                     isCustom
+                    customBaseModels={[
+                      'SD 1.4',
+                      'SD 1.5',
+                      'SDXL 1.0',
+                      'Pony',
+                      'Illustrious',
+                      ...(features.animaTraining ? getBaseModelsByGroup('Anima') : []),
+                    ]}
                   />
                 </>
               )}
@@ -825,19 +920,11 @@ export const ModelSelect = ({
                     : trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]
                         ?.description ?? 'No description.'}
                 </Text>
-                {!isCustomModel &&
-                  trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList]?.air && (
-                    <Anchor
-                      href={getAirModelLink(
-                        trainingModelInfo[formBaseModel as TrainingDetailsBaseModelList].air!
-                      )}
-                      target="_blank"
-                      rel="noreferrer"
-                      size="sm"
-                    >
-                      View base model on Civitai
-                    </Anchor>
-                  )}
+                {baseModelCivitaiLink && (
+                  <Anchor href={baseModelCivitaiLink} target="_blank" rel="noreferrer" size="sm">
+                    View base model on Civitai
+                  </Anchor>
+                )}
                 {blockedModels.includes(formBaseModel) ? (
                   <AlertWithIcon
                     icon={<IconExclamationCircle />}
@@ -862,10 +949,14 @@ export const ModelSelect = ({
                   selectedRun.baseType === 'ltx25' ||
                   selectedRun.baseType === 'minimaxh3' ||
                   selectedRun.baseType === 'hidream-o1' ||
+                  selectedRun.baseType === 'ming' ||
+                  selectedRun.baseType === 'qwen21' ||
+                  selectedRun.baseType === 'yue2' ||
                   selectedRun.baseType === 'anima' ||
                   selectedRun.baseType === 'boogu' ||
                   selectedRun.baseType === 'krea2' ||
                   selectedRun.baseType === 'mageflow' ||
+                  selectedRun.baseType === 'ideogram4' ||
                   selectedRun.baseType === 'acestep15' ||
                   selectedRun.baseType === 'acestep15xl' ? (
                   <AlertWithIcon icon={<IconAlertCircle />} iconColor="default" p="xs">

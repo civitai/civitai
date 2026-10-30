@@ -6,11 +6,13 @@ import {
   generationStatusSchema,
 } from '~/server/schema/generation.schema';
 import type { GenerationStatusMode } from '~/server/schema/generation.schema';
-import type { GateRule } from '~/shared/data-graph/generation/gates';
+import type { GateRule } from '~/shared/generation/gates';
+import type { GeneratorMessage } from '~/shared/generation/messages';
 import type { CivitaiResource, ImageMetaProps } from '~/server/schema/image.schema';
 import type { NormalizedWorkflowMetadata } from '~/server/services/orchestrator';
 import { removeEmpty } from '~/utils/object-helpers';
 import { parseAIR } from '~/utils/string-helpers';
+import { isRawAirResource } from '~/shared/utils/air';
 import { trpc } from '~/utils/trpc';
 import { isImageMetaOnSite } from '~/server/utils/image-onsite';
 import { openResourceSelectModal } from '~/components/Dialog/triggers/resource-select';
@@ -64,19 +66,16 @@ export const useGenerationStatus = () => {
 
 const DEFAULT_GENERATION_CONFIG = {
   unstableResources: [] as number[],
-  experimentalEcosystems: [] as string[],
   selfHostedDisabledEcosystems: [] as string[],
   selfHostedMode: 'enabled' as GenerationStatusMode,
   gateRules: [] as GateRule[],
+  generatorMessages: [] as GeneratorMessage[],
 };
 
 /**
  * Returns the dynamic, Redis-backed generator config:
  * - `unstableResources`: model version IDs flagged unstable by the
  *   `resource-gen-availability` cron
- * - `experimentalEcosystems`: ecosystem keys that should show the
- *   "experimental build" alert in the generator UI (unioned with the
- *   static `isEcosystemExperimental` check)
  * - `selfHostedDisabledEcosystems` / `selfHostedMode`: the self-hosted toggle
  * - `gateRules`: the gate rules that apply to this user (audience-filtered
  *   server-side), resolved per-item by the graph nodes
@@ -306,14 +305,18 @@ export function getStepMeta(step?: {
   if (!step) return;
   const metaParams = step.params;
   const metaResources = step.resources;
-  const civitaiResources = metaResources?.map((args): CivitaiResource => {
-    if ('air' in args && typeof args.air === 'string') {
-      const { version, type } = parseAIR(args.air);
-      return { modelVersionId: version, type, weight: args.strength };
-    } else {
-      return { modelVersionId: args.id, type: args.model.type, weight: args.strength };
-    }
-  });
+  // Raw-AIR training epochs have no ModelVersion: their blob key parses to a NaN version id,
+  // which fails civitaiResourceSchema and blocks posting the image.
+  const civitaiResources = metaResources
+    ?.filter((args) => !isRawAirResource(args))
+    .map((args): CivitaiResource => {
+      if ('air' in args && typeof args.air === 'string') {
+        const { version, type } = parseAIR(args.air);
+        return { modelVersionId: version, type, weight: args.strength };
+      } else {
+        return { modelVersionId: args.id, type: args.model.type, weight: args.strength };
+      }
+    });
   // remove 'resources' due to property being set on video gen
   const { resources, ...params } = (metaParams ?? {}) as Record<string, unknown> & {
     resources: any;

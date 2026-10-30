@@ -1,0 +1,95 @@
+# Per-service dev/prod values for `cli.mjs start --prod <groups>`.
+#
+# Copy to `env-modes.local` (gitignored) and fill in real values. Ask an infra owner for the
+# connection recipes — deliberately not in this file, which is public.
+#
+# Format: [<group>.<dev|prod>] followed by KEY=VALUE lines. A section is applied as an OVERLAY on
+# top of the session's `.env`; keys it does not mention keep their `.env` value. Group names are
+# whatever you write here, so adding a service needs no code change.
+#
+# Every group defaults to `dev`. Move a default with DEVSERVER_PROD_GROUPS in the skill's `.env`
+# (e.g. when the dev Buzz API is down), and override per start with `--prod` / `--dev`.
+#
+# ⚠️ These are the only services with a dev counterpart. The orchestrator, payments, S3,
+# ClickHouse, the notifications DB, the feeds proxy and OpenSearch have none — a session in `dev`
+# mode still talks to production for those. Pressing Generate spends real Buzz whatever this says.
+#
+# The auth hub is not movable at all, for a different reason: it is one shared process reading its
+# own apps/auth/.env, so an overlay here would only point the app at a hub nobody is running.
+# env-modes.mjs refuses an [auth-hub.*] section rather than honouring it.
+
+# A section must restate EVERY key that names the same service. The overlay only moves keys it
+# mentions, so an omitted one keeps its `.env` value — that is how you get writes on production and
+# reads on dev, which looks like nothing at all until it corrupts something. DATABASE_IS_PROD in
+# particular gates the S3 delete paths.
+
+[db.dev]
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
+DATABASE_REPLICA_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
+DATABASE_REPLICA_LONG_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
+DATAPACKET_DATABASE_RO_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?sslmode=no-verify&schema=public
+DATABASE_IS_PROD=false
+
+[db.prod]
+DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=50
+DATABASE_REPLICA_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=50
+DATABASE_REPLICA_LONG_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=50
+DATAPACKET_DATABASE_RO_URL=postgresql://USER:PASSWORD@HOST:PORT/civitai?schema=public&connection_limit=20
+DATABASE_IS_PROD=true
+
+[buzz.dev]
+BUZZ_ENDPOINT=http://HOST:PORT
+
+[buzz.prod]
+BUZZ_ENDPOINT=http://HOST:PORT
+
+# METRICS_SEARCH_* is a SECOND Meilisearch instance that the app writes to, so leaving it out
+# means a search=dev session syncing indexes into the production metrics index.
+
+[search.dev]
+SEARCH_HOST=https://HOST/
+SEARCH_API_KEY=KEY
+NEXT_PUBLIC_SEARCH_HOST=https://HOST/
+NEXT_PUBLIC_SEARCH_CLIENT_KEY=KEY
+METRICS_SEARCH_HOST=https://HOST/
+METRICS_SEARCH_API_KEY=KEY
+
+[search.prod]
+SEARCH_HOST=http://HOST:PORT
+SEARCH_API_KEY=KEY
+NEXT_PUBLIC_SEARCH_HOST=http://HOST:PORT
+NEXT_PUBLIC_SEARCH_CLIENT_KEY=KEY
+METRICS_SEARCH_HOST=http://HOST:PORT
+METRICS_SEARCH_API_KEY=KEY
+
+[signals.dev]
+SIGNALS_ENDPOINT=https://HOST
+NEXT_PUBLIC_SIGNALS_ENDPOINT=https://HOST
+
+[signals.prod]
+SIGNALS_ENDPOINT=http://HOST:PORT
+NEXT_PUBLIC_SIGNALS_ENDPOINT=https://HOST
+
+# REDIS_SYS_SENTINELS must be restated (empty for dev) whenever the base .env sets it: with
+# sentinels configured, REDIS_SYS_URL supplies only the password and the host comes from the
+# sentinel list — so overriding the URL alone leaves the session on the production system Redis.
+
+[redis.dev]
+REDIS_URL=redis://default:PASSWORD@localhost:6379
+REDIS_SYS_URL=redis://default:PASSWORD@localhost:6379
+REDIS_CLUSTER=false
+REDIS_CLUSTER_NODES=
+REDIS_SYS_SENTINELS=
+REDIS_SYS_SENTINEL_NAME=
+REDIS_SYS_SENTINEL_PASSWORD=
+
+# If the production cache is a cluster, REDIS_CLUSTER must move with the URL — it defaults to
+# false, so a single-node client would fail on keyslot redirects instead of connecting.
+[redis.prod]
+REDIS_URL=redis://HOST:PORT
+REDIS_SYS_URL=redis://HOST:PORT
+REDIS_CLUSTER=true
+REDIS_CLUSTER_NODES=HOST:PORT,HOST:PORT,HOST:PORT
+REDIS_SYS_SENTINELS=HOST:PORT
+REDIS_SYS_SENTINEL_NAME=NAME
+REDIS_SYS_SENTINEL_PASSWORD=

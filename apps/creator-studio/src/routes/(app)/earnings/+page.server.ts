@@ -45,6 +45,9 @@ export const load: PageServerLoad = async ({ locals, cookies }) => {
       to: compare.range.to,
     },
     through,
+    // `through` is the last ELAPSED day of the selected month, so it is only today when that month is the current
+    // one. The sales line says which, rather than letting a July figure read as a recency signal in August.
+    throughIsToday: through === todayIso,
     cash,
     monthly,
     buzzRatio,

@@ -32,6 +32,17 @@ export type StickerPlacementData = {
    * backfill.
    */
   commentHidden?: boolean;
+  /**
+   * The space was on `auto` when this was placed, so nobody reviewed it.
+   *
+   * Stamped at create time because no column records it: an auto space calls
+   * `settlePlacement` with the same action and actor as an owner approving from
+   * their queue, and `mode` itself is a three-level cascade resolved only in
+   * `resolvePlacementSpace`. Absent on every row written before this existed and
+   * deliberately not backfilled — the notification that reads it only ever looks
+   * at rows resolved since it last ran.
+   */
+  autoSpace?: boolean;
   /** Mirrored horizontally, so a sticker can face into the artwork. */
   flip: boolean;
   /** 0.3–1. Floored, never zero — see `STICKER_PLACEMENT_MIN_OPACITY`. */
@@ -106,6 +117,57 @@ export function stickerMaxScale(settings?: Record<string, unknown> | null) {
 
 export const STICKER_MAX_SCALE_KEY = 'maxScale';
 
+/** What an image can be, as far as stickers are concerned: audio is placed like an image. */
+export const STICKER_MEDIA_TYPES = ['image', 'video'] as const;
+export type StickerMediaType = (typeof STICKER_MEDIA_TYPES)[number];
+
+export const STICKER_MEDIA_TYPES_KEY = 'mediaTypes';
+
+/** The sticker media type of an `Image.type`. */
+export const stickerMediaTypeOf = (imageType: string | null | undefined): StickerMediaType =>
+  imageType === 'video' ? 'video' : 'image';
+
+/**
+ * Which media types the account lets stickers be placed on.
+ *
+ * Absent, empty or unreadable means both — the state every account was in before
+ * this setting existed, and the reason it needs no backfill. Like `stickerMaxScale`
+ * this reads JSON on a row that a hand-edit can reach without the schema, so an
+ * unreadable value falls back to open rather than quietly closing a creator's space.
+ */
+export function stickerMediaTypes(settings?: Record<string, unknown> | null) {
+  const stored = settings?.[STICKER_MEDIA_TYPES_KEY];
+  if (!Array.isArray(stored)) return [...STICKER_MEDIA_TYPES];
+  const known = STICKER_MEDIA_TYPES.filter((type) => stored.includes(type));
+  return known.length > 0 ? known : [...STICKER_MEDIA_TYPES];
+}
+
+/**
+ * Written by the sticker create path, read by the owner-facing auto-accept
+ * notification's SQL. Both sides take the spelling from here, because a rename
+ * on one side alone fails as a notification that silently never fires.
+ */
+export const STICKER_AUTO_SPACE_KEY = 'autoSpace';
+
+/**
+ * What a caller may hand IN, as against `StickerPlacementData`, which is what a
+ * stored row holds.
+ *
+ * `flip` and `opacity` are optional here and required there, deliberately. #3865
+ * added both and put the defaulting for rows written before they existed into
+ * `parseStickerPlacementData` — "which is now the one way to read
+ * `Placement.data`, rather than in each reader" — so data genuinely reaches the
+ * write path without them. The zod schema defaults both, so the router's parsed
+ * value always carries them and the real call path is unaffected.
+ *
+ * Do not collapse the two back together. `parseStickerPlacementData` and
+ * `PlacedSticker` are the narrowing half and must keep both required; making the
+ * input side match them is what left the defaulting below unreachable to the
+ * compiler while it stayed necessary at runtime.
+ */
+export type StickerPlacementInput = Omit<StickerPlacementData, 'flip' | 'opacity'> &
+  Partial<Pick<StickerPlacementData, 'flip' | 'opacity'>>;
+
 const clamp = (value: number, min: number, max: number) => Math.min(Math.max(value, min), max);
 
 /**
@@ -113,9 +175,11 @@ const clamp = (value: number, min: number, max: number) => Math.min(Math.max(val
  * leaves the image by a pixel is a normal gesture, not a malformed request. The
  * schema still refuses anything non-finite — a NaN would render nowhere and be
  * indistinguishable from the sticker not existing.
+ *
+ * Widening to narrowing: it takes the input shape and returns the stored one.
  */
 export const normalizeStickerPlacement = (
-  data: Omit<StickerPlacementData, 'cosmeticId'>
+  data: Omit<StickerPlacementInput, 'cosmeticId'>
 ): Omit<StickerPlacementData, 'cosmeticId'> => ({
   x: clamp(data.x, 0, 1),
   y: clamp(data.y, 0, 1),
@@ -127,7 +191,9 @@ export const normalizeStickerPlacement = (
   // on its way through `parseStickerPlacementData`, and anything hand-written.
   // NaN would be written to the row and drawn as no sticker at all.
   opacity: clamp(
-    Number.isFinite(data.opacity) ? data.opacity : STICKER_PLACEMENT_DEFAULT_OPACITY,
+    typeof data.opacity === 'number' && Number.isFinite(data.opacity)
+      ? data.opacity
+      : STICKER_PLACEMENT_DEFAULT_OPACITY,
     STICKER_PLACEMENT_MIN_OPACITY,
     STICKER_PLACEMENT_MAX_OPACITY
   ),
@@ -169,6 +235,14 @@ export const normalizeStickerComment = (comment?: string | null): string | undef
  * owner decision, and the abusive cases are the ones that must not wait.
  */
 export const STICKER_REMOVAL_LOCK_HOURS = 24 * 7;
+
+/**
+ * How many of your own placements the "placed" list carries.
+ *
+ * The same cap the remix gallery's sent queue uses, and for the same reason: the
+ * list does not page, so it has to stop somewhere and say that it did.
+ */
+export const STICKER_PLACEMENT_QUEUE_LIMIT = 50;
 
 /** When a sticker approved at `approvedAt` may be removed by the content owner. */
 export const stickerRemovableAt = (approvedAt: Date | string) =>

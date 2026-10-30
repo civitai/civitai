@@ -4,27 +4,37 @@ import { ModelFileVisibility, ModelModifier, ModelStatus } from '~/shared/utils/
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { isProd } from '~/env/other';
 import { getDownloadFilename } from '~/server/services/file.service';
-import { createModelFileDownloadUrl } from '~/server/common/model-helpers';
+import {
+  createModelFileDownloadUrl,
+  createSerializedFileDownloadUrl,
+} from '~/server/common/model-helpers';
 import { dbRead } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readModelVersionPrivacyViaKysely,
+  readModelVersionPrivacyViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
 import type { ModelVersionApiReturn } from '~/server/selectors/modelVersion.selector';
 import { getImagesForModelVersion } from '~/server/services/image.service';
 import { getVaeFiles } from '~/server/services/model.service';
+import {
+  getHiddenModelVersionIds,
+  isPrivateModelVersion,
+} from '~/server/services/model-visibility.service';
 import type { PublicPaidAccessDto } from '~/server/services/paid-access.service';
 import { getPaidAccess, toPublicPaidAccessDto } from '~/server/services/paid-access.service';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
 import { reduceToBasicFileMetadata } from '~/server/services/model-file.service';
 import type { Session } from '~/types/session';
-import { stringifyAIR } from '~/shared/utils/air';
+import { modelVersionToAir } from '~/server/utils/resource-air';
 import { safeDecodeURIComponent } from '~/utils/string-helpers';
-import {
-  allBrowsingLevelsFlag,
-  sfwBrowsingLevelsFlag,
-} from '~/shared/constants/browsingLevel.constants';
-import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { resolveModelFace, showsSfwFace } from '~/shared/utils/model-sfw-face';
+import { apiBrowsingLevel } from '~/server/utils/browsing-level';
 import { logToAxiom } from '~/server/logging/client';
 import { hasValidCreatorMembershipCached } from '~/server/services/creator-program.service';
 import {
@@ -51,9 +61,7 @@ export default MixedAuthEndpoint(async function handler(
   if (!id) return res.status(400).json({ error: 'Missing modelVersionId' });
   const status = user?.isModerator ? undefined : ModelStatus.Published;
 
-  const region = getRegion(req);
-  const isRestricted = isRegionRestricted(region);
-  const allowedBrowsingLevels = isRestricted ? sfwBrowsingLevelsFlag : allBrowsingLevelsFlag;
+  const allowedBrowsingLevels = apiBrowsingLevel(req);
 
   try {
     const modelVersion = await dbRead.$queryRaw<
@@ -81,6 +89,7 @@ export default MixedAuthEndpoint(async function handler(
          LIMIT 1) AS "vaeId",
         mv."uploadType",
         mv."usageControl",
+        mv."availability",
         COALESCE(
           (
             SELECT json_agg(
@@ -137,10 +146,13 @@ export default MixedAuthEndpoint(async function handler(
         (
           SELECT json_build_object(
             'name', m.name,
+            'sfwName', m."sfwName",
             'type', m.type,
             'nsfw', m.nsfw,
             'poi', m.poi,
-            'mode', m.mode
+            'mode', m.mode,
+            'availability', m.availability,
+            'userId', m."userId"
           )
           FROM "Model" m
           WHERE m.id = mv."modelId"
@@ -152,7 +164,7 @@ export default MixedAuthEndpoint(async function handler(
       LIMIT 1
     `.then((results) => results[0] || null);
 
-    await resModelVersionDetails(req, res, modelVersion);
+    await resModelVersionDetails(req, res, modelVersion, async () => user);
   } catch (e) {
     const error = e as Error;
     logToAxiom({
@@ -172,9 +184,17 @@ export async function prepareModelVersionResponse(
   baseUrl: URL,
   images?: AsyncReturnType<typeof getImagesForModelVersion>,
   // `null` means known-ungated; only `undefined` self-fetches.
-  paidAccess?: PublicPaidAccessDto | null
+  paidAccess?: PublicPaidAccessDto | null,
+  // The .com face, as the API v1 model list resolves it: for a caller served only safe levels.
+  showSfwFace = false
 ) {
-  const { files, model, metrics, vaeId, ...version } = modelVersion;
+  // `availability` and the owner only decide visibility; they are not part of the response.
+  const { files, model: modelRow, metrics, vaeId, availability, ...storedVersion } = modelVersion;
+  const { availability: modelAvailability, userId: ownerId, ...storedModel } = modelRow;
+  const withSfwFace = showSfwFace && storedModel.sfwName != null;
+  const model = resolveModelFace(storedModel, withSfwFace);
+  // A .com face has no per-version description; the .red one is not shown in its place.
+  const version = withSfwFace ? { ...storedVersion, description: null } : storedVersion;
   const vae = !!vaeId ? await getVaeFiles({ vaeIds: [vaeId] }) : [];
   files.push(...vae);
   const castedFiles = files as Array<
@@ -198,13 +218,11 @@ export async function prepareModelVersionResponse(
   // Creator Controls: gate the version download count (public API — no owner/mod
   // bypass wired here, matching buildPublicModelResponse). The base query doesn't
   // carry meta/owner, so fetch the privacy inputs directly.
-  const privacy = await dbRead.modelVersion.findUnique({
-    where: { id: version.id },
-    select: {
-      meta: true,
-      model: { select: { meta: true, userId: true, user: { select: { settings: true } } } },
-    },
-  });
+  let privacy = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+    ? await readModelVersionPrivacyViaKysely((await loadKyselyDb()).kyselyRead, version.id)
+    : undefined;
+  // `undefined` is OFF, or a version whose model or user row is gone, for which Prisma throws.
+  if (privacy === undefined) privacy = await readModelVersionPrivacyViaPrisma(dbRead, version.id);
   // Only resolve CP membership when something is actually hidden (version meta, model
   // meta, or the owner's user default). When nothing is hidden, the resolver returns
   // NONE regardless of membership, so the cached membership read can be skipped —
@@ -229,12 +247,11 @@ export async function prepareModelVersionResponse(
     // licensingFee is a Prisma Decimal; coerce so the public API keeps emitting a number, not a JSON string.
     licensingFee: version.licensingFee != null ? Number(version.licensingFee) : null,
     paidAccess,
-    air: stringifyAIR({
-      baseModel: version.baseModel,
-      type: model.type,
-      modelId: version.modelId,
+    air: modelVersionToAir({
       id: version.id,
-      fileType: primaryFile.type,
+      baseModel: version.baseModel,
+      model: { id: version.modelId, type: model.type },
+      files: castedFiles,
     }),
     stats: {
       downloadCount: hidden.downloads ? null : metrics[0]?.downloadCount ?? 0,
@@ -249,13 +266,30 @@ export async function prepareModelVersionResponse(
             metadata: reduceToBasicFileMetadata(metadata),
             hashes: hashesAsObject(hashes),
             name: safeDecodeURIComponent(
-              getDownloadFilename({ model, modelVersion: version, file })
+              // The stored name, so the advertised name matches the file the download route serves.
+              getDownloadFilename({
+                model: storedModel,
+                modelVersion: version,
+                file,
+                versionFiles: castedFiles,
+              })
             ),
             primary: primaryFile.id === file.id,
-            downloadUrl: `${baseUrl.origin}${createModelFileDownloadUrl({
-              versionId: version.id,
-              type: file.type,
-              meta: metadata,
+            // Pin the URL to THIS file — see the matching note in
+            // src/pages/api/v1/models/[id].ts. Without `fileId` the download
+            // route re-resolves the file from the caller's filePreferences, so
+            // the advertised `hashes`/`sizeKB`/`name` and the bytes actually
+            // served can disagree on a multi-file version.
+            //
+            // `castedFiles` is NOT all this version's own files: the `vaeId`
+            // splice above pushes files that live on the LINKED VAE version.
+            // createSerializedFileDownloadUrl pins ONLY a file this version
+            // owns; a spliced one keeps its original discriminator URL, which
+            // the download route resolves through the linked-component
+            // fallback. See the invariant note on that helper.
+            downloadUrl: `${baseUrl.origin}${createSerializedFileDownloadUrl({
+              file: { id: file.id, modelVersionId, type: file.type, metadata },
+              hostVersionId: version.id,
               primary: primaryFile.id === file.id,
             })}`,
           }))
@@ -279,17 +313,38 @@ export async function prepareModelVersionResponse(
   };
 }
 
+type Viewer = { id?: number | null; isModerator?: boolean | null } | null | undefined;
+
+/**
+ * `getViewer` is only called for a version of a flagged or Private model, so a public caller pays
+ * for no session lookup. A version the viewer may not see gets the same 404 as one that does not
+ * exist.
+ */
 export async function resModelVersionDetails(
   req: NextApiRequest,
   res: NextApiResponse,
-  modelVersion: ModelVersionApiReturn | null
+  modelVersion: ModelVersionApiReturn | null,
+  getViewer: () => Promise<Viewer>
 ) {
-  if (!modelVersion) return res.status(404).json({ error: 'Model not found' });
+  const hidden =
+    !!modelVersion && (await getHiddenModelVersionIds([modelVersion], getViewer)).size > 0;
+  if (!modelVersion || hidden) return res.status(404).json({ error: 'Model not found' });
 
   const baseUrl = new URL(
     isProd && req.headers.host ? `https://${req.headers.host}` : 'http://localhost:3000'
   );
-  const body = await prepareModelVersionResponse(modelVersion, baseUrl);
+  const showSfwFace = showsSfwFace(apiBrowsingLevel(req));
+  const body = await prepareModelVersionResponse(
+    modelVersion,
+    baseUrl,
+    undefined,
+    undefined,
+    showSfwFace
+  );
   if (!body) return res.status(404).json({ error: 'Missing model file' });
+  // Only its owner or a moderator gets here with a Private version: never let a cache keep it.
+  // Nor a response showing the .com face: it varies by region, which the shared cache doesn't key on.
+  if (isPrivateModelVersion(modelVersion) || (showSfwFace && modelVersion.model.sfwName != null))
+    res.setHeader('Cache-Control', 'private, no-store');
   res.status(200).json(body);
 }

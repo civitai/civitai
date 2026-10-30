@@ -15,8 +15,10 @@ import {
 import {
   getFollowedCollectionIds,
   hydrateBlockSubject,
+  isPublicCollectionImage,
   mapImageItemToMedia,
 } from '~/server/services/blocks/block-collections.service';
+import { reactTicketForImage } from '~/server/services/blocks/react-ticket.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
@@ -42,7 +44,11 @@ import { CollectionItemStatus, CollectionReadConfiguration } from '~/shared/util
  *
  * Response: `{ collection: { id, name, description, curator:{ userId, username },
  *   isPublic, followed }, items: [{ mediaId, type:'image'|'video', url, width,
- *   height, creator:{ userId, username }, nsfwLevel }], nextCursor }`.
+ *   height, creator:{ userId, username }, nsfwLevel, reactTicket? }], nextCursor }`.
+ *
+ * `reactTicket` is the provenance ticket `blocks.setReactionFromApp` requires before an app may
+ * set the viewer's reaction on that item (`react-ticket.service.ts`). Bound to this app and this
+ * viewer; absent only when no ticket could be signed.
  */
 
 export const config = { api: { responseLimit: false } };
@@ -152,12 +158,23 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
         statuses: [CollectionItemStatus.ACCEPTED],
       },
       user: subjectUser,
+      // The same image population /api/v1/blocks/images serves.
+      imagesAsPublicCatalog: true,
     });
 
-    // Only playable media (image/video). Model/post/article items are dropped.
+    // Only playable media (image/video) that passes the shared block image gate.
+    // Model/post/article items are dropped.
+    type ImageItem = Parameters<typeof mapImageItemToMedia>[0] &
+      Parameters<typeof isPublicCollectionImage>[0];
     const items = expanded
       .filter((it) => it.type === 'image')
-      .map((it) => mapImageItemToMedia(it.data as Parameters<typeof mapImageItemToMedia>[0]));
+      .map((it) => it.data as ImageItem)
+      .filter((image) => isPublicCollectionImage(image, browsingLevel))
+      .map((image) => {
+        const media = mapImageItemToMedia(image);
+        const reactTicket = reactTicketForImage(claims, media.mediaId);
+        return reactTicket ? { ...media, reactTicket } : media;
+      });
 
     const followed = await getFollowedCollectionIds(subjectUserId, [collectionId]);
 

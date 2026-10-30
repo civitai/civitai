@@ -22,8 +22,17 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * `Input buffer contains unsupported image format` — and `/api/og` returns 500
  * for the rest of that pod's life. Upstream: vercel/next.js#96301 introduced it,
  * vercel/next.js#96681 fixes it by adding `'VipsForeignLoadSvg'` to the unblock
- * list. We carry that one-line fix as `patches/next@16.3.0.patch` until we are on
- * a Next release that contains it (stable 16.3.1 is not out yet).
+ * list. We carried that one-line fix as a pnpm patch while we were on 16.3.0.
+ * 16.3.1 is the first release that CONTAINS the fix — it ships the loader entry
+ * upstream — so the patch became inert on that bump and has been deleted. What
+ * these cases guard now is a FUTURE Next regressing the entry again.
+ *
+ * 🔴 Note for whoever reads this next: "the installed file has one occurrence of
+ * `'VipsForeignLoadSvg'`" does NOT tell you whether upstream or a patch put it
+ * there — the count is identical either way. That ambiguity is how the inert
+ * patch survived a bump (pnpm no-ops an already-applied patch with rc=0 and no
+ * warning). Attribute it by diffing the installed file against the published
+ * tarball; on 16.3.1 they are byte-identical.
  *
  * WHY THIS TEST IS SHAPED THE WAY IT IS. 🔴 The ordering is the whole test.
  * Rendering an `ImageResponse` in a fresh process SUCCEEDS even on a broken
@@ -64,6 +73,22 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  *   - ESM copy absent (the shape of the production standalone image): exits 0,
  *     reports 1 copy read and the ESM copy as skipped.
  *   - both copies absent: exits 1 rather than passing vacuously on zero reads.
+ *
+ * Re-watched 2026-08-18 on stock 16.3.1 with the patch DELETED — the mutations
+ * above that reinstall or delete a patch no longer reproduce, since there is no
+ * Next patch to remove, so the guard was driven against node_modules directly:
+ *   - installed copies byte-identical (sha256) to the published next-16.3.1
+ *     tarball, and the guard exits 0 reporting `copies read: 2`, both ok. The
+ *     hash equality is the part that attributes the loader entry to upstream;
+ *     the guard's own green cannot, since it counts rather than attributes.
+ *   - `'VipsForeignLoadSvg',` stripped from BOTH installed copies, leaving the
+ *     `unblock({ operation: [...] })` call structurally intact so the SVG branch
+ *     is reached rather than the no-unblock-call fallback: exits 1 reporting
+ *     both copies "does NOT unblock VipsForeignLoadSvg", `copies read: 2`.
+ *     Restored from a `cp -a` backup (never `git checkout` — node_modules is
+ *     untracked) and re-confirmed green.
+ *   - both copies moved aside: exits 1 with "this check proved nothing",
+ *     `copies read: 0` — still no vacuous pass.
  *
  * SCOPE / WHAT THIS DOES NOT COVER. This runs in-process, so it does not cover
  * packaging failures under `output: 'standalone'` (the OTHER way `/api/og` has
@@ -136,7 +161,7 @@ async function renderOg(query: Record<string, string>) {
  * a hand-copied block list here would keep passing after Next changed it.
  */
 async function initializeNextImageOptimizerSharp() {
-  const { getSharp } = await import('next/dist/server/image-optimizer.js');
+  const { getSharp } = await import('next/dist/server/image-optimizer/transform.js');
   // (concurrency, operationCache) — both nullable; the server passes its config
   // values, and neither affects the block/unblock this test is about.
   const sharp = getSharp(undefined, undefined);
@@ -216,8 +241,8 @@ describe('/api/og — renders a PNG after the Next image optimizer initializes s
     const output = `${run.stdout ?? ''}${run.stderr ?? ''}`;
     expect(run.status, output).toBe(0);
     // Never let a silent no-op pass for a green: the script prints how many
-    // copies of image-optimizer.js it actually read, and zero is a vacuous OK.
-    expect(output).toMatch(/copies of image-optimizer\.js read: [1-9]/);
+    // copies of image-optimizer/transform.js it actually read, and zero is a vacuous OK.
+    expect(output).toMatch(/copies of image-optimizer\/transform\.js read: [1-9]/);
     expect(output).toContain('VipsForeignLoadSvg');
   });
 });

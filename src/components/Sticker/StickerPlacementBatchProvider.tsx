@@ -1,15 +1,17 @@
 import { createContext, useContext, useMemo } from 'react';
 import type { StickerTreatmentKey } from '~/components/Sticker/treatments/sticker-treatments';
 import { useStickerTreatment } from '~/components/Sticker/treatments/useStickerTreatment';
-import type { PlacedSticker } from '~/components/Sticker/placement.util';
+import type { PlacedSticker, StickerPlacementBundle } from '~/components/Sticker/placement.util';
+import { groupPlacementsByImage, resolveStickerCounts } from '~/components/Sticker/placement.util';
 import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
 import { useStickerCosmetics } from '~/components/Sticker/sticker.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { useStickerRevealStore } from '~/store/sticker-reveal.store';
+import { stickersRevealed, useStickerRevealStore } from '~/store/sticker-reveal.store';
+import { chunkIds } from '~/utils/array-helpers';
 import { trpc } from '~/utils/trpc';
 
-/** Matches the `imageIds` cap on `getStickerPlacementsSchema`. */
+/** Matches the `imageIds` cap on `getStickerPlacementsSchema`, which both calls take. */
 const PLACEMENT_FETCH_CHUNK = 100;
 
 type StickerPlacementBatch = {
@@ -40,62 +42,99 @@ const StickerPlacementBatchContext = createContext<StickerPlacementBatch | null>
 export function StickerPlacementBatchProvider({
   imageIds,
   children,
+  alwaysFetch,
 }: {
   imageIds: number[];
   children: React.ReactNode;
+  /**
+   * Fetch even when the viewer has stickers hidden and is logged out.
+   *
+   * 🔴 THE FETCH GATE IS SEPARATE FROM THE DRAW GATE, and a host that overrides
+   * only the second one gets nothing. A surface whose subject IS the stickers
+   * has to say so here too, or an anonymous visitor renders a page of images
+   * with no stickers on them and no error anywhere.
+   */
+  alwaysFetch?: boolean;
 }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const revealed = useStickerRevealStore((state) => state.revealed);
+  const revealed = useStickerRevealStore(stickersRevealed);
 
   const enabled = !!features.stickers && !!features.stickerPlacement;
 
-  const chunks = useMemo(() => {
-    if (!enabled) return [] as number[][];
-    const unique = [...new Set(imageIds)];
-    const result: number[][] = [];
-    for (let i = 0; i < unique.length; i += PLACEMENT_FETCH_CHUNK)
-      result.push(unique.slice(i, i + PLACEMENT_FETCH_CHUNK));
-    return result;
+  const chunks = useMemo(
+    () => (enabled ? chunkIds(imageIds, PLACEMENT_FETCH_CHUNK) : []),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [imageIds.join(','), enabled]);
-
-  const countQueries = trpc.useQueries((t) =>
-    chunks.map((chunk) =>
-      t.placement.getStickerPlacementCounts({ imageIds: chunk }, { staleTime: 60_000 })
-    )
+    [imageIds.join(','), enabled]
   );
 
   // Same rule as the detail view: a signed-in viewer always fetches, because a
   // pending placement is one they either paid for or are being asked to answer,
   // and neither is discoverable from the count (which is approved-only).
-  const wantPlacements = enabled && (revealed || !!currentUser);
-  const placementQueries = trpc.useQueries((t) =>
+  const wantPlacements = enabled && (revealed || !!currentUser || !!alwaysFetch);
+
+  // ONE call per chunk wherever placements are wanted: the combined call carries
+  // the counts too. The count-only call is for the one case that wants nothing
+  // else — an anonymous viewer with stickers hidden — and stays the
+  // edge-cacheable request it always was. Before this, a signed-in viewer paid
+  // for both calls on every chunk of every surface.
+  const countQueries = trpc.useQueries((t) =>
     chunks.map((chunk) =>
-      t.placement.getStickerPlacements(
+      t.placement.getStickerPlacementCounts(
+        { imageIds: chunk },
+        { staleTime: 60_000, enabled: !wantPlacements }
+      )
+    )
+  );
+
+  const combinedQueries = trpc.useQueries((t) =>
+    chunks.map((chunk) =>
+      t.placement.getStickerPlacementsAndCounts(
         { imageIds: chunk },
         { staleTime: 60_000, enabled: wantPlacements }
       )
     )
   );
 
+  // Change stamps rather than the query arrays, which are new on every render.
+  const countStamps = countQueries.map((query) => query.dataUpdatedAt).join(',');
+  const combinedStamps = combinedQueries.map((query) => query.dataUpdatedAt).join(',');
+
   const counts = useMemo(
-    () => Object.assign({}, ...countQueries.map((query) => query.data ?? {})),
+    () =>
+      Object.assign(
+        {},
+        ...chunks.map(
+          (_, index) =>
+            resolveStickerCounts({
+              wantPlacements,
+              combined: {
+                data: (combinedQueries[index]?.data as StickerPlacementBundle | undefined)?.counts,
+                isLoading: !!combinedQueries[index]?.isLoading,
+                isError: !!combinedQueries[index]?.isError,
+              },
+              countsOnly: {
+                data: countQueries[index]?.data,
+                isLoading: !!countQueries[index]?.isLoading,
+                isError: !!countQueries[index]?.isError,
+              },
+            }).counts
+        )
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [countQueries.map((query) => query.dataUpdatedAt).join(',')]
+    [wantPlacements, countStamps, combinedStamps]
   ) as Record<number, number>;
 
-  const byImage = useMemo(() => {
-    const map = new Map<number, PlacedSticker[]>();
-    for (const query of placementQueries)
-      for (const placement of (query.data as PlacedSticker[] | undefined) ?? []) {
-        const list = map.get(placement.imageId) ?? [];
-        list.push(placement);
-        map.set(placement.imageId, list);
-      }
-    return map;
+  const byImage = useMemo(
+    () =>
+      groupPlacementsByImage(
+        combinedQueries.flatMap(
+          (query) => (query.data as StickerPlacementBundle | undefined)?.placements ?? []
+        )
+      ),
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [placementQueries.map((query) => query.dataUpdatedAt).join(',')]);
+    [combinedStamps]
+  );
 
   // Resolved here rather than per card. `useStickerCosmetics` chunks at 100 ids,
   // so a whole surface's artwork is a handful of requests — where a card

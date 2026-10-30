@@ -1,43 +1,20 @@
+import { Prisma } from '@prisma/client';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // Unit tests for upsertArticle's lockedProperties enforcement — locks are read from the
 // stored row, never from the client payload. article.service.ts has a large import graph,
 // so its transitive service/db/search dependencies are stubbed out below.
 
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const mk = () => ({
-    findFirst: vi.fn(),
-    findUnique: vi.fn(),
-    findUniqueOrThrow: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    updateMany: vi.fn(),
-    deleteMany: vi.fn(),
-    count: vi.fn(),
-  });
-  const tx = {
-    article: mk(),
-    image: mk(),
-    imageConnection: mk(),
-    tagsOnArticle: mk(),
-    collectionItem: mk(),
-    $queryRaw: vi.fn(async () => []),
-    $executeRaw: vi.fn(async () => 0),
-  };
-  return {
-    mockDbRead: { article: mk(), image: mk(), $queryRaw: vi.fn() },
-    mockDbWrite: {
-      ...tx,
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-      $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
-    },
-  };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/services/blocklist.service', () => ({ throwOnBlockedLinkDomain: vi.fn() }));
+// The old fixture spread its `tx` into `dbWrite`, so a model reached through the transaction and
+// the same model reached directly were one object. The canonical `$transaction` default runs the
+// callback against `dbMock.dbWrite`, which keeps that identity.
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+vi.mock('~/server/services/blocklist.service', () => ({
+  throwOnBlockedLinkDomain: vi.fn(),
+  throwOnBlockedUserContent: vi.fn(),
+}));
 
 // upsertArticle's UPDATE path does post-commit work that reaches Redis: the
 // count-cache refresh and the replication-lag markers. With no live Redis these
@@ -68,7 +45,13 @@ function mockStored({
   lockedProperties = [] as string[],
   userId = OWNER_ID,
   userNsfwLevel = 1,
-}: { lockedProperties?: string[]; userId?: number; userNsfwLevel?: number } = {}) {
+  status = 'Draft',
+}: {
+  lockedProperties?: string[];
+  userId?: number;
+  userNsfwLevel?: number;
+  status?: string;
+} = {}) {
   const row = {
     id: ARTICLE_ID,
     title: 'Stored title',
@@ -76,7 +59,7 @@ function mockStored({
     coverId: null,
     userId,
     publishedAt: null,
-    status: 'Draft',
+    status,
     nsfwLevel: 1,
     userNsfwLevel,
     moderatorNsfwLevel: null,
@@ -90,8 +73,12 @@ function mockStored({
   mockDbWrite.article.findFirst.mockResolvedValue(row);
 }
 
+// The FIRST article.update is the form write from the transaction — the one these
+// assertions are about, and not necessarily the last one recorded.
 function updateData() {
-  return mockDbWrite.article.update.mock.calls.at(-1)?.[0]?.data ?? {};
+  // Without this, `?? {}` makes every `not.toHaveProperty` below pass on zero writes.
+  expect(mockDbWrite.article.update).toHaveBeenCalled();
+  return mockDbWrite.article.update.mock.calls[0]?.[0]?.data ?? {};
 }
 
 const upsert = (input: Record<string, unknown>) =>
@@ -161,5 +148,89 @@ describe('upsertArticle — moderator', () => {
     const data = updateData();
     expect(data.userNsfwLevel).toBe(8);
     expect(data.lockedProperties).toEqual(['userNsfwLevel', 'nsfw']);
+  });
+});
+
+describe('upsertArticle — status while unpublished for a violation', () => {
+  const MESSAGE = /unpublished for violating Terms of Service/;
+
+  beforeEach(() => mockStored({ status: 'UnpublishedViolation' }));
+
+  it.each(['Draft', 'Unpublished', 'Processing', 'Published'])(
+    'refuses an owner moving the article to %s without writing',
+    async (status) => {
+      await expect(upsert({ status })).rejects.toThrow(MESSAGE);
+
+      expect(mockDbWrite.article.update).not.toHaveBeenCalled();
+    }
+  );
+
+  it('still saves content edits when the owner replays the stored status', async () => {
+    await upsert({ status: 'UnpublishedViolation', content: 'edited' });
+
+    expect(updateData().content).toBe('edited');
+  });
+
+  it('still saves content edits when the owner omits the status', async () => {
+    await upsert({ status: undefined, content: 'edited' });
+
+    expect(updateData().content).toBe('edited');
+  });
+
+  it.each(['Published', 'Draft'])('lets a moderator move the article to %s', async (status) => {
+    await upsert({ userId: MODERATOR_ID, isModerator: true, status });
+
+    expect(mockDbWrite.article.update).toHaveBeenCalled();
+  });
+});
+
+describe('upsertArticle — write guard against a status changed during the save', () => {
+  const MESSAGE = /unpublished for violating Terms of Service and its status cannot be changed/;
+  const updateWhere = () => mockDbWrite.article.update.mock.calls[0]?.[0]?.where;
+  const p2025 = () =>
+    new Prisma.PrismaClientKnownRequestError('not found', { code: 'P2025', clientVersion: 'test' });
+
+  it.each(['Published', 'Processing'])(
+    'refuses to overwrite a row that is now UnpublishedViolation when %s was read',
+    async (status) => {
+      mockStored({ status });
+
+      await upsert({ status });
+
+      expect(updateWhere()).toEqual({ id: ARTICLE_ID, status: { not: 'UnpublishedViolation' } });
+    }
+  );
+
+  it('reports the status lock when that guard matches no row', async () => {
+    mockStored({ status: 'Published' });
+    mockDbWrite.article.update.mockRejectedValue(p2025());
+
+    await expect(upsert({ status: 'Published' })).rejects.toThrow(MESSAGE);
+  });
+
+  it('does not guard a moderator write', async () => {
+    mockStored({ status: 'Published' });
+
+    await upsert({ userId: MODERATOR_ID, isModerator: true, status: 'Published' });
+
+    expect(updateWhere()).toEqual({ id: ARTICLE_ID });
+  });
+
+  it('does not guard a content edit on an article already stored as UnpublishedViolation', async () => {
+    mockStored({ status: 'UnpublishedViolation' });
+
+    await upsert({ status: undefined, content: 'edited' });
+
+    expect(updateWhere()).toEqual({ id: ARTICLE_ID });
+    expect(updateData().content).toBe('edited');
+  });
+
+  it('keeps the never-published-draft guard and its own message', async () => {
+    mockStored({ status: 'Draft' });
+    mockDbWrite.article.update.mockRejectedValue(p2025());
+
+    await expect(upsert({ status: 'Draft' })).rejects.toThrow(/published while you were editing/);
+
+    expect(updateWhere()).toEqual({ id: ARTICLE_ID, status: 'Draft', publishedAt: null });
   });
 });

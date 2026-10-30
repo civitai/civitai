@@ -17,10 +17,11 @@
     "kysely": "^0.28.7",
     "pg": "^8.11.3",
     "prom-client": "^14.2.0",
-    "zod": "^4.0.17"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
+    "@electric-sql/pglite": "^0.4.6",
     "@types/pg": "^8.11.10",
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.11"
   }
 }

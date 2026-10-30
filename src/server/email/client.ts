@@ -24,6 +24,8 @@ const client = shouldConnect
     })
   : null;
 
+export const isEmailConfigured = () => !!client;
+
 export async function sendEmail({
   to,
   cc,
@@ -37,6 +39,7 @@ export async function sendEmail({
   subject: string;
   text?: string;
   html: string;
+  headers?: Record<string, string>;
 }) {
   if (!client || !to) return;
   const info = await client.sendMail({

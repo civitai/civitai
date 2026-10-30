@@ -1,13 +1,8 @@
-import { chunk } from 'lodash-es';
 import { ReviewReactions } from '~/shared/utils/prisma/enums';
-import type { CustomClickHouseClient } from '~/server/clickhouse/client';
 import type { AugmentedPool } from '~/server/db/db-helpers';
 import { parameterizedTemplateHandler, templateHandler } from '~/server/db/db-helpers';
 import type { JobContext } from '~/server/jobs/job';
-import { createLogger } from '~/utils/logging';
-import { buildEntityMetricPerDaySource } from '~/server/flipt/client';
-
-const log = createLogger('metric-helpers');
+import { excludedReactorFilter } from '~/shared/utils/excluded-reactor-filter';
 
 export function getAffected(ctx: {
   pg: AugmentedPool;
@@ -61,7 +56,12 @@ function timeframeSum(
   additionalConditions = '',
   timeframeAlias = 'tf'
 ) {
-  const conditionCheck = additionalConditions ? `WHEN NOT (${additionalConditions}) THEN 0` : '';
+  // `IS NOT TRUE` rather than `NOT (...)` so an outer-joined row, where the condition is
+  // NULL rather than false, scores 0 instead of falling through to the AllTime arm and
+  // counting a reaction that is not there. Identical for every inner-joined caller.
+  const conditionCheck = additionalConditions
+    ? `WHEN (${additionalConditions}) IS NOT TRUE THEN 0`
+    : '';
   additionalConditions =
     additionalConditions && !additionalConditions.startsWith('AND')
       ? `AND ${additionalConditions}`
@@ -122,6 +122,15 @@ function reactionTimeframes(reactionElementAlias = 'r', timeframeAlias = 'tf') {
     .join(',\n');
 }
 
+/**
+ * The metric columns a reaction aggregate writes. Exported because a job has to seed them
+ * to zero for the entities the aggregate returns no row for, which the three post/article
+ * reaction tasks do inline before issuing their query.
+ */
+export const reactionCountKeys = Object.keys(ReviewReactions).map(
+  (reaction) => `${reaction.toLowerCase()}Count`
+);
+
 const reactionMetricNames = Object.keys(ReviewReactions)
   .map((reaction) => `"${reaction.toLowerCase()}Count"`)
   .join(', ');
@@ -131,115 +140,10 @@ const reactionMetricUpserts = Object.keys(ReviewReactions)
   .join(', ');
 
 export const snippets = {
+  excludedReactorFilter,
   reactionTimeframes,
   timeframeSum,
   timeframeCount,
   reactionMetricNames,
   reactionMetricUpserts,
 };
-
-const METRIC_BATCH_SIZE = 200;
-
-// Add additional entity types here as needed
-type EntityType = 'Model' | 'ModelVersion' | 'Post' | 'Article' | 'Image' | 'Collection';
-
-type EntityMetricContext = {
-  ch: CustomClickHouseClient;
-  jobContext: JobContext;
-  lastUpdate: Date;
-  queue: number[];
-  updates: Record<number, Record<string, number>>;
-  idKey: string;
-  addAffected?: (ids: number[]) => void;
-};
-
-type EntityMetricOptions = {
-  updates?: Record<number, Record<string, number>>;
-  idKey?: string;
-  queue?: number[];
-  addAffected?: (ids: number[]) => void;
-};
-
-// The agg table refreshes every 5 minutes. We use a 30s buffer to account for refresh duration.
-const AGG_REFRESH_INTERVAL_MS = 5 * 60 * 1000;
-const AGG_REFRESH_BUFFER_MS = 30 * 1000;
-
-const getAggInterval = (date: Date) => Math.floor(date.getTime() / AGG_REFRESH_INTERVAL_MS);
-
-const floorToAggInterval = (date: Date) =>
-  new Date(getAggInterval(date) * AGG_REFRESH_INTERVAL_MS - AGG_REFRESH_BUFFER_MS);
-
-const hasCrossedAggBoundary = (lastUpdate: Date) =>
-  getAggInterval(lastUpdate) !== getAggInterval(new Date());
-
-export function getEntityMetricTasks(ctx: EntityMetricContext) {
-  return async function (
-    entityType: EntityType,
-    metricType: string,
-    options?: EntityMetricOptions
-  ): Promise<Array<() => Promise<void>>> {
-    // Use provided options or fall back to context defaults
-    const updates = options?.updates ?? ctx.updates;
-    const idKey = options?.idKey ?? ctx.idKey;
-    const queue = options?.queue ?? ctx.queue;
-    const addAffected = options?.addAffected ?? ctx.addAffected;
-
-    // Skip if we haven't crossed an agg refresh boundary (no new data to fetch)
-    if (!hasCrossedAggBoundary(ctx.lastUpdate)) {
-      log(`getEntityMetricTasks(${entityType}, ${metricType}) skipped - no new agg data`);
-      return [];
-    }
-
-    // Floor lastUpdate to the agg refresh interval to ensure we don't miss events
-    // that were processed in the latest agg table refresh
-    const lastUpdateFloored = floorToAggInterval(ctx.lastUpdate);
-
-    // Get affected entities from ClickHouse
-    const events = await ctx.ch.$query<{ entityId: number }>`
-      SELECT DISTINCT entityId
-      FROM entityMetricEvents_month
-      WHERE entityType = '${entityType}'
-        AND metricType = '${metricType}'
-        AND createdAt >= ${lastUpdateFloored}
-    `;
-
-    // Merge with queue
-    const affected = [...new Set([...events.map((x) => x.entityId), ...queue])];
-
-    // Track affected if callback provided
-    if (addAffected) {
-      addAffected(affected);
-    }
-
-    // Create batched tasks
-    const tasks = chunk(affected, METRIC_BATCH_SIZE).map((ids, i) => async () => {
-      ctx.jobContext.checkIfCanceled();
-      log(`getEntityMetricTasks(${entityType}, ${metricType})`, i + 1, 'of', tasks.length);
-
-      const perDaySource = buildEntityMetricPerDaySource(
-        `WHERE entityType = '${entityType}'
-            AND metricType = '${metricType}'
-            AND entityId IN (${ids.join(',')})`
-      );
-      const metrics = await ctx.ch.$query<{ entityId: number; value: number }>(`
-        SELECT
-          entityId,
-          sum(total) AS value
-        FROM ${perDaySource}
-        GROUP BY entityId
-      `);
-
-      ctx.jobContext.checkIfCanceled();
-
-      for (const row of metrics) {
-        const entityId = row.entityId;
-        updates[entityId] ??= { [idKey]: entityId };
-        updates[entityId][metricType] = row.value;
-      }
-
-      log(`getEntityMetricTasks(${entityType}, ${metricType})`, i + 1, 'of', tasks.length, 'done');
-    });
-
-    return tasks;
-  };
-}

@@ -32,6 +32,7 @@ import {
   type StepModerationPosture,
 } from '~/server/services/blocks/steps';
 import type { OrchestratorBlobLike } from '~/server/services/blocks/steps/output';
+import { isPlatformInternalStepType } from '~/server/services/blocks/steps/orchestrator-denylist';
 
 /**
  * Coverage for the App Blocks step-type registry (RFC #3515 migration step 1).
@@ -529,6 +530,100 @@ describe('block step registry — load-time invariants (each guard, mutation-pro
     expect(() => assertStepInvariants('fixture-step', makeTextOutputFixtureStep())).not.toThrow();
   });
 
+  // ── 🔴 CLAUSE 8b — THE TOOL-CALL CONTAINMENT CLAUSE ────────────────────────
+  //
+  // `extractToolCalls` is published by `attachModeratedStepTextOutputs` onto a
+  // RELEASED verdict, and that verdict is computed over `extractText`'s strings.
+  // The gating is therefore sound only while every model-written string the
+  // tool-call surface can publish is ALSO reachable through `extractText`. This
+  // clause is what makes that a build failure rather than a review question.
+
+  /** A `'textOutput'` fixture whose reply is a tool call, with containment intact. */
+  function makeToolCallFixtureStep(overrides: Partial<AnyBlockStep> = {}): AnyBlockStep {
+    const ARGS = '{"query":"model wrote this"}';
+    const sample = {
+      $type: 'fixtureStep',
+      output: {
+        choices: [
+          {
+            message: {
+              tool_calls: [
+                { id: 'call_1', type: 'function', function: { name: 'search', arguments: ARGS } },
+              ],
+            },
+          },
+        ],
+      },
+    };
+    return makeTextOutputFixtureStep({
+      canonicalOutputFor: (): unknown => sample,
+      // Containment: the arguments string is returned HERE, so it is scanned.
+      extractText: () => [ARGS],
+      extractToolCalls: () => [
+        { id: 'call_1', type: 'function' as const, function: { name: 'search', arguments: ARGS } },
+      ],
+      ...overrides,
+    } as Partial<AnyBlockStep>);
+  }
+
+  it('the tool-call fixture PASSES unmutated — every 8b failure below is the mutation', () => {
+    // 🔴 REACHABILITY, same as the textOutput fixture's own control above.
+    expect(() => assertStepInvariants('fixture-step', makeToolCallFixtureStep())).not.toThrow();
+  });
+
+  it('🔴 rejects extractToolCalls publishing an arguments string extractText does NOT return', () => {
+    // The fail-open this clause exists for: the structured surface would reach
+    // the block on the strength of a scan that never read it.
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeToolCallFixtureStep({
+          extractText: () => ['some unrelated prose'],
+        } as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/publishes an arguments string that extractText\(\) does not return/);
+  });
+
+  it('rejects a malformed tool call from extractToolCalls', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeToolCallFixtureStep({
+          extractToolCalls: () => [{ id: 'call_1', type: 'function' }],
+        } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/returned a malformed call/);
+  });
+
+  it('rejects extractToolCalls that returns a non-array', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeToolCallFixtureStep({
+          extractToolCalls: () => 'nope',
+        } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/extractToolCalls\(\) returned a non-array/);
+  });
+
+  it('rejects extractToolCalls declared under a MEDIA posture (it would never be called)', () => {
+    expect(() =>
+      assertStepInvariants(
+        'fixture-step',
+        makeFixtureStep({
+          moderationPosture: 'none',
+          extractToolCalls: () => [],
+        } as unknown as Partial<AnyBlockStep>)
+      )
+    ).toThrow(/declares extractToolCalls\(\) but moderationPosture 'none' publishes MEDIA/);
+  });
+
+  it('a textOutput entry declaring NO extractToolCalls still registers — the field is optional', () => {
+    // Forcing every text entry to declare a `() => []` stub would be exactly the
+    // vacuous declaration clause 8a rejects on the text axis.
+    expect(() => assertStepInvariants('fixture-step', makeTextOutputFixtureStep())).not.toThrow();
+  });
+
   it("rejects a 'textOutput' entry that declares NO extractText (a posture with no output)", () => {
     expect(() =>
       assertStepInvariants(
@@ -791,13 +886,17 @@ describe('block step registry — load-time invariants (each guard, mutation-pro
     // is only safe because of this guard — otherwise a registered entry could
     // silently take over textToImage extraction.
     for (const nativeType of NATIVELY_EXTRACTED_STEP_TYPES) {
+      // `textToImage` is natively extracted AND denylisted (retired), and the denylist runs
+      // first — still refused, for the other reason.
       expect(() =>
         assertStepInvariants(
           'fixture-step',
           makeFixtureStep({ orchestratorType: nativeType } as Partial<AnyBlockStep>)
         )
       ).toThrow(
-        /is natively extracted by workflow\.service — a registered step must not shadow it/
+        isPlatformInternalStepType(nativeType)
+          ? /is platform-internal and cannot be submitted by an app block/
+          : /is natively extracted by workflow\.service — a registered step must not shadow it/
       );
     }
   });
@@ -1012,6 +1111,35 @@ describe('block step registry — billing-mode dispatch', () => {
         expect(
           plan.correctReservationOverage && plan.postPaidSettle,
           `step '${id}' plans BOTH an overage correction and a post-paid settle`
+        ).toBe(false);
+      }
+    }
+  });
+
+  // 🔴 TRIPWIRE, NOT COVERAGE — and it exists because a mutant survived here.
+  //
+  // The router's step branch has a POST-PAID arm (`if (plan.postPaidSettle …)
+  // persistCustomComfySettle({ …, consentBudgetKey: reservation.consent?.key ?? null })`)
+  // that NO registered step can reach: `prepaidFixed` is the only implemented billing
+  // mode and it hardcodes `postPaidSettle: false`. Audit round 1 mutated that
+  // `consentBudgetKey` line to `null` and it SURVIVED the whole suite — correctly, in
+  // the sense that no input exists that could have caught it. The customComfy twin of
+  // that line IS behaviourally covered (blocks.router.workflow.test.ts → "CONSENT
+  // BUDGET"); this one cannot be, until the arm is reachable.
+  //
+  // So this asserts the UNREACHABILITY itself. The moment someone registers a
+  // post-paid step this test goes red, and the fix is not to delete it — it is to add
+  // the router-level settle-record coverage the arm has never had (the customComfy
+  // "persists that key on the settle record" test is the template).
+  it('NO registered step is post-paid — the router post-paid arm is unreachable, so it is UNTESTED', () => {
+    for (const [id, step] of listRegisteredSteps()) {
+      for (const variant of step.variants) {
+        const params = step.paramSchema.parse(step.canonicalParamsFor(variant));
+        expect(
+          planStepSpend(step, params).postPaidSettle,
+          `step '${id}' is now POST-PAID. The router's post-paid settle arm — including ` +
+            `the consentBudgetKey it puts on the settle record — has no behavioural test. ` +
+            `Add one before shipping this step.`
         ).toBe(false);
       }
     }
@@ -1545,7 +1673,7 @@ describe('block step registry — posture ↔ orchestratorType agreement (clause
     // silently covering no type at all. The generated client is the
     // authoritative enumeration; this is the only thing that can catch it.
     const generated = readFileSync(
-      require.resolve('@civitai/client/dist/generated/types.gen.d.ts'),
+      require.resolve('@civitai/orchestration-client/dist/generated/types.gen.d.ts'),
       'utf8'
     );
     const declared = new Set(
@@ -1671,20 +1799,5 @@ describe('block step registry — declared $type vs built $type (clause 7a)', ()
 
   it('NEGATIVE CONTROL: an agreeing entry passes', () => {
     expect(() => assertStepInvariants('fixture-step', makeFixtureStep())).not.toThrow();
-  });
-
-  // 🔴 REDUNDANT WITH THE LOAD-TIME GATE, labelled rather than left to look
-  // like independent coverage: `assertStepInvariants` runs at module import, so
-  // an entry violating 7a crashes the import before this test can collect. It
-  // documents the invariant; it cannot independently fail.
-  it('every SHIPPED entry agrees, on every variant (redundant with load-time gate)', () => {
-    for (const [id, step] of listRegisteredSteps()) {
-      for (const variant of step.variants) {
-        const params = step.paramSchema.parse(step.canonicalParamsFor(variant));
-        expect(step.buildStep(params).$type, `${id} variant '${variant}'`).toBe(
-          step.orchestratorType
-        );
-      }
-    }
   });
 });

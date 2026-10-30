@@ -11,7 +11,18 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
  * the `/edit` target.)
  */
 export const getServerSideProps = createServerSideProps({
-  resolver: async ({ ctx }) => legacyEditRedirect(ctx.params?.appBlockId, 'media'),
+  resolver: async ({ ctx }) => {
+    // 🔴 ONE HOP, not two. Resolving the block's listing here sends the legacy deep-link
+    // straight to the CANONICAL listing-keyed page rather than bouncing it through
+    // `/apps/<appBlockId>/edit` (which now redirects as well). A block with no listing
+    // yet — a first-version app pending approval — has no canonical URL, so
+    // `legacyEditRedirect` falls back to the block-keyed page exactly as before.
+    const raw = ctx.params?.appBlockId;
+    const appBlockId = Array.isArray(raw) ? raw[0] : raw;
+    if (!appBlockId) return legacyEditRedirect(raw, 'media');
+    const { listingIdForAppBlock } = await import('~/server/services/blocks/app-access.service');
+    return legacyEditRedirect(raw, 'media', await listingIdForAppBlock(appBlockId));
+  },
 });
 
 // The redirect always fires in getServerSideProps; this default export exists only

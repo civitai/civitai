@@ -1,10 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
 
-// scope-grant.service imports the Prisma client at module load; mock it so the
-// (pure) partitionByConsent / consentGatedScopes helpers run without a real
-// Prisma engine (mirrors scope-grant.service.test.ts).
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
 import {
   BLOCK_SCOPE_TO_OAUTH_BIT,
   isKnownBlockScope,
@@ -18,6 +13,7 @@ import {
   DEV_TOKEN_SCOPE_ALLOWLIST,
   TUNNEL_HOST_MINT_SCOPE_ALLOWLIST,
 } from '~/server/services/blocks/dev-scoped-mint.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * The #3090 scope-plumbing guard for `collections:read:self` /

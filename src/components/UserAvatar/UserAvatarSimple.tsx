@@ -1,8 +1,10 @@
 import { Text, Tooltip, UnstyledButton } from '@mantine/core';
+import clsx from 'clsx';
 import { IconUser } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
-import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { useViewerBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
+import { NamePlateText } from '~/components/User/NamePlateText';
 import { UserAvatarProfilePicture } from '~/components/UserAvatar/UserAvatarProfilePicture';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type {
@@ -32,6 +34,7 @@ export function UserAvatarSimple({
   cosmetics,
   autoplayAnimations,
   withHoverCard = true,
+  classNames,
 }: {
   id: number;
   profilePicture?: ProfileImage | null;
@@ -40,10 +43,21 @@ export function UserAvatarSimple({
   cosmetics?: UserWithCosmetics['cosmetics'] | null;
   autoplayAnimations?: boolean;
   withHoverCard?: boolean;
+  /**
+   * `avatar` goes on the avatar wrapper; `namePill` wraps the name in a backing element, and
+   * `namePillPlate` is added to it when the user wears a nameplate.
+   */
+  classNames?: { avatar?: string; namePill?: string; namePillPlate?: string };
 }) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const browsingLevel = useBrowsingLevelDebounced();
+  // 🔴 The VIEWER's level, not the page's. A profile picture belongs to the
+  // person in the avatar, not to whatever this page happens to be about — and
+  // `ImageDetail2` sets a page override to the IMAGE's rating, so on a PG image
+  // every commenter's PG-13 avatar was suppressed for viewers who accept PG-13.
+  // Same defect as the remix gallery beside it (#4497); this is the other half.
+  // Domain and policy caps still apply, only the page override is skipped.
+  const browsingLevel = useViewerBrowsingLevelDebounced();
   const displayProfilePicture =
     !deletedAt && profilePicture && profilePicture.ingestion !== 'Blocked';
   const router = useRouter();
@@ -60,7 +74,20 @@ export function UserAvatarSimple({
   const decoration = cosmetics?.find(({ cosmetic }) =>
     cosmetic ? cosmetic.type === 'ProfileDecoration' : undefined
   )?.cosmetic as Omit<ContentDecorationCosmetic, 'description' | 'obtainedAt'>;
-  const additionalTextProps = nameplate?.data;
+
+  const name = (
+    <NamePlateText
+      size="sm"
+      fw={500}
+      lineClamp={1}
+      color="white"
+      className={classes.username}
+      nameplate={nameplate?.data}
+      autoplay={autoplayAnimations !== false}
+    >
+      {username}
+    </NamePlateText>
+  );
 
   const anim = !autoplayGifs || autoplayAnimations === false ? false : undefined;
 
@@ -68,10 +95,10 @@ export function UserAvatarSimple({
     <UserHoverCard user={{ id, deletedAt }} disabled={!withHoverCard}>
       <UnstyledButton
         onClick={() => router.push(username ? `/user/${username}` : `/user?id=${id}`)}
-        className="flex w-fit items-center gap-2"
+        className={clsx('flex w-fit items-center gap-2', classNames?.namePill && 'max-w-full')}
       >
         {displayProfilePicture && (
-          <div className="relative ">
+          <div className={clsx('relative shrink-0', classNames?.avatar)}>
             <div className="flex size-8 items-center justify-center overflow-hidden rounded-full bg-white/30 dark:bg-black/30">
               {profilePicture &&
               (!features.canViewNsfw
@@ -106,22 +133,22 @@ export function UserAvatarSimple({
           </div>
         )}
         {deletedAt ? (
-          <Text size="sm">[deleted]</Text>
+          // Moderators get the id, which is otherwise unrecoverable from this row — see `Username`.
+          <Text size="sm">{currentUser?.isModerator ? `[deleted] #${id}` : '[deleted]'}</Text>
         ) : (
           <>
-            <Text
-              size="sm"
-              fw={500}
-              lineClamp={1}
-              color="white"
-              className={classes.username}
-              {...additionalTextProps}
-            >
-              {username}
-            </Text>
+            {classNames?.namePill ? (
+              <div
+                className={clsx(classNames.namePill, nameplate?.data && classNames.namePillPlate)}
+              >
+                {name}
+              </div>
+            ) : (
+              name
+            )}
             {badge?.data.url && (
               <Tooltip label={badge.name} withArrow withinPortal>
-                <div style={{ display: 'flex', width: 28 }}>
+                <div className="shrink-0" style={{ display: 'flex', width: 28 }}>
                   <EdgeMedia
                     src={badge.data.url}
                     anim={badge.data.animated && anim}

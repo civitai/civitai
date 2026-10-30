@@ -1,9 +1,10 @@
+import { resolveFeedSort } from '~/components/Filters/sort-availability';
+import { useSortAvailability } from '~/components/Filters/useSortAvailability';
 import { withPlaceholderData } from '~/hooks/trpcHelpers';
 import { closeModal, openConfirmModal } from '@mantine/modals';
 import { hideNotification, showNotification } from '@mantine/notifications';
 import { isEqual } from 'lodash-es';
 import { useMemo, useState } from 'react';
-import * as z from 'zod';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -11,19 +12,21 @@ import { useZodRouteParams } from '~/hooks/useZodRouteParams';
 import { useBrowsingSettingsAddons } from '~/providers/BrowsingSettingsAddonsProvider';
 import type { FilterKeys } from '~/providers/FiltersProvider';
 import { useFiltersContext } from '~/providers/FiltersProvider';
-import { ImageSort } from '~/server/common/enums';
 import type { GetInfiniteImagesInput } from '~/server/schema/image.schema';
-import { baseModels } from '~/shared/constants/basemodel.constants';
-import { MediaType, MetricTimeframe, ReviewReactions } from '~/shared/utils/prisma/enums';
+import { MediaType } from '~/shared/utils/prisma/enums';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { removeEmpty } from '~/utils/object-helpers';
-import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-import { booleanString, numericString, numericStringArray } from '~/utils/zod-helpers';
+import { isViewer, isViewerUsername } from '~/utils/is-viewer';
+import { imagesQueryParamSchema } from '~/components/Image/image-query-params';
 
-const imageSections = ['images', 'reactions'] as const;
-export type ImageSections = (typeof imageSections)[number];
+export {
+  imagesQueryParamSchema,
+  parseImageQueryParams,
+  hasImageDetailQueryFilters,
+} from '~/components/Image/image-query-params';
+export type { ImageSections, ImagesQueryParamSchema } from '~/components/Image/image-query-params';
 
 // Dev helper: simulate a transient search failure on the client so the retry UI
 // can be tested without touching the backend. Enable via browser console:
@@ -44,63 +47,24 @@ function useDebugSearchRetry(pagesLoaded: number) {
   return { delayMs: parsed, active: true };
 }
 
-// output is input to getInfiniteImagesSchema
-export type ImagesQueryParamSchema = z.infer<typeof imagesQueryParamSchema>;
-export const imagesQueryParamSchema = z
-  .object({
-    baseModels: z
-      .union([z.enum(baseModels).array(), z.enum(baseModels)])
-      .transform((val) => (Array.isArray(val) ? val : [val]))
-      .optional(),
-    collectionId: numericString(),
-    collectionTagId: numericString(),
-    hideAutoResources: booleanString(),
-    hideManualResources: booleanString(),
-    followed: booleanString(),
-    newCreators: booleanString(),
-    fromPlatform: booleanString(),
-    hidden: booleanString(),
-    includeBaseModel: booleanString(),
-    limit: numericString(),
-    modelId: numericString(),
-    modelVersionId: numericString(),
-    notPublished: booleanString(),
-    publishedOnly: booleanString(),
-    pendingReviewOnly: booleanString(),
-    period: z.enum(MetricTimeframe),
-    periodMode: z.enum(['stats', 'published']).optional(),
-    postId: numericString(),
-    prioritizedUserIds: numericStringArray(),
-    reactions: z.preprocess(
-      (val) => (Array.isArray(val) ? val : [val]),
-      z.array(z.enum(ReviewReactions))
-    ),
-    scheduled: booleanString(),
-    section: z.enum(imageSections),
-    sort: z.enum(ImageSort),
-    tags: numericStringArray(),
-    techniques: numericStringArray(),
-    tools: numericStringArray(),
-    types: z
-      .union([z.array(z.enum(MediaType)), z.enum(MediaType)])
-      .transform((val) => (Array.isArray(val) ? val : [val]))
-      .optional(),
-    userId: numericString(),
-    username: z.coerce.string().transform(postgresSlugify),
-    view: z.enum(['categories', 'feed']),
-    withMeta: booleanString().optional(),
-    requiringMeta: booleanString(),
-    remixOfId: numericString(),
-    includePG13: booleanString().optional(),
-    poiOnly: booleanString(),
-    minorOnly: booleanString(),
-    disablePoi: booleanString(),
-    disableMinor: booleanString(),
-    remixesOnly: booleanString(),
-    nonRemixesOnly: booleanString(),
-    hideChallenges: booleanString(),
-  })
-  .partial();
+/**
+ * The pair that routes an own-content submit picker off the search index.
+ *
+ * 🔴 These two are not two independent preferences. Together they are the signal
+ * `requiresImageDbPath` reads to serve the picker from the database instead of
+ * Meilisearch, and `getInfiniteImagesHandler` additionally requires the `userId`
+ * to be the caller's own. Measured on prod 2026-08-27: an image is absent from
+ * `metrics_images_v1` for 10-30 minutes after publish, so without this the one
+ * image someone opened the picker to submit is the one that is missing.
+ *
+ * It lives here, spread into all three pickers, because it used to be written out
+ * three times. Two of those copies had no test: deleting `publishedOnly` from an
+ * inline ten-key filter block sent that picker silently back to the index — the
+ * grid still rendered, still returned rows, and only the newest image was gone.
+ * One chokepoint means one assertion covers all three.
+ */
+export const ownContentPickerFilters = (userId: number | undefined) =>
+  ({ userId, publishedOnly: true } as const);
 
 export const useImageQueryParams = () => useZodRouteParams(imagesQueryParamSchema);
 
@@ -120,8 +84,12 @@ export const getDefaultMediaTypes = (
 export const useImageFilters = (type: FilterKeys<'images' | 'videos' | 'modelImages'>) => {
   const storeFilters = useFiltersContext((state) => state[type]);
   const { query } = useImageQueryParams(); // router params are the overrides
+  const availability = useSortAvailability();
 
-  return removeEmpty({ ...storeFilters, ...query });
+  const filters = removeEmpty({ ...storeFilters, ...query });
+  // A sort the menu withholds is still a sort the query runs on, whether it came
+  // from the store, a link or the schema default.
+  return { ...filters, sort: resolveFeedSort({ type, value: filters.sort }, availability) };
 };
 
 export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesInput>) => {
@@ -134,6 +102,13 @@ export const useDumbImageFilters = (defaultFilters?: Partial<GetInfiniteImagesIn
     filtersUpdated,
   };
 };
+
+export function isViewingOwnImages(
+  currentUser: { id: number; username?: string | null } | null | undefined,
+  filters: { username?: string; userId?: number }
+) {
+  return isViewerUsername(currentUser, filters.username) || isViewer(currentUser, filters.userId);
+}
 
 export const useQueryImages = (
   filters?: GetInfiniteImagesInput,
@@ -150,13 +125,7 @@ export const useQueryImages = (
   // this is the forced level, which is what those queries should be asking for.
   const contextBrowsingLevel = useBrowsingLevelDebounced();
 
-  // `!!currentUser` guards against `filters.userId === currentUser?.id` being
-  // `undefined === undefined` for anonymous users, which treats them as the owner.
-  const isOwnImages =
-    !!currentUser &&
-    ((!!filters.username &&
-      filters.username.toLowerCase() === currentUser.username?.toLowerCase()) ||
-      filters.userId === currentUser.id);
+  const isOwnImages = isViewingOwnImages(currentUser, filters);
   const excludedTagIds = [
     ...(filters.excludedTagIds ?? []),
     ...(isOwnImages ? [] : browsingSettingsAddons.settings.excludedTagIds ?? []),

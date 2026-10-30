@@ -1,4 +1,16 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+redisMock.redis.packed.set.mockImplementation(async () => undefined);
+redisMock.redis.set.mockImplementation(async () => undefined);
+redisMock.redis.scanIterator.mockImplementation(async function* () {});
+dbMock.dbWrite.blockUserSubscription.create.mockImplementation(async () => ({}));
+dbMock.dbWrite.blockUserSubscription.update.mockImplementation(async () => ({}));
+dbMock.dbWrite.blockUserSubscription.delete.mockImplementation(async () => undefined);
+dbMock.dbWrite.appUserScopeGrant.create.mockImplementation(async () => ({}));
+dbMock.dbWrite.appUserScopeGrant.update.mockImplementation(async () => ({}));
 
 /**
  * Service-layer tests for the user-subscription writes:
@@ -9,53 +21,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
  *     to delete a row owned by another user
  *   - listAvailable issues a SELECT with the slot/query/cursor predicates
  */
-
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => {
-  const dbRead = {
-    $queryRaw: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
-    blockUserSubscription: {
-      findMany: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
-    },
-    model: { findMany: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []) },
-    appBlockPublishRequest: {
-      groupBy: vi.fn<(...args: any[]) => Promise<any[]>>(async () => []),
-    },
-  };
-  const dbWrite = {
-    appBlock: { findUnique: vi.fn<(...args: any[]) => Promise<any>>() },
-    blockUserSubscription: {
-      findFirst: vi.fn<(...args: any[]) => Promise<any>>(),
-      create: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})),
-      update: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})),
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(),
-      delete: vi.fn<(...args: any[]) => Promise<any>>(async () => undefined),
-    },
-    // A6: upsertSubscription now writes an implicit-consent grant via
-    // recordInstallConsent → recordScopeGrant.
-    appUserScopeGrant: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
-      create: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})),
-      update: vi.fn<(...args: any[]) => Promise<any>>(async () => ({})),
-    },
-  };
-  return { mockDbRead: dbRead, mockDbWrite: dbWrite };
-});
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
-vi.mock('~/server/redis/client', () => ({
-  redis: {
-    packed: { get: vi.fn(async () => null), set: vi.fn(async () => undefined) },
-    get: vi.fn(async () => null),
-    set: vi.fn(async () => undefined),
-    del: vi.fn(async () => 0),
-    scanIterator: async function* () {},
-  },
-  sysRedis: { sMembers: vi.fn(async () => []) },
-  REDIS_KEYS: {
-    BLOCKS: { REGISTRY: 'r', TOKEN_RATE_LIMIT: 'rl', REVOKED_INSTANCE: 'rev' },
-  },
-  REDIS_SYS_KEYS: { BLOCKS: { EMERGENCY_KILL_LIST: 'kill' } },
-}));
 
 describe('BlockRegistry.listUserSubscriptions', () => {
   beforeEach(() => {
@@ -354,7 +319,11 @@ describe('BlockRegistry.listAvailable', () => {
     // object carrying the assembled `.sql` string (it was a tagged template before,
     // which this helper reconstructed). Handle both forms.
     const first = lastCall[0];
-    if (first && typeof first === 'object' && typeof (first as { sql?: unknown }).sql === 'string') {
+    if (
+      first &&
+      typeof first === 'object' &&
+      typeof (first as { sql?: unknown }).sql === 'string'
+    ) {
       return (first as { sql: string }).sql;
     }
     const strings = first as unknown as TemplateStringsArray;
@@ -385,9 +354,39 @@ describe('BlockRegistry.listAvailable', () => {
     // E3 rows carry the projected `sort_key` (the cursor encodes it) plus the
     // `category`/`approved_scopes` columns the projection reads.
     mockDbRead.$queryRaw.mockResolvedValue([
-      { id: 'ab_1', block_id: 'b1', app_id: 'oc', app_name: 'A', manifest: {}, install_count: BigInt(5), category: null, approved_scopes: [], sort_key: '00000000000000000005' },
-      { id: 'ab_2', block_id: 'b2', app_id: 'oc', app_name: 'A', manifest: {}, install_count: BigInt(4), category: null, approved_scopes: [], sort_key: '00000000000000000004' },
-      { id: 'ab_3', block_id: 'b3', app_id: 'oc', app_name: 'A', manifest: {}, install_count: BigInt(3), category: null, approved_scopes: [], sort_key: '00000000000000000003' },
+      {
+        id: 'ab_1',
+        block_id: 'b1',
+        app_id: 'oc',
+        app_name: 'A',
+        manifest: {},
+        install_count: BigInt(5),
+        category: null,
+        approved_scopes: [],
+        sort_key: '00000000000000000005',
+      },
+      {
+        id: 'ab_2',
+        block_id: 'b2',
+        app_id: 'oc',
+        app_name: 'A',
+        manifest: {},
+        install_count: BigInt(4),
+        category: null,
+        approved_scopes: [],
+        sort_key: '00000000000000000004',
+      },
+      {
+        id: 'ab_3',
+        block_id: 'b3',
+        app_id: 'oc',
+        app_name: 'A',
+        manifest: {},
+        install_count: BigInt(3),
+        category: null,
+        approved_scopes: [],
+        sort_key: '00000000000000000003',
+      },
     ]);
     const { BlockRegistry } = await import('../block-registry.service');
     const out = await BlockRegistry.listAvailable({ limit: 2 });

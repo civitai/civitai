@@ -117,9 +117,9 @@ Comments support two mention syntaxes. The pipeline (`lib/mentions.mjs`):
 4. **Inject** mention attributes (`{"text": "@DisplayName", "attributes": {"mention": userId}}`)
 
 Explicit `@[identifier]` supports:
-- **Partial name**: `@[justin]` → fuzzy matches "Justin Maier"
+- **Partial name**: `@[jane]` → fuzzy matches "Jane Doe"
 - **Email**: `@[jane@co.com]` → matches by email
-- **User ID**: `@[10620972]` → direct numeric ID
+- **User ID**: `@[12345678]` → direct numeric ID
 
 Bare `@Name` auto-detection:
 - Matches `@First Last` or `@First` against workspace members (case-insensitive)
@@ -163,7 +163,9 @@ node test/smoke-test.mjs --readonly
 node test/smoke-test.mjs --verbose
 ```
 
-When adding new features, add corresponding tests to `test/smoke-test.mjs`.
+Cleanup runs when the suite throws partway, and after one Ctrl+C: the current test finishes, no further test starts, then cleanup runs. It does **not** run after a second Ctrl+C, `taskkill`, a harness timeout or any other hard kill. If a Ctrl+C lands while a create is in flight, that object can be made without the suite ever learning its id. Exit code 3 means something was left live, and the run lists each such object under `LEAKED` for you to delete by hand. Cleanup judges success by the exit codes of `archive`, `delete-list`, `delete-comment` and `edit-page --archive`, and a command killed by a signal counts as failed. It does not re-query ClickUp afterwards.
+
+When adding new features, add corresponding tests to `test/smoke-test.mjs`. Anything a test creates goes into `cleanupTasks` or `cleanupPages` in the same step, before any assertion that could fail. Then run `node test/leak-check.mjs`. It runs the suite against a fake `query.mjs`, makes no ClickUp calls, and names any task, subtask, list or page that the suite created and never removed. It does not track comments or any other kind of object. Its fake archive always succeeds, so it never exercises the `LEAKED` report or Ctrl+C.
 
 ## Webhook Watchers (Event Monitoring)
 
@@ -333,7 +335,7 @@ node watch.mjs 868kjbyvu --on status,assignee
 node watch.mjs 868kjbyvu --timeout 3600 --interval 45 --state-file ./watch-latest.json
 
 # Target a specific account
-node watch.mjs 868kjbyvu --account justin
+node watch.mjs 868kjbyvu --account jane
 ```
 
 ### Flags
@@ -411,7 +413,7 @@ node query.mjs batch-create --file plan.json --json
       "ref": "design",
       "name": "Design system architecture",
       "description": "Create the high-level architecture document",
-      "assignee": "justin",
+      "assignee": "jane",
       "priority": "high",
       "status": "to do",
       "dueDate": "+7d",

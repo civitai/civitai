@@ -1,5 +1,8 @@
 import * as z from 'zod';
+import { BLOCK_SLUG } from '@civitai/app-assistant';
 import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderation.schema';
+import { AGENT_REVIEW_SECTIONS } from '~/shared/constants/agent-review-section.constants';
+import { LISTING_MEDIA_SPLIT_DECISIONS } from '~/shared/constants/listing-media-split.constants';
 
 /**
  * Schemas for the App Blocks W1 publish-request flow.
@@ -14,7 +17,8 @@ import { OFFSITE_MOD_REASON_MIN } from '~/server/schema/blocks/offsite-moderatio
  * 33% base64 overhead becomes a bottleneck. v0 prioritizes shipping.
  */
 
-export const SLUG_REGEX = /^[a-z][a-z0-9-]*[a-z0-9]$/;
+// One rule for a block slug, which App Assistant's app keys (`@civitai/app-assistant`) follow too.
+export const SLUG_REGEX = BLOCK_SLUG;
 export const SEMVER_REGEX = /^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/;
 export const MAX_BUNDLE_SIZE_BYTES = 50 * 1024 * 1024; // 50 MiB
 export const MAX_FILES_IN_BUNDLE = 2000;
@@ -57,9 +61,119 @@ export const submitVersionSchema = z.object({
     .string()
     .min(1)
     .max(Math.ceil((MAX_BUNDLE_SIZE_BYTES * 4) / 3) + 16),
+  // #4059 build provenance. Both OPTIONAL: a client that sends neither submits
+  // exactly as it did before this existed, and this must never become a submit
+  // gate — an author whose tooling predates it, or who builds outside a git
+  // checkout, still ships.
+  //
+  // ── WIRE CONTRACT ──────────────────────────────────────────────────────────
+  // These are the THREE answers a client can give, and only three:
+  //
+  //   omit the key entirely         → UNKNOWN
+  //   send the key as JSON `null`   → UNKNOWN  (the same answer, spelled twice)
+  //   send a value                  → the claim
+  //
+  // and for `sourceDirty` the value half is itself two DIFFERENT answers:
+  //   `false` = the client asserted the tree was CLEAN
+  //   `true`  = the client asserted the tree was DIRTY
+  // `false` is a claim, not an absence. Never collapse it into UNKNOWN, and
+  // never `?? false` an UNKNOWN into it — the tri-state is the feature.
+  //
+  // 🔴 `.nullish()`, NOT `.optional()`. `.optional()` accepts `undefined` only,
+  // and JSON has no `undefined` — so a client encoding UNKNOWN the natural way,
+  // as `{"sourceDirty": null}`, had its WHOLE SUBMIT rejected with a 400, and
+  // for `sourceCommit` that 400 read "must be a 40-character lowercase hex git
+  // commit sha", which is wrong about what happened. That is precisely the
+  // submit gate this field is forbidden to be. Measured against zod 4.0.17.
+  //
+  // The `?? undefined` normalisation is load-bearing, not tidying: it is what
+  // keeps a `null` off the Prisma `create` data. Prisma OMITS an `undefined`
+  // field from the INSERT but emits an explicit `NULL` for a `null` one — the
+  // resulting ROW is identical either way, but the SQL is not, and an explicit
+  // NULL would make EVERY provenance-less submit name the new columns, turning
+  // the migration-ordering hazard (see the migration header) from conditional
+  // into unconditional. `SubmitVersionParams` types both as `?: T` and never
+  // `| null`, so the seam cannot quietly drift back.
+  // ───────────────────────────────────────────────────────────────────────────
+  //
+  // 🔴 UNTRUSTED CLIENT CLAIM. The server validates the SHAPE and stores the
+  // value; it CANNOT confirm the uploaded bundle was actually built from this
+  // commit, and a client is free to send a sha it never built from. Nothing
+  // downstream — UI, API, CLI — may render or describe these as verified. They
+  // are a diagnosis aid for deploy-vs-source drift, not an attestation.
+  //
+  // 🔴 NOT `forgejoCommitSha`, which this row also carries. That one is
+  // SERVER-side, written on approve after the platform's own Forgejo commit
+  // succeeded — a fact about a different repository. Never alias, default, or
+  // fall back between the two.
+  //
+  // A malformed value REJECTS the request rather than being dropped. Zod's
+  // default object mode strips unknown keys silently, which is exactly how a
+  // provenance-sending client would look like it worked while storing nothing —
+  // the inert-feature shape this field exists to close. So the regex is a hard
+  // 400: lowercase 40-hex only (git's own canonical rendering; accepting
+  // uppercase too would mean the same commit is two distinct strings in the
+  // column and a lookup has to normalise).
+  sourceCommit: z
+    .string()
+    .regex(/^[0-9a-f]{40}$/)
+    .nullish()
+    .transform((v) => v ?? undefined),
+  // Whether the client's work tree had uncommitted changes at build time.
+  // Tri-state at rest: absent/null = UNKNOWN, false = the client asserted CLEAN,
+  // true = the client asserted DIRTY. `false` and `null` are DIFFERENT answers
+  // and stay distinguishable end to end — do not `?? false` this anywhere.
+  sourceDirty: z
+    .boolean()
+    .nullish()
+    .transform((v) => v ?? undefined),
 });
 
 export type SubmitVersionInput = z.infer<typeof submitVersionSchema>;
+
+/**
+ * Per-field hints for a `submitVersionSchema` rejection. Only the #4059
+ * provenance fields appear here, on purpose — see below.
+ */
+const SUBMIT_VERSION_FIELD_HINTS: Record<string, string> = {
+  sourceCommit: 'sourceCommit must be a 40-character lowercase hex git commit sha',
+  sourceDirty: 'sourceDirty must be a boolean',
+};
+
+/** The message both submit routes have always returned for a parse failure. */
+export const INVALID_BUNDLE_MESSAGE = 'Invalid bundle payload';
+
+/**
+ * Render a `submitVersionSchema` parse failure as a message that NAMES the field
+ * that failed.
+ *
+ * 🔴 Why this exists: both submit routes answered EVERY parse failure with the
+ * flat `'Invalid bundle payload'`. Once the schema also validates provenance, a
+ * client whose `sourceCommit` was the wrong shape would be told its BUNDLE was
+ * bad and go hunting the zip — the diagnosis cost this feature exists to remove,
+ * re-created one layer up.
+ *
+ * Genuine bundle failures are UNCHANGED: any issue touching `bundleBase64`
+ * (or an unrecognised path, e.g. a non-object body) still yields exactly
+ * `INVALID_BUNDLE_MESSAGE`, so nothing that used to read that string reads
+ * something else now. Only a failure confined to the provenance fields gets the
+ * named message.
+ *
+ * One copy, called from both routes: the predicate was open-coded at two call
+ * sites already and would have drifted at the next edit.
+ */
+export function submitVersionParseErrorMessage(error: z.ZodError): string {
+  const fields = new Set(
+    error.issues.map((issue) => (typeof issue.path[0] === 'string' ? issue.path[0] : ''))
+  );
+  const named = [...fields].filter((f) => f in SUBMIT_VERSION_FIELD_HINTS);
+  // A bundle problem (or anything unrecognised) wins — bundle behaviour is frozen.
+  if (named.length === 0 || named.length !== fields.size) return INVALID_BUNDLE_MESSAGE;
+  return `Invalid submit payload: ${named
+    .sort()
+    .map((f) => SUBMIT_VERSION_FIELD_HINTS[f])
+    .join('; ')}`;
+}
 
 export const withdrawRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
@@ -90,9 +204,16 @@ export type ListApprovedRequestsInput = z.infer<typeof listApprovedRequestsSchem
 export const listRejectedRequestsSchema = listPendingRequestsSchema;
 export type ListRejectedRequestsInput = z.infer<typeof listRejectedRequestsSchema>;
 
+/** Mod-only: one app's publish-request history. Same column as `getMyPendingForSlug`, so
+ *  the same schema rather than a second copy of its bounds. */
+export const listVersionHistorySchema = getMyPendingForSlugSchema;
+
+export type ListVersionHistoryInput = z.infer<typeof listVersionHistorySchema>;
+
 export const approveRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
   approvalNotes: z.string().max(2000).optional(),
+  mediaSplit: z.enum(LISTING_MEDIA_SPLIT_DECISIONS).optional(),
 });
 
 export type ApproveRequestInput = z.infer<typeof approveRequestSchema>;
@@ -107,10 +228,7 @@ export const PUBLISH_REJECTION_REASON_MAX = 2000;
 
 export const rejectRequestSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
-  rejectionReason: z
-    .string()
-    .min(PUBLISH_REJECTION_REASON_MIN)
-    .max(PUBLISH_REJECTION_REASON_MAX),
+  rejectionReason: z.string().min(PUBLISH_REJECTION_REASON_MIN).max(PUBLISH_REJECTION_REASON_MAX),
 });
 
 export type RejectRequestInput = z.infer<typeof rejectRequestSchema>;
@@ -136,9 +254,7 @@ export const getPublishRequestScreenshotsSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
 });
 
-export type GetPublishRequestScreenshotsInput = z.infer<
-  typeof getPublishRequestScreenshotsSchema
->;
+export type GetPublishRequestScreenshotsInput = z.infer<typeof getPublishRequestScreenshotsSchema>;
 
 /** Input for the MOD-ONLY `blocks.getPublishRequestDiff` (line-level code diff). */
 export const getPublishRequestDiffSchema = z.object({
@@ -187,11 +303,37 @@ export const mintReviewBlockTokenSchema = z.object({
 
 export type MintReviewBlockTokenInput = z.infer<typeof mintReviewBlockTokenSchema>;
 
+/**
+ * 🔴 THE ZOD ENUM IS BUILT FROM THE SHARED LEDGER, not a fourth hand-typed copy.
+ * `AGENT_REVIEW_SECTIONS` lives in `~/shared/constants/agent-review-section.constants`
+ * (zod-free, Prisma-free, React-free) so this schema, the provisioning service and the
+ * client renderer cannot disagree about which analyses exist.
+ */
+
 /** Input for the MOD-ONLY agentic code-review `blocks.startAgentReview` (P1) —
- *  dispatches an ephemeral review agent for a PENDING request. Same shape as
- *  previewRequest (the pending request id). */
+ *  dispatches an ephemeral review agent for a PENDING request. */
 export const startAgentReviewSchema = z.object({
   publishRequestId: z.string().min(1).max(64),
+  /**
+   * Re-run only these analyses.
+   *
+   * 🔴 OMITTED MEANS ALL THREE, AND THAT IS THE DEFAULT PATH — a first dispatch and the
+   * whole-report "Re-run all analyses" both leave this out, and the provisioned Job is then
+   * byte-identical to what it was before this field existed.
+   *
+   * 🔴 WHAT A SUBSET BUYS TODAY, STATED PLAINLY SO NOBODY OVER-READS IT. Civitai-side it
+   * (a) carries the list to the agent as a contract env var, and (b) SEEDS the new report
+   * row with the previous report's surviving sections, so a targeted retry can never lose a
+   * completed analysis no matter what the runner does. Whether the runner actually SKIPS the
+   * other two — the part that saves money — depends on the agent template consuming that
+   * env var, which ships separately. Until it does, a targeted re-run costs the same as a
+   * full one; it is never WORSE than today's only option, which is a full re-run.
+   */
+  sections: z
+    .array(z.enum(AGENT_REVIEW_SECTIONS))
+    .min(1)
+    .max(AGENT_REVIEW_SECTIONS.length)
+    .optional(),
 });
 
 export type StartAgentReviewInput = z.infer<typeof startAgentReviewSchema>;

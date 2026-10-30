@@ -6,6 +6,8 @@
 // from eslintrc makes @eslint/eslintrc reject it and then crash formatting the
 // error ("Converting circular structure to JSON"), so lint silently never runs.
 // Enforced by the `eslint-config-next: "15"` entry in package.json `pnpm.overrides`.
+const noDirectPgPool = require('./eslint-no-direct-pg-pool.cjs');
+
 module.exports = {
   root: true,
   parser: '@typescript-eslint/parser',
@@ -43,6 +45,38 @@ module.exports = {
     // without failing lint or the build; escalate to 'error' once the team is
     // ready to gate on it.
     'local-rules/no-io-in-transaction': 'warn',
+
+    // readMetadata/parseGenerationText without `{ plugins: [civitai()] }`
+    // type-check clean and silently degrade: madeOnSite false, on-site formats
+    // undetected, resources unresolved. Plugin-independent exports
+    // (copyMetadata, embedMetadata, types) stay importable. Covers the /image
+    // and /node subpaths too (they re-export the same bare readers); a dynamic
+    // `await import(...)` is not caught — don't do that.
+    'no-restricted-imports': [
+      'error',
+      {
+        paths: [
+          {
+            name: '@civitai/generation-metadata',
+            importNames: ['readMetadata', 'parseGenerationText'],
+            message:
+              'Silently loses civitai semantics without the plugin — use ~/utils/metadata (ExifParser / parsePromptMetadata), or readCivitaiMetadata from @civitai/generation-metadata/civitai.',
+          },
+          {
+            name: '@civitai/generation-metadata/image',
+            importNames: ['readMetadata', 'parseGenerationText'],
+            message:
+              'Silently loses civitai semantics without the plugin — use ~/utils/metadata (ExifParser / parsePromptMetadata), or readCivitaiMetadata from @civitai/generation-metadata/civitai.',
+          },
+          {
+            name: '@civitai/generation-metadata/node',
+            importNames: ['readMetadataFromFile'],
+            message:
+              'Plugin-less by default — read the file yourself and use readCivitaiMetadata from @civitai/generation-metadata/civitai, or pass plugins explicitly.',
+          },
+        ],
+      },
+    ],
 
     // Flags a `vi.mock('~/utils/trpc', () => ({ ... }))` whose factory hand-writes
     // the module instead of spreading the real one via `importOriginal`. A
@@ -93,7 +127,111 @@ module.exports = {
     // comment, a false negative costs a silently-empty test suite. The known
     // false-positive shapes are listed in eslint-local-rules.js so a blocked
     // author can recognise their own and reach for a disable comment.
-    'local-rules/no-wholesale-module-mock': ['error', { modules: ['~/utils/trpc'] }],
+    // `modules` is a CURATED registry, not the whole hazard: the rule only looks
+    // at modules named here, so a module absent from this list is not "safe", it
+    // is UNWATCHED. That is not hypothetical — `~/utils/trpc` was the only entry
+    // when the identical defect landed on `~/components/Dialog/RoutedDialogLink`
+    // (#4364 added a `triggerRoutedDialog` importer three files away from a
+    // factory that listed only `RoutedDialogLink`; the carousel suite died at
+    // import and collected 0 tests for ~17h, reported as `Tests 2062 passed`).
+    //
+    // Add a module here once its wholesale mocks are converted to the
+    // `importOriginal` spread — the entry is only free while the site count is
+    // low. Measured on this tree: 62 modules are wholesale-mocked somewhere in
+    // the browser suite with at least one REAL export omitted, over 329 call
+    // sites, and `eslint src/**/*.browser.test.tsx` already reports 52 files
+    // violating this rule for `~/utils/trpc` alone. Those persist because the
+    // ESLint gate in .github/workflows/lint.yml blocks only ADDED files; the
+    // modified-files pass is `continue-on-error: true`. So widening this list
+    // holds NEW browser tests to the pattern and annotates the rest — it does
+    // not retroactively fix them.
+    //
+    // THE THREE ENTRIES BELOW WERE PICKED BY MEASUREMENT, NOT BY MOCK VOLUME.
+    // The hazard is a wide export surface reached by many `src/` modules: any
+    // one of those importers landing in a test's graph kills the whole FILE. So
+    // the admission test is three conditions, all of which must hold:
+    //
+    //   (a) >= 15 exported bindings   — a surface wide enough that a one-key
+    //       factory is a landmine rather than a complete stand-in;
+    //   (b) >= 25 non-test `src/` importers — enough reach that some importer
+    //       plausibly lands in an unrelated suite's module graph;
+    //   (c) ZERO files violating this rule today — the entry must annotate
+    //       nothing retroactively, so no pre-existing file goes newly red.
+    //
+    // Enumerated (not sampled) over all 501 `~/`-specifiers any `src/` test
+    // wholesale-mocks: 27 clear (a)+(b), and exactly 3 of those also clear (c).
+    // Those 3 are listed. The rest fail ONLY on (c) and are deliberately left
+    // out rather than baselined — e.g. `~/server/common/constants` (97 exports,
+    // 352 importers) has 14 existing violators, `~/server/services/buzz.service`
+    // (37/61) has 110. They are the NEXT candidates, each gated behind
+    // converting its own violators first.
+    //
+    // Volume is explicitly NOT the criterion, and the counterexample matters:
+    // `~/hooks/useCurrentUser` is one-key-mocked by 108 files and is harmless,
+    // because it exports 2 things — a factory naming both IS the whole module.
+    // Listing it would turn ~108 files red to guard nothing.
+    //
+    //   module                                        exports  src importers  mocked by
+    //   ~/shared/data-graph/generation/config/workflows    27        32           1
+    //   ~/components/Image/image.utils                     17        29           1
+    //   ~/components/Sticker/sticker.util                  16        25           5
+    //
+    // `image.utils` is the worked example this list gap was found through: #4450
+    // added `ownContentPickerFilters` and had `remix-gallery.utils` import it,
+    // and `RemixGallerySubmitModal.browser.test.tsx`'s one-key factory then took
+    // the whole file out at collection — `Tests no tests`, 2150 others passing,
+    // nothing red (fixed in #4463). All 7 files mocking the three modules above
+    // already use the `importOriginal` spread; listing them is what stops the
+    // next one from not doing so.
+    'local-rules/no-wholesale-module-mock': [
+      'error',
+      {
+        modules: [
+          '~/utils/trpc',
+          '~/components/Dialog/RoutedDialogLink',
+          '~/shared/data-graph/generation/config/workflows',
+          '~/components/Image/image.utils',
+          '~/components/Sticker/sticker.util',
+        ],
+      },
+    ],
+
+    // The SIBLING of the rule above, one level down: that one guards the MODULE's
+    // export surface (does the factory spread `importOriginal`), this one guards
+    // the `trpc` CLIENT's procedure surface inside the object the factory
+    // returns. A mock can be perfect by the first and broken by the second —
+    // #4147 was exactly that, which is why #4178 says the existing rule "has no
+    // view" of it. Deliberately a separate rule rather than an extension: the
+    // `modules` option above is generic across five modules while this check
+    // knows about `trpc` and `makeTrpcProxy` specifically, the two remedies are
+    // different ("spread the original" vs "call makeTrpcProxy"), and one disable
+    // comment must not switch off both guards. Reasoning in full at the rule.
+    //
+    // 'error', matching its siblings and for the same reason spelled out below:
+    // at 'warn' it would gate nothing, because the only BLOCKING ESLint step in
+    // .github/workflows/lint.yml ("ESLint (added files)") runs without
+    // --max-warnings — and a brand-new component test is exactly the authoring
+    // path this rule exists to close.
+    //
+    // Blast radius on the existing tree: 201 files report (census of all 220
+    // `vi.mock('~/utils/trpc', <inline factory>)` calls in `src/`; the other 19
+    // are 8 `new Proxy`, 7 `makeTrpcProxy`, and 4 that override no `trpc` key).
+    // 🔴 That cannot become a permanently-red gate, and the reason is the lint
+    // LANE's shape rather than this rule's severity: the blocking step lints
+    // `--diff-filter=A` paths only, and the modified-file step is
+    // `continue-on-error: true`. Nothing lints the full repo in CI — not in
+    // GitHub Actions (the eslint job is the only ESLint lane and is
+    // `pull_request`-only, diff-vs-base) and not in the in-cluster Tekton
+    // pr-check pipeline, which runs no ESLint at all. So a legacy file annotates
+    // when touched and blocks nothing; a newly ADDED file is blocked. The 201 are
+    // deliberately NOT migrated — migration is a one-line change per file,
+    // taken opportunistically when someone touches one. `pnpm lint` locally does
+    // cover all of `src/` and will show them.
+    'local-rules/no-hand-enumerated-trpc-mock': 'error',
+
+    // `new Pool` / `new pg.Pool` outside @civitai/db. Reasoning in eslint-no-direct-pg-pool.cjs;
+    // the allowlist is the override below.
+    ...noDirectPgPool,
 
     // aligns closing brackets for tags
     'react/jsx-closing-bracket-location': ['error', 'line-aligned'],
@@ -179,6 +317,56 @@ module.exports = {
       },
     },
     {
+      // 🔴 THE `/apps/*` CHROME MUST NOT BRANCH A RENDER ON A VIEWPORT/CONTAINER HOOK.
+      // The rail/drawer swap is a CSS media query on purpose, so React never learns the
+      // breakpoint was crossed and the server markup matches the first client paint.
+      // These hooks have no server answer — `useContainerSmallerThan` in particular
+      // returns FALSE while `inlineSize === 0`, which is what the server always sees —
+      // so branching on one reintroduces the hydration mismatch this surface has already
+      // paid for once.
+      //
+      // SCOPE: deliberately narrow. `useIsMobile` alone appears in 83 files across the
+      // repo and most of those are legitimate client-only surfaces, so this is NOT a
+      // repo-wide ban; it is switched on for the chrome that is server-rendered and
+      // hydration-sensitive. Widen the glob when another surface earns it.
+      //
+      // Replaces a 250-line hand-rolled source scanner that applied to ONE file and was
+      // bypassable in five consecutive audit rounds — see the rule header in
+      // eslint-local-rules.js.
+      files: [
+        'src/components/Apps/AppsPageLayout.tsx',
+        'src/components/Apps/AppsRailNav.tsx',
+        'src/components/Apps/useAppsNavSections.ts',
+        'src/components/Apps/appsRailState.tsx',
+        // The App Blocks missing-permissions backstop. Its narrow/wide swap is a
+        // CONTAINER QUERY on purpose and must stay one.
+        //
+        // ⚠️ IT EARNS THE GLOB FOR THE FLASH, NOT FOR HYDRATION, AND THE DISTINCTION IS
+        // WHY THIS COMMENT IS LONGER THAN THE ENTRY. This surface is NOT server-rendered:
+        // `BlockSlot` loads the chain through `dynamic(..., { ssr: false })`, and the
+        // notice's own gate withholds it until the iframe posts `BLOCK_READY`. So the
+        // hydration-divergence argument the block comment above makes for the `/apps`
+        // chrome genuinely does not reach it, and anyone who checks will find that out.
+        // What DOES reach it is a pair of reasons, and they are NOT the same reason for
+        // all four hooks — an earlier draft said "the four hooks this rule names are
+        // exactly the ones that would [flash]", and that was false:
+        //   · CONTAINER hooks flash. `useContainerQuery` returns false while
+        //     `inlineSize === 0`, `useContainerSmallerThan` wraps it, and bare
+        //     `useIsMobile()` routes to it — so each renders the wrong shape for a frame
+        //     and then restructures the bar under a viewer already reading it.
+        //   · `useMediaQuery` imported from `@mantine/hooks` flashes too (its default is
+        //     `getInitialValueInEffect: true`), but THIS REPO'S WRAPPER DOES NOT — it
+        //     passes `false` and reads `matchMedia` synchronously on first render, and
+        //     with no SSR pass here that read IS the first paint. It is banned for the
+        //     other reason, stated at length on the component: a VIEWPORT query answers
+        //     the wrong question for a ~320px sidebar on a desktop.
+        'src/components/AppBlocks/BlockConsentNotice.tsx',
+      ],
+      rules: {
+        'local-rules/no-ssr-divergent-media-query': 'error',
+      },
+    },
+    {
       // Browser-mode component tests must not use an http(s) URL as an image
       // source. Nothing serves it to the test browser, so the <img> fires a real
       // `error` event a few ms after mount and the component's own onError
@@ -241,6 +429,24 @@ module.exports = {
       files: ['**/*.test.ts', '**/*.test.tsx', '**/__tests__/**/*.ts', '**/__tests__/**/*.tsx'],
       rules: {
         'local-rules/no-unbounded-paging-fake': 'error',
+      },
+    },
+    {
+      // Where a direct pg Pool is allowed (see eslint-no-direct-pg-pool.cjs). Tests and scripts are
+      // short-lived. apps/auth builds its own standalone pool and must attach the same listeners
+      // itself; it does not yet (#5657 adds them), so that pool is still unguarded.
+      // apps/assistant-runner builds every pool in core/pg-pool.ts, which attaches them.
+      files: [
+        '**/*.test.ts',
+        '**/*.test.tsx',
+        '**/__tests__/**',
+        'scripts/**',
+        'apps/*/scripts/**',
+        'apps/auth/src/lib/server/db/db.ts',
+        'apps/assistant-runner/src/core/pg-pool.ts',
+      ],
+      rules: {
+        'no-restricted-syntax': 'off',
       },
     },
   ],

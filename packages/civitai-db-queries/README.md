@@ -12,7 +12,7 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
 - `src/<domain>.db.ts` — one query module per domain, exported at the subpath `@civitai/db-queries/<domain>`.
   Domain modules are (re)ported on demand, per cutover, from current `main` (see the migration plan) rather
   than kept ahead of their consumers where they'd drift. Today: `tag.db.ts` (the original **exemplar**, plus
-  the votable-tag vote lookups) and `model.db.ts`.
+  the votable-tag vote lookups), `model.db.ts` and `image.db.ts`.
 
   The first ported **hot read paths** are the per-user vote lookups behind the votable-tag endpoint
   (`listImageTagVotes` / `listImageTagVotesMany` / `listModelTagVotes`) and the per-visible-set engagement
@@ -20,6 +20,77 @@ See [`docs/db-queries-kysely-plan.md`](../../docs/db-queries-kysely-plan.md) for
   read statements off the Prisma query engine, whose in-process CPU cost scales with call volume. Their
   behaviour parity with the Prisma originals is pinned against a real database by
   `<civitai>/src/server/db/__tests__/kysely-prisma-parity.test.ts` — see Testing below.
+
+  `listImageReactionsMany` (`image.db.ts`) is the viewer's-own-reactions read behind
+  `getUserReactionsForImages` (image feeds, `reaction.getMyImageReactions`, App Block reactions). It is
+  served behind the default-off server Flipt flag `kysely-image-reactions` so the Prisma query-engine
+  CPU per query can be compared with it on and off; off, the original Prisma read runs. Parity is
+  pinned in the same suite.
+
+  `placement.db.ts` is the placement/sticker read family: the space resolution behind every placement
+  surface, the price range's score, `getCapTier`'s subscriptions, the free-placement display counts,
+  the pending-badge counts and the sticker listing. It is served behind the default-off server Flipt
+  flag `kysely-placement-reads`; off, the original Prisma reads run. Each read keeps its database
+  (`dbWrite` reads move to `kyselyWrite`, `dbRead` reads to `kyselyRead`), and the counts inside the
+  free-placement claim transaction never move. Row parity is written in
+  `<civitai>/src/server/services/__tests__/placement-reads.kysely-parity.test.ts`, which is opt-in
+  (`KYSELY_PARITY_DATABASE_URL`) and does **not** run in CI. The free-slot and allowance counts take
+  the same where-object builders as their Prisma originals (`countPlacements`).
+
+  `hot-reads.db.ts` holds two nested reads that Prisma fans out into one query per relation: the model
+  page's `modelWithDetailsSelect` read (up to four statements) and the creator card (two statements),
+  each run sequentially on ONE pooled connection; plus the image tags and an image's thread. Every
+  VIEW (`UserStat`, `ModelReportStat`, `GenerationCoverage`, `ImageTag`) is filtered by its key as a
+  parameter, never joined: a join key cannot reach through the view's aggregation, so the view would
+  be computed for every row. They are served behind the default-off server Flipt flag `kysely-hot-reads-2`; off, the
+  original Prisma reads run. Each keeps its database (the model read follows `getKyselyWithoutLag`, the
+  creator card reads `kyselyRead`). Nested relations use `jsonArrayFrom`/`jsonObjectFrom` only where
+  every nested column survives JSON unchanged. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-2.kysely-parity.test.ts`, which **does** run in CI
+  (the `unit` job wires it to its Postgres service). Its fixture builds the four views from their
+  production definitions, and it EXPLAINs every statement that reads one and asserts the view's base
+  scan carries the key.
+
+  `hot-reads-3.db.ts` holds the model page's default-version lookup (three Prisma queries, one
+  statement here), three reads `getModelHandler` makes after the model row (the suggested-resource
+  count, the owner's settings, the owner's posts on the versions), and the viewer's pending remix
+  gallery submissions. They are served behind the default-off server Flipt flag `kysely-hot-reads-3`
+  and read base tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-3.kysely-parity.test.ts`, which runs in CI on the
+  same Postgres service and also fails if any statement names a relation declared as a view.
+
+  `hot-reads-4.db.ts` holds the model page's comment reads: the visible top-level comment count
+  (`comment.getVisibleCountByModel`) and the first page of `comment.getAll` (the unpinned list and the
+  pinned block, each with its author, reactions and model name in one statement where Prisma issues
+  one query per relation). Both apply one viewer filter (hidden and blocked users, ToS violations
+  outside the moderator view, the hidden view). They are served behind the default-off server Flipt
+  flag `kysely-hot-reads-4` and read base tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-4.kysely-parity.test.ts`, on the same Postgres
+  service, with the same no-view check.
+
+  `hot-reads-5.db.ts` holds high-volume single-row lookups (KeyValue configs, a post's linked
+  Model3D, dismissed announcement ids, a post's collaborators, a home block, the unclaimed prize
+  count, a model's version ids, a user's model reviews, the download path's model version, the image
+  reads of `reaction.toggle`, a model's `meta`), two of them joining what
+  Prisma read in two queries. They are served behind the default-off server Flipt flag
+  `kysely-hot-reads-5` and read base tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-5.kysely-parity.test.ts`, on the same Postgres
+  service, with the same no-view check.
+
+  `hot-reads-6.db.ts` holds more high-volume lookups (a model version's owner and a post's detail
+  row, each with the user's cosmetics; a model's POI/owner check; user lookups by username; the
+  public donation goals cache's reads; a user's version engagements and recommended reviews; a
+  model's associated resources; the public API's metric-privacy inputs; the download path's file
+  list). They are served behind the default-off server Flipt flag `kysely-hot-reads-6` and read
+  base tables only. Parity is pinned by
+  `<civitai>/src/server/services/__tests__/hot-reads-6.kysely-parity.test.ts`, on the same Postgres
+  service, with the same no-view check.
+
+  `getImageGenerationFields` (`image.db.ts`) is the image row behind the image generation-data
+  endpoint, with its tool and technique links read as nested `json_agg` arrays in one statement. The
+  endpoint's response is a pure function of that row, so its parity is pinned at the row: Kysely vs
+  the original Prisma `findUnique`, key order included, by
+  `<civitai>/src/server/services/__tests__/image-generation-data.kysely-parity.test.ts`.
 
 ## Client access — executor injection
 
@@ -134,8 +205,13 @@ inferred type says `Date`/`number`. Parse those fields where a real `Date`/`bigi
   INSERTs and `ON CONFLICT DO UPDATE` still set `updatedAt` explicitly.
 - **Postgres enum-ARRAY columns need a parser.** pg has no parser for an array of a user-defined enum (dynamic
   oid), so a `SomeEnum[]` column reads back as the raw `{a,b}` literal string. Consumers call
-  `registerEnumArrayTypeParsers(pool)` (from `@civitai/db/kysely`) once at startup (main app:
-  `src/instrumentation.node.ts`) so those columns parse to `string[]`. Scalar enums are fine without it.
+  `registerEnumArrayTypeParsers(pool)` (from `@civitai/db/kysely`) once at startup — main app:
+  `src/instrumentation.node.ts`; SvelteKit spokes: a `ServerInit` `init` export in `hooks.server.ts`
+  (SvelteKit awaits `init` before the first request), using the `pool` returned by
+  `createKyselyClients`. Both register **fail-open**, so a read site that can receive an enum-array
+  column must still tolerate the raw literal — `{green,blue}` is a string that every array operation
+  accepts and iterates by character (see `toDomainArray` in `apps/creator-studio/src/lib/announcements.ts`).
+  Scalar enums are fine without it.
 - **Nested writes** (Prisma `connect`/`connectOrCreate`/nested `create`): decompose into explicit statement
   functions, and have a compose function open `db.transaction().execute((trx) => …)` and pass `trx` as each
   statement's `db`. See **Tag links** below for the canonical example.
@@ -217,12 +293,17 @@ Tiers 1 and 2 prove what SQL runs and that it plans. Neither proves the **caller
 before**, which is the whole risk of porting a live read path. For that, run BOTH implementations against the
 SAME rows in the SAME database and deep-compare the results, rather than asserting the Kysely result against
 a hand-written expectation (which only re-states what the new code does). This lives in the consuming app,
-since the package itself must stay Prisma-free: `<civitai>/src/server/db/__tests__/kysely-prisma-parity.test.ts`,
-with its schema fixture alongside. Cover the empty result, an empty input array (the `IN ()` guard), and
-cross-user/cross-entity isolation — a dropped predicate shows up as extra rows, not as an empty diff.
+since the package itself must stay Prisma-free: `<civitai>/src/server/db/__tests__/kysely-prisma-parity.test.ts`
+for single-query ports, with its schema fixture alongside. A port whose rows feed a larger service
+function can get its own suite, as
+`<civitai>/src/server/services/__tests__/image-generation-data.kysely-parity.test.ts` does. Compare at the
+row when everything downstream is a pure function of it. Cover the empty
+result, an empty input array (the `IN ()` guard), and cross-user/cross-entity isolation — a dropped
+predicate shows up as extra rows, not as an empty diff.
 
-It is opt-in via `KYSELY_PARITY_DATABASE_URL` and deliberately does NOT fall back to `DATABASE_URL`: it
-writes fixtures, so it needs a throwaway database. The test header has the one-line docker command.
+Both are opt-in via `KYSELY_PARITY_DATABASE_URL` and deliberately do NOT fall back to `DATABASE_URL`: they
+write fixtures, so they need a throwaway database. **CI does not set it, so they run locally only** — in CI
+a port is guarded by its tier-1 compiled-SQL test alone. The test headers have the one-line docker command.
 
 ## Example
 

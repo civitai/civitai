@@ -33,6 +33,12 @@ import { trpc } from '~/utils/trpc';
 import { parseBuzzTransactionDetails } from '~/utils/buzz';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
+import {
+  GENERATION_TIP_FILTER,
+  filterTransactionsByDisplayType,
+  getServerTransactionType,
+  getTransactionBadgeLabel,
+} from '~/utils/buzz-transaction-display';
 import { capitalize } from '~/utils/string-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import type {
@@ -50,6 +56,7 @@ const transactionTypes = [
   TransactionType[TransactionType.Bounty],
   TransactionType[TransactionType.Sell],
   TransactionType[TransactionType.Compensation],
+  GENERATION_TIP_FILTER,
   TransactionType[TransactionType.Donation],
   TransactionType[TransactionType.Bid],
   TransactionType[TransactionType.Redeemable],
@@ -104,9 +111,15 @@ export default function UserTransactions() {
       placeholderData: keepPreviousData,
     });
 
+  // The server filters by stored type, so the tip choice rides on Compensation and is narrowed here.
+  const [typeChoice, setTypeChoice] = useState<string | null>(null);
   const transactions = useMemo(
-    () => data?.pages.flatMap((page) => page.transactions) ?? [],
-    [data]
+    () =>
+      filterTransactionsByDisplayType(
+        data?.pages.flatMap((page) => page.transactions) ?? [],
+        typeChoice
+      ),
+    [data, typeChoice]
   );
 
   const handleDateChange = (name: 'start' | 'end') => (value: Date | null) => {
@@ -240,16 +253,12 @@ export default function UserTransactions() {
             label="Type"
             name="type"
             placeholder="Select a type"
-            value={filters.type != null ? TransactionType[filters.type] : null}
+            value={typeChoice}
             data={transactionTypes}
-            onChange={(value) =>
-              value != null
-                ? setFilters((current) => ({
-                    ...current,
-                    type: TransactionType[value as keyof typeof TransactionType],
-                  }))
-                : setFilters((current) => ({ ...current, type: undefined }))
-            }
+            onChange={(value) => {
+              setTypeChoice(value);
+              setFilters((current) => ({ ...current, type: getServerTransactionType(value) }));
+            }}
             clearable
           />
         </Group>
@@ -283,7 +292,7 @@ export default function UserTransactions() {
                     <Group justify="space-between">
                       <Group gap={8}>
                         <Text fw="500">{formatDate(date)}</Text>
-                        <Badge>{TransactionType[type]}</Badge>
+                        <Badge>{getTransactionBadgeLabel(transaction)}</Badge>
                         {filters.accountTypes.length > 1 && (
                           <Badge variant="light" color={accountType}>
                             {capitalize(accountType)}
@@ -303,7 +312,7 @@ export default function UserTransactions() {
                     {fromUser && fromUser.id !== currentUser?.id && (
                       <Text c="dimmed">
                         <Group gap={4}>
-                          {isDebit ? 'To: ' : 'From: '}
+                          {'From: '}
                           <Text fw="500" span>
                             {fromUser.username}
                           </Text>
@@ -313,7 +322,7 @@ export default function UserTransactions() {
                     {toUser && toUser.id !== currentUser?.id && (
                       <Text c="dimmed">
                         <Group gap={4}>
-                          {isDebit ? 'From: ' : 'To: '}
+                          {'To: '}
                           <Text fw="500" span>
                             {toUser.username}
                           </Text>

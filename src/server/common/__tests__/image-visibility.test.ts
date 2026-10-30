@@ -1,5 +1,9 @@
 import { describe, it, expect } from 'vitest';
-import { imageReviewedSql } from '~/server/common/image-visibility';
+import {
+  imageReviewedSql,
+  isImageReviewed,
+  KNIGHTS_VOTE_NSFW_LEVEL_REASON,
+} from '~/server/common/image-visibility';
 
 const render = (alias?: string) => {
   const sql = alias ? imageReviewedSql(alias) : imageReviewedSql();
@@ -10,14 +14,16 @@ const render = (alias?: string) => {
 };
 
 describe('imageReviewedSql', () => {
-  // Pins the whole shape, not keywords. A string-match test would still pass with the
-  // OR and AND swapped — which is the one mistake that would expose every mod-rated
-  // ToS removal (311 Blocked rows in prod when this was written).
-  it('renders scanned OR (mod-rated AND not terminal)', () => {
+  // Pins the whole shape, not keywords: a string match still passes with OR and AND swapped,
+  // which would expose every mod-rated ToS removal.
+  it('renders scanned OR (mod-rated AND not terminal AND not an unqualified Error lock)', () => {
     expect(render()).toBe(
       '( "i"."ingestion" = Scanned::"ImageIngestionStatus" ' +
         'OR ( "i"."nsfwLevelLocked" = TRUE ' +
-        'AND "i"."ingestion" NOT IN (Blocked::"ImageIngestionStatus",Error::"ImageIngestionStatus",NotFound::"ImageIngestionStatus") ) )'
+        'AND "i"."ingestion" NOT IN (Blocked::"ImageIngestionStatus",NotFound::"ImageIngestionStatus") ' +
+        'AND NOT ( "i"."ingestion" = Error::"ImageIngestionStatus" ' +
+        `AND ( COALESCE("i"."metadata"->>'nsfwLevelReason', '') = Knights Vote ` +
+        `OR COALESCE("i"."scanJobs"->'error'->>'failureClass', '') = permanent ) ) ) )`
     );
   });
 
@@ -32,14 +38,40 @@ describe('imageReviewedSql', () => {
     expect(sql).not.toMatch(/nsfwLevelLocked"\s*=\s*TRUE\s*\)?\s*OR/);
   });
 
-  it('excludes every terminal state a mod rating must not override', () => {
-    for (const terminal of ['Blocked', 'Error', 'NotFound']) {
-      expect(render()).toContain(`${terminal}::"ImageIngestionStatus"`);
-    }
-  });
-
   it('honours an alias override', () => {
     expect(render('img')).toContain('"img"."ingestion"');
     expect(render('img')).not.toContain('"i"."ingestion"');
+  });
+});
+
+describe('isImageReviewed', () => {
+  const locked = { nsfwLevelLocked: true } as const;
+
+  it.each([
+    ['a completed scan', { ingestion: 'Scanned', nsfwLevelLocked: false }, true],
+    ['a mod lock on a stalled scan', { ingestion: 'Pending', ...locked }, true],
+    [
+      'a Knights lock on a stalled scan',
+      { ingestion: 'Pending', ...locked, nsfwLevelReason: KNIGHTS_VOTE_NSFW_LEVEL_REASON },
+      true,
+    ],
+    ['a mod lock on an errored scan', { ingestion: 'Error', ...locked }, true],
+    [
+      'a Knights lock on an errored scan',
+      { ingestion: 'Error', ...locked, nsfwLevelReason: KNIGHTS_VOTE_NSFW_LEVEL_REASON },
+      false,
+    ],
+    [
+      'a mod lock on a permanently failed scan',
+      { ingestion: 'Error', ...locked, scanFailureClass: 'permanent' },
+      false,
+    ],
+    ['an errored scan with no lock', { ingestion: 'Error', nsfwLevelLocked: false }, false],
+    ['a mod lock on a ToS removal', { ingestion: 'Blocked', ...locked }, false],
+    ['a mod lock on missing media', { ingestion: 'NotFound', ...locked }, false],
+  ] as const)('%s → %s', (_label, input, expected) => {
+    expect(isImageReviewed({ nsfwLevelReason: null, scanFailureClass: null, ...input })).toBe(
+      expected
+    );
   });
 });

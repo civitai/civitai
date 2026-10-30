@@ -1,10 +1,14 @@
 import { articleNotifications } from '~/server/notifications/article.notifications';
 import { comicNotifications } from '~/server/notifications/comics.notifications';
 import { articleRatingReviewNotifications } from '~/server/notifications/article-rating-review.notifications';
+import { ratingReviewNotifications } from '~/server/notifications/rating-review.notifications';
 import { articleUnpublishNotifications } from '~/server/notifications/article-unpublish.notifications';
+import { creatorServiceNotifications } from '~/server/notifications/creator-service.notifications';
 import { appBlockNotifications } from '~/server/notifications/app-block.notifications';
 import { appCollaboratorNotifications } from '~/server/notifications/app-collaborator.notifications';
+import { appFeedbackNotifications } from '~/server/notifications/app-feedback.notifications';
 import { appListingNotifications } from '~/server/notifications/app-listing.notifications';
+import { appModeratorMessageNotifications } from '~/server/notifications/app-moderator-message.notifications';
 import { auctionNotifications } from '~/server/notifications/auction.notifications';
 import type { BareNotification } from '~/server/notifications/base.notifications';
 import { bountyNotifications } from '~/server/notifications/bounty.notifications';
@@ -13,15 +17,25 @@ import { membershipGiftNotifications } from '~/server/notifications/membership-g
 import { challengeNotifications } from '~/server/notifications/challenge.notifications';
 import { collectionNotifications } from '~/server/notifications/collection.notifications';
 import { commentNotifications } from '~/server/notifications/comment.notifications';
+import { crucibleNotifications } from '~/server/notifications/crucible.notifications';
 import { cosmeticShopNotifications } from '~/server/notifications/cosmetic-shop.notifications';
 import { placementNotifications } from '~/server/notifications/placement.notifications';
+import {
+  storylineNotifications,
+  storylineOwnerNotifications,
+  storylineInviteNotifications,
+} from '~/server/notifications/storyline.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
+import { creatorMilestoneNotifications } from '~/server/notifications/creator-milestone.notifications';
+import { creatorAnnouncementNotifications } from '~/server/notifications/creator-announcement.notifications';
 import { followNotifications } from '~/server/notifications/follow.notifications';
 import { generationMuteNotifications } from '~/server/notifications/generation-mute.notifications';
+import { reviewMuteNotifications } from '~/server/notifications/review-mute.notifications';
 import { imageNotifications } from '~/server/notifications/image.notifications';
 import { mentionNotifications } from '~/server/notifications/mention.notifications';
 import { minorFlagNotifications } from '~/server/notifications/minor-flag.notifications';
+import { textScanFlagNotifications } from '~/server/notifications/text-scan-flag.notifications';
 import { modelNotifications } from '~/server/notifications/model.notifications';
 import { knightsNewOrderNotifications } from '~/server/notifications/new-order.notifications';
 import { strikeNotifications } from '~/server/notifications/strike.notifications';
@@ -32,8 +46,10 @@ import { systemNotifications } from '~/server/notifications/system.notifications
 import { unpublishNotifications } from '~/server/notifications/unpublish.notifications';
 import { userJourneyNotifications } from '~/server/notifications/user-journey.notifications';
 import { referralNotifications } from '~/server/notifications/referral.notifications';
+import { textScanNotifications } from '~/server/notifications/text-scan.notifications';
 
 export const notificationProcessors = {
+  ...creatorAnnouncementNotifications,
   ...mentionNotifications,
   ...modelNotifications,
   ...reviewNotifications,
@@ -43,30 +59,42 @@ export const notificationProcessors = {
   ...userJourneyNotifications,
   ...unpublishNotifications,
   ...minorFlagNotifications,
+  ...textScanFlagNotifications,
   ...articleNotifications,
   ...articleUnpublishNotifications,
+  ...creatorServiceNotifications,
   ...appListingNotifications,
   ...appBlockNotifications,
   ...appCollaboratorNotifications,
+  ...appFeedbackNotifications,
+  ...appModeratorMessageNotifications,
   ...articleRatingReviewNotifications,
+  ...ratingReviewNotifications,
   ...reportNotifications,
   ...featuredNotifications,
   ...bountyNotifications,
   ...placementNotifications,
+  ...storylineNotifications,
+  ...storylineOwnerNotifications,
+  ...storylineInviteNotifications,
   ...buzzNotifications,
   ...collectionNotifications,
   ...imageNotifications,
   ...creatorsProgramNotifications,
   ...followNotifications,
   ...generationMuteNotifications,
+  ...reviewMuteNotifications,
   ...cosmeticShopNotifications,
   ...challengeNotifications,
+  ...crucibleNotifications,
   ...auctionNotifications,
   ...knightsNewOrderNotifications,
   ...comicNotifications,
   ...strikeNotifications,
   ...referralNotifications,
   ...membershipGiftNotifications,
+  ...textScanNotifications,
+  ...creatorMilestoneNotifications,
 };
 
 // Sort notifications by priority and group them by priority
@@ -128,3 +156,19 @@ export const { notificationCategoryTypes, notificationTypes, optInNotificationTy
   getNotificationTypes();
 
 export const isOptInNotification = (type: string) => optInNotificationTypes.includes(type);
+
+/**
+ * Push may target exactly the types that render a control — registered and toggleable. Gates the
+ * `updatePushSettings` insert so a direct API client can't create rows for unknown or
+ * non-toggleable (system/moderation) types the UI never exposes.
+ */
+export const isPushableNotificationType = (type: string) => {
+  const processor = notificationProcessors[type];
+  return !!processor && processor.toggleable !== false;
+};
+
+export const emailNotificationTypeList = Object.entries(notificationProcessors)
+  .filter(([, processor]) => processor.defaultEmail)
+  .map(([type]) => type);
+
+export const isEmailNotificationType = (type: string) => emailNotificationTypeList.includes(type);

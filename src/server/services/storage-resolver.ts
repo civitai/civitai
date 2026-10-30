@@ -3,8 +3,7 @@ import { fetchTimeoutSignal } from '~/server/utils/fetch-timeout';
 import type { ImageUploadBackend } from '~/utils/s3-utils';
 
 const STORAGE_RESOLVER_URL =
-  env.STORAGE_RESOLVER_INTERNAL_URL ??
-  'http://storage-resolver.storage-resolver.svc.cluster.local';
+  env.STORAGE_RESOLVER_INTERNAL_URL ?? 'http://storage-resolver.storage-resolver.svc.cluster.local';
 const STORAGE_RESOLVER_TOKEN = env.STORAGE_RESOLVER_INTERNAL_TOKEN;
 
 export async function registerMediaLocation(
@@ -43,7 +42,11 @@ export async function resolveMediaLocation(
       signal: fetchTimeoutSignal(60_000),
     });
     if (!res.ok) return null;
-    return res.json() as Promise<{ backend: ImageUploadBackend; url: string }>;
+    // `await` is load-bearing, not style. `return res.json()` inside a try returns the promise and
+    // leaves the try before it settles, so the async function adopts a REJECTION that this catch
+    // never sees — and the signature says `| null`, so every caller is written as if it cannot
+    // throw. A 200 carrying a non-JSON body (an ingress/proxy error page) is exactly that case.
+    return (await res.json()) as { backend: ImageUploadBackend; url: string };
   } catch {
     return null;
   }

@@ -1,6 +1,6 @@
 import { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
-import type { FilterableAttributes, SearchableAttributes, SortableAttributes } from 'meilisearch';
+import type { SearchableAttributes, SortableAttributes } from 'meilisearch';
 import { clickhouse } from '~/server/clickhouse/client';
 import { imageReviewedSql } from '~/server/common/image-visibility';
 import { IMAGES_SEARCH_INDEX } from '~/server/common/constants';
@@ -17,6 +17,9 @@ import {
   userBasicCache,
 } from '~/server/redis/caches';
 import { createSearchIndexUpdateProcessor } from '~/server/search-index/base.search-index';
+import { imagesFilterableAttributes } from '~/server/search-index/filterable-attributes';
+import { isRetiredSearchIndex } from '~/server/search-index/retired-indexes';
+import { imagesSortableAttributes } from '~/server/search-index/sortable-attributes';
 import { modelsSearchIndex } from '~/server/search-index/models.search-index';
 import { getCosmeticsForEntity } from '~/server/services/cosmetic.service';
 import { getCosmeticsForUsers, getProfilePicturesForUsers } from '~/server/services/user.service';
@@ -45,31 +48,7 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
 
   const searchableAttributes: SearchableAttributes = ['prompt', 'tagNames', 'user.username'];
 
-  const sortableAttributes: SortableAttributes = [
-    'id',
-    'sortAt',
-    'stats.commentCountAllTime',
-    'stats.reactionCountAllTime',
-    'stats.collectedCountAllTime',
-    'stats.tippedAmountCountAllTime',
-  ];
-
-  const filterableAttributes: FilterableAttributes = [
-    'id',
-    'createdAtUnix',
-    'tagNames',
-    'user.username',
-    'baseModel',
-    'aspectRatio',
-    'nsfwLevel',
-    'combinedNsfwLevel',
-    'type',
-    'toolNames',
-    'techniqueNames',
-    'flags.promptNsfw',
-    'poi',
-    'minor',
-  ];
+  const sortableAttributes: SortableAttributes = [...imagesSortableAttributes];
 
   if (JSON.stringify(searchableAttributes) !== JSON.stringify(settings.searchableAttributes)) {
     const updateSearchableAttributesTask = await index.updateSearchableAttributes(
@@ -92,10 +71,11 @@ const onIndexSetup = async ({ indexName }: { indexName: string }) => {
   }
 
   if (
-    JSON.stringify(filterableAttributes.sort()) !== JSON.stringify(settings.filterableAttributes)
+    JSON.stringify(imagesFilterableAttributes.sort()) !==
+    JSON.stringify(settings.filterableAttributes)
   ) {
     const updateFilterableAttributesTask = await index.updateFilterableAttributes(
-      filterableAttributes
+      imagesFilterableAttributes
     );
 
     console.log(
@@ -138,7 +118,6 @@ type BaseImage = {
   width: number | null;
   metadata: Prisma.JsonValue;
   nsfwLevel: NsfwLevel;
-  aiNsfwLevel: NsfwLevel;
   nsfwLevelLocked: boolean;
   postId: number | null;
   needsReview: string | null;
@@ -220,9 +199,6 @@ const transformData = async ({
         ...imageRecord,
         id,
         nsfwLevel,
-        combinedNsfwLevel: nsfwLevelLocked
-          ? nsfwLevel
-          : Math.max(nsfwLevel, imageRecord.aiNsfwLevel),
         createdAtUnix: imageRecord.createdAt.getTime(),
         aspectRatio:
           !imageRecord.width || !imageRecord.height
@@ -268,6 +244,15 @@ const transformData = async ({
 export type ImageSearchIndexRecord = Awaited<ReturnType<typeof transformData>>[number];
 
 export const imagesSearchIndex = createSearchIndexUpdateProcessor({
+  // Retired: the `images_v6` Meilisearch index is no longer served (the /search/images page
+  // redirects and the `imageSearch` flag is off by default). All writes and syncs no-op, so the
+  // call sites that still queue image updates cost nothing. Restoring image search means removing
+  // it from RETIRED_SEARCH_INDEXES and re-running a reset to rebuild the index. See ticket 868m4c2dn.
+  // NOTE: the ban-purge flow (processUserContentRemovalQueue in server/meilisearch/util.ts)
+  // intentionally has NO entry for this index anymore — with it retired, that flow's
+  // getOrCreateIndex re-created the index bare and its delete tasks all failed. Re-add the
+  // images entry there as part of the same change as the restoration reset.
+  retired: isRetiredSearchIndex(INDEX_ID),
   workerCount: 10,
   indexName: INDEX_ID,
   setup: onIndexSetup,
@@ -340,7 +325,6 @@ export const imagesSearchIndex = createSearchIndexUpdateProcessor({
         i."name",
         i."url",
         i."nsfwLevel",
-        i."aiNsfwLevel",
         i."nsfwLevelLocked",
         i."meta"->'prompt' as "prompt",
         i."hash",

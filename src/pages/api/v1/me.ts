@@ -1,6 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 
+import { readApiKeyBuzzLimit } from '~/server/services/api-key.service';
 import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
 import { Flags } from '~/shared/utils/flags';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -16,11 +17,19 @@ export default AuthedEndpoint(async function handler(
 ) {
   const context = (req as any).context ?? {};
   const tokenScope: number | undefined = context.tokenScope;
-  const buzzLimit = context.buzzLimit ?? null;
   const subject = context.subject ?? null;
+  let buzzLimit = context.buzzLimit ?? null;
+  // An API key's limit is re-read from the primary rather than taken from the bearer lookup, whose
+  // row may come from a short-lived cache: the orchestrator caches what this returns, and a lowered
+  // limit must not be handed out stale. (OAuth subjects already read their consent row per request.)
+  if (subject?.type === 'apiKey') {
+    const current = await readApiKeyBuzzLimit(subject.id);
+    if (current === undefined) return res.status(401).json({ error: 'Unauthorized' });
+    buzzLimit = current;
+  }
 
-  // Release email for session auth (no token) or when the token carries the
-  // UserRead scope — same gate the OIDC userinfo endpoint uses.
+  // Release email and moderator status for session auth (no token) or when the
+  // token carries the UserRead scope — same gate the OIDC userinfo endpoint uses.
   const canReadProfile = subject === null || Flags.hasFlag(tokenScope ?? 0, TokenScope.UserRead);
 
   res.send({
@@ -30,6 +39,8 @@ export default AuthedEndpoint(async function handler(
     status: user.bannedAt ? 'banned' : user.muted ? 'muted' : 'active',
     isMember: user.tier ? user.tier !== 'free' : false,
     subscriptions: Object.keys(user.subscriptions ?? {}),
+    // Never `false`: a non-moderator must look identical to a caller the gate withheld it from.
+    ...(canReadProfile && user.isModerator ? { isModerator: true } : {}),
     ...(canReadProfile && user.email
       ? { email: user.email, emailVerified: !!user.emailVerified }
       : {}),

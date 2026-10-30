@@ -15,8 +15,9 @@ import { useMemo, useState } from 'react';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { RichTextEditor } from '~/components/RichTextEditor/RichTextEditor';
 import { SupportContent } from '~/components/Support/SupportContent';
-import { banReasonDetails } from '~/server/common/constants';
+import { banReasonsAlwaysRemovingMedia } from '~/server/common/constants';
 import { BanReasonCode } from '~/server/common/enums';
+import { banReasonOptions } from '~/utils/user-helpers';
 import { numberWithCommas } from '~/utils/number-helpers';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -34,21 +35,14 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
   const [detailsInternal, setDetailsInternal] = useState<string | undefined>('');
   const [detailsExternal, setDetailsExternal] = useState<string | undefined>('');
   // Unpublishing models happens on every ban historically, so default it on.
-  // Blocking media defaults on only for SexualMinor (kept in sync as the reason
-  // changes, but a mod can still override either toggle).
   const [removeModels, setRemoveModels] = useState(true);
   const [removeMedia, setRemoveMedia] = useState(false);
+  // No opt-out for these: the server removes the media whatever is sent.
+  const mediaAlwaysRemoved = banReasonsAlwaysRemovingMedia.includes(reasonCode);
+  const mediaRemoved = removeMedia || mediaAlwaysRemoved;
 
   const { data: banPreview } = trpc.user.getBanContentPreview.useQuery({ userId });
-  const dataLabels = useMemo(() => {
-    return Object.keys(BanReasonCode).map((r) => {
-      const data = banReasonDetails[r as BanReasonCode];
-      return {
-        value: r,
-        label: data.privateBanReasonLabel ? `${r}: ${data.privateBanReasonLabel}` : r,
-      };
-    });
-  }, []);
+  const dataLabels = useMemo(banReasonOptions, []);
 
   const toggleBanMutation = trpc.user.toggleBan.useMutation({
     async onMutate() {
@@ -93,14 +87,14 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
       detailsInternal,
       detailsExternal,
       removeModels,
-      removeMedia,
+      removeMedia: mediaRemoved,
     });
   };
 
   const handleReasonChange = (value: string | null) => {
     const nextReason = value as BanReasonCode;
     setReasonCode(nextReason);
-    setRemoveMedia(nextReason === BanReasonCode.SexualMinor);
+    setRemoveMedia(nextReason === BanReasonCode.SpamBot);
   };
 
   return (
@@ -143,16 +137,18 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
           <Switch
             label="Remove all images & videos"
             description={
-              banPreview
+              (mediaAlwaysRemoved ? 'Always removed for this ban reason. ' : '') +
+              (banPreview
                 ? `Blocks this user's ${numberWithCommas(banPreview.imageCount)} image${
                     banPreview.imageCount === 1 ? '' : 's'
                   } & videos (7-day appeal window, then deleted).`
-                : 'Blocks all of this user’s images & videos.'
+                : 'Blocks all of this user’s images & videos.')
             }
-            checked={removeMedia}
+            checked={mediaRemoved}
+            disabled={mediaAlwaysRemoved}
             onChange={(event) => setRemoveMedia(event.currentTarget.checked)}
           />
-          {banPreview && (removeModels || removeMedia) && (
+          {banPreview && (removeModels || mediaRemoved) && (
             <Alert color="red" p="xs" icon={<IconAlertTriangle size={18} />}>
               {[
                 removeModels
@@ -160,7 +156,7 @@ export default function UserBanModal({ username, userId, onSuccess }: Props) {
                       banPreview.modelCount === 1 ? '' : 's'
                     }`
                   : null,
-                removeMedia
+                mediaRemoved
                   ? `${numberWithCommas(banPreview.imageCount)} image${
                       banPreview.imageCount === 1 ? '' : 's'
                     } & videos`

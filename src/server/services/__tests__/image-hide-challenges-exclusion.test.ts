@@ -42,19 +42,7 @@ vi.mock('~/env/server', () => ({
   }),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/client', () => {
-  type KeyProxy = (() => string) & { [key: string]: KeyProxy };
-  const make = (): KeyProxy => new Proxy((() => 'k') as KeyProxy, { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: {},
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-  };
-});
 
 // The mapping sits directly after this call in both entry points — a non-empty result lets
 // execution reach it.
@@ -64,6 +52,7 @@ vi.mock('~/server/services/blocked-browsing-tags.service', () => ({
 
 import { getAllImages, getAllImagesIndex } from '../image.service';
 import { dailyChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 // The literal, not `dailyChallengeConfig.challengeTagId`. Reading the id from config makes the
 // exclusion assertions compare against `undefined` on a tree where the field doesn't exist, which

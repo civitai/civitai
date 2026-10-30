@@ -1,4 +1,4 @@
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { getChallengeConfig } from '~/server/games/daily-challenge/daily-challenge.utils';
 import { getBaseUrl } from '~/server/utils/url-helpers';
 import { createWebhookProcessor } from '~/server/webhooks/base.webhooks';

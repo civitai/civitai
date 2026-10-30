@@ -65,9 +65,7 @@ export const model3dMetrics = createMetricProcessor({
     const metricValues = metricKeys
       .map((key) => `COALESCE(d."${key}", mm."${key}", 0) as "${key}"`)
       .join(',\n');
-    const metricOverrides = metricKeys
-      .map((key) => `"${key}" = EXCLUDED."${key}"`)
-      .join(',\n');
+    const metricOverrides = metricKeys.map((key) => `"${key}" = EXCLUDED."${key}"`).join(',\n');
 
     const updateTasks = chunk(Object.values(ctx.updates), 100).map((batch, i) => async () => {
       ctx.jobContext.checkIfCanceled();
@@ -136,10 +134,9 @@ export const model3dMetrics = createMetricProcessor({
 async function getCommentTasks(ctx: MetricContext) {
   const affected = await getAffected(ctx)`
     -- get recent Model3D comments
-    SELECT t."model3dId" as id
-    FROM "Thread" t
-    JOIN "CommentV2" c ON c."threadId" = t.id
-    WHERE t."model3dId" IS NOT NULL AND c."createdAt" > ${ctx.lastUpdate}
+    SELECT c."entityId" as id
+    FROM "CommentV3" c
+    WHERE c."entityType" = 'model3d' AND c."parentId" IS NULL AND c."createdAt" > ${ctx.lastUpdate}
   `;
 
   const tasks = chunk(affected, BATCH_SIZE).map((ids, i) => async () => {
@@ -148,13 +145,14 @@ async function getCommentTasks(ctx: MetricContext) {
     await getMetrics(ctx)`
       -- get Model3D comment metrics
       SELECT
-        t."model3dId",
+        c."entityId" AS "model3dId",
         COUNT(c.id)::int AS "commentCount"
-      FROM "Thread" t
-      JOIN "CommentV2" c ON c."threadId" = t.id
-      WHERE t."model3dId" IN (${ids})
-        AND t."model3dId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
-      GROUP BY t."model3dId"
+      FROM "CommentV3" c
+      WHERE c."entityType" = 'model3d' AND c."parentId" IS NULL AND c."deletedAt" IS NULL
+        AND c."tosViolation" = false
+        AND c."entityId" IN (${ids})
+        AND c."entityId" BETWEEN ${ids[0]} AND ${ids[ids.length - 1]}
+      GROUP BY c."entityId"
     `;
     log('getCommentTasks', i + 1, 'of', tasks.length, 'done');
   });

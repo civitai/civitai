@@ -19,7 +19,14 @@ export function isMatureModel({
   );
 }
 
+// Every link out of the Studio to public content goes through here. The rule was hand-rolled as
+// `nsfwLevel > 3` at five call sites, which is not the same test: it sends a mixed rating (PG13|R) and a
+// Blocked item to civitai.red, where `isMatureModel` — the rule this app actually documents — says .com.
+export function civitaiUrl(path: string, entity: { nsfw?: boolean; nsfwLevel?: number }): string {
+  const domain = isMatureModel(entity) ? 'civitai.red' : 'civitai.com';
+  return `https://${domain}/${path.replace(/^\//, '')}`;
+}
+
 export function modelUrl(modelId: number, model: { nsfw?: boolean; nsfwLevel?: number }): string {
-  const domain = isMatureModel(model) ? 'civitai.red' : 'civitai.com';
-  return `https://${domain}/models/${modelId}`;
+  return civitaiUrl(`models/${modelId}`, model);
 }

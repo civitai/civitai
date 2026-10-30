@@ -1,4 +1,7 @@
-import { Box, Group, Stack } from '@mantine/core';
+import { Box, Button, Group, Stack } from '@mantine/core';
+import { IconCalendarEvent } from '@tabler/icons-react';
+import { NextLink as Link } from '~/components/NextLink/NextLink';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { MetricTimeframe } from '~/shared/utils/prisma/enums';
 import React, { useState } from 'react';
 
@@ -15,16 +18,18 @@ import { postgresSlugify } from '~/utils/string-helpers';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { PostFiltersDropdown } from '~/components/Post/Infinite/PostFiltersDropdown';
+import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { Page } from '~/components/AppLayout/Page';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
-import { dbRead } from '~/server/db/client';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
+import { jumpToEmptyMessage } from '~/shared/utils/jump-to-month';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
   resolver: async ({ ctx, ssg }) => {
     const username = ctx.query.username as string;
-    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    const user = await getUserBannedAtByUsername(username);
 
     if (user?.bannedAt)
       return {
@@ -46,18 +51,22 @@ function UserPostsPage() {
   } = usePostQueryParams();
   // const { replace, section: querySection, ...queryFilters } = usePostQueryParams();
   const period = query.period ?? MetricTimeframe.AllTime;
-  const querySort = query.sort ?? PostSort.Newest;
+  const sort = query.sort ?? PostSort.Newest;
   const selfView =
     !!currentUser &&
     !!query.username &&
     postgresSlugify(currentUser.username) === postgresSlugify(query.username);
+  // A moderator sees anything the creator can see of their own. Matches the
+  // images and videos tabs; the server authorizes this independently in
+  // `post.service.ts` and does not trust the control being rendered.
+  const canViewDrafts = selfView || (currentUser?.isModerator ?? false);
+  const features = useFeatureFlags();
 
   const [section, setSection] = useState<'published' | 'draft'>(
-    selfView ? querySection ?? 'published' : 'published'
+    canViewDrafts ? querySection ?? 'published' : 'published'
   );
   const viewingDraft = section === 'draft';
   const effectiveScheduled = viewingDraft ? query.scheduled ?? true : query.scheduled;
-  const sort = viewingDraft ? PostSort.Newest : querySort;
 
   if (!query.username) return <NotFound />;
 
@@ -71,33 +80,44 @@ function UserPostsPage() {
         <MasonryContainer p={0}>
           <Stack gap="xs">
             <Group gap={8} justify="space-between">
-              {selfView && (
+              {canViewDrafts && (
                 <FeedContentToggle
                   size="xs"
                   value={section}
                   onChange={(section) => {
-                    setSection(section as 'published' | 'draft');
-                    replace({
-                      section: section as 'published' | 'draft',
-                      scheduled: undefined,
-                      sort: section === 'draft' ? PostSort.Newest : undefined,
-                    });
+                    const nextSection = section as 'published' | 'draft';
+                    setSection(nextSection);
+                    replace({ section: nextSection, scheduled: undefined });
                   }}
                 />
               )}
+              {selfView && features.postPlanner && (
+                <Button
+                  component={Link}
+                  href="/user/schedule"
+                  size="xs"
+                  variant="light"
+                  leftSection={<IconCalendarEvent size={14} />}
+                >
+                  Open planner
+                </Button>
+              )}
+              {!selfView && <ActiveTagFilter tagIds={query.tags ?? []} />}
               <Group gap={8} ml="auto" wrap="nowrap">
-                <SortFilter
-                  type="posts"
-                  value={sort}
-                  onChange={(x) => replace({ sort: x as PostSort })}
-                  options={
-                    viewingDraft ? [{ label: PostSort.Newest, value: PostSort.Newest }] : undefined
-                  }
-                />
+                {/* Drafts are a publish queue with a fixed order (see post-sort.ts), so there is
+                    nothing for the picker to change there. */}
+                {!viewingDraft && (
+                  <SortFilter
+                    type="posts"
+                    value={sort}
+                    onChange={(x) => replace({ sort: x as PostSort })}
+                  />
+                )}
                 <PostFiltersDropdown
                   query={{ ...query, period, followed, scheduled: effectiveScheduled }}
                   onChange={(filters) => replace(filters)}
-                  showScheduled={selfView}
+                  showScheduled={canViewDrafts}
+                  jumpToSort={viewingDraft ? undefined : sort}
                   size="compact-sm"
                 />
               </Group>
@@ -112,6 +132,7 @@ function UserPostsPage() {
                 draftOnly: viewingDraft,
                 pending: true,
               }}
+              emptyMessage={viewingDraft ? undefined : jumpToEmptyMessage(query.jumpTo, sort)}
             />
           </Stack>
         </MasonryContainer>

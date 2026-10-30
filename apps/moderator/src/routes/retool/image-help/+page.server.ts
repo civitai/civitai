@@ -1,0 +1,87 @@
+import { fail } from '@sveltejs/kit';
+import { z } from 'zod';
+import type { Actions, PageServerLoad } from './$types';
+import { canAccess } from '$lib/server/access';
+import { parseForm, parseQuery } from '$lib/server/query';
+import {
+  HELP_TYPES,
+  createHelpRequest,
+  getHelpRequestImages,
+  getOpenHelpRequests,
+  resolveHelpRequest,
+} from '$lib/server/image-help.service';
+
+const querySchema = z.object({
+  request: z.coerce.number().int().positive().optional().catch(undefined),
+});
+
+export const load: PageServerLoad = async ({ url, locals }) => {
+  const { request } = parseQuery(url, querySchema);
+  const requests = await getOpenHelpRequests();
+
+  // Default to the oldest open request: the queue is drained in order, and landing on an empty right
+  // pane makes the page look broken when there is work waiting.
+  const selectedId = request ?? requests[0]?.id;
+  const selected = requests.find((r) => r.id === selectedId) ?? null;
+  const images = selected ? await getHelpRequestImages(selected.id) : [];
+
+  return {
+    requests,
+    selected,
+    images,
+    canAct: canAccess(locals.user, '/retool/image-help'),
+    // Queue left, the request's images right — two columns need the full content width.
+    wide: true,
+  };
+};
+
+export const actions: Actions = {
+  resolve: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/retool/image-help'))
+      return fail(400, { error: 'Not permitted.' });
+    const input = parseForm(
+      z.object({ requestId: z.coerce.number().int().positive() }),
+      await request.formData()
+    );
+    if (typeof input === 'string') return fail(400, { error: input });
+
+    const result = await resolveHelpRequest({
+      requestId: input.requestId,
+      // The column is TEXT holding a name, not an id — see the service.
+      handledBy: locals.user.username ?? String(locals.user.id),
+    });
+    if (!result.ok)
+      return fail(400, {
+        error: 'Already handled by someone else — reload to see the current queue.',
+      });
+
+    return { success: true, resolved: input.requestId };
+  },
+
+  /**
+   * Retool's `Get*` → `Store*` pair. `createdBy` takes the Civitai username per the migration skill's
+   * attribution rule, so the column now holds two naming schemes — Retool display names historically,
+   * usernames going forward.
+   */
+  file: async ({ request, locals }) => {
+    if (!canAccess(locals.user, '/retool/image-help'))
+      return fail(400, { error: 'Not permitted.' });
+    const author = locals.user.username;
+    if (!author)
+      return fail(400, { error: 'Your account has no username to attribute the request to.' });
+
+    const input = parseForm(z.object({ type: z.enum(HELP_TYPES) }), await request.formData());
+    if (typeof input === 'string') return fail(400, { error: input });
+
+    const result = await createHelpRequest({ type: input.type, createdBy: author });
+    if (!result.ok) return fail(400, { error: result.error ?? 'Could not file the request.' });
+
+    return {
+      success: true,
+      filed: result.count,
+      warning: result.truncated
+        ? `More than ${result.count} are waiting; this request covers the newest ${result.count}.`
+        : undefined,
+    };
+  },
+};

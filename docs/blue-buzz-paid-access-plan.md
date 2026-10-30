@@ -86,8 +86,8 @@ This keeps the loophole shut by construction: one source colour in, the same col
 
 Chosen for read cost: `terms` is already loaded by `earlyAccessPurchase` and already reaches the client via
 `useModelVersionPermission`, so the flag is free on both sides. A creator-level column would need a new
-lookup **and** a new cache on the purchase path. `cappedTerms` spreads `...terms`, so the flag survives price
-capping untouched, and `gatePrices` only reads the two grants — no change.
+lookup **and** a new cache on the purchase path. Nothing rewrites `terms` on read since the price caps
+were removed, and `gatePrices` only reads the two grants — no change.
 
 @ai: Per-version storage, but the _stance_ is catalog-wide ("am I open to generation credit"), so expressing
 it per-version means editing every gate. Seed it from a creator-level default in Creator Studio settings,

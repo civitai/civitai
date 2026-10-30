@@ -1,8 +1,18 @@
 import { Prisma } from '@prisma/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
 import { TRPCError } from '@trpc/server';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readPostModel3dViaKysely,
+  readPostModel3dViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
 import { userContentOverviewCache } from '~/server/redis/caches';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import { resolveActorFor } from '~/utils/resolve-attribution';
+import { getCreatorGalleryHiddenUserIds } from '~/server/services/creator-gallery-hidden-users.service';
 import {
   getGetUrl,
   getS3Client,
@@ -23,6 +33,10 @@ import {
   publicBrowsingLevelsFlag,
 } from '~/shared/constants/browsingLevel.constants';
 import { canViewModel3d } from '~/server/services/model3d.visibility';
+import {
+  getAvailableCollectionItemsFilterForUser,
+  getUserCollectionPermissionsById,
+} from '~/server/services/collection.service';
 import { imageSelect } from '~/server/selectors/image.selector';
 import { userWithCosmeticsSelect } from '~/server/selectors/user.selector';
 import {
@@ -36,7 +50,6 @@ import type {
   EnsureModel3DFromWorkflowInput,
   GetModel3DByIdInput,
   GetModel3DByPostIdInput,
-  GetModel3DByThumbnailImageIdInput,
   GetModel3DByWorkflowIdInput,
   GetModel3DFilesInput,
   GetModel3DRelatedPostsInput,
@@ -55,9 +68,13 @@ import type {
 import { Model3DSort } from '~/server/schema/model3d.schema';
 import { getOrchestratorToken } from '~/server/orchestrator/get-orchestrator-token';
 import { getWorkflow } from '~/server/services/orchestrator/workflows';
-import { isMature, maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
-import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/ecosystems/polyGen.handler';
-import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/client';
+import { maxNsfwLevel } from '~/shared/constants/orchestrator.constants';
+import { handlePolyGenWorkflowResult } from '~/server/services/orchestrator/handlers/polyGen.handler';
+import {
+  getPolyGenPostBlock,
+  getPolyGenPrimaryModel,
+} from '~/server/orchestrator/polygen/polygen-output';
+import type { ImageBlob, PolyGenStep, Workflow, WorkflowStep } from '@civitai/orchestration-client';
 import type { Context } from '~/server/createContext';
 
 type SessionUser = {
@@ -313,7 +330,10 @@ export const ensureModel3DFromWorkflow = async ({
     const polyGenStep = workflow.steps.find((s: WorkflowStep) => s.$type === 'polyGen') as
       | PolyGenStep
       | undefined;
-    if (!polyGenStep?.output?.model) {
+    const primaryModel = polyGenStep?.output
+      ? getPolyGenPrimaryModel(polyGenStep.output)
+      : undefined;
+    if (!polyGenStep?.output || !primaryModel) {
       throw throwBadRequestError('Workflow has no PolyGen output to materialize a 3D model from');
     }
 
@@ -332,15 +352,16 @@ export const ensureModel3DFromWorkflow = async ({
     // must be unlocked (yellow Buzz → allowMatureContent) before it can be
     // materialized into a postable draft.
     const effectiveNsfwLevel = maxNsfwLevel([
-      polyGenStep.output.model.nsfwLevel,
+      primaryModel.nsfwLevel,
       polyGenStep.output.thumbnail?.nsfwLevel,
       ...(previewStep?.output?.images ?? []).map((img) => img?.nsfwLevel),
     ]);
-    if (workflow.allowMatureContent === false && isMature(effectiveNsfwLevel)) {
-      throw throwBadRequestError(
-        'This 3D model was rated mature. Unlock it with Yellow Buzz before posting.'
-      );
-    }
+    const postBlock = getPolyGenPostBlock({
+      primaryModel,
+      effectiveNsfwLevel,
+      allowMatureContent: workflow.allowMatureContent,
+    });
+    if (postBlock) throw throwBadRequestError(postBlock);
 
     const meta = (workflow.metadata ?? {}) as Record<string, unknown>;
     const generationParams = (meta.params ?? {}) as Record<string, unknown>;
@@ -385,6 +406,7 @@ export const getModel3DsInfinite = async ({
   status,
   statuses,
   tagIds,
+  collectionId,
   includeDrafts,
   sort,
   period,
@@ -411,17 +433,19 @@ export const getModel3DsInfinite = async ({
     // returned every status (including published). The ownership check
     // also required `userId === user.id`, but the profile page sends
     // `username` (not `userId`), so self-view never qualified for drafts.
-    if (statuses?.length) {
-      AND.push({ status: { in: statuses } });
-    } else if (status) {
-      AND.push({ status });
+    const isOwner =
+      !!user &&
+      ((!!userId && userId === user.id) ||
+        (!!username && !!user.username && username === user.username));
+    const canSeeDrafts = isModerator || isOwner;
+    const requestedStatuses = statuses?.length ? statuses : status ? [status] : undefined;
+
+    if (requestedStatuses) {
+      AND.push({
+        status: canSeeDrafts ? { in: requestedStatuses } : Model3DStatus.Published,
+      });
     } else {
-      const isOwner =
-        !!user &&
-        ((!!userId && userId === user.id) ||
-          (!!username && !!user.username && username === user.username));
       const wantDrafts = includeDrafts ?? false;
-      const canSeeDrafts = isModerator || isOwner;
 
       if (wantDrafts && canSeeDrafts) {
         AND.push({ status: { in: [Model3DStatus.Draft, Model3DStatus.Unpublished] } });
@@ -438,6 +462,21 @@ export const getModel3DsInfinite = async ({
     if (username) AND.push({ user: { username } });
     if (query) AND.push({ name: { contains: query, mode: 'insensitive' } });
     if (tagIds?.length) AND.push({ tags: { some: { tagId: { in: tagIds } } } });
+
+    if (collectionId) {
+      const permissions = await getUserCollectionPermissionsById({
+        id: collectionId,
+        userId: user?.id,
+        isModerator,
+      });
+      if (!permissions.read) return { items: [], nextCursor: undefined };
+
+      const { AND: collectionItemAND } = getAvailableCollectionItemsFilterForUser({
+        permissions,
+        userId: user?.id,
+      });
+      AND.push({ collectionItems: { some: { collectionId, AND: collectionItemAND } } });
+    }
 
     // PolyGen `enableAnimation` toggle. JSON path equality against the
     // form-input snapshot stored on `Model3D.generationParams`. The
@@ -648,6 +687,11 @@ export const upsertModel3D = async ({
 }) => {
   const isModerator = !!user.isModerator;
   const { id, tagIds, tagNames, generationParams, meta, ...data } = input;
+
+  await throwOnBlockedUserContent(
+    [data.name, data.description, data.licenseDetails, ...(await newTagNames(tagNames))],
+    { isModerator, surface: 'model3d' }
+  );
 
   // Resolve free-form tag names (creating any that don't exist yet under
   // TagTarget.Model3D) and merge with `tagIds`. Mirrors the article-form
@@ -1130,7 +1174,10 @@ export const getModel3DFiles = async ({
           const { url } = await getGetUrl(file.url, { s3, bucket, fileName: file.name });
           return { ...file, downloadUrl: url };
         }
-        const { url } = await resolveDownloadUrl(file.id, file.url, file.name);
+        const { url } = await resolveDownloadUrl(file.id, file.url, file.name, {
+          caller: 'model3d',
+          actor: resolveActorFor(user),
+        });
         return { ...file, downloadUrl: url };
       } catch {
         // TODO(model3d): surface re-presign failures to mods. For now we fall
@@ -1142,22 +1189,6 @@ export const getModel3DFiles = async ({
 
   return { id: model3d.id, files };
 };
-
-// ---------------------------------------------------------------------------
-// Moderator helper — find a Model3D by its thumbnail Image id.
-//
-// Used by the image-mod surface to surface a "this image is the thumbnail of a
-// 3D Model" affordance + one-click unpublish on the parent (workstream H,
-// §2.10). Mod-only at the router layer — this returns ownership info that
-// non-mods shouldn't see.
-// ---------------------------------------------------------------------------
-export const getModel3DByThumbnailImageId = async ({
-  imageId,
-}: GetModel3DByThumbnailImageIdInput) =>
-  dbRead.model3D.findUnique({
-    where: { thumbnailImageId: imageId },
-    select: { id: true, name: true, status: true },
-  });
 
 // Resolve a post's linked Model3D in one round-trip — used by the
 // "Posted to 3D Model" chip on the image viewers and the post-create page.
@@ -1222,12 +1253,9 @@ export const getVisibleModel3DIdForPost = async ({
   userId?: number;
   isModerator?: boolean;
 }): Promise<number | null> => {
-  const post = await dbRead.post.findUnique({
-    where: { id: postId },
-    select: {
-      model3d: { select: { id: true, userId: true, status: true, deletedAt: true } },
-    },
-  });
+  const post = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+    ? await readPostModel3dViaKysely((await loadKyselyDb()).kyselyRead, postId)
+    : await readPostModel3dViaPrisma(dbRead, postId);
   const model3d = post?.model3d;
   if (!model3d) return null;
   if (
@@ -1298,24 +1326,26 @@ export const getModel3DGallerySettings = async ({ id }: { id: number }) => {
   if (!row) return null;
   const settings = (row.gallerySettings ?? {}) as Model3DGallerySettingsSchema;
   const { tags, users, images } = settings;
-  const hiddenTags =
+  const [hiddenTags, hiddenUsers, creatorHiddenUserIds] = await Promise.all([
     tags && tags.length
-      ? await dbRead.tag.findMany({
+      ? dbRead.tag.findMany({
           where: { id: { in: tags } },
           select: { id: true, name: true },
         })
-      : [];
-  const hiddenUsers =
+      : [],
     users && users.length
-      ? await dbRead.user.findMany({
+      ? dbRead.user.findMany({
           where: { id: { in: users } },
           select: { id: true, username: true },
         })
-      : [];
+      : [],
+    getCreatorGalleryHiddenUserIds(row.userId),
+  ]);
   return {
     hiddenTags,
     hiddenUsers,
     hiddenImages: images ?? [],
+    creatorHiddenUserIds,
   };
 };
 

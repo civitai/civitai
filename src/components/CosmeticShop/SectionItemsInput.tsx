@@ -31,27 +31,12 @@ import { getDisplayName } from '~/utils/string-helpers';
 
 type ShopItemSchema = { title: string; description?: string; id: number };
 
-// The reseller cut for a sellable-by-others item, undefined otherwise. When
-// featured in an official section Civitai acts as the reseller, so the platform
-// take is 30% + this share and the creator keeps the rest.
-const resaleShare = (meta: unknown) => {
-  const m = meta as { sellableByOthers?: boolean; sellerShare?: number } | null;
-  return m?.sellableByOthers ? m.sellerShare ?? 0 : undefined;
-};
-
-const CutLabel = ({ share }: { share: number }) => (
-  <Text size="xs" c="teal" fw={500}>
-    Civitai {30 + share}% · creator {70 - share}%
-  </Text>
-);
-
 type SectionItemsInputProps = Omit<InputWrapperProps, 'children' | 'onChange'> & {
   value?: ShopItemSchema[];
   onChange?: (value: ShopItemSchema[]) => void;
 };
 
 const CosmeticShopItemOption = ({ item }: { item: CosmeticShopItemGetById }) => {
-  const share = resaleShare(item.meta);
   return (
     <Group gap="sm" wrap="nowrap" w="100%">
       {/* Fixed-width well — profile-background samples render at width 100% and
@@ -67,7 +52,6 @@ const CosmeticShopItemOption = ({ item }: { item: CosmeticShopItemGetById }) => 
           {item.cosmetic ? getDisplayName(item.cosmetic.type) : 'Pack'}
           {item.cosmetic?.creator?.username ? ` · by @${item.cosmetic.creator.username}` : ''}
         </Text>
-        {share !== undefined && <CutLabel share={share} />}
       </Stack>
     </Group>
   );
@@ -80,6 +64,8 @@ const CosmeticShopItemSearch = ({
 }) => {
   const [filters, setFilters] = useState<Omit<GetPaginatedCosmeticShopItemInput, 'limit'>>({
     page: 1,
+    // Archived cosmetics can't be sold, so they must not be featurable.
+    archived: false,
   });
   const [debouncedFilters, cancel] = useDebouncedValue(filters, 500);
   const { cosmeticShopItems = [], isFetching: isFetchingCosmetics } =
@@ -220,7 +206,6 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
                 <Grid>
                   {shopItems.map((item) => {
                     const details = detailsById.get(item.id);
-                    const share = details ? resaleShare(details.meta) : undefined;
                     return (
                       <SortableItem key={item.id} id={item.id}>
                         <Grid.Col span={{ base: 12, md: 3 }}>
@@ -237,7 +222,9 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
                                     overflow: 'hidden',
                                   }}
                                 >
-                                  {details.cosmetic && <CosmeticSample cosmetic={details.cosmetic} size="md" />}
+                                  {details.cosmetic && (
+                                    <CosmeticSample cosmetic={details.cosmetic} size="md" />
+                                  )}
                                 </Box>
                               )}
                               <Text fw="bold" size="sm" ta="center" lineClamp={1}>
@@ -245,7 +232,9 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
                               </Text>
                               {details && (
                                 <Text size="xs" c="dimmed">
-                                  {details.cosmetic ? getDisplayName(details.cosmetic.type) : 'Pack'}
+                                  {details.cosmetic
+                                    ? getDisplayName(details.cosmetic.type)
+                                    : 'Pack'}
                                 </Text>
                               )}
                               {details?.cosmetic?.creator && (
@@ -256,7 +245,6 @@ export const SectionItemsInput = ({ value, onChange, ...props }: SectionItemsInp
                                   linkToProfile
                                 />
                               )}
-                              {share !== undefined && <CutLabel share={share} />}
                               <Button
                                 onClick={() => onRemoveSelectedItem(item.id)}
                                 color="red"

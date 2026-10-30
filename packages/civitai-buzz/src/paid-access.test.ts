@@ -8,25 +8,35 @@ import {
   generationPrice,
   generationTrialLimit,
   grantsGeneration,
+  requiresGenerationPurchase,
   isFreeGeneration,
   isPaidAccessActive,
   isTimedGateActive,
   paidGenerationGrant,
+  paidAccessBlockedFor,
+  licensingFeeBlockedFor,
+  separateGenerationPriceMissing,
   CAP_TIERS,
   nextCapTier,
-  shouldUpsellCap,
-  cappedTerms,
-  maxPaidAccessPrice,
-  maxPermanentAccessModels,
-  tierCapRows,
   type ModelVersionTerms,
+  type ModelVersionSaleWindow,
+  discountedTerms,
+  bestSaleFor,
+  maxSaleDays,
+  remainingSaleDays,
+  saleDaysCharged,
+  saleDaysUsed,
+  SALE_DAYS_BY_TIER,
 } from './paid-access';
+import {
+  monthlyPricingAllowance,
+  shouldUpsellAllowance,
+  tierAllowanceRows,
+} from './pricing-allowance';
 import {
   MAX_LICENSING_FEE,
   feeToRatio,
   VIDEO_CAP_MULTIPLIER,
-  effectiveLicensingFee,
-  maxLicensingFee,
   maxLicensingFeeCeiling,
   suggestedFeePerImage,
 } from './licensing-fee';
@@ -107,6 +117,49 @@ describe('generationPrice — effective generation-only purchase price', () => {
   });
 });
 
+describe('model-level monetization policy', () => {
+  it('refuses a gate on a POI model, and on a private one', () => {
+    expect(paidAccessBlockedFor({ poi: true, availability: 'Public' })).toBe(true);
+    expect(paidAccessBlockedFor({ poi: false, availability: 'Private' })).toBe(true);
+  });
+  it('allows a gate on an ordinary public model', () => {
+    expect(paidAccessBlockedFor({ poi: false, availability: 'Public' })).toBe(false);
+  });
+  // The asymmetry is deliberate: a private model has no audience to sell access to, but its fee is for
+  // when it is published. A POI model earns nothing either way.
+  it('refuses a licensing fee on a POI model but keeps it on a private one', () => {
+    expect(licensingFeeBlockedFor({ poi: true, availability: 'Public' })).toBe(true);
+    expect(licensingFeeBlockedFor({ poi: false, availability: 'Private' })).toBe(false);
+  });
+  // Rows arrive from two apps and two ORMs; an absent column must not read as permission granted by
+  // accident, nor as a block that strands every save.
+  it('treats missing fields as unblocked rather than guessing', () => {
+    expect(paidAccessBlockedFor({})).toBe(false);
+    expect(licensingFeeBlockedFor({ poi: null })).toBe(false);
+  });
+});
+
+describe('separateGenerationPriceMissing — the blank "cheaper price" box', () => {
+  it('a stated price is not missing', () => {
+    expect(separateGenerationPriceMissing(200)).toBe(false);
+  });
+  it.each([
+    ['undefined', undefined],
+    ['null', null],
+    // Defensive: the form's zod schema rejects NaN before the guard runs, and its number input maps a
+    // cleared box to undefined. Kept so the predicate is total for callers without that schema.
+    ['NaN', Number.NaN],
+    ['zero', 0],
+    ['negative', -50],
+  ])('%s is missing', (_label, value) => {
+    expect(separateGenerationPriceMissing(value as number | null | undefined)).toBe(true);
+  });
+  it('what an unrefused blank costs the buyer: the FULL download price', () => {
+    const blank = buildModelVersionTerms({ accessPrice: 500, generationPrice: undefined });
+    expect(generationPrice(blank)).toBe(500);
+  });
+});
+
 describe('grantsGeneration — the full access decision', () => {
   const bundled: ModelVersionTerms = { download: { price: 500 } };
   const trial: ModelVersionTerms = {
@@ -129,6 +182,26 @@ describe('grantsGeneration — the full access decision', () => {
   });
   it('free generation is open to everyone', () => {
     expect(grantsGeneration(free, { isOwnerOrMod: false, hasBought: false })).toBe(true);
+  });
+});
+
+describe('requiresGenerationPurchase — distinct from being allowed to generate', () => {
+  const trial: ModelVersionTerms = { generation: { price: 200, trialLimit: 5 } };
+  const free: ModelVersionTerms = { generation: { free: true } };
+
+  it('a trial user is GRANTED generation and still has to buy', () => {
+    const viewer = { isOwnerOrMod: false, hasBought: false };
+    expect(grantsGeneration(trial, viewer)).toBe(true);
+    expect(requiresGenerationPurchase(trial, viewer)).toBe(true);
+  });
+  it('a buyer does not', () => {
+    expect(requiresGenerationPurchase(trial, { isOwnerOrMod: false, hasBought: true })).toBe(false);
+  });
+  it('an owner or moderator does not', () => {
+    expect(requiresGenerationPurchase(trial, { isOwnerOrMod: true, hasBought: false })).toBe(false);
+  });
+  it('free generation is never sold', () => {
+    expect(requiresGenerationPurchase(free, { isOwnerOrMod: false, hasBought: false })).toBe(false);
   });
 });
 
@@ -206,28 +279,19 @@ describe('acceptsBlueBuzz — an extra accepted currency, not a second price', (
     expect(acceptsBlueBuzz(buildModelVersionTerms({ ...opts, acceptsBlueBuzz: true }))).toBe(true);
   });
 
-  it('survives price capping and a usage-control migration', () => {
+  it('survives a usage-control migration', () => {
     const terms = buildModelVersionTerms({ accessPrice: 5000, acceptsBlueBuzz: true });
-    expect(acceptsBlueBuzz(cappedTerms(terms, 'free', { permanent: true }))).toBe(true);
     expect(acceptsBlueBuzz(migrateTermsForUsageControl(terms, true))).toBe(true);
   });
 });
 
-describe('video pricing — every ceiling is 5x on a video model', () => {
-  it('multiplies the licensing-fee cap for each tier and model type', () => {
-    for (const tier of CAP_TIERS) {
-      for (const modelType of ['Checkpoint', 'LORA']) {
-        expect(maxLicensingFee(tier, modelType, 'video')).toBe(
-          maxLicensingFee(tier, modelType, 'image') * VIDEO_CAP_MULTIPLIER
-        );
-      }
-    }
-  });
-
-  it('multiplies the paid-access price cap, leaving gold unlimited', () => {
-    expect(maxPaidAccessPrice('free', 'video')).toBe(maxPaidAccessPrice('free') * 5);
-    expect(maxPaidAccessPrice('silver', 'video')).toBe(maxPaidAccessPrice('silver') * 5);
-    expect(maxPaidAccessPrice('gold', 'video')).toBe(Infinity);
+describe('video pricing — the fee ceiling is 5x on a video model', () => {
+  it('multiplies the licensing-fee ceiling', () => {
+    expect(maxLicensingFeeCeiling('video')).toBe(
+      maxLicensingFeeCeiling('image') * VIDEO_CAP_MULTIPLIER
+    );
+    expect(maxLicensingFeeCeiling('video')).toBe(500);
+    expect(maxLicensingFeeCeiling('image')).toBe(MAX_LICENSING_FEE);
   });
 
   it('multiplies the suggested default, so a new video model is not seeded too low', () => {
@@ -240,33 +304,34 @@ describe('video pricing — every ceiling is 5x on a video model', () => {
     );
   });
 
-  it('does NOT multiply the permanent-gate allowance — it counts gates, it does not price them', () => {
-    expect(maxPermanentAccessModels('free')).toBe(3);
-    expect(tierCapRows().find((r) => r.tier === 'free')?.permanentGates).toBe(3);
+  it('does NOT multiply the monthly allowance — it counts prices, it does not size them', () => {
+    expect(monthlyPricingAllowance('free')).toBe(3);
+    expect(tierAllowanceRows().find((r) => r.tier === 'free')?.monthlyPrices).toBe(3);
+  });
+});
+
+describe('monthlyPricingAllowance — what membership actually governs', () => {
+  it('rises with the tier and is unlimited at gold', () => {
+    expect(monthlyPricingAllowance('free')).toBe(3);
+    expect(monthlyPricingAllowance('bronze')).toBe(10);
+    expect(monthlyPricingAllowance('silver')).toBe(25);
+    expect(monthlyPricingAllowance('gold')).toBe(Infinity);
   });
 
-  it('gold video is no longer clamped by the image ceiling', () => {
-    // The whole point of raising the ceiling: 5 x 100 must survive rather than saturating at 100.
-    expect(maxLicensingFee('gold', 'Checkpoint', 'video')).toBe(500);
-    expect(maxLicensingFeeCeiling('video')).toBe(500);
-    expect(maxLicensingFeeCeiling('image')).toBe(MAX_LICENSING_FEE);
+  it('charges the legacy founder tier as bronze', () => {
+    expect(monthlyPricingAllowance('founder')).toBe(monthlyPricingAllowance('bronze'));
   });
 
-  it('clamps a stored fee against the video cap, not the image one', () => {
-    expect(effectiveLicensingFee(20, 'free', 'Checkpoint', 'image')).toBe(1);
-    expect(effectiveLicensingFee(20, 'free', 'Checkpoint', 'video')).toBe(5);
+  it('falls back to the FREE allowance for an unknown or lapsed tier, never to zero', () => {
+    // Losing a membership must never take away the ability to price anything at all.
+    expect(monthlyPricingAllowance(null)).toBe(3);
+    expect(monthlyPricingAllowance(undefined)).toBe(3);
+    expect(monthlyPricingAllowance('platinum')).toBe(3);
   });
 
-  it('prices gate terms against the video cap', () => {
-    const terms = { download: { price: 5000 } };
-    expect(cappedTerms(terms, 'free', { permanent: true, mediaType: 'image' })).toEqual({
-      download: { price: 500 },
-    });
-    expect(cappedTerms(terms, 'free', { permanent: true, mediaType: 'video' })).toEqual({
-      download: { price: 2500 },
-    });
-    // A timed early-access window has no ceiling — stored is what buyers pay.
-    expect(cappedTerms(terms, 'free', { permanent: false, mediaType: 'image' })).toEqual(terms);
+  it('reports unlimited as null for display, so it survives a JSON boundary', () => {
+    expect(tierAllowanceRows().find((r) => r.tier === 'gold')?.monthlyPrices).toBeNull();
+    expect(tierAllowanceRows().map((r) => r.tier)).toEqual([...CAP_TIERS]);
   });
 });
 
@@ -292,31 +357,29 @@ describe('capMediaType — which column a base model lands in', () => {
 
 // The caps table renders each ceiling through feeToRatio, so a cap that can't be expressed as whole Buzz
 // over 1 or 10 generations would render as an unusable ratio the editor can't accept.
-it('every licensing cap is a whole number of Buzz over 1 or 10 generations', () => {
-  for (const tier of CAP_TIERS)
-    for (const mediaType of ['image', 'video'] as const)
-      for (const modelType of ['Checkpoint', 'LORA']) {
-        const { buzz, images } = feeToRatio(maxLicensingFee(tier, modelType, mediaType));
-        expect([1, 10]).toContain(images);
-        expect(Number.isInteger(buzz)).toBe(true);
-      }
+it('the licensing ceiling is a whole number of Buzz over 1 or 10 generations', () => {
+  for (const mediaType of ['image', 'video'] as const) {
+    const { buzz, images } = feeToRatio(maxLicensingFeeCeiling(mediaType));
+    expect([1, 10]).toContain(images);
+    expect(Number.isInteger(buzz)).toBe(true);
+  }
 });
 
-describe('shouldUpsellCap — nudge only when the ceiling is actually in the way', () => {
-  it('offers an upgrade once the value reaches 80% of the cap', () => {
-    expect(shouldUpsellCap({ value: 79, cap: 100, tier: 'free' })).toBe(false);
-    expect(shouldUpsellCap({ value: 80, cap: 100, tier: 'free' })).toBe(true);
-    expect(shouldUpsellCap({ value: 100, cap: 100, tier: 'free' })).toBe(true);
+describe('shouldUpsellAllowance — nudge only when the limit is actually in the way', () => {
+  it('offers an upgrade once the creator reaches 80% of their allowance', () => {
+    expect(shouldUpsellAllowance({ used: 7, limit: 10, tier: 'free' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 8, limit: 10, tier: 'free' })).toBe(true);
+    expect(shouldUpsellAllowance({ used: 10, limit: 10, tier: 'free' })).toBe(true);
   });
 
-  it('stays quiet for an empty or comfortably-low value', () => {
-    expect(shouldUpsellCap({ value: null, cap: 100, tier: 'free' })).toBe(false);
-    expect(shouldUpsellCap({ value: 0, cap: 100, tier: 'free' })).toBe(false);
-    expect(shouldUpsellCap({ value: 10, cap: 100, tier: 'free' })).toBe(false);
+  it('stays quiet with plenty of headroom', () => {
+    expect(shouldUpsellAllowance({ used: null, limit: 10, tier: 'free' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 0, limit: 10, tier: 'free' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 1, limit: 10, tier: 'free' })).toBe(false);
   });
 
   it('never upsells gold — there is nothing above it', () => {
-    expect(shouldUpsellCap({ value: 100, cap: 100, tier: 'gold' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 100, limit: 10, tier: 'gold' })).toBe(false);
     expect(nextCapTier('gold')).toBeNull();
   });
 
@@ -328,12 +391,238 @@ describe('shouldUpsellCap — nudge only when the ceiling is actually in the way
     expect(nextCapTier('silver')).toBe('gold');
   });
 
-  // 99999 >= Infinity * 0.8 is false by arithmetic, so an Infinity case would pass even without the
-  // guard. cap: 0 is the one that actually pins it — reachable via maxFeeBuzzForRatio at the free/other
-  // cap of 0.1 with a denominator of 1, where floor() yields 0.
-  it('never upsells against an unlimited or zero cap', () => {
-    expect(shouldUpsellCap({ value: 99999, cap: Infinity, tier: 'silver' })).toBe(false);
-    expect(shouldUpsellCap({ value: 0, cap: 0, tier: 'free' })).toBe(false);
-    expect(shouldUpsellCap({ value: 5, cap: 0, tier: 'free' })).toBe(false);
+  it('never upsells against an unlimited or zero limit', () => {
+    expect(shouldUpsellAllowance({ used: 99999, limit: Infinity, tier: 'silver' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 0, limit: 0, tier: 'free' })).toBe(false);
+    expect(shouldUpsellAllowance({ used: 5, limit: 0, tier: 'free' })).toBe(false);
+  });
+});
+
+describe('scheduled sales — discountedTerms', () => {
+  const at = (iso: string) => new Date(iso);
+  const sale = (over: Partial<ModelVersionSaleWindow> = {}): ModelVersionSaleWindow => ({
+    id: 1,
+    discountType: 'Percent',
+    discountAmount: 20,
+    startsAt: at('2026-03-01T00:00:00Z'),
+    endsAt: at('2026-03-08T00:00:00Z'),
+    canceledAt: null,
+    ...over,
+  });
+  const now = at('2026-03-02T00:00:00Z');
+
+  it('discounts BOTH the download price and a separate generation price', () => {
+    const out = discountedTerms(
+      { download: { price: 500 }, generation: { price: 100 } },
+      [sale()],
+      now
+    );
+    expect(out.download?.price).toBe(400);
+    expect(paidGenerationGrant(out)?.price).toBe(80);
+  });
+
+  it('leaves a generation tier with no price of its own alone, so it keeps following the discounted download price', () => {
+    const terms: ModelVersionTerms = { download: { price: 500 }, generation: { trialLimit: 3 } };
+    const out = discountedTerms(terms, [sale()], now);
+    expect(paidGenerationGrant(out)?.price).toBeUndefined();
+    expect(generationPrice(out)).toBe(400);
+  });
+
+  it('never drives a price below the 1-Buzz floor when a fixed discount exceeds it', () => {
+    const out = discountedTerms(
+      { download: { price: 500 }, generation: { price: 100 } },
+      [sale({ discountType: 'Fixed', discountAmount: 300 })],
+      now
+    );
+    expect(out.download?.price).toBe(200);
+    // 1, not 0: a zero-Buzz purchase writes no ledger row and the refund path reads amounts back from it.
+    expect(paidGenerationGrant(out)?.price).toBe(1);
+  });
+
+  it('floors a fractional percentage, leaving the part-Buzz remainder with the seller', () => {
+    const out = discountedTerms({ download: { price: 33 } }, [sale({ discountAmount: 33 })], now);
+    // 33 * 33% = 10.89 -> 10 off, so the buyer pays 23 rather than 22. An integer currency has to break
+    // the tie somewhere; this pins WHICH way, so a later switch to Math.round is a visible change.
+    expect(out.download?.price).toBe(23);
+  });
+
+  it('applies the deepest discount when two sales overlap on one version', () => {
+    const out = discountedTerms(
+      { download: { price: 1000 } },
+      [
+        sale({ id: 1, discountAmount: 10 }),
+        sale({ id: 2, discountType: 'Fixed', discountAmount: 250 }),
+      ],
+      now
+    );
+    expect(out.download?.price).toBe(750);
+  });
+
+  it('ignores a sale that has not started, has ended, or was cancelled before now', () => {
+    const terms: ModelVersionTerms = { download: { price: 500 } };
+    const notStarted = sale({ startsAt: at('2026-03-05T00:00:00Z') });
+    const ended = sale({ endsAt: at('2026-03-01T12:00:00Z') });
+    const cancelled = sale({ canceledAt: at('2026-03-01T12:00:00Z') });
+    for (const s of [notStarted, ended, cancelled]) {
+      expect(discountedTerms(terms, [s], now).download?.price).toBe(500);
+    }
+  });
+
+  // Nothing sits between the creator's number and the buyer's any more: the tier price ceilings this
+  // used to compose over were removed, so the discount comes off the STORED price directly.
+  it('discounts the stored price, whatever the creator', () => {
+    const stored: ModelVersionTerms = { download: { price: 5000 } };
+
+    expect(discountedTerms(stored, [sale()], now).download?.price).toBe(4000);
+  });
+});
+
+describe('scheduled sales — the sale-day budget', () => {
+  const at = (iso: string) => new Date(iso);
+  const window = (over: Partial<ModelVersionSaleWindow> = {}): ModelVersionSaleWindow => ({
+    id: 1,
+    discountType: 'Percent',
+    discountAmount: 20,
+    startsAt: at('2026-03-01T00:00:00Z'),
+    endsAt: at('2026-03-08T00:00:00Z'),
+    canceledAt: null,
+    ...over,
+  });
+
+  it('charges the full scheduled length while the sale stands', () => {
+    expect(saleDaysCharged(window())).toBe(7);
+  });
+
+  it('returns everything when a sale is cancelled before it starts', () => {
+    expect(saleDaysCharged(window({ canceledAt: at('2026-02-27T00:00:00Z') }))).toBe(0);
+  });
+
+  it('returns the untaken tail when a sale is cancelled part-way through', () => {
+    expect(saleDaysCharged(window({ canceledAt: at('2026-03-03T00:00:00Z') }))).toBe(2);
+  });
+
+  it('rounds a part-day up, so a run of short sales cannot slice past the budget', () => {
+    const half = window({ endsAt: at('2026-03-01T12:00:00Z') });
+    expect(saleDaysCharged(half)).toBe(1);
+  });
+
+  it('counts a month-crossing sale against the month it STARTS in, and only that month', () => {
+    const crossing = window({
+      startsAt: at('2026-03-30T00:00:00Z'),
+      endsAt: at('2026-04-04T00:00:00Z'),
+    });
+    expect(saleDaysUsed([crossing], at('2026-03-15T00:00:00Z'))).toBe(5);
+    expect(saleDaysUsed([crossing], at('2026-04-15T00:00:00Z'))).toBe(0);
+  });
+
+  it('does not count the same calendar month of a DIFFERENT year', () => {
+    // Without the year check, March 2025 would spend March 2026's budget.
+    const lastYear = window({
+      startsAt: at('2025-03-01T00:00:00Z'),
+      endsAt: at('2025-03-08T00:00:00Z'),
+    });
+    expect(saleDaysUsed([lastYear], at('2026-03-15T00:00:00Z'))).toBe(0);
+    expect(saleDaysUsed([lastYear], at('2025-03-15T00:00:00Z'))).toBe(7);
+  });
+
+  it('charges the full window when a cancel lands after it had already closed', () => {
+    // A cancel recorded after endsAt returns nothing — the sale ran its length.
+    expect(saleDaysCharged(window({ canceledAt: at('2026-03-20T00:00:00Z') }))).toBe(7);
+  });
+
+  it('gives an unknown or lapsed tier the FREE allowance rather than none', () => {
+    expect(maxSaleDays('gold')).toBe(30);
+    expect(maxSaleDays(null)).toBe(SALE_DAYS_BY_TIER.free);
+    expect(maxSaleDays('nonsense')).toBe(SALE_DAYS_BY_TIER.free);
+  });
+
+  it('never reports negative remaining days after a downgrade', () => {
+    const spent = [
+      window({ startsAt: at('2026-03-01T00:00:00Z'), endsAt: at('2026-03-29T00:00:00Z') }),
+    ];
+    expect(remainingSaleDays('gold', spent, at('2026-03-15T00:00:00Z'))).toBe(2);
+    expect(remainingSaleDays('free', spent, at('2026-03-15T00:00:00Z'))).toBe(0);
+  });
+});
+
+describe('scheduled sales — percent and fixed have no order until applied to a price', () => {
+  const at = (iso: string) => new Date(iso);
+  const now = at('2026-03-02T00:00:00Z');
+  const base = {
+    startsAt: at('2026-03-01T00:00:00Z'),
+    endsAt: at('2026-03-08T00:00:00Z'),
+    canceledAt: null,
+  };
+  const percent: ModelVersionSaleWindow = {
+    id: 1,
+    discountType: 'Percent',
+    discountAmount: 20,
+    ...base,
+  };
+  const fixed: ModelVersionSaleWindow = {
+    id: 2,
+    discountType: 'Fixed',
+    discountAmount: 250,
+    ...base,
+  };
+
+  it('picks the FIXED sale on a cheap version and the PERCENT sale on an expensive one, from the same pair', () => {
+    // 1000: fixed takes 250, percent takes 200 -> fixed wins.
+    expect(
+      discountedTerms({ download: { price: 1000 } }, [percent, fixed], now).download?.price
+    ).toBe(750);
+    // 2000: fixed still takes 250, percent takes 400 -> percent wins. The winner INVERTS on base price,
+    // so a comparison done before knowing the price would get one of these two wrong.
+    expect(
+      discountedTerms({ download: { price: 2000 } }, [percent, fixed], now).download?.price
+    ).toBe(1600);
+  });
+
+  it('picks per PRICE, not per version: one sale can win the download tier and the other the generation tier', () => {
+    const out = discountedTerms(
+      { download: { price: 2000 }, generation: { price: 1000 } },
+      [percent, fixed],
+      now
+    );
+    expect(out.download?.price).toBe(1600);
+    expect(paidGenerationGrant(out)?.price).toBe(750);
+  });
+});
+
+describe('scheduled sales — the resolver DECLINES to discount', () => {
+  const at = (iso: string) => new Date(iso);
+  const now = at('2026-03-02T00:00:00Z');
+  const terms: ModelVersionTerms = { download: { price: 500 }, generation: { price: 100 } };
+
+  // Negative controls. Without these, every "the discount applied" test above would still pass if the
+  // resolver discounted unconditionally — which is the failure that charges every buyer less, forever.
+  it('returns the terms untouched when there are no sales at all', () => {
+    expect(discountedTerms(terms, [], now)).toEqual(terms);
+    expect(discountedTerms(terms, undefined, now)).toEqual(terms);
+    expect(discountedTerms(terms, null, now)).toEqual(terms);
+  });
+
+  it('returns the terms untouched when every sale is out of window', () => {
+    const over = {
+      id: 1,
+      discountType: 'Percent' as const,
+      discountAmount: 50,
+      startsAt: at('2026-01-01T00:00:00Z'),
+      endsAt: at('2026-01-08T00:00:00Z'),
+      canceledAt: null,
+    };
+    expect(discountedTerms(terms, [over], now)).toEqual(terms);
+  });
+
+  it('bestSaleFor returns nothing rather than a zero-value sale', () => {
+    const zeroOff = {
+      id: 1,
+      discountType: 'Percent' as const,
+      discountAmount: 0,
+      startsAt: at('2026-03-01T00:00:00Z'),
+      endsAt: at('2026-03-08T00:00:00Z'),
+      canceledAt: null,
+    };
+    expect(bestSaleFor(500, [zeroOff], now)).toBeUndefined();
   });
 });

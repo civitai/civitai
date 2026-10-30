@@ -1,0 +1,746 @@
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  attachUploadSettlement,
+  planRelayPieces,
+  relayImageChunkedFallback,
+  relayImageFallback,
+} from '~/utils/upload-settlement';
+import type { SettlementXhr } from '~/utils/upload-settlement';
+import { IMAGE_UPLOAD_RELAY_PRODUCER_HEADER } from '~/utils/image-upload-relay-producer';
+
+// AUDIT-F1 regression guard — the defect the first draft of the upload relay shipped,
+// and the one nothing in the tree could see.
+//
+// Per the XHR spec, an `error` at the XHR object is followed by `loadend` at the XHR
+// object IN THE SAME DISPATCH. The first draft moved the `error` handler's
+// synchronous `reject(...)` into a promise chain but left `loadend` settling
+// unconditionally, so `loadend` won the race, computed `success = false`, and
+// resolved BEFORE the relay's fetch could finish. Two consequences, the second worse
+// than the bug the relay exists to fix:
+//
+//   1. the caller received the PRESIGN id — a key holding no bytes, because the PUT
+//      that would have written them is the thing that just failed;
+//   2. the pre-existing throw on a failed upload disappeared, turning a visible
+//      upload failure into a silent success carrying a bad id.
+//
+// These drive the REAL exported function that `useCFImageUpload` calls — not a model
+// of it. An earlier draft of this test re-implemented the rule inline, which would
+// have stayed green against a broken hook; the logic was extracted into
+// `attachUploadSettlement` specifically so the guard could bind to production code.
+//
+// Red against the pre-fix rule: delete the `if (relayPending) return;` line in
+// `attachUploadSettlement` and the first two cases fail.
+
+/** Minimal XHR stub that dispatches terminal events in the spec's order. */
+class StubXhr implements SettlementXhr {
+  readyState = 0;
+  status = 0;
+  private handlers: Record<string, Array<() => void>> = {};
+
+  addEventListener(type: string, fn: EventListenerOrEventListenerObject) {
+    (this.handlers[type] ??= []).push(fn as () => void);
+  }
+
+  private fire(type: string) {
+    for (const fn of this.handlers[type] ?? []) fn();
+  }
+
+  /** A network-layer failure: `error` then `loadend`, same dispatch. */
+  networkFailure() {
+    this.readyState = 4;
+    this.status = 0;
+    this.fire('error');
+    this.fire('loadend');
+  }
+
+  /** A response that reached the backend and was rejected by it. */
+  finishedWithStatus(status: number) {
+    this.readyState = 4;
+    this.status = status;
+    this.fire('loadend');
+  }
+
+  /**
+   * A user cancel: `abort` then `loadend`, same dispatch.
+   *
+   * 🔴 The `loadend` is not decoration. This stub used to fire `abort` alone, which is
+   * NOT what the browser does — per the XHR spec's request-error steps an `abort` at
+   * the XHR object is followed by `loadend` at the XHR object in the same dispatch,
+   * exactly as `error` is. While the non-2xx `loadend` branch called nothing, the
+   * difference was invisible; it stops being invisible the moment that branch reports
+   * an error, because an aborted request arrives at `loadend` with `status === 0`.
+   *
+   * `readyState` is 4 during these events: `abort()` runs the request-error steps
+   * (which set state to DONE and fire the events) and only afterwards resets state to
+   * UNSENT. `status` is 0 because the response is a network error.
+   */
+  userAbort() {
+    this.readyState = 4;
+    this.status = 0;
+    this.fire('abort');
+    this.fire('loadend');
+  }
+}
+
+function callbacks() {
+  return {
+    onRelayed: vi.fn(),
+    onSuccess: vi.fn(),
+    onError: vi.fn(),
+    onAborted: vi.fn(),
+  };
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+});
+
+describe('attachUploadSettlement', () => {
+  it('resolves with the RELAYED id, not the presign id, when the direct PUT fails', async () => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    // A relay is a network call: it can never complete inside the dispatch that
+    // `loadend` runs in, which is exactly what made the original bug reachable.
+    const relay = vi.fn(() => new Promise<string>((r) => setTimeout(() => r('RELAYED-ID'), 5)));
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.networkFailure();
+
+    await expect(settled).resolves.toEqual({ kind: 'relayed', id: 'RELAYED-ID' });
+    expect(cb.onRelayed).toHaveBeenCalledWith('RELAYED-ID');
+    expect(cb.onSuccess).toHaveBeenCalledTimes(1);
+    expect(cb.onError).not.toHaveBeenCalled();
+  });
+
+  it('does not settle from loadend while a relay is in flight', async () => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    let release: (id: string) => void = () => undefined;
+    const relay = vi.fn(() => new Promise<string>((r) => (release = r)));
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.networkFailure();
+
+    // Both terminal events have fired. Nothing may have settled yet.
+    const raced = await Promise.race([
+      settled.then(() => 'settled' as const),
+      new Promise<'pending'>((r) => setTimeout(() => r('pending'), 20)),
+    ]);
+    expect(raced).toBe('pending');
+
+    release('RELAYED-ID');
+    await expect(settled).resolves.toEqual({ kind: 'relayed', id: 'RELAYED-ID' });
+  });
+
+  it('reports the ORIGINAL failure — not the relay error — when the relay also fails', async () => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi.fn().mockRejectedValue(new Error('Upload fallback failed (status 500)'));
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.networkFailure();
+
+    // The failure signal the pre-fix draft silently deleted.
+    await expect(settled).rejects.toThrow('Upload failed (status 0)');
+    expect(cb.onError).toHaveBeenCalledTimes(1);
+    expect(cb.onSuccess).not.toHaveBeenCalled();
+  });
+
+  it('treats a cancel DURING the relay as a cancel, not an upload failure', async () => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi
+      .fn()
+      .mockRejectedValue(new DOMException('The operation was aborted.', 'AbortError'));
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.networkFailure();
+
+    await expect(settled).rejects.toThrow('Upload canceled');
+    expect(cb.onAborted).toHaveBeenCalledTimes(1);
+    expect(cb.onError).not.toHaveBeenCalled();
+  });
+
+  it('does NOT relay a non-2xx response — that means the backend rejected us', async () => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi.fn();
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.finishedWithStatus(403);
+
+    await expect(settled).resolves.toEqual({ kind: 'direct', success: false });
+    expect(relay).not.toHaveBeenCalled();
+  });
+
+  it('settles the ordinary success path unchanged', async () => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi.fn();
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.finishedWithStatus(200);
+
+    await expect(settled).resolves.toEqual({ kind: 'direct', success: true });
+    expect(cb.onSuccess).toHaveBeenCalledTimes(1);
+    expect(relay).not.toHaveBeenCalled();
+  });
+
+  // Renamed after a round-2 audit: this used to be called "settles exactly once" and
+  // was attributed to a `settled` latch, which was measured INERT and has been
+  // removed. What actually protects this is `relayPending` — a later `loadend` yields
+  // to the relay that already settled. Naming the real mechanism so the next reader
+  // does not go looking for a latch that is not there.
+  it('ignores a later loadend once a relay has already settled', async () => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi.fn(() => Promise.resolve('RELAYED-ID'));
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.networkFailure();
+    await settled;
+    // A second dispatch must not re-settle or re-report.
+    xhr.finishedWithStatus(200);
+
+    await expect(settled).resolves.toEqual({ kind: 'relayed', id: 'RELAYED-ID' });
+    expect(cb.onSuccess).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects on a user abort of the direct upload', async () => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi.fn();
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.userAbort();
+
+    await expect(settled).rejects.toThrow('Upload canceled');
+    expect(cb.onAborted).toHaveBeenCalledTimes(1);
+    expect(relay).not.toHaveBeenCalled();
+  });
+
+  // ---------------------------------------------------------------------------
+  // The refused-PUT half. XHR's `error` event is NETWORK-only, so a PUT that reaches
+  // the store and is REFUSED — an expired presign (403), a malformed request (400), a
+  // store that is briefly unavailable (503) — completes normally and lands on
+  // `loadend`. That branch reported nothing at all, so the tracked file went on
+  // asserting `uploading` forever.
+  //
+  // WHERE THAT IS USER-VISIBLE, MEASURED RATHER THAN ASSUMED: `ChallengeSubmitModal`
+  // reads the hook's `TrackedFile.status` directly — it renders `f.status === 'error'`
+  // (`ChallengeSubmitModal.tsx:593`) AND gates its submit on
+  // `some(f => f.status === 'uploading')` (`:407`) — so before this change a refused PUT
+  // there wedged the submit button with a spinner that could never clear. That half is
+  // verified end to end.
+  //
+  // 🔴 `ImageUpload` IS NOT SUCH A PLACE, AND AN EARLIER VERSION OF THIS COMMENT SAID IT
+  // WAS ("`ImageUpload` renders `status === 'error'`, a badge it never got to show").
+  // `ImageUpload.tsx` reads only `progress` off the hook's tracked file
+  // (`ImageUpload.tsx:214-215`); its `image.status === 'error'` at `:302` is
+  // `CustomFile.status`, the post-upload INGESTION status — a different type over a
+  // different value set (`'processing' | 'uploading' | 'complete' | 'blocked' | 'error'`,
+  // `src/types/global.d.ts:64`), which the hook never writes. So on the `ImageUpload`
+  // path a refused PUT is STILL SILENT to the user after this change: settlement resolves,
+  // `handleDrop` clears the entry's `file` and stores the presign id as its `url`
+  // (`ImageUpload.tsx:118-125`), the loading overlay therefore drops, and the entry
+  // renders as an ordinary uploaded image with no status at all. Do not read that silence
+  // as the fix being broken — it is the reach of the fix, and closing it means having
+  // `ImageUpload` consume the tracked file's status.
+  // ---------------------------------------------------------------------------
+
+  it.each([201, 204])('treats a %i as the successful PUT it is', async (status) => {
+    // The store answers 200 to this PUT today, so `=== 200` was not WRONG in
+    // production — it was brittle. A 201 or 204 is a successful PUT by any reading,
+    // and badging one as a failure would put an error on an upload that worked.
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi.fn();
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.finishedWithStatus(status);
+
+    await expect(settled).resolves.toEqual({ kind: 'direct', success: true });
+    expect(cb.onSuccess).toHaveBeenCalledTimes(1);
+    expect(cb.onError).not.toHaveBeenCalled();
+    expect(relay).not.toHaveBeenCalled();
+  });
+
+  it.each([400, 403, 500, 503])('reports a refused %i to the caller', async (status) => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi.fn();
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.finishedWithStatus(status);
+
+    expect(cb.onError).toHaveBeenCalledTimes(1);
+    expect(cb.onSuccess).not.toHaveBeenCalled();
+    /**
+     * 🔴 THE REMAINING HALF OF THE DEFECT, PINNED RATHER THAN FIXED. Settlement still
+     * RESOLVES on a refused PUT, so the caller is still handed a media key with
+     * nothing behind it — which is how an `Image` row gets written for media that
+     * never landed. Making it reject is the follow-up, and it is not a one-line
+     * change: most `uploadToCF` call sites do not catch, so a rejection would surface
+     * uncaught in a number of them, including a bulk `Promise.all` in `ImageUpload`
+     * that would additionally propagate local `blob:` URLs into `onChange` as image
+     * values. Asserting the current behaviour makes that follow-up a deliberate edit
+     * to this expectation rather than a silent drift.
+     */
+    await expect(settled).resolves.toEqual({ kind: 'direct', success: false });
+  });
+
+  /**
+   * 🔴 REACHABLE ONLY BECAUSE OF THE CASE ABOVE, WHICH IS WHY THE GUARD IS NOT INERT.
+   * `abort` is followed by `loadend` in the same dispatch, and an aborted request
+   * arrives there with `status === 0`. While the non-2xx branch called nothing, that
+   * second dispatch was harmless; now that it reports an error, it would overwrite the
+   * user's `aborted` status with `error` — a cancel rendered as a failure.
+   *
+   * Watched to fail: with the `aborted` flag deleted from `attachUploadSettlement`
+   * this case fails with
+   *   AssertionError: expected "spy" to not be called at all, but actually been
+   *   called 1 times
+   * on the `onError` expectation, while every other case in this file stays green.
+   */
+  it('keeps a user cancel reported as aborted, not errored', async () => {
+    const xhr = new StubXhr();
+    const cb = callbacks();
+    const relay = vi.fn();
+
+    const settled = attachUploadSettlement(xhr, relay, cb);
+    xhr.userAbort();
+
+    await expect(settled).rejects.toThrow('Upload canceled');
+    expect(cb.onAborted).toHaveBeenCalledTimes(1);
+    expect(cb.onError).not.toHaveBeenCalled();
+    expect(cb.onSuccess).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `relayImageFallback` is the multipart upload's execution half of the relay rescue —
+ * the POST to `/api/v1/image-upload/relay` (with its 429-shed retry), returning the
+ * relay-minted key or the reason the rescue did not produce one. The DECISION to call it
+ * lives in `selectRelayFallback` (~/utils/upload-retry), pinned there; this function is
+ * what runs when the decision is yes, extracted from `useS3Upload` so the fallback can be
+ * driven directly and can never mask the original failure it is rescuing.
+ *
+ * 🔴 `ok: false` is the contract for EVERY failure — a rejected relay, a non-ok response, a
+ * mid-relay cancel. The caller falls through to the normal terminal-error path, so a
+ * broken fallback must degrade to "upload failed" (the pre-existing outcome), never to a
+ * thrown error that replaces the user's real diagnosis. The `reason` beside it is telemetry;
+ * each case below pins the one it carries.
+ */
+describe('relayImageFallback', () => {
+  const opts = () => ({
+    signal: new AbortController().signal,
+    sleep: vi.fn().mockResolvedValue(undefined),
+    defaultRetryAfterSeconds: 2,
+  });
+  const file = () => new File([new Uint8Array(10)], 'pic.png', { type: 'image/png' });
+
+  it('POSTs the whole file to the relay and resolves its minted key', async () => {
+    const f = file();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'RELAY-KEY' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await relayImageFallback(f, opts());
+
+    expect(result).toEqual({ ok: true, id: 'RELAY-KEY' });
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/api/v1/image-upload/relay',
+      expect.objectContaining({
+        method: 'POST',
+        // 🔴 EXACT, not `objectContaining`. The producer header is what lets the server
+        // attribute a rescue to THIS path; an `objectContaining` here would pass with it
+        // missing, which is the defect the discriminator exists to make impossible. The
+        // exact match also pins the VALUE, so a mutant sending `single_put` from this
+        // caller — the most damaging one available, since it silently re-creates the
+        // attribution error under the appearance of a fix — fails here. (A separate test
+        // asserting exactly that was removed as strictly subsumed by this line.)
+        headers: {
+          'Content-Type': 'image/png',
+          [IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]: 'multipart',
+        },
+        body: f,
+      })
+    );
+    vi.unstubAllGlobals();
+  });
+
+  it('falls back to octet-stream when the File carries no type', async () => {
+    const f = new File([new Uint8Array(10)], 'pic');
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ id: 'RELAY-KEY' }),
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await relayImageFallback(f, opts());
+
+    expect(fetchMock.mock.calls[0][1].headers['Content-Type']).toBe('application/octet-stream');
+    vi.unstubAllGlobals();
+  });
+
+  it('retries the 429 shed once through relayWithRetry, then resolves', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 429,
+        headers: { get: (n: string) => (n === 'Retry-After' ? '2' : null) },
+      })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ id: 'RELAY-KEY' }) });
+    vi.stubGlobal('fetch', fetchMock);
+    const sleep = vi.fn().mockResolvedValue(undefined);
+
+    const result = await relayImageFallback(file(), { ...opts(), sleep });
+
+    expect(result).toEqual({ ok: true, id: 'RELAY-KEY' });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledWith(2000);
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    ['a 500 from the relay', 500],
+    ['a 413 over the relay cap', 413],
+  ])('reports non_2xx on %s, without retrying', async (_name, status) => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue({ ok: false, status, json: async () => ({ error: 'nope' }) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    const result = await relayImageFallback(file(), opts());
+
+    expect(result).toEqual({ ok: false, reason: 'non_2xx' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+
+  it('reports bad_body on a relay id-less 200 rather than inventing a key', async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({}) });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(relayImageFallback(file(), opts())).resolves.toEqual({
+      ok: false,
+      reason: 'bad_body',
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('reports bad_body, not transport_error, on a 2xx whose body will not parse', async () => {
+    // 🔴 A 2xx we cannot parse is not a request that never arrived, and classifying it as a
+    // transport failure would say exactly that.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        throw new SyntaxError('Unexpected end of JSON input');
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(relayImageFallback(file(), opts())).resolves.toEqual({
+      ok: false,
+      reason: 'bad_body',
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('reports transport_error when the relay itself cannot be reached', async () => {
+    const fetchMock = vi.fn().mockRejectedValue(new TypeError('Failed to fetch'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(relayImageFallback(file(), opts())).resolves.toEqual({
+      ok: false,
+      reason: 'transport_error',
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it('reports aborted, not transport_error, when the POST is cancelled mid-flight', async () => {
+    // A cancel reaches the same `catch` as a dead network, and the two are different facts:
+    // one is a person changing their mind, the other is an upload nobody rescued.
+    const fetchMock = vi
+      .fn()
+      .mockRejectedValue(new DOMException('The operation was aborted.', 'AbortError'));
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(relayImageFallback(file(), opts())).resolves.toEqual({
+      ok: false,
+      reason: 'aborted',
+    });
+    vi.unstubAllGlobals();
+  });
+
+  it.each([
+    [
+      'the body read rejects with an AbortError',
+      () => new DOMException('The operation was aborted.', 'AbortError'),
+    ],
+    // 🔴 THE CASE A SHAPE-ONLY CLASSIFIER CANNOT SEE. `abort(reason)` rejects the body read
+    // with that reason VERBATIM, so a cancel carrying a plain `Error` — an ordinary idiom —
+    // reads as a 2xx we could not parse. That is `bad_body`, the one bucket this field exists
+    // to measure, so a future cancel button would inflate exactly the figure being read.
+    ['the cancel carries a non-DOMException reason', () => new Error('cancelled')],
+  ])('reports aborted, not bad_body, when %s', async (_why, makeReason) => {
+    // The relay answered 2xx and the cancel lands while the body is being read, so it is the
+    // INNER catch that sees it — the only abort classifier used to be in the outer one.
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => {
+        controller.abort(makeReason());
+        throw makeReason();
+      },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+
+    await expect(
+      relayImageFallback(file(), { ...opts(), signal: controller.signal })
+    ).resolves.toEqual({ ok: false, reason: 'aborted' });
+    vi.unstubAllGlobals();
+  });
+
+  it('reports aborted, and does not retry, when the signal aborts during a shed wait', async () => {
+    const controller = new AbortController();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 429,
+      headers: { get: (n: string) => (n === 'Retry-After' ? '2' : null) },
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    const sleep = vi.fn(async () => {
+      controller.abort();
+    });
+
+    const result = await relayImageFallback(file(), {
+      signal: controller.signal,
+      sleep,
+      defaultRetryAfterSeconds: 2,
+    });
+
+    expect(result).toEqual({ ok: false, reason: 'aborted' });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    vi.unstubAllGlobals();
+  });
+});
+
+/**
+ * The chunked relay's piece plan. The server length-checks each piece against the plan it
+ * derives from the same `pieceSize`, so an off-by-one here is a rejected (or, worse, a
+ * mis-assembled) upload. Sizes are deliberately not powers of two, and the piece size is not a
+ * divisor of any file size but the one case that tests an exact fit.
+ */
+describe('planRelayPieces', () => {
+  it.each([
+    ['a file smaller than one piece', 5, 7, [[1, 0, 5]]],
+    ['a file of exactly one piece', 7, 7, [[1, 0, 7]]],
+    [
+      'one byte over one piece',
+      8,
+      7,
+      [
+        [1, 0, 7],
+        [2, 7, 8],
+      ],
+    ],
+    [
+      'several pieces with a short last one',
+      23,
+      7,
+      [
+        [1, 0, 7],
+        [2, 7, 14],
+        [3, 14, 21],
+        [4, 21, 23],
+      ],
+    ],
+    [
+      'an exact multiple',
+      21,
+      7,
+      [
+        [1, 0, 7],
+        [2, 7, 14],
+        [3, 14, 21],
+      ],
+    ],
+  ])('plans %s', (_label, fileSize, pieceSize, expected) => {
+    expect(planRelayPieces(fileSize, pieceSize).map((p) => [p.partNumber, p.start, p.end])).toEqual(
+      expected
+    );
+  });
+
+  it('plans a production-sized file at the production piece size', () => {
+    const pieces = planRelayPieces(23_456_789, 8 * 1024 * 1024);
+    expect(pieces.map((p) => p.end - p.start)).toEqual([8_388_608, 8_388_608, 6_679_573]);
+    expect(pieces[pieces.length - 1].end).toBe(23_456_789);
+  });
+
+  it.each([
+    ['a zero piece size', 23, 0],
+    ['a non-numeric piece size', 23, Number.NaN],
+    ['an empty file', 0, 7],
+  ])('plans nothing for %s', (_label, fileSize, pieceSize) => {
+    expect(planRelayPieces(fileSize, pieceSize)).toEqual([]);
+  });
+});
+
+/**
+ * The chunked relay client against a scripted server: start, one request per piece, complete —
+ * and an abort of the server session whenever it gives up after `start`, including on cancel.
+ */
+describe('relayImageChunkedFallback', () => {
+  const PIECE = 7;
+  type Call = { action: string; params: URLSearchParams; init: RequestInit };
+  let calls: Call[];
+  let respond: (call: Call) => Partial<Response> | Promise<Partial<Response>>;
+
+  const ok = (body: unknown): Partial<Response> => ({
+    ok: true,
+    status: 200,
+    headers: new Headers(),
+    json: async () => body,
+  });
+  const status = (code: number): Partial<Response> => ({
+    ok: false,
+    status: code,
+    headers: new Headers(),
+    json: async () => ({ error: 'nope' }),
+  });
+
+  /** A well-behaved server for a file of `size` bytes. */
+  const server = (size: number) => (call: Call) => {
+    if (call.action === 'start')
+      return ok({ session: 'sess-1', pieceSize: PIECE, partCount: Math.ceil(size / PIECE) });
+    if (call.action === 'complete') return ok({ id: 'CHUNKED-KEY' });
+    return ok({});
+  };
+
+  const file = (size: number) =>
+    new File([new Uint8Array(size).map((_, i) => i % 251)], 'big.png', { type: 'image/png' });
+  const opts = (signal = new AbortController().signal) => ({
+    signal,
+    sleep: vi.fn().mockResolvedValue(undefined),
+    defaultRetryAfterSeconds: 2,
+  });
+
+  beforeEach(() => {
+    calls = [];
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string, init: RequestInit) => {
+        const params = new URL(url, 'https://origin.test').searchParams;
+        const call = { action: params.get('action') ?? '', params, init };
+        calls.push(call);
+        if (init.signal?.aborted)
+          throw new DOMException('The operation was aborted.', 'AbortError');
+        return respond(call);
+      })
+    );
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('sends every piece in order, exactly once, and resolves the completed key', async () => {
+    const f = file(23);
+    respond = server(23);
+    const progress: number[] = [];
+
+    const result = await relayImageChunkedFallback(f, {
+      ...opts(),
+      onProgress: (sent) => progress.push(sent),
+    });
+
+    expect(result).toEqual({ ok: true, id: 'CHUNKED-KEY' });
+    expect(calls.map((c) => [c.action, c.params.get('part')])).toEqual([
+      ['start', null],
+      ['part', '1'],
+      ['part', '2'],
+      ['part', '3'],
+      ['part', '4'],
+      ['complete', null],
+    ]);
+    expect(calls[0].params.get('size')).toBe('23');
+    // The bytes of each piece are the file's own bytes at that range.
+    const sentBytes = await Promise.all(
+      calls
+        .filter((c) => c.action === 'part')
+        .map(async (c) => Array.from(new Uint8Array(await (c.init.body as Blob).arrayBuffer())))
+    );
+    expect(sentBytes.flat()).toEqual(Array.from(new Uint8Array(await f.arrayBuffer())));
+    expect(sentBytes.map((b) => b.length)).toEqual([7, 7, 7, 2]);
+    expect(progress).toEqual([7, 14, 21, 23]);
+    // Every step identifies the multipart producer, so the server's counter can attribute it.
+    for (const c of calls)
+      expect((c.init.headers as Record<string, string>)[IMAGE_UPLOAD_RELAY_PRODUCER_HEADER]).toBe(
+        'multipart'
+      );
+  });
+
+  it('aborts the session and reports non_2xx when a piece is refused', async () => {
+    respond = (call) =>
+      call.action === 'part' && call.params.get('part') === '2' ? status(413) : server(23)(call);
+
+    const result = await relayImageChunkedFallback(file(23), opts());
+
+    expect(result).toEqual({ ok: false, reason: 'non_2xx' });
+    expect(calls.map((c) => c.action)).toEqual(['start', 'part', 'part', 'abort']);
+    expect(calls[3].params.get('session')).toBe('sess-1');
+  });
+
+  it('reports bad_body, and aborts, when the server plan does not match the file', async () => {
+    respond = (call) =>
+      call.action === 'start' ? ok({ session: 'sess-1', pieceSize: PIECE, partCount: 9 }) : ok({});
+
+    const result = await relayImageChunkedFallback(file(23), opts());
+
+    expect(result).toEqual({ ok: false, reason: 'bad_body' });
+    expect(calls.map((c) => c.action)).toEqual(['start', 'abort']);
+  });
+
+  it('does not abort a session it never opened', async () => {
+    respond = () => status(500);
+
+    const result = await relayImageChunkedFallback(file(23), opts());
+
+    expect(result).toEqual({ ok: false, reason: 'non_2xx' });
+    expect(calls.map((c) => c.action)).toEqual(['start']);
+  });
+
+  it('on a cancel mid-upload reports aborted and still closes the server session', async () => {
+    const controller = new AbortController();
+    respond = (call) => {
+      if (call.action === 'part' && call.params.get('part') === '2') controller.abort();
+      return server(23)(call);
+    };
+
+    const result = await relayImageChunkedFallback(file(23), opts(controller.signal));
+
+    expect(result).toEqual({ ok: false, reason: 'aborted' });
+    expect(calls.map((c) => c.action)).toEqual(['start', 'part', 'part', 'part', 'abort']);
+    // The abort is sent WITHOUT the cancelled signal, or it would never leave the browser.
+    expect(calls[4].init.signal).toBeUndefined();
+  });
+
+  it('reports transport_error, and aborts, when a piece cannot reach our origin', async () => {
+    respond = (call) => {
+      if (call.action === 'part') throw new TypeError('Failed to fetch');
+      return server(23)(call);
+    };
+
+    const result = await relayImageChunkedFallback(file(23), opts());
+
+    expect(result).toEqual({ ok: false, reason: 'transport_error' });
+    expect(calls.map((c) => c.action)).toEqual(['start', 'part', 'abort']);
+  });
+});

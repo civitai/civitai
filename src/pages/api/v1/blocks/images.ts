@@ -2,7 +2,6 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 import { withAxiom } from '@civitai/next-axiom';
 import type { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import dayjs from '~/shared/utils/dayjs';
 import * as z from 'zod';
 
 import {
@@ -10,9 +9,11 @@ import {
   type BlockScopedNextApiRequest,
 } from '~/server/middleware/block-scope.middleware';
 import { runImageSearch } from '~/server/services/image-search.service';
+import { reactTicketForImage } from '~/server/services/blocks/react-ticket.service';
 import { resolveCatalogBrowsingLevel } from '~/server/utils/block-catalog-maturity';
 import { checkBlockCatalogRateLimit } from '~/server/utils/block-catalog-rate-limit';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
+import { keysetCursorSchema } from '~/server/schema/base.schema';
 import { getNextPage, getPagination } from '~/server/utils/pagination-helpers';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
 import { isClientAbortError } from '~/server/utils/errorHandling';
@@ -21,7 +22,7 @@ import {
   BulkheadFullError,
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
-import { constants } from '~/server/common/constants';
+import { constants, IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import { MediaType, MetricTimeframe } from '~/shared/utils/prisma/enums';
 import { baseModels } from '~/shared/constants/basemodel.constants';
@@ -96,19 +97,32 @@ const blockImagesSchema = z.object({
   modelId: numericString().optional(),
   modelVersionId: numericString().optional(),
   imageId: numericString().optional(),
+  // Batch by id — `?ids=1,2,3`. The direct replacement for the `GET_IMAGES_BY_IDS`
+  // bridge message a block used to get its grid in one round trip
+  // (civitai/civitai-app-starters#429), capped at the SAME ceiling that message
+  // enforced (see IMAGE_IDS_BATCH_MAX).
+  //
+  // 🔴 `ids` IS A FILTER, NEVER A MATURITY BYPASS. It is narrowed by the same
+  // clamped `browsingLevel` every other selector on this route is: the clamp
+  // reaches the search as `ctx.browsingLevel` (resolved below from the token,
+  // never the request) and `getAllImages` applies it as its OWN independent SQL
+  // clause — `(i."nsfwLevel" & ${browsingLevel}) != 0 ...` at
+  // image.service.ts:2241 — alongside, not instead of, the `i."id" = ANY(...)`
+  // clause at :1799. Naming an id therefore cannot surface an image the block's
+  // ceiling excludes; it comes back absent, exactly as on the public route.
+  // Pinned by `blocks-ids-clamp` in `src/tests/api/v1/blocks/images-endpoint.test.ts`.
+  //
+  // Misses are reported by OMISSION — the same deliberate non-disclosure the
+  // public route documents, and the same one `BlockGatedImage` already makes.
+  ids: commaDelimitedNumberArray(
+    z.number().int().positive().array().min(1).max(IMAGE_IDS_BATCH_MAX)
+  ).optional(),
   username: usernameSchema.optional(),
   userId: numericString().optional(),
   period: z.enum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
   sort: z.enum(ImageSort).default(constants.galleryFilterDefaults.sort),
   tags: commaDelimitedNumberArray().optional(),
-  cursor: z
-    .union([z.bigint(), z.number(), z.string(), z.date()])
-    .transform((val) =>
-      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-        ? new Date(val)
-        : val
-    )
-    .optional(),
+  cursor: keysetCursorSchema.optional(),
   type: z.enum(MediaType).optional(),
   baseModels: commaDelimitedEnumArray([...baseModels]).optional(),
   withMeta: booleanString().default(false),
@@ -217,11 +231,39 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     }
     metadata.nextPage = getNextPage({ req, ...metadata }).nextPage;
 
-    res.status(200).json({ items, metadata });
+    // A provenance ticket per image for a signed-in viewer, so the app may set that viewer's
+    // reaction on what it was shown (`blocks.setReactionFromApp`). Anonymous tokens get none.
+    // Per-viewer data is safe here only because `withBlockScope` forces `private, no-store`.
+    const ticketed = items.map((item) => {
+      const reactTicket = reactTicketForImage(claims, item.id);
+      return reactTicket ? { ...item, reactTicket } : item;
+    });
+
+    res.status(200).json({ items: ticketed, metadata });
     return;
   } catch (error) {
-    // Mirror the public endpoint's error mapping so the block selector sees the
-    // same 499/503/<trpc-status> contract.
+    // 🔴 PARTIAL parity with the public /api/v1/images, and the split is
+    // deliberate — READ THIS BEFORE "RESTORING" ANYTHING. Until civitai#3845's
+    // TIER-1 change this handler mirrored the public endpoint's error mapping
+    // end to end. It no longer does, and the divergence is by design:
+    //
+    //   • 499 client-abort            — STILL IDENTICAL (same predicate, same exit).
+    //   • raw transient Meili → 503   — STILL IDENTICAL (same predicate, same
+    //     `{ error: <literal hint> }` body, same no-store + Retry-After).
+    //   • a TRPCError at 503          — same status and headers, DIFFERENT body:
+    //     this handler echoes the TRPCError's own message under `error`, while
+    //     the public endpoint answers 503 in place with the literal hint.
+    //   • every other TRPCError       — DIVERGED. The public endpoint delegates
+    //     to `handleEndpointError` (5xx genericized + fault-logged, `{ message }`
+    //     at 4xx); this one still serves `{ error: trpcError.message, code }`.
+    //
+    // The last two are the civitai#3845 disclosure shape, and this route keeps it
+    // ON PURPOSE for now: it is `withAxiom` + block-scope token auth, not public,
+    // so it is TIER 2 — recorded, not fixed, in
+    // `rest-error-envelope-ledger.test.ts`'s `KNOWN_UNFIXED_SAME_CLASS`. Deleting
+    // its baseline entry is what closes it; copying the public endpoint's mapping
+    // here without doing that turns the ledger red, which is the intended
+    // sequencing rather than an obstacle.
     if (isClientAbortError(error)) {
       if (!res.headersSent) res.status(499).end();
       return;
@@ -233,16 +275,15 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     // MeiliSearchApiError / MeiliSearchTimeOutError) — the dominant 500 source on
     // the public endpoint — are reclassified here too rather than bubbling as a
     // hard 500 via the generic tail. no-store + Retry-After: 2 so the 503 carries
-    // the SAME retryable contract as the public endpoint (the doc above claims
-    // this handler mirrors it). withBlockScope already forces `private, no-store`,
+    // the SAME retryable contract as the public endpoint — this arm is one of the
+    // two that IS still identical to it, per the note above.
+    // withBlockScope already forces `private, no-store`,
     // but set it explicitly so the contract is self-evident at the response site.
     if (isTransientMeiliError(error)) {
       if (!res.headersSent) {
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Retry-After', '2');
-        res
-          .status(503)
-          .json({ error: 'Image search is temporarily overloaded — please retry.' });
+        res.status(503).json({ error: 'Image search is temporarily overloaded — please retry.' });
       }
       return;
     }
@@ -250,8 +291,17 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
     const statusCode = getHTTPStatusCodeFromError(trpcError);
 
     // A TRPCError SERVICE_UNAVAILABLE wrapped by the service layer maps to 503 —
-    // attach the same no-store + Retry-After so the retryable contract is
-    // identical to the raw-error branch above (mirrors the public endpoint).
+    // attach the same no-store + Retry-After so the RETRYABLE contract (status +
+    // headers) is identical to the raw-error branch above.
+    //
+    // 🔴 The BODY is not identical, here or to the public endpoint. This falls
+    // through to the generic tail below and serves `{ error: trpcError.message,
+    // code }`, whereas both the raw-error branch above and the public endpoint
+    // answer 503 in place with a literal hint. That means the retry hint on THIS
+    // route is keyed `error` in both cases but its VALUE is the service's message
+    // rather than the fixed string — and, on the 4xx/5xx tail, that message can be
+    // driver-authored. That is the TIER-2 disclosure this route still carries by
+    // design; see the note at the top of this catch.
     if (statusCode === 503 && !res.headersSent) {
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Retry-After', '2');
@@ -272,4 +322,12 @@ const baseHandler = withAxiom(async function handler(req: NextApiRequest, res: N
 // (`Origin: null`) so its direct catalog fetch needs `ACAO: null` to clear the
 // CORS preflight; safe here (public maturity-clamped data, no credentials,
 // still token-gated) — see WithBlockScopeOpts.allowOpaqueOrigin.
-export default withBlockScope(baseHandler, { endpoint: 'images', allowOpaqueOrigin: true });
+export default withBlockScope(baseHandler, {
+  endpoint: 'images',
+  allowOpaqueOrigin: true,
+  // Public, maturity-clamped image catalog — the same argument as blocks/models.ts. No
+  // requiredScope, nothing viewer-scoped, nothing written; the maturity ceiling comes from
+  // the token's own signed claim, not from the approval row, so a failed approval read
+  // cannot widen what this returns.
+  onApprovalLookupFailure: 'serve',
+});

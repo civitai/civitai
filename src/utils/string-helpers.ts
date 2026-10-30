@@ -1,4 +1,4 @@
-import { Air } from '@civitai/client';
+import { Air } from '@civitai/orchestration-client';
 import { truncate } from 'lodash-es';
 import slugify from 'slugify';
 
@@ -143,7 +143,10 @@ export function camelCase(str: string) {
 
 const validModelExtensions = ['.ckpt', '.pt', '.safetensors', '.sft', '.bin', '.gguf', '.onnx'];
 
-export function sanitizeDownloadFilename(value: string, fallbackExtension = '.safetensors'): string {
+export function sanitizeDownloadFilename(
+  value: string,
+  fallbackExtension = '.safetensors'
+): string {
   let name = value
     .trim()
     .replace(/["\\\r\n\t]/g, '') // strip Content-Disposition-breaking chars
@@ -162,6 +165,41 @@ export function filenamize(value: string, length = 20) {
   return camelCase(truncate(value, { length, separator: '_', omission: '' }));
 }
 
+/**
+ * Replace the middle of a string with a FIXED run of characters — never one per hidden character,
+ * which leaks the original's length to anyone reading a shared screen or a stream.
+ *
+ * Keeps `start` characters from the front and `end` from the back. When the kept ends already
+ * cover the whole string there is nothing left to hide, so it returns the mask alone rather than
+ * handing back the input untouched.
+ */
+export function maskString(
+  value: string,
+  { start = 0, end = 0, mask = '•••••' }: { start?: number; end?: number; mask?: string } = {}
+) {
+  if (!value) return '';
+
+  const head = Math.max(0, start);
+  const tail = Math.max(0, end);
+  if (head + tail >= value.length) return mask;
+
+  return `${value.slice(0, head)}${mask}${tail > 0 ? value.slice(value.length - tail) : ''}`;
+}
+
+/**
+ * Hides the local part but keeps the domain, so the account stays recognisable to its owner.
+ *
+ * A local part short enough that keeping its first character would reveal the whole address falls
+ * back to masking everything: showing `a•••••@example.com` conceals nothing while looking as if it
+ * does, which is worse than an obviously-hidden value.
+ */
+export function maskEmail(email: string) {
+  const at = email.lastIndexOf('@');
+  if (at <= 0) return maskString(email);
+
+  return maskString(email, { start: 1, end: email.length - at });
+}
+
 export function replaceInsensitive(value: string, search: string, replace: string) {
   const escaped = search.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
   return value.replace(new RegExp(escaped, 'gi'), replace);
@@ -176,6 +214,15 @@ export function getFileExtension(value: string) {
 
 export function slugit(value: string) {
   return slugify(value, { lower: true, strict: true });
+}
+
+/**
+ * `slugit` strips everything outside ASCII, so a name written only in CJK (or emoji)
+ * comes back empty. In a path that leaves `//` — use this wherever a slug is a path
+ * segment that must not be empty.
+ */
+export function slugitOr(value: string | null | undefined, fallback: string) {
+  return (value ? slugit(value) : '') || fallback;
 }
 
 /**
@@ -208,15 +255,41 @@ export function getModel3DUrl({ id, name }: { id: number; name?: string | null }
   return slug ? `/3d-models/${id}/${slug}` : `/3d-models/${id}`;
 }
 
+/** Canonical article URL. A title with no slug-able characters gets the bare id path. */
+export function getArticleUrl({ id, title }: { id: number; title?: string | null }): string {
+  const slug = title ? slugit(title) : null;
+  return slug ? `/articles/${id}/${slug}` : `/articles/${id}`;
+}
+
+/**
+ * One HTML tag. `[^<>]` (not `[^>]`) so an unterminated run of `<` can't force quadratic
+ * backtracking (ReDoS) — a `<` always starts a fresh potential tag.
+ *
+ * Deliberately NOT exported. A shared module-scope regex carrying `g` is safe only while every
+ * consumer uses `String.replace`, which resets `lastIndex`; the first caller to reach for
+ * `.test()` or `.exec()` gets a guard that is inert on every other invocation. The two joins
+ * callers actually want are exported as functions instead.
+ */
+const HTML_TAG = /<[^<>]*>/g;
+
+/**
+ * Tags removed with nothing in their place, so `civitai.id<strong>5</strong>92807.click` reads
+ * as one string. The comment blocklist needs this alongside `removeTags`: neither join alone is
+ * enough, because collapsing to a space defeats a pattern split mid-token, while joining with
+ * nothing glues `<p>a</p><p>b</p>` into `ab`.
+ */
+export function removeTagsCompact(str: string) {
+  if (!str) return '';
+  return str.replace(HTML_TAG, '');
+}
+
 /**
  * @see https://www.geeksforgeeks.org/how-to-strip-out-html-tags-from-a-string-using-javascript/
  */
 export function removeTags(str: string) {
   if (!str) return '';
 
-  // Replace all HTML tags with a single space. `[^<>]` (not `[^>]`) so an unterminated run of
-  // `<` can't force quadratic backtracking (ReDoS) — a `<` always starts a fresh potential tag.
-  const stringWithoutTags = str.replace(/<[^<>]*>/g, ' ');
+  const stringWithoutTags = str.replace(HTML_TAG, ' ');
 
   // Replace multiple spaces with a single space
   const stringWithoutExtraSpaces = stringWithoutTags.replace(/\s+/g, ' ');
@@ -289,12 +362,6 @@ export function isAir(identifier: string) {
   return Air.isAir(identifier);
 }
 
-export function getAirModelLink(identifier: string) {
-  const parsed = parseAIRSafe(identifier);
-  if (!parsed) return '/';
-  return `/models/${parsed.model}?modelVersionId=${parsed.version}`;
-}
-
 export function safeDecodeURIComponent(str: string) {
   try {
     return decodeURIComponent(str);
@@ -328,6 +395,12 @@ export function capitalize(str: string) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
+/** "the Flux model", but "The Weirdies model" rather than "the The Weirdies model". */
+export function withDefiniteArticle(name: string, article: 'the' | 'The' = 'the') {
+  if (!/^the\s/i.test(name)) return `${article} ${name}`;
+  return article === 'The' ? capitalize(name) : name;
+}
+
 export function toKebabCase(str: string) {
   return str
     .split('')
@@ -337,4 +410,12 @@ export function toKebabCase(str: string) {
         : letter;
     })
     .join('');
+}
+
+/**
+ * Removes NUL and replaces lone surrogates, which Postgres rejects in text and jsonb. It scrubs rather
+ * than rejects, unlike the validators in `platform-feedback.schema.ts` and `apps/doc-store.ts`.
+ */
+export function sanitizeForPostgres(value: string) {
+  return value.replace(/\u0000/g, '').toWellFormed();
 }

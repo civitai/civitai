@@ -1,16 +1,15 @@
-import type { TRPCError } from '@trpc/server';
+import { TRPCError } from '@trpc/server';
 import { getHTTPStatusCodeFromError } from '@trpc/server/http';
-import dayjs from '~/shared/utils/dayjs';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { isProd } from '~/env/other';
-import { constants } from '~/server/common/constants';
+import { constants, IMAGE_IDS_BATCH_MAX } from '~/server/common/constants';
 import { ImageSort } from '~/server/common/enums';
 import client from 'prom-client';
 import { ensureRegisterFeedImageExistenceCheckMetrics } from '~/server/metrics/feed-image-existence-check.metrics';
 import { isTransientMeiliError } from '~/server/meilisearch/client';
 import { runImageSearch } from '~/server/services/image-search.service';
-import { PublicEndpoint } from '~/server/utils/endpoint-helpers';
+import { handleEndpointError, PublicEndpoint } from '~/server/utils/endpoint-helpers';
 import { isClientAbortError } from '~/server/utils/errorHandling';
 import { longTaskLabelsArmed, runWithLongTaskLabel } from '~/server/eventloop-longtask';
 import {
@@ -19,6 +18,7 @@ import {
   HEAVY_REQUEST_CONCURRENCY,
 } from '~/server/utils/request-bulkhead';
 import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
+import { keysetCursorSchema } from '~/server/schema/base.schema';
 import { getPagination } from '~/server/utils/pagination-helpers';
 import { getRegion, isRegionRestricted } from '~/server/utils/region-blocking';
 import { baseModels } from '~/shared/constants/basemodel.constants';
@@ -53,6 +53,24 @@ const imagesEndpointSchema = z.object({
   modelId: numericString().optional(),
   modelVersionId: numericString().optional(),
   imageId: numericString().optional(),
+  // Batch by id — `?ids=1,2,3`. The one-round-trip replacement for the retired
+  // `GET_IMAGES_BY_IDS` bridge message, which was batch by construction; without
+  // it a 50-cell grid is 50 requests against a rate-limited public API
+  // (civitai/civitai-app-starters#429).
+  //
+  // 🔴 Three properties a caller must not assume away:
+  //   1. RESULTS ARE A SUBSET. An id the viewer may not see and an id that does
+  //      not exist are BOTH simply absent — deliberately indistinguishable. See
+  //      the note above `handleImagesRequest`.
+  //   2. ORDER IS `sort`, NOT REQUEST ORDER. The filter is a SQL
+  //      `i."id" = ANY(...)`; re-key by `item.id` client-side.
+  //   3. `ids` FORCES THE LEGACY DB PATH (image-search.service.ts). Meili feed
+  //      search builds no id filter and would answer with the global feed.
+  // `.min(1)` because an empty array is not a batch — it would fall through
+  // every id clause and return the unfiltered feed.
+  ids: commaDelimitedNumberArray(
+    z.number().int().positive().array().min(1).max(IMAGE_IDS_BATCH_MAX)
+  ).optional(),
   username: usernameSchema.optional(),
   userId: numericString().optional(),
   period: z.enum(MetricTimeframe).default(constants.galleryFilterDefaults.period),
@@ -68,14 +86,7 @@ const imagesEndpointSchema = z.object({
     }),
   browsingLevel: z.coerce.number().optional(),
   tags: commaDelimitedNumberArray().optional(),
-  cursor: z
-    .union([z.bigint(), z.number(), z.string(), z.date()])
-    .transform((val) =>
-      typeof val === 'string' && dayjs(val, 'YYYY-MM-DDTHH:mm:ss.SSS[Z]', true).isValid()
-        ? new Date(val)
-        : val
-    )
-    .optional(),
+  cursor: keysetCursorSchema.optional(),
   type: z.enum(MediaType).optional(),
   baseModels: commaDelimitedEnumArray([...baseModels]).optional(),
   withMeta: booleanString().default(false),
@@ -104,6 +115,40 @@ export default PublicEndpoint(async function handler(req: NextApiRequest, res: N
   return handleImagesRequest(req, res);
 });
 
+/**
+ * 🔴 MISSING IDS ON A `?ids=` BATCH ARE REPORTED BY OMISSION, AND THAT IS A
+ * DECISION — not the default that fell out of reusing the feed response.
+ *
+ * A batch of N ids can return fewer than N items for two different reasons: the
+ * image does not exist (deleted, never existed, wrong id), or it exists and this
+ * viewer may not see it (above their browsing-level ceiling, blocked author,
+ * blocked tag, unpublished post, awaiting moderation). The response does not say
+ * which, and must not.
+ *
+ * Telling them apart is a DISCLOSURE BIT, and this codebase has already ruled on
+ * exactly this question one layer over: `BlockGatedImage` in
+ * `src/server/services/blocks/block-gated-images.service.ts` deliberately
+ * collapses its internal third verdict rather than emit it, because a positive
+ * "this exists but is withheld from you" lets a SFW viewer of a shared grid
+ * ENUMERATE which cells are mature or flagged. A `notFoundIds` array on this
+ * route would re-open that, one route over, for the same ids.
+ *
+ * It would also be a lie under its own name: an id withheld by the clamp is not
+ * "not found". Any name honest about the ambiguity ("idsNotReturned") is a pure
+ * restatement of `ids` minus `items[].id`, which the caller already holds and
+ * can compute in one line. Zero information, one new way to be wrong.
+ *
+ * So: a shorter array, and the contract SAYS a shorter array.
+ * `src/tests/api/v1/images/ids-batch.test.ts` pins the half a test at this layer
+ * can actually observe — an id that did not come back appears NOWHERE in the
+ * response (not as a field name, not as a value) and `metadata` carries only the
+ * paging keys. WHICH of the two reasons applied is decided by `getAllImages`'
+ * SQL, never on this route, so nothing here can tell them apart in the first
+ * place; the guard is against a future field that would.
+ *
+ * (Ordering is `sort`, not request order — `ids` is a SQL `= ANY(...)` filter.
+ * Callers re-key by `item.id`.)
+ */
 async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
   // Started AFTER param validation + the paging guard so cheap 400/429 rejects
   // aren't recorded as ~0ms heavy requests, which would dilute the heavy-tail P99
@@ -120,8 +165,18 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     const session = await getServerAuthSession({ req, res });
 
     // Handle pagination
-    const { limit, page, cursor, nsfw, browsingLevel, type, withMeta, flatMeta, withTags, ...data } =
-      reqParams.data;
+    const {
+      limit,
+      page,
+      cursor,
+      nsfw,
+      browsingLevel,
+      type,
+      withMeta,
+      flatMeta,
+      withTags,
+      ...data
+    } = reqParams.data;
     let skip: number | undefined;
     const usingPaging = page && !cursor;
     if (usingPaging) {
@@ -168,7 +223,7 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // browsingLevel UNCHANGED (mapped above from ?nsfw=/?browsingLevel=); the
     // block endpoint passes a server-clamped value. No other lever differs.
     const { items, nextCursor } = await runImageSearch(
-      { limit, skip, cursor, type, withMeta, flatMeta, withTags, data },
+      { limit, skip, cursor, type, withMeta, flatMeta, withTags, feedService: true, data },
       { browsingLevel: _browsingLevel, user: session?.user, req }
     );
 
@@ -211,32 +266,47 @@ async function handleImagesRequest(req: NextApiRequest, res: NextApiResponse) {
     // layer can't cache the error; Retry-After so clients/CF retry the
     // (typically seconds-long) flap. 4xx-other (malformed filter / auth) is NOT
     // transient and still bubbles to the generic mapping below.
-    if (isTransientMeiliError(error)) {
+    //
+    // 🔴 BOTH transient shapes — the raw SDK error and the service layer's
+    // `TRPCError SERVICE_UNAVAILABLE` wrap of it — are answered HERE, in place,
+    // with ONE body. An earlier draft of this change set the headers for the
+    // TRPCError case and then fell through to `handleEndpointError`, which
+    // answers a 503 as `{ message }`. That left the SAME ROUTE emitting the retry
+    // hint under `error` on this path and under `message` on that one, so no
+    // client could read a single key to get it at 503 — strictly worse than
+    // either choice alone. This is the shape `/api/v1/users` uses, and the two
+    // 503 paths on this route are now byte-identical.
+    //
+    // Answering in place also keeps the hint OUT of the helper's 503 pass-through,
+    // which is deliberately NOT genericized (it is the only copy of a retry hint).
+    // A literal here means a `TRPCError` whose message happens to be
+    // driver-authored cannot reach the wire through this branch at all.
+    const trpcStatus = error instanceof TRPCError ? getHTTPStatusCodeFromError(error) : undefined;
+    if (isTransientMeiliError(error) || trpcStatus === 503) {
       if (!res.headersSent) {
         res.setHeader('Cache-Control', 'no-store');
         res.setHeader('Retry-After', '2');
-        res
-          .status(503)
-          .json({ error: 'Image search is temporarily overloaded — please retry.' });
+        res.status(503).json({ error: 'Image search is temporarily overloaded — please retry.' });
       }
       return;
     }
-    const trpcError = error as TRPCError;
-    const statusCode = getHTTPStatusCodeFromError(trpcError);
 
-    // A TRPCError SERVICE_UNAVAILABLE wrapped by the service layer (the normal
-    // path for a transient Meili failure now) maps to 503 here — attach the
-    // same no-store + Retry-After so the retryable contract is identical to the
-    // raw-error branch above.
-    if (statusCode === 503 && !res.headersSent) {
-      res.setHeader('Cache-Control', 'no-store');
-      res.setHeader('Retry-After', '2');
-    }
-
-    return res.status(statusCode).json({
-      error: trpcError.message,
-      code: trpcError.code,
-    });
+    // 🔴 civitai#3845 TIER 1. This was `{ error: trpcError.message, code: trpcError.code }`
+    // on a `PublicEndpoint` — i.e. served to ANONYMOUS callers. `trpcError` is
+    // whatever escaped `runImageSearch`, and a `throwDbError`-wrapped driver error
+    // puts a raw ``Invalid `prisma.image.findMany()` invocation`` — table and column
+    // names — straight on the wire. Nothing above this line is a validation
+    // rejection: the zod `safeParse` 400 and the paging 429 both `return` from the
+    // try body and never enter this catch, so delegating here cannot turn a client's
+    // malformed `?limit=` into a 500. A 4xx TRPCError from the search layer keeps
+    // its status; only a 5xx (and a driver-authored 4xx) is genericized, and the
+    // un-redacted text goes to the fault log instead of to the caller.
+    //
+    // The 4xx body shape changes from `{ error, code }` to `{ message }` — the same
+    // trade `/api/v1/users` made in the parent change, and the shared shape is the
+    // point of consolidating. 503 does NOT reach here: it is answered above, in its
+    // original shape.
+    return handleEndpointError(res, error);
   } finally {
     endTimer?.();
     // Release the heavy slot as soon as the handler resolves (synchronous

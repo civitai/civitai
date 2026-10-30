@@ -5,6 +5,7 @@ import type { ResourceSelectModalProps } from '~/components/ImageGeneration/Gene
 import type { GenerationResource } from '~/shared/types/generation.types';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 
 /**
  * App Blocks PAGE checkpoint picker (dev:live↔prod parity).
@@ -49,8 +50,18 @@ vi.mock('~/utils/trpc', () => ({
   // test file fails to import.
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     // W13 wildcard-pack import: PageBlockHost now calls this at render; stub so the mount succeeds (behavior covered in PageBlockHostWildcardPack.browser.test.tsx).
-    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    generation: {
+      resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -64,6 +75,12 @@ vi.mock('~/utils/trpc', () => ({
       queryAppWorkflows: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw and
+      // every measurement in the file reads as an empty DOM.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: vi.fn() }) },
     },
     apps: {
@@ -184,6 +201,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'my-page-app',
@@ -232,6 +252,38 @@ describe('PageBlockHost checkpoint picker (dev:live↔prod parity with IframeHos
     expect((props.options?.resources?.[0].baseModels ?? []).length).toBeGreaterThan(0);
   });
 
+  // 🔴 THE PROPERTY THREE REPOS' PROSE RESTS ON, AND NOTHING PINNED IT.
+  //
+  // An ABSENT baseModelGroup must leave `baseModels` EMPTY, because the empty
+  // array is exactly what the three consuming layers special-case as "no
+  // narrowing" (ResourceSelectProvider's `resourceBaseModels.length > 0 ? … :
+  // filterBaseModels`, `selectableVersions`'s `modelBaseModels.length === 0 ||`,
+  // and the query builder's `_baseModels.length ? … : eq(type)`) — so the modal
+  // emits the bare `type = Checkpoint` clause and offers every
+  // generation-covered checkpoint.
+  //
+  // The bare-request cases below already post `{ requestId }` with no family,
+  // but each asserts the REPLY projection, never the modal's options — so a
+  // future default on `baseModels` (falling back to the viewer's last-used
+  // family, say) would silently re-narrow every unconstrained pick with no test
+  // going red, while simultaneously falsifying the handler comments here, the
+  // SDK hook's own documentation and every scaffold that omits the key. This is
+  // the one assertion that fails first instead.
+  test('a BARE request (no baseModelGroup) leaves baseModels EMPTY — no narrowing at all', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+
+    postFromBlock('OPEN_CHECKPOINT_PICKER', { requestId: 'rq_bare' });
+
+    await vi.waitFor(() => {
+      expect(useDialogStore.getState().dialogs).toHaveLength(1);
+    });
+    const props = lastResourceModalProps();
+    expect(props.options?.resources).toHaveLength(1);
+    expect(props.options?.resources?.[0].type).toBe('Checkpoint');
+    expect(props.options?.resources?.[0].baseModels).toEqual([]);
+  });
+
   test('on select posts back ONLY the name/id-only pick — no catalog / private / early-access leak', async () => {
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
@@ -268,13 +320,32 @@ describe('PageBlockHost checkpoint picker (dev:live↔prod parity with IframeHos
     const payload = replies.last('CHECKPOINT_PICKER_RESULT')!.payload as {
       selected: Record<string, unknown>;
     };
+    expectReplyKeys('OPEN_CHECKPOINT_PICKER', 'success', ['selected'], payload);
     const sel = payload.selected;
-    const sensitiveAbsent = ['availability', 'hasAccess', 'canGenerate', 'image', 'name',
-      'nsfw', 'nsfwLevel', 'poi', 'minor', 'sfwOnly', 'userId', 'trainedWords', 'model', 'modelType'];
+    const sensitiveAbsent = [
+      'availability',
+      'hasAccess',
+      'canGenerate',
+      'image',
+      'name',
+      'nsfw',
+      'nsfwLevel',
+      'poi',
+      'minor',
+      'sfwOnly',
+      'userId',
+      'trainedWords',
+      'model',
+      'modelType',
+    ];
     for (const k of sensitiveAbsent) expect(sel).not.toHaveProperty(k);
-    expect(Object.keys(sel).sort()).toEqual(
-      ['baseModel', 'modelId', 'modelName', 'versionId', 'versionName']
-    );
+    expect(Object.keys(sel).sort()).toEqual([
+      'baseModel',
+      'modelId',
+      'modelName',
+      'versionId',
+      'versionName',
+    ]);
     replies.stop();
   });
 
@@ -293,6 +364,7 @@ describe('PageBlockHost checkpoint picker (dev:live↔prod parity with IframeHos
       const r = replies.last('CHECKPOINT_PICKER_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_cancel' });
+      expectReplyKeys('OPEN_CHECKPOINT_PICKER', 'success', [], r.payload);
     });
     replies.stop();
   });
@@ -366,7 +438,8 @@ describe('PageBlockHost checkpoint picker (dev:live↔prod parity with IframeHos
     );
     await vi.waitFor(() => {
       const r = replies.last('CHECKPOINT_PICKER_RESULT');
-      if (!(r && (r.payload as any)?.requestId === 'rq_ck')) throw new Error('checkpoint not resolved');
+      if (!(r && (r.payload as any)?.requestId === 'rq_ck'))
+        throw new Error('checkpoint not resolved');
     });
     useDialogStore.getState().closeAll();
 
@@ -379,7 +452,8 @@ describe('PageBlockHost checkpoint picker (dev:live↔prod parity with IframeHos
     );
     await vi.waitFor(() => {
       const r = replies.last('RESOURCE_PICKER_RESULT');
-      if (!(r && (r.payload as any)?.requestId === 'rq_res')) throw new Error('resource not resolved');
+      if (!(r && (r.payload as any)?.requestId === 'rq_res'))
+        throw new Error('resource not resolved');
     });
 
     // Each result kept its own message type + requestId — the handlers don't cross.

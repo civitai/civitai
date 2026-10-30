@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 // Regression guard for the "backfill wedges a challenge forever" defect.
 //
@@ -13,23 +15,15 @@ import type { NextApiRequest, NextApiResponse } from 'next';
 // `?force=true` widens the exposure to every themed Active/Scheduled challenge at once.
 
 const {
-  mockQueryRaw,
-  mockExecuteRaw,
   mockGenerateThemeElements,
-  mockLogToAxiom,
   mockGetChallengeConfig,
 } = vi.hoisted(() => ({
-  mockQueryRaw: vi.fn(),
-  mockExecuteRaw: vi.fn(),
   mockGenerateThemeElements: vi.fn(),
-  mockLogToAxiom: vi.fn().mockResolvedValue(undefined),
   mockGetChallengeConfig: vi.fn(),
 }));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: mockQueryRaw },
-  dbWrite: { $executeRaw: mockExecuteRaw },
-}));
+const mockQueryRaw = dbMock.dbRead.$queryRaw;
+const mockExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 vi.mock('~/server/games/daily-challenge/daily-challenge.utils', () => ({
   getChallengeConfig: mockGetChallengeConfig,
@@ -39,8 +33,6 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', () => ({
 vi.mock('~/server/games/daily-challenge/generative-content', () => ({
   generateThemeElements: mockGenerateThemeElements,
 }));
-
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mockLogToAxiom }));
 
 vi.mock('~/server/schema/challenge.schema', () => ({
   parseChallengeMetadata: (m: unknown) => (m ?? {}) as Record<string, unknown>,

@@ -11,13 +11,21 @@ export interface SeedInputProps extends Omit<InputWrapperProps, 'children' | 'on
   value?: number;
   onChange?: (value?: number) => void;
   disabled?: boolean;
+  /** The provider's ceiling; defaults to `MAX_SEED`. */
+  max?: number;
 }
 
 // =============================================================================
 // Component
 // =============================================================================
 
-export function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: SeedInputProps) {
+export function SeedInput({
+  value,
+  onChange,
+  disabled,
+  max = MAX_SEED,
+  ...inputWrapperProps
+}: SeedInputProps) {
   const inputRef = useRef<HTMLInputElement>(null);
 
   // Derive control state from value - undefined means random
@@ -57,7 +65,7 @@ export function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: S
     }
 
     // Clamp to max if pasted value exceeds limit
-    onChange?.(Math.min(Math.max(0, numValue), MAX_SEED));
+    onChange?.(Math.min(Math.max(0, numValue), max));
   };
 
   const handlePaste = (e: React.ClipboardEvent<HTMLInputElement>) => {
@@ -66,7 +74,7 @@ export function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: S
 
     if (!isNaN(parsed)) {
       e.preventDefault();
-      onChange?.(Math.min(Math.max(0, parsed), MAX_SEED));
+      onChange?.(Math.min(Math.max(0, parsed), max));
     }
   };
 
@@ -89,6 +97,7 @@ export function SeedInput({ value, onChange, disabled, ...inputWrapperProps }: S
           onPaste={handlePaste}
           placeholder="Random"
           min={0}
+          max={max}
           allowNegative={false}
           allowDecimal={false}
           style={{ flex: 1 }}

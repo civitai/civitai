@@ -63,6 +63,39 @@ ruleTester.run('no-io-in-transaction', rule, {
     `async function f(){ await db.transaction().execute(); }`,
     `async function f(){ await db.$transaction(); }`,
 
+    // ---- Promise combinators: FALSE-POSITIVE CONTROLS ----
+    // Every operand is tx-client work. If the combinator walk stopped allowing
+    // tx.* inside an array literal, this is what would go red.
+    `async function f(){ await db.$transaction(async (tx) => { await Promise.all([tx.image.deleteMany({}), tx.file.deleteMany({})]); }); }`,
+    // 🔴 The same control with DENYLISTED names, so it can actually observe the
+    // tx-root allowance. The fixture above cannot: `deleteMany` is not on the
+    // denylist, so it stays unreported whether or not the allowance runs. `refresh`
+    // and `bust` are, and `tx.*` is how a query builder legitimately spells them.
+    `async function f(){ await db.$transaction(async (tx) => { await Promise.all([tx.thing.refresh(), tx.cache.bust()]); }); }`,
+    // Un-awaited combinator: fire-and-forget is out of scope for the same reason a
+    // bare `fetch('x')` is — it does not consume the transaction's wall-clock
+    // budget, and "make it fire-and-forget" is one of the fixes the rule's own
+    // message prescribes. `void` is the explicit form of the same thing.
+    `async function f(){ await db.$transaction(async (tx) => { Promise.all([bustUserSettings(1)]); await tx.user.update({}); }); }`,
+    `async function f(){ await db.$transaction(async (tx) => { void bustUserSettings(1); await tx.user.update({}); }); }`,
+    // 🔴 EAGERNESS GUARD. A callback handed to something OTHER than .map/.flatMap
+    // may be stored and run long after the transaction commits, so its body must
+    // NOT be read. Loosening EAGER_ITERATION_METHODS to "any inline callback
+    // inside a combinator" is the tempting edit, and these are what kill it.
+    `async function f(){ await db.$transaction(async (tx) => { await Promise.all([emitter.on('x', () => bustUserSettings(1))]); }); }`,
+    `async function f(){ await db.$transaction(async (tx) => { await Promise.all(queue.register(() => bustUserSettings(1))); }); }`,
+    // A non-Promise object with an `all` method is not a combinator.
+    `async function f(){ await db.$transaction(async (tx) => { await settled.all([bustUserSettings(1)]); }); }`,
+
+    // ---- PINNED GAPS (see "KNOWN GAPS in WHICH AWAITED EXPRESSIONS ARE READ") ----
+    // The operand array is a variable, so its elements are not in this AST position.
+    `async function f(){ await db.$transaction(async (tx) => { const jobs = [bustUserSettings(1)]; await Promise.all(jobs); }); }`,
+    // A non-inline map callback is a reference the rule does not resolve.
+    `async function f(){ await db.$transaction(async (tx) => { await Promise.all(ids.map(makeJob)); }); }`,
+    // A spread's own array is likewise unresolvable (its SIBLINGS are read — see
+    // the invalid case below).
+    `async function f(){ await db.$transaction(async (tx) => { await Promise.all([...jobs]); }); }`,
+
     // ---- REGRESSION GUARD (FALSE NEGATIVE, current behavior) ----
     // A non-inline (named) $transaction callback is NOT analyzed: the rule only
     // inspects inline arrow/function-expression callbacks, so I/O inside a named
@@ -146,6 +179,90 @@ ruleTester.run('no-io-in-transaction', rule, {
     {
       code: `async function f(){ await kyselyWrite.transaction().execute(async (trx) => { await db.$transaction(async (tx) => { await tx.user.update({}); }); await fetch('x'); }); }`,
       errors: [{ messageId: 'ioInTx', data: { name: 'fetch' } }],
+    },
+
+    // ---- Promise combinators: the argument-position I/O the rule used to miss ----
+    // The live shape from model.service.ts (`copyGallerySettingsToAllModels`), the
+    // ONE of #3986's two writers the denylist addition could not actually reach:
+    // both calls are ARGUMENTS, so the awaited-call walk saw only `Promise.all`.
+    // Measured on the pre-change rule: 0 hits, while every direct-await case above
+    // flagged.
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.all([userModelCountCache.refresh(1), bustUserSettings(1)]); }); }`,
+      errors: [
+        { messageId: 'ioInTx', data: { name: 'refresh' } },
+        { messageId: 'ioInTx', data: { name: 'bustUserSettings' } },
+      ],
+    },
+    // The live shape from bountyEntry.service.ts (`deleteBountyEntry`): a tx.*
+    // call and a Redis call in one array. Both arms in one fixture — the tx.*
+    // operand must stay unreported while its neighbour is reported.
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.all([tx.image.deleteMany({}), invalidateManyImageExistence(ids)]); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'invalidateManyImageExistence' } }],
+    },
+    // The other three combinators. `race`/`any` still start every operand inside
+    // the transaction — settling early does not cancel the losers.
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.allSettled([bustUserSettings(1)]); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'bustUserSettings' } }],
+    },
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.race([fetch('x')]); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'fetch' } }],
+    },
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.any([sendEmail({})]); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'sendEmail' } }],
+    },
+    // Combinator wrapped in a passthrough, and an element wrapped in one: the two
+    // unwrappers have to compose in both orders.
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.all([bustUserSettings(1)]).catch(() => {}); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'bustUserSettings' } }],
+    },
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.all([logToAxiom({}).catch(() => {})]); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'logToAxiom' } }],
+    },
+    // Nested combinators.
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.all([Promise.allSettled([queueUpdate([])])]); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'queueUpdate' } }],
+    },
+    // A spread defeats only ITSELF: the sibling literal element is still read.
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.all([...jobs, bustUserSettings(1)]); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'bustUserSettings' } }],
+    },
+    // `.map`/`.flatMap` with a CONCISE body — one keystroke (dropping
+    // `async`/`await`) from the block-bodied form the function-stack walk already
+    // caught, and invisible to it because there is no AwaitExpression at all.
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.all(ids.map((i) => bustUserSettings(i))); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'bustUserSettings' } }],
+    },
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.all(groups.flatMap((g) => queueUpdate(g))); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'queueUpdate' } }],
+    },
+    // 🔴 DOUBLE-REPORT GUARD. The BLOCK-bodied form is already reported once by
+    // the function-stack walk (its `await` is a real AwaitExpression inside the
+    // txn context). Reading block bodies in `combinatorOperands` too would report
+    // this line TWICE; RuleTester fails on the extra error, which is what pins the
+    // `body.type !== 'BlockStatement'` filter.
+    {
+      code: `async function f(){ await db.$transaction(async (tx) => { await Promise.all(ids.map(async (i) => { await bustUserSettings(i); })); }); }`,
+      errors: [{ messageId: 'ioInTx', data: { name: 'bustUserSettings' } }],
+    },
+    // Kysely side of the same shape, so the combinator walk is not accidentally
+    // wired to the Prisma matcher only.
+    {
+      code: `async function f(){ await db.transaction().execute(async (trx) => { await Promise.all([bustUserSettings(1), getUserSettings(1)]); }); }`,
+      errors: [
+        { messageId: 'ioInTx', data: { name: 'bustUserSettings' } },
+        { messageId: 'ioInTx', data: { name: 'getUserSettings' } },
+      ],
     },
 
     // ---- REGRESSION GUARD (FALSE POSITIVE, current behavior) ----

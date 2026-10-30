@@ -9,6 +9,7 @@ import {
   listAppCollaboratorsSchema,
   removeAppCollaboratorSchema,
   respondToAppInviteSchema,
+  screenAppCollaboratorTargetsSchema,
   setCollaboratorDisplayedSchema,
   transferIdSchema,
 } from '~/server/schema/blocks/app-collaborator.schema';
@@ -63,6 +64,15 @@ import type { SessionUser } from '~/types/session';
  */
 
 const enforceAppBlocksAuthorFlag = middleware(async ({ ctx, next }) => {
+  // Every attachment below is `protectedProcedure.use(...)`, so `isAuthed` has already
+  // run and `ctx.user` is non-null at runtime — but this is a bare `middleware`, whose
+  // ctx type does not carry that narrowing. `isAppBlocksAuthorEnabled` REQUIRES a
+  // subject (a capability has nothing to authorize without one), so the compiler makes
+  // this refusal mandatory rather than optional. Keep it: it is also what makes the
+  // middleware safe if it is ever attached to a `publicProcedure`.
+  if (!ctx.user) {
+    throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
+  }
   if (await isAppBlocksAuthorEnabled({ user: ctx.user })) return next();
   throw new TRPCError({ code: 'UNAUTHORIZED', message: 'Apps authoring is not enabled' });
 });
@@ -136,6 +146,43 @@ export const appCollaboratorsRouter = router({
       );
     }),
 
+  /**
+   * OWNER: screen the ids the invite picker is currently offering, and say which of them
+   * cannot hold a seat.
+   *
+   * A QUERY, not a mutation, and it returns ids only — no reason, nothing about accounts that
+   * are fine. The picker uses it to stop offering candidates the invite is going to refuse;
+   * `invite` re-checks the same thing and is what actually prevents the grant.
+   *
+   * 🔴 Owner-keyed (the service asserts ownership of `appListingId`) AND rate-limited, like its
+   * `invite` sibling. Neither is load-bearing against today's audience — both exist so this
+   * cannot quietly become an account-state enumeration endpoint the day the authoring flag
+   * widens. The limit is set well above what the picker can generate: the query re-issues only
+   * when the accumulated id set actually changes, not per keystroke.
+   */
+  ineligibleTargets: appDeveloperProcedure
+    .use(
+      rateLimit({
+        limit: 600,
+        period: 3600,
+        errorMessage: 'Too many collaborator lookups — slow down.',
+      })
+    )
+    .input(screenAppCollaboratorTargetsSchema)
+    .query(async ({ ctx, input }) => {
+      assertNotBanned(ctx.user as SessionUser);
+      const { getIneligibleCollaboratorTargets } = await import(
+        '~/server/services/blocks/app-collaborator.service'
+      );
+      return run(() =>
+        getIneligibleCollaboratorTargets({
+          appListingId: input.appListingId,
+          actorUserId: ctx.user!.id,
+          userIds: input.userIds,
+        })
+      );
+    }),
+
   /** OWNER: remove a collaborator (any status). Revokes their repo write. */
   remove: appDeveloperProcedure
     .input(removeAppCollaboratorSchema)
@@ -187,9 +234,21 @@ export const appCollaboratorsRouter = router({
     }),
 
   /**
-   * COLLABORATOR: opt in/out of the PUBLIC BYLINE. Applies immediately (no mod
-   * review) — safe by construction because the flag lives on the collaborator row,
-   * outside the shadow-revision copy sets. See the service.
+   * Set the PUBLIC BYLINE flag on a seat. Applies immediately (no mod review) — safe by
+   * construction because the flag lives on the collaborator row, outside the
+   * shadow-revision copy sets. See the service.
+   *
+   * 🔴 TWO PATHS, chosen by whether `targetUserId` is supplied:
+   *   - omitted → SELF-SERVICE, the shape this proc shipped with, unchanged;
+   *   - supplied → the caller must be the listing OWNER (resolved canonically) or a
+   *     MODERATOR, else FORBIDDEN.
+   *
+   * The owner path is a deliberate product decision — an owner may remove a
+   * collaborator's public credit while leaving the seat intact. It is enforced in the
+   * SERVICE, not here, so a different caller cannot bypass it. Last writer wins; the
+   * service header says why there is no precedence rule.
+   *
+   * 🔴 `isModerator` is read from the SESSION, never from the wire.
    */
   setDisplayed: protectedProcedure
     .use(enforceAppBlocksAuthorFlag)
@@ -202,7 +261,9 @@ export const appCollaboratorsRouter = router({
         setCollaboratorDisplayed({
           appListingId: input.appListingId,
           userId: ctx.user!.id,
+          targetUserId: input.targetUserId,
           displayed: input.displayed,
+          isModerator: !!ctx.user?.isModerator,
         })
       );
     }),
@@ -215,6 +276,30 @@ export const appCollaboratorsRouter = router({
         '~/server/services/blocks/app-collaborator.service'
       );
       return run(() => listMyPendingInvites(ctx.user!.id));
+    }),
+
+  /**
+   * The caller's own live ownership OFFERS (the same inbox surface).
+   *
+   * 🔴 KEYED ON THE RECIPIENT, which is what makes the transfer feature reachable at
+   * all. `getPendingTransfer` is keyed per LISTING, so it can only answer a question the
+   * recipient is unable to ask: a pending offer confers no role, so they cannot resolve
+   * the listing and, in the ordinary case, do not know it exists.
+   *
+   * Gated like its sibling `listMyPendingInvites` — `protectedProcedure +
+   * enforceAppBlocksAuthorFlag`, NOT `appDeveloperProcedure`. Being offered your FIRST
+   * app is precisely the case where "do you already own an app" is the wrong gate.
+   *
+   * Scoped to `ctx.user.id` in the SERVICE signature, so there is no id on the wire that
+   * a caller could point at somebody else's inbox.
+   */
+  listMyPendingTransfers: protectedProcedure
+    .use(enforceAppBlocksAuthorFlag)
+    .query(async ({ ctx }) => {
+      const { listMyPendingTransfers } = await import(
+        '~/server/services/blocks/app-ownership-transfer.service'
+      );
+      return run(() => listMyPendingTransfers(ctx.user!.id));
     }),
 
   // -------------------------------------------------------------------------

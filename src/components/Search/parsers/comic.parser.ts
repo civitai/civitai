@@ -1,7 +1,11 @@
 import type { UiState } from 'instantsearch.js';
 import * as z from 'zod';
 import type { InstantSearchRoutingParser } from '~/components/Search/parsers/base';
-import { searchParamsSchema } from '~/components/Search/parsers/base';
+import {
+  parseSearchParams,
+  searchParamsSchema,
+  stringArrayParamSchema,
+} from '~/components/Search/parsers/base';
 import { COMICS_SEARCH_INDEX } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
@@ -21,17 +25,16 @@ const comicSearchParamsSchema = searchParamsSchema
   .extend({
     index: z.literal('comics'),
     sortBy: z.enum(ComicsSearchIndexSortBy),
-    genre: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
+    genre: stringArrayParamSchema,
   })
   .partial();
 
 export const comicsInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
-    const comicSearchIndexResult = comicSearchParamsSchema.safeParse(QS.parse(location.search));
-    const comicSearchIndexData: ComicSearchParams | Record<string, string[]> =
-      comicSearchIndexResult.success ? comicSearchIndexResult.data : {};
+    const comicSearchIndexData = parseSearchParams(
+      comicSearchParamsSchema,
+      QS.parse(location.search)
+    );
 
     return { [COMICS_SEARCH_INDEX]: removeEmpty(comicSearchIndexData) };
   },

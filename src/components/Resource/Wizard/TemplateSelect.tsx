@@ -1,7 +1,8 @@
 import { useRouter } from 'next/router';
 import { useState } from 'react';
-import { Checkbox, Stack, Text } from '@mantine/core';
+import { Button, Checkbox, Popover, Stack, Text } from '@mantine/core';
 import { QuickSearchDropdown } from '~/components/Search/QuickSearchDropdown';
+import { quoteMeiliValue } from '~/components/Search/meili-filter';
 import type { TemplateOmittableField } from '~/server/schema/model.schema';
 
 // "Settings only" is one preset over the omit list; a future granular picker can write
@@ -13,7 +14,30 @@ type Props = {
   onSelect: () => void;
 };
 
-export function TemplateSelect({ username, onSelect }: Props) {
+export function TemplatePicker({
+  username,
+  hasTemplate,
+}: {
+  username: string;
+  hasTemplate: boolean;
+}) {
+  const [opened, setOpened] = useState(false);
+
+  return (
+    <Popover opened={opened} width={400} position="bottom-end" onChange={setOpened} withArrow>
+      <Popover.Target>
+        <Button variant="subtle" onClick={() => setOpened(true)}>
+          {hasTemplate ? 'Swap template' : 'Use a template'}
+        </Button>
+      </Popover.Target>
+      <Popover.Dropdown p={4}>
+        <TemplateSelect username={username} onSelect={() => setOpened(false)} />
+      </Popover.Dropdown>
+    </Popover>
+  );
+}
+
+function TemplateSelect({ username, onSelect }: Props) {
   const router = useRouter();
   const [settingsOnly, setSettingsOnly] = useState(
     typeof router.query.templateOmit === 'string' && router.query.templateOmit.length > 0
@@ -45,9 +69,11 @@ export function TemplateSelect({ username, onSelect }: Props) {
           );
           onSelect();
         }}
-        filters={`user.username='${username}'`}
+        filters={`user.username = ${quoteMeiliValue(username)}`}
         dropdownItemLimit={10}
         placeholder="Search your models..."
+        // Inline: a portaled option is outside the enclosing Popover, so pressing it closes the Popover.
+        comboboxProps={{ withinPortal: false }}
       />
     </Stack>
   );

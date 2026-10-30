@@ -15,6 +15,7 @@ const h = vi.hoisted(() => ({
   hDel: vi.fn(),
   createPair: vi.fn(),
   getClientIp: vi.fn<() => string | null>(),
+  checkRateLimit: vi.fn<(bucket: string, id: string | null) => Promise<boolean>>(),
   logOAuthEvent: vi.fn(),
   // controllable Kysely client-row result for the OauthClient lookup
   clientRow: undefined as unknown,
@@ -41,13 +42,17 @@ vi.mock('$lib/server/redis', () => ({
 }));
 
 vi.mock('$lib/server/oauth/rate-limit', () => ({
-  checkOAuthRateLimit: vi.fn().mockResolvedValue(true),
+  checkOAuthRateLimit: h.checkRateLimit,
 }));
 vi.mock('$lib/server/oauth/audit-log', () => ({ logOAuthEvent: h.logOAuthEvent }));
 vi.mock('$lib/server/auth/request', () => ({ getClientIp: h.getClientIp }));
 vi.mock('$lib/server/oauth/token-helpers', () => ({ createOAuthTokenPair: h.createPair }));
 
+vi.mock('$lib/server/oauth/server', () => ({ oauthServer: { token: vi.fn() } }));
+vi.mock('$lib/server/axiom', () => ({ logAxiomError: vi.fn() }));
+
 import { POST } from '../+server';
+import { POST as tokenPOST } from '../../token/+server';
 
 const CLI_SCOPE = TokenScope.UserRead | TokenScope.AppBlocksSubmit; // 33554433 (bit 25 set)
 
@@ -74,6 +79,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   h.clientRow = undefined;
   h.getClientIp.mockReturnValue('203.0.113.7'); // resolved client IP for the audit log
+  h.checkRateLimit.mockResolvedValue(true);
   h.hDel.mockResolvedValue(1); // claim succeeds by default (atomic HDEL returns 1)
   h.createPair.mockResolvedValue({
     accessToken: 'civitai_access',
@@ -191,5 +197,95 @@ describe('device-token +server — AppBlocksSubmit scope survives into the minte
     expect(res.status).toBe(400);
     expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
     expect(h.createPair).not.toHaveBeenCalled();
+  });
+});
+
+describe('device-token +server — the poll is bounded per sign-in, not per fleet', () => {
+  // Every install of a device-flow app presents the SAME public client_id, so keying either bucket on it
+  // caps the whole fleet: at DEVICE_POLL_INTERVAL=5 one in-flight sign-in already spends 12 requests a
+  // minute. These assertions fail if the identifier regresses to client_id.
+  it('charges the coarse ceiling to the caller IP and the poll bound to the device_code', async () => {
+    h.hGet.mockResolvedValueOnce(approvedCode);
+    h.clientRow = { allowedScopes: CLI_SCOPE };
+
+    await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'cli',
+      })
+    );
+
+    expect(h.checkRateLimit).toHaveBeenCalledWith('device-token-anon', '203.0.113.7');
+    expect(h.checkRateLimit).toHaveBeenCalledWith('device-token', 'devcode');
+    const identifiers = h.checkRateLimit.mock.calls.map(([, id]) => id);
+    expect(identifiers).not.toContain('cli');
+  });
+
+  it('bails on the per-IP ceiling before it can create a bucket for an unvalidated device_code', async () => {
+    h.checkRateLimit.mockImplementation(async (bucket) => bucket !== 'device-token-anon');
+
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'attacker-supplied',
+        client_id: 'cli',
+      })
+    );
+
+    expect(res.status).toBe(429);
+    expect(h.checkRateLimit).not.toHaveBeenCalledWith('device-token', 'attacker-supplied');
+    expect(h.hGet).not.toHaveBeenCalled();
+  });
+});
+
+describe('device-token +server — client_credentials-only scopes', () => {
+  it('refuses to mint AppStoreCatalogWrite even when the client ceiling carries it', async () => {
+    const scope = TokenScope.UserRead | TokenScope.AppStoreCatalogWrite;
+    h.hGet.mockResolvedValueOnce({ ...approvedCode, scope: scope.toString() });
+    h.clientRow = { allowedScopes: scope };
+
+    const res = await POST(
+      makeEvent({
+        grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+        device_code: 'devcode',
+        client_id: 'civitai-cli',
+      })
+    );
+
+    expect(res.status).toBe(400);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid_scope');
+    expect(h.createPair).not.toHaveBeenCalled();
+  });
+});
+
+describe('the device grant at /token (RFC 8628 §3.4)', () => {
+  it('mints the same token as /device-token, with Link desktop’s form body, outside the token bucket', async () => {
+    // The token endpoint's own per-IP bucket is exhausted; a device poll is charged to its own buckets.
+    h.checkRateLimit.mockImplementation(async (bucket) => bucket !== 'token');
+    h.hGet.mockResolvedValueOnce(approvedCode);
+    h.clientRow = { allowedScopes: CLI_SCOPE };
+
+    const res = await tokenPOST({
+      request: new Request('https://auth.civitai.com/api/auth/oauth/token', {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          grant_type: 'urn:ietf:params:oauth:grant-type:device_code',
+          device_code: 'devcode',
+          client_id: 'civitai-cli',
+        }),
+      }),
+    } as never);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({
+      access_token: 'civitai_access',
+      refresh_token: 'civitai_refresh',
+      scope: String(CLI_SCOPE),
+    });
+    expect(h.createPair).toHaveBeenCalledWith(7, 'civitai-cli', CLI_SCOPE);
+    // RFC 6749 §5.1: a token response must not be cached.
+    expect(res.headers.get('cache-control')).toBe('no-store');
   });
 });

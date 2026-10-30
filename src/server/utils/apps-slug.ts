@@ -29,6 +29,45 @@ export function sanitizeAppSlug(input: string): string | null {
   return isValidAppSlug(replaced) ? replaced : null;
 }
 
+// Names a NEW app may not take. An app is served at `<blockId>.<APPS_DOMAIN>`, and a new app's
+// host is answered by a catch-all on the shared static server. Any name that already has, or will
+// get, its own DNS record under that domain shadows the catch-all, so the app would never be
+// reachable: the DNS ownership records the platform writes beside each managed record
+// (`<record type>-<name>`), dev tunnel hosts (`dev-<16 hex>`), moderator review previews
+// (`review-<sha16>`), and `www`.
+const RESERVED_BLOCK_ID_PREFIXES: ReadonlyArray<{ prefix: string; usedFor: string }> = [
+  { prefix: 'a-', usedFor: 'DNS ownership records' },
+  { prefix: 'aaaa-', usedFor: 'DNS ownership records' },
+  { prefix: 'cname-', usedFor: 'DNS ownership records' },
+  { prefix: 'dev-', usedFor: 'dev tunnel hosts' },
+  { prefix: 'review-', usedFor: 'moderator review previews' },
+];
+const RESERVED_BLOCK_IDS: ReadonlyArray<string> = ['www'];
+
+/**
+ * Why a NEW blockId may not be registered, or `null` when it may.
+ *
+ * - Consecutive hyphens: `sanitizeAppSlug` folds a run of hyphens to one `_`, so `my-app` and
+ *   `my--app` would share one storage schema. Among blockIds that match the manifest pattern and
+ *   contain no `--`, the mapping is a plain `-` to `_` substitution and cannot collide.
+ * - Reserved names (above): the app's address would never reach it.
+ *
+ * Apply this only where a blockId is first registered, never to a new version of an existing app.
+ */
+export function newBlockIdError(blockId: string): string | null {
+  if (blockId.includes('--')) {
+    return `blockId "${blockId}" must not contain consecutive hyphens ("--"): app storage treats a run of hyphens as a single separator, so it could share storage with another app. Use single hyphens.`;
+  }
+  if (RESERVED_BLOCK_IDS.includes(blockId)) {
+    return `blockId "${blockId}" is reserved. Choose a different blockId.`;
+  }
+  const hit = RESERVED_BLOCK_ID_PREFIXES.find(({ prefix }) => blockId.startsWith(prefix));
+  if (hit) {
+    return `blockId "${blockId}" is reserved: ids starting with "${hit.prefix}" are used for ${hit.usedFor}, so the app's address would never reach it. Choose a different blockId.`;
+  }
+  return null;
+}
+
 /**
  * Strict validation gate — every DDL site must verify a slug with this
  * before interpolating it. Returns false for null/undefined/non-string.
@@ -79,7 +118,10 @@ const REVIEW_PREVIEW_ID_RE = /^[a-z0-9]{3,48}$/;
  *  schema. Lowercases + strips non-alnum; returns null if the result is unusable. */
 export function normalizeReviewPreviewId(publishRequestId: unknown): string | null {
   if (typeof publishRequestId !== 'string') return null;
-  const norm = publishRequestId.toLowerCase().replace(/[^a-z0-9]+/g, '').slice(0, 48);
+  const norm = publishRequestId
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '')
+    .slice(0, 48);
   return REVIEW_PREVIEW_ID_RE.test(norm) ? norm : null;
 }
 

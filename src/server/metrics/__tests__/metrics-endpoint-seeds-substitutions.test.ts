@@ -1,5 +1,6 @@
 import client from 'prom-client';
 import { describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * 🔴 THE SEAM: does loading the module that SERVES the scrape actually register
@@ -40,8 +41,6 @@ import { describe, expect, it, vi } from 'vitest';
 vi.mock('~/server/utils/endpoint-helpers', () => ({
   WebhookEndpoint: (handler: unknown) => handler,
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
-
 const METRIC = 'civitai_generation_model_substitutions_total';
 
 describe('/api/metrics registers + seeds the substitution counter at module load', () => {
@@ -60,7 +59,7 @@ describe('/api/metrics registers + seeds the substitution counter at module load
     const { values } = await metric!.get();
     // Derived from the unions, not hardcoded: a 5th surface must be seeded too.
     const { GENERATION_SURFACES, MODEL_SUBSTITUTION_REASONS } = await import(
-      '~/shared/data-graph/generation/model-substitution'
+      '~/shared/generation/model-substitution'
     );
     expect(values).toHaveLength(GENERATION_SURFACES.length * MODEL_SUBSTITUTION_REASONS.length);
     expect(values.every((v) => v.value === 0)).toBe(true);

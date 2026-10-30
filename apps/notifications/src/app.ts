@@ -5,12 +5,16 @@ import {
   countNotificationsInput,
   createNotificationPendingRow,
   createNotificationsBulkInput,
+  getSystemNoticeSendInput,
   markReadInput,
   notificationExistsInput,
   queryNotificationsInput,
+  sendSystemNoticesInput,
 } from '@civitai/notifications';
 import { register, producerRequestsTotal, httpRequestDurationSeconds } from './lib/server/metrics';
-import { isAuthorized } from './lib/server/auth';
+import { isAuthorized, isNoticesAuthorized } from './lib/server/auth';
+import { logToAxiom } from './lib/server/clients/axiom';
+import { getSystemNoticeSend, NoticeError, sendSystemNotices } from './lib/server/notices';
 import { createNotification } from './lib/server/create';
 import {
   cleanupNotifications,
@@ -21,11 +25,13 @@ import {
   queryNotifications,
 } from './lib/server/operations';
 import { notifDbRead, notifDbWrite } from './lib/server/clients/db';
+import { health } from './lib/server/health';
 import { logLevel } from './env';
 
 /**
  * Build the Fastify server (no listen — server.ts calls listen; tests use `.inject`). Ops routes:
- *   - GET  /health      — no-dep liveness+readiness (must not touch DB/redis so it can't flap).
+ *   - GET  /health      — liveness+readiness. Never touches DB/redis itself; on a worker pod it returns
+ *                         503 when the worker's observed redis or poll-loop state says it is stuck.
  *   - GET  /pool-stats  — notif pool snapshots.
  *   - GET  /metrics     — Prometheus scrape, private-by-XFF.
  * Authed producer/read API (A + C), all shared-secret gated, all POST — the trusted caller (the monolith)
@@ -37,6 +43,9 @@ import { logLevel } from './env';
  *   - POST /notifications/mark-read — mark one/all/category read (fire-and-forget).
  *   - POST /notifications/exists  — producer-side key dedup.
  *   - POST /notifications/cleanup — delete old UserNotification rows.
+ * System notices, gated by their own token (NOTIFICATIONS_NOTICES_TOKEN), never the producer one:
+ *   - POST /notifications/notices     — dry-run or send a system notice to a list of users.
+ *   - POST /notifications/notices/get — the audit record for one sendId.
  */
 export async function buildServer(): Promise<FastifyInstance> {
   const app = Fastify({
@@ -62,16 +71,22 @@ export async function buildServer(): Promise<FastifyInstance> {
       status < 400
         ? 'success'
         : status === 401
-          ? 'unauthorized'
-          : status === 400
-            ? 'rejected'
-            : status >= 500
-              ? 'error'
-              : 'client_error';
+        ? 'unauthorized'
+        : status === 400
+        ? 'rejected'
+        : status >= 500
+        ? 'error'
+        : 'client_error';
     httpRequestDurationSeconds.observe({ route, outcome }, reply.elapsedTime / 1000);
   });
 
-  app.get('/health', async () => ({ status: 'ok', service: 'notifications' }));
+  app.get('/health', async (_req, reply) => {
+    const report = health.check();
+    if (report.ok) return { status: 'ok', service: 'notifications' };
+    return reply
+      .code(503)
+      .send({ status: 'unhealthy', service: 'notifications', reasons: report.reasons });
+  });
 
   app.get('/pool-stats', async () => {
     const snapshot = (pool: ReturnType<typeof notifDbWrite>) => ({
@@ -80,7 +95,11 @@ export async function buildServer(): Promise<FastifyInstance> {
       active: pool.totalCount - pool.idleCount,
       waiting: pool.waitingCount,
     });
-    return { write: snapshot(notifDbWrite()), read: snapshot(notifDbRead()), timestamp: Date.now() };
+    return {
+      write: snapshot(notifDbWrite()),
+      read: snapshot(notifDbRead()),
+      timestamp: Date.now(),
+    };
   });
 
   // EXPOSURE GUARD: any request carrying x-forwarded-for came through the public ingress; the in-cluster
@@ -174,6 +193,70 @@ export async function buildServer(): Promise<FastifyInstance> {
     if (!body) return reply;
     const deleted = await cleanupNotifications(body.before);
     return reply.send({ deleted });
+  });
+
+  function noticesBody<T>(schema: ZodType<T>, req: FastifyRequest, reply: FastifyReply): T | null {
+    if (!isNoticesAuthorized(req.headers)) {
+      reply.code(401).send({ error: 'Unauthorized' });
+      return null;
+    }
+    const parsed = schema.safeParse(req.body);
+    if (!parsed.success) {
+      reply.code(400).send({ error: 'Invalid payload', issues: parsed.error.issues });
+      return null;
+    }
+    return parsed.data;
+  }
+
+  app.post('/notifications/notices', async (req, reply) => {
+    const body = noticesBody(sendSystemNoticesInput, req, reply);
+    if (!body) return reply;
+    const credential = 'notices-token' as const;
+    const audit = {
+      name: 'system-notices',
+      sendId: body.sendId,
+      mode: body.mode,
+      noticeType: body.type,
+      sentBy: body.sentBy,
+      reason: body.reason,
+      credential,
+    };
+    try {
+      const result = await sendSystemNotices(body, { credential });
+      logToAxiom({
+        type: 'info',
+        ...audit,
+        status: 200,
+        requested: result.requested,
+        ...result.counts,
+      }).catch(() => undefined);
+      return reply.send(result);
+    } catch (err) {
+      const known = err instanceof NoticeError;
+      const status = known ? err.status : 500;
+      const extra = known ? err.extra : {};
+      // Raw database errors go to the log only; the caller gets our own message.
+      const message = known ? err.message : 'Internal error';
+      const cause = known ? err.cause : err;
+      logToAxiom({
+        type: status >= 500 ? 'error' : 'warning',
+        ...audit,
+        status,
+        message,
+        ...(cause ? { cause: (cause as Error).message } : {}),
+        ...extra,
+      }).catch(() => undefined);
+      if (status >= 500) req.log.error({ err }, 'system notices failed');
+      return reply.code(status).send({ error: message, ...extra });
+    }
+  });
+
+  app.post('/notifications/notices/get', async (req, reply) => {
+    const body = noticesBody(getSystemNoticeSendInput, req, reply);
+    if (!body) return reply;
+    const record = await getSystemNoticeSend(body.sendId);
+    if (!record) return reply.code(404).send({ error: 'Unknown sendId' });
+    return reply.send(record);
   });
 
   return app;

@@ -1,56 +1,50 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as ChallengeJudgeService from '~/server/services/challenge-judge.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // JUDGE_USER_ID/CREATOR_USER_ID must be defined inside vi.hoisted() itself: its callback runs
 // before any top-level `const` in this file initializes, so referencing an outer const here
 // throws a TDZ error ("Cannot access 'JUDGE_USER_ID' before initialization").
-const {
-  mockDbRead,
-  mockDbWrite,
-  mockTx,
-  mockCreateImage,
-  mockGetChallengeConfig,
-  JUDGE_USER_ID,
-  CREATOR_USER_ID,
-} = vi.hoisted(() => {
-  const JUDGE_USER_ID = 8_675_309;
-  const CREATOR_USER_ID = 42;
-  const tx = {
-    challenge: {
-      update: vi.fn().mockResolvedValue({ id: 1 }),
-      create: vi.fn().mockResolvedValue({ id: 2, collectionId: 10 }),
-    },
-    challengeEngagement: {
-      create: vi.fn().mockResolvedValue({}),
-    },
-    collection: {
-      create: vi.fn().mockResolvedValue({ id: 10 }),
-      update: vi.fn().mockResolvedValue({ id: 10 }),
-      findUnique: vi.fn().mockResolvedValue({ metadata: {} }),
-    },
-  };
-  return {
-    JUDGE_USER_ID,
-    CREATOR_USER_ID,
-    mockTx: tx,
-    mockDbRead: {
-      challenge: { findUnique: vi.fn() },
-      challengeJudge: { findUnique: vi.fn().mockResolvedValue({ userId: JUDGE_USER_ID }) },
-      image: { findFirst: vi.fn().mockResolvedValue({ id: 1 }) },
-    },
-    mockDbWrite: { $transaction: vi.fn(async (cb: (tx: unknown) => unknown) => cb(tx)) },
-    mockCreateImage: vi.fn(),
-    mockGetChallengeConfig: vi.fn().mockResolvedValue({ defaultJudgeId: 1 }),
-  };
-});
+const { mockTx, mockCreateImage, mockGetChallengeConfig, JUDGE_USER_ID, CREATOR_USER_ID } =
+  vi.hoisted(() => {
+    const JUDGE_USER_ID = 8_675_309;
+    const CREATOR_USER_ID = 42;
+    const tx = {
+      challenge: {
+        update: vi.fn().mockResolvedValue({ id: 1 }),
+        create: vi.fn().mockResolvedValue({ id: 2, collectionId: 10 }),
+      },
+      challengeEngagement: {
+        create: vi.fn().mockResolvedValue({}),
+      },
+      collection: {
+        create: vi.fn().mockResolvedValue({ id: 10 }),
+        update: vi.fn().mockResolvedValue({ id: 10 }),
+        findUnique: vi.fn().mockResolvedValue({ metadata: {} }),
+      },
+    };
+    return {
+      JUDGE_USER_ID,
+      CREATOR_USER_ID,
+      mockTx: tx,
+      mockCreateImage: vi.fn(),
+      mockGetChallengeConfig: vi.fn().mockResolvedValue({ defaultJudgeId: 1 }),
+    };
+  });
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+// Not canonical defaults, so they are stated rather than inherited. `beforeEach` re-arms both,
+// but the module-scope copies keep the file's own `tx` reachable before the first case runs.
+mockDbRead.challengeJudge.findUnique.mockResolvedValue({ userId: JUDGE_USER_ID });
+mockDbRead.image.findFirst.mockResolvedValue({ id: 1 });
+mockDbWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => unknown) => cb(mockTx));
 
 vi.mock('~/server/flipt/client', () => ({
   FLIPT_FEATURE_FLAGS: {},
   isFlipt: vi.fn().mockResolvedValue(false),
 }));
-
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
   claimChallengeForCompletion: vi.fn(),
@@ -104,7 +98,8 @@ vi.mock('~/server/services/challenge-eligibility.service', () => ({
   assertUserAccountInGoodStanding: vi.fn(),
 }));
 
-vi.mock('~/server/services/challenge-judge.service', () => ({
+vi.mock('~/server/services/challenge-judge.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof ChallengeJudgeService>()),
   getUserSelectableJudges: vi.fn().mockResolvedValue([{ id: 3 }]),
 }));
 

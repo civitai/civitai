@@ -24,6 +24,7 @@ import {
 import { useQueryCosmetic } from '~/components/Cosmetics/cosmetics.util';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { Meta } from '~/components/Meta/Meta';
+import { NsfwLevel } from '~/server/common/enums';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
@@ -164,7 +165,8 @@ function ClaimCosmeticPageInner({ id }: { id: number }) {
       <Meta
         title={`Claim ${cosmetic.name} | Civitai`}
         description={`Claim the ${cosmetic.name}. Awarded for ${cosmetic.description} while you can`}
-        imageUrl={getEdgeUrl(cosmeticImage, { width: 144 })}
+        imageUrl={getEdgeUrl(cosmeticImage, { width: 144, optimized: true })}
+        imageNsfwLevel={NsfwLevel.PG}
         deIndex
       />
       <Container size="xs" mb="lg">
@@ -183,7 +185,9 @@ function ClaimCosmeticPageInner({ id }: { id: number }) {
               <EdgeMedia
                 src={(cosmetic.data as MixedObject).url}
                 alt={cosmetic.name}
+                width={144}
                 style={{ height: 144, width: 144 }}
+                optimized
               />
             )}
             {cosmetic.type === 'ContentDecoration' && (

@@ -31,7 +31,7 @@ vi.mock('~/server/meilisearch/client', async (importOriginal) => {
 // never drives — mocked so the import stays light (mirrors model-search.image-filter).
 vi.mock('~/server/services/model.service', () => ({ getModelsWithVersions: vi.fn() }));
 vi.mock('~/server/services/file.service', () => ({ getDownloadFilename: vi.fn() }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (u: string) => u }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (u: string) => u }));
 vi.mock('~/server/common/model-helpers', () => ({ createModelFileDownloadUrl: vi.fn() }));
 
 const makeCommunicationError = (statusCode: number) => {

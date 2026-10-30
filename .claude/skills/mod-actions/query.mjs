@@ -9,15 +9,26 @@
  *   mute <id|username>              Toggle mute status
  *   leaderboard <id|username> <bool> Set leaderboard eligibility
  *   remove-content <id|username>    Remove all user content
- *   dm <id|username>                Send a DM to a user
+ *   dm <id|username>                Message a user as Civitai Moderation (--as-self: from your account)
+ *   inbox                           Civitai Moderation threads awaiting a reply (--all: every thread)
+ *   thread <id|username>            A user's Civitai Moderation thread, with who sent each message
+ *   creator-program-ban <id|username> <set|clear>  Ban from / unban from the Creator Program
+ *   end-buzz-membership <id|username>  End a Buzz-purchased membership now
  *
  * Options:
  *   --json                Output raw JSON
  *   --dry-run             Preview without making changes
  *   --reason <code>       Ban reason code
  *   --message <text>      External message for user / DM content
- *   --internal <text>     Internal notes
+ *   --internal <text>     Internal notes (the required audit reason for creator-program-ban
+ *                         and end-buzz-membership)
+ *   --gate <ref>          Approval this acts on, e.g. a hub card id (creator-program-ban)
+ *   --key <key>           dm: idempotency key from an earlier attempt, so a retry sends once
+ *   --as-self             dm: send from your own account instead of Civitai Moderation
+ *   --all                 inbox: every thread, not only those awaiting a reply
  */
+
+import { randomUUID } from 'node:crypto';
 
 import {
   requireApiKey, trpcCall, lookupUser, getModUserId, formatUser, API_URL, API_KEY, run,
@@ -28,7 +39,7 @@ requireApiKey();
 // Ban reason codes
 const BAN_REASONS = [
   'SexualMinor', 'SexualMinorGenerator', 'SexualMinorTraining',
-  'SexualPOI', 'Bestiality', 'Scat', 'Nudify', 'Harassment',
+  'SexualPOI', 'Bestiality', 'Scat', 'Nudify', 'Harassment', 'SpamBot',
   'LeaderboardCheating', 'BuzzCheating', 'RRDViolation', 'Other'
 ];
 
@@ -42,6 +53,10 @@ let dryRun = false;
 let reasonCode = null;
 let messageText = null;
 let internalNotes = null;
+let gateRef = null;
+let idempotencyKey = null;
+let asSelf = false;
+let allThreads = false;
 
 for (let i = 0; i < args.length; i++) {
   const arg = args[i];
@@ -55,6 +70,14 @@ for (let i = 0; i < args.length; i++) {
     messageText = args[++i];
   } else if (arg === '--internal') {
     internalNotes = args[++i];
+  } else if (arg === '--gate') {
+    gateRef = args[++i];
+  } else if (arg === '--key') {
+    idempotencyKey = args[++i];
+  } else if (arg === '--as-self') {
+    asSelf = true;
+  } else if (arg === '--all') {
+    allThreads = true;
   } else if (!command) {
     command = arg;
   } else if (!targetInput) {
@@ -73,14 +96,29 @@ Commands:
   mute <id|username>              Toggle mute status
   leaderboard <id|username> <bool> Set leaderboard eligibility
   remove-content <id|username>    Remove all user content
-  dm <id|username>                Send a DM to a user
+  dm <id|username>                Message a user as Civitai Moderation; prints an
+                                  idempotency key to pass back with --key on a retry
+                                  (needs the user.message.asCivitai permission)
+  inbox                           Civitai Moderation threads awaiting a reply
+  thread <id|username>            A user's Civitai Moderation thread
+  creator-program-ban <id|username> <set|clear>
+                                  Ban from / unban from the Creator Program
+                                  (needs the user.creatorProgram.ban permission)
+  end-buzz-membership <id|username>
+                                  End a Buzz-purchased membership now; moves no Buzz
+                                  (needs the user.membership.code permission)
 
 Options:
   --json                Output raw JSON
   --dry-run             Preview without making changes
   --reason <code>       Ban reason code
   --message <text>      External message for user / DM content
-  --internal <text>     Internal notes
+  --internal <text>     Internal notes; the required reason for creator-program-ban
+                        and end-buzz-membership
+  --gate <ref>          Approval this acts on (creator-program-ban), e.g. a hub card id
+  --key <key>           dm: reuse the key an earlier attempt printed, so a retry sends once
+  --as-self             dm: send from your own account (the old behaviour)
+  --all                 inbox: every thread, newest first
 
 Ban Reason Codes:
   ${BAN_REASONS.join(', ')}
@@ -93,6 +131,10 @@ Examples:
   node query.mjs leaderboard 3879899 false
   node query.mjs remove-content 3879899 --dry-run
   node query.mjs dm 3879899 --message "Hello, this is a message from the mod team"
+  node query.mjs inbox
+  node query.mjs thread 3879899
+  node query.mjs creator-program-ban 12345 set --internal "Counterparty farming" --gate hub:request:abc
+  node query.mjs end-buzz-membership 12345 --internal "Buzz refunded by support" --dry-run
 
 Configuration:
   Set CIVITAI_API_KEY and CIVITAI_API_URL in .claude/skills/mod-actions/.env
@@ -147,6 +189,24 @@ async function sendDm(targetUserId, message) {
   const chatId = chat.id;
   const result = await sendChatMessage(chatId, message);
   return { chatId, messageId: result.id, modUserId };
+}
+
+// `/api/mod/*` as the key owner. GET params ride in the query string.
+async function modApi(method, path, params) {
+  const url = new URL(`${API_URL}/api/mod/${path}`);
+  if (method === 'GET')
+    for (const [k, v] of Object.entries(params)) if (v !== undefined) url.searchParams.set(k, String(v));
+  const response = await fetch(url, {
+    method,
+    headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+    body: method === 'GET' ? undefined : JSON.stringify(params),
+  });
+  const text = await response.text();
+  if (!response.ok) {
+    console.error(`${path} failed: ${response.status} ${text.slice(0, 500)}`);
+    process.exit(1);
+  }
+  return JSON.parse(text);
 }
 
 // Format action result
@@ -344,9 +404,37 @@ async function main() {
       }
 
       if (dryRun) {
-        console.log(`[DRY RUN] Would send DM:`);
+        console.log(`[DRY RUN] Would send DM${asSelf ? ' from your account' : ' as Civitai Moderation'}:`);
         console.log(`To: ${user.username} (ID: ${user.id})`);
         console.log(`Message: ${messageText}`);
+        break;
+      }
+
+      if (!asSelf) {
+        const key = idempotencyKey ?? `dm-${randomUUID()}`;
+        // Printed before sending: if the response is lost, rerun with --key and it sends at most once.
+        if (!jsonOutput) console.log(`Idempotency key: ${key}`);
+        const sent = await modApi('POST', 'user/message-as-civitai', {
+          userId: user.id,
+          message: messageText,
+          idempotencyKey: key,
+        });
+        if (jsonOutput) {
+          console.log(
+            JSON.stringify(
+              { ...sent, idempotencyKey: key, user: { id: user.id, username: user.username } },
+              null,
+              2
+            )
+          );
+        } else {
+          console.log(
+            `Action: MESSAGE SENT AS CIVITAI MODERATION${sent.deduped ? ' (already sent with this key)' : ''}`
+          );
+          console.log(`To: ${user.username} (ID: ${user.id})`);
+          console.log(`Chat ID: ${sent.chatId}`);
+          console.log(`Message ID: ${sent.messageId}`);
+        }
         break;
       }
 
@@ -360,6 +448,49 @@ async function main() {
         console.log(`Chat ID: ${dmResult.chatId}`);
         console.log(`Message ID: ${dmResult.messageId}`);
         console.log(`Success: Yes`);
+      }
+      break;
+    }
+
+    case 'inbox': {
+      const { threads } = await modApi('GET', 'messages/inbox', { awaitingOnly: !allThreads, limit: 100 });
+      if (jsonOutput) {
+        console.log(JSON.stringify(threads, null, 2));
+        break;
+      }
+      if (!threads.length) console.log(allThreads ? 'No threads.' : 'Nothing awaiting a reply.');
+      for (const t of threads) {
+        const claim = t.claimedBy ? ` [claimed by ${t.claimedByUsername ?? t.claimedBy}]` : '';
+        console.log(`${t.lastMessageAt}  ${t.username ?? '#' + t.userId} (${t.userId})${claim}`);
+        console.log(`  ${t.lastMessageFromCivitai ? 'Civitai' : 'User'}: ${t.lastMessage.slice(0, 200)}`);
+      }
+      break;
+    }
+
+    case 'thread': {
+      if (!targetInput) {
+        console.error('Usage: node query.mjs thread <id|username>');
+        process.exit(1);
+      }
+      const user = await lookupUser(targetInput);
+      if (!user) {
+        console.error('Error: User not found');
+        process.exit(1);
+      }
+      const thread = await modApi('GET', 'messages/thread', { userId: user.id });
+      if (jsonOutput) {
+        console.log(JSON.stringify(thread, null, 2));
+        break;
+      }
+      if (!thread.chatId) {
+        console.log(`No Civitai Moderation thread with ${user.username}.`);
+        break;
+      }
+      if (thread.claim)
+        console.log(`Claimed by ${thread.claim.username ?? thread.claim.moderatorId} until ${thread.claim.expiresAt}`);
+      for (const m of thread.messages) {
+        const who = m.fromCivitai ? `Civitai (${m.sentByUsername ?? 'unknown'})` : user.username;
+        console.log(`${m.createdAt}  ${who}: ${m.content}`);
       }
       break;
     }
@@ -414,6 +545,94 @@ async function main() {
         console.log(`Buzz Credited: ${reprocessResult.buzzAmount || 0}`);
         console.log(`Transaction ID: ${reprocessResult.transactionId || 'N/A'}`);
         console.log(`Success: Yes`);
+      }
+      break;
+    }
+
+    case 'creator-program-ban': {
+      // Sets or clears only the BannedCreatorProgram onboarding bit, through
+      // /api/mod/user/creator-program-ban (audited; a repeat call changes nothing).
+      if (!targetInput || !['set', 'clear'].includes(arg2) || !internalNotes) {
+        console.error('Usage: node query.mjs creator-program-ban <id|username> <set|clear> --internal "<reason>" [--gate <ref>]');
+        process.exit(1);
+      }
+
+      const user = await lookupUser(targetInput);
+      if (!user) {
+        console.error('Error: User not found');
+        process.exit(1);
+      }
+
+      const body = { userId: user.id, action: arg2, reason: internalNotes, ...(gateRef ? { gateRef } : {}) };
+      if (dryRun) {
+        console.log(`[DRY RUN] Would POST ${API_URL}/api/mod/user/creator-program-ban`);
+        console.log(JSON.stringify(body, null, 2));
+        break;
+      }
+
+      const response = await fetch(`${API_URL}/api/mod/user/creator-program-ban`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        console.error(`creator-program-ban failed: ${response.status} ${text.slice(0, 500)}`);
+        process.exit(1);
+      }
+
+      const result = JSON.parse(text);
+      if (jsonOutput) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Action: CREATOR PROGRAM BAN ${arg2.toUpperCase()}`);
+        console.log(`User: ${user.username} (${user.id})`);
+        console.log(`Onboarding: ${result.before} -> ${result.after}`);
+        console.log(`Changed: ${result.changed ? 'Yes' : 'No (already in that state; still audited)'}`);
+      }
+      break;
+    }
+
+    case 'end-buzz-membership': {
+      if (!targetInput || !internalNotes) {
+        console.error('Usage: node query.mjs end-buzz-membership <id|username> --internal "<reason>" [--dry-run]');
+        process.exit(1);
+      }
+
+      const user = await lookupUser(targetInput);
+      if (!user) {
+        console.error('Error: User not found');
+        process.exit(1);
+      }
+
+      const body = { userId: user.id, reason: internalNotes };
+      if (dryRun) {
+        console.log(`[DRY RUN] Would POST ${API_URL}/api/mod/user/buzz-membership-end`);
+        console.log(JSON.stringify(body, null, 2));
+        break;
+      }
+
+      const response = await fetch(`${API_URL}/api/mod/user/buzz-membership-end`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      });
+      const text = await response.text();
+      if (!response.ok) {
+        console.error(`end-buzz-membership failed: ${response.status} ${text.slice(0, 500)}`);
+        process.exit(1);
+      }
+
+      const result = JSON.parse(text);
+      if (jsonOutput) {
+        console.log(JSON.stringify(result, null, 2));
+      } else {
+        console.log(`Action: END BUZZ MEMBERSHIP`);
+        console.log(`User: ${user.username} (${user.id})`);
+        console.log(`Subscription: ${result.subscriptionId} (${result.productId})`);
+        console.log(`Was: ${result.previousStatus}, paid through ${result.currentPeriodEnd}`);
+        console.log(`Ended: ${result.endedAt}`);
+        if (!result.freshdeskSynced) console.log('Freshdesk contact NOT updated; its tier is stale.');
       }
       break;
     }

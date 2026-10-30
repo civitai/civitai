@@ -34,7 +34,8 @@ sources are already in `default.buzzTransactions`, already keyed by the creator.
 | Source | Filter (`toAccountId = <creatorId>` in all cases) |
 |---|---|
 | Tip | `type = 'tip'` |
-| Generation compensation | `type = 'compensation'` |
+| Generation compensation | `type = 'compensation'` (minus generation tips, below) |
+| Generation tip | `type = 'compensation' AND externalTransactionId LIKE 'generation-tip-%'` (payout dates from 2026-10-13) |
 | License fee | `type = 'licenseFee'` — ⚠️ **currently `'27'`, see the blocker below** |
 | Access sale (early access) | `type = 'purchase' AND externalTransactionId LIKE 'early-access-%'` |
 | Cosmetic sale | `type = 'sell'` |
@@ -75,8 +76,11 @@ or the dashboard's headline totals. **It does not delete the dictionary** — se
 
 `TransactionType.LicenseFee = 27`, but the ClickHouse ingest MV (`buzz.tx_to_staged_mv`) has a hand-written
 `caseWithExpression` map that only enumerates `0..26` and falls back to `toString(Type)`. So **every license fee
-payout since 2026-05-21 is labelled `'27'`** — 92 rows, growing nightly at 02:00. It is the only numeric type
-value in the table's history.
+payout since 2026-05-21 is labelled `'27'`** — 92 rows, growing nightly at 02:00.
+
+**It is no longer the only one: `TransactionType.AppAuthorFee = 28` is a second value past the map**, so App Blocks
+author-fee rows (both the viewer debit and the settlement mint) land as `'28'` from their cutover onward. Any
+`0..26` assumption about this column is unsafe — treat "numeric `type`" as an open set, not as `'27'`.
 
 Until fixed, filter `type IN ('licenseFee','27')`, or the license-fee card reads zero. **Justin owns this fix**
 (he built the MV chain); the root cause, the verified swap procedure, and the backfill live in his private plan
@@ -179,9 +183,10 @@ exists.
   wrong: on the *buyer's* leg both are `purchase`, but on the *creator's receiving* leg — the only side earnings
   cares about — cosmetic is already `sell` and access is `purchase` + a stable `early-access-` prefix. **No new
   type/flag is needed and no schema change is required.** A distinct type would be *cleaner*, not *blocking*.
-- **`earnings.md` claimed `resourceCompensations` carries a `tip` source.** It does not — the only real `source`
-  values are `compensation`, `compensation_recovered_20260507`, and `licenseFee`. Tips are
-  `buzzTransactions.type = 'tip'`.
+- **`resourceCompensations` carries a `tip` source since 2026-10-08.** Before that the only `source` values were
+  `compensation`, `compensation_recovered_20260507` and `licenseFee`. `deliver-creator-compensation` pays them inside its
+  `compensation` transaction until 2026-10-12, and from payout date 2026-10-13 as their own `compensation`
+  transaction keyed `generation-tip-` (`GENERATION_TIP_TRANSACTION_START`), which `/earnings` shows as Generation tips.
 
 ## Precision — resolved, and the earlier "must NOT FLOOR" note was wrong
 
@@ -214,7 +219,7 @@ Neither is a Creator Studio bug, but both change what the numbers mean. Do not d
 1. **Access sales always credit yellow** (see D1 above). Confirmed a bug, fix is forward-only, historical rows
    stay yellow.
 2. **Cosmetic creator payouts are best-effort — a sale can succeed while the creator is never credited.**
-   `cosmetic-shop.service.ts:702-709` wraps the bank→creator `sell` leg in `withRetries(..., 3)` and a catch that
+   `cosmetic-shop.service.ts` (`purchaseCosmeticShopItem`'s payout block) wraps the bank→creator `sell` leg in `withRetries(..., 3)` and a catch that
    only logs to Axiom; the in-code comment says *"we don't want to fail the purchase if this fails. We can divide
    the funds later if needed."* So the platform keeps the buyer's buzz and the creator silently gets nothing.
    **`/earnings` will under-report cosmetic revenue with no signal**, because a failed payout leaves **no row** —
@@ -239,7 +244,9 @@ in this repo inserts into it).
 
 - [ ] Confirm the `byToAccount` projection actually serves the query plan (`EXPLAIN indexes=1`) for a
       `toAccountId = X AND date BETWEEN …` read. If yes, **no MV is needed at all** for v1.
-- [ ] Filter `type IN ('licenseFee','27')` until Justin's ingest fix + backfill lands, then drop the `'27'`.
+- [ ] Filter `type IN ('licenseFee','27')` until Justin's ingest fix + backfill lands, then drop the `'27'`. The
+      MV mislabels `AppAuthorFee` (28) the same way; that one is a **separate product decision**, so decide
+      explicitly whether App Blocks author fees belong in this page's earnings before adding `'28'` to any filter.
 - [ ] Exclude `accountId = 0`; isolate access sales by `externalTransactionId LIKE 'early-access-%'`.
 - [x] ~~Decide whether "top-earning models" is answerable from `buzzTransactions`~~ — **it is not, and Justin
       confirmed the tile ships**, so it is driven by `resourceCompensations` + the Part 2 dictionary (with the

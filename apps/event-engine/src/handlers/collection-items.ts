@@ -1,3 +1,4 @@
+import type { HandlerActions } from '@/types/handlers'
 import { createEventHandler } from './base'
 
 /**
@@ -11,6 +12,7 @@ import { createEventHandler } from './base'
 - ArticleMetric.favoriteCount (create/delete) (deprecate)
 - ArticleMetric.collectedCount (create/delete)
 - CollectionMetric.itemCount (create/delete)
+- status changes (update): a 0 on each of the above, to mark the entity for a recount
 */
 
 enum CollectionItemStatus {
@@ -37,40 +39,35 @@ interface CollectionItemRecord {
   tagId?: number | null
 }
 
+// Model, Post and Article collectedCount and Collection itemCount are counted from Postgres by
+// the metric jobs (src/server/metrics/collection-item-counts.ts); for those, these events only
+// mark the entity for a recount, so a row with no adder still marks them, as user -1 (the
+// processor drops events with no user). Only ACCEPTED rows count, so a status change is marked
+// too, with a 0 that moves no sum, on the row as it was and as it is. Image's 'Collection' is
+// still the sum of these events, attributed to the adder.
+function emit(record: CollectionItemRecord, value: number, actions: HandlerActions) {
+  const marker = record.addedById ?? -1
+
+  actions.forMetric('Collection', record.collectionId).as(marker).add('itemCount', value)
+  if (record.modelId) actions.forMetric('Model', record.modelId).as(marker).add('collectedCount', value)
+  if (record.postId) actions.forMetric('Post', record.postId).as(marker).add('collectedCount', value)
+  // Named to match existing metric
+  if (record.imageId) actions.forMetric('Image', record.imageId).as(record.addedById ?? 0).add('Collection', value)
+  if (record.articleId) actions.forMetric('Article', record.articleId).as(marker).add('collectedCount', value)
+}
+
 export const collectionItemHandler = createEventHandler<CollectionItemRecord>({
   tables: ['CollectionItem'],
-  operations: ['create', 'delete'],
-  processor: async ({ operation, record, actions, pg }) => {
-    const value = operation === 'create' ? 1 : -1
-    const addedBy = record.addedById ?? 0
-
-    // Update collection metric
-    const collectionMetric = actions.forMetric('Collection', record.collectionId).as(addedBy)
-    collectionMetric.add('itemCount', value)
-
-    // Handle model metrics
-    if (record.modelId) {
-      const modelMetric = actions.forMetric('Model', record.modelId).as(addedBy)
-      modelMetric.add('collectedCount', value)
+  operations: ['create', 'update', 'delete'],
+  processor: async ({ operation, record, current, old, actions }) => {
+    if (operation === 'update') {
+      if (current && old && current.status !== old.status) {
+        emit(old, 0, actions)
+        emit(current, 0, actions)
+      }
+      return
     }
-
-    // Handle post metrics
-    if (record.postId) {
-      const postMetric = actions.forMetric('Post', record.postId).as(addedBy)
-      postMetric.add('collectedCount', value)
-    }
-
-    // Handle image metrics
-    if (record.imageId) {
-      const imageMetric = actions.forMetric('Image', record.imageId).as(addedBy)
-      imageMetric.add('Collection', value) // Named to match existing metric
-    }
-
-    // Handle article metrics
-    if (record.articleId) {
-      const articleMetric = actions.forMetric('Article', record.articleId).as(addedBy)
-      articleMetric.add('collectedCount', value)
-    }
+    emit(record, operation === 'create' ? 1 : -1, actions)
   },
   debug: (faker) => ({
     sample: () => {

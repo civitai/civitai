@@ -156,6 +156,10 @@ export function countNotifications(input: {
   return inFlight;
 }
 
+// Past this many rows a recount stops and reports floors: a user with hundreds of thousands unread otherwise
+// scans them all (measured 8-11 s), for a number the UI caps at "1k+".
+export const COUNT_ROW_LIMIT = 10_000;
+
 async function countNotificationsImpl(input: {
   userId: number;
   unread: boolean;
@@ -163,8 +167,7 @@ async function countNotificationsImpl(input: {
 }): Promise<NotificationCategoryCount[]> {
   const { userId, unread, category } = input;
 
-  // The count cache (cache.ts) is a SINGLE per-user redis hash of per-category UNREAD counts, maintained
-  // incrementally by the worker's incrementUser (fan-out) / decrementUser (mark-read). It is keyed on
+  // The count cache (cache.ts) is a SINGLE per-user redis hash of per-category UNREAD counts. It is keyed on
   // `userId` ONLY — it does not distinguish the `unread` flag or a `category` filter. So it can correctly
   // represent EXACTLY ONE variant of this query: `unread:true` with no category. For any other variant:
   //   - `unread:false` (totals incl. read): there is no worker-maintained "total" counter, so this is
@@ -196,14 +199,20 @@ async function countNotificationsImpl(input: {
     where.push(`n.category = $${params.length}::"NotificationCategory"`);
   }
   const query = await db.cancellableQuery<NotificationCategoryCount>(
-    `SELECT n.category, COUNT(*) AS count
-     FROM "UserNotification" un
-       JOIN "Notification" n ON n."id" = un."notificationId"
-     WHERE ${where.join(' AND ')}
+    `SELECT category, COUNT(*) AS count
+     FROM (
+       SELECT n.category
+       FROM "UserNotification" un
+         JOIN "Notification" n ON n."id" = un."notificationId"
+       WHERE ${where.join(' AND ')}
+       LIMIT ${COUNT_ROW_LIMIT + 1}
+     ) scanned
      GROUP BY category`,
     params
   );
-  const result = await query.result();
+  const rows = await query.result();
+  const truncated = rows.reduce((sum, { count }) => sum + Number(count), 0) > COUNT_ROW_LIMIT;
+  const result = truncated ? rows.map((row) => ({ ...row, floor: true })) : rows;
   if (cacheable) await notificationCache.setUser(userId, result);
   return result;
 }
@@ -221,21 +230,92 @@ export async function notificationExists(key: string): Promise<boolean> {
 }
 
 // --- cleanup: batched delete of old UserNotification rows -------------------------------------------
+// Exported for test visibility only (like userWriteQueues and countInFlight): a suite that cannot
+// build a FULL batch cannot see behaviour conditioned on batch fullness.
+export const CLEANUP_BATCH_SIZE = 10000;
+// Users busted in parallel per batch, at two redis round-trips each (lag flag + DEL). Most rows in a
+// batch belong to a different user, so this is the knob that decides whether the bust side dominates
+// the sweep's wall clock.
+const CLEANUP_BUST_CONCURRENCY = 25;
+
+type DeletedRow = { userId: number; viewed: boolean };
+
 export async function cleanupNotifications(before: Date): Promise<number> {
   const write = notifDbWrite();
   let deleted = 0;
+  let bustsAcked = 0;
   // Batch so a single DELETE can't hold a long lock / bloat WAL on a large sweep.
   for (;;) {
-    const resp = await write.query(
+    const resp = await write.query<DeletedRow>(
       `DELETE FROM "UserNotification"
-       WHERE id IN (SELECT id FROM "UserNotification" WHERE "createdAt" < $1 LIMIT 10000)`,
+       WHERE id IN (SELECT id FROM "UserNotification" WHERE "createdAt" < $1 LIMIT ${CLEANUP_BATCH_SIZE})
+       RETURNING "userId", viewed`,
       [before.toISOString()]
     );
-    const rows = resp.rowCount ?? 0;
-    deleted += rows;
-    if (rows === 0) break;
+    deleted += resp.rows.length;
+    if (resp.rows.length === 0) break;
+    bustsAcked += await bustDeletedUnreadCounts(resp.rows);
   }
+  logToAxiom({
+    type: 'info',
+    name: 'notification.cleanup',
+    message: `Cleaned up notifications older than ${before.toISOString()}`,
+    deleted,
+    bustsAcked,
+  }).catch(() => null);
   return deleted;
+}
+
+/**
+ * Drop the cached unread counts of every user this batch deleted an UNREAD row from, or the cache
+ * outlives its rows for a week — the badge keeps counting notifications the list can no longer show.
+ *
+ * Only unread rows matter: the hash counts `viewed IS FALSE` rows ONLY (see countNotificationsImpl),
+ * so deleting a read row cannot make it wrong. bustUser rather than decrementUser — the next count
+ * re-derives from the DB, so a bust cannot drift the way an arithmetic adjustment can.
+ *
+ * Both redis calls swallow their errors: a redis outage must not abort a delete sweep that is doing
+ * its real work against postgres. What comes back is the number of DELs redis acknowledged, which the
+ * sweep logs so the swallow is visible afterwards.
+ *
+ * Flag the lag window BEFORE busting, exactly as markReadImpl does. A count that picks its pool AFTER
+ * the flag reads the primary, so it cannot re-cache the rows this batch just deleted. It does NOT save
+ * a count already in flight against the replica: that one selected its pool before the flag existed and
+ * will still setUser a pre-delete number for up to a week — the same exposure mark-read carries, and
+ * the reason this is a narrowing rather than a closure. When REPLICATION_LAG_DELAY is unset the
+ * tracker is disabled outright, so the flag costs nothing AND narrows nothing — every count reads the
+ * replica and the exposure is bounded by replica lag instead. See L5 in
+ * docs/plans/notifications-review-action-items.md, which owns deciding that value.
+ */
+async function bustDeletedUnreadCounts(rows: DeletedRow[]): Promise<number> {
+  const userIds: number[] = [];
+  const seen = new Set<number>();
+  for (const { userId, viewed } of rows) {
+    if (viewed || seen.has(userId)) continue;
+    seen.add(userId);
+    userIds.push(userId);
+  }
+
+  let next = 0;
+  // Acknowledged DELs, not users attempted — a swallowed error would otherwise report a full sweep's
+  // worth of busts through an outage that dropped nothing. NOT a count of keys that existed: redis acks
+  // a DEL for an absent key, and most swept users have no cached count to drop.
+  let acked = 0;
+  const workers = Array.from({ length: Math.min(CLEANUP_BUST_CONCURRENCY, userIds.length) }, () =>
+    (async () => {
+      for (let i = next++; i < userIds.length; i = next++) {
+        const userId = userIds[i];
+        await preventReplicationLag(userId).catch(() => null);
+        const ok = await notificationCache
+          .bustUser(userId)
+          .then(() => true)
+          .catch(() => false);
+        if (ok) acked++;
+      }
+    })()
+  );
+  await Promise.all(workers);
+  return acked;
 }
 
 // --- mark read: per-user serialized + retried on transient pool-acquire errors ----------------------

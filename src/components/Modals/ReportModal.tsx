@@ -24,15 +24,13 @@ import { ArticleNsfwForm, ImageNsfwForm, ModelNsfwForm } from '~/components/Repo
 import { OwnershipForm } from '~/components/Report/OwnershipForm';
 import { SpamForm } from '~/components/Report/SpamForm';
 import { TosViolationForm } from '~/components/Report/TosViolationForm';
-import { useVoteForTags } from '~/components/VotableTags/votableTag.utils';
+import { useApplyTagVotes } from '~/components/VotableTags/votableTag.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { ReportEntity } from '~/shared/utils/report-helpers';
+import { ReportEntity, reportEntityLabels } from '~/shared/utils/report-helpers';
 import { getLoginLink } from '~/utils/login-helpers';
 import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
-import { getDisplayName } from '~/utils/string-helpers';
-import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { StickerPlacementForm } from '~/components/Report/StickerPlacementForm';
 import { ReportTargetProvider } from '~/components/Report/report-target.context';
 
@@ -64,6 +62,9 @@ const reports = [
       ReportEntity.BountyEntry,
       ReportEntity.ComicProject,
       ReportEntity.Model3D,
+      ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -87,6 +88,10 @@ const reports = [
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
+      ReportEntity.Announcement,
+      ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -111,6 +116,10 @@ const reports = [
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
+      ReportEntity.Announcement,
+      ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
   {
@@ -125,7 +134,12 @@ const reports = [
     reason: ReportReason.Ownership,
     label: 'This uses my art',
     Element: OwnershipForm,
-    availableFor: [ReportEntity.Model, ReportEntity.BountyEntry, ReportEntity.Challenge],
+    availableFor: [
+      ReportEntity.Model,
+      ReportEntity.BountyEntry,
+      ReportEntity.Challenge,
+      ReportEntity.Crucible,
+    ],
   },
   {
     // Its own reason, not TOSViolation. Reports dedupe on (reason, entityId), so
@@ -134,7 +148,9 @@ const reports = [
     // report exists to carry.
     key: 'sticker-placement',
     reason: ReportReason.StickerPlacement,
-    label: 'Bad sticker placement',
+    // Never rendered in the reason list — this entry is reachable only from the
+    // flag on a sticker — so the label is the modal's title and nothing else.
+    label: 'Report this sticker',
     Element: StickerPlacementForm,
     availableFor: [ReportEntity.Image],
   },
@@ -160,9 +176,34 @@ const reports = [
       ReportEntity.Model3D,
       ReportEntity.Model3DReview,
       ReportEntity.Challenge,
+      ReportEntity.Announcement,
+      ReportEntity.Crucible,
+      ReportEntity.Storyline,
+      ReportEntity.ServiceOffering,
     ],
   },
 ];
+
+/**
+ * The dialog's title. Names the entity from `reportEntityLabels`, never `getDisplayName`, which
+ * leaves camelCase half-split ("Report service Offering"); see the note on `reportEntityLabels`.
+ */
+export const reportModalTitle = ({
+  entityType,
+  selected,
+  placementTarget,
+}: {
+  entityType: ReportEntity;
+  selected: { key: string; label: string } | null;
+  placementTarget?: ReportModalProps['placementTarget'];
+}) =>
+  selected?.key === 'sticker-placement' && placementTarget === 'comment'
+    ? 'Report this note'
+    : selected?.label ?? `Report ${reportEntityLabels[entityType]}`;
+
+/** The reasons offered for an entity, in display order. */
+export const reportOptionsFor = (entityType: ReportEntity) =>
+  reports.filter(({ availableFor }) => availableFor.includes(entityType));
 
 const invalidateReasons = [ReportReason.NSFW, ReportReason.Ownership];
 const SEND_REPORT_ID = 'sending-report';
@@ -170,15 +211,27 @@ const SEND_REPORT_ID = 'sending-report';
 export type ReportModalProps = {
   entityType: ReportEntity;
   entityId: number;
+  /**
+   * Open straight onto one form instead of the reason list.
+   *
+   * For a report that starts from the thing being reported rather than from the
+   * page it sits on: the flag on a sticker already knows the reason and the
+   * sticker, so a list of reasons is a question with one answer.
+   */
+  reportKey?: string;
+  /** The placement the flag was on, when the report started there. */
+  placementId?: number;
+  /** Which half of that placement the flag was on. */
+  placementTarget?: 'sticker' | 'comment';
 };
 
 export default function ReportModal({
   entityType,
   entityId,
-}: {
-  entityType: ReportEntity;
-  entityId: number;
-}) {
+  reportKey: initialReportKey,
+  placementId,
+  placementTarget,
+}: ReportModalProps) {
   const dialog = useDialogContext();
 
   // #region [temp for gallery image reports]
@@ -192,7 +245,7 @@ export default function ReportModal({
   // sticker — and keying on the reason silently resolved to whichever was
   // declared first, so picking the sticker option ran the generic TOS form and
   // filed a report with no placement id in it.
-  const [reportKey, setReportKey] = useState<string>();
+  const [reportKey, setReportKey] = useState<string | undefined>(initialReportKey);
   const [uploading, setUploading] = useState(false);
   const selected = useMemo(
     () => reports.find((x) => x.key === reportKey && x.availableFor.includes(entityType)) ?? null,
@@ -200,8 +253,11 @@ export default function ReportModal({
   );
   const reason = selected?.reason;
   const ReportForm = selected?.Element ?? null;
-  const title = selected?.label ?? `Report ${getDisplayName(entityType)}`;
-  const handleVote = useVoteForTags({ entityType: entityType as 'image' | 'model', entityId });
+  const title = reportModalTitle({ entityType, selected, placementTarget });
+  const applyTagVotes = useApplyTagVotes({
+    entityType: entityType as 'image' | 'model',
+    entityId,
+  });
 
   const queryUtils = trpc.useUtils();
   const { data, isInitialLoading } = trpc.model.getModelReportDetails.useQuery(
@@ -220,7 +276,7 @@ export default function ReportModal({
     },
     async onSuccess(_, variables) {
       showSuccessNotification({
-        title: 'Resource reported',
+        title: `${reportEntityLabels[entityType]} reported`,
         message: 'Your request has been received',
       });
       dialog.onClose();
@@ -245,7 +301,8 @@ export default function ReportModal({
           case ReportEntity.Image:
             if (variables.reason === ReportReason.NSFW) {
               const { tags } = variables.details;
-              if (tags) handleVote({ tags, vote: 1 });
+              // createReport records these votes server-side.
+              if (tags) applyTagVotes({ tags, vote: 1 });
             }
             // // model invalidate
             // if (modelId) {
@@ -320,7 +377,6 @@ export default function ReportModal({
   };
 
   const currentUser = useCurrentUser();
-  const features = useFeatureFlags();
   useEffect(() => {
     if (currentUser) return;
     router.push(getLoginLink({ returnUrl: router.asPath, reason: 'report-content' }));
@@ -332,7 +388,10 @@ export default function ReportModal({
       <Stack>
         <Group justify="space-between" wrap="nowrap">
           <Group gap={4}>
-            {!!selected && (
+            {/* No way back when the reason arrived with the modal: the list
+                behind it was never shown, so "back" would land on a choice the
+                reporter did not make. */}
+            {!!selected && !initialReportKey && (
               <LegacyActionIcon onClick={() => setReportKey(undefined)}>
                 <IconArrowLeft size={16} />
               </LegacyActionIcon>
@@ -353,8 +412,7 @@ export default function ReportModal({
               // label="Report reason"
             >
               <Stack pb="xs">
-                {reports
-                  .filter(({ availableFor }) => availableFor.includes(entityType))
+                {reportOptionsFor(entityType)
                   .filter((item) => {
                     if (entityType === ReportEntity.Model) {
                       if (item.reason === ReportReason.Claim) return data?.userId !== -1;
@@ -362,10 +420,12 @@ export default function ReportModal({
                         return !data?.reportStats?.ownershipPending;
                       }
                     }
-                    // Offering a reason for a feature the reporter cannot see is
-                    // an invitation to a form with nothing in it.
-                    if (item.reason === ReportReason.StickerPlacement)
-                      return !!features.stickerPlacement;
+                    // Reachable only from the flag on the sticker itself, never
+                    // from the image. Offered here it would have to ask which
+                    // sticker, and several copies of one sticker on an image are
+                    // indistinguishable in a list — the guess a moderator then
+                    // acts on is what the flag exists to remove.
+                    if (item.reason === ReportReason.StickerPlacement) return false;
                     return true;
                   }) // TEMP FIX
                   .map(({ key, label }) => (
@@ -376,7 +436,7 @@ export default function ReportModal({
           )
         )}
         {ReportForm && (
-          <ReportTargetProvider value={{ entityType, entityId }}>
+          <ReportTargetProvider value={{ entityType, entityId, placementId, placementTarget }}>
             <ReportForm onSubmit={handleSubmit} setUploading={setUploading}>
               <Group grow>
                 <Button variant="default" onClick={dialog.onClose}>

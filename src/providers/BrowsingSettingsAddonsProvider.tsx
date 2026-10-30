@@ -1,5 +1,6 @@
 import { createContext, useContext, useMemo } from 'react';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
+import { BROWSING_LEVEL_FALLBACK } from '~/components/BrowsingLevel/resolve-browsing-level';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { BrowsingSettingsAddon } from '~/shared/constants/browsing-settings-addons';
 import {
@@ -10,6 +11,12 @@ import { trpc } from '~/utils/trpc';
 
 const BrowsingSettingsAddonsCtx = createContext<{
   isLoading: boolean;
+  /**
+   * The debounced level `settings` were resolved at. A filter pairing a level with these addons
+   * must read this one: a second debounce of the same level fires on its own timer, and the
+   * render between the two pairs the new level with the old addons.
+   */
+  browsingLevel: number;
   settings: NonNullable<Omit<BrowsingSettingsAddon, 'type' | 'nsfwLevels'>>;
 }>({
   settings: {
@@ -20,6 +27,7 @@ const BrowsingSettingsAddonsCtx = createContext<{
     generationDefaultValues: {},
     generationMinValues: {},
   },
+  browsingLevel: BROWSING_LEVEL_FALLBACK,
   isLoading: true,
 });
 
@@ -58,6 +66,7 @@ export const BrowsingSettingsAddonsProvider = ({
     <BrowsingSettingsAddonsCtx.Provider
       value={{
         isLoading,
+        browsingLevel,
         settings,
       }}
     >

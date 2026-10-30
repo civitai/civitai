@@ -2,10 +2,12 @@ import { timingSafeEqual } from 'crypto';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { withAxiom } from '@civitai/next-axiom';
 import { env } from '~/env/server';
+import { isConfiguredSecret } from '~/server/utils/configured-secret';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { isAppBlocksEnabled } from '~/server/services/app-blocks-flag';
 import { newAppBlockId } from '~/server/utils/app-block-ids';
 import { BlockManifestValidator } from '~/server/services/block-manifest-validator.service';
+import { newBlockIdError } from '~/server/utils/apps-slug';
 
 // B5: cap the body parser BEFORE the JSON.stringify size check. Next's
 // default is 1MB; we want to reject oversize uploads before they hit
@@ -55,7 +57,11 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
   }
   // M-6: constant-time compare. The secret is high-entropy so a timing
   // oracle is mostly theoretical, but the standard fix is cheap.
-  if (!env.JOB_TOKEN || !safeEqualHeader(req.headers['x-civitai-internal-token'], env.JOB_TOKEN)) {
+  if (!isConfiguredSecret(env.JOB_TOKEN)) {
+    res.status(503).json({ error: 'Endpoint not configured' });
+    return;
+  }
+  if (!safeEqualHeader(req.headers['x-civitai-internal-token'], env.JOB_TOKEN)) {
     res.status(401).json({ error: 'Unauthorized' });
     return;
   }
@@ -158,6 +164,14 @@ export default withAxiom(async function handler(req: NextApiRequest, res: NextAp
     const newManifestJson = JSON.stringify(body.manifest);
     if (existingManifestJson === newManifestJson) {
       res.status(200).json({ id: existing.id, status: existing.status, unchanged: true });
+      return;
+    }
+  }
+
+  if (!existing) {
+    const blockIdError = newBlockIdError(manifest.blockId);
+    if (blockIdError) {
+      res.status(422).json({ error: 'Invalid manifest', details: [blockIdError] });
       return;
     }
   }

@@ -16,17 +16,18 @@ import { createContext, useContext, useEffect, useMemo, useState, useCallback } 
 import { AppLayout } from '~/components/AppLayout/AppLayout';
 import { IconAlertTriangle, IconChevronsLeft } from '@tabler/icons-react';
 import { routing } from '~/components/Search/useSearchState';
-import { instantMeiliSearch } from '@meilisearch/instant-meilisearch';
+import { createInstantMeiliSearch } from '~/components/Search/site-search-client';
+import { withUserHydration } from '~/components/Search/userHydration';
 import { createResilientSearchClient } from '~/components/Search/resilientSearchClient';
 import {
   searchAvailability,
   useSearchAvailabilityStore,
 } from '~/components/Search/search-availability.store';
 import Link from 'next/link';
-import { env } from '~/env/client';
 import type { SearchIndex } from '~/components/Search/parsers/base';
 import type { InstantSearchProps } from 'react-instantsearch';
 import { Configure, InstantSearch, useInstantSearch } from 'react-instantsearch';
+import { SEARCH_HITS_PER_PAGE } from '~/components/Search/search.constants';
 import { CustomSearchBox } from '~/components/Search/CustomSearchComponents';
 import type { RenderSearchComponentProps } from '~/components/AppLayout/AppHeader/AppHeader';
 import { useRouter } from 'next/router';
@@ -42,14 +43,12 @@ import type { UiState } from 'instantsearch.js';
 import { includesInappropriate } from '~/utils/metadata/audit';
 import { useDomainColor } from '~/hooks/useDomainColor';
 import { useCheckProfanity } from '~/hooks/useCheckProfanity';
+import { useBenignPhrases } from '~/hooks/useBenignPhrases';
+import { emptySearchClient } from '~/components/Search/emptySearchClient';
 import classes from './SearchLayout.module.scss';
 import clsx from 'clsx';
 
-const meilisearch = instantMeiliSearch(
-  env.NEXT_PUBLIC_SEARCH_HOST as string,
-  env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
-  { primaryKey: 'id', keepZeroFacets: true }
-);
+const meilisearch = createInstantMeiliSearch({ primaryKey: 'id', keepZeroFacets: true });
 
 // Wrap the Meili client so a backend outage/blip degrades to an empty result set
 // (with a "temporarily unavailable" banner) instead of throwing an uncaught
@@ -57,10 +56,12 @@ const meilisearch = instantMeiliSearch(
 // returns Meili's response verbatim. The availability store is the side-channel
 // used to render the banner (the swallowed error never reaches
 // `useInstantSearch().status`).
-const searchClient: InstantSearchProps['searchClient'] = createResilientSearchClient(meilisearch, {
-  onError: () => searchAvailability.setUnavailable(true),
-  onSuccess: () => searchAvailability.setUnavailable(false),
-});
+const searchClient: InstantSearchProps['searchClient'] = withUserHydration(
+  createResilientSearchClient(meilisearch, {
+    onError: () => searchAvailability.setUnavailable(true),
+    onSuccess: () => searchAvailability.setUnavailable(false),
+  })
+);
 
 // #region [ImageGuardContext]
 type SearchLayoutState = {
@@ -103,11 +104,19 @@ export function SearchLayout({
   indexName,
   leftSidebar,
   initialUiState,
+  maintenance,
 }: {
   children: React.ReactNode;
   indexName: SearchIndex;
   leftSidebar?: React.ReactNode;
   initialUiState?: UiState;
+  /**
+   * Render the search chrome without querying `indexName`. Used when the index is intentionally
+   * retired (image search — the images_v6 index still EXISTS but is empty and declares no
+   * filterable attributes) so the page can show a maintenance notice in place of results instead
+   * of querying an index where a filtered or sorted query errors and the rest return nothing.
+   */
+  maintenance?: boolean;
 }) {
   const isMobile = useIsMobile();
   const [sidebarOpenLocalStorage, setSidebarOpenLocalStorage] = useLocalStorage({
@@ -154,16 +163,24 @@ export function SearchLayout({
     setInstantSearchQuery(query);
   }, []);
 
+  const benignPhrases = useBenignPhrases();
+
   const isIllegalSearch = useMemo(() => {
     if (!searchQuery) return false;
 
-    const illegalSearch = includesInappropriate({ prompt: searchQuery });
+    // Detection reads the whitelisted copy; the query sent to Meili stays the raw text.
+    const illegalSearch = includesInappropriate({ prompt: benignPhrases.strip(searchQuery) });
     return illegalSearch === 'minor';
-  }, [searchQuery]);
+  }, [searchQuery, benignPhrases]);
 
   // Track illegal search separately to avoid side effects in useMemo
   useEffect(() => {
     if (!searchQuery || !isIllegalSearch) return;
+    // Hold the event until the benign lists arrive. Before then `strip` is the identity
+    // function, so a moderator-whitelisted query still reads as illegal here — and firing a
+    // CSAM tracking event for it is exactly the false positive this work exists to remove.
+    // The gate itself still applies while loading; only the side effect waits.
+    if (!benignPhrases.settled) return;
 
     const { sortBy: index } = parsedQuery || {};
     trackAction({
@@ -173,7 +190,7 @@ export function SearchLayout({
         index,
       },
     }).catch(() => undefined);
-  }, [searchQuery, isIllegalSearch, parsedQuery?.sortBy]);
+  }, [searchQuery, isIllegalSearch, parsedQuery?.sortBy, benignPhrases.settled]);
 
   // Check profanity in search query
   const profanityAnalysis = useCheckProfanity(searchQuery, {
@@ -210,13 +227,13 @@ export function SearchLayout({
       <InstantSearch
         // Needs re-render. Otherwise the prev. index will screw up the app.
         key={indexName}
-        searchClient={searchClient}
+        searchClient={maintenance ? emptySearchClient : searchClient}
         indexName={indexName}
         routing={routing}
         future={{ preserveSharedStateOnUnmount: true }}
         initialUiState={initialUiState}
       >
-        <Configure hitsPerPage={50} attributesToHighlight={[]} />
+        <Configure hitsPerPage={SEARCH_HITS_PER_PAGE} attributesToHighlight={[]} />
         <SearchStateMonitor onQueryChange={handleQueryChange} />
         <AppLayout
           renderSearchComponent={renderSearchComponent}

@@ -14,12 +14,26 @@ One process owns the whole notification write side:
   recipients against the **main DB** `UserNotificationSettings` (reachable now that we're in-repo), and
   UPSERTs the `PendingNotification` queue row. This is net-new surface — the external server was
   GET-only.
+- **(A2) Bulk producer** — `POST /notifications/bulk`, same auth. Takes **pre-resolved** recipients
+  and applies **no** opt-out filter; each `send-notifications` processor filters in its own SQL. This
+  is the path `src/server/jobs/send-notifications.ts` uses, and it is why a processor missing its
+  `NOT EXISTS "UserNotificationSettings"` clause is unmuteable.
 - **(B) Fan-out worker** — the ported ~5s poll loop. Claims `PendingNotification` rows, fans each into
   `Notification` + `UserNotification` rows (normal / debounced), deletes/reschedules the pending row,
-  and POSTs a realtime `notification:new` signal per affected user while bumping the redis unread
-  counter.
-- **Ops routes** — `GET /health` (no-dep liveness), `GET /pool-stats` (notif pool snapshots),
-  `GET /metrics` (Prometheus, private-by-XFF).
+  and POSTs a realtime `notification:new` signal per affected user, bumping that user's redis unread
+  counter only if one is already cached (an uncached user is recounted from the DB on the next read).
+  It also hands the newly delivered recipients to the push dispatcher (`worker/push.ts`) and the
+  email dispatcher (`worker/email.ts`, gated on `emailNotificationTypes`; see
+  docs/features/notifications.md "Web push" and "Email").
+- **System notices** — `POST /notifications/notices` (+ `/notifications/notices/get`). Sends one
+  `system-message` or `system-announcement` to up to 50,000 users per call, with `{placeholder}` text
+  filled per recipient. Dry run by default; each recipient gets a given `sendId` at most once; every
+  `sendId` keeps an audit row (`NoticeSend`, `NoticeSendCall`: `containers/notification-db/docker-init/02_notice_send.sql`).
+  A dry run already pins the `sendId` to its type, message and url, so fixing a typo needs a new `sendId`.
+  TypeScript callers use `sendSystemNotices()` from `@civitai/notifications`.
+- **Ops routes** — `GET /health` (liveness; touches no dependency, but returns 503 on a worker pod whose
+  redis commands have all failed for 60s or whose poll loop has stalled for 10 min), `GET /pool-stats`
+  (notif pool snapshots), `GET /metrics` (Prometheus, private-by-XFF).
 
 The producer↔consumer contract is the `PendingNotification` table, not HTTP — so the monolith's
 existing direct writes and this app's producer API can coexist during the transition (plan R3).
@@ -44,7 +58,8 @@ Unlike the auth/gateway images, this app imports `@civitai/db`'s Prisma-backed h
 build needs the generated Prisma client — the Dockerfile does a full frozen install so the root
 `postinstall` runs `db:generate` (see the Dockerfile header).
 
-## Not done here (follow the plan)
+## Deploy status
 
-Deploy wiring (datapacket-talos app dir, Tekton `APP_CONFIG` entry, lockfile refresh, worker cutover
-soak/canary) and the read-path move (C) are separate, sequenced steps — see §5 of the plan.
+Deployed and running in production with `WORKER_ENABLED=true` since 2026-07 — this app's worker is
+the site's sole fan-out consumer. The `.env.example` default of `false` exists so a fresh local
+checkout never races the real worker; it does not describe production.

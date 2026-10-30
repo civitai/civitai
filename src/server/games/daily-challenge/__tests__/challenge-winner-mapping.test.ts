@@ -1,5 +1,21 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as LoggingClient from '~/server/logging/client';
 import { freshPersistedWinner } from './persisted-winner.fixture';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbReadChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
+const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const mockDbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockDbWriteChallengeUpdate = dbMock.dbWrite.challenge.update;
+const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
+const mockLogToAxiom = loggingMock.logToAxiom;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
+  prizePool: 0,
+  prizeDistribution: null,
+});
 
 // Task 19: hardens the LLM-winner -> judged-entry mapping in pickWinnersForChallenge against
 // creator-name spoofing. generateWinners (a TEXT-only LLM call) returns
@@ -18,12 +34,6 @@ import { freshPersistedWinner } from './persisted-winner.fixture';
 // is mocked at the module boundary.
 
 const {
-  mockDbReadQueryRaw,
-  mockDbReadChallengeFindUnique,
-  mockDbWriteQueryRaw,
-  mockDbWriteExecuteRaw,
-  mockDbWriteChallengeUpdate,
-  mockDbWriteChallengeFindUnique,
   mockGetChallengeConfig,
   mockGetJudgingConfig,
   mockEndChallenge,
@@ -38,15 +48,6 @@ const {
   mockCreateChallengeWinner,
   mockGetChallengeById,
 } = vi.hoisted(() => ({
-  mockDbReadQueryRaw: vi.fn(),
-  mockDbReadChallengeFindUnique: vi.fn(),
-  mockDbWriteQueryRaw: vi.fn(),
-  mockDbWriteExecuteRaw: vi.fn().mockResolvedValue(1),
-  mockDbWriteChallengeUpdate: vi.fn().mockResolvedValue(undefined),
-  mockDbWriteChallengeFindUnique: vi.fn().mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  }),
   mockGetChallengeConfig: vi.fn(),
   mockGetJudgingConfig: vi.fn(),
   mockEndChallenge: vi.fn().mockResolvedValue(undefined),
@@ -60,18 +61,6 @@ const {
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
   mockCreateChallengeWinner: vi.fn(),
   mockGetChallengeById: vi.fn().mockResolvedValue(null),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    $queryRaw: mockDbReadQueryRaw,
-    challenge: { findUnique: mockDbReadChallengeFindUnique },
-  },
-  dbWrite: {
-    $queryRaw: mockDbWriteQueryRaw,
-    $executeRaw: mockDbWriteExecuteRaw,
-    challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
-  },
 }));
 
 vi.mock('~/server/events', () => ({
@@ -99,6 +88,8 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async () => {
 });
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
+  challengeClaimStillHeld: vi.fn().mockResolvedValue(true),
+  completeChallengeIfClaimHeld: vi.fn().mockResolvedValue(true),
   claimChallengeForCompletion: mockClaimChallengeForCompletion,
   computeDynamicPool: vi.fn(),
   distributePrizes: vi.fn(),
@@ -145,7 +136,7 @@ vi.mock('~/server/services/reaction.service', () => ({
 
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
-  buildWinnerPayoutTransactions: vi.fn().mockReturnValue([]),
+  buildWinnerPrizes: vi.fn().mockReturnValue([]),
   getChallengeBuzzType: vi.fn().mockResolvedValue('user'),
   reportPoolFundingShortfall: vi.fn(),
 }));
@@ -185,6 +176,12 @@ const JUDGING_CONFIG = {
   reviewTemplate: null,
 } as never;
 
+const PRIZES = [
+  { buzz: 500, points: 10 },
+  { buzz: 250, points: 5 },
+  { buzz: 100, points: 2 },
+];
+
 const currentChallenge = {
   challengeId: 1,
   type: 'daily',
@@ -196,7 +193,7 @@ const currentChallenge = {
   title: 'Test',
   invitation: '',
   coverUrl: '',
-  prizes: [{ buzz: 500, points: 10 }, { buzz: 250, points: 5 }, { buzz: 100, points: 2 }],
+  prizes: PRIZES,
   entryPrizeRequirement: 10,
   entryPrize: { buzz: 0, points: 0 },
 } as never;
@@ -258,8 +255,18 @@ describe('pickWinnersForChallenge winner mapping (name-spoof hardening)', () => 
     // name-based (or name-OR-id) match would resolve BOTH winners to whichever entry happens to
     // come first in array order, since both share the spoofed name.
     mockJudgedEntryRows([
-      { imageId: 1, userId: 100, username: 'Alice', score: { theme: 10, aesthetic: 10, humor: 10, wittiness: 10 } },
-      { imageId: 2, userId: 200, username: 'Alice', score: { theme: 8, aesthetic: 8, humor: 8, wittiness: 8 } },
+      {
+        imageId: 1,
+        userId: 100,
+        username: 'Alice',
+        score: { theme: 10, aesthetic: 10, humor: 10, wittiness: 10 },
+      },
+      {
+        imageId: 2,
+        userId: 200,
+        username: 'Alice',
+        score: { theme: 8, aesthetic: 8, humor: 8, wittiness: 8 },
+      },
     ]);
     // Global winner-cooldown query (System source, no event context) — nobody excluded.
     mockDbWriteQueryRaw.mockResolvedValueOnce([]);
@@ -297,6 +304,124 @@ describe('pickWinnersForChallenge winner mapping (name-spoof hardening)', () => 
         buzzAwarded: 250,
         reason: 'second',
       })
+    );
+  });
+});
+
+// Challenge 390 was recorded with winners at places 2 and 3 and nothing at place 1: its 5,000 Buzz
+// and 150 points reached nobody and the challenge page rendered no first place. The pick that should
+// have been 1st resolved to no entry, and because placement came from the pick's index in the LLM's
+// array before the unresolvable ones were filtered out, the survivors kept slots 2 and 3 instead of
+// moving up. `resolveWinnerPicks` is unit-tested on its own; these drive the same thing through
+// `pickWinnersForChallenge`, so reverting the CALL SITE back to `position: i + 1` fails here.
+describe('pickWinnersForChallenge unmatched picks (challenge 390)', () => {
+  it("awards places 1 and 2 when the judge's first pick resolves to no entry", async () => {
+    mockChallengeJudgeRow(ChallengeSource.System);
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'Alice' },
+      { imageId: 2, userId: 200, username: 'Bob' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm-picked',
+      model: 'test-model',
+      usage: {},
+      winners: [
+        { creator: 'Nobody', creatorId: 999999, reason: 'first' },
+        { creator: 'Alice', creatorId: 100, reason: 'second' },
+        { creator: 'Bob', creatorId: 200, reason: 'third' },
+      ],
+    });
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(mockCreateChallengeWinner).toHaveBeenCalledTimes(2);
+    // Places close up, and the prize follows the place they are actually recorded at — the top prize
+    // is awarded rather than left in account 0 as it was on 390.
+    expect(mockCreateChallengeWinner).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ userId: 100, place: 1, buzzAwarded: 500, pointsAwarded: 10 })
+    );
+    expect(mockCreateChallengeWinner).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ userId: 200, place: 2, buzzAwarded: 250, pointsAwarded: 5 })
+    );
+  });
+
+  it('reports the unfilled prize on a System challenge, which used to be exempt', async () => {
+    mockChallengeJudgeRow(ChallengeSource.System);
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'Alice' },
+      { imageId: 2, userId: 200, username: 'Bob' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+    mockGetChallengeById.mockResolvedValue({
+      source: ChallengeSource.System,
+      prizes: PRIZES,
+      metadata: null,
+    });
+
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm-picked',
+      model: 'test-model',
+      usage: {},
+      winners: [
+        { creator: 'Alice', creatorId: 100, reason: 'first' },
+        { creator: 'Nobody', creatorId: 999999, reason: 'second' },
+        { creator: 'Nobody either', creatorId: 888888, reason: 'third' },
+      ],
+    });
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    // Two funded places reached nobody. Re-gating this on `source === User` makes a daily challenge
+    // silent again, which is how 390 went unnoticed until a user reported it.
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'challenge-partial-winner-residual',
+        source: ChallengeSource.System,
+        residualBuzz: 350,
+        winnersCount: 1,
+        prizePlaces: 3,
+      })
+    );
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'challenge-winner-unmatched-pick',
+        unmatchedIndexes: [1, 2],
+      })
+    );
+  });
+
+  it('resolves a creatorId the judge returned as a numeric string', async () => {
+    mockChallengeJudgeRow(ChallengeSource.System);
+    // Two entrants: a single one is awarded place 1 without asking the judge, so the string id
+    // below would never be read.
+    mockJudgedEntryRows([
+      { imageId: 1, userId: 100, username: 'Alice' },
+      { imageId: 2, userId: 200, username: 'Bob' },
+    ]);
+    mockDbWriteQueryRaw.mockResolvedValueOnce([]);
+
+    mockGenerateWinners.mockResolvedValue({
+      process: 'llm',
+      outcome: 'llm-picked',
+      model: 'test-model',
+      usage: {},
+      // Strict `===` against a number rejected this, and the judge playground could not surface it:
+      // it renders the model's `creator` name and never resolves the id at all.
+      winners: [{ creator: 'Alice', creatorId: '100', reason: 'first' }],
+    });
+
+    await pickWinnersForChallenge(currentChallenge, BASE_CONFIG);
+
+    expect(mockCreateChallengeWinner).toHaveBeenCalledTimes(1);
+    expect(mockCreateChallengeWinner).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ userId: 100, imageId: 1, place: 1, buzzAwarded: 500 })
     );
   });
 });

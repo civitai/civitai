@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { NextApiRequest, NextApiResponse } from 'next';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbWrite = dbMock.dbWrite;
 
 /**
  * Handler-level coverage for POST /api/v1/block-tokens. The token-issuance
@@ -12,15 +14,7 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * block-registry.resolve-instance.test.ts.
  */
 
-const { mockDbWrite, mockRedis, mockSession, mockTokenService, mockBlockRegistry } = vi.hoisted(() => {
-  const dbWrite = {
-    user: { findUnique: vi.fn() },
-    // A6: the per-user scope-grant ledger. getGrantedScopes reads this at mint
-    // time to intersect the signable scopes with what the viewer has granted.
-    appUserScopeGrant: {
-      findUnique: vi.fn<(...args: any[]) => Promise<any>>(async () => null),
-    },
-  };
+const { mockRedis, mockSession, mockTokenService, mockBlockRegistry } = vi.hoisted(() => {
   const redis = {
     incrBy: vi.fn(async () => 1),
     expire: vi.fn(async () => true),
@@ -39,7 +33,6 @@ const { mockDbWrite, mockRedis, mockSession, mockTokenService, mockBlockRegistry
     resolveBlockInstance: vi.fn<(...args: any[]) => Promise<any>>(),
   };
   return {
-    mockDbWrite: dbWrite,
     mockRedis: redis,
     mockSession: session,
     mockTokenService: tokenService,
@@ -56,7 +49,6 @@ vi.mock('~/env/server', () => ({
   },
 }));
 vi.mock('@civitai/next-axiom', () => ({ withAxiom: (h: unknown) => h }));
-vi.mock('~/server/db/client', () => ({ dbWrite: mockDbWrite }));
 vi.mock('~/server/auth/get-server-auth-session', () => ({
   getServerAuthSession: vi.fn(async () => mockSession.value),
 }));
@@ -115,8 +107,16 @@ function makeReq(opts: {
   } as unknown as NextApiRequest;
 }
 
-function makeRes(): NextApiResponse & { _status: number; _body: unknown; _headers: Record<string, string> } {
-  const res: NextApiResponse & { _status: number; _body: unknown; _headers: Record<string, string> } = {
+function makeRes(): NextApiResponse & {
+  _status: number;
+  _body: unknown;
+  _headers: Record<string, string>;
+} {
+  const res: NextApiResponse & {
+    _status: number;
+    _body: unknown;
+    _headers: Record<string, string>;
+  } = {
     _status: 0,
     _body: null,
     _headers: {},
@@ -139,7 +139,11 @@ function makeRes(): NextApiResponse & { _status: number; _body: unknown; _header
       this._body = body;
       return this;
     }),
-  } as unknown as NextApiResponse & { _status: number; _body: unknown; _headers: Record<string, string> };
+  } as unknown as NextApiResponse & {
+    _status: number;
+    _body: unknown;
+    _headers: Record<string, string>;
+  };
   return res;
 }
 
@@ -425,7 +429,9 @@ describe('POST /api/v1/block-tokens', () => {
       res
     );
     expect(res._status).toBe(200);
-    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { ctx: Record<string, unknown> };
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as {
+      ctx: Record<string, unknown>;
+    };
     // The resolved install row has slotId='model.sidebar_top'.
     expect(signArgs.ctx.slotId).toBe('model.sidebar_top');
     expect(signArgs.ctx.modelId).toBe(12345);
@@ -447,7 +453,9 @@ describe('POST /api/v1/block-tokens', () => {
       res
     );
     expect(res._status).toBe(200);
-    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { ctx: Record<string, unknown> };
+    const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as {
+      ctx: Record<string, unknown>;
+    };
     expect(signArgs.ctx.modelName).toBeUndefined();
     expect(signArgs.ctx.modelType).toBeUndefined();
     expect(signArgs.ctx.modelVersionId).toBeUndefined();
@@ -467,7 +475,10 @@ describe('POST /api/v1/block-tokens', () => {
     await handler(
       makeReq({
         origin: 'https://civitai.com',
-        body: { blockInstanceId: 'bus_pub_abc', slotContext: { modelId: 12345, slotId: 'model.sidebar_top' } },
+        body: {
+          blockInstanceId: 'bus_pub_abc',
+          slotContext: { modelId: 12345, slotId: 'model.sidebar_top' },
+        },
       }),
       res
     );
@@ -671,6 +682,156 @@ describe('POST /api/v1/block-tokens', () => {
   // ===========================================================================
   // NSFW-APP-RED-ONLY — host-driven maturity ceiling + mature-app refusal.
   // ===========================================================================
+  /**
+   * 🔴 `effectiveBrowsingLevel` — the per-VIEWER narrowing of `maxBrowsingLevel`.
+   *
+   * `maxBrowsingLevel` is a property of the DOMAIN: every viewer on
+   * `civitai.red` is handed the identical, maximally-wide ceiling, so a block
+   * rendering mature affordances off it shows them to a viewer whose own
+   * setting says PG. This field is the domain ceiling intersected with the
+   * viewer's own level (`getServerBrowsingLevel` — the platform's existing
+   * source of truth, reused rather than re-derived).
+   *
+   * 🔴 EVERY CASE BELOW MAKES THE DOMAIN AND THE VIEWER DISAGREE. The two
+   * disagree in BOTH directions in production (red ⇒ the domain is wider; blue
+   * ⇒ the viewer is wider), and a fixture where they agree cannot tell an
+   * intersection apart from either operand.
+   *
+   * The mocked `getFeatureFlags` must return `canViewNsfw` here — the route
+   * reads it to decide whether the viewer's saved level is honoured at all —
+   * so each case sets it explicitly rather than inheriting the suite default.
+   */
+  describe('effectiveBrowsingLevel (per-viewer ceiling in the mint response)', () => {
+    async function mintAs(opts: {
+      host: string;
+      canViewNsfw: boolean;
+      user: Record<string, unknown> | null;
+    }) {
+      const flagMod = await import('~/server/services/feature-flags.service');
+      (flagMod.getFeatureFlags as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+        appBlocks: true,
+        canViewNsfw: opts.canViewNsfw,
+      });
+      mockSession.value = (opts.user ? { user: opts.user } : null) as never;
+      const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
+      const res = makeRes();
+      await handler(
+        makeReq({
+          origin: `https://${opts.host}`,
+          headers: { host: opts.host },
+          body: validBody(),
+        }),
+        res
+      );
+      return res;
+    }
+
+    const modBase = { id: 42, bannedAt: null, isModerator: true };
+
+    it('🔴 red domain + a viewer with NSFW OFF → PG, NOT the domain ceiling', async () => {
+      // The direction the feature exists for: the domain permits everything and
+      // the viewer permits PG. An implementation that echoed `maxBrowsingLevel`
+      // would return all-levels here.
+      const { allBrowsingLevelsFlag, publicBrowsingLevelsFlag } = await import(
+        '~/shared/constants/browsingLevel.constants'
+      );
+      const res = await mintAs({
+        host: 'civitai.red',
+        canViewNsfw: true,
+        user: { ...modBase, showNsfw: false, browsingLevel: allBrowsingLevelsFlag },
+      });
+      expect(res._status).toBe(200);
+      const body = res._body as { maxBrowsingLevel: number; effectiveBrowsingLevel: number };
+      expect(body.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
+      expect(body.effectiveBrowsingLevel).toBe(publicBrowsingLevelsFlag);
+      expect(body.effectiveBrowsingLevel).not.toBe(body.maxBrowsingLevel);
+    });
+
+    it('red domain + a full-NSFW viewer → the full ceiling (not a blanket clamp)', async () => {
+      const { allBrowsingLevelsFlag } = await import('~/shared/constants/browsingLevel.constants');
+      const res = await mintAs({
+        host: 'civitai.red',
+        canViewNsfw: true,
+        user: { ...modBase, showNsfw: true, browsingLevel: allBrowsingLevelsFlag },
+      });
+      expect((res._body as { effectiveBrowsingLevel: number }).effectiveBrowsingLevel).toBe(
+        allBrowsingLevelsFlag
+      );
+    });
+
+    it('red domain + a PG13-capped viewer → PG13, strictly between the two extremes', async () => {
+      // A third distinct value, so the assertion cannot be satisfied by either
+      // "always the domain ceiling" or "always PG".
+      const { NsfwLevel } = await import('~/server/common/enums');
+      const { Flags } = await import('~/shared/utils/flags');
+      const level = Flags.addFlag(NsfwLevel.PG, NsfwLevel.PG13);
+      const res = await mintAs({
+        host: 'civitai.red',
+        canViewNsfw: true,
+        user: { ...modBase, showNsfw: true, browsingLevel: level },
+      });
+      expect((res._body as { effectiveBrowsingLevel: number }).effectiveBrowsingLevel).toBe(level);
+    });
+
+    it('🔴 a full-NSFW viewer on civitai.com CANNOT widen past the SFW domain ceiling', async () => {
+      // The widening case. `canViewNsfw` is true site-wide on blue, so the raw
+      // viewer level here carries R/X/XXX while the App-Blocks domain ceiling is
+      // SFW. Projecting the viewer's raw level would hand a publisher the mature
+      // bits on a domain whose whole point is that they are not allowed.
+      const { allBrowsingLevelsFlag, sfwBrowsingLevelsFlag, nsfwBrowsingLevelsFlag } = await import(
+        '~/shared/constants/browsingLevel.constants'
+      );
+      const { Flags } = await import('~/shared/utils/flags');
+      const res = await mintAs({
+        host: 'civitai.com',
+        canViewNsfw: true,
+        user: { ...modBase, showNsfw: true, browsingLevel: allBrowsingLevelsFlag },
+      });
+      expect(res._status).toBe(200);
+      const body = res._body as { maxBrowsingLevel: number; effectiveBrowsingLevel: number };
+      expect(body.maxBrowsingLevel).toBe(sfwBrowsingLevelsFlag);
+      expect(body.effectiveBrowsingLevel).toBe(sfwBrowsingLevelsFlag);
+      expect(body.effectiveBrowsingLevel).not.toBe(allBrowsingLevelsFlag);
+      // The specific harm: no mature bit survives.
+      expect(Flags.intersects(body.effectiveBrowsingLevel, nsfwBrowsingLevelsFlag)).toBe(false);
+    });
+
+    it('a signed-in viewer with NO saved level on red → PG (fail-closed, not the ceiling)', async () => {
+      const { allBrowsingLevelsFlag, publicBrowsingLevelsFlag } = await import(
+        '~/shared/constants/browsingLevel.constants'
+      );
+      const res = await mintAs({
+        host: 'civitai.red',
+        canViewNsfw: true,
+        user: { ...modBase, showNsfw: true, browsingLevel: null },
+      });
+      const body = res._body as { maxBrowsingLevel: number; effectiveBrowsingLevel: number };
+      expect(body.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
+      expect(body.effectiveBrowsingLevel).toBe(publicBrowsingLevelsFlag);
+    });
+
+    it('the response ALWAYS carries a level that is a subset of maxBrowsingLevel', async () => {
+      // Structural, over every case this suite can produce: whatever the pair,
+      // `effective & ~max` is empty. A block can never widen its own ceiling.
+      const cases = [
+        { host: 'civitai.red', canViewNsfw: true, browsingLevel: 31, showNsfw: true },
+        { host: 'civitai.red', canViewNsfw: true, browsingLevel: 1, showNsfw: true },
+        { host: 'civitai.com', canViewNsfw: true, browsingLevel: 31, showNsfw: true },
+        { host: 'civitai.com', canViewNsfw: false, browsingLevel: 31, showNsfw: true },
+      ];
+      for (const c of cases) {
+        const res = await mintAs({
+          host: c.host,
+          canViewNsfw: c.canViewNsfw,
+          user: { ...modBase, showNsfw: c.showNsfw, browsingLevel: c.browsingLevel },
+        });
+        const body = res._body as { maxBrowsingLevel: number; effectiveBrowsingLevel: number };
+        expect(typeof body.effectiveBrowsingLevel).toBe('number');
+        expect(body.effectiveBrowsingLevel & ~body.maxBrowsingLevel).toBe(0);
+      }
+    });
+  });
+
   describe('NSFW-app-red-only maturity', () => {
     it('red-capable host (civitai.red) mints the FULL mature ceiling', async () => {
       mockSession.value = { user: { id: 42, bannedAt: null, isModerator: true } } as never;
@@ -678,14 +839,20 @@ describe('POST /api/v1/block-tokens', () => {
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(
-        makeReq({ origin: 'https://civitai.red', headers: { host: 'civitai.red' }, body: validBody() }),
+        makeReq({
+          origin: 'https://civitai.red',
+          headers: { host: 'civitai.red' },
+          body: validBody(),
+        }),
         res
       );
       expect(res._status).toBe(200);
       expect(mockTokenService.sign).toHaveBeenCalled();
       const signArgs = mockTokenService.sign.mock.calls.at(-1)?.[0] as { maxBrowsingLevel: number };
       expect(signArgs.maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
-      expect((res._body as { maxBrowsingLevel: number }).maxBrowsingLevel).toBe(allBrowsingLevelsFlag);
+      expect((res._body as { maxBrowsingLevel: number }).maxBrowsingLevel).toBe(
+        allBrowsingLevelsFlag
+      );
     });
 
     it('civitai.com (non-red host) keeps the SFW ceiling (not the mature flag)', async () => {
@@ -696,7 +863,11 @@ describe('POST /api/v1/block-tokens', () => {
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(
-        makeReq({ origin: 'https://civitai.com', headers: { host: 'civitai.com' }, body: validBody() }),
+        makeReq({
+          origin: 'https://civitai.com',
+          headers: { host: 'civitai.com' },
+          body: validBody(),
+        }),
         res
       );
       expect(res._status).toBe(200);
@@ -717,7 +888,11 @@ describe('POST /api/v1/block-tokens', () => {
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(
-        makeReq({ origin: 'https://civitai.com', headers: { host: 'civitai.com' }, body: validBody() }),
+        makeReq({
+          origin: 'https://civitai.com',
+          headers: { host: 'civitai.com' },
+          body: validBody(),
+        }),
         res
       );
       expect(res._status).toBe(403);
@@ -737,7 +912,11 @@ describe('POST /api/v1/block-tokens', () => {
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(
-        makeReq({ origin: 'https://civitai.red', headers: { host: 'civitai.red' }, body: validBody() }),
+        makeReq({
+          origin: 'https://civitai.red',
+          headers: { host: 'civitai.red' },
+          body: validBody(),
+        }),
         res
       );
       expect(res._status).toBe(200);
@@ -757,7 +936,11 @@ describe('POST /api/v1/block-tokens', () => {
       const { default: handler } = await import('~/pages/api/v1/block-tokens/index');
       const res = makeRes();
       await handler(
-        makeReq({ origin: 'https://civitai.com', headers: { host: 'civitai.com' }, body: validBody() }),
+        makeReq({
+          origin: 'https://civitai.com',
+          headers: { host: 'civitai.com' },
+          body: validBody(),
+        }),
         res
       );
       expect(res._status).toBe(200);

@@ -1,13 +1,23 @@
 import { z } from 'zod';
+import {
+  countPendingPlacementsBySurface,
+  getUserPlacementScore,
+} from '@civitai/db-queries/placement';
 import { dbRead } from '~/server/db/client';
-import { getCapTier } from '~/server/services/subscriptions.service';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import { readKeyValueViaKysely, readKeyValueViaPrisma } from '~/server/services/hot-reads-5.reads';
+import { getCapTier, getCapTiers } from '~/server/services/subscriptions.service';
 import type { MembershipTier } from '~/shared/utils/subscription-tokens';
 import type { PlacementPriceTier, PlacementSurface } from '~/shared/utils/placement';
 import {
   clampApprovalShares,
   clampDeclineFeeRate,
+  isDeclineFeeHostAdjustable,
+  PLACEMENT_FREE_SLOT_CAP_TIERS,
   PLACEMENT_PRICE_CAP_TIERS,
   PLACEMENT_SURFACES,
+  placementFreeSlotCap,
   placementPriceCap,
 } from '~/shared/utils/placement';
 
@@ -34,6 +44,8 @@ const placementConfigSchema = z.object({
   priceCapTiers: z.array(priceCapTierSchema).min(1).optional(),
   /** Per-surface override, so stickers and galleries can be priced apart later. */
   priceCapTiersBySurface: z.record(z.string(), z.array(priceCapTierSchema).min(1)).optional(),
+  freeSlotTiers: z.array(priceCapTierSchema).min(1).optional(),
+  freeSlotTiersBySurface: z.record(z.string(), z.array(priceCapTierSchema).min(1)).optional(),
   approvalShares: z
     .record(
       z.string(),
@@ -43,9 +55,16 @@ const placementConfigSchema = z.object({
 });
 
 export type PlacementConfig = {
+  /**
+   * Platform-fixed surfaces only. A host-set surface's rate lives on its space
+   * (`ResolvedPlacementSpace.declineFeeRate`), and answering here too would be a
+   * second, different answer — the operator floor makes a 0% host read as 5%.
+   */
   declineFeeRate: (surface: PlacementSurface) => number;
   expiryHours: (surface: PlacementSurface) => number;
   priceCapTiers: (surface: PlacementSurface) => PlacementPriceTier[];
+  /** Same table shape and same resolver as the price caps — see the constant. */
+  freeSlotTiers: (surface: PlacementSurface) => PlacementPriceTier[];
   /** The only producer of the approved-placement shares. Nothing may pass its own. */
   approvalShares: (surface: PlacementSurface) => { seller: number; platform: number };
 };
@@ -63,7 +82,9 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
   let stored: z.infer<typeof placementConfigSchema> = {};
 
   try {
-    const row = await dbRead.keyValue.findUnique({ where: { key: PLACEMENT_CONFIG_KEY } });
+    const row = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+      ? await readKeyValueViaKysely((await loadKyselyDb()).kyselyRead, PLACEMENT_CONFIG_KEY)
+      : await readKeyValueViaPrisma(dbRead, PLACEMENT_CONFIG_KEY);
     const parsed = placementConfigSchema.safeParse(row?.value ?? {});
     if (parsed.success) stored = parsed.data;
   } catch {
@@ -71,15 +92,26 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
   }
 
   return {
-    declineFeeRate: (surface) =>
-      clampDeclineFeeRate(
+    declineFeeRate: (surface) => {
+      if (isDeclineFeeHostAdjustable(surface))
+        throw new Error(`placement config: the decline fee on ${surface} is set by its host`);
+      return clampDeclineFeeRate(
         stored.declineFeeRates?.[surface],
         PLACEMENT_SURFACES[surface].defaultDeclineFeeRate
-      ),
+      );
+    },
     expiryHours: (surface) =>
       clampExpiryHours(stored.expiryHours?.[surface], PLACEMENT_SURFACES[surface].expiryHours),
     priceCapTiers: (surface) =>
-      usablePriceCapTiers(stored.priceCapTiersBySurface?.[surface] ?? stored.priceCapTiers),
+      usableCapTiers(
+        stored.priceCapTiersBySurface?.[surface] ?? stored.priceCapTiers,
+        PLACEMENT_PRICE_CAP_TIERS
+      ),
+    freeSlotTiers: (surface) =>
+      usableCapTiers(
+        stored.freeSlotTiersBySurface?.[surface] ?? stored.freeSlotTiers,
+        PLACEMENT_FREE_SLOT_CAP_TIERS
+      ),
     approvalShares: (surface) =>
       clampApprovalShares(stored.approvalShares?.[surface] ?? {}, {
         seller: PLACEMENT_SURFACES[surface].defaultSellerShare,
@@ -91,45 +123,105 @@ export async function getPlacementConfig(): Promise<PlacementConfig> {
 export type PlacementPriceRange = {
   min: number;
   max: number;
+  /**
+   * The most free placements this creator may accept on one space.
+   *
+   * Carried here rather than on its own query because it is decided by the same
+   * two facts — creator score and membership tier — and both are one round trip
+   * each. A second endpoint would double that cost to answer with the same
+   * numbers, and would be free to disagree about them.
+   */
+  freeSlotCap: number;
   score: number;
   tier: 'free' | MembershipTier;
 };
 
 /**
- * The single authority on what a creator may charge. D and E must not each
- * reimplement the score-and-tier scaling, and nothing may persist the result —
- * the cap moves the moment a membership lapses or a score is recomputed.
+ * The single authority on what a creator may charge, and on how much free
+ * capacity they may offer. D and E must not each reimplement the score-and-tier
+ * scaling, and nothing may persist the result — the caps move the moment a
+ * membership lapses or a score is recomputed.
+ *
+ * Pass `config` only when it was read for this same call. One held across
+ * requests would price placements against a stale row.
  */
 export async function placementPriceRange(
   userId: number,
-  surface: PlacementSurface
+  surface: PlacementSurface,
+  config?: PlacementConfig,
+  /** `kysely-placement-reads`, when the caller already evaluated it for this request. */
+  useKysely?: boolean
 ): Promise<PlacementPriceRange> {
-  const [scoreRow, capTier, config] = await Promise.all([
-    // Cast through `numeric`: `::int` raises on a fractional stored total rather
-    // than truncating it. Text that isn't a number at all still raises.
-    dbRead.$queryRaw<{ score: number | null }[]>`
-      SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
-      FROM "User" WHERE id = ${userId}
-    `,
+  const kysely = useKysely ?? (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS));
+  const [scoreRow, capTier, resolvedConfig] = await Promise.all([
+    readUserScore(userId, kysely),
     // Not `getHighestTierSubscription`, which keeps bad-state subscriptions: a
     // creator mid-failed-payment would price against a tier they aren't paying
     // for, while the UI showed them the free cap. Every other monetization cap
     // in the app resolves through this helper.
-    getCapTier(userId),
-    getPlacementConfig(),
+    getCapTier(userId, { useKysely: kysely }),
+    config ?? getPlacementConfig(),
   ]);
 
+  return toPlacementPriceRange(scoreRow[0]?.score, capTier, surface, resolvedConfig);
+}
+
+async function readUserScore(userId: number, useKysely: boolean) {
+  if (useKysely) return getUserPlacementScore((await loadKyselyDb()).kyselyRead, userId);
+  // Cast through `numeric`: `::int` raises on a fractional stored total rather
+  // than truncating it. Text that isn't a number at all still raises.
+  return dbRead.$queryRaw<{ score: number | null }[]>`
+    SELECT floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
+    FROM "User" WHERE id = ${userId}
+  `;
+}
+
+function toPlacementPriceRange(
+  rawScore: number | null | undefined,
+  capTier: string | null,
+  surface: PlacementSurface,
+  config: PlacementConfig
+): PlacementPriceRange {
   // `total` already nets penalties — `reportsAgainst` is stored negative — so a
   // heavily-reported creator can land below zero and gets the bottom band.
-  const score = scoreRow[0]?.score ?? 0;
+  const score = rawScore ?? 0;
   const tier = toPriceCapTier(capTier ?? undefined);
 
   return {
     min: PLACEMENT_SURFACES[surface].serverMinPrice,
     max: placementPriceCap(score, tier, config.priceCapTiers(surface)),
+    freeSlotCap: placementFreeSlotCap(score, tier, config.freeSlotTiers(surface)),
     score,
     tier,
   };
+}
+
+/**
+ * `placementPriceRange` for many creators at once, keyed by user id, so a page of cards does not
+ * price each owner on its own round trips.
+ */
+export async function placementPriceRanges(
+  userIds: number[],
+  surface: PlacementSurface,
+  config?: PlacementConfig
+): Promise<Map<number, PlacementPriceRange>> {
+  const ids = [...new Set(userIds)];
+  if (!ids.length) return new Map();
+  const [scoreRows, capTiers, resolvedConfig] = await Promise.all([
+    dbRead.$queryRaw<{ id: number; score: number | null }[]>`
+      SELECT id, floor((meta -> 'scores' ->> 'total')::numeric)::int AS score
+      FROM "User" WHERE id = ANY(${ids}::int[])
+    `,
+    getCapTiers(ids),
+    config ?? getPlacementConfig(),
+  ]);
+  const scoreById = new Map(scoreRows.map((row) => [row.id, row.score]));
+  return new Map(
+    ids.map((id) => [
+      id,
+      toPlacementPriceRange(scoreById.get(id), capTiers.get(id) ?? null, surface, resolvedConfig),
+    ])
+  );
 }
 
 /**
@@ -150,11 +242,59 @@ const clampExpiryHours = (hours: number | undefined, fallback: number) => {
  * it a cap of 0, i.e. a space nobody can be charged for. It fails toward free
  * rather than toward overcharging, but silently, and the schema can't see it.
  */
-const usablePriceCapTiers = (tiers: PlacementPriceTier[] | undefined) =>
-  tiers?.some((tier) => tier.minScore === 0) ? tiers : PLACEMENT_PRICE_CAP_TIERS;
+const usableCapTiers = (tiers: PlacementPriceTier[] | undefined, fallback: PlacementPriceTier[]) =>
+  tiers?.some((tier) => tier.minScore === 0) ? tiers : fallback;
 
 const MEMBERSHIP_TIERS: MembershipTier[] = ['bronze', 'silver', 'gold'];
 
 /** Anything unrecognised is treated as free rather than guessed upward. */
 const toPriceCapTier = (tier: string | undefined): 'free' | MembershipTier =>
   MEMBERSHIP_TIERS.find((known) => known === tier) ?? 'free';
+
+/**
+ * How many placements are waiting on this owner, per surface, for the badges on
+ * the unified `/user/placements` page and the user menu entry that points at it.
+ *
+ * One grouped query rather than one per surface: the two queues are one table
+ * and one predicate apart, and this runs for every signed-in user on every
+ * session (it rides on `user.checkNotifications` — see the handler). Two counts
+ * would be two round trips for one badge row.
+ *
+ * A count rather than the queue's own `items.length`: those page at 50 and join
+ * every image, so using them for a number both under-reports a large queue and
+ * pays for artwork nobody is looking at.
+ *
+ * Deliberately unfiltered by browsing level, matching both queues: a row outside
+ * the viewer's band still expires, and expiry pays the placer back and costs the
+ * owner their fee. A badge that hid those would count down to zero over a queue
+ * that still had rows in it.
+ *
+ * `[ownerId, surface, status, createdAt, id]` covers this — verified on prod as
+ * an Index Only Scan with all three equality columns in the Index Cond.
+ *
+ * One divergence from the pages, deliberate but worth knowing: they drop rows
+ * whose `data` will not parse, after fetching. So a count here can read higher
+ * than the rows rendered. An unparseable row is still pending, still holds a
+ * slot and still expires, so counting it is the honest answer.
+ */
+export async function getPendingPlacementCounts({ ownerId }: { ownerId: number }) {
+  const bySurface = new Map(await readPendingCounts(ownerId));
+
+  return {
+    sticker: bySurface.get('sticker') ?? 0,
+    remix: bySurface.get('remixGallery') ?? 0,
+  };
+}
+
+async function readPendingCounts(ownerId: number): Promise<[surface: string, count: number][]> {
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_PLACEMENT_READS))
+    return (await countPendingPlacementsBySurface((await loadKyselyDb()).kyselyRead, ownerId)).map(
+      (row) => [row.surface, row.count]
+    );
+  const rows = await dbRead.placement.groupBy({
+    by: ['surface'],
+    where: { ownerId, status: 'pending' },
+    _count: { _all: true },
+  });
+  return rows.map((row) => [row.surface, row._count._all]);
+}

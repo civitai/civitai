@@ -3,7 +3,6 @@ import { openConfirmModal } from '@mantine/modals';
 import { trpc } from '~/utils/trpc';
 import {
   Text,
-  Card,
   Stack,
   Group,
   Title,
@@ -15,6 +14,12 @@ import {
   Progress,
   UnstyledButton,
 } from '@mantine/core';
+import {
+  canWithdrawCatalogItem,
+  markCatalogItemsWithdrawn,
+  type CatalogItem,
+} from '~/components/Account/CatalogItemsCard';
+import { CardOrSection } from '~/components/Account/SettingsLayout';
 import {
   IconPlugConnected,
   IconTrash,
@@ -38,7 +43,7 @@ const periodLabels: Record<'day' | 'week' | 'month', string> = {
   month: '30d',
 };
 
-export function ConnectedAppsCard() {
+export function ConnectedAppsCard({ flat }: { flat?: boolean } = {}) {
   const utils = trpc.useUtils();
   const [editLimitFor, setEditLimitFor] = useState<{
     clientId: string;
@@ -56,9 +61,34 @@ export function ConnectedAppsCard() {
       spendMap.set(entry.id, entry.spend);
     }
   }
+  // The store items each app listed under the user's name; revoking the app withdraws them
+  // (except under a listing the user owns themselves).
+  const withdrawnOnRevoke = (clientId: string) => (item: CatalogItem) =>
+    item.parent.clientId === clientId && !item.parent.isYours;
+  const { data: catalogItems } = trpc.appListings.listMyCatalogSubListings.useQuery(undefined, {
+    enabled: apps.length > 0,
+  });
+  const activeCatalogItemCount = (clientId: string) =>
+    (catalogItems?.items ?? []).filter(
+      (item) => withdrawnOnRevoke(clientId)(item) && canWithdrawCatalogItem(item.status)
+    ).length;
   const revokeMutation = trpc.oauthConsent.revokeApp.useMutation({
-    onSuccess: () => {
+    onSuccess: (result, { clientId }) => {
       utils.oauthConsent.getConnectedApps.invalidate();
+      if (result.catalogItemsWithdrawn === null) {
+        showErrorNotification({
+          title: 'App access revoked',
+          autoClose: false,
+          error: new Error(
+            'Its store items could not be withdrawn. Withdraw them under "Store items listed under your name".'
+          ),
+        });
+        utils.appListings.listMyCatalogSubListings.invalidate();
+        return;
+      }
+      if (result.catalogItemsWithdrawn > 0) {
+        markCatalogItemsWithdrawn(utils, withdrawnOnRevoke(clientId));
+      }
       showSuccessNotification({ message: 'App access revoked' });
     },
     onError: (error) => {
@@ -67,6 +97,7 @@ export function ConnectedAppsCard() {
   });
 
   const handleRevoke = (clientId: string, appName: string) => {
+    const catalogCount = activeCatalogItemCount(clientId);
     openConfirmModal({
       title: 'Revoke App Access',
       children: (
@@ -74,6 +105,10 @@ export function ConnectedAppsCard() {
           Are you sure you want to revoke access for <strong>{appName}</strong>? This will
           disconnect the app and delete all its tokens. You&apos;ll need to re-authorize if you want
           to use it again.
+          {catalogCount > 0 &&
+            ` It also withdraws the ${catalogCount} App Store ${
+              catalogCount === 1 ? 'item' : 'items'
+            } it listed under your name.`}
         </Text>
       ),
       labels: { confirm: 'Revoke Access', cancel: 'Cancel' },
@@ -85,14 +120,16 @@ export function ConnectedAppsCard() {
   if (apps.length === 0 && !isLoading) return null;
 
   return (
-    <Card withBorder>
+    <CardOrSection flat={flat} title="Connected apps">
       <Stack>
-        <Group justify="space-between">
-          <Group gap="xs">
-            <IconPlugConnected size={20} />
-            <Title order={4}>Connected Apps</Title>
+        {!flat && (
+          <Group justify="space-between">
+            <Group gap="xs">
+              <IconPlugConnected size={20} />
+              <Title order={4}>Connected Apps</Title>
+            </Group>
           </Group>
-        </Group>
+        )}
 
         <Box pos="relative">
           <LoadingOverlay visible={isLoading} />
@@ -224,6 +261,6 @@ export function ConnectedAppsCard() {
           initialLimit={editLimitFor.buzzLimit}
         />
       )}
-    </Card>
+    </CardOrSection>
   );
 }

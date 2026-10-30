@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
+// Type-only namespace import for the `importOriginal` mock below. Erased at compile time, so it
+// does not participate in mock hoisting. `@typescript-eslint/consistent-type-imports` rejects
+// the `typeof import('...')` form, which is why this is a named namespace.
+import type * as TrpcUtils from '~/utils/trpc';
+import type * as RoutedDialogLinkModule from '~/components/Dialog/RoutedDialogLink';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 
 // =============================================================================
 // Gallery lazy per-post carousel (`galleryLazyPostImages`).
@@ -53,6 +59,10 @@ const mocks = vi.hoisted(() => {
   });
   // Per-test knobs (reset in beforeEach).
   const state = { error: false };
+  // The active slide's `getState` — what its `RoutedDialogLink` hands the detail modal.
+  // Captured rather than clicked: the mocked slide leaves render at zero size, so a real
+  // click never passes playwright's actionability check.
+  const link = { getState: undefined as undefined | (() => any) };
   const ctx = {
     browsingLevel: 1,
     hiddenImageIds: [] as number[],
@@ -74,11 +84,19 @@ const mocks = vi.hoisted(() => {
       isError: false,
     };
   });
-  return { tailImage, state, ctx, getInfiniteUseQuery };
+  return { tailImage, state, ctx, link, getInfiniteUseQuery };
 });
 
 // --- tail fetch ---------------------------------------------------------------
-vi.mock('~/utils/trpc', () => ({
+// `importOriginal`-spread, not a hand-written factory. This mock applies to the WHOLE module
+// graph, so every module the test transitively reaches must find the names it imports here.
+// `~/utils/trpc` has 12 exports and a factory listing only the two this file uses breaks the
+// moment the graph reaches a third: browser mode serves native ESM, so a missing named export
+// is a LINK-time error that kills the entire FILE — 0 tests collected, no failing assertion,
+// and the suite total silently drops. That is exactly how this file lost all 9 of its tests
+// (#3859 routed it through Remix/remix.utils, which needs `trpcVanilla` among others).
+vi.mock('~/utils/trpc', async (importOriginal) => ({
+  ...(await importOriginal<typeof TrpcUtils>()),
   trpc: {
     image: { getInfinite: { useQuery: mocks.getInfiniteUseQuery } },
     useUtils: () => ({}),
@@ -160,16 +178,27 @@ vi.mock('~/components/Image/ContextMenu/ImagesAsPostsContextMenu', () => ({
 }));
 vi.mock('~/components/Image/Meta/ImageMetaPopover', () => ({ ImageMetaPopover2: () => null }));
 vi.mock('~/components/Cards/components/HoverActionButton', () => ({ default: () => null }));
-vi.mock('~/components/Dialog/RoutedDialogLink', () => ({
-  RoutedDialogLink: ({ children }: any) => <a>{children}</a>,
+// Spread the real module and override only what this test renders. A WHOLESALE
+// factory would replace the module, pinning its export surface to whatever was
+// needed the day it was written: #4364 pulled RemixedCardFlyout into
+// ImagesAsPostsCard, that component imports `triggerRoutedDialog` from here, and
+// the then-current factory listed only RoutedDialogLink — so the whole FILE died
+// at import with a SyntaxError and collected 0 tests for ~17h without going red
+// in any pass/fail count. Spreading is immune to the next export added upstream.
+vi.mock('~/components/Dialog/RoutedDialogLink', async (importOriginal) => ({
+  ...(await importOriginal<typeof RoutedDialogLinkModule>()),
+  RoutedDialogLink: ({ children, getState }: any) => {
+    mocks.link.getState = getState;
+    return <a>{children}</a>;
+  },
 }));
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => ({ imageGeneration: false }),
 }));
 vi.mock('~/components/TrackView/track.utils', () => ({
   useTrackEvent: () => ({ trackAction: vi.fn().mockResolvedValue(undefined) }),
 }));
-vi.mock('~/store/generation-graph.store', () => ({ generationGraphPanel: { open: vi.fn() } }));
 
 // Import AFTER the mocks are registered.
 import { renderWithProviders } from '../../../../test/component-setup';
@@ -209,6 +238,7 @@ const walkToTail = async () => {
 
 beforeEach(() => {
   mocks.getInfiniteUseQuery.mockClear();
+  mocks.link.getState = undefined;
   mocks.state.error = false;
   mocks.ctx.browsingLevel = 1;
   mocks.ctx.hiddenImageIds = [];
@@ -302,6 +332,27 @@ describe('LazyPostImagesCarousel', () => {
       await expect.element(activeSlideId()).toBeInTheDocument();
       await clickNext();
     }
+  });
+
+  test('hands the detail modal the descriptor for the rest of the post, not just the seed', async () => {
+    // A cover click happens at index 0 — six slides short of the approach threshold —
+    // so the seed the modal receives is the bare first slice. Without the descriptor
+    // riding along, images 7..20 are unreachable by that route.
+    mocks.ctx.hiddenImageIds = [42];
+    const data = { postId: 100, imageCount: 20, images: slice(6) } as any;
+    renderWithProviders(<LazyPostImagesCarousel data={data} postId={100} />);
+    await expect.element(activeSlideId()).toHaveAttribute('data-image-id', '1');
+
+    const state = mocks.link.getState!();
+    expect(state.images).toHaveLength(6);
+    expect(state.postTail).toMatchObject({
+      postId: 100,
+      imageCount: 20,
+      browsingLevel: 1,
+      // The owner-curation lists travel too — `getInfinite` re-derives none of them.
+      hiddenImageIds: [42],
+      filters: { modelId: 1, modelVersionId: 2 },
+    });
   });
 
   test('never enables the tail query when postId is null (no broadening to the general feed)', async () => {

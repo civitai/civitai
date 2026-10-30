@@ -28,6 +28,7 @@
  * These are pure functions (no React, no postMessage) so the allowlist is
  * unit-testable in isolation — see __tests__/projectBlockInit.test.ts.
  */
+import { Flags } from '~/shared/utils/flags';
 import type {
   BlockCheckpointInfo,
   BlockInitPayload,
@@ -105,11 +106,49 @@ export function projectBlockInitContext(
  * Defaults are FAIL-CLOSED: an absent ceiling projects `undefined` (the SDK
  * `useDomainMaturity()` hook treats absent as the most restrictive), and an
  * unrecognized domain projects `null` rather than leaking a raw value.
+ *
+ * ── `effectiveBrowsingLevel` ──────────────────────────────────────────────
+ *
+ * `maxBrowsingLevel` is a property of the DOMAIN: every viewer on `civitai.red`
+ * gets the same maximally-wide ceiling, including one whose own NSFW setting is
+ * off. `effectiveBrowsingLevel` is that ceiling intersected with the VIEWER's
+ * own browsing level, computed at mint by `resolveEffectiveBrowsingLevel`
+ * (`src/pages/api/v1/block-tokens/index.ts`) on top of the platform's existing
+ * `getServerBrowsingLevel` source of truth.
+ *
+ * 🔴 THE VIEWER'S RAW LEVEL IS DELIBERATELY NOT PROJECTED, AND MUST NOT BE.
+ * On `blue` the App-Blocks domain ceiling is SFW while a viewer's saved level
+ * may carry R/X/XXX — so the raw viewer level is WIDER than the domain permits
+ * and would read to a publisher as permission it does not have. It is also the
+ * higher-resolution form of `viewerNsfwEnabled`, which this very module was
+ * written to STOP sending to untrusted iframes (see the file header). Only the
+ * intersection goes on the wire.
+ *
+ * 🔴 THE CLAMP IS RE-APPLIED HERE RATHER THAN TRUSTED FROM THE SERVER, and the
+ * two clamps are not redundant in the way they look. The server's runs against
+ * the ceiling it computed in the same request; this one runs against the
+ * ceiling actually being PROJECTED on this message, after the sanitisation
+ * above has had its say. They can disagree — a `maxBrowsingLevel` that fails
+ * the finite check is dropped to `undefined` HERE, at which point there is no
+ * ceiling left to bound anything, and a value the server considered clamped
+ * would ride out unbounded. Hence the two rules below.
+ *
+ * FAIL-CLOSED, in the same shape as its sibling field, plus one rule of its own:
+ *   - absent / non-finite / negative → `undefined`; the SDK then falls back to
+ *     `maxBrowsingLevel`, i.e. exactly the pre-field behaviour. A host or server
+ *     that predates this field cannot regress, and an upgrading block can only
+ *     ever see the SAME or a NARROWER permission — never a wider one.
+ *   - 🔴 NEVER projected without a projected `maxBrowsingLevel`. With no ceiling
+ *     to intersect against there is nothing bounding the value, so it is
+ *     dropped rather than forwarded on trust. Negative is rejected for the
+ *     reason `effectiveBrowsingCeiling` documents: `-1 & ceiling === ceiling`,
+ *     so masking junk would resolve it to the WIDEST possible viewer.
  */
 export function projectBlockInitMaturity(input: {
   domain?: string | null;
   maxBrowsingLevel?: number | null;
-}): Pick<BlockInitPayload, 'domain' | 'maxBrowsingLevel'> {
+  effectiveBrowsingLevel?: number | null;
+}): Pick<BlockInitPayload, 'domain' | 'maxBrowsingLevel' | 'effectiveBrowsingLevel'> {
   const domain =
     input.domain === 'green' || input.domain === 'blue' || input.domain === 'red'
       ? input.domain
@@ -118,7 +157,15 @@ export function projectBlockInitMaturity(input: {
     typeof input.maxBrowsingLevel === 'number' && Number.isFinite(input.maxBrowsingLevel)
       ? input.maxBrowsingLevel
       : undefined;
-  return { domain, maxBrowsingLevel };
+  const rawEffective = input.effectiveBrowsingLevel;
+  const effectiveBrowsingLevel =
+    maxBrowsingLevel !== undefined &&
+    typeof rawEffective === 'number' &&
+    Number.isFinite(rawEffective) &&
+    rawEffective >= 0
+      ? Flags.intersection(maxBrowsingLevel, rawEffective)
+      : undefined;
+  return { domain, maxBrowsingLevel, effectiveBrowsingLevel };
 }
 
 /**

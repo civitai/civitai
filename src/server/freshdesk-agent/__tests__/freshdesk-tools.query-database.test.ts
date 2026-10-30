@@ -43,13 +43,6 @@ vi.mock('~/server/db/pgDb', async (importOriginal) => ({
   pgDbRead: h.readPool,
 }));
 
-// The app-wide Prisma read client. Stubbed so that "the tool never touches it"
-// is an assertion this file can make rather than an inference.
-vi.mock('~/server/db/client', async (importOriginal) => ({
-  ...(await importOriginal<typeof DbClientModule>()),
-  dbRead: { $queryRaw: h.prismaQueryRaw },
-}));
-
 // A pass-through spy, NOT a stub: it delegates to the real scope check and
 // exists only to record WHICH text each call was handed — the tool validates
 // the model's original and the rewritten statement, and those are different
@@ -69,6 +62,8 @@ vi.mock('~/server/http/freshdesk/freshdesk.caller', () => ({ freshdeskCaller: {}
 vi.mock('~/server/http/nowpayments/nowpayments.caller', () => ({ default: {} }));
 
 import { executeToolCall } from '~/server/freshdesk-agent/freshdesk-tools';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+dbMock.dbRead.$queryRaw.mockImplementation((...args: unknown[]) => (h.prismaQueryRaw as (...a: unknown[]) => unknown)(...args));
 
 const ALLOWED_SQL = 'SELECT id, username FROM "User" WHERE id = 7 LIMIT 1';
 

@@ -42,7 +42,8 @@ import dynamic from 'next/dynamic';
 import Link from 'next/link';
 import { useRouter } from 'next/router';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { slugit } from '~/utils/string-helpers';
+import { defaultPresetRatio, PRESET_MODEL_SIZES } from '~/shared/generation/preset-sizes';
+import { slugitOr } from '~/utils/string-helpers';
 import { abbreviateNumber } from '~/utils/number-helpers';
 
 import type { DragEndEvent } from '@dnd-kit/core';
@@ -53,7 +54,6 @@ import { getEdgeUrl } from '~/client-utils/cf-images-utils';
 import { ChapterSettingsModal } from '~/components/Comics/ChapterSettingsModal';
 import {
   COMIC_MODEL_MAX_IMAGES,
-  COMIC_MODEL_SIZES,
   type BulkPanelItem,
 } from '~/components/Comics/comic-project-constants';
 import { PanelCard, SortablePanel, getNsfwLabel } from '~/components/Comics/PanelCard';
@@ -144,6 +144,8 @@ function ProjectWorkspace() {
     | 'SeedreamLite'
     | 'OpenAI'
     | 'OpenAI2'
+    | 'OpenAI25Flare'
+    | 'OpenAI25Sunburst'
     | 'Qwen'
     | 'Grok'
     | null
@@ -235,7 +237,15 @@ function ProjectWorkspace() {
   );
 
   const effectiveModel = generationModel ?? project?.baseModel ?? 'NanoBanana2';
-  const activeAspectRatios = COMIC_MODEL_SIZES[effectiveModel] ?? COMIC_MODEL_SIZES.NanoBanana2;
+  const activeAspectRatios = PRESET_MODEL_SIZES[effectiveModel] ?? PRESET_MODEL_SIZES.NanoBanana2;
+  // Reset a stored ratio the model's list lacks (a model change, an old Flux.2 label), but only once
+  // the project has loaded: until then the list is the NanoBanana2 fallback and would clobber a valid one.
+  useEffect(() => {
+    if (!project) return;
+    if (!activeAspectRatios.some((s) => s.label === aspectRatio))
+      setAspectRatio(defaultPresetRatio(activeAspectRatios));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- aspectRatio is read, not a trigger
+  }, [project, activeAspectRatios]);
 
   const { data: enhanceCostEstimate } = trpc.comics.getPromptEnhanceCostEstimate.useQuery(
     undefined,
@@ -729,18 +739,8 @@ function ProjectWorkspace() {
   });
 
   // ── Handlers ──
-  const handleModelChange = (value: string | null) => {
+  const handleModelChange = (value: string | null) =>
     setGenerationModel(value as typeof generationModel);
-    const newSizes =
-      COMIC_MODEL_SIZES[value ?? project?.baseModel ?? 'NanoBanana2'] ??
-      COMIC_MODEL_SIZES.NanoBanana2;
-    const defaultLabel =
-      newSizes.find((s) => s.label === '3:4' || s.label === 'Portrait' || s.label === '2:3')
-        ?.label ?? newSizes[0].label;
-    if (!newSizes.some((s) => s.label === aspectRatio)) {
-      setAspectRatio(defaultLabel);
-    }
-  };
 
   const handlePanelModalClose = () => {
     closePanelModal();
@@ -750,7 +750,7 @@ function ProjectWorkspace() {
     setUseContext(true);
     setReferencePanelId(null);
     setQuantity(1);
-    setAspectRatio('3:4');
+    setAspectRatio(defaultPresetRatio(activeAspectRatios));
     setGenerationModel(null);
     setSelectedImageIds(null);
     setEnhanceExistingSource(null);
@@ -1068,9 +1068,9 @@ function ProjectWorkspace() {
           }
 
           // Drop the creator into their published work — basking is mandatory.
-          const publicUrl = `/comics/${projectId}/${slugit(project.name)}/${
+          const publicUrl = `/comics/${projectId}/${slugitOr(project.name, 'comic')}/${
             chapterPosition + 1
-          }/${slugit(chapterName)}`;
+          }/${slugitOr(chapterName, 'chapter')}`;
           showSuccessNotification({
             title: 'Chapter published! 🎉',
             message: (
@@ -1327,7 +1327,7 @@ function ProjectWorkspace() {
             {heroImage?.url ? (
               <>
                 <img
-                  src={getEdgeUrl(heroImage.url, { width: 1200 })}
+                  src={getEdgeUrl(heroImage.url, { width: 1200, optimized: true })}
                   alt={`${project.name} hero banner`}
                   className={styles.heroBannerImg}
                   style={{ objectPosition: `center ${heroImagePosition}%` }}
@@ -1354,7 +1354,10 @@ function ProjectWorkspace() {
           <div className={clsx(styles.headerCard, styles.gradientTopBorder)}>
             <div className={styles.headerImage} onClick={() => openSettings()}>
               {project.coverImage?.url ? (
-                <img src={getEdgeUrl(project.coverImage.url, { width: 160 })} alt={project.name} />
+                <img
+                  src={getEdgeUrl(project.coverImage.url, { width: 160, optimized: true })}
+                  alt={project.name}
+                />
               ) : (
                 <IconPhoto size={24} style={{ color: '#909296' }} />
               )}
@@ -1459,7 +1462,9 @@ function ProjectWorkspace() {
               </ActionIcon>
               <button
                 className={styles.gradientBtn}
-                onClick={() => router.push(`/comics/${projectId}/${slugit(project.name)}`)}
+                onClick={() =>
+                  router.push(`/comics/${projectId}/${slugitOr(project.name, 'comic')}`)
+                }
                 disabled={!hasReadyPanelsWithImages}
               >
                 <IconBook size={16} />

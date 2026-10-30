@@ -1,5 +1,5 @@
 import { randomBytes, randomInt } from 'crypto';
-import type { SessionUser } from '@civitai/auth';
+import { isSystemAccountMeta, type SessionUser } from '@civitai/auth';
 import { db } from '../db/db';
 import { toSessionUser } from './session';
 import type { NormalizedProfile } from './providers';
@@ -57,6 +57,29 @@ async function setAccountScope(
     .execute();
 }
 
+/** A sign-in resolved to a system account. Those are API-key only, so neither a magic link to their
+ *  inbox nor an OAuth identity on their address may open a session for them or link to them. */
+export class SystemAccountSignInError extends Error {
+  constructor() {
+    super('System accounts cannot sign in');
+    this.name = 'SystemAccountSignInError';
+  }
+}
+
+/** Does this user carry the system-account marker in `User.meta`? */
+export async function isSystemAccountUser(userId: number): Promise<boolean> {
+  const row = await db
+    .selectFrom('User')
+    .select('meta')
+    .where('id', '=', userId)
+    .executeTakeFirst();
+  return isSystemAccountMeta(row?.meta);
+}
+
+async function assertNotSystemAccount(userId: number): Promise<void> {
+  if (await isSystemAccountUser(userId)) throw new SystemAccountSignInError();
+}
+
 /** True if a user already exists for this exact email — used to allow EXISTING users with a `+`-alias email to
  *  sign in while blocking NEW `+`-alias signups (the legacy plus-address anti-abuse gate). */
 export async function userExistsByEmail(email: string): Promise<boolean> {
@@ -64,6 +87,17 @@ export async function userExistsByEmail(email: string): Promise<boolean> {
     .selectFrom('User')
     .select('id')
     .where('email', '=', email)
+    .executeTakeFirst();
+  return !!row;
+}
+
+/** True if this provider identity is already linked — i.e. a RETURNING user, not a signup. */
+export async function isLinkedAccount(provider: string, providerAccountId: string) {
+  const row = await db
+    .selectFrom('Account')
+    .select('userId')
+    .where('provider', '=', provider)
+    .where('providerAccountId', '=', providerAccountId)
     .executeTakeFirst();
   return !!row;
 }
@@ -83,6 +117,8 @@ export async function findOrCreateUser(
     .where('providerAccountId', '=', profile.providerAccountId)
     .executeTakeFirst();
 
+  if (linked) await assertNotSystemAccount(linked.userId);
+
   let userId = linked?.userId;
   // Returning user — record any newly-granted scope (e.g. a Discord re-login that just approved
   // role_connections.write), so the linked-roles flow sees it without a separate connect step.
@@ -97,10 +133,11 @@ export async function findOrCreateUser(
   if (!userId && profile.email && profile.emailVerified) {
     const existing = await db
       .selectFrom('User')
-      .select('id')
+      .select(['id', 'meta'])
       .where('email', '=', profile.email)
       .executeTakeFirst();
     if (existing) {
+      if (isSystemAccountMeta(existing.meta)) throw new SystemAccountSignInError();
       userId = existing.id;
       await db
         .insertInto('Account')
@@ -127,7 +164,11 @@ export async function findOrCreateUser(
         // victim's real login into this account (takeover). Mirrors the emailVerified gate just below.
         email: profile.email && profile.emailVerified ? profile.email : null,
         username: null,
-        name: profile.name ?? null,
+        // Deliberately never persisted: the OAuth provider's name is unverified, user-controlled,
+        // and outlives a (soft) account deletion. It still seeds the username below, from the profile.
+        // The live NCMEC path (csam.service-new.ts) reads it only as the REPORTER's firstName, so staff
+        // accounts created from here on file reports without one — expected; they carry their email.
+        name: null,
         // Legacy behavior: never store the provider's avatar — users set their own profile picture, and an
         // unmoderated provider avatar shouldn't be displayed by default.
         image: null,
@@ -138,7 +179,13 @@ export async function findOrCreateUser(
     userId = created.id;
     await db
       .insertInto('Account')
-      .values({ userId, type: 'oauth', provider, providerAccountId: profile.providerAccountId, scope })
+      .values({
+        userId,
+        type: 'oauth',
+        provider,
+        providerAccountId: profile.providerAccountId,
+        scope,
+      })
       .execute();
     await assignUsername(userId, [profile.email, profile.name, profile.username]);
   }
@@ -183,7 +230,13 @@ export async function linkAccountToUser(
 
   await db
     .insertInto('Account')
-    .values({ userId, type: 'oauth', provider, providerAccountId: profile.providerAccountId, scope })
+    .values({
+      userId,
+      type: 'oauth',
+      provider,
+      providerAccountId: profile.providerAccountId,
+      scope,
+    })
     .execute();
   return 'linked';
 }
@@ -193,9 +246,10 @@ export async function linkAccountToUser(
 export async function findOrCreateUserByEmail(email: string): Promise<SessionUser> {
   const existing = await db
     .selectFrom('User')
-    .select('id')
+    .select(['id', 'meta'])
     .where('email', '=', email)
     .executeTakeFirst();
+  if (existing && isSystemAccountMeta(existing.meta)) throw new SystemAccountSignInError();
 
   let userId = existing?.id;
   if (!userId) {

@@ -1,8 +1,11 @@
+import { CollectionMode } from '~/shared/utils/prisma/enums';
+
 export type CollectionListView = 'default' | 'compact';
 export type CollectionSort = 'name-asc' | 'name-desc' | 'recently-added' | 'recently-updated';
-export type CollectionMembership = 'owned' | 'shared' | 'following';
+export type CollectionMembership = 'bookmarks' | 'owned' | 'shared' | 'following';
 
 type PermissionFlags = { isCollaborator?: boolean; manage?: boolean } | undefined;
+type SectionCollection = { isOwner: boolean; mode?: CollectionMode | null };
 
 export const SORT_OPTIONS: { value: CollectionSort; label: string }[] = [
   { value: 'name-asc', label: 'Name A–Z' },
@@ -14,15 +17,20 @@ export const SORT_OPTIONS: { value: CollectionSort; label: string }[] = [
 // `isCollaborator` is the server's "elevated beyond the collection's free grant" test
 // (collection.service.ts). CollectionContributor also stores follow rows, so a row alone
 // never means shared — only that flag does.
+// Bookmark collections are owned by the user, so they must be picked off before the ownership
+// branch or they fall in with the collections the user made themselves. Still gated on ownership:
+// someone else's Bookmark collection is not one of yours.
 export function getMembership(
-  collection: { isOwner: boolean },
+  collection: SectionCollection,
   permissions: PermissionFlags
 ): CollectionMembership {
+  if (collection.mode === CollectionMode.Bookmark && collection.isOwner) return 'bookmarks';
   if (collection.isOwner) return 'owned';
   return permissions?.isCollaborator ? 'shared' : 'following';
 }
 
 const SECTION_LABELS: Record<CollectionMembership, string> = {
+  bookmarks: 'Likes & bookmarks',
   owned: 'Owned',
   shared: 'Shared with me',
   following: 'Following',
@@ -31,16 +39,21 @@ const SECTION_LABELS: Record<CollectionMembership, string> = {
 // Every row lands in exactly one section, so nothing can be filtered out of the rendered set.
 // `permissions` is empty whenever the collaborative flag is off or its query hasn't resolved,
 // which classifies non-owned rows as following rather than dropping them.
-export function buildCollectionSections<T extends { id: number; isOwner: boolean }>(
+export function buildCollectionSections<T extends { id: number } & SectionCollection>(
   collections: T[],
   permissions: ReadonlyMap<number, PermissionFlags>
 ): { key: CollectionMembership; label: string; rows: T[] }[] {
-  const rows: Record<CollectionMembership, T[]> = { owned: [], shared: [], following: [] };
+  const rows: Record<CollectionMembership, T[]> = {
+    bookmarks: [],
+    owned: [],
+    shared: [],
+    following: [],
+  };
   for (const collection of collections) {
     rows[getMembership(collection, permissions.get(collection.id))].push(collection);
   }
 
-  return (['owned', 'shared', 'following'] as const).map((key) => ({
+  return (['bookmarks', 'owned', 'shared', 'following'] as const).map((key) => ({
     key,
     label: SECTION_LABELS[key],
     rows: rows[key],

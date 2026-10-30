@@ -1,0 +1,1048 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Training Studio — Configure - Civitai Mockup</title>
+
+  <!-- Mantine v7 CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/@mantine/core@7.17.4/styles.css">
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <!-- Tabler Icons -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@3.3.0/dist/tabler-icons.min.css">
+
+  <style>
+    :root {
+      --mantine-color-scheme: dark;
+      --civitai-blue: #1971c2;
+      --civitai-gold: #F5A623;
+      --bg-dark: #1a1b1e;
+      --bg-card: #25262b;
+      --bg-elevated: #2c2e33;
+      --text-primary: #c1c2c5;
+      --text-heading: #fff;
+      --text-dimmed: #909296;
+      --border-color: #373a40;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      background: var(--bg-dark);
+      color: var(--text-primary);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 0;
+      overflow-x: hidden;
+    }
+
+    /* Layout */
+    .app-container {
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      overflow: hidden;
+    }
+
+    .header {
+      background: linear-gradient(180deg, #2c2e33 0%, #25262b 100%);
+      border-bottom: 1px solid var(--border-color);
+      padding: 1.5rem 2rem;
+      flex-shrink: 0;
+    }
+
+    .header-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2rem;
+    }
+
+    .header-title h1 {
+      font-size: 1.75rem;
+      font-weight: 700;
+      color: var(--text-heading);
+      margin: 0;
+    }
+
+    .header-logo {
+      font-size: 0.875rem;
+      color: var(--text-dimmed);
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .stepper {
+      display: flex;
+      align-items: center;
+      gap: 1.5rem;
+    }
+
+    .stepper-item {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+      font-size: 0.875rem;
+      color: var(--text-dimmed);
+    }
+
+    .stepper-item.active {
+      color: var(--civitai-blue);
+      font-weight: 600;
+    }
+
+    .stepper-item.completed {
+      color: #51cf66;
+    }
+
+    .stepper-dot {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: var(--bg-card);
+      border: 2px solid var(--border-color);
+      font-size: 0.75rem;
+      font-weight: 600;
+    }
+
+    .stepper-item.active .stepper-dot {
+      background: var(--civitai-blue);
+      border-color: var(--civitai-blue);
+      color: white;
+    }
+
+    .stepper-item.completed .stepper-dot {
+      background: #51cf66;
+      border-color: #51cf66;
+      color: white;
+    }
+
+    .stepper-line {
+      flex: 1;
+      height: 2px;
+      background: var(--border-color);
+      margin: 0 0.5rem;
+    }
+
+    /* Main Content */
+    .main-content {
+      display: flex;
+      flex: 1;
+      overflow: hidden;
+      gap: 0;
+    }
+
+    .content-left {
+      flex: 1;
+      overflow-y: auto;
+      padding: 2rem;
+      padding-right: 1rem;
+    }
+
+    .content-right {
+      width: 340px;
+      background: linear-gradient(180deg, #2c2e33 0%, #25262b 100%);
+      border-left: 1px solid var(--border-color);
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Section */
+    .section {
+      margin-bottom: 3rem;
+    }
+
+    .section-title {
+      font-size: 1.125rem;
+      font-weight: 700;
+      color: var(--text-heading);
+      margin: 0 0 1.5rem 0;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .section-title-icon {
+      font-size: 1.25rem;
+    }
+
+    /* Model Card Grid */
+    .model-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 1.25rem;
+    }
+
+    .model-card {
+      background: var(--bg-card);
+      border: 2px solid var(--border-color);
+      border-radius: 0.75rem;
+      overflow: hidden;
+      cursor: pointer;
+      transition: all 300ms ease;
+      position: relative;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .model-card:hover {
+      border-color: var(--civitai-blue);
+      box-shadow: 0 0 20px rgba(25, 113, 194, 0.2);
+    }
+
+    .model-card.selected {
+      border-color: var(--civitai-blue);
+      background: linear-gradient(135deg, rgba(25, 113, 194, 0.1) 0%, rgba(25, 113, 194, 0.05) 100%);
+      box-shadow: 0 0 20px rgba(25, 113, 194, 0.3), inset 0 0 20px rgba(25, 113, 194, 0.05);
+    }
+
+    .model-card-image {
+      width: 100%;
+      aspect-ratio: 1;
+      background: linear-gradient(135deg, #3a3d47 0%, #2c2e33 100%);
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 3rem;
+      color: var(--text-dimmed);
+    }
+
+    .model-card-image.flux {
+      background: linear-gradient(135deg, #6d28d9 0%, #a855f7 100%);
+    }
+
+    .model-card-image.sdxl {
+      background: linear-gradient(135deg, #0891b2 0%, #06b6d4 100%);
+    }
+
+    .model-card-image.illu {
+      background: linear-gradient(135deg, #dc2626 0%, #f87171 100%);
+    }
+
+    .model-card-image.sd15 {
+      background: linear-gradient(135deg, #7c3aed 0%, #c084fc 100%);
+    }
+
+    .model-card-image.pony {
+      background: linear-gradient(135deg, #ea580c 0%, #fed7aa 100%);
+    }
+
+    .model-card-image.wan {
+      background: linear-gradient(135deg, #059669 0%, #6ee7b7 100%);
+    }
+
+    .model-card-image.custom {
+      background: var(--bg-elevated);
+    }
+
+    .model-card-ribbon {
+      position: absolute;
+      top: 0.75rem;
+      right: -2.5rem;
+      background: var(--civitai-gold);
+      color: #000;
+      padding: 0.375rem 3.5rem;
+      font-size: 0.75rem;
+      font-weight: 700;
+      transform: rotate(45deg);
+      letter-spacing: 0.05em;
+      text-transform: uppercase;
+    }
+
+    .model-card-content {
+      padding: 1rem;
+      display: flex;
+      flex-direction: column;
+      flex: 1;
+    }
+
+    .model-card-name {
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--text-heading);
+      margin: 0 0 0.25rem 0;
+    }
+
+    .model-card-desc {
+      font-size: 0.8rem;
+      color: var(--text-dimmed);
+      margin: 0 0 0.75rem 0;
+      line-height: 1.4;
+    }
+
+    .model-card-badges {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 0.75rem;
+      flex-wrap: wrap;
+    }
+
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.25rem;
+      padding: 0.375rem 0.75rem;
+      background: rgba(25, 113, 194, 0.15);
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--civitai-blue);
+      white-space: nowrap;
+    }
+
+    .badge.quality {
+      background: rgba(80, 227, 194, 0.15);
+      color: #50e3c2;
+    }
+
+    .badge.speed {
+      background: rgba(245, 166, 35, 0.15);
+      color: var(--civitai-gold);
+    }
+
+    .model-card-cost {
+      font-size: 0.875rem;
+      color: var(--text-dimmed);
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+      margin-top: auto;
+      padding-top: 0.75rem;
+      border-top: 1px solid var(--border-color);
+    }
+
+    .buzz-icon {
+      font-size: 1rem;
+    }
+
+    .cost-value {
+      color: var(--civitai-gold);
+      font-weight: 700;
+    }
+
+    .model-card-custom-icon {
+      font-size: 2rem;
+      opacity: 0.5;
+    }
+
+    /* Accordion */
+    .accordion {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 0.75rem;
+      overflow: hidden;
+    }
+
+    .accordion-header {
+      padding: 1rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      cursor: pointer;
+      user-select: none;
+      transition: background 200ms ease;
+    }
+
+    .accordion-header:hover {
+      background: var(--bg-elevated);
+    }
+
+    .accordion-header-left {
+      display: flex;
+      align-items: center;
+      gap: 0.75rem;
+    }
+
+    .accordion-header-title {
+      font-weight: 600;
+      color: var(--text-heading);
+      font-size: 0.95rem;
+    }
+
+    .accordion-header-hint {
+      font-size: 0.8rem;
+      color: var(--text-dimmed);
+      margin-top: 0.25rem;
+    }
+
+    .accordion-icon {
+      font-size: 1.25rem;
+      color: var(--text-dimmed);
+      transition: transform 300ms ease;
+    }
+
+    .accordion.open .accordion-icon {
+      transform: rotate(180deg);
+    }
+
+    .accordion-body {
+      display: none;
+      padding: 0 1rem 1rem 1rem;
+      border-top: 1px solid var(--border-color);
+      max-height: 0;
+      overflow: hidden;
+      transition: max-height 300ms ease;
+    }
+
+    .accordion.open .accordion-body {
+      display: block;
+      max-height: 500px;
+    }
+
+    .settings-group {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1rem;
+      margin-bottom: 1rem;
+    }
+
+    .settings-group.full {
+      grid-template-columns: 1fr;
+    }
+
+    .setting-field {
+      display: flex;
+      flex-direction: column;
+      gap: 0.5rem;
+    }
+
+    .setting-label {
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--text-primary);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .setting-input {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-color);
+      border-radius: 0.5rem;
+      padding: 0.5rem 0.75rem;
+      color: var(--text-primary);
+      font-size: 0.875rem;
+    }
+
+    .setting-input:focus {
+      outline: none;
+      border-color: var(--civitai-blue);
+      box-shadow: 0 0 8px rgba(25, 113, 194, 0.3);
+    }
+
+    .setting-hint {
+      font-size: 0.75rem;
+      color: var(--text-dimmed);
+      margin-top: -0.25rem;
+    }
+
+    /* Right Panel */
+    .panel-right {
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+      overflow-y: auto;
+    }
+
+    .panel-section {
+      margin-bottom: 1.5rem;
+    }
+
+    .panel-label {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--text-dimmed);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      margin-bottom: 0.75rem;
+    }
+
+    .panel-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem 0;
+      font-size: 0.95rem;
+      color: var(--text-primary);
+    }
+
+    .panel-row-label {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .panel-row-value {
+      font-weight: 700;
+      color: var(--text-heading);
+    }
+
+    .panel-row-value.buzz {
+      color: var(--civitai-gold);
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+    }
+
+    .panel-time {
+      font-size: 0.875rem;
+      color: var(--text-dimmed);
+    }
+
+    .panel-divider {
+      height: 1px;
+      background: var(--border-color);
+      margin: 1rem 0;
+    }
+
+    .panel-queue {
+      background: rgba(25, 113, 194, 0.1);
+      border: 1px solid rgba(25, 113, 194, 0.2);
+      border-radius: 0.5rem;
+      padding: 0.75rem;
+      font-size: 0.8rem;
+      color: var(--text-primary);
+    }
+
+    .panel-queue-position {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+      color: var(--text-dimmed);
+    }
+
+    .panel-queue-number {
+      color: var(--civitai-blue);
+      font-weight: 700;
+    }
+
+    .dataset-box {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-color);
+      border-radius: 0.5rem;
+      padding: 0.75rem;
+      font-size: 0.8rem;
+    }
+
+    .dataset-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 0.375rem 0;
+      color: var(--text-dimmed);
+    }
+
+    .dataset-row-label {
+      display: flex;
+      align-items: center;
+      gap: 0.375rem;
+    }
+
+    .dataset-row-value {
+      font-weight: 600;
+      color: var(--text-heading);
+    }
+
+    .license-row {
+      color: var(--text-dimmed);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 0.75rem;
+      background: var(--bg-elevated);
+      border-radius: 0.5rem;
+      font-size: 0.8rem;
+      margin-top: 0.75rem;
+    }
+
+    .license-fee {
+      color: var(--civitai-gold);
+      font-weight: 700;
+    }
+
+    /* Bottom Bar */
+    .bottom-bar {
+      background: var(--bg-card);
+      border-top: 1px solid var(--border-color);
+      padding: 1rem 2rem;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-shrink: 0;
+    }
+
+    .button {
+      padding: 0.75rem 1.5rem;
+      border-radius: 0.5rem;
+      border: none;
+      font-weight: 600;
+      font-size: 0.95rem;
+      cursor: pointer;
+      transition: all 200ms ease;
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .button-secondary {
+      background: transparent;
+      border: 2px solid var(--border-color);
+      color: var(--text-primary);
+    }
+
+    .button-secondary:hover {
+      background: var(--bg-elevated);
+      border-color: var(--text-primary);
+    }
+
+    .button-primary {
+      background: var(--civitai-blue);
+      color: white;
+    }
+
+    .button-primary:hover {
+      background: #1563a1;
+      box-shadow: 0 0 16px rgba(25, 113, 194, 0.4);
+    }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    ::-webkit-scrollbar-thumb {
+      background: var(--border-color);
+      border-radius: 3px;
+    }
+
+    ::-webkit-scrollbar-thumb:hover {
+      background: var(--text-dimmed);
+    }
+
+    /* Responsive */
+    @media (max-width: 1200px) {
+      .model-grid {
+        grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      }
+
+      .content-right {
+        width: 300px;
+      }
+    }
+
+    @media (max-width: 900px) {
+      .main-content {
+        flex-direction: column;
+      }
+
+      .content-right {
+        width: 100%;
+        border-left: none;
+        border-top: 1px solid var(--border-color);
+        max-height: 40vh;
+      }
+
+      .model-grid {
+        grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-container">
+    <!-- Header -->
+    <div class="header">
+      <div class="header-top">
+        <div class="header-title">
+          <h1>Train a Model</h1>
+        </div>
+        <div class="header-logo">
+          <span>civitai</span>
+        </div>
+      </div>
+
+      <!-- Stepper -->
+      <div class="stepper">
+        <div class="stepper-item completed">
+          <div class="stepper-dot">✓</div>
+          <span>Data</span>
+        </div>
+        <div class="stepper-line"></div>
+        <div class="stepper-item active">
+          <div class="stepper-dot">2</div>
+          <span>Configure</span>
+        </div>
+        <div class="stepper-line"></div>
+        <div class="stepper-item">
+          <div class="stepper-dot">3</div>
+          <span>Train</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Main Content -->
+    <div class="main-content">
+      <!-- Left Content -->
+      <div class="content-left">
+        <!-- Choose Base Model Section -->
+        <div class="section">
+          <div class="section-title">
+            <span class="section-title-icon">🎯</span>
+            Choose what to train on
+          </div>
+
+          <div class="model-grid">
+            <!-- Flux (Recommended/Selected) -->
+            <div class="model-card selected">
+              <div class="model-card-image flux">
+                <div class="model-card-ribbon">Recommended</div>
+              </div>
+              <div class="model-card-content">
+                <div class="model-card-name">Flux</div>
+                <div class="model-card-desc">Next-gen model with superior quality</div>
+                <div class="model-card-badges">
+                  <div class="badge quality">Best quality</div>
+                  <div class="badge speed">Fast</div>
+                </div>
+                <div class="model-card-cost">
+                  <span class="buzz-icon">⚡</span>
+                  <span class="cost-value">2,800</span>
+                  <span>/10K steps</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- SDXL -->
+            <div class="model-card">
+              <div class="model-card-image sdxl"></div>
+              <div class="model-card-content">
+                <div class="model-card-name">SDXL 1.0</div>
+                <div class="model-card-desc">Balanced speed and quality</div>
+                <div class="model-card-badges">
+                  <div class="badge">Balanced</div>
+                </div>
+                <div class="model-card-cost">
+                  <span class="buzz-icon">⚡</span>
+                  <span class="cost-value">1,200</span>
+                  <span>/10K steps</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Illustrious -->
+            <div class="model-card">
+              <div class="model-card-image illu"></div>
+              <div class="model-card-content">
+                <div class="model-card-name">Illustrious</div>
+                <div class="model-card-desc">Optimized for anime & illustrations</div>
+                <div class="model-card-badges">
+                  <div class="badge quality">High quality</div>
+                  <div class="badge speed">Moderate</div>
+                </div>
+                <div class="model-card-cost">
+                  <span class="buzz-icon">⚡</span>
+                  <span class="cost-value">1,500</span>
+                  <span>/10K steps</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Stable Diffusion 1.5 -->
+            <div class="model-card">
+              <div class="model-card-image sd15"></div>
+              <div class="model-card-content">
+                <div class="model-card-name">SD 1.5</div>
+                <div class="model-card-desc">Classic, lightweight model</div>
+                <div class="model-card-badges">
+                  <div class="badge speed">Fastest</div>
+                </div>
+                <div class="model-card-cost">
+                  <span class="buzz-icon">⚡</span>
+                  <span class="cost-value">400</span>
+                  <span>/10K steps</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Pony -->
+            <div class="model-card">
+              <div class="model-card-image pony"></div>
+              <div class="model-card-content">
+                <div class="model-card-name">Pony</div>
+                <div class="model-card-desc">Specialized for anime characters</div>
+                <div class="model-card-badges">
+                  <div class="badge quality">Quality</div>
+                </div>
+                <div class="model-card-cost">
+                  <span class="buzz-icon">⚡</span>
+                  <span class="cost-value">1,800</span>
+                  <span>/10K steps</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Wan 2.2 (Video) -->
+            <div class="model-card">
+              <div class="model-card-image wan"></div>
+              <div class="model-card-content">
+                <div class="model-card-name">Wan 2.2</div>
+                <div class="model-card-desc">Video generation model</div>
+                <div class="model-card-badges">
+                  <div class="badge">Video</div>
+                  <div class="badge speed">Moderate</div>
+                </div>
+                <div class="model-card-cost">
+                  <span class="buzz-icon">⚡</span>
+                  <span class="cost-value">3,200</span>
+                  <span>/10K steps</span>
+                </div>
+              </div>
+            </div>
+
+            <!-- Custom Model -->
+            <div class="model-card">
+              <div class="model-card-image custom">
+                <div class="model-card-custom-icon">➕</div>
+              </div>
+              <div class="model-card-content">
+                <div class="model-card-name">Custom</div>
+                <div class="model-card-desc">Train on your own LoRA or model</div>
+                <div class="model-card-badges">
+                  <div class="badge">Advanced</div>
+                </div>
+                <div class="model-card-cost">
+                  <span class="buzz-icon">⚡</span>
+                  <span class="cost-value">Custom</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Advanced Settings Section -->
+        <div class="section">
+          <div class="accordion">
+            <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+              <div class="accordion-header-left">
+                <div>
+                  <div class="accordion-header-title">⚙️ Advanced Settings</div>
+                  <div class="accordion-header-hint">Auto-tuned for Flux (tap to override)</div>
+                </div>
+              </div>
+              <div class="accordion-icon">
+                <i class="ti ti-chevron-down"></i>
+              </div>
+            </div>
+
+            <div class="accordion-body">
+              <!-- Engine -->
+              <div class="settings-group full">
+                <div class="setting-field">
+                  <div class="setting-label">Training Engine</div>
+                  <select class="setting-input">
+                    <option>AI-Toolkit (Auto)</option>
+                    <option>Kohya</option>
+                    <option>Custom</option>
+                  </select>
+                  <div class="setting-hint">Auto-selected based on base model</div>
+                </div>
+              </div>
+
+              <!-- Epochs & Steps -->
+              <div class="settings-group">
+                <div class="setting-field">
+                  <div class="setting-label">Epochs</div>
+                  <input type="number" class="setting-input" value="100" min="1" max="1000">
+                  <div class="setting-hint">Training passes over data</div>
+                </div>
+                <div class="setting-field">
+                  <div class="setting-label">Max Steps</div>
+                  <input type="number" class="setting-input" value="10000" min="1">
+                  <div class="setting-hint">Total optimization steps</div>
+                </div>
+              </div>
+
+              <!-- Learning Rate -->
+              <div class="settings-group full">
+                <div class="setting-field">
+                  <div class="setting-label">Learning Rate</div>
+                  <input type="text" class="setting-input" value="0.0001">
+                  <div class="setting-hint">Higher = faster learning, lower = stable</div>
+                </div>
+              </div>
+
+              <!-- Network Dim & Alpha -->
+              <div class="settings-group">
+                <div class="setting-field">
+                  <div class="setting-label">Network Dim</div>
+                  <input type="number" class="setting-input" value="128" min="1">
+                  <div class="setting-hint">LoRA capacity (32-512)</div>
+                </div>
+                <div class="setting-field">
+                  <div class="setting-label">Alpha</div>
+                  <input type="number" class="setting-input" value="128" min="1">
+                  <div class="setting-hint">Scaling factor</div>
+                </div>
+              </div>
+
+              <!-- Optimizer -->
+              <div class="settings-group full">
+                <div class="setting-field">
+                  <div class="setting-label">Optimizer</div>
+                  <select class="setting-input">
+                    <option>AdamW (Default)</option>
+                    <option>SGD</option>
+                    <option>Adam</option>
+                    <option>LAMB</option>
+                  </select>
+                </div>
+              </div>
+
+              <!-- Resolution -->
+              <div class="settings-group">
+                <div class="setting-field">
+                  <div class="setting-label">Resolution</div>
+                  <select class="setting-input">
+                    <option>512 × 512</option>
+                    <option>768 × 768</option>
+                    <option>1024 × 1024</option>
+                  </select>
+                </div>
+                <div class="setting-field">
+                  <div class="setting-label">Precision</div>
+                  <select class="setting-input">
+                    <option>fp16 (Default)</option>
+                    <option>fp32</option>
+                    <option>bfloat16</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Right Panel -->
+      <div class="content-right">
+        <div class="panel-right">
+          <!-- Cost Section -->
+          <div class="panel-section">
+            <div class="panel-label">💰 Estimated Cost</div>
+            <div class="panel-row">
+              <span class="panel-row-label">Training</span>
+              <span class="panel-row-value buzz">
+                <span>⚡</span>
+                <span>2,400</span>
+              </span>
+            </div>
+            <div class="panel-row">
+              <span class="panel-row-label">
+                <span class="panel-row-value">+</span> License
+              </span>
+              <span class="panel-row-value buzz">
+                <span>⚡</span>
+                <span>150</span>
+              </span>
+            </div>
+          </div>
+
+          <!-- Divider -->
+          <div class="panel-divider"></div>
+
+          <!-- Time Section -->
+          <div class="panel-section">
+            <div class="panel-label">⏱️ Time Estimate</div>
+            <div class="panel-row">
+              <span class="panel-row-label">Duration</span>
+              <span class="panel-row-value">~18 min</span>
+            </div>
+            <div class="panel-queue">
+              <div class="panel-queue-position">
+                <i class="ti ti-queue"></i>
+                Position in queue: <span class="panel-queue-number">#3</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Divider -->
+          <div class="panel-divider"></div>
+
+          <!-- Dataset Section -->
+          <div class="panel-section">
+            <div class="panel-label">📦 Dataset</div>
+            <div class="dataset-box">
+              <div class="dataset-row">
+                <span class="dataset-row-label">
+                  <i class="ti ti-photo"></i>
+                  Images
+                </span>
+                <span class="dataset-row-value">12</span>
+              </div>
+              <div class="dataset-row">
+                <span class="dataset-row-label">
+                  <i class="ti ti-tag"></i>
+                  Trigger
+                </span>
+                <span class="dataset-row-value">my_character</span>
+              </div>
+              <div class="dataset-row">
+                <span class="dataset-row-label">
+                  <i class="ti ti-cube"></i>
+                  Type
+                </span>
+                <span class="dataset-row-value">Character LoRA</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- License Fee -->
+          <div class="license-row">
+            <span>Civitai License Fee</span>
+            <span class="license-fee">⚡ 150</span>
+          </div>
+
+          <!-- Spacer -->
+          <div style="flex: 1;"></div>
+
+          <!-- Total Summary (Bottom of panel) -->
+          <div style="padding-top: 1rem; border-top: 1px solid var(--border-color);">
+            <div class="panel-row" style="font-size: 1.125rem;">
+              <span style="font-weight: 700;">Total Cost</span>
+              <span class="panel-row-value buzz" style="font-size: 1.125rem;">
+                <span>⚡</span>
+                <span>2,550</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom Bar -->
+    <div class="bottom-bar">
+      <button class="button button-secondary">
+        <i class="ti ti-arrow-left"></i>
+        Back
+      </button>
+      <button class="button button-primary">
+        Continue to Train
+        <i class="ti ti-arrow-right"></i>
+      </button>
+    </div>
+  </div>
+</body>
+</html>

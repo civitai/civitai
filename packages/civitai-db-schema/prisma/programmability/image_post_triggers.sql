@@ -17,24 +17,26 @@
 -- Why the BEFORE trigger fires on ALL updates, not just {scannedAt, postId}:
 -- there is deliberately NO backfill of the ~92M historical rows still holding a
 -- stale default-now() sortAt (Zuri, 2026-07-16: 88.1% mismatch ⇒ ~92M-row
--- rewrite, 200-400GB WAL — cancelled). The sortAt column is NOT NULL, so a
--- COALESCE(NEW.sortAt, …) belt in the downstream bitdex sync trigger cannot fall
--- back — it would read and emit the stale value. Recomputing on every write means
--- an unrelated UPDATE (e.g. an nsfwLevel-only edit) repairs the row's sortAt
--- before the sync trigger's emission expression reads it. A column-listed trigger
--- would leave those rows stale until they happened to receive a scannedAt/postId
--- write.
+-- rewrite, 200-400GB WAL — cancelled). Recomputing on every write means an
+-- unrelated UPDATE (e.g. an nsfwLevel-only edit) repairs the row's sortAt in
+-- passing. A column-listed trigger would leave those ~92M rows stale until they
+-- happened to receive a scannedAt/postId write.
+-- (This paragraph originally justified the belt against a BitDex sync trigger's
+-- COALESCE fallback. BitDex was decommissioned 2026-09-01 and that trigger is
+-- gone; the unbackfilled rows are the surviving reason.)
 --
 -- Fight / recursion: the Post fan-out's UPDATE (sortAt, updatedAt) now DOES fire
 -- the BEFORE trigger. No fight — at fan-out time the Post row already holds the
 -- new publishedAt (AFTER trigger), so set_image_sort_at recomputes the IDENTICAL
 -- GREATEST value the fan-out's SET clause used, and leaves updatedAt untouched. No
 -- recursion — a BEFORE trigger only mutates NEW in place; it issues no new UPDATE.
--- The fan-out still WRITES sortAt (rather than only bumping updatedAt and letting
--- the BEFORE trigger compute it) because the bitdex sync trigger detects publish
--- changes via OLD≠NEW on the stored column; a purely-computed emission expression
--- would evaluate the Post subselect identically for OLD and NEW at fire time and
--- MISS the publish (rejected alternative).
+-- The fan-out still WRITES sortAt rather than only bumping updatedAt. ⚠️ Its
+-- original reason was a BitDex sync trigger that detected publish changes via
+-- OLD≠NEW on the stored column; BitDex was decommissioned 2026-09-01 and that
+-- trigger no longer exists. The write is KEPT because the stored column is what
+-- Meili's incremental sync reads (see the fan-out author note below), but the
+-- rejected alternative — letting the BEFORE trigger compute it — has not been
+-- re-derived against the surviving consumers. Do that before changing this.
 
 -- Retire the 2024 predecessors (migration 20240719172747). Back then two authors
 -- wrote sortAt: update_image_sort_at() (Post side, later neutered by this file to
@@ -78,8 +80,8 @@ EXECUTE FUNCTION set_image_sort_at();
 -- 2. Fan-out author. A Post's publishedAt moving (publish, schedule, reschedule,
 --    unpublish — including the model/version publish/unpublish flows, which all
 --    rewrite Post.publishedAt) restamps every image on that post. It WRITES sortAt
---    (not a bare updatedAt touch) so the bitdex sync trigger sees OLD≠NEW on the
---    column and emits the publish change (see header). The BEFORE trigger re-fires
+--    (not a bare updatedAt touch); see the header note on why that write is kept
+--    now its original consumer is gone. The BEFORE trigger re-fires
 --    on this UPDATE and recomputes the same value — harmless.
 --    UNCONDITIONAL (no IS DISTINCT FROM guard): every image on the post gets its
 --    "updatedAt" bumped even when sortAt is unchanged. Meili's incremental image

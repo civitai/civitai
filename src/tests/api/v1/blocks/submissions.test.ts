@@ -158,6 +158,12 @@ function dbRow(over: Partial<Record<string, unknown>> = {}) {
     deployState: 'live',
     deployDetail: null,
     deployUpdatedAt: new Date('2026-06-22T00:00:00Z'),
+    // #4059: the DEFAULT fixture is a LEGACY row — submitted before provenance
+    // existed, so both columns are NULL (unknown). The happy-path `toEqual`
+    // below therefore doubles as the legacy-shape assertion: a legacy row must
+    // shape to `null`, not be dropped from the payload and not be coerced.
+    sourceCommit: null,
+    sourceDirty: null,
     submittedAt: new Date('2026-06-20T00:00:00Z'),
     reviewedAt: new Date('2026-06-21T00:00:00Z'),
     updatedAt: new Date('2026-06-22T00:00:00Z'),
@@ -331,6 +337,9 @@ describe('GET /api/v1/blocks/submissions', () => {
       deployState: 'live',
       deployDetail: null,
       deployUpdatedAt: '2026-06-22T00:00:00.000Z',
+      // #4059 — a legacy (pre-provenance) row: both NULL, both PRESENT.
+      sourceCommit: null,
+      sourceDirty: null,
       submittedAt: '2026-06-20T00:00:00.000Z',
       reviewedAt: '2026-06-21T00:00:00.000Z',
       updatedAt: '2026-06-22T00:00:00.000Z',
@@ -457,6 +466,102 @@ describe('GET /api/v1/blocks/submissions', () => {
         where: { submittedByUserId: OWNER_ID, slug: 'my-page-app' },
       })
     );
+  });
+
+  // ---------------------------------------------------------------------------
+  // #4059 build provenance on the READ path. This is the projection
+  // `civitai app status` reads, so a value that is stored but not returned is
+  // the same inert feature as a value that was never stored.
+  // ---------------------------------------------------------------------------
+  describe('#4059 source provenance', () => {
+    const SHA = '4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3';
+
+    it('SURFACES a populated sourceCommit + sourceDirty:true', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockFindMany.mockResolvedValueOnce([dbRow({ sourceCommit: SHA, sourceDirty: true })]);
+      const { req, res } = authGet();
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const out = res._getJSONData() as {
+        submissions: Array<{ sourceCommit: string | null; sourceDirty: boolean | null }>;
+      };
+      expect(out.submissions[0].sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+      expect(out.submissions[0].sourceDirty).toBe(true);
+    });
+
+    /**
+     * 🔴 `null` (UNKNOWN) and `false` (the client asserted CLEAN) are DIFFERENT
+     * answers and must stay distinguishable end to end. A `?? false` anywhere on
+     * this path collapses them and turns "nobody looked" into "someone looked and
+     * it was clean" for every pre-#4059 row — a fabricated fact, and precisely
+     * the opposite of what this feature exists to establish. These two tests are
+     * a pair: neither alone can see the collapse.
+     */
+    it('a legacy row keeps sourceDirty:NULL — not dropped, not coerced to false', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockFindMany.mockResolvedValueOnce([dbRow({ sourceCommit: null, sourceDirty: null })]);
+      const { req, res } = authGet();
+      await handler(req as never, res as never);
+      const s = (res._getJSONData() as { submissions: Array<Record<string, unknown>> })
+        .submissions[0];
+      // Present as a key (not dropped) AND null (not coerced).
+      expect('sourceDirty' in s).toBe(true);
+      expect('sourceCommit' in s).toBe(true);
+      expect(s.sourceDirty).toBeNull();
+      expect(s.sourceCommit).toBeNull();
+      expect(s.sourceDirty).not.toBe(false);
+    });
+
+    it('a KNOWN-CLEAN row reads sourceDirty:false — and false is not null', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockFindMany.mockResolvedValueOnce([dbRow({ sourceCommit: SHA, sourceDirty: false })]);
+      const { req, res } = authGet();
+      await handler(req as never, res as never);
+      const s = (res._getJSONData() as { submissions: Array<Record<string, unknown>> })
+        .submissions[0];
+      expect(s.sourceDirty).toBe(false);
+      expect(s.sourceDirty).not.toBeNull();
+    });
+
+    it('the ?id= single-item read surfaces provenance too', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockFindFirst.mockResolvedValueOnce(dbRow({ sourceCommit: SHA, sourceDirty: false }));
+      const { req, res } = authGet({ id: 'pubreq_01' });
+      await handler(req as never, res as never);
+      expect(res._getStatusCode()).toBe(200);
+      const out = res._getJSONData() as {
+        submission: { sourceCommit: string | null; sourceDirty: boolean | null };
+      };
+      expect(out.submission.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+      expect(out.submission.sourceDirty).toBe(false);
+    });
+
+    it('the SELECT projection asks the DB for both columns', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      const { req, res } = authGet();
+      await handler(req as never, res as never);
+      // Without this the columns are never fetched, so shapeRow reads
+      // `undefined` and the keys vanish from the JSON — stored but invisible.
+      const call = mockFindMany.mock.calls[0][0] as { select: Record<string, unknown> };
+      expect(call.select.sourceCommit).toBe(true);
+      expect(call.select.sourceDirty).toBe(true);
+      // The SERVER-side forgejo sha stays OFF this projection: different thing,
+      // internal-only, and never the author's commit.
+      expect(call.select.forgejoCommitSha).toBeUndefined();
+    });
+
+    it('does NOT leak forgejoCommitSha alongside the client claim', async () => {
+      mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+      mockFindMany.mockResolvedValueOnce([
+        dbRow({ sourceCommit: SHA, sourceDirty: true, forgejoCommitSha: 'server-side-sha' }),
+      ]);
+      const { req, res } = authGet();
+      await handler(req as never, res as never);
+      const s = (res._getJSONData() as { submissions: Array<Record<string, unknown>> })
+        .submissions[0];
+      expect(s).not.toHaveProperty('forgejoCommitSha');
+      expect(s.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+    });
   });
 
   it('429 when the per-user rate limit is exceeded', async () => {

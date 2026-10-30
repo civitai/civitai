@@ -3,6 +3,8 @@ import { dbRead } from '$lib/server/db';
 import { createCache } from '$lib/server/cache';
 import { rangeTtlSeconds } from '$lib/date-range';
 import { currencyMeta } from '$lib/earnings';
+import { PERFORMANCE_CHANNELS, type PerformanceChannel } from '$lib/analytics/earning-channels';
+import { IMPRESSION_ENTITY } from '$lib/server/view-entities';
 import {
   accessKindExpression,
   resolveAccessKind,
@@ -21,10 +23,12 @@ import {
 // getModelPerformance / getModelVersionAnalytics, left undefined by getModelEarnings.
 export type ModelCurrencyTotal = { currency: string; total: number; prev?: number };
 
-// deliver-creator-compensation buckets on exactly this rule: licenseFee mints its own transaction and
-// EVERY other source merges into one compensation payout. Match its `!== 'licenseFee'` rather than naming
-// known sources, so a new or one-off source value lands in a total instead of vanishing from the split.
-const payoutChannel = (source: string) => (source === 'licenseFee' ? 'licenseFee' : 'compensation');
+// The main app's creator dashboard splits on exactly this rule (getDailyCompensationRewardByUser): licenseFee
+// and tip each get their own channel and EVERY other source is compensation. Name only those two, so a new or
+// one-off source such as `compensation_recovered_20260507` lands in a total instead of vanishing from the split.
+// The payout job still pays tips inside the compensation transaction; this split is display only.
+export const payoutChannel = (source: string): 'licenseFee' | 'tip' | 'compensation' =>
+  source === 'licenseFee' || source === 'tip' ? source : 'compensation';
 export type ModelEarning = {
   modelVersionId: number;
   versionName: string | null;
@@ -45,16 +49,7 @@ export type ModelEarning = {
 // `orchestration.daily_resource_generation_counts` (the live, full-volume table; the `default.*` MV copy
 // undercounts ~200x); downloads from `default.daily_downloads`. Both carry garbage future-dated rows, so the
 // window is capped at today().
-// The five ways a model earns, as separate columns on /analytics/models. `licenseFee` + `compensation`
-// come from resourceCompensations; the other three are buyer-funded and only exist in buzzTransactions.
-export const PERFORMANCE_CHANNELS = [
-  'licenseFee',
-  'compensation',
-  'earlyAccess',
-  'permanentAccess',
-  'donation',
-] as const;
-export type PerformanceChannel = (typeof PERFORMANCE_CHANNELS)[number];
+export type { PerformanceChannel };
 
 // `prev` is carried per currency, not just per channel, so the currency filter chips can recompute a
 // correct delta for the selected subset instead of showing a delta for the unfiltered total.
@@ -64,8 +59,8 @@ export type ChannelTotals = {
   total: number;
   prev: number;
   // What the CREATOR was credited, by account type. The filter chips sum a subset of this.
-  // NOTE: `createMultiAccountBuzzTransaction` defaults the credit to yellow, so on the buyer-funded
-  // channels (access sales, donations) this is always yellow whatever the buyer actually paid with.
+  // Buyer-funded channels pay in the currency the buyer spent, so rows dated before that cutover
+  // are yellow-only whatever was actually paid.
   received: ChannelCurrency[];
 };
 
@@ -74,6 +69,10 @@ export type ModelPerformance = ModelEarning & {
   prevGenerations: number;
   downloads: number;
   prevDownloads: number;
+  // Feed impressions are counted against the MODEL, not the version, so every row of one model carries the
+  // same number. Model grouping must therefore take it rather than sum it, and version rows do not show it.
+  impressions: number;
+  prevImpressions: number;
   channels: Record<PerformanceChannel, ChannelTotals>;
   prevBuzzTotal: number;
 };
@@ -361,7 +360,7 @@ async function fetchModelPerformance({
   const w: Window = { from, to, prev };
   const ch = getClickhouse();
   // Each query sums the current + previous window (for the delta chips); `to` also fences out garbage future rows.
-  const [earnRows, genRows, dlRows, accessRows, donationRows] = await Promise.all([
+  const [earnRows, genRows, dlRows, imprRows, accessRows, donationRows] = await Promise.all([
     ch.$query<{
       modelVersionId: number | string;
       accountType: string;
@@ -392,6 +391,14 @@ async function fetchModelPerformance({
        WHERE modelId IN (${modelIdList}) AND modelVersionId IN (${idList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
        GROUP BY modelVersionId`
     ),
+    ch.$query<{ entityId: number | string; cur: number | string; prev: number | string }>(
+      `SELECT entityId,
+         sumIf(impressions, createdDate BETWEEN toDate('${from}') AND toDate('${to}')) AS cur,
+         sumIf(impressions, createdDate BETWEEN toDate('${prev.from}') AND toDate('${prev.to}')) AS prev
+       FROM default.daily_impressions
+       WHERE entityType = '${IMPRESSION_ENTITY.model}' AND entityId IN (${modelIdList}) AND createdDate BETWEEN toDate('${prev.from}') AND toDate('${to}')
+       GROUP BY entityId`
+    ),
     ch.$query<AccessRow>(accessSalesQuery(uid, w)),
     versionByGoal.size === 0
       ? Promise.resolve([] as DonationRow[])
@@ -415,7 +422,21 @@ async function fetchModelPerformance({
       prevGenerations: 0,
       downloads: 0,
       prevDownloads: 0,
+      impressions: 0,
+      prevImpressions: 0,
     });
+  }
+  // Keyed by model, then stamped onto every version row of that model — the table groups either way, and the
+  // per-model number is the only one that exists.
+  const impressionsByModel = new Map<number, { cur: number; prev: number }>();
+  for (const r of imprRows)
+    impressionsByModel.set(Number(r.entityId), { cur: Number(r.cur), prev: Number(r.prev) });
+  for (const e of byId.values()) {
+    const hit = e.modelId == null ? undefined : impressionsByModel.get(e.modelId);
+    if (hit) {
+      e.impressions = hit.cur;
+      e.prevImpressions = hit.prev;
+    }
   }
   for (const r of earnRows) {
     const e = byId.get(Number(r.modelVersionId));
@@ -491,8 +512,15 @@ async function fetchModelPerformance({
         (a, b) => currencyMeta(a.currency).order - currencyMeta(b.currency).order
       );
 
+  // Impressions count as activity in their own right: a model can be shown thousands of times in the feed
+  // without a single download or generation, and dropping those rows makes the impressions column unable to
+  // answer the one question it exists for.
   const active = [...byId.values()].filter(
-    (m) => m.generations > 0 || m.downloads > 0 || m.currencies.some((c) => c.total > 0)
+    (m) =>
+      m.generations > 0 ||
+      m.downloads > 0 ||
+      m.impressions > 0 ||
+      m.currencies.some((c) => c.total > 0)
   );
   // Rank by usage first (this is a performance view), then earnings — so a popular free model still surfaces.
   active.sort(
@@ -511,7 +539,7 @@ async function fetchModelPerformance({
 export const getModelPerformance = createCache({
   // Keys derive from the args, not the payload shape, so a stored value outlives a change to what this
   // returns. Bump the suffix whenever the returned shape OR the numbers in it change.
-  name: 'models:performance:v3',
+  name: 'models:performance:v5',
   fetch: fetchModelPerformance,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;
@@ -721,7 +749,7 @@ async function fetchModelVersionAnalytics({
 }
 
 export const getModelVersionAnalytics = createCache({
-  name: 'analytics:model-versions:v4',
+  name: 'analytics:model-versions:v5',
   fetch: fetchModelVersionAnalytics,
   ttlSeconds: ({ from, to }) => rangeTtlSeconds({ from, to }),
 }).get;

@@ -17,9 +17,9 @@
   "dependencies": {
     "@civitai/redis": "workspace:*",
     "jose": "^6.0.11",
-    "zod": "^4.0.17"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
-    "vitest": "^4.0.18"
+    "vitest": "^4.1.11"
   }
 }

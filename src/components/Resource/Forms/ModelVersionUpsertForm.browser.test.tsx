@@ -11,36 +11,195 @@ import { renderWithProviders } from '../../../../test/component-setup';
  */
 
 import type * as TrpcModule from '~/utils/trpc';
+import type * as FeatureFlagsModule from '~/providers/FeatureFlagsProvider';
 import type { ModelVersionTerms } from '@civitai/buzz';
 
 const mutateAsync = vi.hoisted(() =>
   vi.fn(async (input: unknown) => ({ id: 456, ...(input as object) }))
 );
 
-vi.mock('~/utils/trpc', async (importOriginal) => ({
-  ...(await importOriginal<typeof TrpcModule>()),
-  trpc: {
+const allowance = vi.hoisted(() => ({
+  data: { used: 0, baseLimit: 3 } as Record<string, unknown>,
+}));
+
+/**
+ * The `trpc` mock is in two layers, and the split between them is the whole point.
+ *
+ * MODELLED — every proc whose *behaviour* a test reads. Those keep exactly the shape they had, and
+ * a proc a test depends on has to stay here.
+ *
+ * FALLBACK — a Proxy over the router surface for everything else, so a component may call any proc
+ * it likes and get an inert react-query result back instead of `TypeError: Cannot read properties
+ * of undefined (reading 'useQuery')`. The hand-listed object this replaces went red twice for that
+ * reason: once when the allowance counter landed, and again when `PricingSlotHistory` started
+ * reading `modelVersion.getPricingSlots` (2cbacbc4d5). The comment that recorded the first
+ * occurrence did not stop the second — a note describing a trap is not a guard against it.
+ *
+ * 🔴 The fallback is deliberately the EMPTY result, not a satisfying one. `data: undefined` is what
+ * react-query hands a query that has not resolved: every consumer already guards on it, so the
+ * component renders, and there is nothing for an assertion to land on, so an unlisted proc can never
+ * make a test pass that should fail. The Proxy stops the crash; it is not a stand-in for a fixture.
+ */
+vi.mock('~/utils/trpc', async (importOriginal) => {
+  /** react-query's shape for a query with no data — the same state an `enabled: false` query sits in. */
+  const noData = () => ({
+    data: undefined,
+    error: null,
+    status: 'pending',
+    isPending: true,
+    // v5 defines `isLoading` as `isPending && isFetching`. A query that is not running is pending but
+    // NOT loading, so a consumer's spinner branch stays shut and its empty branch is what renders.
+    isLoading: false,
+    isFetching: false,
+    isRefetching: false,
+    isError: false,
+    isSuccess: false,
+    refetch: vi.fn(async () => ({ data: undefined })),
+  });
+  const inertHook: Record<string, () => unknown> = {
+    useQuery: noData,
+    useSuspenseQuery: noData,
+    useInfiniteQuery: () => ({
+      ...noData(),
+      fetchNextPage: vi.fn(async () => undefined),
+      fetchPreviousPage: vi.fn(async () => undefined),
+      hasNextPage: false,
+      hasPreviousPage: false,
+      isFetchingNextPage: false,
+    }),
+    useMutation: () => ({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn(async () => undefined),
+      reset: vi.fn(),
+      data: undefined,
+      error: null,
+      isPending: false,
+      isError: false,
+      isSuccess: false,
+    }),
+  };
+
+  // A proc. A modelled hook wins outright — it is NOT merged with the inert defaults, because merging
+  // would quietly widen a mock a test reads (`getLicensingRoots` returns `{ data }` and nothing else,
+  // on purpose). Anything that is not a hook name — `_def`, `then`, a symbol React or the runtime
+  // probes for — stays `undefined`, so the proxy is never mistaken for a promise or a real procedure.
+  const proc = (modelled: Record<string, unknown> = {}) =>
+    new Proxy(modelled, {
+      get: (target, key) => (typeof key === 'string' ? target[key] ?? inertHook[key] : undefined),
+    });
+
+  const router = (modelled: Record<string, unknown> = {}) =>
+    new Proxy(modelled, {
+      get: (target, key) =>
+        typeof key === 'string'
+          ? proc(target[key] as Record<string, unknown> | undefined)
+          : undefined,
+    });
+
+  // `useUtils` is the same hazard one surface over: the form invalidates by path after a save, so a
+  // newly-added `utils.<router>.<proc>.invalidate()` would throw exactly the way a new query did.
+  // Same split, and the verb list is closed rather than "anything is callable" — an unknown member of
+  // a utils proc is still `undefined`.
+  const utilsVerbs = new Set([
+    'invalidate',
+    'refetch',
+    'cancel',
+    'reset',
+    'setData',
+    'getData',
+    'setInfiniteData',
+    'getInfiniteData',
+    'prefetch',
+    'fetch',
+    'ensureData',
+  ]);
+  const utilsProc = (modelled: Record<string, unknown> = {}) =>
+    new Proxy(modelled, {
+      get: (target, key) => {
+        if (typeof key !== 'string') return undefined;
+        return target[key] ?? (utilsVerbs.has(key) ? vi.fn(async () => undefined) : undefined);
+      },
+    });
+  const utils = (modelled: Record<string, Record<string, unknown>>) =>
+    new Proxy(modelled, {
+      get: (target, key) =>
+        typeof key === 'string'
+          ? new Proxy(target[key] ?? {}, {
+              get: (routerTarget, procKey) =>
+                typeof procKey === 'string'
+                  ? utilsProc(routerTarget[procKey] as Record<string, unknown> | undefined)
+                  : undefined,
+            })
+          : undefined,
+    });
+
+  const modelled: Record<string, unknown> = {
     modelVersion: {
-      getLicensingRoots: { useQuery: () => ({ data: undefined }) },
+      getLicensingRoots: {
+        // Modelled on react-query's own contract, because that contract is what the fix turns on: a
+        // query with `enabled: false` never runs and therefore has no data. A fixed `{ data: undefined }`
+        // mock cannot tell a gated query from an ungated one, so it would pass either way.
+        useQuery: (input: { modelType?: string }, opts?: { enabled?: boolean }) => ({
+          data: opts?.enabled === false ? undefined : licensingRoots.respond(input),
+        }),
+      },
       getUserEarlyAccessVersions: { useQuery: () => ({ data: [] }) },
+      getPricingAllowance: { useQuery: () => ({ data: allowance.data }) },
       upsert: { useMutation: () => ({ mutateAsync, isPending: false }) },
     },
-    useUtils: () => ({
-      modelVersion: {
-        getById: { invalidate: vi.fn() },
-        getByIdForEdit: { invalidate: vi.fn() },
+    // Rebuilt per call, so each render gets its own spies — the shape the hand-listed version had.
+    useUtils: () =>
+      utils({
+        modelVersion: {
+          getById: { invalidate: vi.fn() },
+          getByIdForEdit: { invalidate: vi.fn() },
+        },
+        model: { getById: { invalidate: vi.fn() } },
+      }),
+  };
+  // tRPC's deprecated alias for the same thing; a component still on it must not fall into `router()`.
+  modelled.useContext = modelled.useUtils;
+
+  return {
+    ...(await importOriginal<typeof TrpcModule>()),
+    trpc: new Proxy(modelled, {
+      get: (target, key) => {
+        if (typeof key !== 'string') return undefined;
+        const own = target[key];
+        // Members of the client itself (`useUtils`, `useContext`) are functions, not routers.
+        if (typeof own === 'function') return own;
+        return router(own as Record<string, unknown> | undefined);
       },
-      model: { getById: { invalidate: vi.fn() } },
     }),
-  },
+  };
+});
+/** Anima's default licensing root: a Checkpoint charging 5 Buzz per image, settled to its own owner. */
+const ANIMA_CHECKPOINT_ROOT = {
+  id: 2945208,
+  modelId: 2458426,
+  versionName: 'base-v1.0',
+  isDefault: true,
+};
+const NO_ROOTS = { roots: [], defaultVersionId: null };
+
+const licensingRoots = vi.hoisted(() => ({
+  // Default: no roots for anyone, which is what every test in this file that predates the licensing
+  // lineage expects. The lineage tests below set their own, and those read the input.
+  respond: (() => ({ roots: [], defaultVersionId: null })) as (input: {
+    modelType?: string;
+  }) => unknown,
 }));
+
 const flags = vi.hoisted(() => ({
   // earlyAccessModel off keeps the Paid Access sub-section out of the way for the disclosure tests; the
   // removal test turns it on, because that section is what holds the irreversible warning.
   current: { licensingFee: true, earlyAccessModel: false } as Record<string, boolean>,
 }));
 
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// Spread the real module: the form's import graph also reaches `useOptionalFeatureFlags` (via the
+// impression hook), and a hand-listed mock that omits it fails the file at import, collecting 0 tests.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsModule>()),
   useFeatureFlags: () => flags.current,
 }));
 const currentUser = vi.hoisted(() => ({
@@ -64,6 +223,10 @@ vi.mock('~/components/RichTextEditor/RichTextEditorComponent', () => ({
 }));
 
 import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersionUpsertForm';
+import {
+  monetizationDefaultsStore,
+  useMonetizationDefaultsStore,
+} from '~/store/model-version-monetization-defaults.store';
 
 const model = {
   id: 123,
@@ -112,7 +275,11 @@ function renderNewVersionForm(onSubmit: (v?: unknown) => void = vi.fn()) {
   );
 }
 
-const chargeSwitch = () => page.getByRole('switch', { name: /I want to charge for this version/ });
+// Matches the switch's own label in ModelVersionUpsertForm. The copy moved from "charge for" to
+// "monetize" in acd61ae136 ("say 'monetize'"), which silently broke every test reaching the fee UI
+// through this locator — 16 of them, all reporting `Cannot find element` rather than anything about
+// copy. Keep this string in step with the `label=` prop, not with the surrounding prose.
+const chargeSwitch = () => page.getByRole('switch', { name: /I want to monetize this version/ });
 const accessSwitch = () => page.getByRole('switch', { name: /Charge for access to this version/ });
 const feeSwitch = () =>
   page.getByRole('switch', { name: /Charge a fee to generate with this version/ });
@@ -152,10 +319,93 @@ function renderChargingForm() {
   );
 }
 
+const belowFloor = { score: 2431, required: 10000, eligible: false, shortfall: 7569 };
+
 beforeEach(() => {
   mutateAsync.mockClear();
   flags.current = { licensingFee: true, earlyAccessModel: false };
   currentUser.value = { id: 1, tier: 'free', isModerator: false, meta: {} };
+  allowance.data = { used: 0, baseLimit: 3 };
+  licensingRoots.respond = () => NO_ROOTS;
+});
+
+describe('ModelVersionUpsertForm — the monetization eligibility floor', () => {
+  test('takes the charge switch away from a creator below it, and says why', async () => {
+    allowance.data = { used: 0, baseLimit: 3, eligibility: belowFloor };
+    renderForm();
+
+    await expect.element(page.getByText(/Creator Score of 10,000/)).toBeInTheDocument();
+    await expect.element(chargeSwitch()).toBeDisabled();
+  });
+
+  // The floor is not a permission level — it states who may sell here, so a moderator meets it too.
+  test('is not waived for a moderator', async () => {
+    allowance.data = { used: 0, baseLimit: 3, eligibility: belowFloor };
+    currentUser.value = { id: 1, tier: 'free', isModerator: true, meta: {} };
+    renderForm();
+
+    await expect.element(chargeSwitch()).toBeDisabled();
+  });
+
+  // Absent while the query is in flight. Failing closed here would disable the switch under the cursor
+  // of every eligible creator for as long as the request takes.
+  test('leaves the switch alone until the answer arrives', async () => {
+    allowance.data = { used: 0, baseLimit: 3 };
+    renderForm();
+
+    await expect.element(chargeSwitch()).toBeEnabled();
+  });
+
+  // Editing a price the version already carries is exempt from the floor, so the controls stay usable
+  // for a creator whose score has since fallen below it.
+  test('does not lock a creator out of a version that already charges', async () => {
+    allowance.data = { used: 0, baseLimit: 3, eligibility: belowFloor };
+    renderChargingForm();
+
+    await expect.element(chargeSwitch()).toBeEnabled();
+    expect(page.getByText(/Creator Score of 10,000/).elements()).toHaveLength(0);
+  });
+});
+
+describe('ModelVersionUpsertForm — the licensing-fee allowance boost', () => {
+  // A paid-access gate is enforced against baseLimit, so the at-limit alert follows it; the boost is
+  // fee-only, and the alert has to say the creator can still add fees.
+  test('at the tier limit, says the extra slots still cover licensing fees', async () => {
+    allowance.data = { used: 3, baseLimit: 3, feeLimit: 103, feeBoost: 100 };
+    renderForm();
+    await userEvent.click(chargeSwitch());
+
+    await expect
+      .element(page.getByText("You've used this month's paid-access allowance"))
+      .toBeInTheDocument();
+    await expect.element(page.getByText(/cover 100 more this month/)).toBeInTheDocument();
+    await expect
+      .element(page.getByText(/licensing fees: 3 of 103, includes 100 extra for licensing fees/))
+      .toBeInTheDocument();
+  });
+
+  test('once the extra slots are spent too, keeps the plain at-limit alert', async () => {
+    allowance.data = { used: 103, baseLimit: 3, feeLimit: 103, feeBoost: 100 };
+    renderForm();
+    await userEvent.click(chargeSwitch());
+
+    await expect
+      .element(page.getByText("You've priced all this month's versions"))
+      .toBeInTheDocument();
+    expect(page.getByText(/cover \d+ more this month/).elements()).toHaveLength(0);
+  });
+
+  test('without a boost, keeps the plain at-limit alert', async () => {
+    allowance.data = { used: 3, baseLimit: 3, feeLimit: 3, feeBoost: 0 };
+    renderForm();
+    await userEvent.click(chargeSwitch());
+
+    await expect
+      .element(page.getByText("You've priced all this month's versions"))
+      .toBeInTheDocument();
+    expect(page.getByText(/cover \d+ more this month/).elements()).toHaveLength(0);
+    expect(page.getByText(/licensing fees:/).elements()).toHaveLength(0);
+  });
 });
 
 describe('ModelVersionUpsertForm — monetization disclosure', () => {
@@ -210,8 +460,7 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
   });
 
   // Closing the section on a version that already charges is a removal, and it happens with the priced
-  // controls off screen — so the warning, the irreversible-early-access note and the undo all have to live
-  // outside them.
+  // controls off screen — so the warning and the undo both have to live outside them.
   test('warns before removing an existing charge, and restores it on request', async () => {
     renderChargingForm();
 
@@ -224,7 +473,9 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect(
       page.getByText(/Saving now removes this version's license fee and paid access/).elements()
     ).toHaveLength(1);
-    expect(page.getByText(/your payment for early access will be lost/).elements()).toHaveLength(1);
+    // Nothing is lost here — a permanent gate can be added back at any time — so the removal note
+    // stops at what saving does. Creators read an irreversibility warning as "my money is at risk".
+    expect(page.getByText(/Early Access window can't be started again/).elements()).toHaveLength(0);
 
     await userEvent.click(page.getByRole('button', { name: 'Restore the stored settings' }));
     await expect.element(chargeSwitch()).toBeChecked();
@@ -422,6 +673,169 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect(page.getByText(/A private model can't have paid access/).elements()).toHaveLength(1);
   });
 
+  // A POI model can't earn at all. The editors used to render (and, on the standalone edit route, the
+  // endpoint didn't even send `poi`), so a stored gate and fee resubmitted from controls the creator was
+  // never meant to see. The PAYLOAD is the assertion that matters: the alert alone would read green while
+  // the charges shipped.
+  test('a POI model hides every monetization control, and submits no charge', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={{ ...model, poi: true } as typeof model}
+        version={chargingVersion}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    // The whole section collapses to one explanation: no charge switch, no gate editor, no fee editor.
+    await expect
+      .element(page.getByText(/Models depicting a real person can't be monetized/))
+      .toBeInTheDocument();
+    expect(
+      page.getByText(/Saving now removes this version's license fee and paid access/).elements()
+    ).toHaveLength(1);
+    expect(chargeSwitch().elements()).toHaveLength(0);
+    expect(accessSwitch().elements()).toHaveLength(0);
+    expect(feeSwitch().elements()).toHaveLength(0);
+
+    // An edit elsewhere: the stored charges are unchanged, so without this the save short-circuits as
+    // pristine and the payload assertions below would never run.
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    // Null/zero because of POI, not because this form never sends them: the blank-price test below
+    // submits a gate from the same model and version with POI off, and `chargingVersion` stores a fee.
+    const payload = mutateAsync.mock.calls[0][0] as { paidAccess?: unknown; licensingFee?: number };
+    expect(payload.paidAccess).toBeNull();
+    expect(payload.licensingFee).toBe(0);
+  });
+
+  // Surfacing the POI notice meant rendering the Monetization card whenever a stored charge is going away.
+  // That also made this case reachable for the first time — a non-commercial base model clears the gate
+  // through an effect rather than at submit — and a removal with no arm of its own falls through to the
+  // reversible early-access wording, offering a Restore that puts back a config the server rejects.
+  test('a non-commercial base model blocks monetization on load, and un-blocks on switching back', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        // Loaded already on the non-commercial base model: the clearing effect is keyed to the value
+        // CHANGING, so on-load it never fires and the stored charges used to ride through to a save the
+        // server then rejected, with nothing on screen having predicted it.
+        version={
+          { ...(chargingVersion as object), baseModel: 'Ideogram 4.0' } as React.ComponentProps<
+            typeof ModelVersionUpsertForm
+          >['version']
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    // Anchor on the card, then read the alert synchronously: both are in the same render, and a revert
+    // still renders the card — so this fails in about a second naming the missing alert, instead of
+    // spending the full matcher timeout on text that is never coming.
+    await expect.element(page.getByText('Monetization')).toBeInTheDocument();
+    expect(
+      page.getByText(/This base model is licensed for non-commercial use/).elements()
+    ).toHaveLength(1);
+    expect(
+      page.getByText(/Saving now removes this version's license fee and paid access/).elements()
+    ).toHaveLength(1);
+    expect(chargeSwitch().elements()).toHaveLength(0);
+    expect(accessSwitch().elements()).toHaveLength(0);
+
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const payload = mutateAsync.mock.calls[0][0] as { paidAccess?: unknown; licensingFee?: number };
+    expect(payload.paidAccess).toBeNull();
+    expect(payload.licensingFee).toBe(0);
+  });
+
+  // Unlike POI, this block is the creator's to undo — the copy says so, and the controls have to actually
+  // come back or that sentence is a lie.
+  test('switching off a non-commercial base model brings the charge controls back', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={
+          { ...(chargingVersion as object), baseModel: 'Ideogram 4.0' } as React.ComponentProps<
+            typeof ModelVersionUpsertForm
+          >['version']
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    // Anchor on the card, then read the alert synchronously: both are in the same render, and a revert
+    // still renders the card — so this fails in about a second naming the missing alert, instead of
+    // spending the full matcher timeout on text that is never coming.
+    await expect.element(page.getByText('Monetization')).toBeInTheDocument();
+    expect(
+      page.getByText(/This base model is licensed for non-commercial use/).elements()
+    ).toHaveLength(1);
+
+    await userEvent.click(page.getByRole('textbox', { name: 'Base Model' }));
+    await userEvent.click(page.getByRole('option', { name: 'SDXL 1.0' }));
+
+    await expect.element(chargeSwitch()).toBeInTheDocument();
+    expect(
+      page.getByText(/This base model is licensed for non-commercial use/).elements()
+    ).toHaveLength(0);
+  });
+
+  // "A cheaper generation-only price" with an empty box used to save a generation grant carrying no price
+  // of its own — which `generationPrice` charges at the DOWNLOAD price. The stored terms are identical to a
+  // deliberate "same as the access price", so nothing after this form can tell the two apart.
+  test('refuses a blank generation-only price, and saves the one that is typed', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} version={chargingVersion} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await userEvent.click(page.getByRole('radio', { name: 'A cheaper generation-only price' }));
+    // By placeholder: the label text also matches the radio that reveals this input.
+    const genPrice = page.getByPlaceholder('Generation-only price');
+    await expect.element(genPrice).toBeInTheDocument();
+
+    // An edit elsewhere, so the save is not short-circuited as pristine: without it the unfixed build
+    // writes nothing either, and the test would pass against the bug it exists to catch.
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    // Both outcomes in one poll, on a short budget. `expect.element` alone would spend the full 15 s
+    // matcher timeout on a revert and then report only that some text never appeared; this names the thing
+    // that actually went wrong — the blank price was saved — in about a second.
+    // Both outcomes in one poll, on the suite's default budget: a revert throws the named error on every
+    // attempt, so that is what the timeout reports — rather than fifteen seconds of `expect.element`
+    // waiting for text that never comes and then blaming the text.
+    await vi.waitFor(() => {
+      if (mutateAsync.mock.calls.length)
+        throw new Error('saved a blank generation-only price instead of refusing it');
+      expect(page.getByText(/Enter a generation-only price/).elements()).toHaveLength(1);
+    });
+
+    // The positive control: the same save goes through once the price exists, so the refusal above is the
+    // missing price and not the form being unsavable for some unrelated reason.
+    // 400, not a round 1000: the free tier's paid-access cap bounds this input at 500, and a value above
+    // it is clamped rather than rejected — which would make the payload assertion below read as a bug.
+    await userEvent.fill(genPrice, '400');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const terms = (mutateAsync.mock.calls[0][0] as { paidAccess?: { terms?: ModelVersionTerms } })
+      .paidAccess?.terms;
+    expect(terms?.generation).toMatchObject({ price: 400 });
+    expect(terms?.download?.price).toBe(5000);
+  });
+
   // A grandfathered version — priced before the affirmation existed — has to tick the box to save at all.
   // Clearing that tick on a switch round-trip that changed nothing puts the creator back in front of
   // "Confirmation required", which is the error this ticket was filed about.
@@ -451,6 +865,59 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     expect((rightsCheckbox().element() as HTMLInputElement).checked).toBe(true);
   });
 
+  // The price input's `max` was keyed to the stored price once a version was published, and Mantine
+  // clamps to `max` on blur — so raising the price on a released model reverted it with no error, no
+  // toast and no request (CU 868kwjc13). Whether a raise is allowed is the server's call.
+  test('raises the access price on a released version', async () => {
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+    // Gold's cap is unlimited, so nothing but the stored price can bound this input.
+    currentUser.value = { id: 1, tier: 'gold', isModerator: false, meta: {} };
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={model}
+        version={
+          {
+            ...(chargingVersion as object),
+            paidAccess: { endsAt: null, timeframeDays: null, terms: { download: { price: 1000 } } },
+          } as React.ComponentProps<typeof ModelVersionUpsertForm>['version']
+        }
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await userEvent.fill(page.getByLabelText('Price for access'), '3000');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const terms = (mutateAsync.mock.calls[0][0] as { paidAccess?: { terms?: ModelVersionTerms } })
+      .paidAccess?.terms;
+    // A revert reports `expected 1000 to be 3000` — the old price, which is the reported symptom itself.
+    expect(terms?.download?.price).toBe(3000);
+  });
+
+  // The other half of the same expression. This used to assert the opposite — that a raise was pulled
+  // back down to the stored price — because a tier-based clamp existed. 307e35f8d7 removed it on
+  // purpose ("revert(monetization): drop the tier price clamps — the article stands"): membership
+  // governs how OFTEN a creator prices and never how much, so there is no cap to clamp to and a free
+  // creator's raise must go through untouched. Re-pointed rather than deleted, because a
+  // reintroduced clamp is exactly what that revert says must not come back.
+  test('submits a raise above the old tier cap unchanged — membership limits how often, not how much', async () => {
+    // Free would once have capped paid access at 500; this version stores 5000.
+    renderChargingForm();
+
+    await userEvent.fill(page.getByLabelText('Price for access'), '6000');
+    // Edit a second field too, so the save cannot be short-circuited as pristine on any path — that
+    // would pass this assertion without the price ever being submitted.
+    await userEvent.fill(page.getByLabelText('Name'), 'v1.1');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    const terms = (mutateAsync.mock.calls[0][0] as { paidAccess?: { terms?: ModelVersionTerms } })
+      .paidAccess?.terms;
+    // A reintroduced clamp reports `expected 5000 to be 6000` — the stored price winning over the edit.
+    expect(terms?.download?.price).toBe(6000);
+  });
+
   // A pristine edit short-circuits the mutation, so the observable is the form's own onSubmit: it fires
   // only once validation passed, which is what the unasked-for fee used to block.
   test('saves without ever opening the section', async () => {
@@ -460,5 +927,270 @@ describe('ModelVersionUpsertForm — monetization disclosure', () => {
     await userEvent.click(page.getByRole('button', { name: 'Save' }));
     await vi.waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
     expect(mutateAsync).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `licensingSourceVersionId` makes a version inherit a root's per-image licence fee — charged to
+ * everyone who generates with it, settled to the ROOT's owner, on a line carrying THIS model's name.
+ * The form pre-selects the ecosystem default with `shouldDirty: false`, so a wrong pre-selection leaves
+ * no mark on screen, and no surface on the site can clear it afterwards (CU 868kwf2fd).
+ *
+ * Both tests render a BRAND-NEW version, which is the shape the leak actually takes: no `version` means
+ * no stored value to echo, and `!version?.id` sends the save straight to the mutation, so whatever the
+ * effect pre-selected is what gets written.
+ */
+describe('ModelVersionUpsertForm — licensing lineage pre-selection', () => {
+  const renderNew = () =>
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+  const save = async () => {
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    return mutateAsync.mock.calls[0][0] as { licensingSourceVersionId?: number | null };
+  };
+
+  // The control for the test below, and the reason it is worth anything: same fixtures, same save, a
+  // root the query DOES offer. If the pre-selection effect or this harness ever stops reaching the
+  // payload, this goes red — so a null in the test below cannot be an artifact of the form never
+  // stamping anything at all.
+  test('stamps a root the query offers', async () => {
+    licensingRoots.respond = () => ({
+      roots: [ANIMA_CHECKPOINT_ROOT],
+      defaultVersionId: ANIMA_CHECKPOINT_ROOT.id,
+    });
+    renderNew();
+
+    expect((await save()).licensingSourceVersionId).toBe(ANIMA_CHECKPOINT_ROOT.id);
+  });
+
+  // 🔴 The gate this pins is `enabled: !!baseModel && !!model?.type`. Relaxing it back to
+  // `!!baseModel` fires one unscoped fetch whose CHECKPOINT roots get stamped onto a LoRA before the
+  // scoped refetch — which returns nothing, so the effect early-returns on a null default and can never
+  // clear it.
+  //
+  // The model is present here and only its TYPE is missing, which is what makes this test worth
+  // anything: with `model` undefined entirely, relaxing the gate to `!!model` also passes, so the test
+  // would pin the wrong half of the condition. (It is also the truer fixture — the wizard's step 2
+  // renders with a model object whose query has resolved and a type the user has not chosen yet.)
+  test('stamps nothing while the model type is still unknown', async () => {
+    licensingRoots.respond = (input) =>
+      input.modelType === undefined
+        ? { roots: [ANIMA_CHECKPOINT_ROOT], defaultVersionId: ANIMA_CHECKPOINT_ROOT.id }
+        : NO_ROOTS;
+    renderWithProviders(
+      <ModelVersionUpsertForm
+        model={{ ...model, type: undefined } as typeof model}
+        onSubmit={vi.fn()}
+      >
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    expect((await save()).licensingSourceVersionId ?? null).toBeNull();
+  });
+});
+
+// A creator releasing model after model re-entered the same pricing every time. The last charging save
+// for a model type is remembered locally and offered back the next time monetization is enabled for that
+// type — a starting point in the form, never a charge applied on their behalf.
+describe('ModelVersionUpsertForm — remembered monetization defaults', () => {
+  // Distinguishable from the type suggestion a LORA would otherwise seed (1 Buzz per 10 generations), so
+  // these tests can't pass on the suggestion alone.
+  const REMEMBERED_FEE = { buzz: 7, images: 10 };
+
+  beforeEach(() => {
+    useMonetizationDefaultsStore.setState({ byModelType: {} });
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+  });
+
+  test('opens the fee editor on the fee last saved for this model type', async () => {
+    monetizationDefaultsStore.set('LORA', { fee: REMEMBERED_FEE, paidAccess: null });
+    renderForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(rightsCheckbox());
+
+    // The fee switch opening by itself is the whole tell: without a remembered fee this editor waits on
+    // a click ('reveals the affirmation first' above pins that), so its own state proves the restore ran.
+    await expect.element(feeSwitch()).toBeChecked();
+    await expect.element(feeInput()).toHaveValue(String(REMEMBERED_FEE.buzz));
+  });
+
+  test('clamps a remembered fee to what this version may charge', async () => {
+    // 500 Buzz per generation — legal on a video base model, five times the ceiling on this SDXL one.
+    monetizationDefaultsStore.set('LORA', { fee: { buzz: 5000, images: 10 }, paidAccess: null });
+    renderForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(rightsCheckbox());
+
+    await expect.element(feeInput()).toHaveValue('1000');
+  });
+
+  test('leaves a version that already charges alone', async () => {
+    monetizationDefaultsStore.set('LORA', { fee: REMEMBERED_FEE, paidAccess: null });
+    renderChargingForm();
+
+    // This version opens with its pricing controls already up, so the restore is reachable at mount —
+    // before any click. Its own 2 Buzz per generation has to survive that.
+    await expect.element(feeInput()).toHaveValue('2');
+
+    // Off and back on: the round trip a creator makes when they change their mind.
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(chargeSwitch());
+
+    // The stored price is this version's to restore explicitly — a remembered one must not stand in for it.
+    expect(feeInput().elements()).toHaveLength(0);
+    await expect
+      .element(page.getByRole('button', { name: 'Restore the stored settings' }))
+      .toBeInTheDocument();
+  });
+
+  // Step 2 of the disclosure shows the affirmation and nothing else, so a remembered fee applied at
+  // step 1 would sit in form state with no control on screen — and block the save over a price the
+  // creator cannot see. Nothing is restored until the pricing controls are up.
+  test('holds the remembered fee back until the pricing controls are on screen', async () => {
+    // Keyed to the type this form renders — a snapshot under any other type restores nothing, and the
+    // save below would pass without exercising the hold-back at all.
+    monetizationDefaultsStore.set('Hypernetwork', { fee: REMEMBERED_FEE, paidAccess: null });
+    renderNewVersionForm();
+
+    await userEvent.click(chargeSwitch());
+    await expect.element(rightsCheckbox()).toBeInTheDocument();
+    // Read synchronously: the save must go through on this state, not on a later one.
+    expect(feeInput().elements()).toHaveLength(0);
+
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ licensingFee: 0 });
+  });
+
+  test('remembers the fee a save actually charged', async () => {
+    renderForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(rightsCheckbox());
+    await userEvent.click(feeSwitch());
+    await userEvent.fill(feeInput(), '7');
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(mutateAsync.mock.calls[0][0]).toMatchObject({ licensingFee: 0.7 });
+    // Written after the server takes it, so the wait is on the mutation, not on the store.
+    expect(useMonetizationDefaultsStore.getState().byModelType.LORA).toEqual({
+      fee: REMEMBERED_FEE,
+      paidAccess: null,
+    });
+  });
+
+  // The first-version form, because an untouched existing version never reaches the mutation at all —
+  // the save short-circuits on a clean form, and the assertion would pass without ever exercising this.
+  test('remembers nothing from a save that charged nothing', async () => {
+    renderNewVersionForm();
+
+    await userEvent.click(page.getByRole('button', { name: 'Save' }));
+
+    await vi.waitFor(() => expect(mutateAsync).toHaveBeenCalledTimes(1));
+    expect(useMonetizationDefaultsStore.getState().byModelType.Hypernetwork).toBeUndefined();
+  });
+});
+
+// The gate half of the restore, which none of the fee assertions above can see. Published and unpriced:
+// publishing is what makes a permanent gate configurable without an early-access score, and it is also
+// what takes the timed window off the table — the two cases this pair separates.
+describe('ModelVersionUpsertForm — remembered paid access', () => {
+  const publishedUnpriced = {
+    ...(version as object),
+    status: 'Published',
+  } as unknown as React.ComponentProps<typeof ModelVersionUpsertForm>['version'];
+
+  const gate = {
+    timeframe: 30,
+    accessPrice: 5000,
+    freeGeneration: false,
+    acceptsBlueBuzz: false,
+    freePreviewGenerations: 0,
+  };
+
+  function renderPublishedForm() {
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} version={publishedUnpriced} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+  }
+
+  beforeEach(() => {
+    useMonetizationDefaultsStore.setState({ byModelType: {} });
+    flags.current = { licensingFee: true, earlyAccessModel: true };
+  });
+
+  test('restores a remembered permanent gate', async () => {
+    monetizationDefaultsStore.set('LORA', {
+      fee: { buzz: 0, images: 10 },
+      paidAccess: { ...gate, permanent: true },
+    });
+    renderPublishedForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(rightsCheckbox());
+
+    await expect.element(accessSwitch()).toBeChecked();
+    const price = page.getByLabelText('Price for access').element() as HTMLInputElement;
+    expect(price.value.replace(/\D/g, '')).toBe('5000');
+  });
+
+  // The other half of the pair above: a published timed window is the one gate removal that cannot be
+  // undone after saving, so it is the only one that gets the warning.
+  test('warns that a published timed window cannot be started again', async () => {
+    const timedVersion = {
+      ...(version as object),
+      status: 'Published',
+      paidAccess: {
+        endsAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        timeframeDays: 30,
+        terms: { download: { price: 5000 } },
+      },
+      meta: {
+        rightsAffirmation: {
+          userId: 1,
+          affirmedAt: '2026-08-01T00:00:00.000Z',
+          version: 1,
+          statement: 'x',
+        },
+      },
+    } as unknown as React.ComponentProps<typeof ModelVersionUpsertForm>['version'];
+
+    renderWithProviders(
+      <ModelVersionUpsertForm model={model} version={timedVersion} onSubmit={vi.fn()}>
+        {() => <button type="submit">Save</button>}
+      </ModelVersionUpsertForm>
+    );
+
+    await expect.element(chargeSwitch()).toBeChecked();
+    await userEvent.click(chargeSwitch());
+    expect(
+      page.getByText(/Early Access window can't be started again once removed/).elements()
+    ).toHaveLength(1);
+  });
+
+  test('drops a remembered timed window this version cannot offer', async () => {
+    monetizationDefaultsStore.set('LORA', {
+      fee: { buzz: 0, images: 10 },
+      paidAccess: { ...gate, permanent: false },
+    });
+    renderPublishedForm();
+
+    await userEvent.click(chargeSwitch());
+    await userEvent.click(rightsCheckbox());
+
+    // Published, so there is no timed window to restore into. Shortening it to something on offer would
+    // be a price-relevant choice made on the creator's behalf; the gate is left for them to set.
+    await expect.element(accessSwitch()).not.toBeChecked();
   });
 });

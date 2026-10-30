@@ -1,8 +1,10 @@
 import { describe, expect, test, vi } from 'vitest';
+import type * as FeatureFlagsMod from '~/providers/FeatureFlagsProvider';
 import { page } from 'vitest/browser';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import type * as NotificationsModule from '~/utils/notifications';
 import type * as TrpcModule from '~/utils/trpc';
 
 /**
@@ -16,13 +18,29 @@ import type * as TrpcModule from '~/utils/trpc';
 
 // --- trpc / providers mocked for the OffsiteReviewModal conditional tests. The
 // pure-props ConnectScopesPanel tests below don't touch these. ---
-vi.mock('~/providers/FeatureFlagsProvider', () => ({
+// 🔴 `importOriginal` SPREAD, not a wholesale replacement (local-rules/
+// no-wholesale-module-mock). A hand-written factory silently breaks the day the
+// module graph reaches an export it omits — measured: once the listing detail
+// began importing `SmartCreatorCard` (→ ChatUserButton → useChatEnabled), a
+// factory listing only `useFeatureFlags` made this whole FILE fail to import with
+// `does not provide an export named 'useFeatureFlagsReady'`, reported as 0 tests
+// collected rather than as a failure.
+vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsMod>()),
   useFeatureFlags: () => ({ appBlocks: true }),
 }));
 // The modal body renders the listing preview (AppListingCard + AppListingDetailBody),
 // which reads useCurrentUser — boundary-stub it (null user is fine).
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
-vi.mock('~/utils/notifications', () => ({
+// Same spread, same reason as the FeatureFlagsProvider factory above — and this one is the
+// case that actually fired. #5082 added `showWarningNotification` to
+// `HideUserButton/BlockUserButton`, reached from here through
+// OffsiteReviewQueue -> AppListingDetailBody -> AppListingComments -> CommentsV2/Comment, and
+// the one-key factory failed the WHOLE FILE at the browser's ESM link step: `SyntaxError: The
+// requested module '/src/utils/notifications.tsx' does not provide an export named
+// 'showWarningNotification'`. #5102
+vi.mock('~/utils/notifications', async (importOriginal) => ({
+  ...(await importOriginal<typeof NotificationsModule>()),
   showSuccessNotification: vi.fn(),
   showErrorNotification: vi.fn(),
 }));
@@ -142,7 +160,7 @@ function makeRow(appListing: Record<string, unknown>) {
     submittedAt: new Date('2026-01-01T00:00:00Z'),
     changelog: null,
     appListing,
-    submittedBy: { id: 42, username: 'dev', image: null },
+    submittedBy: { id: 42, username: 'dev', deletedAt: null, image: null },
   } as never;
 }
 

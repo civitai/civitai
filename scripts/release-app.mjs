@@ -14,6 +14,7 @@
 // are never swept into the release commit.
 import { execSync } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
+import { releaseSkew, skewMessage } from './lib/release-version.mjs';
 
 const [appDir, tagPrefix, bump] = process.argv.slice(2);
 const BUMPS = new Set(['patch', 'minor', 'major']);
@@ -52,6 +53,23 @@ if (branch !== 'main') {
 
 sh('git pull --rebase');
 
+// 🔴 Refuse if this branch is BEHIND the app's released history. Checked here —
+// after the pull so the tag list is current, and BEFORE `npm version` so a refusal
+// leaves the tree exactly as it found it. See scripts/lib/release-version.mjs for
+// the two ways a stale base produces a wrong tag; the dangerous one deploys this
+// branch's code to production without colliding with anything.
+{
+  const currentVersion = JSON.parse(readFileSync(`${appDir}/package.json`, 'utf8')).version;
+  const tags = cap('git tag -l').split('\n').filter(Boolean);
+  const skew = releaseSkew({ currentVersion, tags, tagPrefix });
+  if (skew.behind) {
+    console.error(
+      skewMessage({ appDir, tagPrefix, current: skew.current, highest: skew.highest, branch })
+    );
+    process.exit(1);
+  }
+}
+
 // Bump the sub-package version ONLY (no git side effects from npm).
 sh(`npm --prefix ${appDir} version ${bump} --no-git-tag-version`);
 const version = JSON.parse(readFileSync(`${appDir}/package.json`, 'utf8')).version;
@@ -64,4 +82,6 @@ sh(`git commit -m "chore(${app}): release ${tag}"`);
 sh(`git tag -a ${tag} -m ${tag}`);
 sh('git push --follow-tags');
 
-console.log(`\nReleased ${tag} (pushed to ${branch}). The tag-webhook will build + Flux will deploy.`);
+console.log(
+  `\nReleased ${tag} (pushed to ${branch}). The tag-webhook will build + Flux will deploy.`
+);

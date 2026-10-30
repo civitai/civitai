@@ -37,10 +37,6 @@ const {
   mockParseSubjectUserId,
   mockGetUserById,
   mockGetUserBuzzAccounts,
-  mockLogToAxiom,
-  mockRedis,
-  mockSysRedis,
-  mockDbRead,
 } = vi.hoisted(() => ({
   mockIsAppBlocksEnabled: vi.fn(),
   mockIsReviewSandboxEnabled: vi.fn(),
@@ -57,15 +53,6 @@ const {
   mockParseSubjectUserId: vi.fn(),
   mockGetUserById: vi.fn(),
   mockGetUserBuzzAccounts: vi.fn(),
-  mockLogToAxiom: vi.fn(async () => undefined),
-  mockRedis: { get: vi.fn(), set: vi.fn() },
-  mockSysRedis: { get: vi.fn(), incrBy: vi.fn(), expire: vi.fn(), ttl: vi.fn() },
-  mockDbRead: {
-    modelVersion: { findUnique: vi.fn() },
-    modelBlockInstall: { findUnique: vi.fn() },
-    model: { findUnique: vi.fn() },
-    appBlockPublishRequest: { findMany: vi.fn() },
-  },
 }));
 
 vi.mock('~/server/services/app-blocks-flag', () => ({
@@ -109,24 +96,11 @@ vi.mock('~/server/services/orchestrator/promptAuditing', () => ({
 vi.mock('~/server/services/user.service', () => ({
   getUserById: (...a: unknown[]) => mockGetUserById(...a),
 }));
-vi.mock('~/server/db/client', () => ({
-  dbRead: mockDbRead,
-  dbWrite: { modelBlockInstall: { findUnique: vi.fn() }, model: { findUnique: vi.fn() } },
-}));
-vi.mock('~/server/redis/client', async () => {
-  const actual = await vi.importActual<typeof import('@civitai/redis/client')>(
-    '@civitai/redis/client'
-  );
-  return { ...actual, redis: mockRedis, sysRedis: mockSysRedis };
-});
 vi.mock('~/server/rewards/active/dailyBoost.reward', () => ({
   dailyBoostReward: { apply: vi.fn(), getUserRewardDetails: vi.fn() },
 }));
 vi.mock('~/server/services/buzz.service', () => ({
   getUserBuzzAccounts: (...a: unknown[]) => mockGetUserBuzzAccounts(...a),
-}));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
 }));
 vi.mock('~/server/services/block-registry.service', () => ({
   BlockRegistry: {
@@ -146,6 +120,13 @@ vi.mock('~/server/middleware.trpc', async () => {
 
 import { blocksRouter } from '../blocks.router';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockDbRead = dbMock.dbRead;
+const mockRedis = redisMock.redis;
+const mockSysRedis = redisMock.sysRedis;
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 function fakePerUserFlag(opts?: { user?: { isModerator?: boolean } }) {
   return Promise.resolve(!!opts?.user?.isModerator);
@@ -247,7 +228,55 @@ describe('blocks.startAgentReview — CONFLICT preservation', () => {
     const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
     const res = await caller.startAgentReview({ publishRequestId: PUBREQ });
     expect(res).toMatchObject({ status: 'running' });
-    expect(mockStartAgentReview).toHaveBeenCalledWith({ publishRequestId: PUBREQ, modUserId: 1 });
+    expect(mockStartAgentReview).toHaveBeenCalledWith({
+      publishRequestId: PUBREQ,
+      modUserId: 1,
+      sections: undefined,
+    });
+    // 🔴 WHAT THE `sections: undefined` ABOVE DOES AND DOES NOT CLAIM. `toHaveBeenCalledWith`
+    // uses `toEqual` semantics, under which an ABSENT key and an explicitly-`undefined` key
+    // are equal. So that line does catch `sections: ['codeReview']`, and it cannot
+    // distinguish "the router omitted the key" from "the router passed it as undefined" —
+    // which is fine, because the service branches on the VALUE, not on key presence.
+    // It is restated below as its own assertion for one reason: a failure there names
+    // `sections` and prints the offending value, where the matcher above fails with a whole-
+    // object diff in which the one field that matters is easy to miss.
+    const call = mockStartAgentReview.mock.calls[0][0] as { sections?: unknown };
+    expect(call.sections, 'a plain dispatch must be a FULL run').toBeUndefined();
+  });
+
+  it('🔴 forwards an optional `sections` list (the targeted re-run of ONE failed analysis)', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await caller.startAgentReview({ publishRequestId: PUBREQ, sections: ['codeReview'] });
+    expect(mockStartAgentReview).toHaveBeenCalledWith({
+      publishRequestId: PUBREQ,
+      modUserId: 1,
+      sections: ['codeReview'],
+    });
+  });
+
+  it('🔴 REFUSES a section name that is not one of the three — the input is user-supplied', async () => {
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(
+      caller.startAgentReview({
+        publishRequestId: PUBREQ,
+        // @ts-expect-error — deliberately outside the enum; the zod schema is the gate.
+        sections: ['summaryMd'],
+      })
+    ).rejects.toBeInstanceOf(TRPCError);
+    expect(mockStartAgentReview).not.toHaveBeenCalled();
+  });
+
+  it('🔴 REFUSES an EMPTY section list rather than treating it as "run everything"', async () => {
+    // `[]` is an instruction to run nothing, which is not a thing the runner can do; the
+    // way to ask for a full run is to omit the field. Accepting `[]` would make the
+    // service's `length > 0` test the only thing standing between a mod and a no-op
+    // dispatch they were charged a pod for.
+    const caller = blocksRouter.createCaller(fakeCtx(modUser) as never);
+    await expect(
+      caller.startAgentReview({ publishRequestId: PUBREQ, sections: [] })
+    ).rejects.toBeInstanceOf(TRPCError);
+    expect(mockStartAgentReview).not.toHaveBeenCalled();
   });
 
   it('a service CONFLICT ("already running") is preserved as CONFLICT, not flattened to BAD_REQUEST', async () => {

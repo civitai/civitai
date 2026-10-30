@@ -52,7 +52,6 @@ vi.mock('~/server/redis/client', () => {
   };
 });
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('~/server/db/client', () => ({ dbRead: {}, dbWrite: {} }));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/user.service', () => ({ updateUserById: vi.fn() }));
@@ -60,10 +59,10 @@ vi.mock('~/server/utils/cache-helpers', () => ({
   fetchThroughCache: vi.fn(),
   bustFetchThroughCache: vi.fn(),
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn() }));
-
 import { BlocklistType } from '~/server/common/enums';
 import { auditPromptServer } from '~/server/services/orchestrator/promptAuditing';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const PROMPT = 'raven from teen titans';
 const NEGATIVE = 'mature content, blurry';
@@ -98,7 +97,10 @@ describe('auditPromptServer — benign-phrase stripping', () => {
     expect(auditedPrompt).not.toContain('teen titans');
     expect(auditedNegative).not.toContain('mature content');
     // External moderation sees the same cleaned text as the regex audit.
-    expect(mockModeratePrompt).toHaveBeenCalledWith(auditedPrompt);
+    // Second argument = the observability-only `moderationSource` label, `undefined` because
+    // these options declare none. Asserted at full arity so this keeps pinning exactly what
+    // `moderatePrompt` is handed, not merely its first argument.
+    expect(mockModeratePrompt).toHaveBeenCalledWith(auditedPrompt, undefined);
   });
 
   it('a prompt that only trips on a benign phrase is no longer blocked', async () => {

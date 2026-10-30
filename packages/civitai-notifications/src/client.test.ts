@@ -16,7 +16,11 @@ const validRow = {
 
 // A client bound to a mock fetch + a default endpoint, with retry backoff zeroed so tests don't sleep.
 function client(config: NotificationsClientConfig) {
-  return createNotificationsClient({ endpoint: 'http://notif.internal', retryBaseMs: 0, ...config });
+  return createNotificationsClient({
+    endpoint: 'http://notif.internal',
+    retryBaseMs: 0,
+    ...config,
+  });
 }
 
 describe('createNotificationPendingRow', () => {
@@ -110,8 +114,25 @@ describe('read wrappers', () => {
         headers: { 'content-type': 'application/json' },
       })
     );
-    const counts = await client({ fetch: fetchMock }).countNotifications({ userId: 1, unread: true });
+    const counts = await client({ fetch: fetchMock }).countNotifications({
+      userId: 1,
+      unread: true,
+    });
     expect(counts).toEqual([{ category: 'Comment', count: 3 }]);
+  });
+
+  it('countNotifications keeps the floor flag on a capped count', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      new Response(JSON.stringify([{ category: 'Update', count: '10001', floor: true }]), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    );
+    const counts = await client({ fetch: fetchMock }).countNotifications({
+      userId: 1,
+      unread: true,
+    });
+    expect(counts).toEqual([{ category: 'Update', count: 10001, floor: true }]);
   });
 });
 
@@ -121,9 +142,11 @@ describe('onFailure sink', () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response('busy', { status: 503 }));
 
     await expect(
-      client({ fetch: fetchMock, retries: 2, onFailure: (f) => failures.push(f) }).createNotification(
-        validRow
-      )
+      client({
+        fetch: fetchMock,
+        retries: 2,
+        onFailure: (f) => failures.push(f),
+      }).createNotification(validRow)
     ).rejects.toBeInstanceOf(NotificationsClientError);
 
     expect(failures).toHaveLength(1); // one event, not one-per-attempt
@@ -144,14 +167,21 @@ describe('onFailure sink', () => {
     ).rejects.toBeInstanceOf(NotificationsClientError);
 
     expect(failures).toEqual([
-      expect.objectContaining({ path: '/notifications', status: 400, retryable: false, attempts: 1 }),
+      expect.objectContaining({
+        path: '/notifications',
+        status: 400,
+        retryable: false,
+        attempts: 1,
+      }),
     ]);
   });
 
   it('does NOT report on success', async () => {
     const failures: any[] = [];
     const fetchMock = vi.fn().mockResolvedValue(new Response(null, { status: 202 }));
-    await client({ fetch: fetchMock, onFailure: (f) => failures.push(f) }).createNotification(validRow);
+    await client({ fetch: fetchMock, onFailure: (f) => failures.push(f) }).createNotification(
+      validRow
+    );
     expect(failures).toHaveLength(0);
   });
 
@@ -193,5 +223,71 @@ describe('createNotificationsBulk', () => {
     const fetchMock = vi.fn();
     await client({ fetch: fetchMock }).createNotificationsBulk([]);
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+describe('sendSystemNotices', () => {
+  const input = {
+    sendId: 'refund-b1',
+    type: 'system-message' as const,
+    message: 'Refunded {amount} Buzz',
+    recipients: [{ userId: 1, params: { amount: '10' } }],
+    sentBy: 'test',
+    reason: 'hq:test',
+  };
+  const ok = () =>
+    new Response(JSON.stringify({ sendId: 'refund-b1', mode: 'dry-run', counts: { queued: 1 } }), {
+      status: 200,
+    });
+
+  it('posts a dry run by default with the notices token, never the producer token', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok());
+    const res = await client({
+      fetch: fetchMock,
+      token: 'producer',
+      noticesToken: 'notices',
+    }).sendSystemNotices(input);
+    expect(res.counts.queued).toBe(1);
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe('http://notif.internal/notifications/notices');
+    expect(init.headers.authorization).toBe('Bearer notices');
+    expect(JSON.parse(init.body).mode).toBe('dry-run');
+  });
+
+  it('sends no Authorization header when no notices token is configured', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(ok());
+    await client({ fetch: fetchMock, token: 'producer' }).sendSystemNotices(input);
+    expect(fetchMock.mock.calls[0][1].headers.authorization).toBeUndefined();
+  });
+
+  it('rejects a template mismatch before any request', async () => {
+    const fetchMock = vi.fn();
+    await expect(
+      client({ fetch: fetchMock, noticesToken: 'n' }).sendSystemNotices({
+        ...input,
+        recipients: [{ userId: 1, params: {} }],
+      })
+    ).rejects.toThrow();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('does not retry a 429 or a 5xx (the caller re-runs; the route is idempotent per sendId)', async () => {
+    for (const status of [429, 500]) {
+      const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status }));
+      await expect(
+        client({ fetch: fetchMock, noticesToken: 'n' }).sendSystemNotices({
+          ...input,
+          mode: 'send',
+        })
+      ).rejects.toMatchObject({ status });
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    }
+  });
+
+  it('getSystemNoticeSend returns null on 404', async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response('{}', { status: 404 }));
+    expect(
+      await client({ fetch: fetchMock, noticesToken: 'n' }).getSystemNoticeSend('x')
+    ).toBeNull();
   });
 });

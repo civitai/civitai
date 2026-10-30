@@ -1,8 +1,15 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as PrizeService from '~/server/services/prize.service';
 // Namespace type-imports (erased at compile time, so they are safe above the hoisted vi.mock calls)
 // — the repo forbids inline `typeof import(...)` annotations.
 import type * as FliptClient from '~/server/flipt/client';
 import type * as ChallengeFunding from '~/server/games/daily-challenge/challenge-funding';
+import type * as EngineRegistry from '~/server/games/daily-challenge/challenge-engine-registry';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbWrite = dbMock.dbWrite;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
 
 // The MODERATOR completion path — `endChallengeAndPickWinners`, reached from the tRPC router when a
 // mod ends a challenge by hand. It has its own `createChallengeWinner` +
@@ -12,36 +19,32 @@ import type * as ChallengeFunding from '~/server/games/daily-challenge/challenge
 // be deleted with the whole suite still green.
 //
 // Winner-prize payouts are deduped ONLY by their externalTransactionId, which embeds the PLACE
-// (`challenge-winner-prize-{challengeId}-{userId}-place-{place}`). `createBuzzTransactionMany` adds
-// no dedupe of its own, so these tests assert on the real transaction ids handed to the ledger and
-// deliberately leave the real (pure) `buildWinnerPayoutTransactions` unmocked.
+// (`challenge-winner-prize-{challengeId}-{userId}-place-{place}`). `createPrizes` dedupes
+// on that key and nothing else, so these tests assert on the real transaction ids handed to the ledger and
+// deliberately leave the real (pure) `buildWinnerPrizes` unmocked.
 //
 // Mocking mirrors challenge-judging-categories-gate.service.test.ts, which is the leanest existing
 // harness that drives this function down its LLM re-pick branch.
 
 const {
-  mockDbWrite,
   mockGetJudgedEntries,
   mockGenerateWinners,
   mockGetChallengeById,
   mockCreateChallengeWinner,
+  mockCreatePrizes,
   mockCreateBuzzTransactionMany,
   mockGetExistingWinnersForRetry,
   mockWithRetries,
-  mockBuildWinnerPayoutTransactions,
+  mockBuildWinnerPrizes,
+  mockResolveJudgingEngine,
+  mockRankField,
+  mockSelectWinners,
 } = vi.hoisted(() => ({
-  mockDbWrite: {
-    $queryRaw: vi.fn().mockResolvedValue([]),
-    $executeRaw: vi.fn().mockResolvedValue(1),
-    challenge: {
-      update: vi.fn().mockResolvedValue(undefined),
-      findUnique: vi.fn().mockResolvedValue({ prizePool: 0, prizeDistribution: null }),
-    },
-  },
   mockGetJudgedEntries: vi.fn(),
   mockGenerateWinners: vi.fn(),
   mockGetChallengeById: vi.fn(),
   mockCreateChallengeWinner: vi.fn(),
+  mockCreatePrizes: vi.fn().mockResolvedValue([]),
   mockCreateBuzzTransactionMany: vi.fn().mockResolvedValue(undefined),
   mockGetExistingWinnersForRetry: vi.fn().mockResolvedValue([]),
   // Real `withRetries` re-invokes its closure up to 4 times on a flaky payout; doubled so a test can
@@ -49,12 +52,10 @@ const {
   mockWithRetries: vi.fn(),
   // A SPY that delegates to the real (pure) builder — the transaction ids stay genuine, but the
   // number of times the payout is BUILT becomes observable.
-  mockBuildWinnerPayoutTransactions: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { $queryRaw: vi.fn().mockResolvedValue([]), challenge: { findUnique: vi.fn() } },
-  dbWrite: mockDbWrite,
+  mockBuildWinnerPrizes: vi.fn(),
+  mockResolveJudgingEngine: vi.fn(),
+  mockRankField: vi.fn(),
+  mockSelectWinners: vi.fn(),
 }));
 
 vi.mock('~/server/events', () => ({
@@ -65,11 +66,6 @@ vi.mock('~/server/flipt/client', async (importOriginal) => {
   const actual = await importOriginal<typeof FliptClient>();
   return { ...actual, isFlipt: vi.fn().mockResolvedValue(false) };
 });
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-  safeError: vi.fn((e: unknown) => e),
-}));
 
 vi.mock('~/server/games/daily-challenge/daily-challenge.utils', () => ({
   getChallengeConfig: vi.fn().mockResolvedValue({
@@ -119,14 +115,14 @@ vi.mock('~/server/jobs/daily-challenge-processing', () => ({
   getJudgedEntries: mockGetJudgedEntries,
 }));
 
-// `buildWinnerPayoutTransactions` is deliberately left REAL (it is pure) so the assertions below run
+// `buildWinnerPrizes` is deliberately left REAL (it is pure) so the assertions below run
 // against the genuine externalTransactionId strings — the actual money keys.
 vi.mock('~/server/games/daily-challenge/challenge-funding', async (importOriginal) => {
   const actual = await importOriginal<typeof ChallengeFunding>();
-  mockBuildWinnerPayoutTransactions.mockImplementation(actual.buildWinnerPayoutTransactions);
+  mockBuildWinnerPrizes.mockImplementation(actual.buildWinnerPrizes);
   return {
     ...actual,
-    buildWinnerPayoutTransactions: mockBuildWinnerPayoutTransactions,
+    buildWinnerPrizes: mockBuildWinnerPrizes,
     chargeInitialPrize: vi.fn(),
     refundUserChallengeFunds: vi.fn().mockResolvedValue({ refundedEntries: 0 }),
     reportPoolFundingShortfall: vi.fn().mockResolvedValue(undefined),
@@ -146,6 +142,11 @@ vi.mock('~/server/services/notification.service', () => ({
 
 vi.mock('~/server/services/challenge-engagement.service', () => ({
   sendChallengeResultsNotification: vi.fn().mockResolvedValue(undefined),
+}));
+
+vi.mock('~/server/services/prize.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof PrizeService>()),
+  createPrizes: mockCreatePrizes,
 }));
 
 vi.mock('~/server/services/commentsv2.service', () => ({
@@ -184,6 +185,13 @@ vi.mock('~/utils/errorHandling', () => ({
 }));
 
 vi.mock('~/utils/logging', () => ({ createLogger: vi.fn(() => vi.fn()) }));
+
+// Only `resolveJudgingEngine` is doubled; `buildJudgingEngineContext` and `recapField` stay real so
+// the rubric and the recap slice are the ones production computes.
+vi.mock('~/server/games/daily-challenge/challenge-engine-registry', async (importOriginal) => ({
+  ...(await importOriginal<typeof EngineRegistry>()),
+  resolveJudgingEngine: mockResolveJudgingEngine,
+}));
 
 const { endChallengeAndPickWinners } = await import('~/server/services/challenge.service');
 const { ChallengeSource, ChallengeStatus } = await import('~/shared/utils/prisma/enums');
@@ -283,8 +291,8 @@ function stubUniqueWinnerTable() {
 
 /** The externalTransactionIds actually submitted to the buzz ledger, in submission order. */
 function paidExternalIds(): string[] {
-  expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(1);
-  const [transactions] = mockCreateBuzzTransactionMany.mock.calls[0];
+  expect(mockCreatePrizes).toHaveBeenCalledTimes(1);
+  const [transactions] = mockCreatePrizes.mock.calls[0];
   return (transactions as Array<{ externalTransactionId: string }>).map(
     (t) => t.externalTransactionId
   );
@@ -292,7 +300,7 @@ function paidExternalIds(): string[] {
 
 /** externalTransactionId -> amount, so a reconciled place can be checked to pay its recorded prize. */
 function paidAmountsById(): Record<string, number> {
-  const [transactions] = mockCreateBuzzTransactionMany.mock.calls[0];
+  const [transactions] = mockCreatePrizes.mock.calls[0];
   return Object.fromEntries(
     (transactions as Array<{ externalTransactionId: string; amount: number }>).map((t) => [
       t.externalTransactionId,
@@ -310,8 +318,20 @@ beforeEach(() => {
   mockDbWrite.challenge.findUnique.mockResolvedValue({ prizePool: 0, prizeDistribution: null });
   mockGetChallengeById.mockResolvedValue(challengeRow);
   mockGetExistingWinnersForRetry.mockResolvedValue([]);
+  // Legacy identity by default, so every pre-existing test in this file keeps the behaviour it
+  // was written against.
+  mockRankField.mockImplementation(async (_ctx: unknown, field: unknown[]) => field);
+  mockSelectWinners.mockResolvedValue(null);
+  mockResolveJudgingEngine.mockResolvedValue({
+    key: 'legacy-absolute',
+    ranksFullField: false,
+    shortlistSize: 0,
+    recordEntry: vi.fn(),
+    rankField: mockRankField,
+    selectWinners: mockSelectWinners,
+  });
   mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
-  mockCreateBuzzTransactionMany.mockResolvedValue(undefined);
+  mockCreatePrizes.mockResolvedValue([]);
   // Default: the happy path, one invocation — same as real `withRetries` when nothing throws.
   mockWithRetries.mockImplementation((fn: (remaining: number) => unknown) => fn(3));
   stubUniqueWinnerTable();
@@ -479,27 +499,27 @@ describe('endChallengeAndPickWinners — the payout is built ONCE, outside the r
     mockWithRetries.mockImplementation(async (fn: (remaining: number) => Promise<unknown>) => {
       await fn(3);
       await fn(2);
-      await fn(1);
+      return fn(1);
     });
 
     await endChallengeAndPickWinners(CHALLENGE_ID);
 
     // The retry must genuinely have happened — otherwise this passes on a build that never retries.
-    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(3);
-    expect(mockBuildWinnerPayoutTransactions).toHaveBeenCalledTimes(1);
+    expect(mockCreatePrizes).toHaveBeenCalledTimes(3);
+    expect(mockBuildWinnerPrizes).toHaveBeenCalledTimes(1);
   });
 
   it('every retry submits the SAME transaction array instance, not a rebuilt one', async () => {
     cleanPick();
     mockWithRetries.mockImplementation(async (fn: (remaining: number) => Promise<unknown>) => {
       await fn(3);
-      await fn(2);
+      return fn(2);
     });
 
     await endChallengeAndPickWinners(CHALLENGE_ID);
 
-    const [first] = mockCreateBuzzTransactionMany.mock.calls[0];
-    const [second] = mockCreateBuzzTransactionMany.mock.calls[1];
+    const [first] = mockCreatePrizes.mock.calls[0];
+    const [second] = mockCreatePrizes.mock.calls[1];
     // Identity, not deep equality: a rebuild yields an equal-but-distinct array, so `toEqual` would
     // pass on the very mutation this pins.
     expect(second).toBe(first);
@@ -510,7 +530,165 @@ describe('endChallengeAndPickWinners — the payout is built ONCE, outside the r
 
     await endChallengeAndPickWinners(CHALLENGE_ID);
 
-    expect(mockCreateBuzzTransactionMany).toHaveBeenCalledTimes(1);
-    expect(mockBuildWinnerPayoutTransactions).toHaveBeenCalledTimes(1);
+    expect(mockCreatePrizes).toHaveBeenCalledTimes(1);
+    expect(mockBuildWinnerPrizes).toHaveBeenCalledTimes(1);
+    // Winners are awarded, never paid directly: a direct payment would land in the pool's
+    // currency, and the winner's claim would then conflict on the same key and pay nothing.
+    const directWinnerPayments = mockCreateBuzzTransactionMany.mock.calls
+      .flatMap(([txs]) => (txs ?? []) as { externalTransactionId: string }[])
+      .filter((tx) => tx.externalTransactionId.startsWith('challenge-winner-prize-'));
+    expect(directWinnerPayments).toEqual([]);
+  });
+
+  it("links each winner's notification to their own prize", async () => {
+    cleanPick();
+    mockCreatePrizes.mockImplementation(async (prizes: { userId: number }[]) =>
+      prizes.map((prize) => ({ ...prize, id: prize.userId + 1000 }))
+    );
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    const { createNotification } = await import('~/server/services/notification.service');
+    const sent = vi
+      .mocked(createNotification)
+      .mock.calls.map(([n]) => n as { type: string; userId: number; details: { prizeId?: number } })
+      .filter((n) => n.type === 'challenge-winner');
+    expect(sent.map((n) => [n.userId, n.details.prizeId])).toEqual([
+      [100, 1100],
+      [200, 1200],
+    ]);
+  });
+});
+
+// The moderator path is a SECOND completion path. Until this block existed it called
+// getJudgedEntries and generateWinners directly, with no engine anywhere — so a pairwise challenge
+// ended early by a mod paid out on absolute scores and discarded every comparison it had bought.
+// Same challenge, same prize money, different winners depending on who ended it.
+// The moderator path is a SECOND completion path. It used to call getJudgedEntries and
+// generateWinners directly with no engine anywhere, so a pairwise challenge ended early by a mod
+// paid out on absolute scores and discarded every comparison it had bought.
+//
+// It no longer runs that pipeline for a comparison engine at all: a close-time stage is minutes of
+// LLM round-trips and does not belong in a tRPC mutation the moderator's browser is holding open.
+// It ends the challenge and hands it to the completion cron, which is the same engine-aware path.
+describe('endChallengeAndPickWinners — hands a comparison engine to the completion job', () => {
+  const pairwiseEngine = {
+    key: 'pairwise-ladder' as const,
+    ranksFullField: true,
+    shortlistSize: 15,
+    recordEntry: vi.fn(),
+    rankField: mockRankField,
+    selectWinners: mockSelectWinners,
+  };
+
+  it('ends the challenge and queues it instead of judging inline', async () => {
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
+
+    const result = await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    expect(result).toMatchObject({ success: true, queued: true });
+    // endsAt in the past is what `getEndedActiveChallenges` selects on.
+    const update = mockDbWrite.challenge.update.mock.calls.at(-1)?.[0] as {
+      data: { endsAt: Date };
+    };
+    expect(update.data.endsAt).toBeInstanceOf(Date);
+    expect(update.data.endsAt.getTime()).toBeLessThanOrEqual(Date.now());
+  });
+
+  it('closes submissions immediately, not when the completion job gets to it', async () => {
+    // A moderator ending a challenge early is usually trying to STOP something. Leaving the
+    // collection open until the next tick lets entries land in that window, get reviewed, and
+    // become eligible for the prizes the mod was trying to close off.
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    const helpers = await import('~/server/games/daily-challenge/challenge-helpers');
+    expect(vi.mocked(helpers.closeChallengeCollection)).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not judge, pay, or claim on the way out', async () => {
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    expect(mockGetJudgedEntries).not.toHaveBeenCalled();
+    expect(mockGenerateWinners).not.toHaveBeenCalled();
+    expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
+    expect(mockCreatePrizes).not.toHaveBeenCalled();
+    // Claiming would move it to Completing, where the cron — which only looks at Active — would
+    // never pick it up.
+    const helpers = await import('~/server/games/daily-challenge/challenge-helpers');
+    expect(vi.mocked(helpers.claimChallengeForCompletion)).not.toHaveBeenCalled();
+  });
+
+  // A moderator who just saw a success toast and no winners is LIKELY to click again, so this is
+  // a sequence that will happen rather than a hypothetical one.
+  it('is idempotent on a double-click: two clicks queue one completion, not two', async () => {
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'pairwise-ladder' });
+
+    const first = await endChallengeAndPickWinners(CHALLENGE_ID);
+    const second = await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    expect(first).toMatchObject({ queued: true });
+    expect(second).toMatchObject({ queued: true });
+    // There is no queue to double up: both clicks write the same state — an endsAt in the past —
+    // and the completion job takes it exactly once under claimChallengeForCompletion.
+    expect(mockCreateChallengeWinner).not.toHaveBeenCalled();
+    expect(mockCreatePrizes).not.toHaveBeenCalled();
+    const updates = mockDbWrite.challenge.update.mock.calls.filter(
+      (call) => (call[0] as { data: Record<string, unknown> }).data.endsAt
+    );
+    expect(updates).toHaveLength(2);
+  });
+
+  it('refuses once the completion job has claimed it, rather than re-queueing underneath it', async () => {
+    // The claim moves the challenge to Completing. A third click then has to bounce off the status
+    // guard — re-queueing here is what would put a second completion behind an in-flight one.
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
+    mockGetChallengeById.mockResolvedValue({
+      ...challengeRow,
+      judgingEngine: 'pairwise-ladder',
+      status: ChallengeStatus.Completing,
+    });
+
+    // Worded as "already being completed" rather than "must be Active": this is the ordinary
+    // second click, and a moderator should not be told to fix something that is working.
+    await expect(endChallengeAndPickWinners(CHALLENGE_ID)).rejects.toThrow(
+      /already being completed/
+    );
+    expect(mockDbWrite.challenge.update).not.toHaveBeenCalled();
+  });
+
+  it('still says "must be Active" for a status that really is a mistake', async () => {
+    mockResolveJudgingEngine.mockResolvedValue(pairwiseEngine);
+    mockGetChallengeById.mockResolvedValue({
+      ...challengeRow,
+      judgingEngine: 'pairwise-ladder',
+      status: ChallengeStatus.Completed,
+    });
+
+    await expect(endChallengeAndPickWinners(CHALLENGE_ID)).rejects.toThrow(
+      /Challenge must be Active/
+    );
+  });
+
+  it('still runs a legacy challenge inline, exactly as before', async () => {
+    mockGetChallengeById.mockResolvedValue({ ...challengeRow, judgingEngine: 'legacy-absolute' });
+    mockGetJudgedEntries.mockResolvedValue(JUDGED_ENTRIES);
+    llmWinners([
+      { creatorId: 200, creator: 'bob' },
+      { creatorId: 100, creator: 'alice' },
+    ]);
+
+    await endChallengeAndPickWinners(CHALLENGE_ID);
+
+    const places = mockCreateChallengeWinner.mock.calls.map((call) => call[0]);
+    expect(places.map((p: { userId: number }) => p.userId)).toEqual([200, 100]);
+    expect(mockGetJudgedEntries.mock.calls[0][5]).toBeUndefined();
   });
 });

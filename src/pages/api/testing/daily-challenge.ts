@@ -1,6 +1,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import { dbRead } from '~/server/db/client';
 import {
   getChallengeById,
@@ -122,7 +122,8 @@ export default WebhookEndpoint(async function (req: NextApiRequest, res: NextApi
         i."id" as "imageId",
         i."userId",
         u."username",
-        i."url"
+        i."url",
+        i."nsfwLevel"
       FROM "Image" i
       JOIN "User" u ON u.id = i."userId"
       WHERE i.id = ${imageId}

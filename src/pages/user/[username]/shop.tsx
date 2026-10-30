@@ -9,13 +9,19 @@ import {
   useQueryCreatorShop,
 } from '~/components/CreatorShop/creator-shop.util';
 import { ShopDraftBanner } from '~/components/CreatorShop/Manage/ShopDraftBanner';
+import { storefrontSectionKeys } from '~/components/CreatorShop/section-meta';
 import { EmptyShopState } from '~/components/CreatorShop/Storefront/EmptyShopState';
 import { ShopHeader } from '~/components/CreatorShop/Storefront/ShopHeader';
 import { StorefrontSections } from '~/components/CreatorShop/Storefront/StorefrontSections';
-import { useOwnedCosmeticIds } from '~/components/CreatorShop/Storefront/storefront.util';
+import { useQueryShopServices } from '~/components/CreatorShop/Services/creator-service.util';
+import {
+  isStorefrontEmpty,
+  useOwnedCosmeticIds,
+} from '~/components/CreatorShop/Storefront/storefront.util';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
-import { dbRead } from '~/server/db/client';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -27,7 +33,7 @@ export const getServerSideProps = createServerSideProps({
     if (!features?.creatorShop)
       return { redirect: { destination: `/user/${username}`, permanent: false } };
 
-    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    const user = await getUserBannedAtByUsername(username);
     if (user?.bannedAt) return { redirect: { destination: `/user/${username}`, permanent: true } };
 
     await Promise.all([
@@ -49,6 +55,12 @@ function UserShopPage() {
   const { shop, isLoading, isError } = useQueryCreatorShop(user?.id, isModerator && preview);
   const { updateSettings } = useMutateCreatorShop();
   const ownedCosmeticIds = useOwnedCosmeticIds();
+  const features = useFeatureFlags();
+  const servicesEnabled = !!features.creatorServices && !!user?.id;
+  const { offerings: services, isLoading: servicesLoading } = useQueryShopServices(
+    user?.id ?? 0,
+    servicesEnabled
+  );
 
   const isOwner =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
@@ -61,7 +73,20 @@ function UserShopPage() {
 
   const baseUrl = `/user/${username}`;
   const displayName = user?.username ?? username;
-  const isEmpty = !isLoading && (shop?.cosmetics.length ?? 0) === 0;
+  const isEmpty =
+    !isLoading &&
+    isStorefrontEmpty({
+      cosmeticCount: shop?.cosmetics.length ?? 0,
+      activeServiceCount: services.length,
+      servicesEnabled,
+    });
+
+  // ServicesSection renders only with an Active offering, and only where the shop shows it.
+  const showServicesLink =
+    !!shop &&
+    !isEmpty &&
+    services.length > 0 &&
+    storefrontSectionKeys(shop.settings.sections, features).includes('services');
 
   // The header/banners and non-Featured sections are constrained to a max width
   // and centered; the outer wrapper stays full-width so the Featured section can
@@ -82,6 +107,7 @@ function UserShopPage() {
               isModerator={isModerator}
               preview={preview}
               onTogglePreview={() => setPreview((v) => !v)}
+              showServicesLink={showServicesLink}
             />
 
             {isModerator && preview && (
@@ -101,7 +127,7 @@ function UserShopPage() {
           </Stack>
         </div>
 
-        {isLoading ? (
+        {isLoading || servicesLoading ? (
           <div className={constrained}>
             <Center py="xl">
               <Loader />

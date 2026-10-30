@@ -1,4 +1,12 @@
 import type { PageServerLoad } from './$types';
-import { requireAccess } from '$lib/server/access';
+import { childLinks } from '$lib/server/access';
 
-export const load: PageServerLoad = ({ locals, url }) => requireAccess(locals.user, url.pathname);
+// The /images hub lists its sub-pages (role-pruned) as links — no queue of its own.
+export const load: PageServerLoad = ({ locals }) => {
+  const links = childLinks('/images', locals.user).map((l) => ({
+    path: l.path ?? '#',
+    label: l.label,
+    countKey: l.countKey,
+  }));
+  return { links };
+};

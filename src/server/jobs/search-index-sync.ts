@@ -25,11 +25,15 @@ const cronTimeMap: Record<SearchIndexSetKey, string> = {
   // minute and contending for the Meilisearch write lock.
   users: '7 * * * *',
   articles: '*/5 * * * *',
-  images: '5 8 * * *',
+  // Retired — the `images_v6` search index is no longer served (see 868m4c2dn). The processor
+  // is `retired`, so this job would no-op anyway; keeping it unrunnable stops the scheduler
+  // from firing it at all.
+  images: UNRUNNABLE_JOB_CRON,
   collections: '*/10 * * * *',
   bounties: '*/5 * * * *',
-  imageMetrics: '*/1 * * * *',
-  imageMetricsUpdateMetrics: '*/1 * * * *',
+  // Retired with the feeds Meilisearch (`metrics_images_v1`), as `images` above.
+  imageMetrics: UNRUNNABLE_JOB_CRON,
+  imageMetricsUpdateMetrics: UNRUNNABLE_JOB_CRON,
   tools: UNRUNNABLE_JOB_CRON,
   comics: '*/5 * * * *',
 };

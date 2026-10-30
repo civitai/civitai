@@ -1,6 +1,12 @@
+import type {
+  MingAiToolkitTrainingInput,
+  Qwen21AiToolkitTrainingInput,
+  YuE2AiToolkitTrainingInput,
+} from '@civitai/orchestration-client';
 import type JSZip from 'jszip';
 import { type BaseModel } from '~/shared/constants/basemodel.constants';
 import { OrchEngineTypes, OrchPriorityTypes } from '~/server/common/enums';
+import type { FeatureFlagKey } from '~/server/services/feature-flags.service';
 import { getMimeTypeFromExt, MEDIA_TYPE } from '~/shared/constants/mime-types';
 import type {
   TrainingDetailsBaseModelList,
@@ -8,6 +14,44 @@ import type {
 } from '~/server/schema/model-version.schema';
 import { getFileExtension } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+
+/** Training Studio catalog gate (`ModelCard.flagKey`) -> the feature flag that answers it in this
+ *  app; the embedded element can't evaluate Flipt itself. A gate missing from this map is hidden
+ *  in the embed for everyone. */
+export const studioModelFlagFeatures = {
+  'ming-training': 'mingTraining',
+  'qwen21-training': 'qwen21Training',
+  'yue2-training': 'yue2Training',
+  'flux3-klein-training': 'flux3KleinTraining',
+  'moss-image-training': 'mossImageTraining',
+  'flux2-klein-edit-training': 'flux2KleinEditTraining',
+  'training-studio-audio-training': 'trainingStudioAudioTraining',
+} as const satisfies Record<string, FeatureFlagKey>;
+
+export function enabledStudioModelFlags(
+  features: Partial<Record<FeatureFlagKey, boolean>>
+): string[] {
+  return Object.entries(studioModelFlagFeatures)
+    .filter(([, feature]) => features[feature])
+    .map(([flagKey]) => flagKey);
+}
+
+/** Whether a user may generate with UNPUBLISHED training results (epoch checkpoints). The single
+ *  definition behind the training-results Generate affordances and the Training Studio embed's
+ *  `canGenerateUnpublished` host config — a tier change here must reach all of them at once. */
+export function canGenerateWithEpochs(
+  user: { isMember?: boolean; isModerator?: boolean } | null | undefined
+): boolean {
+  return !!(user?.isMember || user?.isModerator);
+}
+
+/** The Training Studio embed's `isPaidMember` host config. `undefined` = no session to read, which the
+ *  element words as "unless you have a membership" rather than asserting either way. */
+export function paidMemberHostFlag(
+  user: { isPaidMember?: boolean } | null | undefined
+): boolean | undefined {
+  return user ? !!user.isPaidMember : undefined;
+}
 
 export const trainingBaseModelTypesImage = [
   'sd15',
@@ -25,6 +69,11 @@ export const trainingBaseModelTypesImage = [
   'boogu',
   'krea2',
   'mageflow',
+  'ideogram4',
+  'ming',
+  'qwen21',
+  'mossimage',
+  'flux3klein',
 ] as const;
 export const trainingBaseModelTypesVideo = [
   'hunyuan',
@@ -34,7 +83,7 @@ export const trainingBaseModelTypesVideo = [
   'ltx25',
   'minimaxh3',
 ] as const;
-export const trainingBaseModelTypesAudio = ['acestep15', 'acestep15xl'] as const;
+export const trainingBaseModelTypesAudio = ['acestep15', 'acestep15xl', 'yue2'] as const;
 export const trainingBaseModelType = [
   ...trainingBaseModelTypesImage,
   ...trainingBaseModelTypesVideo,
@@ -62,6 +111,9 @@ export const aiToolkitStepDefault = (baseType: TrainingBaseModelType): number =>
   baseType === 'ltx23' ||
   baseType === 'ltx25' ||
   baseType === 'boogu' ||
+  baseType === 'ming' ||
+  baseType === 'qwen21' ||
+  baseType === 'yue2' ||
   baseType === 'minimaxh3'
     ? 3000
     : baseType === 'anima'
@@ -356,7 +408,7 @@ export const trainingModelInfo: {
     description: "Krea AI's in-house image generation model.",
     // Krea 2 is an AI-Toolkit-only ecosystem, so this AIR is NOT sent as the orchestrator
     // `model` (the orchestrator resolves the base model from the ecosystem); it's only used for
-    // UI display / getModel. Points at the locked Krea 2 generation checkpoint.
+    // UI display / getModel. Points at a Krea 2 generation checkpoint.
     air: 'urn:air:krea2:checkpoint:civitai:2656567@2983022',
     baseModel: 'Krea 2',
     isNew: true,
@@ -375,6 +427,21 @@ export const trainingModelInfo: {
     baseModel: 'MageFlow',
     isNew: true,
     aiToolkit: { ecosystem: 'mageflow' },
+  },
+  //
+  ideogram4: {
+    label: 'Base',
+    pretty: 'Ideogram 4.0',
+    type: 'ideogram4',
+    description: "Ideogram, Inc.'s text-to-image model with strong typography.",
+    // Placeholder AIR from the licence's upstream repository — swap in the canonical
+    // urn:air:ideogram4:checkpoint:civitai:<modelId>@<versionId> once Ideogram 4 is
+    // uploaded here. Ideogram is AI-Toolkit-only, so this is never sent as the
+    // orchestrator `model`; it's UI display / getModel only.
+    air: 'urn:air:ideogram4:repository:huggingface:ideogram-ai/ideogram-4-nf4@main.tar',
+    baseModel: 'Ideogram 4.0',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ideogram4' },
   },
   //
   flux2klein_4b: {
@@ -396,6 +463,40 @@ export const trainingModelInfo: {
     baseModel: 'Flux.2 Klein 9B-base',
     isNew: false,
     aiToolkit: { ecosystem: 'flux2klein', modelVariant: '9b' },
+  },
+  // Training Studio only: listed so its runs can be published as a model page, never trainable here.
+  mossimage_base: {
+    label: 'Base',
+    pretty: 'MOSS Image Base',
+    type: 'mossimage',
+    description: 'OpenMOSS MOSS Image base model.',
+    air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409868',
+    baseModel: 'MOSS Image',
+    isNew: true,
+    disabled: true,
+    aiToolkit: { ecosystem: 'mossImage', modelVariant: 'base' },
+  },
+  mossimage_sft: {
+    label: 'SFT',
+    pretty: 'MOSS Image SFT',
+    type: 'mossimage',
+    description: 'OpenMOSS MOSS Image SFT model.',
+    air: 'urn:air:mossimage:checkpoint:civitai:3005406@3409867',
+    baseModel: 'MOSS Image',
+    isNew: true,
+    disabled: true,
+    aiToolkit: { ecosystem: 'mossImage', modelVariant: 'sft' },
+  },
+  flux3klein: {
+    label: 'Base',
+    pretty: 'Flux.3 Klein',
+    type: 'flux3klein',
+    description: 'Flux.3 Klein base model.',
+    air: 'urn:air:flux3klein:checkpoint:civitai:3003556@3407485',
+    baseModel: 'Flux.3 Klein-base',
+    isNew: true,
+    disabled: true,
+    aiToolkit: { ecosystem: 'flux3klein' },
   },
   //
   ltx2: {
@@ -459,13 +560,43 @@ export const trainingModelInfo: {
     isNew: false,
   },
   //
+  ming: {
+    label: 'Base',
+    pretty: 'Ming Image Design 0.1',
+    type: 'ming',
+    description: 'Train image styles and subjects with Ming Image Design.',
+    air: 'urn:air:ming:checkpoint:civitai:2961930@3355635',
+    baseModel: 'Ming Image Design 0.1',
+    isNew: true,
+    aiToolkit: { ecosystem: 'ming' satisfies MingAiToolkitTrainingInput['ecosystem'] },
+  },
+  qwen21: {
+    label: 'Base',
+    pretty: 'Qwen 2.1',
+    type: 'qwen21',
+    description: 'Train image styles and subjects with Qwen Image 2.1.',
+    air: 'urn:air:qwen21:checkpoint:civitai:2954443@3352534',
+    baseModel: 'Qwen 2.1',
+    isNew: true,
+    aiToolkit: { ecosystem: 'qwen21' satisfies Qwen21AiToolkitTrainingInput['ecosystem'] },
+  },
+  yue2: {
+    label: 'Base',
+    pretty: 'YuE2',
+    type: 'yue2',
+    description: 'Train music styles with YuE2 using audio captions and lyrics.',
+    air: 'urn:air:yue2:checkpoint:civitai:2944296@3337846',
+    baseModel: 'YuE2',
+    isNew: true,
+    aiToolkit: { ecosystem: 'yue2' satisfies YuE2AiToolkitTrainingInput['ecosystem'] },
+  },
   acestep_15: {
     label: '1.5 (3.5B)',
     pretty: 'ACE-Step 1.5',
     type: 'acestep15',
     description: 'ACE-Step 1.5 audio diffusion model for music generation training.',
     air: 'urn:air:ace:checkpoint:civitai:2549270@2864864',
-    baseModel: 'ACE-Step',
+    baseModel: 'ACE Audio',
     isNew: true,
     aiToolkit: { ecosystem: 'ace_step_15' },
   },
@@ -475,7 +606,7 @@ export const trainingModelInfo: {
     type: 'acestep15xl',
     description: 'ACE-Step 1.5 XL Base 4B audio diffusion model.',
     air: 'urn:air:ace:checkpoint:civitai:2549270@2864892',
-    baseModel: 'ACE-Step',
+    baseModel: 'ACE Audio',
     isNew: true,
     aiToolkit: { ecosystem: 'ace_step_15_xl', modelVariant: 'base' },
   },
@@ -485,7 +616,7 @@ export const trainingModelInfo: {
     type: 'acestep15xl',
     description: 'ACE-Step 1.5 XL SFT (supervised fine-tuned) 4B audio diffusion model.',
     air: 'urn:air:ace:checkpoint:civitai:2549270@2864917',
-    baseModel: 'ACE-Step',
+    baseModel: 'ACE Audio',
     isNew: true,
     aiToolkit: { ecosystem: 'ace_step_15_xl', modelVariant: 'sft' },
   },
@@ -591,9 +722,24 @@ const baseTypeToEcosystem: Partial<Record<TrainingBaseModelType, string>> = {
   boogu: 'boogu',
   krea2: 'krea2',
   mageflow: 'mageflow',
+  ideogram4: 'ideogram4',
+  ming: 'ming',
+  qwen21: 'qwen21',
+  yue2: 'yue2',
   acestep15: 'ace_step_15',
   acestep15xl: 'ace_step_15_xl',
 };
+
+/**
+ * A base model outside `trainingModelInfo` is a user-supplied AIR, shown as "Custom" on the
+ * submit screen and the model select.
+ */
+export function prettyTrainingBaseModel(baseModel: string | undefined | null): string | null {
+  if (!baseModel) return null;
+  return baseModel in trainingModelInfo
+    ? trainingModelInfo[baseModel as TrainingDetailsBaseModelList].pretty
+    : 'Custom';
+}
 
 /**
  * Get AI Toolkit ecosystem for a training model
@@ -668,6 +814,15 @@ export const isAiToolkitEnabled = (
   return flagKey ? !!features[flagKey] : false;
 };
 
+// Base model types trained on short, comma-separated tags (legacy kohya SD1.5/SDXL).
+// Every other base type — the AI-Toolkit image ecosystems, video, and audio — trains on
+// natural-language captions, so caption preference is the complement rather than a second
+// hand-maintained list that would drift as models are added.
+export const tagLabelBaseTypes: TrainingBaseModelType[] = ['sd15', 'sdxl'];
+
+export const baseTypePrefersCaptions = (baseType: TrainingBaseModelType): boolean =>
+  !(tagLabelBaseTypes as readonly string[]).includes(baseType);
+
 // Check if base model supports AI Toolkit
 export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean => {
   // AI Toolkit supports these base model types (flux2 is not included - it only uses rapid)
@@ -692,8 +847,12 @@ export const isAiToolkitSupported = (baseType: TrainingBaseModelType): boolean =
     'boogu',
     'krea2',
     'mageflow',
+    'ideogram4',
+    'ming',
+    'qwen21',
     'acestep15',
     'acestep15xl',
+    'yue2',
   ];
   return supportedTypes.includes(baseType);
 };
@@ -714,8 +873,12 @@ export const isAiToolkitMandatory = (baseType: TrainingBaseModelType): boolean =
     'boogu',
     'krea2',
     'mageflow',
+    'ideogram4',
+    'ming',
+    'qwen21',
     'acestep15',
     'acestep15xl',
+    'yue2',
   ];
   return mandatoryTypes.includes(baseType);
 };
@@ -732,6 +895,7 @@ export const getDefaultEngine = (
   features?: Record<string, boolean>,
   opts?: { ignoreDefaultPreference?: boolean }
 ): EngineTypes => {
+  if (baseType === 'ming' || baseType === 'qwen21' || baseType === 'yue2') return 'ai-toolkit';
   if (baseType === 'qwen') return 'ai-toolkit'; // Qwen requires AI Toolkit
   if (baseType === 'zimage') return 'ai-toolkit'; // ZImage (Turbo/Base) requires AI Toolkit
   if (baseType === 'ernie') return 'ai-toolkit'; // Ernie requires AI Toolkit
@@ -745,6 +909,7 @@ export const getDefaultEngine = (
   if (baseType === 'boogu') return 'ai-toolkit'; // Boogu requires AI Toolkit
   if (baseType === 'krea2') return 'ai-toolkit'; // Krea 2 requires AI Toolkit
   if (baseType === 'mageflow') return 'ai-toolkit'; // Mage-Flow requires AI Toolkit
+  if (baseType === 'ideogram4') return 'ai-toolkit'; // Ideogram 4 requires AI Toolkit
   if (baseType === 'acestep15' || baseType === 'acestep15xl') return 'ai-toolkit'; // Audio models require AI Toolkit
   if (baseType === 'wan') return 'ai-toolkit'; // Wan defaults to AI Toolkit
   if (baseType === 'hunyuan') return 'musubi';
@@ -764,8 +929,7 @@ export const getDefaultEngine = (
   }
   // When Kohya is disabled via Flipt, pick best available fallback
   if (features && !features.kohyaTraining) {
-    // Flux defaults to rapid (its primary non-Kohya engine)
-    if (baseType === 'flux') return 'rapid';
+    if (baseType === 'flux') return isAiToolkitEnabled('flux', features) ? 'ai-toolkit' : 'rapid';
     // For other models, use AI Toolkit if available
     if (isAiToolkitEnabled(baseType, features)) return 'ai-toolkit';
     // Last resort — ai-toolkit even if not flagged (better than broken kohya)

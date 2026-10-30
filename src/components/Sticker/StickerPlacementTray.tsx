@@ -1,17 +1,32 @@
-import { CloseButton, Group, ScrollArea, Text } from '@mantine/core';
-import clsx from 'clsx';
-import { useEffect, useRef, useState } from 'react';
-import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
-import { useImagePlacementSpace } from '~/components/Sticker/placement.util';
-import { stickerMaxScale } from '~/shared/utils/sticker-placement';
-import type { ResolvedSticker } from '~/components/Sticker/sticker.util';
-import { useOwnedSticker } from '~/components/Sticker/sticker.util';
-import { StickerTopUp } from '~/components/Sticker/StickerTopUp';
-import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { Button, CloseButton, Group, Select, Text, TextInput, ThemeIcon } from '@mantine/core';
 import {
-  pointerOverSurface,
-  useStickerPlacementDraftStore,
-} from '~/store/sticker-placement-draft.store';
+  IconAlertTriangle,
+  IconInfoCircle,
+  IconPlus,
+  IconSearch,
+  IconSticker,
+} from '@tabler/icons-react';
+import clsx from 'clsx';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { EdgeImage } from '~/components/EdgeMedia/EdgeImage';
+import { FilterChip } from '~/components/Filters/FilterChip';
+import { Countdown } from '~/components/Countdown/Countdown';
+import { freeOfferFor, preCommitFreeReason, trayNotes } from '~/components/Sticker/free-offer';
+import { StickerShopPanel } from '~/components/Sticker/StickerShopPanel';
+import { StickerPreviewToggle } from '~/components/Sticker/StickerPreviewToggle';
+import { StickerShopTile } from '~/components/Sticker/StickerShopTile';
+import { STICKER_EDITOR_ATTR } from '~/components/EmblaCarousel/watchTouchDrag';
+import { SHELF_TILE_STYLE } from '~/components/Sticker/shelf-tile-style';
+import { useStickerDragOut } from '~/components/Sticker/use-sticker-drag-out';
+import {
+  useFreePlacementStanding,
+  useImagePlacementSpace,
+} from '~/components/Sticker/placement.util';
+import { isStickerKeptOffImage } from '~/shared/constants/cosmetic-flags.constants';
+import { stickerMaxScale } from '~/shared/utils/sticker-placement';
+import { remainingStickerUses, useOwnedSticker } from '~/components/Sticker/sticker.util';
+import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useStickerPlacementDraftStore } from '~/store/sticker-placement-draft.store';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -27,29 +42,54 @@ import { trpc } from '~/utils/trpc';
  * three stickers sit in a field of empty panel, and pushed the instructions so
  * far from them that they read as unrelated.
  */
-export function StickerPlacementTray({ imageId }: { imageId: number }) {
-  const currentUser = useCurrentUser();
-  const { sticker, isLoading } = useOwnedSticker();
-  // The sticker they tried to place with nothing left. Buying uses here rather
-  // than sending them to the shop is the point — a tray they have to leave is a
-  // placement they don't make.
-  const [topUp, setTopUp] = useState<ResolvedSticker | null>(null);
-  // Being dragged, but not yet on the image. The only feedback during that
-  // stretch, since nothing is drawn on the image until the pointer arrives.
-  const [dragging, setDragging] = useState<number | null>(null);
-  const endGrab = useRef<(() => void) | null>(null);
-  const trayRef = useRef<HTMLDivElement>(null);
+/**
+ * The height of one tile, SET on the tile rather than measured from it. The
+ * tray's two-row cap is derived from this number, so a tile free to grow past it
+ * would leave the second row showing a sliver with nothing to catch it.
+ */
+const STICKER_TILE_HEIGHT = 78;
+/** Mantine `xs`, used as both the gap between tiles and the row's padding. */
+const STICKER_TILE_GAP = 10;
 
-  // A gesture in flight when the tray closes would leave window listeners behind
-  // and could drop a sticker onto an image nobody is looking at any more.
-  useEffect(() => () => endGrab.current?.(), []);
+type StickerTraySort = 'used' | 'obtained';
+
+/**
+ * A collection worth searching. Below this the controls are two widgets above
+ * three stickers, which is the clutter the tray's notes were just trimmed of.
+ */
+const STICKER_SEARCH_THRESHOLD = 12;
+
+/** The height that shows exactly `rows` rows of tiles and clips the rest. */
+const trayRowsHeight = (rows: number) =>
+  rows * STICKER_TILE_HEIGHT + (rows - 1) * STICKER_TILE_GAP + 2 * STICKER_TILE_GAP;
+
+export function StickerPlacementTray({
+  imageId,
+  imageNsfwLevel,
+}: {
+  imageId: number;
+  imageNsfwLevel: number;
+}) {
+  const currentUser = useCurrentUser();
+  const { sticker: owned, isLoading } = useOwnedSticker();
+  const sticker = useMemo(
+    () =>
+      owned.filter(
+        (option) => !isStickerKeptOffImage({ cosmeticFlags: option.flags ?? 0, imageNsfwLevel })
+      ),
+    [owned, imageNsfwLevel]
+  );
+  const [shopping, setShopping] = useState(false);
+  const [search, setSearch] = useState('');
+  const [mineOnlyRequested, setMineOnlyRequested] = useState(false);
+  const [sortBy, setSortBy] = useState<StickerTraySort>('used');
+  const trayRef = useRef<HTMLDivElement>(null);
 
   const targetImageId = useStickerPlacementDraftStore((state) => state.targetImageId);
   const trayOpen = useStickerPlacementDraftStore((state) => state.trayOpen);
   const drafts = useStickerPlacementDraftStore((state) => state.drafts);
-  const begin = useStickerPlacementDraftStore((state) => state.begin);
   const closeTray = useStickerPlacementDraftStore((state) => state.closeTray);
-  const setInteraction = useStickerPlacementDraftStore((state) => state.setInteraction);
+  const previewing = useStickerPlacementDraftStore((state) => state.previewing);
   const setTray = useStickerPlacementDraftStore((state) => state.setTray);
 
   // Bound to this bar's own image, not merely to "a session exists". The
@@ -65,15 +105,105 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // the target alone: a panel that has been put away is not an obstacle the buy
   // button should still be avoiding.
   useEffect(() => {
-    if (!showing) return;
+    if (!showing) {
+      // The panel is state, not markup: without this it survives the tray being
+      // put away and is still open on the next image opened. The typed filter is
+      // worse — it comes back showing 2 of 83 with nothing on screen saying why.
+      setShopping(false);
+      setSearch('');
+      setMineOnlyRequested(false);
+      return;
+    }
     setTray(trayRef.current);
     return () => setTray(null);
   }, [showing, setTray]);
 
   const { space } = useImagePlacementSpace(targetImageId ?? undefined);
+  // Same query key as the layer's, so this shares its cache rather than making a
+  // second request. Here it only decides one clause of one sentence; the choice
+  // itself is made on the draft, where the mode is also shown.
+  const { standing } = useFreePlacementStanding(targetImageId ?? undefined);
   const { data: balances } = trpc.cosmetic.getStickerBalances.useQuery(undefined, {
     enabled: !!currentUser && targetImageId != null,
   });
+  // 97.6% of sticker owners hold 12 or fewer and never see the sort control;
+  // 73.4% hold one, where an order is a no-op. tRPC batching is off, so this is
+  // its own round trip on the tray-open path — not worth taking for them.
+  // Governs the search box and the sort control only; the chip below is free and
+  // is drawn on having made something rather than on collection size.
+  const worthNarrowing = sticker.length > STICKER_SEARCH_THRESHOLD;
+  const { data: recentUse } = trpc.cosmetic.getStickerRecentUse.useQuery(undefined, {
+    enabled: !!currentUser && targetImageId != null && sticker.length > 1,
+    staleTime: 60_000,
+  });
+  /**
+   * 🔴 READ OFF THE COLLECTION THE TRAY ALREADY HAS — DO NOT REINTRODUCE A QUERY.
+   * `createdById` rides along on `user.getCosmetics`, which every tray open
+   * fetches anyway, so this costs nothing: no request, no chunking, no threshold
+   * deciding who can afford to know. That is what lets the chip appear for
+   * anyone who has made a sticker rather than only for heavy collectors.
+   *
+   * It was briefly a second procedure behind a `> 12` gate. Asking instead would
+   * have meant an attribution round trip on every tray open for all 1,545 sticker
+   * owners to serve the 123 who made one — measured 2026-09-09.
+   */
+  const madeByYou = useMemo(() => {
+    const viewerId = currentUser?.id;
+    const mine = new Set<number>();
+    if (viewerId == null) return mine;
+    for (const option of sticker) if (option.createdById === viewerId) mine.add(option.id);
+    return mine;
+  }, [sticker, currentUser?.id]);
+  /**
+   * 🔴 DERIVED, NOT THE RAW TOGGLE — the filter cannot outlive its own control.
+   * The chip is drawn on this same predicate, so the two cannot come apart and
+   * leave the tray filtered to nothing with no control on screen to clear it —
+   * on the paid surface, right after a purchase changes the collection.
+   *
+   * Masking rather than clearing is deliberate: if the set repopulates under the
+   * same mounted tray, the filter the placer asked for comes back with it.
+   */
+  const mineOnly = mineOnlyRequested && madeByYou.size > 0;
+
+  // The creator's ceiling, not just the global one. Read before the early return
+  // below, because the pickup gesture is a hook and cannot be conditional.
+  const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
+  const { grab, dragging, shelfRef } = useStickerDragOut(maxScale);
+
+  /**
+   * What the tray actually draws: the collection filtered by what was typed, in
+   * the chosen order.
+   *
+   * 🔴 THE SECONDARY SORT IS THE STABILITY, NOT A COMPARATOR BRANCH. `sticker`
+   * arrives newest-obtained first, and `Array.prototype.sort` is stable, so two
+   * stickers the placer has never used keep that order for free. Writing the
+   * tie-break by hand would be a second copy of a rule already applied upstream.
+   */
+  const lastUsedAt = useMemo(
+    () => new Map((recentUse ?? []).map((row) => [row.cosmeticId, row.lastUsedAt])),
+    [recentUse]
+  );
+  const visible = useMemo(() => {
+    const pool = mineOnly ? sticker.filter((option) => madeByYou.has(option.id)) : sticker;
+    const term = search.trim().toLowerCase();
+    const matched = term
+      ? pool.filter((option) =>
+          `${option.name ?? ''} ${option.slug ?? ''}`.toLowerCase().includes(term)
+        )
+      : pool;
+
+    if (sortBy === 'obtained') return matched;
+
+    return [...matched].sort((a, b) => {
+      const left = lastUsedAt.get(a.id);
+      const right = lastUsedAt.get(b.id);
+      if (left && right) return left < right ? 1 : left > right ? -1 : 0;
+      // Used beats never-used; two never-used keep the obtained order they came in.
+      if (left) return -1;
+      if (right) return 1;
+      return 0;
+    });
+  }, [sticker, search, sortBy, lastUsedAt, mineOnly, madeByYou]);
 
   if (!showing) return null;
 
@@ -83,152 +213,275 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
   // Drafts already on the image are subtracted, because each one will spend a
   // use when it is bought. Without this you could lay out three with one use
   // left and only find out at the third purchase, having arranged all of them.
-  const balanceFor = (cosmeticId: number) => {
-    const remaining = balances?.find((balance) => balance.cosmeticId === cosmeticId)?.remaining;
-    if (remaining == null) return remaining;
-    const drafted = drafts.filter((draft) => draft.cosmeticId === cosmeticId).length;
-    return Math.max(remaining - drafted, 0);
-  };
-
-  const maxScale = stickerMaxScale(space?.settings as Record<string, unknown> | undefined);
-
-  /**
-   * A sticker reaches the image by being dragged onto it, and by nothing else.
-   *
-   * Pressing one creates no draft. The draft comes into existence on the first
-   * pointer move that lands inside the media box, positioned under the cursor;
-   * a press that never gets there — a plain click, or a drag released outside —
-   * leaves the image untouched. Creating it on pointer-down put a sticker in the
-   * middle of someone's work before they had chosen anywhere and then teleported
-   * it, which is the thing being fixed rather than a detail of when it renders.
-   */
-  const grab = (cosmeticId: number) => (event: React.PointerEvent) => {
-    // No pickup while a drag is already in flight. The layer holds one gesture,
-    // so the sticker this created would be dropped on the image and then never
-    // follow anything — placed, stationary, with no cue that it went wrong.
-    //
-    // Gated on a live gesture rather than on `event.isPrimary`, which looks
-    // equivalent and is not: a mouse is primary no matter how many touches are
-    // down, so a trackpad pickup during a touch drag walked straight past it —
-    // and a palm resting on a tablet makes the dragging finger non-primary, so
-    // it silently dropped pickups that were perfectly fine.
-    if (useStickerPlacementDraftStore.getState().interaction) return;
-
-    event.preventDefault();
-    endGrab.current?.();
-    setDragging(cosmeticId);
-    const { pointerId } = event;
-
-    // Captured here, on the tray button, for the same reason the sticker
-    // captures its own: this drag ends up owned by the layer's gesture, which is
-    // refused outright while another is live, so a pointerup that never arrives
-    // would strand it and refuse everything after. Capture makes that delivery
-    // guaranteed. Released implicitly on the up that ends the drag.
-    try {
-      event.currentTarget.setPointerCapture(pointerId);
-    } catch {
-      // Pointer already gone; teardown below still runs on up/cancel.
-    }
-
-    const onMove = (move: PointerEvent) => {
-      if (move.pointerId !== pointerId) return;
-      const at = pointerOverSurface(move.clientX, move.clientY);
-      if (!at) return;
-      begin(cosmeticId, at, maxScale);
-      // Handing the drag to the layer, which owns it from here — along with the
-      // pointer holding it, so the layer arms against this finger rather than
-      // whichever one moves next. Armed only once the sticker exists on the
-      // image, so there is never a live move gesture with nothing to move.
-      setInteraction('move', pointerId);
-      teardown();
-    };
-
-    const teardown = () => {
-      window.removeEventListener('pointermove', onMove);
-      window.removeEventListener('pointerup', teardown);
-      window.removeEventListener('pointercancel', teardown);
-      endGrab.current = null;
-      setDragging(null);
-    };
-
-    endGrab.current = teardown;
-    window.addEventListener('pointermove', onMove);
-    window.addEventListener('pointerup', teardown);
-    window.addEventListener('pointercancel', teardown);
-  };
+  // Shared with the duplicate action, which asks the same question about the
+  // same three states. It was this rule written out twice, which is the drift
+  // the refill offer had already been split into two copies by.
+  const balanceFor = (cosmeticId: number) => remainingStickerUses({ balances, drafts, cosmeticId });
 
   const price = space?.price ?? 0;
-  // Says the panel can be got out of the way, and that more than one is allowed,
-  // only once there is something that would survive it. Before that both are
-  // instructions about nothing.
+  // The same predicate the draft's own control uses, so the sentence here and
+  // the button down there cannot disagree about what is on offer.
+  const freeAvailable = !!freeOfferFor(space, standing);
+
+  /**
+   * Why free is off the table, said while the choice is still being made rather
+   * than after the server has refused it.
+   *
+   * Every branch of that decision is in `free-offer.ts`, where a test can put
+   * all four states to it — inline here, the guards that keep the sentence from
+   * appearing on ordinary paid images are two `&&`s nothing can observe.
+   */
+  const freeUnavailableReason = preCommitFreeReason(freeAvailable, standing, space);
+  // `Countdown` needs a Date; the query hands back whatever JSON carried.
+  const resetsAt = standing?.resetsAt ? new Date(standing.resetsAt) : null;
+
+  const notes = trayNotes({
+    freeAvailable,
+    price,
+    review: space?.mode === 'review',
+    reason: freeUnavailableReason,
+    declineFee: space?.declineFee,
+  });
+  // Says more than one is allowed only once there is a draft to say it about.
+  // Before that it is an instruction about nothing.
   const instruction = drafts.length
-    ? 'Drag out as many as you like, then buy the ones you want. Closing this panel leaves them on the image.'
-    : 'Drag a sticker onto the image.';
+    ? 'Drag out as many as you like, then pay to place the ones you want.'
+    : 'Tap or drag a sticker onto the image.';
 
   return (
     // Measured as the obstacle the buy button avoids, and deliberately measured
     // at full width rather than at the visible panel's `max-w-xl`: this root
     // spans the viewport and takes the clicks across all of it.
-    <div ref={trayRef} className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3">
-      <div className="w-full max-w-xl overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
-        <div className="flex items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
-          <div className="flex-1">
-            <Text size="sm" fw={600}>
-              {instruction}
-            </Text>
-            <Text size="xs" c="dimmed">
-              {price} Buzz + one use
-              {space?.mode === 'review' &&
-                ' · this creator reviews placements, so only you will see it until they approve. If they decline, part of what you paid stays with them.'}
-            </Text>
-          </div>
-          <CloseButton
-            onClick={closeTray}
-            aria-label={drafts.length ? 'Close the sticker panel' : 'Stop placing a sticker'}
+    // The safe-area padding lands on the MEASURED root deliberately: the buy
+    // button avoids this element's height, and the tray is genuinely taller now,
+    // so growing the measured obstacle is the correct half of the change, not a
+    // side effect of it.
+    <div
+      ref={trayRef}
+      {...{ [STICKER_EDITOR_ATTR]: '' }}
+      className="fixed inset-x-0 bottom-0 z-30 flex justify-center p-3 pb-[max(0.75rem,var(--safe-area-inset-bottom))]"
+      // Hidden, not unmounted: the buy button keeps measuring this box, so its
+      // side does not flip while the controls are hidden.
+      style={previewing ? { visibility: 'hidden' } : undefined}
+    >
+      <div className="flex w-full max-w-xl flex-col">
+        {/* Above the tray, not in place of it: the row of what you own is the
+            thing you are shopping to add to, so it stays visible while you buy. */}
+        {shopping && (
+          <StickerShopPanel
+            maxScale={maxScale}
+            imageNsfwLevel={imageNsfwLevel}
+            onClose={() => setShopping(false)}
           />
-        </div>
-
-        {topUp ? (
-          <div className="p-3">
-            <StickerTopUp
-              sticker={topUp}
-              onCancel={() => setTopUp(null)}
-              // Returns to the row rather than starting a draft. Convenient as
-              // that would be, it would put a sticker on the image with no drag
-              // — the one thing `grab` above promises cannot happen — and a
-              // purchase confirmation is not a placement gesture.
-              onPurchased={() => setTopUp(null)}
+        )}
+        <div className="overflow-hidden rounded-lg border border-gray-3 bg-white shadow-lg dark:border-dark-4 dark:bg-dark-7">
+          <div className="flex flex-wrap items-start gap-2 border-b border-gray-3 px-3 py-2 dark:border-dark-4">
+            <div className="order-1 min-w-0 flex-1">
+              <Text size="sm" fw={600}>
+                {instruction}
+              </Text>
+              {/* One short line each, with an icon, rather than one sentence
+                  spanning the panel. Which lines exist and what they say is
+                  decided in `free-offer.ts`, where every branch is covered;
+                  this only draws them. */}
+              <div className="mt-0.5 flex flex-col gap-0.5">
+                {notes.map((note) => (
+                  <div key={note.id} className="flex items-start gap-1.5">
+                    {note.tone === 'warn' ? (
+                      <IconAlertTriangle
+                        size={13}
+                        className="mt-0.5 shrink-0 text-yellow-6"
+                        aria-hidden
+                      />
+                    ) : (
+                      <IconInfoCircle
+                        size={13}
+                        className="mt-0.5 shrink-0 opacity-60"
+                        aria-hidden
+                      />
+                    )}
+                    <Text size="xs" c={note.tone === 'warn' ? 'yellow.6' : 'dimmed'}>
+                      {note.text}
+                      {/* The spent-allowance line is the one note whose answer
+                          keeps changing while the panel is open, so it says WHEN
+                          rather than a phrase that ages: a live countdown to the
+                          reset instead of "it comes back tomorrow" still sitting
+                          there at 11:59. Only on that note, and only when the
+                          server told us when. */}
+                      {note.id === 'reason' && standing && standing.remaining <= 0 && resetsAt && (
+                        <>
+                          {' Next free placement: '}
+                          <Countdown endTime={resetsAt} format="short" />
+                        </>
+                      )}
+                    </Text>
+                  </div>
+                ))}
+              </div>
+            </div>
+            {!isLoading && (worthNarrowing || !!madeByYou.size) && (
+              <div className="order-3 flex w-full shrink-0 items-center gap-2 sm:order-2 sm:w-auto">
+                {/* Search and sort stay on collection size — two widgets above
+                    three stickers is the clutter the threshold exists for. The
+                    chip does not, because it costs nothing and answers a
+                    question a three-sticker creator still has. */}
+                {worthNarrowing && (
+                  <>
+                    <TextInput
+                      size="xs"
+                      radius="xl"
+                      className="min-w-0 flex-1 sm:w-36 sm:flex-none"
+                      value={search}
+                      onChange={(event) => setSearch(event.currentTarget.value)}
+                      placeholder="Search"
+                      aria-label="Search your stickers"
+                      leftSection={<IconSearch size={14} />}
+                    />
+                    <Select
+                      size="xs"
+                      radius="xl"
+                      className="w-36 shrink-0 sm:w-40"
+                      value={sortBy}
+                      onChange={(value) => setSortBy(value === 'obtained' ? 'obtained' : 'used')}
+                      data={[
+                        { value: 'used', label: 'Recently used' },
+                        { value: 'obtained', label: 'Recently acquired' },
+                      ]}
+                      aria-label="Sort your stickers"
+                      allowDeselect={false}
+                      // The panel clips its overflow, and this app defaults Popover to
+                      // `withinPortal: false`, so the menu would open inside the clip.
+                      comboboxProps={{ withinPortal: true }}
+                    />
+                  </>
+                )}
+                {/* Drawn only for someone who has made one: a filter that can
+                    only ever empty the tray is worse than no filter. */}
+                {!!madeByYou.size && (
+                  <FilterChip
+                    size="xs"
+                    className="shrink-0"
+                    checked={mineOnly}
+                    onChange={setMineOnlyRequested}
+                    /**
+                     * 🔴 ALL FOUR OF THESE PIN GEOMETRY, AND NONE IS DECORATION.
+                     * Mantine restyles a checked chip: padding drops 16px -> 7.5px
+                     * and a check icon appears. Those do not cancel — measured
+                     * 105.08px unchecked against 102.73px checked — so the control
+                     * visibly jumped as you toggled it, next to two inputs that do
+                     * not move. Pinning what varies, and dropping the icon, makes
+                     * the box the same in both states by construction rather than
+                     * by arithmetic.
+                     *
+                     * Dropping the icon costs this chip a cue the other filter
+                     * chips keep: FilterChip.module.scss draws a checked chip as a
+                     * primary border on a cleared background, and with the icon
+                     * hidden that border is the only thing here saying which state
+                     * it is in.
+                     *
+                     * `borderWidth`/`borderStyle` duplicate what that file already
+                     * sets for the checked state, and are kept deliberately: they
+                     * hold the box steady whatever the shared module does to the
+                     * border later. The shorthand there resolved to nothing until
+                     * PR #4749 (it named `--mantine-color-primary`, which nothing
+                     * defines), and these two longhands are why this chip did not
+                     * jump while it did.
+                     *
+                     * The height fallback is load-bearing separately:
+                     * `--input-height-xs` is scoped to an Input, so unqualified it
+                     * resolves to nothing here and the declaration is dropped —
+                     * which is why the chip first came out at 23px beside 30px
+                     * inputs.
+                     */
+                    styles={{
+                      label: {
+                        height: 'var(--input-height-xs, 1.875rem)',
+                        paddingInline: 16,
+                        borderWidth: 1,
+                        borderStyle: 'solid',
+                      },
+                      iconWrapper: { display: 'none' },
+                    }}
+                  >
+                    Made by you
+                  </FilterChip>
+                )}
+              </div>
+            )}
+            <StickerPreviewToggle imageId={imageId} className="order-2 shrink-0 sm:order-3" />
+            <CloseButton
+              className="order-2 sm:order-3"
+              onClick={closeTray}
+              aria-label={drafts.length ? 'Close the sticker panel' : 'Stop placing a sticker'}
             />
           </div>
-        ) : (
-          <ScrollArea.Autosize mah={120} type="auto" scrollbarSize={6}>
-            <Group gap="xs" wrap="nowrap" p="xs">
+
+          {/* Native overflow, not `ScrollArea.Autosize`. Autosize wraps its child in a
+              `display:flex; overflow:auto` box whose `flex:1` inner box keeps the default
+              `min-width:auto`, so it refuses to shrink to the panel: the scroll viewport
+              came out wider than the visible panel, putting the track's end and the last
+              sticker outside the clip. */}
+          <div
+            ref={shelfRef}
+            className="overflow-y-auto"
+            style={{ maxHeight: trayRowsHeight(2), scrollbarWidth: 'thin' }}
+          >
+            <Group gap={STICKER_TILE_GAP} p={STICKER_TILE_GAP}>
               {isLoading && <Text size="sm">Loading your stickers…</Text>}
-              {!isLoading && !sticker.length && (
-                <Text size="sm" c="dimmed">
-                  You don&apos;t own any stickers yet.
-                </Text>
+
+              {/* Ahead of the stickers, so it stays put as the row grows. */}
+              {!isLoading && !!sticker.length && (
+                <StickerShopTile open={shopping} onClick={() => setShopping((open) => !open)} />
               )}
-              {sticker.map((option) => {
+
+              {/* Owning nothing is the one state where the tile is not enough —
+                  there is nothing beside it to explain it, so it gets said. */}
+              {!isLoading && !sticker.length && (
+                <div className="flex items-center gap-3 px-1 py-2">
+                  <ThemeIcon size={40} radius="xl" variant="light" color="yellow">
+                    <IconSticker size={22} />
+                  </ThemeIcon>
+                  <div className="flex flex-col items-start gap-1">
+                    <Text size="sm" fw={500}>
+                      No stickers yet
+                    </Text>
+                    <Button
+                      size="compact-xs"
+                      variant="light"
+                      color="yellow"
+                      leftSection={<IconPlus size={14} stroke={2.5} />}
+                      onClick={() => {
+                        setShopping(true);
+                      }}
+                    >
+                      Browse the sticker shop
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {visible.map((option) => {
                 const remaining = balanceFor(option.id);
                 const exhausted = remaining === 0;
                 return (
                   <button
                     key={option.id}
                     type="button"
-                    // An exhausted sticker opens the top-up instead of doing
-                    // nothing. It stays a pointer-down like the others so the two
-                    // outcomes of pressing a sticker share one gesture.
-                    onPointerDown={exhausted ? () => setTopUp(option) : grab(option.id)}
+                    // 🔴 NO GATE IS STORED HERE, DELIBERATELY. An exhausted
+                    // sticker drags out like any other and the draft layer
+                    // decides what it owes, because that answer changes as other
+                    // drafts come and go: freezing "you must buy this" onto the
+                    // draft is what left a sticker asking to be bought for a use
+                    // another draft had just handed back.
+                    onPointerDown={grab(option.id)}
+                    style={{ ...SHELF_TILE_STYLE, height: STICKER_TILE_HEIGHT }}
                     className={clsx(
-                      'flex shrink-0 cursor-grab flex-col items-center gap-1 rounded border p-2',
+                      'flex shrink-0 cursor-grab flex-col items-center justify-center gap-1 rounded border p-2',
                       drafts.some((draft) => draft.cosmeticId === option.id) ||
                         dragging === option.id
                         ? 'border-blue-5'
                         : 'border-transparent',
                       exhausted && 'opacity-40'
                     )}
-                    style={{ touchAction: 'none' }}
                   >
                     <EdgeImage
                       src={option.url}
@@ -241,9 +494,14 @@ export function StickerPlacementTray({ imageId }: { imageId: number }) {
                   </button>
                 );
               })}
+              {!isLoading && !!sticker.length && !visible.length && (
+                <Text size="sm" c="dimmed" px="xs">
+                  {`No ${mineOnly ? 'stickers you made' : 'stickers'} match “${search.trim()}”.`}
+                </Text>
+              )}
             </Group>
-          </ScrollArea.Autosize>
-        )}
+          </div>
+        </div>
       </div>
     </div>
   );

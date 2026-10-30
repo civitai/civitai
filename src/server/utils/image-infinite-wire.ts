@@ -4,7 +4,7 @@
  * `image.getInfinite` is a `heavyProcedure` and the #1 procedure by server time.
  * Its response is serialized SYNCHRONOUSLY with superjson on the Node event loop —
  * walking every field of every image (a page can carry ~100 images). Both server
- * paths that back it — the DB path (`getAllImages`) and the Meili/BitDex path
+ * paths that back it — the DB path (`getAllImages`) and the Meili path
  * (`getAllImagesIndex`) — return the SAME `ImagesInfiniteModel` per-item shape.
  * Cutting per-image fields that no consumer reads reduces both the byte size on
  * the wire (~5–7% / ~11–14 KB per page) and the serialize walk (dropping the
@@ -15,10 +15,10 @@
  *  - the feed card (`ImagesCard` / `Cards/ImageCard`) + its context menu,
  *  - the hidden-preferences `images` filter (`useApplyHiddenPreferences`),
  *  - the masonry grid + OG/SSR structured-data path,
- *  - AND the image-detail modal seeded from the card (`ImageDetail2`), which reads
- *    the SEEDED image objects directly (no refetch when the seed contains the
- *    clicked id — `ImageDetailProvider` uses `initialImages` as-is), so its
- *    read-set is load-bearing here and was traced explicitly.
+ *  - AND the image-detail modal seeded from the card (`ImageDetail2`), which renders
+ *    the SEEDED image objects directly, so its read-set is load-bearing here and was
+ *    traced explicitly. It reaches this shape twice over: as the seed, and as the
+ *    per-post tail a model-gallery modal loads via `usePostImagesWithTail`.
  *
  * The correctness of "these are unread" is enforced by the compiler, not asserted:
  * because `ImagesInfiniteModel` is defined from `getAllImages`' return type and the

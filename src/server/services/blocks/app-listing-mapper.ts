@@ -1,5 +1,6 @@
 import { Prisma } from '@prisma/client';
 
+import { validateRepositoryUrl } from '~/server/schema/blocks/external-app.schema';
 import { newAppListingId } from '~/server/utils/app-block-ids';
 
 /**
@@ -69,6 +70,31 @@ export function resolveListingTagline(manifest: unknown): string | null {
 }
 
 /**
+ * Extract the optional PUBLIC SOURCE-REPOSITORY link from the manifest's `repository`
+ * key (null when absent / blank / not a string).
+ *
+ * 🔴 IT RETURNS THE NORMALISED FORM, not the raw manifest string, because equality on
+ * this value is load-bearing downstream: the off-site material-change check compares a
+ * proposed link against the stored one, and `https://github.com/a/b/` vs
+ * `https://github.com/a/b.git` are the SAME repository. Normalising at every write —
+ * manifest resolve included — is what makes those comparisons stable.
+ *
+ * 🔴 A STORED VALUE THAT NO LONGER VALIDATES RESOLVES TO NULL, deliberately. The
+ * submission validator already gates this key, so an invalid value can only reach here
+ * from a row that predates the validator or from a later tightening of the host
+ * allowlist — and in BOTH cases the honest answer on a public store page is to show no
+ * Source row, not to render a link the current rules would reject. Mirrors
+ * `resolveListingTagline`'s "a legacy row can never crash the mapper" posture, one step
+ * stronger: it can never SERVE a now-disallowed link either.
+ */
+export function resolveListingSourceRepo(manifest: unknown): string | null {
+  const m = (manifest ?? {}) as { repository?: unknown };
+  if (typeof m.repository !== 'string') return null;
+  const validated = validateRepositoryUrl(m.repository);
+  return validated.ok ? validated.url : null;
+}
+
+/**
  * The MANIFEST-GOVERNED scalar set of an onsite store listing, in the shape the
  * approve path writes on a subsequent-version re-sync.
  *
@@ -92,18 +118,45 @@ export type ListingScalarSync = {
   description: string | null;
   tagline: string | null;
   category: string | null;
+  /**
+   * The public source-repository link. 🔴 The key is ABSENT ENTIRELY — not `null` —
+   * when the manual-apply `source_repo_url` column is unavailable, so the resulting
+   * Prisma `data` cannot name a column the database does not have. See
+   * `sourceRepoAvailable` on the builder.
+   */
+  sourceRepoUrl?: string | null;
 };
 
 export function buildListingScalarSync(args: {
   manifest: unknown;
   blockId: string;
   category: string | null;
+  /**
+   * Whether `app_listings.source_repo_url` exists (probe it with
+   * `isSourceRepoColumnAvailable`).
+   *
+   * 🔴 DEFAULTS TO FALSE — fail-safe, and the direction matters. Omitting the key
+   * makes the feature inert; including it against a missing column makes the whole
+   * write throw, and BOTH call sites of this builder are pre-existing log-and-continue
+   * paths, so that throw would not surface as an error — it would silently stop store
+   * listings being minted for newly approved apps. A caller that forgets the flag
+   * therefore loses the new field, never the old behaviour.
+   */
+  sourceRepoAvailable?: boolean;
 }): ListingScalarSync {
   return {
     name: resolveListingName(args.manifest, args.blockId),
     description: resolveListingDescription(args.manifest),
     tagline: resolveListingTagline(args.manifest),
     category: args.category,
+    // 🔴 RESOLVED FROM THE MANIFEST ON EVERY SYNC, exactly like `tagline`, and that is
+    // the whole point of it living here rather than only in `mapAppBlockToListing`. A
+    // value set at the FIRST approve and never re-read would leave an author who added
+    // (or removed) `repository` in v1.1.0 staring at the v1.0.0 link forever — the
+    // identical bug #3441 fixed for name/description/tagline. Removing the manifest key
+    // resolves to `null`, which CLEARS the column: manifest-governed means the manifest
+    // is the whole truth, not a one-way seed.
+    ...(args.sourceRepoAvailable ? { sourceRepoUrl: resolveListingSourceRepo(args.manifest) } : {}),
   };
 }
 
@@ -119,7 +172,18 @@ export function buildListingScalarSync(args: {
  * → 'offsite'. The approve path only ever passes hosted (externalUrl=null) blocks
  * → 'onsite'; the offsite external-submission flow owns its own listing writes.
  */
-export function mapAppBlockToListing(ab: SourceAppBlock): Prisma.AppListingUncheckedCreateInput {
+export function mapAppBlockToListing(
+  ab: SourceAppBlock,
+  opts: {
+    /**
+     * Whether `app_listings.source_repo_url` exists — same fail-safe-false contract as
+     * {@link buildListingScalarSync}'s flag. Absent ⇒ the key is omitted from the
+     * create payload, so this mapper keeps producing a payload the pre-migration
+     * database accepts.
+     */
+    sourceRepoAvailable?: boolean;
+  } = {}
+): Prisma.AppListingUncheckedCreateInput {
   if (!ab.app || typeof ab.app.userId !== 'number') {
     throw new Error(`mapAppBlockToListing: AppBlock ${ab.id} has no resolvable owner`);
   }
@@ -133,6 +197,9 @@ export function mapAppBlockToListing(ab: SourceAppBlock): Prisma.AppListingUnche
     // Manifest-governed one-liner for the store card/detail slot. Absent/blank in
     // the manifest ⇒ NULL (the card renders no tagline) — same as description.
     tagline: resolveListingTagline(ab.manifest),
+    // Manifest-governed public source-repo link, on the SAME terms as `tagline`.
+    // Key omitted (not null) when the manual-apply column is absent — see the opts flag.
+    ...(opts.sourceRepoAvailable ? { sourceRepoUrl: resolveListingSourceRepo(ab.manifest) } : {}),
     // Assets are P1 — left NULL here (no mandatory-asset enforcement in P0).
     iconId: null,
     coverId: null,

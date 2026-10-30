@@ -1,7 +1,11 @@
 import type { UiState } from 'instantsearch.js';
 import * as z from 'zod';
 import type { InstantSearchRoutingParser } from '~/components/Search/parsers/base';
-import { searchParamsSchema } from '~/components/Search/parsers/base';
+import {
+  parseSearchParams,
+  searchParamsSchema,
+  stringArrayParamSchema,
+} from '~/components/Search/parsers/base';
 import { TOOLS_SEARCH_INDEX } from '~/server/common/constants';
 import { removeEmpty } from '~/utils/object-helpers';
 import { QS } from '~/utils/qs';
@@ -21,20 +25,17 @@ const toolSearchParamsSchema = searchParamsSchema
   .extend({
     index: z.literal('tools'),
     sortBy: z.enum(ToolsSearchIndexSortBy),
-    company: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    type: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
+    company: stringArrayParamSchema,
+    type: stringArrayParamSchema,
   })
   .partial();
 
 export const toolsInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
-    const collectionSearchIndexResult = toolSearchParamsSchema.safeParse(QS.parse(location.search));
-    const collectionSearchIndexData: ToolSearchParams | Record<string, string[]> =
-      collectionSearchIndexResult.success ? collectionSearchIndexResult.data : {};
+    const collectionSearchIndexData = parseSearchParams(
+      toolSearchParamsSchema,
+      QS.parse(location.search)
+    );
 
     return { [TOOLS_SEARCH_INDEX]: removeEmpty(collectionSearchIndexData) };
   },

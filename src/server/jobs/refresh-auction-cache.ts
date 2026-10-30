@@ -1,7 +1,6 @@
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { createJob } from '~/server/jobs/job';
-import { modelVersionResourceCache } from '~/server/redis/caches';
 import { modelsSearchIndex } from '~/server/search-index';
 import { homeBlockCacheBust } from '~/server/services/home-block-cache.service';
 import { resourceDataCache } from '~/server/redis/resource-data.redis';
@@ -22,6 +21,5 @@ export const refreshAuctionCache = createJob('refresh-auction-cache', '6 0 * * *
   await bustFeaturedModelsCache();
   await homeBlockCacheBust(HomeBlockType.FeaturedModelVersion, 'default');
   await resourceDataCache.bust(versionIds);
-  await modelVersionResourceCache.refresh(versionIds);
   await bustOrchestratorModelCache(versionIds);
 });

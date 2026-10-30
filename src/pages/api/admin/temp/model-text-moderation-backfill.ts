@@ -1,0 +1,147 @@
+/**
+ * One-off backfill: submit existing published models to XGuard text moderation.
+ *
+ * POST /api/admin/temp/model-text-moderation-backfill?token=$WEBHOOK_TOKEN
+ * Body:
+ *   terms: string[]     // REQUIRED, 1-3 entries. Case-insensitive substring match on
+ *                       // name + description. The term SELECTS candidates; XGuard
+ *                       // renders every verdict. No verdict is inferred from the term.
+ *   cursor?: number     // resume from this model id (exclusive). Omit to start.
+ *   window?: number     // ids scanned per call, 1k-100k, default 50k.
+ *   limit?: number      // max submissions per call, 1-250, default 200.
+ *   dryRun?: boolean    // count candidates without submitting. Default true.
+ *
+ * Paging walks a fixed WINDOW OF IDS per call, not "scan until `limit` matches". The
+ * term match cannot use an index — `Model` has no trigram index and a leading wildcard
+ * makes the btree unusable — so match-count paging degenerates into a full-table scan
+ * whenever the terms are selective, and gets worse the further the cursor advances.
+ * Measured on prod before this bound: a single non-matching term cost 3.9s / 8.7GB of
+ * buffer traffic, three of them well over 20s, on the replica that serves the site, with
+ * no statement timeout to stop it. A fixed id window makes every call cost the same and
+ * makes progress deterministic. `terms` is capped for the same reason — each one adds two
+ * ILIKE evaluations per row scanned.
+ *
+ * Deliberately NOT gated on either feature flag: this is the tool for re-running the
+ * set after the apply flag goes up, and for re-running after a rollback. Gating it
+ * would remove it from exactly the two situations it exists for. (Same exemption
+ * minor-hash-sweep has from MINOR_HASH_AUTO_FLAG.)
+ *
+ * Submits with forceRescan so a model already scanned during the shadow phase gets a
+ * fresh verdict instead of the cached one, which would never re-enter applyResult.
+ *
+ * A non-dry run is logged to Axiom (`model-text-moderation`) before responding, so a
+ * gateway timeout on a long batch still leaves a record of what committed.
+ */
+import type { NextApiRequest, NextApiResponse } from 'next';
+import * as z from 'zod';
+import { dbRead } from '~/server/db/client';
+import { logToAxiom } from '~/server/logging/client';
+import {
+  resolveBackfillCursor,
+  submitModelTextModerationBackfill,
+} from '~/server/services/model-moderation.adapter';
+import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { limitConcurrency } from '~/server/utils/concurrency-helpers';
+import { ModelStatus } from '~/shared/utils/prisma/enums';
+
+const schema = z.object({
+  terms: z.array(z.string().min(2)).min(1).max(3),
+  cursor: z.number().int().nonnegative().optional(),
+  window: z.number().int().min(1_000).max(100_000).default(50_000),
+  limit: z.number().int().min(1).max(250).default(200),
+  dryRun: z.boolean().default(true),
+});
+
+export default WebhookEndpoint(async (req: NextApiRequest, res: NextApiResponse) => {
+  if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
+
+  const parsed = schema.safeParse(req.body ?? {});
+  if (!parsed.success)
+    return res.status(400).json({ error: 'Invalid request', issues: parsed.error.issues });
+  const { terms, cursor, window: windowSize, limit, dryRun } = parsed.data;
+
+  const from = cursor ?? 0;
+  const to = from + windowSize;
+  const maxId = (await dbRead.model.aggregate({ _max: { id: true } }))._max.id ?? 0;
+
+  const candidates = await dbRead.model.findMany({
+    where: {
+      status: ModelStatus.Published,
+      id: { gt: from, lte: to },
+      OR: terms.flatMap((term) => [
+        { name: { contains: term, mode: 'insensitive' as const } },
+        { description: { contains: term, mode: 'insensitive' as const } },
+      ]),
+    },
+    select: { id: true, name: true, description: true, lockedProperties: true },
+    orderBy: { id: 'asc' },
+    take: limit,
+  });
+
+  // A stored nsfw lock is a moderator's call; leave those rows alone, exactly as
+  // applyResult would.
+  const eligible = candidates.filter((m) => !(m.lockedProperties ?? []).includes('nsfw'));
+  const windowTruncated = candidates.length === limit;
+  const nextCursor = resolveBackfillCursor({
+    windowEnd: to,
+    maxId,
+    lastCandidateId: candidates[candidates.length - 1]?.id,
+    truncated: windowTruncated,
+  });
+
+  if (dryRun) {
+    return res.status(200).json({
+      dryRun: true,
+      scanned: { from, to, maxId },
+      selected: candidates.length,
+      eligible: eligible.length,
+      skippedLocked: candidates.length - eligible.length,
+      windowTruncated,
+      nextCursor,
+    });
+  }
+
+  let submitted = 0;
+  let failed = 0;
+  let empty = 0;
+  await limitConcurrency(
+    eligible.map((model) => async () => {
+      try {
+        // No throw on a failed submit — createXGuardModerationRequest normalizes both
+        // controlled (4xx/5xx) and uncontrolled (network/DNS) failures into a logged,
+        // EM-recorded return with no `id`. Count from the return value, not the catch.
+        const result = await submitModelTextModerationBackfill(model);
+        if (result === null) empty++;
+        else if (result?.id) submitted++;
+        else failed++;
+      } catch {
+        failed++;
+      }
+    }),
+    5
+  );
+
+  const counts = {
+    scanned: { from, to, maxId },
+    selected: candidates.length,
+    eligible: eligible.length,
+    skippedLocked: candidates.length - eligible.length,
+    submitted,
+    failed,
+    empty,
+    windowTruncated,
+    nextCursor,
+  };
+
+  // Logged here, before responding, so an HTTP timeout on a long batch cannot lose the
+  // record of what already committed — same reasoning as minor-hash-sweep's summary log.
+  await logToAxiom({
+    type: 'info',
+    name: 'model-text-moderation',
+    message: 'backfill batch complete',
+    cursor: cursor ?? null,
+    ...counts,
+  }).catch(() => null);
+
+  return res.status(200).json({ dryRun: false, ...counts });
+});

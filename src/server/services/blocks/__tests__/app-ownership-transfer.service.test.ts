@@ -124,6 +124,16 @@ const OFFSITE_REPO_SLUG = 'offsite-repo';
  * `app-access.denormalized-owner-drift.test.ts`.
  */
 const DRIFTED = 'apl_drifted';
+/**
+ * 🔴 An OFF-SITE listing carrying a block whose `OauthClient` names SOMEONE ELSE —
+ * issue #3844. For an off-site listing `AppListing.userId` IS the owner, and the accept
+ * path's step (2) is `if (isOnsite)`-guarded, so an off-site move writes only that
+ * column and leaves the attached block naming the PREVIOUS owner (as does the mod
+ * `claimListing` remedy). `loadOwnedListing` resolved BLOCK-FIRST until #3844, so this
+ * gate answered to the ex-owner: they could still INITIATE A TRANSFER of a listing they
+ * no longer owned and hand it straight back out.
+ */
+const OFFSITE_BLOCK_DRIFTED = 'apl_offsite_block_drifted';
 const OLD_OWNER = 10;
 const NEW_OWNER = 20;
 const STRANGER = 50;
@@ -198,6 +208,23 @@ function listingTable(): Record<string, Record<string, unknown>> {
         appId: 'oc_offsite',
         blockId: OFFSITE_REPO_SLUG,
         app: { userId: OLD_OWNER },
+      },
+    },
+    // 🔴 OFFSITE, with a block whose OauthClient names STRANGER. The column (OLD_OWNER)
+    // is canonical here; the block must not decide. Issue #3844.
+    [OFFSITE_BLOCK_DRIFTED]: {
+      id: OFFSITE_BLOCK_DRIFTED,
+      slug: 'offsite-block-drifted-slug',
+      kind: 'offsite',
+      userId: OLD_OWNER,
+      appBlockId: 'ab_offsiteDrifted',
+      connectClientId: null,
+      revisionOfId: null,
+      revisionOf: null,
+      appBlock: {
+        appId: 'oc_offsiteDrifted',
+        blockId: 'offsite-drifted-repo',
+        app: { userId: STRANGER },
       },
     },
     // 🔴 onsite, with the canonical owner and the denormalized column DISAGREEING.
@@ -323,8 +350,59 @@ describe('initiateTransfer', () => {
 
   it('a NON-OWNER cannot initiate', async () => {
     await expect(
-      initiateTransfer({ appListingId: LISTING, toUserId: NEW_OWNER, actorUserId: STRANGER, now: NOW })
+      initiateTransfer({
+        appListingId: LISTING,
+        toUserId: NEW_OWNER,
+        actorUserId: STRANGER,
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'NOT_OWNER' });
+  });
+
+  /**
+   * 🔴 ISSUE #3844 — `loadOwnedListing` must resolve ownership KIND-AWARE.
+   *
+   * On an OFF-SITE listing the column is canonical and the attached block must not
+   * override it. Block-first, this gate handed the power to DISPOSE OF THE LISTING to
+   * whoever the block still named — the ex-owner after an off-site accept, or the
+   * impersonator `claimListing` had just dispossessed. `claimListing` cancels a pending
+   * transfer in the same tx precisely so the listing cannot be handed back out; a gate
+   * that lets the same user open a NEW one undoes that.
+   */
+  describe('🔴 on an OFF-SITE listing that CARRIES A BLOCK (#3844)', () => {
+    it('POSITIVE CONTROL: the fixture is offsite, has a block, and the two owners differ', () => {
+      const l = LISTINGS[OFFSITE_BLOCK_DRIFTED] as {
+        kind: string;
+        userId: number;
+        appBlock: { app: { userId: number } };
+      };
+      expect(l.kind).toBe('offsite');
+      expect(l.userId).toBe(OLD_OWNER);
+      expect(l.appBlock.app.userId).toBe(STRANGER);
+      expect(OLD_OWNER).not.toBe(STRANGER);
+    });
+
+    it('the COLUMN owner may initiate', async () => {
+      const t = await initiateTransfer({
+        appListingId: OFFSITE_BLOCK_DRIFTED,
+        toUserId: NEW_OWNER,
+        actorUserId: OLD_OWNER,
+        now: NOW,
+      });
+      expect(t.status).toBe('pending');
+    });
+
+    it('🔴 the user the BLOCK names is REFUSED — and no transfer row is written', async () => {
+      await expect(
+        initiateTransfer({
+          appListingId: OFFSITE_BLOCK_DRIFTED,
+          toUserId: NEW_OWNER,
+          actorUserId: STRANGER,
+          now: NOW,
+        })
+      ).rejects.toMatchObject({ code: 'NOT_OWNER' });
+      expect(mockDb.appOwnershipTransfer.create).not.toHaveBeenCalled();
+    });
   });
 
   it('transferring to yourself is INVALID_TARGET', async () => {
@@ -352,7 +430,12 @@ describe('initiateTransfer', () => {
 
   it('a SHADOW revision cannot be transferred — there is nothing to own', async () => {
     await expect(
-      initiateTransfer({ appListingId: SHADOW, toUserId: NEW_OWNER, actorUserId: OLD_OWNER, now: NOW })
+      initiateTransfer({
+        appListingId: SHADOW,
+        toUserId: NEW_OWNER,
+        actorUserId: OLD_OWNER,
+        now: NOW,
+      })
     ).rejects.toMatchObject({ code: 'INVALID_TARGET' });
     expect(mockDb.appOwnershipTransfer.create).not.toHaveBeenCalled();
   });
@@ -459,21 +542,29 @@ describe('🔴 an OFF-SITE listing with a connectClientId is REFUSED', () => {
    * transfer; NOT moving it leaves ownership SPLIT between the listing and the client.
    * So the transfer is refused, with an error that says why.
    *
-   * Enforced twice — at initiate (fail fast) and IN-TX at accept — because an offer
-   * stays open for `transferExpiryDays` and a revision approve can LINK a client inside
-   * that window. An initiate-only check is simply false for the whole window.
+   * Enforced twice — at initiate (fail fast) and IN-TX at accept — because an offer stays
+   * open for `transferExpiryDays`, so the initiate-time read says nothing about the row at
+   * the instant of accept.
+   *
+   * 🔴 NOT because "a revision approve can LINK a client inside that window". That claim
+   * was false and #4126 removed it from all seven places it had been copied to: no writer
+   * can move `AppListing.connectClientId` from null to non-null on an EXISTING row. The
+   * accept-time arm below therefore drives a state today's product cannot produce — it is
+   * defence-in-depth against a future link flow, a migration or a direct DB write, and it
+   * is deliberately kept as such. Canonical account: the `acceptBlockedReason` docstring
+   * in `app-ownership-transfer.service.ts`.
    */
   it('the predicate is exported and states the rule in one place', () => {
-    expect(refusesTransferForConnectClient({ kind: 'offsite', connectClientId: CONNECT_CLIENT })).toBe(
-      true
-    );
+    expect(
+      refusesTransferForConnectClient({ kind: 'offsite', connectClientId: CONNECT_CLIENT })
+    ).toBe(true);
     expect(refusesTransferForConnectClient({ kind: 'offsite', connectClientId: null })).toBe(false);
     // 🔴 ON-SITE IS UNAFFECTED — its OauthClient is reached through the AppBlock, and
     // THAT one does move. A predicate that dropped the kind check would block every
     // on-site transfer the moment the column were ever populated.
-    expect(refusesTransferForConnectClient({ kind: 'onsite', connectClientId: CONNECT_CLIENT })).toBe(
-      false
-    );
+    expect(
+      refusesTransferForConnectClient({ kind: 'onsite', connectClientId: CONNECT_CLIENT })
+    ).toBe(false);
   });
 
   it('initiate REFUSES, and no transfer row is created', async () => {
@@ -489,17 +580,52 @@ describe('🔴 an OFF-SITE listing with a connectClientId is REFUSED', () => {
     expect(mockDb.appOwnershipEvent.create).not.toHaveBeenCalled();
   });
 
-  it('🔴 the message NAMES the reason — "unlink the OAuth client first" is actionable', async () => {
-    // A bare FORBIDDEN would leave the owner with no idea what to do, and the whole
-    // point of refusing rather than guessing is that the human makes the call.
+  it('🔴 the message NAMES THE REASON, and instructs NO action the owner cannot take', async () => {
+    // A bare FORBIDDEN would leave the owner with no idea why, and the whole point of
+    // refusing explicitly is that the reason survives to the surface.
     expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/OAuth application/i);
-    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/Unlink the OAuth client first/i);
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/cannot be transferred/i);
+    // …and it names the CONSEQUENCE, which is the part that makes the refusal legible.
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toMatch(/credentials|split ownership/i);
+
+    // 🔴 NO REMEDY, DELIBERATELY — kept as a NEGATIVE assertion because this string used
+    // to end "Unlink the OAuth client first". 🔴 ITS ORIGINAL STATED REASON ("there is no
+    // unlink path in the product") IS FALSE and #4126 refuted it: deleting the OAuth
+    // client cascades `onDelete: SetNull` onto `AppListing.connectClientId`, so an
+    // owner-initiated route out exists today. DO NOT DELETE THIS GUARD ON DISCOVERING
+    // THAT — the decision to name no remedy was re-taken on its merits with the route
+    // known, and the four surviving reasons are recorded at the constant.
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).not.toMatch(/unlink/i);
+
+    // 🔴 THE WHOLE STRING, NOT A WORD. An INVARIANT GUARD, not regression coverage: it is
+    // green on pre-#4126 code and pins a decision rather than a fixed bug. It exists
+    // because every assertion above is walkable by REWORDING — "remove the OAuth client
+    // first" or "delete your OAuth application first" satisfies `not.toMatch(/unlink/i)`
+    // and every positive regex here, while re-introducing exactly the always-on false
+    // instruction they were written to stop. The literal below is an INDEPENDENT copy, so
+    // editing the constant moves one side only and this fails. A cosmetic reword must pay
+    // for itself by updating this line — which is the point: it forces whoever changes the
+    // copy to read the decision record at the constant first.
+    expect(CONNECT_CLIENT_TRANSFER_REFUSAL).toBe(
+      'This listing is linked to an OAuth application, so its ownership cannot be transferred: ' +
+        'moving it would either hand over that application’s credentials or split ownership ' +
+        'between the listing and the client.'
+    );
   });
 
-  it('🔴 ACCEPT re-asserts it: a client LINKED after the offer was made blocks the accept', async () => {
-    // The window this closes. The offer was created against a clean listing; a revision
-    // approve then linked a client. Nothing about the transfer row changed — only the
-    // listing did — so an initiate-time-only check would let it through.
+  it('🔴 ACCEPT re-asserts it: a listing that reads as linked at accept time blocks the accept', async () => {
+    // What this closes: the transfer row is unchanged and only the LISTING differs from
+    // what initiate saw, so an initiate-time-only check would let it through.
+    //
+    // 🔴 THE SETUP IS SYNTHETIC AND #4126 SAYS SO OUT LOUD. This mock returns a linked
+    // listing under a live offer; the comment here used to explain that state as "a
+    // revision approve then linked a client", which is FALSE — nothing in the product can
+    // move `AppListing.connectClientId` from null to non-null on an existing row, and
+    // initiate refuses a listing born linked. Reaching this state needs a direct DB write,
+    // a migration or a future link flow. That does not make the test worthless: it pins
+    // the accept-time gate as defence-in-depth, and without it the in-tx re-assert could
+    // be deleted with the suite still green. It IS a reason not to cite this test as
+    // evidence that the state is product-reachable.
     mockDb.appOwnershipTransfer.findUnique.mockImplementation(async () => {
       const t = liveTransfer();
       return {
@@ -1080,7 +1206,8 @@ describe('🔴 getPendingTransfer — who may read the offer', () => {
    * On `origin/main` this read did not exist in this shape; the re-key routed it through
    * the listing resolver, and while that resolver returned the DENORMALIZED
    * `AppListing.userId` the gate answered a different question than every sibling
-   * (`initiateTransfer`/`loadOwnedListing` resolve `appBlock.app.userId ?? userId`).
+   * (`initiateTransfer`/`loadOwnedListing` resolve through the shared, kind-aware
+   * `resolveCanonicalListingOwner` — the block for onsite, the column for offsite).
    * The consequence is specific and inverted: the REAL owner gets `null` for their own
    * outgoing offer — which reads as "there is no transfer", the one answer that is
    * indistinguishable from safety — while the stale name reads both parties and the

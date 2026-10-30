@@ -1,10 +1,13 @@
-import { Indicator } from '@mantine/core';
 import { IconBell } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
 import { useState } from 'react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
+import {
+  formatBellCount,
+  useQueryNotificationsCount,
+} from '~/components/Notifications/notifications.utils';
+import { CountIndicator } from '~/components/AppLayout/AppHeader/CountIndicator';
 import { LegacyActionIcon } from '../LegacyActionIcon/LegacyActionIcon';
 
 const NotificationsDrawer = dynamic(
@@ -32,22 +35,11 @@ export function NotificationBell() {
   return (
     <>
       <div onClick={toggleDrawer} ref={setToggle} style={{ height: '28px' }}>
-        <Indicator
-          color="red"
-          label={count.all > 99 ? '99+' : count.all}
-          size={16}
-          offset={4}
-          className="flex items-center text-sm font-bold"
-          classNames={{
-            indicator: 'cursor-pointer h-5',
-          }}
-          disabled={count.all <= 0}
-          withBorder
-        >
+        <CountIndicator label={formatBellCount(count)} disabled={count.all <= 0}>
           <LegacyActionIcon variant="subtle" color="gray" aria-label="Notifications">
             <IconBell />
           </LegacyActionIcon>
-        </Indicator>
+        </CountIndicator>
       </div>
     </>
   );

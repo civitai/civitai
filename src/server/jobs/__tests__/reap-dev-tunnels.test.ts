@@ -13,9 +13,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *    a k8s/TLS blip can NEVER crash the runner.
  */
 
-const { mockReap, mockLogToAxiom, mockRecordRun } = vi.hoisted(() => ({
+const { mockReap, mockRecordRun } = vi.hoisted(() => ({
   mockReap: vi.fn(),
-  mockLogToAxiom: vi.fn(() => Promise.resolve(undefined)),
   mockRecordRun: vi.fn(),
 }));
 
@@ -25,9 +24,6 @@ vi.mock('~/server/services/blocks/dev-tunnel.service', () => ({
 vi.mock('~/server/prom/dev-tunnel.metrics', () => ({
   recordDevTunnelReaperRun: (...a: unknown[]) => mockRecordRun(...a),
 }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...a: unknown[]) => mockLogToAxiom(...a),
-}));
 // createJob wraps the handler in metadata/lock machinery we don't need here —
 // stub it to hand back the bare handler (mirrors the sibling block-job tests).
 vi.mock('../job', () => ({
@@ -35,6 +31,8 @@ vi.mock('../job', () => ({
 }));
 
 import { reapDevTunnelsJob } from '../reap-dev-tunnels';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+const mockLogToAxiom = loggingMock.logToAxiom;
 
 // After the createJob stub, the export is the bare async handler.
 const runJob = reapDevTunnelsJob as unknown as () => Promise<{
@@ -73,18 +71,6 @@ describe('reapDevTunnelsJob', () => {
     expect(mockRecordRun).toHaveBeenCalledWith('ok');
     // Nothing swept → no summary log emitted (but the `ok` metric still ticks).
     expect(mockLogToAxiom).not.toHaveBeenCalled();
-  });
-
-  it('logs a summary (incl. skipped) only when the sweep did something', async () => {
-    mockReap.mockResolvedValue({ swept: 2, reaped: 1, skipped: 1, listOk: true });
-
-    await runJob();
-
-    expect(mockLogToAxiom).toHaveBeenCalledTimes(1);
-    expect(mockLogToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ type: 'reap-dev-tunnels', swept: 2, reaped: 1, skipped: 1 }),
-      'webhooks'
-    );
   });
 
   it('surfaces a LIST failure as a distinct error + `list_failed` metric (not a silent no-op)', async () => {

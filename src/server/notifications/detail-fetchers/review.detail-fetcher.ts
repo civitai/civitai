@@ -1,8 +1,10 @@
 import { Prisma } from '@prisma/client';
 import { createDetailFetcher } from '~/server/notifications/detail-fetchers/base.detail-fetcher';
 import type { SimpleUser } from '~/server/selectors/user.selector';
-import { getProfilePicturesForUsers } from '~/server/services/user.service';
 import { isDefined } from '~/utils/type-guards';
+
+// Lazy: a static import here closes the image.service import cycle (no-image-service-import-cycle).
+const userService = () => import('~/server/services/user.service');
 
 export const reviewDetailFetcher = createDetailFetcher({
   types: ['new-review'],
@@ -23,9 +25,12 @@ export const reviewDetailFetcher = createDetailFetcher({
       FROM "ResourceReview" r
       JOIN "User" u ON r."userId" = u.id
       WHERE r.id IN (${Prisma.join(reviewIds)})
+        -- Same reason as the comment fetcher: this inlines the body at READ time, so a review a
+        -- moderator has taken down otherwise keeps serving it into the recipient's panel.
+        AND r."tosViolation" = false
     `;
     const userIds = reviews.map((u) => u.id);
-    const profilePictures = await getProfilePicturesForUsers(userIds);
+    const profilePictures = await (await userService()).getProfilePicturesForUsers(userIds);
     for (const u of reviews) u.profilePicture = profilePictures[u.id];
 
     for (const n of notifications) {

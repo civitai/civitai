@@ -24,6 +24,7 @@ import {
 } from '@tabler/icons-react';
 import { memo, useCallback, useMemo, useState } from 'react';
 import HoverActionButton from '~/components/Cards/components/HoverActionButton';
+import { RemixedCardFlyout } from '~/components/RemixGallery/RemixedCardFlyout';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { RoutedDialogLink } from '~/components/Dialog/RoutedDialogLink';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
@@ -31,6 +32,7 @@ import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { useGallerySettings } from '~/components/Image/AsPosts/gallery.utils';
 import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/ImagesAsPostsInfiniteProvider';
 import { OnsiteIndicator } from '~/components/Image/Indicators/OnsiteIndicator';
+import { SponsoredBadge } from '~/components/Promotion/SponsoredBadge';
 import { ImageMetaPopover2 } from '~/components/Image/Meta/ImageMetaPopover';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
@@ -39,6 +41,12 @@ import { Reactions } from '~/components/Reaction/Reactions';
 import { ThumbsDownIcon, ThumbsUpIcon } from '~/components/ThumbsIcon/ThumbsIcon';
 import { TwCard } from '~/components/TwCard/TwCard';
 import { TwCosmeticWrapper } from '~/components/TwCosmeticWrapper/TwCosmeticWrapper';
+import {
+  ImageMediaHat,
+  imageMediaHatClearLeft,
+  useInHatLayer,
+} from '~/components/Cosmetics/EventDecoration/EventDecorationOverlay';
+import { HatLayerHost } from '~/components/Cosmetics/EventDecoration/HatLayer';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import type { ImagesAsPostModel } from '~/server/controllers/image.controller';
@@ -47,14 +55,15 @@ import { isDefined } from '~/utils/type-guards';
 import { SimpleImageCarousel } from '~/components/SimpleImageCarousel/SimpleImageCarousel';
 import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
 import { watchTouchDrag } from '~/components/EmblaCarousel/watchTouchDrag';
-import { useApplyHiddenPreferences } from '~/components/HiddenPreferences/useApplyHiddenPreferences';
-import { mergePostImages, shouldFetchPostTail } from '~/components/Image/AsPosts/lazyPostImages';
-import { POST_IMAGE_LIMIT } from '~/server/common/constants';
-import { trpc } from '~/utils/trpc';
+import { shouldFetchPostTail } from '~/components/Image/AsPosts/lazyPostImages';
+import type { PostTailDescriptor } from '~/components/Image/AsPosts/usePostImagesWithTail';
+import { usePostImagesWithTail } from '~/components/Image/AsPosts/usePostImagesWithTail';
 import classes from './ImagesAsPostsCard.module.css';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { ImagesAsPostsContextMenu } from '~/components/Image/ContextMenu/ImagesAsPostsContextMenu';
+import { ImpressionSentinel } from '~/components/TrackView/ImpressionSentinel';
+import { useTrackImpression } from '~/components/TrackView/useTrackImpression';
 
 type ImagesAsPostsCardProps = {
   data: ImagesAsPostModel;
@@ -97,8 +106,13 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
         : undefined),
     };
   }, [cosmetic?.data, pinned, theme, colorScheme]);
+  // The cover only: further images are recorded per slide as they are swiped to.
+  const impressionRef = useTrackImpression<HTMLElement>([
+    ...(data.postId ? [{ entityType: 'Post' as const, entityId: data.postId }] : []),
+    ...(image ? [{ entityType: 'Image' as const, entityId: image.id }] : []),
+  ]);
 
-  return (
+  const card = (
     <TwCosmeticWrapper
       className="w-full"
       cosmetic={cosmeticData}
@@ -109,10 +123,16 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
           <PinnedIndicator radius="xl" color="orange" size="md" iconProps={pinnedIconProps} />
         )}
         <TwCard
+          ref={impressionRef}
           style={!cosmeticData ? { height } : undefined}
           className={clsx({ ['border']: !pinned })}
         >
           <MediaHash {...image} className={clsx('opacity-70', cosmetic && 'rounded-b-lg')} />
+          {data.sponsored && (
+            <div className="relative z-10 flex px-2 pt-2">
+              <SponsoredBadge kind="post" />
+            </div>
+          )}
           {data.user.id !== -1 && <ImagesAsPostsCardHeader {...props} cosmetic={cosmetic} />}
 
           <div className="relative flex-1 overflow-hidden">
@@ -121,6 +141,17 @@ function ImagesAsPostsCardNoMemo(props: ImagesAsPostsCardProps) {
         </TwCard>
       </>
     </TwCosmeticWrapper>
+  );
+
+  // imageCount > images.length: the lazily fetched tail may bring a hat the first page lacks.
+  const mayWearHat =
+    data.images.some((i) => i.eventDecoration) || (data.imageCount ?? 0) > data.images.length;
+  return mayWearHat ? (
+    <div className="relative w-full">
+      <HatLayerHost>{card}</HatLayerHost>
+    </div>
+  ) : (
+    card
   );
 }
 export const ImagesAsPostsCard = memo(ImagesAsPostsCardNoMemo);
@@ -180,7 +211,8 @@ function ImagesAsPostsCardHeader({
 
   return (
     <Paper
-      p="xs"
+      py="xs"
+      px="xs"
       radius={0}
       className={clsx(
         'z-[2] flex h-[58px] items-start justify-between gap-2',
@@ -267,6 +299,7 @@ function ImagesAsPostsCardHeader({
 
 function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
   const features = useFeatureFlags();
+  const inHatLayer = useInHatLayer();
   const postId = data.postId ?? undefined;
   const image = data.images[0];
   const handleRemixClick = (e: React.MouseEvent) => {
@@ -279,7 +312,11 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
       {(safe) => (
         <>
           {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
-          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+          <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
+          <ImageGuard2.BlurToggle
+            className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+            style={imageMediaHatClearLeft(image.eventDecoration, inHatLayer)}
+          />
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />
@@ -299,6 +336,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
               )}
             </div>
           )}
+          {safe && <RemixedCardFlyout imageId={image.id} />}
           <RoutedDialogLink
             name="imageDetail"
             state={{ imageId: image.id, images: [image] }}
@@ -315,6 +353,8 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
                   type={image.type}
                   imageId={image.id}
                   width={450}
+                  hiDpi={features.hiDpiPreviews}
+                  sourceWidth={image.width}
                   placeholder="empty"
                   wrapperProps={edgeMediaWrapperProps}
                   skip={getSkipValue(image)}
@@ -329,6 +369,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
             entityId={image.id}
             entityType="image"
             reactions={image.reactions}
+            metricsUnknown={image.stats?.statsUnknown}
             metrics={{
               likeCount: image.stats?.likeCountAllTime,
               dislikeCount: image.stats?.dislikeCountAllTime,
@@ -342,7 +383,7 @@ function ImagesAsPostsCardContent({ data }: { data: ImagesAsPostModel }) {
             targetUserId={image.user.id}
             disableBuzzTip={image.poi}
           />
-          {image.hasMeta && (
+          {features.imageCardInfoButton && image.hasMeta && (
             <div className="absolute bottom-1 right-0.5 z-10">
               <ImageMetaPopover2 imageId={image.id} type={image.type}>
                 <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
@@ -376,18 +417,21 @@ const carouselIndicatorProps = {
  * One carousel slide's content (blur guard, remix, image, reactions, meta). Shared
  * by the static and lazy carousels so an appended (lazily-fetched) image renders
  * byte-identically to a seeded one. `dialogImages` seeds the detail modal with the
- * carousel's currently-loaded set.
+ * carousel's currently-loaded set; `postTail` lets it load the rest itself.
  */
 function PostCarouselSlide({
   image,
   postId,
   dialogImages,
+  postTail,
 }: {
   image: ImagesAsPostModel['images'][number];
   postId: number;
   dialogImages: ImagesAsPostModel['images'];
+  postTail?: PostTailDescriptor;
 }) {
   const features = useFeatureFlags();
+  const inHatLayer = useInHatLayer();
   const handleRemixClick = (e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
@@ -397,8 +441,13 @@ function PostCarouselSlide({
     <ImageGuard2 image={image} connectType="post" connectId={postId}>
       {(safe) => (
         <>
+          <ImpressionSentinel impressions={[{ entityType: 'Image', entityId: image.id }]} />
           {image.onSite && <OnsiteIndicator isRemix={!!image.remixOfId} />}
-          <ImageGuard2.BlurToggle className="absolute left-2 top-2 z-10" />
+          <ImageMediaHat imageId={image.id} decoration={image.eventDecoration} />
+          <ImageGuard2.BlurToggle
+            className="absolute left-[max(0.5rem,var(--event-decoration-clear-left,0px))] top-2 z-10"
+            style={imageMediaHatClearLeft(image.eventDecoration, inHatLayer)}
+          />
           {safe && (
             <div className="absolute right-2 top-2 z-10 flex flex-col gap-2">
               <ImagesAsPostsContextMenu image={image} />
@@ -418,10 +467,11 @@ function PostCarouselSlide({
               )}
             </div>
           )}
+          {safe && <RemixedCardFlyout imageId={image.id} />}
           <RoutedDialogLink
             name="imageDetail"
             state={{ imageId: image.id }}
-            getState={() => ({ imageId: image.id, images: dialogImages })}
+            getState={() => ({ imageId: image.id, images: dialogImages, postTail })}
             className={classes.link}
           >
             <>
@@ -437,6 +487,8 @@ function PostCarouselSlide({
                   type={image.type}
                   imageId={image.id}
                   width={450}
+                  hiDpi={features.hiDpiPreviews}
+                  sourceWidth={image.width}
                   placeholder="empty"
                   wrapperProps={edgeMediaWrapperProps}
                   skip={getSkipValue(image)}
@@ -449,6 +501,7 @@ function PostCarouselSlide({
             entityId={image.id}
             entityType="image"
             reactions={image.reactions}
+            metricsUnknown={image.stats?.statsUnknown}
             metrics={{
               likeCount: image.stats?.likeCountAllTime,
               dislikeCount: image.stats?.dislikeCountAllTime,
@@ -462,7 +515,7 @@ function PostCarouselSlide({
             targetUserId={image.user.id}
             disableBuzzTip={image.poi}
           />
-          {image.hasMeta && (
+          {features.imageCardInfoButton && image.hasMeta && (
             <div className="absolute bottom-1 right-0.5 z-10">
               <ImageMetaPopover2 imageId={image.id} type={image.type}>
                 <div className="m-0.5 flex size-7 items-center justify-center rounded-full bg-black/50">
@@ -568,8 +621,11 @@ export function StaticPostImagesCarousel({
  * N" immediately (indicators from `imageCount`); fetches the post's remaining
  * images via `trpc.image.getInfinite({ postId })` when the active slide approaches
  * the loaded edge, re-applies the feed's hidden preferences to the fetched tail
- * (content safety), and appends. The detail modal is seeded with whatever is
- * loaded at click time.
+ * (content safety), and appends.
+ *
+ * The detail modal is seeded with what is loaded at click time PLUS the descriptor
+ * it needs to load the rest itself — a click on the cover happens long before the
+ * approach threshold, so the seed alone is usually just the first slice.
  *
  * Exported for component tests.
  */
@@ -597,48 +653,35 @@ export function LazyPostImagesCarousel({
     [seed.length, total]
   );
 
-  // The tail = the WHOLE post (≤ POST_IMAGE_LIMIT), same version/browsing-level
-  // filters the gallery used, so the returned set matches `imageCount`. postId
-  // forces the DB path server-side (covered index, ~2ms).
-  const { data: tailData, isError: tailError } = trpc.image.getInfinite.useQuery(
-    {
-      ...filters,
-      postId,
-      browsingLevel,
-      limit: POST_IMAGE_LIMIT,
-      include: ['cosmetics', 'tagIds'],
-    },
-    {
-      // `postId != null` is the explicit invariant: a null postId must never broaden
-      // `getInfinite` to the model's general feed (it would append unrelated images).
-      enabled: fetchTail && postId != null,
-      trpc: { context: { skipBatch: true } },
-      staleTime: 5 * 60 * 1000,
-    }
-  );
-
-  // Content safety: re-apply the feed's hidden preferences to the fetched tail so
-  // it never surfaces images the feed slice would have dropped (owner/user-hidden,
-  // system-hidden tags, poi/minor). Browsing level is already applied server-side.
-  const { items: filteredTail } = useApplyHiddenPreferences({
-    type: 'images',
-    data: tailData?.items,
-    hiddenImages: hiddenImageIds,
-    hiddenUsers,
-    hiddenTags,
+  const {
+    images: loaded,
+    fetched,
+    isError: tailError,
+  } = usePostImagesWithTail({
+    seed,
+    postId,
+    filters,
     browsingLevel,
+    hiddenImageIds,
+    hiddenTags,
+    hiddenUsers,
+    enabled: fetchTail,
   });
 
-  const fetched = !!tailData;
-  const loaded = useMemo(
+  const postTail = useMemo<PostTailDescriptor | undefined>(
     () =>
-      fetched
-        ? (mergePostImages(
-            seed as { id: number }[],
-            (filteredTail ?? []) as { id: number }[]
-          ) as ImagesAsPostModel['images'])
-        : seed,
-    [fetched, seed, filteredTail]
+      postId != null
+        ? {
+            postId,
+            imageCount: total,
+            filters,
+            browsingLevel,
+            hiddenImageIds,
+            hiddenTags,
+            hiddenUsers,
+          }
+        : undefined,
+    [postId, total, filters, browsingLevel, hiddenImageIds, hiddenTags, hiddenUsers]
   );
 
   // Before the tail resolves, advertise the true count so indicators read "1 of N".
@@ -662,6 +705,7 @@ export function LazyPostImagesCarousel({
             image={loaded[index]}
             postId={postId}
             dialogImages={loaded}
+            postTail={postTail}
           />
         ) : (
           <Center key={index} className="size-full">

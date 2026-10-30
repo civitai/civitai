@@ -3,6 +3,7 @@ import { page } from 'vitest/browser';
 import { useDialogStore } from '~/components/Dialog/dialogStore';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { expectReplyKeys } from '../../../test/expectReplyKeys';
 
 /**
  * App Blocks Model-Benchmarking shared-grid host bridges — the host-handler tests
@@ -16,9 +17,11 @@ import { renderWithProviders } from '../../../test/component-setup';
  * Mounts the REAL PageBlockHost and drives the actual postMessage bridge.
  */
 
-const { publishMutate, getImagesMutate } = vi.hoisted(() => ({
+const { publishMutate, getImagesMutate, previewPostMutate, createPostMutate } = vi.hoisted(() => ({
   publishMutate: vi.fn(),
   getImagesMutate: vi.fn(),
+  previewPostMutate: vi.fn(),
+  createPostMutate: vi.fn(),
 }));
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
@@ -26,7 +29,17 @@ vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/utils/trpc', () => ({
   setTrpcBatchingEnabled: vi.fn(),
   trpc: {
-    generation: { resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) } },
+    // Collection follow/unfollow host bridge (SET_COLLECTION_FOLLOW). Both
+    // hosts register the handler, so every host-rendering suite needs these
+    // two session-authed mutations present on the mocked client.
+    collection: {
+      follow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      unfollow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
+    generation: {
+      resolveWildcardPack: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+      resolveResourceFile: { useMutation: () => ({ mutateAsync: vi.fn() }) },
+    },
     blocks: {
       submitWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       getMyBuzzBalance: { useMutation: () => ({ mutateAsync: vi.fn() }) },
@@ -41,6 +54,11 @@ vi.mock('~/utils/trpc', () => ({
       cancelAppWorkflow: { useMutation: () => ({ mutateAsync: vi.fn() }) },
       publishGenerationOutputs: { useMutation: () => ({ mutateAsync: publishMutate }) },
       getImagesByIds: { useMutation: () => ({ mutateAsync: getImagesMutate }) },
+      // CREATE_POST_FROM_APP is TWO block-token mutations — the read-only preview
+      // that resolves the consent payload, and the write. PageBlockHost reads both
+      // at render, so a mock missing either makes the WHOLE component throw.
+      previewPostFromApp: { useMutation: () => ({ mutateAsync: previewPostMutate }) },
+      createPostFromApp: { useMutation: () => ({ mutateAsync: createPostMutate }) },
     },
     apps: {
       shared: {
@@ -64,7 +82,11 @@ vi.mock('~/utils/trpc', () => ({
           getCounts: { fetch: vi.fn() },
           get: { fetch: vi.fn() },
         },
-        storage: { get: { fetch: vi.fn() }, list: { fetch: vi.fn() }, getQuota: { fetch: vi.fn() } },
+        storage: {
+          get: { fetch: vi.fn() },
+          list: { fetch: vi.fn() },
+          getQuota: { fetch: vi.fn() },
+        },
       },
     }),
   },
@@ -78,7 +100,11 @@ function postFromBlock(type: string, payload?: unknown) {
   const cw = iframeEl.contentWindow;
   if (!cw) throw new Error('iframe contentWindow missing');
   window.dispatchEvent(
-    new MessageEvent('message', { data: { type, payload }, origin: window.location.origin, source: cw })
+    new MessageEvent('message', {
+      data: { type, payload },
+      origin: window.location.origin,
+      source: cw,
+    })
   );
 }
 
@@ -114,6 +140,9 @@ const baseProps = {
   iframeSrc: SAME_ORIGIN_SRC,
   // The public run surface. Required since the init-fragment gate keys on it.
   surface: 'page-run' as const,
+  // Required. These suites cover the DEFAULT (host-veil) presentation;
+  // the bootSkeleton path is covered in PageBlockHostLaunchReveal.
+  bootSkeleton: false,
   sandbox: 'allow-scripts',
   trustTier: 'internal' as const,
   slug: 'benchmark-app',
@@ -175,6 +204,7 @@ describe('PageBlockHost PUBLISH_GENERATION_OUTPUTS (consent-gated publish)', () 
       const r = replies.last('PUBLISH_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_pub', result: { imageIds: [101, 102] } });
+      expectReplyKeys('PUBLISH_GENERATION_OUTPUTS', 'success', ['result'], r.payload);
     });
     replies.stop();
   });
@@ -193,6 +223,7 @@ describe('PageBlockHost PUBLISH_GENERATION_OUTPUTS (consent-gated publish)', () 
       const r = replies.last('PUBLISH_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_no', error: 'publish canceled' });
+      expectReplyKeys('PUBLISH_GENERATION_OUTPUTS', 'error', ['error'], r.payload);
     });
     expect(publishMutate).not.toHaveBeenCalled();
     replies.stop();
@@ -244,29 +275,61 @@ describe('PageBlockHost GET_IMAGES_BY_IDS (per-viewer gated read)', () => {
     getImagesMutate.mockReset();
   });
 
-  test('forwards the ids + token and replies the gated projection (visible + hidden)', async () => {
+  test('forwards the ids + token and replies the gated projection VERBATIM', async () => {
+    // The host is a pass-through by design: the moderation decision is the
+    // server's and the host must not re-derive, summarise or drop any part of it
+    // (`PageBlockHost.tsx` sends the mutation's `result` straight back). So the
+    // fixture carries EVERY wire shape at once, and the `toEqual` below is what
+    // pins all of them — `ratingPending` in particular is the only signal telling
+    // a grid "show this, but claim no rating", and it would go missing silently
+    // if someone ever added a projection here.
     const images = [
-      { imageId: 1, status: 'visible', nsfwLevel: 1, contentRating: 'g', url: 'edge:1', width: 512, height: 512 },
+      // A rated, within-ceiling image: the full projection.
+      {
+        imageId: 1,
+        status: 'visible',
+        nsfwLevel: 1,
+        contentRating: 'g',
+        url: 'edge:1',
+        width: 512,
+        height: 512,
+      },
+      // Withheld — above the ceiling, flagged, OR (for a non-author) not yet
+      // rated. All three collapse to this one token on purpose.
       { imageId: 2, status: 'hidden' },
+      // The viewer's OWN not-yet-rated image: url, and NO rating fields.
+      {
+        imageId: 3,
+        status: 'visible',
+        ratingPending: true,
+        url: 'edge:3',
+        width: 512,
+        height: 512,
+      },
     ];
     getImagesMutate.mockResolvedValue({ images });
     renderWithProviders(<PageBlockHost {...baseProps} />);
     await driveToReady();
     const replies = listenForReply();
 
-    postFromBlock('GET_IMAGES_BY_IDS', { requestId: 'rq_get', imageIds: [1, 2] });
+    postFromBlock('GET_IMAGES_BY_IDS', { requestId: 'rq_get', imageIds: [1, 2, 3] });
 
-    expect(getImagesMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', imageIds: [1, 2] });
+    expect(getImagesMutate).toHaveBeenCalledWith({ blockToken: 'tok_abc', imageIds: [1, 2, 3] });
     await vi.waitFor(() => {
       const r = replies.last('IMAGES_RESULT');
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_get', result: { images } });
     });
-    // The hidden entry carries NO url on the wire.
     const payload = replies.last('IMAGES_RESULT')!.payload as {
       result: { images: Array<Record<string, unknown>> };
     };
+    // The hidden entry carries NO url on the wire…
     expect(payload.result.images[1]).not.toHaveProperty('url');
+    // …and the owner's unrated entry asserts NO rating. (`toEqual` already
+    // forbids extra keys; named so a "helpful default" has to delete a line.)
+    expect(payload.result.images[2]).toHaveProperty('ratingPending', true);
+    expect(payload.result.images[2]).not.toHaveProperty('nsfwLevel');
+    expect(payload.result.images[2]).not.toHaveProperty('contentRating');
     replies.stop();
   });
 
@@ -299,6 +362,78 @@ describe('PageBlockHost GET_IMAGES_BY_IDS (per-viewer gated read)', () => {
       if (!r) throw new Error('no reply yet');
       expect(r.payload).toEqual({ requestId: 'rq_err', error: 'boom' });
     });
+    replies.stop();
+  });
+});
+
+/** CREATE_POST_FROM_APP: preview → consent → `createPostFromApp` → `CREATE_POST_RESULT`. */
+describe('PageBlockHost CREATE_POST_FROM_APP (consent-gated post)', () => {
+  const PREVIEW = {
+    title: null,
+    detail: null,
+    tags: [],
+    droppedTags: [],
+    // Three images from two sources, so a count taken from `sources` cannot pass.
+    images: [1, 2, 3].map((n) => ({
+      url: `https://image.civitai.com/x/post-preview-${n}.jpeg`,
+      width: 512,
+      height: 512,
+    })),
+    gallery: null,
+  };
+
+  beforeEach(() => {
+    useDialogStore.getState().closeAll();
+    previewPostMutate.mockReset();
+    createPostMutate.mockReset();
+  });
+
+  test('on CONFIRM writes with the previewed image count and replies { result }', async () => {
+    previewPostMutate.mockResolvedValue(PREVIEW);
+    createPostMutate.mockResolvedValue({ postId: 901 });
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('CREATE_POST_FROM_APP', {
+      requestId: 'rq_post',
+      sources: [{ workflowId: 'wf_1' }, { workflowId: 'wf_2' }],
+    });
+
+    await vi.waitFor(() => expect(useDialogStore.getState().dialogs).toHaveLength(1));
+    expect(createPostMutate).not.toHaveBeenCalled();
+    await (lastDialog().props as ConfirmProps).onConfirm();
+
+    expect(createPostMutate).toHaveBeenCalledWith({
+      blockToken: 'tok_abc',
+      sources: [{ workflowId: 'wf_1' }, { workflowId: 'wf_2' }],
+      confirmedImageCount: 3,
+    });
+    expect(createPostMutate).toHaveBeenCalledTimes(1);
+    await vi.waitFor(() => {
+      const r = replies.last('CREATE_POST_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_post', result: { postId: 901 } });
+      expectReplyKeys('CREATE_POST_FROM_APP', 'success', ['result'], r.payload);
+    });
+    replies.stop();
+  });
+
+  test('no sources is refused with { error } before any server call', async () => {
+    renderWithProviders(<PageBlockHost {...baseProps} />);
+    await driveToReady();
+    const replies = listenForReply();
+
+    postFromBlock('CREATE_POST_FROM_APP', { requestId: 'rq_empty', sources: [] });
+
+    await vi.waitFor(() => {
+      const r = replies.last('CREATE_POST_RESULT');
+      if (!r) throw new Error('no reply yet');
+      expect(r.payload).toEqual({ requestId: 'rq_empty', error: 'no images to post' });
+      expectReplyKeys('CREATE_POST_FROM_APP', 'error', ['error'], r.payload);
+    });
+    expect(previewPostMutate).not.toHaveBeenCalled();
+    expect(useDialogStore.getState().dialogs).toHaveLength(0);
     replies.stop();
   });
 });

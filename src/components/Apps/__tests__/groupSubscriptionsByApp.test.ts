@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { groupSubscriptionsByApp, type SubscriptionRecord } from '../groupSubscriptionsByApp';
 
 /**
- * Pure unit tests for the /apps/installed one-row-per-app grouping. Node-env
+ * Pure unit tests for the /apps/activity one-row-per-app grouping. Node-env
  * vitest (no jsdom / RTL) — the consuming card UI in installed.tsx reduces to
  * "render whatever groupSubscriptionsByApp returns".
  */

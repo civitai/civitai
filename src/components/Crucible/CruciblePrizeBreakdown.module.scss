@@ -1,0 +1,35 @@
+@keyframes shimmer {
+  0% {
+    background-position: -200% center;
+  }
+  100% {
+    background-position: 200% center;
+  }
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.85;
+    transform: scale(1.02);
+  }
+}
+
+.amount {
+  font-size: 2rem;
+  line-height: 1.1;
+  background: linear-gradient(135deg, #6ee7b7 0%, #34d399 30%, #10b981 60%, #34d399 100%);
+  background-size: 200% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  animation: shimmer 4s linear infinite;
+}
+
+.pulse {
+  animation: pulse 3s ease-in-out infinite;
+}

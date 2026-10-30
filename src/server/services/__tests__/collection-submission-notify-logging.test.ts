@@ -1,46 +1,16 @@
 import { describe, expect, it, vi } from 'vitest';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
+loggingMock.logToAxiom.mockImplementation(() => Promise.reject(new Error('axiom is unreachable')));
 
-/**
- * Pins the `.catch()` on the best-effort `logToAxiom(...)` call in the submission-notify
- * failure handler inside `saveItemInCollections` (collection.service.ts).
- *
- * ## Why this is a separate file
- *
- * 🔴 The mock below is a PLAIN FUNCTION, not a `vi.fn()`, and that is the entire reason this
- * test can fail. A `vi.fn()` records settled results by attaching
- * `returnValue.then(onFulfilled, onRejected)` to whatever the implementation returns — which
- * MARKS a returned rejected promise as handled. Through a `vi.fn()` mock, Node therefore never
- * emits `unhandledRejection` whether or not the production `.catch()` has an actual handler, so
- * any assertion written against a `vi.fn()` mock passes either way: unfalsifiable, which is worse
- * than no test. (See `src/server/services/__tests__/cover-image.service.logging.test.ts`, the
- * precedent this file mirrors.)
- *
- * `collection-submission-notify-failure-isolation.test.ts` deliberately mocks
- * `~/server/logging/client` with a `vi.fn()` so it can assert on the log payload. The two mock
- * shapes cannot coexist in one file, hence this second file.
- */
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: () => Promise.reject(new Error('axiom is unreachable')),
+const { mockCreateNotification, mockHomeBlockCacheBust, mockQueueUpdate } = vi.hoisted(() => ({
+  mockCreateNotification: vi.fn(),
+  mockHomeBlockCacheBust: vi.fn(),
+  mockQueueUpdate: vi.fn(),
 }));
 
-const { mockDbRead, mockDbWrite, mockCreateNotification, mockHomeBlockCacheBust, mockQueueUpdate } =
-  vi.hoisted(() => ({
-    mockDbRead: {
-      collection: { findMany: vi.fn() },
-      $queryRaw: vi.fn(),
-      collectionContributor: { findMany: vi.fn() },
-      collectionItem: { findMany: vi.fn() },
-    },
-    mockDbWrite: {
-      $executeRaw: vi.fn(),
-      $transaction: vi.fn(),
-    },
-    mockCreateNotification: vi.fn(),
-    mockHomeBlockCacheBust: vi.fn(),
-    mockQueueUpdate: vi.fn(),
-  }));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/notification.service', () => ({
   createNotification: mockCreateNotification,
 }));

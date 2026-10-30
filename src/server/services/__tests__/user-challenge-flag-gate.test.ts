@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * User-created challenges are still behind the `userChallenges` flag, but entries are written
@@ -17,47 +18,33 @@ const COLLECTION_ID = 100;
 const USER_ID = 5;
 const IMAGE_ID = 9001;
 
-const { mockChargeEntryFees, mockChallengeFindFirst, mockDbRead } = vi.hoisted(() => {
-  const mockChargeEntryFees = vi.fn();
-  const mockChallengeFindFirst = vi.fn();
-  const mockDbRead = {
-    user: { findUnique: vi.fn() },
-    challenge: { findFirst: mockChallengeFindFirst },
-    collectionItem: { count: vi.fn(), findFirst: vi.fn() },
-    collection: { findMany: vi.fn() },
-    image: { findMany: vi.fn() },
-    article: { findMany: vi.fn() },
-    model: { findMany: vi.fn() },
-    post: { findMany: vi.fn() },
-    imageResourceNew: { findMany: vi.fn() },
-    $queryRaw: vi.fn(),
-  };
-  return { mockChargeEntryFees, mockChallengeFindFirst, mockDbRead };
-});
+const { mockChargeEntryFees } = vi.hoisted(() => ({ mockChargeEntryFees: vi.fn() }));
 
-vi.mock('~/server/redis/client', () => {
-  const make = (): any => new Proxy(() => 'k', { get: () => make() });
-  const keyProxy = make();
-  return {
-    redis: { get: vi.fn(), set: vi.fn(), packed: { get: vi.fn(), set: vi.fn() } },
-    sysRedis: { get: vi.fn(), set: vi.fn() },
-    REDIS_KEYS: keyProxy,
-    REDIS_SYS_KEYS: keyProxy,
-    REDIS_SUB_KEYS: keyProxy,
-    withSysReadDeadline: vi.fn((p) => p),
-  };
-});
+// `validateContestCollectionEntry` writes nothing; the entry-fee charge (the one side effect) is
+// stubbed below. Its challenge lookups read the primary — which client each one uses is pinned by
+// challenge-entry-gates-read-primary.test.ts, not here.
+const mockDbRead = dbMock.dbRead;
+const mockChallengeFindFirst = dbMock.dbWrite.challenge.findFirst;
+
+// `~/server/redis/client` is covered by the canonical mock registered in src/__tests__/setup.ts,
+// which also supplies the REAL REDIS_*_KEYS tables in place of the placeholder proxy that used to
+// answer every key lookup here. Nothing in this file asserts a key.
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: vi.fn() }));
-vi.mock('@civitai/db', () => ({ createLagTracker: vi.fn(() => ({})), loadDbEnv: vi.fn(() => ({})) }));
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: {} }));
-vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {},  pgDbRead: {}, pgDbWrite: {} }));
+vi.mock('@civitai/db', () => ({
+  createLagTracker: vi.fn(() => ({})),
+  loadDbEnv: vi.fn(() => ({})),
+}));
+vi.mock('~/server/db/pgDb', () => ({ pgDbReadLong: {}, pgDbRead: {}, pgDbWrite: {} }));
 vi.mock('~/server/db/db-lag-helpers', () => ({
   getDbWithoutLag: vi.fn(),
   preventReplicationLag: vi.fn(),
 }));
 vi.mock('~/server/search-index', () => ({}));
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: {} }));
-vi.mock('~/server/redis/caches', () => ({ tagIdsForImagesCache: {}, userCollectionCountCache: {} }));
+vi.mock('~/server/redis/caches', () => ({
+  tagIdsForImagesCache: {},
+  userCollectionCountCache: {},
+}));
 vi.mock('~/server/services/article.service', () => ({ getArticles: vi.fn() }));
 vi.mock('~/server/services/home-block-cache.service', () => ({ homeBlockCacheBust: vi.fn() }));
 vi.mock('~/server/services/image.service', () => ({
@@ -82,14 +69,16 @@ const { validateContestCollectionEntry } = await import('~/server/services/colle
 // The function makes several distinct `challenge.findFirst` lookups. The flag gate is the one
 // that filters on source alone (no entryFee/status/createdById), so dispatch on that shape.
 function wireChallengeFindFirst({ userChallengeCollection }: { userChallengeCollection: boolean }) {
-  mockChallengeFindFirst.mockImplementation(async ({ where }: { where: Record<string, unknown> }) => {
-    const isFlagGateLookup =
-      where.source === 'User' && !('entryFee' in where) && !('createdById' in where);
-    // status: 'Active' satisfies the assertUserChallengeAcceptingEntries timing gate (which shares
-    // this source-only lookup shape) so the flag-gate behavior under test is what actually decides.
-    if (isFlagGateLookup) return userChallengeCollection ? { id: 1, status: 'Active' } : null;
-    return null; // every other challenge lookup: nothing configured
-  });
+  mockChallengeFindFirst.mockImplementation(
+    async ({ where }: { where: Record<string, unknown> }) => {
+      const isFlagGateLookup =
+        where.source === 'User' && !('entryFee' in where) && !('createdById' in where);
+      // status: 'Active' satisfies the assertUserChallengeAcceptingEntries timing gate (which shares
+      // this source-only lookup shape) so the flag-gate behavior under test is what actually decides.
+      if (isFlagGateLookup) return userChallengeCollection ? { id: 1, status: 'Active' } : null;
+      return null; // every other challenge lookup: nothing configured
+    }
+  );
 }
 
 const entry = (overrides: Record<string, unknown> = {}) =>

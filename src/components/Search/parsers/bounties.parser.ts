@@ -1,5 +1,9 @@
 import type { InstantSearchRoutingParser } from '~/components/Search/parsers/base';
-import { searchParamsSchema } from '~/components/Search/parsers/base';
+import {
+  parseSearchParams,
+  searchParamsSchema,
+  stringArrayParamSchema,
+} from '~/components/Search/parsers/base';
 import * as z from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -10,7 +14,9 @@ export const BountiesSearchIndexSortBy = [
   BOUNTIES_SEARCH_INDEX,
   `${BOUNTIES_SEARCH_INDEX}:stats.unitAmountCountAllTime:desc`,
   `${BOUNTIES_SEARCH_INDEX}:stats.entryCountAllTime:desc`,
-  `${BOUNTIES_SEARCH_INDEX}:favoriteCountAllTime:desc`,
+  // `stats.`-prefixed, like its siblings: that is where the bounty document carries the count, and
+  // what the index declares sortable. A bare `favoriteCountAllTime` names no field at all.
+  `${BOUNTIES_SEARCH_INDEX}:stats.favoriteCountAllTime:desc`,
   `${BOUNTIES_SEARCH_INDEX}:createdAt`,
 ] as const;
 
@@ -20,18 +26,10 @@ const collectionSearchParamsSchema = searchParamsSchema
   .extend({
     index: z.literal('bounties'),
     sortBy: z.enum(BountiesSearchIndexSortBy),
-    baseModel: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    users: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    tags: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    type: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
+    baseModel: stringArrayParamSchema,
+    users: stringArrayParamSchema,
+    tags: stringArrayParamSchema,
+    type: stringArrayParamSchema,
   })
   .partial();
 
@@ -39,11 +37,10 @@ export type BountySearchParams = z.output<typeof collectionSearchParamsSchema>;
 
 export const bountiesInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
-    const collectionSearchIndexResult = collectionSearchParamsSchema.safeParse(
+    const collectionSearchIndexData = parseSearchParams(
+      collectionSearchParamsSchema,
       QS.parse(location.search)
     );
-    const collectionSearchIndexData: BountySearchParams | Record<string, string[]> =
-      collectionSearchIndexResult.success ? collectionSearchIndexResult.data : {};
 
     return { [BOUNTIES_SEARCH_INDEX]: removeEmpty(collectionSearchIndexData) };
   },

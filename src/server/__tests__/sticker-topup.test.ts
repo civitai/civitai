@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { buzzPurchaseTypes } from '~/shared/constants/buzz.constants';
 import { STICKER_TOPUP_CLAIM_KEY, STICKER_TOPUP_MAX_QUANTITY } from '~/shared/utils/sticker-token';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const findCosmetic = vi.fn();
 const findListing = vi.fn();
@@ -11,7 +12,7 @@ const refundMultiAccountTransaction = vi.fn();
 const createBuzzTransaction = vi.fn();
 const getBlockedPairIds = vi.fn();
 const refreshOwnedStickerCache = vi.fn();
-const logToAxiom = vi.fn();
+const logToAxiom = loggingMock.logToAxiom;
 
 // Every read in this path decides whether to charge or how much, so none may
 // come off the replica. `dbRead` throws rather than returning data: a lagging
@@ -45,12 +46,6 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 vi.mock('~/server/redis/caches', () => ({
   refreshOwnedStickerCache: (...args: unknown[]) => refreshOwnedStickerCache(...args),
 }));
-// Returns a promise, like the real one — which awaits its ingest with no
-// internal guard, so a degraded Axiom rejects.
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: (...args: unknown[]) => logToAxiom(...args),
-}));
-
 const { purchaseStickerUses } = await import('~/server/services/sticker.service');
 
 // Every quantity in scope is a different number, so no assertion can confuse
@@ -118,6 +113,28 @@ describe('purchaseStickerUses', () => {
     });
     createBuzzTransaction.mockResolvedValue({ transactionId: 'tx' });
     refreshOwnedStickerCache.mockResolvedValue(undefined);
+  });
+
+  // An event item (data.event) is sold only through the shop purchase, which
+  // checks the event window, the buyer's team and paid Buzz. A top-up checks
+  // none of them, so it must not sell one.
+  it('refuses an event-gated sticker before any charge', async () => {
+    findCosmetic.mockResolvedValue({
+      id: COSMETIC_ID,
+      name: 'party cat',
+      type: 'Sticker',
+      createdById: CREATOR,
+      data: {
+        slug: 'party_cat',
+        url: 'img',
+        uses: 100,
+        pricePerUse: PRICE_PER_USE,
+        event: 'any-event',
+      },
+    });
+
+    await expect(call()).rejects.toThrow("Event stickers can't be topped up");
+    expect(createMultiAccountBuzzTransaction).not.toHaveBeenCalled();
   });
 
   // A sticker sold only inside packs has no listing of its own. Without this the

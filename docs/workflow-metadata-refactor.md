@@ -190,12 +190,11 @@ image.step              // parent StepData
 
 ### What's been built
 
-**Helper modules (tested, 73 tests passing):**
+**Helper modules:**
 
 - ~~`workflow-metadata.ts` — `buildStepSource()` / `resolveStepSource()` for writing and reading `source` on step metadata~~ **(removed)** — this "Model A" representation (source nested under `step.metadata.source`, enhancement action at the root) was never wired into production. The live path stores the source generation's params at the step-metadata root with a `workflow` lineage marker, resolved inline by `formatStep()` in `orchestration-new.service.ts` and surfaced to clients as `NormalizedStepMetadata.sourceLineage`.
-- `step-ref.ts` — `$ref` helpers: `isStepRef`, `buildStepRef`, `assignStepNames`
+- `step-ref.ts` — `buildStepRef()` for `$ref` objects
 - `multi-graph.ts` — `processMultiGraphInputs()` for chained workflows
-- `index.ts` — `getStepParams()` / `getStepResources()` client helpers with fallback logic
 
 **Write path (production):**
 
@@ -273,9 +272,7 @@ Submit multiple generation-graphs in a single workflow request. Each graph = one
 
 ```ts
 type StepRef = { $ref: string; path: string };
-function isStepRef(value: unknown): value is StepRef;
 function buildStepRef(stepIndex: number, outputPath: string): StepRef;
-function assignStepNames(steps: WorkflowStepTemplate[]): WorkflowStepTemplate[];
 ```
 
 ## Key Files
@@ -283,8 +280,8 @@ function assignStepNames(steps: WorkflowStepTemplate[]): WorkflowStepTemplate[];
 | File | Role |
 | ---- | ---- |
 | `src/server/services/orchestrator/orchestration-new.service.ts` | Main service — write + read paths |
-| `src/server/services/orchestrator/index.ts` | Barrel exports, `getStepParams` / `getStepResources` helpers |
-| `src/server/services/orchestrator/step-ref.ts` | `$ref` helpers (tested) |
+| `src/server/services/orchestrator/index.ts` | Barrel exports (`WorkflowData`, `StepData`, normalized types) |
+| `src/server/services/orchestrator/step-ref.ts` | `buildStepRef()` |
 | `src/server/services/orchestrator/legacy-metadata-mapper.ts` | `mapDataToGraphInput()` — maps raw metadata to graph format |
 | `src/shared/utils/resource.utils.ts` | `toStepMetadata()` — converts graph output to params/resources |
 | `src/store/source-metadata.store.ts` | Client `SourceMetadata` type |

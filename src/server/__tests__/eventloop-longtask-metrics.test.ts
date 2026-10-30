@@ -50,10 +50,6 @@ vi.mock('~/server/prom/client', () => {
   };
 });
 
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
-}));
-
 import {
   recordDrift,
   classifyDrift,
@@ -62,6 +58,7 @@ import {
   LONGTASK_MAX_SUPPORTED_SUSPEND_CAP_MS,
   type DriftClassification,
 } from '~/server/eventloop-longtask';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const PREFIX = 'civitai_app_';
 const COUNTER = PREFIX + 'eventloop_longtask_total';

@@ -17,9 +17,10 @@ import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { FeedContentToggle } from '~/components/FeedContentToggle/FeedContentToggle';
 import { ArticleFiltersDropdown } from '~/components/Article/Infinite/ArticleFiltersDropdown';
+import { ActiveTagFilter } from '~/components/Tags/ActiveTagFilter';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { Page } from '~/components/AppLayout/Page';
-import { dbRead } from '~/server/db/client';
+import { getUserBannedAtByUsername } from '~/server/services/user-banned-at.service';
 
 export const getServerSideProps = createServerSideProps({
   useSSG: true,
@@ -33,7 +34,7 @@ export const getServerSideProps = createServerSideProps({
         },
       };
 
-    const user = await dbRead.user.findUnique({ where: { username }, select: { bannedAt: true } });
+    const user = await getUserBannedAtByUsername(username);
     if (user?.bannedAt)
       return {
         redirect: { destination: `/user/${username}`, permanent: true },
@@ -86,6 +87,7 @@ function UserArticlesPage() {
                   }}
                 />
               )}
+              {viewingPublished && <ActiveTagFilter tagIds={query.tags ?? []} />}
               {viewingPublished && (
                 <Group gap={8} ml="auto" wrap="nowrap">
                   <SortFilter

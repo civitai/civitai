@@ -11,7 +11,7 @@
 # Runtime reads REAL env vars from the deploy secret (.env is dev-only) — DB/CLICKHOUSE/REDIS/MEILI/KAFKA/S3/etc.
 
 ##### deps — install only this app's deps (frozen) ##############################
-FROM node:22-alpine AS deps
+FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS deps
 RUN apk add --no-cache libc6-compat && corepack enable && corepack prepare pnpm@10.28.1 --activate
 WORKDIR /app
 
@@ -39,12 +39,13 @@ RUN pnpm --filter @civitai/event-engine build
 ##### prod-deps — pruned, isolated production node_modules ######################
 # Deploy event-engine's OWN dependency closure (non-legacy). We must NOT use `--legacy`
 # here: legacy `pnpm deploy` builds a flat/hoisted tree from the WHOLE workspace graph and
-# hoists a single version of each package to the top level. The repo root (a workspace
-# member) declares `@clickhouse/client@^0.2.2`; event-engine declares `@clickhouse/client@^1.12.1`
-# (a major API break). Under `--legacy`, the root's 0.2.x won the hoist, so the built image
-# shipped `@clickhouse/client@0.2.x` at the top level even though event-engine's own manifest
-# pins ^1.12.1 — every ClickHouse insert then failed at runtime. Non-legacy deploy resolves
-# ONLY event-engine's closure and preserves per-package version isolation, so it links 1.12.x.
+# hoists a single version of each package to the top level. When the repo root declared
+# `@clickhouse/client@^0.2.2` against event-engine's `^1.12.1` (a major API break), the root's
+# 0.2.x won the hoist under `--legacy`, so the built image shipped 0.2.x at the top level even
+# though event-engine's own manifest pinned ^1.12.1 — every ClickHouse insert then failed at
+# runtime. The root is on ^1.23.1 now, so that particular pair no longer conflicts; the rule
+# stands because the next diverging dependency would hoist the same way. Non-legacy deploy
+# resolves ONLY event-engine's closure and preserves per-package version isolation.
 # pnpm 10 gates non-legacy deploy behind `inject-workspace-packages` — event-engine depends on
 # NO @civitai/* workspace package, so injection is a no-op here; we just need the gate open.
 FROM deps AS prod-deps
@@ -54,7 +55,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     --config.inject-workspace-packages=true /app/deploy
 
 ##### runtime ###################################################################
-FROM node:22-alpine AS runtime
+FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S nodejs -g 1001 && adduser -S nodeapp -u 1001

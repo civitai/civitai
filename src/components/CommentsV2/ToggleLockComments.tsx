@@ -31,12 +31,14 @@ export function ToggleLockComments({
   const { mutate, isPending: isLoading } = trpc.commentv2.toggleLockThread.useMutation({
     onMutate: async () => {
       queryUtils.commentv2.getThreadDetails.setData({ entityId, entityType }, (old) => {
-        if (!old) return { id: -1, locked: true, hiddenCount: 0 };
+        if (!old) return { id: -1, locked: true };
         return { ...old, locked: !old.locked };
       });
     },
     onSuccess: () => {
       queryUtils.commentv2.getThreadDetails.invalidate({ entityId, entityType });
+      // A surface on the v3 comment suite reads its lock from there.
+      void queryUtils.commentv3.invalidate();
       onSuccess?.();
     },
     onError: () => {

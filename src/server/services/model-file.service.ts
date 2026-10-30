@@ -1,4 +1,5 @@
 import { Prisma } from '@prisma/client';
+import { deleteUnlessHeld, modelRowHeldSql } from '~/server/services/legal-hold.service';
 import { TRPCError } from '@trpc/server';
 import { CacheTTL, constants, KEY_VALUE_KEYS } from '~/server/common/constants';
 import type { ModelFileType } from '~/server/common/constants';
@@ -7,9 +8,12 @@ import { dbRead, dbWrite } from '~/server/db/client';
 import { dbKV } from '~/server/db/db-helpers';
 import { logToAxiom } from '~/server/logging/client';
 import { REDIS_KEYS } from '~/server/redis/client';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import type { GetByIdInput } from '~/server/schema/base.schema';
+import type { ColorDomain } from '~/shared/constants/domain.constants';
 import type {
   ModelFileCreateInput,
+  ModelFileMetadata,
   ModelFileUpdateInput,
   RecentTrainingDataInput,
 } from '~/server/schema/model-file.schema';
@@ -26,10 +30,19 @@ import {
   ModelHashType,
   ModelStatus,
   ModelUploadType,
+  TrainingStatus,
 } from '~/shared/utils/prisma/enums';
+import { resourceDataCache } from '~/server/redis/resource-data.redis';
+import { bustOrchestratorModelCache } from '~/server/services/orchestrator/models';
 import { deleteModelFileObject } from '~/utils/s3-utils';
+import { deregisterFileLocationsByFile } from '~/utils/storage-resolver';
 import { primaryModelFileTypes } from '~/utils/file-display-helpers';
 import { prepareFile } from '~/utils/file-helpers';
+import {
+  assertFileTypeChangeAllowed,
+  assertVersionAcceptsNewUpload,
+} from '~/server/utils/model-file-replace';
+import { assertClientFileUrlAllowed } from '~/server/utils/model-file-url-bound';
 
 export type ModelFileCached = AsyncReturnType<typeof fetchModelFilesForCache>[number];
 export async function fetchModelFilesForCache(ids: number[]) {
@@ -49,7 +62,13 @@ export async function fetchModelFilesForCache(ids: number[]) {
     );
 }
 
-export const filesForModelVersionCache = createCachedObject({
+/**
+ * NOT EXPORTED — on purpose. Every read must go through `getFilesForModelVersionCache` (which
+ * hands back a caller-owned `files` array) and every bust through
+ * `deleteFilesForModelVersionCache`. Keeping the cache object module-private makes bypassing
+ * the accessor structurally impossible rather than merely discouraged by a comment.
+ */
+const filesForModelVersionCache = createCachedObject({
   key: REDIS_KEYS.CACHES.FILES_FOR_MODEL_VERSION,
   idKey: 'modelVersionId',
   ttl: CacheTTL.day,
@@ -78,8 +97,55 @@ export function reduceToBasicFileMetadata(
   };
 }
 
+/**
+ * Read the per-version file lists, returning records whose nested `files` array is the
+ * CALLER'S OWN — safe to append to, sort, or splice.
+ *
+ * 🔴 THE COPY IS FORWARD-PROTECTION, NOT A FIX FOR A LIVE MUTATOR. The one mutator that
+ * existed — `getModelsWithVersions` doing `files.push(...vaeFile)` — is gone; that call site
+ * now builds a new array (`model.service.ts`). So no caller in the tree mutates the returned
+ * `files` today, and this copy is deliberately kept as belt-and-braces for the NEXT one.
+ *
+ * 🔴 That does NOT make the two halves circular. The call site is pinned INDEPENDENTLY of this
+ * copy by `model.service.vae-append-no-mutation.test.ts`, which stubs this accessor to hand back
+ * the raw cache-owned array — the copy removed — so restoring the `push` turns it red on its own.
+ * Deleting this copy is therefore a real decision, not a no-op, and one that must be argued
+ * against the cache layer's own contract below (relevant if the deep-clone in issue #3872 lands:
+ * a clone THERE would make this copy redundant, but only once it is actually in place).
+ *
+ * What it protects against is the shared cache layer, whose contract is genuinely unsafe here:
+ * `createCachedArray` only ever SHALLOW-clones a record before handing it out, and says so —
+ * "shallow only protects TOP-LEVEL fields — nested refs are shared … consumers MUST treat
+ * returned values as read-only for nested fields"
+ * (`packages/civitai-redis/src/cached-array.ts`). Its FAIL-OPEN DEGRADED fetch (taken whenever
+ * a cluster read rejects) resolves ONE record per id for every caller that joins the in-flight
+ * lookup, so the shallow clone leaves all of them holding the SAME `files` array. An in-process
+ * L1 hit shares it the same way; this cache sets no `localTtl`, so that path is latent.
+ *
+ * Because `filesForModelVersionCache` is module-private, EVERY read routes through here, which
+ * is what makes this the single place a future appender can be made safe. Cost is one array
+ * copy per record (~a few hundred short-lived allocations per feed hydration) — negligible
+ * against the msgpack unpack already done on the same path.
+ *
+ * Array-level is the right DEPTH: no consumer mutates an individual file object, only the list.
+ * Guarded rather than unconditional so a record without a `files` array keeps its pre-existing
+ * shape instead of throwing on a hot public-API path. NOTE: with the real cache that guard is
+ * not reachable — `lookupFn` above always initialises `files: []`, and marker records are
+ * skipped inside the cache layer — so its test is an invariant guard, not regression coverage.
+ *
+ * The result is built into a `typeof records`-annotated object rather than cast: the annotation
+ * is the only thing that makes dropping a field from the returned shape a type error.
+ */
 export async function getFilesForModelVersionCache(modelVersionIds: number[]) {
-  return await filesForModelVersionCache.fetch(modelVersionIds);
+  const records = await filesForModelVersionCache.fetch(modelVersionIds);
+  const isolated: typeof records = {};
+  for (const [id, record] of Object.entries(records)) {
+    isolated[id] = {
+      ...record,
+      files: Array.isArray(record.files) ? [...record.files] : record.files,
+    };
+  }
+  return isolated;
 }
 export async function deleteFilesForModelVersionCache(modelVersionId: number) {
   await filesForModelVersionCache.bust(modelVersionId);
@@ -92,6 +158,11 @@ export async function createFile<TSelect extends Prisma.ModelFileSelect>({
   ...data
 }: ModelFileCreateInput & { select: TSelect; userId: number; isModerator?: boolean }) {
   const file = prepareFile(data);
+  // `name` is the uploaded file name, which some model types publish as the download name.
+  await throwOnBlockedUserContent([data.overrideName, data.name], {
+    isModerator,
+    surface: 'model-file',
+  });
 
   const ownsVersion = await dbWrite.modelVersion.findFirst({
     where: { id: data.modelVersionId, model: !isModerator ? { userId } : undefined },
@@ -118,78 +189,282 @@ export async function updateFile({
   isModerator,
   backend: _backend,
   s3Path: _s3Path,
+  // Ignored, not honoured: the lookup below authorizes the file you may EDIT, not a version you may
+  // move it to, so writing this would let an owner attach their file to anyone's model version. The
+  // upsert callers send the file's existing version, so dropping it changes nothing for them; the
+  // create branch still takes it from `modelFileCreateSchema`.
+  modelVersionId: _modelVersionId,
+  uploadDomain,
+  urlFromClient,
   ...inputData
-}: ModelFileUpdateInput & { userId: number; isModerator?: boolean }) {
+}: ModelFileUpdateInput & {
+  userId: number;
+  isModerator?: boolean;
+  /** The request's domain, stamped onto a new training-data upload. Never the client's value. */
+  uploadDomain?: ColorDomain | null;
+  /** A new url came from a client, so it must name an object the caller may attach. */
+  urlFromClient?: boolean;
+}) {
   const modelFile = await dbWrite.modelFile.findUnique({
     where: { id, modelVersion: { model: !isModerator ? { userId } : undefined } },
-    select: {
-      id: true,
-      url: true,
-      metadata: true,
-      modelVersionId: true,
-      sizeKB: true,
-      modelVersion: { select: { modelId: true } },
-    },
+    select: replaceableFileSelect,
   });
   if (!modelFile) throw throwNotFoundError();
 
-  // If URL is changing, capture the old one for S3 cleanup
-  const oldUrl = inputData.url && inputData.url !== modelFile.url ? modelFile.url : undefined;
+  // Only a changed name: the editor re-sends the stored ones with every file save, and scanning them
+  // would leave a file whose name trips a list impossible to edit in any other way.
+  const changedNames = [
+    inputData.overrideName !== modelFile.overrideName ? inputData.overrideName : undefined,
+    inputData.name !== modelFile.name ? inputData.name : undefined,
+  ].filter(Boolean);
+  if (changedNames.length)
+    await throwOnBlockedUserContent(changedNames, { isModerator, surface: 'model-file' });
+
+  assertFileTypeChangeAllowed(modelFile, inputData.type);
 
   metadata = metadata ? { ...(modelFile.metadata as Prisma.JsonObject), ...metadata } : undefined;
-  // CAS guard on URL changes: only apply if the row's url is still what we read.
-  // Prevents two concurrent URL-changing updateFile calls from both scheduling a
-  // delete of the same captured `oldUrl`. Pure-metadata updates skip the guard
-  // so they aren't starved by url-change races.
-  const updateResult = await dbWrite.modelFile.updateMany({
-    where: oldUrl ? { id, url: modelFile.url } : { id },
-    data: {
-      ...inputData,
-      metadata,
-    },
-  });
 
-  // CAS lost: another writer swapped the URL between findUnique and updateMany.
-  // Surface the conflict instead of silently returning success — the caller
-  // needs to know their write did NOT apply. Skip the cache bust too, since
-  // we didn't change anything that would invalidate it.
-  if (oldUrl && updateResult.count === 0) {
-    throw throwBadRequestError(
-      'ModelFile URL was modified concurrently; retry your update'
-    );
+  if (inputData.url && inputData.url !== modelFile.url) {
+    if (urlFromClient)
+      await assertClientFileUrlAllowed({
+        url: inputData.url,
+        userId,
+        isModerator: !!isModerator,
+        modelVersionId: modelFile.modelVersionId,
+        op: 'replace',
+      });
+    return replaceFileContent({
+      file: modelFile,
+      input: { ...inputData, url: inputData.url, metadata },
+      userId,
+      isModerator,
+      uploadDomain: uploadDomain ?? null,
+    });
   }
 
+  const { count } = await dbWrite.modelFile.updateMany({
+    where: { id },
+    data: { ...inputData, metadata },
+  });
+  // Replaced or deleted since the lookup above: nothing was written.
+  if (count === 0) throw throwNotFoundError();
   await deleteFilesForModelVersionCache(modelFile.modelVersionId);
 
-  // Clean up old S3 object after DB update succeeds (best-effort).
-  // Only fires when we actually swapped the URL on this call — pure-metadata
-  // updates have no oldUrl to clean up. Terminal .catch on the chain so an
-  // Axiom-side rejection can't leak as an unhandled rejection in this
-  // fire-and-forget path. The refcount check inside deleteModelFileObject is
-  // the load-bearing safety: it skips the delete if any other ModelFile row
-  // still references the URL.
-  if (oldUrl) {
-    deleteModelFileObject(oldUrl)
-      .catch((error) =>
-        logToAxiom({
-          type: 'error',
-          name: 'model-file-delete-s3-object',
-          message: `Failed to delete old S3 object for file ${id}`,
-          error,
-        })
-      )
-      .catch(() => {});
-  }
-
   // Merge committed updates back into the snapshot so the returned record
-  // reflects post-update state (e.g. `sizeKB` on a re-upload). `updateMany`
-  // doesn't return the updated row, and we don't want a second round-trip.
+  // reflects post-update state. `updateMany` doesn't return the updated row,
+  // and we don't want a second round-trip.
   return {
     ...modelFile,
     metadata,
     ...(inputData.sizeKB !== undefined ? { sizeKB: inputData.sizeKB } : {}),
+    replacedFileId: undefined as number | undefined,
   };
 }
+
+const replaceableFileSelect = {
+  id: true,
+  name: true,
+  overrideName: true,
+  url: true,
+  type: true,
+  visibility: true,
+  metadata: true,
+  modelVersionId: true,
+  sizeKB: true,
+  modelVersion: {
+    select: {
+      modelId: true,
+      baseModel: true,
+      status: true,
+      trainingStatus: true,
+      uploadType: true,
+      model: { select: { type: true, userId: true } },
+    },
+  },
+} satisfies Prisma.ModelFileSelect;
+
+type ReplaceableFile = Prisma.ModelFileGetPayload<{ select: typeof replaceableFileSelect }>;
+
+/**
+ * A new upload behind an existing file becomes a new file record: the old row (and its hashes) is
+ * deleted and a new one created in its place, unscanned, so nothing recorded about the old object
+ * carries over to the new one.
+ */
+async function replaceFileContent({
+  file,
+  input,
+  userId,
+  isModerator,
+  uploadDomain,
+}: {
+  file: ReplaceableFile;
+  input: Omit<ModelFileUpdateInput, 'id' | 'modelVersionId' | 'backend' | 's3Path'> & {
+    url: string;
+  };
+  userId: number;
+  isModerator?: boolean;
+  uploadDomain: ColorDomain | null;
+}) {
+  // Fails fast on the snapshot; the transaction below re-checks against the locked version row.
+  assertVersionAcceptsNewUpload(file.modelVersion, file.type);
+
+  const { overrideName, ...fields } = input;
+  const type = (fields.type ?? file.type) as ModelFileType;
+  const metadata = { ...((fields.metadata ?? file.metadata ?? {}) as ModelFileMetadata) };
+  // Provenance is server-owned: a training-data upload carries the domain of the request that
+  // uploaded it, whatever the request said its type was.
+  delete metadata.uploadDomain;
+  if (type === 'Training Data' && uploadDomain) metadata.uploadDomain = uploadDomain;
+  const prepared = prepareFile({
+    name: fields.name ?? file.name,
+    url: fields.url,
+    sizeKB: fields.sizeKB ?? file.sizeKB,
+    type,
+    visibility: fields.visibility ?? file.visibility,
+    metadata,
+  });
+  const fileName = prepared.name;
+
+  const created = await dbWrite.$transaction(async (tx) => {
+    // Lock the version so a training submit or a publish cannot interleave with the swap: both
+    // write this row, so they either finish first (and the re-check refuses) or wait for us.
+    const [version] = await tx.$queryRaw<
+      { status: ModelStatus; trainingStatus: TrainingStatus | null }[]
+    >`
+      SELECT status, "trainingStatus" FROM "ModelVersion"
+      WHERE id = ${file.modelVersionId}::int
+      FOR UPDATE
+    `;
+    if (!version) throw throwNotFoundError();
+    assertVersionAcceptsNewUpload(version, file.type);
+
+    // A held owner's file is not replaced: the replace deletes the old row and its bytes.
+    const outcome = await deleteUnlessHeld(
+      tx.$executeRaw`
+      DELETE FROM "ModelFile" mf
+      USING "ModelVersion" mv, "Model" m
+      WHERE mf.id = ${file.id}
+        AND mf.url = ${file.url}
+        AND mv.id = mf."modelVersionId"
+        AND m.id = mv."modelId"
+        ${isModerator ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
+        AND NOT ${modelRowHeldSql()}
+    `,
+      {
+        expected: 1,
+        isModerator,
+        db: tx,
+        ownerFrom: fileOwnerSql(file.id, isModerator ? undefined : userId),
+        held: modelRowHeldSql(),
+      }
+    );
+    // Another writer replaced or removed the file since we read it.
+    if (outcome === 'short')
+      throw throwBadRequestError('ModelFile URL was modified concurrently; retry your update');
+
+    const row = await tx.modelFile.create({
+      data: {
+        ...prepared,
+        overrideName: overrideName !== undefined ? overrideName : file.overrideName,
+        rawScanResult: Prisma.JsonNull,
+        modelVersionId: file.modelVersionId,
+      },
+      select: { id: true },
+    });
+
+    // Other versions can link this file as a component (settings.fileId) and would lose it
+    // without a repoint. Any file type can be linked, so this always runs; "resourceId" is
+    // unindexed, so it is a scan of RecommendedResource.
+    const linkedFrom = await tx.$queryRaw<{ sourceId: number | null }[]>`
+      UPDATE "RecommendedResource"
+      SET settings = settings || jsonb_build_object(
+        'fileId', ${row.id}::int,
+        'fileName', ${fileName}::text
+      )
+      WHERE "resourceId" = ${file.modelVersionId}::int
+        AND settings->>'isLinkedComponent' = 'true'
+        AND settings->>'fileId' = ${String(file.id)}
+      RETURNING "sourceId"
+    `;
+
+    return { id: row.id, linkedSourceIds: linkedFrom.flatMap((r) => r.sourceId ?? []) };
+  });
+
+  // Logged, not thrown, from here on: the replacement has landed, and an error now would send the
+  // caller back to retry against the old id, which no longer exists.
+  await deleteFilesForModelVersionCache(file.modelVersionId).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'model-file-url-change',
+      message: `Failed to bust the file list for file ${file.id}`,
+      error,
+    }).catch(() => undefined)
+  );
+
+  // The orchestrator resolves a version's files by AIR and caches what it resolved, and
+  // resourceDataCache holds the version's coverage (and linked components) for an hour; all of it
+  // still describes the old file.
+  await Promise.all([
+    resourceDataCache.bust([file.modelVersionId, ...created.linkedSourceIds]),
+    bustOrchestratorModelCache(file.modelVersionId),
+  ]).catch((error) =>
+    logToAxiom({
+      type: 'error',
+      name: 'model-file-url-change',
+      message: `Failed to bust resource caches for file ${file.id}`,
+      error,
+    }).catch(() => undefined)
+  );
+
+  // Best-effort, after commit. The refcount check inside deleteModelFileObject skips the delete if
+  // any other ModelFile row still references the url.
+  deleteModelFileObject(file.url)
+    .catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-delete-s3-object',
+        message: `Failed to delete old S3 object for file ${file.id}`,
+        error,
+      })
+    )
+    .catch(() => undefined);
+  deregisterFileLocationsByFile([file.id])
+    .catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'model-file-delete-deregister-file-locations',
+        message: `Failed to deregister file locations for file ${file.id}`,
+        error,
+      })
+    )
+    .catch(() => undefined);
+
+  return {
+    ...file,
+    id: created.id,
+    name: prepared.name,
+    overrideName: overrideName !== undefined ? overrideName : file.overrideName,
+    url: prepared.url,
+    type: prepared.type,
+    visibility: prepared.visibility ?? file.visibility,
+    sizeKB: prepared.sizeKB,
+    metadata: prepared.metadata as Prisma.JsonObject,
+    replacedFileId: file.id as number | undefined,
+  };
+}
+
+/** The file `id` with its model owner as `m."userId"`, for `ownerHeld`; only `userId`'s when given. */
+function fileOwnerSql(id: number, userId?: number) {
+  return Prisma.sql`
+    FROM "ModelFile" mf
+    JOIN "ModelVersion" mv ON mv.id = mf."modelVersionId"
+    JOIN "Model" m ON m.id = mv."modelId"
+    WHERE mf.id = ${id}
+    ${userId === undefined ? Prisma.empty : Prisma.sql`AND m."userId" = ${userId}`}
+  `;
+}
+
+const reviewedDatasetStatuses: TrainingStatus[] = [TrainingStatus.Paused, TrainingStatus.Denied];
 
 export async function deleteFile({
   id,
@@ -206,6 +481,7 @@ export async function deleteFile({
       type: true,
       modelVersion: {
         select: {
+          trainingStatus: true,
           model: {
             select: { status: true },
           },
@@ -215,6 +491,17 @@ export async function deleteFile({
   });
 
   if (!file) throw throwNotFoundError();
+
+  // A dataset under review, or denied, stays on record for moderators; only they may remove it.
+  if (
+    file.type === 'Training Data' &&
+    file.modelVersion.trainingStatus &&
+    reviewedDatasetStatuses.includes(file.modelVersion.trainingStatus) &&
+    !isModerator
+  )
+    throw throwBadRequestError(
+      "Training data for a training run under review or denied can't be deleted."
+    );
 
   const modelStatus = file.modelVersion.model.status;
   const isTrainingFile = file.type === 'Training Data';
@@ -227,20 +514,40 @@ export async function deleteFile({
     );
   }
 
-  const rows = await dbWrite.$queryRaw<
-    { modelVersionId: number; modelId: number; url: string }[]
-  >`
+  let rows: { modelVersionId: number; modelId: number; url: string }[] = [];
+  // A held owner's file is refused. Scoped to the caller's own files, so a stranger cannot tell a
+  // held file from a missing one.
+  await deleteUnlessHeld(
+    dbWrite.$queryRaw<typeof rows>`
     DELETE FROM "ModelFile" mf
     USING "ModelVersion" mv, "Model" m
     WHERE mf."modelVersionId" = mv.id
     AND mv."modelId" = m.id
     AND mf.id = ${id}
     ${isModerator ? Prisma.empty : Prisma.raw(`AND m."userId" = ${userId}`)}
+    AND NOT ${modelRowHeldSql()}
+    ${
+      // Repeats the check above at delete time, in case the run was moved to review in between.
+      isModerator
+        ? Prisma.empty
+        : // COALESCE: a NULL status would make the whole condition NULL and drop every dataset row.
+          Prisma.sql`AND NOT (mf.type = 'Training Data' AND COALESCE(mv."trainingStatus"::text, '') IN (${Prisma.join(
+            reviewedDatasetStatuses
+          )}))`
+    }
     RETURNING
       mv.id as "modelVersionId",
       m.id as "modelId",
       mf.url as "url"
-  `;
+  `.then((deleted) => (rows = deleted).length),
+    {
+      expected: 1,
+      isModerator,
+      db: dbWrite,
+      ownerFrom: fileOwnerSql(id, isModerator ? undefined : userId),
+      held: modelRowHeldSql(),
+    }
+  );
 
   const row = rows[0];
   if (row?.modelVersionId) await deleteFilesForModelVersionCache(row.modelVersionId);
@@ -263,6 +570,28 @@ export async function deleteFile({
         })
       )
       .catch(() => {});
+  }
+
+  // Post-commit: drop this file's storage-resolver registry row (best-effort).
+  // Deleting one file leaves its model version alive, so the version-keyed
+  // deregistration can never reach this entry — without a file-keyed call the
+  // registry keeps describing a file that no longer exists. Keyed on `id`, the
+  // id the DELETE above actually removed (a returned `row` is the proof it did),
+  // never a re-read. Same fire-and-forget shape as the object cleanup beside it,
+  // with a terminal .catch so an Axiom-side rejection can't leak as an unhandled
+  // rejection. The helper is best-effort and never throws, but the wrapper keeps
+  // a future change from turning a registry blip into a failed delete.
+  if (row) {
+    deregisterFileLocationsByFile([id])
+      .catch((error) =>
+        logToAxiom({
+          type: 'error',
+          name: 'model-file-delete-deregister-file-locations',
+          message: `Failed to deregister file locations for file ${id}`,
+          error,
+        })
+      )
+      .catch(() => undefined);
   }
 
   return row ? { modelVersionId: row.modelVersionId, modelId: row.modelId } : undefined;
@@ -328,7 +657,11 @@ export async function restoreReplacedFile({ id }: { id: number }) {
 
   await dbWrite.modelFile.update({
     where: { id },
-    data: { replacedAt: null, visibility: priorVisibility, metadata: restMetadata as Prisma.InputJsonValue },
+    data: {
+      replacedAt: null,
+      visibility: priorVisibility,
+      metadata: restMetadata as Prisma.InputJsonValue,
+    },
   });
 
   await deleteFilesForModelVersionCache(file.modelVersionId);
@@ -344,7 +677,7 @@ export const getRecentTrainingData = async ({
   const where: Prisma.ModelFileWhereInput[] = [
     { type: 'Training Data' },
     { dataPurged: false },
-    { modelVersion: { uploadType: ModelUploadType.Trained, model: { userId } } },
+    { modelVersion: { uploadType: ModelUploadType.Trained, model: { userId, deletedAt: null } } },
   ];
 
   if (filters.hasLabels === true || filters.labelType !== null) {
@@ -441,7 +774,9 @@ function dedupeOptions(values: string[]) {
 function normalizeModelFileOptions(value: unknown): ModelFileOptions {
   const v = (value ?? {}) as Partial<Record<keyof ModelFileOptions, unknown>>;
   const pick = (input: unknown, fallback: string[]) => {
-    const list = Array.isArray(input) ? input.filter((x): x is string => typeof x === 'string') : [];
+    const list = Array.isArray(input)
+      ? input.filter((x): x is string => typeof x === 'string')
+      : [];
     const cleaned = dedupeOptions(list);
     return cleaned.length ? cleaned : fallback;
   };

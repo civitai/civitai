@@ -1,0 +1,35 @@
+/* `<civitai-chat>` styles itself from `--civitai-*` custom properties, which inherit into its shadow
+   root. Mapping them onto Mantine's variables keeps it in the site theme (both schemes) without
+   loading `@civitai/theme`'s global stylesheet. */
+.chat {
+  --civitai-color-text: var(--mantine-color-text);
+  --civitai-color-text-dimmed: var(--mantine-color-dimmed);
+  --civitai-color-body: var(--mantine-color-body);
+  --civitai-color-surface: var(--mantine-color-default);
+  --civitai-color-surface-2: var(--mantine-color-default-hover);
+  --civitai-color-border: var(--mantine-color-default-border);
+  --civitai-color-primary: var(--mantine-primary-color-filled);
+  --civitai-color-primary-hover: var(--mantine-primary-color-filled-hover);
+  --civitai-color-primary-fg: var(--mantine-primary-color-contrast);
+  --civitai-color-primary-light: var(--mantine-primary-color-light);
+  --civitai-color-error: var(--mantine-color-error);
+  --civitai-color-warning: var(--mantine-color-yellow-filled);
+  --civitai-color-anchor: var(--mantine-color-anchor);
+  --civitai-color-media-placeholder: var(--mantine-color-default-hover);
+  --civitai-color-gray-7: var(--mantine-color-gray-7);
+  --civitai-radius: var(--mantine-radius-md);
+  --civitai-font-family: var(--mantine-font-family);
+  --civitai-font-mono: var(--mantine-font-family-monospace);
+
+  display: block;
+  height: 100%;
+  min-height: 0;
+}
+
+/* The chat and the preview each scroll on their own, so the workspace fills its scroll container
+   instead of growing with its content. `useFillScrollParent` sets the height; the calc is the
+   fallback until it has measured. */
+.workspace {
+  height: var(--assistant-fill-height, calc(100dvh - var(--header-height) - 8rem));
+  min-height: 32rem;
+}

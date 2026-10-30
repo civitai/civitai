@@ -94,15 +94,15 @@
       <Table.Body>
         {#each pageRows as m (m.modelId)}
           <Table.Row>
-            <Table.Cell class="max-w-80">
+            <Table.Cell>
               <a
                 href={modelUrl(m.modelId, m)}
                 target="_blank"
                 rel="noreferrer"
-                class="inline-flex items-center gap-1 truncate text-dark-1 hover:text-white hover:underline"
+                class="flex max-w-80 items-center gap-1 text-dark-1 hover:text-white hover:underline"
                 title={m.name ?? `Model ${m.modelId}`}
               >
-                <span class="truncate">{m.name ?? `Model ${m.modelId}`}</span>
+                <span class="block min-w-0 flex-1 truncate">{m.name ?? `Model ${m.modelId}`}</span>
                 <IconExternalLink size={13} class="shrink-0 text-dark-3" />
               </a>
             </Table.Cell>

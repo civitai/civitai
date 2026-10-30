@@ -95,7 +95,7 @@ function envDisabled(name: string): boolean {
 let rlWindowStartMs = 0;
 let rlCountThisWindow = 0;
 let rlDroppedSinceEmit = 0;
-let rlSeenPaths = new Set<string>();
+const rlSeenPaths = new Set<string>();
 
 /**
  * Per-window, path-aware gate. Returns the number of lines suppressed-by-ceiling
@@ -150,6 +150,11 @@ export interface TrpcSlowLogInput {
   errorCode?: string;
   /** Numeric user id (internal, not PII) when authenticated. */
   userId?: number;
+}
+
+/** The slow threshold, ms, for a procedure that logs its own breakdown beside this line. */
+export function trpcSlowLogThresholdMs(): number {
+  return envNumber('TRPC_SLOW_LOG_MS', DEFAULT_SLOW_MS, 1);
 }
 
 /**

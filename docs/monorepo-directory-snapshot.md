@@ -109,7 +109,7 @@ model-share/
 │   │   │   └── prisma/
 │   │   │       ├── enums.ts                      # SHIM — re-exports from @civitai/db (Prisma-generated)
 │   │   │       └── models.ts                     # SHIM — re-exports from @civitai/db
-│   │   └── ... (data-graph, tiptap, etc. unchanged)
+│   │   └── ... (generation, tiptap, etc. unchanged)
 │   ├── store/
 │   ├── styles/
 │   ├── types/

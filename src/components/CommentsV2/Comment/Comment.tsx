@@ -9,14 +9,18 @@ import {
   Stack,
   Text,
   ThemeIcon,
+  Tooltip,
   UnstyledButton,
 } from '@mantine/core';
 import {
   IconArrowBackUp,
   IconArrowRight,
+  IconBell,
+  IconBellOff,
   IconCaretDownFilled,
   IconDotsVertical,
   IconEdit,
+  IconExclamationCircle,
   IconEye,
   IconEyeOff,
   IconFlag,
@@ -24,11 +28,13 @@ import {
   IconLink,
   IconPinned,
   IconPinnedOff,
+  IconShieldOff,
   IconTrash,
 } from '@tabler/icons-react';
 import { useClipboard } from '@mantine/hooks';
 import clsx from 'clsx';
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
+import { useScrollToHighlightedComment } from '~/components/CommentsV2/Comment/useScrollToHighlightedComment';
 import { create } from 'zustand';
 import { CommentBadge } from '~/components/CommentsV2/Comment/CommentBadge';
 import {
@@ -49,11 +55,18 @@ import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import { type Comment } from '~/server/services/commentsv2.service';
+import { type Comment as CommentModel } from '~/server/services/commentsv2.service';
+import { closeAllModals, openConfirmModal } from '@mantine/modals';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
 import { constants } from '../../../server/common/constants';
 import { useMutateComment } from '../commentv2.utils';
+import {
+  HiddenCommentAvatar,
+  HiddenCommentLabel,
+  HideAgainButton,
+  useHiddenCommentReveal,
+} from './HiddenComment';
 import classes from './Comment.module.css';
 import { CommentForm } from './CommentForm';
 import { CommentProvider, useCommentV2Context } from './CommentProvider';
@@ -71,7 +84,7 @@ const useStore = create<Store>((set) => ({
 }));
 
 type CommentProps = Omit<GroupProps, 'children'> & {
-  comment: Comment;
+  comment: CommentModel;
   viewOnly?: boolean;
   highlight?: boolean;
   resourceOwnerId?: number;
@@ -98,6 +111,7 @@ export function CommentContent({
   const { setExpanded, setRootThread, rootEntityType } = useRootThreadContext();
   const { entityId, entityType, highlighted, level } = useCommentsContext();
   const { canDelete, canEdit, canReply, canHide, canPin, badge, canReport } = useCommentV2Context();
+  const { concealed, reveal, conceal } = useHiddenCommentReveal(comment.hidden);
 
   const seededThreads = useSeededReplyThreads();
   const seededThread = seededThreads.byCommentId.get(comment.id);
@@ -115,13 +129,48 @@ export function CommentContent({
   const currentUser = useCurrentUser();
   const clipboard = useClipboard();
 
-  const { toggleHide, togglePinned } = useMutateComment();
+  const {
+    toggleHide,
+    togglePinned,
+    setTosViolation,
+    settingTosViolation,
+    toggleThreadMute,
+    togglingThreadMute,
+  } = useMutateComment();
+
+  // Fetched only while the menu is open: the alternative is one query per comment on every feed.
+  const [menuOpened, setMenuOpened] = useState(false);
+  const { data: threadMute } = trpc.commentv2.getThreadMuted.useQuery(
+    { commentId: comment.id },
+    { enabled: menuOpened && !!currentUser }
+  );
 
   const handleCopyLink = () => {
-    const url = new URL(window.location.href);
-    url.searchParams.set('highlight', String(comment.id));
-    clipboard.copy(url.toString());
+    // Resolve through /comments/<id> rather than patching the current URL: the latter keeps
+    // whatever deep-link params (commentParentId, threadId) the page arrived with, so a link copied
+    // from a notification thread stays rooted on the notification's comment instead of this one.
+    clipboard.copy(`${window.location.origin}/comments/${comment.id}`);
     showSuccessNotification({ message: 'Comment link copied to clipboard' });
+  };
+
+  const handleRemoveAsTos = () => {
+    openConfirmModal({
+      title: 'Remove as ToS violation',
+      children: (
+        <Text size="sm">
+          This flags the comment as a Terms of Service violation, actions any matching reports and
+          notifies the author. Are you sure?
+        </Text>
+      ),
+      centered: true,
+      labels: { confirm: 'Remove as ToS violation', cancel: 'Cancel' },
+      confirmProps: { color: 'red', loading: settingTosViolation },
+      closeOnConfirm: false,
+      onConfirm: () =>
+        setTosViolation({ id: comment.id })
+          .catch(() => null)
+          .finally(() => closeAllModals()),
+    });
   };
 
   const handleCopyId = () => {
@@ -134,24 +183,7 @@ export function CommentContent({
 
   const isHighlighted = highlighted === comment.id;
 
-  useEffect(() => {
-    if (!isHighlighted) return;
-    const elem = document.getElementById(`comment-${comment.id}`);
-    if (!elem) return;
-    const center = () => elem.scrollIntoView({ behavior: 'auto', block: 'center' });
-    const recenterIfDrifted = () => {
-      const rect = elem.getBoundingClientRect();
-      if (rect.top < 0 || rect.bottom > window.innerHeight) center();
-    };
-    // Initial scroll, then retry as layout settles (images, late mounts, paginated batches)
-    center();
-    const t1 = window.setTimeout(recenterIfDrifted, 100);
-    const t2 = window.setTimeout(recenterIfDrifted, 500);
-    return () => {
-      window.clearTimeout(t1);
-      window.clearTimeout(t2);
-    };
-  }, [isHighlighted, comment.id]);
+  useScrollToHighlightedComment(isHighlighted, comment.id);
 
   const maxDepth = constants.comments.getMaxDepth({ entityType: rootEntityType ?? entityType });
   // Subscribe per comment rather than to the whole set: opening one thread must not re-render
@@ -191,33 +223,47 @@ export function CommentContent({
             <IconArrowsMaximize size={16} />
           </UnstyledButton>
         )} */}
-        <UserAvatar user={comment.user} size="sm" linkToProfile />
+        {concealed ? (
+          <HiddenCommentAvatar size={26} />
+        ) : (
+          <UserAvatar user={comment.user} size="sm" linkToProfile />
+        )}
       </Group>
 
       <Stack gap={0} style={{ flex: 1 }}>
         <Group justify="space-between">
-          {/* AVATAR */}
-          <Group gap={8} align="center">
-            <UserAvatar
-              user={comment.user}
-              size="md"
-              linkToProfile
-              includeAvatar={false}
-              withUsername
-              badge={badge ? <CommentBadge {...badge} /> : null}
-            />
-            <Text c="dimmed" size="xs" mt={2}>
-              <DaysFromNow date={comment.createdAt} />
-            </Text>
-            {comment.pinnedAt && (
-              <ThemeIcon size="sm" color="orange">
-                <IconPinned size={16} stroke={2} />
-              </ThemeIcon>
-            )}
-          </Group>
+          {concealed ? (
+            <HiddenCommentLabel onShow={reveal} />
+          ) : (
+            <Group gap={8} align="center">
+              <UserAvatar
+                user={comment.user}
+                size="md"
+                linkToProfile
+                includeAvatar={false}
+                withUsername
+                badge={badge ? <CommentBadge {...badge} /> : null}
+              />
+              <Text c="dimmed" size="xs" mt={2}>
+                <DaysFromNow date={comment.createdAt} />
+              </Text>
+              {comment.pinnedAt && (
+                <ThemeIcon size="sm" color="orange">
+                  <IconPinned size={16} stroke={2} />
+                </ThemeIcon>
+              )}
+              {currentUser?.isModerator && comment.tosViolation && (
+                <Tooltip label="Has TOS Violation">
+                  <ThemeIcon color="orange" size="xs">
+                    <IconExclamationCircle />
+                  </ThemeIcon>
+                </Tooltip>
+              )}
+            </Group>
+          )}
 
           {/* CONTROLS */}
-          <Menu position="bottom-end" withinPortal>
+          <Menu position="bottom-end" withinPortal opened={menuOpened} onChange={setMenuOpened}>
             <Menu.Target>
               <LegacyActionIcon size="xs" variant="subtle">
                 <IconDotsVertical size={14} />
@@ -292,12 +338,51 @@ export function CommentContent({
                   </Menu.Item>
                 </LoginRedirect>
               )}
+              {currentUser && (
+                // Already silenced from further up, so unmuting here would delete nothing and then
+                // claim the notifications were back on. Says where the mute lives instead.
+                <Menu.Item
+                  leftSection={
+                    threadMute?.muted ? (
+                      <IconBell size={14} stroke={1.5} />
+                    ) : (
+                      <IconBellOff size={14} stroke={1.5} />
+                    )
+                  }
+                  // Not merely cosmetic: the mutation toggles from DB state, so clicking a control
+                  // labelled "Mute" before the query lands UNMUTES an already-muted thread.
+                  disabled={
+                    !threadMute ||
+                    threadMute.viaAncestor ||
+                    togglingThreadMute ||
+                    !threadMute.canMute
+                  }
+                  onClick={() => toggleThreadMute({ commentId: comment.id }).catch(() => null)}
+                >
+                  {threadMute?.viaAncestor
+                    ? 'Muted with the thread above'
+                    : threadMute && !threadMute.canMute
+                    ? 'No replies to mute yet'
+                    : threadMute?.muted
+                    ? 'Unmute this thread'
+                    : 'Mute this thread'}
+                </Menu.Item>
+              )}
               <Menu.Item leftSection={<IconLink size={14} stroke={1.5} />} onClick={handleCopyLink}>
                 Copy link
               </Menu.Item>
               {currentUser?.isModerator && (
                 <Menu.Item leftSection={<IconId size={14} stroke={1.5} />} onClick={handleCopyId}>
                   Copy comment ID
+                </Menu.Item>
+              )}
+              {currentUser?.isModerator && !comment.tosViolation && (
+                <Menu.Item
+                  color="red"
+                  leftSection={<IconShieldOff size={14} stroke={1.5} />}
+                  onClick={handleRemoveAsTos}
+                >
+                  Remove as ToS violation
                 </Menu.Item>
               )}
             </Menu.Dropdown>
@@ -307,35 +392,40 @@ export function CommentContent({
         <Stack style={{ flex: 1 }} gap={4}>
           {!editing ? (
             <>
-              <Box my={5}>
-                <LineClamp className="text-sm" lineClamp={3} variant="block">
-                  <RenderHtml
-                    html={comment.content}
-                    allowCustomStyles={false}
-                    withMentions
-                    withProfanityFilter
-                    allowStickers
-                  />
-                </LineClamp>
-              </Box>
+              {!concealed && (
+                <Box my={5}>
+                  <LineClamp className="text-sm" lineClamp={3} variant="block">
+                    <RenderHtml
+                      html={comment.content}
+                      allowCustomStyles={false}
+                      withMentions
+                      withProfanityFilter
+                      allowStickers
+                    />
+                  </LineClamp>
+                </Box>
+              )}
               {/* COMMENT INTERACTION */}
-              <Group gap={4}>
-                <CommentReactions comment={comment} />
-                {canReply && !viewOnly && (
-                  <Button
-                    variant="subtle"
-                    radius="xl"
-                    onClick={() => setReplying(true)}
-                    size="compact-xs"
-                    color="gray"
-                  >
-                    <Group gap={4}>
-                      <IconArrowBackUp size={14} />
-                      Reply
-                    </Group>
-                  </Button>
-                )}
-              </Group>
+              {!concealed && (
+                <Group gap={4}>
+                  <CommentReactions comment={comment} />
+                  {comment.hidden && <HideAgainButton onClick={conceal} />}
+                  {canReply && !viewOnly && (
+                    <Button
+                      variant="subtle"
+                      radius="xl"
+                      onClick={() => setReplying(true)}
+                      size="compact-xs"
+                      color="gray"
+                    >
+                      <Group gap={4}>
+                        <IconArrowBackUp size={14} />
+                        Reply
+                      </Group>
+                    </Button>
+                  )}
+                </Group>
+              )}
             </>
           ) : (
             <CommentForm comment={comment} onCancel={() => setId(undefined)} autoFocus />
@@ -382,6 +472,7 @@ export function CommentContent({
 function CommentReplies({ commentId, replyCount }: { commentId: number; replyCount: number }) {
   const { level, badges } = useCommentsContext();
   const { setRootThread } = useRootThreadContext();
+  const { resourceOwnerId } = useCommentV2Context();
 
   return (
     <Stack mt="md" className={classes.replyInset}>
@@ -400,7 +491,7 @@ function CommentReplies({ commentId, replyCount }: { commentId: number; replyCou
           ) : (
             <Stack>
               {data?.map((comment) => (
-                <Comment key={comment.id} comment={comment} />
+                <Comment key={comment.id} comment={comment} resourceOwnerId={resourceOwnerId} />
               ))}
               {/* A thread too long to sit inline opens on its own rather than paging in place —
                   paging here grows an already-indented block with no end in sight, behind a
@@ -420,7 +511,7 @@ function CommentReplies({ commentId, replyCount }: { commentId: number; replyCou
                 </Group>
               )}
               {created.map((comment) => (
-                <Comment key={comment.id} comment={comment} />
+                <Comment key={comment.id} comment={comment} resourceOwnerId={resourceOwnerId} />
               ))}
             </Stack>
           )

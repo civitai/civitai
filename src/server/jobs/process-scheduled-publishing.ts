@@ -2,13 +2,14 @@ import { Prisma } from '@prisma/client';
 import { dbWrite } from '~/server/db/client';
 import { eventEngine } from '~/server/events';
 import { NotificationCategory, SearchIndexUpdateQueueAction } from '~/server/common/enums';
-import { POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
+import { constants, POST_MINIMUM_SCHEDULE_MINUTES } from '~/server/common/constants';
 import { uniq, uniqBy } from 'lodash-es';
 import { logToAxiom } from '~/server/logging/client';
 import { dataForModelsCache, userImageVideoCountCaches } from '~/server/redis/caches';
 import { firstDailyPostReward } from '~/server/rewards';
 import { getFirstDailyPostRewardedIds } from '~/server/rewards/active/firstDailyPost.reward';
 import { queueImageSearchIndexUpdate } from '~/server/services/image.service';
+import { publishDueScheduledArticles } from '~/server/services/article-schedule.service';
 import { modelsSearchIndex } from '~/server/search-index';
 import {
   bustMvCache,
@@ -16,8 +17,11 @@ import {
 } from '~/server/services/model-version.service';
 import { createNotification } from '~/server/services/notification.service';
 import { updateComicNsfwLevels } from '~/server/services/nsfwLevels.service';
+import { markComicProjectsChapterPublished } from '~/server/services/comics/chapter-publish.service';
+import { scanEntitiesInBackground } from '~/server/services/text-scan/submit';
 import { isDefined } from '~/utils/type-guards';
 import { createJob, getJobDate } from './job';
+import { notRemovedWithOwnerSql } from '~/server/utils/legal-hold';
 
 type ScheduledEntity = {
   id: number;
@@ -29,6 +33,137 @@ type ScheduledEntity = {
 // across a large batch would otherwise be reward-applied row by row in one run.
 const REWARD_SWEEP_LIMIT = 5000;
 
+// The due selects skip a model a content wipe kept as the go-live statements do, or its side effects
+// (cache busts, index updates) fire again every run on a model that never goes live.
+
+/** Scheduled models due by `now`. */
+export const scheduledModelsDueSql = (now: Date) => Prisma.sql`
+  SELECT id, "userId"
+  FROM "Model"
+  WHERE status = 'Scheduled'
+    AND "publishedAt" <= ${now}
+    AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
+    AND ${notRemovedWithOwnerSql('meta')}
+`;
+
+/** Scheduled versions due by `now` that have a file, with their early access. */
+export const scheduledVersionsDueSql = (now: Date) => Prisma.sql`
+  SELECT
+    mv.id,
+    m."userId",
+    JSON_BUILD_OBJECT(
+      'modelId', m.id,
+      'hasEarlyAccess', EXISTS (
+        SELECT 1 FROM "PaidAccess" pa
+        WHERE pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
+          AND pa."timeframeDays" IS NOT NULL
+      ),
+      'earlyAccessEndsAt', (
+        SELECT pa."endsAt" FROM "PaidAccess" pa
+        WHERE pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
+      )
+    ) as "extras"
+  FROM "ModelVersion" mv
+  JOIN "Model" m ON m.id = mv."modelId"
+  WHERE mv.status = 'Scheduled'
+    AND mv."publishedAt" <= ${now}
+    AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+    AND ${notRemovedWithOwnerSql('m.meta')}
+    AND EXISTS (SELECT 1 FROM "ModelFile" mf WHERE mf."modelVersionId" = mv.id)
+`;
+
+/** Unpublished posts by the model's owner on a scheduled version due by `now`. */
+export const scheduledPostsDueSql = (now: Date) => Prisma.sql`
+  SELECT p.id, p."userId"
+  FROM "Post" p
+  JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
+  JOIN "Model" m ON m.id = mv."modelId"
+  WHERE p."publishedAt" IS NULL
+    AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
+    AND m."userId" = p."userId"
+    AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+    AND ${notRemovedWithOwnerSql('m.meta')}
+`;
+
+// DB clock, truncated: sync_model_to_metric drops a lastVersionAt later than NOW(), and the
+// timestamp(3) column rounds a bare NOW() UP about half the time. Either leaves
+// ModelMetric.lastVersionAt NULL and the model off feeds.
+/** Stamps `lastVersionAt` on models with versions going live. */
+export const lastVersionAtSql = (modelIds: number[]) => Prisma.sql`
+  UPDATE "Model"
+  SET "lastVersionAt" = date_trunc('milliseconds', NOW())
+  WHERE id IN (${Prisma.join(modelIds)})
+    AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
+    AND ${notRemovedWithOwnerSql('meta')}
+`;
+
+/**
+ * The locked (post, version) pairs go live with their version. Respects `prevPublishedAt`, so a
+ * republished post keeps its original date.
+ */
+export const scheduledPostsGoLiveSql = (
+  locked: { postId: number; versionId: number }[],
+  now: Date
+) => Prisma.sql`
+  UPDATE "Post" p
+  SET
+    "publishedAt" = CASE
+      WHEN p."metadata"->>'prevPublishedAt' IS NOT NULL
+      THEN (p."metadata"->>'prevPublishedAt')::timestamptz
+      ELSE mv."publishedAt"
+    END,
+    "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt' - 'unpublishedReason'
+  FROM "ModelVersion" mv
+  JOIN "Model" m ON m.id = mv."modelId"
+  WHERE (p.id, p."modelVersionId") IN (${Prisma.join(
+    locked.map(({ postId, versionId }) => Prisma.sql`(${postId}, ${versionId})`)
+  )})
+    AND (p."publishedAt" IS NULL)
+    AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
+    AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
+    AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+    AND m.status::text NOT IN (${Prisma.join(constants.modPublishOnlyStatuses)})
+    AND ${notRemovedWithOwnerSql('m.meta')}
+  RETURNING p.id, p."userId"
+`;
+
+/**
+ * Scheduled versions due by `now` go live, unless their model's moderation rule, a take-down or a
+ * content wipe's record stops them.
+ */
+export const scheduledVersionsGoLiveSql = (ids: number[], now: Date) => Prisma.sql`
+  UPDATE "ModelVersion" mv
+  SET status = 'Published', availability = 'Public'
+  FROM "Model" m
+  WHERE mv.id IN (${Prisma.join(ids)})
+    AND mv."modelId" = m.id
+    AND mv.status = 'Scheduled'
+    AND mv."publishedAt" <= ${now}
+    AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
+    AND m.status::text NOT IN (${Prisma.join(constants.modPublishOnlyStatuses)})
+    -- A model a content wipe kept goes live only by a moderator's hand.
+    AND ${notRemovedWithOwnerSql('m.meta')}
+  RETURNING mv.id
+`;
+
+/** Scheduled models due by `now` go live, unless a moderation rule or a wipe's record stops them. */
+export const scheduledModelsGoLiveSql = (ids: number[], now: Date) => Prisma.sql`
+  UPDATE "Model"
+  SET status = 'Published'
+  WHERE id IN (${Prisma.join(ids)})
+    AND status = 'Scheduled'
+    AND "publishedAt" <= ${now}
+    AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE)
+    AND ${notRemovedWithOwnerSql('meta')}
+    -- After the version UPDATE, so a version it just published counts. A model whose versions all
+    -- wait on their files stays Scheduled with them.
+    AND EXISTS (
+      SELECT 1 FROM "ModelVersion" mv
+      WHERE mv."modelId" = "Model".id AND mv.status = 'Published'
+    )
+  RETURNING id
+`;
+
 export const processScheduledPublishing = createJob(
   'process-scheduled-publishing',
   '*/1 * * * *',
@@ -37,63 +172,19 @@ export const processScheduledPublishing = createJob(
     const now = new Date();
 
     // Get things to publish
-    const scheduledModels = await dbWrite.$queryRaw<ScheduledEntity[]>`
-      SELECT
-        id,
-        "userId"
-      FROM "Model"
-      WHERE status = 'Scheduled' 
-        AND "publishedAt" <= ${now}
-        AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
-    `;
-    const scheduledModelVersions = await dbWrite.$queryRaw<ScheduledEntity[]>`
-      SELECT
-        mv.id,
-        m."userId",
-        JSON_BUILD_OBJECT(
-          'modelId', m.id,
-          'hasEarlyAccess', EXISTS (
-            SELECT 1 FROM "PaidAccess" pa
-            WHERE pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
-              AND pa."timeframeDays" IS NOT NULL
-          ),
-          'earlyAccessEndsAt', (
-            SELECT pa."endsAt" FROM "PaidAccess" pa
-            WHERE pa."entityType" = 'ModelVersion' AND pa."entityId" = mv.id
-          )
-        ) as "extras"
-      FROM "ModelVersion" mv
-      JOIN "Model" m ON m.id = mv."modelId"
-      WHERE mv.status = 'Scheduled'
-        AND mv."publishedAt" <= ${now}
-        AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE)
-        AND EXISTS (
-          SELECT 1
-          FROM "ModelFile" mf
-          WHERE mf."modelVersionId" = mv.id
-        );
-    `;
-    const scheduledPosts = await dbWrite.$queryRaw<ScheduledEntity[]>`
-      SELECT
-        p.id,
-        p."userId"
-      FROM "Post" p
-      JOIN "ModelVersion" mv ON mv.id = p."modelVersionId"
-      JOIN "Model" m ON m.id = mv."modelId"
-      WHERE
-        (p."publishedAt" IS NULL)
-      AND mv.status = 'Scheduled' AND mv."publishedAt" <=  ${now}
-      AND m."userId" = p."userId"
-      AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
-    `;
+    const scheduledModels = await dbWrite.$queryRaw<ScheduledEntity[]>(scheduledModelsDueSql(now));
+    const scheduledModelVersions = await dbWrite.$queryRaw<ScheduledEntity[]>(
+      scheduledVersionsDueSql(now)
+    );
+    const scheduledPosts = await dbWrite.$queryRaw<ScheduledEntity[]>(scheduledPostsDueSql(now));
 
     // Standalone scheduled posts go live passively once feeds stop filtering on
     // "publishedAt" — no status flips, so this window is the only publish-time hook.
-    // The createdAt offset can't exclude a scheduled post (the offset is enforced at
-    // schedule time) but it does let through drafts that sat over an hour before
-    // being published normally — roughly a sixth of all publishes. They're harmless
-    // to the reward, which dedups per post, but any further side effect added to this
-    // sweep fires on them too.
+    // The createdAt offset must never exceed the schedule minimum: post.controller treats
+    // anything that far ahead as scheduled and skips the inline reward, so a larger offset
+    // here leaves short schedules unrewarded for good. It also lets through drafts published
+    // normally after sitting that long. They're harmless to the reward, which dedups per
+    // post, but any further side effect added to this sweep fires on them too.
     //
     // Never widen the window past the start of the UTC day: the reward's dedup entry
     // expires then, so a window spanning midnight re-grants yesterday's posts. That
@@ -149,14 +240,10 @@ export const processScheduledPublishing = createJob(
           AND "publishedAt" <= ${now}
       `;
 
-      // Update project publishedAt for first-time publishing projects
       const projectIds = [...new Set(scheduledComicChapters.map((ch) => ch.projectId))];
-      for (const projectId of projectIds) {
-        await dbWrite.comicProject.updateMany({
-          where: { id: projectId, publishedAt: null },
-          data: { publishedAt: now },
-        });
+      await markComicProjectsChapterPublished(projectIds, now);
 
+      for (const projectId of projectIds) {
         // Update NSFW levels — chapter recompute must complete before project
         // recompute or the project reads stale chapter levels.
         await updateComicNsfwLevels([projectId]).catch((e) =>
@@ -196,58 +283,55 @@ export const processScheduledPublishing = createJob(
       }
     }
 
-    await dbWrite.$transaction(
+    // What the UPDATEs below actually published, with each post's owner as of the write: they
+    // re-check every row, so one taken down or moved since the selects drops out, and must get none
+    // of the side effects. Returned rather than assigned out, so a rollback yields none.
+    const { flippedPosts, publishedModelIds, publishedVersionIds } = await dbWrite.$transaction(
       async (tx) => {
+        let flipped: ScheduledEntity[] = [];
+        let publishedModels = new Set<number>();
+        let publishedVersions = new Set<number>();
         const modelsToUpdate = [
           ...new Set(scheduledModelVersions.map(({ extras }) => extras?.modelId).filter(isDefined)),
         ];
 
-        if (modelsToUpdate.length) {
-          await tx.$executeRaw`
-            -- Update last version of models with versions transitioned to published
-            UPDATE "Model"
-            SET "lastVersionAt" = ${now}
-            WHERE id IN (${Prisma.join(modelsToUpdate)})
-              AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
+        // Models, then versions, each by id: the order the model publish and takedown paths take
+        // them, which lock their one model first. Without it this crosses them and either side can
+        // be picked as the deadlock victim.
+        const lockModelIds = uniq([...scheduledModels.map(({ id }) => id), ...modelsToUpdate]);
+        if (lockModelIds.length)
+          await tx.$queryRaw`
+            SELECT id FROM "Model" WHERE id IN (${Prisma.join(lockModelIds)})
+            ORDER BY id FOR NO KEY UPDATE
           `;
-        }
+        const scheduledVersionIds = scheduledModelVersions.map(({ id }) => id);
+        if (scheduledVersionIds.length)
+          await tx.$queryRaw`
+            SELECT id FROM "ModelVersion" WHERE id IN (${Prisma.join(scheduledVersionIds)})
+            ORDER BY id FOR NO KEY UPDATE
+          `;
 
-        if (scheduledModels.length) {
-          const scheduledModelIds = scheduledModels.map(({ id }) => id);
+        if (modelsToUpdate.length) await tx.$executeRaw(lastVersionAtSql(modelsToUpdate));
 
-          await tx.$executeRaw`
-          -- Make scheduled models published
-          UPDATE "Model" 
-          SET status = 'Published'
-          WHERE id IN (${Prisma.join(scheduledModelIds)})
-            AND status = 'Scheduled'
-            AND "publishedAt" <= ${now}
-            AND (meta IS NULL OR (meta->>'cannotPublish')::boolean IS NOT TRUE);
-        `;
-        }
-
-        if (scheduledPosts.length) {
+        if (scheduledPosts.length && scheduledVersionIds.length) {
           const scheduledPostIds = scheduledPosts.map(({ id }) => id);
 
-          await tx.$queryRaw<{ id: number }[]>`
-          -- Update scheduled versions posts
-          -- Respect prevPublishedAt metadata to preserve original date on republish
-          UPDATE "Post" p
-          SET
-            "publishedAt" = CASE
-              WHEN p."metadata"->>'prevPublishedAt' IS NOT NULL
-              THEN (p."metadata"->>'prevPublishedAt')::timestamptz
-              ELSE mv."publishedAt"
-            END,
-            "metadata" = p."metadata" - 'unpublishedAt' - 'unpublishedBy' - 'prevPublishedAt'
-          FROM "ModelVersion" mv
-          JOIN "Model" m ON m.id = mv."modelId"
-          WHERE p.id IN (${Prisma.join(scheduledPostIds)})
-            AND (p."publishedAt" IS NULL)
-            AND mv.id = p."modelVersionId" AND m."userId" = p."userId"
-            AND mv.status = 'Scheduled' AND mv."publishedAt" <= ${now}
-            AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
-        `;
+          // Lock the posts after their versions, in the order a moderator's version takedown takes
+          // them before unpublishing its owner's live posts, which these are not yet: unlocked, a
+          // takedown in flight is unseen by the UPDATE below and its cascade misses these posts.
+          // Only the (post, version) pairs locked here are published, and only onto a version this
+          // run publishes, so a post never goes live ahead of its version: one whose version the
+          // select above skipped, or that moved to another version meanwhile, waits for a later run.
+          const locked = await tx.$queryRaw<{ postId: number; versionId: number }[]>`
+            SELECT p.id AS "postId", mv.id AS "versionId" FROM "ModelVersion" mv
+            JOIN "Post" p ON p."modelVersionId" = mv.id
+            WHERE p.id IN (${Prisma.join(scheduledPostIds)})
+              AND mv.id IN (${Prisma.join(scheduledVersionIds)})
+            FOR NO KEY UPDATE OF mv, p
+          `;
+
+          if (locked.length)
+            flipped = await tx.$queryRaw<ScheduledEntity[]>(scheduledPostsGoLiveSql(locked, now));
           // Images are reindexed post-commit via queueImageSearchIndexUpdate
           // below — the db trigger's updatedAt bump isn't reliably picked up by
           // the metrics_images index.
@@ -258,34 +342,70 @@ export const processScheduledPublishing = createJob(
             .filter((item) => !!item.extras?.hasEarlyAccess)
             .map(({ id }) => id);
 
-          await tx.$executeRaw`
-            -- Update scheduled versions published
-            UPDATE "ModelVersion" mv 
-            SET status = 'Published', availability = 'Public'
-            FROM "Model" m
-            WHERE mv.id IN (${Prisma.join(scheduledModelVersions.map(({ id }) => id))})
-              AND mv."modelId" = m.id
-              AND mv.status = 'Scheduled'
-              AND mv."publishedAt" <= ${now}
-              AND (m.meta IS NULL OR (m.meta->>'cannotPublish')::boolean IS NOT TRUE);
-          `;
+          const published = await tx.$queryRaw<{ id: number }[]>(
+            scheduledVersionsGoLiveSql(scheduledVersionIds, now)
+          );
+          // Only what that statement published: it re-checks the status, so a version a moderator
+          // took down after the select above drops out here, and the early-access publish, which
+          // writes by id, never sees it.
+          publishedVersions = new Set(published.map(({ id }) => id));
+          const earlyAccessPublished = earlyAccess.filter((id) => publishedVersions.has(id));
 
-          if (earlyAccess.length) {
+          if (earlyAccessPublished.length) {
             // The only downside to this failing is that the model version will be published with no early access.
             // Initially, I think this will be OK.
             await publishModelVersionsWithEarlyAccess({
-              modelVersionIds: earlyAccess,
+              modelVersionIds: earlyAccessPublished,
               continueOnError: true,
               tx,
             });
           }
         }
+
+        if (scheduledModels.length) {
+          const scheduledModelIds = scheduledModels.map(({ id }) => id);
+
+          const published = await tx.$queryRaw<{ id: number }[]>(
+            scheduledModelsGoLiveSql(scheduledModelIds, now)
+          );
+          publishedModels = new Set(published.map(({ id }) => id));
+        }
+
+        return {
+          flippedPosts: flipped,
+          publishedModelIds: publishedModels,
+          publishedVersionIds: publishedVersions,
+        };
       },
       { timeout: 30000 }
     );
 
+    // Undated until now, so never scanned. First after the commit: the steps below are unguarded, and
+    // these posts are live now, so the next run never selects them again — a scan skipped is lost.
+    if (flippedPosts.length)
+      scanEntitiesInBackground(
+        'Post',
+        flippedPosts.map((p) => p.id)
+      );
+
+    // Before the engagements, which are unguarded: a throw there aborts the run, and these versions
+    // already read Published, so the next run never selects them again — a bust skipped here is lost.
+    // Each bust is guarded so that moving them first cannot let one cache fault cancel the engagements.
+    for (const modelVersion of scheduledModelVersions) {
+      await bustMvCache(modelVersion.id, modelVersion.extras?.modelId).catch((error) =>
+        logToAxiom({
+          name: 'process-scheduled-publishing',
+          type: 'error',
+          message: 'model version cache bust failed',
+          modelVersionId: modelVersion.id,
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
+    }
+
     // Process event engagements
     for (const model of scheduledModels) {
+      if (!publishedModelIds.has(model.id)) continue;
       await eventEngine.processEngagement({
         userId: model.userId,
         type: 'published',
@@ -294,19 +414,19 @@ export const processScheduledPublishing = createJob(
       });
     }
     for (const modelVersion of scheduledModelVersions) {
+      if (!publishedVersionIds.has(modelVersion.id)) continue;
       await eventEngine.processEngagement({
         userId: modelVersion.userId,
         type: 'published',
         entityType: 'modelVersion',
         entityId: modelVersion.id,
       });
-      await bustMvCache(modelVersion.id, modelVersion.extras?.modelId);
     }
     // Neither scheduled path reaches the inline side effects in post.controller, so
     // they land here on the day the post actually goes live. The sweep half of this
     // set also carries normally-published drafts, so anything driven off it has to
     // tolerate being handed the same post id twice.
-    const publishedPosts = uniqBy([...scheduledPosts, ...newlyLivePosts], 'id');
+    const publishedPosts = uniqBy([...flippedPosts, ...newlyLivePosts], 'id');
 
     for (const post of publishedPosts) {
       await eventEngine.processEngagement({
@@ -357,11 +477,12 @@ export const processScheduledPublishing = createJob(
       );
     }
 
-    // Reindex the just-published posts' images so the metrics_images feed picks
-    // up their new sort position (GREATEST(publishedAt, scannedAt, createdAt)).
-    if (scheduledPosts.length) {
+    // Both halves, not just the posts this job flips: a standalone scheduled post goes live
+    // by the clock with no write, and images_v6 rejects a future-dated post at pull time —
+    // so the enqueue from schedule time never landed and this sweep is its only hook.
+    if (publishedPosts.length) {
       const images = await dbWrite.image.findMany({
-        where: { postId: { in: scheduledPosts.map((p) => p.id) } },
+        where: { postId: { in: publishedPosts.map((p) => p.id) } },
         select: { id: true },
       });
       if (images.length) {
@@ -370,9 +491,12 @@ export const processScheduledPublishing = createJob(
           action: SearchIndexUpdateQueueAction.Update,
         });
       }
+    }
+
+    if (flippedPosts.length) {
       // This job publishes via raw SQL rather than updatePost, so it owns the
       // count refresh for the posts it flips.
-      await userImageVideoCountCaches.refresh(uniq(scheduledPosts.map((p) => p.userId)));
+      await userImageVideoCountCaches.refresh(uniq(flippedPosts.map((p) => p.userId)));
     }
 
     const processedModelIds = [
@@ -387,6 +511,19 @@ export const processScheduledPublishing = createJob(
         processedModelIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
       );
     }
+
+    // Last and caught: an article fault must not stop the run being recorded.
+    const goLive = await publishDueScheduledArticles(now).catch((error) =>
+      logToAxiom({
+        name: 'process-scheduled-publishing',
+        type: 'error',
+        message: 'scheduled article go-live failed',
+        error: (error as Error)?.message,
+      }).catch(() => undefined)
+    );
+    // Scanned when scheduled; this re-arms a scan that ran out of retries, and is a no-op otherwise.
+    const liveArticleIds = goLive ? [...goLive.published, ...goLive.processing] : [];
+    if (liveArticleIds.length) scanEntitiesInBackground('Article', liveArticleIds);
 
     await setLastRun();
   }

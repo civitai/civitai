@@ -1,105 +1,31 @@
 #!/usr/bin/env node
 /**
- * PreToolUse hook for Bash commands.
+ * PreToolUse hook for Bash commands: reads the tool call on stdin and answers on stdout.
  *
- * Behaviors:
- *   - Dangerous commands (taskkill node.exe, etc): Block outright (exit code 2)
- *   - Database writes (--writable): Prompt user for confirmation (JSON with "ask")
- *   - Everything else: Allow (exit code 0)
+ * Wiring only — every decision lives in check-writable.logic.mjs, which is what tests import.
+ * There is deliberately NO "am I the main module" check here: the one that was tried compared
+ * `resolve(process.argv[1])` against the realpath in `import.meta.url`, so a symlink or a
+ * directory junction anywhere in the path made the hook attach nothing, exit 0, and allow every
+ * command — with no error to read. A file that is only ever executed cannot get that wrong.
  */
 
 import { stdin } from 'process';
 
-// `prettier --write <targets>`: the incident was a repo-WIDE rewrite, not formatting a directory
-// this change owns. Read the targets instead of matching `--write`, so a scoped path just runs.
-function prettierWriteTargets(command) {
-  return command
-    .split(/[;&|]+/)
-    .filter((seg) => /\bprettier\b/.test(seg) && /--write/.test(seg))
-    .flatMap((seg) =>
-      seg
-        .slice(seg.indexOf('--write') + '--write'.length)
-        // Drop redirections and their operands (`2>&1`, `> out.log`) — they are not format targets.
-        .replace(/\d*[<>]+&?\s*[^\s]*/g, ' ')
-        .split(/\s+/)
-        .map((t) => t.replace(/^['"]|['"]$/g, ''))
-        // Not targets: flags, and redirections (`2>&1`, `> out.txt`) that survive the segment split.
-        .filter((t) => t && !t.startsWith('-') && !/[<>]/.test(t))
-    );
-}
-
-// The rule from CLAUDE.md is about BREADTH, not about prettier: a run may only reach files this
-// change owns, because the repo is not Prettier-clean (789 of 4,116 `src` files) and a broad `--write`
-// both buries the change and rewrites colleagues' uncommitted work in place. So a named file or a
-// directory deep enough to belong to one feature runs; anything that could sweep an app or the repo
-// asks first. `pnpm run prettier:write` (dirty files only) always runs.
-const OWNED_DIR_DEPTH = 3; // e.g. src/components/Sticker — an app or a top-level dir is not owned
-
-// Depth alone is not ownership: apps/moderator/src is three deep and is still a whole app. A
-// directory named after the tree it holds, rather than after a feature, needs one more level.
-const CONTAINER_DIRS = new Set([
-  'src', 'app', 'apps', 'lib', 'libs', 'packages', 'components', 'pages', 'routes', 'server',
-  'scripts', 'utils', 'hooks', 'store', 'stores', 'types', 'styles', 'public', 'tests', 'test',
-]);
-
-function isUnscoped(target) {
-  const t = target.replace(/\\/g, '/').replace(/\/+$/, '');
-  if (t === '' || t === '.' || t === '*' || t.startsWith('**')) return true;
-
-  // Judge a glob by the fixed prefix it can never escape: src/**/*.tsx is still all of src.
-  const dir = t.includes('*') ? t.slice(0, t.indexOf('*')).replace(/\/+$/, '') : t;
-  const segments = dir.split('/').filter(Boolean);
-  const leaf = segments[segments.length - 1] || '';
-
-  // A named file is one file, at any depth.
-  if (!t.includes('*') && /\.[a-z0-9]+$/i.test(leaf)) return false;
-
-  const required = CONTAINER_DIRS.has(leaf.toLowerCase()) ? OWNED_DIR_DEPTH + 1 : OWNED_DIR_DEPTH;
-  return segments.length < required;
-}
-
-// Patterns that would kill Claude Code or critical processes - BLOCK OUTRIGHT
-const DANGEROUS_PATTERNS = [
-  { pattern: /taskkill\s+\/\/F\s+\/\/IM\s+node\.exe/i, reason: 'This would kill all Node.js processes including Claude Code itself' },
-  { pattern: /taskkill\s+.*node\.exe/i, reason: 'This would kill Node.js processes including Claude Code' },
-  { pattern: /taskkill\s+.*python\.exe/i, reason: 'This could kill Python processes used by Claude Code' },
-  { pattern: /kill\s+-9\s+.*node/i, reason: 'This would kill Node.js processes including Claude Code' },
-  { pattern: /pkill\s+.*node/i, reason: 'This would kill Node.js processes including Claude Code' },
-  { pattern: /rm\s+-rf\s+\/(?!\w)/i, reason: 'This would recursively delete the root filesystem' },
-  {
-    pattern: /prettier[^;&|]*prettier-plugin-svelte/i,
-    reason:
-      'Ad-hoc prettier with prettier-plugin-svelte EMPTIES .svelte files to zero bytes while reporting success (28 components lost, 2026-08-07). Use `pnpm run prettier:write`.',
-  },
-  {
-    check: (command) => prettierWriteTargets(command).some((t) => t === '*' || t.replace(/\\/g, '/').startsWith('**')),
-    reason:
-      'A repo-wide `prettier --write` rewrites ~1000 committed files (the repo is not prettier-2-clean) and reformats other people\'s uncommitted work in place. Use `pnpm run prettier:write`, which scopes to dirty files.',
-  },
-];
-
-// Expensive or historically destructive, but sometimes legitimate — confirm rather than block.
-const GUARDED_PATTERNS = [
-  {
-    pattern: /svelte-kit\s+sync|pnpm\s+(run\s+)?check\b/i,
-    reason:
-      '`svelte-kit sync` regenerates ~690 files under .svelte-kit/, which the Vite dev server watches — the collision that froze this window repeatedly. Use `pnpm run typecheck` unless the route tree changed.',
-  },
-  {
-    // Only the unscoped shapes ask. `prettier --write src/components/Sticker/` runs.
-    check: (command) => {
-      const targets = prettierWriteTargets(command);
-      return targets.length === 0 ? false : targets.some(isUnscoped);
-    },
-    reason:
-      'Formatting outside `pnpm run prettier:write` can reach files this change does not own. Confirm the target is scoped.',
-  },
-];
+import {
+  DANGEROUS_PATTERNS,
+  DIRECT_TSC_REASON,
+  FULL_SUITE_REASON,
+  GUARDED_PATTERNS,
+  directRootTypecheck,
+  fullUnitSuiteRun,
+} from './check-writable.logic.mjs';
 
 let input = '';
 
 stdin.setEncoding('utf8');
-stdin.on('data', (chunk) => { input += chunk; });
+stdin.on('data', (chunk) => {
+  input += chunk;
+});
 stdin.on('end', () => {
   try {
     const data = JSON.parse(input);
@@ -109,8 +35,19 @@ stdin.on('end', () => {
     // describes a blocked command is not an attempt to run it, and blocking those makes the incident
     // impossible to write down.
     const command = rawCommand
-      .replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?^\1$/gm, ' ')
+      // `^[ \t]*\1[ \t]*$`, not `^\1$`: the `<<-` form exists precisely to allow an indented
+      // terminator, and a heredoc written inside an indented block has one too. Requiring column 0
+      // leaked those bodies into the matcher, so writing the incident down got flagged.
+      .replace(/<<-?\s*['"]?(\w+)['"]?[\s\S]*?^[ \t]*\1[ \t]*$/gm, ' ')
       .replace(/-m\s+(['"])[\s\S]*?\1/g, ' ');
+    //
+    // 🔴 Do NOT add `-e`/`--eval` to that list. It was tried, to stop a `node -e` probe whose
+    // STRINGS named blocked commands from being denied, and it disabled every guard in this file:
+    // the strip runs in front of all of them, so `node -e "require('child_process').execSync(
+    // 'taskkill /F /IM node.exe')"` was ALLOWED while the bare command blocks — measured, by
+    // spawning this hook. A heredoc body and a `-m` message are inert text; an `-e` body is the
+    // code that runs, and it is the one place where hiding the text hides the act. If a probe of
+    // your own trips a guard, put the script in a file.
 
     // Check for dangerous commands that should be blocked outright (no confirmation possible)
     for (const { pattern, check, reason } of DANGEROUS_PATTERNS) {
@@ -118,6 +55,28 @@ stdin.on('end', () => {
         console.error(`BLOCKED: ${reason}\nCommand: ${rawCommand}`);
         process.exit(2); // Exit code 2 blocks the command immediately
       }
+    }
+
+    if (fullUnitSuiteRun(command)) {
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: FULL_SUITE_REASON,
+        }
+      }));
+      process.exit(0);
+    }
+
+    if (directRootTypecheck(command)) {
+      console.log(JSON.stringify({
+        hookSpecificOutput: {
+          hookEventName: 'PreToolUse',
+          permissionDecision: 'deny',
+          permissionDecisionReason: DIRECT_TSC_REASON,
+        }
+      }));
+      process.exit(0);
     }
 
     for (const { pattern, check, reason } of GUARDED_PATTERNS) {

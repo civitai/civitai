@@ -94,9 +94,8 @@ export async function debounceArticleUpdate(articleId: number): Promise<void> {
  * advance article state, and `updateArticleNsfwLevels` picks up the new cover
  * rating so `Article.nsfwLevel` no longer lags the cover.
  *
- * Callers are responsible for gating on the `articleImageScanning` feature flag
- * because the two webhook entrypoints resolve the flag differently (one reads
- * from a request context, the other receives it as a parameter).
+ * Callers gate on the `articleImageScanning` feature flag — it needs a request context,
+ * which this helper does not have.
  */
 export async function fanOutArticleImageUpdates(imageId: number): Promise<void> {
   const [articleConnections, coverArticles] = await Promise.all([

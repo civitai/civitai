@@ -1,15 +1,16 @@
-import { Button, Progress } from '@mantine/core';
-import { useEffect, useRef } from 'react';
+import { Button, Progress, Text } from '@mantine/core';
+import { useEffect, useRef, useState } from 'react';
 import { IconPhotoPlus } from '@tabler/icons-react';
 import { dialogStore } from '~/components/Dialog/dialogStore';
 import { MediaDropzone } from '~/components/Image/ImageDropzone/MediaDropzone';
 import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { useShowCreatePostError } from '~/components/Post/showCreatePostError';
 import ImageSelectModal from '~/components/Training/Form/ImageSelectModal';
 import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { UploadNotice } from '~/components/UploadNotice/UploadNotice';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useMediaUploadSettingsContext } from '~/components/MediaUploadSettings/MediaUploadSettingsProvider';
 import { useMediaUpload } from '~/hooks/useMediaUpload';
-import { POST_IMAGE_LIMIT } from '~/server/common/constants';
 import { IMAGE_MIME_TYPE, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { addPostImageSchema } from '~/server/schema/post.schema';
 import type { PostDetailEditable } from '~/server/services/post.service';
@@ -19,12 +20,10 @@ import {
   useOrchestratorUrlStore,
 } from '~/store/post-image-transmitter.store';
 import { hideNotification, showNotification } from '@mantine/notifications';
-import { showErrorNotification } from '~/utils/notifications';
 import { downloadGeneratorImages } from '~/utils/generator-import';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
-
-const max = POST_IMAGE_LIMIT;
+import { isPickSnapshot } from '~/utils/unreadable-pick';
 
 export function PostImageDropzone({
   showProgress = true,
@@ -40,9 +39,11 @@ export function PostImageDropzone({
     state.images,
     state.setImages,
   ]);
+  const { maxItems } = useMediaUploadSettingsContext();
   const params = usePostEditParams();
   const currentUser = useCurrentUser();
-  const { src, modelVersionId, model3dId, tag, collectionId } = params;
+  const showCreatePostError = useShowCreatePostError();
+  const { src, modelVersionId, model3dId, storyline, continues, tag, collectionId } = params;
   // #endregion
 
   // #region [mutations]
@@ -71,8 +72,19 @@ export function PostImageDropzone({
   const submittedUrlsRef = useRef(new Set<string>());
 
   // #region [upload images]
-  const { files, canAdd, error, upload, progress, loading } = useMediaUpload<{ postId: number }>({
+  // Dropped files still backed by the device. Only their read failures are shown as unreadable
+  // picks: an import, or an in-memory copy taken at the pick, fails only on its own content.
+  const pickedFilesRef = useRef(new WeakSet<File>());
+  const [unreadablePicks, setUnreadablePicks] = useState(0);
+  const { files, canAdd, remaining, error, upload, progress, loading } = useMediaUpload<{
+    postId: number;
+  }>({
     count: images.length,
+    onUnreadable: (file) => {
+      if (!pickedFilesRef.current.has(file)) return false;
+      setUnreadablePicks((n) => n + 1);
+      return true;
+    },
     onComplete: (props, context) => {
       const { postId = context?.postId, modelVersionId } = params;
       if (!postId) throw new Error('missing post id');
@@ -93,6 +105,7 @@ export function PostImageDropzone({
             width: props.metadata.width,
             height: props.metadata.height,
             hash: props.metadata.hash,
+            generationWorkflowId: props.generationWorkflowId,
             externalDetailsUrl,
           });
 
@@ -115,28 +128,37 @@ export function PostImageDropzone({
   // #endregion
 
   // #region [handlers]
-  function handleUpload(fileData: { file: File; meta?: Record<string, unknown> }[]) {
+  function handleUpload(
+    fileData: { file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[]
+  ) {
     if (currentUser?.muted) return;
     if (post) upload(fileData);
     else {
       createPostMutation.mutate(
-        { modelVersionId, model3dId, tag, collectionId },
+        {
+          modelVersionId,
+          model3dId,
+          storylineId: storyline,
+          parentChapterId: continues,
+          tag,
+          collectionId,
+        },
         {
           onSuccess: async (data) => {
             queryUtils.post.getEdit.setData({ id: data.id }, () => data);
             // Refresh the version's post list so re-entering the post step (e.g. via
             // the wizard's back/next) reuses this post instead of creating a new one.
             if (modelVersionId) {
-              await queryUtils.modelVersion.getById.invalidate({ id: modelVersionId, withFiles: true });
+              await queryUtils.modelVersion.getById.invalidate({
+                id: modelVersionId,
+                withFiles: true,
+              });
             }
             await onCreatePost?.(data);
             upload(fileData, { postId: data.id });
           },
           onError(error) {
-            showErrorNotification({
-              title: 'Failed to create post',
-              error: new Error(error.message),
-            });
+            showCreatePostError(error.message);
           },
         }
       );
@@ -144,6 +166,8 @@ export function PostImageDropzone({
   }
 
   const handleDrop = (args: { file: File; meta?: Record<string, unknown> }[]) => {
+    for (const { file } of args) if (!isPickSnapshot(file)) pickedFilesRef.current.add(file);
+    setUnreadablePicks(0);
     handleUpload(args);
   };
 
@@ -212,6 +236,8 @@ export function PostImageDropzone({
           accept={[...IMAGE_MIME_TYPE, ...VIDEO_MIME_TYPE]}
           disabled={!canAdd}
           error={error}
+          unreadablePicks={unreadablePicks}
+          pickLimit={remaining}
           loading={createPostMutation.isPending || loading}
           className="rounded-lg"
         />
@@ -225,6 +251,9 @@ export function PostImageDropzone({
       >
         Import from Generator
       </Button>
+      <Text size="sm" c={remaining === 0 ? 'orange' : 'dimmed'} ta="center" aria-live="polite">
+        {images.length} / {maxItems} files
+      </Text>
       {!!files.length && showProgress && <Progress value={progress} animated size="lg" />}
       {!files.length && <UploadNotice />}
     </div>

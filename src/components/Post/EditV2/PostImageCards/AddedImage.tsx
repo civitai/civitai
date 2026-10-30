@@ -1,4 +1,5 @@
 import { PlacementSpaceToggle } from '~/components/Sticker/PlacementSpaceToggle';
+import { AddEventDecorationMenuItem } from '~/components/Decorations/AddEventDecorationMenuItem';
 import { Popover, PopoverButton, PopoverPanel } from '@headlessui/react';
 import {
   Accordion,
@@ -25,6 +26,7 @@ import {
   IconCopyPlus,
   IconChevronDown,
   IconChevronUp,
+  IconArrowsExchange,
   IconDotsVertical,
   IconEye,
   IconEyeOff,
@@ -44,13 +46,15 @@ import { dialogStore } from '~/components/Dialog/dialogStore';
 import { EdgeMedia } from '~/components/EdgeMedia/EdgeMedia';
 import { RefreshImageResources } from '~/components/Image/RefreshImageResources/RefreshImageResources';
 import { UnblockImage } from '~/components/Image/UnblockImage/UnblockImage';
-import { isMadeOnSite } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { ResourceSelectMultiple } from '~/components/ImageGeneration/GenerationForm/ResourceSelectMultiple';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { BrowsingLevelBadge } from '~/components/BrowsingLevel/BrowsingLevelBadge';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { ImageMetaModal } from '~/components/Post/EditV2/ImageMetaModal';
+import { MoveImageToPostModal } from '~/components/Post/EditV2/MoveImageToPostModal';
+import { usePostContestCollectionDetails } from '~/components/Post/post.utils';
 import { usePostEditStore, usePostPreviewContext } from '~/components/Post/EditV2/PostEditProvider';
 import { PostImageTechnique } from '~/components/Post/EditV2/Techniques/PostImageTechnique';
 import { ImageTechniquesPopover } from '~/components/Post/EditV2/Techniques/PostImageTechniquesPopover';
@@ -61,11 +65,16 @@ import {
 import { PostImageTool } from '~/components/Post/EditV2/Tools/PostImageTool';
 import { ImageToolsPopover } from '~/components/Post/EditV2/Tools/PostImageToolsPopover';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
+import { StorylineCaptionSlot } from '~/components/Storyline/editor/StorylineCaptionSlot';
 import { useCurrentUserRequired } from '~/hooks/useCurrentUser';
-import { DEFAULT_EDGE_IMAGE_WIDTH, MAX_RESOURCES_PER_IMAGE } from '~/server/common/constants';
+import {
+  DEFAULT_EDGE_IMAGE_WIDTH,
+  MAX_MANUAL_CHECKPOINTS_PER_IMAGE,
+  MAX_MANUAL_RESOURCES_PER_IMAGE,
+} from '~/server/common/constants';
 import type { NsfwLevel } from '~/server/common/enums';
 import { BlockedReason } from '~/server/common/enums';
-import type { ImageMetaProps } from '~/server/schema/image.schema';
+import type { ImageMetaProps, UnmatchedResource } from '~/server/schema/image.schema';
 import type { VideoMetadata } from '~/server/schema/media.schema';
 import type { PostEditImageDetail, ResourceHelper } from '~/server/services/post.service';
 import {
@@ -74,16 +83,29 @@ import {
   getGenerationBaseModelResourceOptions,
 } from '~/shared/constants/basemodel.constants';
 import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
-import { ImageIngestionStatus, MediaType, ModelType } from '~/shared/utils/prisma/enums';
+import {
+  CosmeticEntity,
+  ImageIngestionStatus,
+  MediaType,
+  ModelType,
+} from '~/shared/utils/prisma/enums';
 import { useImageStore } from '~/store/image.store';
 import { createSelectStore } from '~/store/select.store';
 import type { MyRecentlyAddedModels } from '~/types/router';
 import { sortAlphabeticallyBy, sortByModelTypes } from '~/utils/array-helpers';
 import { hasImageLicenseViolation, isValidAIGeneration } from '~/utils/image-utils';
+import {
+  canAddManualResources,
+  getManualResourceLimitError,
+  getManualResourceUsage,
+  manualResourceLimitMessages,
+  pickAddableResources,
+} from '~/utils/manual-image-resources';
 import { showErrorNotification } from '~/utils/notifications';
 import { getDisplayName, getModelUrl } from '~/utils/string-helpers';
 import { queryClient, trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
+import { RemixSourcesCard } from '~/components/RemixGallery/RemixSourcesCard';
 import { CustomCard } from './CustomCard';
 
 // #region [types]
@@ -104,6 +126,8 @@ type State = {
   isBlocked: boolean;
   isScanned: boolean;
   isPending: boolean;
+  isScanFailed: boolean;
+  isScanNotFound: boolean;
   canAdd: boolean;
   otherImages: PostEditImageDetail[];
   allowedResources: AllowedResource[];
@@ -111,6 +135,8 @@ type State = {
   needsReview: string | null;
   isMinor: boolean;
   onDelete: () => void;
+  /** Absent when the image cannot be moved out of this post. */
+  onMove?: () => void;
   onEditMetaClick: () => void;
   isDeleting: boolean;
   isUpdating: boolean;
@@ -127,7 +153,7 @@ const useAddedImageContext = () => {
 };
 // #endregion
 
-const getAllowedResources = (resources: ResourceHelper[]) => {
+export const getAllowedResources = (resources: ResourceHelper[], advancedMode: boolean) => {
   const resourcesSorted = sortByModelTypes(resources);
   for (const resource of resourcesSorted) {
     if (resource.modelType === ModelType.Checkpoint) {
@@ -135,11 +161,11 @@ const getAllowedResources = (resources: ResourceHelper[]) => {
         ? getBaseModelGroup(resource.modelVersionBaseModel)
         : null;
       if (isDefined(baseModel)) {
-        return (
-          (getGenerationBaseModelResourceOptions(baseModel)?.filter(
-            (t) => t.type !== 'Checkpoint'
-          ) as AllowedResource[]) ?? []
-        );
+        const options =
+          (getGenerationBaseModelResourceOptions(baseModel) as AllowedResource[]) ?? [];
+        // Advanced Mode allows unrestricted mixing of base models; keep Checkpoint available so a
+        // second one can be added.
+        return advancedMode ? options : options.filter((t) => t.type !== 'Checkpoint');
       }
     } else {
       if (isDefined(resource.modelType) && isDefined(resource.modelVersionBaseModel)) {
@@ -165,9 +191,14 @@ const getAllowedResources = (resources: ResourceHelper[]) => {
   return [];
 };
 
-const canAddFunc = (type: MediaType, meta: ImageMetaProps | null) => {
-  return type === MediaType.video || !isMadeOnSite(meta);
-};
+/** Moves models just added by hand to the top of the resource picker's "recently added" list. */
+export function rememberManuallyAddedModels(resources: Pick<ResourceHelper, 'modelId'>[]) {
+  const queryKey = getQueryKey(trpc.model.getRecentlyManuallyAdded);
+  queryClient.setQueriesData<MyRecentlyAddedModels>({ queryKey, exact: false }, (old) => {
+    if (!old) return;
+    return uniq([...resources.map((r) => r.modelId).filter(isDefined), ...old]);
+  });
+}
 
 // #region [AddedImage Provider]
 export function AddedImage({ image }: { image: PostEditImageDetail }) {
@@ -176,23 +207,30 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   const storedImage = useImageStore(image);
   const queryUtils = trpc.useUtils();
 
-  const [images, updateImage, setImages, postId] = usePostEditStore((state) => [
-    state.images,
-    state.updateImage,
-    state.setImages,
-    state.post?.id,
-  ]);
+  const [images, updateImage, setImages, postId, postPublishedAt, collectionId] = usePostEditStore(
+    (state) => [
+      state.images,
+      state.updateImage,
+      state.setImages,
+      state.post?.id,
+      state.post?.publishedAt,
+      state.collectionId,
+    ]
+  );
 
   const { id, meta, blockedFor, ingestion, nsfwLevel, hideMeta, type, needsReview } = storedImage;
   const minor = image.minor ?? false;
   const otherImages = images
     .map((img) => (img.type === 'added' ? img.data : null))
     .filter(isDefined)
-    .filter((data) => data.id !== id && canAddFunc(data.type, data.meta));
+    .filter((data) => data.id !== id && canAddManualResources(data));
+
+  const { generation } = useCurrentUserSettings();
+  const advancedMode = generation?.advancedMode ?? false;
 
   const allowedResources = useMemo(() => {
-    return getAllowedResources(image.resourceHelper);
-  }, [image.resourceHelper]);
+    return getAllowedResources(image.resourceHelper, advancedMode);
+  }, [image.resourceHelper, advancedMode]);
 
   const nsfwLicenseViolation = useMemo(() => {
     return hasImageLicenseViolation(storedImage);
@@ -202,22 +240,26 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
   // const isBlocked = ingestion === ImageIngestionStatus.Blocked;
   const isScanned = ingestion === ImageIngestionStatus.Scanned;
   const isPendingManualAssignment = ingestion === ImageIngestionStatus.PendingManualAssignment;
+  const isScanFailed = ingestion === ImageIngestionStatus.Error;
+  const isScanNotFound = ingestion === ImageIngestionStatus.NotFound;
   const isBlocked = false;
   const isMinor = minor && !needsReview;
-  const canAdd = canAddFunc(type, meta);
+  const canAdd = canAddManualResources({ type, meta });
   // #endregion
 
   // #region [delete image]
-  const deleteImageMutation = trpc.image.delete.useMutation({
-    onSuccess: (_, { id }) => {
-      setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
-      if (postId)
-        queryUtils.post.getEdit.setData({ id: postId }, (old) => {
-          if (!old) return old;
+  const removeFromEditor = (id: number) => {
+    setImages((state) => state.filter((x) => x.type !== 'added' || x.data.id !== id));
+    if (postId)
+      queryUtils.post.getEdit.setData({ id: postId }, (old) => {
+        if (!old) return old;
 
-          return { ...old, images: old.images?.filter((x) => x.id !== id) };
-        });
-    },
+        return { ...old, images: old.images?.filter((x) => x.id !== id) };
+      });
+  };
+
+  const deleteImageMutation = trpc.image.delete.useMutation({
+    onSuccess: (_, { id }) => removeFromEditor(id),
     onError: (error) => showErrorNotification({ error: new Error(error.message) }),
   });
 
@@ -234,6 +276,30 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         },
       });
     else deleteImageMutation.mutate({ id: image.id });
+  };
+  // #endregion
+
+  // #region [move image]
+  const isOwner = usePostEditStore((state) => state.post?.user.id) === useCurrentUserRequired().id;
+  const { collection: contestCollection } = usePostContestCollectionDetails(
+    { id: postId ?? 0 },
+    { enabled: !!postId && !!collectionId }
+  );
+  const canMove =
+    isOwner &&
+    !!postId &&
+    id > 0 &&
+    isScanned &&
+    !needsReview &&
+    !contestCollection &&
+    !!postPublishedAt &&
+    new Date(postPublishedAt) <= new Date();
+  const handleMove = () => {
+    if (!postId) return;
+    dialogStore.trigger({
+      component: MoveImageToPostModal,
+      props: { fromPostId: postId, imageId: id, onMoved: () => removeFromEditor(id) },
+    });
   };
   // #endregion
 
@@ -268,12 +334,7 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         updateImage(id, (image) => {
           image.resourceHelper = image.resourceHelper.concat(resp);
         });
-
-        const queryKey = getQueryKey(trpc.model.getRecentlyManuallyAdded);
-        queryClient.setQueriesData<MyRecentlyAddedModels>({ queryKey, exact: false }, (old) => {
-          if (!old) return;
-          return uniq([...resp.map((r) => r.modelId).filter(isDefined), ...old]);
-        });
+        rememberManuallyAddedModels(resp);
       }
     },
     onError(error) {
@@ -296,12 +357,15 @@ export function AddedImage({ image }: { image: PostEditImageDetail }) {
         isBlocked,
         isPending,
         isScanned,
+        isScanFailed,
+        isScanNotFound,
         canAdd,
         otherImages,
         allowedResources,
         needsReview: needsReview ?? null,
         isMinor,
         onDelete: handleDelete,
+        onMove: canMove ? handleMove : undefined,
         onEditMetaClick: handleEditMetaClick,
         isDeleting: deleteImageMutation.isPending,
         isUpdating: updateImageMutation.isPending,
@@ -332,6 +396,9 @@ function Preview() {
   return (
     <div className="flex flex-col">
       <PostImage />
+      <div className="p-3 empty:hidden">
+        <StorylineCaption />
+      </div>
       {isBlocked && <TosViolationBanner />}
       <Accordion
         value={value}
@@ -353,7 +420,8 @@ function Preview() {
 const ResourceHeader = () => {
   const { image, allowedResources, addResource, isAddingResource, canAdd } = useAddedImageContext();
 
-  const cantAdd = image.resourceHelper.length >= MAX_RESOURCES_PER_IMAGE;
+  const manualUsage = getManualResourceUsage(image.resourceHelper);
+  const cantAdd = manualUsage.total >= MAX_MANUAL_RESOURCES_PER_IMAGE;
 
   const [updateImage] = usePostEditStore((state) => [state.updateImage]);
 
@@ -374,6 +442,15 @@ const ResourceHeader = () => {
           Models, LoRAs, embeddings or other Stable Diffusion or Flux specific resources used to
           create this image.
         </InfoPopover>
+        {canAdd && (
+          <Tooltip
+            label={`Manually added: ${manualUsage.checkpoints}/${MAX_MANUAL_CHECKPOINTS_PER_IMAGE} checkpoints`}
+          >
+            <Badge color={cantAdd ? 'red' : 'gray'} variant="light">
+              {manualUsage.total}/{MAX_MANUAL_RESOURCES_PER_IMAGE}
+            </Badge>
+          </Tooltip>
+        )}
       </div>
       <div className="flex items-center gap-2">
         {canAdd ? (
@@ -391,6 +468,10 @@ const ResourceHeader = () => {
                 <Stack>
                   <Text>Manually add a resource.</Text>
                   <Text size="sm">
+                    Up to {MAX_MANUAL_RESOURCES_PER_IMAGE} manually added resources per image, of
+                    which at most {MAX_MANUAL_CHECKPOINTS_PER_IMAGE} can be checkpoints.
+                  </Text>
+                  <Text size="sm">
                     If you can&apos;t find the one you&apos;re looking for, it&apos;s either not
                     uploaded here, or is being filtered out to match your already selected
                     resources.
@@ -398,10 +479,7 @@ const ResourceHeader = () => {
                 </Stack>
               </InfoPopover>
             </Box>
-            <Tooltip
-              label={`Maximum resources reached (${MAX_RESOURCES_PER_IMAGE})`}
-              disabled={!cantAdd}
-            >
+            <Tooltip label={manualResourceLimitMessages.total} disabled={!cantAdd}>
               <ResourceSelectMultiple
                 buttonLabel="RESOURCE"
                 modalTitle="Select resource(s)"
@@ -418,9 +496,16 @@ const ResourceHeader = () => {
                 }}
                 onChange={(vals) => {
                   if (!vals?.length || cantAdd) return;
-                  vals.forEach((val) => {
-                    addResource(val.id);
-                  });
+                  const { accepted, error } = pickAddableResources(
+                    image.resourceHelper,
+                    vals.map((val) => ({ modelVersionId: val.id, modelType: val.model.type }))
+                  );
+                  if (error)
+                    showErrorNotification({
+                      title: 'Unable to add resource',
+                      error: new Error(error),
+                    });
+                  accepted.forEach((resource) => addResource(resource.modelVersionId));
                 }}
               />
             </Tooltip>
@@ -450,16 +535,15 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   const otherAvailableIDs = useMemo(() => {
     return otherImages
       .map((oi) => {
-        // Skip if target image is at resource limit
-        if (oi.resourceHelper.length >= MAX_RESOURCES_PER_IMAGE) return null;
-        // Skip if target image already has this exact resource
         if (oi.resourceHelper.some((rh) => rh.modelVersionId === modelVersionId)) return null;
+        if (getManualResourceLimitError(oi.resourceHelper, [{ modelVersionId, modelType }]))
+          return null;
 
         // Allow copy to eligible images
         return oi.id;
       })
       .filter(isDefined);
-  }, [modelVersionId, otherImages]);
+  }, [modelVersionId, modelType, otherImages]);
 
   const copyResourceMutation = trpc.post.addResourceToImage.useMutation({
     onSuccess: (resp) => {
@@ -496,11 +580,13 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
   });
 
   const handleRemoveResource = () => {
-    if (!canAdd || !modelVersionId || detected) return;
+    if (!canAdd || !modelVersionId) return;
     openConfirmModal({
       centered: true,
       title: 'Remove Resource',
-      children: 'Are you sure you want to remove this resource from this image?',
+      children: detected
+        ? 'This resource was detected from the image metadata. Remove it if it is not what you used.'
+        : 'Are you sure you want to remove this resource from this image?',
       labels: { confirm: 'Yes, remove it', cancel: 'Cancel' },
       confirmProps: { color: 'red' },
       onConfirm: () => {
@@ -566,10 +652,10 @@ const ResourceRow = ({ resource, i }: { resource: ResourceHelper; i: number }) =
           </LegacyActionIcon>
         </Tooltip>
       )}
-      {!canAdd || detected ? (
+      {!canAdd ? (
         <></>
       ) : (
-        <Tooltip label="Delete">
+        <Tooltip label={detected ? 'Not what you used? Remove it' : 'Delete'}>
           <LegacyActionIcon
             color="red"
             size="sm"
@@ -606,6 +692,8 @@ function EditDetail() {
     isBlocked,
     isPending,
     isScanned,
+    isScanFailed,
+    isScanNotFound,
     onEditMetaClick,
     isDeleting,
     isUpdating,
@@ -615,6 +703,9 @@ function EditDetail() {
     isMinor,
   } = useAddedImageContext();
   const postId = usePostEditStore((state) => state.post?.id);
+  // A published post has no publish left to hang a promise on, so the remix card
+  // submits on the spot instead of collecting ticks.
+  const postPublished = usePostEditStore((state) => !!state.post?.publishedAt);
   const updateImage = usePostEditStore((state) => state.updateImage);
 
   const { meta, hideMeta, resourceHelper: resources, blockedFor } = image;
@@ -623,15 +714,25 @@ function EditDetail() {
   const hasSimpleMeta = !!simpleMeta.length;
   const resourcesSorted = sortByModelTypes(resources);
   const unmatchedResources = useMemo(() => {
+    const derived = meta?.unmatchedResources as UnmatchedResource[] | undefined;
+    if (derived) return derived;
+    // Images ingested before the server derived this list carry a per-resource flag instead
     const metaResources = (meta?.resources ?? []) as {
-      type: string;
+      type?: string;
       name?: string;
       hash?: string;
       unmatched?: boolean;
     }[];
-    return metaResources.filter((r) => r.unmatched && r.name);
-  }, [meta?.resources]);
+    return metaResources
+      .filter((r) => r.unmatched && r.name)
+      .map((r) => ({
+        type: r.type,
+        name: r.name!.replace(/.*[/\\]/, '').replace(/\.[^/.]+$/, ''),
+        hash: r.hash ?? '',
+      }));
+  }, [meta?.unmatchedResources, meta?.resources]);
   const hasLegacyUnmatched = useMemo(() => {
+    if (meta?.unmatchedResources) return false;
     if (unmatchedResources.length > 0) return false; // new-style flags take precedence
     const metaResources = (meta?.resources ?? []) as { hash?: string; unmatched?: boolean }[];
     const resourcesWithHashes = metaResources.filter((r) => !!r.hash);
@@ -640,7 +741,7 @@ function EditDetail() {
     if (hasAnyFlags) return false;
     const detectedCount = resources.filter((r) => r.detected).length;
     return resourcesWithHashes.length > detectedCount;
-  }, [meta?.resources, resources, unmatchedResources.length]);
+  }, [meta?.unmatchedResources, meta?.resources, resources, unmatchedResources.length]);
   const cannotVerifyAi =
     !isValidAIGeneration({
       id: image.id,
@@ -690,6 +791,11 @@ function EditDetail() {
           {(!showPreview || hasSimpleMeta) && (
             <div className={`flex w-full flex-col gap-3 ${!showPreview ? '@sm:w-4/12' : ''}`}>
               {!showPreview && <PostImage />}
+              {!showPreview && <StorylineCaption />}
+              {/* Directly under the image. The wrapper is `flex-row-reverse`, so
+                  this narrow column is the one on the RIGHT. Renders nothing
+                  without remix provenance, which is the ordinary case. */}
+              <RemixSourcesCard imageId={image.id} published={postPublished} />
               {hasSimpleMeta && (
                 <>
                   <div className="flex flex-col *:border-gray-4 not-last:*:border-b dark:*:border-dark-4">
@@ -848,19 +954,19 @@ function EditDetail() {
                     <Text size="sm">
                       The following resources could not be matched to models on Civitai:
                     </Text>
-                    {unmatchedResources.map((r, i) => {
-                      const displayName = r.name?.replace(/.*[/\\]/, '').replace(/\.[^/.]+$/, '');
-                      return (
-                        <Group key={i} gap="xs" wrap="nowrap" mt={4}>
-                          <Text size="sm" lineClamp={1}>
-                            {displayName}
-                          </Text>
+                    {unmatchedResources.map((r, i) => (
+                      <Group key={i} gap="xs" wrap="nowrap" mt={4}>
+                        <Text size="sm" lineClamp={1}>
+                          {r.name}
+                        </Text>
+                        {/* Absent for resources detected only via meta.hashes */}
+                        {!!r.type && (
                           <Badge color="gray" size="sm" variant="filled">
                             {getDisplayName(r.type)}
                           </Badge>
-                        </Group>
-                      );
-                    })}
+                        )}
+                      </Group>
+                    ))}
                   </Alert>
                 )}
                 {hasLegacyUnmatched && (
@@ -1126,6 +1232,35 @@ function EditDetail() {
             </Text>
           </Alert>
         )}
+        {isScanFailed && (
+          <Alert
+            color="red"
+            w="100%"
+            radius={0}
+            className="rounded-lg p-2"
+            classNames={{ message: 'flex items-center justify-center gap-2' }}
+          >
+            <Text align="center">
+              We couldn&apos;t finish analyzing this image, so it won&apos;t be visible to others.
+              We&apos;ll keep retrying for a while — if this message is still here later, remove the
+              image and upload it again, or contact support.
+            </Text>
+          </Alert>
+        )}
+        {isScanNotFound && (
+          <Alert
+            color="red"
+            w="100%"
+            radius={0}
+            className="rounded-lg p-2"
+            classNames={{ message: 'flex items-center justify-center gap-2' }}
+          >
+            <Text align="center">
+              We couldn&apos;t load this image to analyze it, so it won&apos;t be visible to others.
+              Remove it and upload it again.
+            </Text>
+          </Alert>
+        )}
         {isPendingManualAssignment && (
           <Alert
             color="blue"
@@ -1145,11 +1280,20 @@ function EditDetail() {
   );
 }
 
+function StorylineCaption() {
+  const { image } = useAddedImageContext();
+  const post = usePostEditStore((state) => state.post);
+  if (!post) return null;
+  return <StorylineCaptionSlot post={post} image={image} />;
+}
+
 function PostImage() {
   const { showPreview } = usePostPreviewContext();
-  const { image, isBlocked, onDelete, isDeleting, onEditMetaClick, needsReview, isMinor } =
+  const { image, isBlocked, onDelete, onMove, isDeleting, onEditMetaClick, needsReview, isMinor } =
     useAddedImageContext();
   const { metadata, url, type, id, nsfwLevel, poi } = image;
+  // Only the owner can hat their images; a moderator editing this post would be refused.
+  const isOwner = usePostEditStore((state) => state.post?.user.id) === useCurrentUserRequired().id;
   const imageFlag = isMinor ? 'Minor' : !needsReview && poi ? 'POI' : undefined;
   return (
     <div className={`relative`}>
@@ -1165,7 +1309,9 @@ function PostImage() {
           src={url}
           width={metadata?.width ?? DEFAULT_EDGE_IMAGE_WIDTH}
           type={type}
-          original={type === 'video' ? true : undefined}
+          // 🔴 PostImageCards renders every image in the post with no virtualisation, and EdgeImage
+          // sets no `loading`, so without this a 16-image post (p90) fetches all of them eagerly.
+          loading="lazy"
           className={showPreview ? 'rounded-none' : 'rounded-lg'}
           anim={type === 'video'}
           html5Controls
@@ -1205,6 +1351,13 @@ function PostImage() {
                 Edit image
               </Menu.Item>
             )}
+            {!isBlocked && isOwner && image.id > 0 && (
+              <AddEventDecorationMenuItem
+                entityType={CosmeticEntity.Image}
+                entityId={image.id}
+                image={image}
+              />
+            )}
             {!isBlocked && image.id > 0 && (
               // Inside the menu rather than on the card: it is a setting, not an
               // action, and the card is already carrying every control the
@@ -1212,6 +1365,11 @@ function PostImage() {
               <div className="px-3 py-2" onClick={(event) => event.stopPropagation()}>
                 <PlacementSpaceToggle level="image" entityId={image.id} />
               </div>
+            )}
+            {!isBlocked && onMove && (
+              <Menu.Item leftSection={<IconArrowsExchange size={16} />} onClick={onMove}>
+                Move to another post
+              </Menu.Item>
             )}
             <Menu.Item
               color="red"

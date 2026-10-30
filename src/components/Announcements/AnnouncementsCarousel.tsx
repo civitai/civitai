@@ -1,9 +1,8 @@
 import { useGetAnnouncements } from '~/components/Announcements/announcements.utils';
 import clsx from 'clsx';
-import React, { useRef } from 'react';
+import React from 'react';
 import { Announcement } from '~/components/Announcements/Announcement';
-import autoplay from 'embla-carousel-autoplay';
-import { Embla } from '~/components/EmblaCarousel/EmblaCarousel';
+import { AnnouncementCarouselFrame } from '~/components/Announcements/AnnouncementCarouselFrame';
 import type { AnnouncementType } from '~/server/schema/announcement.schema';
 
 export default function AnnouncementsCarousel({
@@ -13,28 +12,18 @@ export default function AnnouncementsCarousel({
   className?: string;
   type?: AnnouncementType;
 }) {
-  const autoplayRef = useRef(autoplay({ delay: 10000 }));
   const { data } = useGetAnnouncements(type);
 
   const announcements = data.filter((x) => !x.dismissed);
 
-  if (!announcements.length) return null;
-
   return (
-    // Required custom class to apply certain styles based on peer elements
-    // eslint-disable-next-line tailwindcss/no-custom-classname
-    <div className={clsx('announcements peer container', className)}>
-      <Embla plugins={[autoplayRef.current]} loop withIndicators={announcements.length > 1}>
-        <Embla.Viewport>
-          <Embla.Container className="-ml-4 flex">
-            {announcements.map((announcement, index) => (
-              <Embla.Slide key={announcement.id} index={index} className="flex-[0_0_100%] pl-4">
-                <Announcement announcement={announcement} className="h-full" />
-              </Embla.Slide>
-            ))}
-          </Embla.Container>
-        </Embla.Viewport>
-      </Embla>
-    </div>
+    <AnnouncementCarouselFrame
+      items={announcements}
+      // Required custom class to apply certain styles based on peer elements
+      // eslint-disable-next-line tailwindcss/no-custom-classname
+      className={clsx('announcements peer container', className)}
+    >
+      {(announcement) => <Announcement announcement={announcement} className="h-full" />}
+    </AnnouncementCarouselFrame>
   );
 }

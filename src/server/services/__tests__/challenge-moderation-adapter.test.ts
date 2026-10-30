@@ -1,28 +1,41 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { NsfwLevel } from '~/server/common/enums';
+import type * as ModeModule from '~/server/services/text-scan/mode';
+import type * as SubmitModule from '~/server/services/text-scan/submit';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // applyFailure must only downgrade a challenge that is actually mid-scan. A moderator rescan
 // (rescanChallenge) is the first path that submits a workflow for an already-Scanned challenge, so
 // an unscoped write would let one transient orchestrator failure hide a live challenge from the
 // feeds and 404 its detail page.
-const { mockDbRead, mockDbWrite } = vi.hoisted(() => ({
-  mockDbRead: { challenge: { findUnique: vi.fn() } },
-  mockDbWrite: { challenge: { update: vi.fn(), updateMany: vi.fn() } },
-}));
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/text-moderation.service', () => ({ submitTextModeration: vi.fn() }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn(() => Promise.resolve()) }));
 vi.mock('~/server/games/daily-challenge/challenge-nsfw-escalation', () => ({
   applyChallengeNsfwEscalation: vi.fn(),
 }));
 vi.mock('~/server/prom/challenge.metrics', () => ({ recordChallengeScanResult: vi.fn() }));
+// Pinned off so this suite stays about the XGuard path.
+vi.mock('~/server/services/text-scan/mode', async (importOriginal) => ({
+  ...(await importOriginal<typeof ModeModule>()),
+  getTextScanMode: vi.fn(async () => 'off'),
+}));
+vi.mock('~/server/services/text-scan/submit', async (importOriginal) => ({
+  ...(await importOriginal<typeof SubmitModule>()),
+  scanEntity: vi.fn(),
+}));
 
-const { challengeModerationAdapter } = await import('~/server/services/challenge-moderation.adapter');
+const { challengeModerationAdapter } = await import(
+  '~/server/services/challenge-moderation.adapter'
+);
 const { applyChallengeNsfwEscalation } = await import(
   '~/server/games/daily-challenge/challenge-nsfw-escalation'
 );
 const { recordChallengeScanResult } = await import('~/server/prom/challenge.metrics');
+const { getTextScanMode } = await import('~/server/services/text-scan/mode');
+const { scanEntity } = await import('~/server/services/text-scan/submit');
 
 describe('challengeModerationAdapter.applyFailure', () => {
   beforeEach(() => {
@@ -88,6 +101,41 @@ describe('challengeModerationAdapter.applyResult telemetry-read safety', () => {
 
     // The failed read collapses to null → `source: undefined` is passed, which normSource maps to
     // the 'unknown' bucket — the metric is still recorded, never skipped.
-    expect(recordChallengeScanResult).toHaveBeenCalledWith({ source: undefined, result: 'scanned' });
+    expect(recordChallengeScanResult).toHaveBeenCalledWith({
+      source: undefined,
+      result: 'scanned',
+    });
+  });
+});
+
+describe('challengeModerationAdapter.submit under text-scan', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.mocked(getTextScanMode).mockResolvedValueOnce('active');
+    mockDbWrite.challenge.findUnique.mockResolvedValue({ source: 'User' });
+  });
+
+  // Only the retry cron calls submit, and it has already bumped the Pending row.
+  it('submits as a retry, past the in-flight dedupe', async () => {
+    vi.mocked(scanEntity).mockResolvedValueOnce({ status: 'submitted', workflowId: 'ts-1' });
+
+    const result = await challengeModerationAdapter.submit({ entityId: 42, content: 'Theme' });
+
+    expect(scanEntity).toHaveBeenCalledWith(
+      expect.objectContaining({ entityType: 'Challenge', entityId: 42, fromRetry: true })
+    );
+    expect(result).toEqual({ id: 'ts-1' });
+  });
+
+  it('settles a retry the scan skips, so the challenge does not stay Pending', async () => {
+    vi.mocked(scanEntity).mockResolvedValueOnce({ status: 'skipped', reason: 'too-short' });
+
+    expect(await challengeModerationAdapter.submit({ entityId: 42, content: 'T' })).toBeNull();
+
+    expect(applyChallengeNsfwEscalation).toHaveBeenCalledWith({
+      entityId: 42,
+      isNsfw: false,
+      level: NsfwLevel.PG,
+    });
   });
 });

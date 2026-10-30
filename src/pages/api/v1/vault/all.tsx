@@ -2,7 +2,7 @@ import { TRPCError } from '@trpc/server';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import type { SessionUser } from '~/types/session';
 import { getPaginatedVaultItems } from '~/server/services/vault.service';
-import { AuthedEndpoint } from '~/server/utils/endpoint-helpers';
+import { AuthedEndpoint, handleEndpointError } from '~/server/utils/endpoint-helpers';
 import { getPaginatedVaultItemsSchema } from '~/server/schema/vault.schema';
 
 export default AuthedEndpoint(
@@ -23,7 +23,11 @@ export default AuthedEndpoint(
         }
       }
 
-      res.status(500).json({ message: 'An unexpected error occurred', error });
+      // civitai#3845 (population B): the whole error OBJECT used to be
+      // serialized here. The MEMBERSHIP_REQUIRED arm above is route-specific (it
+      // answers 200), so it stays; everything else delegates.
+      handleEndpointError(res, error);
+      return;
     }
   },
   ['GET']

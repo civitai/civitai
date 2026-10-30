@@ -22,16 +22,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
  */
 
 vi.mock('~/server/clickhouse/client', () => ({ clickhouse: undefined }));
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn(() => Promise.resolve()),
-}));
-
 import {
   VIEWS_QUERY_TIMEOUT_SECONDS,
   emptyViews,
   getAppViews,
   unavailableViews,
 } from '../app-views.service';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 const IDS = ['apb_one', 'apb_two'];
 const FROM = new Date('2026-07-01T00:00:00.000Z');
@@ -231,8 +228,8 @@ describe('getAppViews — latency is bounded, not just errors', () => {
 
   it('degrades to UNAVAILABLE when the query hangs past the timeout', async () => {
     // The degrade-don't-throw contract originally covered errors only. A SLOW
-    // ClickHouse is the more likely failure: the driver's own request_timeout
-    // defaults to five minutes, which would hold the whole Promise.all open.
+    // ClickHouse is the more likely failure: the shared client pins request_timeout
+    // to five minutes, which would hold the whole Promise.all open.
     //
     // Fake timers so this costs ~0ms instead of a real 10s on every unit run.
     // The guard is unweakened: the promise still resolves only via the abort

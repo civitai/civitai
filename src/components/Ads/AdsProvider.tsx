@@ -1,15 +1,20 @@
 import { useRouter } from 'next/router';
 import Script from 'next/script';
-import React, { createContext, useContext, useEffect } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import { create } from 'zustand';
 import { adUnitsLoaded } from '~/components/Ads/ads.utils';
 import { useThirdPartyConsent } from '~/components/Consent/consent.context';
+import { detectPrivacyUi } from '~/components/Consent/privacy-ui';
+import { IsClient } from '~/components/IsClient/IsClient';
 import { useSignalContext } from '~/components/Signals/SignalsProvider';
+import { env } from '~/env/client';
+import { outwardTrafficAllowed } from '~/env/local-origin';
 import { isDev } from '~/env/other';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useIsomorphicLayoutEffect } from '~/hooks/useIsomorphicLayoutEffect';
 import { useBrowsingSettings } from '~/providers/BrowserSettingsProvider';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { isBraveBrowser } from '~/utils/device-helpers';
 
 declare global {
   interface Window {
@@ -19,12 +24,41 @@ declare global {
   }
 }
 
+const adEngineLoaders = {
+  production: 'https://cdn.snigelweb.com/adengine/civitai.com/loader.js',
+  staging: 'https://staging-cdn.snigelweb.com/adengine/civitai.com/loader.js',
+};
+
+type AdEngine = keyof typeof adEngineLoaders;
+
+export const AD_ENGINE_PARAM = 'adengine';
+const AD_ENGINE_SESSION_KEY = 'civitai:adengine';
+
+/** Sticky for the tab, so the switch survives navigation and full reloads without re-appending the
+ *  param. `?adengine=production` clears it; the loader installs a global, so this is read once per
+ *  page load rather than tracked per-route — a second loader would fight the first. */
+function resolveAdEngine(): AdEngine {
+  if (typeof window === 'undefined') return 'production';
+  const requested = new URLSearchParams(window.location.search).get(AD_ENGINE_PARAM);
+  const engine: AdEngine | null =
+    requested === 'staging' || requested === 'production' ? requested : null;
+  try {
+    if (engine) sessionStorage.setItem(AD_ENGINE_SESSION_KEY, engine);
+    return (engine ?? sessionStorage.getItem(AD_ENGINE_SESSION_KEY)) === 'staging'
+      ? 'staging'
+      : 'production';
+  } catch {
+    return engine ?? 'production';
+  }
+}
+
 const AdsContext = createContext<{
   ready: boolean;
   consent: boolean;
   adsBlocked?: boolean;
   adsEnabled: boolean;
   useDirectAds: boolean;
+  adEngine: AdEngine;
   username?: string;
   isMember: boolean;
 } | null>(null);
@@ -41,6 +75,7 @@ const useAdProviderStore = create<{
   consent: boolean;
   browserBlocked: boolean;
   gateBlocked: boolean;
+  pageNsfwLevel?: number;
 }>(() => ({
   ready: false,
   // Tri-state: undefined = detection pending, false = confirmed serving (loader onLoad / direct-ad
@@ -61,6 +96,24 @@ export function useAdGate(blocked: boolean) {
     useAdProviderStore.setState({ gateBlocked: true });
     return () => useAdProviderStore.setState({ gateBlocked: false });
   }, [blocked]);
+}
+
+/**
+ * The rating of the content a page shows, sent with direct ad requests alongside the viewer's
+ * browsing level (the ad server combines the two). Set by `Gated`; a store rather than context
+ * because the adhesive footer renders outside the page tree. Layout effect, so it lands before
+ * any ad unit's first request.
+ */
+export function useSetAdPageNsfwLevel(nsfwLevel: number) {
+  useIsomorphicLayoutEffect(() => {
+    if (!nsfwLevel) return;
+    useAdProviderStore.setState({ pageNsfwLevel: nsfwLevel });
+    return () => useAdProviderStore.setState({ pageNsfwLevel: undefined });
+  }, [nsfwLevel]);
+}
+
+export function useAdPageNsfwLevel() {
+  return useAdProviderStore((state) => state.pageNsfwLevel);
 }
 
 const blockedUrls: string[] = [
@@ -88,6 +141,7 @@ export function AdsProvider({
   const currentUser = useCurrentUser();
   const features = useFeatureFlags();
   const { allowed: consentAllowed } = useThirdPartyConsent();
+  const [adEngine] = useState(resolveAdEngine);
 
   // derived value from browsingMode and nsfwOverride
   const isMember = currentUser?.isMember ?? false;
@@ -103,7 +157,8 @@ export function AdsProvider({
   // loader (and the prebid/ad-tech cascade behind it) cannot fire until accepted.
   const adsEnabled = isDev
     ? false
-    : !browserBlocked &&
+    : outwardTrafficAllowed(env.NEXT_PUBLIC_CIVITAI_LINK, env.NEXT_PUBLIC_LOCAL_ADS_ENABLED) &&
+      !browserBlocked &&
       consentAllowed &&
       (allowAds || !isMember) &&
       !blockedUrls.some((url) => router.asPath.includes(url)) &&
@@ -130,12 +185,12 @@ export function AdsProvider({
   }, [useDirectAds, adsEnabled]);
 
   useEffect(() => {
-    const nav = navigator as Navigator & { brave?: { isBrave?: () => Promise<boolean> } };
-    if (typeof nav.brave?.isBrave === 'function') {
-      nav.brave.isBrave().then((isBrave) => {
-        if (isBrave) useAdProviderStore.setState({ browserBlocked: true });
-      });
-    }
+    // Shared with the web-push failure message — see `isBraveBrowser`. This used to open-code the
+    // same detection with no rejection handling, which left an unhandled rejection on any Brave
+    // build whose `isBrave()` rejects.
+    isBraveBrowser().then((isBrave) => {
+      if (isBrave) useAdProviderStore.setState({ browserBlocked: true });
+    });
   }, []);
 
   useEffect(() => {
@@ -176,6 +231,7 @@ export function AdsProvider({
         // so the adhesive footer — rendered outside the page tree — is covered too.
         adsEnabled: adsEnabled && !((gated || gateBlocked) && !useDirectAds),
         useDirectAds,
+        adEngine,
         username: currentUser?.username,
         isMember,
       }}
@@ -221,11 +277,19 @@ export function AdsProvider({
       {adsEnabled && !useDirectAds && (
         <Script
           defer
-          src="https://cdn.snigelweb.com/adengine/civitai.com/loader.js"
+          src={adEngineLoaders[adEngine]}
           onError={handleLoadedError}
           onLoad={handleLoaded}
         />
       )}
+      {/* Client-gated: the engine is resolved from sessionStorage, which SSR can't see. */}
+      <IsClient>
+        {adEngine === 'staging' && (
+          <div className="pointer-events-none fixed bottom-2 left-2 z-50 rounded bg-red-6 px-2 py-1 text-xs font-bold uppercase text-white">
+            Snigel staging ad engine
+          </div>
+        )}
+      </IsClient>
       {/* Cleanup old ad tags */}
       {adsEnabled && !useDirectAds && (
         <Script
@@ -248,8 +312,14 @@ export function AdsProvider({
         />
       )}
       {adsEnabled && !useDirectAds && <ImpressionTracker />}
+      {adsEnabled && !useDirectAds && <PrivacyUiDetector />}
     </AdsContext.Provider>
   );
+}
+
+function PrivacyUiDetector() {
+  useEffect(() => detectPrivacyUi(), []);
+  return null;
 }
 
 function ImpressionTracker() {

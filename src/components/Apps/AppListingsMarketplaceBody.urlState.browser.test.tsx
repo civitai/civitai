@@ -1,9 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page, userEvent } from 'vitest/browser';
-import { useEffect, useReducer } from 'react';
+import { useEffect, useReducer, useState } from 'react';
 import { useRouter } from 'next/router';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
 import { renderWithProviders } from '../../../test/component-setup';
+import { makeTrpcProxy } from '../../../test/trpcProxyStub';
 import type * as TrpcMod from '~/utils/trpc';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
@@ -44,11 +45,14 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     tagline: 'tag',
     category: null,
     contentRating: null,
+    isBeta: false,
     iconUrl: null,
     coverUrl: null,
     creator: null,
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    openCount: kind === 'onsite' ? 0 : null,
+    restrictedAudience: null,
     kindData:
       kind === 'onsite'
         ? {
@@ -57,7 +61,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
             hasPage: false,
             liveUrl: `https://slug-${id}.civit.ai`,
           }
-        : { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://x.app' },
+        : { kind: 'offsite', externalUrl: 'https://x.app' },
   };
 }
 
@@ -68,31 +72,61 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => true }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
+// 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
+// It replaces the module outright, so a named import in the file's module graph that
+// the factory omits makes the whole file fail to IMPORT — reported as
+// `Tests no tests`, i.e. as nothing to see rather than as a failure. That is exactly
+// what happened when the store card began rendering the shared `⋮` menu, whose
+// `useCanReviewListing` reads `useOptionalFeatureFlags`.
+// 🔴 AN `importOriginal` SPREAD IS THE WRONG CURE HERE, and it was tried: the real
+// flags module imports `setTrpcBatchingEnabled` from `~/utils/trpc`, which this
+// file's own wholesale trpc factory does not provide, so spreading moves the same
+// import failure one module over. See
+// `src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`, which
+// gates exactly this rule for its own directory.
+// Both hooks must return the SAME flags: a component may call either, and which one
+// it calls is not something a test file can see.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
+  useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
-  trpc: {
-    appListings: {
-      listAvailable: {
-        useInfiniteQuery: (input: Record<string, unknown>) => {
-          mocks.lastArgs = input;
-          return {
-            data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
-            isLoading: false,
-            isFetchingNextPage: false,
-            fetchNextPage: vi.fn(),
-            hasNextPage: false,
-          };
-        },
+  trpc: makeTrpcProxy({
+    'appListings.listAvailable': {
+      useInfiniteQuery: (input: Record<string, unknown>) => {
+        mocks.lastArgs = input;
+        return {
+          data: { pages: [{ items: mocks.items, nextCursor: undefined }] },
+          isLoading: false,
+          isFetchingNextPage: false,
+          fetchNextPage: vi.fn(),
+          hasNextPage: false,
+        };
       },
     },
-  },
+  }),
 }));
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
+const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+
+/** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
+function StoreWithControls() {
+  return (
+    <>
+      <AppsStoreFeedFilters />
+      <AppListingsMarketplaceBody />
+    </>
+  );
+}
 
 // NOTE the disable is the LAST comment line before the statement — an
 // `eslint-disable-next-line` followed by MORE comment lines disables the next
@@ -120,6 +154,18 @@ const ROUTER_LATENCY_MS = 500;
 let forceRerender: (() => void) | null = null;
 
 /**
+ * Every `router.replace` the component issues, counted.
+ *
+ * 🔴 THE ONLY ASSERTION THAT CAN SEE THE PING-PONG. Every other check in this
+ * file is a RETRYING matcher (`vi.waitFor`, `expect.element(...).toHaveValue`),
+ * and a retrying matcher passes the moment the oscillation happens to swing
+ * through the expected value. The whole suite was green on the unfixed code
+ * while `/apps` burned ~1.8 route writes/sec forever in production. A COUNT that
+ * must stop growing is the shape of assertion the defect cannot satisfy.
+ */
+let replaceCalls = 0;
+
+/**
  * A router that behaves like the real one: `replace` applies the new query AFTER
  * a delay and then re-renders the subscribers, and it returns a promise.
  *
@@ -129,10 +175,14 @@ let forceRerender: (() => void) | null = null;
  */
 function StatefulRouterHarness({ latencyMs }: { latencyMs: number }) {
   const [, force] = useReducer((x: number) => x + 1, 0);
+  // The store is mounted only once `replace` is patched: the sub-nav controls read it on their
+  // first render, which (unlike the store body) does not wait on a data load.
+  const [patched, setPatched] = useState(false);
   useEffect(() => {
     forceRerender = force;
     const original = router.replace;
     router.replace = ((url: unknown) => {
+      replaceCalls += 1;
       const nextQuery = { ...((url as { query?: Record<string, unknown> })?.query ?? {}) };
       return new Promise<boolean>((resolve) => {
         setTimeout(() => {
@@ -144,13 +194,14 @@ function StatefulRouterHarness({ latencyMs }: { latencyMs: number }) {
         }, latencyMs);
       });
     }) as typeof router.replace;
+    setPatched(true);
     return () => {
       router.replace = original;
       forceRerender = null;
     };
   }, [latencyMs]);
 
-  return <AppListingsMarketplaceBody />;
+  return patched ? <StoreWithControls /> : null;
 }
 
 /** Simulate a browser Back / an external navigation to `next`. */
@@ -166,7 +217,10 @@ beforeEach(() => {
   mocks.lastArgs = null;
   router.query = {};
   forceRerender = null;
+  replaceCalls = 0;
 });
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 async function openFilters() {
   await userEvent.click(page.getByTestId('apps-store-filters-dropdown'));
@@ -179,7 +233,7 @@ describe('the harness itself round-trips (guard on the guard)', () => {
     // router would make the racing test pass for the wrong reason.
     renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Off-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
     await vi.waitFor(() => expect(currentQuery()).toMatchObject({ kind: 'offsite' }));
     // …and the component re-renders FROM the URL.
     await vi.waitFor(() => expect(mocks.lastArgs).toMatchObject({ kind: 'offsite' }));
@@ -232,12 +286,71 @@ describe('(a) the search box tracks an EXTERNAL query change', () => {
   });
 });
 
+/**
+ * (d) WHITESPACE IS NOT A DISAGREEMENT. The echo into the URL compares TRIMMED values ('Alpha '
+ * and 'Alpha' are the same search), so it skips a write when only whitespace changed. The adopt
+ * effect compared RAW values, so it read that skipped write as `router.query` having moved and
+ * reset the box to the URL: a space typed after a pause vanished, and a space deleted came back.
+ * Every one of these waits out the 300ms debounce, because that is when it happened.
+ */
+describe('(d) a space in the search box survives the URL round-trip', () => {
+  const PAST_DEBOUNCE_MS = 700;
+
+  test('🔴 a trailing space typed after a pause stays in the box', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha' }));
+
+    await search.fill('Alpha ');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe('Alpha ');
+  });
+
+  test('🔴 a trailing space deleted after a pause stays deleted', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha ');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha ' }));
+
+    await search.fill('Alpha');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe('Alpha');
+  });
+
+  test('a leading space typed into an empty box stays', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill(' ');
+    await sleep(PAST_DEBOUNCE_MS);
+    expect((search.element() as HTMLInputElement).value).toBe(' ');
+  });
+
+  test('a Back to a genuinely different term is still adopted', async () => {
+    // The control that keeps the fix honest: ignoring whitespace must not make the box deaf to
+    // an external change.
+    router.query = { query: 'Alpha' };
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toHaveValue('Alpha');
+
+    navigateTo({ query: 'Bravo' });
+    await vi.waitFor(() => expect((search.element() as HTMLInputElement).value).toBe('Bravo'));
+  });
+});
+
 describe('(b) two fast filter clicks must not drop one', () => {
   test('🔴 kind then category, both inside the in-flight window, both survive', async () => {
     renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
     await openFilters();
 
-    await userEvent.click(page.getByRole('button', { name: 'On-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Embedded' }));
     await userEvent.click(page.getByRole('button', { name: 'Generation' }));
 
     await vi.waitFor(() => {
@@ -246,7 +359,7 @@ describe('(b) two fast filter clicks must not drop one', () => {
     // …and the panel, which now renders FROM the url, shows both as pressed
     // rather than visibly reverting the first one.
     await expect
-      .element(page.getByRole('button', { name: 'On-site' }))
+      .element(page.getByRole('button', { name: 'Embedded' }))
       .toHaveAttribute('aria-pressed', 'true');
     await expect
       .element(page.getByRole('button', { name: 'Generation' }))
@@ -256,13 +369,34 @@ describe('(b) two fast filter clicks must not drop one', () => {
   test('a sort change racing a kind change keeps both', async () => {
     renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
     await openFilters();
-    await userEvent.click(page.getByRole('button', { name: 'Off-site' }));
+    await userEvent.click(page.getByRole('button', { name: 'Standalone' }));
     // Close the panel and change sort immediately.
-    await userEvent.click(page.getByLabelText('Sort').first());
-    await userEvent.click(page.getByRole('option', { name: 'Newest' }));
+    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
     await vi.waitFor(() => {
       expect(currentQuery()).toMatchObject({ kind: 'offsite', sort: 'newest' });
     });
+  });
+
+  test('a sort click while the search write is in flight keeps the search term', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
+    await userEvent.fill(page.getByLabelText('Search'), 'matrix');
+    // The 300ms debounce has fired and the search write is on its way (the router applies it
+    // ROUTER_LATENCY_MS later), but the URL does not carry the term yet.
+    await vi.waitFor(() => expect(replaceCalls).toBeGreaterThanOrEqual(1));
+    expect(currentQuery()).not.toHaveProperty('query');
+
+    await userEvent.click(page.getByRole('button', { name: 'Top rated' }));
+    await userEvent.click(page.getByRole('menuitem', { name: 'Newest' }));
+
+    await vi.waitFor(
+      () => expect(currentQuery()).toMatchObject({ query: 'matrix', sort: 'newest' }),
+      { timeout: 4000 }
+    );
+    // …and the box was not rewritten from the URL while the dust settled.
+    await new Promise((resolve) => setTimeout(resolve, ROUTER_LATENCY_MS * 2));
+    await expect.element(page.getByLabelText('Search')).toHaveValue('matrix');
+    expect(currentQuery()).toMatchObject({ query: 'matrix', sort: 'newest' });
   });
 
   test('clearing a filter still CLEARS it (the merge must not resurrect defaults)', async () => {
@@ -276,5 +410,82 @@ describe('(b) two fast filter clicks must not drop one', () => {
       expect(currentQuery()).not.toHaveProperty('kind');
       expect(currentQuery()).not.toHaveProperty('category');
     });
+  });
+});
+
+/**
+ * (c) THE PING-PONG. Reproduced on production 2026-08-13: typing into the store
+ * search box started an UNBOUNDED `history.replaceState` oscillation —
+ * `/apps?query=X` → `/apps` → `/apps?query=X` → … at ~1.8 writes/sec, never
+ * settling, ending with the term stripped from the URL.
+ *
+ * 🔴 WHY THE SUITE ABOVE COULD NOT SEE IT. Every assertion in (a) and (b) is a
+ * RETRYING matcher, and an oscillation swings through the expected value on
+ * every cycle — so "typing is NOT clobbered by the re-sync" was GREEN on the
+ * broken code. The defect is not a wrong value, it is a value that will not stop
+ * changing, and only a COUNT that must stop growing can express that.
+ *
+ * The mechanism is written up at the adopt effect in
+ * `AppListingsMarketplaceBody.tsx`: the debounced echo and the URL→box adopt
+ * both run in the SAME commit, and the adopt's `isWritePending` guard used to be
+ * a render-time boolean, sampled before the echo had incremented it.
+ */
+describe('(c) typing must SETTLE — no unbounded route-write ping-pong', () => {
+  test('🔴 one search term → route writes STOP, and `?query=` sticks', async () => {
+    renderWithProviders(<StatefulRouterHarness latencyMs={0} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha' }));
+
+    // 1.8s ≈ 3 full periods of the production loop (2 × the 300ms debounce), so
+    // on the unfixed code this window CANNOT be quiet. Sampling — rather than
+    // one reading at the end — is deliberate: a single final read of the URL is
+    // a coin flip against an oscillation, and would make this test flaky-green
+    // instead of reliably red.
+    const settledAt = replaceCalls;
+    const writes: number[] = [];
+    const urlQueries: unknown[] = [];
+    const boxValues: string[] = [];
+    for (let i = 0; i < 18; i++) {
+      await sleep(100);
+      writes.push(replaceCalls);
+      urlQueries.push(currentQuery().query);
+      boxValues.push((search.element() as HTMLInputElement).value);
+    }
+
+    // BOUNDED: not one further route write after the term landed.
+    expect(writes).toEqual(writes.map(() => settledAt));
+    // STICKS: `?query=Alpha` is present at EVERY instant — it never reverts to a
+    // bare `/apps`, which is the end state the production repro landed on.
+    expect(urlQueries).toEqual(urlQueries.map(() => 'Alpha'));
+    // …and the box is not wiped out from under the viewer on the way there.
+    expect(boxValues).toEqual(boxValues.map(() => 'Alpha'));
+  });
+
+  test('🔴 …and with a SLOW router too (the in-flight window is real)', async () => {
+    // Same claim at the other end of the dimension the hook's counter exists
+    // for: a `router.replace` that takes 500ms to land. One measurement at
+    // latency 0 would say nothing about the window where the counter is doing
+    // the work.
+    renderWithProviders(<StatefulRouterHarness latencyMs={ROUTER_LATENCY_MS} />);
+    const search = page.getByLabelText('Search');
+    await expect.element(search).toBeInTheDocument();
+
+    await search.fill('Alpha');
+    await vi.waitFor(() => expect(currentQuery()).toMatchObject({ query: 'Alpha' }));
+
+    const settledAt = replaceCalls;
+    const writes: number[] = [];
+    const urlQueries: unknown[] = [];
+    for (let i = 0; i < 18; i++) {
+      await sleep(100);
+      writes.push(replaceCalls);
+      urlQueries.push(currentQuery().query);
+    }
+    expect(writes).toEqual(writes.map(() => settledAt));
+    expect(urlQueries).toEqual(urlQueries.map(() => 'Alpha'));
+    await expect.element(search).toHaveValue('Alpha');
   });
 });

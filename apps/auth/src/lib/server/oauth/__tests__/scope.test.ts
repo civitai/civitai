@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { TokenScope, ALL_SCOPES } from '@civitai/auth/token-scope';
 
-import { hasScope, scopeToString, stringToScope, scopeLabels } from '../scope';
+import { hasScope, isScopeGrantable, scopeToString, stringToScope, scopeLabels } from '../scope';
 
 /**
  * `apps/auth/src/lib/server/oauth/scope.ts` — the hub's only scope encode/decode +
@@ -32,7 +32,7 @@ describe('scopeLabels', () => {
       'View generation & training history',
       'Generate, train & scan',
       'View buzz balance & history',
-      'Submit Apps for review',
+      'Manage your Apps: submit versions, pull source, test locally, edit listings, view analytics and respond to user feedback',
       'Open on-site dev tunnels',
     ]);
   });
@@ -43,7 +43,7 @@ describe('scopeLabels', () => {
     const before = 100663297; // UserRead|AppBlocksSubmit|AppBlocksDevTunnel
     expect(scopeLabels(before)).toEqual([
       'Read profile, settings & email',
-      'Submit Apps for review',
+      'Manage your Apps: submit versions, pull source, test locally, edit listings, view analytics and respond to user feedback',
       'Open on-site dev tunnels',
     ]);
   });
@@ -59,7 +59,23 @@ describe('scopeLabels', () => {
       expect(label.length).toBeGreaterThan(0);
     }
     // Positive control on the loop above — it must have iterated.
-    expect(scopeLabels(ALL_SCOPES).length).toBeGreaterThanOrEqual(27);
+    expect(scopeLabels(ALL_SCOPES).length).toBeGreaterThanOrEqual(28);
+  });
+
+  it('renders the Civitai Link pairing label for bit 27', () => {
+    expect(scopeLabels(TokenScope.LinkConnect)).toEqual([
+      'Connect the Civitai Link app to your account',
+    ]);
+  });
+
+  it('renders every label for the civitai-link-desktop consent screen, in bit order', () => {
+    // UserRead|VaultRead|VaultWrite|LinkConnect — the mask the desktop client requests.
+    expect(scopeLabels(159383553)).toEqual([
+      'Read profile, settings & email',
+      'View vault',
+      'Manage vault',
+      'Connect the Civitai Link app to your account',
+    ]);
   });
 });
 
@@ -91,5 +107,56 @@ describe('stringToScope / scopeToString', () => {
     expect(stringToScope('-1')).toBe(0);
     expect(stringToScope('not-a-number')).toBe(0);
     expect(stringToScope(undefined)).toBe(0);
+  });
+
+  it('accepts the Civitai Link desktop mask, which exceeds Full', () => {
+    // RED before the bit exists: 159383553 > the old ALL_SCOPES (134217727), so the
+    // out-of-range clamp returned 0 and the hub would answer invalid_scope.
+    expect(stringToScope('159383553')).toBe(159383553);
+    expect(scopeToString(159383553)).toEqual(['159383553']);
+  });
+});
+
+describe('isScopeGrantable', () => {
+  const CATALOG = TokenScope.AppStoreCatalogWrite;
+  const CEILING = TokenScope.UserRead | TokenScope.AIServicesWrite | CATALOG;
+
+  it('lets client_credentials mint the catalog bit (UserRead included) within the ceiling', () => {
+    expect(isScopeGrantable(CEILING, CATALOG, 'client_credentials')).toBe(true);
+    expect(isScopeGrantable(CEILING, CATALOG | TokenScope.UserRead, 'client_credentials')).toBe(
+      true
+    );
+  });
+
+  it('caps client_credentials at UserRead|AppStoreCatalogWrite even inside the ceiling', () => {
+    expect(isScopeGrantable(CEILING, TokenScope.AIServicesWrite, 'client_credentials')).toBe(false);
+    expect(
+      isScopeGrantable(CEILING, CATALOG | TokenScope.AIServicesWrite, 'client_credentials')
+    ).toBe(false);
+  });
+
+  it('keeps the ceiling for client_credentials', () => {
+    expect(isScopeGrantable(TokenScope.UserRead, CATALOG, 'client_credentials')).toBe(false);
+  });
+
+  it('never lets a user grant carry the catalog bit, even when the ceiling has it', () => {
+    expect(isScopeGrantable(CEILING, CATALOG, 'user')).toBe(false);
+    expect(isScopeGrantable(CEILING, CATALOG | TokenScope.UserRead, 'user')).toBe(false);
+  });
+
+  it('never lets a user or client_credentials grant carry WorkerRegister, even within the ceiling', () => {
+    const worker = TokenScope.WorkerRegister;
+    expect(isScopeGrantable(CEILING | worker, worker, 'user')).toBe(false);
+    expect(isScopeGrantable(CEILING | worker, worker | TokenScope.UserRead, 'user')).toBe(false);
+    expect(isScopeGrantable(CEILING | worker, worker, 'client_credentials')).toBe(false);
+    expect(isScopeGrantable(CEILING | worker, CATALOG, 'client_credentials')).toBe(true);
+  });
+
+  it('leaves user grants within the ceiling unchanged (positive control)', () => {
+    expect(
+      isScopeGrantable(CEILING, TokenScope.AIServicesWrite | TokenScope.UserRead, 'user')
+    ).toBe(true);
+    expect(isScopeGrantable(TokenScope.None, TokenScope.UserRead, 'user')).toBe(true);
+    expect(isScopeGrantable(CEILING, TokenScope.VaultRead, 'user')).toBe(false);
   });
 });

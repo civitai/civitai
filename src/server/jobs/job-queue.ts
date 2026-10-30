@@ -3,12 +3,18 @@ import dayjs from '~/shared/utils/dayjs';
 import { chunk, uniq } from 'lodash-es';
 import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
-import { imagesMetricsSearchIndex, imagesSearchIndex } from '~/server/search-index';
+import {
+  collectionsSearchIndex,
+  imagesMetricsSearchIndex,
+  imagesSearchIndex,
+} from '~/server/search-index';
 import {
   getNsfwLevelRelatedEntities,
   updateCollectionsNsfwLevels,
   updateNsfwLevels,
 } from '~/server/services/nsfwLevels.service';
+import { detachHeldThreadsCte } from '~/server/services/comment-thread-hold';
+import { accountHoldSql } from '~/server/services/legal-hold.service';
 import { limitConcurrency, Limiter } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 // TEMP: unused while collection enqueue is disabled below. REVERT.
@@ -28,11 +34,13 @@ const jobQueueMap = {
   [EntityType.ModelVersion]: 'modelVersionIds',
   [EntityType.Comment]: 'commentIds', // unused
   [EntityType.CommentV2]: 'commentV2Ids', // unused
+  [EntityType.CommentV3]: 'commentV3Ids', // unused
   [EntityType.User]: 'userIds', // unused
   [EntityType.UserProfile]: 'userProfileIds', // unused
   [EntityType.ResourceReview]: 'resourceReviewIds', // unused
   [EntityType.ChatMessage]: 'chatMessageIds', // unused
   [EntityType.Model3D]: 'model3dIds',
+  [EntityType.Storyline]: 'storylineIds', // unused
 } as const;
 type JobQueueMap = typeof jobQueueMap;
 type JobQueueIds = {
@@ -175,7 +183,23 @@ const updateNsfwLevelsCollectionsJob = createJob(
       // Smaller batch size for more granular processing
       await Limiter({ batchSize: 20, limit: 3 }).process(collectionIds, async (batchIds) => {
         try {
+          // Every id in the batch, not just the ones `updateCollectionsNsfwLevels`
+          // returns — it returns only collections whose level actually moved
+          // (`AND c."nsfwLevel" != c2."nsfwLevel"`), which removing an item rarely does.
+          // The queue row is the signal that membership changed; the level change is a
+          // rare side effect of it, and gating on it left documents stale.
+          //
+          // Ahead of the recompute, not after it: the recompute is two EXISTS
+          // subqueries over five LEFT JOINs per collection and collections of ~191k
+          // items exist, so it can time out — and a batch that fails deterministically
+          // would otherwise never tell the index about any of its 20 collections. On
+          // retry the duplicate costs nothing; the queue is a Redis set.
+          await collectionsSearchIndex.queueUpdate(
+            batchIds.map((id) => ({ id, action: SearchIndexUpdateQueueAction.Update }))
+          );
+
           await updateCollectionsNsfwLevels(batchIds);
+
           await dbWrite.jobQueue.deleteMany({
             where: {
               type: JobQueueType.UpdateNsfwLevel,
@@ -261,18 +285,25 @@ const handleJobQueueCleanIfEmpty = createJob(
         if (!ids.length) return;
         // Delete posts that have no images, but preserve the empty anchor post of a published
         // version — deleting it cascades to auto-unpublishing the version (reason 'no-posts'),
-        // stranding the creator. Keeping the shell lets them re-add showcase images.
+        // stranding the creator. Keeping the shell lets them re-add showcase images. A storyline
+        // chapter's post is kept for the same reason: deleting it leaves the chapter without content.
         await dbWrite.$executeRaw`
-          DELETE FROM "Post" p
-          WHERE id IN (${Prisma.join(ids)})
-            AND NOT EXISTS (SELECT 1 FROM "Image" WHERE "postId" = p.id)
-            AND NOT EXISTS (
-              SELECT 1 FROM "ModelVersion" mv
-              JOIN "Model" m ON m.id = mv."modelId"
-              WHERE mv.id = p."modelVersionId"
-                AND p."userId" = m."userId"
-                AND mv.status = 'Published'::"ModelStatus"
-            )
+          WITH doomed AS (
+            SELECT p.id FROM "Post" p
+            WHERE p.id IN (${Prisma.join(ids)})
+              AND NOT EXISTS (SELECT 1 FROM "Image" WHERE "postId" = p.id)
+              AND NOT EXISTS (
+                SELECT 1 FROM "ModelVersion" mv
+                JOIN "Model" m ON m.id = mv."modelId"
+                WHERE mv.id = p."modelVersionId"
+                  AND p."userId" = m."userId"
+                  AND mv.status = 'Published'::"ModelStatus"
+              )
+              AND NOT EXISTS (SELECT 1 FROM "StorylineChapter" sc WHERE sc."postId" = p.id)
+              AND NOT ${accountHoldSql(Prisma.raw('p."userId"'), true)}
+          ),
+          ${detachHeldThreadsCte({ postId: Prisma.sql`SELECT id FROM doomed` }, true)}
+          DELETE FROM "Post" WHERE id IN (SELECT id FROM doomed)
         `;
       });
 

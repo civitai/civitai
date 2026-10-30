@@ -38,8 +38,18 @@ export const getModelVersionDetailsSelect = Prisma.validator<Prisma.ModelVersion
 
 export const getModelVersionApiSelect = Prisma.validator<Prisma.ModelVersionSelect>()({
   ...getModelVersionDetailsSelect,
+  availability: true,
   model: {
-    select: { name: true, type: true, nsfw: true, poi: true, mode: true },
+    select: {
+      name: true,
+      sfwName: true,
+      type: true,
+      nsfw: true,
+      poi: true,
+      mode: true,
+      availability: true,
+      userId: true,
+    },
   },
 });
 const modelVersionApi = Prisma.validator<Prisma.ModelVersionDefaultArgs>()({
@@ -53,7 +63,9 @@ export const getModelVersionsForSearchIndex = Prisma.validator<Prisma.ModelVersi
   nsfwLevel: true,
   createdAt: true,
   flags: true,
-  generationCoverage: { select: { covered: true } },
+  generatorLoaded: true,
+  usageControl: true,
+  generationCoverage: { select: { covered: true, coveredNext: true } },
   trainedWords: true,
   baseModel: true,
   baseModelType: true,

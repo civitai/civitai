@@ -1,3 +1,4 @@
+import type { OutputUse } from '~/shared/generation/config/types';
 import {
   Accordion,
   ActionIcon,
@@ -40,7 +41,10 @@ import type {
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import { getStepMeta } from '~/components/ImageGeneration/GenerationForm/generation.utils';
 import { MarkerFiltersDropdown } from '~/components/ImageGeneration/MarkerFiltersDropdown';
-import { useGetTextToImageRequests } from '~/components/ImageGeneration/utils/generationRequestHooks';
+import {
+  matchesMarkerTags,
+  useGetTextToImageRequests,
+} from '~/components/ImageGeneration/utils/generationRequestHooks';
 import { ImageMetaPopover } from '~/components/ImageMeta/ImageMeta';
 import { InViewLoader } from '~/components/InView/InViewLoader';
 import { NoContent } from '~/components/NoContent/NoContent';
@@ -73,13 +77,15 @@ import { MediaType, TrainingStatus } from '~/shared/utils/prisma/enums';
 import type { ImageGetMyInfinite, RecentTrainingData } from '~/types/router';
 import { formatDate } from '~/utils/date-helpers';
 import { formatKBytes } from '~/utils/number-helpers';
-import { getAirModelLink, isAir, splitUppercase } from '~/utils/string-helpers';
+import { isAir, splitUppercase } from '~/utils/string-helpers';
+import { getAirModelLink } from '~/shared/utils/air';
 import { trainingModelInfo } from '~/utils/training';
 import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from '~/components/Search/SearchLayout.module.scss';
 import clsx from 'clsx';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
+import { DEFAULT_EDGE_IMAGE_WIDTH } from '~/server/common/constants';
 
 // const take = 20;
 
@@ -88,6 +94,8 @@ export type SelectedImage = {
   label: string;
   type: MediaType;
   meta?: Record<string, unknown>;
+  /** Generator selections only — lets the server verify what the job was made from. */
+  generationWorkflowId?: string;
 };
 
 type UploadedImage = Omit<ImageGetMyInfinite[number], 'meta'> & { meta: ImageMetaProps | null };
@@ -116,6 +124,8 @@ export type ImageSelectModalProps = {
   importedUrls: string[];
   videoAllowed: boolean;
   selectSource?: ImageSelectSource;
+  /** What the picked outputs are for; outputs that can't be used for it aren't listed. */
+  outputUse?: OutputUse;
 };
 
 export default function ImageSelectModal({
@@ -124,6 +134,7 @@ export default function ImageSelectModal({
   importedUrls,
   videoAllowed,
   selectSource = 'generation',
+  outputUse = 'post',
 }: ImageSelectModalProps) {
   const dialog = useDialogContext();
   const currentUser = useCurrentUser();
@@ -147,6 +158,7 @@ export default function ImageSelectModal({
     isFetchingNextPage: isFetchingNextPageGenerations,
     hasNextPage: hasNextPageGenerations,
     fetchNextPage: fetchNextPageGenerations,
+    markerTags,
     // isError: isErrorGenerations,
   } = useGetTextToImageRequests(
     { tags: videoAllowed ? [] : [WORKFLOW_TAGS.IMAGE] },
@@ -185,10 +197,14 @@ export default function ImageSelectModal({
         // Training datasets only accept 2D media; PolyGen (3D) outputs
         // have no sensible representation here.
         wf.succeededOutput.filter(
-          (x): x is TrainingGenerationBlob => x.available && x.type !== 'model3d'
+          (x): x is TrainingGenerationBlob =>
+            x.available &&
+            x.type !== 'model3d' &&
+            matchesMarkerTags(x, markerTags) &&
+            x.canUse(outputUse)
         )
       ),
-    [generationData]
+    [generationData, markerTags, outputUse]
   );
 
   const uploadedMedia = useMemo(
@@ -467,6 +483,7 @@ const ImageGridMedia = ({
                 : '',
             type: type === 'training' ? 'image' : img.type,
             meta,
+            generationWorkflowId: type === 'generation' ? img.workflowId : undefined,
           },
         ];
       } else {
@@ -677,6 +694,7 @@ const ImageGridMedia = ({
         alt={`Imported Media - ${img.id}`}
         src={img.url}
         type={img.type}
+        width={DEFAULT_EDGE_IMAGE_WIDTH}
         className={`h-[250px] w-full object-cover`}
         anim={true}
       />

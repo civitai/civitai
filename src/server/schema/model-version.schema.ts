@@ -1,18 +1,24 @@
-import { v4 as uuidv4 } from 'uuid';
 import type { ModelVersionTerms, RightsAffirmation } from '@civitai/buzz';
+import type { BaseModelAttestation } from '~/shared/constants/base-model-attestation.constants';
 import { MAX_LICENSING_FEE, maxLicensingFeeCeiling } from '@civitai/buzz';
 import * as z from 'zod';
-import {
-  MAX_DONATION_GOAL,
-  MIN_DONATION_GOAL,
-} from '~/components/Model/ModelVersions/model-version.utils';
+import { MAX_DONATION_GOAL, MIN_DONATION_GOAL } from '~/shared/constants/donation-goal.constants';
 import type { BaseModel } from '~/shared/constants/basemodel.constants';
+import {
+  LORA_STRENGTH_BOUNDS,
+  TURBO_VARIANT_MODEL_TYPES,
+} from '~/shared/constants/generation.constants';
+import { baseModels } from '~/shared/constants/basemodel.constants';
 import { constants } from '~/server/common/constants';
-import { infiniteQuerySchema } from '~/server/schema/base.schema';
-import { imageSchema } from '~/server/schema/image.schema';
+import { imageInputSchema } from '~/server/schema/image.schema';
 import { modelFileSchema } from '~/server/schema/model-file.schema';
 import type { ModelMeta } from '~/server/schema/model.schema';
+import {
+  metricVisibilityChoicesSchema,
+  metricVisibilityMetaFromChoices,
+} from '~/server/utils/model-metric-privacy';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import { CSS_COLOR, DEFAULT_ALLOWED_ATTRIBUTES } from '~/utils/html-sanitize-helpers';
 import {
   LicensingFeeSettlementCurrency,
   LicensingFeeType,
@@ -33,12 +39,6 @@ import {
   trainingBaseModelType,
 } from '~/utils/training';
 
-export type QueryModelVersionSchema = z.infer<typeof queryModelVersionsSchema>;
-export const queryModelVersionsSchema = infiniteQuerySchema.extend({
-  trainingStatus: z.enum(TrainingStatus).optional(),
-  // uploadType: z.enum(ModelUploadType).optional(),
-});
-
 export type RecipeModelInput = z.infer<typeof recipeModelSchema>;
 export const recipeModelSchema = z.object({
   id: z.union([z.number(), z.string()]).optional(),
@@ -48,7 +48,7 @@ export const recipeModelSchema = z.object({
 
 export type RecipeInput = z.infer<typeof recipeSchema>;
 export const recipeSchema = z.object({
-  id: z.string().default(uuidv4()),
+  id: z.string().default(() => crypto.randomUUID()),
   type: z.enum(['sum', 'diff']),
   modelA: recipeModelSchema,
   modelB: recipeModelSchema,
@@ -83,10 +83,16 @@ export const trainingDetailsBaseModelsLtx25 = ['ltx25'] as const;
 export const trainingDetailsBaseModelsMiniMaxH3 = ['minimaxh3'] as const;
 export const trainingDetailsBaseModelsErnie = ['ernie'] as const;
 export const trainingDetailsBaseModelsHiDreamO1 = ['hidream_o1'] as const;
+export const trainingDetailsBaseModelsQwen21 = ['qwen21'] as const;
+export const trainingDetailsBaseModelsMing = ['ming'] as const;
+export const trainingDetailsBaseModelsYue2 = ['yue2'] as const;
 export const trainingDetailsBaseModelsAnima = ['anima'] as const;
 export const trainingDetailsBaseModelsBoogu = ['boogu'] as const;
 export const trainingDetailsBaseModelsKrea2 = ['krea2'] as const;
 export const trainingDetailsBaseModelsMageFlow = ['mageflow'] as const;
+export const trainingDetailsBaseModelsIdeogram4 = ['ideogram4'] as const;
+export const trainingDetailsBaseModelsMossImage = ['mossimage_base', 'mossimage_sft'] as const;
+export const trainingDetailsBaseModelsFlux3Klein = ['flux3klein'] as const;
 export const trainingDetailsBaseModelsAcestep15 = ['acestep_15'] as const;
 export const trainingDetailsBaseModelsAcestep15Xl = [
   'acestep_15_xl_base',
@@ -106,9 +112,14 @@ const trainingDetailsBaseModelsImage = [
   ...trainingDetailsBaseModelsErnie,
   ...trainingDetailsBaseModelsHiDreamO1,
   ...trainingDetailsBaseModelsAnima,
+  ...trainingDetailsBaseModelsMing,
+  ...trainingDetailsBaseModelsQwen21,
   ...trainingDetailsBaseModelsBoogu,
   ...trainingDetailsBaseModelsKrea2,
   ...trainingDetailsBaseModelsMageFlow,
+  ...trainingDetailsBaseModelsIdeogram4,
+  ...trainingDetailsBaseModelsMossImage,
+  ...trainingDetailsBaseModelsFlux3Klein,
 ] as const;
 const trainingDetailsBaseModelsVideo = [
   ...trainingDetailsBaseModelsHunyuan,
@@ -120,6 +131,7 @@ const trainingDetailsBaseModelsVideo = [
 ] as const;
 const trainingDetailsBaseModelsAudio = [
   ...trainingDetailsBaseModelsAcestep15,
+  ...trainingDetailsBaseModelsYue2,
   ...trainingDetailsBaseModelsAcestep15Xl,
 ] as const;
 
@@ -249,6 +261,10 @@ export const audioSampleOverrideSchema = z.object({
   steps: z.number().int().min(1).max(200).optional(),
   cfg: z.number().min(0).max(20).optional(),
 });
+export const yue2SampleOverrideSchema = audioSampleOverrideSchema
+  .pick({ lyrics: true, duration: true, steps: true })
+  .extend({ steps: z.number().int().min(1).max(100).optional() });
+
 export type AudioSampleOverrideSchema = z.infer<typeof audioSampleOverrideSchema>;
 
 export type TrainingDetailsObj = z.infer<typeof trainingDetailsObj>;
@@ -273,17 +289,27 @@ export const trainingDetailsObj = z.object({
   continueFromEpoch: z
     .object({
       air: z.string(),
-      epochNumber: z.number(),
+      // Not `.nonnegative()`: an epoch the orchestrator never numbered is stored as -1, and
+      // "Train Further" sends that value straight back. The service clamps it instead.
+      epochNumber: z.number().int(),
       sourceModelVersionId: z.number(),
       sourceVersionName: z.string().optional(),
     })
     .optional(),
 });
 
+const canonicalBaseModels = new Set(baseModels);
+
+// Every name, not `activeBaseModels`: deprecated models must stay editable, and hidden ones are
+// moderator-only in the UI but legitimate on the wire.
+const baseModelSchema = z.string().refine((value) => canonicalBaseModels.has(value), {
+  error: (issue) => `Unknown base model: ${issue.input}`,
+});
+
 export const modelVersionUpsertSchema = z.object({
   id: z.coerce.number().optional(),
   name: z.string().min(1, 'Name cannot be empty.'),
-  baseModel: z.string(),
+  baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
     allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
@@ -292,7 +318,7 @@ export const modelVersionUpsertSchema = z.object({
   steps: z.coerce.number().min(0).nullish(),
   epochs: z.coerce.number().min(0).max(100000).nullish(),
   images: z
-    .array(imageSchema)
+    .array(imageInputSchema)
     .min(1, 'At least one example image must be uploaded')
     .max(20, 'You can only upload up to 20 images'),
   trainedWords: z.array(z.string()),
@@ -302,11 +328,54 @@ export const modelVersionUpsertSchema = z.object({
   // recipe: z.array(recipeSchema).optional(),
 });
 
+// A cleared number input submits '', which `z.coerce.number()` would read as 0.
+const blankToUndefined = (value: unknown) => (value === '' || value === null ? undefined : value);
+const rangeNumber = z.preprocess(blankToUndefined, z.coerce.number());
+
+/** A recommended value and the advisory band around it; the generator paints the band on the slider. */
+export const recommendedRangeSchema = z
+  .object({ min: rangeNumber, max: rangeNumber, default: rangeNumber })
+  .refine((r) => r.min <= r.max, { error: 'Min must not exceed max', path: ['min'] })
+  .refine((r) => r.min <= r.default && r.default <= r.max, {
+    error: 'Default must be within min and max',
+    path: ['default'],
+  });
+
+/** A checkpoint's generation settings. */
+export const recommendedGenerationSettingsSchema = z.object({
+  /** The LoRA the generator's Turbo toggle starts on with this checkpoint, over the family's default. */
+  turboLora: z
+    .object({
+      id: z.number().int().positive(),
+      /** Over the LoRA's own default strength. */
+      strength: z.coerce
+        .number()
+        .min(LORA_STRENGTH_BOUNDS.min)
+        .max(LORA_STRENGTH_BOUNDS.max)
+        .nullish(),
+    })
+    .nullish(),
+});
+
+/**
+ * A LoRA's turbo block. Its presence marks the version as a turbo variant, so both ranges are
+ * required: the generator applies them whole when the LoRA is on.
+ */
+export const turboSettingsSchema = z.object({
+  steps: recommendedRangeSchema,
+  cfgScale: recommendedRangeSchema,
+});
+
+/** The model types a turbo block may be saved on. */
+export { TURBO_VARIANT_MODEL_TYPES };
+
 export type RecommendedSettingsSchema = z.infer<typeof recommendedSettingsSchema>;
 export const recommendedSettingsSchema = z.object({
   minStrength: z.coerce.number().nullish(),
   maxStrength: z.coerce.number().nullish(),
   strength: z.coerce.number().nullish(),
+  generation: recommendedGenerationSettingsSchema.nullish(),
+  turbo: turboSettingsSchema.nullish(),
 });
 
 export const linkedComponentSettingsSchema = z.object({
@@ -339,7 +408,7 @@ export const setLinkedComponentsSchema = z.object({
 export type SetLinkedComponentsInput = z.infer<typeof setLinkedComponentsSchema>;
 
 export const addLinkedComponentSchema = z.object({
-  id: z.number(), // source model version ID (named `id` for isOwnerOrModerator middleware compat)
+  id: z.number(), // source model version ID (named `id` for the ownership middleware)
   targetVersionId: z.number(), // linked resource's version ID
   targetFileId: z.number().optional(), // explicit file to link; falls back to auto-picking the primary
   replaceFileId: z.number().optional(), // redundant file on the source version to delete after linking
@@ -407,7 +476,20 @@ export const donationGoalInputSchema = z.object({
 export type ModelVersionPaidAccessDto = {
   endsAt: Date | null;
   timeframeDays: number | null;
+  /** Already discounted when a sale is live — `sale.listTerms` carries what it was before. */
   terms: ModelVersionTerms;
+  /**
+   * Present only while a sale is actually discounting this viewer's price. `listTerms` is the
+   * pre-sale price so the UI can strike it through; `endsAt` is what a countdown reads.
+   */
+  sale: {
+    listTerms: ModelVersionTerms;
+    /** What a buyer is quoted, so an owner can be shown it without recomputing the discount. */
+    buyerTerms: ModelVersionTerms;
+    endsAt: Date;
+    discountType: 'Fixed' | 'Percent';
+    discountAmount: number;
+  } | null;
 };
 
 // Narrow input for editing only a version's paid access (e.g. from the creator studio) without
@@ -433,11 +515,47 @@ export const modelVersionUpsertSchema2 = z.object({
   modelId: z.number(),
   id: z.number().optional(),
   name: z.string().trim().min(1, 'Name cannot be empty.'),
-  baseModel: z.string(),
+  baseModel: baseModelSchema,
   baseModelType: z.enum(constants.baseModelTypes).nullish(),
   description: getSanitizedStringSchema({
-    allowedTags: ['div', 'strong', 'p', 'em', 'u', 's', 'a', 'br', 'ul', 'ol', 'li', 'code', 'pre'],
+    // `div` is the blurb wrapper and is already in this narrowed list; `data-id` on it comes from
+    // the app-wide attribute defaults. `span` is here for what goes INSIDE a blurb — the colour
+    // span, and mentions. `allowBlurbs` is an attribute STRIP toggle, not a tag admission, so it
+    // cannot admit either tag on its own: drop one and the markup is stripped at save,
+    // `expandBlurbs` sees plain text, and the control renders and silently does nothing on this
+    // surface alone.
+    allowedTags: [
+      'div',
+      'strong',
+      'p',
+      'em',
+      'u',
+      's',
+      'a',
+      'br',
+      'ul',
+      'ol',
+      'li',
+      'code',
+      'pre',
+      'span',
+    ],
+    // Admitting `span` re-opens what this surface used to strip outright, so its attributes are
+    // narrowed to the three a blurb needs. That closes `class` and `data-label`.
+    // `data-type` + `data-id` are exactly what a mention carries, so a mention span survives here
+    // and gets a real hover card. Parity with every other rich-text surface, not a new exposure.
+    // `style` is admitted for a blurb's text colour and bounded by `allowedStyles` below to the
+    // `color` property alone — STRICTER than the other blurb surfaces, which take the app-wide
+    // `span: [... 'style']` with no property allowlist at all. Without it a blurb's colour is
+    // stripped here and nowhere else, which is the silent per-surface divergence this whole
+    // paragraph exists to prevent.
+    allowedAttributes: {
+      ...DEFAULT_ALLOWED_ATTRIBUTES,
+      span: ['data-type', 'data-id', 'style'],
+    },
+    allowedStyles: { span: { color: CSS_COLOR } },
     stripEmpty: true,
+    allowBlurbs: true,
   }).nullish(),
   steps: z.number().min(0).nullish(),
   epochs: z.number().min(0).max(100000).nullish(),
@@ -467,6 +585,8 @@ export const modelVersionUpsertSchema2 = z.object({
   paidAccess: modelVersionPaidAccessInputSchema.nullish(),
   donationGoal: donationGoalInputSchema.nullish(),
   rightsAffirmed: rightsAffirmedSchema,
+  /** The creator's attestation for base models that require one; see base-model-attestation.constants. */
+  baseModelAttested: z.boolean().optional(),
   earlyAccessGoalConfig: z
     .object({
       unitAmount: z.number(),
@@ -485,10 +605,14 @@ export const modelVersionUpsertSchema2 = z.object({
   // Creator Controls: per-version metric privacy (merged into ModelVersion.meta).
   meta: z
     .object({
-      hideBuzz: z.boolean().optional(),
-      hideDownloads: z.boolean().optional(),
-      hideGenerations: z.boolean().optional(),
+      hideBuzz: z.boolean().nullish(),
+      hideDownloads: z.boolean().nullish(),
+      hideGenerations: z.boolean().nullish(),
+      metricVisibility: metricVisibilityChoicesSchema.optional(),
     })
+    .transform(({ metricVisibility, ...val }) =>
+      metricVisibility ? { ...val, ...metricVisibilityMetaFromChoices(metricVisibility) } : val
+    )
     .optional(),
 });
 
@@ -497,6 +621,17 @@ export const getModelVersionSchema = z.object({
   id: z.number(),
   withFiles: z.boolean().optional(),
 });
+
+/**
+ * Why the upsert handler cleared a submitted `licensingSourceVersionId`. A union rather than a string
+ * because it is written straight into the audit's `reason` column: a typo in a free-form string reaches
+ * a moderator's change history with nothing on the way to catch it.
+ */
+export type LicensingSourceRejection =
+  | 'not-a-root'
+  | 'base-model-mismatch'
+  | 'model-not-found'
+  | 'model-type-mismatch';
 
 export type GetLicensingRootsSchema = z.infer<typeof getLicensingRootsSchema>;
 export const getLicensingRootsSchema = z.object({
@@ -538,6 +673,7 @@ export type ModelVersionMeta = ModelMeta & {
   generationAlias?: GenerationAlias;
   /** Recorded the first time this version was monetized. See resolveRightsAffirmation. */
   rightsAffirmation?: RightsAffirmation;
+  baseModelAttestation?: BaseModelAttestation;
 };
 
 export type PublishVersionInput = z.infer<typeof publishVersionSchema>;
@@ -592,16 +728,6 @@ export const modelVersionEarlyAccessPurchase = z.object({
   // A boolean, not a currency: the buyer may only choose BETWEEN blue and their domain currency, and
   // naming the currency outright would let a client ask a green-domain purchase to spend yellow.
   payWithBlue: z.boolean().optional(),
-});
-
-export type GetModelVersionPopularityInput = z.infer<typeof getModelVersionPopularityInput>;
-export const getModelVersionPopularityInput = z.object({
-  id: z.number(),
-});
-
-export type GetModelVersionsPopularityInput = z.infer<typeof getModelVersionsPopularityInput>;
-export const getModelVersionsPopularityInput = z.object({
-  ids: z.array(z.number()),
 });
 
 export type GetModelVersionsByIdsInput = z.infer<typeof getModelVersionsByIdsInput>;

@@ -1,13 +1,17 @@
 import { useHotkeys } from '@mantine/hooks';
 import produce from 'immer';
 import { useRouter } from 'next/router';
-import { createContext, useContext, useMemo } from 'react';
+import { createContext, Fragment, useContext, useMemo, useRef, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { useBrowserRouter } from '~/components/BrowserRouter/BrowserRouterProvider';
 import { useBrowsingLevelDebounced } from '~/components/BrowsingLevel/BrowsingLevelProvider';
 import { useCollection } from '~/components/Collections/collection.utils';
 import type { ImagesQueryParamSchema } from '~/components/Image/image.utils';
-import { useQueryImages } from '~/components/Image/image.utils';
+import {
+  hasImageDetailQueryFilters,
+  parseImageQueryParams,
+  useQueryImages,
+} from '~/components/Image/image.utils';
 import type { ConnectProps } from '~/components/ImageGuard/ImageGuard2';
 import { PageLoader } from '~/components/PageLoader/PageLoader';
 import { useHiddenPreferencesData } from '~/hooks/hidden-preferences';
@@ -53,7 +57,6 @@ export function ImageDetailProvider({
   hideReactions,
   filters,
   collectionId,
-  withoutPost,
 }: {
   children: React.ReactElement;
   imageId: number;
@@ -62,7 +65,6 @@ export function ImageDetailProvider({
   hideReactions?: boolean;
   filters: ImagesQueryParamSchema;
   collectionId?: number;
-  withoutPost?: boolean;
 }) {
   const router = useRouter();
   const browserRouter = useBrowserRouter();
@@ -75,14 +77,19 @@ export function ImageDetailProvider({
     enabled: !!collectionId,
   });
 
-  const { postId: queryPostId, active = false } = browserRouter.query as {
-    postId?: number;
-    active?: boolean;
-  };
+  // `browserRouter.query` holds raw strings, so reading `postId` off it with a cast
+  // was not a parse: on `?postId=null` this handed the string 'null' to the `??`
+  // below, it beat the parsed filter, and `image.getInfinite` was called with a
+  // string against an input schema typed `z.number()` — a guaranteed failed request
+  // on every load of the very links this page was fixed to serve. Parse it the same
+  // way the filters are parsed; `active` is a genuine boolean read and stays a cast.
+  const { postId: queryPostId } = parseImageQueryParams(browserRouter.query);
+  const { active = false } = browserRouter.query as { active?: boolean };
   const { modelId, modelVersionId, username, userId, reactions, postId: filterPostId } = filters;
   const postId = queryPostId ?? filterPostId;
   // #region [data fetching]
-  const shouldFetchMany = !initialImages?.length && (Object.keys(filters).length > 0 || !!postId);
+  // Shared with the page-data endpoint, which withholds the main-image preload on the same rule.
+  const shouldFetchMany = !initialImages?.length && hasImageDetailQueryFilters(filters, postId);
   const browsingLevel = useBrowsingLevelDebounced();
   const {
     images: queryImages = [],
@@ -111,7 +118,7 @@ export function ImageDetailProvider({
   // TODO - this needs to return the data as `ImagesInfiniteModel`
   // alternatively, we always query multiple images, with the cursor starting at `imageId`
   const { data: prefetchedImage, isInitialLoading: imageQueryLoading } = trpc.image.get.useQuery(
-    { id: imageId, withoutPost },
+    { id: imageId },
     { enabled: shouldFetchImage }
   );
   // A disabled observer still reports `isInitialLoading` while *another* observer
@@ -193,7 +200,20 @@ export function ImageDetailProvider({
   // #endregion
 
   // #region [navigation]
+  // The carousel keeps its own position and only writes the URL back. When the image changes from
+  // anywhere else (a remix card opening its source over this detail), it would keep showing the old
+  // one and, on its next settle, write that back over the new URL — so start the detail over.
+  const lastNavigatedIdRef = useRef(imageId);
+  const [seenImageId, setSeenImageId] = useState(imageId);
+  const [externalMoves, setExternalMoves] = useState(0);
+  if (!Object.is(seenImageId, imageId)) {
+    setSeenImageId(imageId);
+    if (!Object.is(lastNavigatedIdRef.current, imageId)) setExternalMoves(externalMoves + 1);
+    lastNavigatedIdRef.current = imageId;
+  }
+
   const navigate = (id: number) => {
+    lastNavigatedIdRef.current = id;
     const query = browserRouter.query;
     const [, queryString] = browserRouter.asPath.split('?');
     browserRouter.replace(
@@ -252,7 +272,7 @@ export function ImageDetailProvider({
         hideReactions,
       }}
     >
-      {children}
+      <Fragment key={externalMoves}>{children}</Fragment>
     </ImageDetailContext.Provider>
   );
 }

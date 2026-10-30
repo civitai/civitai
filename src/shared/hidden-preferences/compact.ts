@@ -37,6 +37,7 @@
 import produce from 'immer';
 import type {
   HiddenImage,
+  HiddenPreferencesKind,
   HiddenPreferenceTypes,
   HiddenTag,
   HiddenUser,
@@ -209,15 +210,27 @@ export function applyOptimisticHiddenToggle(
 }
 
 /**
- * Reconcile the cache with the server's authoritative `added`/`removed` diff
- * (the `toggleHidden` mutation result). Same shape-branching as the optimistic
+ * Apply the server's `added`/`removed` diff. Same shape-branching as the optimistic
  * path; object sets replace-in-place to pick up server-provided fields.
+ *
+ * The item type is the server's, not `{ id: number }`, because what goes into the
+ * cache is the whole item minus `kind` — a tag's `name`/`nsfwLevel`, a user's
+ * `username`, all of which the account pages render. The narrower type could not
+ * describe that and needed a cast to an index signature to compile.
+ *
+ * The compiler still cannot enforce it: immer's draft is `any`, so dropping the
+ * payload type-checks. The test asserting `username` survives a server diff is the
+ * guard.
+ *
+ * Module-private on purpose: it ignores `hidden`, so a caller that reaches for it
+ * instead of `reconcileHiddenToggle` silently keeps an optimistic write the server
+ * refused. Go through `reconcileHiddenToggle`.
  */
-export function applyServerHiddenToggle(
+function applyServerHiddenToggle(
   cache: HiddenCache,
   key: string,
-  added: Array<{ id: number }>,
-  removed: Array<{ id: number }>
+  added: Array<HiddenPreferencesKind>,
+  removed: Array<HiddenPreferencesKind>
 ): HiddenCache {
   return produce(cache, (draft: any) => {
     if (isCompactIdKey(draft, key)) {
@@ -226,14 +239,98 @@ export function applyServerHiddenToggle(
       for (const { id } of removed) toggleCompactId(arr, id, false);
       return;
     }
-    for (const { kind, id, ...props } of added as Array<Record<string, unknown> & { id: number }>) {
-      const index = draft[key].findIndex((x: any) => x.id === id && x.hidden);
-      if (index === -1) draft[key].push({ id, ...props });
-      else draft[key][index] = { id, ...props };
+    for (const { kind, ...item } of added) {
+      const index = draft[key].findIndex((x: any) => x.id === item.id && x.hidden);
+      if (index === -1) draft[key].push(item);
+      else draft[key][index] = item;
     }
-    for (const { kind, id, ...props } of removed as Array<Record<string, unknown> & { id: number }>) {
+    for (const { id } of removed) {
       const index = draft[key].findIndex((x: any) => x.id === id && x.hidden);
       if (index > -1) draft[key].splice(index, 1);
     }
   });
+}
+
+export const HIDDEN_KIND_TO_KEY = {
+  image: 'hiddenImages',
+  model: 'hiddenModels',
+  model3d: 'hiddenModel3Ds',
+  tag: 'hiddenTags',
+  user: 'hiddenUsers',
+  blockedUser: 'blockedUsers',
+} as const;
+
+export type HiddenToggleKind = keyof typeof HIDDEN_KIND_TO_KEY;
+
+/**
+ * Fold a `toggleHidden` response into the cache. `hidden`, when the toggle sends
+ * one, is the server's authoritative outcome and overrides the optimistic write
+ * from `onMutate` — the `added`/`removed` diff cannot, because five of the six
+ * kinds return both empty on every call.
+ *
+ * Takes the whole `result` rather than a destructured `hidden`, which removes one
+ * way to make the override inert — not the only one; see `applyToggleSuccess`.
+ *
+ * `hidden` is one flag for the whole batch, matching the server, which inspects
+ * only `data[0]` for the kinds that send it. Both current senders pass a single
+ * id; a multi-select hide would need it keyed by id first.
+ */
+export function reconcileHiddenToggle(
+  cache: HiddenCache,
+  kind: HiddenToggleKind,
+  items: Array<{ id: number }>,
+  result: {
+    added: Array<HiddenPreferencesKind>;
+    removed: Array<HiddenPreferencesKind>;
+    hidden?: boolean;
+  }
+): HiddenCache {
+  const key = HIDDEN_KIND_TO_KEY[kind];
+  const next = applyServerHiddenToggle(cache, key, result.added, result.removed);
+  if (result.hidden === undefined) return next;
+  return applyOptimisticHiddenToggle(next, key, items, result.hidden);
+}
+
+/**
+ * The empty legacy cache used when `getHidden` has not populated yet. Rare —
+ * `getHidden` is prefetched — and a real fetch overwrites it; `expandHiddenPreferences`
+ * reads the legacy shape fine.
+ */
+export const EMPTY_HIDDEN_CACHE = {
+  hiddenImages: [],
+  hiddenModels: [],
+  hiddenModel3Ds: [],
+  hiddenUsers: [],
+  hiddenTags: [],
+  blockedUsers: [],
+  blockedByUsers: [],
+} as unknown as HiddenCache;
+
+/**
+ * The whole of the mutation's `onSuccess` cache write, so the wiring is executable
+ * without React Query. Kept here rather than inline in the hook because nothing in
+ * the repo runs that hook: mutating the arguments of the inline version left the
+ * entire suite green while reinstating the phantom state this exists to prevent.
+ */
+export function applyToggleSuccess(
+  cache: HiddenCache | undefined,
+  variables: { kind: HiddenToggleKind; data: Array<{ id: number }> },
+  result: {
+    added: Array<HiddenPreferencesKind>;
+    removed: Array<HiddenPreferencesKind>;
+    hidden?: boolean;
+  }
+): HiddenCache {
+  return reconcileHiddenToggle(cache ?? EMPTY_HIDDEN_CACHE, variables.kind, variables.data, result);
+}
+
+/**
+ * What `onError` must do with the cache. React Query treats an `undefined` updater
+ * result as "no update", so handing back a missing snapshot silently leaves the
+ * optimistic write standing forever — refetching is the only correct fallback.
+ */
+export function planToggleRollback(
+  previous: HiddenCache | undefined
+): { restore: HiddenCache } | { invalidate: true } {
+  return previous === undefined ? { invalidate: true } : { restore: previous };
 }

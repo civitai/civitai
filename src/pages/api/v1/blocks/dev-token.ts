@@ -19,6 +19,7 @@ import {
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
+import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -86,15 +87,51 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    app), reach this pending branch, and mint a token whose `appId` resolves —
  *    in `recordSpendAttribution` — to the VICTIM's real OauthClient, writing a
  *    forged `blockSpendAttribution` row (status='tracked', appOwnerUserId=victim,
- *    real grossValueCents). That row is exactly what the deferred payout rail
- *    (#2605 Slice-4 backpay) reads to pay `gross × spendSharePct`. Dormant today
- *    (spendSharePct=0, no money moves) but a forged accrual ledger would persist
- *    into the payout window. The synthetic `pending-pubreq_<ULID>` can never match
+ *    real grossValueCents). The synthetic `pending-pubreq_<ULID>` can never match
  *    an `appblk-*` id nor a real `OauthClient.id`, so the attribution lookup MISSES
  *    → the inert `if (!app)` skip-write path → no row written (correct: a pending
- *    dev-test spend has no approved app to attribute to). GATE: before #2605 turns
- *    on a non-zero `spendSharePct`, re-confirm no pending-path mint can ever land a
- *    real `OauthClient.id` in `appId`.
+ *    dev-test spend has no approved app to attribute to).
+ *
+ *    ⚠️ WHAT A FORGED ROW WOULD REACH — RESTATED, because the old rail is gone
+ *    and this paragraph used to name it. The platform-funded percentage bounty
+ *    (`gross × <card spend rate>`) was removed, and a rate card no longer carries
+ *    a spend rate at all, so the old "before #2605 turns on a non-zero spend
+ *    rate" gate could never be triggered and was NOT closable. The
+ *    hazard did not go away — it moved, onto two surfaces that are CLOSER than
+ *    the dormant ledger it replaced:
+ *
+ *      1. A LIVE READER, TODAY. `app-analytics.service.ts` aggregates
+ *         `block_spend_attribution` by `app_block_id` for the app-owner
+ *         dashboard. A forged row is therefore immediately visible in a third
+ *         party's own analytics — misattribution with no payout involved and no
+ *         flag in front of it.
+ *      2. THE AUTHOR FEE, AND IT NOW CARRIES A RECIPIENT. ⚠️ An earlier revision
+ *         of this paragraph said the fee was "OBSERVE-ONLY" and carried no
+ *         recipient, so `appId` was not load-bearing and a forged row could not
+ *         misdirect a fee "today, flag on or off". That has been false since
+ *         2026-09-25. `recordSpendAttribution` still drives the observe-only
+ *         `observeBlockAuthorFee` (`author-fee.ts`), but the fee also CHARGES on
+ *         the submit path, and `resolveBlockAuthorFeePayee`
+ *         (`author-fee-accrual.service.ts`) resolves the payee by
+ *         `OauthClient.id` — exactly this app resolution. A mis-resolved `appId`
+ *         is therefore a misdirected payee, not just a polluted dashboard.
+ *
+ *    GATE: the condition this gate was waiting on HAS OCCURRED — settlement
+ *    shipped and a recipient is derived from this resolution — so it is no longer
+ *    a future trigger. WHAT DISCHARGES IT, and the only thing that does: the S1
+ *    case in `src/tests/api/v1/blocks/dev-token.test.ts` — "a foreign-owned
+ *    APPROVED app for the same slug does NOT pin the token appId to
+ *    appblk-<slug>" — must exist and pass, which it does as of this commit. It is
+ *    now a STANDING invariant rather than a one-off review step: if that
+ *    assertion is deleted or weakened, a pending-path mint can land a real
+ *    `OauthClient.id` in `appId` and money follows it. Do not relax it without
+ *    replacing it.
+ *
+ *    ⚠️ The flag's state is NOT what makes this live, and tying the gate to the
+ *    flag would still be wrong. The hazard is realised by the payee derivation
+ *    existing at all, which is a code property; the flag is one toggle with no
+ *    deploy and no review, so keying on it would fire on changes that cannot
+ *    realise the hazard and stay silent on the one that can.
  *
  *    PENDING-PATH AUDIT GATE (FIX 🟡-1): a pending-app dev mint has NO
  *    AppBlock-backed audit rows — recordSpendAttribution throws+swallows on the
@@ -198,9 +235,12 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *
  * ## Gates / hard caps (every one server-side + fail-closed — scope doc §4.1)
  *  - MOD-ONLY (`isAppBlocksEnabled({ user })` + `user.isModerator`) — match the
- *    pre-GA mod posture. The runtime spend procedures already call
- *    `assertViewerIsModerator`, so a non-mod could mint but not spend; we keep
- *    mint mod-gated anyway. RELAX in lockstep with the runtime belt at GA.
+ *    pre-GA mod posture. ⚠️ This bullet used to add "the runtime spend procedures
+ *    already call `assertViewerIsModerator`, so a non-mod could mint but not spend".
+ *    That is FALSE today: the symbol occurs ZERO times in blocks.router / apps.router,
+ *    and the runtime capability gate it described was removed from the money paths by
+ *    the scope-enforcement work. THIS MINT GATE IS NOW THE ONLY CAPABILITY CHECK on
+ *    this path, and it is mint-time only — see the BLAST RADIUS note at the sign step.
  *  - SCOPE CLAMP: granted ⊆ the scope source ⊆ DEV_TOKEN_SCOPE_ALLOWLIST
  *    (EXCLUDES `social:tip:self` + `block:settings:*`) ⊆ [the app's OAuth
  *    ceiling — approved path ONLY] ⊆ requested (if the body narrows), then the
@@ -209,7 +249,7 @@ type AxiomAPIRequest = NextApiRequest & { log: Logger };
  *    pending request's un-reviewed `manifest.scopes` (local-manifest mode, where
  *    the absent OAuth ceiling is replaced by 7f). Unknown / out-of-allowlist
  *    scopes are STRIPPED, never error.
- *  - BUDGET CAP: a LOWER dev cap (DEV_BUZZ_BUDGET_CAP) than the prod 1000. The
+ *  - BUDGET CAP: the per-call DEV_BUZZ_BUDGET_CAP (= the install-token BUZZ_BUDGET_CAP). The
  *    existing per-user daily cumulative cap (reserveBlockBuzzSpend) is untouched.
  *  - FORCED SFW: maxBrowsingLevel = domainBrowsingCeiling(null) UNCONDITIONALLY
  *    (localhost has no color domain; we never read the request host, so a
@@ -383,11 +423,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // rejected. The runtime spend belt re-checks the author capability against the
   // token SUBJECT; we keep the MINT author-gated too (scope doc §4 / §6 R2).
   if (user.bannedAt) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
 
@@ -585,17 +625,16 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
       signAppId: block.appId,
       signAppBlockId: block.id,
       // Synthetic, revocable PAGE instance id — same shape as the prod page mint.
-      // NOTE (revocation-wiring caveat): dev page tokens share the
-      // `page_<appBlockId>` instanceId shape with PRODUCTION page mints. The
-      // revocation WRITE path (block-revocation.service.ts revokeInstance /
-      // clearInstance) is currently UNWIRED (no callers). If it is ever wired,
-      // dev instance ids on THIS path must be namespaced distinctly (e.g.
-      // `devpage_`) and/or the revocation marker TTL must cover the 4h dev token
-      // lifetime — otherwise a dev revocation (or a 4h marker) would bleed into
-      // production page tokens for the SAME app (collision on `page_<appBlockId>`).
+      // That shared shape means one revocation would reach BOTH, so a caller
+      // that revokes by page instance id must namespace dev ids first (e.g.
+      // `devpage_`). No such caller exists: both wired call sites in
+      // block-registry.service revoke `blockUserSubscription.blockInstanceId`,
+      // which `newBlockInstanceId` mints as `bki_<ulid>`. The marker's TTL is
+      // not what gates this — it decides how long a revocation lasts, never
+      // which id it is written under.
       blockInstanceId: `${PAGE_INSTANCE_PREFIX}${block.id}`,
       // DEV budget default = the APPROVED manifest's declared per-gen budget so
-      // an app whose `page.buzzBudgetPerGen` exceeds the flat 50 default is
+      // an app whose `page.buzzBudgetPerGen` exceeds the flat default is
       // dev-testable without a manual `buzzBudget` request. Clamped to
       // DEV_BUZZ_BUDGET_CAP by resolveDevBuzzBudget; undefined → the flat default.
       manifestBudgetDefault: parseManifestBuzzBudget(manifest.page),
@@ -647,10 +686,19 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         // let recordSpendAttribution's `oauthClient.findUnique({ where: { id } })`
         // (buzz-attribution.service.ts) RESOLVE the victim's real client and write
         // a foreign `blockSpendAttribution` row (status='tracked',
-        // appOwnerUserId=<victim>, real grossValueCents) — the exact row the
-        // deferred payout rail (#2605 Slice-4 backpay) reads to pay
-        // `gross × spendSharePct`. Dormant today (spendSharePct=0) but a forged
-        // accrual ledger would persist into the payout window.
+        // appOwnerUserId=<victim>, real grossValueCents).
+        //
+        // ⚠️ WHAT THAT ROW REACHES — the platform-funded `gross × <card spend
+        // rate>` bounty this comment used to name is REMOVED, and a rate card no
+        // longer carries a spend rate. Today a forged row lands in a surface
+        // that is LIVE rather than dormant: `app-analytics.service.ts` aggregates
+        // `block_spend_attribution` for the app-owner dashboard. And this same
+        // call drives `observeBlockAuthorFee` (#4922 slice 1) — observe-only,
+        // keyed on `baseGenerationBuzz`/`generationType` and carrying NO
+        // recipient, so `appId` is not load-bearing for it until the settlement
+        // slice. See the re-pointed GATE in the APPID MISATTRIBUTION block at the
+        // top of this file; the S1 assertion in
+        // `src/tests/api/v1/blocks/dev-token.test.ts` is what re-confirms it.
         //
         // Instead use `pending-<publishRequestId>` — `pubreq_<ULID>` ids make this
         // `pending-pubreq_<ULID>`, which can NEVER match an `appblk-*` id NOR a
@@ -681,7 +729,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         // only raises the per-call BUDGET (never a spend AUTHORITY): spend is
         // still bounded by DEV_BUZZ_BUDGET_CAP (the clamp in resolveDevBuzzBudget),
         // the per-user daily cap, the dev-session cap, and the 7f AIServicesWrite
-        // bearer gate. Mirrors the approved path so a pending recipe with a >50
+        // bearer gate. Mirrors the approved path so a pending recipe with its own
         // budget is dev-testable pre-approval without a manual `buzzBudget`.
         manifestBudgetDefault: parseManifestBuzzBudget(manifest.page),
       };
@@ -735,7 +783,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
         // dev's LOCAL `block.manifest.json`, which the CLI does not send on this
         // path (only `scopes`/`buzzBudget` cross the wire). So the dev default
         // stays the flat DEV_BUZZ_BUDGET_DEFAULT here; a dev iterating on a
-        // brand-new (unsubmitted) app whose recipe ceiling exceeds 50 must pass
+        // brand-new (unsubmitted) app whose recipe ceiling exceeds that default must pass
         // an explicit `buzzBudget` in the request body (still clamped to
         // DEV_BUZZ_BUDGET_CAP). To auto-default this mode, the CLI would need to
         // send the local manifest's `page.buzzBudgetPerGen` in the body — deferred.
@@ -804,7 +852,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
 
   // 8. BUDGET CAP — only meaningful when ai:write:budgeted survived the clamp.
   // DEFAULT to the resolved app manifest's `page.buzzBudgetPerGen` (approved +
-  // pending modes) so an app/recipe whose per-gen budget exceeds the flat 50
+  // pending modes) so an app/recipe whose per-gen budget exceeds the flat
   // default is dev-testable WITHOUT a manual `buzzBudget` request; an explicit
   // caller `requestedBudget` still wins, and DEV_BUZZ_BUDGET_CAP still clamps.
   // The ephemeral no-row mode carries no manifest default → the flat fallback.
@@ -927,11 +975,22 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // the 4h max-age cap off it, leaving every PRODUCTION token at 15min).
   //
   // BLAST RADIUS of the 4h lifetime — the token carries NO mod claim, so the
-  // mint-TIME moderator check (step 2) does NOT bound it. What bounds the
-  // money/settings paths is the LIVE per-request moderator re-check
-  // (`assertViewerIsModerator` in apps.router / blocks.router): a demoted/banned
-  // mod's 4h token is rejected there as soon as the demotion lands. The token is
-  // further self-bound, per-call budget capped, and forced-SFW.
+  // mint-TIME moderator check (step 2) does NOT bound it.
+  //
+  // 🔴 NOTHING RE-CHECKS THE MINTER'S CAPABILITY FOR THOSE 4 HOURS, AND THERE IS NO
+  // REPLACEMENT BOUND. This comment used to name a "LIVE per-request moderator
+  // re-check (`assertViewerIsModerator` in apps.router / blocks.router)"; that symbol
+  // occurs ZERO times in either router today (grep it), and the same runtime gate its
+  // successor provided was removed from every money path by the scope-enforcement
+  // work. So a user whose moderator capability is revoked keeps a working, spend-
+  // capable dev token until it expires — up to 4h.
+  //
+  // What DOES bound it is only what the token itself carries: it is SELF-BOUND (the
+  // `sub` is the minter, so any spend is their OWN Buzz), per-call budget capped at
+  // DEV_BUZZ_BUDGET_CAP, subject to the same cumulative per-user daily cap
+  // as everything else, forced-SFW, and revocable through BlockRevocation on its
+  // `blockInstanceId`. That bounds the HARM (self-inflicted, capped) — it does not
+  // bound the LIFETIME, and no comment here should imply otherwise.
   const result = await signDevScopedPageToken({
     userId: user.id,
     signBlockId: resolved.signBlockId,
@@ -947,6 +1006,7 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   res.status(200).json({
     token: result.token,
     expiresAt: result.expiresAt,
+    kind: 'block',
     scopes: granted,
     buzzBudget,
     maxBrowsingLevel: FORCED_SFW_CEILING,

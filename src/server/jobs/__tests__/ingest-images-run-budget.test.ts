@@ -9,14 +9,11 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 // cancellation — all as a single pass (no in-batch retry). These tests exercise that
 // helper directly with the REAL limitConcurrency (only ingestImage is mocked).
 
-const { mockIngestImage, mockDeleteImages, mockDbRead, mockDbWrite } = vi.hoisted(() => ({
+const { mockIngestImage, mockDeleteImages } = vi.hoisted(() => ({
   mockIngestImage: vi.fn(async () => true),
   mockDeleteImages: vi.fn(async () => undefined),
-  mockDbRead: { jobQueue: { findMany: vi.fn(async () => []) } },
-  mockDbWrite: { $queryRaw: vi.fn(async () => []), $executeRaw: vi.fn(async () => 0) },
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
 vi.mock('~/server/services/image.service', () => ({
   ingestImage: mockIngestImage,
   deleteImages: mockDeleteImages,
@@ -36,6 +33,9 @@ vi.mock('~/env/server', () => ({
 import { sendImagesForScanBulk } from '~/server/jobs/image-ingestion';
 import type { JobContext } from '~/server/jobs/job';
 import type { IngestImageInput } from '~/server/schema/image.schema';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 function makeImages(n: number): IngestImageInput[] {
   return Array.from({ length: n }, (_, i) => ({ id: i + 1, url: `img-${i + 1}` }));

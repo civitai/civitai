@@ -5,7 +5,13 @@ import { trpc } from '~/utils/trpc';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDebouncer } from '~/utils/debouncer';
 import { EditPostTags } from '~/components/Post/EditV2/EditPostTags';
-import { usePostEditParams, usePostEditStore } from '~/components/Post/EditV2/PostEditProvider';
+import { PostEditBackLink } from '~/components/Post/EditV2/PostEditBackLink';
+import { presetTitleFor } from '~/components/Post/EditV2/post-edit-apply-preset.utils';
+import {
+  usePendingSave,
+  usePostEditParams,
+  usePostEditStore,
+} from '~/components/Post/EditV2/PostEditProvider';
 
 import { Group } from '@mantine/core';
 import { CollectionSelectDropdown } from '~/components/Post/EditV2/Collections/CollectionSelectDropdown';
@@ -17,6 +23,7 @@ const formSchema = z.object({ title: z.string().nullish(), detail: z.string().nu
 
 export function PostEditForm() {
   const post = usePostEditStore((state) => state.post);
+  const updatePost = usePostEditStore((state) => state.updatePost);
   const { postTitle, collectionId } = usePostEditParams();
   const form = useForm({
     schema: formSchema,
@@ -25,7 +32,30 @@ export function PostEditForm() {
   const debounce = useDebouncer(1000);
 
   const { mutate } = trpc.post.update.useMutation({
-    onError(error) {
+    // Applied when the request is SENT, not when it lands. The provider snapshots the store into
+    // the `post.getEdit` cache on `routeChangeStart` and nothing refetches it (staleTime is
+    // Infinity), so a save flushed on the way out would otherwise still be in flight when that
+    // snapshot is taken — the next visit then seeds the form from the pre-edit values and its
+    // first autosave writes them back over the server.
+    onMutate({ title, detail }) {
+      let previous: { title: string | null; detail: string | null } | undefined;
+      updatePost((data) => {
+        previous = { title: data.title ?? null, detail: data.detail ?? null };
+        if (title !== undefined) data.title = title ?? null;
+        if (detail !== undefined) data.detail = detail ?? null;
+      });
+      return previous;
+    },
+    onError(error, { title, detail }, previous) {
+      // Roll back, or the store keeps a value the server rejected and hands it to the
+      // `post.getEdit` cache on the way out — claiming a save that never landed. Each field
+      // is restored only if it still holds what THIS request set, so a later edit that
+      // succeeded while this one was failing isn't clobbered.
+      updatePost((data) => {
+        if (!previous) return;
+        if (title !== undefined && data.title === (title ?? null)) data.title = previous.title;
+        if (detail !== undefined && data.detail === (detail ?? null)) data.detail = previous.detail;
+      });
       showErrorNotification({
         title: 'Failed to update post',
         error: new Error(error.message),
@@ -52,6 +82,21 @@ export function PostEditForm() {
     };
   }, []); // eslint-disable-line
 
+  // Apply preset hands its title here rather than saving it, so the field's current value decides
+  // (a prefilled or still-unsaved title wins) and the autosave above is the only writer.
+  const [presetTitle, setPresetTitle] = usePostEditStore((state) => [
+    state.presetTitle,
+    state.setPresetTitle,
+  ]);
+  useEffect(() => {
+    if (!presetTitle) return;
+    const title = presetTitleFor(form.getValues('title'), presetTitle);
+    if (title) form.setValue('title', title, { shouldDirty: true });
+    setPresetTitle(null);
+  }, [presetTitle]); // eslint-disable-line
+
+  usePendingSave('post-detail', debounce);
+
   const controls = [
     'heading',
     'formatting',
@@ -68,6 +113,13 @@ export function PostEditForm() {
           "Civitai is currently in read-only mode and you won't be able to publish or see changes made to this post."
         }
       />
+      {post && (
+        <PostEditBackLink
+          modelId={post.parentModelId}
+          modelVersionId={post.modelVersionId}
+          modelName={post.parentModelName}
+        />
+      )}
       <InputTextArea
         data-tour="post:title"
         name="title"

@@ -21,7 +21,9 @@ import { useEffect, useRef, useState } from 'react';
  * stays correct as the grid reflows. Returns a ref to attach to the clipping
  * element + the current overflow verdict.
  */
-export function useIsOverflowing<T extends HTMLElement = HTMLElement>() {
+export function useIsOverflowing<T extends HTMLElement = HTMLElement>({
+  vertical = true,
+}: { vertical?: boolean } = {}) {
   const ref = useRef<T>(null);
   const [overflowing, setOverflowing] = useState(false);
 
@@ -29,7 +31,9 @@ export function useIsOverflowing<T extends HTMLElement = HTMLElement>() {
     const el = ref.current;
     if (!el) return;
     const measure = () =>
-      setOverflowing(el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight);
+      setOverflowing(
+        el.scrollWidth > el.clientWidth || (vertical && el.scrollHeight > el.clientHeight)
+      );
     measure();
     // ResizeObserver covers card reflow / responsive breakpoints without a
     // window resize listener (the AuctionPlacementCard OverflowTooltip missed
@@ -39,23 +43,66 @@ export function useIsOverflowing<T extends HTMLElement = HTMLElement>() {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [vertical]);
 
   return { ref, overflowing };
 }
 
 /**
- * A `Text` that clips (via `lineClamp`/`truncate` passed through) and reveals its
- * full value in a Tooltip ONLY when it actually clips. Rendered inline (`span`)
- * so it composes inside the creator chip's Group.
+ * A `Text` that clips and reveals its full value in a Tooltip ONLY when it
+ * actually clips. Rendered inline (`span`) so it composes inside the creator
+ * chip's Group.
+ *
+ * TWO CLIPPING MODES, and which one you get is decided by `clampLines`:
+ *   - omitted (the default, and every pre-existing call site) → SINGLE-LINE
+ *     ellipsis, exactly as before;
+ *   - a number → a multi-line `-webkit-line-clamp` box of that many lines.
+ *
+ * 🔴 THE MODES ARE MUTUALLY EXCLUSIVE AT THE CSS LEVEL, WHICH IS WHY THIS IS A
+ * PROP AND NOT A CLASSNAME THE CALLER PASSES IN. The single-line mode's
+ * `white-space: nowrap` + `display: inline-block` are written INLINE and
+ * therefore beat a `line-clamp-N` utility class: hand this component the
+ * Tailwind class and you silently get one ellipsised line, not N clamped ones.
+ * The overflow hook already measures BOTH axes (`scrollWidth > clientWidth ||
+ * scrollHeight > clientHeight`), so the tooltip gating works unchanged in the
+ * multi-line mode — it is the clipping CSS that has to differ.
  */
 export function TruncatedText({
   children,
   tooltipLabel,
+  clampLines,
   style,
   ...textProps
-}: { children: string; tooltipLabel?: string } & TextProps) {
-  const { ref, overflowing } = useIsOverflowing<HTMLSpanElement>();
+}: { children: string; tooltipLabel?: string; clampLines?: number } & TextProps) {
+  // A single line clips only horizontally; its glyph box can be a pixel taller than the line
+  // box, which would otherwise read as overflow and open the tooltip on every title.
+  const { ref, overflowing } = useIsOverflowing<HTMLSpanElement>({ vertical: clampLines != null });
+  const clipping =
+    clampLines == null
+      ? // Single line. `component="span"` (inline-VALID inside the chip's <a>) +
+        // an explicit `inline-block` so the element HAS a client box. Mantine's
+        // `span` boolean prop forces `display: inline`, whose
+        // clientWidth/scrollWidth are always 0 — the overflow measurement then
+        // never trips and the Tooltip is dead. Clipping on a single line makes
+        // `scrollWidth > clientWidth` a true overflow signal.
+        ({
+          display: 'inline-block',
+          overflow: 'hidden',
+          textOverflow: 'ellipsis',
+          whiteSpace: 'nowrap',
+          verticalAlign: 'bottom',
+        } as const)
+      : // N lines. `-webkit-box` is what `line-clamp-N` compiles to; written
+        // inline here so it cannot be overridden by the single-line rules above,
+        // and so the line count comes from the caller's constant rather than
+        // from a class name that spells a second copy of it. Overflow is then
+        // VERTICAL, which `useIsOverflowing`'s `scrollHeight` arm sees.
+        ({
+          display: '-webkit-box',
+          WebkitBoxOrient: 'vertical' as const,
+          WebkitLineClamp: clampLines,
+          overflow: 'hidden',
+        } as const);
   return (
     <Tooltip
       label={tooltipLabel ?? children}
@@ -65,26 +112,11 @@ export function TruncatedText({
       maw={320}
       withArrow
     >
-      {/* `component="span"` (inline-VALID inside the chip's <a>) + an explicit
-          `inline-block` so the element HAS a client box. Mantine's `span` boolean
-          prop forces `display: inline`, whose clientWidth/scrollWidth are always 0
-          — the overflow measurement then never trips and the Tooltip is dead (and
-          the passed `lineClamp` never clips either). Clipping on a single line
-          below makes `scrollWidth > clientWidth` a true overflow signal; the inline
-          `display` overrides any `-webkit-box` a forwarded `lineClamp` would set. */}
       <Text
         ref={ref}
         component="span"
         {...textProps}
-        style={{
-          ...style,
-          display: 'inline-block',
-          maxWidth: '100%',
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-          verticalAlign: 'bottom',
-        }}
+        style={{ ...style, maxWidth: '100%', ...clipping }}
       >
         {children}
       </Text>

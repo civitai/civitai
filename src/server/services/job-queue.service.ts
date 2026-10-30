@@ -4,13 +4,14 @@ import { Prisma } from '@prisma/client';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 
 export async function enqueueJobs(
-  jobs: { entityId: number; entityType: EntityType; type: JobQueueType }[]
+  jobs: { entityId: number; entityType: EntityType; type: JobQueueType }[],
+  db: Prisma.TransactionClient = dbWrite
 ) {
   if (!jobs?.length) return;
 
   const batches = chunk(jobs, 500);
   for (const batch of batches) {
-    await dbWrite.$executeRaw`
+    await db.$executeRaw`
       INSERT INTO "JobQueue" ("entityId", "entityType", "type")
       VALUES ${Prisma.join(
         batch.map(

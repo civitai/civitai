@@ -165,20 +165,36 @@ describe('blockWorkflowBodySchema — the INLINE arm', () => {
     ).toBe(false);
   });
 
-  it('a node must carry class_type + inputs', () => {
-    expect(
-      blockWorkflowBodySchema.safeParse(inlineBody({ workflow: { '1': { class_type: 'X' } } }))
-        .success
-    ).toBe(false);
-    expect(
-      blockWorkflowBodySchema.safeParse(inlineBody({ workflow: { '1': { inputs: {} } } })).success
-    ).toBe(false);
-    // A node with an EXTRA key is rejected too — the node schema is `.strict()`.
-    expect(
-      blockWorkflowBodySchema.safeParse(
-        inlineBody({ workflow: { '1': { class_type: 'X', inputs: {}, _meta: {} } } })
-      ).success
-    ).toBe(false);
+  it('an API-shaped graph is held to the strict node schema, at the node path', () => {
+    // Every node carries `class_type` and `inputs`, so the graph is API-shaped and
+    // the node schema applies. A node with an EXTRA key is rejected (`.strict()`).
+    const extraKey = blockWorkflowBodySchema.safeParse(
+      inlineBody({ workflow: { '1': { class_type: 'X', inputs: {}, _meta: {} } } })
+    );
+    expect(extraKey.success).toBe(false);
+    expect(!extraKey.success && extraKey.error.issues.map((i) => [i.path, i.code])).toEqual([
+      [['workflow', '1'], 'unrecognized_keys'],
+    ]);
+    const badClass = blockWorkflowBodySchema.safeParse(
+      inlineBody({ workflow: { '1': { class_type: 7, inputs: {} } } })
+    );
+    expect(!badClass.success && badClass.error.issues.map((i) => i.path)).toEqual([
+      ['workflow', '1', 'class_type'],
+    ]);
+  });
+
+  it('a graph that is NOT API-shaped parses, so the handler can refuse it with not-api-format', () => {
+    // A node missing `inputs` or `class_type`, or an editor (UI) export, is not API
+    // format. The schema lets it through on purpose: a schema error is thrown at the
+    // tRPC boundary and cannot carry an `errorCode`. `checkInlineComfyGraph` refuses
+    // it in the estimate and the submit (see `blocks.router.workflow.test.ts`).
+    for (const workflow of [
+      { '1': { class_type: 'X' } },
+      { '1': { inputs: {} } },
+      { nodes: [{ id: 1, type: 'KSampler' }], links: [], version: 0.4 },
+    ]) {
+      expect(blockWorkflowBodySchema.safeParse(inlineBody({ workflow })).success).toBe(true);
+    }
   });
 });
 
@@ -230,12 +246,12 @@ describe('blockWorkflowBodySchema — inline arm bounds', () => {
     ).toBe(false);
   });
 
-  it('🔴 INLINE_MAX_BUZZ is DERIVED from DEV_BUZZ_BUDGET_CAP, not invented', () => {
+  it('🔴 a pre-approval token can afford any inline job (INLINE_MAX_BUZZ <= DEV_BUZZ_BUDGET_CAP)', () => {
     // The constant is spelled as a literal in the schema so the wire layer stays
-    // import-light. This is what stops the derivation drifting silently: if
-    // someone changes the dev per-call cap, this goes red and the reason for
-    // the inline ceiling has to be re-stated rather than quietly diverging.
-    expect(INLINE_MAX_BUZZ).toBe(DEV_BUZZ_BUDGET_CAP);
+    // import-light, so nothing but this test relates the two. If the inline
+    // ceiling rose above the dev per-call cap, an inline job priced in between
+    // would run for viewers yet be impossible to develop or review.
+    expect(INLINE_MAX_BUZZ).toBeLessThanOrEqual(DEV_BUZZ_BUDGET_CAP);
   });
 
   it('an empty graph is rejected', () => {

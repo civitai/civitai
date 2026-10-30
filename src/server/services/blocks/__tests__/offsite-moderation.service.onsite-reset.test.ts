@@ -73,6 +73,13 @@ const onsiteListing = {
   appBlockId: 'apb_1',
 };
 
+/**
+ * The client-claimed source commit on the approved row being cloned. Distinct
+ * from `forgejoCommitSha` below in every character, so an assertion cannot pass
+ * by the two being confused for one another.
+ */
+const SOURCE_SHA = '4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3';
+
 /** The latest approved block publish request cloned into the fresh pending one. */
 const lastApprovedReq = {
   appBlockId: 'apb_1',
@@ -84,6 +91,9 @@ const lastApprovedReq = {
   fileSummary: { files: [], added: [], removed: [], changed: [] },
   manifestDiffSummary: { kind: 'update' },
   forgejoCommitSha: 'sha_abc',
+  // #4059 client-claimed provenance on the approved row.
+  sourceCommit: SOURCE_SHA,
+  sourceDirty: true,
 };
 
 beforeEach(() => {
@@ -155,6 +165,97 @@ describe('resetOnsiteListingToPending', () => {
     );
     expect(res).toMatchObject({ appListingId: 'apl_1', status: 'pending' });
     expect(res.publishRequestId).toMatch(/^pubreq_/);
+  });
+
+  /**
+   * #4059 — the clone must CARRY the client-claimed provenance forward.
+   *
+   * The justification is narrow and it is the only one: this clone re-submits a
+   * BYTE-IDENTICAL bundle (same `bundleKey`, same `bundleSha256`) that the
+   * approved row already carried. A claim about where those exact bytes came
+   * from is still the SAME claim about the SAME bytes — carrying it is not
+   * inventing anything. Dropping it, by contrast, permanently loses the answer
+   * to "which tree did these bytes come from?" for any app that goes through a
+   * suspend → reset-to-pending cycle, which is exactly the archaeology #4059
+   * exists to make unnecessary.
+   *
+   * 🔴 This is NOT the `recordPendingFromPush` case, which correctly leaves both
+   * NULL: that path has no client and no author work tree, so there is no claim
+   * to carry. Here there is one, and it is already attached to these bytes.
+   */
+  describe('#4059 provenance carry-forward', () => {
+    it('SELECTS both provenance columns on the latest-approved read', async () => {
+      await resetOnsiteListingToPending({
+        input: { appListingId: 'apl_1', reason: 'needs another look' },
+        reviewerUserId: MOD,
+      });
+      // Call 0 is the latest-approved lookup (call 1 is the open-pending probe).
+      const select = mockRead.appBlockPublishRequest.findFirst.mock.calls[0][0].select;
+      expect(select).toMatchObject({ sourceCommit: true, sourceDirty: true });
+    });
+
+    it('CARRIES sourceCommit + sourceDirty onto the cloned pending request', async () => {
+      await resetOnsiteListingToPending({
+        input: { appListingId: 'apl_1', reason: 'needs another look' },
+        reviewerUserId: MOD,
+      });
+      const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
+      expect(reqArg.sourceCommit).toBe('4f3a9c2e17b06d85fa1c39e470b28d6ac519e0f3');
+      expect(reqArg.sourceDirty).toBe(true);
+      // And it is the AUTHOR'S claim, not the platform's Forgejo sha — the two
+      // travel together on this row and must never be aliased.
+      expect(reqArg.forgejoCommitSha).toBe('sha_abc');
+      expect(reqArg.sourceCommit).not.toBe(reqArg.forgejoCommitSha);
+      // The bytes are what licenses the carry-forward; assert they really are
+      // the same bytes, so this test fails loudly if the clone ever stops being
+      // byte-identical while still copying the claim.
+      expect(reqArg.bundleKey).toBe('bundles/deadbeef.zip');
+      expect(reqArg.bundleSha256).toBe('deadbeef');
+    });
+
+    it('CARRIES sourceDirty:false as FALSE (a CLAIM of clean, not an absence)', async () => {
+      mockRead.appBlockPublishRequest.findFirst
+        .mockReset()
+        .mockResolvedValueOnce({ ...lastApprovedReq, sourceDirty: false })
+        .mockResolvedValueOnce(null);
+      await resetOnsiteListingToPending({
+        input: { appListingId: 'apl_1', reason: 'needs another look' },
+        reviewerUserId: MOD,
+      });
+      const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
+      // `toBe(false)`, not a falsy check: null/undefined would pass a falsy
+      // check and mean UNKNOWN, the opposite answer.
+      expect(reqArg.sourceDirty).toBe(false);
+      expect(reqArg.sourceDirty).not.toBeNull();
+      expect(reqArg.sourceDirty).not.toBeUndefined();
+    });
+
+    // 🔴 INVARIANT GUARD, NOT REGRESSION COVERAGE — this one was measured GREEN
+    // against the pre-carry-forward service, because a path that writes neither
+    // column trivially satisfies "neither column was invented". It earns its
+    // place against the FALLBACK mutants (`?? forgejoCommitSha`, `?? false`),
+    // which it does kill; do not count it as coverage for the drop this
+    // describe-block fixes — the three siblings above are that.
+    it('does NOT INVENT a value when the approved row has NULLs (unknown stays unknown)', async () => {
+      mockRead.appBlockPublishRequest.findFirst
+        .mockReset()
+        .mockResolvedValueOnce({ ...lastApprovedReq, sourceCommit: null, sourceDirty: null })
+        .mockResolvedValueOnce(null);
+      await resetOnsiteListingToPending({
+        input: { appListingId: 'apl_1', reason: 'needs another look' },
+        reviewerUserId: MOD,
+      });
+      const reqArg = mockWrite.appBlockPublishRequest.create.mock.calls[0][0].data;
+      expect(reqArg.sourceCommit ?? null).toBeNull();
+      expect(reqArg.sourceDirty ?? null).toBeNull();
+      // 🔴 And specifically NOT fallen back to the Forgejo sha, which IS present
+      // on this row — the one substitution that would look plausible and be a
+      // fabricated claim about an author's tree.
+      expect(reqArg.forgejoCommitSha).toBe('sha_abc');
+      expect(reqArg.sourceCommit).not.toBe('sha_abc');
+      // Nor coerced to the `false` claim.
+      expect(reqArg.sourceDirty).not.toBe(false);
+    });
   });
 
   it('NOT_FOUND for a missing listing', async () => {

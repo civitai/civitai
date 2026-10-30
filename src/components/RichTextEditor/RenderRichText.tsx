@@ -19,6 +19,8 @@ import { CustomYoutubeNode } from '~/shared/tiptap/custom-youtube-node';
 import { TimestampNode } from '~/shared/tiptap/timestamp.node';
 import { LocalTimestamp } from '~/components/LocalTimestamp/LocalTimestamp';
 import { MentionHoverCard } from '~/components/UserAvatar/MentionHoverCard';
+import { BlurbNode } from '~/shared/tiptap/blurb.node';
+import { sanitizeBlurbInterior } from '~/utils/html-sanitize-helpers';
 
 const extensions = [
   StarterKit.configure({ heading: false }),
@@ -31,6 +33,7 @@ const extensions = [
   MentionNode,
   StrawPollNode,
   TimestampNode,
+  BlurbNode,
 ];
 
 export function RenderRichText({
@@ -52,6 +55,21 @@ export function RenderRichText({
             media: ({ node }) => <EdgeMediaComponent {...(node.attrs as any)} />,
             timestamp: ({ node }) => (
               <LocalTimestamp value={node.attrs.value} style={node.attrs.style} />
+            ),
+            // The static renderer's default output puts `node.attrs.text` in as an escaped text
+            // child, but it's markup (bold/italic/link/code) meant to render as such. The string
+            // comes out of the stored article body, which the fan-out writes via raw SQL rather
+            // than zod, so this pass — not an assumed upstream one — is what makes injecting it as
+            // markup safe. The save gate and the splice apply the same allowlist; this is the
+            // third and last place it has to hold.
+            blurb: ({ node }) => (
+              <div
+                data-type="blurb"
+                data-id={node.attrs.id}
+                dangerouslySetInnerHTML={{
+                  __html: sanitizeBlurbInterior(node.attrs.text ?? ''),
+                }}
+              />
             ),
             // For unconsented CA visitors, replace third-party embed nodes with a
             // placeholder so the iframe is never inserted in the DOM.

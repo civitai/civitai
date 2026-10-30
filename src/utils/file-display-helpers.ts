@@ -4,23 +4,14 @@
  */
 
 import type { ModelFileType } from '~/server/common/constants';
+import { constants } from '~/server/common/constants';
 import type { ModelType } from '~/shared/utils/prisma/enums';
-import { getFileExtension } from '~/utils/string-helpers';
 import {
-  IconAdjustments,
-  IconArrowsMaximize,
-  IconBrain,
-  IconCube,
-  IconEye,
-  IconFile3d,
-  IconFileSettings,
-  IconFileZip,
-  IconPackage,
-  IconPhotoScan,
-  IconSettings,
-  IconTopologyRing,
-  IconTypography,
-} from '@tabler/icons-react';
+  filenamize,
+  getDisplayName,
+  getFileExtension,
+  replaceInsensitive,
+} from '~/utils/string-helpers';
 
 /**
  * Metadata shape expected for file display functions
@@ -31,28 +22,6 @@ interface FileMetadata {
   format?: string | null;
   size?: string | null;
 }
-
-/**
- * Icon/color config for component types — shared between sidebar and file upload UI
- */
-export const componentTypeConfig: Record<
-  ModelFileComponentType,
-  { name: string; icon: typeof IconPhotoScan; color: string }
-> = {
-  Checkpoint: { name: 'Checkpoint', icon: IconCube, color: 'red' },
-  VAE: { name: 'VAE', icon: IconPhotoScan, color: 'purple' },
-  TextEncoder: { name: 'Text Encoder', icon: IconTypography, color: 'blue' },
-  UNet: { name: 'UNet', icon: IconBrain, color: 'orange' },
-  DiffusionModel: { name: 'Diffusion Model', icon: IconBrain, color: 'orange' },
-  CLIPVision: { name: 'CLIP Vision', icon: IconEye, color: 'green' },
-  CLIP: { name: 'CLIP', icon: IconTypography, color: 'violet' },
-  VisionLanguage: { name: 'VLM', icon: IconEye, color: 'grape' },
-  ControlNet: { name: 'ControlNet', icon: IconAdjustments, color: 'cyan' },
-  Upscaler: { name: 'Upscale Model', icon: IconArrowsMaximize, color: 'teal' },
-  Workflow: { name: 'Workflow', icon: IconTopologyRing, color: 'indigo' },
-  Config: { name: 'Config', icon: IconSettings, color: 'gray' },
-  Other: { name: 'Other', icon: IconPackage, color: 'gray' },
-};
 
 /**
  * ComfyUI-friendly display labels for model file types.
@@ -68,53 +37,6 @@ export const comfyFileTypeLabels: Record<string, string> = {
   Upscaler: 'Upscale Model',
   'Enhancement LoRA': 'Enhancement LoRA',
 };
-
-/**
- * Icon/color config for model file formats
- */
-export const fileFormatConfig: Record<string, { icon: typeof IconFile3d; color: string }> = {
-  SafeTensor: { icon: IconFile3d, color: 'blue' },
-  GGUF: { icon: IconFile3d, color: 'green' },
-  PickleTensor: { icon: IconFile3d, color: 'yellow' },
-  Other: { icon: IconFile3d, color: 'gray' },
-};
-
-/**
- * Get icon/color for a file based on its extension and metadata
- */
-export function getFileIconConfig(
-  fileName: string,
-  metadata?: { format?: string | null } | null
-): { icon: typeof IconFile3d; color: string } {
-  // ZIP files
-  if (fileName.endsWith('.zip')) {
-    return { icon: IconFileZip, color: 'yellow' };
-  }
-
-  // Check format from metadata
-  const format = metadata?.format;
-  if (format && format in fileFormatConfig) {
-    return fileFormatConfig[format];
-  }
-
-  // Infer from extension
-  if (fileName.endsWith('.safetensors')) {
-    return fileFormatConfig.SafeTensor;
-  }
-  if (fileName.endsWith('.gguf')) {
-    return fileFormatConfig.GGUF;
-  }
-
-  // Optional/misc files
-  if (fileName.endsWith('.json')) {
-    return { icon: IconFileSettings, color: 'gray' };
-  }
-  if (fileName.endsWith('.yaml') || fileName.endsWith('.yml')) {
-    return { icon: IconSettings, color: 'gray' };
-  }
-
-  return fileFormatConfig.Other;
-}
 
 /**
  * File types that are still honored on existing files but are no longer offered
@@ -162,6 +84,31 @@ export function filterFileTypeByExtension(value: ModelFileType, fileName: string
     default:
       return true;
   }
+}
+
+/**
+ * File-type options for a filename, with display labels. `currentType` stays selectable even
+ * when not otherwise offered, so an existing file never renders as a blank Select.
+ */
+export function getModelFileTypeOptions(
+  fileName: string,
+  {
+    types = constants.modelFileTypes,
+    currentType,
+    modelType,
+  }: {
+    types?: readonly ModelFileType[];
+    currentType?: ModelFileType | null;
+    modelType?: ModelType | null;
+  } = {}
+) {
+  return types
+    .filter((type) => type === currentType || filterFileTypeByExtension(type, fileName))
+    .map((type) => ({
+      value: type,
+      label:
+        comfyFileTypeLabels[type] ?? getDisplayName(type === 'Model' ? modelType ?? type : type),
+    }));
 }
 
 /**
@@ -352,4 +299,48 @@ export const primaryModelFileTypes: readonly ModelFileType[] = [
 export function getPrimaryFileTypes(modelType?: ModelType | null): readonly ModelFileType[] {
   if (!modelType) return primaryModelFileTypes;
   return primaryFileTypesByModelType[modelType] ?? primaryModelFileTypes;
+}
+
+/**
+ * Default download name for a trainer import, whose stored name is the opaque training
+ * job id. Falls back to that stored name when `filenamize` leaves nothing of the model
+ * name — opaque-but-unique beats a version name that collides across a whole catalogue.
+ */
+export function getTrainedFileDefaultName({
+  modelName,
+  versionName,
+  fileName,
+}: {
+  modelName: string;
+  versionName: string;
+  fileName: string;
+}) {
+  const model = filenamize(modelName);
+  if (!model) return fileName;
+
+  const version = filenamize(replaceInsensitive(versionName, model, ''));
+  const base = version && version !== model ? `${model}_${version}` : model;
+  return `${base}.${getFileExtension(fileName) || 'safetensors'}`;
+}
+
+/**
+ * A name the creator typed wins, then one they saved on an earlier pass, then the
+ * computed default. Writing that default over a saved name is what this ordering stops.
+ */
+export function resolveTrainedFileName({
+  editedName,
+  overrideName,
+  modelName,
+  versionName,
+  fileName,
+}: {
+  editedName: string | null;
+  overrideName: string | null | undefined;
+  modelName: string;
+  versionName: string;
+  fileName: string;
+}) {
+  return (
+    editedName ?? overrideName ?? getTrainedFileDefaultName({ modelName, versionName, fileName })
+  );
 }

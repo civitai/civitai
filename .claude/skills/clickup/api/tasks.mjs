@@ -97,6 +97,64 @@ export async function createSubtask(parentTaskId, name, options = {}) {
   return response;
 }
 
+// Walk a task's ancestor chain, nearest parent first. The chain is bounded so a
+// hierarchy that is already circular fails loudly instead of looping forever.
+export async function getAncestorIds(taskId, maxDepth = 25) {
+  const ancestors = [];
+  let current;
+  try {
+    current = await getTask(taskId);
+  } catch (err) {
+    throw new Error(`Could not read task ${taskId}: ${err.message}`);
+  }
+  for (let depth = 0; depth < maxDepth; depth++) {
+    const parentId = current.parent;
+    if (!parentId) return ancestors;
+    if (ancestors.includes(parentId) || parentId === taskId) {
+      throw new Error(
+        `Task ${taskId} already sits in a circular parent chain: ${[
+          taskId,
+          ...ancestors,
+          parentId,
+        ].join(' -> ')}`
+      );
+    }
+    ancestors.push(parentId);
+    try {
+      current = await getTask(parentId);
+    } catch (err) {
+      throw new Error(
+        `Could not read ancestor ${parentId} while walking the parent chain above ${taskId}: ${err.message}`
+      );
+    }
+  }
+  throw new Error(
+    `Parent chain above ${taskId} is deeper than ${maxDepth} levels; refusing to walk further`
+  );
+}
+
+// Make an existing task a subtask of another task.
+// ClickUp's UpdateTask docs say a subtask cannot be converted back to a task by
+// setting parent to null, so there is no detach counterpart to this.
+export async function setParent(taskId, parentTaskId) {
+  return updateTask(taskId, { parent: parentTaskId });
+}
+
+// Resolve a workspace custom task type by name. The ids are per-workspace, so
+// they are looked up rather than hardcoded.
+export async function findCustomItemByName(teamId, name) {
+  const response = await apiRequest(`/team/${teamId}/custom_item`);
+  const items = response.custom_items || [];
+  const wanted = name.toLowerCase().trim();
+  return items.find((i) => (i.name || '').toLowerCase() === wanted) || null;
+}
+
+// Set or clear a task's custom type. `customItemId` of null restores the
+// default "Task" type.
+export async function setCustomItemId(taskId, customItemId) {
+  return updateTask(taskId, { custom_item_id: customItemId });
+}
+
 /**
  * Search tasks using the ClickUp v2 filtered-team-tasks endpoint.
  *

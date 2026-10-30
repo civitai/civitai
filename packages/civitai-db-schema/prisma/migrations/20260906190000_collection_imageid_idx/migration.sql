@@ -1,0 +1,29 @@
+-- Index `Collection."imageId"` so a deleted image can find the collections whose COVER it is.
+--
+-- The collections search index denormalizes a cover image onto every collection document, and
+-- CollectionCard renders `if (data.image) return [data.image]` — the cover wins over item images.
+-- Deleting a cover image otherwise leaves the document holding a dead thumbnail with no
+-- CollectionItem row pointing at it, so the reindex enqueue has to look the collection up BY that
+-- column. (`Collection.imageId` is not a foreign key in the deployed database, so nothing clears
+-- it on delete either.)
+--
+-- Without this index that lookup is a parallel sequential scan of the ~17.3M-row / 2,817 MB heap:
+-- measured, the seven-leg resolve costs 461,408 with the leg enabled and unindexed, against 9,876
+-- with it disabled. That is on a user-facing image-delete path which `deleteImages` runs at up to
+-- five concurrent batches.
+--
+-- 🔴 NO `IF NOT EXISTS`, DELIBERATELY. `CREATE INDEX CONCURRENTLY` leaves an INVALID index behind
+-- when it fails, and that index still occupies the name — so `IF NOT EXISTS` would turn the retry
+-- into a silent no-op that prints `CREATE INDEX` and repairs nothing. Without it the retry errors
+-- loudly and you take the recovery below. The application gate reads `indisvalid AND indisready`
+-- rather than mere existence, so a half-built or failed index does NOT switch the cover leg on.
+--
+-- Recovery if this fails partway (check: `SELECT indisvalid, indisready FROM pg_index
+-- WHERE indexrelid = '"Collection_imageId_idx"'::regclass;` — anything but `t | t` is unusable):
+--
+--   DROP INDEX CONCURRENTLY "Collection_imageId_idx";
+--   -- then re-run the CREATE below
+--
+-- CONCURRENTLY cannot run inside a transaction block; run each statement on its own.
+CREATE INDEX CONCURRENTLY "Collection_imageId_idx" ON "Collection" ("imageId")
+  WHERE "imageId" IS NOT NULL;

@@ -10,6 +10,7 @@ import { isAppBlocksAuthorEnabled, isAppBlocksEnabled } from '~/server/services/
 import { isApprovedAndServing } from '~/shared/constants/app-block-deploy.constants';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
+import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -106,6 +107,8 @@ type SubmissionRow = {
   deployState: string | null;
   deployDetail: string | null;
   deployUpdatedAt: Date | null;
+  sourceCommit: string | null;
+  sourceDirty: boolean | null;
   submittedAt: Date;
   reviewedAt: Date | null;
   updatedAt: Date;
@@ -141,6 +144,23 @@ function shapeRow(row: SubmissionRow, appsDomain: string) {
     deployState: row.deployState, // null | 'building' | 'deploying' | 'live' | 'failed'
     deployDetail: row.deployDetail,
     deployUpdatedAt: row.deployUpdatedAt ? row.deployUpdatedAt.toISOString() : null,
+    // #4059 build provenance — the submitting CLIENT'S OWN CLAIM about the tree
+    // the bundle was built from, echoed back unverified. The server never
+    // confirmed the bundle was built from `sourceCommit`, so a consumer must not
+    // render either of these as an attestation.
+    //
+    // 🔴 NULL IS NOT FALSE, and both are passed through raw for exactly that
+    // reason. `sourceDirty: null` means UNKNOWN (a pre-#4059 row, or a client
+    // that sent nothing); `sourceDirty: false` means the client asserted the tree
+    // was CLEAN. Coercing null to false would turn "nobody looked" into "someone
+    // looked and it was clean" — the opposite of what this feature is for. Do not
+    // add a `?? false` here or in any consumer.
+    //
+    // Deliberately NOT `forgejoCommitSha`, which stays off this projection with
+    // the rest of the internal-only columns: that is a server-side sha in the
+    // platform's own repo, not the author's.
+    sourceCommit: row.sourceCommit,
+    sourceDirty: row.sourceDirty,
     submittedAt: row.submittedAt.toISOString(),
     reviewedAt: row.reviewedAt ? row.reviewedAt.toISOString() : null,
     updatedAt: row.updatedAt.toISOString(),
@@ -162,6 +182,10 @@ const SELECT = {
   deployState: true,
   deployDetail: true,
   deployUpdatedAt: true,
+  // #4059 — client-claimed build provenance. Safe to project: it is the caller's
+  // OWN submission and the value came from that caller in the first place.
+  sourceCommit: true,
+  sourceDirty: true,
   submittedAt: true,
   reviewedAt: true,
   updatedAt: true,
@@ -214,11 +238,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // (parity with submit-version + withdraw + dev-token). AUTHZ; the
   // isAppBlocksEnabled kill-switch below is separate.
   if (user.bannedAt) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
 

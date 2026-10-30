@@ -1,4 +1,4 @@
-import { Center, Loader, Stack } from '@mantine/core';
+import { Center, Loader, Stack, Tabs } from '@mantine/core';
 import { useRouter } from 'next/router';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { Page } from '~/components/AppLayout/Page';
@@ -13,10 +13,12 @@ import { ManageHeader } from '~/components/CreatorShop/Manage/ManageHeader';
 import { ManageItemsTable } from '~/components/CreatorShop/Manage/ManageItemsTable';
 import { ManageStats } from '~/components/CreatorShop/Manage/ManageStats';
 import { ManageToolbar } from '~/components/CreatorShop/Manage/ManageToolbar';
-import { ShopDraftBanner } from '~/components/CreatorShop/Manage/ShopDraftBanner';
+import { PublishShopBanner } from '~/components/CreatorShop/Manage/PublishShopBanner';
 import { useManageItems } from '~/components/CreatorShop/Manage/manage.util';
+import { ManageServicesPanel } from '~/components/CreatorShop/Services/ManageServicesPanel';
 import { UserProfileLayout } from '~/components/Profile/ProfileLayout2';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { postgresSlugify } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
@@ -38,6 +40,23 @@ function ManageShopPage() {
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
   const isModerator = currentUser?.isModerator ?? false;
   const canManage = isOwner || isModerator;
+  const features = useFeatureFlags();
+  // Services are managed by their seller only; a moderator managing someone else's shop sees cosmetics.
+  const servicesFlag = !!features.creatorServices;
+  const servicesEnabled = servicesFlag && isOwner;
+  // Without the flag the owner keeps the tab while they have services left to pause or remove.
+  const { data: mine } = trpc.creatorService.getMine.useQuery(undefined, {
+    enabled: isOwner && !servicesFlag,
+  });
+  const showServicesTab =
+    servicesEnabled || (isOwner && !!mine && (mine.items.length > 0 || mine.hiddenOffDomain > 0));
+  const tab = showServicesTab && router.query.tab === 'services' ? 'services' : 'cosmetics';
+  const setTab = (value: string | null) =>
+    router.replace(
+      { query: { ...router.query, tab: value === 'services' ? 'services' : undefined } },
+      undefined,
+      { shallow: true }
+    );
 
   const { data: user } = trpc.userProfile.get.useQuery({ username }, { enabled: !!username });
   // Moderators manage another creator's shop by passing that creator's userId;
@@ -58,26 +77,8 @@ function ManageShopPage() {
 
   const showControls = !isLoading && items.length > 0;
 
-  return (
-    <Stack gap="lg" mt="md" pb="xl">
-      <ManageHeader
-        canAddItems={isOwner}
-        targetUserId={manageUserId}
-        backHref={`/user/${username}/shop`}
-      />
-
-      {settings && settings.enabled !== true && (
-        <ShopDraftBanner
-          onEnable={() => updateSettings.mutate({ enabled: true, userId: manageUserId })}
-          enabling={updateSettings.isPending}
-          disabledReason={
-            !isLoading && items.length === 0
-              ? 'Add at least one item before publishing your shop.'
-              : undefined
-          }
-        />
-      )}
-
+  const cosmetics = (
+    <Stack gap="lg">
       {showControls && <ManageStats stats={stats} resaleStats={resaleStats} />}
 
       {showControls && (
@@ -105,6 +106,53 @@ function ManageShopPage() {
           unarchiveItem={unarchiveItem}
           deleteItem={deleteItem}
         />
+      )}
+    </Stack>
+  );
+
+  return (
+    <Stack gap="lg" mt="md" pb="xl">
+      <ManageHeader
+        canAddItems={isOwner}
+        showCosmeticActions={tab === 'cosmetics'}
+        targetUserId={manageUserId}
+        backHref={`/user/${username}/shop`}
+      />
+
+      {settings && settings.enabled !== true && (
+        <PublishShopBanner
+          cosmeticCount={items.length}
+          cosmeticsLoading={isLoading}
+          servicesCount={servicesEnabled}
+          onEnable={() => updateSettings.mutate({ enabled: true, userId: manageUserId })}
+          enabling={updateSettings.isPending}
+        />
+      )}
+
+      {showServicesTab ? (
+        <Tabs value={tab} onChange={setTab} keepMounted={false}>
+          <Tabs.List mb="lg">
+            <Tabs.Tab value="cosmetics">Cosmetics</Tabs.Tab>
+            <Tabs.Tab value="services">Services</Tabs.Tab>
+          </Tabs.List>
+          <Tabs.Panel value="cosmetics">{cosmetics}</Tabs.Panel>
+          <Tabs.Panel value="services">
+            <ManageServicesPanel
+              servicesEnabled={servicesEnabled}
+              unpublishedShop={
+                servicesEnabled && settings && settings.enabled !== true
+                  ? {
+                      onPublish: () =>
+                        updateSettings.mutate({ enabled: true, userId: manageUserId }),
+                      publishing: updateSettings.isPending,
+                    }
+                  : undefined
+              }
+            />
+          </Tabs.Panel>
+        </Tabs>
+      ) : (
+        cosmetics
       )}
     </Stack>
   );

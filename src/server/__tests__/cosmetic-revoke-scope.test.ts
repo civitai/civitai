@@ -1,17 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
-const findMany = vi.fn();
-const deleteMany = vi.fn();
+const findMany = dbMock.dbWrite.userCosmetic.findMany;
+const deleteMany = dbMock.dbWrite.userCosmetic.deleteMany;
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {},
-  dbWrite: {
-    userCosmetic: {
-      findMany: (...args: unknown[]) => findMany(...args),
-      deleteMany: (...args: unknown[]) => deleteMany(...args),
-    },
-  },
-}));
 vi.mock('~/server/redis/caches', () => ({
   userCosmeticCache: { refresh: vi.fn() },
   cosmeticEntityCaches: {},
@@ -23,7 +15,9 @@ vi.mock('~/server/search-index', () => ({
 }));
 vi.mock('~/server/services/image.service', () => ({ queueImageSearchIndexUpdate: vi.fn() }));
 
-const { revokeCosmeticsFromUsers } = await import('~/server/services/cosmetic.service');
+const { revokeCosmeticsFromUsers, unassignCosmetic } = await import(
+  '~/server/services/cosmetic.service'
+);
 
 const USERS = [11, 12];
 const COSMETICS = [301, 302];
@@ -62,5 +56,35 @@ describe('revokeCosmeticsFromUsers claim scoping', () => {
     expect(revoked).toBe(0);
     expect(deleteMany).not.toHaveBeenCalled();
     expect(findMany).not.toHaveBeenCalled();
+  });
+});
+
+// A revoked cosmetic the user was wearing still shows on their search document (search results,
+// user pickers) until the users index re-pulls them, which it does only for queued ids.
+describe('revoking or unassigning a worn cosmetic queues the wearer', () => {
+  const WEARER = 11;
+  const wearersOnly = (async (args: { where: { equippedToId?: unknown } }) =>
+    args.where.equippedToId === null ? [{ userId: WEARER }] : []) as never;
+
+  it('revokeCosmeticsFromUsers queues the users who were wearing it, and only them', async () => {
+    findMany.mockImplementation(wearersOnly);
+    const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
+    const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
+
+    await revokeCosmeticsFromUsers({ userIds: USERS, cosmeticIds: COSMETICS });
+
+    expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([WEARER]);
+  });
+
+  it('unassignCosmetic queues the users who were wearing it, and only them', async () => {
+    findMany.mockImplementation(wearersOnly);
+    const { usersSearchIndex } = await import('~/server/search-index/users.search-index');
+    const queue = vi.spyOn(usersSearchIndex, 'queueUpdate').mockResolvedValue();
+    onTestFinished(() => queue.mockRestore());
+
+    await unassignCosmetic({ cosmeticId: COSMETICS[0], userIds: USERS });
+
+    expect(queue.mock.calls.flatMap(([items]) => items.map((x) => x.id))).toEqual([WEARER]);
   });
 });

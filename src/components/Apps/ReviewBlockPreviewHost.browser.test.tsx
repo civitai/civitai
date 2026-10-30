@@ -24,9 +24,13 @@ vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
   PageBlockHost: ({
     reviewRunForReal,
     canOpenPage,
+    bootSkeleton,
+    trustTier,
   }: {
     reviewRunForReal?: boolean;
     canOpenPage?: boolean;
+    bootSkeleton?: boolean;
+    trustTier?: string;
   }) => (
     <div
       data-testid="page-host"
@@ -35,6 +39,18 @@ vi.mock('~/components/AppBlocks/PageBlockHost', () => ({
       // must forward the VIEWER's `appBlocks && appBlocksPages`, not a
       // per-surface constant and not half the run route's predicate.
       data-can-open-page={String(!!canOpenPage)}
+      // Surfaced for the same reason: the moderator must review the SHIPPED
+      // presentation. Without this the whole review-preview plumbing was
+      // reversible with a fully green gate — hardcoding `false` here again, or
+      // dropping the key from the mint, killed nothing.
+      data-boot-skeleton={String(!!bootSkeleton)}
+      // 🔴 The forced tier is DEFENCE LAYER 2 (this file's own header): it is
+      // what makes `intersectSandbox` drop `allow-same-origin`, so the review
+      // iframe runs at an opaque origin rather than the moderator's. It was
+      // unpinned — flipping it to 'internal' type-checks and survived 1151
+      // tests across every Apps browser suite. Pre-existing, closed here
+      // because the stub was open on the desk.
+      data-trust-tier={String(trustTier)}
     />
   ),
 }));
@@ -71,6 +87,7 @@ const RENDER_ONLY_MINT: MintReviewBlockTokenResult = {
   blockInstanceId: 'page_pubreq_X',
   appName: 'My App',
   sandbox: 'allow-scripts',
+  bootSkeleton: false,
   runForReal: false,
   buzzCap: null,
 };
@@ -86,7 +103,14 @@ const RUN_FOR_REAL_MINT: MintReviewBlockTokenResult = {
 // A REAL stateful useMutation stub: `mutate({ runForReal })` synchronously swaps
 // `data` between the two fixtures (mirrors a resolved re-mint), so the component
 // re-renders exactly as it would against the server.
-const mintCalls = vi.hoisted(() => ({ inputs: [] as Array<{ runForReal: boolean }> }));
+const mintCalls = vi.hoisted(() => ({
+  inputs: [] as Array<{ runForReal: boolean }>,
+  // Lets a test make the MINT declare bootSkeleton, which is the only way to
+  // prove the value travels manifest -> mint -> host rather than being a
+  // constant. Without a true case the negative one passes against a hardcoded
+  // `false`, which is exactly the state this coverage was missing.
+  bootSkeleton: false,
+}));
 vi.mock('~/utils/trpc', async () => {
   const React = await import('react');
   return {
@@ -103,7 +127,11 @@ vi.mock('~/utils/trpc', async () => {
               isError: false,
               mutate: (input: { publishRequestId: string; runForReal: boolean }) => {
                 mintCalls.inputs.push({ runForReal: input.runForReal });
-                setData(input.runForReal ? RUN_FOR_REAL_MINT : RENDER_ONLY_MINT);
+                const base = input.runForReal ? RUN_FOR_REAL_MINT : RENDER_ONLY_MINT;
+                // `??` not a bare override: an unconditional overwrite makes the
+                // fixtures' own `bootSkeleton` field DEAD, so a future author who
+                // sets it there gets a silently-passing false result.
+                setData({ ...base, bootSkeleton: mintCalls.bootSkeleton ?? base.bootSkeleton });
               },
             };
           },
@@ -118,6 +146,7 @@ import { ReviewBlockPreviewHost } from '~/components/Apps/ReviewBlockPreviewHost
 
 beforeEach(() => {
   mintCalls.inputs = [];
+  mintCalls.bootSkeleton = false;
   flagState.appBlocks = false;
   flagState.appBlocksPages = false;
 });
@@ -133,6 +162,33 @@ function mount() {
 }
 
 describe('ReviewBlockPreviewHost — run-for-real opt-in', () => {
+  test("forwards the app's OWN bootSkeleton so the moderator sees the shipped presentation", async () => {
+    // 🔴 THIS WAS UNGUARDED. The whole review-preview plumbing — the mint
+    // projection and this prop — was reversible with a fully green gate:
+    // hardcoding `false` here again, or dropping the key from the mint,
+    // killed nothing, because the stub above never surfaced it. Which put us
+    // back at a moderator approving a presentation the shipped app does not
+    // have: the defect the plumbing was added to fix.
+    mount();
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    // The default fixture does NOT declare it.
+    expect(page.getByTestId('page-host').element().getAttribute('data-boot-skeleton')).toBe(
+      'false'
+    );
+    // The forced-unverified tier, pinned for the first time.
+    expect(page.getByTestId('page-host').element().getAttribute('data-trust-tier')).toBe(
+      'unverified'
+    );
+  });
+
+  test('a mint that DECLARES bootSkeleton reaches the host', async () => {
+    // The discriminating half: the value must travel, not be a constant.
+    mintCalls.bootSkeleton = true;
+    mount();
+    await expect.element(page.getByTestId('page-host')).toBeInTheDocument();
+    expect(page.getByTestId('page-host').element().getAttribute('data-boot-skeleton')).toBe('true');
+  });
+
   test('DEFAULT is render-only: host gets reviewRunForReal=false, no banner, opt-in offered', async () => {
     mount();
     // The mount effect mints render-only.

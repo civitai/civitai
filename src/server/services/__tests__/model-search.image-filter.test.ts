@@ -43,7 +43,7 @@ vi.mock('~/server/meilisearch/client', () => ({
 vi.mock('~/server/services/file.service', () => ({
   getDownloadFilename: vi.fn(() => 'model.safetensors'),
 }));
-vi.mock('~/client-utils/cf-images-utils', () => ({
+vi.mock('~/client-utils/edge-url', () => ({
   getEdgeUrl: (url: string) => url,
 }));
 vi.mock('~/server/common/model-helpers', () => ({

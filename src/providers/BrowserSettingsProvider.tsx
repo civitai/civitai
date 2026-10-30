@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useContext, useEffect, useRef, useSyncExternalStore } from 'react';
 import { createStore, useStore } from 'zustand';
 import { useCivitaiSessionContext } from '~/components/CivitaiWrapped/CivitaiSessionProvider';
 import { Flags } from '~/shared/utils/flags';
@@ -22,6 +22,15 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
   const queryUtils = trpc.useUtils();
   const { mutate } = trpc.user.updateContentSettings.useMutation({
     onSuccess: (_, variables) => {
+      // These lists are filtered on the server by these two, read from the session, which this
+      // mutation has refreshed by the time it returns: the app image picker's posted list, and a
+      // shop's services (mature ones show only at the viewer's level). A list fetched before that
+      // was filtered at the old level. A no-op for a list that has not been opened.
+      if (variables.showNsfw !== undefined || variables.browsingLevel !== undefined) {
+        void queryUtils.blockImagePicker.getPosted.reset();
+        void queryUtils.creatorService.getForShop.reset();
+      }
+
       // Patch every confirmed field into the getSettings React Query cache so
       // `CivitaiSessionProvider` sees the user's intent immediately, instead
       // of the stale `session.user.*` values that live behind the JWT cookie
@@ -103,12 +112,7 @@ export function BrowserSettingsProvider({ children }: { children: React.ReactNod
           // Cancel any in-flight getSettings refetch so a stale response
           // (e.g. triggered by window focus) can't overwrite the mutation's cache update.
           queryUtils.user.getSettings.cancel();
-          // The reason why we pass domain it's cause that way we can store the content values on different places depending
-          // on how it makes sense. For instance, for RED - Browssing level is stored under the name `redBrowsingLevel` inside the user settings.
-          mutate({
-            ...changed,
-            domain,
-          });
+          mutate(changed);
           snapshotRef.current = curr;
         }
       });
@@ -132,6 +136,14 @@ export function useBrowsingSettings<T>(selector: (state: StoreState & StoreState
   const store = useContext(Context);
   if (!store) throw new Error('Missing ContentSettingsProvider');
   return useStore(store, selector);
+}
+
+const noSubscription = () => () => undefined;
+/** `autoplayGifs` for components that can mount outside the provider, where it reads true. */
+export function useAutoplayGifs() {
+  const store = useContext(Context);
+  const getSnapshot = () => store?.getState().autoplayGifs ?? true;
+  return useSyncExternalStore(store?.subscribe ?? noSubscription, getSnapshot, getSnapshot);
 }
 
 type StoreState = {

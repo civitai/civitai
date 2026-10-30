@@ -50,8 +50,7 @@ export async function imageToBlurhash(url: string) {
   return { hash: '', width: 0, height: 0 };
 }
 
-export async function createImageElement(src: string | Blob | File) {
-  const objectUrl = typeof src === 'string' ? src : URL.createObjectURL(src);
+function loadImageElement(objectUrl: string) {
   return new Promise<HTMLImageElement>((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'Anonymous';
@@ -77,16 +76,65 @@ export async function createImageElement(src: string | Blob | File) {
       }
       resolve(img);
     });
-    img.addEventListener('error', (error) => {
-      console.error('[createImageElement] Image failed to load:', error);
-      reject(error);
+    img.addEventListener('error', (event) => {
+      // The `error` event on <img> carries no reason, so rejecting with it gives callers
+      // an Event that stringifies to "[object Event]". Reject with a real Error instead,
+      // and record the little the element does expose, so a caller's log names something.
+      reject(
+        new Error(
+          `Image failed to load (complete=${img.complete}, naturalWidth=${img.naturalWidth})`,
+          { cause: event }
+        )
+      );
     });
     img.src = objectUrl;
   });
 }
 
-export async function getImageDimensions(src: string | Blob | File) {
-  const img = await createImageElement(src);
+export type CreateImageElementOptions = {
+  /**
+   * Extra load attempts, spaced by `loadRetryDelayMs`. A blob that decoded a moment ago can
+   * still fail to load when many images are in flight, so anything processing a batch should
+   * retry before treating a failure as a property of the file.
+   */
+  loadRetries?: number;
+  loadRetryDelayMs?: number;
+};
+
+export async function createImageElement(
+  src: string | Blob | File,
+  { loadRetries = 0, loadRetryDelayMs = 250 }: CreateImageElementOptions = {}
+) {
+  const objectUrl = typeof src === 'string' ? src : URL.createObjectURL(src);
+
+  let lastError: unknown;
+  try {
+    for (let attempt = 0; attempt <= loadRetries; attempt++) {
+      if (attempt > 0) await new Promise((r) => setTimeout(r, loadRetryDelayMs));
+      try {
+        return await loadImageElement(objectUrl);
+      } catch (error) {
+        lastError = error;
+      }
+    }
+  } finally {
+    // A url made here is released once the element has loaded (it keeps what it decoded) or
+    // failed for good, so it does not hold the blob's bytes for the life of the page.
+    if (objectUrl !== src) URL.revokeObjectURL(objectUrl);
+  }
+
+  console.error(
+    `[createImageElement] Image failed to load after ${loadRetries + 1} attempt(s):`,
+    lastError
+  );
+  throw lastError;
+}
+
+export async function getImageDimensions(
+  src: string | Blob | File,
+  options?: CreateImageElementOptions
+) {
+  const img = await createImageElement(src, options);
   return {
     width: img.width,
     height: img.height,

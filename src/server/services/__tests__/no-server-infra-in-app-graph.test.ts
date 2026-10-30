@@ -1,7 +1,18 @@
 import fs from 'fs';
 import path from 'path';
-import ts from 'typescript';
 import { describe, expect, it } from 'vitest';
+
+import type { Edge } from './import-graph.harness';
+import {
+  eraseServerOnlyBlocks,
+  exportTargetToPath,
+  parseImports,
+  REPO_ROOT,
+  rel,
+  resolveSpecifier,
+  resolveWorkspace,
+  WORKSPACE_PACKAGES,
+} from './import-graph.harness';
 
 /**
  * `_app`'s module graph must not reach server infrastructure.
@@ -17,9 +28,14 @@ import { describe, expect, it } from 'vitest';
  * redis client into the browser graph. Nothing reported it: the leaves were externalised by
  * `serverExternalPackages`, so the build stayed green. Only an `fs/promises` import ever
  * failed loudly enough to notice.
+ *
+ * The ONE construct that does keep a module out is an `if (typeof window === 'undefined') { … }`
+ * block: Next defines `typeof window` at build time, so the client build drops the block and
+ * the imports in it. The walk follows the client's view of each file
+ * (`eraseServerOnlyBlocks`), and every edge that view drops must be listed in
+ * `SERVER_ONLY_EDGES` below — so such an edge is a reviewed decision, not a quiet escape.
  */
 
-const REPO_ROOT = path.resolve(__dirname, '../../../..');
 const ENTRY = 'src/pages/_app.tsx';
 
 /**
@@ -77,6 +93,11 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
       'via logging/client.ts; a leaf (its only import is `import type`), so it adds itself and no further edges. Drops with logging/client.',
   },
   {
+    file: 'src/server/logging/server-fault-override.ts',
+    reason:
+      'via logging/client.ts, which consults it in classifyErrorFault. A leaf with ZERO imports (not even a type-only one), so it adds itself and no further edges; it ships a WeakSet and two pure predicates, no server infrastructure. Deliberately NOT declared inside logging/client.ts: throwers import it directly, and the unit setup mocks ~/server/logging/client WHOLESALE, so a thrower reaching through that module would get undefined under test. Drops with logging/client.',
+  },
+  {
     file: 'packages/civitai-axiom/src/client.ts',
     reason: 'via logging/client.ts:7; drops only when logging/client does.',
   },
@@ -95,201 +116,34 @@ const KNOWN_REACHABLE: { file: string; reason: string }[] = [
   },
 ];
 
-const EXTENSIONS = ['.ts', '.tsx', '.js', '.jsx', '.mjs', '.cjs', '.svelte'];
-
-function readAliasMap(): [string, string][] {
-  // tsconfig is JSONC (comments + trailing commas). Use TypeScript's own parser rather than
-  // hand-rolled stripping, so a future edit to tsconfig can't quietly yield an empty alias
-  // map — which would resolve nothing and make this whole guard vacuously pass.
-  const file = path.join(REPO_ROOT, 'tsconfig.json');
-  const { config, error } = ts.parseConfigFileTextToJson(file, fs.readFileSync(file, 'utf8'));
-  if (error) throw new Error(`could not parse tsconfig.json: ${JSON.stringify(error.messageText)}`);
-  const paths = config?.compilerOptions?.paths as Record<string, string[]> | undefined;
-  if (!paths || !Object.keys(paths).length)
-    throw new Error('tsconfig.json has no compilerOptions.paths');
-  return Object.entries(paths).map(([k, v]) => [k, v[0]!]);
-}
-
-const ALIASES = readAliasMap();
-
 /**
- * Workspace packages resolved from each `package.json` `exports` map — the real contract, and
- * the only thing that covers deep subpaths. tsconfig aliases only 8 of the 15 packages, so
- * alias-only resolution silently treated `@civitai/auth`, `buzz`, `shared`, `ui`, `email`,
- * `storage` and `db-queries` as external leaves and stopped walking there. That mattered:
- * `@civitai/auth`'s barrel reaches `redis.ts`, which imports `@civitai/redis` — so the
- * invariant held only because call sites happen to spell it `@civitai/auth/client`, something
- * the guard could not see and a one-word edit would undo.
+ * Imports the client build drops because they sit inside an
+ * `if (typeof window === 'undefined') { … }` block. Asserted EXACTLY: a new one fails until it
+ * is listed here, and a removed one fails until it is deleted. Measured for this form on
+ * Next 16.3.1 under both Turbopack and `--webpack`: a marker string in a module imported this
+ * way was absent from every `.next/static` file, while the same module imported behind only a
+ * runtime `if (!req) return` was present.
  */
-/**
- * An `exports` value is a path, or a conditions object (`{ import, require, default }`).
- * Returning null rather than throwing on an unrecognised shape matters: this runs at module
- * scope, so a throw here fails COLLECTION, and a file that collects nothing reads as a pass.
- */
-type ExportTarget = string | Record<string, unknown> | undefined;
-
-function exportTargetToPath(target: ExportTarget): string | null {
-  if (typeof target === 'string') return target;
-  if (!target || typeof target !== 'object') return null;
-  // `import` before `default`: this walks SOURCE. The conventional manifest is
-  // `{ import: './src/x.ts', default: './dist/x.cjs' }`, and preferring `default` would walk a
-  // bundled artifact whose imports are invisible — blindness, dressed as a resolution.
-  for (const condition of ['import', 'node', 'default', 'require']) {
-    const value = target[condition];
-    if (typeof value === 'string') return value;
-  }
-  return null;
-}
-
-function readWorkspacePackages(): {
-  name: string;
-  dir: string;
-  exports: Record<string, ExportTarget>;
-}[] {
-  const packagesDir = path.join(REPO_ROOT, 'packages');
-  const out: { name: string; dir: string; exports: Record<string, ExportTarget> }[] = [];
-  for (const entry of fs.readdirSync(packagesDir)) {
-    const manifest = path.join(packagesDir, entry, 'package.json');
-    if (!fs.existsSync(manifest)) continue;
-    const json = JSON.parse(fs.readFileSync(manifest, 'utf8')) as {
-      name?: string;
-      exports?: Record<string, ExportTarget>;
-    };
-    if (!json.name) continue;
-    out.push({ name: json.name, dir: path.join(packagesDir, entry), exports: json.exports ?? {} });
-  }
-  if (!out.length) throw new Error('no workspace packages found under packages/');
-  return out;
-}
-
-const WORKSPACE_PACKAGES = readWorkspacePackages();
-
-function resolveWorkspace(spec: string): string | null {
-  for (const pkg of WORKSPACE_PACKAGES) {
-    if (spec !== pkg.name && !spec.startsWith(pkg.name + '/')) continue;
-    const rest = spec === pkg.name ? '' : spec.slice(pkg.name.length + 1);
-    const subpath = rest ? `./${rest}` : '.';
-
-    const exact = exportTargetToPath(pkg.exports[subpath]);
-    if (exact) return resolveFile(path.join(pkg.dir, exact));
-
-    // Wildcard keys, longest-prefix-wins per the exports spec. `@civitai/ui` maps
-    // `./components/*` at `./src/lib/components/*` — without this the subpath misses the map
-    // and the source-layout fallback guesses `src/components/*`, which does not exist, so the
-    // module becomes a silent external leaf: the exact blindness this guard exists to prevent.
-    let best: string | null = null;
-    let bestPrefix = -1;
-    for (const [key, value] of Object.entries(pkg.exports)) {
-      const star = key.indexOf('*');
-      if (star === -1) continue;
-      const prefix = key.slice(0, star);
-      const suffix = key.slice(star + 1);
-      if (!subpath.startsWith(prefix) || !subpath.endsWith(suffix)) continue;
-      if (prefix.length <= bestPrefix) continue;
-      const target = exportTargetToPath(value);
-      if (!target) continue;
-      best = target.replace('*', subpath.slice(prefix.length, subpath.length - suffix.length));
-      bestPrefix = prefix.length;
-    }
-    // Fall THROUGH when a wildcard matched but its target doesn't exist. Returning here
-    // would make a wildcard key strictly worse than no map at all, since the layout
-    // fallback below would never get its turn.
-    if (best) {
-      const resolved = resolveFile(path.join(pkg.dir, best));
-      if (resolved) return resolved;
-    }
-
-    // Six packages ship no `exports` map at all (buzz, redis, axiom, ...); use their layout.
-    return resolveFile(path.join(pkg.dir, 'src', rest || 'index'));
-  }
-  return null;
-}
-
-function resolveFile(candidate: string): string | null {
-  if (fs.existsSync(candidate) && fs.statSync(candidate).isFile()) return candidate;
-  // ESM specifiers name the EMITTED file, so TS/Svelte sources are imported as `./x.js`
-  // (and Svelte 5 rune modules as `./x.svelte.js`). Every real `@civitai/ui` subpath in
-  // apps/ is spelled that way; without this swap they all resolve to nothing and the
-  // package becomes a silent external leaf.
-  if (candidate.endsWith('.js')) {
-    const stem = candidate.slice(0, -'.js'.length);
-    for (const ext of EXTENSIONS) {
-      if (fs.existsSync(stem + ext)) return stem + ext;
-    }
-  }
-  for (const ext of EXTENSIONS) {
-    if (fs.existsSync(candidate + ext)) return candidate + ext;
-  }
-  for (const ext of EXTENSIONS) {
-    const index = path.join(candidate, 'index' + ext);
-    if (fs.existsSync(index)) return index;
-  }
-  return null;
-}
-
-function resolveSpecifier(spec: string, fromFile: string): string | null {
-  if (spec.startsWith('.')) {
-    return resolveFile(path.resolve(path.dirname(fromFile), spec));
-  }
-  for (const [pattern, target] of ALIASES) {
-    if (pattern.endsWith('/*')) {
-      const prefix = pattern.slice(0, -1);
-      if (spec.startsWith(prefix)) {
-        return resolveFile(path.join(REPO_ROOT, target.slice(0, -1) + spec.slice(prefix.length)));
-      }
-    } else if (spec === pattern) {
-      return resolveFile(path.join(REPO_ROOT, target));
-    }
-  }
-  return resolveWorkspace(spec); // null -> node_modules / unresolvable -> external leaf
-}
-
-function stripComments(source: string): string {
-  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
-}
-
-/**
- * A named-import clause erases entirely when every specifier is type-only. Both spellings
- * count: `import type { A }` and the inline `import { type A, type B }`. Missing the inline
- * form makes a pure type reference look like a value edge, which mis-attributes megabytes
- * of unrelated graph to whichever file happens to use it.
- */
-function isTypeOnlyClause(clause: string): boolean {
-  if (/^\s*type[\s{*]/.test(clause)) return true;
-  const braces = clause.match(/\{([\s\S]*)\}/);
-  if (!braces) return false;
-  const outside = clause.slice(0, clause.indexOf('{'));
-  if (/[A-Za-z_$*]/.test(outside)) return false; // default or namespace binding present
-  const specifiers = braces[1]!
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return specifiers.length > 0 && specifiers.every((s) => /^type\s/.test(s));
-}
-
-type Edge = { spec: string; dynamic: boolean };
-
-function parseImports(source: string): Edge[] {
-  const code = stripComments(source);
-  const edges: Edge[] = [];
-  let match: RegExpExecArray | null;
-
-  const fromRe = /(?:^|[\n;}])\s*(?:import|export)\s+([\s\S]*?)from\s*['"]([^'"]+)['"]/g;
-  while ((match = fromRe.exec(code))) {
-    if (!isTypeOnlyClause(match[1]!)) edges.push({ spec: match[2]!, dynamic: false });
-  }
-  const bareRe = /(?:^|[\n;}])\s*import\s*['"]([^'"]+)['"]/g;
-  while ((match = bareRe.exec(code))) edges.push({ spec: match[1]!, dynamic: false });
-  const requireRe = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-  while ((match = requireRe.exec(code))) edges.push({ spec: match[1]!, dynamic: false });
-  // Followed deliberately: a lazily-fetched chunk is still a compiled chunk.
-  const dynamicRe = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g;
-  while ((match = dynamicRe.exec(code))) edges.push({ spec: match[1]!, dynamic: true });
-
-  return edges;
-}
-
-const rel = (abs: string) => path.relative(REPO_ROOT, abs).replace(/\\/g, '/');
+const SERVER_ONLY_EDGES: { file: string; spec: string; reason: string }[] = [
+  {
+    file: 'src/pages/_app.tsx',
+    spec: '~/server/services/settings-bootstrap.service',
+    reason:
+      'the per-render settings bootstrap, read in-process instead of over an HTTP request to our own `/api/user/settings`.',
+  },
+  {
+    file: 'src/pages/_app.tsx',
+    spec: '~/server/shell/shell-render',
+    reason:
+      'the static-shell decision and its viewer-independent seeds (flags with no user, ToS, browsing addons, liveNow), read before the bootstrap is.',
+  },
+  {
+    file: 'src/pages/_app.tsx',
+    spec: '~/server/trpc/trpc-pool-cookie',
+    reason:
+      'the tRPC routing cookie, synced from the viewer flag on a private full render; server-only because it writes a response header.',
+  },
+];
 
 /**
  * Breadth-first so a reported chain is the SHORTEST one, and `visited` bounds the walk to
@@ -301,6 +155,7 @@ function walkGraph() {
   const parent = new Map<string, { from: string; dynamic: boolean } | null>([[entryAbs, null]]);
   const queue = [entryAbs];
   const parsed = new Map<string, Edge[]>();
+  const serverOnly: string[] = [];
 
   while (queue.length) {
     const file = queue.shift()!;
@@ -312,7 +167,9 @@ function walkGraph() {
       } catch {
         continue; // unreadable -> leaf
       }
-      edges = parseImports(source);
+      const clientView = eraseServerOnlyBlocks(source, file);
+      for (const spec of clientView.erased) serverOnly.push(`${rel(file)} -> ${spec}`);
+      edges = parseImports(clientView.source);
       parsed.set(file, edges);
     }
     for (const edge of edges) {
@@ -334,10 +191,15 @@ function walkGraph() {
     return hops.reverse();
   };
 
-  return { reachable: new Set([...parent.keys()].map(rel)), chainTo, parent };
+  return {
+    reachable: new Set([...parent.keys()].map(rel)),
+    chainTo,
+    parent,
+    serverOnly: serverOnly.sort(),
+  };
 }
 
-const { reachable, chainTo } = walkGraph();
+const { reachable, chainTo, serverOnly } = walkGraph();
 const isDenied = (file: string) => DENIED_PREFIXES.some((p) => file === p || file.startsWith(p));
 const known = new Set(KNOWN_REACHABLE.map((k) => k.file));
 
@@ -346,6 +208,53 @@ function formatViolation(file: string): string {
   const lines = chain.map((hop, i) => (i === 0 ? `    ${hop}` : `      -> ${hop}`));
   return `  ${file}\n${lines.join('\n')}`;
 }
+
+describe('client view of a file (eraseServerOnlyBlocks)', () => {
+  const erasedOf = (src: string) => eraseServerOnlyBlocks(src, 'x.tsx').erased;
+
+  it('drops an import inside the exact server-only block, in either operand order', () => {
+    expect(erasedOf(`if (typeof window === 'undefined') { await import('~/a'); }`)).toEqual([
+      '~/a',
+    ]);
+    expect(erasedOf(`if ('undefined' === typeof window) { await import('~/b'); }`)).toEqual([
+      '~/b',
+    ]);
+    // Nested deeper inside the block is still inside it.
+    expect(
+      erasedOf(`if (typeof window === 'undefined') { const f = async () => import('~/c'); }`)
+    ).toEqual(['~/c']);
+  });
+
+  it('keeps the import in the client view of that file', () => {
+    const { source } = eraseServerOnlyBlocks(
+      `before();\nif (typeof window === 'undefined') {\n  await import('~/a');\n}\nafter();`,
+      'x.tsx'
+    );
+    expect(source).not.toContain('~/a');
+    expect(source).toContain('before();');
+    expect(source).toContain('after();');
+    expect(source.split('\n')).toHaveLength(5);
+  });
+
+  // Each of these reaches the client in at least one of the two bundlers, so the walk must
+  // keep following it.
+  it.each([
+    [
+      'an early return (webpack keeps what follows)',
+      `function f() { if (typeof window !== 'undefined') return; return import('~/a'); }`,
+    ],
+    ['the else branch', `if (typeof window === 'undefined') { x(); } else { import('~/a'); }`],
+    ['a loose comparison', `if (typeof window == 'undefined') { import('~/a'); }`],
+    [
+      'an aliased condition',
+      `const isServer = typeof window === 'undefined'; if (isServer) { import('~/a'); }`,
+    ],
+    ['a runtime-only guard', `if (!req) return; await import('~/a');`],
+  ])('does not drop %s', (_label, src) => {
+    expect(erasedOf(src)).toEqual([]);
+    expect(eraseServerOnlyBlocks(src, 'x.tsx').source).toContain('~/a');
+  });
+});
 
 describe('workspace export resolution', () => {
   // Every manifest ships flat string targets today, so the conditions form is unexercised by
@@ -406,6 +315,13 @@ describe('no server infrastructure in the _app client graph', () => {
           `\n`
       );
     }
+  });
+
+  it('drops exactly the reviewed server-only edges', () => {
+    expect(
+      serverOnly,
+      "an import inside `if (typeof window === 'undefined') { … }` is skipped by this walk — list it in SERVER_ONLY_EDGES, or delete a stale entry"
+    ).toEqual(SERVER_ONLY_EDGES.map((e) => `${e.file} -> ${e.spec}`).sort());
   });
 
   it('has no stale KNOWN_REACHABLE entries', () => {

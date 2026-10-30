@@ -1,133 +1,824 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import ts from 'typescript';
 import { describe, expect, test } from 'vitest';
 import {
+  APPS_CARD_LIST_GAP,
+  APPS_CARD_LIST_MIN_COLUMN,
+  APPS_CONTAINER_GUTTER,
   APPS_FULL_BLEED_PAGES,
-  APPS_NARROW_TABLE_PAGE_WIDTH,
-  APPS_PAGE_WIDTHS,
-  APPS_READABLE_PAGE_WIDTH,
+  APPS_FULL_MEASURE_PAGES,
+  APPS_LEGACY_CONTAINER_WIDTH,
+  APPS_PAGE_CONTAINER_WIDTH,
+  APPS_PAGE_MEASURES,
+  APPS_READABLE_MEASURE,
   APPS_REDIRECT_ONLY_PAGES,
-  APPS_WIDE_PAGE_WIDTH,
+  APPS_TWO_COLUMN_DETAIL_MEASURE,
+  appsMeasureCss,
+  isAppsMeasureBand,
+  type AppsMeasure,
+  type AppsMeasureBand,
 } from '~/components/Apps/appsPageWidths';
-import { LISTING_GRID_SPAN, LISTING_STORE_CONTAINER_SIZE } from '~/components/Apps/appListingGrid';
+import * as widthsModule from '~/components/Apps/appsPageWidths';
+import {
+  LISTING_CARD_MIN_WIDTH,
+  LISTING_GRID_SPAN,
+  LISTING_STORE_CONTAINER_SIZE,
+  listingGridColumnsAt,
+} from '~/components/Apps/appListingGrid';
+import {
+  SUBMISSIONS_CONTAINER_CHROME,
+  SUBMISSIONS_TABLE_MIN_WIDTH,
+} from '~/components/Apps/submissionsTable';
+import { APPS_RESERVED_SCROLLBAR, appsRailChromeWidth } from '~/components/Apps/appsRailGeometry';
 
 /**
- * `/apps/*` container-width pins (blocking `unit` project).
+ * `/apps/*` geometry pins (blocking `unit` project).
  *
- * The product feedback was "the apps pages should use the full page width". The
- * implementation answer is a per-route decision recorded in ONE module, with the
- * store's width kept as an explicit matched pair with the grid span. Both halves
- * are pinned here so a later tweak can't quietly re-narrow a page or move the
- * container out from under the grid.
+ * The model: ONE container width for every route, plus an optional CONTENT MEASURE
+ * applied inside the body. It replaced a per-route CONTAINER width, which put the
+ * shared sub-nav inside a per-page box and made the tab strip move horizontally
+ * between routes.
+ *
+ * The RENDERED proof of the alignment lives in
+ * `AppsPageLayout.chromeAlignment.browser.test.tsx` (browser-mode). This
+ * file pins the CONSTANTS and the route taxonomy in the node tier.
  */
 
-describe('APPS_PAGE_WIDTHS — the decided value per route', () => {
-  test('the browse/manage surfaces are all the WIDE width (1920)', () => {
-    expect(APPS_WIDE_PAGE_WIDTH).toBe(1920);
-    expect(APPS_PAGE_WIDTHS['/apps']).toBe(1920);
-    expect(APPS_PAGE_WIDTHS['/apps/installed']).toBe(1920);
-    expect(APPS_PAGE_WIDTHS['/apps/my-submissions']).toBe(1920);
-    expect(APPS_PAGE_WIDTHS['/apps/review/[publishRequestId]']).toBe(1920);
-    expect(APPS_PAGE_WIDTHS['/apps/revenue']).toBe(1920);
-  });
+/**
+ * Tags a page's default export may render WITHOUT mounting the shared chrome: the
+ * access-denied leaf and the document-head element that is a sibling of the layout
+ * rather than a substitute for it.
+ */
+const CHROME_EXEMPT_TAGS = new Set(['Meta', 'NotFound']);
 
-  test('the /apps/review QUEUE is the narrow-table width (1400), not the wide one', () => {
-    // Four short columns (Kind / App / Submitter / Submitted) + a Review button
-    // cannot spend 1920: the table pads Submitter out to ~380px for a short
-    // username and opens a large dead gap before the action. Literal values, not
-    // derived from the module's own constant arithmetic.
-    expect(APPS_NARROW_TABLE_PAGE_WIDTH).toBe(1400);
-    expect(APPS_PAGE_WIDTHS['/apps/review']).toBe(1400);
-    // 🔴 The DETAIL route is deliberately NOT moved with it — it renders
-    // side-by-side diff panels + a live preview, which do use the width. If a
-    // later pass narrows the queue further, this is the pin that stops the detail
-    // page being dragged along by association.
-    expect(APPS_PAGE_WIDTHS['/apps/review/[publishRequestId]']).toBe(1920);
-    // …and my-submissions keeps 1920: its table has a real 1424px scroll floor.
-    expect(APPS_PAGE_WIDTHS['/apps/my-submissions']).toBe(1920);
-  });
+/**
+ * Components a page may render INSTEAD of mounting the chrome itself, because they mount
+ * it one level down. `/apps/submit`'s `?edit=<listingId>` branch is the only such case:
+ * it returns `<AppsSubmitEditView …/>`, and that component owns its own `AppsPageLayout`
+ * (nesting a second one inside it would double the chrome).
+ *
+ * 🔴 EVERY ENTRY IS VERIFIED, NOT TRUSTED. An allowlist is exactly where a real orphan
+ * would hide — "it's fine, that component handles it" is the sentence that stops anyone
+ * looking. The test below parses each delegate's own source and fails if it does not in
+ * fact render `AppsPageLayout`, so adding a name here cannot silence the guard.
+ */
+const CHROME_DELEGATES: Record<string, { file: string; exportName: string }> = {
+  AppsSubmitEditView: {
+    file: 'src/components/Apps/AppsSubmitEditView.tsx',
+    exportName: 'AppsSubmitEditView',
+  },
+};
 
-  test('the form/detail surfaces are all the READABLE width (1100)', () => {
-    expect(APPS_READABLE_PAGE_WIDTH).toBe(1100);
-    expect(APPS_PAGE_WIDTHS['/apps/submit']).toBe(1100);
-    expect(APPS_PAGE_WIDTHS['/apps/store-preview/[slug]']).toBe(1100);
-    expect(APPS_PAGE_WIDTHS['/apps/[appBlockId]/edit']).toBe(1100);
-    expect(APPS_PAGE_WIDTHS['/apps/[appBlockId]/revenue']).toBe(1100);
-    expect(APPS_PAGE_WIDTHS['/apps/get-started']).toBe(1100);
-  });
+/**
+ * Components a page may render as a SIBLING of the chrome because they are portaled
+ * overlays — they leave the container's layout flow entirely, so "outside the measure
+ * box" is where they belong rather than a defect.
+ *
+ * 🔴 VERIFIED, NOT TRUSTED — the same rule as {@link CHROME_DELEGATES}, and for the same
+ * reason: an allowlist keyed on a NAME is exactly where real page content would hide, and
+ * "…Modal" is a naming convention, not a guarantee. The test below parses each entry and
+ * fails unless it actually renders a portaling overlay at its top level. Adding a name
+ * here cannot silence the guard.
+ */
+const CHROME_PORTAL_SIBLINGS: Record<string, { file: string; exportName: string }> = {
+  OnsiteReviewModal: {
+    file: 'src/components/Apps/OnsiteReviewModal.tsx',
+    exportName: 'OnsiteReviewModal',
+  },
+  OffsiteReviewModal: {
+    file: 'src/components/Apps/OffsiteReviewQueue.tsx',
+    exportName: 'OffsiteReviewModal',
+  },
+  CombinedReviewModal: {
+    file: 'src/components/Apps/CombinedReviewModal.tsx',
+    exportName: 'CombinedReviewModal',
+  },
+  PriorVersionsModal: {
+    file: 'src/components/Apps/PriorVersionsModal.tsx',
+    exportName: 'PriorVersionsModal',
+  },
+};
 
-  test('the RETIRED /apps/[appBlockId] is redirect-only, not a width', () => {
-    // It was listed as a rendering route with the comment "still renders for a
-    // direct hit". The page's own docstring says RETIRED and its
-    // `getServerSideProps` unconditionally redirects to
-    // `/apps/store-preview/<slug>`, so a width there was unreachable AND made
-    // this module assert a false fact about the app.
-    expect(APPS_PAGE_WIDTHS).not.toHaveProperty('/apps/[appBlockId]');
-    expect(APPS_REDIRECT_ONLY_PAGES).toContain('/apps/[appBlockId]');
-  });
+/** Tags that mean "a portaled overlay root" — checked together with their IMPORT source. */
+const PORTAL_ROOT_TAGS = new Set(['Modal', 'Modal.Stack', 'Drawer', 'Drawer.Stack', 'Portal']);
 
-  test('every width is one of the THREE decided values — no fourth hand-picked number', () => {
-    // The whole point of the module is that there are a few CLASSES of apps page,
-    // not eleven bespoke widths. A new page must join a class (or the class list
-    // must grow deliberately, failing here first — which is exactly what happened
-    // when `/apps/review` needed the narrow-table class).
-    for (const [route, width] of Object.entries(APPS_PAGE_WIDTHS)) {
-      expect(
-        [APPS_WIDE_PAGE_WIDTH, APPS_NARROW_TABLE_PAGE_WIDTH, APPS_READABLE_PAGE_WIDTH],
-        `${route}`
-      ).toContain(width);
+/** The package a portal root must come from for the name to mean anything. */
+const PORTAL_ROOT_MODULE = '@mantine/core';
+
+/**
+ * The module specifier a top-level identifier was imported from, or `null`.
+ *
+ * 🔴 THIS IS WHAT STOPS THE PORTAL CONTRACT BEING A NAME CHECK. Matching the tag `Modal`
+ * against a set of strings trusts whatever the file chose to call things: a component
+ * defining its own `const Modal = ({children}) => <Box mx="auto">{children}</Box>` and
+ * returning `<Modal>` satisfied a name-only test completely, and was then allowlisted as
+ * a "portaled overlay" — moving the trust from the component's name to the name of the
+ * tag it happens to render, which is no improvement at all. Resolving the import is the
+ * difference between "it is called Modal" and "it IS Mantine's Modal".
+ */
+function importSourceOf(source: ts.SourceFile, baseName: string): string | null {
+  let found: string | null = null;
+  source.forEachChild((node) => {
+    if (!ts.isImportDeclaration(node) || !node.importClause) return;
+    const specifier = (node.moduleSpecifier as ts.StringLiteral).text;
+    const { name, namedBindings } = node.importClause;
+    if (name?.getText(source) === baseName) found = specifier;
+    if (namedBindings && ts.isNamedImports(namedBindings)) {
+      for (const el of namedBindings.elements) {
+        if (el.name.getText(source) === baseName) found = specifier;
+      }
+    } else if (namedBindings && ts.isNamespaceImport(namedBindings)) {
+      if (namedBindings.name.getText(source) === baseName) found = specifier;
     }
-    // Pin the class list itself, as literals. Without this the check above is
-    // satisfied by ANY set of constants, including a fourth one added silently.
-    expect([APPS_WIDE_PAGE_WIDTH, APPS_NARROW_TABLE_PAGE_WIDTH, APPS_READABLE_PAGE_WIDTH]).toEqual([
-      1920, 1400, 1100,
+  });
+  return found;
+}
+
+/** Parse `file` once so a caller can resolve imports in it. */
+function sourceFileOf(file: string): ts.SourceFile {
+  return ts.createSourceFile(
+    file,
+    fs.readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX
+  );
+}
+
+/** Tag names that mean "a fragment", i.e. unwrap the children rather than count the tag. */
+const FRAGMENT_TAGS = new Set(['React.Fragment', 'Fragment']);
+
+/**
+ * EVERY top-level renderable JSX tag a component can render, one array per `return`.
+ *
+ * 🔴 AN AST WALK BECAUSE A TEXT GUARD IS WALKABLE BY A COMMENT. `/<AppsPageLayout[\s>]/`
+ * over the file's source matches a commented-out element just as happily as a real render,
+ * so a page could be re-orphaned while the guard stayed green. Comments are TRIVIA in the
+ * TypeScript AST — not nodes — so a commented-out element simply is not here.
+ *
+ * 🔴 EVERY BRANCH IS COLLECTED, AND THAT IS LOAD-BEARING GIVEN HOW THE RESULT IS USED.
+ * A ternary contributes BOTH arms, a fragment contributes ALL its children, and a
+ * `&&` contributes its JSX side. That is only safe because {@link chromeOffenders}
+ * requires EVERY tag to be allowed rather than asking whether the layout appears
+ * SOMEWHERE. An earlier version paired this same flattening with an `includes` check, so
+ * one good ternary arm covered for a re-orphaned one — the union hid the violation
+ * instead of exposing it. Union + "all must be allowed" is the combination that works;
+ * union + "any may match" is strictly worse than not flattening at all.
+ *
+ * Nested functions are deliberately NOT descended into: a `.map()` callback or a locally
+ * declared sub-component has its own returns, and they are not the page's outermost render.
+ */
+function pageReturnTags(file: string, exportName?: string): string[][] {
+  const source = ts.createSourceFile(
+    file,
+    fs.readFileSync(file, 'utf8'),
+    ts.ScriptTarget.Latest,
+    /* setParentNodes */ true,
+    ts.ScriptKind.TSX
+  );
+
+  // 🔴 THREE DEFAULT-EXPORT SHAPES, because rejecting a legitimate one turns the BLOCKING
+  // suite red on a page that is perfectly correct: `export default function P() {}`,
+  // `const P = () => {}; export default P;`, and `export default () => {}`. A guard that
+  // only understands one spelling is a guard against a spelling, not against the hazard.
+  let body: ts.Node | undefined;
+  const defaultExportedNames = new Set<string>();
+  source.forEachChild((node) => {
+    if (ts.isExportAssignment(node) && !node.isExportEquals) {
+      if (ts.isIdentifier(node.expression))
+        defaultExportedNames.add(node.expression.getText(source));
+      // `export default () => …` / `export default function () {}`
+      else if (ts.isArrowFunction(node.expression) || ts.isFunctionExpression(node.expression)) {
+        if (!exportName) body = node.expression.body;
+      }
+    }
+  });
+  source.forEachChild((node) => {
+    if (ts.isFunctionDeclaration(node)) {
+      const name = node.name?.getText(source);
+      const matches = exportName
+        ? name === exportName
+        : node.modifiers?.some((m) => m.kind === ts.SyntaxKind.DefaultKeyword) ||
+          (name != null && defaultExportedNames.has(name));
+      if (matches && node.body) body = node.body;
+      return;
+    }
+    if (ts.isVariableStatement(node)) {
+      for (const decl of node.declarationList.declarations) {
+        const name = decl.name.getText(source);
+        const isExported = node.modifiers?.some((m) => m.kind === ts.SyntaxKind.ExportKeyword);
+        const matches = exportName
+          ? name === exportName && isExported
+          : defaultExportedNames.has(name);
+        if (!matches || !decl.initializer) continue;
+        if (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer)) {
+          body = decl.initializer.body;
+        }
+      }
+    }
+  });
+  if (!body) {
+    throw new Error(
+      exportName
+        ? `no exported component \`${exportName}\` found`
+        : 'no default-exported component found (tried: export default function, ' +
+          'const X = () => …; export default X, export default () => …)'
+    );
+  }
+
+  /** Tag names at the TOP level of one returned expression. */
+  const topLevelTags = (expr: ts.Expression | undefined): string[] => {
+    if (!expr) return [];
+    if (ts.isParenthesizedExpression(expr)) return topLevelTags(expr.expression);
+    // Both arms — see the 🔴 note above on why the union is safe here.
+    if (ts.isConditionalExpression(expr))
+      return [...topLevelTags(expr.whenTrue), ...topLevelTags(expr.whenFalse)];
+    // `cond && <A/>` / `a ?? <B/>` — either side may be the JSX.
+    if (ts.isBinaryExpression(expr))
+      return [...topLevelTags(expr.left), ...topLevelTags(expr.right)];
+    const childTags = (children: ts.NodeArray<ts.JsxChild>): string[] => {
+      const tags: string[] = [];
+      for (const child of children) {
+        if (ts.isJsxElement(child) || ts.isJsxSelfClosingElement(child)) {
+          tags.push(...topLevelTags(child as unknown as ts.Expression));
+        } else if (ts.isJsxExpression(child)) tags.push(...topLevelTags(child.expression));
+        // 🔴 A NESTED ANONYMOUS FRAGMENT. `<><Box/></>` sitting inside another fragment
+        // used to be dropped on the floor here: `JsxFragment` is neither a `JsxElement`
+        // nor a `JsxExpression`, so the loop skipped it and its children were never
+        // inspected. `<React.Fragment>` WAS handled, so the two spellings of the same
+        // thing disagreed — and the docstring claimed "a fragment contributes ALL its
+        // children" for both.
+        else if (ts.isJsxFragment(child)) tags.push(...childTags(child.children));
+      }
+      return tags;
+    };
+    if (ts.isJsxElement(expr)) {
+      const tag = expr.openingElement.tagName.getText(source);
+      // `<React.Fragment>` is a fragment written the long way — unwrap it, or a perfectly
+      // correct page reads as rendering an unknown element called `React.Fragment`.
+      return FRAGMENT_TAGS.has(tag) ? childTags(expr.children) : [tag];
+    }
+    if (ts.isJsxSelfClosingElement(expr)) {
+      const tag = expr.tagName.getText(source);
+      return FRAGMENT_TAGS.has(tag) ? [] : [tag];
+    }
+    if (ts.isJsxFragment(expr)) return childTags(expr.children);
+    // `{[<Box key="a" />]}` — a list of elements renders every entry.
+    if (ts.isArrayLiteralExpression(expr)) return expr.elements.flatMap((el) => topLevelTags(el));
+    return [];
+  };
+
+  const groups: string[][] = [];
+  const visit = (node: ts.Node) => {
+    // Do not descend into a nested function — its returns are not the page's render.
+    if (
+      ts.isFunctionDeclaration(node) ||
+      ts.isFunctionExpression(node) ||
+      ts.isArrowFunction(node)
+    ) {
+      return;
+    }
+    if (ts.isReturnStatement(node)) {
+      groups.push(topLevelTags(node.expression));
+      return;
+    }
+    ts.forEachChild(node, visit);
+  };
+  // A concise arrow body (`() => <X/>`) is an expression, not a block: it IS the return.
+  if (ts.isBlock(body as ts.Node)) ts.forEachChild(body as ts.Node, visit);
+  else groups.push(topLevelTags(body as ts.Expression));
+  return groups;
+}
+
+/**
+ * The ONE rule, applied to pages and to chrome delegates alike. In EVERY return that
+ * renders anything: every top-level tag must be permitted there, AND the chrome must
+ * actually be mounted.
+ *
+ * 🔴 TWO CLAUSES, BECAUSE EACH ALONE HAS A HOLE THE OTHER CLOSES.
+ *
+ * "No stray tag" replaced an older `rendered.includes('AppsPageLayout')`, which three
+ * shapes walked past by putting un-chromed content ALONGSIDE chromed content — a ternary
+ * whose other arm rendered a bare centred `<Box>`, the same as a fragment child, and a
+ * plain un-chromed sibling. The layout WAS present, so `includes` was satisfied while
+ * real page content rendered outside it.
+ *
+ * But "no stray tag" alone is satisfied by a group containing NO chrome provider at all,
+ * because portal siblings are permitted tags: `chromeOffenders('x', [['OnsiteReviewModal']])`
+ * returned `[]`, i.e. a page whose only top-level render is an overlay passed with no
+ * chrome. Permission to appear beside the chrome is not the same as providing it, and
+ * conflating the two is what let the allowlist stand in for the layout.
+ *
+ * 🔴 EVERY GROUP IS EVALUATED — `continue`, never `break`. A page's FIRST return is
+ * routinely a gate (`return <NotFound />`), which filters to empty; a `break` there would
+ * skip every later return and report green having inspected nothing. Pinned by the
+ * multi-group rows in this file's `chromeOffenders` table.
+ */
+function chromeOffenders(label: string, groups: string[][]): string[] {
+  /** Tags that MOUNT the chrome. */
+  const providers = new Set(['AppsPageLayout', ...Object.keys(CHROME_DELEGATES)]);
+  /** Tags merely PERMITTED beside it — they provide nothing on their own. */
+  const permitted = new Set([...providers, ...Object.keys(CHROME_PORTAL_SIBLINGS)]);
+  const offenders: string[] = [];
+  for (const tags of groups) {
+    const rendered = tags.filter((t) => !CHROME_EXEMPT_TAGS.has(t));
+    if (rendered.length === 0) continue;
+    const stray = rendered.filter((t) => !permitted.has(t));
+    if (stray.length > 0) {
+      offenders.push(
+        `${label} (a return renders [${rendered.join(', ')}] outside the shared chrome — ` +
+          `stray: ${stray.join(', ')})`
+      );
+      continue;
+    }
+    if (!rendered.some((t) => providers.has(t))) {
+      offenders.push(
+        `${label} (a return renders [${rendered.join(', ')}] with NO chrome provider — ` +
+          `a portaled overlay may sit beside the layout, it cannot replace it)`
+      );
+    }
+  }
+  return offenders;
+}
+
+/**
+ * Does the component at `file` honour the portaled-overlay contract?
+ *
+ * 🔴 EXTRACTED SO IT CAN BE TESTED ON A KNOWN-BAD INPUT. While this logic was inline in
+ * its test, nothing exercised it except the three real entries — all of which pass — so
+ * disabling the import check entirely still produced a fully green suite. A guard whose
+ * only inputs are known-good cannot be shown to work; the negative control beside its
+ * test now feeds it a fixture that MUST be reported.
+ */
+function portalOffenders(name: string, abs: string, exportName: string): string[] {
+  const offenders: string[] = [];
+  if (!fs.existsSync(abs)) return [`${name} (no file at ${abs})`];
+  let groups: string[][];
+  try {
+    groups = pageReturnTags(abs, exportName);
+  } catch (err) {
+    return [`${name} (could not parse: ${(err as Error).message})`];
+  }
+  if (groups.length === 0) return [`${name} (has no return statement)`];
+  const source = sourceFileOf(abs);
+  // Every return that renders anything must render a portal root — an early return of
+  // ordinary markup would put real content outside the chrome.
+  for (const tags of groups) {
+    const rendered = tags.filter((t) => !CHROME_EXEMPT_TAGS.has(t));
+    if (rendered.length === 0) continue;
+    const stray = rendered.filter((t) => !PORTAL_ROOT_TAGS.has(t));
+    if (stray.length > 0) {
+      offenders.push(`${name} (a return renders non-portal roots: ${stray.join(', ')})`);
+      continue;
+    }
+    // 🔴 AND THE NAME MUST RESOLVE TO THE REAL COMPONENT. `Modal` is just an identifier;
+    // a file is free to define its own. Without this the contract trusted a spelling, and
+    // a locally-defined `const Modal = … <Box mx="auto">` satisfied it completely.
+    for (const tag of rendered) {
+      const base = tag.split('.')[0];
+      const from = importSourceOf(source, base);
+      if (from !== PORTAL_ROOT_MODULE) {
+        offenders.push(
+          `${name} (renders <${tag}>, but \`${base}\` is ` +
+            (from ? `imported from '${from}'` : 'not imported at all') +
+            ` — a portal root must come from '${PORTAL_ROOT_MODULE}')`
+        );
+      }
+    }
+  }
+  return offenders;
+}
+
+describe('the container is uniform, and it is the only container', () => {
+  test('🔴 there is no per-route CONTAINER width map any more', () => {
+    // The defect was `APPS_PAGE_WIDTHS`: a container width per route. If it comes
+    // back — under any name — the sub-nav starts moving again. `APPS_PAGE_MEASURES`
+    // is a different thing (a BODY cap), and the layout guards in
+    // `appsPageLayout.test.ts` pin that it can never reach the Container.
+    // A NAMESPACE import, not `require`: the `~` alias is a Vite resolver and does
+    // not exist for node's CJS loader, so `require` throws MODULE_NOT_FOUND and the
+    // test fails for a reason that has nothing to do with the claim.
+    expect(widthsModule).not.toHaveProperty('APPS_PAGE_WIDTHS');
+    expect(widthsModule).not.toHaveProperty('APPS_WIDE_PAGE_WIDTH');
+    expect(widthsModule).not.toHaveProperty('APPS_READABLE_PAGE_WIDTH');
+    // Guard-the-guard: an empty namespace would satisfy every `not.toHaveProperty`.
+    expect(widthsModule).toHaveProperty('APPS_PAGE_CONTAINER_WIDTH');
+    expect(widthsModule).toHaveProperty('APPS_PAGE_MEASURES');
+  });
+});
+
+/** The content width a body gets from the CURRENT shared container. */
+const USABLE = APPS_PAGE_CONTAINER_WIDTH - APPS_CONTAINER_GUTTER;
+/** …and from the container this module shipped with before the ultrawide pass. */
+const LEGACY_USABLE = APPS_LEGACY_CONTAINER_WIDTH - APPS_CONTAINER_GUTTER;
+
+/** What a band resolves to at a given container CONTENT width — the `clamp()`, in JS. */
+function bandAt(band: AppsMeasureBand, contentWidth: number): number {
+  return Math.min(band.max, Math.max(band.min, (band.grow / 100) * contentWidth));
+}
+
+describe('APPS_PAGE_MEASURES — the decided CONTENT measure per route', () => {
+  test('🔴 the NARROW-TABLE class is gone, and /apps/review takes no measure at all', () => {
+    // It existed for exactly one route and for exactly one reason: four short columns
+    // could not spend the container, so the surplus landed as padding between the last
+    // column and the Review button. The columns are proportional now
+    // (`APPS_REVIEW_QUEUE_COLUMNS`), so the cap would hide the fix rather than help it.
+    //
+    // 🔴 THE CONSTANT ITSELF IS ASSERTED ABSENT, not merely unused. A surviving export
+    // with no consumer is the shape that gets wired back in by the next reader who finds
+    // a table reading too wide — the module has already lost `APPS_PAGE_WIDTHS` and
+    // `MY_APPS_CONTAINER_SIZE` the same way.
+    expect(widthsModule).not.toHaveProperty('APPS_NARROW_TABLE_MEASURE');
+    expect(APPS_PAGE_MEASURES).not.toHaveProperty('/apps/review');
+    expect(APPS_FULL_MEASURE_PAGES).toContain('/apps/review');
+    // Guard-the-guard: an empty namespace satisfies every `not.toHaveProperty`.
+    expect(widthsModule).toHaveProperty('APPS_READABLE_MEASURE');
+  });
+
+  test('the two-column detail band is 1288 → 1600 and only the store preview takes it', () => {
+    expect(APPS_TWO_COLUMN_DETAIL_MEASURE).toEqual({ min: 1288, max: 1600, grow: 65 });
+    expect(APPS_PAGE_MEASURES['/apps/store-preview/[slug]']).toBe(APPS_TWO_COLUMN_DETAIL_MEASURE);
+    // 🔴 Pinned in BOTH directions so a later "tidy-up" that folds the detail into
+    // another class fails here rather than silently squeezing the right rail
+    // (readable) or putting the markdown description on a ~1685px measure (full).
+    expect(APPS_PAGE_MEASURES['/apps/store-preview/[slug]']).not.toBe(APPS_READABLE_MEASURE);
+    const takers = Object.entries(APPS_PAGE_MEASURES)
+      .filter(([, m]) => m === APPS_TWO_COLUMN_DETAIL_MEASURE)
+      .map(([r]) => r);
+    expect(takers).toEqual(['/apps/store-preview/[slug]']);
+  });
+
+  test('🔴 the two-column CEILING keeps its markdown column inside the readable floor', () => {
+    // The ceiling is DERIVED rather than picked: the left column is prose at the `md`
+    // 8/12 span, so the page may only be as wide as leaves that column at or under the
+    // readable band's own floor. Stated as the relationship, so moving either number
+    // without the other fails here.
+    const mainColumn = (APPS_TWO_COLUMN_DETAIL_MEASURE.max * 8) / 12;
+    expect(mainColumn).toBeLessThanOrEqual(APPS_READABLE_MEASURE.min);
+    // …and it is not needlessly conservative — one more Mantine grid step (a 1700 cap)
+    // would break it, which is what makes the bound meaningful rather than arbitrary.
+    expect((1700 * 8) / 12).toBeGreaterThan(APPS_READABLE_MEASURE.min);
+  });
+
+  test('the readable band is 1068 → 1368, and these five form/prose routes take it', () => {
+    expect(APPS_READABLE_MEASURE).toEqual({ min: 1068, max: 1368, grow: 55 });
+    const takers = Object.entries(APPS_PAGE_MEASURES)
+      .filter(([, m]) => m === APPS_READABLE_MEASURE)
+      .map(([r]) => r)
+      .sort();
+    // The SET, not a spot-check: this fails when a route joins or leaves.
+    // 🔴 SIX UNTIL `/apps/get-started` WAS CONSOLIDATED INTO `/apps/build`. That route is
+    // gone (301), and its successor is NOT here — it takes the full container, because its
+    // workbench state renders the submissions table. See the note on `/apps/build` in
+    // `APPS_FULL_MEASURE_PAGES` for why the widest state wins a route-keyed registry.
+    expect(takers).toEqual([
+      '/apps/[appBlockId]/edit',
+      '/apps/[appBlockId]/revenue',
+      '/apps/invites',
+      '/apps/listing/[appListingId]/edit',
+      '/apps/submit',
     ]);
   });
 
-  test('a route is classified exactly once (no overlap between the three lists)', () => {
+  test('every measure is one of the TWO decided classes — no third hand-picked number', () => {
+    // The whole point of the module is that there are a few CLASSES of apps page,
+    // not eleven bespoke numbers. A new page must join a class, or the class list
+    // must grow deliberately — failing here first.
+    for (const [route, measure] of Object.entries(APPS_PAGE_MEASURES)) {
+      expect([APPS_TWO_COLUMN_DETAIL_MEASURE, APPS_READABLE_MEASURE], `${route}`).toContain(
+        measure
+      );
+    }
+    // Pin the class list itself, as literals. Without this the check above is
+    // satisfied by ANY set of constants, including a third one added silently.
+    expect([APPS_TWO_COLUMN_DETAIL_MEASURE, APPS_READABLE_MEASURE]).toEqual([
+      { min: 1288, max: 1600, grow: 65 },
+      { min: 1068, max: 1368, grow: 55 },
+    ]);
+  });
+
+  test('🔴 a measure is always strictly inside the container, at BOTH ends of its band', () => {
+    // A measure ≥ the container is a no-op that reads as a decision. For a band it is
+    // the CEILING that has to clear it — checking the floor alone would pass a band that
+    // silently stops narrowing anything on a wide screen.
+    for (const [route, measure] of Object.entries(APPS_PAGE_MEASURES) as [string, AppsMeasure][]) {
+      const min = isAppsMeasureBand(measure) ? measure.min : measure;
+      const max = isAppsMeasureBand(measure) ? measure.max : measure;
+      expect(max, `${route} must actually narrow the body at its widest`).toBeLessThan(USABLE);
+      expect(min, `${route} must be a positive px value`).toBeGreaterThan(0);
+      expect(max, `${route}'s band must not be inverted`).toBeGreaterThanOrEqual(min);
+    }
+  });
+});
+
+describe('🔴 a BAND grows only where the container grew', () => {
+  const bands = Object.entries(APPS_PAGE_MEASURES).filter(
+    (entry): entry is [string, AppsMeasureBand] => isAppsMeasureBand(entry[1])
+  );
+
+  test('the sweep found bands to check (guards a vacuous loop)', () => {
+    // Every measure is a band today, and if that ever stops being true this loop would
+    // pass by checking nothing.
+    expect(bands.length).toBeGreaterThanOrEqual(6);
+    expect(new Set(bands.map(([, b]) => b)).size).toBe(2);
+  });
+
+  test('every band is still at its FLOOR at the old 1920 container', () => {
+    // The provenance rule this module has held since the container/measure split: a
+    // width pass may add width on screens that got wider, never re-decide what a 1440 or
+    // 1920 monitor already showed. `grow` is what makes that true, so it is asserted as
+    // arithmetic rather than described in the docstring.
+    expect(LEGACY_USABLE).toBe(1888);
+    for (const [route, band] of bands) {
+      expect(bandAt(band, LEGACY_USABLE), `${route} moved at the old container width`).toBe(
+        band.min
+      );
+    }
+  });
+
+  test('…and every band reaches its CEILING inside the current one', () => {
+    // The other end: a band whose `grow` is too small never reaches its own max, so the
+    // ceiling would be a number that reads as a decision and does nothing.
+    expect(USABLE).toBe(2528);
+    for (const [route, band] of bands) {
+      expect(bandAt(band, USABLE), `${route} never reaches its ceiling`).toBe(band.max);
+    }
+  });
+
+  test('🔴 the ramp is a RAMP — each band is strictly between its ends somewhere', () => {
+    // Without this, `grow: 100` would satisfy both tests above while jumping every
+    // measured page straight to its ceiling the moment the container passed 1888.
+    for (const [route, band] of bands) {
+      const midpoint = bandAt(band, (LEGACY_USABLE + USABLE) / 2);
+      expect(midpoint, `${route} jumps rather than ramps`).toBeGreaterThan(band.min);
+      expect(midpoint, `${route} jumps rather than ramps`).toBeLessThan(band.max);
+    }
+  });
+
+  test('appsMeasureCss renders a band as a clamp and a number untouched', () => {
+    expect(appsMeasureCss(APPS_READABLE_MEASURE)).toBe('clamp(1068px, 55%, 1368px)');
+    expect(appsMeasureCss(APPS_TWO_COLUMN_DETAIL_MEASURE)).toBe('clamp(1288px, 65%, 1600px)');
+    // A number is passed through so Mantine can convert it to rem as it always has.
+    expect(appsMeasureCss(777)).toBe(777);
+    // POSITIVE CONTROL on the formatter: feed a band no real measure equals and watch
+    // every term move, so the two assertions above cannot be satisfied by a hardcode.
+    expect(appsMeasureCss({ min: 111, max: 222, grow: 33 })).toBe('clamp(111px, 33%, 222px)');
+  });
+
+  test('isAppsMeasureBand separates the two shapes', () => {
+    expect(isAppsMeasureBand(APPS_READABLE_MEASURE)).toBe(true);
+    expect(isAppsMeasureBand(1068)).toBe(false);
+  });
+});
+
+describe('🔴 the card-list column ladder steps exactly where the surplus appeared', () => {
+  /** The CSS `repeat(auto-fill, minmax(min, 1fr))` count, mirrored in JS. */
+  const columnsAt = (w: number) =>
+    Math.max(
+      1,
+      Math.floor((w + APPS_CARD_LIST_GAP) / (APPS_CARD_LIST_MIN_COLUMN + APPS_CARD_LIST_GAP))
+    );
+
+  test('one column through the OLD container, two in the current one', () => {
+    // The whole justification for `/apps/activity` becoming a grid: it must change
+    // nothing a 1440 or 1920 monitor showed, and spend the 640px the ultrawide pass
+    // added. The min column is what puts the step between the two.
+    expect(columnsAt(1408)).toBe(1); // 1440 viewport
+    expect(columnsAt(LEGACY_USABLE)).toBe(1); // the old 1920 container
+    expect(columnsAt(USABLE)).toBe(2); // the current 2560 container
+  });
+
+  test('the step is not sitting on either fixture width', () => {
+    // A ladder whose rung lands ON a width the tests measure cannot detect an
+    // off-by-one. 🔴 THE RUNG MOVED 2416 → 2216 WITH THE RAIL RE-TUNE
+    // (`APPS_CARD_LIST_MIN_COLUMN` 1200 → 1100), and this literal is the independent
+    // witness for that: it is written out rather than recomputed from the constant, so a
+    // constant change without a decision fails here.
+    expect(columnsAt(2215)).toBe(1);
+    expect(columnsAt(2216)).toBe(2);
+    expect(USABLE - 2216).toBeGreaterThan(64);
+    expect(2216 - LEGACY_USABLE).toBeGreaterThan(64);
+  });
+
+  /**
+   * 🔴 THE RAIL-OPEN RUNG — the reason the constant moved at all, and the case the old
+   * value silently lost.
+   *
+   * The left rail takes 292px off every `/apps/*` body, so at a 2560 viewport the card
+   * list gets 2226 of grid rather than 2528. At the old 1200 that is ONE column: the
+   * 640px content-to-control gap this constant exists to close reopened on exactly the
+   * monitors it was written for. 1100 restores the second column there and changes
+   * nothing at 1300 / 1440 / 1920, where a single column was already correct.
+   *
+   * RED AT `origin/main` BY CONSTRUCTION: at `APPS_CARD_LIST_MIN_COLUMN = 1200`,
+   * `columnsAt(2226)` is 1.
+   */
+  test('🔴 with the rail OPEN, a 2560 viewport still gets TWO columns', () => {
+    const railOpenGrid =
+      APPS_PAGE_CONTAINER_WIDTH -
+      APPS_RESERVED_SCROLLBAR -
+      APPS_CONTAINER_GUTTER -
+      appsRailChromeWidth(false);
+    expect(railOpenGrid).toBe(2226);
+    expect(columnsAt(railOpenGrid)).toBe(2);
+
+    // …and the narrower viewports are UNCHANGED — one column with the rail open, exactly
+    // as they were with no rail at 1200. This is the half that makes the constant change
+    // a repair rather than a new density opinion.
+    for (const viewport of [1300, 1440, 1920]) {
+      const grid =
+        Math.min(viewport - APPS_RESERVED_SCROLLBAR, APPS_PAGE_CONTAINER_WIDTH) -
+        APPS_CONTAINER_GUTTER -
+        appsRailChromeWidth(false);
+      expect(columnsAt(grid), `@${viewport} rail open`).toBe(1);
+    }
+
+    // 🔴 THE BOUND IS SOLVED, NOT SAMPLED — and this is the correction an audit forced.
+    // The previous version asserted 1100 / 1120 / 1200 and the COMMENT generalised that
+    // three-point sample into "1100 is the LOOSEST value that restores it". It is not:
+    // two columns need `2n + 16 <= 2226`, so the largest admissible value is **1105**, and
+    // the sample simply had no point between 1100 and 1120. A sampled inequality cannot
+    // establish a maximum; scanning for the first failure can, so it does.
+    const columnsAtMin = (w: number, min: number) =>
+      Math.max(1, Math.floor((w + APPS_CARD_LIST_GAP) / (min + APPS_CARD_LIST_GAP)));
+    let bound = 0;
+    for (let n = 1000; n <= 1400; n += 1) {
+      if (columnsAtMin(railOpenGrid, n) >= 2) bound = n;
+      else break;
+    }
+    expect(bound, 'the largest min-column that still yields two columns at 2226').toBe(1105);
+    expect(columnsAtMin(railOpenGrid, bound)).toBe(2);
+    expect(columnsAtMin(railOpenGrid, bound + 1)).toBe(1);
+
+    // …and the SHIPPED value is under that bound with deliberate margin, not on it. A
+    // value at the bound is maximally loose and maximally fragile — one pixel of rail,
+    // gutter or scrollbar change and the rung disappears.
+    expect(APPS_CARD_LIST_MIN_COLUMN).toBe(1100);
+    expect(APPS_CARD_LIST_MIN_COLUMN).toBeLessThan(bound);
+    expect(columnsAtMin(railOpenGrid, APPS_CARD_LIST_MIN_COLUMN)).toBe(2);
+    // The old sample points, kept as the regression they were: 1200 (the retired value)
+    // still fails, which is the defect this constant change repairs.
+    expect(columnsAtMin(railOpenGrid, 1200)).toBe(1);
+  });
+});
+
+describe('🔴 the measures preserve the OLD rendered content widths exactly', () => {
+  // 🔴 THE PROVENANCE IS NOW THE BAND'S **FLOOR**, and that is the point of a floor: a
+  // band whose min drifted off the old container width would silently re-decide what a
+  // 1440 monitor shows, which is the confounded change the gutter arithmetic above
+  // exists to keep out of a width pass.
+  test.each([
+    ['two-column detail', APPS_TWO_COLUMN_DETAIL_MEASURE, 1320],
+    ['readable', APPS_READABLE_MEASURE, 1100],
+  ])('%s: band floor = old container width − gutter', (_label, band, oldContainerWidth) => {
+    expect(band.min).toBe(oldContainerWidth - APPS_CONTAINER_GUTTER);
+  });
+
+  test('the two-column FLOOR equals the MODEL DETAIL page content width', () => {
+    // Its documented justification is "the same width as the model detail page",
+    // which renders `<Container size="xl">` — Mantine's `xl` is 1320 border-box, so
+    // its CONTENT is 1288. Stating the claim in content terms is what makes it true.
+    const MANTINE_XL_CONTAINER = 1320;
+    expect(APPS_TWO_COLUMN_DETAIL_MEASURE.min).toBe(MANTINE_XL_CONTAINER - APPS_CONTAINER_GUTTER);
+  });
+});
+
+describe('🔴 the store width and the store grid ladder are a MATCHED PAIR', () => {
+  test('LISTING_STORE_CONTAINER_SIZE reads the shared container width (one number, not two)', () => {
+    // `appListingGrid.ts` used to carry its own literal 1600. If it drifts back to a
+    // literal, this fails the moment the two disagree.
+    expect(LISTING_STORE_CONTAINER_SIZE).toBe(APPS_PAGE_CONTAINER_WIDTH);
+    expect(LISTING_STORE_CONTAINER_SIZE).toBe(2560);
+  });
+
+  test('🔴 /apps takes NO body measure, so its content width IS the container width', () => {
+    // This is what keeps the card arithmetic below true after the container/measure
+    // split. Give `/apps` a measure and the grid silently re-truncates.
+    expect(APPS_PAGE_MEASURES).not.toHaveProperty('/apps');
+    expect(APPS_FULL_MEASURE_PAGES).toContain('/apps');
+  });
+
+  /**
+   * ⚠️ BOTH TESTS BELOW ARE MAIN'S, RESTORED. A left-rail re-tune inverted them — the
+   * first to four columns at 620px, the second to THREE columns at 1600/1920 — and that
+   * re-tune is reverted. The store ladder ships `main`'s rungs, so these assert `main`'s
+   * outcomes again. The rail's own cost now falls only on viewers who OPEN it, and is
+   * measured in `appListingGrid.ts` rather than baked into this container arithmetic.
+   */
+  test('the container yields the card width the top of the reachable ladder was tuned for', () => {
+    //   container 2560 − 2×16 Container padding = 2528 of grid
+    //   the widest REACHABLE rung is FIVE columns from 2364; gap 16 → 4 gaps between them
+    //   → (2528 − 4×16) / 5 = 492.8 px per card.
+    //   (SIX is declared at 2840 and deliberately out of reach here — see
+    //   `__tests__/appListingGrid.test.ts`, which pins that as the thing that fails if
+    //   this container is ever raised past it.)
+    const GUTTER = 16;
+    const usable = LISTING_STORE_CONTAINER_SIZE - APPS_CONTAINER_GUTTER;
+    expect(usable).toBe(2528);
+    const columns = listingGridColumnsAt(usable);
+    const cardWidth = (usable - GUTTER * (columns - 1)) / columns;
+    expect(columns).toBe(5);
+    expect(cardWidth).toBe(492.8);
+    // 🔴 THE PAIRING, AS A RELATIONSHIP RATHER THAN TWO NUMBERS: a container change
+    // that outran the ladder would land cards under the floor the ladder exists to
+    // hold, and this is what notices.
+    expect(cardWidth).toBeGreaterThanOrEqual(LISTING_CARD_MIN_WIDTH);
+    // 🔴 AND THE DIRECTION, WHICH IS THE PRODUCT DECISION: widening the container from
+    // 1920 to 2560 makes each card BIGGER (492.8 vs 460), not smaller-and-more-numerous.
+    // Without this, a ladder re-tune that added columns faster would satisfy everything
+    // above while quietly reversing the 2026-07 larger-covers pass on wide screens.
+    expect(cardWidth).toBeGreaterThan((1920 - APPS_CONTAINER_GUTTER - 3 * GUTTER) / 4);
+  });
+
+  test('🔴 the retired container widths still produce the column counts they shipped', () => {
+    // The ultrawide pass must not have moved anything BELOW its own new territory.
+    // 1600 and 1920 are the two container widths this store has actually shipped at;
+    // both still resolve to four columns, at the card widths those passes measured.
+    for (const [container, columns, cardWidth] of [
+      [1600, 4, 380],
+      [1920, 4, 460],
+    ] as const) {
+      const usable = container - APPS_CONTAINER_GUTTER;
+      expect(listingGridColumnsAt(usable), `container ${container}`).toBe(columns);
+      expect((usable - 16 * (columns - 1)) / columns, `container ${container}`).toBe(cardWidth);
+    }
+    // The `xl` SPAN is still four columns — the legacy object the narrow half of the
+    // ladder is derived from has not been quietly re-tuned.
+    expect(12 / LISTING_GRID_SPAN.xl).toBe(4);
+  });
+});
+
+describe('🔴 /apps/build is wide enough for its table, as a RELATIONSHIP', () => {
+  /**
+   * This replaces the deleted `MY_APPS_CONTAINER_SIZE` alias and its `> 1100` pin.
+   * The alias could not have noticed the container dropping to 1400; the relationship
+   * can, because it names the floor the table actually has.
+   */
+  test('the container clears the submissions-table scroll floor', () => {
+    const contentWidth = APPS_PAGE_CONTAINER_WIDTH - SUBMISSIONS_CONTAINER_CHROME;
+    expect(contentWidth).toBeGreaterThan(SUBMISSIONS_TABLE_MIN_WIDTH);
+  });
+
+  test('…and it does so because /apps/build takes no measure', () => {
+    // If it ever took the readable measure, the floor would NOT be cleared — which
+    // is exactly the clip the wide width was introduced to fix. Asserted as the
+    // counterfactual so the previous test cannot pass for the wrong reason.
+    expect(APPS_PAGE_MEASURES).not.toHaveProperty('/apps/build');
+    expect(APPS_FULL_MEASURE_PAGES).toContain('/apps/build');
+    // …and the route it inherited this from is GONE, not merely reclassified — so a
+    // future reader cannot conclude the table lives on two routes.
+    expect(APPS_PAGE_MEASURES).not.toHaveProperty('/apps/mine');
+    expect(APPS_FULL_MEASURE_PAGES).not.toContain('/apps/mine');
+    // The readable band's CEILING is used, not its floor: the counterfactual has to be
+    // "even at its widest, that class would still clip this table", or a band that grew
+    // past the floor would make this pass for a reason that is no longer true.
+    expect(APPS_READABLE_MEASURE.max - SUBMISSIONS_CONTAINER_CHROME).toBeLessThan(
+      SUBMISSIONS_TABLE_MIN_WIDTH
+    );
+  });
+});
+
+describe('the route taxonomy', () => {
+  test('a route is classified exactly once (no overlap between the four lists)', () => {
     const all = [
-      ...Object.keys(APPS_PAGE_WIDTHS),
+      ...Object.keys(APPS_PAGE_MEASURES),
+      ...APPS_FULL_MEASURE_PAGES,
       ...APPS_FULL_BLEED_PAGES,
       ...APPS_REDIRECT_ONLY_PAGES,
     ];
     expect(new Set(all).size).toBe(all.length);
   });
-});
 
-describe('🔴 the store width and the store grid span are a MATCHED PAIR', () => {
-  test('LISTING_STORE_CONTAINER_SIZE reads through to the /apps entry (one number, not two)', () => {
-    // `appListingGrid.ts` used to carry its own literal 1600. If it drifts back to
-    // a literal, this fails the moment the two disagree.
-    expect(LISTING_STORE_CONTAINER_SIZE).toBe(APPS_PAGE_WIDTHS['/apps']);
-    expect(LISTING_STORE_CONTAINER_SIZE).toBe(1920);
+  test('the RETIRED /apps/[appBlockId] is redirect-only, not a measure', () => {
+    // It was once listed as a rendering route with the comment "still renders for a
+    // direct hit". The page's own docstring says RETIRED and its
+    // `getServerSideProps` unconditionally redirects, so a width there was
+    // unreachable AND made the module assert a false fact about the app.
+    expect(APPS_PAGE_MEASURES).not.toHaveProperty('/apps/[appBlockId]');
+    expect(APPS_REDIRECT_ONLY_PAGES).toContain('/apps/[appBlockId]');
   });
 
-  test('the widened container yields the card width the xl span was tuned for', () => {
-    // The pair, stated as arithmetic rather than as a code-review promise:
-    //   container 1920 − 2×16 Container padding = 1888 usable
-    //   xl span 3/12 → 4 columns; Grid gutter "md" (16) → 3 gutters between them
-    //   → (1888 − 3×16) / 4 = 460 px per card.
-    // Pinned so that moving EITHER number without re-deriving the other fails
-    // here. (The judgment call — 460px covers at 1920 vs re-tuning the span to 5
-    // columns — is recorded in the PR; see `appListingGrid.ts`.)
-    const CONTAINER_PADDING = 32;
-    const GUTTER = 16;
-    const columns = 12 / LISTING_GRID_SPAN.xl;
-    const usable = (LISTING_STORE_CONTAINER_SIZE as number) - CONTAINER_PADDING;
-    const cardWidth = (usable - GUTTER * (columns - 1)) / columns;
-    expect(columns).toBe(4);
-    expect(cardWidth).toBe(460);
+  test('the merged-away /apps/my-submissions is not listed anywhere', () => {
+    const all = [
+      ...Object.keys(APPS_PAGE_MEASURES),
+      ...APPS_FULL_MEASURE_PAGES,
+      ...APPS_FULL_BLEED_PAGES,
+      ...APPS_REDIRECT_ONLY_PAGES,
+    ];
+    expect(all).not.toContain('/apps/my-submissions');
   });
 });
 
 /**
  * 🔴 THE ENUMERATION GUARD — the reason this file reads the filesystem.
  *
- * A constants map is only "every apps page" if something checks it against the
- * pages that actually exist. Without this, a new `/apps/*` route silently
- * inherits `AppsPageLayout`'s `xl` default (or hand-picks a width) and the
- * "full width" decision quietly stops being true — exactly the drift that
- * produced the 1600 / 1500 / 'lg' / 'xl' / 'sm' spread this module replaced.
+ * A constants map is only "every apps page" if something checks it against the pages
+ * that actually exist. Without this, a new `/apps/*` route silently renders its own
+ * bare `<Container>` and the uniform-chrome decision quietly stops being true —
+ * exactly the drift that left FOUR pages (`get-started`, `[appBlockId]/edit`,
+ * `[appBlockId]/revenue`, `listing/[appListingId]/edit`) with no sub-nav at all.
  */
 describe('every /apps page on disk is classified', () => {
   const PAGES_DIR = path.resolve(__dirname, '../../../pages/apps');
@@ -151,26 +842,40 @@ describe('every /apps page on disk is classified', () => {
     return out.sort();
   }
 
+  /** Absolute path of the page file backing a route pathname. */
+  function pageFile(route: string): string {
+    const rel = route === '/apps' ? '/apps/index' : route;
+    return path.resolve(PAGES_DIR, '..', `${rel.replace(/^\/apps\//, 'apps/')}.tsx`);
+  }
+
   test('the walker actually found the apps pages (guards a silently-empty scan)', () => {
     // A test that classifies zero routes would pass vacuously — the failure mode
-    // that makes an fs-backed guard worthless. Pin a floor and a known member.
+    // that makes an fs-backed guard worthless. Pin a floor AND known members from
+    // every list, so a walk that finds only the shallow files still fails.
     const routes = appsRoutes();
-    expect(routes.length).toBeGreaterThanOrEqual(15);
+    expect(routes.length).toBeGreaterThanOrEqual(19);
     expect(routes).toContain('/apps');
+    expect(routes).toContain('/apps/review');
+    expect(routes).toContain('/apps/build');
+    expect(routes).toContain('/apps/[appBlockId]/edit');
+    expect(routes).toContain('/apps/listing/[appListingId]/edit');
+    expect(routes).toContain('/apps/run/[slug]/[[...path]]');
   });
 
   test('no /apps route is unclassified', () => {
     const classified = new Set<string>([
-      ...Object.keys(APPS_PAGE_WIDTHS),
+      ...Object.keys(APPS_PAGE_MEASURES),
+      ...APPS_FULL_MEASURE_PAGES,
       ...APPS_FULL_BLEED_PAGES,
       ...APPS_REDIRECT_ONLY_PAGES,
     ]);
     const unclassified = appsRoutes().filter((r) => !classified.has(r));
     expect(
       unclassified,
-      `Unclassified /apps route(s). Add each to APPS_PAGE_WIDTHS (with a width), ` +
-        `APPS_FULL_BLEED_PAGES (full-viewport iframe/shell) or APPS_REDIRECT_ONLY_PAGES ` +
-        `(getServerSideProps always redirects/404s) in src/components/Apps/appsPageWidths.ts.`
+      `Unclassified /apps route(s). Add each to APPS_PAGE_MEASURES (a narrower body), ` +
+        `APPS_FULL_MEASURE_PAGES (full container), APPS_FULL_BLEED_PAGES (full-viewport ` +
+        `iframe/shell) or APPS_REDIRECT_ONLY_PAGES (getServerSideProps always ` +
+        `redirects/404s) in src/components/Apps/appsPageWidths.ts.`
     ).toEqual([]);
   });
 
@@ -178,49 +883,523 @@ describe('every /apps page on disk is classified', () => {
    * 🔴 CONSUMPTION — the cheap half of "is this entry real?".
    *
    * The completeness walk only proves a route is LISTED. It cannot notice that a
-   * listed route's width is never read, which is exactly how
-   * `/apps/[appBlockId]` came to carry a `Container size=` that its own
-   * always-redirecting `getServerSideProps` made unreachable.
+   * listed route's measure is never read, which is exactly how `/apps/[appBlockId]`
+   * came to carry a `Container size=` its always-redirecting `getServerSideProps`
+   * made unreachable.
    *
-   * Two pages read their width through a NAMED ALIAS instead of indexing the map
-   * directly — the store via `LISTING_STORE_CONTAINER_SIZE` (paired with the grid
-   * span) and my-submissions via `MY_SUBMISSIONS_CONTAINER_SIZE` (paired with the
-   * table scroll floor). Both alias constants are defined as
-   * `APPS_PAGE_WIDTHS[<route>]`, so they are genuine consumers; they are listed
-   * here rather than special-cased silently.
+   * There are no ALIAS consumers left. Both former ones —
+   * `LISTING_STORE_CONTAINER_SIZE` for `/apps` and `MY_APPS_CONTAINER_SIZE` for
+   * `/apps/mine` — existed to hand a per-page CONTAINER width to the layout; both
+   * routes are now measure-free, so every entry below is read directly and the
+   * special-casing is gone. (The old ALIASES map also carried real doc-rot: it named
+   * `MY_SUBMISSIONS_CONTAINER_SIZE`, a constant that had been renamed.)
    *
-   * ⚠️ WHAT THIS STILL CANNOT CATCH: a route that is listed, consumes its width,
-   * and yet never renders (because something upstream always redirects). That
-   * remains a judgement made by reading the page — see the module docstring.
+   * ⚠️ WHAT THIS STILL CANNOT CATCH: a route that is listed, consumes its measure,
+   * and yet never renders because something upstream always redirects. That remains
+   * a judgement made by reading the page — see the module docstring.
    */
-  test('every APPS_PAGE_WIDTHS entry is actually consumed by its page', () => {
-    const ALIASES: Record<string, string> = {
-      '/apps': 'LISTING_STORE_CONTAINER_SIZE',
-      '/apps/my-submissions': 'MY_SUBMISSIONS_CONTAINER_SIZE',
-    };
+  test('every APPS_PAGE_MEASURES entry is actually consumed by its page', () => {
     const unconsumed: string[] = [];
-    for (const route of Object.keys(APPS_PAGE_WIDTHS)) {
-      const rel = route === '/apps' ? '/apps/index' : route;
-      const file = path.resolve(PAGES_DIR, '..', `${rel.replace(/^\/apps\//, 'apps/')}.tsx`);
+    for (const route of Object.keys(APPS_PAGE_MEASURES)) {
+      const file = pageFile(route);
       if (!fs.existsSync(file)) {
         unconsumed.push(`${route} (no page file at ${file})`);
         continue;
       }
       const src = fs.readFileSync(file, 'utf8');
-      const token = ALIASES[route] ?? `APPS_PAGE_WIDTHS['${route}']`;
-      if (!src.includes(token)) unconsumed.push(`${route} (expected ${token})`);
+      if (!src.includes(`APPS_PAGE_MEASURES['${route}']`)) {
+        unconsumed.push(`${route} (expected APPS_PAGE_MEASURES['${route}'])`);
+      }
     }
     expect(
       unconsumed,
-      'Listed route(s) whose page never reads the width — either wire the page up ' +
-        'or move the route to APPS_FULL_BLEED_PAGES / APPS_REDIRECT_ONLY_PAGES.'
+      'Listed route(s) whose page never reads the measure — either wire the page up ' +
+        'or move the route to APPS_FULL_MEASURE_PAGES / APPS_FULL_BLEED_PAGES / ' +
+        'APPS_REDIRECT_ONLY_PAGES.'
     ).toEqual([]);
+  });
+
+  /**
+   * 🔴 LAYOUT ADOPTION — the guard that catches the FOUR orphans, and any new page.
+   *
+   * Completeness and consumption between them still allowed a page to render its own
+   * bare `<Container>` with no sub-nav: `/apps/get-started`, `/apps/[appBlockId]/edit`,
+   * `/apps/[appBlockId]/revenue` and `/apps/listing/[appListingId]/edit` all did, and
+   * every guard in this file passed. Uniform chrome is a claim about EVERY rendering
+   * route, so it is checked against every rendering route.
+   */
+  describe('🔴 every rendering /apps page renders the shared chrome', () => {
+    /** Routes expected to mount `AppsPageLayout`: measured + full-measure. */
+    const RENDERING_ROUTES = [
+      ...Object.keys(APPS_PAGE_MEASURES),
+      ...APPS_FULL_MEASURE_PAGES,
+    ].sort();
+
+    test('the rendering set is the one we think it is (fails if it grows OR shrinks)', () => {
+      // A ledger, not a floor: a loop over a set nobody pinned passes vacuously when
+      // the set empties, and silently skips a page when the set shrinks.
+      expect(RENDERING_ROUTES).toEqual([
+        '/apps',
+        '/apps/[appBlockId]/edit',
+        '/apps/[appBlockId]/revenue',
+        // 🔴 ONE ROUTE WHERE THERE WERE THREE. `/apps/get-started` and `/apps/mine` were
+        // consolidated into this (301s), and `/apps/submit` KEEPS its route but lost its
+        // sub-nav row. So the set SHRANK by two — which is exactly the direction this
+        // ledger exists to make visible, and the reason it is a `toEqual` and not a floor.
+        '/apps/activity',
+        // `/apps/assistant` left by 301ing here: `/apps/build` renders the App Assistant.
+        '/apps/build',
+        '/apps/invites',
+        '/apps/listing/[appListingId]/edit',
+        // 🔴 'revenue' sorts BEFORE 'review' — they diverge at index 9, 'e' < 'i'.
+        '/apps/revenue',
+        '/apps/review',
+        '/apps/review/[publishRequestId]',
+        '/apps/store-preview/[slug]',
+        '/apps/submit',
+      ]);
+      expect(RENDERING_ROUTES).toHaveLength(12);
+    });
+
+    test('every RETURN of every page renders the layout (AST, not text)', () => {
+      // 🔴 PARSED, NOT GREPPED, and that is the whole point — see `pageReturnTags`.
+      // A text guard here was walkable two ways at once: move `<AppsPageLayout …>` into
+      // a JSX comment (the regex matches the COMMENT) and render `<Box maw={…}
+      // mx="auto">` instead (no `<Container>`, so the sibling ban never fires). The page
+      // is re-orphaned with no sub-nav and both text guards stay green.
+      const offenders: string[] = [];
+      let filesParsed = 0;
+      let returnsInspected = 0;
+      for (const route of RENDERING_ROUTES) {
+        const file = pageFile(route);
+        if (!fs.existsSync(file)) {
+          offenders.push(`${route} (no page file at ${file})`);
+          continue;
+        }
+        let groups: string[][];
+        try {
+          groups = pageReturnTags(file);
+        } catch (err) {
+          offenders.push(`${route} (could not parse: ${(err as Error).message})`);
+          continue;
+        }
+        filesParsed += 1;
+        if (groups.length === 0) {
+          offenders.push(`${route} (default export has no return statement)`);
+          continue;
+        }
+        returnsInspected += groups.length;
+        // ONE rule, shared with the delegate check below — see `chromeOffenders`.
+        offenders.push(...chromeOffenders(route, groups));
+      }
+      // 🔴 THE OFFENDER LIST IS ASSERTED FIRST, DELIBERATELY. When a page uses a shape the
+      // walk cannot parse, `filesParsed` also comes up short — and if the count assertion
+      // ran first it would fail with "expected 12 to be 13", burying the one message that
+      // says WHICH page and WHY. Vitest stops at the first failing expect, so the
+      // informative assertion has to be the first one.
+      expect(
+        offenders,
+        'Rendering /apps route(s) not on the shared chrome. Wrap the page body in ' +
+          '<AppsPageLayout> (passing `measure` only if it is in APPS_PAGE_MEASURES) ' +
+          'instead of any container of its own.'
+      ).toEqual([]);
+      // Guard-the-guard, twice: an empty `offenders` is indistinguishable from a loop
+      // that parsed nothing, AND from one that parsed files but found no returns.
+      expect(filesParsed, 'the AST walk parsed no page files').toBe(RENDERING_ROUTES.length);
+      expect(returnsInspected, 'the AST walk found no returns to inspect').toBeGreaterThanOrEqual(
+        RENDERING_ROUTES.length
+      );
+    });
+
+    test('🔴 every chrome DELEGATE really does mount the chrome', () => {
+      // The allowlist is the one place a genuine orphan could hide behind a reassuring
+      // name, so the delegate is held to LITERALLY the same rule as a page — the same
+      // `chromeOffenders` function, not a paraphrase of it.
+      //
+      // 🔴 IT USED TO BE `groups.some(tags => tags.includes('AppsPageLayout'))` while this
+      // test's own description said "every return that renders anything". Giving
+      // `AppsSubmitEditView` an early return rendering a bare centred `<Box>` walked
+      // straight past it: one good return vouched for a bad one, in the very check whose
+      // job is to stop the allowlist being taken on trust.
+      const names = Object.keys(CHROME_DELEGATES);
+      expect(names.length, 'the delegate list is empty — nothing to verify').toBeGreaterThan(0);
+      const offenders: string[] = [];
+      for (const name of names) {
+        const { file, exportName } = CHROME_DELEGATES[name];
+        const abs = path.resolve(__dirname, '../../../..', file);
+        if (!fs.existsSync(abs)) {
+          offenders.push(`${name} (no file at ${abs})`);
+          continue;
+        }
+        // 🔴 CAUGHT, like the page loop. An allowlist entry written in a shape the walk
+        // cannot parse used to THROW out of the test, so the run died with a raw stack
+        // instead of the named offender assertion — the exact opposite of the message
+        // ordering fixed a round ago.
+        let groups: string[][];
+        try {
+          groups = pageReturnTags(abs, exportName);
+        } catch (err) {
+          offenders.push(`${name} (could not parse: ${(err as Error).message})`);
+          continue;
+        }
+        if (groups.length === 0) {
+          offenders.push(`${name} (has no return statement)`);
+          continue;
+        }
+        const renders = groups.some((tags) => tags.includes('AppsPageLayout'));
+        if (!renders) offenders.push(`${name} (does not render AppsPageLayout)`);
+        offenders.push(...chromeOffenders(name, groups));
+      }
+      expect(
+        offenders,
+        'A component allowlisted as mounting the shared chrome does not actually mount it.'
+      ).toEqual([]);
+    });
+
+    /**
+     * 🔴 THE RULE ITSELF, TABLE-DRIVEN — because every other test here consumes
+     * `chromeOffenders` and none of them PINS it.
+     *
+     * Found by mutating the guard rather than the code: weakening `chromeOffenders` back
+     * to its old "does the layout appear anywhere in this group" semantics, together with
+     * a real un-chromed sibling on a page, passed the entire blocking suite. The AST
+     * negative control below could not see it — it exercises `pageReturnTags` and
+     * inspects the tags itself, never routing through the rule. So the rule was the one
+     * piece of this machinery with no guard of its own.
+     *
+     * The `[AppsPageLayout, Box]` rows are the load-bearing ones: they are exactly the
+     * shapes an `includes`-style predicate waves through, because the layout IS present —
+     * alongside page content rendering outside it.
+     */
+    describe('🔴 chromeOffenders — the rule, pinned directly', () => {
+      // 🔴 EVERY ROW IS A LIST OF GROUPS, NOT ONE GROUP, and that is the point of the
+      // shape. The table used to pass `[group]` — always exactly one — so the loop OVER
+      // groups was never exercised: `groups.slice(0, 1)` and `continue`→`break` both
+      // survived the whole suite, even with a real un-chromed sibling planted on
+      // /apps/review. `break` is the realistic one: a page's first return is routinely a
+      // gate that filters to empty, so it would skip every later return and report green
+      // having inspected nothing.
+      const cases: { name: string; groups: string[][]; offends: boolean }[] = [
+        { name: 'the layout alone', groups: [['AppsPageLayout']], offends: false },
+        { name: 'Meta beside the layout', groups: [['Meta', 'AppsPageLayout']], offends: false },
+        { name: 'a bare access-denied leaf', groups: [['NotFound']], offends: false },
+        { name: 'nothing renderable', groups: [[]], offends: false },
+        { name: 'no returns at all', groups: [], offends: false },
+        { name: 'a verified delegate', groups: [['AppsSubmitEditView']], offends: false },
+        {
+          name: 'a portaled overlay beside the layout',
+          groups: [['AppsPageLayout', 'OnsiteReviewModal']],
+          offends: false,
+        },
+        { name: 'page content with NO layout', groups: [['Box']], offends: true },
+        // 🔴 The two an `includes` check passes.
+        {
+          name: 'an un-chromed SIBLING alongside the layout',
+          groups: [['AppsPageLayout', 'Box']],
+          offends: true,
+        },
+        {
+          name: 'a ternary whose other arm is un-chromed (flattened to one group)',
+          groups: [['AppsPageLayout', 'Container']],
+          offends: true,
+        },
+        // 🔴 F4 — permission to sit beside the chrome is not the same as providing it.
+        {
+          name: 'ONLY a portaled overlay, with no chrome provider',
+          groups: [['OnsiteReviewModal']],
+          offends: true,
+        },
+        // 🔴 THE MULTI-GROUP AXIS. Each row below is green in its first group and rotten
+        // in a later one, so anything that stops after the first return lets it through.
+        {
+          name: 'a GATE return first, then an un-chromed one (kills `break`)',
+          groups: [[], ['Box']],
+          offends: true,
+        },
+        {
+          name: 'a NotFound gate first, then an un-chromed one (kills `break`)',
+          groups: [['NotFound'], ['Box']],
+          offends: true,
+        },
+        {
+          name: 'a good return first, then an un-chromed one (kills slice(0, 1))',
+          groups: [['AppsPageLayout'], ['Box']],
+          offends: true,
+        },
+        {
+          name: 'three returns, only the LAST rotten',
+          groups: [['AppsPageLayout'], ['NotFound'], ['Container']],
+          offends: true,
+        },
+        {
+          name: 'several good returns stay clean',
+          groups: [['AppsPageLayout'], ['NotFound'], ['Meta', 'AppsPageLayout']],
+          offends: false,
+        },
+      ];
+
+      test.each(cases)('$name', ({ groups, offends }) => {
+        const out = chromeOffenders('fixture', groups);
+        expect(out.length > 0).toBe(offends);
+      });
+
+      test('the offender message names the stray tag, not just the route', () => {
+        // A guard whose message does not say WHAT is wrong sends the next reader hunting.
+        const [msg] = chromeOffenders('/apps/x', [['AppsPageLayout', 'Box']]);
+        expect(msg).toContain('/apps/x');
+        expect(msg).toContain('stray: Box');
+      });
+
+      test('the NO-PROVIDER message is distinct from the stray-tag one', () => {
+        // Two different defects must not print the same sentence, or the message stops
+        // telling you which one you have.
+        const [stray] = chromeOffenders('/apps/x', [['AppsPageLayout', 'Box']]);
+        const [none] = chromeOffenders('/apps/x', [['OnsiteReviewModal']]);
+        expect(none).toContain('NO chrome provider');
+        expect(stray).not.toContain('NO chrome provider');
+      });
+
+      test('a later rotten return is reported even when an earlier one is fine', () => {
+        // The message must name the offending group, not merely count one.
+        const out = chromeOffenders('/apps/x', [['AppsPageLayout'], ['Box']]);
+        expect(out).toHaveLength(1);
+        expect(out[0]).toContain('stray: Box');
+      });
+
+      test('EVERY rotten group is reported, not just the first', () => {
+        // Pins that the loop keeps going after it finds one — a `break` on the offending
+        // branch would report 1 of 2 and still fail the suite, so only a count sees it.
+        const out = chromeOffenders('/apps/x', [['Box'], ['AppsPageLayout'], ['Container']]);
+        expect(out).toHaveLength(2);
+      });
+
+      test('the table exercises the multi-group axis and both verdicts', () => {
+        // Guard-the-guard: duplicated rows inflate the table without adding coverage, and
+        // a table of single-group rows cannot see a loop bug at all.
+        const keys = cases.map((c) => JSON.stringify(c.groups));
+        expect(new Set(keys).size).toBe(keys.length);
+        expect(cases.some((c) => c.offends)).toBe(true);
+        expect(cases.some((c) => !c.offends)).toBe(true);
+        // At least two rows must carry MORE THAN ONE group, or the loop is unpinned again.
+        expect(cases.filter((c) => c.groups.length > 1).length).toBeGreaterThanOrEqual(2);
+        // …and at least one multi-group row must be clean ONLY in its first group, which
+        // is the precise shape `break` and `slice(0, 1)` survive.
+        expect(
+          cases.some(
+            (c) =>
+              c.groups.length > 1 &&
+              c.offends &&
+              chromeOffenders('probe', [c.groups[0]]).length === 0
+          )
+        ).toBe(true);
+      });
+    });
+
+    test('🔴 every PORTAL SIBLING really is a portaled overlay', () => {
+      // Same contract as the delegate check: the exemption is earned by what the
+      // component renders, not by what it is called. A page-content component wrongly
+      // listed here would be waved past the chrome rule, which is the whole hazard an
+      // allowlist introduces.
+      const names = Object.keys(CHROME_PORTAL_SIBLINGS);
+      expect(names.length, 'the portal-sibling list is empty — nothing to verify').toBeGreaterThan(
+        0
+      );
+      const offenders = names.flatMap((name) =>
+        portalOffenders(
+          name,
+          path.resolve(__dirname, '../../../..', CHROME_PORTAL_SIBLINGS[name].file),
+          CHROME_PORTAL_SIBLINGS[name].exportName
+        )
+      );
+      expect(
+        offenders,
+        'A component allowlisted as a portaled overlay renders ordinary markup instead — ' +
+          'it would place page content outside the shared chrome.'
+      ).toEqual([]);
+    });
+
+    describe('🔴 the portal contract, on known-BAD inputs (negative controls)', () => {
+      /**
+       * Why these exist: the portal check's only real inputs are the three genuine
+       * entries, and all three pass. So the check could be disabled outright — I removed
+       * the import comparison and the entire suite stayed green at 135/135 — because
+       * nothing ever fed it a case it had to reject. A guard tested only on known-good
+       * inputs is a guard nobody has watched work.
+       */
+      const write = (suffix: string, body: string) => {
+        const tmp = path.join(os.tmpdir(), `apps-portal-${suffix}-${process.pid}.tsx`);
+        fs.writeFileSync(tmp, body);
+        return tmp;
+      };
+
+      test('a LOCALLY DEFINED `Modal` is rejected, however convincingly named', () => {
+        // The exact shape that survived: the tag is called Modal, so a name-only check
+        // waves it through, but it is this file's own component wrapping a centred Box.
+        const tmp = write(
+          'local',
+          [
+            "import { Box } from '@mantine/core';",
+            "import type { ReactNode } from 'react';",
+            'const Modal = ({ children }: { children?: ReactNode }) => (',
+            '  <Box maw={700} mx="auto">{children}</Box>',
+            ');',
+            'export function FakeOverlay() {',
+            '  return <Modal>overlay</Modal>;',
+            '}',
+          ].join('\n')
+        );
+        try {
+          const out = portalOffenders('FakeOverlay', tmp, 'FakeOverlay');
+          expect(out).toHaveLength(1);
+          expect(out[0]).toContain('not imported at all');
+          expect(out[0]).toContain('@mantine/core');
+        } finally {
+          fs.unlinkSync(tmp);
+        }
+      });
+
+      test('a `Modal` imported from the WRONG package is rejected, and the message says which', () => {
+        const tmp = write(
+          'wrongpkg',
+          [
+            "import { Modal } from 'some-other-ui-kit';",
+            'export function FakeOverlay() {',
+            '  return <Modal>overlay</Modal>;',
+            '}',
+          ].join('\n')
+        );
+        try {
+          const out = portalOffenders('FakeOverlay', tmp, 'FakeOverlay');
+          expect(out).toHaveLength(1);
+          expect(out[0]).toContain("imported from 'some-other-ui-kit'");
+        } finally {
+          fs.unlinkSync(tmp);
+        }
+      });
+
+      test('ordinary markup is rejected even before the import question', () => {
+        const tmp = write(
+          'plain',
+          [
+            "import { Box } from '@mantine/core';",
+            'export function FakeOverlay() {',
+            '  return <Box maw={700} mx="auto" />;',
+            '}',
+          ].join('\n')
+        );
+        try {
+          const out = portalOffenders('FakeOverlay', tmp, 'FakeOverlay');
+          expect(out).toHaveLength(1);
+          expect(out[0]).toContain('non-portal roots: Box');
+        } finally {
+          fs.unlinkSync(tmp);
+        }
+      });
+
+      test('POSITIVE CONTROL — a real Mantine Modal passes', () => {
+        // Without this the three rejections above are satisfied by a function that
+        // rejects everything.
+        const tmp = write(
+          'good',
+          [
+            "import { Modal } from '@mantine/core';",
+            'export function RealOverlay() {',
+            '  return <Modal opened onClose={() => undefined}>overlay</Modal>;',
+            '}',
+          ].join('\n')
+        );
+        try {
+          expect(portalOffenders('RealOverlay', tmp, 'RealOverlay')).toEqual([]);
+        } finally {
+          fs.unlinkSync(tmp);
+        }
+      });
+
+      test('importSourceOf resolves each import form, and reports absence as null', () => {
+        const tmp = write(
+          'imports',
+          [
+            "import Default from 'pkg-default';",
+            "import { Named, Other as Aliased } from 'pkg-named';",
+            "import * as Ns from 'pkg-ns';",
+            'export function X() {',
+            '  return <Named />;',
+            '}',
+          ].join('\n')
+        );
+        try {
+          const src = sourceFileOf(tmp);
+          expect(importSourceOf(src, 'Default')).toBe('pkg-default');
+          expect(importSourceOf(src, 'Named')).toBe('pkg-named');
+          // An ALIASED import binds the local name, which is what a tag resolves against.
+          expect(importSourceOf(src, 'Aliased')).toBe('pkg-named');
+          expect(importSourceOf(src, 'Other')).toBeNull();
+          expect(importSourceOf(src, 'Ns')).toBe('pkg-ns');
+          expect(importSourceOf(src, 'NotImported')).toBeNull();
+        } finally {
+          fs.unlinkSync(tmp);
+        }
+      });
+    });
+
+    test('🔴 the AST walk can SEE a violation (negative control on the guard above)', () => {
+      // The guard above returns a reassuring empty list; this proves the machinery that
+      // produces it can produce a non-empty one. A synthetic page whose layout call sits
+      // in a comment — mutant M5b exactly — must be reported, and the comment must NOT
+      // count as a render.
+      const tmp = path.join(os.tmpdir(), `apps-chrome-negative-control-${process.pid}.tsx`);
+      fs.writeFileSync(
+        tmp,
+        [
+          "import { Box } from '@mantine/core';",
+          "import { AppsPageLayout } from '~/components/Apps/AppsPageLayout';",
+          'export default function FakePage() {',
+          '  return (',
+          '    <>',
+          '      {/* <AppsPageLayout measure={1068}> */}',
+          '      <Box maw={1068} mx="auto" />',
+          '      {/* </AppsPageLayout> */}',
+          '    </>',
+          '  );',
+          '}',
+        ].join('\n')
+      );
+      try {
+        const groups = pageReturnTags(tmp);
+        expect(groups).toHaveLength(1);
+        const rendered = groups[0].filter((t) => !CHROME_EXEMPT_TAGS.has(t));
+        // The comment is trivia in the AST, so it cannot masquerade as a render.
+        expect(rendered).not.toContain('AppsPageLayout');
+        expect(rendered).toContain('Box');
+      } finally {
+        fs.unlinkSync(tmp);
+      }
+    });
+
+    test('🔴 no rendering page hand-rolls its own top-level Mantine Container', () => {
+      // The specific shape of the defect: a page-level `<Container>` re-creates the
+      // per-page box the layout exists to remove. Nested containers inside a body
+      // component are not this file's business — this checks the PAGE files, which
+      // are the ones that own the outermost element.
+      const offenders: string[] = [];
+      let filesRead = 0;
+      for (const route of RENDERING_ROUTES) {
+        const file = pageFile(route);
+        if (!fs.existsSync(file)) continue;
+        const src = fs.readFileSync(file, 'utf8');
+        filesRead += 1;
+        if (/<Container[\s>]/.test(src)) offenders.push(`${route} (renders its own <Container>)`);
+      }
+      expect(filesRead).toBe(RENDERING_ROUTES.length);
+      expect(offenders).toEqual([]);
+    });
   });
 
   test('no classified route is stale (every entry maps to a real page file)', () => {
     const onDisk = new Set(appsRoutes());
     const stale = [
-      ...Object.keys(APPS_PAGE_WIDTHS),
+      ...Object.keys(APPS_PAGE_MEASURES),
+      ...APPS_FULL_MEASURE_PAGES,
       ...APPS_FULL_BLEED_PAGES,
       ...APPS_REDIRECT_ONLY_PAGES,
     ].filter((r) => !onDisk.has(r));

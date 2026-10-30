@@ -1,0 +1,63 @@
+-- Bulk Ban's "accounts on this email domain" search (getAccountsOnDomains in
+-- apps/moderator) filters on the DOMAIN half of the address:
+--
+--   WHERE lower(substring(email from '@(.+)$')) IN ($1, ...)
+--     AND "bannedAt" IS NULL AND "deletedAt" IS NULL
+--
+-- "User"."email" carries only its own unique btree on the whole citext value, and a
+-- suffix match cannot use it -- so every call sequentially scans "User". Moderators
+-- see it as an intermittent 500 on that search; what varies is whether the scan beats
+-- the statement timeout, not whether it happens.
+--
+-- The expression here is character-for-character what the query emits, because an
+-- expression index is only used when the indexed expression matches the predicate's.
+-- Changing either side without the other silently returns this to a seq scan, with
+-- nothing failing to say so.
+--
+-- Partial on the same two null checks the query always applies: a ban-evasion sweep
+-- is looking for accounts it can still act on, and every already-banned or deleted
+-- row is dead weight in the index otherwise. If a future caller wants the full census
+-- it will not use this index -- write a second one rather than widening this.
+--
+-- CONCURRENTLY, so building it cannot lock out registration and profile writes. Three
+-- consequences for whoever applies this by hand:
+--
+--   1. It must NOT be wrapped in a transaction block -- run this statement on its own.
+--
+--   2. Do not apply it under a session with a lock_timeout set. CREATE INDEX
+--      CONCURRENTLY briefly takes a lock at both ends of the build, and a timeout
+--      there fails DIRTY: it leaves an INVALID index behind. `SET lock_timeout = 0`
+--      for this session.
+--
+--   3. IF NOT EXISTS matches on the NAME. If a previous attempt left an invalid
+--      index, this statement reports success and creates nothing. Check for that
+--      before retrying, and drop it first:
+--        SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;
+--        DROP INDEX CONCURRENTLY "User_email_domain_idx";
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "User_email_domain_idx"
+  ON "User" ((lower(substring(email from '@(.+)$'))))
+  WHERE "bannedAt" IS NULL AND "deletedAt" IS NULL;
+
+-- 🔴 THEN RUN `ANALYZE "User";` ON THE PRIMARY. This is not optional and not
+-- housekeeping: Postgres has no statistics for an index EXPRESSION until an ANALYZE
+-- runs after the index exists, and CREATE INDEX CONCURRENTLY does not do it. Measured
+-- on prod with the index live, valid and ready: every domain -- one with ~600k
+-- accounts and one with none -- estimated the identical 57,821 rows (12,976,758 x
+-- 0.005 x 0.891, i.e. DEFAULT_EQ_SEL), so the planner kept betting that LIMIT 500
+-- would fill early on the primary key and the search still took 23.1 s. The index was
+-- 84 MB of maintenance cost buying nothing until analyzed.
+--
+-- VERIFY against the primary, by the flag rather than the exit code -- a sibling
+-- migration having been applied is not evidence this one was:
+--   SELECT indisvalid FROM pg_index
+--   WHERE indexrelid = '"User_email_domain_idx"'::regclass;
+--
+-- If that returns false: REINDEX INDEX CONCURRENTLY "User_email_domain_idx";
+-- or DROP INDEX CONCURRENTLY and re-run the statement above.
+--
+-- Then confirm the planner actually takes it -- a matching index it declines is the
+-- same 500, and that is exactly what happens before the ANALYZE above. Look for a
+-- Bitmap Index Scan on "User_email_domain_idx" with an estimate near 1, NOT 57,821:
+--   EXPLAIN SELECT id FROM "User"
+--   WHERE lower(substring(email from '@(.+)$')) IN ('example.com')
+--     AND "bannedAt" IS NULL AND "deletedAt" IS NULL LIMIT 500;

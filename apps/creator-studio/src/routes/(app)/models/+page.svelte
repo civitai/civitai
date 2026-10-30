@@ -1,6 +1,6 @@
 <script lang="ts">
   import { enhance } from '$app/forms';
-  import { goto, invalidateAll } from '$app/navigation';
+  import { goto, invalidateAll, replaceState } from '$app/navigation';
   import { page } from '$app/state';
   import { SvelteSet } from 'svelte/reactivity';
   import { toast } from '@civitai/ui/components/ui/sonner/index.js';
@@ -28,25 +28,33 @@
   import { Label } from '@civitai/ui/components/ui/label/index.js';
   import {
     feeToRatio,
-    feeMaxFor,
     monetizationLimits,
     suggestedFee,
+    seedFeeRatio,
     DEFAULT_FEE_IMAGES,
     type MonetizationLimits,
   } from '$lib/monetization/fee';
-  import { capMediaType, type CapTier } from '@civitai/buzz';
+  import {
+    EARLY_ACCESS_NOT_COUNTED,
+    PRICING_SLOT_EXPLAINER,
+    capMediaType,
+    formatPricingAllowance,
+    feeAllowanceBoostNote,
+    pricingAllowanceState,
+    pricingFloorMessage,
+    type CapTier,
+  } from '@civitai/buzz';
   import JoinUpsell from '$lib/components/JoinUpsell.svelte';
   import TierCapsTable from '$lib/components/TierCapsTable.svelte';
+  import CapUpsell from '$lib/components/CapUpsell.svelte';
+  import PricingSlotHistory from '$lib/components/PricingSlotHistory.svelte';
   import LicensingFeeFields from '$lib/components/monetization/LicensingFeeFields.svelte';
   import RightsAffirmation from '$lib/components/monetization/RightsAffirmation.svelte';
   import PaidAccessEditor from '$lib/components/PaidAccessEditor.svelte';
   import BulkBar from '$lib/components/BulkBar.svelte';
   import BulkActionDialog from '$lib/components/BulkActionDialog.svelte';
   import type { BulkAction } from '$lib/monetization/bulk-actions';
-  import { maxPaidAccessPrice } from '$lib/monetization/paid-access';
 
-  // Gold's cap is Infinity; the context contract says uncapped is null.
-  const finiteOrNull = (n: number) => (Number.isFinite(n) ? n : null);
   import {
     IconSearch,
     IconFilter,
@@ -56,54 +64,42 @@
   } from '@tabler/icons-svelte';
   import { modelUrl } from '$lib/model-url';
   import type { PageData } from './$types';
+  import type { ModelsView } from '$lib/server/models-view';
   import type { CreatorModel, CreatorModelVersion } from '$lib/server/models';
 
   let { data }: { data: PageData } = $props();
 
-  // The tier every cap on this page resolves against (a lapse falls back to free, never to "no access").
+  // Filter-as-you-type swaps only the query-dependent slice (CU 868kv6ejd); the caps, scores and sale
+  // windows beside it in `data` are per-creator and no search term can move them.
+  let live = $state<ModelsView | null>(null);
+  const view = $derived<ModelsView>(live ?? data);
+  // A completed navigation or an invalidateAll is authoritative: drop the live slice so the two can
+  // never disagree about what the URL is showing.
+  $effect(() => {
+    data;
+    live = null;
+  });
+
+  // Arrived from Sales via "New sale": the page is here to collect a selection and hand it back.
+  // Read from the view rather than the URL so the banner cannot be absent while the list is narrowed —
+  // the server narrows on `for=sale` alone, and an unexplained short list is worse than an early prompt.
+  const pickingForSale = $derived(view.query.saleOnly);
+
+  // The tier the monthly allowance resolves against (a lapse falls back to free, never to "no access").
   const tier = $derived(data.caps.capTier);
 
-  // Off / Active / Over cap — anyone may set a fee now, so the amber state means "above your tier's ceiling
-  // for this model type": still charged in full, but it can't be raised until the membership is upgraded.
-  function feeStatus(
-    fee: number | null,
-    modelType: string,
-    baseModel: string
-  ): { label: string; cls: string } {
-    if (fee == null || fee <= 0) return { label: 'Off', cls: 'text-dark-2' };
-    return fee > monetizationLimits({ tier, modelType, baseModel }).fee.maxPerGeneration
-      ? { label: 'Over cap', cls: 'text-yellow-5' }
+  function feeStatus(fee: number | null): { label: string; cls: string } {
+    return fee == null || fee <= 0
+      ? { label: 'Off', cls: 'text-dark-2' }
       : { label: 'Active', cls: 'text-green-5' };
   }
 
-  // Versions storing a fee above the creator's cap. They earn the capped amount, not the stored one, and
-  // the per-row "Over cap" chip only reaches someone already scanning the table — the creator in
-  // CU 868kn7zu4 set a fee before caps existed and had no reason to look again.
-  const overCapVersions = $derived.by(() => {
-    const out: { name: string; stored: number; effective: number }[] = [];
-    for (const m of data.models)
-      for (const v of m.versions) {
-        const fee = v.licensingFee ?? 0;
-        if (fee <= 0) continue;
-        const cap = monetizationLimits({ tier, modelType: m.type, baseModel: v.baseModel }).fee
-          .maxPerGeneration;
-        if (fee > cap) out.push({ name: `${m.name} · ${v.name}`, stored: fee, effective: cap });
-      }
-    return out;
-  });
-
-  // Compact fee chip for a scan row: colour mirrors feeStatus (green Active / amber Capped / dim Off).
-  function feeChip(
-    fee: number | null,
-    modelType: string,
-    baseModel: string
-  ): { label: string; cls: string } {
+  // Compact fee chip for a scan row: colour mirrors feeStatus.
+  function feeChip(fee: number | null): { label: string; cls: string } {
     if (fee == null || fee <= 0) return { label: 'Fee off', cls: 'border-dark-4 text-dark-2' };
     const { buzz, images } = feeToRatio(fee);
     const label = images === 1 ? `${buzz} ⚡ / gen` : `${buzz} ⚡ / ${images}`;
-    return fee > monetizationLimits({ tier, modelType, baseModel }).fee.maxPerGeneration
-      ? { label, cls: 'border-yellow-5/30 bg-yellow-5/10 text-yellow-5' }
-      : { label, cls: 'border-green-5/30 bg-green-5/10 text-green-5' };
+    return { label, cls: 'border-green-5/30 bg-green-5/10 text-green-5' };
   }
 
   // Early-access chip: shown (green) only while a window is actually active, so it clearly means
@@ -133,11 +129,13 @@
           title: 'Timed early access — becomes free when the window ends',
         };
   }
-  // Permanent access is capped by CP tier (null cap = unlimited); concurrent early access by models score.
-  const permAtCap = $derived(
-    data.caps.permanentCap !== null &&
-      data.caps.permanentCap > 0 &&
-      data.caps.permanentUsed >= data.caps.permanentCap
+  // New prices are limited by membership tier; concurrent early access by models score.
+  const allowance = $derived(
+    pricingAllowanceState({ used: data.caps.pricingUsed, limit: data.caps.pricingLimit })
+  );
+  const permAtCap = $derived(allowance.atLimit);
+  const feeAllowance = $derived(
+    pricingAllowanceState({ used: data.caps.pricingUsed, limit: data.caps.feePricingLimit })
   );
   const eaAtCap = $derived(
     data.caps.earlyAccessCap > 0 && data.caps.earlyAccessUsed >= data.caps.earlyAccessCap
@@ -165,11 +163,11 @@
   ];
   // Count only non-default filters (an empty status is the default, so it doesn't count).
   const activeFilterCount = $derived(
-    (data.query.status ? 1 : 0) +
-      (data.query.bm ? 1 : 0) +
-      (data.query.mt ? 1 : 0) +
-      (data.query.access ? 1 : 0) +
-      (data.query.fee ? 1 : 0)
+    (view.query.status ? 1 : 0) +
+      (view.query.bm ? 1 : 0) +
+      (view.query.mt ? 1 : 0) +
+      (view.query.access ? 1 : 0) +
+      (view.query.fee ? 1 : 0)
   );
 
   // --- URL-driven table state (search / fee filter / sort / pagination) ---
@@ -177,23 +175,87 @@
     goto(buildHref(params), { keepFocus: true, noScroll: true, replaceState: true });
   }
 
-  // Build an href off the current URL, applying overrides — so links (bulk mode on/off) preserve the active
+  // Build off the current URL, applying overrides — so links (bulk mode on/off) preserve the active
   // filters/sort/page instead of resetting them (868ke491x bulk-edit-clears-filters bug).
-  function buildHref(overrides: Record<string, string | null>): string {
+  function buildParams(overrides: Record<string, string | null>): URLSearchParams {
     const params = new URLSearchParams(page.url.searchParams);
     for (const [k, v] of Object.entries(overrides)) {
       if (v) params.set(k, v);
       else params.delete(k);
     }
-    const qs = params.toString();
+    return params;
+  }
+
+  function buildHref(overrides: Record<string, string | null>): string {
+    const qs = buildParams(overrides).toString();
     return qs ? `${page.url.pathname}?${qs}` : page.url.pathname;
   }
 
-  // Search fires on Enter, on blur, and via the button — all no-op if the term is unchanged.
-  function runSearch(raw: FormDataEntryValue | string | null) {
-    const q = String(raw ?? '').trim();
-    if (q === (data.query.q ?? '')) return;
-    navigate({ q: q || null, page: null });
+  // --- Live search ---
+  // Staged locally rather than mirrored from the view: a bulk action reloads the page, and binding the
+  // input to server state would wipe a term the creator had typed but not yet settled.
+  let draftTerm = $state<string | null>(null);
+  const term = $derived(draftTerm ?? view.query.q);
+  // Drop the draft only once the view AGREES with it. Clearing unconditionally discards characters typed
+  // while a search is still in flight, and the pending timer then searches the reverted value.
+  $effect(() => {
+    if (draftTerm === view.query.q) draftTerm = null;
+  });
+
+  let searchTimer: ReturnType<typeof setTimeout>;
+  let inFlight: AbortController | null = null;
+  let searchSeq = 0;
+  let searching = $state(false);
+  // Both outlive this component: navigating away mid-type would otherwise fire a search against a page
+  // the creator has left.
+  $effect(() => () => {
+    clearTimeout(searchTimer);
+    inFlight?.abort();
+  });
+
+  // The whole point of the endpoint over a navigation: one query set per settled keystroke instead of
+  // the entire load. The URL still gets the term — shallow, so `buildHref` (filters, paging, the CSV
+  // link) reads it and a reload or a bulk action's invalidateAll lands on the same results.
+  async function search(raw: string) {
+    const q = raw.trim();
+    if (q === view.query.q) return;
+    const params = buildParams({ q: q || null, page: null });
+    const qs = params.toString();
+    replaceState(qs ? `${page.url.pathname}?${qs}` : page.url.pathname, page.state);
+
+    inFlight?.abort();
+    const controller = new AbortController();
+    inFlight = controller;
+    const seq = ++searchSeq;
+    searching = true;
+    try {
+      const res = await fetch(`/models/search?${qs}`, { signal: controller.signal });
+      if (!res.ok) throw new Error(String(res.status));
+      const next = (await res.json()) as ModelsView;
+      if (seq === searchSeq) live = next;
+    } catch {
+      if (controller.signal.aborted || seq !== searchSeq) return;
+      // Leaving the previous results up under a term that no longer produced them reads as "no matches
+      // for what you typed", which is a wrong answer rather than a failure. `invalidateAll` rather than
+      // a goto: the URL already carries the term, and goto to the URL you are on does not re-run loads.
+      toast.error('Search failed.');
+      await invalidateAll();
+    } finally {
+      if (seq === searchSeq) searching = false;
+    }
+  }
+
+  function typed(value: string) {
+    draftTerm = value;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => search(value), 400);
+  }
+
+  // Enter and the button skip the wait; they don't do anything the debounce wouldn't.
+  function submitSearch(e: SubmitEvent) {
+    e.preventDefault();
+    clearTimeout(searchTimer);
+    search(term);
   }
 
   // --- Bulk selection ---
@@ -201,31 +263,36 @@
   // never think to look for them. A reactive Set — in-place add/delete/clear stay fine-grained.
   const selected = new SvelteSet<number>();
   let bulkAction = $state<BulkAction | null>(null);
-  // Permanent slots the creator can still fill (null cap = unlimited).
-  const remainingPermanentSlots = $derived(
-    data.caps.permanentCap === null
+  // Prices the creator can still apply this month (null limit = unlimited).
+  const remainingPricingSlots = $derived(
+    data.caps.pricingLimit === null
       ? Infinity
-      : Math.max(0, data.caps.permanentCap - data.caps.permanentUsed)
+      : Math.max(0, data.caps.pricingLimit - data.caps.pricingUsed)
   );
-  // Versions already sold permanently don't consume a NEW slot when re-priced — mirrors the server's
-  // countPermanentAccessVersionsExcluding baseline, so re-pricing stays possible even at the cap.
-  const alreadyPermanentIds = $derived(
+  const remainingFeeSlots = $derived(
+    data.caps.feePricingLimit === null
+      ? Infinity
+      : Math.max(0, data.caps.feePricingLimit - data.caps.pricingUsed)
+  );
+  // A version that already carries a price spends nothing when re-priced — mirrors the server's
+  // unpricedVersionIds. The server can still refuse a boosted licensed version a permanent gate.
+  const alreadyPricedIds = $derived(
     new Set(
-      data.models
+      view.models
         .flatMap((m) => m.versions)
-        .filter((v) => v.paidAccessConfig?.permanent)
+        .filter((v) => v.paidAccessConfig?.permanent || (v.licensingFee ?? 0) > 0)
         .map((v) => v.id)
     )
   );
-  // Slots the current selection would consume, for the paid-access form's over-cap warning.
+  // Slots the current selection would consume, for the paid-access form's warning.
   const newSlotsUsed = $derived.by(() => {
     let n = 0;
-    for (const id of selected) if (!alreadyPermanentIds.has(id)) n++;
+    for (const id of selected) if (!alreadyPricedIds.has(id)) n++;
     return n;
   });
   const affirmedIds = $derived(
     new Set(
-      data.models
+      view.models
         .flatMap((m) => m.versions)
         .filter((v) => v.rightsAffirmed)
         .map((v) => v.id)
@@ -238,7 +305,7 @@
     return false;
   });
   const selectedIds = $derived([...selected]);
-  const matchingIds = $derived(new Set(data.matchingVersionIds));
+  const matchingIds = $derived(new Set(view.matchingVersionIds));
   // Selected versions the current filters no longer return — usually because a bulk write just moved
   // them out of the filter that found them. They stay selected and actionable; the bar names the count
   // so it never claims rows the table isn't showing.
@@ -248,55 +315,50 @@
     return n;
   });
   const allMatchingSelected = $derived(
-    data.matchingVersionIds.length > 0 && selected.size >= data.matchingVersionIds.length
+    view.matchingVersionIds.length > 0 && selected.size >= view.matchingVersionIds.length
   );
   // Suggested fee is per model type, so it's only unambiguous when the type filter pins one. It lives in
   // the fee form now rather than the bar — it's an input default, not an operation.
   const bulkSuggested = $derived(
-    data.query.mt ? suggestedFee({ modelType: data.query.mt, baseModel: data.query.bm }) : undefined
+    view.query.mt ? suggestedFee({ modelType: view.query.mt, baseModel: view.query.bm }) : undefined
   );
 
-  // One fee is applied to every picked version, so the input is capped by the STRICTEST cap in the
-  // selection — matching bulkSetLicensingFee on the server. "Select all" can pick versions beyond this
-  // page, whose model types aren't loaded, so anything unresolved falls back to the non-checkpoint cap
-  // (the strictest there is).
-  // Parameterised by tier so the cap upsell can ask "what would Gold allow for this same selection?"
-  function strictestLimits(t: CapTier): MonetizationLimits {
-    const loaded = new Map<number, { modelType: string; baseModel: string }>();
-    for (const m of data.models)
-      for (const v of m.versions) loaded.set(v.id, { modelType: m.type, baseModel: v.baseModel });
+  // One fee is applied to every picked version, so the input is bounded by the STRICTEST ceiling in the
+  // selection — matching bulkSetLicensingFee on the server. Only the media axis moves it now, so a mixed
+  // image/video selection is bounded at the image ceiling. "Select all" can pick versions beyond this
+  // page, whose base models aren't loaded; anything unresolved prices as image, the stricter of the two.
+  const bulkLimits = $derived.by(() => {
+    const loaded = new Map<number, string>();
+    for (const m of data.models) for (const v of m.versions) loaded.set(v.id, v.baseModel);
     let strictest: MonetizationLimits | null = null;
     for (const id of selected) {
-      const v = loaded.get(id);
-      const limits = monetizationLimits({
-        tier: t,
-        modelType: v?.modelType,
-        baseModel: v?.baseModel,
-      });
+      const limits = monetizationLimits({ tier, baseModel: loaded.get(id) });
       if (!strictest || limits.fee.maxPerGeneration < strictest.fee.maxPerGeneration)
         strictest = limits;
     }
-    return strictest ?? monetizationLimits({ tier: t });
-  }
-  const bulkLimits = $derived(strictestLimits(tier));
+    return strictest ?? monetizationLimits({ tier });
+  });
 
   // One fee is applied across the whole selection, and the server rejects the batch if it would raise ANY
   // version past that version's own cap — so a single "your cap is N" hides which member is binding.
   // Grouped by the two axes that move the cap: model type and the media type of the base model.
   const selectionFeeCaps = $derived.by(() => {
     const byKey = new Map<string, { label: string; cap: number }>();
-    for (const m of data.models)
+    for (const m of view.models)
       for (const v of m.versions) {
         if (!selected.has(v.id)) continue;
-        const cap = monetizationLimits({ tier, modelType: m.type, baseModel: v.baseModel }).fee
-          .maxPerGeneration;
+        const cap = monetizationLimits({ tier, baseModel: v.baseModel }).fee.maxPerGeneration;
         const media = capMediaType(v.baseModel);
-        const key = `${m.type}|${media}`;
-        if (!byKey.has(key))
-          byKey.set(key, { label: media === 'video' ? `${m.type} (video)` : m.type, cap });
+        // Keyed on media alone: the ceiling no longer varies by model type, so keying on both emitted
+        // one row per type all showing the same number.
+        if (!byKey.has(media))
+          byKey.set(media, { label: media === 'video' ? 'Video models' : 'Image models', cap });
       }
     return [...byKey.values()].sort((a, b) => a.cap - b.cap);
   });
+
+  const POI_BLOCKED_HINT =
+    "Flagged as depicting a real person — a new licensing fee or access price will be refused. If that's wrong, contact support to have the flag reviewed.";
 
   function toggleVersion(id: number) {
     if (selected.has(id)) selected.delete(id);
@@ -326,7 +388,7 @@
         await invalidateAll();
         if (editing) {
           const id = editing.id;
-          editing = data.models.flatMap((m) => m.versions).find((v) => v.id === id) ?? editing;
+          editing = view.models.flatMap((m) => m.versions).find((v) => v.id === id) ?? editing;
         }
       } else if (event.result.type === 'failure') {
         toast.error(String(event.result.data?.error ?? 'Failed to save'));
@@ -342,24 +404,28 @@
     const qs = params.toString();
     return `/models/export${qs ? `?${qs}` : ''}`;
   });
+  // Every filter the empty state offers to clear. `mt` and `usage` were missing, so filtering to a type
+  // with no matches reported "you have no models" — and, under `for=sale`, "none of these can go on sale".
   const filterActive = $derived(
-    !!data.query.q ||
-      !!data.query.fee ||
-      !!data.query.bm ||
-      !!data.query.status ||
-      data.query.access
+    !!view.query.q ||
+      !!view.query.fee ||
+      !!view.query.bm ||
+      !!view.query.mt ||
+      !!view.query.usage ||
+      !!view.query.status ||
+      view.query.access
   );
 
   // --- Early/paid-access editor (per-version drawer) ---
   let editing = $state<CreatorModelVersion | null>(null);
   // The parent model's type isn't on the version, so capture it when opening — the fee reference is keyed by it.
   let editingType = $state('');
+  // Same for the POI flag, which is model-level.
+  let editingPoi = $state(false);
   // The edited version's base model decides the media axis of every cap in the drawer.
   // One object per edited version — max, offered denominators and the suggestion all come from it, so
   // they cannot disagree with each other or with what the server enforces.
-  const editingLimits = $derived(
-    monetizationLimits({ tier, modelType: editingType, baseModel: editing?.baseModel })
-  );
+  const editingLimits = $derived(monetizationLimits({ tier, baseModel: editing?.baseModel }));
   // Per-model-type suggested fee behind the drawer's "Use this" shortcut.
   const suggested = $derived(
     feeToRatio(suggestedFee({ modelType: editingType, baseModel: editing?.baseModel }))
@@ -370,90 +436,168 @@
   let feeAffirmed = $state(false);
   // Clearing a fee earns nothing, so only a non-zero fee needs the affirmation.
   const feeNeedsAffirmation = $derived(!!editing && !editing.rightsAffirmed && (feeBuzz ?? 0) > 0);
+  // Only a NEW price is floored: editing one the version already carries is exempt.
+  const feeBlockedByFloor = $derived(
+    !data.caps.pricingFloor.eligible && !!editing && !alreadyPricedIds.has(editing.id)
+  );
 
   // Opens the licensing drawer for a version. Seeds only the fee inputs here; the early/paid-access
   // editor (PaidAccessEditor) owns its own state, seeded from the version on mount.
-  function openEditor(version: CreatorModelVersion, modelType: string) {
+  function openEditor(version: CreatorModelVersion, modelType: string, poi: boolean) {
     editingType = modelType;
+    editingPoi = poi;
     feeAffirmed = false;
-    const r = feeToRatio(version.licensingFee);
-    feeBuzz = r.buzz || undefined;
-    feeImages = String(r.images);
+    // Denominator from the seed rule, amount from the version alone: an unset fee opens on the
+    // suggestion's denominator with nothing priced until the creator types.
+    feeBuzz = feeToRatio(version.licensingFee).buzz || undefined;
+    feeImages = String(
+      seedFeeRatio({ licensingFee: version.licensingFee, modelType, baseModel: version.baseModel })
+        .images
+    );
     editing = version;
   }
 </script>
 
-<header class="page-header">
-  <h1>Licensing</h1>
-  <p>Set licensing fees, manage early/paid access, and sell access indefinitely — per version.</p>
-</header>
-
-{#if data.caps.capTier === 'free'}
-  <JoinUpsell
-    class="mb-6"
-    body="You can set licensing fees and paid access on the free tier. Joining the Creator Program raises how much you can charge."
-  />
+{#if pickingForSale}
+  <!-- The whole page is in service of one question while this is up, so it replaces the page's own
+       header and the caps strip rather than sitting under them. Controls stay enabled: a creator may
+       legitimately want to fix a price or a gate before putting a version on sale. -->
+  <div class="mb-4 rounded-lg border border-blue-4/40 bg-blue-4/10 p-4">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div class="flex flex-col gap-1">
+        <h1 class="text-2xl font-bold text-white">Sale preparation</h1>
+        <p class="text-sm text-dark-1">
+          Choose the versions to put on sale, then continue to set the discount and dates.
+        </p>
+        <p class="text-sm text-dark-2">
+          Only versions sold with a permanent access price are listed — a sale takes Buzz off that
+          price, so there is nothing for it to discount anywhere else.
+        </p>
+      </div>
+      <div class="flex items-center gap-2">
+        <span
+          class="rounded-full border border-dark-4 bg-dark-6/60 px-2.5 py-1 text-xs font-medium tabular-nums text-dark-1"
+        >
+          {selected.size} selected
+        </span>
+        <Button
+          size="sm"
+          disabled={selected.size === 0}
+          onclick={() => goto(`/sales?versions=${selectedIds.join(',')}`)}
+        >
+          Continue
+        </Button>
+        <Button variant="ghost" size="sm" href="/sales">Cancel</Button>
+      </div>
+    </div>
+  </div>
 {/if}
 
-<div
-  class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-dark-5 bg-dark-6/40 px-3 py-2 text-xs"
->
-  <span class="flex items-center gap-1.5">
-    <span class="inline-block h-2 w-2 rounded-full bg-blue-4"></span>
-    <span class="text-dark-2">Permanent access</span>
-    {#if data.caps.permanentCap === 0}
-      <span class="font-medium text-dark-2">Not available on your tier</span>
-    {:else if data.caps.permanentCap === null}
-      <span class="font-medium text-white">{data.caps.permanentUsed} set · unlimited</span>
-    {:else}
-      <span class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}">
-        {data.caps.permanentUsed} of {data.caps.permanentCap} set{permAtCap
-          ? ' · limit reached'
-          : ''}
-      </span>
+{#if !pickingForSale}
+  <header class="page-header">
+    <h1>Models</h1>
+    <p>Set licensing fees, manage early/paid access, and sell access indefinitely — per version.</p>
+  </header>
+{/if}
+
+{#if data.caps.capTier === 'free'}
+  <JoinUpsell class="mb-6" />
+{/if}
+
+{#if !pickingForSale}
+  <div
+    class="mb-4 flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-dark-5 bg-dark-6/40 px-3 py-2 text-xs"
+  >
+    <span class="flex items-center gap-1.5">
+      <span class="inline-block h-2 w-2 rounded-full bg-blue-4"></span>
+      {#if !data.caps.pricingFloor.eligible}
+        <span class="font-medium text-yellow-5">
+          Creator score {data.caps.pricingFloor.score.toLocaleString()} of {data.caps.pricingFloor.required.toLocaleString()}
+          to monetize
+        </span>
+      {:else}
+        <span
+          class="font-medium {permAtCap ? 'text-yellow-5' : 'text-white'}"
+          title={PRICING_SLOT_EXPLAINER}
+        >
+          {formatPricingAllowance(allowance)}
+        </span>
+        <span class="text-dark-2" title={PRICING_SLOT_EXPLAINER}>
+          · licensing fees and permanent paid access
+        </span>
+        {#if data.caps.feeBoost > 0 && data.caps.feePricingLimit !== null}
+          <span class="font-medium text-white" data-testid="fee-allowance-boost">
+            · {feeAllowance.used} of {feeAllowance.limit} for licensing fees ({feeAllowanceBoostNote(
+              data.caps.feeBoost
+            )})
+          </span>
+        {/if}
+        {#if !allowance.unlimited}
+          <CapUpsell
+            used={allowance.used}
+            limit={data.caps.pricingLimit ?? Infinity}
+            capTier={data.caps.capTier}
+          />
+        {/if}
+      {/if}
+    </span>
+    <span class="flex items-center gap-1.5">
+      <span class="inline-block h-2 w-2 rounded-full bg-green-5"></span>
+      <span class="text-dark-2">Early access</span>
+      {#if data.caps.earlyAccessCap === 0}
+        <span class="font-medium text-dark-2">Not unlocked yet — grows with your creator score</span
+        >
+      {:else}
+        <span
+          class="font-medium {eaAtCap ? 'text-yellow-5' : 'text-white'}"
+          title={EARLY_ACCESS_NOT_COUNTED}
+        >
+          {data.caps.earlyAccessUsed} of {data.caps.earlyAccessCap} active{eaAtCap
+            ? ' · limit reached'
+            : ''}
+        </span>
+        <span class="text-dark-2" title={EARLY_ACCESS_NOT_COUNTED}>
+          · up to {data.caps.maxEarlyAccessDays} days · a separate limit
+        </span>
+      {/if}
+    </span>
+    <!-- Two meters side by side get read as one budget — say what each counts where they meet. -->
+    {#if permAtCap && data.caps.pricingFloor.eligible}
+      <p class="w-full text-yellow-5">{PRICING_SLOT_EXPLAINER}</p>
+      {#if data.caps.feeBoost > 0 && !feeAllowance.atLimit}
+        <p class="w-full text-white">
+          You can still add {feeAllowance.remaining} more licensing fees this month with your extra
+          slots. They don't cover permanent paid access.
+        </p>
+      {/if}
     {/if}
-  </span>
-  <span class="flex items-center gap-1.5">
-    <span class="inline-block h-2 w-2 rounded-full bg-green-5"></span>
-    <span class="text-dark-2">Early access</span>
-    {#if data.caps.earlyAccessCap === 0}
-      <span class="font-medium text-dark-2">Not unlocked yet — grows with your creator score</span>
-    {:else}
-      <span class="font-medium {eaAtCap ? 'text-yellow-5' : 'text-white'}">
-        {data.caps.earlyAccessUsed} of {data.caps.earlyAccessCap} active{eaAtCap
-          ? ' · limit reached'
-          : ''}
-      </span>
-      <span class="text-dark-2">· up to {data.caps.maxEarlyAccessDays} days</span>
-    {/if}
-  </span>
-  <details class="w-full">
-    <summary
-      class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
-      data-testid="tier-caps-toggle"
-    >
-      Pricing limits · {data.caps.tier}
-    </summary>
-    <TierCapsTable capTier={data.caps.capTier} class="mt-3" />
-  </details>
-</div>
+    <details class="w-full">
+      <summary
+        class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
+        data-testid="tier-caps-toggle"
+      >
+        Monetization limits · {data.caps.tier}
+      </summary>
+      <TierCapsTable capTier={data.caps.capTier} class="mt-3" />
+    </details>
+    <details class="w-full">
+      <summary
+        class="cursor-pointer select-none text-dark-2 marker:text-dark-2 hover:text-white"
+        data-testid="pricing-slots-toggle"
+      >
+        What used your pricing slots
+      </summary>
+      <div class="mt-3">
+        <PricingSlotHistory slots={data.caps.pricingSlots} />
+      </div>
+    </details>
+  </div>
+{/if}
 
 <!-- Search / filter / sort -->
 <div class="mb-4 flex flex-wrap items-center gap-2">
-  <form
-    class="flex items-center gap-1"
-    onsubmit={(e) => {
-      e.preventDefault();
-      runSearch(new FormData(e.currentTarget).get('q'));
-    }}
-  >
-    <Input
-      name="q"
-      value={data.query.q}
-      placeholder="Search models…"
-      onblur={(e) => runSearch(e.currentTarget.value)}
-      class="w-56"
-    />
+  <form class="flex items-center gap-1" onsubmit={submitSearch}>
+    <Input name="q" bind:value={() => term, typed} placeholder="Search models…" class="w-56" />
     <Button type="submit" variant="outline" size="icon" aria-label="Search" title="Search">
       <IconSearch size={16} />
     </Button>
@@ -472,7 +616,7 @@
       <fieldset>
         <legend class="mb-2 text-xs font-medium uppercase tracking-wide text-dark-2">Status</legend>
         <RadioGroup
-          value={data.query.status ?? ''}
+          value={view.query.status ?? ''}
           onValueChange={(v) => navigate({ status: v || null, page: null })}
         >
           {#each statusOptions as opt (opt.value)}
@@ -490,7 +634,7 @@
         </Label>
         <Select.Root
           type="single"
-          value={data.query.mt ?? ''}
+          value={view.query.mt ?? ''}
           onValueChange={(v: string) => navigate({ mt: v || null, page: null })}
         >
           <Select.Trigger
@@ -499,11 +643,11 @@
             class="w-full text-white"
             aria-label="Model type"
           >
-            {data.query.mt || 'All types'}
+            {view.query.mt || 'All types'}
           </Select.Trigger>
           <Select.Content>
             <Select.Item value="" label="All types" />
-            {#each data.modelTypes as mt (mt)}
+            {#each view.modelTypes as mt (mt)}
               <Select.Item value={mt} label={mt} />
             {/each}
           </Select.Content>
@@ -515,7 +659,7 @@
         </Label>
         <Select.Root
           type="single"
-          value={data.query.bm ?? ''}
+          value={view.query.bm ?? ''}
           onValueChange={(v: string) => navigate({ bm: v || null, page: null })}
         >
           <Select.Trigger
@@ -524,11 +668,11 @@
             class="w-full text-white"
             aria-label="Base model"
           >
-            {data.query.bm || 'All base models'}
+            {view.query.bm || 'All base models'}
           </Select.Trigger>
           <Select.Content>
             <Select.Item value="" label="All base models" />
-            {#each data.baseModels as bm (bm)}
+            {#each view.baseModels as bm (bm)}
               <Select.Item value={bm} label={bm} />
             {/each}
           </Select.Content>
@@ -537,7 +681,7 @@
       <div class="flex items-center gap-2">
         <Checkbox
           id="filter-access"
-          checked={data.query.access}
+          checked={view.query.access}
           onCheckedChange={(c) => navigate({ access: c ? '1' : null, page: null })}
         />
         <Label for="filter-access" class="cursor-pointer font-normal">Has early / paid access</Label
@@ -548,7 +692,7 @@
           >Licensing fee</legend
         >
         <RadioGroup
-          value={data.query.fee ?? ''}
+          value={view.query.fee ?? ''}
           onValueChange={(v) => navigate({ fee: v || null, page: null })}
         >
           {#each feeOptions as opt (opt.value)}
@@ -575,13 +719,13 @@
   </Popover.Root>
   <Select.Root
     type="single"
-    value={data.query.sort}
+    value={view.query.sort}
     onValueChange={(v: string) => {
       if (v) navigate({ sort: v, page: null });
     }}
   >
     <Select.Trigger size="default" class="w-44 text-white" aria-label="Sort">
-      {data.query.sort === 'name' ? 'Name' : 'Recently updated'}
+      {view.query.sort === 'name' ? 'Name' : 'Recently updated'}
     </Select.Trigger>
     <Select.Content>
       <Select.Item value="recent" label="Recently updated" />
@@ -591,18 +735,18 @@
 </div>
 
 <div class="mb-4 flex items-center justify-between gap-2">
-  <p class="text-xs text-dark-2">{data.total} model{data.total === 1 ? '' : 's'}</p>
+  <p class="text-xs text-dark-2">{view.total} model{view.total === 1 ? '' : 's'}</p>
   <label class="flex items-center gap-1.5 text-xs text-dark-2">
     Per page
     <Select.Root
       type="single"
-      value={String(data.perPage)}
+      value={String(view.perPage)}
       onValueChange={(v: string) => {
         if (v) navigate({ ps: v, page: null });
       }}
     >
       <Select.Trigger size="sm" class="w-16 text-white" aria-label="Models per page">
-        {data.perPage}
+        {view.perPage}
       </Select.Trigger>
       <Select.Content>
         {#each data.pageSizeOptions as n (n)}
@@ -613,39 +757,18 @@
   </label>
 </div>
 
-{#if overCapVersions.length > 0}
-  <div class="mb-3 rounded-lg border border-yellow-5/30 bg-yellow-5/10 px-3 py-2 text-sm">
-    <p class="font-medium text-yellow-4">
-      {overCapVersions.length} version{overCapVersions.length === 1 ? '' : 's'} earn less than the fee
-      you set
-    </p>
-    <p class="mt-0.5 text-xs text-dark-2">
-      Your membership tier caps what a generation can charge, so these are billed at the capped rate
-      — the stored fee applies again if you upgrade.
-    </p>
-    <ul class="mt-1.5 max-h-24 overflow-y-auto text-xs text-dark-1">
-      {#each overCapVersions.slice(0, 10) as v (v.name)}
-        <li class="truncate">
-          {v.name} — set {v.stored} ⚡, earning {v.effective} ⚡ / generation
-        </li>
-      {/each}
-    </ul>
-    {#if overCapVersions.length > 10}
-      <p class="mt-1 text-xs text-dark-2">…and {overCapVersions.length - 10} more.</p>
-    {/if}
-  </div>
-{/if}
-
 {#if data.total > 0 || selected.size > 0}
   <BulkBar
     count={selected.size}
-    matchingCount={data.matchingVersionIds.length}
+    matchingCount={view.matchingVersionIds.length}
     {allMatchingSelected}
     {offViewCount}
     {exportHref}
     onAction={(a) => (bulkAction = a)}
+    onStartSale={() => goto(`/sales?versions=${selectedIds.join(',')}`)}
+    salesEnabled={data.salesEnabled}
     onSelectAllMatching={() => {
-      for (const id of data.matchingVersionIds) selected.add(id);
+      for (const id of view.matchingVersionIds) selected.add(id);
     }}
     onClear={() => selected.clear()}
   />
@@ -657,166 +780,196 @@
   limits={bulkLimits}
   feeCapsByType={selectionFeeCaps}
   capTier={tier}
-  capFor={(t, imgs) => feeMaxFor(strictestLimits(t), imgs)}
-  accessCapFor={(t) => finiteOrNull(maxPaidAccessPrice(t))}
   caps={data.caps}
   suggestedFee={bulkSuggested}
   needsAffirmation={selectionNeedsAffirmation}
-  permanentSlotsLeft={remainingPermanentSlots - newSlotsUsed + selected.size}
+  pricingSlotsLeft={remainingPricingSlots - newSlotsUsed + selected.size}
+  pricingSlotsRemaining={remainingPricingSlots}
+  feeSlotsRemaining={remainingFeeSlots}
 />
 
-{#if data.models.length === 0}
-  <div class="placeholder">
-    {#if filterActive}
-      No models match your filters. <button
-        class="underline"
-        onclick={() =>
-          navigate({ q: null, fee: null, bm: null, status: null, access: null, page: null })}
-        >Clear</button
-      >
-    {:else}
-      You have no models yet. <a href="https://civitai.com/models/create"
-        >Upload one on civitai.com</a
-      > to get started.
-    {/if}
-  </div>
-{:else}
-  <div class="flex flex-col gap-5">
-    {#each data.models as model (model.id)}
-      <Card>
-        <CardHeader>
-          <div class="flex items-center gap-3">
-            {#if model.versions.length > 0}
-              {@const mId = `m-${model.id}`}
-              {@const picked = selectedCount(model)}
-              <Checkbox
-                id={mId}
-                checked={picked === model.versions.length}
-                indeterminate={picked > 0 && picked < model.versions.length}
-                onCheckedChange={() => toggleModel(model)}
-                aria-label="Select all versions of {model.name}"
-              />
-              <Label for={mId} class="cursor-pointer">
+<!-- Dimmed rather than emptied while a search settles: replacing results with a spinner makes every
+     keystroke flash the whole list, and the previous rows are still the honest answer until new ones land. -->
+<div aria-busy={searching} class={searching ? 'opacity-60 transition-opacity' : undefined}>
+  {#if view.models.length === 0}
+    <div class="placeholder">
+      {#if filterActive}
+        No models match your filters. <button
+          class="underline"
+          onclick={() =>
+            navigate({
+              q: null,
+              fee: null,
+              bm: null,
+              mt: null,
+              usage: null,
+              status: null,
+              access: null,
+              page: null,
+            })}>Clear</button
+        >
+      {:else if view.query.saleOnly}
+        Nothing here can go on sale. A sale discounts a permanent access price, so price a version
+        first — early access and licensing fees aren't what a sale takes Buzz off.
+        <a href="/models">Set a price</a>
+      {:else}
+        You have no models yet. <a href="https://civitai.com/models/create"
+          >Upload one on civitai.com</a
+        > to get started.
+      {/if}
+    </div>
+  {:else}
+    <div class="flex flex-col gap-5">
+      {#each view.models as model (model.id)}
+        <Card>
+          <CardHeader>
+            <div class="flex items-center gap-3">
+              {#if model.versions.length > 0}
+                {@const mId = `m-${model.id}`}
+                {@const picked = selectedCount(model)}
+                <Checkbox
+                  id={mId}
+                  checked={picked === model.versions.length}
+                  indeterminate={picked > 0 && picked < model.versions.length}
+                  onCheckedChange={() => toggleModel(model)}
+                  aria-label="Select all versions of {model.name}"
+                />
+                <Label for={mId} class="cursor-pointer">
+                  <CardTitle class="text-base text-white">{model.name}</CardTitle>
+                </Label>
+              {:else}
                 <CardTitle class="text-base text-white">{model.name}</CardTitle>
-              </Label>
+              {/if}
+              <Badge variant="secondary">{model.type}</Badge>
+              {#if model.poi}
+                <Badge
+                  variant="outline"
+                  class="border-yellow-5/30 bg-yellow-5/10 text-yellow-5"
+                  title={POI_BLOCKED_HINT}
+                >
+                  Real person
+                </Badge>
+              {/if}
+              <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
+                {model.status}
+              </Badge>
+              {#if model.versions.length > 0}
+                <a
+                  href={modelUrl(model.id, model)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  title="View on Civitai"
+                  aria-label="View {model.name} on Civitai"
+                  class="shrink-0 rounded-md p-1 text-dark-2 hover:bg-dark-6 hover:text-white"
+                >
+                  <IconExternalLink size={16} />
+                </a>
+              {/if}
+            </div>
+          </CardHeader>
+          <CardContent class="p-0">
+            {#if model.versions.length === 0}
+              <p class="px-5 py-4 text-sm text-dark-2">No versions.</p>
             {:else}
-              <CardTitle class="text-base text-white">{model.name}</CardTitle>
-            {/if}
-            <Badge variant="secondary">{model.type}</Badge>
-            <Badge variant={model.status === 'Published' ? 'default' : 'outline'} class="ml-auto">
-              {model.status}
-            </Badge>
-            {#if model.versions.length > 0}
-              <a
-                href={modelUrl(model.id, model)}
-                target="_blank"
-                rel="noopener noreferrer"
-                title="View on Civitai"
-                aria-label="View {model.name} on Civitai"
-                class="shrink-0 rounded-md p-1 text-dark-2 hover:bg-dark-6 hover:text-white"
-              >
-                <IconExternalLink size={16} />
-              </a>
-            {/if}
-          </div>
-        </CardHeader>
-        <CardContent class="p-0">
-          {#if model.versions.length === 0}
-            <p class="px-5 py-4 text-sm text-dark-2">No versions.</p>
-          {:else}
-            <ul class="divide-y divide-dark-4 border-t border-dark-4">
-              {#each model.versions as version (version.id)}
-                {@const chip = feeChip(version.licensingFee, model.type, version.baseModel)}
-                {@const cbId = `v-${version.id}`}
-                <li>
-                  <div
-                    class="flex w-full items-center gap-3 px-5 hover:bg-dark-6/40"
-                    class:bg-dark-6={selected.has(version.id)}
-                  >
-                    <Checkbox
-                      id={cbId}
-                      checked={selected.has(version.id)}
-                      onCheckedChange={() => toggleVersion(version.id)}
-                      aria-label="Select {version.name}"
-                      class="shrink-0"
-                    />
-                    <button
-                      type="button"
-                      onclick={() => openEditor(version, model.type)}
-                      class="flex min-w-0 flex-1 cursor-pointer flex-col gap-1.5 py-3 text-left sm:flex-row sm:items-center sm:gap-3"
+              <ul class="divide-y divide-dark-4 border-t border-dark-4">
+                {#each model.versions as version (version.id)}
+                  {@const chip = feeChip(version.licensingFee)}
+                  {@const cbId = `v-${version.id}`}
+                  <li>
+                    <div
+                      class="flex w-full items-center gap-3 px-5 hover:bg-dark-6/40"
+                      class:bg-dark-6={selected.has(version.id)}
                     >
-                      <span class="flex min-w-0 items-center gap-2 sm:flex-1">
-                        <span class="truncate text-sm font-medium text-white">{version.name}</span>
-                        <Badge variant="secondary" class="shrink-0 text-[10px]"
-                          >{version.baseModel}</Badge
-                        >
-                        <Badge
-                          variant="outline"
-                          class="{statusBadgeCls(
-                            version.status
-                          )} ml-auto shrink-0 text-[10px] uppercase tracking-wide sm:ml-0"
-                        >
-                          {version.status}
-                        </Badge>
-                      </span>
-                      <span class="flex shrink-0 items-center gap-2">
-                        {#if version.paidAccessConfig}
-                          {@const ab = accessBadge(version.paidAccessConfig)}
-                          <Badge variant="outline" class={ab.cls} title={ab.title}>{ab.label}</Badge
+                      <Checkbox
+                        id={cbId}
+                        checked={selected.has(version.id)}
+                        onCheckedChange={() => toggleVersion(version.id)}
+                        aria-label="Select {version.name}"
+                        class="shrink-0"
+                      />
+                      <button
+                        type="button"
+                        onclick={() => openEditor(version, model.type, model.poi)}
+                        class="flex min-w-0 flex-1 cursor-pointer flex-col gap-1.5 py-3 text-left sm:flex-row sm:items-center sm:gap-3"
+                      >
+                        <span class="flex min-w-0 items-center gap-2 sm:flex-1">
+                          <span class="truncate text-sm font-medium text-white">{version.name}</span
                           >
-                        {/if}
-                        <Badge variant="outline" class={chip.cls}>{chip.label}</Badge>
-                        <IconChevronRight size={16} class="ml-auto shrink-0 text-dark-2 sm:ml-0" />
-                      </span>
-                    </button>
-                  </div>
-                </li>
-              {/each}
-            </ul>
-          {/if}
-        </CardContent>
-      </Card>
-    {/each}
-  </div>
-
-  {#if data.pageCount > 1}
-    <Pagination.Root
-      count={data.total}
-      perPage={data.perPage}
-      page={data.page}
-      onPageChange={(p) => navigate({ page: String(p) })}
-      class="mt-6"
-    >
-      {#snippet children({ pages, currentPage })}
-        <Pagination.Content>
-          <Pagination.Item>
-            <Pagination.PrevButton aria-label="Previous page">
-              <IconChevronLeft size={16} />
-            </Pagination.PrevButton>
-          </Pagination.Item>
-          {#each pages as p (p.key)}
-            {#if p.type === 'ellipsis'}
-              <Pagination.Item>
-                <Pagination.Ellipsis />
-              </Pagination.Item>
-            {:else}
-              <Pagination.Item>
-                <Pagination.Link page={p} isActive={currentPage === p.value}>
-                  {p.value}
-                </Pagination.Link>
-              </Pagination.Item>
+                          <Badge variant="secondary" class="shrink-0 text-[10px]"
+                            >{version.baseModel}</Badge
+                          >
+                          <Badge
+                            variant="outline"
+                            class="{statusBadgeCls(
+                              version.status
+                            )} ml-auto shrink-0 text-[10px] uppercase tracking-wide sm:ml-0"
+                          >
+                            {version.status}
+                          </Badge>
+                        </span>
+                        <span class="flex shrink-0 items-center gap-2">
+                          {#if version.paidAccessConfig}
+                            {@const ab = accessBadge(version.paidAccessConfig)}
+                            <Badge variant="outline" class={ab.cls} title={ab.title}
+                              >{ab.label}</Badge
+                            >
+                          {/if}
+                          <Badge variant="outline" class={chip.cls}>{chip.label}</Badge>
+                          <IconChevronRight
+                            size={16}
+                            class="ml-auto shrink-0 text-dark-2 sm:ml-0"
+                          />
+                        </span>
+                      </button>
+                    </div>
+                  </li>
+                {/each}
+              </ul>
             {/if}
-          {/each}
-          <Pagination.Item>
-            <Pagination.NextButton aria-label="Next page">
-              <IconChevronRight size={16} />
-            </Pagination.NextButton>
-          </Pagination.Item>
-        </Pagination.Content>
-      {/snippet}
-    </Pagination.Root>
+          </CardContent>
+        </Card>
+      {/each}
+    </div>
+
+    {#if view.pageCount > 1}
+      <Pagination.Root
+        count={view.total}
+        perPage={view.perPage}
+        page={view.page}
+        onPageChange={(p) => navigate({ page: String(p) })}
+        class="mt-6"
+      >
+        {#snippet children({ pages, currentPage })}
+          <Pagination.Content>
+            <Pagination.Item>
+              <Pagination.PrevButton aria-label="Previous page">
+                <IconChevronLeft size={16} />
+              </Pagination.PrevButton>
+            </Pagination.Item>
+            {#each pages as p (p.key)}
+              {#if p.type === 'ellipsis'}
+                <Pagination.Item>
+                  <Pagination.Ellipsis />
+                </Pagination.Item>
+              {:else}
+                <Pagination.Item>
+                  <Pagination.Link page={p} isActive={currentPage === p.value}>
+                    {p.value}
+                  </Pagination.Link>
+                </Pagination.Item>
+              {/if}
+            {/each}
+            <Pagination.Item>
+              <Pagination.NextButton aria-label="Next page">
+                <IconChevronRight size={16} />
+              </Pagination.NextButton>
+            </Pagination.Item>
+          </Pagination.Content>
+        {/snippet}
+      </Pagination.Root>
+    {/if}
   {/if}
-{/if}
+</div>
 
 <Sheet
   open={editing != null}
@@ -826,13 +979,20 @@
 >
   <SheetContent side="right" class="w-full gap-0 overflow-y-auto p-0 sm:max-w-md">
     {#if editing}
-      {@const st = feeStatus(editing.licensingFee, editingType, editing.baseModel)}
+      {@const st = feeStatus(editing.licensingFee)}
       <SheetHeader class="border-b border-dark-4 p-5">
         <SheetTitle class="text-white">{editing.name}</SheetTitle>
         <SheetDescription>{editing.baseModel} · {editing.status}</SheetDescription>
       </SheetHeader>
 
       <div class="flex flex-col gap-6 p-5">
+        {#if editingPoi}
+          <p class="rounded-md border border-yellow-5/30 bg-yellow-5/10 p-3 text-xs text-yellow-5">
+            This model is flagged as depicting a real person, so it can't carry a licensing fee or a
+            paid-access price. Clearing an existing fee still works. If the flag is wrong, contact
+            support to have it reviewed.
+          </p>
+        {/if}
         <!-- Licensing fee -->
         <section class="flex flex-col gap-3">
           <div class="flex items-center justify-between">
@@ -850,19 +1010,14 @@
               bind:buzz={feeBuzz}
               bind:images={feeImages}
               limits={editingLimits}
-              capTier={data.caps.capTier}
-              capFor={(t, imgs) =>
-                feeMaxFor(
-                  monetizationLimits({
-                    tier: t,
-                    modelType: editingType,
-                    baseModel: editing?.baseModel,
-                  }),
-                  imgs
-                )}
               {suggested}
               ariaLabelSuffix=" for {editing.name}"
             />
+            {#if feeBlockedByFloor}
+              <p class="w-full text-xs text-yellow-5">
+                {pricingFloorMessage(data.caps.pricingFloor.score)}
+              </p>
+            {/if}
             {#if feeNeedsAffirmation}
               <RightsAffirmation bind:checked={feeAffirmed} />
             {/if}
@@ -870,7 +1025,7 @@
               type="submit"
               size="sm"
               class="w-full"
-              disabled={feeNeedsAffirmation && !feeAffirmed}
+              disabled={feeBlockedByFloor || (feeNeedsAffirmation && !feeAffirmed)}
             >
               Save fee
             </Button>
@@ -878,7 +1033,12 @@
         </section>
 
         {#key editing.id}
-          <PaidAccessEditor version={editing} onClose={() => (editing = null)} caps={data.caps} />
+          <PaidAccessEditor
+            version={editing}
+            onClose={() => (editing = null)}
+            caps={data.caps}
+            sales={view.salesByVersion[editing.id]}
+          />
         {/key}
       </div>
     {/if}

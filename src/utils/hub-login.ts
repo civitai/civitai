@@ -1,4 +1,4 @@
-import { hubLoginUrl } from '@civitai/auth/client';
+import { hubLoginUrl, SPOKE_AUTHORIZE_PATH } from '@civitai/auth/client';
 
 // THE single builder for the hub login entry URL. Now SERVER-SIDE only — used by `/login`
 // (`src/server/auth/login-redirect.ts`) and the `/api/auth/login-popup` endpoint, both of which build the URL
@@ -23,7 +23,7 @@ export function buildHubLoginUrl(opts: {
   // `reason` rides the post-login path for attribution.
   const reasonQuery = reason ? `&reason=${encodeURIComponent(reason)}` : '';
   const postLoginPath = `/api/auth/post-login?dest=${encodeURIComponent(dest)}${reasonQuery}`;
-  const landing = `${origin}/api/auth/authorize?returnUrl=${encodeURIComponent(postLoginPath)}`;
+  const landing = `${origin}${SPOKE_AUTHORIZE_PATH}?returnUrl=${encodeURIComponent(postLoginPath)}`;
   return hubLoginUrl(hub, {
     returnUrl: landing,
     reason, // hub login-funnel analytics

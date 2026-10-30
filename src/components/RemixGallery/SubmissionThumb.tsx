@@ -6,6 +6,12 @@ import type { RouterOutput } from '~/types/router';
 type PendingSubmission =
   RouterOutput['placement']['getPendingRemixGallerySubmissions']['items'][number];
 
+/** The variant that carries an asset. The other one has no pixels to open. */
+export type ViewableQueueImage = Extract<
+  NonNullable<PendingSubmission['image']>,
+  { viewable: true }
+>;
+
 /**
  * The submitted image, openable.
  *
@@ -17,16 +23,27 @@ type PendingSubmission =
  * still waiting on them, and sending the reviewer away to see one submission
  * loses the list and their place in it.
  */
-export function SubmissionThumb({ image }: { image: NonNullable<PendingSubmission['image']> }) {
+export function SubmissionThumb({
+  image,
+  label = 'Open this remix in a new tab',
+}: {
+  image: ViewableQueueImage;
+  label?: string;
+}) {
   return (
-    <Tooltip label="Open this remix in a new tab" withArrow openDelay={400}>
+    <Tooltip label={label} withArrow openDelay={400}>
       <a
         href={`/images/${image.id}`}
         target="_blank"
         rel="noreferrer"
         className="group relative block w-20 shrink-0"
       >
-        <AspectRatioImageCard aspectRatio="square" image={image} />
+        {/* `explain={false}` because this is 80px wide. The default renders the
+            centered "This image is rated X" block with its own Show button on
+            top of the corner toggle — two reveal controls on one thumbnail, and
+            at this size the centered one covers the whole tile and takes the
+            click that should open the image. The corner toggle is the reveal. */}
+        <AspectRatioImageCard aspectRatio="square" image={image} explain={false} />
         {/* Hidden until hover: the affordance has to be discoverable without
             putting a permanent scrim over every thumbnail in the queue. */}
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-md bg-black/50 opacity-0 transition-opacity group-hover:opacity-100">

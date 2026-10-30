@@ -1,0 +1,549 @@
+#!/usr/bin/env node
+/**
+ * Creates CivitaiOfficial models and versions, and writes model descriptions. See SKILL.md.
+ *
+ * Every write is a dry run that prints its payload unless --writable is passed.
+ */
+
+import { spawnSync } from 'child_process';
+import { createHash } from 'crypto';
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join, resolve } from 'path';
+import { API_KEY, API_URL, createCli, projectRoot, trpcCall, whoami } from '../mod-actions/lib.mjs';
+import {
+  attachUrl as runAttachUrl,
+  detachUrl as runDetachUrl,
+  verifyUrl as runVerifyUrl,
+} from './attach-url.mjs';
+import { queryDb } from '../generation-coverage/coverage.mjs';
+
+// constants.system.officialUserId in src/server/common/constants.ts
+const OFFICIAL_USER_ID = 12042163;
+const KINDS = { 'api-only': 'ExternalGeneration', 'hosted-weights': 'Download' };
+// The "base model" tag is what puts a model in that category on the site; it is the one tag every
+// CivitaiOfficial mirror carries.
+const BASE_MODEL_TAG = { id: 1237, name: 'base model' };
+// constants.modelFileFp in src/server/common/constants.ts — the schema takes any string, so a typo
+// would store silently and show up as a precision the file picker cannot label.
+const FP_VALUES = [
+  'fp32', 'fp16', 'bf16', 'mxfp8', 'fp8_mixed', 'fp8_scaled', 'fp8', 'int8', 'nf4', 'nvfp4', 'int4',
+];
+const HANDLERS_DIR = resolve(projectRoot, 'src/server/services/orchestrator/form-graph');
+// Mirrors LOADABLE_FILE_TYPES in src/utils/file-display-helpers.ts, which checkLoadable applies.
+const LOADABLE_FILE_TYPES = ['Model', 'Pruned Model', 'Diffusion Model', 'UNet', 'Negative', 'VAE'];
+// Closed models reachable only through their provider's API, plus fal, which hosts third-party models.
+const EXTERNAL_ENGINES = [
+  'fal', 'openai', 'google', 'gemini', 'seedance', 'seedream', 'kling', 'kling-v3',
+  'vidu', 'vidu-q3', 'sora', 'veo3', 'grok', 'minimax-h3',
+];
+
+const { flags, writable, fail, required, requiredInt, oneOf, dryRun, dispatch } = createCli([
+  'writable',
+  'no-download',
+  'optional',
+  'storage-registration-follows',
+]);
+
+const sqlString = (value) => `'${String(value).replace(/'/g, "''")}'`;
+
+// ---------------------------------------------------------------------------
+// Descriptions. A write needs --approved <hash> of the exact text the user was shown, so an edit
+// made after approval — to the file, or to the live page — fails instead of landing unseen.
+
+function readDescription() {
+  const html = readFileSync(required('description-file'), 'utf-8').trim();
+  if (!html) fail('the description file is empty');
+  return html;
+}
+
+function approvalHash(...parts) {
+  return createHash('sha256').update(parts.join('\0')).digest('hex').slice(0, 12);
+}
+
+function requireApproval(hash) {
+  if (flags.approved !== hash)
+    fail(
+      `--approved ${flags.approved ?? '(missing)'} does not match ${hash}. ` +
+        `Run without --writable, show the user the output, and get their approval of that exact text.`
+    );
+}
+
+function printApprovalFooter(hash) {
+  console.log(`\nApproval hash: ${hash}`);
+  console.log(`After the user approves exactly this, re-run with: --writable --approved ${hash}`);
+}
+
+const oneTagPerLine = (html) => `${html.replace(/>\s*</g, '>\n<')}\n`;
+
+function printDiff(current, proposed) {
+  const dir = mkdtempSync(join(tmpdir(), 'official-model-description-'));
+  const currentPath = join(dir, 'current.html');
+  const proposedPath = join(dir, 'proposed.html');
+  writeFileSync(currentPath, oneTagPerLine(current));
+  writeFileSync(proposedPath, oneTagPerLine(proposed));
+  const diff = spawnSync('git', ['diff', '--no-index', '--no-color', '--', currentPath, proposedPath], {
+    encoding: 'utf-8',
+  });
+  if (diff.error) console.log(`(git unavailable — compare ${currentPath} with ${proposedPath})`);
+  else console.log(diff.stdout);
+}
+
+// ---------------------------------------------------------------------------
+// Models
+
+async function transferToOfficial(modelId, targetUserId) {
+  await trpcCall('moderator.models.transferOwnership', { modelIds: [modelId], targetUserId });
+  console.log(`Transferred model ${modelId} to user ${targetUserId}.`);
+
+  // The transfer sets `isOfficial` server-side, but only on builds carrying that change. Asserted
+  // rather than assumed: the flag gates the official-models cache and resource attribution, and its
+  // absence is invisible on the model page — which is how 14 releases shipped without it.
+  const after = await trpcCall('model.getById', { id: modelId }, 'GET');
+  if (after.isOfficial) return;
+  await trpcCall('model.setOfficial', { id: modelId, isOfficial: true });
+  console.log(`Marked model ${modelId} official (the transfer did not).`);
+}
+
+async function createModel() {
+  const name = required('name');
+  const description = readDescription();
+  const targetUserId = flags['owner-id'] ? requiredInt('owner-id') : OFFICIAL_USER_ID;
+  const hash = approvalHash(name, description);
+  const type = flags.type ?? 'Checkpoint';
+  const payload = {
+    name,
+    description,
+    type,
+    uploadType: 'Created',
+    status: 'Draft',
+    tagsOnModels: [BASE_MODEL_TAG],
+    // Meaningless on anything but a checkpoint, and the column stays null there.
+    ...(type === 'Checkpoint' ? { checkpointType: 'Trained' } : {}),
+  };
+
+  if (!writable) {
+    console.log(`[dry run] model.upsert → ${API_URL}, then transfer to user ${targetUserId}`);
+    console.log(`Name: ${name}   Type: ${payload.type}   Status: Draft`);
+    console.log(`Checkpoint type: ${payload.checkpointType ?? 'n/a'}   Category: ${BASE_MODEL_TAG.name}\n`);
+    console.log(oneTagPerLine(description));
+    return printApprovalFooter(hash);
+  }
+  requireApproval(hash);
+
+  const model = await trpcCall('model.upsert', payload);
+  console.log(`Created Draft model ${model.id}: ${API_URL}/models/${model.id}`);
+  try {
+    await transferToOfficial(model.id, targetUserId);
+  } catch (err) {
+    console.error(`Transfer failed: ${err.message}`);
+    console.error(`The model exists and is owned by you. Retry with:`);
+    console.error(`  node .claude/skills/official-model-admin/model.mjs transfer --model-id ${model.id} --writable`);
+    process.exit(1);
+  }
+}
+
+async function updateDescription() {
+  const id = requiredInt('model-id');
+  const proposed = readDescription();
+  const model = await trpcCall('model.getById', { id }, 'GET');
+  const current = (model.description ?? '').trim();
+  if (current === proposed) return console.log('The proposed description matches the live one — nothing to do.');
+  const hash = approvalHash(current, proposed);
+
+  if (!writable) {
+    console.log(`[dry run] description update for model ${id} ("${model.name}", ${model.status}) → ${API_URL}`);
+    console.log(`${current.length} → ${proposed.length} chars\n`);
+    printDiff(current, proposed);
+    return printApprovalFooter(hash);
+  }
+  requireApproval(hash);
+
+  // model.upsert is a whole-form write, but on update it drops `status` and leaves every omitted
+  // optional field untouched — so the required fields go back at their current values.
+  await trpcCall('model.upsert', {
+    id,
+    name: model.name,
+    type: model.type,
+    uploadType: model.uploadType,
+    status: model.status,
+    description: proposed,
+  });
+  const after = await trpcCall('model.getById', { id }, 'GET');
+  console.log(`Updated the description of model ${id}: ${API_URL}/models/${id}`);
+  if ((after.description ?? '').trim() !== proposed)
+    console.log('Note: the stored HTML differs from the file — the server sanitizes and expands blurbs. Check the page.');
+}
+
+async function transfer() {
+  const modelId = requiredInt('model-id');
+  const targetUserId = flags['owner-id'] ? requiredInt('owner-id') : OFFICIAL_USER_ID;
+  if (!writable) return dryRun('moderator.models.transferOwnership', { modelIds: [modelId], targetUserId });
+  await transferToOfficial(modelId, targetUserId);
+}
+
+// ---------------------------------------------------------------------------
+// Versions: API-only (the provider runs it, no files) or hosted weights (we run it from files)
+
+/**
+ * Which handlers the form-graph dispatcher routes an ecosystem to, by reading its source.
+ *
+ * Three shapes have to be matched, and missing any of them reports the wrong handler for a
+ * family that has one — wrong evidence for the API-only/hosted-weights call this script
+ * exists to make, in the one direction nobody checks.
+ *
+ * 1. A `case` may carry a trailing brace (`case 'Grok': {`).
+ * 2. A whole family may be routed by a predicate ahead of the switch, with no line naming
+  *    the key at all. Such a predicate is named for the family prefix (`isWanEcosystem` ←
+  *    `Wan22`), which is the only link a text scan has to it, so `via` reports how the match
+ *    was made rather than leaving the inference invisible to whoever reads the evidence.
+ * 3. An arm may dispatch to SEVERAL handlers, and the choice can matter to the answer — Grok
+ *    forks image vs video, and a family can be API-only for one and hosted for the other.
+ *    Reading just the first one found also used to run PAST the end of the block, because
+  *    Grok's `return` is a multi-line ternary: it reported the NEXT case's handler.
+ */
+function handlerFor(ecosystemKey) {
+  const index = readFileSync(join(HANDLERS_DIR, 'index.ts'), 'utf-8').split('\n');
+  const isLabel = (line) => /^(case '|default:)/.test(line.trim());
+
+  let via = `case '${ecosystemKey}'`;
+  let start = index.findIndex(
+    (line) => /^case '([^']+)':\s*\{?$/.exec(line.trim())?.[1] === ecosystemKey
+  );
+  let end = -1;
+
+  if (start === -1) {
+    start = index.findIndex((line) => {
+      const guard = /^if \(is(\w+)Ecosystem\(/.exec(line.trim());
+      if (!guard || !ecosystemKey.toLowerCase().startsWith(guard[1].toLowerCase())) return false;
+      via = `the is${guard[1]}Ecosystem guard, matched on the family prefix — confirm ${ecosystemKey} is in its set`;
+      return true;
+    });
+    if (start === -1) return null;
+    end = start + 1;
+  } else {
+    // Skip the fall-through labels this arm shares, then stop at the next one.
+    let i = start;
+    while (i + 1 < index.length && isLabel(index[i + 1])) i++;
+    end = index.findIndex((line, j) => j > i && isLabel(line));
+    if (end === -1) end = index.length;
+  }
+
+  const block = index.slice(start, end).join(String.fromCharCode(10));
+  const fns = [...new Set([...block.matchAll(/\b(create\w+(?:Input|Steps))\(/g)].map((m) => m[1]))];
+  if (!fns.length) return null;
+
+  const arms = fns.map((fn) => {
+    const file = readdirSync(HANDLERS_DIR)
+      .filter((f) => f.endsWith('.handler.ts'))
+      .find((f) => readFileSync(join(HANDLERS_DIR, f), 'utf-8').includes(`export const ${fn}`));
+    if (!file) return { fn, file: null, engines: [] };
+    const source = readFileSync(join(HANDLERS_DIR, file), 'utf-8');
+    const engines = [...new Set([...source.matchAll(/engine: ['"]([\w-]+)['"]/g)].map((m) => m[1]))];
+    return { fn, file, engines };
+  });
+
+  return { via, arms };
+}
+function classifyEngine(engine) {
+  if (engine === 'comfy' || engine.endsWith('-comfy')) return 'hosted-weights';
+  if (EXTERNAL_ENGINES.includes(engine)) return 'api-only';
+  return 'unclear';
+}
+
+async function evidence() {
+  if (!flags.ecosystem && !flags['base-model']) fail('pass --ecosystem <key> and/or --base-model <name>');
+  const votes = new Set();
+
+  console.log('Evidence for API-only vs hosted weights\n');
+
+  if (flags.ecosystem) {
+    const handler = handlerFor(flags.ecosystem);
+    if (!handler) {
+      console.log(`Handler: none for ecosystem "${flags.ecosystem}" in form-graph/index.ts (new ecosystem?).`);
+      console.log('  Check @civitai/orchestration-client instead: a Comfy* input type means hosted weights;');
+      console.log('  a provider-specific input with a provider engine means API-only.');
+    } else {
+      console.log(`Routed via ${handler.via}`);
+      if (handler.arms.length > 1)
+        console.log(`  ${handler.arms.length} handlers on this arm — it forks (image vs video, or by version), and a family can be API-only for one and hosted for the other.`);
+      for (const arm of handler.arms) {
+        console.log(`Handler: ${arm.file ?? '(file not found)'} (${arm.fn})`);
+        for (const engine of arm.engines) {
+          const kind = classifyEngine(engine);
+          votes.add(kind);
+          console.log(`  engine '${engine}' → ${kind === 'unclear' ? 'unclear (a model-family engine; runs either way)' : kind}`);
+        }
+        if (arm.engines.length > 1)
+          console.log('  Several engines: the handler branches by version, so the answer depends on which branch this version takes.');
+      }
+    }
+  }
+
+  if (flags['base-model']) {
+    const { rows } = queryDb(
+      `SELECT mv.id, mv.name, mv.status, mv."usageControl",
+              (SELECT count(*) FROM "ModelFile" f WHERE f."modelVersionId" = mv.id)::int AS files
+       FROM "ModelVersion" mv JOIN "Model" m ON m.id = mv."modelId"
+       WHERE m."userId" = ${OFFICIAL_USER_ID} AND mv."baseModel" = ${sqlString(flags['base-model'])}
+       ORDER BY mv.id DESC LIMIT 10`,
+      { db: flags.db }
+    );
+    console.log(`\nExisting CivitaiOfficial versions with base model "${flags['base-model']}":`);
+    if (!rows.length) console.log('  none');
+    for (const row of rows) {
+      const kind = row.usageControl === 'ExternalGeneration' ? 'api-only' : 'hosted-weights';
+      votes.add(kind);
+      console.log(`  ${row.id}  ${row.name} — ${row.usageControl}, ${row.files} file(s), ${row.status} → ${kind}`);
+    }
+  }
+
+  const decided = [...votes].filter((v) => v !== 'unclear');
+  console.log(
+    `\nSuggestion: ${
+      decided.length === 1 ? decided[0] : decided.length > 1 ? 'MIXED — ask which one this version is' : 'no signal'
+    }`
+  );
+  console.log(`
+Confirm with the user before create-version. The deciding question:
+  Does the provider publish weights we download and run (e.g. on Hugging Face)?  → hosted-weights
+  Or is the model only reachable through the provider's own API?                 → api-only`);
+}
+
+async function createVersion() {
+  const kind = oneOf('kind', required('kind'), Object.keys(KINDS));
+  const usageControl = kind === 'hosted-weights' && flags['no-download'] ? 'Generation' : KINDS[kind];
+  const payload = {
+    modelId: requiredInt('model-id'),
+    name: required('name'),
+    baseModel: required('base-model'),
+    usageControl,
+    trainedWords: [],
+  };
+
+  if (!writable) return dryRun(`modelVersion.upsert (${kind})`, payload);
+
+  let version;
+  try {
+    version = await trpcCall('modelVersion.upsert', payload);
+  } catch (err) {
+    if (/Unknown base model/i.test(err.message))
+      fail(
+        `${err.message}\nThe server at ${API_URL} does not know this base model yet. ` +
+          `The constants PR that adds it must be deployed there first.`
+      );
+    throw err;
+  }
+
+  const { id } = version;
+  console.log(`Created Draft version ${id} on model ${payload.modelId} (${kind}, ${usageControl}).`);
+  if (kind === 'api-only')
+    return console.log('No model files needed — the provider runs it. Next: the coverage row.');
+
+  console.log(`
+This version needs its model files before it can generate. Give the user this link:
+
+  ${API_URL}/models/${payload.modelId}/model-versions/${id}/wizard?step=2
+
+(or, on the model page, the version menu → "Manage files"). When they say the upload is done:
+
+  node .claude/skills/official-model-admin/model.mjs files --version ${id}`);
+}
+
+async function files() {
+  const id = requiredInt('version');
+  const version = await trpcCall('modelVersion.getById', { id, withFiles: true }, 'GET');
+  const uploaded = version.files ?? [];
+  const uploadUrl = `${API_URL}/models/${version.model.id}/model-versions/${id}/wizard?step=2`;
+
+  console.log(`Version ${id}: ${version.model.name} — ${version.name} (${version.usageControl})\n`);
+  for (const f of uploaded)
+    console.log(
+      `  ${f.scannedAt ? 'scanned ' : 'SCANNING'}  ${f.type.padEnd(15)} ${String(f.metadata?.format ?? '?').padEnd(11)} ${f.name}`
+    );
+
+  if (version.usageControl === 'ExternalGeneration') {
+    const note = uploaded.length ? ' These files are not used for generation.' : '';
+    return console.log(`API-only version — no files needed.${note}`);
+  }
+  if (!uploaded.length) return console.log(`NOT READY: no files yet. Upload at ${uploadUrl}`);
+
+  const weights = uploaded.filter((f) => LOADABLE_FILE_TYPES.includes(f.type));
+  const scannedWeights = weights.filter((f) => f.scannedAt);
+  const needsSafeTensor = version.model.type === 'Checkpoint';
+  if (!weights.length)
+    return console.log(
+      `\nNOT READY: no weight file. One file must have type ${LOADABLE_FILE_TYPES.join(', ')}. Fix the file types at ${uploadUrl}`
+    );
+  if (!scannedWeights.length)
+    return console.log('\nNOT READY: the weight files are still being scanned. Check again in a few minutes.');
+  if (needsSafeTensor && !scannedWeights.some((f) => f.metadata?.format === 'SafeTensor'))
+    return console.log('\nNOT READY: a checkpoint needs a SafeTensor weight file. Upload one, or correct the format.');
+  if (scannedWeights.length < weights.length)
+    return console.log('\nREADY, but some weight files are still scanning — only the scanned ones can load yet.');
+  console.log('\nREADY: the weight files are uploaded and scanned. Next: the coverage row.');
+}
+
+
+// The transfer itself is queued from /moderator/huggingface-import.
+
+const formatBytes = (bytes) => {
+  if (!bytes) return '—';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** i).toFixed(i ? 2 : 0)} ${units[i]}`;
+};
+
+async function hfImports() {
+  // Filtered server-side: a client-side filter over this page silently misses anything past the
+  // limit, and reports it as "no imports" — indistinguishable from never having imported it.
+  const input = { limit: 100 };
+  if (flags.repo) input.repo = flags.repo;
+  if (flags.group) input.groupName = flags.group;
+  const shown = await trpcCall('huggingFaceImport.getAll', input, 'GET');
+  if (!shown.length) {
+    const what = flags.repo ?? flags.group;
+    return console.log(what ? `No imports matching ${what}.` : 'No imports.');
+  }
+
+  for (const row of shown) {
+    const attached = row.modelFileId
+      ? `attached → file ${row.modelFileId} on version ${row.modelVersionId}`
+      : row.status === 'Completed'
+      ? 'ready to attach'
+      : '';
+    console.log(
+      [
+        String(row.id).padStart(5),
+        row.status.padEnd(12),
+        formatBytes(row.sizeBytes).padStart(10),
+        `${row.repo}/${row.filename}`,
+        `[${row.groupName}]`,
+        row.suggestedType ? `(suggests ${row.suggestedType})` : '',
+        attached,
+      ]
+        .filter(Boolean)
+        .join('  ')
+    );
+    if (row.error) console.log(`        ${row.error}`);
+  }
+  console.log(
+    `
+Attach with: attach-import --import <id> --version <id> --type <${LOADABLE_FILE_TYPES.join('|')}|Text Encoder|Config|...>`
+  );
+  console.log('The type decides whether the version can load — read the filename, do not guess.');
+}
+
+async function attachImport() {
+  const id = requiredInt('import');
+  const modelVersionId = requiredInt('version');
+  const type = required('type');
+  // The attach writes `format` only. Precision is not inferable from the file — `w4a8` is `int4`,
+  // and every quant name is the publisher's own — so it is stated, and a wrong one misprices the
+  // download a user picks between.
+  const fp = flags.fp ? oneOf('fp', flags.fp, FP_VALUES) : undefined;
+  const metadata = { ...(fp ? { fp } : {}), ...(flags.optional ? { isRequired: false } : {}) };
+
+  if (!writable)
+    return dryRun('huggingFaceImport.attach', {
+      id,
+      modelVersionId,
+      type,
+      ...(Object.keys(metadata).length ? { 'then modelFile.update metadata': metadata } : {}),
+    });
+
+  const result = await trpcCall('huggingFaceImport.attach', { id, modelVersionId, type });
+  console.log(
+    `Attached import ${id} as model file ${result.modelFileId} on version ${result.modelVersionId}.`
+  );
+  if (Object.keys(metadata).length) {
+    // updateFile merges metadata, so this keeps the `format` the attach just wrote.
+    await trpcCall('modelFile.update', { id: result.modelFileId, metadata });
+    console.log(`  metadata: ${JSON.stringify(metadata)}`);
+  }
+  console.log('Scanning and hashing start on their own. Check with: files --version ' + modelVersionId);
+}
+
+const urlDeps = { call: trpcCall, fetchFn: fetch, apiUrl: API_URL, apiKey: API_KEY, log: console.log };
+
+async function attachUrl() {
+  const ok = await runAttachUrl(
+    {
+      fromFile: requiredInt('from-file'),
+      fromVersion: requiredInt('from-version'),
+      version: requiredInt('version'),
+      url: flags.url,
+      storageRegistrationFollows: !!flags['storage-registration-follows'],
+      writable,
+    },
+    urlDeps
+  );
+  if (!ok) process.exitCode = 1;
+}
+
+async function verifyUrl() {
+  const ok = await runVerifyUrl(
+    {
+      file: requiredInt('file'),
+      version: requiredInt('version'),
+      fromFile: requiredInt('from-file'),
+      fromVersion: requiredInt('from-version'),
+    },
+    urlDeps
+  );
+  if (!ok) process.exitCode = 1;
+}
+
+async function detachUrl() {
+  const ok = await runDetachUrl(
+    {
+      file: requiredInt('file'),
+      version: requiredInt('version'),
+      fromFile: requiredInt('from-file'),
+      fromVersion: requiredInt('from-version'),
+      writable,
+    },
+    urlDeps
+  );
+  if (!ok) process.exitCode = 1;
+}
+
+const HELP = `Usage: node .claude/skills/official-model-admin/model.mjs <command> [flags]
+
+  whoami
+  create-model        --name <n> --description-file <html> [--type Checkpoint] [--owner-id <id>] [--writable --approved <hash>]
+  update-description  --model-id <id> --description-file <html> [--writable --approved <hash>]
+  transfer            --model-id <id> [--owner-id <id>] [--writable]
+  evidence            [--ecosystem <key>] [--base-model <name>]      API-only or hosted weights?
+  create-version      --model-id <id> --name <n> --base-model <name> --kind <api-only|hosted-weights>
+                      [--no-download] [--writable]
+  files               --version <id>                                 are the uploaded files ready?
+  hf-imports          [--repo <owner/name>] [--group <name>]         Hugging Face transfers and their state
+  attach-import       --import <id> --version <id> --type <type> [--fp <precision>] [--optional] [--writable]
+  attach-url          --from-file <id> --from-version <id> --version <id> [--url <same object>]
+                      [--storage-registration-follows] [--writable]  reuse another version's stored file
+  verify-url          --file <id> --version <id> --from-file <id> --from-version <id>
+                                                                     does the copy download the source's bytes?
+  detach-url        --file <id> --version <id> --from-file <id> --from-version <id> [--writable]
+
+Description writes need --approved <hash>, printed by the dry run of the same command.
+--kind api-only → ExternalGeneration (no files); hosted-weights → Download, or Generation with --no-download.
+--owner-id defaults to CivitaiOfficial (${OFFICIAL_USER_ID}).`;
+
+dispatch(
+  {
+    whoami,
+    'create-model': createModel,
+    'update-description': updateDescription,
+    transfer,
+    evidence,
+    'create-version': createVersion,
+    files,
+    'hf-imports': hfImports,
+    'attach-import': attachImport,
+    'attach-url': attachUrl,
+    'verify-url': verifyUrl,
+    'detach-url': detachUrl,
+  },
+  HELP
+);

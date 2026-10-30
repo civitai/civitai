@@ -1,5 +1,6 @@
 import { createHash } from 'crypto';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import type * as AppListingRating from '~/server/services/blocks/app-listing-rating';
 import { TRPCError } from '@trpc/server';
 import sharp from 'sharp';
 
@@ -79,6 +80,8 @@ const { mockCreateImage } = vi.hoisted(() => ({
 
 const { mockRead, mockWrite, ids } = vi.hoisted(() => {
   const makeClient = () => ({
+    $queryRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => []),
+    $executeRaw: vi.fn(async (..._a: unknown[]): Promise<unknown> => 0),
     appListing: {
       findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
       create: vi.fn(async (args: { data: unknown }) => args.data),
@@ -127,7 +130,23 @@ const { mockNotify } = vi.hoisted(() => ({ mockNotify: vi.fn(async () => undefin
 // itself, and the sharp decode inside it, run for real against real bytes.
 const { mockS3Send } = vi.hoisted(() => ({ mockS3Send: vi.fn() }));
 
+// The guard reads the blocklist table, which this file's db fake does not model.
+vi.mock('~/server/services/blocklist.service', async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  throwOnBlockedUserContent: vi.fn(async () => undefined),
+}));
+
 vi.mock('~/server/db/client', () => ({ dbRead: mockRead, dbWrite: mockWrite }));
+
+// The post-commit history write is a seam: these suites pin what each go-live HANDS it;
+// `app-listing-rating.test.ts` pins that it writes one event only when the value changed.
+const { recordRatingChange } = vi.hoisted(() => ({
+  recordRatingChange: vi.fn(async (..._a: unknown[]): Promise<void> => undefined),
+}));
+vi.mock('~/server/services/blocks/app-listing-rating', async (importOriginal) => ({
+  ...(await importOriginal<typeof AppListingRating>()),
+  recordListingRatingChangeAfterCommit: (...a: unknown[]) => recordRatingChange(...a),
+}));
 vi.mock('~/server/services/image.service', () => ({ createImage: mockCreateImage }));
 vi.mock('~/server/utils/app-block-ids', () => ({
   newAppListingId: () => `apl_test_${++ids.n}`,
@@ -523,6 +542,35 @@ describe('withdrawExternalRequest', () => {
     });
   });
 
+  it('🔴 REPORTS WHICH CLOSE HAPPENED, so the UI can stop calling both "Submission withdrawn."', async () => {
+    // The two outcomes are not equally reversible. `'deleted'` throws away a draft;
+    // `'removed'` leaves a formerly-live listing delisted behind a `delist` event, which
+    // `republishOwnListing`'s guard reads as a moderator takedown — the owner cannot put
+    // it back and a moderator must relist. Announcing both with one sentence left an owner
+    // looking at a "removed by a moderator" state they had caused themselves, with nothing
+    // having warned them. Asserted as a PAIR so a mutant returning one constant fails.
+    async function withdrawWithListingStatus(status: string) {
+      vi.clearAllMocks();
+      mockWrite.$transaction.mockImplementation(async (cb: (tx: unknown) => Promise<unknown>) =>
+        cb(mockWrite)
+      );
+      mockWrite.appListingPublishRequest.updateMany.mockResolvedValue({ count: 1 });
+      mockWrite.appListing.updateMany.mockResolvedValue({ count: 1 });
+      mockWrite.appListing.deleteMany.mockResolvedValue({ count: 1 });
+      mockRead.appListingPublishRequest.findUnique.mockResolvedValue({
+        id: 'alpr_1',
+        status: 'pending',
+        submittedByUserId: CALLER,
+        appListingId: 'apl_1',
+      });
+      mockWrite.appListing.findUnique.mockResolvedValue({ status, slug: 'cool-app' });
+      return withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER });
+    }
+
+    expect(await withdrawWithListingStatus('pending')).toEqual({ outcome: 'removed' });
+    expect(await withdrawWithListingStatus('draft')).toEqual({ outcome: 'deleted' });
+  });
+
   it('🔴 Fix #1 regression: an intervening report-resolve event does NOT downgrade the close to owner-unpublish (still DELIST)', async () => {
     // The exploit closed: mod resets (report-driven) → mod resolves the triggering
     // report → the listing's NEWEST moderation event is now `report-resolve`, NOT
@@ -591,9 +639,11 @@ describe('withdrawExternalRequest', () => {
       submittedByUserId: CALLER,
       appListingId: 'apl_1',
     });
+    // 🔴 `'none'` rather than the outcome of whoever DID close it: this call did
+    // nothing, and the UI must not narrate someone else's close as its own.
     await expect(
       withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ outcome: 'none' });
     expect(mockWrite.appListingPublishRequest.updateMany).not.toHaveBeenCalled();
     expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
   });
@@ -610,9 +660,11 @@ describe('withdrawExternalRequest', () => {
     mockWrite.appListingPublishRequest.updateMany.mockResolvedValue({ count: 0 });
     mockWrite.appListingPublishRequest.findUnique.mockResolvedValue({ status: 'withdrawn' });
 
+    // Lost the race → `'none'`: the concurrent withdraw owns both the close and the
+    // description of it.
     await expect(
       withdrawExternalRequest({ publishRequestId: 'alpr_1', userId: CALLER })
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ outcome: 'none' });
     // We did not perform the withdraw → we do NOT re-delete the draft.
     expect(mockWrite.appListing.deleteMany).not.toHaveBeenCalled();
   });
@@ -689,6 +741,8 @@ function stageApproveScenario(listing: {
     name: 'Cool App',
     slug: 'cool-app',
     revisionOfId: null,
+    // What the author declared; the approve replaces it with the derived rating.
+    contentRating: 'pg',
     // 🔴 `kind` is REQUIRED in this fixture, not decoration. The go-live actionability
     // gate is off-site-only, so a row without a `kind` makes that gate a silent no-op
     // and every approve test would pass with the guard deleted. Off-site is what this
@@ -894,6 +948,11 @@ describe('approveExternalRequest', () => {
         // off-site-only and names the listing in its moderator-facing error.
         kind: true,
         slug: true,
+        // The two ON-SITE approve inputs, read on the PRIMARY with everything else so
+        // they are row-consistent with the flip: the app's DECLARED rating (the
+        // raise-only floor) and the backing block to un-suspend.
+        contentRating: true,
+        appBlockId: true,
       },
     });
     // The screenshot imageIds (for the floor count + the scan gate) are read from
@@ -1109,6 +1168,7 @@ describe('approveExternalRequest', () => {
   });
 
   it('TOCTOU: the guarded request flip matches 0 rows (concurrent withdraw) → NOT_PENDING, listing NOT flipped', async () => {
+    recordRatingChange.mockClear();
     stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
     // Inside the tx, the request updateMany loses the race → count 0.
     mockWrite.appListingPublishRequest.updateMany.mockResolvedValue({ count: 0 });
@@ -1118,6 +1178,7 @@ describe('approveExternalRequest', () => {
     // The tx opened + the request flip ran, but we bailed BEFORE the listing flip.
     expect(mockWrite.$transaction).toHaveBeenCalledTimes(1);
     expect(mockWrite.appListing.updateMany).not.toHaveBeenCalled();
+    expect(recordRatingChange).not.toHaveBeenCalled();
   });
 
   it('mod SELF-APPROVE is ALLOWED (v1): reviewer == submitter succeeds (no self-approve block)', async () => {
@@ -1160,6 +1221,7 @@ describe('approveExternalRequest', () => {
   }
 
   it('DERIVES the rating from the assets max nsfwLevel (icon PG, cover PG13, screenshot R → r)', async () => {
+    recordRatingChange.mockClear();
     stageApproveScenario({ iconId: 1, coverId: 2, screenshotCount: 1 });
     stagePrimaryAssetLevels([
       { id: 1, nsfwLevel: 1 }, // icon PG
@@ -1168,6 +1230,14 @@ describe('approveExternalRequest', () => {
     ]);
     await approveExternalRequest({ publishRequestId: 'alpr_1', reviewerUserId: MOD });
     expect(ratingStampedOnFlip()).toBe('r');
+    expect(recordRatingChange).toHaveBeenCalledTimes(1);
+    expect(recordRatingChange).toHaveBeenCalledWith({
+      appListingId: 'apl_1',
+      slug: 'cool-app',
+      before: 'pg',
+      after: 'r',
+      actorUserId: MOD,
+    });
   });
 
   it('a mod override ABOVE the derived rating is HONOURED (derived r, override x → x)', async () => {

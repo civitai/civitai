@@ -2,7 +2,6 @@ import type { ButtonProps } from '@mantine/core';
 import {
   Alert,
   Button,
-  Card,
   Center,
   Checkbox,
   Divider,
@@ -14,24 +13,31 @@ import {
   Text,
   Title,
 } from '@mantine/core';
+import { CardOrSection, UpsellPanel } from '~/components/Account/SettingsLayout';
 import { trpc } from '../../utils/trpc';
-import { IconExternalLink, IconInfoCircle } from '@tabler/icons-react';
+import { IconExternalLink, IconInfoCircle, IconUserPlus, IconUsers } from '@tabler/icons-react';
 import { CustomMarkdown } from '~/components/Markdown/CustomMarkdown';
 import rehypeRaw from 'rehype-raw';
 import { useState } from 'react';
 import { showErrorNotification } from '~/utils/notifications';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { dialogStore } from '~/components/Dialog/dialogStore';
-import { StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
-import {
-  useTipaltiConfigurationUrl,
-  useUserPaymentConfiguration,
-} from '~/components/UserPaymentConfiguration/util';
+import { isBlockedTipaltiStatus, StripeConnectStatus, TipaltiStatus } from '~/server/common/enums';
+import { useUserPaymentConfiguration } from '~/components/UserPaymentConfiguration/util';
 import dynamic from 'next/dynamic';
 import { useMutateUserSettings } from '~/components/UserSettings/hooks';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 
 const stripeConnectLoginUrl = 'https://connect.stripe.com/express_login';
+
+const ProviderHeading = ({ flat, children }: { flat?: boolean; children: React.ReactNode }) =>
+  flat ? (
+    <Text size="sm" fw={500}>
+      {children}
+    </Text>
+  ) : (
+    <Title order={3}>{children}</Title>
+  );
 
 export const AcceptCodeOfConduct = ({ onAccepted }: { onAccepted: () => void }) => {
   const dialog = useDialogContext();
@@ -205,7 +211,7 @@ const FeatureIntroductionModal = dynamic(
   () => import('~/components/FeatureIntroduction/FeatureIntroduction')
 );
 
-const StripeConnectConfigurationCard = () => {
+const StripeConnectConfigurationCard = ({ flat }: { flat?: boolean }) => {
   const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
   if (!userPaymentConfiguration) return null;
 
@@ -214,10 +220,10 @@ const StripeConnectConfigurationCard = () => {
     return (
       <Stack>
         <Group justify="space-between">
-          <Title order={3}>Stripe Connect</Title>
+          <ProviderHeading flat={flat}>Stripe Connect</ProviderHeading>
         </Group>
 
-        <Text>
+        <Text size={flat ? 'xs' : undefined} c={flat ? 'dimmed' : undefined}>
           We will no longer be supporting Stripe connect for payments. Please setup Tipalti in order
           to receive payments.
         </Text>
@@ -229,7 +235,7 @@ const StripeConnectConfigurationCard = () => {
     <>
       <Stack>
         <Group justify="space-between">
-          <Title order={3}>Stripe Connect</Title>
+          <ProviderHeading flat={flat}>Stripe Connect</ProviderHeading>
           <LegacyActionIcon
             color="gray"
             variant="subtle"
@@ -248,7 +254,7 @@ const StripeConnectConfigurationCard = () => {
         </Group>
       </Stack>
 
-      <Divider my="xl" />
+      {!flat && <Divider my="xl" />}
 
       {isLoading ? (
         <Center>
@@ -271,24 +277,26 @@ const StripeConnectConfigurationCard = () => {
   );
 };
 
-const TipaltiConfigurationCard = () => {
+const TipaltiConfigurationCard = ({ flat }: { flat?: boolean }) => {
   const { userPaymentConfiguration } = useUserPaymentConfiguration();
+  const descProps = flat ? ({ size: 'xs', c: 'dimmed' } as const) : {};
 
   if (!userPaymentConfiguration) return null;
 
   if (!userPaymentConfiguration?.tipaltiAccountId) {
-    // True as of now, we don't support stripe anymore
     return (
       <Stack>
         <Group justify="space-between">
-          <Title order={3}>Tipalti Account</Title>
+          <ProviderHeading flat={flat}>Tipalti</ProviderHeading>
         </Group>
 
-        <Text>
+        <Text size={flat ? 'xs' : undefined} c={flat ? 'dimmed' : undefined}>
           Tipalti is the new way to receive payments. We are slowly rolling invitations to Tipalti
           to all creators. If you have not received an invitation yet, please be patient.
         </Text>
-        <Text>A notification will be sent to you once you are invited to Tipalti.</Text>
+        <Text {...descProps}>
+          A notification will be sent to you once you are invited to Tipalti.
+        </Text>
       </Stack>
     );
   }
@@ -297,93 +305,130 @@ const TipaltiConfigurationCard = () => {
     <>
       <Stack>
         <Group justify="space-between">
-          <Title order={3}>Tipalti Account</Title>
+          <ProviderHeading flat={flat}>Tipalti</ProviderHeading>
         </Group>
       </Stack>
 
-      <Divider my="xs" />
+      {!flat && <Divider my="xs" />}
 
-      {userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() ===
-        TipaltiStatus.PendingOnboarding ||
-      userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() ===
-        TipaltiStatus.InternalValue ? (
+      {userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.PendingOnboarding ||
+      userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.InternalValue ? (
         <>
           <Stack>
-            <Text>
+            <Text {...descProps}>
               Your account requires setup. Click the button below to start/continue your setup
               process.
             </Text>
           </Stack>
         </>
-      ) : userPaymentConfiguration?.tipaltiAccountStatus.toUpperCase() === TipaltiStatus.Active ? (
+      ) : userPaymentConfiguration?.tipaltiAccountStatus === TipaltiStatus.Active ? (
         <>
           {userPaymentConfiguration?.tipaltiPaymentsEnabled ? (
-            <Text>
+            <Text {...descProps}>
               Your account is set up and ready for withdrawals. Click below to make any adjustments
               to your Tipalti account settings.
             </Text>
           ) : (
             <Stack>
-              <Text>
+              <Text {...descProps}>
                 Your account has been activated but you are still not able to withdraw. If you had a
                 failed payment, Tipalti will mark the account as not payable until you fix the
                 problem.
               </Text>
 
-              <Text>
+              <Text {...descProps}>
                 If you have not had a failed payment, this might be due to document verification and
                 validation. You will be notified once this changes.
               </Text>
-              <Text>If you think this is an error, please contact support.</Text>
+              <Text {...descProps}>If you think this is an error, please contact support.</Text>
             </Stack>
           )}
         </>
       ) : (
-        <Text>
+        <Text {...descProps}>
           We are unable to setup your account so that you can withdraw funds. You may contact
           support if you think this is a mistake to get a better understanding of the issue.
         </Text>
       )}
 
-      <Divider my="xs" />
+      {!flat && <Divider my="xs" />}
 
-      {![TipaltiStatus.Blocked, TipaltiStatus.BlockedByTipalti].some(
-        (s) => s === userPaymentConfiguration?.tipaltiAccountStatus
-      ) && (
-        <Button
-          component="a"
-          href="/tipalti/setup"
-          target="_blank"
-          rel="nofollow noreferrer"
-          classNames={{ label: 'text-white' }}
-          fullWidth
-        >
-          Set up my Tipalti Account
-        </Button>
+      {!isBlockedTipaltiStatus(userPaymentConfiguration?.tipaltiAccountStatus) && (
+        <Group justify={flat ? 'flex-end' : undefined}>
+          <Button
+            component="a"
+            href="/tipalti/setup"
+            target="_blank"
+            rel="nofollow noreferrer"
+            classNames={{ label: 'text-white' }}
+            size={flat ? 'compact-sm' : undefined}
+            fullWidth={!flat}
+          >
+            Set up my Tipalti Account
+          </Button>
+        </Group>
       )}
     </>
   );
 };
 
-export function UserPaymentConfigurationCard() {
+export function UserPaymentConfigurationCard({ flat }: { flat?: boolean } = {}) {
   const { userPaymentConfiguration, isLoading } = useUserPaymentConfiguration();
 
+  // A payment configuration is created on joining the Creator Program, so its absence is the
+  // not-a-member case rather than an error. The legacy page drops the card; the flat pane keeps the
+  // section and says how to get one.
   if (!isLoading && !userPaymentConfiguration) {
-    return null;
+    if (!flat) return null;
+
+    return (
+      <CardOrSection
+        flat
+        title="Payouts"
+        description="Where your earnings and withdrawals land."
+        id="payments"
+      >
+        <UpsellPanel
+          icon={<IconUsers size={24} />}
+          title="Creator Program members only"
+          description="Set up payouts once you join the Creator Program:"
+          perks={['Earn real cash from your creations', 'Withdraw your earnings to your bank']}
+          action={
+            <Button
+              component="a"
+              href="/creator-program"
+              variant="filled"
+              size="sm"
+              leftSection={<IconUserPlus size={16} />}
+              className="w-fit"
+            >
+              Join the Creator Program
+            </Button>
+          }
+        />
+      </CardOrSection>
+    );
   }
 
   return (
-    <Card withBorder id="payments">
+    <CardOrSection
+      flat={flat}
+      title={flat ? 'Payouts' : undefined}
+      description={flat ? 'Where your earnings and withdrawals land.' : undefined}
+      id="payments"
+    >
       {isLoading && (
         <Stack>
           <Loader />
         </Stack>
       )}
-      {userPaymentConfiguration?.stripeAccountId && <StripeConnectConfigurationCard />}
-      {userPaymentConfiguration?.tipaltiAccountId && userPaymentConfiguration?.stripeAccountId && (
-        <Divider my="xl" />
+      {userPaymentConfiguration?.stripeAccountId && (
+        <>
+          <StripeConnectConfigurationCard flat={flat} />
+          <Divider my="xl" />
+        </>
       )}
-      {!userPaymentConfiguration?.tipaltiAccountId && <TipaltiConfigurationCard />}
-    </Card>
+      <TipaltiConfigurationCard flat={flat} />
+    </CardOrSection>
   );
 }

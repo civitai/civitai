@@ -20,9 +20,10 @@ describe('new-post-comment', () => {
       clickhouse: undefined,
     }) as string;
 
-  it('notifies the post owner off the postId thread join', () => {
-    expect(sql()).toContain('JOIN "Thread" t ON t.id = c."threadId" AND t."postId" IS NOT NULL');
-    expect(sql()).toContain('JOIN "Post" p ON p.id = t."postId"');
+  it('notifies the post owner of a top-level post comment', () => {
+    expect(sql()).toContain(`c."entityType" = 'post'`);
+    expect(sql()).toContain('c."parentId" IS NULL');
+    expect(sql()).toContain('JOIN "Post" p ON p.id = c."entityId"');
     expect(sql()).toContain('p."userId" "ownerId"');
   });
 
@@ -74,6 +75,14 @@ describe('new-post-comment', () => {
 
   it('is registered in the processor list so the settings UI can toggle it', () => {
     expect(notificationProcessors['new-post-comment']).toBeDefined();
+    // ⚠️ `defaultDisabled` IS A REMOVED CONCEPT — this line can only ever read `undefined`, so
+    // `.toBeFalsy()` passes vacuously and proves nothing. `notification-settings-polarity.test.ts`
+    // actively asserts no notification source contains the field. Left in place because removing
+    // it is out of scope here, but do not copy it: the lever that decides whether the toggle
+    // renders is `toggleable` (see `getNotificationTypes`, which skips
+    // `toggleable === false && !showCategory`), and the way to assert it is against the OUTPUT —
+    // `notificationCategoryTypes[category]` must contain the type. Done that way in
+    // `comment.appListing-owner.test.ts`, where a `toggleable: false` mutant survived this shape.
     expect(notificationProcessors['new-post-comment'].defaultDisabled).toBeFalsy();
     expect(notificationProcessors['new-post-comment'].category).toBe(NotificationCategory.Comment);
   });

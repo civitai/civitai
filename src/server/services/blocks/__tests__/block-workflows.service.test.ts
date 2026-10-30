@@ -1,25 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-/**
- * G6 — persistent block-generation output queue read-model
- * (block-workflows.service). Covers the three raw-SQL helpers:
- *   - upsertBlockWorkflowOnSubmit: server-derived, fire-and-forget, NON-blocking
- *     (never throws), skips a bad status, ON CONFLICT DO NOTHING
- *   - updateBlockWorkflowStatus: idempotent status set, returns affected rows,
- *     fail-safe (returns 0 + swallows on error), skips a bad status
- *   - listMyBlockWorkflows: viewer+app scoped, bounded limit, keyset pagination
- */
-
-const { mockExecuteRaw, mockQueryRaw } = vi.hoisted(() => ({
-  mockExecuteRaw: vi.fn(),
-  mockQueryRaw: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbWrite: { $executeRaw: (...a: unknown[]) => mockExecuteRaw(...a) },
-  dbRead: { $queryRaw: (...a: unknown[]) => mockQueryRaw(...a) },
-}));
-
 import {
   upsertBlockWorkflowOnSubmit,
   updateBlockWorkflowStatus,
@@ -27,6 +7,9 @@ import {
   blockWorkflowOwnedByAppUser,
   BLOCK_WORKFLOWS_MAX_LIMIT,
 } from '../block-workflows.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockQueryRaw = dbMock.dbRead.$queryRaw;
 
 // A tagged-template mock receives (TemplateStringsArray, ...values). Pull the
 // interpolated values so we can assert the server-derived bind params.

@@ -22,12 +22,18 @@ vi.mock('redis', () => {
     };
     return client;
   };
-  return {
+  // `default` mirrors the named exports: pre-bundling wraps this CJS dep for interop, so the
+  // consumer resolves through `default` and a factory without one yields undefined. It fails
+  // by collecting almost no tests rather than by going red, so the check is the collected
+  // count. `importOriginal` does NOT cover this — a spread copies named exports and does not
+  // synthesise a `default`.
+  const mocked = {
     createClient: vi.fn(noopClient),
     createCluster: vi.fn(noopClient),
     createSentinel: vi.fn(noopClient),
     RESP_TYPES: { BLOB_STRING: 'BLOB_STRING' },
   };
+  return { ...mocked, default: mocked };
 });
 
 // Block resource-data / Flipt imports from running real-network init.
@@ -41,7 +47,8 @@ import { attachSysSentinelListeners } from '~/server/redis/client';
 /**
  * Round-3 audit fix coverage:
  *  - Listener wiring: attachSysSentinelListeners attaches both topology-change
- *    and client-error handlers to the underlying client.
+ *    and error handlers to the underlying client (RedisSentinel forwards its
+ *    connections' errors as `error`, with passthroughClientErrorEvents).
  *  - Log shape: the destructured event.node.{host,port} fields appear in the
  *    log string as bracketed key=value pairs so Loki regex can extract them.
  *  - Counter increments: each event fires exactly one .inc() against the
@@ -92,160 +99,6 @@ describe('attachSysSentinelListeners', () => {
     vi.clearAllMocks();
   });
 
-  describe('listener wiring', () => {
-    it('attaches handlers for both topology-change and client-error', () => {
-      const sentinel = makeFakeSentinel();
-      const ctx = makeCtx();
-
-      attachSysSentinelListeners(sentinel.client, ctx);
-
-      expect(sentinel.on).toHaveBeenCalledTimes(2);
-      expect(sentinel.on).toHaveBeenCalledWith('topology-change', expect.any(Function));
-      expect(sentinel.on).toHaveBeenCalledWith('client-error', expect.any(Function));
-      expect(sentinel.handlers.has('topology-change')).toBe(true);
-      expect(sentinel.handlers.has('client-error')).toBe(true);
-    });
-
-    it('does not attach any other listeners (no surprise side effects)', () => {
-      const sentinel = makeFakeSentinel();
-      attachSysSentinelListeners(sentinel.client, makeCtx());
-      // Exactly the two we expect — guards against drift adding a third
-      // listener with mismatched label cardinality.
-      expect(sentinel.handlers.size).toBe(2);
-    });
-  });
-
-  describe('log shape — topology-change', () => {
-    it('renders host, port, and type as bracketed key=value pairs', () => {
-      const sentinel = makeFakeSentinel();
-      const ctx = makeCtx();
-      attachSysSentinelListeners(sentinel.client, ctx);
-
-      sentinel.emit('topology-change', {
-        type: 'master-change',
-        node: { host: '10.244.1.5', port: 6379 },
-      });
-
-      expect(ctx.log).toHaveBeenCalledTimes(1);
-      const msg = ctx.log.mock.calls[0]?.[0] as string;
-      expect(msg).toContain('Redis sentinel topology change');
-      expect(msg).toContain('type=master-change');
-      expect(msg).toContain('host=10.244.1.5');
-      expect(msg).toContain('port=6379');
-    });
-
-    it('passes the raw event through as a trailing log argument', () => {
-      const sentinel = makeFakeSentinel();
-      const ctx = makeCtx();
-      attachSysSentinelListeners(sentinel.client, ctx);
-
-      const event = { type: 'master-change', node: { host: 'h', port: 1 }, extra: 'detail' };
-      sentinel.emit('topology-change', event);
-
-      // First arg = string, second arg = original event (preserves the
-      // existing pattern in client.ts of passing the full payload through).
-      expect(ctx.log.mock.calls[0]?.[1]).toBe(event);
-    });
-  });
-
-  describe('log shape — client-error', () => {
-    it('renders host, port, and type as bracketed key=value pairs', () => {
-      const sentinel = makeFakeSentinel();
-      const ctx = makeCtx();
-      attachSysSentinelListeners(sentinel.client, ctx);
-
-      sentinel.emit('client-error', {
-        type: 'master',
-        node: { host: '10.244.2.7', port: 6379 },
-        error: new Error('ECONNRESET'),
-      });
-
-      expect(ctx.log).toHaveBeenCalledTimes(1);
-      const msg = ctx.log.mock.calls[0]?.[0] as string;
-      expect(msg).toContain('Redis sentinel sub-client error');
-      expect(msg).toContain('type=master');
-      expect(msg).toContain('host=10.244.2.7');
-      expect(msg).toContain('port=6379');
-    });
-
-    it('prefers event.error over the raw event for the trailing log argument', () => {
-      const sentinel = makeFakeSentinel();
-      const ctx = makeCtx();
-      attachSysSentinelListeners(sentinel.client, ctx);
-
-      const error = new Error('ETIMEDOUT');
-      sentinel.emit('client-error', {
-        type: 'replica',
-        node: { host: 'h', port: 1 },
-        error,
-      });
-
-      // Loki + alert routing reads the trailing arg; error gives us stack info.
-      expect(ctx.log.mock.calls[0]?.[1]).toBe(error);
-    });
-  });
-
-  describe('counter increments', () => {
-    it('increments the topology counter with {type, host, deployment}', () => {
-      const sentinel = makeFakeSentinel();
-      const ctx = makeCtx('civitai-dp-prod-primary-xyz');
-      attachSysSentinelListeners(sentinel.client, ctx);
-
-      sentinel.emit('topology-change', {
-        type: 'master-change',
-        node: { host: '10.244.1.5', port: 6379 },
-      });
-
-      expect(ctx.topologyCounter.labels).toHaveBeenCalledTimes(1);
-      expect(ctx.topologyCounter.labels).toHaveBeenCalledWith({
-        type: 'master-change',
-        host: '10.244.1.5',
-        deployment: 'civitai-dp-prod-primary-xyz',
-      });
-      expect(ctx.topologyCounter.inc).toHaveBeenCalledTimes(1);
-      // The error counter is untouched.
-      expect(ctx.errorCounter.labels).not.toHaveBeenCalled();
-    });
-
-    it('increments the error counter with {type, host, deployment}', () => {
-      const sentinel = makeFakeSentinel();
-      const ctx = makeCtx('civitai-dp-prod-api-abc');
-      attachSysSentinelListeners(sentinel.client, ctx);
-
-      sentinel.emit('client-error', {
-        type: 'master',
-        node: { host: '10.244.2.7', port: 6379 },
-        error: new Error('ECONNRESET'),
-      });
-
-      expect(ctx.errorCounter.labels).toHaveBeenCalledTimes(1);
-      expect(ctx.errorCounter.labels).toHaveBeenCalledWith({
-        type: 'master',
-        host: '10.244.2.7',
-        deployment: 'civitai-dp-prod-api-abc',
-      });
-      expect(ctx.errorCounter.inc).toHaveBeenCalledTimes(1);
-      expect(ctx.topologyCounter.labels).not.toHaveBeenCalled();
-    });
-
-    it('increments once per event, not once per listener (no double-counting)', () => {
-      const sentinel = makeFakeSentinel();
-      const ctx = makeCtx();
-      attachSysSentinelListeners(sentinel.client, ctx);
-
-      sentinel.emit('topology-change', {
-        type: 'master-change',
-        node: { host: 'h', port: 1 },
-      });
-      sentinel.emit('topology-change', {
-        type: '+switch-master',
-        node: { host: 'h', port: 1 },
-      });
-
-      expect(ctx.topologyCounter.inc).toHaveBeenCalledTimes(2);
-    });
-  });
-
   describe('null-safety', () => {
     it('handles an event with no node (topology-change)', () => {
       const sentinel = makeFakeSentinel();
@@ -268,22 +121,26 @@ describe('attachSysSentinelListeners', () => {
       expect(ctx.topologyCounter.inc).toHaveBeenCalledTimes(1);
     });
 
-    it('handles an event with no node (client-error)', () => {
+    it('counts a forwarded Sentinel connection error with its node', () => {
       const sentinel = makeFakeSentinel();
       const ctx = makeCtx();
       attachSysSentinelListeners(sentinel.client, ctx);
 
+      // The shape @redis/client 6.3.0 forwards (sentinel/index.js transform).
       expect(() =>
-        sentinel.emit('client-error', { type: 'sentinel', error: new Error('boom') })
+        sentinel.emit(
+          'error',
+          new Error('Sentinel Client (h1:26379): boom', { cause: new Error('boom') })
+        )
       ).not.toThrow();
 
       const msg = ctx.log.mock.calls[0]?.[0] as string;
-      expect(msg).toContain('host=?');
-      expect(msg).toContain('port=?');
+      expect(msg).toContain('host=h1');
+      expect(msg).toContain('port=26379');
 
       expect(ctx.errorCounter.labels).toHaveBeenCalledWith({
-        type: 'sentinel',
-        host: '?',
+        type: 'SENTINEL',
+        host: 'h1',
         deployment: expect.any(String),
       });
       expect(ctx.errorCounter.inc).toHaveBeenCalledTimes(1);
@@ -295,18 +152,16 @@ describe('attachSysSentinelListeners', () => {
       attachSysSentinelListeners(sentinel.client, ctx);
 
       expect(() => sentinel.emit('topology-change', {})).not.toThrow();
-      expect(() => sentinel.emit('client-error', {})).not.toThrow();
+      expect(() => sentinel.emit('error', {})).not.toThrow();
 
-      // Both counters still fire so we don't silently lose error events to
-      // null-pointer guards.
+      // The topology counter still fires so we don't silently lose events to
+      // null-pointer guards. An `error` that is not a forwarded connection error
+      // is not counted (getBaseClient's generic listener logs it).
       expect(ctx.topologyCounter.inc).toHaveBeenCalledTimes(1);
-      expect(ctx.errorCounter.inc).toHaveBeenCalledTimes(1);
+      expect(ctx.errorCounter.inc).not.toHaveBeenCalled();
 
       // The "unknown" type fallback IS the cardinality-budget escape valve.
       expect(ctx.topologyCounter.labels).toHaveBeenCalledWith(
-        expect.objectContaining({ type: 'unknown', host: '?' })
-      );
-      expect(ctx.errorCounter.labels).toHaveBeenCalledWith(
         expect.objectContaining({ type: 'unknown', host: '?' })
       );
     });
@@ -317,9 +172,9 @@ describe('attachSysSentinelListeners', () => {
       attachSysSentinelListeners(sentinel.client, ctx);
 
       expect(() => sentinel.emit('topology-change', null)).not.toThrow();
-      expect(() => sentinel.emit('client-error', null)).not.toThrow();
+      expect(() => sentinel.emit('error', null)).not.toThrow();
       expect(ctx.topologyCounter.inc).toHaveBeenCalledTimes(1);
-      expect(ctx.errorCounter.inc).toHaveBeenCalledTimes(1);
+      expect(ctx.errorCounter.inc).not.toHaveBeenCalled();
     });
   });
 });

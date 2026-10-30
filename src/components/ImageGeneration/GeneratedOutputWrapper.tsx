@@ -132,6 +132,10 @@ export function GeneratedOutputWrapper({
 
   const aspectRatio = image.aspect;
 
+  // The user stopped this job, so a missing output is the outcome they asked for.
+  // Leave the slot empty — the step's cancellation alert already accounts for it.
+  if (!available && step.status === 'canceled') return <></>;
+
   // Step terminated but the blob never materialized — show an error card in the slot.
   if (!image.available && image.errored) {
     return (
@@ -223,15 +227,17 @@ export function GeneratedOutputWrapper({
               onToggleFavorite={handleToggleFavorite}
               onToggleFeedback={handleToggleFeedback}
               infoSlot={
-                <ImageMetaPopover
-                  meta={step.params as any}
-                  zIndex={isLightbox ? 410 : imageGenerationDrawerZIndex + 1}
-                  hideSoftware
-                >
-                  <LegacyActionIcon size="md" variant="subtle" color="gray">
-                    <IconInfoCircle size={16} />
-                  </LegacyActionIcon>
-                </ImageMetaPopover>
+                !image.hideDetails && (
+                  <ImageMetaPopover
+                    meta={step.params as any}
+                    zIndex={isLightbox ? 410 : imageGenerationDrawerZIndex + 1}
+                    hideSoftware
+                  >
+                    <LegacyActionIcon size="md" variant="subtle" color="gray">
+                      <IconInfoCircle size={16} />
+                    </LegacyActionIcon>
+                  </ImageMetaPopover>
+                )
               }
             />
           )}

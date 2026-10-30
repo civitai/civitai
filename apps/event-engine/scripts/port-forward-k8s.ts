@@ -1,5 +1,5 @@
 import { spawn, ChildProcess } from 'child_process';
-import { logger } from '../src/utils/logger';
+import * as readline from 'readline';
 
 interface PortForwardConfig {
   service: string;
@@ -139,7 +139,6 @@ class K8sPortForwarder {
 
     // Windows specific
     if (process.platform === 'win32') {
-      const readline = require('readline');
       const rl = readline.createInterface({
         input: process.stdin,
         output: process.stdout

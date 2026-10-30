@@ -1,25 +1,49 @@
+import { Prisma } from '@prisma/client';
+import { chunk } from 'lodash-es';
 import { isProd } from '~/env/other';
 import { env } from '~/env/server';
+import { MODERATOR_TAKEDOWN_ACTIVITIES } from '~/server/common/moderator-takedown-activities';
 import { dbRead, dbWrite } from '~/server/db/client';
 import { createJob, type JobContext } from '~/server/jobs/job';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { deleteImages, ingestImage } from '~/server/services/image.service';
+import {
+  MAX_IN_FLIGHT_RETRACTIONS,
+  newRetractionGate,
+} from '~/server/services/image-cacher-retraction';
 import { imageIngestCronCounter, imageIngestCronQueueDepth } from '~/server/prom/client';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { EntityType, JobQueueType } from '~/shared/utils/prisma/enums';
 import { getImageScanRetryLimit } from '~/server/services/image-scan-failure';
+import {
+  legalHoldUserIdsSql,
+  PLACEHOLDER_OWNER_ID,
+  userUnderLegalHoldSql,
+} from '~/server/utils/legal-hold';
+import { accountHoldSql, holdMarkerViewExists } from '~/server/services/legal-hold.service';
+import { BLOCKED_IMAGE_RETENTION_DAYS } from '@civitai/shared/job-queue';
 import { decreaseDate } from '~/utils/date-helpers';
+import {
+  appealTrainingHeld,
+  isAppealTrainingConfigured,
+} from '~/server/jobs/appeal-decision-records';
 
 const IMAGE_SCANNING_ERROR_DELAY = 60 * 1; // 1 hour
 const IMAGE_SCANNING_RETRY_LIMIT = 9;
 
-// Hard per-image backstop for a single submit. The orchestrator submit is already
-// bounded per-attempt (createImageIngestionRequest, ~15s AbortSignal), but this also
-// covers any other external await inside ingestImage (Redis flag read, prompt lookup,
-// the scanJobs UPDATE) so one hung submit ties up a single concurrency slot rather
-// than the whole run. A fired timeout just fails that image → it stays queued and is
-// retried on a later run.
+// Minutes a just-created image counts as "submit in flight" (see the double-submit
+// note below). Must stay above the upload-path submit's own ceiling or the window it
+// closes reopens; overshooting costs one cron tick of delay for an image whose submit
+// died without writing the row at all.
+const SUBMIT_IN_FLIGHT_GRACE = 2;
+
+// Hours a Pending upload that keeps getting 429s is spared the age-out to Error.
+const RATE_LIMIT_AGE_OUT_GRACE_HOURS = 6;
+
+// Hard per-image backstop. The orchestrator submit is bounded per attempt (~15s), but the
+// Flipt flag read before it and the scanJobs UPDATE after it are not, so this keeps one hung
+// image to one concurrency slot. A timed-out image stays queued for a later run.
 const INGEST_IMAGE_TIMEOUT_MS = 60 * 1000;
 
 // Per-run wall-clock budget. Once exceeded we stop STARTING new submits so the run
@@ -45,6 +69,18 @@ const INGEST_RUN_BUDGET_MS = 3.5 * 60 * 1000;
 // run can't dump more than 20 in-flight submits on the rating scanner at once (the
 // per-run pull is already capped by IMAGE_SCANNING_MAX_PER_RUN).
 const INGEST_SUBMIT_CONCURRENCY = 20;
+
+// remove-blocked-images stops starting retracting deletes past this, so the run ends inside its
+// 30-minute lock: a second run taking the lock would double the retractions in flight. A chunk is
+// five rounds of `MAX_IN_FLIGHT_RETRACTIONS` rows, each a storage delete of up to
+// `RETRACTING_STORAGE_DELETE_TIMEOUT_MS` (30s), a slot wait of up to `RETRACTION_SLOT_WAIT_MS` (60s)
+// and a request of up to `IMAGE_CACHER_WAIT_MS` (70s): ~13.5 min. So the takedown phase ends within
+// this budget (5 min) + one chunk (~13.5 min) + the persist budget (1 min) = ~19.5 min, leaving
+// ~10.5 min of the lock for the reads before it and the non-retracting deletes after it.
+// Not bounded here: the chunk's DB DELETE and its cache and search-index updates, which run on the
+// database's and those clients' own timeouts.
+const TAKEDOWN_RETRACTION_BUDGET_MS = 5 * 60 * 1000;
+const TAKEDOWN_CHUNK_ROUNDS = 5;
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
   return new Promise<T>((resolve, reject) => {
@@ -72,6 +108,11 @@ type IngestImageRow = IngestImageInput & {
    * Null for images that have never errored or errored before classification shipped.
    */
   failureClass: string | null;
+  /**
+   * When its current run of 429 submits began; null unless the last submit was a 429.
+   * A successful submit clears `scanJobs.error`, and with it this.
+   */
+  rateLimitedSince: Date | null;
   /**
    * True when the image is connected to an already-Published Article (via
    * ImageConnection) and therefore represents backfill work from the article
@@ -135,6 +176,9 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
            i."scanRequestedAt", i."createdAt", i.ingestion,
            (i."scanJobs"->>'retryCount')::int as "retryCount",
            i."scanJobs"->'error'->>'failureClass' as "failureClass",
+           CASE WHEN i."scanJobs"->'error'->>'responseStatus' = '429'
+             THEN (i."scanJobs"->'error'->>'firstRateLimitedAt')::timestamptz
+           END as "rateLimitedSince",
            EXISTS (
              SELECT 1 FROM "ImageConnection" ic
              JOIN "Article" a ON a.id = ic."entityId"
@@ -150,9 +194,22 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   const rescanDate = decreaseDate(now, env.IMAGE_SCANNING_RETRY_DELAY, 'minutes');
   const errorRetryDate = decreaseDate(now, IMAGE_SCANNING_ERROR_DELAY, 'minutes').getTime();
 
+  // A NULL `scanRequestedAt` does not yet mean "never submitted". The Image INSERT
+  // trigger queues a new image immediately, but `ingestImage` stamps
+  // `scanRequestedAt` only once its upload-path submit returns — up to ~50s later
+  // (3 attempts x the 15s per-attempt abort). A run landing inside that window reads
+  // the NULL as eligible and submits a SECOND workflow for the same image. Measured
+  // 2026-09-18: of 41,865 images scanned in 12h, 166 had two workflows, and 161 of
+  // those were created within 30s of a cron tick (uniform baseline: 9.8%).
+  const submitInFlightDate = decreaseDate(now, SUBMIT_IN_FLIGHT_GRACE, 'minutes');
+  const isSubmitInFlight = (img: IngestImageRow) =>
+    img.ingestion === 'Pending' && !img.scanRequestedAt && img.createdAt > submitInFlightDate;
+
   const pendingImages = images.filter(
     (img) =>
-      img.ingestion === 'Pending' && (!img.scanRequestedAt || img.scanRequestedAt <= rescanDate)
+      img.ingestion === 'Pending' &&
+      !isSubmitInFlight(img) &&
+      (!img.scanRequestedAt || img.scanRequestedAt <= rescanDate)
   );
 
   // Age-out safety net for never-returning Pending scans.
@@ -181,10 +238,22 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // Pending image is flipped to Error (below, in the prod block), which routes it
   // into the EXISTING capped Error-retry machinery — it gets a bounded number of
   // real retries and then terminalizes, instead of being Pending forever.
+  //
+  // A rate-limited upload is exempt: it is old because the orchestrator told us to wait,
+  // not because a scan went missing, and it keeps being re-sent as Pending. Only for
+  // RATE_LIMIT_AGE_OUT_GRACE_HOURS, so a limit that never lifts still surfaces as Error and
+  // a long storm can't hold the oldest-first window forever.
   const pendingTimeoutDate = decreaseDate(now, env.IMAGE_SCANNING_PENDING_TIMEOUT, 'minutes');
+  const rateLimitGraceDate = decreaseDate(now, RATE_LIMIT_AGE_OUT_GRACE_HOURS, 'hours');
+  const isRateLimitExempt = (img: IngestImageRow) =>
+    !!img.rateLimitedSince && img.rateLimitedSince > rateLimitGraceDate;
   const agedOutPendingIds = images
     .filter(
-      (img) => img.ingestion === 'Pending' && !img.isBackfill && img.createdAt <= pendingTimeoutDate
+      (img) =>
+        img.ingestion === 'Pending' &&
+        !img.isBackfill &&
+        !isRateLimitExempt(img) &&
+        img.createdAt <= pendingTimeoutDate
     )
     .map((img) => img.id);
   const agedOutPendingSet = new Set(agedOutPendingIds);
@@ -216,8 +285,8 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   // Error retries use a reason-aware ceiling: transient infra churn (Siglip
   // container instability, 5xx, timeouts, expiry) keeps retrying under a higher
   // bounded cap; permanent (unscannable media) gives up almost immediately;
-  // unknown keeps the historical 9-cap. retryCount always increments, so the cap
-  // is a hard backstop against re-flooding the scanner.
+  // unknown keeps the historical 9-cap. retryCount increments on every failed attempt
+  // (not on a 429), so the cap is a hard backstop against re-flooding the scanner.
   const errorImages = images.filter(
     (img) =>
       img.ingestion === 'Error' &&
@@ -246,6 +315,10 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
         ) {
           return true;
         }
+        // Skipped this run only because its first submit may still be in flight. It is
+        // neither processed nor waiting on a cooldown, so without this it prunes as
+        // stale — and if that submit died silently, nothing would ever re-drive it.
+        if (isSubmitInFlight(img)) return true;
         // Rescan waiting for the retry delay (and still under the retry cap) - KEEP.
         // Must mirror the rescanImages cooldown above, otherwise a cooled-down
         // Rescan image is neither processed nor waiting and gets wrongly pruned.
@@ -281,8 +354,11 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     return true;
   });
 
+  const submitInFlightCount = images.filter(isSubmitInFlight).length;
+
   console.log({
     pendingImages: pendingImages.length,
+    submitInFlight: submitInFlightCount,
     pendingUserUploads: pendingUserUploads.length,
     pendingBackfill: pendingBackfill.length,
     agedOutPending: agedOutPendingIds.length,
@@ -379,6 +455,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
   imageIngestCronCounter.inc({ bucket: 'waitingForRetry' }, waitingForRetryIds.size);
   imageIngestCronCounter.inc({ bucket: 'staleRemoved' }, staleIds.length);
   imageIngestCronCounter.inc({ bucket: 'agedOutPending' }, agedOutPendingIds.length);
+  imageIngestCronCounter.inc({ bucket: 'submitInFlight' }, submitInFlightCount);
 
   // Failed sends = images whose submit was attempted and returned/threw failure,
   // across every lane. Images not reached this run (budget/cancel) are neither sent
@@ -402,6 +479,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
       rescan: rescanImages.length,
       error: errorImages.length,
       agedOutPending: agedOutPendingIds.length,
+      submitInFlight: submitInFlightCount,
       waitingForRetry: waitingForRetryIds.size,
       staleRemoved: staleIds.length,
       failedSends,
@@ -429,6 +507,7 @@ export const ingestImages = createJob('ingest-images', '*/5 * * * *', async (ctx
     sentRescan: sentRescanIds.length,
     sentError: sentErrorIds.length,
     agedOutPending: agedOutPendingIds.length,
+    submitInFlight: submitInFlightCount,
     waitingForRetry: waitingForRetryIds.size,
     staleRemoved: staleIds.length,
     failedSends,
@@ -474,58 +553,238 @@ export async function sendImagesForScanBulk(
   return { sent, failed };
 }
 
-const BLOCKED_IMAGE_RETENTION_DAYS = 7;
-// Ceiling on the CSAM hold below, measured from the REPORT, not from the block: the
-// send/archive pipeline has no retry limit and no dead-letter, so a report nobody finishes
-// would otherwise hold a user's blocked media forever. Clocking it from the block instead
-// would silently shrink each report's budget by however old the block already was.
-const CSAM_HOLD_MAX_DAYS = 30;
+export { MODERATOR_TAKEDOWN_ACTIVITIES };
+
+/**
+ * The Blocked images of accounts under an account hold, read over the owners those holds can name:
+ * one with a CSAM review flag, a CSAM block, or an image a report lists. The owners are read first
+ * and materialized: as an IN subquery the planner misjudges how many there are and hash-joins every
+ * Blocked image.
+ */
+export const accountHeldBlockedImagesSql = Prisma.sql`
+  WITH owners AS MATERIALIZED (
+    SELECT c."userId" FROM (
+      SELECT "userId" FROM "Image" WHERE "needsReview" = 'csam'
+      UNION
+      SELECT "userId" FROM "Image" WHERE "blockedFor" = 'CSAM'
+      UNION
+      SELECT ri."userId"
+      FROM "CsamReport" rr
+      CROSS JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(rr.images) = 'array' THEN rr.images ELSE '[]'::jsonb END
+      ) re
+      JOIN "Image" ri
+        ON ri.id = CASE WHEN (re ->> 'id') ~ '^[0-9]{1,18}$' THEN (re ->> 'id')::bigint END
+    ) c
+    WHERE ${accountHoldSql(Prisma.raw('c."userId"'), true)}
+  )
+  SELECT i.id FROM "Image" i
+  WHERE i.ingestion = 'Blocked'::"ImageIngestionStatus"
+    AND i."userId" = ANY (ARRAY(SELECT "userId" FROM owners))
+`;
+
+/**
+ * The job's holds, re-checked by the DELETE itself. They are read once at the start of a run that
+ * can take its full lock to finish, so a hold placed mid-run would otherwise not stop it. Only valid
+ * on a statement over an unaliased "Image".
+ */
+export function purgeHoldGuard({ holdForTrainingCopy }: { holdForTrainingCopy: boolean }) {
+  return Prisma.sql`
+    "Image".ingestion = 'Blocked'::"ImageIngestionStatus"
+    AND "Image"."needsReview" IS DISTINCT FROM 'appeal'
+    -- Read off the row itself, so a flag committed while this DELETE runs still holds the image.
+    AND "Image"."needsReview" IS DISTINCT FROM 'csam'
+    AND NOT ${userUnderLegalHoldSql(Prisma.raw('"Image"."userId"'))}
+    AND NOT ${accountHoldSql(Prisma.raw('"Image"."userId"'), true)}
+    ${
+      holdForTrainingCopy
+        ? Prisma.sql`AND NOT ${appealTrainingHeld(Prisma.raw('"Image"'))}`
+        : Prisma.empty
+    }
+  `;
+}
+
+// The held sets below have no size bound, so each is bound as ONE array parameter: Prisma's `in`
+// binds a variable per id and fails past the driver's limit. Joined through unnest rather than
+// `= ANY`/`<> ALL`: under a generic plan those scan the array once per row, while the join hashes it.
+
+/** Queued blocked-image deletes among `ids` whose retention ran out by `cutoff`. */
+export function blockedQueueExpiredAmongSql(ids: number[], cutoff: Date) {
+  return Prisma.sql`
+    SELECT j."entityId" FROM "JobQueue" j
+    WHERE j.type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+      AND j."entityType" = ${EntityType.Image}::"EntityType"
+      AND EXISTS (SELECT 1 FROM unnest(${ids}::int[]) h(id) WHERE h.id = j."entityId")
+      AND j."createdAt" <= ${cutoff}
+  `;
+}
+
+/** The oldest queued blocked-image deletes, leaving out `excluded`; an empty set leaves out none. */
+export function blockedQueueBatchSql(excluded: number[], take: number) {
+  return Prisma.sql`
+    SELECT j."entityId", j."createdAt" FROM "JobQueue" j
+    WHERE j.type = ${JobQueueType.BlockedImageDelete}::"JobQueueType"
+      AND j."entityType" = ${EntityType.Image}::"EntityType"
+      AND NOT EXISTS (SELECT 1 FROM unnest(${excluded}::int[]) h(id) WHERE h.id = j."entityId")
+    ORDER BY j."createdAt" ASC
+    LIMIT ${take}
+  `;
+}
 
 export const removeBlockedImages = createJob(
   'remove-blocked-images',
   '0 * * * *',
   async () => {
-    // dbWrite because a report created within replica lag would otherwise be invisible here
-    // and its evidence purged in this same run.
-    const heldUsers = await dbWrite.$queryRaw<{ userId: number; oldestReport: Date }[]>`
-      SELECT "userId", MIN("createdAt") AS "oldestReport"
-      FROM "CsamReport"
-      WHERE "userId" IS NOT NULL
-        AND ("reportSentAt" IS NULL OR "archivedAt" IS NULL)
-      GROUP BY "userId"
-    `;
-    const holdCutoff = decreaseDate(new Date(), CSAM_HOLD_MAX_DAYS, 'days');
-    const activeUserIds = heldUsers.filter((u) => u.oldestReport > holdCutoff).map((u) => u.userId);
-    const expiredUserIds = heldUsers
-      .filter((u) => u.oldestReport <= holdCutoff)
-      .map((u) => u.userId);
+    const startedAt = Date.now();
+    // The run's counts, in Axiom: the job runner logs only that a run succeeded.
+    const finished = <T extends Record<string, number>>(summary: T) => {
+      logToAxiom({
+        name: 'remove-blocked-images',
+        type: 'info',
+        message: 'finished',
+        ...summary,
+        durationMs: Date.now() - startedAt,
+      }).catch(() => undefined);
+      return summary;
+    };
+    const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
 
-    // Excluded from the batch rather than filtered out after: held rows stay queued forever, so
-    // in an oldest-first window they would occupy the whole batch every run, stalling deletion
-    // site-wide for every other user.
-    const heldActive = activeUserIds.length
+    // Fails closed: a run that cannot read the legal holds deletes nothing.
+    let heldActive: number[];
+    try {
+      // dbWrite because a report created within replica lag would otherwise be invisible here
+      // and its evidence purged in this same run.
+      const heldUsers = await dbWrite.$queryRaw<{ userId: string }[]>(legalHoldUserIdsSql);
+      const heldUserIds = [
+        PLACEHOLDER_OWNER_ID,
+        ...heldUsers.map((u) => Number(u.userId)).filter(Number.isSafeInteger),
+      ];
+
+      // Excluded from the batch rather than filtered out after: held rows stay queued forever, so
+      // in an oldest-first window they would occupy the whole batch every run, stalling deletion
+      // site-wide for every other user.
+      heldActive = (
+        await dbRead.$queryRaw<{ id: number }[]>`
+          SELECT id FROM "Image"
+          WHERE "userId" = ANY(${heldUserIds})
+            AND ingestion = 'Blocked'::"ImageIngestionStatus"
+        `
+      ).map((x) => x.id);
+
+      // The held images that are past retention, i.e. the ones this run would otherwise delete.
+      const wouldSkip = heldActive.length
+        ? await dbRead.$queryRaw<{ entityId: number }[]>(
+            blockedQueueExpiredAmongSql(heldActive, cutoff)
+          )
+        : [];
+      if (wouldSkip.length) {
+        logToAxiom({
+          name: 'remove-blocked-images',
+          type: 'info',
+          message: 'Would skip',
+          reason: 'legal-hold',
+          imageIds: wouldSkip.map((x) => x.entityId),
+          count: wouldSkip.length,
+        });
+      }
+    } catch (e) {
+      logToAxiom({
+        name: 'remove-blocked-images',
+        type: 'error',
+        message: 'Legal hold lookup failed; nothing deleted this run',
+        error: e instanceof Error ? e.message : String(e),
+      });
+      return { skipped: 'legal-hold-lookup-failed' };
+    }
+
+    // The hold marker's statements below name its view, so on a database without it (a restore or a
+    // copy from before its migration) they would fail part-way through: nothing is deleted there.
+    if (!(await holdMarkerViewExists())) {
+      logToAxiom({
+        type: 'warning',
+        name: 'remove-blocked-images',
+        message: 'hold marker view missing: nothing deleted this run',
+      }).catch(() => undefined);
+      return { skipped: 'hold-marker-view-missing' };
+    }
+
+    // A hold that ends by its date writes nothing, so what it kept is swept here; a release purges
+    // its own. A failure costs only the sweep. Gated like the deletes below, and kept above every
+    // early return but the failed hold lookup and the missing view (which it names): it is also what
+    // clears a copy made in a race with the release.
+    if (env.DATABASE_IS_PROD)
+      await dbWrite.$executeRaw`SELECT evidence_hold_purge_unheld()`.catch((error: unknown) =>
+        logToAxiom({
+          type: 'error',
+          name: 'remove-blocked-images',
+          message: 'evidence hold sweep failed',
+          error: (error as Error)?.message,
+        }).catch(() => undefined)
+      );
+
+    // A pending review decides this image's fate, so it is held until a moderator resolves it.
+    // For an appeal, rejection clears needsReview and the next run deletes it; purging it first
+    // strands the Appeal as Pending forever.
+    // dbWrite for the same replica-lag reason as the CSAM lookup above.
+    const reviewHeldRows = await dbWrite.$queryRaw<{ id: number; needsReview: string }[]>`
+      SELECT id, "needsReview" FROM "Image"
+      WHERE "needsReview" IN ('appeal', 'csam')
+        AND ingestion = 'Blocked'::"ImageIngestionStatus"
+    `;
+    const appealHeld = reviewHeldRows.filter((x) => x.needsReview === 'appeal').map((x) => x.id);
+    const csamReviewHeld = reviewHeldRows.filter((x) => x.needsReview === 'csam').map((x) => x.id);
+
+    // An owner under a hold marker keeps every image whatever its review flag says. dbWrite for the
+    // same replica-lag reason as above. Two statements, not a join: through the view's aggregate the
+    // planner misjudges how many owners match and scans every Blocked image instead of each owner's.
+    const evidenceHeldUserIds = (
+      await dbWrite.$queryRaw<{ userId: number }[]>`SELECT "userId" FROM "EvidenceHeldUser"`
+    ).map((x) => x.userId);
+    const evidenceHeld = evidenceHeldUserIds.length
       ? (
-          await dbRead.$queryRaw<{ id: number }[]>`
+          await dbWrite.$queryRaw<{ id: number }[]>`
         SELECT id FROM "Image"
-        WHERE "userId" = ANY(${activeUserIds})
+        WHERE "userId" = ANY(${evidenceHeldUserIds}::int[])
           AND ingestion = 'Blocked'::"ImageIngestionStatus"
       `
         ).map((x) => x.id)
       : [];
 
-    const jobQueue = await dbRead.jobQueue.findMany({
-      where: {
-        type: JobQueueType.BlockedImageDelete,
-        entityType: EntityType.Image,
-        ...(heldActive.length ? { entityId: { notIn: heldActive } } : {}),
-      },
-      take: 15000,
-      orderBy: { createdAt: 'asc' },
-    });
+    // Every other hold on an account keeps all of its Blocked images, so they leave the batch for the
+    // reason above.
+    const accountHeld = (
+      await dbWrite.$queryRaw<{ id: number }[]>(accountHeldBlockedImagesSql)
+    ).map((x) => x.id);
+
+    const held = [
+      ...new Set([
+        ...heldActive,
+        ...appealHeld,
+        ...csamReviewHeld,
+        ...evidenceHeld,
+        ...accountHeld,
+      ]),
+    ];
+    const jobQueue = await dbRead.$queryRaw<{ entityId: number; createdAt: Date }[]>(
+      blockedQueueBatchSql(held, 15000)
+    );
 
     if (!jobQueue.length) {
-      console.log('No blocked images in queue', { csamHeld: heldActive.length });
-      return { processed: 0, csamHeld: heldActive.length };
+      console.log('No blocked images in queue', {
+        csamHeld: heldActive.length,
+        appealHeld: appealHeld.length,
+        csamReviewHeld: csamReviewHeld.length,
+        evidenceHeld: evidenceHeld.length,
+        accountHeld: accountHeld.length,
+      });
+      return finished({
+        processed: 0,
+        csamHeld: heldActive.length,
+        appealHeld: appealHeld.length,
+        csamReviewHeld: csamReviewHeld.length,
+        evidenceHeld: evidenceHeld.length,
+        accountHeld: accountHeld.length,
+      });
     }
 
     const imageIds = jobQueue.map((j) => j.entityId);
@@ -535,11 +794,10 @@ export const removeBlockedImages = createJob(
     // Blocked, so its createdAt is the block time. Image.createdAt would start the clock at
     // upload, making anything blocked more than a week after upload deletable on the next run.
     const blockedAt = new Map(jobQueue.map((j) => [j.entityId, j.createdAt]));
-    const cutoff = decreaseDate(new Date(), BLOCKED_IMAGE_RETENTION_DAYS, 'days');
     const images = await dbRead.$queryRaw<
-      { id: number; userId: number; blockedFor: string | null }[]
+      { id: number; userId: number; blockedFor: string | null; url: string | null }[]
     >`
-    SELECT id, "userId", "blockedFor"
+    SELECT id, "userId", "blockedFor", url
     FROM "Image"
     WHERE id = ANY(${imageIds})
       AND ingestion = 'Blocked'::"ImageIngestionStatus"
@@ -570,16 +828,13 @@ export const removeBlockedImages = createJob(
       return true;
     });
 
-    // Only the images actually being destroyed this run, so the alert can't over-report an
-    // expired hold whose images fell outside the batch or turned out to be stale.
-    const expiredUserIdSet = new Set(expiredUserIds);
-    const holdExpiredDeletions = imagesToDelete.filter((img) => expiredUserIdSet.has(img.userId));
-
     console.log({
       imagesToDelete: imagesToDelete.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
-      csamHoldExpired: holdExpiredDeletions.length,
+      appealHeld: appealHeld.length,
+      csamReviewHeld: csamReviewHeld.length,
+      evidenceHeld: evidenceHeld.length,
       staleIds: staleIds.length,
     });
 
@@ -587,27 +842,212 @@ export const removeBlockedImages = createJob(
 
     if (!env.DATABASE_IS_PROD) return { imagesToDelete: 0 };
 
-    // Emitted immediately before the delete and never truncated: once these rows and their
-    // queue entries are gone this log is the only record that the evidence existed.
-    if (holdExpiredDeletions.length) {
+    // Delete images that are past retention period.
+    //
+    // 🔴 RETRACTS — but NOT every image it deletes. `retractPublicBlobs` asks the image-cache
+    // service to also delete the image's public copies and purge them from the CDN, so a redirect
+    // cached before the delete stops resolving. Those copies are named from the image's own
+    // storage key, so this reaches only this url (see `PurgeResizeCacheRetraction`). The
+    // `cdn-access-sync` job asks for the same thing at takedown time, under the same rule.
+    //
+    // ── WHY THE DISCRIMINATOR IS POSITIVE ────────────────────────────────────────────────────
+    // This job reads a QUEUE, so what reaches this line is decided by that queue's WRITERS, not
+    // by this job's own callers. `trg_blocked_image_delete_queue` enqueues EVERY row that ends up
+    // `ingestion = 'Blocked'` with a `blockedFor` other than 'AiNotVerified', whatever put it
+    // there — including an INSERT that arrives already Blocked. That writer set is open: it grows
+    // whenever anyone adds a block path, and it already contains automated scanners.
+    //
+    // So the split must not be "retract unless X", which opts every new and every automated
+    // writer in by default and silently. It is "retract only where a human takedown decision on
+    // THIS SPECIFIC IMAGE is affirmatively on record", and the record is `ModActivity`.
+    //
+    // `ModActivity` has three writers, all server-side and none reachable from a request body:
+    // `trackModActivity` here, `recordModActivity` in the moderator app, and the auth hub's own
+    // copy, which only ever writes `entityType: 'impersonate'`. Nothing a client submits reaches
+    // it — which is the second reason it is used here rather than an `Image.metadata` marker:
+    // `Image.metadata` is a `z.record(z.string(), z.any())` that `createImage` spreads verbatim
+    // into the row, so a marker stored there is writable by the image's own uploader, in EITHER
+    // polarity. Under a positive discriminator the forgeable direction would be worse than the
+    // one this replaces: it would let an uploader trigger a retraction by forging the marker.
+    //
+    // The activity kinds counted are `MODERATOR_TAKEDOWN_ACTIVITIES`, and the row must be dated
+    // at or after the queue row (i.e. at or after the block). Both halves matter — see the
+    // constant for the enumeration behind each.
+    //
+    // ── WHAT EACH BLOCKED-IMAGE WRITER GETS, ENUMERATED OVER EVERY WRITE OF `ingestion` IN
+    //    `src`, `apps` AND `packages` ─────────────────────────────────────────────────────────
+    // RETRACTS — a moderator acted on one named image, and a per-image `review`/`bulkRemove` row
+    //   is written in the same request:
+    //     • `handleBlockImages` (image.service) WHEN CALLED WITH AN ID LIST — the `/api/mod/
+    //       remove-images` bulk removal and the moderator app's own bulk remove, which also
+    //       writes its own `bulkRemove` row per image.
+    //     • `blockImage` in the moderator app (`apps/moderator/.../image-moderation.service.ts`).
+    //     • `setTosViolationHandler` (image.controller) — the main app's single-image TOS
+    //       takedown. Its `trackModActivity` call was added alongside this split; it is a
+    //       moderator-gated per-image decision that previously left no row in the mod audit log
+    //       at all.
+    // DOES NOT RETRACT — the row is still hard-deleted here, exactly as before; only its public
+    //   copies are not deleted:
+    //     • the scan pipeline's three block outcomes — the orchestrator content rating
+    //       (`blockImageFromRating`), the prompt/text audit, and the moderation rule engine
+    //       (`image-scan-result.service` / `image-scan-pipeline`). Automated, no moderator, no
+    //       `ModActivity`.
+    //     • the CSAM branch of `report.service` — reached from `report.create`, which is a
+    //       `guardedProcedureAllowUnverifiedEmail`, so it is fired by ANY reporting user's report
+    //       and not by a moderator reviewing one. This is the writer that would be most dangerous
+    //       to opt in by default: it is the only queue writer a stranger can aim at your image.
+    //     • the Knights of New Order game (`new-order.service`), which calls `handleBlockImages`
+    //       with an id but NO `moderatorId`, so no activity row is written. A community rating
+    //       consensus is not a staff takedown decision.
+    //     • `handleBlockImages` CALLED WITH A `userId` AND NO ID LIST, and `toggleBan`'s
+    //       "remove all media" branch, and `softDeleteUser` — each blocks a whole library in one
+    //       statement. The moderator decided about an ACCOUNT, not about each image's bytes, and
+    //       the ids never reach a per-image record; `removeAllImagesForUser` says so in its own
+    //       docstring. Consistent with `api/mod/delete-user-images`, which never retracted.
+    //     • `remove-deleted-user-images` — a user deleting their OWN account with the 7-day grace
+    //       option. Nothing was moderated; it must not reach another owner's bytes.
+    //     • anything else that lands in the queue, now or later, including a writer added after
+    //       this comment was written. That is the property being bought.
+    //
+    // ── WHAT RETRACTION KEYS ON ──────────────────────────────────────────────────────────────
+    // A `MODERATOR_TAKEDOWN_ACTIVITIES` row on the image dated at or after its queue row's
+    // `createdAt`; without one the image is still deleted, but not retracted. Every un-block that
+    // writes a `review` row drops the image's queue row, so that row is never compared against a
+    // later block. A new one has to do the same.
+    //
+    // No other caller of `deleteImages` passes the option at all: an ordinary user deleting their
+    // own picture, a replaced image being reaped, an account being drained in `immediate` mode and
+    // the moderator bulk endpoint all keep today's variant-only invalidation.
+    const takedownCandidateIds = imagesToDelete.map((x) => x.id);
+    // MAX rather than an EXISTS correlated per row: one grouped read for the whole batch, and the
+    // comparison against each image's own block time then happens in memory.
+    const moderatorActivity = takedownCandidateIds.length
+      ? await dbRead.$queryRaw<{ entityId: number; lastActedAt: Date }[]>`
+      SELECT "entityId", MAX("createdAt") AS "lastActedAt"
+      FROM "ModActivity"
+      WHERE "entityId" = ANY(${takedownCandidateIds})
+        AND "entityType" = 'image'
+        AND activity = ANY(${[...MODERATOR_TAKEDOWN_ACTIVITIES]}::text[])
+      GROUP BY "entityId"
+    `
+      : [];
+    const lastActedAt = new Map(moderatorActivity.map((r) => [r.entityId, r.lastActedAt]));
+
+    // A moderator acted on this image at or after it was blocked. `queuedAt` is non-null for
+    // everything in `imagesToDelete` — that is what put it there — but it is re-read rather than
+    // asserted, so a future change to that filter degrades to NOT retracting.
+    const isTakedown = (id: number) => {
+      const queuedAt = blockedAt.get(id);
+      const actedAt = lastActedAt.get(id);
+      return !!queuedAt && !!actedAt && actedAt.getTime() >= queuedAt.getTime();
+    };
+    const takedowns = takedownCandidateIds.filter(isTakedown);
+    const deletedWithoutRetraction = takedownCandidateIds.filter((id) => !isTakedown(id));
+    const onlyWhere = purgeHoldGuard({ holdForTrainingCopy: isAppealTrainingConfigured() });
+    const deleted: number[] = [];
+    // Takedowns not started this run. Their queue rows stay, and being oldest they lead the next run.
+    const retractionDeferred: number[] = [];
+    let retractionStoppedBy: 'busy' | 'budget' | 'retry-queue-unavailable' | null = null;
+    // One gate for the run: a 429 or a timeout in any chunk stops the retractions after it.
+    const retractionGate = newRetractionGate();
+    const takedownChunkSize = MAX_IN_FLIGHT_RETRACTIONS * TAKEDOWN_CHUNK_ROUNDS;
+    const oldestFirst = [...takedowns].sort(
+      (a, b) => (blockedAt.get(a)?.getTime() ?? 0) - (blockedAt.get(b)?.getTime() ?? 0)
+    );
+    // Lazy: the takedown sync's graph (the CDN and edge-url clients) is needed only here.
+    const cdnAccess = takedowns.length
+      ? await import('~/server/services/cdn-access.service')
+      : null;
+    for (const ids of chunk(oldestFirst, takedownChunkSize)) {
+      if (retractionStoppedBy || !cdnAccess) {
+        retractionDeferred.push(...ids);
+        continue;
+      }
+      // 🔴 Before the rows are deleted: a run that dies after the DELETE and before the persist
+      // below would otherwise leave these images deleted with no record of their retraction (the
+      // next run files their queue rows as stale). Not written means not deleted.
+      let reservation: string | null;
+      try {
+        reservation = await cdnAccess.reserveTakedownRetractions(
+          ids.map((id) => ({ id, url: imageById.get(id)?.url }))
+        );
+      } catch (error) {
+        logToAxiom({
+          name: 'remove-blocked-images',
+          type: 'error',
+          message: 'could not queue takedown retractions; not deleting takedowns this run',
+          error: error instanceof Error ? error.message : String(error),
+        }).catch(() => undefined);
+        retractionStoppedBy = 'retry-queue-unavailable';
+        retractionDeferred.push(...ids);
+        continue;
+      }
+      const rows = await deleteImages(ids, true, {
+        retractPublicBlobs: true,
+        onlyWhere,
+        retractionGate,
+      });
+      deleted.push(...rows.map((x) => x.id));
+      // After the storage deletes. The CDN sync purged these urls' CDN entries at takedown time,
+      // and the retention window outlasts anything cached before the deny, so no CDN purge here.
+      // A retraction that did not land replaces its reservation with a retry that is due now (or,
+      // when another run has reserved the image since, joins that run's reservation).
+      const persisted = await cdnAccess.persistDeletedTakedowns(rows, {
+        reservation: reservation ?? undefined,
+      });
+      if (reservation) {
+        // Kept back from settling, so its reservation stays the retry:
+        // - a row whose retry could not be written;
+        // - an image gone without this delete returning it (its owner deleted it in between): it is
+        //   deleted, so its retraction is still owed, and the reservation sends it once due.
+        // Everything else settles: retracted, nothing to retract (another row still uses the url),
+        // queued (that write already released this reservation), or kept by a hold (a held image
+        // must get no retraction).
+        const returned = new Set(rows.map((x) => x.id));
+        const notReturned = ids.filter((id) => !returned.has(id));
+        const stillThere = notReturned.length
+          ? new Set(
+              (
+                await dbWrite.$queryRaw<{ id: number }[]>`
+                  SELECT id FROM "Image" WHERE id = ANY(${notReturned}::int[])`
+              ).map((x) => x.id)
+            )
+          : new Set<number>();
+        const keep = new Set([
+          ...(persisted?.unqueued ?? []),
+          ...notReturned.filter((id) => !stillThere.has(id)),
+        ]);
+        await cdnAccess.settleTakedownReservations(
+          ids.filter((id) => !keep.has(id)),
+          reservation
+        );
+      }
+      // A 429 or a timeout means the image server is at its limit or slow: more now only add load.
+      if (retractionGate.busy || rows.some((x) => x.retraction === 'busy'))
+        retractionStoppedBy = 'busy';
+      else if (Date.now() - startedAt >= TAKEDOWN_RETRACTION_BUDGET_MS)
+        retractionStoppedBy = 'budget';
+    }
+    if (retractionDeferred.length)
       logToAxiom({
         name: 'remove-blocked-images',
-        type: 'error',
-        subType: 'csam-hold-expired',
-        message: `CSAM report older than ${CSAM_HOLD_MAX_DAYS} days; purging its evidence anyway`,
-        userIds: [...new Set(holdExpiredDeletions.map((x) => x.userId))],
-        imageIds: holdExpiredDeletions.map((x) => x.id),
-        count: holdExpiredDeletions.length,
-      });
+        type: 'info',
+        message: 'retracting deletes stopped for this run; the rest stay queued',
+        reason: retractionStoppedBy,
+        count: retractionDeferred.length,
+      }).catch(() => undefined);
+    if (deletedWithoutRetraction.length > 0) {
+      const rows = await deleteImages(deletedWithoutRetraction, true, { onlyWhere });
+      deleted.push(...rows.map((x) => x.id));
     }
+    const deletedSet = new Set(deleted);
+    const deferredSet = new Set(retractionDeferred);
+    const heldAtDelete = takedownCandidateIds.filter(
+      (id) => !deletedSet.has(id) && !deferredSet.has(id)
+    );
 
-    // Delete images that are past retention period
-    if (imagesToDelete.length > 0) {
-      await deleteImages(imagesToDelete.map((x) => x.id));
-    }
-
-    // Remove processed and stale entries from queue
-    const idsToRemove = [...imagesToDelete.map((x) => x.id), ...staleIds];
+    // Remove processed and stale entries from queue. Anything the guard kept stays queued.
+    const idsToRemove = [...deleted, ...staleIds];
     if (idsToRemove.length > 0) {
       await dbWrite.$executeRaw`
       DELETE FROM "JobQueue"
@@ -617,15 +1057,43 @@ export const removeBlockedImages = createJob(
     `;
     }
 
-    return {
-      deleted: imagesToDelete.length,
+    // How far behind the job is, against what it got through this run.
+    const backlog = await dbWrite.$queryRaw<{ blockedQueue: number; retractionRetries: number }[]>`
+      SELECT
+        count(*) FILTER (WHERE type::text = ${JobQueueType.BlockedImageDelete})::int AS "blockedQueue",
+        count(*) FILTER (
+          WHERE type::text = ${JobQueueType.ImageCdnPersistRetry} AND data->>'retract' = 'true'
+        )::int AS "retractionRetries"
+      FROM "JobQueue"
+      WHERE type::text IN (${JobQueueType.BlockedImageDelete}, ${JobQueueType.ImageCdnPersistRetry})
+    `
+      .then((r) => (Array.isArray(r) ? r[0] : undefined))
+      .catch(() => undefined);
+
+    return finished({
+      deleted: deleted.length,
+      heldAtDelete: heldAtDelete.length,
+      // Reported separately so the two populations are legible in the job's own output: the
+      // second number is deletions that deliberately left the public copies to expire. It is
+      // NOT "account deletions" — it is everything with no moderator takedown on record, which is
+      // account deletions plus every automated block plus every whole-library block.
+      retracted: takedowns.filter((id) => deletedSet.has(id)).length,
+      deletedWithoutRetraction: deletedWithoutRetraction.filter((id) => deletedSet.has(id)).length,
+      retractionDeferred: retractionDeferred.length,
+      // -1 when the count could not be read.
+      blockedQueueRemaining: backlog?.blockedQueue ?? -1,
+      retractionRetriesQueued: backlog?.retractionRetries ?? -1,
       staleRemoved: staleIds.length,
       waitingForRetention: waitingIds.length,
       csamHeld: heldActive.length,
-      csamHoldExpired: holdExpiredDeletions.length,
-    };
+      appealHeld: appealHeld.length,
+      csamReviewHeld: csamReviewHeld.length,
+      evidenceHeld: evidenceHeld.length,
+      accountHeld: accountHeld.length,
+    });
   },
   // Deleting 15k images per run can exceed the 5-min default lock; a second pod
-  // grabbing the lock mid-run would double-delete and hit S3/DB twice.
-  { lockExpiration: 20 * 60 }
+  // grabbing the lock mid-run would double-delete and hit S3/DB twice. Sized by
+  // TAKEDOWN_RETRACTION_BUDGET_MS above, and under the hourly cadence.
+  { lockExpiration: 30 * 60 }
 );

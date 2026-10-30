@@ -1,9 +1,18 @@
 import type { Prisma } from '@prisma/client';
 import { chunk } from 'lodash-es';
-import { v4 as uuid } from 'uuid';
 import { CacheTTL } from '~/server/common/constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { dbRead, dbWrite } from '~/server/db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readDismissedAnnouncementIdsViaKysely,
+  readDismissedAnnouncementIdsViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
+import {
+  activeAnnouncementWhere,
+  announcementWindowOverlapsWhere,
+} from '~/server/services/announcement-window';
 import type { RedisKeyTemplateCache } from '~/server/redis/client';
 import { REDIS_KEYS, redis } from '~/server/redis/client';
 import type {
@@ -70,7 +79,7 @@ async function notifyAnnouncementTargets(
       userIds: batch,
       category: NotificationCategory.System,
       type: 'system-announcement',
-      key: `system-announcement:targeted:${announcement.id}:${uuid()}`,
+      key: `system-announcement:targeted:${announcement.id}:${crypto.randomUUID()}`,
       details: { message: announcement.title, url },
     });
   }
@@ -142,8 +151,13 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
   const { limit = DEFAULT_PAGE_SIZE, page } = data ?? {};
   const { take, skip } = getPagination(limit, page);
 
+  // The moderator list is the sitewide tool; creator-authored rows are not its
+  // subject and would swamp it. Moderating those needs its own surface.
+  const where: Prisma.AnnouncementWhereInput = { userId: null };
+
   const [items, count] = await dbRead.$transaction([
     dbRead.announcement.findMany({
+      where,
       skip,
       take,
       select: {
@@ -162,7 +176,7 @@ export async function getAnnouncementsPaged(data: GetAnnouncementsPagedSchema) {
       },
       orderBy: { startsAt: { sort: 'desc', nulls: 'last' } },
     }),
-    dbRead.announcement.count(),
+    dbRead.announcement.count({ where }),
   ]);
 
   return getPagingData(
@@ -258,37 +272,66 @@ async function getAnnouncementsCached(domain?: DomainColor) {
 }
 
 /**
- * Enabled announcements whose (open-ended) start/end window overlaps `[from, to]`.
+ * Records dismissals against the account, as a cross-device backstop for the device stores
+ * (the announcements cookie, and localStorage for creator announcements). Those stay the
+ * only thing the render path reads; this is merged into them once a session.
  *
- * The single source of truth for "is this announcement showing". `activeAnnouncementWhere`
- * is the degenerate `from === to === now` case used by the read path; the media health
- * check widens only the upper bound so it can see a banner before it goes live.
+ * Only ids that name a currently-live announcement are written. That bounds the table by the
+ * announcement lifecycle rather than by how much a client sends, and it means a user-supplied
+ * id can never reach the foreign key. `ids` is already length-bounded by the schema.
+ *
+ * Returns nothing deliberately: a count of the ids that matched would answer "which of these
+ * announcements is live right now" for any signed-in caller, including ones targeted at someone
+ * else, and no caller needs the number.
  */
-export function announcementWindowOverlapsWhere(
-  from: Date,
-  to: Date
-): Prisma.AnnouncementWhereInput {
-  return {
-    disabled: false,
-    AND: [
-      {
-        OR: [{ startsAt: { lte: to } }, { startsAt: { equals: null } }],
-      },
-      {
-        OR: [{ endsAt: { gte: from } }, { endsAt: { equals: null } }],
-      },
-    ],
-  };
+export async function dismissAnnouncementsForUser({
+  userId,
+  ids,
+}: {
+  userId: number;
+  ids: number[];
+}) {
+  // dbWrite: an announcement that went live seconds ago may not be on the replica yet, and a
+  // dismissal dropped here is silent — the user would see it again on their other device.
+  const live = await dbWrite.announcement.findMany({
+    where: { id: { in: ids }, ...activeAnnouncementWhere(new Date()) },
+    select: { id: true },
+  });
+  if (!live.length) return;
+
+  await dbWrite.announcementDismissal.createMany({
+    data: live.map(({ id }) => ({ userId, announcementId: id })),
+    skipDuplicates: true,
+  });
 }
 
 /**
- * The "currently live" predicate: enabled, and now is inside the (open-ended)
- * start/end window. Shared with the announcement media health check so a monitor
- * can never disagree with the read path about which announcements are live.
+ * The ids this user has dismissed, of the announcements that can still be shown.
+ *
+ * 🔴 The active-announcement join is the bound on this response, and it is server-side on
+ * purpose: a client filter would still have shipped every id a user ever dismissed. A row for
+ * a dead announcement is inert rather than wrong, which is what lets cleanup be lazy.
  */
-export function activeAnnouncementWhere(now: Date): Prisma.AnnouncementWhereInput {
-  return announcementWindowOverlapsWhere(now, now);
+export async function getDismissedAnnouncementIds({
+  userId,
+  domain,
+}: {
+  userId: number;
+  domain?: DomainColor;
+}) {
+  const now = new Date();
+  if (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+    return readDismissedAnnouncementIdsViaKysely((await loadKyselyDb()).kyselyRead, {
+      userId,
+      now,
+      domain,
+    });
+  return readDismissedAnnouncementIdsViaPrisma(dbRead, { userId, now, domain });
 }
+
+// The live-window predicates live in a leaf module so the kysely-hot-reads-5 Prisma reader and its
+// parity suite use them without importing this service; re-exported so every caller is unchanged.
+export { activeAnnouncementWhere, announcementWindowOverlapsWhere };
 
 /**
  * How far ahead of "now" the media health check looks.
@@ -307,13 +350,21 @@ export const ANNOUNCEMENT_MEDIA_LOOKAHEAD_MS = 24 * 60 * 60 * 1000;
  * live within `lookaheadMs`, across all domains. Used by the media health check —
  * deliberately NOT domain-filtered, since a broken banner on a single-domain
  * announcement is just as broken.
+ *
+ * Site announcements only. A creator's cover is a `coverId` Image row, never a
+ * `metadata.image` key, so creator rows can never produce a finding — and there are ~25k
+ * of them once the profile-banner migration runs, against ~260 site rows. Without this the
+ * hourly check seq-scans and ships all of them to be discarded in JS.
  */
 export async function getMonitoredAnnouncementImageRefs(
   lookaheadMs: number = ANNOUNCEMENT_MEDIA_LOOKAHEAD_MS
 ) {
   const now = new Date();
   const announcements = await dbRead.announcement.findMany({
-    where: announcementWindowOverlapsWhere(now, new Date(now.getTime() + lookaheadMs)),
+    where: {
+      userId: null,
+      ...announcementWindowOverlapsWhere(now, new Date(now.getTime() + lookaheadMs)),
+    },
     select: { id: true, metadata: true },
   });
 
@@ -336,6 +387,9 @@ async function getAnnouncements(domain?: DomainColor) {
     where: {
       ...activeAnnouncementWhere(now),
       domain: { hasSome: domain ? [DomainColor.all, domain] : [DomainColor.all] },
+      // Platform announcements only. This cache is global per domain, so an
+      // authored row reaching it would show one creator's post to everyone.
+      userId: null,
     },
     select: {
       createdAt: true,

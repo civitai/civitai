@@ -21,7 +21,7 @@ app:
    accessible, Tailwind-styled primitives we'd otherwise get wrong by hand.
 
 The shadcn-svelte primitives are already vendored as the shared **[@civitai/ui](../../packages/civitai-ui/README.md)**
-package (24 components + theme, Tailwind v4). New SvelteKit apps consume it rather than re-running the CLI —
+package (shadcn-svelte primitives + theme, Tailwind v4). New SvelteKit apps consume it rather than re-running the CLI —
 see its README for the 4-line bootstrap (`workspace:*` dep, `ssr.noExternal`, `@import "@civitai/ui/theme.css"`,
 one `@source`). Add new shared components *into* that package, not into an app.
 
@@ -97,9 +97,27 @@ Vite reads the **app's own** `.env` (from `process.cwd()`), not the repo root �
 For a `*.civitai.com` app, bind the policy and let a tiny framework adapter act on the guard's decision:
 
 ```ts
-// src/lib/server/auth.ts
-import { createSpokeGuard } from '@civitai/auth';
-export const guard = createSpokeGuard({ require: (u) => u.isModerator === true });
+// src/lib/server/auth.ts — as in apps/moderator/src/lib/server/auth.ts
+import { createRevocationCheck, createSpokeGuard, type SessionRegistryRedis } from '@civitai/auth';
+import { logToAxiom, safeError } from './axiom'; // the app's Axiom logger
+import { getSysRedis } from './redis';
+
+// A sign-out, ban or force-logout written anywhere ends the session here. When the store can't be reached the
+// check allows the request, so log each time it does.
+export const isRevoked = createRevocationCheck({
+  redis: () => getSysRedis() as unknown as SessionRegistryRedis,
+  onError: (err) => {
+    logToAxiom({
+      ...safeError(err),
+      name: 'sysredis-fail-open',
+      type: 'warning',
+      subtype: 'read-degraded',
+      fn: 'spoke isRevoked',
+    }).catch(() => undefined);
+  },
+});
+
+export const guard = createSpokeGuard({ require: (u) => u.isModerator === true, isRevoked });
 ```
 
 ```ts
@@ -107,9 +125,10 @@ export const guard = createSpokeGuard({ require: (u) => u.isModerator === true }
 export const handle = async ({ event, resolve }) => {
   const result = await guard.check(event.request.headers.get('cookie') ?? '', event.url.href);
   if (result.status === 'login')     return new Response(null, { status: 302, headers: { location: result.redirect } });
+  if (result.status === 'reauth')    return spokeReauthResponse(result.authorize);
   if (result.status === 'forbidden') return new Response(null, { status: 303, headers: { location: 'https://civitai.com' } });
   event.locals.user = result.user;
-  return resolve(event);
+  return withSetCookies(await resolve(event), result.setCookies);
 };
 ```
 

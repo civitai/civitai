@@ -50,6 +50,7 @@ import { ReferralRewardKind, ReferralRewardStatus } from '~/shared/utils/prisma/
 import type { Prisma } from '@prisma/client';
 import { constants } from '~/server/common/constants';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
+import { booleanString } from '~/utils/zod-helpers';
 
 // Hidden debug endpoint for experimenting with the referral program.
 // Guarded by the WEBHOOK_TOKEN header — not reachable by end users.
@@ -71,7 +72,7 @@ const actionSchema = z.enum([
   'reset',
 ]);
 
-const schema = z
+export const schema = z
   .object({
     action: actionSchema,
     userId: z.coerce.number().int().positive().optional(),
@@ -83,8 +84,11 @@ const schema = z
     durationDays: z.coerce.number().int().positive().optional(),
     sourceEventId: z.string().optional(),
     code: z.string().optional(),
-    settleImmediately: z.coerce.boolean().optional(),
-    confirm: z.coerce.boolean().optional(),
+    // booleanString, not z.coerce.boolean: this schema is parsed against req.query, where
+    // coerce runs JS Boolean(). `confirm` is a GUARD, so under coerce `?confirm=false`
+    // SATISFIES it and the action proceeds for real.
+    settleImmediately: booleanString().optional(),
+    confirm: booleanString().optional(),
   })
   .superRefine((data, ctx) => {
     const needsUser: z.infer<typeof actionSchema>[] = [

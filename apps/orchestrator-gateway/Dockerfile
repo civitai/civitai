@@ -10,7 +10,7 @@
 # is dev-only; the prod node server reads process.env.
 
 ##### deps — install only this app + its workspace deps (lean, frozen) ##########
-FROM node:22-alpine AS deps
+FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS deps
 RUN apk add --no-cache libc6-compat && corepack enable && corepack prepare pnpm@10.28.1 --activate
 WORKDIR /app
 
@@ -44,7 +44,7 @@ RUN --mount=type=cache,id=pnpm-store,target=/root/.local/share/pnpm/store \
     pnpm --filter @civitai/orchestrator-gateway deploy --prod --legacy --ignore-scripts /app/deploy
 
 ##### runtime ###################################################################
-FROM node:22-alpine AS runtime
+FROM node:22.23.4-alpine3.24@sha256:fe4f6d74e20370acb04ad889077d14d0f64a9c8ea6a42bc60cddf1e844699914 AS runtime
 ENV NODE_ENV=production
 WORKDIR /app
 RUN addgroup -S nodejs -g 1001 && adduser -S nodeapp -u 1001

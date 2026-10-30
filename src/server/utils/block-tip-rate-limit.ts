@@ -82,10 +82,7 @@ export async function checkBlockTipRateLimit(
 // PAGE_FORBIDDEN_SCOPES: a compromised/buggy block can neither drain an account
 // in one call (per-tip cap) nor bleed it over a day (per-user daily cap).
 
-// Per-single-tip ceiling. Bounds one call; a block can't move a large sum in one
-// shot. Conservative vs. the gen per-call budget cap (1000) — a tip is a direct
-// transfer to another user, but a legitimate creator tip can reasonably exceed
-// 1000, so this is set higher while still hard-bounding a single request.
+// Per-single-tip ceiling. Bounds one call; a block can't move a large sum in one shot.
 export const BLOCK_TIP_MAX_PER_TIP = 5_000;
 // Per-USER daily aggregate across ALL of a user's installed blocks (the key omits
 // appBlockId, mirroring BLOCK_BUZZ_CAP_PER_DAY, so a publisher can't multiply the

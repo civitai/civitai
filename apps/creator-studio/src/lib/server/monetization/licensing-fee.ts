@@ -5,17 +5,24 @@ import {
   buildRightsAffirmation,
   capMediaType,
   hasCurrentRightsAffirmation,
-  maxLicensingFee,
   maxLicensingFeeCeiling,
   raisesOverCap,
+  licensingFeeBlockedFor,
 } from '@civitai/buzz';
-import { cappedTier, type Membership } from '$lib/server/membership';
+import { type Membership } from '$lib/server/membership';
+import {
+  assertFeePricingAllowed,
+  recordPricingSlots,
+  releasableVersionIds,
+  releasePricingSlots,
+  unpricedVersionIds,
+} from '$lib/server/monetization/pricing-slot';
 import { FEE_IMAGE_OPTIONS } from '$lib/monetization/fee';
 
-// Absolute ceiling for the write path, not the creator's actual limit — that's the per-tier cap applied
-// below, which also knows the version's media type. Video allows 5x, so the ceiling has to admit the
-// higher of the two and let the tier cap reject anything the creator hasn't earned.
-const MAX_LICENSING_FEE = maxLicensingFeeCeiling('video');
+// The widest ceiling any version can earn, for the schema bound. Named apart from the package's
+// MAX_LICENSING_FEE (100, the per-image base): this is 500, and two same-named constants with
+// different values in one import graph is a trap. The per-version check below applies the real one.
+const FEE_SCHEMA_CEILING = maxLicensingFeeCeiling('video');
 
 const IMAGE_VALUES: readonly number[] = FEE_IMAGE_OPTIONS;
 
@@ -44,10 +51,10 @@ export const licensingFeeRatioSchema = z
       });
       return z.NEVER;
     }
-    if (perImage > MAX_LICENSING_FEE) {
+    if (perImage > FEE_SCHEMA_CEILING) {
       ctx.addIssue({
         code: 'custom',
-        message: `That fee is too high — the maximum is ${MAX_LICENSING_FEE} ⚡ per generation.`,
+        message: `That fee is too high — the maximum is ${FEE_SCHEMA_CEILING} ⚡ per generation.`,
       });
       return z.NEVER;
     }
@@ -63,21 +70,36 @@ export type SetFeeResult = { ok: true } | { ok: false; status: 400 | 403; error:
 export type BulkFeeResult =
   { ok: true; updated: number } | { ok: false; status: 400 | 403; error: string };
 
-// Clamp/round a raw fee to a valid 2-decimal buzz amount in [0, MAX], null to clear. undefined = invalid input.
+// Clamp/round a raw fee to a valid 2-decimal buzz amount in [0, FEE_SCHEMA_CEILING], null to clear. undefined = invalid input.
 function normalizeFee(raw: number | null): number | null | undefined {
   if (raw == null) return null;
-  if (!Number.isFinite(raw) || raw < 0 || raw > MAX_LICENSING_FEE) return undefined;
+  if (!Number.isFinite(raw) || raw < 0 || raw > FEE_SCHEMA_CEILING) return undefined;
   const rounded = Math.round(raw * 100) / 100;
   return rounded === 0 ? null : rounded; // 0 clears the fee
 }
 
 type OwnedVersion = {
   id: number;
+  label: string;
   baseModel: string;
   modelType: string;
   currentFee: number;
   affirmed: boolean;
+  poi: boolean;
 };
+
+// A bulk selection spans pages, so a refusal that only counts the offenders leaves nothing to act
+// on — "1 of them" is unfindable (868m15nnc).
+const NAMED_IN_ERROR = 5;
+// Names are unbounded, so five unabridged labels is a toast nobody reads.
+const LABEL_MAX = 60;
+function nameList(versions: OwnedVersion[]): string {
+  const shown = versions
+    .slice(0, NAMED_IN_ERROR)
+    .map((v) => (v.label.length > LABEL_MAX ? `${v.label.slice(0, LABEL_MAX - 1)}…` : v.label));
+  const rest = versions.length - shown.length;
+  return rest > 0 ? `${shown.join(', ')} and ${rest} more` : shown.join(', ');
+}
 
 // The user's own (non-deleted) versions among the given ids, with the fields the fee ops need: base model for
 // the non-commercial guard, model type for default-by-type. Doubles as the ownership check.
@@ -88,10 +110,13 @@ async function ownedVersions(userId: number, versionIds: number[]): Promise<Owne
     .innerJoin('Model', 'Model.id', 'ModelVersion.modelId')
     .select([
       'ModelVersion.id as id',
+      'ModelVersion.name as versionName',
+      'Model.name as modelName',
       'ModelVersion.baseModel as baseModel',
       'Model.type as modelType',
       'ModelVersion.licensingFee as currentFee',
       'ModelVersion.meta as meta',
+      'Model.poi as poi',
     ])
     .where('ModelVersion.id', 'in', versionIds)
     .where('Model.userId', '=', userId)
@@ -99,10 +124,12 @@ async function ownedVersions(userId: number, versionIds: number[]): Promise<Owne
     .execute();
   return rows.map((r) => ({
     id: r.id,
+    label: `${r.modelName} — ${r.versionName}`,
     baseModel: r.baseModel,
     modelType: r.modelType,
     currentFee: r.currentFee == null ? 0 : Number(r.currentFee),
     affirmed: hasCurrentRightsAffirmation(r.meta, userId),
+    poi: !!r.poi,
   }));
 }
 
@@ -175,7 +202,7 @@ export async function setLicensingFee(
     return {
       ok: false,
       status: 400,
-      error: `Fee must be between 0 and ${MAX_LICENSING_FEE} buzz.`,
+      error: `Fee must be between 0 and ${FEE_SCHEMA_CEILING} buzz.`,
     };
 
   const owned = await ownedVersions(userId, [versionId]);
@@ -187,19 +214,32 @@ export async function setLicensingFee(
       status: 400,
       error: `"${owned[0].baseModel}" is non-commercial and can't be monetized.`,
     };
+  // This write is direct SQL and never reaches the main app, so the model-level policy has to be applied
+  // here too or Creator Studio is simply a way around it.
+  if (normalized != null && licensingFeeBlockedFor({ poi: owned[0].poi }))
+    return {
+      ok: false,
+      status: 400,
+      error: "A model depicting a real person can't be monetized.",
+    };
 
-  // Anyone may charge; the tier caps how much, and it varies by model type (CU 868kj4q49).
-  const cap = maxLicensingFee(
-    cappedTier(membership),
-    owned[0].modelType,
-    capMediaType(owned[0].baseModel)
-  );
+  // The ceiling is the same for every creator; only the media axis moves it.
+  const cap = maxLicensingFeeCeiling(capMediaType(owned[0].baseModel));
   if (raisesOverCap(normalized, owned[0].currentFee, cap))
     return {
       ok: false,
       status: 403,
-      error: `Your membership allows up to ${cap} buzz per generation for this model type. Lower the fee or upgrade your membership.`,
+      error: `A licensing fee can be at most ${cap} buzz per generation. Lower the fee to continue.`,
     };
+
+  // Putting a price on a version that has none is what the eligibility floor and the monthly allowance
+  // govern. Editing or clearing one is exempt.
+  //
+  // "Has none" means no fee AND no permanent gate — `currentFee` alone would charge a creator a second
+  // time for a version they already sell, and refuse it outright at a full month.
+  const newlyPricedIds = normalized == null ? [] : await unpricedVersionIds(userId, [versionId]);
+  const gate = await assertFeePricingAllowed(userId, membership, newlyPricedIds.length);
+  if (!gate.ok) return gate;
 
   const needsAffirmation = normalized != null && !owned[0].affirmed;
   if (needsAffirmation && !rightsAffirmed)
@@ -210,7 +250,12 @@ export async function setLicensingFee(
   await dbWrite.transaction().execute(async (trx) => {
     await writeFee(trx, userId, [versionId], normalized);
     if (needsAffirmation) await stampRightsAffirmation(trx, userId, [versionId]);
+    await recordPricingSlots(userId, newlyPricedIds, trx as typeof dbWrite);
   });
+  // Outside the transaction, and only when the write cleared the fee: releasability is read from the
+  // post-write state, which an uncommitted transaction would not show.
+  if (normalized == null)
+    await releasePricingSlots(userId, await releasableVersionIds(userId, [versionId]));
   return { ok: true };
 }
 
@@ -288,7 +333,7 @@ export async function bulkSetLicensingFee(
     return {
       ok: false,
       status: 400,
-      error: `Fee must be between 0 and ${MAX_LICENSING_FEE} buzz.`,
+      error: `Fee must be between 0 and ${FEE_SCHEMA_CEILING} buzz.`,
     };
   if (versionIds.length === 0)
     return { ok: false, status: 400, error: 'Select at least one version.' };
@@ -300,32 +345,53 @@ export async function bulkSetLicensingFee(
       return {
         ok: false,
         status: 400,
-        error: `${nonCommercial.length} selected version(s) use a non-commercial base model and can't be monetized — deselect them and try again.`,
+        error: `${
+          nonCommercial.length
+        } selected version(s) use a non-commercial base model and can't be monetized: ${nameList(
+          nonCommercial
+        )}. Deselect them and try again.`,
       };
 
-    // One fee across a mixed selection, so the STRICTEST applicable cap governs — a LoRA in the batch holds
-    // the whole batch to the LoRA ceiling rather than silently overcharging on it. Still increase-only, per
-    // version: the batch is rejected only if it would RAISE some version past its own cap, so re-applying a
-    // grandfathered fee across a selection stays possible after a lapse.
-    const tier = cappedTier(membership);
+    const poi = owned.filter((v) => licensingFeeBlockedFor({ poi: v.poi }));
+    if (poi.length > 0)
+      return {
+        ok: false,
+        status: 400,
+        error: `${poi.length} selected version(s) depict a real person and can't be monetized: ${nameList(
+          poi
+        )}. Deselect them and try again.`,
+      };
+
+    // Increase-only, per version: the batch is rejected only if it would RAISE some version past the
+    // ceiling that version's media type earns, so re-applying a grandfathered fee across a mixed
+    // selection stays possible.
     const raised = owned.filter((v) =>
-      raisesOverCap(
-        normalized,
-        v.currentFee,
-        maxLicensingFee(tier, v.modelType, capMediaType(v.baseModel))
-      )
+      raisesOverCap(normalized, v.currentFee, maxLicensingFeeCeiling(capMediaType(v.baseModel)))
     );
     if (raised.length > 0) {
       const strictest = Math.min(
-        ...raised.map((v) => maxLicensingFee(tier, v.modelType, capMediaType(v.baseModel)))
+        ...raised.map((v) => maxLicensingFeeCeiling(capMediaType(v.baseModel)))
       );
       return {
         ok: false,
         status: 403,
-        error: `Your membership allows up to ${strictest} buzz per generation across the selected model types. Lower the fee or upgrade your membership.`,
+        error: `A licensing fee can be at most ${strictest} buzz per generation across the selected models. Lower the fee to continue.`,
       };
     }
   }
+
+  // Only versions moving from unpriced to priced spend allowance — a bulk re-price of models the
+  // creator already charges for is free, however large the selection. Same predicate as the single
+  // path and the gate actions: no fee AND no permanent gate.
+  const newlyPricedIds =
+    normalized == null
+      ? []
+      : await unpricedVersionIds(
+          userId,
+          owned.map((v) => v.id)
+        );
+  const gate = await assertFeePricingAllowed(userId, membership, newlyPricedIds.length);
+  if (!gate.ok) return gate;
 
   const toAffirm = normalized == null ? [] : owned.filter((v) => !v.affirmed).map((v) => v.id);
   if (toAffirm.length > 0 && !rightsAffirmed)
@@ -339,7 +405,12 @@ export async function bulkSetLicensingFee(
       normalized
     );
     await stampRightsAffirmation(trx, userId, toAffirm);
+    await recordPricingSlots(userId, newlyPricedIds, trx as typeof dbWrite);
     return n;
   });
+  if (normalized == null) {
+    const ids = owned.map((v) => v.id);
+    await releasePricingSlots(userId, await releasableVersionIds(userId, ids));
+  }
   return { ok: true, updated };
 }

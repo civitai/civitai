@@ -1,5 +1,5 @@
 import { Menu, Text, ThemeIcon } from '@mantine/core';
-import { useRef } from 'react';
+import { cloneElement, isValidElement, useEffect, useRef } from 'react';
 import { IconBrush, IconMovie, IconWand } from '@tabler/icons-react';
 import type { RemixKind } from '~/shared/constants/remix.constants';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
@@ -7,12 +7,16 @@ import {
   canReusePrompt,
   getEngineRefusal,
   getRemixKinds,
-  isReuseRefused,
+  getRemixOptions,
+  getSoleRemixOption,
   startPromptReuse,
   startRemix,
+  type RemixOptionKey,
   type RemixSourceImage,
 } from '~/components/Image/Remix/remix.utils';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 import { remixMenuZIndex } from '~/shared/constants/app-layout.constants';
+import { waitForElement } from '~/utils/html-helpers';
 
 type RemixOption = {
   label: string;
@@ -75,6 +79,8 @@ export function RemixMenu({
   source,
   sourceModelVersionId,
   onAction,
+  onOpen,
+  tourTarget,
   children,
   zIndex,
 }: {
@@ -84,13 +90,24 @@ export function RemixMenu({
   /** Known only where the surface is scoped to a version (the model carousel). */
   sourceModelVersionId?: number;
   onAction?: () => void;
+  /**
+   * The menu became visible. Separate from `onAction` so a tour can put one
+   * step on the button and the next on the options themselves.
+   */
+  onOpen?: () => void;
+  /** `data-tour` for the dropdown, where a tour step describes the options. */
+  tourTarget?: string;
   children: React.ReactNode;
   zIndex?: number;
 }) {
   const { trackAction } = useTrackEvent();
-  const kinds = getRemixKinds(image);
+  const { setBlockedTarget, running: tourRunning } = useTourContext();
+  const options = getRemixOptions(image);
   const engineRefusal = getEngineRefusal(image);
-  const showReuse = canReusePrompt(image) && !isReuseRefused(image);
+  // Exactly one thing to offer: skip the menu and run it. A tour spotlighting
+  // this menu teaches the menu, so while one is running it opens as usual rather
+  // than skipping the step that describes it.
+  const soleOption = tourTarget && tourRunning ? undefined : getSoleRemixOption(image);
 
   const track = (remixKind: 'edit' | 'video' | 'reuse') =>
     trackAction({
@@ -116,27 +133,75 @@ export function RemixMenu({
     onAction?.();
   };
 
-  // A menu holding nothing but a disabled refusal has no item to click, so an
-  // `onAction` that only fires from an item would strand a tour step whose only
-  // way forward is clicking through this button. Latched because `onOpen` fires
-  // on every open, and `onAction` advances a tour a step at a time.
-  const hasActionableItem = (!engineRefusal && kinds.length > 0) || showReuse;
-  const announcedRefusal = useRef(false);
-  const handleRefusalOpen = () => {
-    if (announcedRefusal.current) return;
-    announcedRefusal.current = true;
-    onAction?.();
+  const runOption = (option: RemixOptionKey) =>
+    option === 'reuse' ? handleReuse() : handleKind(option);
+
+  // Latched: Mantine fires this on every open, while a tour advances a step at
+  // a time, so reopening the menu must not move it on again.
+  //
+  // The fallback keeps a caller that only passes `onAction` unstuck. A menu
+  // holding nothing but a disabled refusal has no item to click, so there an
+  // `onAction` that only fires from an item would strand a tour step whose sole
+  // exit is clicking through this button.
+  const hasActionableItem = options.length > 0;
+  const announcedOpen = useRef(false);
+
+  // The menu step hides its footer, so a menu holding nothing but a disabled refusal
+  // would be a dead end. Reporting it blocked is what puts `Next` back on that step.
+  // Latched so clearing only ever undoes this menu's own report, never another
+  // component's (`FormFooter` reports `gen:submit` from the same slot).
+  const reportedBlocked = useRef(false);
+  const clearBlocked = () => {
+    if (!reportedBlocked.current) return;
+    reportedBlocked.current = false;
+    setBlockedTarget(null);
   };
+  useEffect(() => clearBlocked, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const handleOpen = () => {
+    if (announcedOpen.current) return;
+    announcedOpen.current = true;
+    if (tourTarget && !hasActionableItem) {
+      reportedBlocked.current = true;
+      setBlockedTarget(`[data-tour="${tourTarget}"]`);
+    }
+    if (!onOpen) {
+      if (!hasActionableItem) onAction?.();
+      return;
+    }
+    if (!tourTarget) return onOpen();
+    // Mantine calls this from the state setter, before the dropdown commits, so
+    // announcing the open straight away points a tour step at a target that is
+    // not in the document yet — Joyride reads that as `TARGET_NOT_FOUND` and
+    // skips the step it was meant to land on.
+    waitForElement({ selector: `[data-tour="${tourTarget}"]`, interval: 50, timeout: 2000 })
+      .catch(() => null)
+      .then(() => onOpen());
+  };
+
+  // No Menu at all, not a disabled one: Menu.Target still toggles its own open
+  // state, which would fire `onOpen` (a second tour advance) and leave the
+  // button announcing a popup it never opens.
+  if (soleOption && isValidElement<{ onClick?: (e: React.MouseEvent) => void }>(children)) {
+    return cloneElement(children, {
+      onClick: (e) => {
+        children.props.onClick?.(e);
+        runOption(soleOption);
+      },
+    });
+  }
 
   return (
     <Menu
       withinPortal
       position="bottom-end"
       zIndex={zIndex ?? remixMenuZIndex}
-      onOpen={hasActionableItem ? undefined : handleRefusalOpen}
+      onOpen={handleOpen}
+      onClose={clearBlocked}
     >
       <Menu.Target>{children}</Menu.Target>
       <Menu.Dropdown
+        data-tour={tourTarget}
         className="w-[290px] p-1.5"
         onClick={(e) => {
           // These live inside RoutedDialogLink on the feed cards, which would
@@ -150,32 +215,19 @@ export function RemixMenu({
             <Text size="xs">{engineRefusal}</Text>
           </Menu.Item>
         )}
-        {!engineRefusal && (
-          <>
-            {kinds.map((kind) => {
-              const option = kindLabels[kind];
-              return (
-                <Menu.Item
-                  key={kind}
-                  className="rounded-md px-2 py-2.5"
-                  leftSection={<OptionIcon option={option} />}
-                  onClick={() => handleKind(kind)}
-                >
-                  <OptionLabel option={option} />
-                </Menu.Item>
-              );
-            })}
-          </>
-        )}
-        {showReuse && (
-          <Menu.Item
-            className="rounded-md px-2 py-2.5"
-            leftSection={<OptionIcon option={reuseOption} />}
-            onClick={handleReuse}
-          >
-            <OptionLabel option={reuseOption} />
-          </Menu.Item>
-        )}
+        {options.map((key) => {
+          const option = key === 'reuse' ? reuseOption : kindLabels[key];
+          return (
+            <Menu.Item
+              key={key}
+              className="rounded-md px-2 py-2.5"
+              leftSection={<OptionIcon option={option} />}
+              onClick={() => runOption(key)}
+            >
+              <OptionLabel option={option} />
+            </Menu.Item>
+          );
+        })}
       </Menu.Dropdown>
     </Menu>
   );

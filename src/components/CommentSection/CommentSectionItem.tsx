@@ -4,10 +4,18 @@ import {
   IconArrowBackUp,
   IconDotsVertical,
   IconEdit,
+  IconEye,
+  IconEyeOff,
   IconFlag,
   IconTrash,
 } from '@tabler/icons-react';
 import { useRef, useState } from 'react';
+import {
+  HiddenCommentAvatar,
+  HiddenCommentLabel,
+  HideAgainButton,
+  useHiddenCommentReveal,
+} from '~/components/CommentsV2/Comment/HiddenComment';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
@@ -21,9 +29,9 @@ import type { EditorCommandsRef } from '~/components/RichTextEditor/RichTextEdit
 import { StickerPicker } from '~/components/Sticker/StickerPicker';
 import { Username } from '~/components/User/Username';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
+import { useToggleCommentReaction } from '~/components/CommentSection/useToggleCommentReaction';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { ReportEntity } from '~/shared/utils/report-helpers';
-import type { ReactionDetails } from '~/server/selectors/reaction.selector';
 import type { CommentGetCommentsById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -109,80 +117,66 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
     });
   };
 
-  const toggleReactionMutation = trpc.comment.toggleReaction.useMutation({
-    async onMutate({ id, reaction }) {
-      await queryUtils.comment.getReactions.cancel({ commentId: comment.id });
-
-      const previousReactions =
-        queryUtils.comment.getReactions.getData({ commentId: comment.id }) ?? [];
-      const latestReaction =
-        previousReactions.length > 0 ? previousReactions[previousReactions.length - 1] : { id: 0 };
-
-      if (currentUser) {
-        const newReaction: ReactionDetails = {
-          id: latestReaction.id + 1,
-          reaction,
-          user: {
-            id: currentUser.id,
-            username: currentUser.username ?? '',
-          },
-        };
-        const reacted = previousReactions.find(
-          (r) => r.reaction === reaction && r.user.id === currentUser.id
-        );
-        queryUtils.comment.getReactions.setData({ commentId: id }, (old = []) =>
-          reacted
-            ? old.filter((oldReaction) => oldReaction.id !== reacted.id)
-            : [...old, newReaction]
-        );
-      }
-
-      return { previousReactions };
+  const toggleHideMutation = trpc.comment.toggleHide.useMutation({
+    async onSuccess() {
+      await queryUtils.comment.getCommentsById.invalidate();
     },
-    onError(_error, _variables, context) {
-      queryUtils.comment.getReactions.setData(
-        { commentId: comment.id },
-        context?.previousReactions
-      );
+    onError(error) {
+      showErrorNotification({
+        error: new Error(error.message),
+        title: comment.hidden ? 'Could not unhide comment' : 'Could not hide comment',
+      });
     },
   });
 
+  const toggleCommentReaction = useToggleCommentReaction(comment.id);
+
   const isOwner = currentUser?.id === comment.user.id;
   const isMod = currentUser?.isModerator ?? false;
+  const isModelOwner = !!currentUser && model?.user.id === currentUser.id;
   const isMuted = currentUser?.muted ?? false;
   const isEditing = editComment?.id === comment.id;
+  const { concealed, reveal, conceal } = useHiddenCommentReveal(comment.hidden);
 
   return (
     <Group align="flex-start" justify="space-between" wrap="nowrap">
       <Group align="flex-start" style={{ flex: '1 1 0' }} wrap="nowrap">
-        <UserAvatar user={comment.user} size="md" linkToProfile />
+        {concealed ? (
+          <HiddenCommentAvatar size={38} />
+        ) : (
+          <UserAvatar user={comment.user} size="md" linkToProfile />
+        )}
         <Stack gap="xs" style={{ flex: '1 1 0' }}>
           <Stack gap={0}>
-            <Group gap={8} align="center">
-              {!comment.user.deletedAt ? (
-                <UserHoverCard user={comment.user}>
-                  <Text
-                    component={Link}
-                    href={`/user/${comment.user.username}`}
-                    size="sm"
-                    fw="bold"
-                  >
-                    <Username {...comment.user} />
-                  </Text>
-                </UserHoverCard>
-              ) : (
-                <Username {...comment.user} />
-              )}
-              {comment.user.id === model?.user.id ? (
-                <Badge color="violet" size="xs">
-                  OP
-                </Badge>
-              ) : null}
-              <Text c="dimmed" className="text-xs" component="a" href={directLink.toString()}>
-                <DaysFromNow date={comment.createdAt} />
-              </Text>
-            </Group>
-            {!isEditing ? (
+            {concealed ? (
+              <HiddenCommentLabel onShow={reveal} />
+            ) : (
+              <Group gap={8} align="center">
+                {!comment.user.deletedAt ? (
+                  <UserHoverCard user={comment.user}>
+                    <Text
+                      component={Link}
+                      href={`/user/${comment.user.username}`}
+                      size="sm"
+                      fw="bold"
+                    >
+                      <Username {...comment.user} />
+                    </Text>
+                  </UserHoverCard>
+                ) : (
+                  <Username {...comment.user} />
+                )}
+                {comment.user.id === model?.user.id ? (
+                  <Badge color="violet" size="xs">
+                    OP
+                  </Badge>
+                ) : null}
+                <Text c="dimmed" className="text-xs" component="a" href={directLink.toString()}>
+                  <DaysFromNow date={comment.createdAt} />
+                </Text>
+              </Group>
+            )}
+            {concealed ? null : !isEditing ? (
               <RenderHtml
                 html={comment.content}
                 className="text-sm"
@@ -204,12 +198,13 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
               />
             )}
           </Stack>
-          {!isEditing ? (
+          {concealed ? null : !isEditing ? (
             <Group gap={4}>
               <ReactionPicker
                 reactions={reactions}
-                onSelect={(reaction) => toggleReactionMutation.mutate({ id: comment.id, reaction })}
+                onSelect={(reaction) => toggleCommentReaction.toggle(reaction)}
               />
+              {comment.hidden && <HideAgainButton onClick={conceal} />}
               {currentUser && !isOwner && !comment.locked && !isMuted && (
                 <Button
                   variant="subtle"
@@ -270,13 +265,30 @@ export function CommentSectionItem({ comment, modelId, onReplyClick }: Props) {
                 {((!comment.locked && !isMuted) || isMod) && (
                   <Menu.Item
                     leftSection={<IconEdit size={14} stroke={1.5} />}
-                    onClick={() => setEditComment(comment)}
+                    onClick={() => {
+                      reveal();
+                      setEditComment(comment);
+                    }}
                   >
                     Edit comment
                   </Menu.Item>
                 )}
               </>
             ) : null}
+            {(isModelOwner || isMod) && (
+              <Menu.Item
+                leftSection={
+                  comment.hidden ? (
+                    <IconEye size={14} stroke={1.5} />
+                  ) : (
+                    <IconEyeOff size={14} stroke={1.5} />
+                  )
+                }
+                onClick={() => toggleHideMutation.mutate({ id: comment.id })}
+              >
+                {comment.hidden ? 'Unhide comment' : 'Hide comment'}
+              </Menu.Item>
+            )}
             {(!currentUser || !isOwner) && (
               <LoginRedirect reason="report-model">
                 <Menu.Item

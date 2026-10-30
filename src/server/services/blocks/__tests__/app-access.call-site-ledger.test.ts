@@ -1,6 +1,12 @@
-import { readdirSync, readFileSync, statSync } from 'fs';
-import { join, relative, sep } from 'path';
+import { readFileSync } from 'fs';
+import { join } from 'path';
 import { describe, expect, it } from 'vitest';
+import { sourceFiles } from '../../../../../test/source-scan';
+
+// `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
+import { stripCommentsAndStrings } from '../../../../../test/strip-comments';
+// Client-safe constants module (no `~/server/db/client` in its graph) — see its header.
+import { CAPABILITIES_BY_KIND } from '~/shared/constants/app-capabilities.constants';
 
 /**
  * 🔴 SEAM GUARD for app-ownership gating.
@@ -90,6 +96,34 @@ const GATE_LEDGER: Record<string, string> = {
     'invitee does not. NO mod bypass — preserved exactly as it was (D1). getMyApps is ' +
     'widened to owned+seated via getMyAppsEarnings; getMyRevenue is deliberately NOT ' +
     'widened (D4).',
+  'src/server/services/blocks/app-listing-visibility-write.service.ts':
+    'setListingVisibilityAsOwner is THE gate on the owner path for the per-listing ' +
+    'VISIBILITY LEVEL: owner | ACCEPTED collaborator, resolved by resolveListingAccess ' +
+    'through dbWrite so a seat accepted moments ago is visible. NO mod bypass, ' +
+    'deliberately — and the moderator half is a SEPARATE proc rather than a bypass here. ' +
+    'setListingVisibilityAsModerator now EXISTS (added with the owner-facing UI): ' +
+    'moderatorProcedure at the router, a REQUIRED audited reason, and a `set-visibility` ' +
+    'moderation event written inside the SAME interactive transaction as the level write. ' +
+    '🔴 THE TRANSACTION IS THE SUPPORT, NOT THE ORDERING. An earlier wording here derived ' +
+    'the invariant from the event being written AFTER the level lands — which is exactly ' +
+    'the two-round-trip shape that SHIPPED and produced a committed level change with no ' +
+    'audit row. Ordering is what failed; atomicity is what fixes it. So a moderator cannot ' +
+    "change a stranger's discoverability without a row the OWNER can read in their own " +
+    'listing history — and if the `$transaction` is ever removed, THIS invariant is gone ' +
+    'with it, whatever the ordering. The earlier ledger entry asserted this proc while it did NOT exist ' +
+    '(it had been deferred), which is worse in a ledger than in prose because a ledger is ' +
+    'the authoritative in-tree record — so note that the claim is now TRUE and was ' +
+    'verified against the router and the service, not inferred from this sentence. ' +
+    'Admitting a moderator to the OWNER path would still be an unaudited write, which is ' +
+    'why that path is unchanged and has no mod bypass. D1 and the review ceiling bind for ' +
+    'moderators too (applyVisibility enforces both for every caller), so a mod cannot ' +
+    'make a draft public — they approve it instead. A missing row ' +
+    'and a caller ' +
+    'with no role produce the SAME refusal, so the proc is not an existence oracle over ' +
+    'listing ids. The resolver is NOT status-aware (its own header says so), so D1 ' +
+    '("levels apply to non-suspended listings only") is enforced separately in ' +
+    'applyVisibility against VISIBILITY_ELIGIBLE_LISTING_STATUSES plus the backing ' +
+    "block's own suspension, and re-asserted in the CAS write's WHERE clause.",
   'src/server/services/blocks/app-listing-assets.service.ts':
     'loadOwnedListing is THE gate: owner | ACCEPTED collaborator | moderator, with BOTH ' +
     'the owner half and the seat half resolved by resolveListingAccess — never the ' +
@@ -106,6 +140,52 @@ const GATE_LEDGER: Record<string, string> = {
     'seat check specifically because beginListingRevision clones the shadow with the ' +
     'PARENT OWNER’s userId, so an editor’s own shadow reads as not-theirs — and that ' +
     'clone is a copy of a copy, which is why reading it directly was doubly wrong.',
+  'src/server/services/blocks/author-fee-accrual.service.ts':
+    'accrueBlockAuthorFee credits the app OWNER only — `oauthClient.userId`, snapshotted ' +
+    'onto the row at write time — and is deliberately NOT widened to ACCEPTED ' +
+    'collaborators. This is D4 applied to a new earnings surface, not a new decision: ' +
+    'earnings reads are appOwnerUserId-keyed precisely so an ex-owner keeps the money ' +
+    'they accrued before transferring an app away, and widening the WRITE would make ' +
+    'that impossible to express — a row would owe several people with no split anyone ' +
+    'has specified. Resolving the owner at SETTLEMENT instead would be worse still: it ' +
+    'would retroactively re-route earnings on every ownership transfer. NO mod bypass ' +
+    '(D1) and none is meaningful here — this is not a gate a caller passes through, it ' +
+    'is a payee resolution. If collaborator revenue-sharing is ever specified it belongs ' +
+    'as an explicit split on top of this row, not as a widened owner lookup.',
+  'src/server/services/blocks/block-goods.service.ts':
+    'resolveBlockGoodForPurchase reads the app OWNER — `app?.userId` off the AppBlock ' +
+    'row — to decide who a digital-goods sale PAYS and who is barred from buying their ' +
+    'own catalog. Both uses are OWNER-ONLY and deliberately NOT widened to ACCEPTED ' +
+    'collaborators, for the same reason author-fee accrual is not: the owner is ' +
+    'snapshotted onto `block_good_purchase.app_owner_user_id` at write time so an ' +
+    'ex-owner keeps what they earned before transferring the app away, and a widened ' +
+    'lookup would make a single sale owe several people with no split anyone has ' +
+    'specified. Resolving the payee later instead would retroactively re-route earnings ' +
+    'on every ownership transfer. The self-purchase refusal is owner-only for a ' +
+    'different reason: it exists because an owner buying their own good would pay ' +
+    'themselves 70% through the bank and burn 30%, which is only true of the person the ' +
+    'payout goes to — a collaborator buying the app’s goods is an ordinary sale. NO mod ' +
+    'bypass, and none is meaningful: neither use is a gate a caller passes through. If ' +
+    'collaborator revenue-sharing is ever specified it belongs as an explicit split on ' +
+    'top of the recorded payout, not as a widened owner lookup.',
+  'src/server/services/blocks/block-approval.service.ts':
+    'resolveAppBlockApprovalVerdict resolves the app owner — `oauthClient.findUnique` on ' +
+    '`claims.appId`, read as `app?.userId` — to decide whether a `dev` token may bypass ' +
+    'the approved-status check on a REAL, NOT-approved row: the ' +
+    'owner-dev-tunnel case (clawgate #571). It is a SEPARATE query rather than a nested ' +
+    'select on the row read, because without `relationJoins` a nested relation is a ' +
+    'second round trip anyway and would bill every bridge call and every REST request ' +
+    'for a column only this branch consults. DELIBERATELY OWNER-ONLY, and the reason is ' +
+    'that it is a MIRROR rather than a policy of its own: the only mint that can issue ' +
+    'such a token, `resolveOwnedNonApprovedPageBlock`, resolves `where: { app: { userId ' +
+    '} }` — owner-only, not widened to seats. Widening THIS read to ACCEPTED ' +
+    'collaborators would exempt a class of token the mint can never produce, i.e. it ' +
+    'would only ever loosen the gate for a stale token, never enable a real editor ' +
+    'workflow. If collaborator dev tunnels are ever specified, the MINT is what changes ' +
+    'first and this read follows it — never the other way round. NO mod bypass (D1): a ' +
+    'moderator reviewing a non-approved app already has its own exemption, the signed ' +
+    '`reviewRunForReal` claim answered before this read, so a mod override here would ' +
+    'be a second, weaker path to the same thing.',
   'src/server/services/blocks/app-analytics.service.ts':
     'getOwnedAppBlocks resolves the permitted-id SET (owned + seated) instead of ' +
     '`app: { userId }`. Safe to widen HERE because every downstream aggregate filters ' +
@@ -113,10 +193,28 @@ const GATE_LEDGER: Record<string, string> = {
     'listing re-key an OFF-SITE seat contributes no block id to that set (it has no ' +
     'block), so this read is unchanged for offsite: analytics for an offsite listing is ' +
     'AppListingMetric, a different surface, not this block-scoped one.',
-  'src/server/services/appBlockReview.service.ts':
-    'The self-review exclusion is widened to the INSIDER set (owner + accepted ' +
-    'collaborators, regardless of `displayed`) so a collaborator cannot 5-star the app ' +
-    'they co-author. Pending/rejected invitees are NOT insiders.',
+  'src/server/services/blocks/private-run-access.service.ts':
+    'THE PRIVATE-RUN ACCESS PREDICATE, and the FIRST production caller resolveAppAccess ' +
+    'has ever had — until this landed, that consolidated block-keyed resolver was ' +
+    'reachable only from its own tests. COLLABORATORS ARE DELIBERATELY WIDENED HERE, and ' +
+    'this is the one entry in this ledger where an ACCEPTED seat gains access to a ' +
+    'NON-approved app: an accepted editor may privately run a DELISTED app, because a ' +
+    'collaborator diagnosing a takedown needs to see the thing that was taken down. It is ' +
+    'widened by INVOKING resolveAppAccess rather than by re-implementing a role check — ' +
+    'the SSR route and the PHASE 3 token mint both call this ONE predicate, which is what ' +
+    'stops them drifting into the SSR-allows/mint-refuses asymmetry that produced ' +
+    'tryDevTunnelOwnedNonApprovedMint. Three further decisions about collaborators, none ' +
+    'obvious: (1) editors are READ-ONLY — ai:write:budgeted is stripped in ' +
+    'clampPrivateRunScopes and re-refused per submit in blockPerCallBudget, an operator ' +
+    'decision taken against the original recommendation on reversibility grounds; (2) a ' +
+    'PENDING or REJECTED seat gets NOTHING, because the status: ACCEPTED filter inside ' +
+    'hasAcceptedSeat is the consent gate and is NOT widened here; (3) an already-accepted ' +
+    'seat SURVIVES the delist while no NEW seat can be granted on a removed listing — ' +
+    'that asymmetry is AUTHORABLE_LISTING_STATUSES gating the grant while ' +
+    'resolveAppAccess applies no listing-status filter to the READ, and it is inherited ' +
+    'deliberately rather than re-decided. The OWNER-BANNED refusal applies to owner and ' +
+    'editor only; moderators keep access to a banned publisher app by design, because ' +
+    'reviewing what a banned publisher shipped is the job.',
   'src/server/services/blocks/offsite-moderation.service.ts':
     'loadOwnedListingInTx (unpublish/republish own listing) and ' +
     'listMyListingModerationEvents are NOT widened: unpublishing a live listing and ' +
@@ -138,9 +236,14 @@ const GATE_LEDGER: Record<string, string> = {
     'every gate that delegates here, refusing the real owner while admitting the name ' +
     'the row happens to carry. (NOT acceptTransfer’s onsite listing write, which is ' +
     'unconditional and heals the parent; see app-access.denormalized-owner-drift.test.ts ' +
-    'for the mechanism in full.) 🔴 The resolution is BLOCK-FIRST, not kind-branching, ' +
-    'and on an offsite-listing-that-carries-a-block it names the wrong owner after a ' +
-    'transfer or a mod claim — 0 rows and unmintable today, tracked as issue #3844.',
+    'for the mechanism in full.) 🔴 The resolution is KIND-AWARE, in ONE place — ' +
+    'resolveCanonicalListingOwner, plus canonicalOwnerWhereBranches as its query form: ' +
+    'onsite takes the block’s OauthClient.userId with the column as fallback, offsite ' +
+    'takes the column UNCONDITIONALLY even when a block is attached. It was BLOCK-FIRST ' +
+    'until issue #3844, which inverted every delegating gate on an offsite-with-a-block ' +
+    'listing after acceptTransfer’s offsite path or claimListing (both move only the ' +
+    'column) — the impersonation remedy’s ex-owner kept edit access. The column is read ' +
+    'from the PARENT on a shadow hop for the same reason.',
   'src/server/services/blocks/app-collaborator.service.ts':
     'assertOwner — seat management is OWNER-ONLY by product decision (an editor is a ' +
     'co-owner in every respect EXCEPT managing collaborators and initiating a ' +
@@ -148,7 +251,9 @@ const GATE_LEDGER: Record<string, string> = {
     'the wrong question here; only `owner` may pass. listCollaborators DOES use it, and ' +
     'requires a non-null role (or a moderator): the roster exposes accepted seats whose ' +
     'holder opted OUT of the public byline, plus invitedBy and timestamps, so it is not ' +
-    'a public read. A pending invitee reads their own invite via listMyPendingInvites.',
+    'a public read. A pending invitee reads their own invite via listMyPendingInvites. ' +
+    '🔴 toSeatListing (the write-side owner resolution) DELEGATES to ' +
+    'resolveCanonicalListingOwner rather than re-spelling it block-first — see #3844.',
   'src/server/services/blocks/app-ownership-transfer.service.ts':
     'loadOwnedListing — initiating a transfer is OWNER-ONLY, same reasoning as seat ' +
     'management. Accept is gated on being the transfer’s ADDRESSEE, not on any role, ' +
@@ -157,7 +262,10 @@ const GATE_LEDGER: Record<string, string> = {
     'anyone else, so the read cannot become an existence oracle. Editors are excluded: ' +
     'disposing of the listing is the one capability a seat never carries. 🔴 KIND-AWARE: ' +
     'onsite moves OauthClient.userId + AppListing.userId; offsite moves the listing ' +
-    'column ONLY and is REFUSED outright when the listing carries a connectClientId.',
+    'column ONLY and is REFUSED outright when the listing carries a connectClientId. ' +
+    '🔴 loadOwnedListing’s owner resolution DELEGATES to resolveCanonicalListingOwner, ' +
+    'so the gate that authorises a transfer reads ownership the same kind-aware way the ' +
+    'accept path WRITES it (#3844) — block-first, an ex-owner could re-offer the listing.',
   'src/server/services/blocks/app-collaborator-earnings.service.ts':
     'The app-scoped money read: resolves the role FIRST and filters by appBlockId + the ' +
     'CURRENT owner. Never appOwnerUserId alone — that is the portfolio leak. 🔴 Also the ' +
@@ -170,6 +278,29 @@ const GATE_LEDGER: Record<string, string> = {
   'src/server/services/blocks/app-listing-backfill.service.ts':
     'Same as the mapper: a mod-only backfill STAMPING the denormalized owner. Not a ' +
     'caller-identity gate.',
+  'src/server/services/blocks/app-listing-history.service.ts':
+    'A REAL caller-identity gate, and it goes through resolveListingAccess precisely so ' +
+    'it admits an accepted EDITOR as well as the owner. `listListingHistory` backs the ' +
+    'expandable rows on the merged /apps/mine table, and the surface it replaced ' +
+    '(/apps/my-submissions) scoped history to a publish request’s submittedByUserId — ' +
+    'which returns EMPTY for a collaborator (submitted nothing), for a transfer ' +
+    'recipient and for a moderator-claimed owner, on an app they can plainly edit. ' +
+    'Refuses FORBIDDEN rather than returning [], because an empty list reads to the UI ' +
+    'as "this app has no history", which is a lie a stranger should not be told either.',
+  'src/server/services/blocks/app-moderator-message.service.ts':
+    'NOT a caller-identity gate — the caller is a MODERATOR and the mod boundary is the ' +
+    'router (`moderatorProcedure` + the inner isModerator recheck), exactly as on ' +
+    'delist/relist/claim/purge. It calls resolveListingAccess to answer a different ' +
+    'question: WHO IS THE RECIPIENT. That is why it passes `userId: null` — it wants ' +
+    '`ownerUserId`, not a role, and null takes the early return so no seat lookup is ' +
+    'paid. 🔴 It is in this ledger for the reason the mapper and the backfill are: the ' +
+    'ownership-READ sites must stay enumerated. Reading the denormalized ' +
+    'AppListing.userId here would be worse than a missed delivery — on a drifted onsite ' +
+    'row it would send a moderator’s private message ABOUT someone’s app TO a user who ' +
+    'no longer owns it, while the real owner is never told their listing has a problem. ' +
+    'Collaborators are NOT included by default (an editor consented to edit, not to ' +
+    'receive moderation correspondence); `includeCollaborators` opts in per message and ' +
+    'reads the ACCEPTED set via listAcceptedCollaboratorUserIds, ignoring `displayed`.',
   'src/pages/api/v1/blocks/dev-token.ts':
     'NOT widened, deliberately. This is a THIRD gate shape the ledger surfaced: a ' +
     'positive-match BRANCH CONDITION (`block.app.userId === user.id`) rather than a ' +
@@ -190,14 +321,73 @@ const GATE_LEDGER: Record<string, string> = {
     '(b) the isSelfPurchase / isSelfSpend business-logic branch for revenue share. No ' +
     'caller is being authorised. 🔴 The stamp is deliberately never rewritten by an ' +
     'ownership transfer — see the money-invariance decision.',
+  'src/server/services/blocks/known-app-blocks.service.ts':
+    'NOT a gate — listed so the population stays closed. getApprovedAppBlockAnalytics ' +
+    'reads `app.userId` so the custom-events ingest can LABEL a row `isOwner` (team) when ' +
+    'the viewer is the app owner OR an ACCEPTED collaborator; nobody is authorised or ' +
+    'refused by it. Collaborators come from listApprovedAppBlockSeatHolders in ' +
+    'app-access.service, which shares APP_BLOCK_SEAT_LISTING_WHERE and the ACCEPTED ' +
+    'filter with resolveAccessibleAppBlockIds; app-block-team.seam.test.ts pins that the ' +
+    'two agree. Widening the label only changed rows written after it shipped.',
   'src/server/services/blocks/publish-request.service.ts':
     'NOT a caller-identity gate: both sites STAMP the owner (the approve path minting ' +
     'the listing via mapAppBlockToListing, and the backfill attributing a synthetic ' +
-    'request). 🔴 KNOWN GAP recorded here rather than fixed in this PR: submitVersion’s ' +
-    'SUBSEQUENT-version branch never checks that the submitter owns the existing app — ' +
-    'it is masked today because both HTTP callers require isModerator. If that is ever ' +
-    'opened to non-mod authors it becomes a slug-hijack vector and needs an explicit ' +
-    'owner (or collaborator) check.',
+    'request). Its one caller-identity gate is not open-coded here: submitVersion refuses ' +
+    'a version of an EXISTING app unless the submitter is a moderator or ' +
+    'app-access.service’s mayShipAppVersion (resolveAppAccess: owner or ACCEPTED editor) ' +
+    'says yes, before the pending-conflict check — the session submit route admits ' +
+    'non-moderator authors, so this closes the slug-hijack the gap left open.',
+  'src/server/services/blocks/publisher-ban-revocation.service.ts':
+    'NOT a caller-identity gate, and DELIBERATELY NOT WIDENED — the inverse direction ' +
+    'from every other entry here. `app: { userId }` selects the BANNED PUBLISHER’s own ' +
+    'apps so `toggleBan` can revoke their live block instances. Widening it to "any app ' +
+    'this user can reach" would let a ban on a seated EDITOR revoke every live token of ' +
+    'an app owned by somebody who was not banned — a moderation action against one ' +
+    'account taking down another account’s product. So here an editor seat must NOT ' +
+    'expand the set: banning the OWNER is the case this closes. 🔴 IT NOW ROUTES THROUGH ' +
+    'resolveCanonicalListingOwner, as a three-branch Prisma predicate — this entry said ' +
+    'it "resolves no AppListing, so D5 does not apply" and that stopped being true when ' +
+    'the writer was corrected. `app.userId` is NOT the owner for a kind:offsite listing, ' +
+    'and both claimListing (the impersonation remedy that PRECEDES a ban) and ' +
+    'acceptTransfer (ordinary, user-driven) move only the listing column — so keying on ' +
+    'app.userId over-revoked the victim. The defence that made it look safe, "off-site ' +
+    'apps mint no block token", was never proven and is FALSE: no mint path reads ' +
+    'AppListing or a kind at all. Branch 1 (no listing at all → app.userId) is ' +
+    'load-bearing and must not be dropped — most blocks predating W13 would otherwise go ' +
+    'UNrevoked, which for a security control is worse than over-revoking.',
+  'src/server/services/blocks/app-feedback.service.ts':
+    'Private per-app feedback, TWO gates in opposite directions. (1) The owner INBOX ' +
+    '(resolveInboxListingId: list, set owner status, flag as abusive) admits owner | ' +
+    'ACCEPTED collaborator via resolveListingAccess, keyed on the SEAT listing, so an ' +
+    'editor reads and triages the inbox exactly as the owner does (product decision) and ' +
+    'a pending/rejected invitee does not. NO mod bypass: moderators read every row through ' +
+    'the separate moderatorProcedure list, and an owner-path write by a mod would stamp ' +
+    'the mod as the developer. The writes resolve through dbWrite so a seat revoked a ' +
+    'moment ago cannot still write off a lagging replica. (2) The SUBMIT gate ' +
+    '(resolveAppFeedbackTarget) REFUSES anyone with a role — owner AND editor — because ' +
+    'people who read the inbox do not write to it. Both halves take the canonical, ' +
+    'kind-aware owner from resolveListingAccess, never the denormalized column (D5).',
+  'src/server/services/blocks/user-app-surface.service.ts':
+    'NOT an access gate at all — an owner SUPPRESSION on a read of the viewer’s OWN data. ' +
+    'listMyScopeGrants’ activity leg skips a row when AppBlock.app.userId === the viewer, ' +
+    'because an author driving their own block writes ordinary block_scope_invocations rows ' +
+    'and the card would otherwise tell them an app used their account without an install ' +
+    '(2 of the 13 measured pairs are exactly that). It keys on the CANONICAL owner ' +
+    'AppBlock.app.userId, never a denormalized AppListing.userId (D5). 🔴 DELIBERATELY NOT ' +
+    'widened to ACCEPTED collaborators and NOT given a mod bypass: every other entry here ' +
+    'answers "may this caller act on the app", while this one answers "is this row about ' +
+    'the viewer’s relationship to someone else’s app". A seated editor has no install and ' +
+    'no consent of their own, so their activity row is true and informative; suppressing it ' +
+    'would hide a real relationship, and a mod bypass would show a moderator a card about ' +
+    'an app they happen to own. The skip fails OPEN on an unresolvable owner (shows the ' +
+    'row) because dropping rows is the wrong direction for a transparency surface.',
+  'src/server/services/apps/doc-store-owner-usage.service.ts':
+    'getMyDocStoreUsage reads the ownedIds half of resolveAccessibleAppBlockIds — the ' +
+    'canonical AppBlock.app.userId owner, never the denormalized AppListing.userId (D5). ' +
+    '🔴 DELIBERATELY NOT widened to ACCEPTED collaborators (editorIds is discarded) and ' +
+    'NO mod bypass: the figure is the app-wide document-store usage (every user’s data in ' +
+    'the app) measured against limits only the owner manages, so it is an owner-only read. ' +
+    'The router passes ctx.user.id and takes no input, so no other user’s set is reachable.',
 };
 
 /**
@@ -211,12 +401,36 @@ const GATE_LEDGER: Record<string, string> = {
  * would be invisible to `GATE_LEDGER`, because it would open no new gate.
  */
 const KIND_CAPABILITY_LEDGER: Record<string, string> = {
+  'src/shared/constants/app-capabilities.constants.ts':
+    'DEFINES the table. Moved out of app-access.service so CLIENT code can derive ' +
+    '`earnings` / `submitVersion` without pulling that module’s ~/server/db/client import ' +
+    'into the browser bundle — the alternative was a second, drifting copy of a ' +
+    'permission table in the UI. Same two structural false cells, same fail-closed ' +
+    'fallback to the narrower (offsite) row for an unknown kind; app-access.service ' +
+    're-exports every symbol, so there is still exactly one definition.',
+  'src/components/Apps/AppInvitesBody.tsx':
+    'CONSUMES the whole row to build the INVITEE-side disclosure: an on-site invite says ' +
+    'the seat exposes `earnings` and `submitVersion` (Buzz figures + pushing code), an ' +
+    'off-site one must promise NEITHER, because no BlockBuzzAttribution row can exist and ' +
+    'there is no repo. Reading the table rather than hard-coding the copy is what keeps ' +
+    'the invitee’s disclosure identical to the owner’s at invite time.',
+  'src/components/Apps/AppTransferOffersView.tsx':
+    'CONSUMES the row to build the RECIPIENT-side ownership-transfer disclosure, for the ' +
+    'same reason AppInvitesBody does and with the same two cells doing the work: an ' +
+    'on-site offer says the recipient takes over the repo (`submitVersion`) and that Buzz ' +
+    'accrued BEFORE the transfer stays with the previous owner (`earnings`); an off-site ' +
+    'offer must promise NEITHER, because there is no repo and no BlockBuzzAttribution row ' +
+    'can exist for a listing with no AppBlock. Reading the table rather than hard-coding ' +
+    'the copy is what stops the transfer disclosure and the invite disclosure drifting ' +
+    'into two different accounts of what an off-site listing can do.',
   'src/server/services/blocks/app-access.service.ts':
-    'DEFINES the table (CAPABILITIES_BY_KIND / capabilitiesForKind / ' +
-    'listingKindSupports) and resolves each listing’s kind + appBlockId. The two false ' +
-    'cells — earnings and submitVersion on offsite — are STRUCTURAL: BlockBuzzAttribution ' +
-    'is keyed on appBlockId, and an offsite listing has no bundle and no Forgejo repo. An ' +
-    'unknown kind falls back to the NARROWER (offsite) row, i.e. fail closed.',
+    'RE-EXPORTS the table and resolves each listing’s kind + appBlockId, and is where ' +
+    'every server consumer still reaches it (CAPABILITIES_BY_KIND / capabilitiesForKind / ' +
+    'listingKindSupports). The two false cells — earnings and submitVersion on offsite — ' +
+    'are STRUCTURAL: BlockBuzzAttribution is keyed on appBlockId, and an offsite listing ' +
+    'has no bundle and no Forgejo repo. It also stamps each row of listMyAppListings / ' +
+    'getAppListingAuthoringContext with `capabilitiesForKind`, so the authoring UI derives ' +
+    'its tab set from the table instead of re-deriving one.',
   'src/server/services/blocks/app-collaborator-earnings.service.ts':
     'CONSUMES `earnings`. Refuses an offsite listing with an explicit unsupportedKind ' +
     'before running any aggregate — never a zeroed summary, which would be ' +
@@ -383,36 +597,93 @@ const DENORM_OWNER_HOLDOUTS: Record<string, string> = {
     'anti-abuse rule is a product decision.',
 };
 
-function walk(dir: string, out: string[] = []): string[] {
-  for (const entry of readdirSync(dir)) {
-    if (entry === 'node_modules' || entry === '.next' || entry === '.git') continue;
-    const full = join(dir, entry);
-    if (statSync(full).isDirectory()) walk(full, out);
-    else if (/\.tsx?$/.test(entry)) out.push(full);
-  }
-  return out;
-}
-
-/** Every non-test .ts/.tsx under src/, as repo-relative POSIX-ish paths. */
-function sourceFiles(): string[] {
-  return walk(join(ROOT, 'src'))
-    .map((f) => relative(ROOT, f).split(sep).join('/'))
-    .filter((f) => !/__tests__|\.test\.tsx?$|(^|\/)src\/tests\//.test(f));
-}
-
-const FILES = sourceFiles();
+const FILES = sourceFiles(ROOT);
 
 /**
- * Source with comments removed — there is a LOT of prose about ownership in this
- * codebase, and only real code should count as a gate site.
+ * Source with comments AND string literals removed — there is a LOT of prose about
+ * ownership in this codebase, and only real code should count as a gate site.
+ *
+ * 🔴 CONSOLIDATED onto the shared `stripCommentsAndStrings`. This file carried its own
+ * private, comments-only stripper; `app-collaborators.client-seam.test.ts` had no
+ * stripper at all and reported a proc as WIRED on the strength of a JSDoc mention. Two
+ * guards, one rule, applied at neither site consistently — so the rule now lives in one
+ * module that both import.
+ *
+ * 🔴 MEASURED BEFORE THE SWITCH, because a stricter stripper could have changed this
+ * ledger's verdicts: every one of its six scans returns an IDENTICAL set under both
+ * strippers (GATE_RE 16, DENORM_OWNER_RE 3, CAP_RE 6, seat-query files 3, 19 seat calls
+ * across 3 files, 0 `appBlockId_userId` hits). So the ledger was NOT counting or missing
+ * sites through string literals today — it simply had no protection against it, and now
+ * cannot acquire one silently.
  */
 function code(file: string): string {
-  return readFileSync(join(ROOT, file), 'utf8')
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  return stripCommentsAndStrings(readFileSync(join(ROOT, file), 'utf8'));
 }
 
 const CODE = new Map(FILES.map((f) => [f, code(f)] as const));
+
+/**
+ * 🔴 THE STRIPPER IS PART OF THIS GUARD, so it is pinned here. Every scan below asks
+ * "does this file contain a gate?", and the answer is only meaningful if prose cannot
+ * supply one. Without these assertions, reverting `code()` to a private comments-only
+ * stripper is invisible: the ledger's verdicts happen to be identical today (measured),
+ * so nothing else in this file would go red.
+ */
+describe('the source stripper is shared and STRUCTURAL', () => {
+  it('removes block comments, line comments AND string literals', () => {
+    expect(stripCommentsAndStrings('/** listing.userId !== x */').trim()).toBe('');
+    expect(stripCommentsAndStrings('// listing.userId !== x').trim()).toBe('');
+    expect(stripCommentsAndStrings("const s = 'listing.userId !== x';")).not.toContain('userId');
+    expect(stripCommentsAndStrings('const s = `listing.userId !== x`;')).not.toContain('userId');
+  });
+
+  it('POSITIVE CONTROL: real code SURVIVES it', () => {
+    // The failure direction that would make every scan below vacuously empty.
+    const kept = stripCommentsAndStrings(
+      '/** prose */\nif (listing.userId !== user.id) return null;'
+    );
+    expect(kept).toContain('listing.userId !== user.id');
+  });
+
+  it('the scanned corpus is non-empty (so an empty CODE map cannot pass everything)', () => {
+    expect(FILES.length).toBeGreaterThan(100);
+    expect([...CODE.values()].some((c) => c.length > 0)).toBe(true);
+  });
+
+  /**
+   * 🔴 THIS FILE'S OWN `code()` GOES THROUGH THE SHARED STRIPPER — asserted on the CODE
+   * map, not on the module.
+   *
+   * The three assertions above call `stripCommentsAndStrings` DIRECTLY, so they pin the
+   * MODULE and say nothing about whether this ledger uses it. Reverting `code()` to a
+   * private comments-only stripper survived all of them, and survived every other scan
+   * too (the verdicts are identical today) — a consolidation that was documented but not
+   * pinned, which is the same shape as the bug the module was written to fix.
+   */
+  const CAPS_FILE = 'src/shared/constants/app-capabilities.constants.ts';
+
+  it('🔴 `code()` strips STRING LITERALS out of a real corpus file', () => {
+    const stripped = CODE.get(CAPS_FILE);
+    expect(stripped, `${CAPS_FILE} is not in the scanned population`).toBeDefined();
+    // These are string literals in that module's `ListingKind` union + status list. The
+    // OLD comments-only stripper leaves them; the shared one removes them.
+    expect(stripped).not.toContain("'onsite'");
+    expect(stripped).not.toContain("'draft'");
+  });
+
+  it('POSITIVE CONTROL: the same file keeps its real CODE', () => {
+    // Without this, "the literals are gone" would also pass on a `code()` that returned
+    // an empty string for every file.
+    const stripped = CODE.get(CAPS_FILE)!;
+    expect(stripped).toContain('CAPABILITIES_BY_KIND');
+    expect(stripped).toContain('export function capabilitiesForKind');
+    // …and the raw file really does contain the literals, so their absence above is the
+    // stripper's doing and not a fact about the file.
+    const raw = readFileSync(join(ROOT, CAPS_FILE), 'utf8');
+    expect(raw).toContain("'onsite'");
+    expect(raw).toContain("'draft'");
+  });
+});
 const GATES = FILES.filter((f) => GATE_RE.test(CODE.get(f)!)).sort();
 
 describe('app-ownership gate ledger', () => {
@@ -560,9 +831,7 @@ describe('app-ownership gate ledger', () => {
         ['nested member, optional', 'if (shot.appListing?.userId !== user.id) throw e;'],
       ];
       for (const [label, sample] of REMOVED) {
-        expect(DENORM_OWNER_RE.test(sample), `DENORM_OWNER_RE must recognise: ${label}`).toBe(
-          true
-        );
+        expect(DENORM_OWNER_RE.test(sample), `DENORM_OWNER_RE must recognise: ${label}`).toBe(true);
       }
     });
 
@@ -600,9 +869,9 @@ describe('app-ownership gate ledger', () => {
     it('NEGATIVE CONTROL: it does not match the canonical resolution or an unrelated owner', () => {
       // The replacement must NOT itself count as a member of the class, or the assertion
       // below could never go green; and an Image/Post owner check is a different subject.
-      expect(DENORM_OWNER_RE.test('const role = await resolveListingRole(listingId, userId);')).toBe(
-        false
-      );
+      expect(
+        DENORM_OWNER_RE.test('const role = await resolveListingRole(listingId, userId);')
+      ).toBe(false);
       expect(
         DENORM_OWNER_RE.test('const ownerUserId = row.appBlock?.app?.userId ?? row.userId;')
       ).toBe(false);
@@ -697,20 +966,20 @@ describe('app-ownership gate ledger', () => {
       // `appBlockId` would compile (both are strings) and would silently match NOTHING —
       // demoting every editor to no-access with no error anywhere.
       for (const [file, call] of SEAT_CALLS) {
-        expect(call, `${file}: a seat call must be keyed on appListingId`).toMatch(
-          /appListingId/
-        );
+        expect(call, `${file}: a seat call must be keyed on appListingId`).toMatch(/appListingId/);
       }
     });
 
     it('the OLD composite seat key `appBlockId_userId` is gone from the seat files', () => {
       // The Prisma selector for the pre-re-key primary key `(appBlockId, userId)`.
       //
-      // 🔴 SCOPED TO THE SEAT FILES ON PURPOSE, and the reason is a genuine collision:
-      // `AppBlockReview` carries its OWN `@@unique([appBlockId, userId])`, which Prisma
-      // ALSO names `appBlockId_userId`. A repo-wide ban on the string would fail on
-      // `appBlockReview.service.ts` for a completely unrelated (and correct) selector —
-      // an assertion that looks like a re-key regression and is not one.
+      // 🔴 SCOPED TO THE SEAT FILES ON PURPOSE. The reason used to be a genuine
+      // collision: the removed `AppBlockReview` model carried its OWN
+      // `@@unique([appBlockId, userId])`, which Prisma ALSO named `appBlockId_userId`,
+      // so a repo-wide ban on the string failed on a completely unrelated (and correct)
+      // selector. That model is gone, but the scoping stays — a repo-wide ban would
+      // re-acquire the same false positive the moment any other model declares that
+      // composite, and the property this test cares about is about the SEAT files.
       const seatFiles = [...new Set(SEAT_CALLS.map(([f]) => f))];
       expect(seatFiles.length).toBe(3);
       for (const file of seatFiles) {
@@ -723,9 +992,7 @@ describe('app-ownership gate ledger', () => {
 
     it('NEGATIVE CONTROL: the composite-key probe CAN match', () => {
       // Proves the assertion above is testing a string that would be found if present.
-      expect('where: { appBlockId_userId: { appBlockId, userId } }').toContain(
-        'appBlockId_userId'
-      );
+      expect('where: { appBlockId_userId: { appBlockId, userId } }').toContain('appBlockId_userId');
     });
   });
 
@@ -735,6 +1002,8 @@ describe('app-ownership gate ledger', () => {
 
   describe('🔴 kind-derived capabilities — the second closed population', () => {
     const CAP_RE = /listingKindSupports|capabilitiesForKind|CAPABILITIES_BY_KIND/;
+    /** Every capability CELL, read off the table itself. See the note on the check below. */
+    const CAPABILITY_NAMES = Object.keys(CAPABILITIES_BY_KIND.onsite);
     const CAP_SITES = FILES.filter((f) => CAP_RE.test(CODE.get(f)!)).sort();
 
     it('POSITIVE CONTROL: CAP_RE matches every spelling that appears in production', () => {
@@ -766,12 +1035,35 @@ describe('app-ownership gate ledger', () => {
     });
 
     it('every capability-ledger entry names the capability it reads', () => {
+      // 🔴 THE CAPABILITY NAMES ARE DERIVED FROM THE TABLE, not from a hand-maintained
+      // alternation. That regex had `listingMedia` added to it when the cell was split
+      // out — a widening that pinned NOTHING, because no entry consumed only that cell,
+      // so narrowing it back changed no answer. Reading the names off
+      // `CAPABILITIES_BY_KIND` makes the check correct for every cell automatically,
+      // including any added later, and makes it impossible to add a cell the ledger
+      // cannot express.
       for (const [file, rationale] of Object.entries(KIND_CAPABILITY_LEDGER)) {
         expect(rationale.length, `${file} rationale is too terse`).toBeGreaterThan(80);
         expect(
-          /earnings|submitVersion|analytics|listingContent|submitForReview/.test(rationale),
-          `${file} must name which capability it consumes`
+          CAPABILITY_NAMES.some((c) => rationale.includes(c)),
+          `${file} must name which capability it consumes (one of: ${CAPABILITY_NAMES.join(', ')})`
         ).toBe(true);
+      }
+    });
+
+    it('POSITIVE CONTROL: the derived capability-name list is real and complete', () => {
+      // A silently-empty list would make the assertion above vacuously true for every
+      // entry, which is exactly the failure the hand-written regex could not have.
+      expect(CAPABILITY_NAMES.length).toBeGreaterThanOrEqual(6);
+      for (const expected of [
+        'listingContent',
+        'listingMedia',
+        'submitForReview',
+        'analytics',
+        'earnings',
+        'submitVersion',
+      ]) {
+        expect(CAPABILITY_NAMES).toContain(expected);
       }
     });
 

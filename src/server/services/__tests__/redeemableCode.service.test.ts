@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 import dayjs from 'dayjs';
 import utc from 'dayjs/plugin/utc';
 import type {
@@ -10,70 +11,24 @@ import type {
 dayjs.extend(utc);
 
 // Use vi.hoisted to define mocks that will be available in vi.mock factories
-const {
-  mockDbWrite,
-  mockDbRead,
-  mockCreateBuzzTransaction,
-  mockDeliverMonthlyCosmetics,
-  mockSupersedeBuzzMembership,
-} = vi.hoisted(() => {
-  const mockRedeemableCode = {
-    findUnique: vi.fn(),
-    update: vi.fn(),
-    createMany: vi.fn(),
-    delete: vi.fn(),
-  };
-
-  const mockCustomerSubscription = {
-    findFirst: vi.fn(),
-    findMany: vi.fn(),
-    create: vi.fn(),
-    update: vi.fn(),
-    delete: vi.fn(),
-    updateManyAndReturn: vi.fn(),
-  };
-
-  const mockPrice = {
-    findUnique: vi.fn(),
-  };
-
-  const mockProduct = {
-    findMany: vi.fn(),
-  };
-
-  const mockKeyValue = {
-    findUnique: vi.fn(),
-  };
-
-  return {
-    mockDbWrite: {
-      redeemableCode: mockRedeemableCode,
-      customerSubscription: mockCustomerSubscription,
-      price: mockPrice,
-      product: mockProduct,
-      keyValue: mockKeyValue,
-      $transaction: vi.fn(async (callback: (tx: any) => Promise<any>) => {
-        return callback({
-          redeemableCode: mockRedeemableCode,
-          customerSubscription: mockCustomerSubscription,
-          price: mockPrice,
-          product: mockProduct,
-          keyValue: mockKeyValue,
-        });
-      }),
-      $queryRaw: vi.fn(),
-      $executeRaw: vi.fn(),
-    },
-    mockDbRead: {
-      keyValue: {
-        findUnique: vi.fn(),
-      },
-    },
+const { mockCreateBuzzTransaction, mockDeliverMonthlyCosmetics, mockSupersedeBuzzMembership } =
+  vi.hoisted(() => ({
     mockCreateBuzzTransaction: vi.fn().mockResolvedValue({ success: true }),
     mockDeliverMonthlyCosmetics: vi.fn().mockResolvedValue(undefined),
     mockSupersedeBuzzMembership: vi.fn().mockResolvedValue({ superseded: 0 }),
-  };
-});
+  }));
+
+// The clients stay split, as the fixture they replace had them.
+//
+// `$transaction` inherits the canonical default, which runs the callback against `dbWrite`.
+// The old fixture handed it an object whose five members were the write client's own model
+// objects, so the default reaches the same nodes — and every `consumeRedeemableCode` case
+// below replaces the implementation with its own `tx` anyway, which is where the interesting
+// behaviour lives. Note that those replacements OUTLIVE their test: `vi.clearAllMocks()`
+// clears call history, not implementations. That was true of the fixture too, and is left
+// alone here so the conversion changes no ordering.
+const mockDbWrite = dbMock.dbWrite;
+const mockDbRead = dbMock.dbRead;
 
 // Mock modules
 vi.mock('~/env/server', () => ({
@@ -81,10 +36,6 @@ vi.mock('~/env/server', () => ({
     TIER_METADATA_KEY: 'tier',
     BUZZ_ENDPOINT: 'http://mock-buzz-endpoint',
   },
-}));
-
-vi.mock('~/server/logging/client', () => ({
-  logToAxiom: vi.fn().mockResolvedValue(undefined),
 }));
 
 vi.mock('~/server/auth/session-invalidation', () => ({
@@ -116,11 +67,6 @@ vi.mock('~/server/utils/subscription.utils', () => {
     },
   };
 });
-
-vi.mock('~/server/db/client', () => ({
-  dbWrite: mockDbWrite,
-  dbRead: mockDbRead,
-}));
 
 vi.mock('~/server/services/buzz.service', () => ({
   createBuzzTransaction: mockCreateBuzzTransaction,
@@ -167,6 +113,7 @@ interface MockRedeemableCode {
   redeemedAt: Date | null;
   expiresAt: Date | null;
   transactionId: string | null;
+  metadata?: Record<string, unknown> | null;
 }
 
 interface MockSubscription {
@@ -335,6 +282,23 @@ describe('redeemableCode.service', () => {
           }),
         ]),
       });
+    });
+
+    it('draws codes from a cryptographic source, not Math.random', async () => {
+      const random = vi.spyOn(Math, 'random').mockReturnValue(0);
+      mockDbWrite.redeemableCode.createMany.mockResolvedValue({ count: 5 });
+
+      try {
+        const codes = await createRedeemableCodes({
+          unitValue: 5000,
+          type: RedeemableCodeType.Buzz,
+          quantity: 5,
+        });
+
+        expect(new Set(codes).size).toBe(5);
+      } finally {
+        random.mockRestore();
+      }
     });
 
     it('should throw error when priceId does not exist', async () => {
@@ -1185,6 +1149,98 @@ describe('redeemableCode.service', () => {
         const expectedEnd = dayjs.utc(now).add(3, 'month').toDate();
         expect(updatedSubscription.currentPeriodStart.getTime()).toBe(now.getTime());
         expect(updatedSubscription.currentPeriodEnd.getTime()).toBe(expectedEnd.getTime());
+      });
+    });
+
+    describe('Support codes are bound to their customer', () => {
+      const supportMeta = { source: 'moderator-membership-code', forUserId: 1, mintedBy: 7 };
+      const txThatRedeems = (mockCode: object) =>
+        mockDbWrite.$transaction.mockImplementation(async (callback: any) =>
+          callback({
+            redeemableCode: {
+              update: vi.fn().mockResolvedValue({ ...mockCode, redeemedAt: new Date(), userId: 1 }),
+            },
+            customerSubscription: {
+              findFirst: vi.fn().mockResolvedValue(null),
+              create: vi.fn().mockResolvedValue({ id: 'sub_new' }),
+            },
+          })
+        );
+
+      it('refuses a support code presented by anyone but its customer, as if it did not exist', async () => {
+        const mockCode = createMockRedeemableCode({ metadata: supportMeta });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        txThatRedeems(mockCode);
+
+        await expect(consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 2 })).rejects.toThrow(
+          'Code does not exist or has been redeemed'
+        );
+        expect(mockDbWrite.$transaction).not.toHaveBeenCalled();
+      });
+
+      it('control: the customer it was minted for redeems it', async () => {
+        const mockCode = createMockRedeemableCode({ metadata: supportMeta });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        txThatRedeems(mockCode);
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+        expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(1);
+      });
+
+      it('leaves every other code redeemable by whoever holds it', async () => {
+        const mockCode = createMockRedeemableCode({ metadata: { orderId: 'o_1', forUserId: 1 } });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        txThatRedeems(mockCode);
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 2 });
+        expect(mockDbWrite.$transaction).toHaveBeenCalledTimes(1);
+      });
+
+      it('never returns metadata (support reason, minter, order ids) to the redeemer', async () => {
+        const mockCode = createMockRedeemableCode({
+          metadata: supportMeta,
+          redeemedAt: new Date('2024-01-10'),
+          userId: 1,
+        });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        mockDbRead.keyValue.findUnique.mockResolvedValue(null);
+
+        const result = await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+        expect(result).not.toHaveProperty('metadata');
+        expect(result).toMatchObject({ code: 'MB-TEST-1234' });
+      });
+
+      it('redeems only an unexpired code, which is what makes a revoke stick', async () => {
+        const mockCode = createMockRedeemableCode({ metadata: supportMeta });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        const update = vi
+          .fn()
+          .mockResolvedValue({ ...mockCode, redeemedAt: new Date(), userId: 1 });
+        mockDbWrite.$transaction.mockImplementation(async (callback: any) =>
+          callback({
+            redeemableCode: { update },
+            customerSubscription: {
+              findFirst: vi.fn().mockResolvedValue(null),
+              create: vi.fn().mockResolvedValue({ id: 'sub_new' }),
+            },
+          })
+        );
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+        expect(update.mock.calls[0][0].where).toEqual({
+          code: 'MB-TEST-1234',
+          redeemedAt: null,
+          OR: [{ expiresAt: { gt: expect.any(Date) } }, { expiresAt: null }],
+        });
+      });
+
+      it('asks the database for metadata, or the binding could never be read', async () => {
+        const mockCode = createMockRedeemableCode({ metadata: supportMeta });
+        mockDbWrite.redeemableCode.findUnique.mockResolvedValue(mockCode);
+        txThatRedeems(mockCode);
+
+        await consumeRedeemableCode({ code: 'MB-TEST-1234', userId: 1 });
+        expect(mockDbWrite.redeemableCode.findUnique.mock.calls[0][0].select.metadata).toBe(true);
       });
     });
 

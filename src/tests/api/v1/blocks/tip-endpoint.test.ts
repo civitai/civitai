@@ -73,7 +73,6 @@ const {
   mockRate,
   mockReserve,
   mockRefund,
-  mockUserFind,
   mockStash,
   mockClaim,
   mockFinalize,
@@ -85,7 +84,6 @@ const {
   mockRate: vi.fn(),
   mockReserve: vi.fn(),
   mockRefund: vi.fn(),
-  mockUserFind: vi.fn(),
   mockStash: vi.fn(),
   mockClaim: vi.fn(),
   mockFinalize: vi.fn(),
@@ -96,7 +94,6 @@ const {
 vi.mock('~/server/controllers/buzz.controller', () => ({
   createBuzzTipTransactionHandler: mockTip,
 }));
-vi.mock('~/server/db/client', () => ({ dbRead: { user: { findUnique: mockUserFind } } }));
 // Tracker is instantiated for the fabricated ctx — a no-op class is enough.
 vi.mock('~/server/clickhouse/client', () => ({ Tracker: class {} }));
 vi.mock('~/server/services/blocks/block-collections.service', () => ({
@@ -118,6 +115,8 @@ vi.mock('~/server/utils/block-tip-rate-limit', () => ({
 }));
 
 import handler from '~/pages/api/v1/blocks/tip';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockUserFind = dbMock.dbRead.user.findUnique;
 
 function fakeClaims(over: Partial<BlockTokenClaims> = {}): BlockTokenClaims {
   return {

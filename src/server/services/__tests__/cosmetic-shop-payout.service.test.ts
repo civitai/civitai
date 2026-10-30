@@ -9,6 +9,7 @@ const { mocks } = vi.hoisted(() => ({
     userFindUnique: vi.fn(),
     resaleFindUnique: vi.fn(),
     userCosmeticFindFirst: vi.fn(),
+    purchasesFindUnique: vi.fn(),
     purchasesCreate: vi.fn(),
     purchasesUpdate: vi.fn(),
     userCosmeticCreate: vi.fn(),
@@ -20,23 +21,6 @@ const { mocks } = vi.hoisted(() => ({
   },
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    cosmeticShopItem: { findUnique: mocks.shopItemFindUnique },
-    user: { findUnique: mocks.userFindUnique },
-    userCosmeticShopItemResale: { findUnique: mocks.resaleFindUnique },
-  },
-  dbWrite: {
-    cosmeticShopItem: { update: mocks.shopItemUpdate },
-    userCosmetic: { findFirst: mocks.userCosmeticFindFirst },
-    userCosmeticShopPurchases: { update: mocks.purchasesUpdate },
-    $transaction: (fn: (tx: unknown) => Promise<unknown>) =>
-      fn({
-        userCosmeticShopPurchases: { create: mocks.purchasesCreate },
-        userCosmetic: { create: mocks.userCosmeticCreate },
-      }),
-  },
-}));
 // `importOriginal` keeps the rest of the module real: this suite's import graph
 // reaches prom collectors it never names, and a hand-listed mock silently breaks
 // the moment that graph grows.
@@ -44,7 +28,6 @@ vi.mock('~/server/prom/client', async (importOriginal) => ({
   ...(await importOriginal<typeof PromClient>()),
   dbReadFallbackCounter: { inc: vi.fn() },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: mocks.logToAxiom }));
 // The post-commit sticker cache bust would reach a Redis that isn't running here,
 // and its failure path logs to axiom — which these tests assert stays silent.
 // `importOriginal` leaves every other cache export real.
@@ -70,6 +53,51 @@ vi.mock('~/server/services/user-preferences.service', () => ({
 import { computeCreatorShopSplit } from '~/server/schema/creator-shop.schema';
 import { TransactionType } from '~/shared/constants/buzz.constants';
 import { purchaseCosmeticShopItem } from '../cosmetic-shop.service';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import {
+  installShopPurchaseClaimFake,
+  shopPurchaseClaimFake,
+} from '~/test-utils/shopPurchaseClaimFake';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+dbMock.dbRead.cosmeticShopItem.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.user.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.userFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbRead.userCosmeticShopItemResale.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.resaleFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.cosmeticShopItem.update.mockImplementation((...args: unknown[]) =>
+  (mocks.shopItemUpdate as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmetic.findFirst.mockImplementation((...args: unknown[]) =>
+  (mocks.userCosmeticFindFirst as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopPurchases.findUnique.mockImplementation((...args: unknown[]) =>
+  (mocks.purchasesFindUnique as (...a: unknown[]) => unknown)(...args)
+);
+dbMock.dbWrite.userCosmeticShopPurchases.update.mockImplementation((...args: unknown[]) =>
+  (mocks.purchasesUpdate as (...a: unknown[]) => unknown)(...args)
+);
+let claims = shopPurchaseClaimFake();
+dbMock.dbWrite.$transaction.mockImplementation((fn: (tx: unknown) => Promise<unknown>) =>
+  claims.rollbackOnThrow(() =>
+    fn({
+      userCosmeticShopPurchases: { create: mocks.purchasesCreate },
+      // Not owned under the grant lock: the re-check passes and the grant proceeds.
+      userCosmetic: { create: mocks.userCosmeticCreate, findFirst: vi.fn(async () => null) },
+      cosmeticShopPurchaseClaim: claims.txDelegate,
+      $executeRaw: vi.fn(),
+    })
+  )
+);
+beforeEach(() => {
+  claims = installShopPurchaseClaimFake();
+});
+loggingMock.logToAxiom.mockImplementation((...args: unknown[]) =>
+  (mocks.logToAxiom as (...a: unknown[]) => unknown)(...args)
+);
 
 const BUYER_ID = 1;
 const CREATOR_ID = 100;
@@ -158,19 +186,17 @@ describe('purchaseCosmeticShopItem payouts', () => {
       type: TransactionType.Purchase,
     });
     expect(charge.externalTransactionIdPrefix).toMatch(
-      new RegExp(`^cosmetic-purchase-${BUYER_ID}-${SHOP_ITEM_ID}-`)
+      new RegExp(`^cosmetic-purchase-v2-${BUYER_ID}-${SHOP_ITEM_ID}-`)
     );
   });
 
-  it('own-storefront purchase (shop enabled) pays the creator the full 70% pool: 7000', async () => {
-    mocks.userFindUnique.mockResolvedValue({ settings: { creatorShop: { enabled: true } } });
-
+  it('own-storefront purchase pays the creator the full 70% pool: 7000 (no shop-settings lookup)', async () => {
     await purchase(CREATOR_ID);
 
-    expect(mocks.userFindUnique).toHaveBeenCalledWith({
-      where: { id: CREATOR_ID },
-      select: { settings: true },
-    });
+    // The creator selling their own item is the full-pool case on its own —
+    // the shop's `enabled` flag is visibility, not a payout term — so there is
+    // no settings blob to consult.
+    expect(mocks.userFindUnique).not.toHaveBeenCalled();
     expect(sellCalls()).toEqual([
       expect.objectContaining({
         fromAccountId: 0,
@@ -181,36 +207,53 @@ describe('purchaseCosmeticShopItem payouts', () => {
     ]);
   });
 
-  it('spoofed own-shop claim (shop NOT enabled) pays the creator only their 50% cut: 5000', async () => {
+  // Regression guard for 868kxwtn3: a creator selling their own sellable item on
+  // their own storefront kept only ~50% because the payout gated the full pool on
+  // `creatorShop.enabled`. Own-store sales pay the full 70% pool regardless of
+  // that flag — there is no other creator reselling, so no seller share is
+  // diverted to the platform.
+  it('own-storefront purchase pays the full 70% pool even when the shop is not enabled: 7000', async () => {
     mocks.userFindUnique.mockResolvedValue({ settings: { creatorShop: { enabled: false } } });
 
     await purchase(CREATOR_ID);
 
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
     ]);
   });
 
-  it('official Civitai shop attribution (-1) is a platform resale: creator gets 5000 only', async () => {
+  // Civitai selling a resellable item from its own shop is not a resale: no
+  // reseller made the sale, so the seller share is the creator's, not the platform's.
+  // A creator can't be their own reseller, even if a resale row names them.
+  it('own-storefront purchase with a resale row under the creator still pays one 7000 leg', async () => {
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
+
+    await purchase(CREATOR_ID);
+
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
+    ]);
+  });
+
+  it('official Civitai shop sale of a resellable item pays the creator the full pool: 7000', async () => {
     await purchase(-1);
 
-    // The system user has no shop settings worth consulting.
     expect(mocks.userFindUnique).not.toHaveBeenCalled();
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
     ]);
+    expect(mocks.purchasesUpdate.mock.calls[0][0].data.meta).toEqual({
+      payouts: [{ userId: CREATOR_ID, amount: 7000, color: 'yellow', transactionId: 'tx-1' }],
+      platformCut: 3000,
+    });
   });
 
-  // Every UI surface sends an attribution (-1 or a shop owner id); undefined
-  // still reaches us from direct API calls and stale clients. It must pay the
-  // platform split — if omitting the field paid the full pool, stripping the
-  // attribution would be the spoof.
-  it('unattributed purchase of a sellable item falls back to the platform resale split: creator gets 5000 only', async () => {
+  it('unattributed purchase of a resellable item pays the creator the full pool: 7000', async () => {
     await purchase(undefined);
 
     expect(mocks.userFindUnique).not.toHaveBeenCalled();
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
     ]);
   });
 
@@ -275,14 +318,40 @@ describe('purchaseCosmeticShopItem payouts', () => {
     expect(update.data.meta.platformCut).toBe(3000);
   });
 
-  it('invalid reseller attribution (no resale listing for the item) pays no seller share: creator 5000 only', async () => {
+  it('invalid reseller attribution (no resale listing for the item) pays no seller share: creator 7000', async () => {
     mocks.resaleFindUnique.mockResolvedValue(null);
 
     await purchase(RESELLER_ID);
 
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
     ]);
+  });
+
+  // The share is credited from the listing row looked up under the attributed
+  // id, so naming someone else can neither take the real reseller's cut nor
+  // stop them being paid on their own sales.
+  it('pays a real reseller their share while a spoofed attribution on the same item gets nothing', async () => {
+    const SPOOF_ID = 300;
+    mocks.resaleFindUnique.mockImplementation(
+      async ({ where }: { where: { userId_shopItemId: { userId: number } } }) =>
+        where.userId_shopItemId.userId === RESELLER_ID ? { sellerShare: 20 } : null
+    );
+
+    await purchase(SPOOF_ID);
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
+    ]);
+
+    mocks.createBuzzTransaction.mockClear();
+    await purchase(RESELLER_ID);
+    expect(sellCalls()).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 }),
+        expect.objectContaining({ toAccountId: RESELLER_ID, amount: 2000 }),
+      ])
+    );
+    expect(sellCalls()).toHaveLength(2);
   });
 
   it('genuine self-resale (buyer resells the item) gets no kickback: creator keeps the full 7000, buyer nothing', async () => {
@@ -295,13 +364,13 @@ describe('purchaseCosmeticShopItem payouts', () => {
     expect(sells.some((s) => s.toAccountId === BUYER_ID)).toBe(false);
   });
 
-  it('bogus self-attribution (buyer does NOT resell the item) is treated as unattributed: creator 5000 only', async () => {
+  it('bogus self-attribution (buyer does NOT resell the item) is treated as unattributed: creator 7000', async () => {
     mocks.resaleFindUnique.mockResolvedValue(null);
 
     await purchase(BUYER_ID);
 
     const sells = sellCalls();
-    expect(sells).toEqual([expect.objectContaining({ toAccountId: CREATOR_ID, amount: 5000 })]);
+    expect(sells).toEqual([expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 })]);
     expect(sells.some((s) => s.toAccountId === BUYER_ID)).toBe(false);
   });
 
@@ -326,17 +395,17 @@ describe('purchaseCosmeticShopItem payouts', () => {
     ]);
   });
 
-  it('sellerShare 70 on a platform resale leaves the creator 0 — no zero-amount payout is created', async () => {
+  it('a reseller listing at 70% leaves the creator 0 — no zero-amount payout is created', async () => {
     mocks.shopItemFindUnique.mockResolvedValue(
       shopItemRow({ meta: { sellableByOthers: true, sellerShare: 70 } })
     );
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 70 });
 
-    await purchase(undefined);
+    await purchase(RESELLER_ID);
 
-    expect(sellCalls()).toHaveLength(0);
-    // The only transaction is the buyer's charge.
-    expect(mocks.createBuzzTransaction).not.toHaveBeenCalled();
-    expect(mocks.createMultiTx).toHaveBeenCalledTimes(1);
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: RESELLER_ID, amount: 7000 }),
+    ]);
     // And the payout block didn't silently blow up either.
     expect(mocks.logToAxiom).not.toHaveBeenCalled();
   });
@@ -392,17 +461,15 @@ describe('purchaseCosmeticShopItem payouts', () => {
     ]);
   });
 
-  // Grandfathering is per-reseller: an unattributed sale of a still-resellable
-  // item is a platform resale at the item's CURRENT share, not anyone's terms.
-  it('leaves the platform resale split on the item’s current share', async () => {
+  it('pays the creator the full pool with no reseller, whatever share the item offers', async () => {
     mocks.shopItemFindUnique.mockResolvedValue(
-      shopItemRow({ meta: { sellableByOthers: true, sellerShare: 10 } })
+      shopItemRow({ meta: { sellableByOthers: true, sellerShare: 70 } })
     );
 
-    await purchase(undefined);
+    await purchase(-1);
 
     expect(sellCalls()).toEqual([
-      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 6000 }),
+      expect.objectContaining({ toAccountId: CREATOR_ID, amount: 7000 }),
     ]);
   });
 
@@ -600,5 +667,248 @@ describe('purchaseCosmeticShopItem sticker gate', () => {
     mocks.shopItemFindUnique.mockResolvedValue(shopItemRow());
     await purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID });
     expect(mocks.createMultiTx).toHaveBeenCalled();
+  });
+});
+
+// A sticker is spent, not worn: a purchase is a batch of uses, so someone out of
+// them is buying the same thing they bought the first time. Every other
+// single-ownership type stays refused — owning a second badge gets you nothing.
+describe('purchaseCosmeticShopItem repeat purchases', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+    mocks.userFindUnique.mockResolvedValue({ id: BUYER_ID });
+    mocks.userCosmeticCreate.mockResolvedValue({ userId: BUYER_ID, cosmeticId: 7 });
+    mocks.createMultiTx.mockResolvedValue(
+      chargeResponse([{ accountType: 'yellow', amount: PRICE }])
+    );
+  });
+
+  it('sells a sticker to someone who already owns a spent holding of it', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    // 🔴 Answers by QUERY, not by call order. The buyer holds a spent (finite)
+    // row: the ownership lookup — which only the reverted code makes — must see
+    // it and throw, while the unlimited lookup this code makes finds nothing.
+    // Keyed on call order instead, the same mock passes against a revert,
+    // because for a sticker today there is exactly one `findFirst`.
+    mocks.userCosmeticFindFirst.mockImplementation(({ where }: { where: { remaining?: null } }) =>
+      Promise.resolve('remaining' in where ? null : { claimKey: 'held' })
+    );
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      stickersEnabled: true,
+    });
+
+    expect(mocks.createMultiTx).toHaveBeenCalled();
+    // A second row, not an edit of the first: the claim key is the transaction
+    // id, and `getStickerBalances` sums across holdings.
+    expect(mocks.userCosmeticCreate).toHaveBeenCalled();
+  });
+
+  // Repeat purchases are what make a duplicate charge reachable at all: every
+  // other type is still refused by the ownership check.
+  it('refuses a replay of the same buying intent instead of charging twice', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    const key = '11111111-1111-4111-8111-111111111111';
+    const transactionId = `cosmetic-purchase-v2-${BUYER_ID}-${SHOP_ITEM_ID}-${key}`;
+    claims.rows.set(transactionId, {
+      transactionId,
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      amount: 1,
+      attempts: 1,
+      status: 'paid',
+    });
+
+    await expect(
+      purchaseCosmeticShopItem({
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        stickersEnabled: true,
+        idempotencyKey: '11111111-1111-4111-8111-111111111111',
+      })
+    ).rejects.toThrow('already been completed');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('charges when the intent has not been seen before', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.purchasesFindUnique.mockResolvedValue(null);
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      stickersEnabled: true,
+      idempotencyKey: '22222222-2222-4222-8222-222222222222',
+    });
+
+    expect(mocks.createMultiTx).toHaveBeenCalled();
+    // The key IS the transaction id, which is what makes the replay above
+    // recognisable — a random one per attempt would never match.
+    expect(mocks.createMultiTx.mock.calls[0][0].externalTransactionIdPrefix).toContain(
+      '22222222-2222-4222-8222-222222222222'
+    );
+  });
+
+  // The buyer pressed a button showing a number. A listing re-priced while a
+  // shop panel sat open must refuse rather than charge the new one silently.
+  it('refuses when the price moved since the button rendered', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ unitAmount: 9999 }));
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+
+    await expect(
+      purchaseCosmeticShopItem({
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        expectedUnitAmount: PRICE,
+      })
+    ).rejects.toThrow('price changed');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('charges when the expected price still matches', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow());
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      expectedUnitAmount: PRICE,
+    });
+
+    expect(mocks.createMultiTx).toHaveBeenCalled();
+  });
+
+  it('refuses a second sale when the buyer already has unlimited uses', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type: 'Sticker' }));
+    mocks.userCosmeticFindFirst.mockResolvedValue({ id: 5 });
+
+    await expect(
+      purchaseCosmeticShopItem({
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        stickersEnabled: true,
+      })
+    ).rejects.toThrow('unlimited uses');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it('still refuses a second badge', async () => {
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow());
+    mocks.userCosmeticFindFirst.mockResolvedValue({ id: 9 });
+
+    await expect(
+      purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID })
+    ).rejects.toThrow('already own');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+});
+
+describe('purchaseCosmeticShopItem creator restocking their own sticker', () => {
+  beforeEach(() => {
+    Object.values(mocks).forEach((m) => m.mockReset());
+    mocks.getBlockedPairIds.mockResolvedValue([]);
+    mocks.resaleFindUnique.mockResolvedValue(null);
+    mocks.userCosmeticCreate.mockResolvedValue({ userId: BUYER_ID, cosmeticId: 7 });
+    mocks.createBuzzTransaction.mockResolvedValue({ transactionId: 'tx-1' });
+    mocks.createMultiTx.mockResolvedValue(
+      chargeResponse([{ accountType: 'yellow', amount: PRICE }])
+    );
+    // The creator holds their spent approval grant; only the unlimited lookup
+    // (which filters on `remaining`) comes back empty.
+    mocks.userCosmeticFindFirst.mockImplementation(({ where }: { where: { remaining?: null } }) =>
+      Promise.resolve('remaining' in where ? null : { claimKey: 'creator-shop' })
+    );
+  });
+
+  const ownSticker = () =>
+    mocks.shopItemFindUnique.mockResolvedValue(
+      shopItemRow({ type: 'Sticker', createdById: BUYER_ID })
+    );
+
+  it('sells the creator their own sticker at full price and grants the uses', async () => {
+    ownSticker();
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      stickersEnabled: true,
+    });
+
+    expect(mocks.createMultiTx.mock.calls[0][0]).toMatchObject({
+      fromAccountId: BUYER_ID,
+      toAccountId: 0,
+      amount: PRICE,
+    });
+    expect(mocks.userCosmeticCreate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ userId: BUYER_ID }) })
+    );
+  });
+
+  it.each([
+    ['the official shop', undefined],
+    ['their own storefront', BUYER_ID],
+  ])('pays the creator none of their own money back, bought through %s', async (_, via) => {
+    ownSticker();
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      viaShopUserId: via,
+      stickersEnabled: true,
+    });
+
+    expect(mocks.createMultiTx).toHaveBeenCalled();
+    expect(sellCalls()).toEqual([]);
+    expect(mocks.purchasesUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { meta: { payouts: [], platformCut: PRICE } } })
+    );
+  });
+
+  // No holding is found, so only the creator gate can refuse: the single-ownership
+  // check further down would otherwise throw the same message for a badge.
+  it.each(['Badge', 'ContentDecoration'])('still refuses a creator their own %s', async (type) => {
+    mocks.userCosmeticFindFirst.mockResolvedValue(null);
+    mocks.shopItemFindUnique.mockResolvedValue(shopItemRow({ type, createdById: BUYER_ID }));
+
+    await expect(
+      purchaseCosmeticShopItem({ userId: BUYER_ID, shopItemId: SHOP_ITEM_ID })
+    ).rejects.toThrow('You already own this cosmetic');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
+  });
+
+  it("still pays another creator's storefront its share when the creator restocks there", async () => {
+    ownSticker();
+    mocks.resaleFindUnique.mockResolvedValue({ sellerShare: 20 });
+
+    await purchaseCosmeticShopItem({
+      userId: BUYER_ID,
+      shopItemId: SHOP_ITEM_ID,
+      viaShopUserId: RESELLER_ID,
+      stickersEnabled: true,
+    });
+
+    const { sellerAmount } = computeCreatorShopSplit(PRICE, 20);
+    expect(sellCalls()).toEqual([
+      expect.objectContaining({ toAccountId: RESELLER_ID, amount: sellerAmount }),
+    ]);
+  });
+
+  it('refuses a creator whose own sticker grant is unlimited', async () => {
+    ownSticker();
+    mocks.userCosmeticFindFirst.mockResolvedValue({ claimKey: 'creator-shop' });
+
+    await expect(
+      purchaseCosmeticShopItem({
+        userId: BUYER_ID,
+        shopItemId: SHOP_ITEM_ID,
+        stickersEnabled: true,
+      })
+    ).rejects.toThrow('unlimited uses');
+    expect(mocks.createMultiTx).not.toHaveBeenCalled();
   });
 });

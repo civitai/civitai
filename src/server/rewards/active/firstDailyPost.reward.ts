@@ -25,10 +25,10 @@ export const firstDailyPostReward = createBuzzEvent({
  *
  * The Buzz ledger keys this reward on the post — `firstDailyPost:<postId>-<userId>-<userId>`
  * — and that key never expires, while the grant itself is capped per user per UTC
- * day in Redis. So re-applying to a post on a later day passes the daily cap,
- * spends it, and is then refused by the ledger as a duplicate: the user's day is
- * burned and no Buzz moves, silently. Any caller that can hand the reward a post
- * it already paid for has to filter with this first.
+ * day in Redis. So re-applying to a post on a later day passes the daily cap and is
+ * then refused by the ledger as a duplicate. `apply` now gives the spent cap back
+ * when the ledger reports it already paid on an earlier day, so the day is no longer
+ * burned — filtering first still spares the pointless submit and lookup.
  */
 export async function getFirstDailyPostRewardedIds(posts: PostOwner[]) {
   const rewarded = new Set<number>();

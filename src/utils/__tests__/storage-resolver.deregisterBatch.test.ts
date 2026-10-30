@@ -58,7 +58,9 @@ describe('deregisterFileLocationsBatch', () => {
     expect(url).toBe('http://storage-resolver.internal/deregister');
     expect((init as RequestInit).method).toBe('POST');
     expect((init as any).headers.Authorization).toBe('Bearer test-token');
-    expect(JSON.parse((init as RequestInit).body as string)).toEqual({ modelVersionIds: [1, 2, 3] });
+    expect(JSON.parse((init as RequestInit).body as string)).toEqual({
+      modelVersionIds: [1, 2, 3],
+    });
     // Per-chunk unconditional abort so a hung resolver can't stall bulk cleanup.
     expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal);
   });

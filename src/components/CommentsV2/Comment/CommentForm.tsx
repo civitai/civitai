@@ -1,6 +1,5 @@
 import { Alert, Button, Center, Group, Stack } from '@mantine/core';
 import { IconLock } from '@tabler/icons-react';
-import produce from 'immer';
 import { useMemo, useRef, useState } from 'react';
 import {
   useCommentsContext,
@@ -15,7 +14,9 @@ import { upsertCommentv2Schema } from '~/server/schema/commentv2.schema';
 import type { SimpleUser } from '~/server/selectors/user.selector';
 import { removeDuplicates } from '~/utils/array-helpers';
 import { showErrorNotification } from '~/utils/notifications';
-import { trpc } from '~/utils/trpc';
+import { queryClient, trpc } from '~/utils/trpc';
+import { getQueryKey } from '@trpc/react-query';
+import { editCommentInInfiniteCaches } from '~/components/CommentsV2/comment-edit-cache';
 import classes from './CommentForm.module.scss';
 import clsx from 'clsx';
 
@@ -82,35 +83,21 @@ export const CommentForm = ({
   const queryUtils = trpc.useUtils();
   const { mutate, isPending: isLoading } = trpc.commentv2.upsert.useMutation({
     async onSuccess(response, request) {
-      form.reset();
+      // An edit resets to the saved text: the editor now re-syncs on reset, and the original
+      // content would show again until the form closes.
+      form.reset(request.id ? { ...defaultValues, content: response.content } : undefined);
       // Placements just spent uses, so the picker's counts are stale.
       await queryUtils.cosmetic.getStickerBalances.invalidate();
       // if it has an id, just set the data with state
       if (request.id) {
         // Response is minimally different but key components remain the same so any is used.
         queryUtils.commentv2.getSingle.setData({ id: request.id }, response);
-        queryUtils.commentv2.getInfinite.setInfiniteData(
-          { entityType, entityId },
-          produce((old) => {
-            if (!old) return;
-
-            // Find and update the comment across all pages
-            let found = false;
-            old.pages.forEach((page) => {
-              if (page?.comments) {
-                const item = page.comments.find((x) => x.id === request.id);
-                if (item) {
-                  item.content = request.content as string;
-                  found = true;
-                }
-              }
-            });
-
-            if (!found) {
-              store.editComment(entityType, entityId, response);
-            }
-          })
-        );
+        editCommentInInfiniteCaches(queryClient, getQueryKey(trpc.commentv2.getInfinite), {
+          id: request.id,
+          content: response.content,
+        });
+        // Comments created this session render from the store, not the query cache.
+        store.editComment(entityType, entityId, response);
       } else {
         const hasThreadData = queryUtils.commentv2.getInfinite.getInfiniteData({
           entityType,
@@ -181,7 +168,7 @@ export const CommentForm = ({
           onFocus={!autoFocus ? () => setFocused(true) : undefined}
           onSuperEnter={() => form.handleSubmit(handleSubmit)()}
           classNames={{
-            root: borderless ? 'border-none' : undefined,
+            root: clsx('overflow-hidden rounded-3xl', borderless && 'border-none'),
             content: clsx(classes.content, 'rounded-3xl'),
           }}
           data-testid="comment-form"

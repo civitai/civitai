@@ -2,14 +2,15 @@ import { useMantineTheme, getPrimaryShade, useComputedColorScheme } from '@manti
 import {
   type Icon,
   type IconProps,
+  IconBackpack,
   IconBarbell,
   IconBook,
   IconBookmark,
   IconBookmarkEdit,
+  IconBriefcase,
   IconBrush,
   IconChartHistogram,
   IconCloudLock,
-  IconCode,
   IconCube,
   IconCrown,
   IconGift,
@@ -23,6 +24,8 @@ import {
   IconProgressBolt,
   IconSword,
   IconShoppingBag,
+  IconStairsUp,
+  IconSticker,
   IconThumbUp,
   IconTrophy,
   IconUpload,
@@ -34,18 +37,25 @@ import {
 } from '@tabler/icons-react';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/router';
+import { myShopNavVisible } from '~/components/AppLayout/AppHeader/myShopNavVisibility';
 import { appsNavVisibility } from '~/components/AppLayout/AppHeader/appsNavVisibility';
 import { dialogStore } from '~/components/Dialog/dialogStore';
+import { useEventMenuItems } from '~/components/AppLayout/AppHeader/useEventMenuItems';
+import { enabledInventoryTypes } from '~/components/Inventory/inventory-types';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useQueryNotificationsCount } from '~/components/Notifications/notifications.utils';
+import { PLACEMENT_QUEUE_URL } from '~/components/Placement/queue-routes';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import { OnboardingSteps } from '~/server/common/enums';
-import { Flags } from '~/shared/utils/flags';
+import { CREATOR_JOURNEY_HREF } from '~/shared/constants/creator-journey.constants';
+import type { UserMenuItemId } from '~/shared/constants/user-menu.constants';
 import type { LoginRedirectReason } from '~/utils/login-helpers';
 import { trpc } from '~/utils/trpc';
 import type { CollectionType } from '~/shared/utils/prisma/enums';
 import { useMemo } from 'react';
 
 export type UserMenuItem = {
+  /** Set on items the drill-in menu can place and pin; see `USER_MENU_ITEM_IDS`. */
+  id?: UserMenuItemId;
   label: string;
   icon: React.ForwardRefExoticComponent<IconProps & React.RefAttributes<Icon>>;
   color?: string;
@@ -54,9 +64,24 @@ export type UserMenuItem = {
   as?: string;
   rel?: 'nofollow';
   onClick?: () => void;
+  /** Opens `href` in a new tab. */
+  external?: boolean;
   currency?: boolean;
   redirectReason?: LoginRedirectReason;
   newUntil?: Date;
+  isNew?: boolean;
+  /**
+   * A count rendered as a filled badge after the label. Zero and undefined both
+   * render nothing — a badge that says "0" reads as a broken badge, not as an
+   * empty queue.
+   *
+   * Anything supplying this must come from a query the header already makes.
+   * The menu mounts on every page for every signed-in user, so a number here
+   * that costs a request is a request on every page.
+   */
+  badge?: number;
+  /** What the badge counts, shown on hover. */
+  badgeTooltip?: string;
 };
 
 type UserMenuItemGroup = {
@@ -82,50 +107,113 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
     },
   } = useSystemCollections();
 
-  // App Blocks nav entries: public get-started vs mod-only marketplace. Pure
-  // helper (unit-tested in appsNavVisibility.test.ts) is the source of truth.
+  // App Blocks nav entry: is the /apps store visible to this viewer. Pure helper
+  // (unit-tested in appsNavVisibility.test.ts) is the source of truth.
   const appsNav = appsNavVisibility(features);
+
+  // Already in flight for the notification bell — one request per session,
+  // `staleTime: Infinity`. Reading it here adds no round trip.
+  const { pendingPlacements, pendingCollectionReviews, unopenedBoxes } =
+    useQueryNotificationsCount();
+
+  const eventItems = useEventMenuItems(
+    theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')]
+  );
 
   return [
     {
       visible: !!currentUser,
       items: [
         {
+          id: 'profile',
           href: `/user/${currentUser?.username as string}`,
           icon: IconUser,
           color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Your Profile',
         },
+        // Stays after the event's strip is dismissed: the way back to the event.
+        ...eventItems,
         {
-          href: `/user/${currentUser?.username as string}/shop`,
-          // Only Creator Program members qualify to run a shop.
-          visible:
-            features.creatorShop &&
-            Flags.hasFlag(currentUser?.onboarding ?? 0, OnboardingSteps.CreatorProgram),
-          icon: IconShoppingBag,
-          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Shop',
+          id: 'inventory',
+          href: '/user/inventory',
+          visible: enabledInventoryTypes(features).length > 0,
+          icon: IconBackpack,
+          color: theme.colors.grape[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Inventory',
+          badge: unopenedBoxes,
+          badgeTooltip: 'Unopened mystery boxes',
         },
         {
-          href: `/user/${currentUser?.username as string}/models?section=training`,
+          id: 'my-shop',
+          href: `/user/${currentUser?.username as string}/shop`,
+          // Same rule as the shop itself (`creatorShopProcedure`): the `creatorShop` flag.
+          visible: myShopNavVisible(features),
+          icon: IconShoppingBag,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Shop',
+        },
+        {
+          id: 'service-requests',
+          // The buyer's list of what they've requested; a seller's incoming ones are on the shop's
+          // manage page.
+          href: '/services/deals',
+          visible: !!currentUser && features.creatorServices,
+          icon: IconBriefcase,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Service Requests',
+        },
+        {
+          id: 'placements',
+          // The creator's own review queues — stickers AND remixes, one page.
+          // Their only other routes are four levels deep in account settings
+          // and the approve/decline drawn on a single image, so a creator with
+          // anything waiting had nowhere to go and find it — which is most of
+          // why 96 placements sat pending against 251 approved while the
+          // feature was selling. The count is both surfaces, because the entry
+          // now points at both.
+          href: PLACEMENT_QUEUE_URL,
+          // `stickerPlacement` gates PLACING a sticker, not receiving one, and
+          // the page itself asks only for a signed-in unbanned user. Gating the
+          // entry on the flag alone would hide it from exactly the owners
+          // holding a queue — someone with the flag placed on their image, they
+          // never had it. So: the flag, or a queue that is actually waiting.
+          visible: !!currentUser && (features.stickerPlacement || pendingPlacements > 0),
+          icon: IconSticker,
+          color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Placements',
+          badge: pendingPlacements,
+          badgeTooltip: 'Placements waiting for your review',
+          newUntil: new Date('2026-09-20'),
+        },
+        {
+          id: 'training',
+          // With the Training Studio on, "my trainings" IS the studio's run list.
+          href: features.trainingStudioUi
+            ? '/training-studio'
+            : `/user/${currentUser?.username as string}/models?section=training`,
           visible: !!currentUser && features.imageTrainingResults,
           icon: IconBarbell,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Training',
         },
         {
+          id: 'collections',
           href: `/collections`,
           icon: IconBookmark,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Collections',
+          label: 'Collections',
+          badge: pendingCollectionReviews,
+          badgeTooltip: 'Items awaiting review in your collections',
         },
         {
+          id: 'liked-models',
           href: `/collections/${bookmarkedModelsCollection?.id}`,
           icon: IconThumbUp,
           color: theme.colors.green[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Liked Models',
         },
         {
+          id: 'bookmarked-articles',
           href: `/collections/${bookmarkedArticlesCollection?.id}`,
           visible: !!bookmarkedArticlesCollection,
           icon: IconBookmarkEdit,
@@ -133,22 +221,24 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'Bookmarked Articles',
         },
         {
+          id: 'bounties',
           href: '/bounties?engagement=favorite',
-          as: '/bounties',
           visible: features.bounties,
           icon: IconMoneybag,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Bounties',
+          label: 'Bounties',
         },
         {
+          id: 'challenges',
           href: '/challenges?engagement=created',
           visible: features.challengePlatform && features.userChallenges,
           icon: IconTrophy,
           color: theme.colors.pink[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Your Challenges',
+          label: 'Challenges',
           newUntil: new Date('2026-08-15'),
         },
         {
+          id: 'buzz-dashboard',
           href: '/user/buzz-dashboard',
           visible: features.buzz,
           icon: IconProgressBolt,
@@ -156,6 +246,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           label: 'Buzz Dashboard',
         },
         {
+          id: 'creator-studio',
           // The Creator Studio spoke (creator-studio.civitai.com) — earnings/analytics + per-version
           // licensing-fee and paid-access management. Shared session, so a plain cross-subdomain link.
           href: 'https://creator-studio.civitai.com',
@@ -166,13 +257,24 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-09-01'),
         },
         {
+          id: 'creator-journey',
+          href: CREATOR_JOURNEY_HREF,
+          visible: !!currentUser && features.creatorJourney,
+          icon: IconStairsUp,
+          color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
+          label: 'Creator Journey',
+          newUntil: new Date('2026-11-15'),
+        },
+        {
+          id: 'vault',
           href: '/user/vault',
           visible: features.vault,
           icon: IconCloudLock,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'My Vault',
+          label: 'Vault',
         },
         {
+          id: 'referrals',
           href: '/user/referrals',
           visible: features.referralProgramV2,
           icon: IconGift,
@@ -181,24 +283,31 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2026-07-20'),
         },
         {
-          // PUBLIC "App builders" get-started landing page (Scope A soft launch).
-          // Gated on the separate public `appBlocksGetStarted` flag (kill switch),
-          // NOT the mod-only `appBlocks` gate — this is the only `/apps/*` surface
-          // visible to non-mods. Distinct label ("Build apps") from the mod-only
-          // marketplace entry below so a moderator never sees two identical labels.
-          // Visibility comes from the pure `appsNavVisibility` helper (unit-tested).
-          href: '/apps/get-started',
-          visible: appsNav.getStarted,
-          icon: IconCode,
-          color: theme.colors.blue[getPrimaryShade(theme, colorScheme ?? 'dark')],
-          label: 'Build apps',
-          newUntil: new Date('2026-08-01'),
-        },
-        {
-          // Mod-only App Blocks marketplace + in-page AppsSubNav hub (installed,
-          // submit, my-submissions, revenue, review). Stays gated on `appBlocks`
-          // (mod-only today). Labeled "Apps" so it reads distinctly from the
-          // public "Build apps" entry above.
+          id: 'apps',
+          // 🔴 ONE `/apps*` DROPDOWN ENTRY, ONE DESTINATION. This was two entries
+          // ("Build apps" → `/apps/get-started` and "Apps" → `/apps`), then one entry
+          // with a CONDITIONAL href that fell back to `/apps/get-started` for a viewer
+          // who held that flag but no store flag — because such a viewer cannot load
+          // `/apps` at all (`resolveAppsPageAccess` → `notFound`) and sending them there
+          // would be a menu entry into a 404.
+          //
+          // 🔴 THE FALLBACK IS GONE BECAUSE ITS DESTINATION IS, AND THE REPLACEMENT WOULD
+          // 404 FOR THE SAME COHORT. `/apps/get-started` merged into `/apps/build`, whose
+          // gate (`canAccessAppsBuild`) requires `hasAppsStoreAccess` — so repointing the
+          // fallback would have recreated, on the very same line, exactly the
+          // menu-entry-into-a-404 defect the fallback was written to avoid. A
+          // get-started-only viewer now has NO `/apps/*` surface at all, so the honest
+          // menu for them is no entry, which is what `visible` says.
+          //
+          // That also retires the "the label and icon do not follow the href" note this
+          // block used to carry: there is one destination now, so "Apps" with
+          // `IconPlugConnected` names it exactly.
+          //
+          // `marketplace` still routes through the shared `hasAppsStoreAccess` predicate
+          // (#3907) — gating it on `appBlocks` alone hid the store from the catalog-only
+          // and external-only cohorts, and this entry is the ONLY in-product route to
+          // `/apps` (the sub-nav's Marketplace tab renders only once you are already on
+          // an `/apps/*` route).
           href: '/apps',
           visible: appsNav.marketplace,
           icon: IconPlugConnected,
@@ -212,12 +321,14 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
       visible: !!currentUser,
       items: [
         {
+          id: 'leaderboard',
           href: '/leaderboard/overall',
           icon: IconCrown,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Leaderboard',
         },
         {
+          id: 'auctions',
           href: '/auctions',
           visible: features.auctions,
           icon: IconGavel,
@@ -226,6 +337,7 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2025-04-07'),
         },
         {
+          id: 'knights-of-new',
           href: '/games/knights-of-new-order',
           visible: features.newOrderGame,
           icon: IconSword,
@@ -234,21 +346,25 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2025-06-15'),
         },
         {
+          id: 'link-app',
           href: '/product/link',
           icon: IconLink,
           label: 'Download Link App',
         },
         {
+          id: 'following',
           href: `/user/${currentUser?.username as string}/following`,
           icon: IconUsers,
           label: 'Creators You Follow',
         },
         {
+          id: 'downloads',
           href: '/user/downloads',
           icon: IconHistory,
           label: 'Download History',
         },
         {
+          id: 'getting-started',
           icon: IconPlayerPlayFilled,
           label: 'Getting Started',
           onClick: () => {
@@ -266,13 +382,16 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
     {
       visible: !currentUser,
       items: [
+        ...eventItems,
         {
+          id: 'leaderboard',
           href: '/leaderboard/overall',
           icon: IconCrown,
           color: theme.colors.yellow[getPrimaryShade(theme, colorScheme ?? 'dark')],
           label: 'Leaderboard',
         },
         {
+          id: 'auctions',
           href: '/auctions',
           visible: features.auctions,
           icon: IconGavel,
@@ -281,11 +400,13 @@ export function useGetMenuItems(): UserMenuItemGroup[] {
           newUntil: new Date('2025-04-07'),
         },
         {
+          id: 'link-app',
           href: '/product/link',
           icon: IconLink,
           label: 'Download Link App',
         },
         {
+          id: 'sign-in',
           href: `/login?returnUrl=${router.asPath}`,
           rel: 'nofollow',
           icon: IconUserCircle,
@@ -306,6 +427,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
 
   return [
     {
+      id: 'create-generate',
       href: '/generate',
       visible: !isMuted,
       rel: 'nofollow',
@@ -314,6 +436,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Generate',
     },
     {
+      id: 'create-post-images',
       href: '/posts/create',
       visible: !isMuted && canCreate,
       redirectReason: 'post-images',
@@ -323,6 +446,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Post Images',
     },
     {
+      id: 'create-post-videos',
       href: '/posts/create?video=true',
       visible: !isMuted && canCreate,
       redirectReason: 'post-images',
@@ -332,6 +456,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Post Videos',
     },
     {
+      id: 'create-model',
       href: '/models/create',
       visible: !isMuted && canCreate,
       redirectReason: 'upload-model',
@@ -343,6 +468,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
     {
       // Opens the generation panel with the 3D Model tab selected. The
       // Model3D generator surface is gated separately by `model3dGenerator`.
+      id: 'create-model3d',
       href: '/generate?type=model3d',
       visible: !isMuted && features.model3dGenerator,
       rel: 'nofollow',
@@ -351,7 +477,10 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Generate 3D Model',
     },
     {
-      href: '/models/train',
+      // The user-toggleable trainingStudioUi flag swaps the trainer entry for the new Training
+      // Studio; the old wizard stays reachable by toggling it back off.
+      id: 'create-train',
+      href: features.trainingStudioUi ? '/training-studio' : '/models/train',
       visible: !isMuted && features.imageTraining,
       redirectReason: 'train-model',
       rel: 'nofollow',
@@ -361,6 +490,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       currency: true,
     },
     {
+      id: 'create-article',
       href: '/articles/create',
       visible: !isMuted && canCreate && features.articles,
       redirectReason: 'create-article',
@@ -370,6 +500,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Write an Article',
     },
     {
+      id: 'create-comic',
       href: '/comics/create',
       visible: !isMuted && canCreate && features.comicCreator,
       redirectReason: 'post-images',
@@ -379,6 +510,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       label: 'Create a Comic',
     },
     {
+      id: 'create-bounty',
       href: '/bounties/create',
       visible: !isMuted && canCreate && features.bounties,
       redirectReason: 'create-bounty',
@@ -389,6 +521,7 @@ export function useGetActionMenuItems(): Array<Omit<UserMenuItem, 'href'> & { hr
       currency: true,
     },
     {
+      id: 'create-challenge',
       href: '/challenges/create',
       visible: !isMuted && canCreate && features.challengePlatform && features.userChallenges,
       redirectReason: 'create-challenge',

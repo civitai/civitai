@@ -30,22 +30,32 @@ const { mockDbRead } = vi.hoisted(() => ({
     appListing: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The MANUAL-APPLY `source_repo_url` column is read through its OWN guarded
+      // `findUnique` (app-listing-source-repo.service) — never via
+      // `listingHydrateSelect`, which the public /apps GRID shares. Mocked here so the
+      // seam is exercised; `null` = "no source repo set", the default for these rows.
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ sourceRepoUrl: null })),
     },
   },
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbRead }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
-vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
+vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, sm: 180 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({
+  // 🔴 BOTH EXPORTS. `app-listing.service` now imports `bustCacheTag` as well as
+  // `queryCache` (it owns `bustAppListingCatalogCache`), and a one-key factory makes the
+  // WHOLE FILE fail to import with `No "bustCacheTag" export is defined on the … mock`.
   queryCache:
     () =>
     async (sql: unknown): Promise<unknown[]> =>
       mockDbRead.$queryRaw(sql),
+  bustCacheTag: vi.fn(async () => undefined),
 }));
 
 import {
+  getListingCard,
   getListingDetail,
   listAvailableListings,
   listingPublicVisibilityFilter,
@@ -56,6 +66,18 @@ function capturedSql(): string {
   const last = mockDbRead.$queryRaw.mock.calls.at(-1);
   const first = last?.[0] as { sql?: unknown } | undefined;
   return first && typeof first.sql === 'string' ? first.sql : '';
+}
+
+/**
+ * The captured SQL with `--` comments stripped.
+ *
+ * 🔴 Necessary, not cosmetic: the query's own comment reads "full scope emits TRUE
+ * (unchanged)", so a bare `/\bTRUE\b/` over the raw text matches the PROSE and reports
+ * a fail-open predicate on a query whose predicate is `FALSE`. An assertion that can be
+ * satisfied by a comment is not an assertion about the SQL.
+ */
+function capturedPredicateSql(): string {
+  return capturedSql().replace(/--[^\n]*/g, '');
 }
 
 /** A hydrated ONSITE listing row (as `listingHydrateSelect` returns). */
@@ -76,6 +98,10 @@ function onsiteRow(over: Record<string, unknown> = {}) {
     cover: null,
     user: { id: 7, username: 'dev', image: null },
     metric: null,
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     appBlock: {
       currentVersionDeployedAt: new Date('2026-01-01T00:00:00Z'),
       manifest: { name: 'Cool App', page: { path: '/run' } },
@@ -103,6 +129,10 @@ function offsiteExternalRow(over: Record<string, unknown> = {}) {
     cover: null,
     user: { id: 7, username: 'dev', image: null },
     metric: null,
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     appBlock: null,
     screenshots: [],
     ...over,
@@ -161,9 +191,44 @@ describe('listAvailableListings — STORE-SCOPE kind gate in the keyset WHERE', 
     expect(sql).not.toMatch(/al\.kind = 'offsite'/i);
   });
 
-  it('no scope passed → defaults to full (offsite clause absent — back-compat)', async () => {
-    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 });
-    expect(capturedSql()).not.toMatch(/al\.kind = 'offsite'/i);
+  // 🔴 civitai#3983 REGRESSION GUARD — the fail-open default this replaced.
+  //
+  // The test that used to sit here read: "no scope passed → defaults to full (offsite
+  // clause absent)". It asserted an ABSENCE (`not.toMatch(/al.kind = 'offsite'/)`) that
+  // `full` (TRUE) and `none` (FALSE) BOTH satisfy, so it could not tell the whole
+  // catalog from an empty one — it was green for the entire time production served the
+  // full approved catalog, on-site apps included, to anonymous callers of
+  // `GET /api/v1/apps` through exactly this `?? 'full'` default.
+  //
+  // Assert the PREDICATE that is emitted, positively, for each way a scope can be
+  // missing or uninterpretable. `FALSE` is the whole claim: an absent scope selects
+  // nothing.
+  it.each([
+    ['omitted entirely', undefined as unknown],
+    ['explicitly undefined', undefined as unknown],
+    ['null', null as unknown],
+    ['a string outside the closed set', 'FULL' as unknown],
+    ['a non-string', 1 as unknown],
+  ])('ABSENT SCOPE FAILS CLOSED — %s → the FALSE predicate, never TRUE', async (_label, value) => {
+    await listAvailableListings(
+      { kind: 'all', sort: 'newest', limit: 20 },
+      // deliberately bypassing the compile-time union: the point is the RUNTIME value
+      // production actually carried past a green typecheck.
+      { scope: value as never }
+    );
+    const sql = capturedPredicateSql();
+    expect(sql).toMatch(/\bFALSE\b/);
+    expect(sql).not.toMatch(/\bTRUE\b/);
+  });
+
+  // POSITIVE CONTROL for the guard above: the same assertion must be able to FAIL.
+  // A privileged caller still emits TRUE, so "matches FALSE / not TRUE" is a claim
+  // about the absent-scope case and not a property of every query this builds.
+  it('POSITIVE CONTROL: an explicit `full` scope still emits TRUE, not FALSE', async () => {
+    await listAvailableListings({ kind: 'all', sort: 'newest', limit: 20 }, { scope: 'full' });
+    const sql = capturedPredicateSql();
+    expect(sql).toMatch(/\bTRUE\b/);
+    expect(sql).not.toMatch(/\bFALSE\b/);
   });
 
   // 🔴 SECURITY (W13 draft-at-submit): a pre-approval DRAFT onsite listing exists in
@@ -208,6 +273,31 @@ describe('listAvailableListings — STORE-SCOPE kind gate in the keyset WHERE', 
   });
 });
 
+describe('getListingCard — same STORE-SCOPE kind gate as the detail read', () => {
+  beforeEach(() => {
+    mockDbRead.appListing.findFirst.mockReset();
+  });
+
+  it('public-external → HIDES (null) an ONSITE listing', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
+    expect(await getListingCard({ slug: 'cool-app' }, { scope: 'public-external' })).toBeNull();
+  });
+
+  it('public-external → SHOWS an OFFSITE listing as a card', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+      ...offsiteExternalRow(),
+      status: 'approved',
+    });
+    const card = await getListingCard({ slug: 'ext-app' }, { scope: 'public-external' });
+    expect(card?.id).toBe('apl_2');
+  });
+
+  it('none → null', async () => {
+    mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
+    expect(await getListingCard({ slug: 'cool-app' }, { scope: 'none' })).toBeNull();
+  });
+});
+
 describe('getListingDetail — STORE-SCOPE kind gate (app-layer)', () => {
   beforeEach(() => {
     mockDbRead.appListing.findFirst.mockReset();
@@ -245,9 +335,36 @@ describe('getListingDetail — STORE-SCOPE kind gate (app-layer)', () => {
     expect(detail!.id).toBe('apl_1');
   });
 
-  it('default scope (none passed) → full: ONSITE shown (back-compat)', async () => {
+  // 🔴 civitai#3983 REGRESSION GUARD — replaces "default scope (none passed) → full:
+  // ONSITE shown (back-compat)", the test that CODIFIED the fail-open default. Under
+  // it, an absent scope reached an ONSITE listing's full detail through the public,
+  // unauthenticated `GET /api/v1/apps/{slug}`.
+  //
+  // The DB assertion is the load-bearing half: the guard must short-circuit BEFORE the
+  // hydration read, so a mocked approved row cannot leak even if a later projection
+  // change would have rendered it.
+  it.each([
+    ['omitted entirely', undefined as unknown],
+    ['explicitly undefined', undefined as unknown],
+    ['null', null as unknown],
+    ['a string outside the closed set', 'FULL' as unknown],
+  ])(
+    'ABSENT SCOPE FAILS CLOSED — %s → null, and the DB is never touched',
+    async (_label, value) => {
+      mockDbRead.appListing.findFirst.mockResolvedValueOnce({
+        ...onsiteRow(),
+        status: 'approved',
+      });
+      expect(await getListingDetail({ slug: 'cool-app' }, { scope: value as never })).toBeNull();
+      expect(mockDbRead.appListing.findFirst).not.toHaveBeenCalled();
+    }
+  );
+
+  // POSITIVE CONTROL: the seeded row IS reachable with a real scope, so the nulls
+  // above are attributable to the scope and not to a broken fixture.
+  it('POSITIVE CONTROL: the same seeded row IS returned under an explicit `full`', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({ ...onsiteRow(), status: 'approved' });
-    expect(await getListingDetail({ slug: 'cool-app' })).not.toBeNull();
+    expect(await getListingDetail({ slug: 'cool-app' }, { scope: 'full' })).not.toBeNull();
   });
 
   // 🔴 SECURITY (W13 draft-at-submit): the DETAIL proc app-layer gate returns null for
@@ -255,7 +372,7 @@ describe('getListingDetail — STORE-SCOPE kind gate (app-layer)', () => {
   // PENDING) onsite listing is indistinguishable from a missing one — even under the
   // most-permissive `full` scope. A crafted slug/id can never reach a draft's data on
   // the public REST `/api/v1/apps/[slug]` or the tRPC store detail.
-  it("DRAFT CANNOT LEAK — a pre-approval DRAFT onsite listing → null under full scope", async () => {
+  it('DRAFT CANNOT LEAK — a pre-approval DRAFT onsite listing → null under full scope', async () => {
     mockDbRead.appListing.findFirst.mockResolvedValueOnce({
       ...onsiteRow(),
       status: 'draft',

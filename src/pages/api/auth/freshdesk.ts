@@ -4,6 +4,7 @@ import * as z from 'zod';
 import { env } from '~/env/server';
 import { createFreshdeskToken } from '~/server/integrations/freshdesk';
 import { MixedAuthEndpoint } from '~/server/utils/endpoint-helpers';
+import { requireFullScopeSession } from '~/server/utils/require-full-scope-session';
 import { getLoginLink } from '~/utils/login-helpers';
 
 const schema = z.object({
@@ -17,6 +18,7 @@ export default MixedAuthEndpoint(async function (
 ) {
   // Redirect if not authenticated
   if (!user?.username || !user?.email) return res.redirect(getLoginLink({ returnUrl: req.url }));
+  if (!requireFullScopeSession(req, res)) return;
   if (!env.FRESHDESK_JWT_SECRET) return res.status(500).send('FRESHDESK_JWT_SECRET not set');
   if (!env.FRESHDESK_JWT_URL) return res.status(500).send('FRESHDESK_JWT_URL not set');
 

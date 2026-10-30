@@ -4,16 +4,24 @@ import {
   getCommentCountV2Handler,
   getCommentsThreadDetailsHandler,
   getCommentsInfiniteHandler,
+  setTosViolationHandler,
   toggleLockThreadDetailsHandler,
   upsertCommentV2Handler,
   getCommentHandler,
   toggleHideCommentHandler,
   togglePinnedCommentHandler,
+  toggleThreadMuteHandler,
+  getThreadMutedHandler,
+  toggleSectionMuteHandler,
+  getSectionMutedHandler,
 } from './../controllers/commentv2.controller';
 import {
   commentConnectorSchema,
   upsertCommentv2Schema,
   getCommentsInfiniteSchema,
+  toggleThreadMuteSchema,
+  muteRateLimits,
+  sectionMuteSchema,
 } from './../schema/commentv2.schema';
 import {
   middleware,
@@ -29,6 +37,14 @@ import { toggleHideCommentSchema } from '~/server/schema/commentv2.schema';
 import { rateLimit } from '~/server/middleware.trpc';
 import { commentRateLimits } from '~/server/schema/comment.schema';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
+import { keepOwnReactorIds } from '~/server/utils/reaction-identity';
+
+// Comment reactions return every row (the client counts them), but only the viewer's own reaction identity.
+const ownReactorIdsOnly = middleware(async ({ ctx, next }) => {
+  const result = await next();
+  if (result.ok && !ctx.user?.isModerator) keepOwnReactorIds(result.data, ctx.user?.id);
+  return result;
+});
 
 const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   if (!ctx.user) throw throwAuthorizationError();
@@ -38,8 +54,11 @@ const isOwnerOrModerator = middleware(async ({ ctx, next, input = {} }) => {
   const userId = ctx.user.id;
   const isModerator = ctx?.user?.isModerator;
   if (!isModerator && !!id) {
-    const ownerId = (await dbRead.commentV2.findUnique({ where: { id } }))?.userId ?? 0;
-    if (ownerId !== userId) throw throwAuthorizationError();
+    const row = await dbRead.commentV2.findUnique({
+      where: { id },
+      select: { userId: true, tosViolation: true },
+    });
+    if (!row || row.tosViolation || row.userId !== userId) throw throwAuthorizationError();
   }
 
   return next({
@@ -58,12 +77,14 @@ export const commentv2Router = router({
   getSingle: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getByIdSchema)
+    .use(ownReactorIdsOnly)
     .query(getCommentHandler),
   upsert: guardedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(upsertCommentv2Schema)
     .use(isOwnerOrModerator)
     .use(rateLimit(commentRateLimits))
+    .use(ownReactorIdsOnly)
     .mutation(upsertCommentV2Handler),
   delete: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
@@ -77,16 +98,45 @@ export const commentv2Router = router({
   getInfinite: publicProcedure
     .meta({ requiredScope: TokenScope.MediaRead })
     .input(getCommentsInfiniteSchema)
+    .use(ownReactorIdsOnly)
     .query(getCommentsInfiniteHandler),
+  setTosViolation: moderatorProcedure.input(getByIdSchema).mutation(setTosViolationHandler),
   toggleLockThread: moderatorProcedure
     .input(commentConnectorSchema)
     .mutation(toggleLockThreadDetailsHandler),
   toggleHide: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleHideCommentSchema)
+    .use(ownReactorIdsOnly)
     .mutation(toggleHideCommentHandler),
   togglePinned: protectedProcedure
     .meta({ requiredScope: TokenScope.SocialWrite })
     .input(toggleHideCommentSchema)
     .mutation(togglePinnedCommentHandler),
+  getThreadMuted: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(toggleThreadMuteSchema)
+    .query(getThreadMutedHandler),
+  // Both mutations share ONE rate-limit budget: they are the same capability at two granularities,
+  // and a per-endpoint budget is just twice the number it appears to be.
+  //
+  // `protectedProcedure`, NOT `guardedProcedure`, even though the per-comment path can create a
+  // `Thread` row. `guardedProcedure` refuses a site-muted account, and a site mute is about posting
+  // content — silencing your own notifications is a preference keyed on your own userId, and the
+  // people whose accounts are restricted are the ones most likely to want it. The rate limit and the
+  // thread-lock check bound the create instead.
+  toggleThreadMute: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(toggleThreadMuteSchema)
+    .use(rateLimit(muteRateLimits, undefined, { sharedKey: 'commentv2.mute' }))
+    .mutation(toggleThreadMuteHandler),
+  getSectionMuted: protectedProcedure
+    .meta({ requiredScope: TokenScope.MediaRead })
+    .input(sectionMuteSchema)
+    .query(getSectionMutedHandler),
+  toggleSectionMute: protectedProcedure
+    .meta({ requiredScope: TokenScope.SocialWrite })
+    .input(sectionMuteSchema)
+    .use(rateLimit(muteRateLimits, undefined, { sharedKey: 'commentv2.mute' }))
+    .mutation(toggleSectionMuteHandler),
 });

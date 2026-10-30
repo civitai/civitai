@@ -186,7 +186,11 @@ export const referralRouter = router({
       try {
         return await redeemTokens({ userId: ctx.user.id, offerIndex: input.offerIndex });
       } catch (err) {
-        throw new TRPCError({ code: 'BAD_REQUEST', message: (err as Error).message });
+        throw new TRPCError({
+          code: 'BAD_REQUEST',
+          message: (err as Error).message,
+          cause: err,
+        });
       }
     }),
 

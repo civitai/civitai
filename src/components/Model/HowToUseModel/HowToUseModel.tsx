@@ -3,27 +3,37 @@ import { ModelType } from '~/shared/utils/prisma/enums';
 import type { IconProps } from '@tabler/icons-react';
 import { IconInfoSquareRounded } from '@tabler/icons-react';
 
+const RESOURCE_GUIDE_URL = 'https://education.civitai.com/civitais-guide-to-resource-types/';
+
+// Section anchors in the Education resource-types guide. A type the guide has no section for opens
+// the guide at the top.
 const instructions: Partial<Record<ModelType, string>> = {
-  [ModelType.Checkpoint]: '#fine-tuned-model-checkpoints-dreambooth-models',
-  [ModelType.TextualInversion]: '#textual-inversions',
-  [ModelType.AestheticGradient]: '#aesthetic-gradients',
-  [ModelType.LORA]: '#lora',
-  [ModelType.LoCon]: '#locon',
-  [ModelType.Hypernetwork]: '#hypernetwork',
-  [ModelType.Controlnet]: '#controlnet',
-  [ModelType.Poses]: '#poses',
+  [ModelType.Checkpoint]: '#models',
+  [ModelType.TextualInversion]: '#Embeddings',
+  [ModelType.AestheticGradient]: '',
+  [ModelType.LORA]: '#Loras',
+  [ModelType.LoCon]: '#Loras',
+  [ModelType.DoRA]: '#Loras',
+  [ModelType.Hypernetwork]: '',
+  [ModelType.Controlnet]: '',
+  [ModelType.Poses]: '',
+  [ModelType.VAE]: '#VAE',
   [ModelType.Wildcards]: '#wildcards',
-  [ModelType.MotionModule]: '#motion-module',
+  [ModelType.Workflows]: '#workflows',
+  [ModelType.MotionModule]: '',
 };
 
-export const HowToUseModel = ({ type }: ModelFileAlertProps) => {
-  if (!instructions[type]) return null;
+/** The "How to use this" link for a model type, or null when the type has no guide entry. */
+export function howToUseModelHref(type: ModelType) {
+  const anchor = instructions[type];
+  return anchor === undefined ? null : `${RESOURCE_GUIDE_URL}${anchor}`;
+}
 
-  return (
-    <HowToButton
-      href={`https://github.com/civitai/civitai/wiki/How-to-use-models${instructions[type]}`}
-    />
-  );
+export const HowToUseModel = ({ type }: ModelFileAlertProps) => {
+  const href = howToUseModelHref(type);
+  if (!href) return null;
+
+  return <HowToButton href={href} />;
 };
 
 type ModelFileAlertProps = {

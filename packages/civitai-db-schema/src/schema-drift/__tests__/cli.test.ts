@@ -1,10 +1,9 @@
-import { execFile } from 'node:child_process';
 import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { promisify } from 'node:util';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { runTsxCli, type CliRun } from './support/tsx-cli';
 import type { DbCatalog } from '../types';
 
 /**
@@ -21,40 +20,25 @@ import type { DbCatalog } from '../types';
  */
 vi.setConfig({ testTimeout: 60_000 });
 
-const run = promisify(execFile);
-
 const here = fileURLToPath(new URL('.', import.meta.url));
 const packageRoot = join(here, '../../..');
-const tsx = join(packageRoot, 'node_modules/.bin/tsx');
 const cli = join(packageRoot, 'src/schema-drift/cli.ts');
 const fixtureSchema = join(here, 'fixtures/fixture.prisma');
 const realSchema = join(packageRoot, 'prisma/schema.full.prisma');
-
-interface Run {
-  code: number;
-  stdout: string;
-  stderr: string;
-}
 
 /**
  * Drive the real entry point as a process, so the assertions are about what a person
  * running the command actually gets — exit code included. The unit tests exercise the
  * differ; nobody runs the differ.
  */
-async function drift(args: string[]): Promise<Run> {
-  try {
-    const { stdout, stderr } = await run(tsx, [cli, ...args], {
-      cwd: packageRoot,
-      // No DATABASE_URL: every case here is --catalog driven, and an inherited one must
-      // never be reachable from a test.
-      env: { ...process.env, DATABASE_URL: '' },
-      maxBuffer: 32 * 1024 * 1024,
-    });
-    return { code: 0, stdout, stderr };
-  } catch (error) {
-    const e = error as { code?: number; stdout?: string; stderr?: string };
-    return { code: e.code ?? -1, stdout: e.stdout ?? '', stderr: e.stderr ?? '' };
-  }
+async function drift(args: string[]): Promise<CliRun> {
+  return runTsxCli(cli, args, {
+    cwd: packageRoot,
+    // No DATABASE_URL: every case here is --catalog driven, and an inherited one must
+    // never be reachable from a test.
+    env: { ...process.env, DATABASE_URL: '' },
+    maxBuffer: 32 * 1024 * 1024,
+  });
 }
 
 let dir: string;

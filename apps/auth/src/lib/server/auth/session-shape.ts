@@ -2,15 +2,18 @@ import { z } from 'zod';
 import type { SessionUser } from '@civitai/auth';
 import { getUserBanDetails, type BanDetailsMeta } from './ban';
 
-// Focused parse of the two content-preference fields the session exposes off `User.settings`. The main app
+// Focused parse of the content-preference fields the session exposes off `User.settings`. The main app
 // runs the FULL userSettingsSchema.safeParse (which fails wholesale if any unrelated field is mistyped, then
-// falls back to defaults); we read just these two leniently so an explicit user choice is honored regardless
+// falls back to defaults); we read just these leniently so an explicit user choice is honored regardless
 // of the rest of the blob. PARITY NOTE: this is intentionally more robust than getSessionUser — for the (rare)
-// user whose settings blob has an unrelated malformed field AND an explicit allowAds/redBrowsingLevel, the hub
+// user whose settings blob has an unrelated malformed field AND an explicit allowAds, the hub
 // honors it while getSessionUser currently defaults. To make them bit-identical, getSessionUser should adopt
 // the same focused read (a small, revenue-adjacent change — left for explicit review). See the cutover doc (D).
 const settingsSchema = z
-  .object({ allowAds: z.boolean().optional(), redBrowsingLevel: z.number().optional() })
+  .object({
+    allowAds: z.boolean().optional(),
+    isEarlyAdopter: z.boolean().optional(),
+  })
   .passthrough();
 
 // PURE derivation: queried rows + permissions → the @civitai/auth SessionUser. No DB / redis / env, so the
@@ -50,6 +53,11 @@ export interface ProducerUserRow {
   filePreferences: unknown;
   settings: unknown;
   meta: unknown;
+  /**
+   * `EXISTS` an approved `AppAccessRequest` for this user (the producer's query). Kysely types an
+   * `EXISTS` as `SqlBool` (`boolean | 0 | 1`); node-postgres returns a boolean.
+   */
+  appBuilderApproved?: boolean | 0 | 1 | null;
   profilePicture: { url: string } | null;
   referral: { id: number } | null;
 }
@@ -116,13 +124,23 @@ export function shapeSessionUser({
     }
   }
 
-  // allowAds / redBrowsingLevel — honor the user's stored settings when present (see settingsSchema note),
+  // allowAds — honor the user's stored settings when present (see settingsSchema note),
   // else fall back to the tier-based default (member → no ads; free → ads). Mirrors getSessionUser's intent.
   const parsedSettings = settingsSchema.safeParse(asObject(row.settings));
   const settings = parsedSettings.success ? parsedSettings.data : {};
-  const allowAds = settings.allowAds != null ? settings.allowAds : highestTier != null ? false : true;
-  const redBrowsingLevel: number | undefined =
-    settings.redBrowsingLevel != null ? settings.redBrowsingLevel : undefined;
+  const allowAds =
+    settings.allowAds != null ? settings.allowAds : highestTier != null ? false : true;
+
+  // Early-adopter opt-in. Kept SPARSE (undefined when the user never opted in) rather
+  // than coerced to false, so the session payload for the overwhelming majority of users
+  // is unchanged; `buildFliptContext` is what turns it into a 'true'/'false' string.
+  const isEarlyAdopter: boolean | undefined =
+    settings.isEarlyAdopter != null ? settings.isEarlyAdopter : undefined;
+
+  // App-builder grant, from the producer's EXISTS over `AppAccessRequest` — a column of the
+  // query, not of `settings`, so a settings blob carrying the same key is ignored. Sparse like
+  // `isEarlyAdopter`: only an approved user's payload changes.
+  const appBuilderApproved: true | undefined = row.appBuilderApproved ? true : undefined;
 
   // meta → banDetails (parity: the main app strips banDetails out of meta before reading it, so banDetails
   // is effectively undefined; reproduced exactly).
@@ -150,7 +168,6 @@ export function shapeSessionUser({
     showNsfw: row.showNsfw,
     blurNsfw: row.blurNsfw,
     browsingLevel: row.browsingLevel,
-    redBrowsingLevel,
     onboarding: row.onboarding,
     permissions,
     roles,
@@ -159,6 +176,8 @@ export function shapeSessionUser({
     subscriptionId: primarySubscriptionId,
     memberInBadState,
     allowAds,
+    isEarlyAdopter,
+    appBuilderApproved,
     tier: highestTier,
     meta: userMeta,
     banDetails: banDetails as Record<string, unknown> | undefined,

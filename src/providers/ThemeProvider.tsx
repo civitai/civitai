@@ -33,6 +33,16 @@ export const theme = createTheme({
       defaultProps: { withArrow: true },
     },
     Popover: { styles: { dropdown: { maxWidth: '100vw' } }, defaultProps: { withinPortal: false } },
+
+    // Mantine's OptionsDropdown defaults to a 4px scrollbar that only shows mid-scroll, so a list
+    // past the 220px cap reads as if it ends at the fold. 'auto' shows the bar whenever the options
+    // overflow and nothing when they don't. Every component built on that dropdown needs it, so a
+    // fifth one belongs here too.
+    Select: { defaultProps: { scrollAreaProps: { type: 'auto' } } },
+    Autocomplete: { defaultProps: { scrollAreaProps: { type: 'auto' } } },
+    MultiSelect: { defaultProps: { scrollAreaProps: { type: 'auto' } } },
+    TagsInput: { defaultProps: { scrollAreaProps: { type: 'auto' } } },
+
     Rating: { styles: { symbolBody: { cursor: 'pointer' } } },
     Switch: {
       styles: {
@@ -265,6 +275,17 @@ export function ThemeProvider({
         withCssVariables={false}
       >
         <StaticMantineCssVariables />
+        {/* NO INSET PROP HERE — deliberately. Mantine pins each notification
+            container 16px (`--mantine-spacing-md`) off the edge its position
+            names, which is inside both the notch and the home-indicator strip
+            once `viewport-fit=cover` is on. That is paid at the library seam,
+            by the `.mantine-Notifications-root[data-position…]` rules in
+            `src/styles/globals.css`, for two reasons a prop here cannot meet:
+            this is one of THREE `<Notifications />` in the tree (also
+            `ImageDetailByProps` and `bounties/[id]/entries/[entryId]`), and a
+            single `style` prop is spread onto all six position containers at
+            once, so it cannot be right for the `top-*` and `bottom-*` halves
+            simultaneously. Do not re-add one here. */}
         <Notifications />
         <DateLocaleProvider>{children}</DateLocaleProvider>
       </MantineProvider>

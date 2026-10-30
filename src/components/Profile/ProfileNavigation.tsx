@@ -9,13 +9,17 @@ import {
   IconPencilMinus,
   IconPhoto,
   IconShoppingBag,
+  IconSticker,
+  IconTrophy,
   IconVideo,
 } from '@tabler/icons-react';
 import { useRouter } from 'next/router';
+import { useProfileAchievements } from '~/components/CreatorJourney/useProfileAchievements';
 import { trpc } from '~/utils/trpc';
 import type { DataItem } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import { HomeStyleSegmentedControl } from '~/components/HomeContentToggle/HomeStyleSegmentedControl';
 import homeStyleClasses from '~/components/HomeContentToggle/HomeStyleSegmentedControl.module.css';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { getDisplayName, postgresSlugify } from '~/utils/string-helpers';
@@ -30,7 +34,8 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
   const router = useRouter();
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
-  const isShopOwner =
+  const settings = useCurrentUserSettings();
+  const isProfileOwner =
     !!currentUser && postgresSlugify(currentUser.username) === postgresSlugify(username);
   const isModerator = currentUser?.isModerator ?? false;
 
@@ -40,6 +45,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
     isRefetching,
   } = trpc.userProfile.overview.useQuery({ username });
   const { data: user } = trpc.userProfile.get.useQuery({ username });
+  const { count: achievementCount } = useProfileAchievements(user?.id);
 
   const activePath = router.pathname.split('/').pop() || overviewPath;
   const baseUrl = `/user/${username}`;
@@ -93,11 +99,31 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       count: userOverview?.comicCount ?? 0,
       disabled: !features.comicCreator || !!user?.bannedAt,
     },
+    achievements: {
+      url: `${baseUrl}/achievements`,
+      icon: (props) => <IconTrophy {...props} />,
+      label: 'Achievements',
+      count: achievementCount,
+      // Zero when the flag is off for the viewer, so this also hides it then.
+      disabled: achievementCount === 0 || !!user?.bannedAt,
+    },
     collections: {
       url: `${baseUrl}/collections`,
       icon: (props) => <IconBookmark {...props} />,
       count: userOverview?.collectionCount ?? 0,
       disabled: !!user?.bannedAt,
+    },
+    'sticker-book': {
+      url: `${baseUrl}/sticker-book`,
+      icon: (props) => <IconSticker {...props} />,
+      label: 'Sticker Book',
+      // Hidden from visitors when the creator hid it, the same way a disabled
+      // shop is — the owner and moderators keep the tab. The book's own payload
+      // withholds the content independently; this only decides the nav item.
+      disabled:
+        !features.stickerBook ||
+        !!user?.bannedAt ||
+        (!isProfileOwner && !isModerator && !!user?.stickerBookHidden),
     },
     shop: {
       url: `${baseUrl}/shop`,
@@ -109,7 +135,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       disabled:
         !features.creatorShop ||
         !!user?.bannedAt ||
-        (!isShopOwner && !isModerator && !user?.creatorShopEnabled),
+        (!isProfileOwner && !isModerator && !user?.creatorShopEnabled),
     },
   };
 
@@ -118,6 +144,7 @@ export const ProfileNavigation = ({ username }: ProfileNavigationProps) => {
       data={opts}
       value={activePath}
       loading={isInitialLoading || isRefetching}
+      keepLabels={settings.navigation?.keepProfileLabels}
     />
   );
 };

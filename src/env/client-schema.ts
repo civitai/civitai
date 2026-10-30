@@ -8,25 +8,51 @@ import { isProd } from './other';
  * To expose them to the client, prefix them with `NEXT_PUBLIC_`.
  */
 export const clientSchema = z.object({
-  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: z.string().default(''),
   NEXT_PUBLIC_IMAGE_LOCATION: z.string().default(''),
   NEXT_PUBLIC_CIVITAI_LINK: isProd ? z.url() : z.url().optional(),
   NEXT_PUBLIC_GIT_HASH: z.string().optional(),
+  NEXT_PUBLIC_LOCAL_TRACKER_ENABLED: z.string().optional(),
+  NEXT_PUBLIC_LOCAL_ADS_ENABLED: z.string().optional(),
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: z.url().optional(),
   NEXT_PUBLIC_PICFINDER_API_KEY: z.string().optional(),
   NEXT_PUBLIC_SEARCH_HOST: z.url().optional(),
   NEXT_PUBLIC_SEARCH_CLIENT_KEY: z.string().optional(),
   NEXT_PUBLIC_SIGNALS_ENDPOINT: z.string().optional(),
-  NEXT_PUBLIC_USER_LOOKUP_URL: z.string().optional(),
-  NEXT_PUBLIC_MODEL_LOOKUP_URL: z.string().optional(),
-  NEXT_PUBLIC_CHAT_LOOKUP_URL: z.string().optional(),
-  NEXT_PUBLIC_POST_LOOKUP_URL: z.string().optional(),
+  // VAPID public key for web push (`applicationServerKey`). Must be the pair of the private key the
+  // notifications worker signs with, or every subscription minted here is undeliverable. Unset =
+  // push UI never offered.
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: z.string().optional(),
+  NEXT_PUBLIC_MODERATOR_APP_URL: z.url().default('https://moderator.civitai.com'),
+  NEXT_PUBLIC_TRAINING_STUDIO_URL: z.url().default('https://training.civitai.com'),
+  // 🔴 The BROWSER-facing orchestrator origin, and deliberately NOT the server-side
+  // `ORCHESTRATOR_ENDPOINT`. That one is an in-cluster address
+  // (`http://orchestration-api.…svc.cluster.local:8080`), so handing it to client code yields a
+  // mixed-content warning and `ERR_NAME_NOT_RESOLVED` — which is exactly what the embedded Training
+  // Studio did until this existed. The web component calls the orchestrator DIRECTLY from the
+  // browser (docs/training-studio-web-component.md), so it needs the public origin. Keep the two
+  // separate: server code keeps using `ORCHESTRATOR_ENDPOINT`, browser code uses this.
+  //
+  // This default's HOST also appears in `CIVITAI_IMAGE_HOSTS`
+  // (src/components/AppBlocks/saveImageDownload.ts) — same hostname, different job: that one is the
+  // allowlist of hosts the App Blocks download bridge may FETCH from, this one is the base URL the
+  // browser CALLS. They are not interchangeable and must not be merged, but they are coupled: a
+  // blob URL minted by this origin has to be fetchable by that bridge, so changing the public
+  // orchestrator host means changing both. The coupling is asserted, not just described, in
+  // src/__tests__/pages/training-studio-embed-orchestrator-origin.test.ts.
+  NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT: z.url().default('https://orchestration.civitai.com'),
   NEXT_PUBLIC_GPTT_UUID: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID_ALT: z.string().optional(),
   NEXT_PUBLIC_GPTT_UUID_GREEN: z.string().optional(),
   NEXT_PUBLIC_BASE_URL: z.string().optional(),
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: z.stringbool().default(true),
-  NEXT_PUBLIC_LOG_TRPC: z.stringbool().default(false),
+  // An empty value reads as unset rather than as a parse error: the read below named
+  // the wrong variable until #4035, so a config carrying a valueless key had been
+  // inert and would otherwise start throwing out of `~/env/client`. Anything else
+  // unparseable still throws, as it does for every other stringbool here.
+  NEXT_PUBLIC_LOG_TRPC: z.preprocess(
+    (value) => (value === '' ? undefined : value),
+    z.stringbool().default(false)
+  ),
   NEXT_PUBLIC_RECAPTCHA_KEY: z.string().optional(),
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: z.string().optional(),
   NEXT_PUBLIC_CHOPPED_ENDPOINT: z.url().optional(),
@@ -75,25 +101,26 @@ export const clientSchema = z.object({
  * @type {{ [k in keyof z.infer<typeof clientSchema>]: z.infer<typeof clientSchema>[k] | undefined }}
  */
 export const clientEnv = {
-  NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION: process.env.NEXT_PUBLIC_CONTENT_DECTECTION_LOCATION,
   NEXT_PUBLIC_IMAGE_LOCATION: process.env.NEXT_PUBLIC_IMAGE_LOCATION,
   NEXT_PUBLIC_GIT_HASH: process.env.NEXT_PUBLIC_GIT_HASH,
+  NEXT_PUBLIC_LOCAL_TRACKER_ENABLED: process.env.NEXT_PUBLIC_LOCAL_TRACKER_ENABLED,
+  NEXT_PUBLIC_LOCAL_ADS_ENABLED: process.env.NEXT_PUBLIC_LOCAL_ADS_ENABLED,
   NEXT_PUBLIC_CIVITAI_LINK: process.env.NEXT_PUBLIC_CIVITAI_LINK,
   NEXT_PUBLIC_PICFINDER_WS_ENDPOINT: process.env.NEXT_PUBLIC_PICFINDER_WS_ENDPOINT,
   NEXT_PUBLIC_PICFINDER_API_KEY: process.env.NEXT_PUBLIC_PICFINDER_API_KEY,
   NEXT_PUBLIC_SEARCH_HOST: process.env.NEXT_PUBLIC_SEARCH_HOST,
   NEXT_PUBLIC_SEARCH_CLIENT_KEY: process.env.NEXT_PUBLIC_SEARCH_CLIENT_KEY,
   NEXT_PUBLIC_SIGNALS_ENDPOINT: process.env.NEXT_PUBLIC_SIGNALS_ENDPOINT,
-  NEXT_PUBLIC_USER_LOOKUP_URL: process.env.NEXT_PUBLIC_USER_LOOKUP_URL,
-  NEXT_PUBLIC_MODEL_LOOKUP_URL: process.env.NEXT_PUBLIC_MODEL_LOOKUP_URL,
-  NEXT_PUBLIC_CHAT_LOOKUP_URL: process.env.NEXT_PUBLIC_CHAT_LOOKUP_URL,
-  NEXT_PUBLIC_POST_LOOKUP_URL: process.env.NEXT_PUBLIC_POST_LOOKUP_URL,
+  NEXT_PUBLIC_VAPID_PUBLIC_KEY: process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY,
+  NEXT_PUBLIC_MODERATOR_APP_URL: process.env.NEXT_PUBLIC_MODERATOR_APP_URL,
+  NEXT_PUBLIC_TRAINING_STUDIO_URL: process.env.NEXT_PUBLIC_TRAINING_STUDIO_URL,
+  NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT: process.env.NEXT_PUBLIC_ORCHESTRATOR_ENDPOINT,
   NEXT_PUBLIC_GPTT_UUID: process.env.NEXT_PUBLIC_GPTT_UUID,
   NEXT_PUBLIC_GPTT_UUID_ALT: process.env.NEXT_PUBLIC_GPTT_UUID_ALT,
   NEXT_PUBLIC_GPTT_UUID_GREEN: process.env.NEXT_PUBLIC_GPTT_UUID_GREEN,
   NEXT_PUBLIC_BASE_URL: process.env.NEXT_PUBLIC_BASE_URL ?? process.env.NEXTAUTH_URL,
   NEXT_PUBLIC_UI_HOMEPAGE_IMAGES: process.env.NEXT_PUBLIC_UI_HOMEPAGE_IMAGES,
-  NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRP,
+  NEXT_PUBLIC_LOG_TRPC: process.env.NEXT_PUBLIC_LOG_TRPC,
   NEXT_PUBLIC_RECAPTCHA_KEY: process.env.NEXT_PUBLIC_RECAPTCHA_KEY,
   NEXT_PUBLIC_PAYPAL_CLIENT_ID: process.env.NEXT_PUBLIC_PAYPAL_CLIENT_ID,
   NEXT_PUBLIC_CHOPPED_ENDPOINT: process.env.NEXT_PUBLIC_CHOPPED_ENDPOINT,

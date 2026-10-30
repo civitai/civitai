@@ -1,5 +1,5 @@
 import type { InstantSearchRoutingParser } from '~/components/Search/parsers/base';
-import { searchParamsSchema } from '~/components/Search/parsers/base';
+import { parseSearchParams, searchParamsSchema } from '~/components/Search/parsers/base';
 import * as z from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
@@ -27,9 +27,10 @@ export type UserSearchParams = z.output<typeof userSearchParamsSchema>;
 
 export const usersInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
-    const userSearchIndexResult = userSearchParamsSchema.safeParse(QS.parse(location.search));
-    const userSearchIndexData: UserSearchParams | Record<string, string[]> =
-      userSearchIndexResult.success ? userSearchIndexResult.data : {};
+    const userSearchIndexData = parseSearchParams(
+      userSearchParamsSchema,
+      QS.parse(location.search)
+    );
 
     return { [USERS_SEARCH_INDEX]: removeEmpty(userSearchIndexData) };
   },

@@ -1,0 +1,162 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
+import { awardBountyEntry, upsertBountyEntry } from '~/server/services/bountyEntry.service';
+import { upsertBountyEntryHandler } from '~/server/controllers/bountyEntry.controller';
+import type { ProtectedContext } from '~/server/createContext';
+
+const BOUNTY_ID = 10;
+const ENTRY_ID = 20;
+const OWNER_ID = 1;
+const ENTRANT_ID = 2;
+
+loggingMock.logToAxiom.mockImplementation(() => Promise.resolve());
+
+describe('awardBountyEntry', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbWrite.bountyEntry.findUniqueOrThrow.mockResolvedValue({
+      id: ENTRY_ID,
+      bountyId: BOUNTY_ID,
+      userId: OWNER_ID,
+    });
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([
+      { userId: 3, complete: false, refunded: false, poi: false, availability: 'Public', meta: {} },
+    ] as never);
+  });
+
+  it('refuses to let a benefactor award their own entry', async () => {
+    await expect(awardBountyEntry({ id: ENTRY_ID, userId: OWNER_ID })).rejects.toThrow(
+      "You can't award your own entry."
+    );
+    expect(dbMock.dbWrite.bountyBenefactor.findUniqueOrThrow).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.bountyBenefactor.update).not.toHaveBeenCalled();
+    expect(dbMock.dbWrite.$queryRaw).not.toHaveBeenCalled();
+  });
+
+  it("lets a benefactor reach the award checks for someone else's entry", async () => {
+    dbMock.dbWrite.bountyBenefactor.findUniqueOrThrow.mockResolvedValue({
+      bountyId: BOUNTY_ID,
+      userId: ENTRANT_ID,
+      unitAmount: 100,
+      currency: 'BUZZ',
+      awardedToId: 999,
+    });
+
+    await expect(awardBountyEntry({ id: ENTRY_ID, userId: ENTRANT_ID })).rejects.toThrow(
+      'Supporters have already awarded an entry.'
+    );
+    expect(dbMock.dbWrite.bountyBenefactor.findUniqueOrThrow).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('upsertBountyEntryHandler', () => {
+  const ctxFor = (userId: number) => ({ user: { id: userId } } as unknown as ProtectedContext);
+  const input = { bountyId: BOUNTY_ID, files: [], images: [] } as unknown as Parameters<
+    typeof upsertBountyEntryHandler
+  >[0]['input'];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      complete: false,
+      entryLimit: 1,
+      entries: [{ userId: ENTRANT_ID }],
+    });
+  });
+
+  it('refuses an entry from the bounty owner', async () => {
+    await expect(upsertBountyEntryHandler({ input, ctx: ctxFor(OWNER_ID) })).rejects.toThrow(
+      'You cannot submit entries to your own bounty.'
+    );
+    expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    // The fake returns userId whatever is selected; without it in the real select the guard never fires.
+    // entryLimit singles out the handler's own read: the visibility check also selects userId.
+    expect(dbMock.dbRead.bounty.findUnique).toHaveBeenCalledWith(
+      expect.objectContaining({
+        select: expect.objectContaining({ userId: true, entryLimit: true }),
+      })
+    );
+  });
+
+  it('lets the owner edit an entry that already exists', async () => {
+    await upsertBountyEntryHandler({
+      input: { ...input, id: ENTRY_ID },
+      ctx: ctxFor(OWNER_ID),
+    }).catch(() => null);
+    expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+  });
+
+  it('reaches the entry-limit check for anyone else', async () => {
+    await expect(upsertBountyEntryHandler({ input, ctx: ctxFor(ENTRANT_ID) })).rejects.toThrow(
+      'You have reached the maximum number of entries for this bounty'
+    );
+  });
+
+  describe('bounty schedule', () => {
+    const hour = 60 * 60 * 1000;
+    const bountyStartingAt = (startsAt: Date) =>
+      dbMock.dbRead.bounty.findUnique.mockResolvedValue({
+        userId: OWNER_ID,
+        complete: false,
+        startsAt,
+        entryLimit: 5,
+        entries: [],
+      });
+
+    it('refuses a new entry before the bounty starts', async () => {
+      bountyStartingAt(new Date(Date.now() + 2 * hour));
+
+      await expect(upsertBountyEntryHandler({ input, ctx: ctxFor(ENTRANT_ID) })).rejects.toThrow(
+        'This bounty has not started yet'
+      );
+      expect(dbMock.dbWrite.$transaction).not.toHaveBeenCalled();
+    });
+
+    it('accepts a new entry once the bounty has started', async () => {
+      bountyStartingAt(new Date(Date.now() - hour));
+
+      await upsertBountyEntryHandler({ input, ctx: ctxFor(ENTRANT_ID) }).catch(() => null);
+
+      expect(dbMock.dbWrite.$transaction).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe('upsertBountyEntry images', () => {
+  const KEY = '3f6c2b91-0d84-4a15-9e70-c2b8a4d15e35';
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    redisMock.sysRedis.mGet.mockResolvedValue([String(ENTRANT_ID)] as never);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([] as never);
+    dbMock.dbWrite.$queryRaw.mockResolvedValue([] as never);
+    dbMock.dbWrite.bountyEntry.update.mockResolvedValue({ id: ENTRY_ID, userId: ENTRANT_ID });
+    dbMock.dbWrite.bountyEntry.create.mockResolvedValue({ id: ENTRY_ID, userId: ENTRANT_ID });
+    dbMock.dbWrite.imageConnection.findMany.mockResolvedValue([] as never);
+    dbMock.dbWrite.image.findMany.mockResolvedValue([] as never);
+  });
+
+  it.each([
+    ['an update', ENTRY_ID],
+    ['a new entry', undefined],
+  ])(
+    'reads the key issue records of new images before opening the transaction: %s',
+    async (_, id) => {
+      await upsertBountyEntry({
+        id,
+        bountyId: BOUNTY_ID,
+        images: [{ url: KEY, type: 'image' }],
+        userId: ENTRANT_ID,
+      } as never);
+
+      expect(redisMock.sysRedis.mGet).toHaveBeenCalledTimes(1);
+      expect(redisMock.sysRedis.mGet.mock.invocationCallOrder[0]).toBeLessThan(
+        dbMock.dbWrite.$transaction.mock.invocationCallOrder[0]
+      );
+      expect(dbMock.dbWrite.image.createMany).toHaveBeenCalledTimes(1);
+    }
+  );
+});

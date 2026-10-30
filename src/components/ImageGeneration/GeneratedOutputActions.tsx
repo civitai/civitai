@@ -1,17 +1,12 @@
 import { Menu } from '@mantine/core';
-import {
-  IconDownload,
-  IconHeart,
-  IconThumbDown,
-  IconThumbUp,
-  IconWand,
-} from '@tabler/icons-react';
+import { IconDownload, IconHeart, IconThumbDown, IconThumbUp, IconWand } from '@tabler/icons-react';
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
 import { useState } from 'react';
 
 import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { GeneratedItemWorkflowMenu } from '~/components/generation_v2/GeneratedItemWorkflowMenu';
+import { GeneratedOutputRemixMenu } from '~/components/ImageGeneration/GeneratedOutputRemixMenu';
 import { useGeneratedItemWorkflows } from '~/components/generation_v2/hooks/useGeneratedItemWorkflows';
 import type { BlobData } from '~/shared/orchestrator/workflow-data';
 import { downloadBlob, fetchBlob } from '~/utils/file-utils';
@@ -38,7 +33,7 @@ export function GeneratedOutputActions({
     outputType: output.mediaType,
     ecosystemKey: output.ecosystemKey,
   });
-  const hasWorkflows = groups.some((g) => g.workflows.length > 0);
+  const hasWorkflows = output.canUse('derive') && groups.some((g) => g.workflows.length > 0);
 
   const [downloading, setDownloading] = useState(false);
   const handleDownload = async () => {
@@ -112,6 +107,8 @@ export function GeneratedOutputActions({
             </Menu.Dropdown>
           </Menu>
         )}
+
+        <GeneratedOutputRemixMenu output={output} />
 
         <LegacyActionIcon
           size="md"

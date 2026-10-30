@@ -3,8 +3,7 @@
  *
  * Picks what the unified listing detail shows under its discovery rail. Pure so
  * the correctness coverage lands in the node `unit` project — the fast,
- * deterministic suite CI runs on every PR, whereas the browser-mode component
- * suites are not run in CI at all (same rationale as `appListingCardView` /
+ * deterministic suite CI runs on every PR (same rationale as `appListingCardView` /
  * `appListingDetailView` / `recentAppsRail`).
  *
  * Selection policy, in order:
@@ -24,6 +23,7 @@
  * grid already uses.
  */
 
+import { marketplaceCategoryLabel } from '~/server/services/blocks/marketplace-categories.constants';
 import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
 
 /** Rail cap — one row at the store's widest breakpoint, no "load more". */
@@ -111,4 +111,24 @@ export function isRelatedRailLoading(opts: {
   return (
     (opts.hasCategoryFilter && opts.categoryPending) || (opts.wantTopUp && opts.popularPending)
   );
+}
+
+/**
+ * The rail's HEADING — and its `aria-label`, which is the same string.
+ *
+ * 🔴 Lives here, not inline in the component, for this module's stated reason:
+ * an expression that renders a user-facing string is testable in the node project once
+ * it is pure. It was
+ * inline, and that made `RelatedListings` the one call site of
+ * `marketplaceCategoryLabel` with no reachable assertion anywhere.
+ *
+ * Null/unknown handling is the rail's own, and deliberately asymmetric with the
+ * chip surfaces: a listing with NO category gets the generic "More apps" rather
+ * than a heading with a hole in it, while an UNKNOWN category still names itself
+ * (via the shared helper's raw fallback), because the rail beneath it really is
+ * filtered by that value.
+ */
+export function relatedRailHeading(category: string | null | undefined): string {
+  if (!category) return 'More apps';
+  return `More in ${marketplaceCategoryLabel(category)}`;
 }

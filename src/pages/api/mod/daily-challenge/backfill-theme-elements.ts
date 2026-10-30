@@ -11,11 +11,15 @@ import { parseChallengeMetadata } from '~/server/schema/challenge.schema';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import { WebhookEndpoint } from '~/server/utils/endpoint-helpers';
 import { createLogger } from '~/utils/logging';
+import { booleanString } from '~/utils/zod-helpers';
 
 const log = createLogger('api:backfill-theme-elements', 'cyan');
 
 const schema = z.object({
-  force: z.coerce.boolean().optional().default(false),
+  // booleanString, not z.coerce.boolean: this schema is parsed against req.query, where
+  // coerce runs JS Boolean() and makes `?force=false` TRUE — regenerating theme elements for
+  // every themed Active/Scheduled challenge instead of only the ones missing them.
+  force: booleanString().optional().default(false),
 });
 
 type ChallengeRow = {
@@ -88,6 +92,9 @@ export default WebhookEndpoint(async function (_req: NextApiRequest, res: NextAp
       const judgingConfig = await getJudgingConfig(resolvedJudgeId);
       const elements = await generateThemeElements({
         theme: challenge.theme,
+        // Without this the regenerated elements are derived from the drifted theme STRING alone,
+        // which can only restate the drift. Absent on challenges created before the concept step.
+        resourceConcept: parseChallengeMetadata(challenge.metadata).resourceConcept,
         config: judgingConfig,
       });
 

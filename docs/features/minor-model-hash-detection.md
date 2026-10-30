@@ -26,7 +26,7 @@ Both unattended paths are behind one Flipt kill switch and ship **default-off**.
 | `src/pages/models/[id]/[[...slug]].tsx` | Owner-facing alert on the model page |
 | `src/server/jobs/minor-hash-sweep.ts` | Nightly sweep job (`45 3 * * *`) |
 | `src/pages/api/admin/temp/minor-hash-sweep.ts` | Backfill + rollback endpoint (`WEBHOOK_TOKEN`) |
-| `src/pages/moderator/minor-hash-matches.tsx` | Moderator review page (two tabs) |
+| `apps/moderator/src/routes/models/flags/` | Moderator review: Model Flags, three tabs (see [moderator-model-flags.md](moderator-model-flags.md)) |
 | `src/server/routers/moderator/index.ts` | `moderator.models.*` procedures |
 | `src/server/schema/minor-hash.schema.ts` | Zod inputs |
 | `src/server/flipt/client.ts` | `FLIPT_FEATURE_FLAGS.MINOR_HASH_AUTO_FLAG` |
@@ -62,6 +62,7 @@ snapshot, not a guess.
 m.minor
 AND 'minor' = ANY(m."lockedProperties")
 AND m.meta->'minorFlagSnapshot'->>'source' IS DISTINCT FROM 'auto'
+AND m.meta->'minorFlagSnapshot'->>'source' IS DISTINCT FROM 'text-scan'
 ```
 
 Each clause earns its place:
@@ -73,6 +74,8 @@ Each clause earns its place:
   model becomes a seed contributing *every* hash on it — including hashes no moderator ever tied to
   minor content — so the seed set grows from machine decisions and a dry run can't predict what later
   rounds will match. Measured on a prod-scale clone: dry run said 300, the drain wrote 302.
+- Excluding `source='text-scan'` does the same for the text scan's minor verdicts: an unreviewed LLM
+  verdict must not flag other people's uploads. Upholding its appeal promotes it to `'manual'`.
 
 A moderator's own "Set as Minor" writes `source='manual'` and still seeds. Legacy flags (no snapshot at
 all) seed too: `NULL IS DISTINCT FROM 'auto'` is true. And an auto-flag a moderator affirms is
@@ -130,23 +133,25 @@ timeout still leaves a record of what committed.
 
 ## Snapshot and rollback
 
-`Model.meta.minorFlagSnapshot`, written idempotently (`WHERE NOT (meta ? key)`) so a re-flag can never
-clobber the original pre-state:
+`Model.meta.minorFlagSnapshot`. A re-flag of a model that is still minor never clobbers the original
+pre-state; a snapshot left behind by an unset is replaced (`WHERE NOT (meta ? key) OR NOT m.minor`), so a
+new flag never inherits an old flag's source and pre-state:
 
 | Field | Meaning |
 |-------|---------|
 | `at` | When the flag was applied |
-| `source` | `'auto'` (activity `setMinorAutoHash`) or `'manual'` |
+| `source` | `'auto'` (activity `setMinorAutoHash`), `'text-scan'` (`setMinorTextScan`) or `'manual'` |
 | `prevNsfw`, `prevSfwOnly`, `prevGalleryLevel` | Pre-flag values |
 | `prevLockedProperties` | Full pre-flag array |
 | `prevMinorImageIds` | Images already `minor` before the flag |
 
-Snapshot capture is best-effort: losing it must block a later rollback, not the flag itself.
+Snapshot capture is best-effort: losing it must block a later rollback, not the flag itself. It runs
+on the flag's own transaction, and a failed capture rolls back to a savepoint so the flag still lands.
 
 `rollbackMinorHashAutoFlags` has two modes:
 
-- **Blanket** — `source IS DISTINCT FROM 'manual'` **and not human-confirmed**. A moderator's own
-  decision is never reverted as collateral of "undo the backfill".
+- **Blanket** — `source = 'auto'` **and not human-confirmed**. Neither a moderator's own decision nor a
+  text-scan flag (which has its own appeal path) is reverted as collateral of "undo the backfill".
 - **Targeted** (`modelIds`) — exactly those models, any source, no confirmation skip. Naming the model
   *is* the deliberate decision. This is the escape hatch for a mis-click.
 
@@ -186,15 +191,17 @@ A clear stamp only restrains the automation. A moderator can still flag the mode
 
 ## Moderator review page
 
-`/moderator/minor-hash-matches` (mod nav). Two tabs:
+Model Flags in the moderator app (`/models/flags`; the main app's `/moderator/minor-hash-matches` redirects to it). The two queues below live in its **Needs review** (file matches, nothing applied) and **Auto-flagged** (hash flags, applied) tabs:
 
-**Pending review** — different-uploader matches (`queryMinorHashMatches`). Actions: **Set as Minor**
+**File matches** in Needs review (was Pending review; chip "hash", shown to holders of `modelFlags.fileMatches.decide`) — different-uploader matches (`queryMinorHashMatches`). Actions: **Set as Minor**
 (`model.setMinor`, a manual flag — snapshotted, so undoable, but only by a targeted rollback) or
 **Dismiss** (`dismissMinorHashMatch`, writes `Model.meta.minorHashDismissed`; dismissed models are
 excluded from the queue).
 
-**Auto-flagged** — models the scan hook flagged that no moderator has signed off yet
-(`queryAutoFlaggedMinorModels`: `source='auto'` and not human-confirmed), newest first. Actions:
+**Auto-flagged** (hash flags) — models the scan hook flagged that no moderator has signed off yet
+(`queryAutoFlaggedMinorModels`: `source='auto'`, not human-confirmed, not accepted, and flagged within
+`AUTO_FLAG_REVIEW_WINDOW_DAYS` (30)), newest first. Past the window an unreviewed flag is accepted unless
+it has an appeal. Actions:
 
 - **Keep flagged** (`confirmMinorHashAutoFlag`) — promotes the snapshot to `source='manual'` (keeping
   `confirmedFrom`/`confirmedAt`/`confirmedBy`) and records the moderator's own `setMinor` `ModActivity`.
@@ -206,7 +213,35 @@ excluded from the queue).
   kept, so a targeted undo stays possible. If snapshot capture had failed, the promotion no-ops and the
   `ModActivity` row alone protects the flag.
 - **Revert** (`revertMinorHashAutoFlag`) — targeted rollback of that one model, plus a
-  `rollbackMinorAutoHash` `ModActivity`.
+  `rollbackMinorAutoHash` `ModActivity`. A moderator's revert (and their Unset as Minor) first records a
+  ruling on the model's current text in `meta.textScanFlags.minor.appealGranted`, so a rescan of the
+  same text cannot re-flag it.
+
+**Appeals** — every Pending Model appeal, including ones against a text-scan `poi` or `minor` flag
+(`meta.textScanFlags`). `resolveMinorFlagAppeal` rules per label: with both labels open a moderator can
+keep one and lift the other (`minor`/`poi` on `/api/mod/minor-flag/resolve-appeal`). Overturning a minor
+flag whose origin is `auto` or `text-scan` rolls it back to its snapshot; a moderator-origin flag takes
+the plain unset path instead. A grant covers the text it was about: if the owner edited the text while
+the appeal was open, the model is rescanned (`rescanQueued`). The hash-match detail renders only for
+hash-origin rows. A ruling may carry `resolvedReason` + `internalNotes` (`flagAppeal` subject;
+`not-a-minor` and `not-a-real-person` apply only to their own label). The endpoint validates them
+when sent and stores them on the `Appeal` row; the moderator app requires them.
+
+**Re-detections** — a clear stays a clear when the owner edits the text. If a label already carries
+a human `appealGranted` and a later scan detects it on text with a *different* hash, the scan flags
+nothing, notifies nobody and changes no restrictions: it writes
+`meta.textScanFlags[label].redetected` (workflow, reason, names, hash) and leaves the grant in
+place. A first-detection hold from review mode writes the same marker with `kind: 'first'`. The same
+hash stays blocked as before. The moderator app lists these on the Needs review tab, `/models/flags/needs-review` (badged
+"text scan · re-detection", beside first detections held by review mode — see `minor-detection-review.md`), with
+the prior clear (who, when, via). **Flag** (the API's keep) calls
+`/api/mod/minor-flag/resolve-redetection` and applies the flag exactly as the scan would have (owner
+notice included) and records `appealUpheld`; **Don't flag** (the API's dismiss) stamps a new
+moderator `appealGranted` on the re-detected text and clears the marker. Flagging replaces the label
+entry, so the decisions it replaces move into a capped `rulings` history (newest 5) rather than
+being lost. Both decisions carry the moderator's `reason` slug and `note` (from the `heldDetection`
+subject in `@civitai/shared/resolution-reasons`) on the stamp, so `rulings` keeps the reason; the
+note is dropped from history. A `closed` outcome stamps neither. Bounty real-person flags keep the old behaviour: a changed text re-flags.
 
 Neither queue is paginated (`limit` default 1000, max 2000, plus a `truncated` flag). This is
 deliberate: rows *leave* these queues as they're actioned, so any server-side window — OFFSET or keyset
@@ -231,10 +266,10 @@ Both use the same sentence, and both are deliberately vague:
 > contact support.
 
 It names no hash, no matched model, and no source, and it does not enumerate the restrictions
-applied. Each of those details would tell a repeat uploader exactly which bytes to change. There is
-no in-app appeal: the Auto-flagged tab already *is* a moderator review of every automated flag, so an
-appeal queue would duplicate it — owners are routed to support, and a moderator actions it from that
-tab.
+applied. Each of those details would tell a repeat uploader exactly which bytes to change. The
+Auto-flagged tab reviews automated flags for their first 30 days, and owner appeals land in the moderator
+app's Appeals tab (`/models/flags/appeals`, which calls `/api/mod/minor-flag/resolve-appeal`).
+Appeals there cover minor flags from any source and real-person flags, so they are not a tab of this queue. Past the window the flag is presumed correct and leaves the Auto-flagged tab; the moderator app no longer has a lookup that offers Revert for an older flag.
 
 **Notification** — `model-flagged-minor` (`minor-flag.notifications.ts`), `NotificationCategory.System`,
 `toggleable: false`. It polls for a snapshot whose `at` is newer than the job cursor, gated on:

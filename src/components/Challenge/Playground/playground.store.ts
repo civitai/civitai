@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { immer } from 'zustand/middleware/immer';
 import { persist } from 'zustand/middleware';
+import type { JudgingEngineKey } from '~/server/games/daily-challenge/challenge-judging-engine';
 
 export type ActivityTab = 'generateContent' | 'reviewImage' | 'pickWinners';
 
@@ -13,6 +14,7 @@ export type JudgeDraft = {
   reviewTemplate?: string | null;
   winnerSelectionPrompt?: string | null;
   userSelectable?: boolean;
+  judgingEngine?: JudgingEngineKey;
 };
 
 type GenerateContentInputs = {
@@ -56,7 +58,7 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
     immer((set) => ({
       selectedJudgeId: null,
       activityTab: 'generateContent' as ActivityTab,
-      aiModel: 'openai/gpt-4o-mini',
+      aiModel: 'civitai/qwen3.8',
       drafts: {},
       generateContentInputs: { modelVersionIds: [] },
       reviewImageInputs: { imageInput: '', theme: '', themeElements: '', creator: '' },
@@ -104,20 +106,24 @@ export const usePlaygroundStore = create<PlaygroundState & PlaygroundActions>()(
     })),
     {
       name: 'judge-playground',
-      version: 3,
+      version: 5,
       migrate: (persistedState, version) => {
         // Migration history:
         //   v0 -> v1: x-ai/grok-4.1-fast deprecated 2026-05-15
         //   v1 -> v2: Qwen orchestrator endpoint not ready; fall back to gpt-5-nano
         //   v2 -> v3: gpt-5-nano returned empty content on generateArticle; use gpt-4o-mini
+        //   v3 -> v4: Qwen 35B retired from the orchestrator
+        //   v4 -> v5: gpt-4o-mini and gpt-5-nano retired from the challenge pipeline
+        // Every retired model lands on the pipeline default.
         const state = persistedState as Partial<PlaygroundState> | undefined;
-        const stale = [
+        const retired = [
           'x-ai/grok-4.1-fast',
           'urn:air:qwen3:repository:huggingface:Civitai/Qwen3.6-35B-A3B-Abliterated-AWQ@main.tar',
           'openai/gpt-5-nano',
+          'openai/gpt-4o-mini',
         ];
-        if ((version ?? 0) < 3 && state?.aiModel && stale.includes(state.aiModel)) {
-          state.aiModel = 'openai/gpt-4o-mini';
+        if ((version ?? 0) < 5 && state?.aiModel && retired.includes(state.aiModel)) {
+          state.aiModel = 'civitai/qwen3.8';
         }
         return state;
       },

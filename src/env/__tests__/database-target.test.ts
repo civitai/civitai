@@ -1,6 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
-  DATABASE_ENVIRONMENT_VAR,
   isDatabaseEnvironmentConfigured,
   isNonProductionDatabase,
   resolveDatabaseEnvironment,
@@ -47,10 +46,6 @@ describe('env/database-target — resolveDatabaseEnvironment', () => {
     expect(resolveDatabaseEnvironment({ DATABASE_ENVIRONMENT: 'prod' })).toBe('unknown');
     expect(resolveDatabaseEnvironment({ DATABASE_ENVIRONMENT: 'nonproduction' })).toBe('unknown');
     expect(resolveDatabaseEnvironment({ DATABASE_ENVIRONMENT: 'preview' })).toBe('unknown');
-  });
-
-  it('names its own variable', () => {
-    expect(DATABASE_ENVIRONMENT_VAR).toBe('DATABASE_ENVIRONMENT');
   });
 });
 

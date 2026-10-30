@@ -17,7 +17,7 @@ Civitai runs under two canonical hosts driven by the same codebase:
 | `civitai.com` (green) | SFW site | Content whose `nsfwLevel` passes `hasSafeBrowsingLevel` |
 | `civitai.red` (red / blue) | NSFW site | Everything, including mature content |
 
-The domain is resolved server-side in [_app.tsx:289](../src/pages/_app.tsx#L289)
+The domain is resolved server-side in [_app.tsx:419](../src/pages/_app.tsx#L419)
 (`canIndex = serverDomainMap values includes host`) and surfaced to React via
 `useDomainColor()` in [src/hooks/useDomainColor.tsx](../src/hooks/useDomainColor.tsx).
 Feature-flag style: `isGreen` = .com, `isBlue` / `isRed` = .red variants.
@@ -96,15 +96,20 @@ Top priority: these are the pages most likely to produce the content/meta
 mismatch described above. All have user-rated content; all need the NSFW-aware
 `deIndex` guard.
 
+Most of these now render through [`Gated`](../src/components/Gated/Gated.tsx), which
+applies the guard centrally: it deindexes the redirect, login and unrated states, and on a
+mature host it deindexes safe content so green stays canonical. Pages ticked "via `Gated`"
+get the guard from there; they have not each been audited against the rest of the checklist.
+
 - [x] `/articles/:id/:slug?` — [articles/[id]/[[...slug]].tsx](../src/pages/articles/[id]/[[...slug]].tsx) *(fixed 2026-04-24)*
-- [ ] `/models/:id/:slug?` — [models/[id]/[[...slug]].tsx](../src/pages/models/[id]/[[...slug]].tsx)
+- [x] `/models/:id/:slug?` — [models/[id]/[[...slug]].tsx](../src/pages/models/[id]/[[...slug]].tsx) *(via `Gated`)*
 - [ ] `/model-versions/:id` — [model-versions/[id].tsx](../src/pages/model-versions/[id].tsx)
-- [ ] `/images/:imageId` — [images/[imageId].tsx](../src/pages/images/[imageId].tsx)
-- [ ] `/posts/:postId/:postSlug?` — [posts/[postId]/[[...postSlug]].tsx](../src/pages/posts/[postId]/[[...postSlug]].tsx)
-- [ ] `/bounties/:id/:slug?` — [bounties/[id]/[[...slug]].tsx](../src/pages/bounties/[id]/[[...slug]].tsx)
+- [x] `/images/:imageId` — [images/[imageId].tsx](../src/pages/images/[imageId].tsx) *(via `Gated`, in `ImageDetail2`; all image and video pages are `noindex` since 2026-09-16)*
+- [x] `/posts/:postId/:postSlug?` — [posts/[postId]/[[...postSlug]].tsx](../src/pages/posts/[postId]/[[...postSlug]].tsx) *(via `Gated`, in `PostDetail`)*
+- [x] `/bounties/:id/:slug?` — [bounties/[id]/[[...slug]].tsx](../src/pages/bounties/[id]/[[...slug]].tsx) *(via `Gated`)*
 - [ ] `/bounties/:id/entries/:entryId` — [bounties/[id]/entries/[entryId]/index.tsx](../src/pages/bounties/[id]/entries/[entryId]/index.tsx)
-- [ ] `/collections/:collectionId` — [collections/[collectionId]/index.tsx](../src/pages/collections/[collectionId]/index.tsx)
-- [ ] `/comics/:id/:slug?` — [comics/[id]/[[...slug]].tsx](../src/pages/comics/[id]/[[...slug]].tsx)
+- [x] `/collections/:collectionId` — [collections/[collectionId]/index.tsx](../src/pages/collections/[collectionId]/index.tsx) *(via `Gated`, in `Collection`)*
+- [ ] `/comics/:id/:slug?` — [comics/[id]/[[...slug]].tsx](../src/pages/comics/[id]/[[...slug]].tsx) *(renders a plain `Meta` with a canonical and no NSFW-aware `deIndex`; not on `Gated`)*
 
 ### P1 — User-facing pages with mixed or derived content ratings
 
@@ -121,9 +126,9 @@ are SEO-visible.
 - [ ] `/user/:username/comics` — [user/[username]/comics.tsx](../src/pages/user/[username]/comics.tsx)
 - [ ] `/user/:username/:list` — [user/[username]/[list].tsx](../src/pages/user/[username]/[list].tsx) (catch-all list route)
 - [ ] `/user-id/:userId` — [user-id/[userId].tsx](../src/pages/user-id/[userId].tsx) (confirm canonical points at username URL)
-- [ ] `/tag/:tagname` — [tag/[tagname].tsx](../src/pages/tag/[tagname].tsx) (tag aggregation, can include NSFW)
+- [x] `/tag/:tagname` — [tag/[tagname].tsx](../src/pages/tag/[tagname].tsx) (tag aggregation, can include NSFW) *(2026-09-16: green counts and lists safe models only and noindexes mature-only tags; see [seo-improvements.md](seo-improvements.md) §1)*
 - [ ] `/reviews/:reviewId` — [reviews/[reviewId].tsx](../src/pages/reviews/[reviewId].tsx)
-- [ ] `/comments/v2/:id` — [comments/v2/[id].tsx](../src/pages/comments/v2/[id].tsx) (likely should de-index)
+- [ ] `/comments/:id` — [comments/[id].tsx](../src/pages/comments/[id].tsx) (likely should de-index; `/comments/v2/:id` is an alias re-exporting it)
 - [ ] `/challenges/:id/:slug?` — [challenges/[id]/[[...slug]].tsx](../src/pages/challenges/[id]/[[...slug]].tsx)
 - [ ] `/events/:slug` — [events/[slug].tsx](../src/pages/events/[slug].tsx)
 - [ ] `/leaderboard/:id` — [leaderboard/[id].tsx](../src/pages/leaderboard/[id].tsx)
@@ -148,7 +153,6 @@ descriptions, and canonicals are set (not inherited from defaults).
 - [ ] `/comics/browse` — [comics/browse.tsx](../src/pages/comics/browse.tsx)
 - [ ] `/challenges` — [challenges/index.tsx](../src/pages/challenges/index.tsx)
 - [ ] `/challenges/winners` — [challenges/winners.tsx](../src/pages/challenges/winners.tsx)
-- [ ] `/events` — [events/index.tsx](../src/pages/events/index.tsx)
 - [ ] `/tools` — [tools/index.tsx](../src/pages/tools/index.tsx)
 - [ ] `/builds` — [builds/index.tsx](../src/pages/builds/index.tsx)
 - [ ] `/search/models` — [search/models.tsx](../src/pages/search/models.tsx)
@@ -185,9 +189,8 @@ Must agree with per-page `deIndex` decisions (submitting a noindex URL is a
 contradictory signal).
 
 - [ ] `/sitemap-models.xml` — [sitemap-models.xml/index.tsx](../src/pages/sitemap-models.xml/index.tsx)
-- [ ] `/sitemap-articles.xml` — [sitemap-articles.xml/index.tsx](../src/pages/sitemap-articles.xml/index.tsx)
-- [ ] `/sitemap-tools.xml` — [sitemap-tools.xml/index.tsx](../src/pages/sitemap-tools.xml/index.tsx)
-- [ ] Decide whether to add missing sitemaps: posts, images, bounties, collections, comics, users, events, challenges.
+- [x] `/sitemap-articles.xml` — [sitemap-articles.xml/index.tsx](../src/pages/sitemap-articles.xml/index.tsx) *(2026-09-17: excludes Unsearchable and scanner-blocked articles, matching the page; see [seo-improvements.md](seo-improvements.md) §4)*
+- [ ] Decide whether to add missing sitemaps: posts, bounties, collections, comics, users, events, challenges. *(Images and videos: no — those pages are `noindex`. Discovery is not a constraint, so treat any new sitemap as a curated list, not a coverage fix; see [seo-improvements.md](seo-improvements.md).)*
 
 ### Should be de-indexed (sanity-check only)
 
@@ -200,7 +203,7 @@ group render `noindex`, tick the group.
 - [ ] Auth / claim / redirect (`login`, `login/token`, `verify-email`, `redirect`, `region-blocked`, `preview-restricted`, `redeem-code`, `claim/buzz/[id]`, `claim/cosmetic/[id]`, `intent/avatar`, `intent/post`, `discord/link-role`, `studio/confirm`, `subscribe/[plan]`, `purchase/buzz`)
 - [ ] Payments (`payment/*`, `tipalti/setup`)
 - [ ] Collections helpers (`collections/[collectionId]/join`, `collections/[collectionId]/review`, `collections/youtube/auth`)
-- [ ] Games / one-offs (`games/chopped`, `games/knights-of-new-order`, `dev/onboarding`, `data-graph-v2`, `images/iterate`)
+- [ ] Games / one-offs (`games/chopped`, `games/knights-of-new-order`, `dev/onboarding`, `images/iterate`)
 - [ ] Moderator / internal (`moderator/*`, `research/*`, `testing/*`)
 
 ---

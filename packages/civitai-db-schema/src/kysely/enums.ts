@@ -93,6 +93,8 @@ export type PaymentProvider = (typeof PaymentProvider)[keyof typeof PaymentProvi
 export const MembershipGiftStatus = {
   Pending: 'Pending',
   Fulfilled: 'Fulfilled',
+  Active: 'Active',
+  Completed: 'Completed',
   Failed: 'Failed',
   Refunded: 'Refunded',
   Revoked: 'Revoked',
@@ -143,6 +145,15 @@ export const ImportStatus = {
   Completed: 'Completed',
 } as const;
 export type ImportStatus = (typeof ImportStatus)[keyof typeof ImportStatus];
+export const HuggingFaceImportStatus = {
+  Queued: 'Queued',
+  Transferring: 'Transferring',
+  Completed: 'Completed',
+  Failed: 'Failed',
+  Canceled: 'Canceled',
+} as const;
+export type HuggingFaceImportStatus =
+  (typeof HuggingFaceImportStatus)[keyof typeof HuggingFaceImportStatus];
 export const ModelStatus = {
   Draft: 'Draft',
   Training: 'Training',
@@ -172,6 +183,7 @@ export const CommercialUse = {
   RentCivit: 'RentCivit',
   Rent: 'Rent',
   Sell: 'Sell',
+  SellMerge: 'SellMerge',
 } as const;
 export type CommercialUse = (typeof CommercialUse)[keyof typeof CommercialUse];
 export const CheckpointType = {
@@ -253,6 +265,8 @@ export const ModelHashType = {
   SHA256: 'SHA256',
   CRC32: 'CRC32',
   BLAKE3: 'BLAKE3',
+  SHA256_12: 'SHA256_12',
+  SSHS_12: 'SSHS_12',
 } as const;
 export type ModelHashType = (typeof ModelHashType)[keyof typeof ModelHashType];
 export const ScanResultCode = {
@@ -354,6 +368,12 @@ export const EntityModerationStatus = {
 } as const;
 export type EntityModerationStatus =
   (typeof EntityModerationStatus)[keyof typeof EntityModerationStatus];
+export const TextScanHoldStatus = {
+  Pending: 'Pending',
+  Dismissed: 'Dismissed',
+  Confirmed: 'Confirmed',
+} as const;
+export type TextScanHoldStatus = (typeof TextScanHoldStatus)[keyof typeof TextScanHoldStatus];
 export const ImageEngagementType = {
   Favorite: 'Favorite',
   Hide: 'Hide',
@@ -414,8 +434,26 @@ export const ApiKeyType = {
   User: 'User',
   Access: 'Access',
   Refresh: 'Refresh',
+  Worker: 'Worker',
 } as const;
 export type ApiKeyType = (typeof ApiKeyType)[keyof typeof ApiKeyType];
+export const CommentEntityType = {
+  model: 'model',
+  image: 'image',
+  post: 'post',
+  article: 'article',
+  review: 'review',
+  bounty: 'bounty',
+  bountyEntry: 'bountyEntry',
+  comicChapter: 'comicChapter',
+  challenge: 'challenge',
+  model3d: 'model3d',
+  model3dReview: 'model3dReview',
+  appListing: 'appListing',
+  crucible: 'crucible',
+  storyline: 'storyline',
+} as const;
+export type CommentEntityType = (typeof CommentEntityType)[keyof typeof CommentEntityType];
 export const TagEngagementType = {
   Hide: 'Hide',
   Follow: 'Follow',
@@ -436,6 +474,8 @@ export const CosmeticType = {
   ProfileDecoration: 'ProfileDecoration',
   ProfileBackground: 'ProfileBackground',
   Sticker: 'Sticker',
+  ChatTheme: 'ChatTheme',
+  CardDecoration: 'CardDecoration',
 } as const;
 export type CosmeticType = (typeof CosmeticType)[keyof typeof CosmeticType];
 export const CosmeticSource = {
@@ -549,6 +589,17 @@ export const CollectionItemStatus = {
   REJECTED: 'REJECTED',
 } as const;
 export type CollectionItemStatus = (typeof CollectionItemStatus)[keyof typeof CollectionItemStatus];
+export const CollectionItemRejectionReason = {
+  OffTopic: 'OffTopic',
+  WrongFormat: 'WrongFormat',
+  Duplicate: 'Duplicate',
+  Quality: 'Quality',
+  RulesViolation: 'RulesViolation',
+  Other: 'Other',
+  Automated: 'Automated',
+} as const;
+export type CollectionItemRejectionReason =
+  (typeof CollectionItemRejectionReason)[keyof typeof CollectionItemRejectionReason];
 export const CollectionContributorPermission = {
   VIEW: 'VIEW',
   ADD: 'ADD',
@@ -621,6 +672,12 @@ export const CsamReportType = {
   ExternalLink: 'ExternalLink',
 } as const;
 export type CsamReportType = (typeof CsamReportType)[keyof typeof CsamReportType];
+export const CsamQueueSetAsideOutcome = {
+  AfterReport: 'AfterReport',
+  Dismissed: 'Dismissed',
+} as const;
+export type CsamQueueSetAsideOutcome =
+  (typeof CsamQueueSetAsideOutcome)[keyof typeof CsamQueueSetAsideOutcome];
 export const Availability = {
   Public: 'Public',
   Unsearchable: 'Unsearchable',
@@ -633,6 +690,11 @@ export const PaidAccessEntityType = {
   ComicChapter: 'ComicChapter',
 } as const;
 export type PaidAccessEntityType = (typeof PaidAccessEntityType)[keyof typeof PaidAccessEntityType];
+export const SaleDiscountType = {
+  Fixed: 'Fixed',
+  Percent: 'Percent',
+} as const;
+export type SaleDiscountType = (typeof SaleDiscountType)[keyof typeof SaleDiscountType];
 export const EntityCollaboratorStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
@@ -658,6 +720,12 @@ export const ChatMemberStatus = {
   Kicked: 'Kicked',
 } as const;
 export type ChatMemberStatus = (typeof ChatMemberStatus)[keyof typeof ChatMemberStatus];
+export const ChatNotifyLevel = {
+  All: 'All',
+  Mentions: 'Mentions',
+  None: 'None',
+} as const;
+export type ChatNotifyLevel = (typeof ChatNotifyLevel)[keyof typeof ChatNotifyLevel];
 export const ChatMessageType = {
   Markdown: 'Markdown',
   Image: 'Image',
@@ -683,11 +751,13 @@ export const EntityType = {
   Collection: 'Collection',
   Comment: 'Comment',
   CommentV2: 'CommentV2',
+  CommentV3: 'CommentV3',
   User: 'User',
   UserProfile: 'UserProfile',
   ResourceReview: 'ResourceReview',
   ChatMessage: 'ChatMessage',
   Model3D: 'Model3D',
+  Storyline: 'Storyline',
 } as const;
 export type EntityType = (typeof EntityType)[keyof typeof EntityType];
 export const JobQueueType = {
@@ -699,6 +769,10 @@ export const JobQueueType = {
   ModerationRequest: 'ModerationRequest',
   BlockedImageDelete: 'BlockedImageDelete',
   ImageScan: 'ImageScan',
+  ReplacedImageDelete: 'ReplacedImageDelete',
+  ImageStorageDelete: 'ImageStorageDelete',
+  CdnAccessSync: 'CdnAccessSync',
+  ImageCdnPersistRetry: 'ImageCdnPersistRetry',
 } as const;
 export type JobQueueType = (typeof JobQueueType)[keyof typeof JobQueueType];
 export const VaultItemStatus = {
@@ -733,8 +807,16 @@ export const AppealStatus = {
   Pending: 'Pending',
   Approved: 'Approved',
   Rejected: 'Rejected',
+  Void: 'Void',
 } as const;
 export type AppealStatus = (typeof AppealStatus)[keyof typeof AppealStatus];
+export const AppealCategory = {
+  Account: 'Account',
+  Article: 'Article',
+  Model: 'Model',
+  Other: 'Other',
+} as const;
+export type AppealCategory = (typeof AppealCategory)[keyof typeof AppealCategory];
 export const AuctionType = {
   Model: 'Model',
   Image: 'Image',
@@ -881,6 +963,7 @@ export const UserRestrictionStatus = {
   Pending: 'Pending',
   Upheld: 'Upheld',
   Overturned: 'Overturned',
+  AccountDeleted: 'AccountDeleted',
 } as const;
 export type UserRestrictionStatus =
   (typeof UserRestrictionStatus)[keyof typeof UserRestrictionStatus];
@@ -892,6 +975,7 @@ export const StrikeReason = {
   HarassmentContent: 'HarassmentContent',
   ProhibitedContent: 'ProhibitedContent',
   ManualModAction: 'ManualModAction',
+  Scam: 'Scam',
 } as const;
 export type StrikeReason = (typeof StrikeReason)[keyof typeof StrikeReason];
 export const StrikeStatus = {
@@ -956,3 +1040,135 @@ export const OutboxEntity = {
   ModelVersion: 'ModelVersion',
 } as const;
 export type OutboxEntity = (typeof OutboxEntity)[keyof typeof OutboxEntity];
+export const StorylineStatus = {
+  Ongoing: 'Ongoing',
+  Complete: 'Complete',
+} as const;
+export type StorylineStatus = (typeof StorylineStatus)[keyof typeof StorylineStatus];
+export const StorylineWhoCanContinue = {
+  Anyone: 'Anyone',
+  Collaborators: 'Collaborators',
+} as const;
+export type StorylineWhoCanContinue =
+  (typeof StorylineWhoCanContinue)[keyof typeof StorylineWhoCanContinue];
+export const ServiceOfferingStatus = {
+  Draft: 'Draft',
+  Active: 'Active',
+  Paused: 'Paused',
+  Removed: 'Removed',
+} as const;
+export type ServiceOfferingStatus =
+  (typeof ServiceOfferingStatus)[keyof typeof ServiceOfferingStatus];
+export const ServicePreviewKind = {
+  Image: 'Image',
+  Video: 'Video',
+  SampleOutputs: 'SampleOutputs',
+  None: 'None',
+} as const;
+export type ServicePreviewKind = (typeof ServicePreviewKind)[keyof typeof ServicePreviewKind];
+export const ServiceBuzzType = {
+  yellow: 'yellow',
+  blue: 'blue',
+  green: 'green',
+} as const;
+export type ServiceBuzzType = (typeof ServiceBuzzType)[keyof typeof ServiceBuzzType];
+export const ServiceDealStatus = {
+  Requested: 'Requested',
+  Accepted: 'Accepted',
+  Delivered: 'Delivered',
+  InRevision: 'InRevision',
+  Completed: 'Completed',
+  Declined: 'Declined',
+  Expired: 'Expired',
+  CancellationRequested: 'CancellationRequested',
+  Cancelled: 'Cancelled',
+  Disputed: 'Disputed',
+} as const;
+export type ServiceDealStatus = (typeof ServiceDealStatus)[keyof typeof ServiceDealStatus];
+export const ServiceDealEventType = {
+  Requested: 'Requested',
+  Accepted: 'Accepted',
+  Declined: 'Declined',
+  Expired: 'Expired',
+  Delivered: 'Delivered',
+  RevisionRequested: 'RevisionRequested',
+  Completed: 'Completed',
+  CancellationRequested: 'CancellationRequested',
+  CancellationAccepted: 'CancellationAccepted',
+  CancellationDeclined: 'CancellationDeclined',
+  Cancelled: 'Cancelled',
+  Disputed: 'Disputed',
+  DisputeResolved: 'DisputeResolved',
+  DeadlineExtended: 'DeadlineExtended',
+  Held: 'Held',
+  Released: 'Released',
+  Refunded: 'Refunded',
+} as const;
+export type ServiceDealEventType = (typeof ServiceDealEventType)[keyof typeof ServiceDealEventType];
+export const ServiceDealFileKind = {
+  Preview: 'Preview',
+  Final: 'Final',
+} as const;
+export type ServiceDealFileKind = (typeof ServiceDealFileKind)[keyof typeof ServiceDealFileKind];
+export const ServiceDealFileStatus = {
+  Uploading: 'Uploading',
+  Processing: 'Processing',
+  Ready: 'Ready',
+  Failed: 'Failed',
+} as const;
+export type ServiceDealFileStatus =
+  (typeof ServiceDealFileStatus)[keyof typeof ServiceDealFileStatus];
+export const ServiceDealFileScanStatus = {
+  Pending: 'Pending',
+  Passed: 'Passed',
+  Failed: 'Failed',
+  NotScanned: 'NotScanned',
+} as const;
+export type ServiceDealFileScanStatus =
+  (typeof ServiceDealFileScanStatus)[keyof typeof ServiceDealFileScanStatus];
+export const ServiceDisputeResolution = {
+  Refund: 'Refund',
+  Release: 'Release',
+} as const;
+export type ServiceDisputeResolution =
+  (typeof ServiceDisputeResolution)[keyof typeof ServiceDisputeResolution];
+export const ServiceDealLeg = {
+  Hold: 'Hold',
+  Release: 'Release',
+  Fee: 'Fee',
+  Refund: 'Refund',
+} as const;
+export type ServiceDealLeg = (typeof ServiceDealLeg)[keyof typeof ServiceDealLeg];
+export const UserHubSourceType = {
+  User: 'User',
+  Model: 'Model',
+  ModelVersion: 'ModelVersion',
+  Collection: 'Collection',
+  Tag: 'Tag',
+} as const;
+export type UserHubSourceType = (typeof UserHubSourceType)[keyof typeof UserHubSourceType];
+export const CrucibleStatus = {
+  Pending: 'Pending',
+  Active: 'Active',
+  Completed: 'Completed',
+  Cancelled: 'Cancelled',
+} as const;
+export type CrucibleStatus = (typeof CrucibleStatus)[keyof typeof CrucibleStatus];
+export const CrucibleIngestionStatus = {
+  Pending: 'Pending',
+  Scanned: 'Scanned',
+  Blocked: 'Blocked',
+  Error: 'Error',
+} as const;
+export type CrucibleIngestionStatus =
+  (typeof CrucibleIngestionStatus)[keyof typeof CrucibleIngestionStatus];
+export const CrucibleEngagementType = {
+  Notify: 'Notify',
+} as const;
+export type CrucibleEngagementType =
+  (typeof CrucibleEngagementType)[keyof typeof CrucibleEngagementType];
+export const PrizeSourceType = {
+  Crucible: 'Crucible',
+  Challenge: 'Challenge',
+} as const;
+export type PrizeSourceType = (typeof PrizeSourceType)[keyof typeof PrizeSourceType];

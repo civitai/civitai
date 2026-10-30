@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  domainSpendType,
   getAllowedAccountTypes,
   getBlockAllowedAccountTypes,
+  getBuzzBulkMultiplier,
   isPayoutEligibleBuzz,
   orderBlockCurrencyTypes,
   PAYOUT_ELIGIBLE_BUZZ_TYPES,
@@ -9,6 +11,29 @@ import {
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
 
 const features = (isGreen: boolean) => ({ isGreen } as unknown as FeatureAccess);
+
+describe('domainSpendType — the one currency a placement may be paid in', () => {
+  it('is green on the green domain and yellow otherwise', () => {
+    expect(domainSpendType(features(true))).toBe('green');
+    expect(domainSpendType(features(false))).toBe('yellow');
+  });
+
+  // Never blue. A placement that took non-transferable Buzz and paid it out
+  // would be a transfer channel for it.
+  it('never returns a currency the escrow refuses', () => {
+    for (const isGreen of [true, false])
+      expect(domainSpendType(features(isGreen))).not.toBe('blue');
+  });
+
+  // One derivation, not two. If this ever disagrees with the generator's list
+  // the button and the escrow would offer different currencies.
+  it('is the domain currency the generator would spend', () => {
+    for (const isGreen of [true, false])
+      expect([domainSpendType(features(isGreen))]).toEqual(
+        getAllowedAccountTypes(features(isGreen))
+      );
+  });
+});
 
 describe('getBlockAllowedAccountTypes — App Blocks currency parity', () => {
   it('SFW (green/blue, isGreen=true) → blue then green (blue-first)', () => {
@@ -135,5 +160,42 @@ describe('orderBlockCurrencyTypes — preferred-first + domain clamp', () => {
     const mature = orderBlockCurrencyTypes(false, 'green');
     expect(mature.disallowed).toBe(true);
     expect(mature.ordered).toEqual(['blue', 'yellow']); // never widened to include green
+  });
+});
+
+describe('getBuzzBulkMultiplier — a bad multiplier never zero-credits a paid purchase', () => {
+  // The paid-purchase path (Stripe/Paddle) feeds the result straight into a buzz transaction, then
+  // writes an idempotency marker — so a zero credit is unrepairable by retry. A non-finite or sub-1
+  // multiplier must floor to 1 (base Buzz granted, no bonus), never to 0. ClickUp 868m0axkg.
+  const cases: [string, number][] = [
+    ['NaN (Math.max fold of a bad row against membership)', NaN],
+    ['negative', -3],
+    ['zero', 0],
+    ['Infinity', Infinity],
+    ['below 1', 0.5],
+  ];
+
+  it.each(cases)('grants the full purchase and no bonus at %s', (_label, multiplier) => {
+    const result = getBuzzBulkMultiplier({ buzzAmount: 1000, purchasesMultiplier: multiplier });
+    // On revert (raw multiplier) totalCustomBuzz goes to 0 / negative / NaN / Infinity — never 1000.
+    expect(result.totalCustomBuzz).toBe(1000);
+    expect(result.mainBuzzAdded).toBe(0);
+    expect(result.purchasesMultiplier).toBe(1);
+  });
+
+  it('still applies a real membership multiplier', () => {
+    const result = getBuzzBulkMultiplier({ buzzAmount: 1000, purchasesMultiplier: 1.2 });
+    expect(result.mainBuzzAdded).toBe(200);
+    expect(result.totalCustomBuzz).toBe(1200);
+  });
+
+  it('coerces a numeric-string multiplier rather than dropping the bonus', () => {
+    // Matches the defensive `Number()` on buzzAmount: a DB-typed value can arrive as a string.
+    const result = getBuzzBulkMultiplier({
+      buzzAmount: 1000,
+      purchasesMultiplier: '1.2' as unknown as number,
+    });
+    expect(result.mainBuzzAdded).toBe(200);
+    expect(result.totalCustomBuzz).toBe(1200);
   });
 });

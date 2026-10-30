@@ -9,8 +9,9 @@ import { isPrivateIp, isPublicHttpsUrl } from '~/server/utils/ssrf-hostname';
  * SSRF-hardened server-side fetch — the ONE guarded outbound-fetch primitive for
  * pulling an attacker-influenced URL (an App Blocks external-listing page or its
  * og:image). There is NO existing safeFetch/isPrivateIp util in the repo; this is
- * it. `unfurl.js` and `cf-images-utils.uploadViaBuffer` both do UNGUARDED outbound
- * fetches — do NOT use them to reach a user-supplied URL; use this instead.
+ * it. `unfurl.js` on its own does UNGUARDED outbound fetches — only reach a
+ * user-supplied URL with it through `safeUnfurl` (`safe-unfurl.ts`), which hands it
+ * this function as `opts.fetch`.
  *
  * Controls (all enforced on every hop):
  *   1. LEXICAL — https-only + `isPublicHttpsUrl` (rejects hex/int/octal IPv4,
@@ -75,8 +76,12 @@ export type SafeFetchOptions = {
    * lowercased, before any `;` params). e.g. `['text/html']` or `['image/']`.
    */
   allowedContentTypes: readonly string[];
-  /** Max redirect hops to follow (each re-validated). Default 2. */
+  /** Max redirect hops to follow (each re-validated). Default 2; 0 refuses any redirect. */
   maxRedirects?: number;
+  /** Deadline for the TLS connection to be established, within `timeoutMs`. */
+  connectTimeoutMs?: number;
+  /** A tighter cap chosen from the body's first bytes (e.g. by file type), applied as it streams. */
+  capFromHead?: { headBytes: number; maxBytes: (head: Buffer) => number };
 };
 
 export type SafeFetchResult = {
@@ -201,10 +206,21 @@ function requestHop(
         },
       },
       (res) => {
+        clearTimeout(connectTimer);
         resolve({ statusCode: res.statusCode ?? 0, headers: res.headers, stream: res });
       }
     );
-    req.on('error', (err) => reject(err));
+    const connectTimer = opts.connectTimeoutMs
+      ? setTimeout(
+          () => req.destroy(new SafeFetchError('timeout', 'connect timed out')),
+          opts.connectTimeoutMs
+        )
+      : undefined;
+    req.on('socket', (socket) => socket.once('secureConnect', () => clearTimeout(connectTimer)));
+    req.on('error', (err) => {
+      clearTimeout(connectTimer);
+      reject(err);
+    });
     req.end();
   });
 }
@@ -229,9 +245,11 @@ function mapTransportError(err: unknown): SafeFetchError {
 function readCappedBody(
   stream: IncomingMessage,
   contentLength: string | undefined,
-  maxBytes: number,
-  signal: AbortSignal
+  initialMaxBytes: number,
+  signal: AbortSignal,
+  capFromHead?: SafeFetchOptions['capFromHead']
 ): Promise<Buffer> {
+  let maxBytes = initialMaxBytes;
   const declared = Number(contentLength);
   if (Number.isFinite(declared) && declared > maxBytes) {
     stream.destroy();
@@ -259,9 +277,14 @@ function readCappedBody(
       reject(e);
     };
     const onAbort = () => fail(new SafeFetchError('timeout', 'request timed out'));
+    let headChecked = !capFromHead;
     const onData = (chunk: Buffer) => {
       if (settled) return;
       total += chunk.byteLength;
+      if (!headChecked && capFromHead && total >= capFromHead.headBytes) {
+        headChecked = true;
+        maxBytes = Math.min(maxBytes, capFromHead.maxBytes(Buffer.concat([...chunks, chunk])));
+      }
       if (total > maxBytes) {
         fail(new SafeFetchError('too_large', `body exceeds cap ${maxBytes}`));
         return;
@@ -358,7 +381,8 @@ export async function safeFetch(url: string, opts: SafeFetchOptions): Promise<Sa
         res.stream,
         headerValue(res.headers, 'content-length'),
         opts.maxBytes,
-        controller.signal
+        controller.signal,
+        opts.capFromHead
       );
       return { finalUrl: parsed.toString(), contentType, bytes };
     } finally {

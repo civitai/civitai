@@ -35,19 +35,28 @@ const { mockDb } = vi.hoisted(() => ({
     appListing: {
       findMany: vi.fn(async (..._a: unknown[]): Promise<unknown[]> => []),
       findFirst: vi.fn(async (..._a: unknown[]): Promise<unknown> => null),
+      // The MANUAL-APPLY `source_repo_url` column is read through its OWN guarded
+      // `findUnique` (app-listing-source-repo.service) — never via
+      // `listingHydrateSelect`, which the public /apps GRID shares. Mocked here so the
+      // seam is exercised; `null` = "no source repo set", the default for these rows.
+      findUnique: vi.fn(async (..._a: unknown[]): Promise<unknown> => ({ sourceRepoUrl: null })),
     },
   },
 }));
 
 vi.mock('~/server/db/client', () => ({ dbRead: mockDb, dbWrite: mockDb }));
-vi.mock('~/client-utils/cf-images-utils', () => ({ getEdgeUrl: (src: string) => src }));
+vi.mock('~/client-utils/edge-url', () => ({ getEdgeUrl: (src: string) => src }));
 vi.mock('~/env/server', () => ({ env: { APPS_DOMAIN: 'civit.ai' } }));
-vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600 } }));
+vi.mock('~/server/common/constants', () => ({ CacheTTL: { hour: 3600, sm: 180 } }));
 vi.mock('~/server/utils/cache-helpers', () => ({
+  // 🔴 BOTH EXPORTS. `app-listing.service` now imports `bustCacheTag` as well as
+  // `queryCache` (it owns `bustAppListingCatalogCache`), and a one-key factory makes the
+  // WHOLE FILE fail to import with `No "bustCacheTag" export is defined on the … mock`.
   queryCache:
     () =>
     async (sql: unknown): Promise<unknown[]> =>
       mockDb.$queryRaw(sql),
+  bustCacheTag: vi.fn(async () => undefined),
 }));
 
 import { getListingDetail } from '../app-listing.service';
@@ -58,6 +67,10 @@ const DISPLAYED = 20;
 const HIDDEN = 21;
 const PENDING = 30;
 const REJECTED = 40;
+/** Accepted + displayed, but BANNED — must not keep a public placement. */
+const BANNED = 50;
+/** Accepted + displayed, but soft-DELETED. */
+const DELETED = 60;
 
 /**
  * The seat table. 🔴 KEYED ON THE LISTING and carrying no block anywhere — which is the
@@ -68,6 +81,10 @@ const SEATS = [
   { appListingId: OFFSITE, userId: HIDDEN, status: 'accepted', displayed: false },
   { appListingId: OFFSITE, userId: PENDING, status: 'pending', displayed: true },
   { appListingId: OFFSITE, userId: REJECTED, status: 'rejected', displayed: true },
+  // 🔴 Both of these pass the SEAT filters (accepted + displayed) and must still be
+  // excluded — by the USER filter, which is a separate gate on a separate table.
+  { appListingId: OFFSITE, userId: BANNED, status: 'accepted', displayed: true },
+  { appListingId: OFFSITE, userId: DELETED, status: 'accepted', displayed: true },
 ];
 
 /**
@@ -77,17 +94,43 @@ const SEATS = [
  * narrows rather than merely passing through an already-narrow row.
  */
 const USERS: Record<number, Record<string, unknown>> = {
+  /**
+   * 🔴 This row is deliberately OVER-WIDE (email, isModerator) so the projection's
+   * three-key allowlist is provably doing work — but it is NOT banned.
+   *
+   * It used to carry `bannedAt: new Date(...)`, purely as another extra field, and that
+   * was harmless only because nothing filtered on it. The fixture was therefore asserting
+   * that a BANNED user appears in the public byline — which is exactly the defect the
+   * filter below now closes. Keep the over-wide shape; keep the account healthy.
+   */
   [DISPLAYED]: {
     id: DISPLAYED,
     username: 'editor-shown',
     image: 'shown.png',
     email: 'shown@example.com',
-    bannedAt: new Date('2026-01-01T00:00:00Z'),
+    bannedAt: null,
+    deletedAt: null,
     isModerator: true,
   },
   [HIDDEN]: { id: HIDDEN, username: 'editor-hidden', image: null, email: 'hidden@example.com' },
   [PENDING]: { id: PENDING, username: 'invitee', image: null },
   [REJECTED]: { id: REJECTED, username: 'decliner', image: null },
+  [BANNED]: {
+    id: BANNED,
+    username: 'banned-editor',
+    image: 'banned.png',
+    bannedAt: new Date('2026-01-01T00:00:00Z'),
+    deletedAt: null,
+  },
+  // 🔴 A soft delete keeps the username, so the chip component's username-skip does NOT
+  // catch this one — only an explicit filter does.
+  [DELETED]: {
+    id: DELETED,
+    username: 'deleted-editor',
+    image: 'deleted.png',
+    bannedAt: null,
+    deletedAt: new Date('2026-02-01T00:00:00Z'),
+  },
 };
 
 /** An approved OFF-SITE external-link listing, as `listingHydrateSelect` returns it. */
@@ -111,6 +154,10 @@ function offsiteRow(over: Record<string, unknown> = {}) {
     cover: null,
     user: { id: OWNER, username: 'dev', image: null },
     metric: null,
+    // `updatedAt` is a NOT-NULL Prisma column on every real row; the detail
+    // projection reads it for the header's "Updated:" meta line. Fixed value so
+    // the projection's ISO output is deterministic.
+    updatedAt: new Date('2026-03-04T05:06:07.000Z'),
     screenshots: [],
     status: 'approved',
     ...over,
@@ -132,9 +179,20 @@ beforeEach(() => {
         (w.displayed === undefined || s.displayed === w.displayed)
     ).map((s) => ({ userId: s.userId }));
   });
+  // 🔴 Honours `bannedAt` / `deletedAt` as well as the id set. A fake that ignored them
+  // would make every assertion about those filters vacuous — and this fake DID ignore
+  // them, which is why a banned collaborator sat in the byline fixture unnoticed.
   mockDb.user.findMany.mockImplementation(async (args: unknown) => {
-    const ids = (args as { where: { id: { in: number[] } } }).where.id.in;
-    return ids.map((id) => USERS[id]).filter(Boolean);
+    const w = (
+      args as {
+        where: { id: { in: number[] }; bannedAt?: null; deletedAt?: null };
+      }
+    ).where;
+    return w.id.in
+      .map((id) => USERS[id])
+      .filter(Boolean)
+      .filter((u) => !('bannedAt' in w) || u.bannedAt == null)
+      .filter((u) => !('deletedAt' in w) || u.deletedAt == null);
   });
 });
 
@@ -143,17 +201,34 @@ describe('🔴 INSTRUMENT CONTROLS', () => {
     const all = (await mockDb.appCollaborator.findMany({
       where: { appListingId: OFFSITE },
     })) as Array<{ userId: number }>;
-    expect(all.map((r) => r.userId).sort()).toEqual([DISPLAYED, HIDDEN, PENDING, REJECTED].sort());
+    expect(all.map((r) => r.userId).sort()).toEqual(
+      [DISPLAYED, HIDDEN, PENDING, REJECTED, BANNED, DELETED].sort()
+    );
 
     const byline = (await mockDb.appCollaborator.findMany({
       where: { appListingId: OFFSITE, status: 'accepted', displayed: true },
     })) as Array<{ userId: number }>;
-    expect(byline.map((r) => r.userId)).toEqual([DISPLAYED]);
+    // 🔴 THREE rows pass the SEAT filters. Only the USER filter narrows it to one, which
+    // is what makes the banned/deleted assertions below a different gate.
+    expect(byline.map((r) => r.userId).sort()).toEqual([DISPLAYED, BANNED, DELETED].sort());
 
     // …and a DIFFERENT listing id returns nothing, so "it found rows" is a statement
     // about the key and not about a fake that answers everything.
     const other = await mockDb.appCollaborator.findMany({ where: { appListingId: 'apl_other' } });
     expect(other).toEqual([]);
+  });
+
+  it('🔴 the user fake honours bannedAt / deletedAt (else the filter tests are vacuous)', async () => {
+    const unfiltered = (await mockDb.user.findMany({
+      where: { id: { in: [DISPLAYED, BANNED, DELETED] } },
+    })) as Array<{ id: number }>;
+    // POSITIVE CONTROL: without the clauses the fake returns all three…
+    expect(unfiltered.map((u) => u.id).sort()).toEqual([DISPLAYED, BANNED, DELETED].sort());
+    // …and with them, exactly the healthy one.
+    const filtered = (await mockDb.user.findMany({
+      where: { id: { in: [DISPLAYED, BANNED, DELETED] }, bannedAt: null, deletedAt: null },
+    })) as Array<{ id: number }>;
+    expect(filtered.map((u) => u.id)).toEqual([DISPLAYED]);
   });
 
   it('the user fake really does return over-wide rows', async () => {
@@ -170,6 +245,37 @@ describe('🔴 an OFF-SITE listing carries a public collaborator byline', () => 
     const detail = await getListingDetail({ slug: 'ext-app' }, { scope: 'public-external' });
     expect(detail).not.toBeNull();
     expect(detail!.collaborators.map((c) => c.id)).toEqual([DISPLAYED]);
+  });
+
+  /**
+   * 🔴 A BANNED OR DELETED COLLABORATOR IS NOT A PUBLIC BYLINE. This read is what puts a
+   * third party's name and avatar on a public app page, linked to their profile — and
+   * this PR is what renders that field for the first time, so the filter belongs with it.
+   *
+   * Deleted accounts fell out only INCIDENTALLY before: a hard delete nulls `username` and
+   * the chip component skips username-less rows. That is luck, not a filter, and a SOFT
+   * delete keeps the username, so it did not even hold.
+   */
+  it('a BANNED collaborator is absent from the public byline', async () => {
+    const detail = await getListingDetail({ slug: 'ext-app' }, { scope: 'public-external' });
+    const ids = detail!.collaborators.map((c) => c.id);
+    expect(ids).not.toContain(BANNED);
+    // Beside the absence, the presence — so this is not passing on an empty byline.
+    expect(ids).toContain(DISPLAYED);
+  });
+
+  it('a soft-DELETED collaborator is absent, despite still having a username', async () => {
+    const detail = await getListingDetail({ slug: 'ext-app' }, { scope: 'public-external' });
+    const ids = detail!.collaborators.map((c) => c.id);
+    expect(ids).not.toContain(DELETED);
+    expect(ids).toContain(DISPLAYED);
+  });
+
+  it('the byline is EXACTLY the healthy, accepted, displayed seat', () => {
+    // The whole population in one assertion: 6 seats, 1 chip.
+    return getListingDetail({ slug: 'ext-app' }, { scope: 'public-external' }).then((detail) => {
+      expect(detail!.collaborators.map((c) => c.id)).toEqual([DISPLAYED]);
+    });
   });
 
   it('🔴 the byline is read under the LISTING id — the assertion the re-key exists for', async () => {

@@ -1,33 +1,29 @@
 import { TRPCError } from '@trpc/server';
 import dayjs from '~/shared/utils/dayjs';
 
+import { requiresEmailVerification } from '~/server/common/email-verification-gate';
 import type { ProtectedContext } from '~/server/createContext';
 import { dbRead } from '~/server/db/client';
-import type { ModelMeta } from '~/server/schema/model.schema';
 import type {
-  BulkUpdateReportStatusInput,
   CreateEntityAppealInput,
   CreateReportInput,
   GetRecentAppealsInput,
-  GetReportsInput,
-  ResolveAppealInput,
-  SetReportStatusInput,
-  UpdateReportSchema,
 } from '~/server/schema/report.schema';
-import { simpleUserSelect } from '~/server/selectors/user.selector';
 import { getImageById } from '~/server/services/image.service';
-import { trackModActivity } from '~/server/services/moderator.service';
+import { isCommentGoneForMembers } from '~/server/services/commentsv2.service';
+import { ReportEntity } from '~/shared/utils/report-helpers';
 import {
-  bulkSetReportStatus,
   createEntityAppeal,
   createReport,
   getAppealCount,
-  getLatestModelAppeal,
-  getReports,
-  reopenModelAppeal,
-  resolveEntityAppeal,
-  updateReportById,
+  isAppealBlockedByHoldMarker,
+  getLatestAppeal,
+  reopenAppeal,
 } from '~/server/services/report.service';
+import {
+  isBountyFlagAppealable,
+  isModelFlagAppealable,
+} from '~/server/services/text-scan/flag-snapshot';
 import {
   isPrismaForeignKeyViolation,
   throwAuthorizationError,
@@ -36,6 +32,13 @@ import {
   throwDbError,
   throwNotFoundError,
 } from '~/server/utils/errorHandling';
+import {
+  getAppealRefusal,
+  getStorylineAppealRefusal,
+  IMAGE_NOT_APPEALABLE,
+  isAppealableImage,
+  isAppealableModel3D,
+} from '~/shared/utils/appeal';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { getAllowedAccountTypes } from '~/server/utils/buzz-helpers';
 
@@ -47,10 +50,17 @@ export async function createReportHandler({
   ctx: ProtectedContext;
 }) {
   try {
+    if (
+      input.type === ReportEntity.CommentV2 &&
+      !ctx.user.isModerator &&
+      (await isCommentGoneForMembers(input.id))
+    )
+      throw throwNotFoundError('The content you are trying to report no longer exists');
     const result = await createReport({
       ...input,
       userId: ctx.user.id,
       isModerator: ctx.user.isModerator,
+      emailVerificationRequired: requiresEmailVerification(ctx.user),
     });
 
     if (result) {
@@ -63,7 +73,7 @@ export async function createReportHandler({
       });
     }
 
-    return result;
+    return null;
   } catch (e) {
     // The reported entity was deleted between the client rendering it and the
     // report landing, so the entity-report FK has nothing to point at. Search
@@ -75,262 +85,21 @@ export async function createReportHandler({
   }
 }
 
-export async function setReportStatusHandler({
-  input,
-  ctx,
+async function assertNotAlreadyAppealed({
+  entityType,
+  entityId,
+  userId,
 }: {
-  input: SetReportStatusInput;
-  ctx: ProtectedContext;
+  entityType: EntityType;
+  entityId: number;
+  userId: number;
 }) {
-  try {
-    const { id, status } = input;
-    await bulkSetReportStatus({ ids: [id], status, userId: ctx.user.id, ip: ctx.ip });
-  } catch (e) {
-    if (e instanceof TRPCError) throw e;
-    else throw throwDbError(e);
-  }
+  const refusal = getAppealRefusal(
+    entityType,
+    await getLatestAppeal({ entityType, entityId, userId })
+  );
+  if (refusal) throw throwBadRequestError(refusal);
 }
-
-export async function bulkUpdateReportStatusHandler({
-  input,
-  ctx,
-}: {
-  input: BulkUpdateReportStatusInput;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { ids, status } = input;
-    await bulkSetReportStatus({ ids, status, userId: ctx.user.id });
-  } catch (e) {
-    if (e instanceof TRPCError) throw e;
-    else throw throwDbError(e);
-  }
-}
-
-export type GetReportsProps = AsyncReturnType<typeof getReportsHandler>;
-
-export async function getReportsHandler({ input }: { input: GetReportsInput }) {
-  try {
-    const { items, ...result } = await getReports({
-      ...input,
-      select: {
-        id: true,
-        user: { select: { ...simpleUserSelect, email: true } },
-        reason: true,
-        createdAt: true,
-        details: true,
-        status: true,
-        internalNotes: true,
-        alsoReportedBy: true,
-        model: {
-          select: {
-            model: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                name: true,
-                nsfw: true,
-                tosViolation: true,
-              },
-            },
-          },
-        },
-        resourceReview: {
-          select: {
-            resourceReview: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                nsfw: true,
-                tosViolation: true,
-                modelId: true,
-                modelVersionId: true,
-              },
-            },
-          },
-        },
-        comment: {
-          select: {
-            comment: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                nsfw: true,
-                tosViolation: true,
-                modelId: true,
-                parentId: true,
-              },
-            },
-          },
-        },
-        image: {
-          select: {
-            image: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                nsfw: true,
-                tosViolation: true,
-              },
-            },
-          },
-        },
-        article: {
-          select: {
-            article: {
-              select: {
-                id: true,
-                nsfwLevel: true,
-                title: true,
-                publishedAt: true,
-                tosViolation: true,
-                user: { select: simpleUserSelect },
-              },
-            },
-          },
-        },
-        post: {
-          select: {
-            post: {
-              select: {
-                id: true,
-                nsfw: true,
-                title: true,
-                publishedAt: true,
-                tosViolation: true,
-                user: { select: simpleUserSelect },
-              },
-            },
-          },
-        },
-        reportedUser: {
-          select: {
-            user: { select: { ...simpleUserSelect, email: true } },
-          },
-        },
-        collection: {
-          select: {
-            collection: {
-              select: { id: true, name: true, nsfw: true, user: { select: simpleUserSelect } },
-            },
-          },
-        },
-        bounty: {
-          select: {
-            bounty: {
-              select: { id: true, name: true, nsfw: true, user: { select: simpleUserSelect } },
-            },
-          },
-        },
-        bountyEntry: {
-          select: {
-            bountyEntry: {
-              select: { id: true, bountyId: true, user: { select: simpleUserSelect } },
-            },
-          },
-        },
-        commentV2: {
-          select: {
-            commentV2: {
-              select: {
-                id: true,
-                user: { select: simpleUserSelect },
-                nsfw: true,
-                tosViolation: true,
-              },
-            },
-          },
-        },
-        chat: {
-          select: {
-            chat: {
-              select: { id: true },
-            },
-          },
-        },
-        comicProject: {
-          select: {
-            comicProject: {
-              select: { id: true, name: true, user: { select: simpleUserSelect } },
-            },
-          },
-        },
-        model3d: {
-          select: {
-            model3d: {
-              select: {
-                id: true,
-                name: true,
-                nsfw: true,
-                tosViolation: true,
-                thumbnailImage: { select: { id: true, url: true, name: true } },
-                user: { select: simpleUserSelect },
-              },
-            },
-          },
-        },
-        model3dReview: {
-          select: {
-            model3dReview: {
-              select: {
-                id: true,
-                model3dId: true,
-                nsfw: true,
-                tosViolation: true,
-                user: { select: simpleUserSelect },
-              },
-            },
-          },
-        },
-        challenge: {
-          select: {
-            challenge: {
-              select: { id: true, title: true, createdBy: { select: simpleUserSelect } },
-            },
-          },
-        },
-      },
-    });
-    return {
-      items: items.map((item) => {
-        return {
-          ...item,
-          model: item.model?.model,
-          comment: item.comment?.comment,
-          resourceReview: item.resourceReview?.resourceReview,
-          image: item.image?.image,
-          article: item.article?.article,
-          post: item.post?.post,
-          reportedUser: item.reportedUser?.user,
-          collection: item.collection?.collection,
-          bounty: item.bounty?.bounty,
-          bountyEntry: item.bountyEntry?.bountyEntry,
-          chat: item.chat?.chat,
-          comicProject: item.comicProject?.comicProject,
-          model3d: item.model3d?.model3d,
-          model3dReview: item.model3dReview?.model3dReview,
-          challenge: item.challenge?.challenge,
-        };
-      }),
-      ...result,
-    };
-  } catch (e) {
-    throw throwDbError(e);
-  }
-}
-
-export const updateReportHandler = async ({ input }: { input: UpdateReportSchema }) => {
-  try {
-    const { id, ...data } = input;
-    const report = await updateReportById({ id, data });
-    if (!report) throw throwNotFoundError(`No report with id ${id}`);
-
-    return report;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-};
 
 export async function createEntityAppealHandler({
   input,
@@ -344,45 +113,82 @@ export async function createEntityAppealHandler({
   try {
     // Check ownership before creating the appeal
     switch (input.entityType) {
-      case EntityType.Image:
+      case EntityType.Image: {
         const image = await getImageById({ id: input.entityId });
         if (!image) throw throwNotFoundError('Image not found');
         if (image.userId !== userId) throw throwAuthorizationError();
-
+        await assertNotAlreadyAppealed({ ...input, userId });
+        if (!isAppealableImage(image)) throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
+        // A hold marker's kept image reads as a moderator block. Refused in the same words, so the
+        // refusal says no more than that.
+        if (await isAppealBlockedByHoldMarker({ imageId: image.id, userId }))
+          throw throwBadRequestError(IMAGE_NOT_APPEALABLE);
         break;
+      }
       case EntityType.Model3D:
         const m3d = await dbRead.model3D.findUnique({
           where: { id: input.entityId },
-          select: { userId: true },
+          select: { userId: true, status: true },
         });
         if (!m3d) throw throwNotFoundError('3D model not found');
         if (m3d.userId !== userId) throw throwAuthorizationError();
+        await assertNotAlreadyAppealed({ ...input, userId });
+        if (!isAppealableModel3D(m3d))
+          throw throwBadRequestError('Only a 3D model removed by moderators can be appealed');
         break;
       case EntityType.Model: {
         const model = await dbRead.model.findUnique({
           where: { id: input.entityId },
-          select: { userId: true, minor: true, meta: true },
+          select: { userId: true, minor: true, poi: true, meta: true },
         });
         if (!model) throw throwNotFoundError('Model not found');
         if (model.userId !== userId) throw throwAuthorizationError();
 
         // Legacy flags carry no snapshot and are deliberately excluded.
-        const meta = model.meta as ModelMeta | null;
-        if (!model.minor || !meta?.minorFlagSnapshot)
-          throw throwBadRequestError('This model is not flagged as depicting a minor');
+        if (!isModelFlagAppealable(model))
+          throw throwBadRequestError('This model has no automated flag to review');
 
-        // `Appeal` is unique on (entityType, entityId, userId): creating a second
-        // row raises P2002, which is not a TRPCError and reaches the owner as a
-        // raw 500. Asking again after a denial is intended, so reuse the row.
-        const existing = await getLatestModelAppeal(input.entityId, userId);
+        // Asking again after a denial is intended for an automated flag, so reuse the row.
+        const existing = await getLatestAppeal({ ...input, userId });
         if (existing?.status === AppealStatus.Pending)
           throw throwBadRequestError('Your review request for this model is already under review');
-        if (existing)
-          return await reopenModelAppeal({
-            entityId: input.entityId,
-            userId,
-            message: input.message,
-          });
+        if (existing) return await reopenAppeal({ id: existing.id, message: input.message });
+
+        skipFee = true;
+        break;
+      }
+      case EntityType.Bounty: {
+        const bounty = await dbRead.bounty.findUnique({
+          where: { id: input.entityId },
+          select: { userId: true, poi: true, meta: true },
+        });
+        if (!bounty) throw throwNotFoundError('Bounty not found');
+        if (bounty.userId !== userId) throw throwAuthorizationError();
+        if (!isBountyFlagAppealable(bounty))
+          throw throwBadRequestError('This bounty has no automated flag to review');
+
+        const existing = await getLatestAppeal({ ...input, userId });
+        if (existing?.status === AppealStatus.Pending)
+          throw throwBadRequestError('Your review request for this bounty is already under review');
+        if (existing) return await reopenAppeal({ id: existing.id, message: input.message });
+
+        skipFee = true;
+        break;
+      }
+      case EntityType.Storyline: {
+        const storyline = await dbRead.storyline.findUnique({
+          where: { id: input.entityId },
+          select: { userId: true, tosViolationByScan: true, tosViolationByModerator: true },
+        });
+        if (!storyline) throw throwNotFoundError('Storyline not found');
+        if (storyline.userId !== userId) throw throwAuthorizationError();
+        const refusal = getStorylineAppealRefusal(storyline);
+        if (refusal) throw throwBadRequestError(refusal);
+
+        const existing = await getLatestAppeal({ ...input, userId });
+        if (existing?.status === AppealStatus.Pending)
+          throw throwBadRequestError('Your appeal for this storyline is already under review');
+        if (existing) return await reopenAppeal({ id: existing.id, message: input.message });
 
         skipFee = true;
         break;
@@ -414,38 +220,13 @@ export async function getRecentAppealsHandler({
 }) {
   const sessionUser = ctx.user;
   try {
-    const userId = input.userId ?? sessionUser.id;
     const count = await getAppealCount({
-      userId,
+      userId: sessionUser.id,
       status: [AppealStatus.Pending, AppealStatus.Rejected],
       startDate: input.startDate ?? dayjs.utc().subtract(30, 'days').toDate(),
     });
 
     return count;
-  } catch (error) {
-    if (error instanceof TRPCError) throw error;
-    else throw throwDbError(error);
-  }
-}
-
-export async function resolveEntityAppealHandler({
-  input,
-  ctx,
-}: {
-  input: ResolveAppealInput;
-  ctx: ProtectedContext;
-}) {
-  try {
-    const { id: userId } = ctx.user;
-    const appeals = await resolveEntityAppeal({ ...input, userId });
-
-    await trackModActivity(userId, {
-      entityType: 'image',
-      entityId: input.ids,
-      activity: 'resolveAppeal',
-    });
-
-    return appeals;
   } catch (error) {
     if (error instanceof TRPCError) throw error;
     else throw throwDbError(error);

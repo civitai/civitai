@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as RedisClientModule from '@civitai/redis/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * PRODUCTION half of the coverage for namespace-scoping the admin cache-clear path (the
@@ -77,8 +78,6 @@ vi.mock('~/server/prom/client', () => ({
   cacheFailOpenDegradedCounter: { inc: vi.fn() },
   cacheFailOpenOriginFetchCounter: { inc: vi.fn() },
 }));
-vi.mock('~/server/logging/client', () => ({ logToAxiom: vi.fn().mockResolvedValue(undefined) }));
-
 // The endpoint's only non-trivial dependency besides cache-helpers. Replaced with a pass-through
 // so the real handler body runs; the auth wrapper is not what this file is about.
 vi.mock('~/server/utils/endpoint-helpers', () => ({

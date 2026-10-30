@@ -35,7 +35,7 @@ export const BidModelButton = ({
   const features = useFeatureFlags();
 
   const { data: auctions = [] } = trpc.auction.getAll.useQuery(undefined, {
-    enabled: features.auctions,
+    enabled: !!features.auctions,
   });
 
   const isCheckpoint = entityData.model.type === ModelType.Checkpoint;
@@ -79,8 +79,7 @@ export const BidModelButton = ({
     setSelectedModel({
       ...entityData,
       strength: -1,
-      minStrength: -1,
-      maxStrength: -1,
+      settings: { strength: { min: -1, max: -1, default: -1 } },
       trainedWords: [],
       canGenerate: true,
       hasAccess: true,

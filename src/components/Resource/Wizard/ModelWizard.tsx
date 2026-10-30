@@ -1,17 +1,7 @@
-import {
-  Button,
-  Group,
-  LoadingOverlay,
-  Popover,
-  Stack,
-  Stepper,
-  Text,
-  TextInput,
-  Title,
-} from '@mantine/core';
+import { Button, Group, LoadingOverlay, Stack, Text, TextInput, Title } from '@mantine/core';
 import type { NextRouter } from 'next/router';
 import { useRouter } from 'next/router';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import * as z from 'zod';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import { FeatureIntroductionHelpButton } from '~/components/FeatureIntroduction/FeatureIntroduction';
@@ -23,6 +13,7 @@ import { ModelVersionUpsertForm } from '~/components/Resource/Forms/ModelVersion
 import { PostUpsertForm2 } from '~/components/Resource/Forms/PostUpsertForm2';
 import TrainingSelectFile from '~/components/Resource/Forms/TrainingSelectFile';
 import { useIsChangingLocation } from '~/components/RouterTransition/RouterTransition';
+import { WizardStepper } from '~/components/Stepper/WizardStepper';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import type { TemplateOmittableField } from '~/server/schema/model.schema';
 import { templateOmittableFields } from '~/server/schema/model.schema';
@@ -30,11 +21,12 @@ import { ModelUploadType, ModelUsageControl, TrainingStatus } from '~/shared/uti
 import { showErrorNotification } from '~/utils/notifications';
 import { useS3UploadStore } from '~/store/s3-upload.store';
 import type { ModelById } from '~/types/router';
+import { resolveTrainedFileName } from '~/utils/file-display-helpers';
 import { QS } from '~/utils/qs';
 import { sanitizeDownloadFilename } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 import { isNumber } from '~/utils/type-guards';
-import { TemplateSelect } from './TemplateSelect';
+import { TemplatePicker } from './TemplateSelect';
 import { useWizardAutoResume } from './useWizardAutoResume';
 import { useWizardStepSave } from './useWizardStepSave';
 import { ReadOnlyAlert } from '~/components/ReadOnlyAlert/ReadOnlyAlert';
@@ -105,11 +97,21 @@ const CreateSteps = ({
   const modelVersionId = result.success ? result.data.modelVersionId : undefined;
   const src = result.success ? result.data.src : undefined;
 
-  const { data: templateFields, isInitialLoading: isTemplateLoading } =
-    trpc.model.getTemplateFields.useQuery(
-      { id: templateId as number, omit: parseTemplateOmit(templateOmit) },
-      { enabled: !!templateId }
-    );
+  const {
+    data: templateFields,
+    isInitialLoading: isTemplateLoading,
+    error: templateError,
+  } = trpc.model.getTemplateFields.useQuery(
+    { id: templateId as number, omit: parseTemplateOmit(templateOmit) },
+    { enabled: !!templateId }
+  );
+  useEffect(() => {
+    if (templateError)
+      showErrorNotification({
+        title: 'Could not load the template',
+        error: new Error(templateError.message),
+      });
+  }, [templateError]);
   const { data: bountyFields, isInitialLoading: isBountyLoading } =
     trpc.model.getModelTemplateFieldsFromBounty.useQuery(
       { id: bountyId as number },
@@ -146,18 +148,16 @@ const CreateSteps = ({
     useWizardStepSave(navigateToStep);
 
   return (
-    <Stepper
+    <WizardStepper
       active={activeIndex}
       onStepClick={(idx) => {
         const urlStep = skipFiles && idx >= 2 ? idx + 2 : idx + 1;
         handleStepSelect(urlStep, step);
       }}
-      allowNextStepsSelect={false}
-      size="sm"
       classNames={{ steps: 'container max-w-sm' }}
     >
       {/* Step 1: Model Info */}
-      <Stepper.Step label={editing ? 'Edit model' : 'Create your model'}>
+      <WizardStepper.Step label={editing ? 'Edit model' : 'Create your model'}>
         <div className="container relative flex max-w-sm flex-col gap-3">
           <LoadingOverlay visible={isLoadingTemplateData} />
           <Title order={3}>{editing ? 'Edit model' : 'Create your model'}</Title>
@@ -181,10 +181,13 @@ const CreateSteps = ({
             )}
           </ModelUpsertForm>
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 2: Version Info */}
-      <Stepper.Step label={hasVersions ? 'Edit version' : 'Add version'} allowStepSelect={!!model}>
+      <WizardStepper.Step
+        label={hasVersions ? 'Edit version' : 'Add version'}
+        allowStepSelect={!!model}
+      >
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>{hasVersions ? 'Edit version' : 'Add version'}</Title>
           <ModelVersionUpsertForm
@@ -223,11 +226,11 @@ const CreateSteps = ({
             )}
           </ModelVersionUpsertForm>
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 3: Upload Files */}
       {!skipFiles && (
-        <Stepper.Step
+        <WizardStepper.Step
           label="Upload files"
           loading={uploading > 0}
           color={error + aborted > 0 ? 'red' : undefined}
@@ -238,18 +241,18 @@ const CreateSteps = ({
             <Files />
             <UploadStepActions onBackClick={goBack} onNextClick={goNext} />
           </div>
-        </Stepper.Step>
+        </WizardStepper.Step>
       )}
 
-      <Stepper.Step
+      <WizardStepper.Step
         label={postId ? 'Edit post' : 'Create a post'}
         allowStepSelect={!!hasVersions && (hasFiles || skipFiles)}
       >
         {model && modelVersion && (
           <PostUpsertForm2 postId={postId} modelVersionId={modelVersion.id} modelId={model.id} />
         )}
-      </Stepper.Step>
-    </Stepper>
+      </WizardStepper.Step>
+    </WizardStepper>
   );
 };
 
@@ -269,7 +272,7 @@ export function TrainStepModelFileRename({
     <TextInput
       label="Download filename"
       description="The name users will see when downloading this model file"
-      placeholder={`${modelVersion.name || 'model'}.safetensors`}
+      placeholder={modelFile.name}
       value={value}
       onChange={(e) => onChange(e.currentTarget.value)}
     />
@@ -321,9 +324,17 @@ const TrainSteps = ({
     useWizardStepSave(navigateToStep);
 
   const modelFile = modelVersion.files.find((f) => f.type === 'Model');
-  const [fileName, setFileName] = useState<string>(
-    modelFile?.overrideName ?? (modelVersion.name ? `${modelVersion.name}.safetensors` : '')
-  );
+  // null means untouched; '' is a real edit that clears the override.
+  const [editedFileName, setEditedFileName] = useState<string | null>(null);
+  const fileName = modelFile
+    ? resolveTrainedFileName({
+        editedName: editedFileName,
+        overrideName: modelFile.overrideName,
+        modelName: model.name,
+        versionName: modelVersion.name,
+        fileName: modelFile.name,
+      })
+    : '';
   const updateFileMutation = trpc.modelFile.update.useMutation();
 
   const handleVersionNext = async () => {
@@ -345,15 +356,13 @@ const TrainSteps = ({
   };
 
   return (
-    <Stepper
+    <WizardStepper
       active={step - 1}
       onStepClick={(idx) => handleStepSelect(idx + 1, step)}
-      allowNextStepsSelect={false}
-      size="sm"
       classNames={{ steps: 'container max-w-sm' }}
     >
       {/* Step 1: Select File */}
-      <Stepper.Step
+      <WizardStepper.Step
         label="Select Model Iteration"
         loading={
           modelVersion.trainingStatus === TrainingStatus.Pending ||
@@ -378,10 +387,10 @@ const TrainSteps = ({
           </Text>
           <TrainingSelectFile model={model} modelVersion={modelVersion} onNextClick={goNext} />
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 2: Model Info */}
-      <Stepper.Step label="Edit model">
+      <WizardStepper.Step label="Edit model">
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit model</Title>
           <ModelUpsertForm
@@ -402,10 +411,10 @@ const TrainSteps = ({
             )}
           </ModelUpsertForm>
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 3: Version Info */}
-      <Stepper.Step label="Edit version">
+      <WizardStepper.Step label="Edit version">
         <div className="container flex max-w-sm flex-col gap-3">
           <Title order={3}>Edit version</Title>
           <ModelVersionUpsertForm
@@ -417,7 +426,7 @@ const TrainSteps = ({
               <TrainStepModelFileRename
                 modelVersion={modelVersion}
                 value={fileName}
-                onChange={setFileName}
+                onChange={setEditedFileName}
               />
             }
           >
@@ -438,15 +447,15 @@ const TrainSteps = ({
             )}
           </ModelVersionUpsertForm>
         </div>
-      </Stepper.Step>
+      </WizardStepper.Step>
 
       {/* Step 4: Post Info */}
-      <Stepper.Step label={postId ? 'Edit post' : 'Create a post'}>
+      <WizardStepper.Step label={postId ? 'Edit post' : 'Create a post'}>
         {model && modelVersion && (
           <PostUpsertForm2 postId={postId} modelVersionId={modelVersion.id} modelId={model.id} />
         )}
-      </Stepper.Step>
-    </Stepper>
+      </WizardStepper.Step>
+    </WizardStepper>
   );
 };
 
@@ -490,7 +499,6 @@ export function ModelWizard() {
   const step = isNumber(routeStep) && routeStep >= 1 && routeStep <= MAX_STEPS ? routeStep : 1;
 
   const isNew = router.pathname.includes('/create');
-  const [opened, setOpened] = useState(false);
   const isTransitioning = useIsChangingLocation();
 
   const {
@@ -609,25 +617,7 @@ export function ModelWizard() {
                 />
               </Group>
               {isNew && !isTraining && currentUser?.username && (
-                <Popover
-                  opened={opened}
-                  width={400}
-                  position="bottom-end"
-                  onChange={setOpened}
-                  withArrow
-                >
-                  <Popover.Target>
-                    <Button variant="subtle" onClick={() => setOpened(true)}>
-                      {templateId ? 'Swap template' : 'Use a template'}
-                    </Button>
-                  </Popover.Target>
-                  <Popover.Dropdown p={4}>
-                    <TemplateSelect
-                      username={currentUser.username}
-                      onSelect={() => setOpened(false)}
-                    />
-                  </Popover.Dropdown>
-                </Popover>
+                <TemplatePicker username={currentUser.username} hasTemplate={!!templateId} />
               )}
             </Group>
           </Stack>

@@ -12,15 +12,9 @@ import type { NextApiRequest, NextApiResponse } from 'next';
  * ignored" from "the supplied value is merely one of several considered".
  */
 
-const { mockFindUnique, mockGetDownloadUrl, mockGetServerAuthSession } = vi.hoisted(() => ({
-  mockFindUnique: vi.fn(),
+const { mockGetDownloadUrl, mockGetServerAuthSession } = vi.hoisted(() => ({
   mockGetDownloadUrl: vi.fn(),
   mockGetServerAuthSession: vi.fn(),
-}));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { keyValue: { findUnique: mockFindUnique } },
-  dbWrite: { keyValue: { findUnique: mockFindUnique } },
 }));
 
 vi.mock('~/server/auth/get-server-auth-session', () => ({
@@ -44,6 +38,12 @@ vi.mock('~/server/logging/client', () => ({
 }));
 
 import handler from '~/pages/api/download/[...key]';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+// The handler reads the blocklist from the REPLICA only (`dbRead.keyValue.findUnique` in
+// the route). The old fixture aliased dbRead and dbWrite to one spy, so a read routed to
+// the primary would have satisfied it silently; binding dbRead alone makes that
+// distinguishable.
+const mockFindUnique = dbMock.dbRead.keyValue.findUnique;
 
 const BLOCKED = '203.0.113.7';
 const NOT_BLOCKED = '198.51.100.9';

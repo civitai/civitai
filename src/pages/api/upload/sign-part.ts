@@ -38,23 +38,44 @@ const signPart = async (req: NextApiRequest, res: NextApiResponse) => {
     return;
   }
 
+  /**
+   * 🔴 RESPOND BEFORE LOGGING, AND CONTAIN THE LOG — the same defect as ./complete.ts,
+   * ./abort.ts and ./index.ts, on the fourth upload route. Both `logToAxiom` calls used to sit
+   * between the work and the response, so during the 2026-08-23 Axiom outage this path stalled
+   * for the SDK's 30 s axios timeout and then threw instead of answering.
+   *
+   * Worth fixing here even though `@civitai/axiom` now contains that write: this is the path
+   * that rescues a multi-hour upload whose 12 h part URLs expired (see the header above), so a
+   * telemetry stall on it costs the whole transfer, and the containment argument only holds if
+   * it does not depend on remembering to keep the package total.
+   */
   try {
     const s3 = backend === 'b2' ? getUploadS3Client('b2') : null;
     const result = await getUploadPartUrl({ bucket, key, uploadId, partNumber, s3 });
-    await logToAxiom({ name: 's3-upload-sign-part', userId, key, uploadId, partNumber, backend });
     res.status(200).json(result);
+    try {
+      await logToAxiom({ name: 's3-upload-sign-part', userId, key, uploadId, partNumber, backend });
+    } catch {
+      /* contained — @civitai/axiom reports its own ingest failures */
+    }
   } catch (e) {
     const error = e as Error;
-    await logToAxiom({
-      name: 's3-upload-sign-part-error',
-      userId,
-      key,
-      uploadId,
-      partNumber,
-      backend,
-      error: error.message,
-    });
+    // Unchanged body (this route already answered with the message; it is on the
+    // rest-error-envelope-ledger baseline alongside its siblings), only the ORDER changes.
     res.status(500).json({ error: error.message });
+    try {
+      await logToAxiom({
+        name: 's3-upload-sign-part-error',
+        userId,
+        key,
+        uploadId,
+        partNumber,
+        backend,
+        error: error.message,
+      });
+    } catch {
+      /* contained — see the success path */
+    }
   }
 };
 

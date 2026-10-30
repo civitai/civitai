@@ -1,3 +1,4 @@
+import { MY_APPS_HREF } from '~/shared/constants/apps-build.constants';
 import { NotificationCategory } from '~/server/common/enums';
 import { createNotificationProcessor } from '~/server/notifications/base.notifications';
 
@@ -35,8 +36,13 @@ export type AppBlockModerationNotificationDetails = {
   reason?: string | null;
 };
 
-/** Both submitter notifications point the developer at their submissions view. */
-const SUBMITTER_SUBMISSIONS_URL = '/apps/my-submissions';
+/**
+ * Both submitter notifications point the developer at their submissions view — state C of
+ * `/apps/build`, which is the table `/apps/mine` used to be. Repointed with the rest of the
+ * `/apps/build` consolidation; see the access-narrowing note on `OWNER_SUBMISSIONS_URL` in
+ * `./app-listing.notifications`, which applies verbatim to these two.
+ */
+const SUBMITTER_SUBMISSIONS_URL = MY_APPS_HREF;
 
 /** `Your app block "Name"` when a name is present, else a terse `Your app block`. */
 function blockLabel(details: AppBlockModerationNotificationDetails): string {

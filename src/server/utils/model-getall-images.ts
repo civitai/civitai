@@ -82,17 +82,30 @@ export const GET_ALL_IMAGES_PER_MODEL = 12;
  * ~42% of the browse-feed page bytes (and the proportional superjson walk) when
  * models carry a full showcase.
  *
- * 🔴 FLAG-GATED (DARK `getAllModelImagesSlim`, `availability: []`) — NOT always-on
- * — because it REINTRODUCES the browsing-level feed-drop risk the 3→8→12 reviews
- * walked away from: with only 6 leading (postId,index-ordered, browsing-agnostic)
- * images, a mixed-level model whose only browsing-safe image sits past index 6 is
- * dropped from an SFW-mode viewer's feed (`hidden.noImages`). 6 (vs 1) preserves 5
- * fall-through candidates beyond the cover and mirrors the sibling
- * `GALLERY_POST_IMAGE_SLICE`; the residual risk is real but bounded, measured, and
- * instantly reversible. OFF ⇒ the cap stays `GET_ALL_IMAGES_PER_MODEL` (12) — the
- * COUNT is byte-identical to today (the always-on field trim still applies to both
- * branches). Ramp ONLY by the Flipt threshold while watching
- * `feed_noimages_drop`; instant rollback = drop the threshold to 0. Tune here.
+ * 🔴 On the BROWSE FEED this is FLAG-GATED (DARK `getAllModelImagesSlim`,
+ * `availability: []`) — NOT always-on — because it REINTRODUCES the browsing-level
+ * feed-drop risk the 3→8→12 reviews walked away from: with only 6 leading
+ * (postId,index-ordered, browsing-agnostic) images, a mixed-level model whose only
+ * browsing-safe image sits past index 6 is dropped from an SFW-mode viewer's feed
+ * (`hidden.noImages`). 6 (vs 1) preserves 5 fall-through candidates beyond the cover
+ * and mirrors the sibling `GALLERY_POST_IMAGE_SLICE`; the residual risk is real but
+ * bounded, measured, and instantly reversible. OFF ⇒ the cap stays
+ * `GET_ALL_IMAGES_PER_MODEL` (12) — the COUNT is byte-identical to today (the
+ * always-on field trim still applies to both branches). Ramp ONLY by the Flipt
+ * threshold while watching `feed_noimages_drop`; instant rollback = drop the
+ * threshold to 0. Tune here.
+ *
+ * 🔴 The two HOME BLOCK callers take it UNFLAGGED, paired with `biasImageSlice`
+ * (`home-block.service.ts`, `slimModelImages`). A per-user Flipt evaluation cannot
+ * reach them: `getHomeBlockCached` keys on `type:identifier:domain` with no user
+ * segment and calls `getHomeBlockData` with no user, so whichever request missed the
+ * cache would pick the payload for every viewer of that domain until it expires.
+ * Consequences to know before changing this number: those blocks have NO flag
+ * rollback — only revert, deploy, and wait out a 10 min (Feed) / 1 hr
+ * (FeaturedModelVersion) cache TTL — and `emitFeedNoImagesDrop` carries no block or
+ * source discriminator, so a rise in `feed_noimages_drop` cannot be attributed to
+ * them. Their safety rests entirely on `biasImageSlice`'s bit-coverage guarantee,
+ * which needs this cap to stay >= the number of browsing levels.
  */
 export const GET_ALL_IMAGES_PER_MODEL_SLIM = 6;
 

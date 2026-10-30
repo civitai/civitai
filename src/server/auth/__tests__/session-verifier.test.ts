@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type * as CivitaiAuth from '@civitai/auth';
 import type { SessionClaims } from '@civitai/auth';
 
 // Leg 3 of the SPOF fix: the sysRedis revocation read is now bounded by withSysReadDeadline and FAILS OPEN on
@@ -12,15 +13,24 @@ const h = vi.hoisted(() => ({
 }));
 
 // session-verifier constructs an AuthVerifier at module load — stub the package (we only exercise isRevoked).
-vi.mock('@civitai/auth', () => ({ createAuthVerifier: () => ({}) }));
+vi.mock('@civitai/auth', async (importOriginal) => ({
+  ...(await importOriginal<typeof CivitaiAuth>()),
+  createAuthVerifier: () => ({}),
+}));
 vi.mock('~/server/auth/session-metrics', () => ({ observeSessionLeg: h.observeSessionLeg }));
 vi.mock('~/server/redis/fail-open-log', () => ({ logSysRedisFailOpen: h.logSysRedisFailOpen }));
-vi.mock('~/server/redis/client', () => ({
+// 🔴 Spread the REAL package for the key constants rather than re-typing them. Hand-typed
+// copies drift silently: this factory used to declare TOKEN_STATE as 'sys:token-state' and
+// ALL as 'sys:all' while production uses 'session:token-state' and 'session:all', so the
+// suite exercised keys Redis never sees and could not have caught a key-name regression.
+// The client and the withSysReadDeadline control surface stay overridden.
+vi.mock('~/server/redis/client', async () => ({
+  ...(await import('@civitai/redis/client')),
   sysRedis: { hGet: h.hGet, get: h.get },
-  REDIS_SYS_KEYS: { SESSION: { TOKEN_STATE: 'sys:token-state', ALL: 'sys:all' } },
   withSysReadDeadline: h.withSysReadDeadline,
 }));
 
+import { REDIS_SYS_KEYS } from '@civitai/redis/client';
 import { isRevoked } from '../session-verifier';
 
 const claims = (over: Partial<SessionClaims> = {}): SessionClaims =>
@@ -48,6 +58,30 @@ describe('isRevoked — bounded revocation read (leg 3)', () => {
   it('returns true when a global SESSION.ALL cutoff is newer than the token', async () => {
     h.get.mockResolvedValue(new Date(5000).toISOString()); // cutoff 5000 > signedAt 1000
     expect(await isRevoked(claims({ signedAt: 1000 }))).toBe(true);
+  });
+
+  it("returns true when the user's cut is newer than the token, and not for one signed after it", async () => {
+    h.get.mockImplementation(async (key: string) =>
+      key === `${REDIS_SYS_KEYS.SESSION.USER_CUT}:7` ? '5000' : null
+    );
+    expect(await isRevoked(claims({ sub: '7', signedAt: 1000 }))).toBe(true);
+    expect(await isRevoked(claims({ sub: '7', signedAt: 6000 }))).toBe(false);
+  });
+
+  it("returns true for an impersonation token when the moderator's cut is newer", async () => {
+    h.get.mockImplementation(async (key: string) =>
+      key === `${REDIS_SYS_KEYS.SESSION.USER_CUT}:100` ? '5000' : null
+    );
+    expect(await isRevoked(claims({ sub: '7', impersonatedBy: 100, signedAt: 1000 }))).toBe(true);
+    expect(await isRevoked(claims({ sub: '7', signedAt: 1000 }))).toBe(false);
+  });
+
+  it("returns true when the token's family is invalid", async () => {
+    h.hGet.mockImplementation(async (key: string, field: string) =>
+      key === REDIS_SYS_KEYS.SESSION.FAMILY_STATE && field === 'root' ? 'invalid' : null
+    );
+    expect(await isRevoked(claims({ sid: 'root' }))).toBe(true);
+    expect(await isRevoked(claims({ sid: 'other' }))).toBe(false);
   });
 
   it('FAILS OPEN (false) on a read-deadline timeout and records outcome "timeout"', async () => {

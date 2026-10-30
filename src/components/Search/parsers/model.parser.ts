@@ -1,22 +1,32 @@
 import type { InstantSearchRoutingParser } from '~/components/Search/parsers/base';
-import { searchParamsSchema } from '~/components/Search/parsers/base';
+import {
+  parseSearchParams,
+  searchParamsSchema,
+  stringArrayParamSchema,
+} from '~/components/Search/parsers/base';
 import * as z from 'zod';
 import { QS } from '~/utils/qs';
 import { removeEmpty } from '~/utils/object-helpers';
 import type { IndexUiState, UiState } from 'instantsearch.js';
-import { IMAGES_SEARCH_INDEX, MODELS_SEARCH_INDEX } from '~/server/common/constants';
+import { MODELS_SEARCH_INDEX } from '~/server/common/constants';
 
+// Every entry must name an attribute the LIVE models index declares sortable — see
+// `modelsSortableAttributes` in src/server/search-index/sortable-attributes.ts and the contract
+// test in src/components/Search/__tests__/search-index-contract.test.ts. InstantSearch sends this
+// string straight through to Meilisearch, so an attribute the index does not expose is not a
+// degraded sort, it is a failed request and an empty results page.
 export const ModelSearchIndexSortBy = [
   MODELS_SEARCH_INDEX,
   `${MODELS_SEARCH_INDEX}:metrics.thumbsUpCount:desc`,
-  // Creator Controls: sort on the REAL sort-only mirrors — the displayed
-  // `metrics.downloadCount` / `metrics.tippedAmountCount` are masked to null when a
-  // creator hides them, so sorting on those would break the order.
-  `${MODELS_SEARCH_INDEX}:sortMetrics.downloadCount:desc`,
+  // Creator Controls keeps unmasked copies of downloads/tips in a sort-only `sortMetrics` field so
+  // a hidden number can still order correctly. That field is not sortable on the live index yet —
+  // declaring it and sorting on it needs a models index reset first — so these two stay on
+  // `metrics.*` until that lands.
+  `${MODELS_SEARCH_INDEX}:metrics.downloadCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.favoriteCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.commentCount:desc`,
   `${MODELS_SEARCH_INDEX}:metrics.collectedCount:desc`,
-  `${MODELS_SEARCH_INDEX}:sortMetrics.tippedAmountCount:desc`,
+  `${MODELS_SEARCH_INDEX}:metrics.tippedAmountCount:desc`,
   `${MODELS_SEARCH_INDEX}:createdAt:desc`,
 ] as const;
 
@@ -26,24 +36,12 @@ const modelSearchParamsSchema = searchParamsSchema
   .extend({
     sortBy: z.enum(ModelSearchIndexSortBy),
     lastVersionAt: z.string(),
-    baseModel: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    modelType: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    checkpointType: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    tags: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    users: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
-    category: z
-      .union([z.array(z.string()), z.string()])
-      .transform((val) => (Array.isArray(val) ? val : [val])),
+    baseModel: stringArrayParamSchema,
+    modelType: stringArrayParamSchema,
+    checkpointType: stringArrayParamSchema,
+    tags: stringArrayParamSchema,
+    users: stringArrayParamSchema,
+    category: stringArrayParamSchema,
   })
   .partial();
 
@@ -54,10 +52,10 @@ type ModelUiState = UiState & {
 
 export const modelInstantSearchRoutingParser: InstantSearchRoutingParser = {
   parseURL: ({ location }) => {
-    const modelSearchIndexResult = modelSearchParamsSchema.safeParse(QS.parse(location.search));
-
-    const modelSearchIndexData: ModelSearchParams | Record<string, string[]> =
-      modelSearchIndexResult.success ? modelSearchIndexResult.data : {};
+    const modelSearchIndexData = parseSearchParams(
+      modelSearchParamsSchema,
+      QS.parse(location.search)
+    );
 
     return { [MODELS_SEARCH_INDEX]: removeEmpty(modelSearchIndexData) };
   },

@@ -2,6 +2,9 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { Prisma } from '@prisma/client';
 import type * as CollectionService from '~/server/services/collection.service';
 import type * as SessionClientModule from '~/server/auth/session-client';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
+const mockDbWrite = dbMock.dbWrite;
 
 // `dbRead.collection.findUnique`, `dbRead.collectionContributor.findMany`, and
 // `dbWrite.collectionInvite.deleteMany` aren't in the original brief's mock shape but the
@@ -9,44 +12,14 @@ import type * as SessionClientModule from '~/server/auth/session-client';
 // removal); stubbed here so those calls don't crash the suite. The `dbRead` trio also backs
 // `countCollaborators`, which reads the caps off the replica. The owner-lookup default of
 // OWNER_ID lets every test that targets someone other than the owner pass through untouched.
-const { mockDbRead, mockDbWrite, mockGetPermissions, mockCreateNotification, mockGetSessionUser } =
-  vi.hoisted(() => {
-    const OWNER_ID = 999;
-    return {
-      mockDbRead: {
-        collection: {
-          findUnique: vi
-            .fn()
-            .mockResolvedValue({ userId: OWNER_ID, read: 'Private', write: 'Private', mode: null }),
-        },
-        collectionContributor: { findMany: vi.fn().mockResolvedValue([]) },
-        collectionInvite: { findMany: vi.fn().mockResolvedValue([]), findUnique: vi.fn() },
-        collectionItem: { groupBy: vi.fn().mockResolvedValue([]) },
-      },
-      mockDbWrite: {
-        collection: { findUnique: vi.fn() },
-        collectionInvite: {
-          upsert: vi.fn(),
-          update: vi.fn(),
-          findUnique: vi.fn(),
-          findMany: vi.fn(),
-          deleteMany: vi.fn(),
-        },
-        collectionContributor: {
-          upsert: vi.fn(),
-          delete: vi.fn(),
-          findUnique: vi.fn(),
-          findMany: vi.fn(),
-        },
-        $transaction: vi.fn(),
-      },
-      mockGetPermissions: vi.fn(),
-      mockCreateNotification: vi.fn(),
-      mockGetSessionUser: vi.fn(),
-    };
-  });
-
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead, dbWrite: mockDbWrite }));
+const { mockGetPermissions, mockCreateNotification, mockGetSessionUser } = vi.hoisted(() => {
+  const OWNER_ID = 999;
+  return {
+    mockGetPermissions: vi.fn(),
+    mockCreateNotification: vi.fn(),
+    mockGetSessionUser: vi.fn(),
+  };
+});
 
 vi.mock('~/server/services/collection.service', async (importOriginal) => ({
   ...(await importOriginal<typeof CollectionService>()),
@@ -66,6 +39,7 @@ const {
   inviteCollaborator,
   respondToInvite,
   removeCollaborator,
+  updateCollaboratorRole,
   getCollaborators,
   getMyInvites,
   COLLABORATOR_CAP,
@@ -76,6 +50,14 @@ const COLLECTION_ID = 10;
 const OWNER_ID = 999;
 const MANAGER_ID = 777;
 const TARGET_ID = 555;
+
+// The owner-lookup default every test that targets someone else passes through.
+mockDbRead.collection.findUnique.mockResolvedValue({
+  userId: OWNER_ID,
+  read: 'Private',
+  write: 'Private',
+  mode: null,
+});
 
 function asOwner() {
   mockGetPermissions.mockResolvedValue({
@@ -124,6 +106,7 @@ describe('inviteCollaborator', () => {
     arrangeCounts();
     mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'gold' });
     mockDbWrite.collectionInvite.upsert.mockResolvedValue({ id: 1 });
+    mockDbRead.userEngagement.findFirst.mockResolvedValue(null);
   });
 
   it('lets the owner invite a Manager', async () => {
@@ -202,6 +185,48 @@ describe('inviteCollaborator', () => {
         role: 'Contributor',
       })
     ).rejects.toThrow();
+  });
+
+  it('refuses to invite a user on either side of a block, and sends no notification', async () => {
+    asOwner();
+    mockDbRead.userEngagement.findFirst.mockResolvedValue({ userId: OWNER_ID });
+
+    await expect(
+      inviteCollaborator({
+        collectionId: COLLECTION_ID,
+        userId: OWNER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Contributor',
+        isMember: true,
+      })
+    ).rejects.toThrow(/cannot invite this user/i);
+
+    expect(mockDbWrite.collectionInvite.upsert).not.toHaveBeenCalled();
+    expect(mockCreateNotification).not.toHaveBeenCalled();
+  });
+
+  // Asserts the query, not just the refusal: a guard written in one direction
+  // still passes the test above, because the mock answers regardless of `where`.
+  it('looks for a block in both directions', async () => {
+    asOwner();
+
+    await inviteCollaborator({
+      collectionId: COLLECTION_ID,
+      userId: OWNER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+      isMember: true,
+    });
+
+    expect(mockDbRead.userEngagement.findFirst).toHaveBeenCalledTimes(1);
+    const { where } = mockDbRead.userEngagement.findFirst.mock.calls[0][0];
+    expect(where.type).toBe('Block');
+    expect(where.OR).toEqual(
+      expect.arrayContaining([
+        { userId: OWNER_ID, targetUserId: TARGET_ID },
+        { userId: TARGET_ID, targetUserId: OWNER_ID },
+      ])
+    );
   });
 
   it('refuses when collaboration is disabled', async () => {
@@ -518,7 +543,13 @@ describe('respondToInvite', () => {
     });
   });
 
-  it('unions the role bits onto existing follow permissions', async () => {
+  it('writes the role bits plus whatever the collection grants for free', async () => {
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      userId: OWNER_ID,
+      read: 'Public',
+      write: 'Review',
+      mode: null,
+    });
     mockDbWrite.collectionInvite.findUnique.mockResolvedValue({
       id: 1,
       collectionId: COLLECTION_ID,
@@ -527,16 +558,10 @@ describe('respondToInvite', () => {
       status: 'Pending',
       createdAt: new Date(),
     });
-    mockDbWrite.collectionContributor.findUnique.mockResolvedValue({
-      permissions: ['VIEW', 'ADD_REVIEW'],
-    });
     mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
       fn({
         collectionInvite: { update: mockDbWrite.collectionInvite.update },
-        collectionContributor: {
-          findUnique: mockDbWrite.collectionContributor.findUnique,
-          upsert: mockDbWrite.collectionContributor.upsert,
-        },
+        collectionContributor: { upsert: mockDbWrite.collectionContributor.upsert },
       })
     );
 
@@ -544,8 +569,36 @@ describe('respondToInvite', () => {
 
     const upsertArgs = mockDbWrite.collectionContributor.upsert.mock.calls[0][0];
     expect(new Set(upsertArgs.update.permissions)).toEqual(
-      new Set(['VIEW', 'ADD_REVIEW', 'ADD', 'MANAGE'])
+      new Set(['VIEW', 'ADD', 'MANAGE', 'ADD_REVIEW'])
     );
+  });
+
+  // Rebuilt from the invite's role rather than unioned onto the stored row: unioning makes
+  // accepting a Contributor invite a no-op for anyone who already holds MANAGE, which is how a
+  // collaborator kept reading as a Manager after being re-invited as a Contributor.
+  it('does not carry a stored MANAGE bit into a Contributor seat', async () => {
+    mockDbWrite.collectionInvite.findUnique.mockResolvedValue({
+      id: 1,
+      collectionId: COLLECTION_ID,
+      userId: TARGET_ID,
+      role: 'Contributor',
+      status: 'Pending',
+      createdAt: new Date(),
+    });
+    mockDbWrite.collectionContributor.findUnique.mockResolvedValue({
+      permissions: ['VIEW', 'ADD', 'MANAGE'],
+    });
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        collectionInvite: { update: mockDbWrite.collectionInvite.update },
+        collectionContributor: { upsert: mockDbWrite.collectionContributor.upsert },
+      })
+    );
+
+    await respondToInvite({ inviteId: 1, userId: TARGET_ID, accept: true });
+
+    const upsertArgs = mockDbWrite.collectionContributor.upsert.mock.calls[0][0];
+    expect(upsertArgs.update.permissions).not.toContain('MANAGE');
   });
 
   it('rejects an invite older than 7 days', async () => {
@@ -625,6 +678,147 @@ describe('respondToInvite', () => {
       respondToInvite({ inviteId: 1, userId: TARGET_ID, accept: true })
     ).rejects.toThrow();
     expect(mockDbWrite.collectionContributor.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe('updateCollaboratorRole', () => {
+  const contributorUpdate = vi.fn();
+  const inviteUpdate = vi.fn();
+
+  const arrangeSeat = ({
+    permissions = ['VIEW', 'ADD'],
+    seat = { id: 7, status: 'Accepted' } as { id: number; status: string } | null,
+    read = 'Private',
+    write = 'Private',
+  } = {}) => {
+    mockDbRead.collection.findUnique.mockResolvedValue({
+      id: COLLECTION_ID,
+      userId: OWNER_ID,
+      read,
+      write,
+      mode: null,
+    });
+    mockDbWrite.collectionContributor.findUnique.mockResolvedValue(
+      permissions ? { permissions } : null
+    );
+    mockDbWrite.collectionInvite.findUnique.mockResolvedValue(seat);
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    arrangeCounts();
+    arrangeSeat();
+    mockDbWrite.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        collectionContributor: { update: contributorUpdate },
+        collectionInvite: { update: inviteUpdate },
+      })
+    );
+  });
+
+  it('drops MANAGE when the owner demotes a Manager', async () => {
+    asOwner();
+    arrangeSeat({ permissions: ['VIEW', 'ADD', 'MANAGE'] });
+
+    await updateCollaboratorRole({
+      collectionId: COLLECTION_ID,
+      userId: OWNER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+    });
+
+    expect(contributorUpdate.mock.calls[0][0].data.permissions).not.toContain('MANAGE');
+  });
+
+  // `countCollaborators` reads the invite row's role as well as the stored bits, so a seat left
+  // at its old role keeps occupying a Manager slot the roster no longer shows.
+  it('moves the seats invite row to the new role', async () => {
+    asOwner();
+    arrangeSeat({ permissions: ['VIEW', 'ADD', 'MANAGE'] });
+
+    await updateCollaboratorRole({
+      collectionId: COLLECTION_ID,
+      userId: OWNER_ID,
+      targetUserId: TARGET_ID,
+      role: 'Contributor',
+    });
+
+    expect(inviteUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: 7 }, data: { role: 'Contributor' } })
+    );
+  });
+
+  it('refuses a Manager promoting someone to Manager', async () => {
+    asManager();
+
+    await expect(
+      updateCollaboratorRole({
+        collectionId: COLLECTION_ID,
+        userId: MANAGER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Manager',
+      })
+    ).rejects.toThrow();
+    expect(contributorUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refuses a Manager demoting another Manager', async () => {
+    asManager();
+    arrangeSeat({ permissions: ['VIEW', 'ADD', 'MANAGE'] });
+
+    await expect(
+      updateCollaboratorRole({
+        collectionId: COLLECTION_ID,
+        userId: MANAGER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Contributor',
+      })
+    ).rejects.toThrow();
+    expect(contributorUpdate).not.toHaveBeenCalled();
+  });
+
+  it('refuses to promote past the manager cap', async () => {
+    asOwner();
+    arrangeCounts({ collaborators: MANAGER_CAP, managers: MANAGER_CAP });
+    arrangeSeat();
+
+    await expect(
+      updateCollaboratorRole({
+        collectionId: COLLECTION_ID,
+        userId: OWNER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Manager',
+      })
+    ).rejects.toThrow(new RegExp(`at most ${MANAGER_CAP} managers`));
+  });
+
+  // A follower on a write:Public collection holds {VIEW, ADD} exactly like a Contributor, so
+  // promoting off the bits alone would hand a Manager seat to anyone who clicked follow.
+  it('refuses to promote a follower who holds no seat', async () => {
+    asOwner();
+    arrangeSeat({ permissions: ['VIEW', 'ADD'], seat: null, read: 'Public', write: 'Public' });
+
+    await expect(
+      updateCollaboratorRole({
+        collectionId: COLLECTION_ID,
+        userId: OWNER_ID,
+        targetUserId: TARGET_ID,
+        role: 'Manager',
+      })
+    ).rejects.toThrow(/not a collaborator/i);
+  });
+
+  it('refuses to change the owner', async () => {
+    asOwner();
+
+    await expect(
+      updateCollaboratorRole({
+        collectionId: COLLECTION_ID,
+        userId: OWNER_ID,
+        targetUserId: OWNER_ID,
+        role: 'Contributor',
+      })
+    ).rejects.toThrow();
   });
 });
 
@@ -949,16 +1143,29 @@ describe('getCollaborators invite gating', () => {
     mockDbRead.collectionInvite.findMany.mockResolvedValue([]);
   });
 
-  it('blocks a Manager on a free owner’s collection before they pick anyone', async () => {
+  // The Manager is blocked, but is never told it is about the owner's membership — that reason
+  // names someone else's billing state, so it is collapsed to the generic one for anyone who
+  // isn't the owner. The payload is the disclosure surface, not just the copy.
+  it('blocks a Manager on a free owner’s collection without naming the reason', async () => {
     asManager();
     mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'free' });
 
     const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: MANAGER_ID });
 
     expect(result.canInvite).toBe(false);
-    expect(result.inviteBlockedReason).toBe('owner-membership');
+    expect(result.inviteBlockedReason).toBe('collaboration-disabled');
     // The gate is the OWNER's tier, not the inviter's.
     expect(mockGetSessionUser).toHaveBeenCalledWith(OWNER_ID);
+  });
+
+  it('tells the owner their membership is what blocks the invite', async () => {
+    asOwner();
+    mockGetSessionUser.mockResolvedValue({ id: OWNER_ID, tier: 'free' });
+
+    const result = await getCollaborators({ collectionId: COLLECTION_ID, userId: OWNER_ID });
+
+    expect(result.canInvite).toBe(false);
+    expect(result.inviteBlockedReason).toBe('owner-membership');
   });
 
   it('allows inviting when the owner holds a membership', async () => {

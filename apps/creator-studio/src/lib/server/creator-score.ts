@@ -10,6 +10,7 @@ const SCORE_KEYS = [
   'users',
   'reportsActioned',
   'reportsAgainst',
+  'staffAwarded',
 ] as const;
 
 type Scores = Partial<Record<(typeof SCORE_KEYS)[number] | 'total', number | string>>;
@@ -35,18 +36,25 @@ export async function getCreatorScore(userId: number): Promise<number> {
   return Math.max(sum, num(scores.total));
 }
 
-// The per-type *models* score — what the early-access day ladder keys off (distinct from the
-// aggregate creator score above).
-export async function getModelsScore(userId: number): Promise<number> {
-  return num((await readScores(userId)).models);
+// The stored total, which is the number `/user/account` puts under the words "Creator Score" — so it
+// is what every gate that says "creator score" to the creator must compare against. Distinct from the
+// aggregate above only when the nightly job has left `total` stale below the sum of its parts; the
+// creator sees the stale figure too, so a gate reading it stays consistent with what they are told.
+export async function getTotalScore(userId: number): Promise<number> {
+  // Strict rather than `num`, which coerces: a string-typed score in this JSON column would read
+  // 50000 here and 0 in the main app's creatorScoreFromMeta, so the same row would be refused
+  // permission to price in one app and allowed in the other, at the same money gate.
+  const total = (await readScores(userId)).total;
+  return typeof total === 'number' && Number.isFinite(total) ? total : 0;
 }
 
 // Moderator-only testing override (this app only), mirroring TEST_MEMBERSHIP_COOKIE. The early-access
-// ladder keys off the *models* score, which membership doesn't touch — so simulating a tier alone can't
-// reach these flows, and the ladder's first rung is 40k. Set from the sidebar simulator.
+// ladder keys off the creator score, which membership doesn't touch — so simulating a tier alone can't
+// reach these flows, and the ladder's first rung is 10k. Set from the sidebar simulator.
+// Cookie name predates the switch off the models score; renaming it would only drop live simulator state.
 export const TEST_MODELS_SCORE_COOKIE = 'cs-test-models-score';
 
-export async function resolveModelsScore(
+export async function resolveTotalScore(
   userId: number,
   isModerator: boolean,
   testCookie?: string
@@ -55,5 +63,22 @@ export async function resolveModelsScore(
     const n = Number(testCookie);
     if (Number.isFinite(n) && n >= 0) return n;
   }
-  return getModelsScore(userId);
+  return getTotalScore(userId);
+}
+
+// Moderator-only testing override (this app only), mirroring TEST_MODELS_SCORE_COOKIE. Without it the
+// below-floor sale state — the one a paying member below 10,000 actually sees — cannot be reached from
+// the sidebar simulator at all.
+export const TEST_CREATOR_SCORE_COOKIE = 'cs-test-creator-score';
+
+export async function resolveCreatorScore(
+  userId: number,
+  isModerator: boolean,
+  testCookie?: string
+): Promise<number> {
+  if (isModerator && testCookie) {
+    const n = Number(testCookie);
+    if (Number.isFinite(n) && n >= 0) return n;
+  }
+  return getCreatorScore(userId);
 }

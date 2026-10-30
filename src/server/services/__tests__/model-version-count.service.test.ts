@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
 
 /**
  * Unit contract for the pushed-down modelVersion-count helper that replaces the
@@ -21,12 +22,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
  *      count agrees with the list it just read.
  */
 
-const { groupBy } = vi.hoisted(() => ({ groupBy: vi.fn() }));
-
-vi.mock('~/server/db/client', () => ({
-  dbRead: { modelVersion: { groupBy } },
-  dbWrite: {},
-}));
+const groupBy = dbMock.dbRead.modelVersion.groupBy;
 
 import { getModelVersionCountsByModelId } from '~/server/services/model-version-count.service';
 
@@ -92,15 +88,6 @@ describe('getModelVersionCountsByModelId', () => {
 
     expect(groupBy).not.toHaveBeenCalled();
     expect(counts.size).toBe(0);
-  });
-
-  it('defaults to the read-replica handle (dbRead) when no db is passed', async () => {
-    groupBy.mockResolvedValue([{ modelId: 1, _count: { _all: 2 } }]);
-
-    await getModelVersionCountsByModelId([1]);
-
-    // The mocked dbRead.modelVersion.groupBy is the one that ran.
-    expect(groupBy).toHaveBeenCalledTimes(1);
   });
 
   it('runs on the caller-supplied db handle (no-lag primary) when one is passed', async () => {

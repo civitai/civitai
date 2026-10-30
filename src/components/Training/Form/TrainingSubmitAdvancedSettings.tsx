@@ -29,7 +29,10 @@ import { NumberInputWrapper } from '~/libs/form/components/NumberInputWrapper';
 import { SelectWrapper } from '~/libs/form/components/SelectWrapper';
 import { TextInputWrapper } from '~/libs/form/components/TextInputWrapper';
 import type { TrainingDetailsObj } from '~/server/schema/model-version.schema';
-import { audioSampleOverrideSchema } from '~/server/schema/model-version.schema';
+import {
+  audioSampleOverrideSchema,
+  yue2SampleOverrideSchema,
+} from '~/server/schema/model-version.schema';
 import {
   getDefaultTrainingStateFor,
   getDefaultTrainingParams,
@@ -880,7 +883,11 @@ export const AdvancedSettings = ({
                 // after submit.
                 const overrideIssues: Partial<Record<keyof AudioSampleOverride, string>> = isAudio
                   ? (() => {
-                      const parsed = audioSampleOverrideSchema.safeParse(override);
+                      const parsed = (
+                        selectedRun.baseType === 'yue2'
+                          ? yue2SampleOverrideSchema
+                          : audioSampleOverrideSchema
+                      ).safeParse(override);
                       if (parsed.success) return {};
                       const map: Partial<Record<keyof AudioSampleOverride, string>> = {};
                       for (const issue of parsed.error.issues) {
@@ -933,95 +940,105 @@ export const AdvancedSettings = ({
                                 setOverrideAt({ duration: typeof v === 'number' ? v : undefined })
                               }
                             />
-                            <NumberInputWrapper
-                              label="BPM"
-                              min={20}
-                              max={300}
-                              value={override.bpm ?? ''}
-                              error={overrideIssues.bpm}
-                              onChange={(v) =>
-                                setOverrideAt({ bpm: typeof v === 'number' ? v : undefined })
-                              }
-                            />
-                            <TextInputWrapper
-                              label="Time signature"
-                              placeholder="4"
-                              value={override.timeSignature ?? ''}
-                              error={overrideIssues.timeSignature}
-                              onChange={(e) =>
-                                setOverrideAt({ timeSignature: e.currentTarget.value })
-                              }
-                            />
                           </Group>
-                          <Group grow wrap="wrap" align="flex-start">
-                            <TextInputWrapper
-                              label="Language"
-                              placeholder="en"
-                              value={override.language ?? ''}
-                              error={overrideIssues.language}
-                              onChange={(e) => setOverrideAt({ language: e.currentTarget.value })}
-                            />
-                            <TextInputWrapper
-                              label="Key"
-                              placeholder="A minor"
-                              value={override.key ?? ''}
-                              error={overrideIssues.key}
-                              onChange={(e) => setOverrideAt({ key: e.currentTarget.value })}
-                            />
-                          </Group>
-                          <Group grow wrap="wrap" align="flex-start">
-                            <NumberInputWrapper
-                              label="Instrumental weight"
-                              min={0}
-                              max={1}
-                              step={0.1}
-                              decimalScale={2}
-                              value={override.instrumentalWeight ?? ''}
-                              error={overrideIssues.instrumentalWeight}
-                              onChange={(v) =>
-                                setOverrideAt({
-                                  instrumentalWeight: typeof v === 'number' ? v : undefined,
-                                })
-                              }
-                            />
-                            <NumberInputWrapper
-                              label="Vocal weight"
-                              min={0}
-                              max={1}
-                              step={0.1}
-                              decimalScale={2}
-                              value={override.vocalWeight ?? ''}
-                              error={overrideIssues.vocalWeight}
-                              onChange={(v) =>
-                                setOverrideAt({
-                                  vocalWeight: typeof v === 'number' ? v : undefined,
-                                })
-                              }
-                            />
-                          </Group>
+                          {selectedRun.baseType !== 'yue2' && (
+                            <>
+                              <Group grow wrap="wrap" align="flex-start">
+                                <NumberInputWrapper
+                                  label="BPM"
+                                  min={20}
+                                  max={300}
+                                  value={override.bpm ?? ''}
+                                  error={overrideIssues.bpm}
+                                  onChange={(v) =>
+                                    setOverrideAt({ bpm: typeof v === 'number' ? v : undefined })
+                                  }
+                                />
+                                <TextInputWrapper
+                                  label="Time signature"
+                                  placeholder="4"
+                                  value={override.timeSignature ?? ''}
+                                  error={overrideIssues.timeSignature}
+                                  onChange={(e) =>
+                                    setOverrideAt({ timeSignature: e.currentTarget.value })
+                                  }
+                                />
+                              </Group>
+                              <Group grow wrap="wrap" align="flex-start">
+                                <TextInputWrapper
+                                  label="Language"
+                                  placeholder="en"
+                                  value={override.language ?? ''}
+                                  error={overrideIssues.language}
+                                  onChange={(e) =>
+                                    setOverrideAt({ language: e.currentTarget.value })
+                                  }
+                                />
+                                <TextInputWrapper
+                                  label="Key"
+                                  placeholder="A minor"
+                                  value={override.key ?? ''}
+                                  error={overrideIssues.key}
+                                  onChange={(e) => setOverrideAt({ key: e.currentTarget.value })}
+                                />
+                              </Group>
+                              <Group grow wrap="wrap" align="flex-start">
+                                <NumberInputWrapper
+                                  label="Instrumental weight"
+                                  min={0}
+                                  max={1}
+                                  step={0.1}
+                                  decimalScale={2}
+                                  value={override.instrumentalWeight ?? ''}
+                                  error={overrideIssues.instrumentalWeight}
+                                  onChange={(v) =>
+                                    setOverrideAt({
+                                      instrumentalWeight: typeof v === 'number' ? v : undefined,
+                                    })
+                                  }
+                                />
+                                <NumberInputWrapper
+                                  label="Vocal weight"
+                                  min={0}
+                                  max={1}
+                                  step={0.1}
+                                  decimalScale={2}
+                                  value={override.vocalWeight ?? ''}
+                                  error={overrideIssues.vocalWeight}
+                                  onChange={(v) =>
+                                    setOverrideAt({
+                                      vocalWeight: typeof v === 'number' ? v : undefined,
+                                    })
+                                  }
+                                />
+                              </Group>
+                            </>
+                          )}
                           <Group grow wrap="wrap" align="flex-start">
                             <NumberInputWrapper
                               label="Steps"
                               min={1}
-                              max={200}
+                              max={selectedRun.baseType === 'yue2' ? 100 : 200}
                               value={override.steps ?? ''}
                               error={overrideIssues.steps}
                               onChange={(v) =>
                                 setOverrideAt({ steps: typeof v === 'number' ? v : undefined })
                               }
                             />
-                            <NumberInputWrapper
-                              label="CFG"
-                              min={0}
-                              max={20}
-                              step={0.5}
-                              decimalScale={2}
-                              value={override.cfg ?? ''}
-                              error={overrideIssues.cfg}
-                              onChange={(v) =>
-                                setOverrideAt({ cfg: typeof v === 'number' ? v : undefined })
-                              }
-                            />
+                            {selectedRun.baseType !== 'yue2' && (
+                              <NumberInputWrapper
+                                label="CFG"
+                                min={0}
+                                max={20}
+                                step={0.5}
+                                decimalScale={2}
+                                value={override.cfg ?? ''}
+                                error={overrideIssues.cfg}
+                                onChange={(v) =>
+                                  setOverrideAt({ cfg: typeof v === 'number' ? v : undefined })
+                                }
+                              />
+                            )}
                           </Group>
                         </Stack>
                       </Card>
@@ -1052,21 +1069,23 @@ export const AdvancedSettings = ({
                             the model defaults.
                           </Text>
                           <Group grow wrap="wrap" align="flex-start">
-                            <NumberInputWrapper
-                              label="Sample CFG Scale"
-                              min={0}
-                              max={20}
-                              step={0.5}
-                              decimalScale={2}
-                              value={selectedRun.params.sampleCfgScale ?? ''}
-                              onChange={(v) =>
-                                doUpdate({
-                                  params: {
-                                    sampleCfgScale: typeof v === 'number' ? v : undefined,
-                                  },
-                                })
-                              }
-                            />
+                            {selectedRun.baseType !== 'yue2' && (
+                              <NumberInputWrapper
+                                label="Sample CFG Scale"
+                                min={0}
+                                max={20}
+                                step={0.5}
+                                decimalScale={2}
+                                value={selectedRun.params.sampleCfgScale ?? ''}
+                                onChange={(v) =>
+                                  doUpdate({
+                                    params: {
+                                      sampleCfgScale: typeof v === 'number' ? v : undefined,
+                                    },
+                                  })
+                                }
+                              />
+                            )}
                             <NumberInputWrapper
                               label="Sample LoRA Strength"
                               min={0}

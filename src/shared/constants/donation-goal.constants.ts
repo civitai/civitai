@@ -1,0 +1,2 @@
+export const MIN_DONATION_GOAL = 1000;
+export const MAX_DONATION_GOAL = 1000000000;

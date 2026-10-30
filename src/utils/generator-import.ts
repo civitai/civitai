@@ -1,5 +1,5 @@
 import pLimit from 'p-limit';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { getEdgeUrl } from '~/client-utils/edge-url';
 import type { SelectedImage } from '~/components/Training/Form/ImageSelectModal';
 import { IMAGE_MIME_TYPE, MIME_TYPES, VIDEO_MIME_TYPE } from '~/shared/constants/mime-types';
 import { isDefined } from '~/utils/type-guards';
@@ -14,7 +14,7 @@ const importLimit = pLimit(5);
  */
 export async function downloadGeneratorImages(
   assets: SelectedImage[]
-): Promise<{ file: File; meta?: Record<string, unknown> }[]> {
+): Promise<{ file: File; meta?: Record<string, unknown>; generationWorkflowId?: string }[]> {
   const files = await Promise.all(
     assets.map((asset, idx) =>
       importLimit(async () => {
@@ -36,6 +36,7 @@ export async function downloadGeneratorImages(
               }
             ),
             meta: asset.meta ?? { prompt: asset.label },
+            generationWorkflowId: asset.generationWorkflowId,
           };
         } catch (e) {
           return;

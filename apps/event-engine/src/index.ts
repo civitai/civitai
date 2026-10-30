@@ -70,7 +70,7 @@ function isPoisonError(err: unknown): boolean {
 async function startMetricEventWatcher() {
   validateConfig();
 
-  const healthServer = startHealthServer();
+  startHealthServer();
 
   const eventProcessor = getEventProcessor();
   await eventProcessor.start();

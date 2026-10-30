@@ -11,8 +11,10 @@ import { useImagesAsPostsInfiniteContext } from '~/components/Image/AsPosts/Imag
 import { constants } from '~/server/common/constants';
 import { IconPinned, IconPinnedOff } from '@tabler/icons-react';
 import { trpc } from '~/utils/trpc';
-import { showSuccessNotification } from '~/utils/notifications';
+import { showErrorNotification, showSuccessNotification } from '~/utils/notifications';
 import { ImageContextMenuWrapper } from '~/components/Image/ContextMenu/ContextMenu';
+import ConfirmDialog from '~/components/Dialog/Common/ConfirmDialog';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 
 export function ImagesAsPostsContextMenu({ image }: { image: ImageContextMenuProps['image'] }) {
   return (
@@ -36,20 +38,23 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
 
   const currentModelVersionId = filters.modelVersionId as number;
 
+  const hiddenImageIds =
+    (model
+      ? gallerySettings?.hiddenImages?.[currentModelVersionId]
+      : model3dGallerySettings?.hiddenImages) ?? [];
+
   const handleUpdateGallerySettings = async ({
-    imageId,
+    imageIds,
     user,
   }: {
-    imageId?: number;
+    imageIds?: number[];
     user?: { id: number; username: string | null };
   }) => {
     if (!showModerationOptions) return;
     if (model) {
       await toggle({
         modelId: model.id,
-        hiddenImages: imageId
-          ? { modelVersionId: currentModelVersionId, imageIds: [imageId] }
-          : undefined,
+        hiddenImages: imageIds ? { modelVersionId: currentModelVersionId, imageIds } : undefined,
         users: user ? [user] : undefined,
       }).catch(() => null);
 
@@ -58,13 +63,38 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
     } else if (model3dId) {
       await toggleModel3D({
         model3dId,
-        hiddenImages: imageId ? [imageId] : undefined,
+        hiddenImages: imageIds,
         users: user ? [user] : undefined,
       }).catch(() => null);
 
       if (filters.hidden)
         await queryUtils.image.getImagesAsPostsInfinite.invalidate({ ...filters });
     }
+  };
+
+  // The toggle unhides every id it is given when ANY of them is already hidden, so hiding
+  // must send only the post's not-yet-hidden images and unhiding only its hidden ones.
+  const handleTogglePostHidden = ({ postId, hide }: { postId: number; hide: boolean }) => {
+    dialogStore.trigger({
+      component: ConfirmDialog,
+      props: {
+        title: hide ? 'Hide post from gallery' : 'Unhide post from gallery',
+        message: hide
+          ? 'Every image in this post will be hidden from this gallery.'
+          : 'Every image in this post will be shown in this gallery again.',
+        labels: { cancel: 'Cancel', confirm: hide ? 'Hide post' : 'Unhide post' },
+        onConfirm: async () => {
+          const postImageIds = await queryUtils.post.getImageIds
+            .fetch({ id: postId })
+            .catch((error: Error) => {
+              showErrorNotification({ title: 'Unable to load post images', error });
+              return [];
+            });
+          const imageIds = postImageIds.filter((id) => hiddenImageIds.includes(id) !== hide);
+          if (imageIds.length) await handleUpdateGallerySettings({ imageIds });
+        },
+      },
+    });
   };
 
   const handlePinPost = async ({
@@ -95,20 +125,36 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
 
   const moderationOptions = (image: ImageContextMenuProps['image']) => {
     if (!showModerationOptions) return null;
+    const imageAlreadyHidden = hiddenImageIds.includes(image.id);
+    const hideImageItems = (
+      <>
+        <Menu.Item
+          key="hide-image-gallery"
+          onClick={() => handleUpdateGallerySettings({ imageIds: [image.id] })}
+        >
+          {imageAlreadyHidden ? 'Unhide image from gallery' : 'Hide image from gallery'}
+        </Menu.Item>
+        {image.postId ? (
+          <Menu.Item
+            key="hide-post-gallery"
+            onClick={() =>
+              handleTogglePostHidden({ postId: image.postId as number, hide: !imageAlreadyHidden })
+            }
+          >
+            {imageAlreadyHidden ? 'Unhide post from gallery' : 'Hide post from gallery'}
+          </Menu.Item>
+        ) : null}
+      </>
+    );
+
     if (source.kind === 'model3d') {
-      const imageAlreadyHidden = !!model3dGallerySettings?.hiddenImages.includes(image.id);
       const userAlreadyHidden = !!model3dGallerySettings?.hiddenUsers.find(
         (u) => u.id === image.user?.id
       );
       return (
         <>
           <Menu.Label key="menu-label">Gallery Moderation</Menu.Label>
-          <Menu.Item
-            key="hide-image-gallery"
-            onClick={() => handleUpdateGallerySettings({ imageId: image.id })}
-          >
-            {imageAlreadyHidden ? 'Unhide image from gallery' : 'Hide image from gallery'}
-          </Menu.Item>
+          {hideImageItems}
           <Menu.Item
             key="hide-user-gallery"
             onClick={() => handleUpdateGallerySettings({ user: image.user })}
@@ -119,9 +165,6 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
       );
     }
 
-    const imageAlreadyHidden = gallerySettings
-      ? gallerySettings.hiddenImages?.[currentModelVersionId]?.includes(image.id)
-      : false;
     const userAlreadyHidden = gallerySettings
       ? gallerySettings.hiddenUsers.findIndex((u) => u.id === image.user?.id) > -1
       : false;
@@ -167,12 +210,7 @@ function ImagesAsPostsContextMenuItems({ image }: ImageContextMenuProps) {
             )}
           </Menu.Item>
         ) : null}
-        <Menu.Item
-          key="hide-image-gallery"
-          onClick={() => handleUpdateGallerySettings({ imageId: image.id })}
-        >
-          {imageAlreadyHidden ? 'Unhide image from gallery' : 'Hide image from gallery'}
-        </Menu.Item>
+        {hideImageItems}
         <Menu.Item
           key="hide-user-gallery"
           onClick={() => handleUpdateGallerySettings({ user: image.user })}

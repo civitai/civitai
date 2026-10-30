@@ -1,7 +1,7 @@
 import type { Prisma } from '@prisma/client';
 import { env } from '~/env/server';
 import type { ComponentFileType, ModelFileType } from '~/server/common/constants';
-import { componentFileTypes, constants } from '~/server/common/constants';
+import { componentFileTypes } from '~/server/common/constants';
 import { EntityAccessPermission } from '~/server/common/enums';
 import type { BaseFileSchema, GetFilesByEntitySchema } from '~/server/schema/file.schema';
 import { getBountyEntryFilteredFiles } from '~/server/services/bountyEntry.service';
@@ -9,19 +9,30 @@ import { isPaidAccessActive } from '@civitai/buzz';
 import { getPaidAccess } from '~/server/services/paid-access.service';
 import type { LinkedComponentSettings } from '~/server/schema/model-version.schema';
 import { getPrimaryFile } from '~/server/utils/model-helpers';
-import {
-  ModelFileVisibility,
-  ModelModifier,
-  ModelStatus,
-  ModelType,
-  ModelUsageControl,
-} from '~/shared/utils/prisma/enums';
+import { ModelModifier, ModelStatus, ModelUsageControl } from '~/shared/utils/prisma/enums';
 import { logToAxiom, safeError } from '~/server/logging/client';
 import { resolveDownloadUrl } from '~/utils/delivery-worker';
+import type { ResolveAttribution } from '~/utils/resolve-attribution';
+import type { NameableFile, NameableModel, NameableVersion } from '~/utils/model-file-naming';
+import { resolveModelFileName } from '~/utils/model-file-naming';
 import { removeEmpty } from '~/utils/object-helpers';
-import { filenamize, replaceInsensitive } from '~/utils/string-helpers';
 import { isDefined } from '~/utils/type-guards';
+import { canViewPoiModel } from '~/server/utils/poi-model-visibility';
+import { throwBadRequestError } from '~/server/utils/errorHandling';
 import { dbRead } from '../db/client';
+import { loadKyselyDb } from '~/server/db/kyselyDb.lazy';
+import { FLIPT_FEATURE_FLAGS, isFlipt } from '~/server/flipt/client';
+import {
+  readModelVersionForFileViaKysely,
+  readModelVersionForFileViaPrisma,
+} from '~/server/services/hot-reads-5.reads';
+import {
+  downloadFileSelect,
+  downloadFilesWhere,
+  readDownloadFilesViaKysely,
+  readDownloadFilesViaPrisma,
+} from '~/server/services/hot-reads-6.reads';
+import type { DownloadFilesWhere } from '@civitai/db-queries/hot-reads-6';
 import { hasEntityAccess } from './common.service';
 
 export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema) => {
@@ -40,6 +51,25 @@ export const getFilesByEntity = async ({ id, ids, type }: GetFilesByEntitySchema
   }));
 };
 
+/** File metadata only the bounty entry file check and its moderator override write. Never taken from a caller. */
+export const SERVER_FILE_METADATA_KEYS = [
+  'sha256Server',
+  'hashCheckedAt',
+  'hashAttemptedAt',
+  'hashFailCount',
+  'hashLastError',
+  'blockedReason',
+  'checkOverride',
+] as const;
+
+function callerMetadata(metadata: unknown) {
+  return Object.fromEntries(
+    Object.entries((metadata ?? {}) as Record<string, unknown>).filter(
+      ([key]) => !(SERVER_FILE_METADATA_KEYS as readonly string[]).includes(key)
+    )
+  );
+}
+
 export const updateEntityFiles = async ({
   tx,
   entityId,
@@ -55,18 +85,27 @@ export const updateEntityFiles = async ({
 }) => {
   const updatedFiles = files.filter((f) => f.id);
 
-  if (updatedFiles.length > 0) {
-    await Promise.all(
-      updatedFiles.map((file) => {
-        return tx.file.update({
-          where: { id: file.id },
-          data: {
-            ...file,
-            metadata: { ...(file.metadata ?? {}), ownRights },
-          },
-        });
-      })
-    );
+  // A file saved again at the same url keeps its check result; a new url is checked afresh. The
+  // result is read inside this UPDATE, from the row as it is written, so a moderator's change to it
+  // is never written back over; read it in an earlier statement and that guarantee is gone. The
+  // server keys must be read from `f`, the row being updated, not a joined or sub-selected copy. In
+  // id order, so two saves of one item take the row locks in the same order.
+  for (const file of [...updatedFiles].sort((a, b) => (a.id as number) - (b.id as number))) {
+    const metadata = { ...callerMetadata(file.metadata), ownRights };
+    const count = await tx.$executeRaw`
+      UPDATE "File" f
+      SET name = ${file.name}, url = ${file.url}, "sizeKB" = ${file.sizeKB},
+        metadata = ${JSON.stringify(metadata)}::jsonb || CASE
+          WHEN f.url = ${file.url} AND jsonb_typeof(f.metadata) = 'object' THEN COALESCE(
+            (SELECT jsonb_object_agg(key, value) FROM jsonb_each(f.metadata)
+              WHERE key = ANY(${[...SERVER_FILE_METADATA_KEYS]}::text[])),
+            '{}'::jsonb
+          )
+          ELSE '{}'::jsonb
+        END
+      WHERE f.id = ${file.id} AND f."entityId" = ${entityId} AND f."entityType" = ${entityType}
+    `;
+    if (count !== 1) throw throwBadRequestError('A file to update is not part of this item.');
   }
 
   // Delete any files that were removed.
@@ -91,7 +130,7 @@ export const updateEntityFiles = async ({
         ...file,
         entityId,
         entityType,
-        metadata: { ...(file.metadata ?? {}), ownRights },
+        metadata: { ...callerMetadata(file.metadata), ownRights },
       })),
     });
   }
@@ -160,6 +199,8 @@ export const getFileForModelVersion = async ({
   user,
   noAuth,
   fileId,
+  direct,
+  attribution,
 }: {
   modelVersionId: number;
   type?: ModelFileType;
@@ -175,47 +216,29 @@ export const getFileForModelVersion = async ({
   };
   noAuth?: boolean;
   fileId?: number;
+  /**
+   * Resolve to an origin-direct URL rather than the CDN-fronted one. Affects only
+   * which host serves the bytes — every access decision above is unchanged, and
+   * this flag is read after all of them.
+   */
+  direct?: boolean;
+  /**
+   * Which code path and actor this resolve is for, forwarded to the storage
+   * resolver for attribution only. Required so every caller names itself.
+   */
+  attribution: ResolveAttribution;
 }): Promise<ModelVersionFileResult> => {
-  const modelVersion = await dbRead.modelVersion.findFirst({
-    // `model: { is: {} }` requires the (required) `model` relation to exist.
-    // Without it, a ModelVersion whose `model` was hard-deleted (orphaned FK)
-    // makes Prisma throw "Inconsistent query result: Field model is required to
-    // return data, got null" at query execution → caught upstream → 500 on every
-    // download lookup for that version. With the filter the DB drops the orphan
-    // row, findFirst returns null, and we fall through to the `not-found` (404)
-    // branch below — a model-less version is genuinely not downloadable. Same
-    // class/fix as #2637 (relation-existence filter on orphaned required
-    // relations).
-    where: { id: modelVersionId, model: { is: {} } },
-    select: {
-      id: true,
-      status: true,
-      model: {
-        select: {
-          id: true,
-          name: true,
-          type: true,
-          publishedAt: true,
-          status: true,
-          userId: true,
-          mode: true,
-          nsfw: true,
-          availability: true,
-          poi: true,
-        },
-      },
-      name: true,
-      trainedWords: true,
-      createdAt: true,
-      requireAuth: true,
-      usageControl: true,
-    },
-  });
+  // The version and its model (readModelVersionForFileViaPrisma, hot-reads-5.reads.ts, keeps the
+  // `model: { is: {} }` orphan filter and why it exists). The Kysely read's inner join stands in
+  // for that filter.
+  const modelVersion = (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_5))
+    ? await readModelVersionForFileViaKysely((await loadKyselyDb()).kyselyRead, modelVersionId)
+    : await readModelVersionForFileViaPrisma(dbRead, modelVersionId);
 
   if (!modelVersion) return { status: 'not-found' };
 
   // disablePoi - Disables downloads for POI resources.
-  if (modelVersion.model.poi && modelVersion.model.userId !== user?.id && !user?.isModerator) {
+  if (!canViewPoiModel(modelVersion.model.poi, modelVersion.model.userId, user)) {
     return { status: 'not-found' };
   }
 
@@ -283,29 +306,29 @@ export const getFileForModelVersion = async ({
   }
 
   // Get the correct file
-  const fileSelect = {
-    id: true,
-    url: true,
-    name: true,
-    overrideName: true,
-    type: true,
-    metadata: true,
-    hashes: { select: { hash: true }, where: { type: 'SHA256' as const } },
-  };
-
   let file: FileResult | null = null;
+  // The files `file` sits beside, so the name it gets can be made distinct from theirs.
+  let versionFiles: FileResult[] = [];
+  const readFiles = async (where: DownloadFilesWhere) =>
+    (await isFlipt(FLIPT_FEATURE_FLAGS.KYSELY_HOT_READS_6))
+      ? readDownloadFilesViaKysely((await loadKyselyDb()).kyselyRead, where)
+      : readDownloadFilesViaPrisma(dbRead, downloadFilesWhere(where));
   if (fileId) {
-    // Direct file lookup by ID — bypasses type-based resolution
-    const fileWhere: Prisma.ModelFileWhereInput = { id: fileId, modelVersionId };
-    if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
-    const found = await dbRead.modelFile.findFirst({ where: fileWhere, select: fileSelect });
-    file = found as FileResult | null;
+    // Direct file lookup by ID — bypasses type-based resolution. Fetched as the whole version's
+    // files rather than the one row so the siblings come along; it is the same single query.
+    const found = await readFiles({ modelVersionId, publicOnly: !isOwner && !isMod });
+    versionFiles = found as FileResult[];
+    file = versionFiles.find((candidate) => candidate.id === fileId) ?? null;
   } else {
-    // Try local files on this model version first
-    const fileWhere: Prisma.ModelFileWhereInput = { modelVersionId };
-    if (type) fileWhere.type = type;
-    if (!isOwner && !isMod) fileWhere.visibility = ModelFileVisibility.Public;
-    const files = await dbRead.modelFile.findMany({ where: fileWhere, select: fileSelect });
+    // Try local files on this model version first. A replaced file is a quarantined component whose
+    // linked replacement is the fallback below, so it must not win here.
+    const files = await readFiles({
+      modelVersionId,
+      notReplaced: true,
+      type,
+      publicOnly: !isOwner && !isMod,
+    });
+    versionFiles = files as FileResult[];
     const metadata = {
       ...user?.filePreferences,
       ...removeEmpty({ format, size, fp, quantType }),
@@ -329,11 +352,13 @@ export const getFileForModelVersion = async ({
         // Fetch the primary 'Model' file from the linked version
         const linkedFile = await dbRead.modelFile.findFirst({
           where: { modelVersionId: linked.resourceId, type: 'Model' },
-          select: fileSelect,
+          select: downloadFileSelect,
           orderBy: { id: 'asc' },
         });
         if (linkedFile) {
           file = { ...linkedFile, type: type } as FileResult;
+          // Belongs to the linked version, so this version's files are not its siblings.
+          versionFiles = [];
         }
       }
     }
@@ -344,13 +369,20 @@ export const getFileForModelVersion = async ({
     model: modelVersion.model,
     modelVersion,
     file,
+    versionFiles,
   });
   try {
-    const { url } = await resolveDownloadUrl(file.id, file.url, filename);
+    const { url, urlExpiryDate } = await resolveDownloadUrl(file.id, file.url, filename, {
+      direct,
+      ...attribution,
+    });
     return {
       status: 'success',
       url,
+      // The legacy delivery-worker path hands this back as JSON text, not a Date.
+      urlExpiresAt: new Date(urlExpiryDate),
       fileId: file.id,
+      sizeKB: file.sizeKB,
       modelId: modelVersion.model.id,
       modelVersionId,
       nsfw: modelVersion.model.nsfw,
@@ -403,48 +435,14 @@ export function getDownloadFilename({
   model,
   modelVersion,
   file,
+  versionFiles,
 }: {
-  model: { name: string; type: ModelType };
-  modelVersion: { name: string; trainedWords?: string[] };
-  file: { name: string; overrideName?: string | null; type: ModelFileType | string };
+  model: NameableModel;
+  modelVersion: NameableVersion;
+  file: NameableFile;
+  versionFiles?: NameableFile[];
 }) {
-  if (file.overrideName) return file.overrideName;
-
-  let fileName = file.name;
-  const modelName = filenamize(model.name);
-  let versionName = filenamize(replaceInsensitive(modelVersion.name, modelName, ''));
-
-  // If the model name is empty (due to unsupported characters), we should keep the filename as is
-  // OR if the type is LORA or LoCon
-  const shouldKeepFilename =
-    modelName.length === 0 || model.type === ModelType.LORA || model.type === ModelType.LoCon;
-  if (shouldKeepFilename) return fileName;
-
-  const ext = file.name.split('.').pop();
-  if (!constants.modelFileTypes.includes(file.type as ModelFileType)) return file.name;
-  const fileType = file.type as ModelFileType;
-
-  if (fileType === 'Training Data') {
-    fileName = `${modelName}_${versionName}_trainingData.zip`;
-  } else if (model.type === ModelType.TextualInversion) {
-    const trainedWord = modelVersion.trainedWords?.[0];
-    let fileSuffix = '';
-    if (fileType === 'Negative') fileSuffix = '-neg';
-
-    if (trainedWord) fileName = `${trainedWord}${fileSuffix}.${ext}`;
-  } else if (fileType !== 'VAE') {
-    let fileSuffix = '';
-    if (fileName.toLowerCase().includes('-inpainting')) {
-      versionName = versionName.replace(/_?inpainting/i, '');
-      fileSuffix = '-inpainting';
-    } else if (fileName.toLowerCase().includes('.instruct-pix2pix')) {
-      versionName = versionName.replace(/_?instruct|-?pix2pix/gi, '');
-      fileSuffix = '.instruct-pix2pix';
-    } else if (fileType === 'Text Encoder') fileSuffix = '_txt';
-
-    fileName = `${modelName}_${versionName}${fileSuffix}.${ext}`;
-  }
-  return fileName;
+  return resolveModelFileName({ model, modelVersion, file, versionFiles });
 }
 
 type ModelVersionFileResult =
@@ -467,7 +465,9 @@ type ModelVersionFileResult =
   | {
       status: 'success';
       url: string;
+      urlExpiresAt: Date;
       fileId: number;
+      sizeKB: number;
       modelId: number;
       modelVersionId: number;
       nsfw: boolean;
@@ -483,6 +483,7 @@ type FileResult = {
   name: string;
   overrideName?: string | null;
   metadata: Prisma.JsonValue;
+  sizeKB: number;
   hashes: {
     hash: string;
   }[];

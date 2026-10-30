@@ -12,6 +12,7 @@ export default function PromptEnhanceDrawer({
   negativePrompt,
   ecosystem,
   resources,
+  images,
   onApply,
 }: PromptEnhanceProps) {
   const dialog = useDialogContext();
@@ -84,6 +85,7 @@ export default function PromptEnhanceDrawer({
             instruction={enhanceInstruction}
             ecosystem={ecosystem}
             triggerWords={triggerWords}
+            images={images}
             onApply={onApply}
           />
         </Tabs.Panel>

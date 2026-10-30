@@ -3,6 +3,7 @@ import { IconChevronLeft, IconChevronRight } from '@tabler/icons-react';
 import { clsx } from 'clsx';
 import React from 'react';
 import type { TooltipRenderProps } from 'react-joyride';
+import { useTourContext } from '~/components/Tours/ToursProvider';
 
 export function TourPopover(props: TooltipRenderProps) {
   const {
@@ -17,6 +18,7 @@ export function TourPopover(props: TooltipRenderProps) {
     skipProps,
     tooltipProps,
   } = props;
+  const { blockedTarget } = useTourContext();
 
   const centered = step.placement === 'center';
 
@@ -37,7 +39,11 @@ export function TourPopover(props: TooltipRenderProps) {
         <Text className={clsx(!step.showProgress && 'hidden')} size="sm" c="dimmed">
           {index + 1} of {size}
         </Text>
-        {!step.hideCloseButton && <CloseButton aria-label="Close" ml="auto" />}
+        {/* Only the handler: `closeProps` also carries Joyride's own label as
+            `children`, which would render inside the icon button. */}
+        {!step.hideCloseButton && (
+          <CloseButton onClick={closeProps.onClick} aria-label="Close" ml="auto" />
+        )}
       </Group>
       <div className="flex flex-col gap-1">
         {step.title && step.showProgress && (
@@ -47,7 +53,7 @@ export function TourPopover(props: TooltipRenderProps) {
         )}
         {typeof step.content === 'string' ? <Text>{step.content}</Text> : step.content}
       </div>
-      {!step.hideFooter && (
+      {(!step.hideFooter || blockedTarget === step.target) && (
         <Group justify="space-between" wrap="nowrap">
           {step.showSkipButton !== false && (
             <Button {...skipProps} variant="subtle" size="xs" color="gray">

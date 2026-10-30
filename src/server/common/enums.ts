@@ -9,6 +9,7 @@ export enum UploadType {
 export type UploadTypeUnion = `${UploadType}`;
 
 export enum ModelSort {
+  Hot = 'Hot',
   HighestRated = 'Highest Rated',
   MostDownloaded = 'Most Downloaded',
   MostLiked = 'Most Liked',
@@ -17,7 +18,12 @@ export enum ModelSort {
   ImageCount = 'Most Images',
   Newest = 'Newest',
   Oldest = 'Oldest',
+  RecentlyAdded = 'Recently Added',
 }
+
+export const ModelSortHidden = {
+  RecentlyAdded: ModelSort.RecentlyAdded,
+};
 
 export enum ReviewSort {
   Newest = 'newest',
@@ -50,10 +56,12 @@ export enum ImageSort {
   Newest = 'Newest',
   Oldest = 'Oldest',
   Random = 'Random',
+  RecentlyAdded = 'Recently Added',
 }
 
 export const ImageSortHidden = {
   Random: ImageSort.Random,
+  RecentlyAdded: ImageSort.RecentlyAdded,
 };
 
 export enum PostSort {
@@ -61,7 +69,13 @@ export enum PostSort {
   MostComments = 'Most Comments',
   MostCollected = 'Most Collected',
   Newest = 'Newest',
+  Oldest = 'Oldest',
+  RecentlyAdded = 'Recently Added',
 }
+
+export const PostSortHidden = {
+  RecentlyAdded: PostSort.RecentlyAdded,
+};
 
 export enum ImageType {
   txt2img = 'txt2img',
@@ -107,7 +121,12 @@ export enum ArticleSort {
   MostCollected = 'Most Collected',
   Newest = 'Newest',
   RecentlyUpdated = 'Recently Updated',
+  RecentlyAdded = 'Recently Added',
 }
+
+export const ArticleSortHidden = {
+  RecentlyAdded: ArticleSort.RecentlyAdded,
+};
 
 export enum CheckpointType {
   Trained = 'Trained',
@@ -140,12 +159,16 @@ export enum SignalMessages {
   ChatNewMessage = 'chat:new-message',
   ChatNewRoom = 'chat:new-room',
   ChatTypingStatus = 'chat:typing-status',
+  ChatMessageDeleted = 'chat:message-deleted',
+  ChatMessageUpdated = 'chat:message-updated',
+  ChatRoomUpdated = 'chat:room-updated',
+  ChatMembersUpdated = 'chat:members-updated',
   OrchestratorUpdate = 'orchestrator-job:status-update',
   TextToImageUpdate = 'orchestrator:text-to-image-update',
   WorkflowUpdate = 'orchestrator:workflow-update',
   SchedulerDownload = 'scheduler:download',
   NotificationNew = 'notification:new',
-  ModelVersionPopularityUpdate = 'model-version:popularity:update',
+  ResourceLoadUpdate = 'resource-load:update',
   Pong = 'pong',
   CompensationPoolUpdate = 'creators-program:compensation-pool-update',
   CashInvalidator = 'creators-program:cash-invalidator',
@@ -167,6 +190,9 @@ export enum SignalMessages {
   ReferralTokenExpiringSoon = 'referral:token-expiring-soon',
   ScannerPolicyTestProgress = 'scanner-policy:test-progress',
   ContestScoreRunUpdate = 'contest-score:run-update',
+  EventPointsHat = 'event-points:hat',
+  EventPointsTeams = 'event-points:teams',
+  EventPointsOwner = 'event-points:owner',
 }
 
 export enum BountySort {
@@ -183,6 +209,13 @@ export enum BountySort {
 export enum BountyBenefactorSort {
   HighestAmount = 'Highest Amount',
   Newest = 'Newest',
+}
+
+export enum CrucibleSort {
+  PrizePool = 'Prize Pool',
+  EndingSoon = 'Ending Soon',
+  Newest = 'Newest',
+  MostEntries = 'Most Entries',
 }
 
 export enum BountyStatus {
@@ -210,6 +243,7 @@ export enum ViolationType {
   RealisticMinorNsfw = 'realisticMinorNsfw',
   AnimatedMinorNsfw = 'animatedMinorNsfw',
   SchoolNsfw = 'schoolNsfw',
+  MinorViolence = 'minorViolence',
   Bestiality = 'bestiality',
   SexualViolence = 'sexualViolence',
   MindAlteredNsfw = 'mindAlteredNsfw',
@@ -328,9 +362,12 @@ export enum BanReasonCode {
   Scat = 'Scat',
   Nudify = 'Nudify',
   Harassment = 'Harassment',
+  SpamBot = 'SpamBot',
+  BotAccount = 'BotAccount',
   LeaderboardCheating = 'LeaderboardCheating',
   BuzzCheating = 'BuzzCheating',
   RRDViolation = 'RRDViolation',
+  Chargeback = 'Chargeback',
   Other = 'Other',
 }
 
@@ -341,13 +378,24 @@ export enum StripeConnectStatus {
   Rejected = 'Rejected',
 }
 
+// Tipalti's own spelling. These ARE the strings in
+// UserPaymentConfiguration.tipaltiAccountStatus, both for rows written before the webhook
+// validated anything and for the values `Tipalti.payeeStatusSchema` parses incoming ones against —
+// so normalising their casing here silently breaks every comparison. INTERNAL_VALUE is Tipalti's
+// sentinel for a status this API version does not expose.
 export enum TipaltiStatus {
   PendingOnboarding = 'PendingOnboarding',
-  Active = 'ACTIVE',
-  Suspended = 'SUSPENDED',
-  Blocked = 'BLOCKED',
-  BlockedByTipalti = 'BLOCKED_BY_TIPALTI',
+  Active = 'Active',
+  Suspended = 'Suspended',
+  Blocked = 'Blocked',
+  BlockedByProvider = 'BlockedByProvider',
   InternalValue = 'INTERNAL_VALUE',
+}
+
+const blockedTipaltiStatuses = [TipaltiStatus.Blocked, TipaltiStatus.BlockedByProvider] as const;
+
+export function isBlockedTipaltiStatus(status: string | null | undefined) {
+  return blockedTipaltiStatuses.some((s) => s === status);
 }
 
 export enum OrchPriorityTypes {
@@ -367,6 +415,10 @@ export enum OrchEngineTypes {
 
 export enum BlocklistType {
   EmailDomain = 'EmailDomain',
+  // Opt-in per entry: an entry here blocks the domain AND every subdomain of it. Separate from
+  // `EmailDomain` so suffix matching is a decision a moderator makes about one domain, never a
+  // behaviour change applied to the ~8,800 entries the upstream sync maintains.
+  EmailDomainSuffix = 'EmailDomainSuffix',
   LinkDomain = 'LinkDomain',
   MessagePattern = 'MessagePattern',
   UsernameExact = 'UsernameExact',
@@ -377,6 +429,10 @@ export enum BlocklistType {
   // false-flag `needsReview='minor'`. Edited by moderators at /moderator/blocklists.
   PromptBenignPhrase = 'PromptBenignPhrase',
   NegativeBenignPhrase = 'NegativeBenignPhrase',
+  // Single words that innocently CONTAIN a profanity token ("spreadsheet" holds
+  // "spread"). Suppresses a substring match from the profanity filter rather than
+  // being blanked from the text — different matcher to the two phrase lists above.
+  ProfanityBenignWord = 'ProfanityBenignWord',
 }
 
 export enum ToolSort {
@@ -400,6 +456,7 @@ export enum SignalTopic {
   NewOrderPlayer = 'new-order-player', // with :playerId
   NewOrderQueue = 'new-order-queue', // with :queueId
   Metric = 'metrics', // with :entityType:entityId
+  EventPoints = 'event-points', // with :event:hat:topicId, :event:owner:topicId, or :event:teams
   ContestScore = 'contest-score', // with :collectionId
 }
 
@@ -430,18 +487,7 @@ export enum NewOrderSignalActions {
 
 export enum ExternalModerationType {
   Clavata = 'Clavata',
-}
-
-export enum ModReviewType {
-  Minor = 'minor',
-  POI = 'poi',
-  Reported = 'reported',
-  CSAM = 'csam',
-  BlockedTags = 'tag',
-  NewUsers = 'newUser',
-  Appeals = 'appeal',
-  RuleViolations = 'modRule',
-  RemixSource = 'remixSource',
+  MessagePattern = 'MessagePattern',
 }
 
 export enum MarketplacePaymentMethod {

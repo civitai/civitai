@@ -8,10 +8,10 @@ import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema
 
 /**
  * Regression: `/apps` STORE HYDRATION SAFETY — the sibling of
- * `AppsSubNav.hydration.browser.test.tsx`, for the change that put the store's
+ * `AppsRailNav.hydration.browser.test.tsx`, for the change that put the store's
  * filters in the URL.
  *
- * THE INCIDENT THIS GUARDS (see the long comment in `AppsSubNav.tsx`): a value
+ * THE INCIDENT THIS GUARDS (see the long comment in `useAppsNavSections.ts`): a value
  * that differed between the SERVER render and the FIRST CLIENT render bailed
  * React hydration (#418/#425) at the `/apps` page ROOT, leaving EVERY `/apps`
  * page un-hydrated and inert — dead buttons, queries that never fired. It was
@@ -50,11 +50,14 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
     tagline: 'tag',
     category: null,
     contentRating: null,
+    isBeta: false,
     iconUrl: null,
     coverUrl: null,
     creator: null,
     recommend: { recommendedCount: 0, notRecommendedCount: 0, recommendPct: null },
     reviewCount: 0,
+    openCount: kind === 'onsite' ? 0 : null,
+    restrictedAudience: null,
     kindData:
       kind === 'onsite'
         ? {
@@ -63,7 +66,7 @@ function makeCard(id: string, name: string, kind: 'onsite' | 'offsite' = 'onsite
             hasPage: false,
             liveUrl: `https://slug-${id}.civit.ai`,
           }
-        : { kind: 'offsite', subKind: 'external-link', externalUrl: 'https://x.app' },
+        : { kind: 'offsite', externalUrl: 'https://x.app' },
   };
 }
 
@@ -76,10 +79,31 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock('~/providers/IsClientProvider', () => ({ useIsClient: () => mocks.isClient }));
-vi.mock('~/hooks/useIsMobile', () => ({ useIsMobile: () => false, isMobileDevice: () => false }));
+// Spread the real module so newly added exports (e.g. useIsMobileDevice) keep resolving —
+// a hand-listed mock breaks COLLECTION the moment the app chrome imports a new name from it.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  useIsMobile: () => false,
+  isMobileDevice: () => false,
+}));
 vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+// 🔴 THE WHOLESALE FACTORY MUST NAME **BOTH** FLAG HOOKS.
+// It replaces the module outright, so a named import in the file's module graph that
+// the factory omits makes the whole file fail to IMPORT — reported as
+// `Tests no tests`, i.e. as nothing to see rather than as a failure. That is exactly
+// what happened when the store card began rendering the shared `⋮` menu, whose
+// `useCanReviewListing` reads `useOptionalFeatureFlags`.
+// 🔴 AN `importOriginal` SPREAD IS THE WRONG CURE HERE, and it was tried: the real
+// flags module imports `setTrpcBatchingEnabled` from `~/utils/trpc`, which this
+// file's own wholesale trpc factory does not provide, so spreading moves the same
+// import failure one module over. See
+// `src/components/AppBlocks/__tests__/featureFlagsMockCompleteness.test.ts`, which
+// gates exactly this rule for its own directory.
+// Both hooks must return the SAME flags: a component may call either, and which one
+// it calls is not something a test file can see.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
+  useOptionalFeatureFlags: () => ({ appBlocks: true, appBlocksPages: false }),
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => ({
@@ -103,6 +127,17 @@ vi.mock('~/utils/trpc', async (importOriginal) => ({
 }));
 
 const { AppListingsMarketplaceBody } = await import('./AppListingsMarketplaceBody');
+const { AppsStoreFeedFilters } = await import('./AppsStoreFeedFilters');
+
+/** Sort + Filters render in the site sub-nav in the app, so the store is mounted beside them. */
+function StoreWithControls() {
+  return (
+    <>
+      <AppsStoreFeedFilters />
+      <AppListingsMarketplaceBody />
+    </>
+  );
+}
 const { clearRecentlyOpenedApps } = await import('./recentlyOpenedAppsStore');
 
 /**
@@ -150,25 +185,30 @@ beforeEach(() => {
  * a hydration mismatch would actually change.
  */
 function controlRowSignature(): string[] {
-  const row = document.querySelector('[data-testid="apps-store-control-row"]');
-  if (!row) return ['<no control row>'];
-  return Array.from(row.querySelectorAll('input,button,[role="group"]')).map((el) =>
-    [
-      el.tagName,
-      el.getAttribute('role') ?? '',
-      el.getAttribute('aria-label') ?? el.textContent?.trim() ?? '',
-      (el as HTMLInputElement).value ?? '',
-      el.getAttribute('aria-pressed') ?? '',
-      el.getAttribute('placeholder') ?? '',
-    ].join('|')
+  // The controls are split across the store body (search) and the sub-nav (sort, filters).
+  const rows = ['apps-store-control-row', 'apps-store-feed-filters'].map((id) =>
+    document.querySelector(`[data-testid="${id}"]`)
   );
+  if (rows.some((row) => !row)) return ['<no control row>'];
+  return rows
+    .flatMap((row) => Array.from(row!.querySelectorAll('input,button,[role="group"]')))
+    .map((el) =>
+      [
+        el.tagName,
+        el.getAttribute('role') ?? '',
+        el.getAttribute('aria-label') ?? el.textContent?.trim() ?? '',
+        (el as HTMLInputElement).value ?? '',
+        el.getAttribute('aria-pressed') ?? '',
+        el.getAttribute('placeholder') ?? '',
+      ].join('|')
+    );
 }
 
 describe('/apps store — the first client paint already reflects the URL', () => {
   test('🔴 pre-mount, a param-seeded mount drives the LISTING QUERY (no default-then-swap)', async () => {
     router.query = { ...SEEDED };
     mocks.isClient = false; // server + first client paint
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
 
     // If the filters were deferred behind `useIsClient()`, this would be the
@@ -185,10 +225,10 @@ describe('/apps store — the first client paint already reflects the URL', () =
   test('🔴 pre-mount, the CONTROLS themselves show the seeded values', async () => {
     router.query = { ...SEEDED };
     mocks.isClient = false;
-    renderWithProviders(<AppListingsMarketplaceBody />);
+    renderWithProviders(<StoreWithControls />);
 
     // The sort control renders the seeded sort, not the default "Top rated".
-    await expect.element(page.getByLabelText('Sort').first()).toHaveValue('Newest');
+    await expect.element(page.getByRole('button', { name: 'Newest' })).toBeInTheDocument();
     // The search box is seeded from `?query=` on its very first render.
     await expect.element(page.getByLabelText('Search')).toHaveValue('matrix');
     // …and so is the collapsed panel's kind toggle. (By testid, not by accessible
@@ -196,7 +236,7 @@ describe('/apps store — the first client paint already reflects the URL', () =
     // so a name query is a strict-mode violation whenever both are on screen.)
     await userEvent.click(page.getByTestId('apps-store-filters-dropdown'));
     await expect
-      .element(page.getByRole('button', { name: 'Off-site' }))
+      .element(page.getByRole('button', { name: 'Standalone' }))
       .toHaveAttribute('aria-pressed', 'true');
   });
 
@@ -209,12 +249,12 @@ describe('/apps store — the first client paint already reflects the URL', () =
     // (Unmount-and-remount via `cleanup()` was tried and tears down the harness's
     // container, so every later render lands in an empty body.)
     mocks.isClient = false;
-    const { rerender } = await renderWithProviders(<AppListingsMarketplaceBody />);
+    const { rerender } = await renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
     const before = controlRowSignature();
 
     mocks.isClient = true;
-    await rerender(<AppListingsMarketplaceBody />);
+    await rerender(<StoreWithControls />);
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
     const after = controlRowSignature();
 
@@ -230,7 +270,7 @@ describe('/apps store — the first client paint already reflects the URL', () =
     const badge = () => document.querySelector('.mantine-Indicator-indicator')?.textContent ?? null;
 
     mocks.isClient = false;
-    const { rerender } = await renderWithProviders(<AppListingsMarketplaceBody />);
+    const { rerender } = await renderWithProviders(<StoreWithControls />);
     await expect.element(page.getByLabelText('Search')).toBeInTheDocument();
     // Server + first client paint: the dot renders (its `disabled` prop is driven
     // by the count, which IS server-knowable) but carries NO NUMBER —
@@ -241,7 +281,7 @@ describe('/apps store — the first client paint already reflects the URL', () =
     expect(badge()).toBe('');
 
     mocks.isClient = true;
-    await rerender(<AppListingsMarketplaceBody />);
+    await rerender(<StoreWithControls />);
     await vi.waitFor(() => expect(badge()).toBe('2'));
   });
 });
@@ -252,8 +292,8 @@ describe('/apps store — no client-only source leaks into the first render', ()
     // a divergent (or throwing) first render.
     router.query = { kind: 'sideways', category: 'hats', sort: 'chaos' };
     mocks.isClient = false;
-    renderWithProviders(<AppListingsMarketplaceBody />);
-    await expect.element(page.getByLabelText('Sort').first()).toHaveValue('Top rated');
+    renderWithProviders(<StoreWithControls />);
+    await expect.element(page.getByRole('button', { name: 'Top rated' })).toBeInTheDocument();
     expect(mocks.lastArgs).toMatchObject({ kind: 'all', sort: 'top-rated' });
     expect(mocks.lastArgs?.category).toBeUndefined();
     // …and the grid still renders — never an empty result set.

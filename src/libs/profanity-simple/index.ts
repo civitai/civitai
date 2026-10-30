@@ -1,9 +1,8 @@
 /**
- * Simple Profanity Filter - Focused implementation using obscenity + compromise
+ * Simple Profanity Filter - Focused implementation on top of obscenity
  *
  * This is a streamlined profanity detection system that:
  * - Uses obscenity package for core profanity detection (includes leetspeak handling)
- * - Uses compromise to generate word variations (plurals, conjugations)
  * - Extends word dictionary with metadata words
  * - Provides synchronous operations for React components
  */
@@ -13,6 +12,7 @@ import {
   TextCensor,
   englishDataset,
   DataSet,
+  type MatchPayload,
   asteriskCensorStrategy,
   grawlixCensorStrategy,
   assignIncrementingIds,
@@ -25,7 +25,7 @@ import {
 
 import { getCachedNsfwWords } from './word-processor';
 import { customLeetSpeakTransformer } from './custom-transformers';
-import whitelistWords from '~/utils/metadata/lists/whitelist-words.json';
+import { whitelistWords } from '@civitai/mod-utils/profanity/lists';
 import { removeTags } from '~/utils/string-helpers';
 import { NsfwLevel } from '~/server/common/enums';
 import { constants } from '~/server/common/constants';
@@ -33,6 +33,20 @@ import { constants } from '~/server/common/constants';
 export interface ProfanityFilterOptions {
   /** How to replace profane words */
   replacementStyle: 'asterisk' | 'grawlix' | 'remove';
+  /**
+   * The moderator-managed benign words (`BlocklistType.ProfanityBenignWord`). It REPLACES the
+   * static `whitelist-words.json` rather than adding to it, so a moderator can remove an
+   * entry and have that take effect — a union would make the Remove control in the blocklist
+   * UI a silent no-op for every word the static list also carries, which is all of them,
+   * since the seed migration copies it verbatim.
+   *
+   * `null` means there is no moderator row (not migrated, or unreachable) and falls back to
+   * the static list, so that case degrades to today's behaviour rather than to no whitelist.
+   * An EMPTY ARRAY is different and is honoured as-is: it means a moderator deleted every
+   * entry, which is the strongest possible "do not whitelist" intent, and quietly restoring
+   * 424 shipped words over the top of it would be the opposite of what they asked for.
+   */
+  moderatorWhitelist: string[] | null;
 }
 
 export interface ProfanityThresholdConfig {
@@ -100,6 +114,21 @@ function createWhitelistMappings(
   return mappings;
 }
 
+/**
+ * obscenity's `fuck` phrase carries `|fu|`, so a bare `fu` token matches — which blocked
+ * legitimate Danbooru tags in the trainer's tag audit (ClickUp 868m5agjq). 143 `Tag` rows carry a
+ * standalone `fu`: `fu hua`, `fu xuan`, `fu'ri'na`, `fu manchu`, `fu dog`.
+ *
+ * Kept out of `whitelist-words.json` because `moderatorWhitelist` REPLACES that file: a list-only
+ * fix would miss the search gate, and a moderator emptying the row would re-break it. `analyze()`
+ * compares this set against the whole extracted word, so only the bare token is excused — `fuk`,
+ * `fkin` and `f*ck` still fire.
+ *
+ * `fk` was here and was removed: 3 `Tag` rows carry it, none used on any model, so it excused
+ * nothing real. Measure the corpus before adding a token.
+ */
+export const LIBRARY_OVERMATCH_TOKENS = ['fu'] as const;
+
 export class SimpleProfanityFilter {
   private matcher!: RegExpMatcher;
   private censor!: TextCensor;
@@ -112,8 +141,11 @@ export class SimpleProfanityFilter {
   constructor(options: Partial<ProfanityFilterOptions> = {}) {
     this.options = {
       replacementStyle: 'asterisk',
+      moderatorWhitelist: null,
       ...options,
     };
+
+    const whitelist = this.options.moderatorWhitelist ?? whitelistWords;
 
     // Cache NSFW words once during construction
     this.nsfwWords = getCachedNsfwWords();
@@ -123,27 +155,38 @@ export class SimpleProfanityFilter {
     this.dataset.addAll(englishDataset);
 
     // Initialize whitelist mappings
-    this.whitelistMappings = createWhitelistMappings(this.nsfwWords.originalWords, whitelistWords);
+    this.whitelistMappings = createWhitelistMappings(this.nsfwWords.originalWords, whitelist);
 
-    // Initialize whitelist Set for O(1) lookup during analysis
-    this.whitelistSet = new Set(whitelistWords.map((word) => word.toLowerCase()));
+    // Initialize whitelist Set for O(1) lookup during analysis. An entry equal to a profane
+    // word itself is dropped: `createWhitelistMappings` already refuses that case, but this
+    // set is what `analyze()` filters against, so without the same guard a single-token entry
+    // would disarm the filter for that exact word. Harmless while the list was a checked-in
+    // JSON file; this is the change that turns it into a text box.
+    const profaneWords = new Set(this.nsfwWords.originalWords.map((word) => word.toLowerCase()));
+    this.whitelistSet = new Set(
+      [...whitelist, ...LIBRARY_OVERMATCH_TOKENS]
+        .map((word) => word.toLowerCase())
+        .filter((word) => !profaneWords.has(word))
+    );
 
     this.initializeMatcher();
     this.initializeCensor();
   }
 
-  /**
-   * Check if text contains profanity
-   */
-  isProfane(text: string): boolean {
-    return this.matcher.hasMatch(text);
+  /** Drop matches whose full surrounding word is whitelisted; clean() and analyze() must apply the same exclusion. */
+  private excludeWhitelisted(text: string, matches: MatchPayload[]): MatchPayload[] {
+    return matches.filter((match) => {
+      const { startIndex, endIndex } = this.dataset.getPayloadWithPhraseMetadata(match);
+      const fullWord = this.extractFullWord(text, startIndex, endIndex + 1);
+      return !this.isWhitelistedWord(fullWord);
+    });
   }
 
   /**
    * Clean profane words from text
    */
   clean(text: string): string {
-    const matches = this.matcher.getAllMatches(text);
+    const matches = this.excludeWhitelisted(text, this.matcher.getAllMatches(text));
     return this.censor.applyTo(text, matches);
   }
 
@@ -163,11 +206,7 @@ export class SimpleProfanityFilter {
     }
 
     // Filter out matches where the full word is in the whitelist
-    const filteredMatches = matches.filter((match) => {
-      const { startIndex, endIndex } = this.dataset.getPayloadWithPhraseMetadata(match);
-      const fullWord = this.extractFullWord(text, startIndex, endIndex + 1);
-      return !this.isWhitelistedWord(fullWord);
-    });
+    const filteredMatches = this.excludeWhitelisted(text, matches);
 
     // If all matches were filtered out, return clean result
     if (filteredMatches.length === 0) {
@@ -453,4 +492,31 @@ export function createProfanityFilter(
   options?: Partial<ProfanityFilterOptions>
 ): SimpleProfanityFilter {
   return new SimpleProfanityFilter(options);
+}
+
+// Constructing a filter builds the whole English dataset + matcher, so callers share one per
+// distinct whitelist. Keyed rather than a single instance because the moderator list can
+// change; the common case (one list for the whole session) still allocates once. Lives here
+// rather than in the hook that needed it first, so server callers can reach it too.
+// Bounded: each matcher measures ~132 KB, and the list is refetched hourly, so a long-lived
+// tab DOES see new keys as moderators edit — the cap is load-bearing, not defensive. A tab
+// normally holds the pre-load (static) filter and the current one.
+const MAX_CACHED_FILTERS = 2;
+const filtersByWhitelist = new Map<string, SimpleProfanityFilter>();
+export function getProfanityFilter(
+  moderatorWhitelist: string[] | null = null
+): SimpleProfanityFilter {
+  // `null` (no row) and `[]` (emptied by a moderator) mean different things, so they must not
+  // collide on the same cache key.
+  const key = moderatorWhitelist === null ? 'no-moderator-row' : `list:${moderatorWhitelist}`;
+  let filter = filtersByWhitelist.get(key);
+  if (!filter) {
+    filter = createProfanityFilter({ moderatorWhitelist });
+    if (filtersByWhitelist.size >= MAX_CACHED_FILTERS) {
+      const oldest = filtersByWhitelist.keys().next().value;
+      if (oldest !== undefined) filtersByWhitelist.delete(oldest);
+    }
+    filtersByWhitelist.set(key, filter);
+  }
+  return filter;
 }

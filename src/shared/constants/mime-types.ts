@@ -8,6 +8,7 @@ export const MIME_TYPES = {
   jpg: 'image/jpeg',
   jpeg: 'image/jpeg',
   webp: 'image/webp',
+  avif: 'image/avif',
 
   // Video
   mp4: 'video/mp4',
@@ -27,6 +28,7 @@ export const MEDIA_TYPE: Record<string, MediaType> = {
   [MIME_TYPES.png]: MediaType.image,
   [MIME_TYPES.jpeg]: MediaType.image, // Also covers MIME_TYPES.jpg since they're both 'image/jpeg'
   [MIME_TYPES.webp]: MediaType.image,
+  [MIME_TYPES.avif]: MediaType.image,
   [MIME_TYPES.mp4]: MediaType.video,
   [MIME_TYPES.webm]: MediaType.video,
   [MIME_TYPES.mp3]: MediaType.audio,
@@ -34,8 +36,14 @@ export const MEDIA_TYPE: Record<string, MediaType> = {
 } as const;
 
 // Note: MIME_TYPES.jpg and MIME_TYPES.jpeg are both 'image/jpeg', so we only include it once
-export const IMAGE_MIME_TYPE = [MIME_TYPES.png, MIME_TYPES.jpeg, MIME_TYPES.webp];
+export const IMAGE_MIME_TYPE = [MIME_TYPES.png, MIME_TYPES.jpeg, MIME_TYPES.webp, MIME_TYPES.avif];
 export type IMAGE_MIME_TYPE = (typeof IMAGE_MIME_TYPE)[number];
+/**
+ * Images whose picked bytes reach an engine unchanged (training datasets, Chopped submissions), which
+ * is not confirmed to decode AVIF. Generator source images take IMAGE_MIME_TYPE: they are
+ * re-encoded to JPEG before upload.
+ */
+export const ENGINE_INPUT_IMAGE_MIME_TYPE = [MIME_TYPES.png, MIME_TYPES.jpeg, MIME_TYPES.webp];
 export const VIDEO_MIME_TYPE = [MIME_TYPES.mp4, MIME_TYPES.webm];
 export const AUDIO_MIME_TYPE = [MIME_TYPES.mp3, MIME_TYPES.wav];
 export const ZIP_MIME_TYPE = [MIME_TYPES.zip, MIME_TYPES.xZipCompressed, MIME_TYPES.xZipMultipart];

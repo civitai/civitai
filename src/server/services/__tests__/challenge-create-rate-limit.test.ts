@@ -1,22 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+const mockDbRead = dbMock.dbRead;
 
-const { mockDbRead, mockGetHighestTierSubscription } = vi.hoisted(() => ({
-  mockDbRead: {
-    user: { findUnique: vi.fn() },
-    userStrike: { count: vi.fn() },
-    challenge: { count: vi.fn() },
-  },
+const { mockGetHighestTierSubscription } = vi.hoisted(() => ({
   mockGetHighestTierSubscription: vi.fn(),
 }));
 
-vi.mock('~/server/db/client', () => ({ dbRead: mockDbRead }));
 vi.mock('~/server/services/subscriptions.service', () => ({
   getHighestTierSubscription: mockGetHighestTierSubscription,
 }));
 
-const { assertUnderDailyCreateLimit, assertCanCreateUserChallenge } = await import(
-  '~/server/services/challenge-eligibility.service'
-);
+const {
+  assertUnderDailyCreateLimit,
+  assertCanCreateUserChallenge,
+  assertUnderActiveChallengeLimit,
+} = await import('~/server/services/challenge-eligibility.service');
 const { CHALLENGE_CREATE_DAILY_LIMIT } = await import('~/shared/constants/challenge.constants');
 
 const USER_ID = 42;
@@ -30,7 +28,7 @@ function mockGoodStanding() {
     muted: false,
     deletedAt: null,
   });
-  mockDbRead.userStrike.count.mockResolvedValue(0);
+  mockDbRead.userStrike.aggregate.mockResolvedValue({ _sum: { points: 0 } });
   mockGetHighestTierSubscription.mockResolvedValue({ tier: 'gold' });
 }
 
@@ -42,7 +40,7 @@ describe('assertUnderDailyCreateLimit', () => {
   it('throws when the user has hit the daily create limit', async () => {
     mockDbRead.challenge.count.mockResolvedValue(CHALLENGE_CREATE_DAILY_LIMIT);
     await expect(assertUnderDailyCreateLimit(USER_ID)).rejects.toThrow(
-      /at most 5 challenges per day/i
+      /at most 5 challenges in any 24 hours/i
     );
   });
 
@@ -83,12 +81,28 @@ describe('assertCanCreateUserChallenge (daily limit wiring)', () => {
   it('rejects creation once the daily limit is reached, even with room under the active-challenge cap', async () => {
     mockDbRead.challenge.count.mockResolvedValue(CHALLENGE_CREATE_DAILY_LIMIT);
     await expect(assertCanCreateUserChallenge(USER_ID)).rejects.toThrow(
-      /at most 5 challenges per day/i
+      /at most 5 challenges in any 24 hours/i
     );
   });
 
   it('allows creation when under both the daily and active-challenge limits', async () => {
     mockDbRead.challenge.count.mockResolvedValue(0);
     await expect(assertCanCreateUserChallenge(USER_ID)).resolves.toBeUndefined();
+  });
+});
+
+// The create-requirements modal is shared with crucibles, so both refusals state the limit the same way.
+describe('assertUnderActiveChallengeLimit', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('states the cap as running at once, with every tier', async () => {
+    mockGetHighestTierSubscription.mockResolvedValue({ tier: 'silver' });
+    mockDbRead.challenge.count.mockResolvedValue(3);
+
+    await expect(assertUnderActiveChallengeLimit(USER_ID)).rejects.toThrow(
+      "You've reached your limit of 3 challenges running at once for your membership tier (Free 1, Founder and Bronze 2, Silver 3, Gold 5)."
+    );
   });
 });

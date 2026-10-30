@@ -1,4 +1,18 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { dbMock } from '~/__tests__/mocks/db.mock';
+import type * as FliptClient from '~/server/flipt/client';
+const mockDbReadQueryRaw = dbMock.dbRead.$queryRaw;
+const mockDbReadChallengeFindUnique = dbMock.dbRead.challenge.findUnique;
+const mockDbWriteQueryRaw = dbMock.dbWrite.$queryRaw;
+const mockDbWriteExecuteRaw = dbMock.dbWrite.$executeRaw;
+const mockDbWriteChallengeUpdate = dbMock.dbWrite.challenge.update;
+const mockDbWriteChallengeFindUnique = dbMock.dbWrite.challenge.findUnique;
+dbMock.dbWrite.$executeRaw.mockResolvedValue(1);
+dbMock.dbWrite.challenge.update.mockResolvedValue(undefined);
+dbMock.dbWrite.challenge.findUnique.mockResolvedValue({
+  prizePool: 0,
+  prizeDistribution: null,
+});
 
 // Verifies judging-category routing after the DYNAMIC_JUDGING_CATEGORIES flag removal: any
 // challenge with a valid judgingCategories value is judged/ranked by it regardless of source.
@@ -13,11 +27,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 // left real so the ranking math under test is the actual production math.
 
 const {
-  mockDbReadQueryRaw,
-  mockDbReadChallengeFindUnique,
-  mockDbWriteQueryRaw,
-  mockDbWriteExecuteRaw,
-  mockDbWriteChallengeUpdate,
   mockIsFlipt,
   mockGetChallengeConfig,
   mockGetJudgingConfig,
@@ -31,19 +40,9 @@ const {
   mockUpdateChallengeStatus,
   mockRefundUserChallengeFunds,
   mockCreateNotification,
-  mockDbWriteChallengeFindUnique,
 } = vi.hoisted(() => ({
-  mockDbReadQueryRaw: vi.fn(),
-  mockDbReadChallengeFindUnique: vi.fn(),
-  mockDbWriteQueryRaw: vi.fn(),
-  mockDbWriteExecuteRaw: vi.fn().mockResolvedValue(1),
-  mockDbWriteChallengeUpdate: vi.fn().mockResolvedValue(undefined),
   // Final-prize recompute reads prizePool/prizeDistribution on the User path; null distribution
   // skips the recompute so these tests exercise the judging gate unchanged.
-  mockDbWriteChallengeFindUnique: vi.fn().mockResolvedValue({
-    prizePool: 0,
-    prizeDistribution: null,
-  }),
   mockIsFlipt: vi.fn().mockResolvedValue(false),
   mockGetChallengeConfig: vi.fn(),
   mockGetJudgingConfig: vi.fn(),
@@ -59,18 +58,6 @@ const {
   mockCreateNotification: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock('~/server/db/client', () => ({
-  dbRead: {
-    $queryRaw: mockDbReadQueryRaw,
-    challenge: { findUnique: mockDbReadChallengeFindUnique },
-  },
-  dbWrite: {
-    $queryRaw: mockDbWriteQueryRaw,
-    $executeRaw: mockDbWriteExecuteRaw,
-    challenge: { update: mockDbWriteChallengeUpdate, findUnique: mockDbWriteChallengeFindUnique },
-  },
-}));
-
 // Cuts the eventEngine -> clickhouse/redis/discord transitive chain. Only
 // reviewEntriesForChallenge's event-engagement branch calls this.
 vi.mock('~/server/events', () => ({
@@ -78,7 +65,7 @@ vi.mock('~/server/events', () => ({
 }));
 
 vi.mock('~/server/flipt/client', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('~/server/flipt/client')>();
+  const actual = await importOriginal<typeof FliptClient>();
   return { ...actual, isFlipt: mockIsFlipt };
 });
 
@@ -102,6 +89,8 @@ vi.mock('~/server/games/daily-challenge/daily-challenge.utils', async () => {
 });
 
 vi.mock('~/server/games/daily-challenge/challenge-helpers', () => ({
+  challengeClaimStillHeld: vi.fn().mockResolvedValue(true),
+  completeChallengeIfClaimHeld: vi.fn().mockResolvedValue(true),
   claimChallengeForCompletion: mockClaimChallengeForCompletion,
   computeDynamicPool: vi.fn(),
   distributePrizes: vi.fn(),
@@ -122,6 +111,7 @@ vi.mock('~/server/games/daily-challenge/challenge-rewards', () => ({
 }));
 
 vi.mock('~/server/games/daily-challenge/generative-content', () => ({
+  REVIEW_FALLBACK_MODEL: 'fallback-model',
   estimateBuzzCost: vi.fn().mockReturnValue(0),
   generateArticle: vi.fn(),
   generateCollectionDetails: vi.fn(),
@@ -149,7 +139,7 @@ vi.mock('~/server/services/reaction.service', () => ({
 vi.mock('~/server/games/daily-challenge/challenge-funding', () => ({
   refundUserChallengeFunds: mockRefundUserChallengeFunds,
   getChallengeBuzzType: vi.fn(async () => 'yellow'),
-  buildWinnerPayoutTransactions: vi.fn(() => []),
+  buildWinnerPrizes: vi.fn(() => []),
   reportPoolFundingShortfall: vi.fn(),
 }));
 
@@ -157,13 +147,12 @@ vi.mock('~/utils/logging', () => ({
   createLogger: vi.fn(() => vi.fn()),
 }));
 
-const {
-  getJudgedEntries,
-  pickWinnersForChallenge,
-  reviewEntries,
-} = await import('~/server/jobs/daily-challenge-processing');
+const { getJudgedEntries, pickWinnersForChallenge, reviewEntries } = await import(
+  '~/server/jobs/daily-challenge-processing'
+);
 const { FLIPT_FEATURE_FLAGS } = await import('~/server/flipt/client');
 const { ChallengeSource } = await import('~/shared/utils/prisma/enums');
+const { Prisma } = await import('@prisma/client');
 
 const VALID_CATEGORIES = [
   { key: 'theme', weight: 60, label: 'Theme', criteria: 'fits the theme' },
@@ -237,16 +226,10 @@ describe('getJudgedEntries — routes on categories presence, not source', () =>
   it('System source + categories present: uses the weighted-category path (post-fix — previously required User source)', async () => {
     mockOneRow();
     mockDbWriteQueryRaw.mockResolvedValueOnce([]); // winner-cooldown (global) query
-    const result = await getJudgedEntries(
-      100,
-      config,
-      undefined,
-      ChallengeSource.System,
-      [
-        { key: 'theme', weight: 60, label: 'Theme', criteria: 'x' },
-        { key: 'aesthetic', weight: 40, label: 'Aesthetic', criteria: 'x' },
-      ] as never
-    );
+    const result = await getJudgedEntries(100, config, undefined, ChallengeSource.System, [
+      { key: 'theme', weight: 60, label: 'Theme', criteria: 'x' },
+      { key: 'aesthetic', weight: 40, label: 'Aesthetic', criteria: 'x' },
+    ] as never);
     expect(result).toHaveLength(1);
     expect(result[0].userId).toBe(100);
   });
@@ -254,13 +237,9 @@ describe('getJudgedEntries — routes on categories presence, not source', () =>
   it('User source + categories present: still uses the weighted-category path (unchanged)', async () => {
     mockOneRow();
     // No winner-cooldown prime: user challenges skip the cooldown query entirely.
-    const result = await getJudgedEntries(
-      100,
-      config,
-      undefined,
-      ChallengeSource.User,
-      [{ key: 'theme', weight: 100, label: 'Theme', criteria: 'x' }] as never
-    );
+    const result = await getJudgedEntries(100, config, undefined, ChallengeSource.User, [
+      { key: 'theme', weight: 100, label: 'Theme', criteria: 'x' },
+    ] as never);
     expect(result).toHaveLength(1);
     expect(mockDbWriteQueryRaw).not.toHaveBeenCalled();
   });
@@ -268,7 +247,13 @@ describe('getJudgedEntries — routes on categories presence, not source', () =>
   it('categories undefined (any source): ranks against the fixed rubric', async () => {
     mockOneRow();
     mockDbWriteQueryRaw.mockResolvedValueOnce([]); // winner-cooldown (global) query
-    const result = await getJudgedEntries(100, config, undefined, ChallengeSource.System, undefined);
+    const result = await getJudgedEntries(
+      100,
+      config,
+      undefined,
+      ChallengeSource.System,
+      undefined
+    );
     expect(result).toHaveLength(1);
     // theme 10, everything else 0, against the 50/15/15/20 fixed split.
     expect(result[0].weightedRating).toBeCloseTo(5);
@@ -327,7 +312,13 @@ describe('getJudgedEntries — routes on categories presence, not source', () =>
       },
     ]);
     mockDbWriteQueryRaw.mockResolvedValueOnce([]);
-    const result = await getJudgedEntries(100, config, undefined, ChallengeSource.System, undefined);
+    const result = await getJudgedEntries(
+      100,
+      config,
+      undefined,
+      ChallengeSource.System,
+      undefined
+    );
     expect(result).toHaveLength(1);
     expect(result[0].imageId).toBe(2);
   });
@@ -423,7 +414,7 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
     entryPrize: { buzz: 0, points: 0 },
   } as never;
 
-  function mockReviewSequence(source: string, judgingCategories: unknown) {
+  function mockReviewSequence(source: string, judgingCategories: unknown, entryFee = 0) {
     mockGetActiveChallenges.mockResolvedValue([activeChallenge]);
 
     // dbRead.$queryRaw call order inside reviewEntriesForChallenge (reviewCostType: 'None'
@@ -444,6 +435,7 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
           metadata: null,
           source,
           judgingCategories,
+          entryFee,
         },
       ]) // challengeRecord
       .mockResolvedValueOnce([]) // rejectedUsers
@@ -516,5 +508,30 @@ describe('reviewEntriesForChallenge (via reviewEntries) — judging-category gat
 
     const arg = mockGenerateReview.mock.calls[0][0];
     expect(arg.categories).toBeUndefined();
+  });
+
+  // The recentEntries query is the second dbWrite.$queryRaw call (after userScoredCounts).
+  function recentEntriesSql() {
+    const [strings, ...values] = mockDbWriteQueryRaw.mock.calls[1] as [
+      TemplateStringsArray,
+      ...unknown[]
+    ];
+    return Prisma.sql(strings, ...values).sql;
+  }
+
+  it('paid user challenge: an entry whose review failed on an earlier tick is selected again', async () => {
+    mockReviewSequence(ChallengeSource.User, VALID_CATEGORIES, 50);
+
+    await reviewEntries();
+
+    expect(recentEntriesSql()).not.toContain('"reviewedAt" >=');
+  });
+
+  it('free challenge: keeps the since-last-review window', async () => {
+    mockReviewSequence(ChallengeSource.System, VALID_CATEGORIES);
+
+    await reviewEntries();
+
+    expect(recentEntriesSql()).toContain('"reviewedAt" >=');
   });
 });

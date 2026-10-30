@@ -1,6 +1,7 @@
 import { redis, REDIS_KEYS } from '~/server/redis/client';
 import { invalidateCivitaiUser } from '~/server/services/orchestrator/civitai';
 import { sessionClient } from '~/server/auth/session-client';
+import { bustUserCreatorCache } from '~/server/services/user-creator.service';
 
 export async function clearSessionCache(userId: number) {
   await Promise.all([
@@ -10,9 +11,9 @@ export async function clearSessionCache(userId: number) {
     // main-app-only per-user caches (not hub-owned) — cleared directly.
     redis.del(`${REDIS_KEYS.CACHES.MULTIPLIERS_FOR_USER}:${userId}`),
     redis.del(`${REDIS_KEYS.USER.SETTINGS}:${userId}`),
-    // Decides what buyers are charged for this user's paid access, so it must clear the moment a
-    // subscription changes — Stripe's webhook reaches here via refreshSession.
-    redis.del(`${REDIS_KEYS.CACHES.PAID_ACCESS_CAP_TIER}:${userId}`),
+    // The creator card shows the same user-row fields a session refresh exists to pick up
+    // (username, avatar, ban, mute, deletion). Never throws.
+    bustUserCreatorCache(userId),
     // orchestrator's cached civitai user — a main-app concern, fired here at the invalidation point.
     invalidateCivitaiUser({ userId }),
   ]);

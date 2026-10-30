@@ -1,10 +1,7 @@
 import {
   Alert,
-  Box,
   Button,
   Center,
-  Code,
-  CopyButton,
   Divider,
   Group,
   Input,
@@ -15,21 +12,26 @@ import {
   Text,
 } from '@mantine/core';
 
-import { IconBolt, IconCalendar, IconClipboard } from '@tabler/icons-react';
+import { IconBolt, IconCalendar } from '@tabler/icons-react';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { useRouter } from 'next/router';
-import { env } from 'process';
+// 🔴 `~/env/client`, NOT `process` — which is what this was, uniquely among client components.
+// Next inlines the LITERAL text `process.env.NEXT_PUBLIC_*`; a destructured `env` binding is
+// not that text, so this read the browser's `process` shim and `joinUrl` below was `''`
+// unconditionally. `NEXT_PUBLIC_BASE_URL` is declared in `src/env/client-schema.ts`.
+import { env } from '~/env/client';
 import { useEffect, useState } from 'react';
 import { NotFound } from '~/components/AppLayout/NotFound';
 import {
   collectionReadPrivacyData,
+  collectionTypeData,
   collectionWritePrivacyData,
   useCollection,
   useMutateCollection,
 } from '~/components/Collections/collection.utils';
+import { CollectionInviteLink } from '~/components/Collections/CollectionInviteLink';
 import { useDialogContext } from '~/components/Dialog/DialogProvider';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
-import { LegacyActionIcon } from '~/components/LegacyActionIcon/LegacyActionIcon';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import {
   Form,
@@ -179,6 +181,8 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
   const canConfigurePrivacy = isOwner || !!currentUser?.isModerator;
   const canOpenSubmissions = (isMember && isOwner) || !!currentUser?.isModerator;
   const isImageCollection = collection?.type === CollectionType.Image;
+  // Matches the form's own normalization above, where a null type is read as Model.
+  const isModelCollection = (collection?.type ?? CollectionType.Model) === CollectionType.Model;
   const isContestMode = collection?.mode === CollectionMode.Contest;
   const joinUrl =
     env.NEXT_PUBLIC_BASE_URL && collectionId
@@ -222,7 +226,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                 data={[
                   ...Object.values(CollectionType).map((value) => ({
                     value,
-                    label: getDisplayName(value),
+                    label: collectionTypeData[value].label,
                   })),
                 ]}
                 clearable
@@ -271,25 +275,7 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                         <Text fw={500} size="sm">
                           Here is your Invite Link:
                         </Text>
-                        <CopyButton value={joinUrl}>
-                          {({ copied, copy }) => (
-                            <Box pos="relative" onClick={copy} style={{ cursor: 'pointer' }}>
-                              <LegacyActionIcon
-                                pos="absolute"
-                                top="50%"
-                                right={10}
-                                variant="transparent"
-                                style={{ transform: 'translateY(-50%) !important' }}
-                                disabled={!joinUrl}
-                              >
-                                <IconClipboard />
-                              </LegacyActionIcon>
-                              <Code block color={copied ? 'green' : undefined}>
-                                {copied ? 'Copied' : joinUrl}
-                              </Code>
-                            </Box>
-                          )}
-                        </CopyButton>
+                        <CollectionInviteLink joinUrl={joinUrl} />
                       </Stack>
                     )}
 
@@ -338,28 +324,26 @@ export default function CollectionEditModal({ collectionId }: { collectionId?: n
                       placeholder="Leave blank for unlimited"
                       clearable
                     />
-                    <InputMultiSelect
-                      name="metadata.baseModels"
-                      label="Allowed base models"
-                      description="Model entries need a version on one of these base models. With a submission start date, the same version must also have been added during the submission period. Leave empty to allow all base models."
-                      placeholder="Leave empty to allow all base models"
-                      // Full list, not activeBaseModels — hidden base models are still valid
-                      // contest targets, and this field is moderator-only.
-                      data={baseModels}
-                      searchable
-                      clearable
-                    />
+                    {/* The gate this drives runs only against model submissions, so on any other
+                        collection type the field is a control that silently does nothing. */}
+                    {isModelCollection && (
+                      <InputMultiSelect
+                        name="metadata.baseModels"
+                        label="Allowed base models"
+                        description="Model entries need a version on one of these base models. With a submission start date, the same version must also have been added during the submission period. Leave empty to allow all base models."
+                        placeholder="Leave empty to allow all base models"
+                        // Full list, not activeBaseModels — hidden base models are still valid
+                        // contest targets, and this field is moderator-only.
+                        data={baseModels}
+                        searchable
+                        clearable
+                      />
+                    )}
                     {isImageCollection && (
                       <InputCheckbox
                         name="metadata.existingEntriesDisabled"
                         label="Existing entries disabled"
                         description="Makes it so that the + button takes you directly to the create flow, bypassing existing images selection. Users can still circumbent this by following the collection & selecting an image."
-                      />
-                    )}
-                    {isImageCollection && (
-                      <InputCheckbox
-                        name="metadata.disableFollowOnSubmission"
-                        label="Submitting an entry will not follow the collection"
                       />
                     )}
                     <InputDatePicker

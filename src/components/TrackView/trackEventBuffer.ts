@@ -202,6 +202,15 @@ export function enqueueTrackEvent(event: TrackBatchEvent): void {
   }
 }
 
+// Drain the buffer now. For callers that coalesce ABOVE this buffer (see
+// impressionBuffer.ts) and need their own drain to reach the network in the same
+// tick — the lifecycle listeners below fire on the same events, and whether they
+// run before or after another module's handler depends on registration order,
+// which is mount order. Calling this explicitly removes that ordering dependency.
+export function flushTrackEvents(viaBeacon = false): void {
+  flush(viaBeacon);
+}
+
 // Test-only hooks. Not part of the runtime contract — let tests drive the buffer
 // deterministically (inspect pending count, force a flush, reset module state).
 export const __trackBufferTestHooks = {

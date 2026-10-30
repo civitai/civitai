@@ -70,6 +70,20 @@ function registerRecordingProvider(): InMemoryLogRecordExporter {
  *     read 1 — so the "does SIGTERM actually flush" test would pass with the very defect
  *     it exists to catch. Measured: with a synchronous stub, removing the `await`
  *     left that test GREEN.
+ *  3. It implements the WHOLE `LogRecordExporter` interface, `forceFlush` included, even
+ *     though a no-op is all this fake needs. That is not ceremony. `BatchLogRecordProcessor`
+ *     calls `exporter.forceFlush()` from `_flushAll()` — i.e. on the shutdown path — inside
+ *     a `try/catch` that routes the error to `globalErrorHandler`. A fake missing the method
+ *     therefore does not throw: the TypeError is swallowed, the flush is abandoned, and the
+ *     test reads ZERO exported records — indistinguishable from a shutdown that never
+ *     flushed. Measured when this package moved to `@opentelemetry/sdk-logs@0.219.0`, which
+ *     made `forceFlush` a REQUIRED member of `LogRecordExporter` (it was optional at
+ *     0.211.0). The real OTLP exporter inherits it from `OTLPExporterBase`, so only the
+ *     fake was ever short of the contract. A no-op is faithful here because the fake's own
+ *     `setTimeout` still resolves the export on a later tick, which is what property 2 needs.
+ *     Both halves of that were read off the installed builds, not inferred: at 0.211.0
+ *     `LogRecordExporter` declared only `export` and `shutdown`, and its
+ *     `BatchLogRecordProcessorBase` called `this._exporter.forceFlush()` exactly zero times.
  */
 function collectingExporter(): { exporter: LogRecordExporter; records: ReadableLogRecord[] } {
   const records: ReadableLogRecord[] = [];
@@ -82,6 +96,7 @@ function collectingExporter(): { exporter: LogRecordExporter; records: ReadableL
           resultCallback({ code: ExportResultCode.SUCCESS });
         }, 5);
       },
+      forceFlush: async () => {},
       shutdown: async () => {},
     },
   };

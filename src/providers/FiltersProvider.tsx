@@ -9,6 +9,7 @@ import {
   BountyStatus,
   BuzzWithdrawalRequestSort,
   CollectionSort,
+  CrucibleSort,
   GenerationReactType,
   GenerationSort,
   ImageSort,
@@ -25,6 +26,7 @@ import {
   Availability,
   BountyType,
   CheckpointType,
+  CrucibleStatus,
   ImageGenerationProcess,
   MediaType,
   MetricTimeframe,
@@ -34,17 +36,25 @@ import {
 } from '~/shared/utils/prisma/enums';
 import { removeEmpty } from '~/utils/object-helpers';
 import { baseModels } from '~/shared/constants/basemodel.constants';
+import { publishedDateSchema } from '~/shared/utils/published-range';
+import { CRUCIBLE_CONTENT_TYPES } from '~/shared/constants/crucible.constants';
 
 export type ModelFilterSchema = z.infer<typeof modelFilterSchema>;
 const modelFilterSchema = z.object({
-  period: z.enum(MetricTimeframe).default(MetricTimeframe.Month),
+  // AllTime: a recency FILTER can empty a page, and on a tag page it usually does. Hot ranks
+  // recency instead, and a sort cannot drop rows.
+  period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime),
   periodMode: periodModeSchema,
-  sort: z.enum(ModelSort).default(ModelSort.HighestRated),
+  publishedFrom: publishedDateSchema.optional(),
+  publishedTo: publishedDateSchema.optional(),
+  sort: z.enum(ModelSort).default(ModelSort.Hot),
   types: z.enum(ModelType).array().optional(),
   checkpointType: z.enum(CheckpointType).optional(),
   baseModels: z.enum(baseModels).array().optional(),
   status: z.enum(ModelStatus).array().optional(),
   earlyAccess: z.boolean().optional(),
+  paidAccess: z.boolean().optional(),
+  hidePaid: z.boolean().optional(),
   supportsGeneration: z.boolean().optional(),
   fromPlatform: z.boolean().optional(),
   followed: z.boolean().optional(),
@@ -60,6 +70,9 @@ const modelFilterSchema = z.object({
   disablePoi: z.boolean().optional(),
   disableMinor: z.boolean().optional(),
 });
+export const modelSortPeriodDefaults = modelFilterSchema
+  .pick({ sort: true, period: true })
+  .parse({});
 
 type QuestionFilterSchema = z.infer<typeof questionFilterSchema>;
 const questionFilterSchema = z.object({
@@ -102,7 +115,9 @@ const imageFilterSchema = z.object({
 
 type ModelImageFilterSchema = z.infer<typeof modelImageFilterSchema>;
 const modelImageFilterSchema = imageFilterSchema.extend({
-  sort: z.enum(ImageSort).default(ImageSort.Newest), // Default sort for model images should be newest
+  // Most Reactions, not Newest: a model gallery opening on Newest fronts images
+  // that may not be rated yet, which is the sort SFW viewers are not offered.
+  sort: z.enum(ImageSort).default(ImageSort.MostReactions),
   period: z.enum(MetricTimeframe).default(MetricTimeframe.AllTime), //Default period for model details should be all time
   types: z.array(z.enum(MediaType)).default([]),
 });
@@ -141,6 +156,13 @@ const bountyFilterSchema = z.object({
   userId: z.number().optional(),
   baseModels: z.enum(baseModels).array().optional(),
   excludedUserIds: z.number().array().optional(),
+});
+
+type CrucibleFilterSchema = z.infer<typeof crucibleFilterSchema>;
+const crucibleFilterSchema = z.object({
+  sort: z.enum(CrucibleSort).default(CrucibleSort.PrizePool),
+  status: z.enum(CrucibleStatus).array().optional(),
+  contentType: z.enum(CRUCIBLE_CONTENT_TYPES).optional(),
 });
 
 type VideoFilterSchema = z.infer<typeof videoFilterSchema>;
@@ -194,6 +216,7 @@ type StorageState = {
   articles: ArticleFilterSchema;
   collections: CollectionFilterSchema;
   bounties: BountyFilterSchema;
+  crucibles: CrucibleFilterSchema;
   videos: VideoFilterSchema;
   threads: ThreadFilterSchema;
   generation: GenerationFilterSchema;
@@ -220,6 +243,7 @@ type StoreState = FilterState & {
   setArticleFilters: (filters: Partial<ArticleFilterSchema>) => void;
   setCollectionFilters: (filters: Partial<CollectionFilterSchema>) => void;
   setBountyFilters: (filters: Partial<BountyFilterSchema>) => void;
+  setCrucibleFilters: (filters: Partial<CrucibleFilterSchema>) => void;
   setVideoFilters: (filters: Partial<VideoFilterSchema>) => void;
   setThreadFilters: (filters: Partial<ThreadFilterSchema>) => void;
   setGenerationFilters: (filters: Partial<GenerationFilterSchema>) => void;
@@ -239,6 +263,7 @@ const localStorageSchemas: LocalStorageSchema = {
   articles: { key: 'article-filters', schema: articleFilterSchema },
   collections: { key: 'collections-filters', schema: collectionFilterSchema },
   bounties: { key: 'bounties-filters', schema: bountyFilterSchema },
+  crucibles: { key: 'crucibles-filters', schema: crucibleFilterSchema },
   videos: { key: 'videos-filters', schema: videoFilterSchema },
   threads: { key: 'thread-filters', schema: threadFilterSchema },
   generation: { key: 'generation-filters', schema: generationFilterSchema },
@@ -251,6 +276,31 @@ const localStorageSchemas: LocalStorageSchema = {
   auctions: { key: 'auction-filters', schema: auctionFilterSchema },
 };
 
+/**
+ * One-time rewrite of the old default pair (`Highest Rated` + `Month`). The store persists
+ * its whole merged state on every change, defaults included, so anyone who ever touched a
+ * model filter has those saved as though chosen, and would otherwise keep them forever.
+ * Only the exact pair is replaced, so a real choice of either field survives.
+ */
+export const MODEL_FILTER_MIGRATION_KEY = 'model-filters-migration';
+export const MODEL_FILTER_MIGRATION_VERSION = '1-hot-default';
+
+export function migrateModelFilters(key: string, value: Record<string, unknown>) {
+  if (key !== localStorageSchemas.models.key) return value;
+  if (localStorage.getItem(MODEL_FILTER_MIGRATION_KEY) === MODEL_FILTER_MIGRATION_VERSION)
+    return value;
+
+  const isOldDefaultPair =
+    value?.sort === ModelSort.HighestRated && value?.period === MetricTimeframe.Month;
+  const migrated = isOldDefaultPair
+    ? { ...value, sort: ModelSort.Hot, period: MetricTimeframe.AllTime }
+    : value;
+
+  localStorage.setItem(MODEL_FILTER_MIGRATION_KEY, MODEL_FILTER_MIGRATION_VERSION);
+  if (isOldDefaultPair) localStorage.setItem(key, serializeJSON(migrated));
+  return migrated;
+}
+
 const getInitialValues = <TSchema extends z.ZodObject>({
   key,
   schema,
@@ -260,7 +310,7 @@ const getInitialValues = <TSchema extends z.ZodObject>({
 }) => {
   if (typeof window === 'undefined') return schema.parse({});
   const storageValue = localStorage.getItem(key) ?? '{}';
-  const value = deserializeJSON(storageValue);
+  const value = migrateModelFilters(key, deserializeJSON(storageValue));
   const result = schema.safeParse(value);
   if (result.success) return result.data;
   else {
@@ -315,6 +365,8 @@ const createFilterStore = () =>
         set((state) => handleLocalStorageChange({ key: 'collections', data, state })),
       setBountyFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'bounties', data, state })),
+      setCrucibleFilters: (data) =>
+        set((state) => handleLocalStorageChange({ key: 'crucibles', data, state })),
       setVideoFilters: (data) =>
         set((state) => handleLocalStorageChange({ key: 'videos', data, state })),
       setThreadFilters: (data) =>
@@ -376,6 +428,7 @@ export function useSetFilters(type: FilterSubTypes) {
           articles: state.setArticleFilters,
           collections: state.setCollectionFilters,
           bounties: state.setBountyFilters,
+          crucibles: state.setCrucibleFilters,
           videos: state.setVideoFilters,
           threads: state.setThreadFilters,
           generation: state.setGenerationFilters,

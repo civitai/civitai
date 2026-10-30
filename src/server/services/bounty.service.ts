@@ -1,5 +1,15 @@
-import { Prisma } from '@prisma/client';
 import {
+  bountyThreadParents,
+  detachHeldThreadsCte,
+  detachHeldThreadsSql,
+} from '~/server/services/comment-thread-hold';
+import { holdMarkerViewExists, ownerHeldSql } from '~/server/services/legal-hold.service';
+import { isRemovedWithOwner } from '~/server/utils/legal-hold';
+import type * as z from 'zod';
+import { Prisma } from '@prisma/client';
+import { TRPCError } from '@trpc/server';
+import {
+  Availability,
   BountyEntryMode,
   Currency,
   ImageIngestionStatus,
@@ -10,14 +20,36 @@ import type { ManipulateType } from 'dayjs';
 import dayjs from '~/shared/utils/dayjs';
 import { groupBy, uniq } from 'lodash-es';
 import { bountyRefundedEmail } from '~/server/email/templates';
-import { TransactionType, type BuzzSpendType } from '~/shared/constants/buzz.constants';
+import {
+  TransactionType,
+  type BuzzAccountType,
+  type BuzzSpendType,
+} from '~/shared/constants/buzz.constants';
 import {
   createBuzzTransaction,
+  createBuzzTransactionMany,
   createMultiAccountBuzzTransaction,
+  getMultiAccountTransactionsByPrefix,
   getUserBuzzAccount,
-  refundMultiAccountTransaction,
+  refundTransaction,
 } from '~/server/services/buzz.service';
+import { refundAllLegsByPrefix } from '~/server/services/buzz-prefix-refund';
+import { getBuzzApiStatus } from '~/server/utils/buzz-error';
 import {
+  isPayoutPending,
+  lockBountyForPayout,
+  nextPayoutRecordedAt,
+  payoutPendingSql,
+} from '~/server/services/bounty-payout-lock';
+import { assertBountyStarted } from '~/server/services/bounty-schedule';
+import { bountyVisibilityWhere, type BountyViewer } from '~/server/services/bounty-visibility';
+import {
+  hasOpenTextScanFlag,
+  readTextScanFlags,
+  withTextScanDecision,
+} from '~/server/services/text-scan/flag-snapshot';
+import {
+  checkEntityImageKeys,
   createEntityImages,
   updateEntityImages,
   enqueueImageIngestion,
@@ -50,7 +82,20 @@ import { updateEntityFiles } from './file.service';
 import type { ImageMetadata, VideoMetadata } from '~/server/schema/media.schema';
 import type { IngestImageInput } from '~/server/schema/image.schema';
 import { userBountyCountCache } from '~/server/redis/caches';
-import { throwOnBlockedLinkDomain } from '~/server/services/blocklist.service';
+import { evaluateAutoNsfw } from '~/server/services/auto-nsfw';
+import { legacyProfanityAutoNsfwApplies } from '~/server/services/text-scan/route';
+import { scanEntityInBackground } from '~/server/services/text-scan/submit';
+import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
+import { newTagNames } from '~/server/services/new-tag-names';
+import type { BlurbUse } from '~/server/services/blurb-materialize.service';
+import {
+  expandBlurbs,
+  getReferencedBlurbIds,
+  reconcileBlurbReferences,
+} from '~/server/services/blurb-materialize.service';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
+import { BOUNTIES_SEARCH_INDEX } from '~/server/common/constants';
+import { SearchIndexUpdateQueueAction } from '~/server/common/enums';
 import { createProfanityFilter } from '~/libs/profanity-simple';
 import { logToAxiom } from '~/server/logging/client';
 
@@ -78,11 +123,13 @@ export const getAllBounties = <TSelect extends Prisma.BountySelect>({
     excludedUserIds,
   },
   select,
+  viewer,
 }: {
   input: GetInfiniteBountySchema;
   select: TSelect;
+  viewer?: BountyViewer;
 }) => {
-  const AND: Prisma.Enumerable<Prisma.BountyWhereInput> = [];
+  const AND: Prisma.Enumerable<Prisma.BountyWhereInput> = [bountyVisibilityWhere(viewer)];
 
   if (userId && engagement) {
     if (engagement === 'favorite')
@@ -174,11 +221,17 @@ export const createBounty = async ({
   expiresAt: incomingExpiresAt,
   buzzType,
   addLockedProperties,
+  blurbUses,
   ...data
 }: CreateBountyInput & {
   userId: number;
   /** Locks added by the server itself (the profanity filter), not by the caller. */
   addLockedProperties?: string[];
+  /**
+   * `undefined` means the feature was not evaluated for the owner and must NOT reconcile — an
+   * empty array would delete every reference row. See `BlurbExpansion`.
+   */
+  blurbUses?: BlurbUse[];
 }) => {
   const { userId } = data;
   switch (currency) {
@@ -196,6 +249,7 @@ export const createBounty = async ({
     throw new Error('When using Green Buzz, you are not allowed to create NSFW content');
   }
 
+  // The columns are @db.Date: store the UTC day the caller picked.
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
@@ -206,6 +260,7 @@ export const createBounty = async ({
   ]);
 
   let imagesToIngest: IngestImageInput[] = [];
+  const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
@@ -251,6 +306,7 @@ export const createBounty = async ({
           images,
           tx,
           userId,
+          keysCheckedFor,
           entityId: bounty.id,
           entityType: 'Bounty',
         });
@@ -293,6 +349,14 @@ export const createBounty = async ({
           break;
       }
 
+      if (blurbUses)
+        await reconcileBlurbReferences({
+          entityType: 'Bounty',
+          entityId: bounty.id,
+          uses: blurbUses,
+          tx,
+        });
+
       return bounty;
     },
     { maxWait: 10000, timeout: 30000 }
@@ -324,18 +388,25 @@ export const updateBountyById = async ({
   entryLimit,
   isModerator,
   addLockedProperties,
+  blurbUses,
   ...data
 }: UpdateBountyInput & {
   userId: number;
   isModerator?: boolean;
   /** Locks added by the server itself (the profanity filter), not by the caller. */
   addLockedProperties?: string[];
+  /**
+   * `undefined` means the feature was not evaluated for the owner and must NOT reconcile — an
+   * empty array would delete every reference row. See `BlurbExpansion`.
+   */
+  blurbUses?: BlurbUse[];
 }) => {
   // Convert dates to UTC for storing
   const startsAt = startOfDay(incomingStartsAt, { utc: true });
   const expiresAt = startOfDay(incomingExpiresAt, { utc: true });
 
   let imagesToIngest: IngestImageInput[] = [];
+  const keysCheckedFor = await checkEntityImageKeys({ images, userId });
 
   const bounty = await dbWrite.$transaction(
     async (tx) => {
@@ -345,6 +416,8 @@ export const updateBountyById = async ({
           id: true,
           entryLimit: true,
           complete: true,
+          poi: true,
+          meta: true,
           lockedProperties: true,
           _count: { select: { entries: true } },
         },
@@ -357,6 +430,17 @@ export const updateBountyById = async ({
         storedLockedProperties: existing.lockedProperties,
         isModerator,
       });
+      if (data.poi && !existing.poi && !isModerator)
+        throw throwBadRequestError(
+          'The creation of bounties intended to depict an actual person is prohibited.'
+        );
+      // A moderator clearing a text-scan poi flag un-hides the bounty and records the ruling, so
+      // the expiry job pays out as normal and a rescan of the same text does not hide it again.
+      const liftedTextScanPoi =
+        isModerator &&
+        existing.poi &&
+        data.poi === false &&
+        hasOpenTextScanFlag(existing.meta, 'poi');
       // Applied after enforcement, which drops every caller-supplied lock — these come from
       // the server, so they must survive it.
       if (addLockedProperties?.length)
@@ -366,6 +450,8 @@ export const updateBountyById = async ({
         ]);
 
       if (existing.complete) throw throwBadRequestError('Cannot update a completed bounty');
+      if (liftedTextScanPoi && isRemovedWithOwner(existing.meta))
+        throw throwBadRequestError('This bounty is kept hidden until its payout settles');
 
       if (
         entryLimit &&
@@ -382,6 +468,18 @@ export const updateBountyById = async ({
         where: { id },
         data: {
           ...data,
+          ...(liftedTextScanPoi && {
+            availability:
+              (readTextScanFlags(existing.meta).poi?.prev?.availability as
+                | Availability
+                | undefined) ?? Availability.Public,
+            meta: withTextScanDecision(existing.meta, 'poi', 'appealGranted', {
+              at: new Date().toISOString(),
+              by: userId,
+              textHash: readTextScanFlags(existing.meta).poi?.textHash ?? null,
+              via: 'moderator',
+            }) as Prisma.JsonObject,
+          }),
           entryLimit,
           startsAt,
           expiresAt,
@@ -432,8 +530,17 @@ export const updateBountyById = async ({
           entityId: bounty.id,
           entityType: 'Bounty',
           userId,
+          keysCheckedFor,
         });
       }
+
+      if (blurbUses)
+        await reconcileBlurbReferences({
+          entityType: 'Bounty',
+          entityId: bounty.id,
+          uses: blurbUses,
+          tx,
+        });
 
       return bounty;
     },
@@ -453,6 +560,17 @@ export const updateBountyById = async ({
   return bounty;
 };
 
+async function parseBountyInput<T extends z.ZodType>(schema: T, input: unknown) {
+  const parsed = await schema.safeParseAsync(input);
+  if (!parsed.success) throw throwBadRequestError(parsed.error.issues[0]?.message);
+  return parsed.data as z.output<T>;
+}
+
+function assertBountyWindow({ startsAt, expiresAt }: { startsAt: Date; expiresAt: Date }) {
+  if (expiresAt <= startsAt)
+    throw throwBadRequestError('Expiration date must come after the start date');
+}
+
 export const upsertBounty = async ({
   id,
   userId,
@@ -460,16 +578,43 @@ export const upsertBounty = async ({
   buzzType,
   ...data
 }: UpsertBountyInput & { userId: number; isModerator: boolean }) => {
-  await throwOnBlockedLinkDomain(data.description);
+  await throwOnBlockedUserContent(
+    [data.name, data.description, ...(await newTagNames(data.tags?.map((tag) => tag.name)))],
+    { isModerator, surface: 'bounty' }
+  );
 
   const stored = id
-    ? await dbRead.bounty.findUnique({ where: { id }, select: { lockedProperties: true } })
+    ? await dbRead.bounty.findUnique({
+        where: { id },
+        select: { lockedProperties: true, userId: true },
+      })
     : null;
   const storedLockedProperties = stored?.lockedProperties ?? [];
   enforceLockedProperties({ data, storedLockedProperties, isModerator });
 
+  // Re-expanded from the OWNER's rows rather than trusted from the client, and before the write
+  // so what is stored is what the blurb actually says — and before the profanity filter below,
+  // which must evaluate the text that will actually be published. A moderator saving someone
+  // else's bounty resolves none of their blurbs, so they get the ids the bounty already
+  // references instead of stripping every span.
+  const ownerId = stored?.userId ?? userId;
+  const restrictToBlurbIds =
+    id && ownerId !== userId
+      ? () => getReferencedBlurbIds({ entityType: 'Bounty', entityId: id })
+      : undefined;
+  const expansion = await expandBlurbs({
+    userId: ownerId,
+    html: data.description,
+    restrictToBlurbIds,
+  });
+  data.description = expansion.html;
+
+  // The guard above saw the CLIENT's html. Blurb bodies were spliced in since, so the string
+  // about to be written is one it never checked.
+  await throwOnBlockedUserContent(data.description, { isModerator, surface: 'bounty' });
+
   const addLockedProperties: string[] = [];
-  if (!isModerator) {
+  if (!isModerator && (await legacyProfanityAutoNsfwApplies('Bounty', id))) {
     // Check bounty name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
     const textToCheck = [data.name, data.description].filter(Boolean).join(' ');
@@ -495,13 +640,20 @@ export const upsertBounty = async ({
   }
 
   if (id) {
-    const updateInput = await updateBountyInputSchema.parseAsync({ id, ...data });
-    return updateBountyById({
+    const updateInput = await parseBountyInput(updateBountyInputSchema, { id, ...data });
+    assertBountyWindow(updateInput);
+    const updated = await updateBountyById({
       ...updateInput,
       userId,
       isModerator,
       addLockedProperties,
+      blurbUses: expansion.evaluated ? expansion.uses : undefined,
     });
+    if (updated) {
+      await queueBountySearchIndexUpdate(updated.id);
+      scanEntityInBackground({ entityType: 'Bounty', entityId: updated.id });
+    }
+    return updated;
   } else {
     if (data.poi) {
       throw throwBadRequestError(
@@ -509,10 +661,145 @@ export const upsertBounty = async ({
       );
     }
 
-    const createInput = await createBountyInputSchema.parseAsync({ ...data, buzzType });
-    return createBounty({ ...createInput, userId, addLockedProperties });
+    const createInput = await parseBountyInput(createBountyInputSchema, { ...data, buzzType });
+    assertBountyWindow(createInput);
+    const created = await createBounty({
+      ...createInput,
+      userId,
+      addLockedProperties,
+      blurbUses: expansion.evaluated ? expansion.uses : undefined,
+    });
+    await queueBountySearchIndexUpdate(created.id);
+    scanEntityInBackground({ entityType: 'Bounty', entityId: created.id });
+    return created;
   }
 };
+
+/**
+ * The one path for "a bounty's description changed", for a caller holding only new HTML — the
+ * blurb fan-out. `upsertBounty` is form-shaped, so a partial call to it would clear name, tags,
+ * files, images and the entry limit rather than update a column.
+ *
+ * `updateBountyById`'s own follow-up — the image ingest queue and the owner's bounty COUNT —
+ * is not repeated here: a re-materialised body moves neither.
+ */
+export async function applyBountyContentChange({
+  id,
+  description,
+  expectedDescription,
+}: {
+  id: number;
+  description: string;
+  /**
+   * Compare-and-set: the body this caller READ before splicing. The fan-out does load → splice →
+   * save with nothing held across it, so a creator saving in that window had their edit silently
+   * reverted by the replay — no error, and the save it clobbered had already returned success.
+   * Supplied, a mismatch writes nothing and returns false; the reference stays pending and the
+   * next pass re-reads. Omitted, the write is unconditional as before.
+   */
+  expectedDescription?: string;
+}) {
+  // The blocklist can move after a blurb was saved, and this path has no user in the loop to
+  // catch it — same reason `applyArticleContentChange` re-checks.
+  await throwOnBlockedUserContent(description, { surface: 'bounty' });
+
+  const stored = await dbWrite.bounty.findUnique({
+    where: { id },
+    select: { name: true, nsfw: true, lockedProperties: true, details: true },
+  });
+  if (!stored) throw throwNotFoundError(`No bounty with id ${id}`);
+
+  // Raw SQL because Prisma's @updatedAt fires on every client-side update(), and a blurb
+  // re-materialization is not a creator edit.
+  const affected =
+    await dbWrite.$executeRaw`UPDATE "Bounty" SET description = ${description} WHERE id = ${id}${
+      expectedDescription === undefined
+        ? Prisma.empty
+        : Prisma.sql` AND description = ${expectedDescription}`
+    }`;
+  // `stored` above already proved the row exists, so a zero here is the compare-and-set losing.
+  if (!affected) {
+    if (expectedDescription !== undefined) return false;
+    throw throwNotFoundError(`No bounty with id ${id}`);
+  }
+
+  // `upsertBounty` runs this gate on the text a creator types. This path is the fan-out, which
+  // has just written text that gate never saw — without it, editing a blurb puts profanity into a
+  // published bounty while it keeps the SFW rating it earned with the old text. Evaluated
+  // unconditionally: there is no acting moderator here to exempt, only the owner whose blurb
+  // changed.
+  const flagged = (await legacyProfanityAutoNsfwApplies('Bounty', id))
+    ? evaluateAutoNsfw({
+        name: stored.name,
+        description,
+        alreadyNsfw: stored.nsfw,
+        lockedProperties: stored.lockedProperties,
+      })
+    : null;
+  if (flagged) {
+    const details = {
+      ...((stored.details as MixedObject | null) ?? {}),
+      ...flagged.metaPatch,
+    } as Prisma.InputJsonObject;
+    // Prisma rather than raw SQL, unlike the body write above: this fires rarely, and hand-rolling
+    // the jsonb + text[] binds is where that trade stops being worth it.
+    await dbWrite.bounty.update({
+      where: { id },
+      data: flagged.lock
+        ? { nsfw: true, lockedProperties: uniq([...stored.lockedProperties, 'nsfw']), details }
+        : { details },
+    });
+  }
+
+  await queueBountySearchIndexUpdate(id);
+  scanEntityInBackground({ entityType: 'Bounty', entityId: id });
+
+  return true;
+}
+
+/**
+ * The bounty save path enqueued nothing before this, so an edited bounty served its old
+ * `description` in search results until a metric or entry event re-enqueued it. Called from
+ * both `upsertBounty` and `applyBountyContentChange` so the two cannot diverge.
+ *
+ * The enqueue itself, not `bountiesSearchIndex.queueUpdate`, which is exactly this call with
+ * `indexName` bound (base.search-index.ts) — reaching it through the index module would pull
+ * `meilisearch/client` and its module-scope pLimit and prom collectors into this service's graph.
+ */
+function queueBountySearchIndexUpdate(id: number) {
+  return SearchIndexUpdate.queueUpdate({
+    indexName: BOUNTIES_SEARCH_INDEX,
+    items: [{ id, action: SearchIndexUpdateQueueAction.Update }],
+  });
+}
+
+/**
+ * Ahead of deleting a bounty: an open one becomes a refund of its unawarded supporters. Returns
+ * whether a payout is owed, for `settleBountyPayout`, or null for a missing bounty.
+ */
+export async function claimBountyRefundForDelete(id: number) {
+  // An unpaid award is paid before the bounty becomes a refund: the refund leaves out awarded
+  // supporters, and the delete then removes their rows.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const claim = await dbWrite.$transaction(async (tx) => {
+      const locked = await lockBountyForPayout(tx, id);
+      if (!locked) return null;
+      if (locked.userId && !locked.complete && !locked.refunded) {
+        if (isPayoutPending(locked)) return { awardPending: true } as const;
+        await tx.bounty.update({
+          where: { id },
+          data: { complete: true, refunded: true, payoutRecordedAt: nextPayoutRecordedAt(locked) },
+        });
+        return { owed: true, firstAttempt: true };
+      }
+      return { owed: isPayoutPending(locked), firstAttempt: false };
+    });
+    if (!claim || !('awardPending' in claim)) return claim;
+    // Still unpaid: owed, and the caller's settle reports it as failed.
+    if (!(await settleBountyPayout(id))) return { owed: true, firstAttempt: false };
+  }
+  throw new Error(`Bounty ${id}: awards kept arriving; not claimed as a refund`);
+}
 
 export const deleteBountyById = async ({
   id,
@@ -520,7 +807,7 @@ export const deleteBountyById = async ({
 }: GetByIdInput & { isModerator: boolean }) => {
   const bounty = await getBountyById({
     id,
-    select: { userId: true, expiresAt: true, complete: true, refunded: true },
+    select: { userId: true, expiresAt: true },
   });
   if (!bounty) throw throwNotFoundError('Bounty not found');
 
@@ -538,73 +825,36 @@ export const deleteBountyById = async ({
       throw throwBadRequestError('Cannot delete bounty because it has supporters and/or entries');
   }
 
-  // Fetch benefactor data BEFORE deletion to avoid cascade delete issues
-  const bountyCreator =
-    bounty.userId && !bounty.complete && !bounty.refunded
-      ? await dbRead.bountyBenefactor.findUnique({
-          where: { bountyId_userId: { userId: bounty.userId, bountyId: id } },
-          select: { unitAmount: true, currency: true, buzzTransactionId: true },
-        })
-      : null;
+  // The refund is claimed and paid before the row goes: deleting cascades the benefactor rows a
+  // retry would refund from.
+  const claim = await claimBountyRefundForDelete(id);
+  if (!claim) return null;
 
-  const deletedBounty = await dbWrite.$transaction(async (tx) => {
+  if (claim.owed) {
+    const settled = await settleBountyPayout(id, {
+      firstAttempt: claim.firstAttempt,
+      refundDescription: isModerator
+        ? 'Refund reason: moderator deleted bounty'
+        : 'Refund reason: owner deleted bounty',
+    });
+    if (!settled && !(isModerator && (await refundUnpayableBountyAward(id))))
+      throw new TRPCError({
+        code: 'INTERNAL_SERVER_ERROR',
+        message:
+          'The bounty could not be paid out, so it was not deleted. The payout is retried automatically; try deleting it again later.',
+      });
+  }
+
+  const markerView = await holdMarkerViewExists();
+  return dbWrite.$transaction(async (tx) => {
+    if (!(await lockBountyForPayout(tx, id))) return null;
+    await tx.$executeRaw(
+      detachHeldThreadsSql(bountyThreadParents(Prisma.sql`SELECT ${id}::int`), markerView)
+    );
     const deletedBounty = await tx.bounty.delete({ where: { id } });
-    if (!deletedBounty) return null;
-
     await tx.file.deleteMany({ where: { entityId: id, entityType: 'Bounty' } });
     return deletedBounty;
   });
-  if (!deletedBounty) return null;
-
-  // Refund the bounty creator using pre-fetched data
-  if (bounty.userId && !bounty.complete && !bounty.refunded && bountyCreator) {
-    switch (bountyCreator.currency) {
-      case Currency.BUZZ: {
-        if (bountyCreator.buzzTransactionId && bountyCreator.buzzTransactionId.length > 0) {
-          // Refund all transactions for the creator
-          const txResults = await Promise.allSettled(
-            bountyCreator.buzzTransactionId.map((txId) =>
-              refundMultiAccountTransaction({
-                externalTransactionIdPrefix: txId,
-                description: isModerator
-                  ? 'Refund reason: moderator deleted bounty'
-                  : 'Refund reason: owner deleted bounty',
-                details: { bountyId: id },
-              })
-            )
-          );
-
-          // Log any failures
-          txResults.forEach((result, index) => {
-            if (result.status === 'rejected') {
-              // Log failure
-              logToAxiom({
-                name: 'bounty-refund',
-                type: 'error',
-                message: `Bounty ${id}: Failed to refund transaction ${
-                  bountyCreator.buzzTransactionId[index]
-                } - ${String(result.reason)}`,
-              }).catch(() => null);
-            }
-          });
-        } else {
-          // Fallback: No transaction IDs (legacy data)
-          await createBuzzTransaction({
-            fromAccountId: 0,
-            toAccountId: bounty.userId,
-            amount: bountyCreator.unitAmount,
-            type: TransactionType.Refund,
-            description: 'Refund reason: owner deleted bounty',
-          });
-        }
-        break;
-      }
-      default: // Do no checks
-        break;
-    }
-  }
-
-  return deletedBounty;
 };
 
 export const getBountyImages = async ({
@@ -657,12 +907,14 @@ export const addBenefactorUnitAmount = async ({
 }: AddBenefactorUnitAmountInputSchema & { userId: number; buzzType: BuzzSpendType }) => {
   const bounty = await dbRead.bounty.findUnique({
     where: { id: bountyId },
-    select: { complete: true, id: true, nsfw: true, nsfwLevel: true },
+    select: { complete: true, id: true, nsfw: true, nsfwLevel: true, startsAt: true },
   });
 
   if (!bounty) {
     throw throwNotFoundError('Bounty not found');
   }
+
+  assertBountyStarted(bounty);
 
   if (bounty.complete) {
     throw throwBadRequestError('Bounty is already complete');
@@ -785,6 +1037,459 @@ export const getImagesForBounties = async ({
   return groupedImages;
 };
 
+function logBountyPayoutError({
+  bountyId,
+  userId,
+  message,
+  name = 'bounty-refund',
+}: {
+  bountyId: number;
+  userId?: number | null;
+  message: string;
+  name?: 'bounty-refund' | 'bounty-award';
+}) {
+  logToAxiom({
+    name,
+    type: 'error',
+    message: `Bounty ${bountyId}: ${message}`,
+    bountyId,
+    userId,
+  }).catch(() => null);
+}
+
+async function refundBountyPrefix(txId: string, description: string, details: MixedObject) {
+  if (isBountyTransactionPrefix(txId)) {
+    await refundAllLegsByPrefix({ externalTransactionIdPrefix: txId, description, details });
+    return;
+  }
+  try {
+    await refundTransaction(txId, description);
+  } catch (error) {
+    // A single transaction: 409 means an earlier attempt already refunded it.
+    const status = getBuzzApiStatus(error);
+    if (status === 404 || status === 409) return;
+    throw error;
+  }
+}
+
+/**
+ * Returns every benefactor's Buzz (only the unawarded ones with `onlyUnawarded`). Call it only
+ * after a committed claim under `lockBountyForPayout`. A failed refund is logged per benefactor
+ * and the rest continue.
+ *
+ * Refunds by transaction id are safe to repeat. Legacy rows without ids are paid by a plain
+ * transaction that is not, so a retry (`includeLegacy: false`) skips them.
+ */
+export async function refundBountyBenefactorFunds({
+  bountyId,
+  currency,
+  onlyUnawarded = false,
+  includeLegacy = true,
+  description = 'Reason: Bounty refund',
+}: {
+  bountyId: number;
+  currency: Currency;
+  onlyUnawarded?: boolean;
+  includeLegacy?: boolean;
+  description?: string;
+}): Promise<{ refunded: number[]; failed: number[] }> {
+  const outcome = { refunded: [] as number[], failed: [] as number[] };
+  if (currency !== Currency.BUZZ) return outcome;
+  const benefactors = await dbWrite.bountyBenefactor.findMany({
+    // An award keeps `awardedAt` after its entry is deleted and `awardedToId` is nulled.
+    where: { bountyId, currency, ...(onlyUnawarded ? { awardedToId: null, awardedAt: null } : {}) },
+    select: { userId: true, unitAmount: true, buzzTransactionId: true },
+  });
+
+  for (const { userId, unitAmount, buzzTransactionId } of benefactors) {
+    if (unitAmount <= 0) continue;
+    try {
+      if (buzzTransactionId && buzzTransactionId.length > 0) {
+        const txResults = await Promise.allSettled(
+          buzzTransactionId.map((txId) =>
+            refundBountyPrefix(txId, description, { bountyId, userId, unitAmount })
+          )
+        );
+        const failed = txResults.flatMap((result, index) =>
+          result.status === 'rejected'
+            ? [`${buzzTransactionId[index]} - ${String(result.reason)}`]
+            : []
+        );
+        if (failed.length) {
+          logBountyPayoutError({
+            bountyId,
+            userId,
+            message: `Failed to refund transactions ${failed.join(', ')}`,
+          });
+          outcome.failed.push(userId);
+          continue;
+        }
+      } else if (includeLegacy) {
+        await createBuzzTransaction({
+          fromAccountId: 0,
+          toAccountId: userId,
+          amount: unitAmount,
+          type: TransactionType.Refund,
+          description,
+        });
+      } else {
+        logBountyPayoutError({ bountyId, userId, message: 'Legacy refund not retried' });
+        continue;
+      }
+      outcome.refunded.push(userId);
+    } catch (e) {
+      logBountyPayoutError({ bountyId, userId, message: `Refund failed - ${String(e)}` });
+      outcome.failed.push(userId);
+    }
+  }
+  return outcome;
+}
+
+// Not `bounty-award-<id>-…`: awards before this key used that shape with an entry id OR a bounty
+// id, so a bounty id could match an old entry award and read as already paid.
+const bountyAwardTransactionId = (bountyId: number, supporterId: number, accountType: string) =>
+  `bounty-award-b${bountyId}-u${supporterId}-${accountType}`;
+
+type AwardedFunds = { userId: number; unitAmount: number; buzzTransactionId: string[] | null };
+
+type SupporterCharge = { userId: number; chargedAt: number; amount: number };
+
+/** Unix seconds, from the time the charge prefix carries; 0 for a charge that has none. */
+const prefixChargedAt = (prefix: string) =>
+  Math.floor((Number(prefix.split('-').at(-1)) || 0) / 1000);
+
+/**
+ * What each supporter was charged, by colour and charge time: each colour is paid as its own row.
+ * Throws when a lookup fails: an award paid on partial amounts would spend its keys on them.
+ */
+async function bountyAwardAmounts(benefactors: AwardedFunds[]) {
+  const amounts: Partial<Record<BuzzAccountType, SupporterCharge[]>> = {};
+  const add = (accountType: BuzzAccountType, userId: number, chargedAt: number, amount: number) => {
+    if (amount <= 0) return;
+    const charges = (amounts[accountType] ??= []);
+    const same = charges.find((c) => c.userId === userId && c.chargedAt === chargedAt);
+    if (same) same.amount += amount;
+    else charges.push({ userId, chargedAt, amount });
+  };
+  for (const { userId, unitAmount, buzzTransactionId } of benefactors) {
+    const ids = buzzTransactionId ?? [];
+    const prefixes = ids.filter(isBountyTransactionPrefix);
+    const charged = await Promise.all(
+      prefixes.map(async (prefix) => ({
+        chargedAt: prefixChargedAt(prefix),
+        charges: await getMultiAccountTransactionsByPrefix(prefix),
+      }))
+    );
+    if (
+      prefixes.length &&
+      prefixes.length === ids.length &&
+      !charged.some((c) => c.charges.length) &&
+      unitAmount > 0
+    )
+      throw new Error('No charge transactions found for the award');
+    let total = 0;
+    for (const { chargedAt, charges } of charged)
+      for (const charge of charges) {
+        add(charge.accountType as BuzzAccountType, userId, chargedAt, charge.amount);
+        total += charge.amount;
+      }
+    // Charges made before multi-account Buzz have no per-type record; they were yellow.
+    if (prefixes.length < ids.length || !ids.length) add('yellow', userId, 0, unitAmount - total);
+  }
+  return amounts;
+}
+
+/**
+ * Refunds a supporter whose award can no longer be paid, in the colours it was charged in. Returns
+ * false if any refund fails. Safe to repeat: charges refund by transaction id, and a legacy charge
+ * pays under a fixed key.
+ */
+async function refundAwardingSupporter(bountyId: number, supporter: AwardedFunds) {
+  const { userId, unitAmount, buzzTransactionId } = supporter;
+  const description = 'Reason: Bounty refund, the awarded entry was deleted';
+  try {
+    if (buzzTransactionId?.length) {
+      for (const txId of buzzTransactionId)
+        await refundBountyPrefix(txId, description, { bountyId, userId, unitAmount });
+    } else if (unitAmount > 0) {
+      const result = await createBuzzTransactionMany([
+        {
+          fromAccountId: 0,
+          toAccountId: userId,
+          amount: unitAmount,
+          type: TransactionType.Refund,
+          description,
+          details: { bountyId },
+          externalTransactionId: `bounty-award-refund-b${bountyId}-u${userId}`,
+        },
+      ]);
+      if (!result.transactions.length && !result.conflicts.length) return false;
+    }
+  } catch (e) {
+    logBountyPayoutError({ bountyId, userId, message: `Award refund failed - ${String(e)}` });
+    return false;
+  }
+  const activity = 'refundDeletedBountyAward';
+  const logged = await dbWrite.modActivity.findFirst({
+    where: { entityType: 'bounty', entityId: bountyId, activity, userId },
+    select: { id: true },
+  });
+  if (!logged)
+    await dbWrite.modActivity.create({
+      data: { userId, entityType: 'bounty', entityId: bountyId, activity },
+    });
+  return true;
+}
+
+/**
+ * The supporters are the rows with `awardedAt`. Each is paid to the owner of the entry it awarded.
+ * `awardedToId` is nulled when that entry is deleted: the latest award is then paid to the winner
+ * captured on the bounty, and an earlier one is refunded to its supporter.
+ *
+ * An award dated at or before `settledAt` was paid by that settlement (see `nextPayoutRecordedAt`),
+ * under this key or an older one, and is skipped: its entry may since have been deleted.
+ */
+async function payBountyAward(
+  bountyId: number,
+  winnerUserId: number | null,
+  settledAt: Date | null
+) {
+  if (!winnerUserId) {
+    logBountyPayoutError({ bountyId, name: 'bounty-award', message: 'Award has no winner to pay' });
+    return false;
+  }
+  const awardedRows = await dbWrite.bountyBenefactor.findMany({
+    where: { bountyId, awardedAt: { not: null } },
+    select: {
+      userId: true,
+      unitAmount: true,
+      currency: true,
+      buzzTransactionId: true,
+      awardedAt: true,
+      awartedTo: { select: { userId: true } },
+    },
+  });
+  const awarded = awardedRows.filter((b) => !settledAt || !b.awardedAt || b.awardedAt > settledAt);
+  if (!awarded.length) {
+    logBountyPayoutError({
+      bountyId,
+      userId: winnerUserId,
+      name: 'bounty-award',
+      message: 'Award recorded but no supporter is marked as awarding it',
+    });
+    return false;
+  }
+  // The expiry job awards every remaining supporter at once, under one `awardedAt`.
+  const latestAt = Math.max(...awarded.map((b) => b.awardedAt?.getTime() ?? 0));
+
+  let paid = true;
+  for (const supporter of awarded) {
+    if (supporter.currency !== Currency.BUZZ) continue;
+    const isLatest = supporter.awardedAt?.getTime() === latestAt;
+    const payee = supporter.awartedTo?.userId ?? (isLatest ? winnerUserId : null);
+    if (!payee) {
+      if (!(await refundAwardingSupporter(bountyId, supporter))) paid = false;
+      continue;
+    }
+
+    const transactions = Object.entries(await bountyAwardAmounts([supporter])).map(
+      ([accountType, charges = []]) => ({
+        fromAccountId: 0,
+        toAccountId: payee,
+        toAccountType: accountType as BuzzAccountType,
+        amount: charges.reduce((sum, c) => sum + c.amount, 0),
+        type: TransactionType.Bounty,
+        description: 'Reason: Bounty entry has been awarded!',
+        // Who funded the award, on the ledger row itself: it outlives the bounty, and bankable
+        // netting reads it (`BOUNTY_AWARD_SQL`).
+        details: {
+          entityId: bountyId,
+          entityType: 'Bounty',
+          // Flat number arrays, one entry per charge, the shape tips already store (`targetUserIds`).
+          supporterIds: charges.map((c) => c.userId),
+          supporterAmounts: charges.map((c) => c.amount),
+          supporterChargedAt: charges.map((c) => c.chargedAt),
+        },
+        externalTransactionId: bountyAwardTransactionId(bountyId, supporter.userId, accountType),
+      })
+    );
+    if (!transactions.length) continue;
+
+    const result = await createBuzzTransactionMany(transactions);
+    // A conflict is the ledger already holding the key: an earlier attempt paid it.
+    if (result.transactions.length + result.conflicts.length < transactions.length) {
+      logBountyPayoutError({
+        bountyId,
+        userId: payee,
+        name: 'bounty-award',
+        message: 'The ledger neither made nor recognised every award transaction',
+      });
+      paid = false;
+    }
+  }
+  return paid;
+}
+
+/**
+ * Moves the Buzz for a recorded award or refund and stamps `payoutSettledAt`. Safe to repeat: awards
+ * pay under fixed keys and refunds treat an already-refunded charge as done. Returns whether the
+ * bounty owes nothing more. `firstAttempt` is false for retries, which skip legacy refunds.
+ */
+export async function settleBountyPayout(
+  bountyId: number,
+  {
+    firstAttempt = false,
+    refundDescription,
+  }: { firstAttempt?: boolean; refundDescription?: string } = {}
+) {
+  const bounty = await dbWrite.bounty.findUnique({
+    where: { id: bountyId },
+    select: {
+      refunded: true,
+      payoutRecordedAt: true,
+      payoutSettledAt: true,
+      payoutWinnerUserId: true,
+    },
+  });
+  if (!bounty || !isPayoutPending(bounty)) return true;
+
+  let settled = false;
+  try {
+    settled = bounty.refunded
+      ? (
+          await refundBountyBenefactorFunds({
+            bountyId,
+            currency: Currency.BUZZ,
+            onlyUnawarded: true,
+            includeLegacy: firstAttempt,
+            description: refundDescription,
+          })
+        ).failed.length === 0
+      : await payBountyAward(bountyId, bounty.payoutWinnerUserId, bounty.payoutSettledAt);
+  } catch (e) {
+    logBountyPayoutError({ bountyId, message: `Payout failed - ${String(e)}` });
+  }
+  if (!settled) return false;
+
+  // Only the payout read above: one recorded since then is still owed. Never before it was
+  // recorded, which a clock behind the recording one would stamp.
+  const { payoutRecordedAt } = bounty;
+  await dbWrite.bounty.updateMany({
+    where: { id: bountyId, payoutRecordedAt },
+    data: { payoutSettledAt: new Date(Math.max(Date.now(), payoutRecordedAt?.getTime() ?? 0)) },
+  });
+  return true;
+}
+
+/**
+ * Invariant: once an award is recorded, its `awardedAt` marks and `payoutWinnerUserId` are cleared
+ * only here. Clearing them anywhere else would let an award that was paid but not yet stamped
+ * settled be refunded as well.
+ *
+ * The moderator override for a recorded award no retry can pay: it has no winner, or no supporter is
+ * marked as awarding it. The award becomes a refund to its supporters, and the caller may delete once
+ * this returns true. If the refund also fails, the supporter rows are logged before the delete
+ * cascades them away. Any other unsettled payout, such as a Buzz failure, returns false and blocks.
+ */
+export async function refundUnpayableBountyAward(bountyId: number) {
+  const converted = await dbWrite.$transaction(async (tx) => {
+    const locked = await lockBountyForPayout(tx, bountyId);
+    if (!locked || locked.refunded || !isPayoutPending(locked)) return false;
+    const settledAt = locked.payoutSettledAt;
+    const unpayable =
+      !locked.payoutWinnerUserId ||
+      !(await tx.bountyBenefactor.count({
+        where: { bountyId, awardedAt: settledAt ? { gt: settledAt } : { not: null } },
+      }));
+    if (!unpayable) return false;
+    // An award an earlier settlement paid keeps its marks, so the refund below leaves it out.
+    await tx.bountyBenefactor.updateMany({
+      where: settledAt
+        ? { bountyId, OR: [{ awardedAt: null }, { awardedAt: { gt: settledAt } }] }
+        : { bountyId },
+      data: { awardedToId: null, awardedAt: null },
+    });
+    await tx.bounty.update({
+      where: { id: bountyId },
+      data: { refunded: true, payoutWinnerUserId: null },
+    });
+    return true;
+  });
+  if (!converted) return false;
+
+  logBountyPayoutError({
+    bountyId,
+    name: 'bounty-award',
+    message: 'Award could not be paid; refunding its supporters instead',
+  });
+  const refunded = await settleBountyPayout(bountyId, {
+    firstAttempt: true,
+    refundDescription: 'Reason: Bounty refund, the award could not be paid',
+  });
+  if (!refunded) {
+    const benefactors = await dbWrite.bountyBenefactor.findMany({
+      where: { bountyId },
+      select: { userId: true, unitAmount: true, currency: true, buzzTransactionId: true },
+    });
+    logToAxiom({
+      name: 'bounty-refund',
+      type: 'error',
+      message: `Bounty ${bountyId}: refund of an unpayable award failed; deleted by a moderator anyway`,
+      bountyId,
+      benefactors,
+    }).catch(() => null);
+  }
+  return true;
+}
+
+const BOUNTY_PAYOUT_RETRY_AFTER_MS = 10 * 60 * 1000;
+const BOUNTY_PAYOUT_RETRY_BATCH_SIZE = 100;
+const BOUNTY_PAYOUT_RETRY_MAX_BATCHES = 20;
+
+export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
+  const cutoff = new Date(now.getTime() - BOUNTY_PAYOUT_RETRY_AFTER_MS);
+  let cursor = 0;
+  let settled = 0;
+  for (let batch = 0; batch < BOUNTY_PAYOUT_RETRY_MAX_BATCHES; batch++) {
+    const due = await dbWrite.$queryRaw<{ id: number }[]>`
+      SELECT b.id FROM "Bounty" b
+      WHERE b.id > ${cursor} AND ${payoutPendingSql} AND b."payoutRecordedAt" <= ${cutoff}
+      ORDER BY b.id
+      LIMIT ${BOUNTY_PAYOUT_RETRY_BATCH_SIZE}`;
+    if (!due.length) break;
+    cursor = due[due.length - 1].id;
+    for (const { id } of due) if (await settleBountyPayout(id)) settled++;
+    if (due.length < BOUNTY_PAYOUT_RETRY_BATCH_SIZE) break;
+  }
+  return { settled };
+}
+
+/**
+ * Only a complete bounty settled after its last recorded payout: an open one, or one whose award was
+ * recorded again after an earlier one settled, still owes supporters. Held owners' bounties are
+ * skipped and picked up on the first run after the hold ends.
+ */
+export async function deleteSettledKeptBounties() {
+  const markerView = await holdMarkerViewExists();
+  const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b
+    WHERE b.meta ->> 'removedWithOwner' = 'true' AND b.complete
+      AND b."payoutSettledAt" >= b."payoutRecordedAt"
+      AND NOT ${ownerHeldSql(Prisma.raw('b."userId"'))}`;
+  const deleted = await dbWrite.$queryRaw<{ id: number }[]>`
+    WITH ${detachHeldThreadsCte(bountyThreadParents(doomed), markerView)},
+    gone AS (DELETE FROM "Bounty" WHERE id IN (${doomed}) RETURNING id),
+    files AS (
+      DELETE FROM "File" WHERE "entityType" = 'Bounty' AND "entityId" IN (SELECT id FROM gone)
+    )
+    SELECT id FROM gone`;
+  if (!deleted.length) return 0;
+  await SearchIndexUpdate.queueUpdate({
+    indexName: BOUNTIES_SEARCH_INDEX,
+    items: deleted.map(({ id }) => ({ id, action: SearchIndexUpdateQueueAction.Delete })),
+  });
+  return deleted.length;
+}
+
 export const refundBounty = async ({
   id,
   isModerator,
@@ -798,9 +1503,6 @@ export const refundBounty = async ({
     select: {
       name: true,
       id: true,
-      complete: true,
-      refunded: true,
-      userId: true,
       user: { select: { id: true, email: true } },
     },
   } as const;
@@ -809,87 +1511,41 @@ export const refundBounty = async ({
     return dbWrite.bounty.findUniqueOrThrow(bountyFindArgs);
   });
 
-  const { user } = bounty;
+  const updated = await dbWrite.$transaction(async (tx) => {
+    const locked = await lockBountyForPayout(tx, id);
+    if (!locked) throw throwNotFoundError('Bounty not found');
+    if (locked.complete || locked.refunded)
+      throw throwBadRequestError('This bounty has already been awarded or refunded');
+    if (isPayoutPending(locked))
+      throw throwBadRequestError('An award on this bounty is still being paid. Try again later.');
 
-  if (bounty.complete || bounty.refunded) {
-    throw throwBadRequestError('This bounty has already been awarded or refunded');
-  }
+    const benefactors = await tx.bountyBenefactor.findMany({
+      where: { bountyId: id },
+      select: { userId: true, currency: true, awardedToId: true, awardedAt: true },
+    });
+    // `awardedAt` outlives the awarded entry.
+    if (benefactors.some((b) => b.awardedToId != null || b.awardedAt != null))
+      throw throwBadRequestError(
+        'At least one benefactor has awarded an entry. This bounty is not refundable.'
+      );
 
-  const benefactors = await dbRead.bountyBenefactor.findMany({
-    where: { bountyId: id },
+    if (!benefactors.some((b) => b.userId === locked.userId))
+      throw throwBadRequestError('No currency found for bounty');
+
+    return tx.bounty.update({
+      where: { id },
+      data: { complete: true, refunded: true, payoutRecordedAt: nextPayoutRecordedAt(locked) },
+    });
   });
 
-  if (benefactors.find((b) => b.awardedToId !== null)) {
-    throw throwBadRequestError(
-      'At least one benefactor has awarded an entry. This bounty is not refundable.'
-    );
-  }
+  await settleBountyPayout(id, { firstAttempt: true });
 
-  const currency = benefactors.find((b) => b.userId === bounty.userId)?.currency;
-
-  if (!currency) {
-    throw throwBadRequestError('No currency found for bounty');
-  }
-
-  for (const { userId, unitAmount, buzzTransactionId } of benefactors) {
-    if (unitAmount > 0) {
-      switch (currency) {
-        case Currency.BUZZ: {
-          if (buzzTransactionId && buzzTransactionId.length > 0) {
-            // Refund all transactions for this benefactor
-            const txResults = await Promise.allSettled(
-              buzzTransactionId.map((txId) =>
-                refundMultiAccountTransaction({
-                  externalTransactionIdPrefix: txId,
-                  description: 'Reason: Bounty refund',
-                  details: { bountyId: id, userId, unitAmount },
-                })
-              )
-            );
-
-            // Log any failures
-            txResults.forEach((result, index) => {
-              if (result.status === 'rejected') {
-                // Log failure
-                logToAxiom({
-                  name: 'bounty-refund',
-                  type: 'error',
-                  message: `Bounty ${id}: Failed to refund transaction ${
-                    buzzTransactionId[index]
-                  } - ${String(result.reason)}`,
-                }).catch(() => null);
-              }
-            });
-          } else {
-            // Fallback: No transaction IDs (legacy data or edge case)
-            await createBuzzTransaction({
-              fromAccountId: 0,
-              toAccountId: userId,
-              amount: unitAmount,
-              type: TransactionType.Refund,
-              description: 'Reason: Bounty refund',
-            });
-          }
-
-          break;
-        }
-        default: // Do nothing just yet.
-          break;
-      }
-    }
-  }
-
-  if (user) {
+  if (bounty.user) {
     bountyRefundedEmail.send({
       bounty,
-      user,
+      user: bounty.user,
     });
   }
-
-  const updated = await dbWrite.bounty.update({
-    where: { id },
-    data: { complete: true, refunded: true },
-  });
 
   if (updated.userId) {
     await userBountyCountCache.refresh(updated.userId);

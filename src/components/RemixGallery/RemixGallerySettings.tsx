@@ -1,4 +1,8 @@
 import {
+  REMIX_QUEUE_RECEIVED_URL,
+  REMIX_QUEUE_SENT_URL,
+} from '~/components/Placement/queue-routes';
+import {
   Alert,
   Anchor,
   Badge,
@@ -11,6 +15,8 @@ import {
 } from '@mantine/core';
 import { useEffect, useState } from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
+import { SettingsSection } from '~/components/Account/SettingsLayout';
+import { PlacementFreeSlotSlider } from '~/components/Placement/PlacementFreeSlotSlider';
 import { PlacementPriceSlider } from '~/components/Placement/PlacementPriceSlider';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
@@ -30,7 +36,7 @@ import { trpc } from '~/utils/trpc';
  * There is no "accept all" here. A sticker comes from a moderated catalog; a
  * remix gallery accepts arbitrary user media, so every submission is reviewed.
  */
-export function RemixGallerySettings() {
+export function RemixGallerySettings({ flat }: { flat?: boolean } = {}) {
   const features = useFeatureFlags();
   const currentUser = useCurrentUser();
   const utils = trpc.useUtils();
@@ -48,9 +54,7 @@ export function RemixGallerySettings() {
     {},
     { enabled }
   );
-  const { data: sent } = trpc.placement.getMyRemixGallerySubmissions.useQuery(undefined, {
-    enabled,
-  });
+  const { data: sent } = trpc.placement.getMyRemixGallerySubmissions.useQuery({}, { enabled });
 
   const stored = spaces?.[0];
   // Seeded from the surface default, not from `'off'`. A creator with no row is
@@ -61,11 +65,16 @@ export function RemixGallerySettings() {
   const [mode, setMode] = useState<string>(PLACEMENT_SURFACES.remixGallery.defaultMode);
   const [price, setPrice] = useState<number | ''>('');
   const [contentRule, setContentRule] = useState<RemixGalleryContentRule>('atOrBelow');
+  // `null`, not the default value: a stored number stops tracking the surface
+  // default when it moves, and "unset" and "deliberately set to 1" are the same
+  // number, so this cannot be recovered by diffing against the default later.
+  const [freeSlots, setFreeSlots] = useState<number | null>(null);
 
   useEffect(() => {
     if (!stored) return;
     setMode(stored.mode);
     setPrice(stored.price ?? '');
+    setFreeSlots(stored.freeSlots);
     setContentRule(remixGalleryContentRule(stored.settings as Record<string, unknown>));
   }, [stored]);
 
@@ -78,10 +87,13 @@ export function RemixGallerySettings() {
   if (!enabled || !currentUser) return null;
 
   const cap = range?.max ?? 0;
+  const freeSlotCap = range?.freeSlotCap ?? 0;
   const overCap = typeof price === 'number' && cap > 0 && price > cap;
   // Waiting on the owner, and waiting on someone else. Only the first is a
   // to-do, which is why it is the one badged in yellow.
   const receivedCount = pending?.items.length ?? 0;
+  // A floor once the queue pages — see the sticker twin in PlacementSpaceSection.
+  const receivedLabel = pending?.nextCursor ? `${receivedCount}+` : `${receivedCount}`;
   const sentCount = (sent ?? []).filter((row) => row.status === 'pending').length;
   const caption = placementPriceCaption(
     'remixGallery',
@@ -93,10 +105,17 @@ export function RemixGallerySettings() {
   const commit = (
     nextMode: string,
     nextPrice: number | '',
-    nextRule: RemixGalleryContentRule = contentRule
+    nextRule: RemixGalleryContentRule = contentRule,
+    /**
+     * Sent ONLY when the free-slot control was the thing that moved. `undefined`
+     * leaves the stored value alone, and for a creator who has never touched it
+     * that means leaving it NULL — which is what tracks the surface default.
+     */
+    nextFreeSlots?: number
   ) =>
     save.mutate({
       settings: { contentRule: nextRule },
+      freeSlots: nextFreeSlots,
       surface: 'remixGallery',
       entityType: 'user',
       entityId: currentUser.id,
@@ -104,23 +123,21 @@ export function RemixGallerySettings() {
       price: nextPrice === '' ? null : nextPrice,
     });
 
-  return (
-    <>
-      <Divider
-        label={
-          <Group gap={4} wrap="nowrap">
-            Remix galleries on your images
-            <InfoPopover size="xs" iconProps={{ size: 14 }} width={340}>
-              <Text size="sm" maw={320} style={{ whiteSpace: 'normal' }}>
-                Let other people pay to feature their remixes on your work. You review every
-                submission and decide what a remix means on your own images. Turning this on does
-                not share your prompt — hidden prompts stay hidden.
-              </Text>
-            </InfoPopover>
-          </Group>
-        }
-      />
+  const heading = (
+    <Group gap={4} wrap="nowrap">
+      Remix galleries on your images
+      <InfoPopover size="xs" iconProps={{ size: 14 }} width={340}>
+        <Text size="sm" maw={320} style={{ whiteSpace: 'normal' }}>
+          Let other people pay to feature their remixes on your work. You review every submission
+          and decide what a remix means on your own images. Turning this on does not share your
+          prompt — hidden prompts stay hidden.
+        </Text>
+      </InfoPopover>
+    </Group>
+  );
 
+  const body = (
+    <>
       <SegmentedControl
         value={mode}
         onChange={(value) => {
@@ -170,17 +187,14 @@ export function RemixGallerySettings() {
             commit(mode, value);
           }}
         />
-        {/* Sits on the same line as the track's min/max marks rather than under
-            them — the slider reserves that row, so a caption below it leaves a
-            gap and reads as detached from the control it describes.
-
-            The shared helper, so galleries get the over-cap and off-grid
-            warnings stickers already had; a hand-rolled caption here said only
-            what the price was and stayed silent when the cap had overridden it. */}
+        {/* Sits on the track's mark row rather than under it, so the price costs
+            no vertical space of its own. That only works while the caption is
+            one short line — the marks are pinned left and right and this is
+            centred, so anything longer runs into both. `placementPriceCaption`
+            is bounded to the amount for that reason; do not append to it here. */}
         {caption && (
           <Text size="xs" ta="center" mt={-22} c={caption.warning ? 'yellow' : 'dimmed'}>
             {caption.text}
-            {price === '' && ', the platform default'}
           </Text>
         )}
       </Stack>
@@ -211,6 +225,23 @@ export function RemixGallerySettings() {
         />
       </Stack>
 
+      {/* Hidden at a cap of 0 rather than shown disabled — every position would
+          mean the same thing — and hidden with the gallery closed, where there is
+          nothing to hold a slot on. */}
+      {freeSlotCap > 0 && mode !== 'off' && (
+        <PlacementFreeSlotSlider
+          surface="remixGallery"
+          cap={freeSlotCap}
+          value={freeSlots}
+          noun={['submission', 'submissions']}
+          onChange={setFreeSlots}
+          onCommit={(value) => {
+            setFreeSlots(value);
+            commit(mode, price, contentRule, value);
+          }}
+        />
+      )}
+
       {/* Two directions, two buttons. A gallery owner both receives submissions
           and makes them, and the counts need somewhere to live — a link with an
           arrow gives a waiting count nowhere to sit, and the received one is the
@@ -221,13 +252,20 @@ export function RemixGallerySettings() {
             all. Every other button-as-link in the app uses the plain anchor. */}
         <Button
           component="a"
-          href="/user/remix-submissions?tab=received"
+          href={REMIX_QUEUE_RECEIVED_URL}
           variant="light"
           size="sm"
           rightSection={
             receivedCount > 0 ? (
-              <Badge size="sm" color="yellow" variant="filled" circle>
-                {receivedCount}
+              <Badge
+                size="sm"
+                color="yellow"
+                variant="filled"
+                // See the remix tab badge: a disc clips the "+" off "50+".
+                circle={!pending?.nextCursor}
+                px={pending?.nextCursor ? 6 : undefined}
+              >
+                {receivedLabel}
               </Badge>
             ) : undefined
           }
@@ -236,7 +274,7 @@ export function RemixGallerySettings() {
         </Button>
         <Button
           component="a"
-          href="/user/remix-submissions?tab=sent"
+          href={REMIX_QUEUE_SENT_URL}
           variant="default"
           size="sm"
           rightSection={
@@ -263,6 +301,20 @@ export function RemixGallerySettings() {
       {/* No "set a price first" warning: the surface carries a default, so an
           unset price is a normal state rather than a broken one. Saying
           otherwise would tell a creator to fix something that is working. */}
+    </>
+  );
+
+  if (flat)
+    return (
+      <SettingsSection title={heading}>
+        <div className="flex flex-col gap-4">{body}</div>
+      </SettingsSection>
+    );
+
+  return (
+    <>
+      <Divider label={heading} />
+      {body}
     </>
   );
 }

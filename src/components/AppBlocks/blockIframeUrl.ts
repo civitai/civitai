@@ -42,8 +42,10 @@
 // fragment from a block app's own hash state without guessing.
 //
 // 🔴 THIS IS A MIRRORED CONTRACT, NOT A SHARED IMPORT. civitai consumes the
-// PUBLISHED `@civitai/app-sdk` dist, and the decoder lands in a version that
-// is not published yet, so the encoder cannot import it. `__tests__/blockIframeUrl.test.ts`
+// PUBLISHED `@civitai/app-sdk` dist, and when this landed the decoder was in a
+// version not yet published, so the encoder could not import it. (The installed
+// dist, 0.80.0, exports `parseBlockInitFragment`; the mirror has not been
+// replaced or bound to it.) `__tests__/blockIframeUrl.test.ts`
 // pins the exact literal output string — change the format on one side and that
 // literal must be changed here AND in the SDK's `initFragment.test.ts`, which
 // pins the same literal from the decoder's side.

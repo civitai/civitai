@@ -44,6 +44,7 @@ Notes); the **Main site** column is what exists on civitai.com today.
 | Per-model earnings by source | ✓ | ~ | Studio planned (A1); main shows Buzz totals, not per-model-by-source |
 | Usage & content analytics | ✓ | ~ | Studio planned (A1/C1); scattered across main today |
 | CP cash status (pending / settled) | ✓ | ✓ | Studio displays + links out; canonical view is the Buzz dashboard |
+| Banked Buzz this month (read-only) | ✓ | ✓ | Studio dashboard shows it; banking itself stays on the main site |
 | Creator score + requirements | ✓ | ✓ | Both display; Studio shows it on `/join` with growth tips |
 
 ### The cash-out pipeline & account (program mechanics)
@@ -70,7 +71,7 @@ for built vs planned. The pattern is clear: the Studio owns the **controls + ins
 | **Turn Buzz into real earnings** | The headline — convert earned Buzz to cash | Program (main app) |
 | **Bank your Buzz** | Bank Yellow/Green Buzz into the monthly Compensation Pool | Buzz dashboard (main app) |
 | **Claim your share / withdraw cash** | Withdraw during the 3-day Extraction Phase via the payment partner (Tipalti) | Buzz dashboard (main app) |
-| **Bankable Buzz sources** | Early Access, Tips, Generator Compensation can all be banked | Program mechanic (main app) |
+| **Bankable Buzz sources** | Licensing fees, Early Access/paid access, user tips, donations, sales, bounties (from Nov 2026, generation compensation no longer counts) | Program mechanic (main app) |
 | **Tier-scaled banking cap** | Higher membership tiers (Silver/Gold) raise the monthly bank cap | Membership + program (main app) |
 | **Requirements** | Active Civitai membership **+** creator score ≥ 40,000 | Gate (shared) |
 
@@ -87,6 +88,7 @@ Per [implementation-checklist.md](implementation-checklist.md) / the page specs:
 | **Earnings by source** (comp / license / tips / access / cosmetic) | `/earnings` | ✅ built (A1 Part 1 — reads `buzzTransactions` directly) |
 | **Usage & earnings analytics** | `/analytics` | ✅ content section (userId-keyed) · 🚧 model section (A1 Part 2) |
 | **CP cash status** (ready / pending / withdrawn) + **Withdraw link-out** | `/earnings`, dashboard | ✅ built (authoritative via `@civitai/buzz`) |
+| **Banked this month** (Buzz, read-only) | dashboard | ✅ built (buzz service, `creatorProgramBank`) |
 | **Payout (Tipalti) status** + membership/tier status + **$50 setup unlock** | `/settings` | ✅ built |
 | **Creator Program upsell** + live creator score + how-to-grow | `/join` | ✅ built |
 

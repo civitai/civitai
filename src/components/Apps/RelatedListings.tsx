@@ -6,14 +6,13 @@ import {
   isRelatedRailLoading,
   needsPopularTopUp,
   RELATED_LISTINGS_LIMIT,
+  relatedRailHeading,
   selectRelatedListings,
 } from '~/components/Apps/related-listings';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  isMarketplaceCategory,
-  MARKETPLACE_CATEGORY_LABELS,
-} from '~/server/services/blocks/marketplace-categories.constants';
-import type { ListingCard } from '~/server/schema/blocks/app-listing-read.schema';
+import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-categories.constants';
+import { onlyListingCards } from '~/shared/constants/app-sub-listing.constants';
+import { hasAppsStoreAccess } from '~/shared/utils/app-blocks-access';
 import { trpc } from '~/utils/trpc';
 
 /**
@@ -37,11 +36,6 @@ import { trpc } from '~/utils/trpc';
  * offers a way back into the store.
  */
 
-function categoryLabel(category: string | null): string | null {
-  if (!category) return null;
-  return isMarketplaceCategory(category) ? MARKETPLACE_CATEGORY_LABELS[category] : category;
-}
-
 export interface RelatedListingsProps {
   /** The listing being viewed — excluded from the rail. */
   listingId: string;
@@ -50,10 +44,10 @@ export interface RelatedListingsProps {
 
 export function RelatedListings({ listingId, category }: RelatedListingsProps) {
   const features = useFeatureFlags();
-  // Same store-visibility gate the grid + detail use (`appListings` OR-falling-
-  // back to `appBlocks`), so this rail can never fire a read the page itself
-  // isn't allowed to make.
-  const canSeeStore = !!(features.appListings || features.appBlocks);
+  // Same store-visibility gate the grid + detail use — the SHARED
+  // `hasAppsStoreAccess` predicate — so this rail can never fire a read the page
+  // itself isn't allowed to make.
+  const canSeeStore = hasAppsStoreAccess(features);
 
   // The DTO's `category` is a free-text column (`string | null`), while the
   // query input is the closed taxonomy enum. Narrow through the shared type
@@ -65,7 +59,8 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
     { category: categoryFilter, sort: 'popular', limit: RELATED_LISTINGS_LIMIT + 1 },
     { enabled: canSeeStore && !!categoryFilter }
   );
-  const sameCategory = (categoryQuery.data?.items ?? []) as ListingCard[];
+  // Drops sub-listing cards: `AppListingCard` throws on them.
+  const sameCategory = onlyListingCards(categoryQuery.data?.items ?? []);
 
   const wantTopUp =
     !categoryFilter ||
@@ -85,11 +80,12 @@ export function RelatedListings({ listingId, category }: RelatedListingsProps) {
   const items = selectRelatedListings({
     selfId: listingId,
     sameCategory,
-    popular: (popularQuery.data?.items ?? []) as ListingCard[],
+    popular: onlyListingCards(popularQuery.data?.items ?? []),
   });
 
-  const label = categoryLabel(category);
-  const heading = label ? `More in ${label}` : 'More apps';
+  // 🔴 From the PURE module, so the blocking `unit` gate covers the one string on
+  // this surface that a reader actually sees the category in.
+  const heading = relatedRailHeading(category);
   const loading = isRelatedRailLoading({
     hasCategoryFilter: !!categoryFilter,
     categoryPending: categoryQuery.isPending,

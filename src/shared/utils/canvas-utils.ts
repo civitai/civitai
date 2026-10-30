@@ -1,44 +1,99 @@
-import { blobToFile, fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
-import { encodeMetadata, ExifParser } from '~/utils/metadata';
-import {
-  createExifSegmentFromTags,
-  encodeUserCommentUTF16BE,
-  isEncoded,
-} from '~/utils/encoding-helpers';
+import { copyMetadata } from '@civitai/generation-metadata';
+import { fetchBlob, fetchBlobAsFile } from '~/utils/file-utils';
 import { createImageElement, calculateAspectRatioFit } from '~/utils/image-utils';
 import type { Area } from 'react-easy-crop';
 
-async function canvasToBlobWithImageExif(canvas: HTMLCanvasElement, src: File | Blob | string) {
-  const image = src instanceof File || typeof src === 'string' ? src : blobToFile(src);
-  const parser = await ExifParser(image);
-  let userComment =
-    parser.exif.userComment && isEncoded(parser.exif.userComment)
-      ? parser.exif.userComment
-      : undefined;
-  if (!userComment) {
-    const meta = await parser.getMetadata();
-    if (Object.keys(meta).length > 0) {
-      userComment = encodeUserCommentUTF16BE(encodeMetadata(meta));
-    }
+/** A stage of preparing an image on the device before it is uploaded. */
+export type ImagePrepStage =
+  | 'pick-unreadable'
+  | 'dims'
+  | 'read-blob'
+  | 'decode'
+  | 'encode'
+  | 'metadata'
+  | 'dims-after-encode';
+
+/**
+ * A failure in one stage of preparing an image, tagged with the stage so a caller can report
+ * where it failed. The message is the underlying error's, so what callers show is unchanged.
+ */
+export class ImagePrepError extends Error {
+  constructor(
+    readonly stage: ImagePrepStage,
+    readonly timedOut: boolean,
+    message: string,
+    options?: { cause?: unknown }
+  ) {
+    super(message, options);
+    this.name = 'ImagePrepError';
   }
-  const dataUrl = canvas.toDataURL('image/jpeg');
-
-  const exifSegment = createExifSegmentFromTags({
-    artist: parser.exif.Artist,
-    userComment,
-    software: parser.exif.Software,
-  });
-  const jpegBytes = Buffer.from(dataUrl.split(',')[1], 'base64');
-  const soi = Uint8Array.prototype.slice.call(jpegBytes, 0, 2); // FFD8
-  const rest = Uint8Array.prototype.slice.call(jpegBytes, 2);
-  const newJpegBytes = new Uint8Array(soi.length + exifSegment.length + rest.length);
-
-  newJpegBytes.set(soi, 0);
-  newJpegBytes.set(exifSegment, soi.length);
-  newJpegBytes.set(rest, soi.length + exifSegment.length);
-
-  return new Blob([newJpegBytes], { type: 'image/jpeg' });
 }
+
+/** Shown for an ImagePrepError in place of the browser's own text ("failed to load image blob", …). */
+export const IMAGE_PREP_ERROR =
+  "Couldn't read this image on your device. Try a different file or a screenshot.";
+/** Shown when an image url (not a file on the device) fails to load. */
+export const IMAGE_LOAD_ERROR = "Couldn't read this image. Try a different file or a screenshot.";
+
+/**
+ * Runs one preparation stage. A failure becomes an ImagePrepError for that stage (an inner stage's
+ * tag is kept), and with `timeoutMs` a stage that never settles fails as timed out instead of
+ * hanging. The work itself cannot be cancelled; only the wait for it ends.
+ */
+export async function prepStage<T>(
+  stage: ImagePrepStage,
+  run: () => Promise<T>,
+  timeoutMs?: number
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    const work = run();
+    if (!timeoutMs) return await work;
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new ImagePrepError(stage, true, `${stage} timed out`)),
+          timeoutMs
+        );
+      }),
+    ]);
+  } catch (e) {
+    if (e instanceof ImagePrepError) throw e;
+    throw new ImagePrepError(stage, false, e instanceof Error ? e.message : String(e), {
+      cause: e,
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function canvasToBlobWithImageExif(
+  canvas: HTMLCanvasElement,
+  src: File | Blob | string,
+  timeoutMs?: number
+) {
+  const stripped = await prepStage(
+    'encode',
+    async () => {
+      const blob = await new Promise<Blob | null>((resolve) =>
+        canvas.toBlob(resolve, 'image/jpeg')
+      );
+      if (!blob) throw new Error('canvas.toBlob failed');
+      return blob;
+    },
+    timeoutMs
+  );
+  const restored = await prepStage(
+    'metadata',
+    async () => copyMetadata(src, new Uint8Array(await stripped.arrayBuffer())),
+    timeoutMs
+  );
+  return new Blob([restored as BlobPart], { type: 'image/jpeg' });
+}
+
+/** Opt-in bound, in ms, on each local stage that can hang (read, decode, encode, metadata). */
+type PrepOptions = { stageTimeoutMs?: number };
 
 export function getRadianAngle(degreeValue: number) {
   return (degreeValue * Math.PI) / 180;
@@ -119,22 +174,32 @@ export async function getCroppedImg(
   return blob;
 }
 
-export async function imageToJpegBlob(src: string | Blob | File) {
-  const blob = await fetchBlob(src);
-  if (!blob) throw new Error('failed to load image blob');
+export async function imageToJpegBlob(
+  src: string | Blob | File,
+  { stageTimeoutMs }: PrepOptions = {}
+) {
+  const blob = await prepStage(
+    'read-blob',
+    async () => {
+      const blob = await fetchBlob(src);
+      if (!blob) throw new Error('failed to load image blob');
+      return blob;
+    },
+    stageTimeoutMs
+  );
 
   if (blob.type === 'image/jpeg') return blob;
 
-  const img = await createImageElement(blob);
+  const img = await prepStage('decode', () => createImageElement(blob), stageTimeoutMs);
   const canvas = document.createElement('canvas');
   canvas.width = img.width;
   canvas.height = img.height;
 
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Error resizing image');
+  if (!ctx) throw new ImagePrepError('encode', false, 'Error resizing image');
   ctx.drawImage(img, 0, 0);
 
-  return canvasToBlobWithImageExif(canvas, blob);
+  return canvasToBlobWithImageExif(canvas, blob, stageTimeoutMs);
 }
 
 export async function resizeImage(
@@ -144,13 +209,20 @@ export async function resizeImage(
     maxWidth?: number;
     minWidth?: number;
     minHeight?: number;
-  } = {}
+  } & PrepOptions = {}
 ) {
-  const file = await fetchBlobAsFile(src);
-  if (!file) throw new Error('failed to load image blob');
+  const { stageTimeoutMs } = options;
+  const file = await prepStage(
+    'read-blob',
+    async () => {
+      const file = await fetchBlobAsFile(src);
+      if (!file) throw new Error('failed to load image blob');
+      return file;
+    },
+    stageTimeoutMs
+  );
 
-  // const url = URL.createObjectURL(blob);
-  const img = await createImageElement(file);
+  const img = await prepStage('decode', () => createImageElement(file), stageTimeoutMs);
 
   const { maxWidth = img.width, maxHeight = img.height, minWidth, minHeight } = options;
 
@@ -172,8 +244,8 @@ export async function resizeImage(
   canvas.height = height;
 
   const ctx = canvas.getContext('2d');
-  if (!ctx) throw new Error('Error resizing image');
+  if (!ctx) throw new ImagePrepError('encode', false, 'Error resizing image');
   ctx.drawImage(img, 0, 0, width, height);
 
-  return canvasToBlobWithImageExif(canvas, file);
+  return canvasToBlobWithImageExif(canvas, file, stageTimeoutMs);
 }

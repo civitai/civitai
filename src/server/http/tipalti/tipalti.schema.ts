@@ -49,11 +49,16 @@ export namespace Tipalti {
       .optional(),
   });
 
+  // Tipalti may send a status we don't list; every reader of the stored column assumes the value is
+  // a TipaltiStatus, so coerce at the boundary rather than letting an unlisted string reach the DB.
+  // INTERNAL_VALUE is Tipalti's own sentinel for exactly this.
+  export const payeeStatusSchema = z.enum(TipaltiStatus).catch(TipaltiStatus.InternalValue);
+
   export type Payee = z.infer<typeof createPayeeResponseSchema>;
   export const createPayeeResponseSchema = z.object({
     id: z.string(),
     refCode: z.string().optional(),
-    status: z.enum(TipaltiStatus),
+    status: payeeStatusSchema,
     statusChangeDateTimeUTC: z.string().nullish(),
     statusReason: z.string().nullish(),
     isAccountClosed: z.boolean().optional(),

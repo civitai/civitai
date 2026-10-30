@@ -3,12 +3,6 @@ import * as dotenv from 'dotenv';
 
 dotenv.config();
 
-interface BackfillProgress {
-  currentMonth: Date;
-  endDate: Date;
-  matViewStart: Date;
-}
-
 async function setupClickhouseRollupView() {
   const clickhouseUrl = process.env.CLICKHOUSE_URL;
   if (!clickhouseUrl) {
@@ -122,7 +116,7 @@ async function setupClickhouseRollupView() {
       const startTime = Date.now();
 
       try {
-        const result = await client.exec({
+        await client.exec({
           query: backfillQuery,
         });
 

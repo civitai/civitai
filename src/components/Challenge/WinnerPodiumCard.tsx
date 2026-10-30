@@ -3,6 +3,7 @@ import { Group, Text, useComputedColorScheme } from '@mantine/core';
 import { IconCrown, IconEyeOff, IconPhotoOff, IconSparkles, IconTrophy } from '@tabler/icons-react';
 import Link from 'next/link';
 import { EdgeMedia2 } from '~/components/EdgeMedia/EdgeMedia';
+import { getSkipValue } from '~/components/EdgeMedia/EdgeMedia.util';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { JudgeScoreBadge } from '~/components/Image/JudgeScoreBadge/JudgeScoreBadge';
@@ -10,7 +11,7 @@ import type { JudgingCategory } from '~/server/games/daily-challenge/daily-chall
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { MediaHash } from '~/components/ImageHash/ImageHash';
 import { useServerDomains } from '~/providers/AppProvider';
-import { syncAccount } from '~/utils/sync-account';
+import { useSyncAccount } from '~/hooks/useSyncAccount';
 import type { JudgeInfo } from '~/components/Image/Providers/ImagesProvider';
 import { Currency, MediaType } from '~/shared/utils/prisma/enums';
 import type { ProfileImage } from '~/server/selectors/image.selector';
@@ -25,6 +26,8 @@ export type WinnerPodiumData = {
   imageUrl: string | null;
   imageNsfwLevel?: number | null;
   imageHash?: string | null;
+  imageType?: MediaType;
+  imageMetadata?: MixedObject | null;
   buzzAwarded: number;
   reason?: string | null;
   judgeScore?: JudgeScore | Record<string, number> | null;
@@ -113,7 +116,9 @@ export function WinnerPodiumCard({
   // genuinely removed image (no hash).
   const isGatedThumb = !!winner.imageId && !winner.imageUrl && !!winner.imageHash;
   // Cross-domain link to the image on the mature site, mirroring the Gated MatureContentRedirect CTA.
-  const redImageUrl = syncAccount(`//${useServerDomains().red}/images/${winner.imageId}`);
+  const redDomain = useServerDomains().red;
+  const syncAccount = useSyncAccount();
+  const redImageUrl = syncAccount(`//${redDomain}/images/${winner.imageId}`);
 
   return (
     <div
@@ -168,10 +173,16 @@ export function WinnerPodiumCard({
                   {safe ? (
                     <EdgeMedia2
                       src={winner.imageUrl!}
-                      type={MediaType.image}
+                      type={winner.imageType ?? MediaType.image}
+                      metadata={winner.imageMetadata}
+                      skip={getSkipValue({
+                        type: winner.imageType ?? MediaType.image,
+                        metadata: winner.imageMetadata,
+                      })}
                       imageId={winner.imageId!}
                       width={450}
                       className="size-full object-cover transition-transform duration-300 hover:scale-105"
+                      wrapperProps={{ className: 'size-full' }}
                     />
                   ) : (
                     <MediaHash hash={winner.imageHash ?? null} width={450} height={450} />

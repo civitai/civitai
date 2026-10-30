@@ -1,6 +1,10 @@
 import {
   createNotificationPendingRow,
   createNotificationsBulkInput,
+  sendSystemNoticesInput,
+  type SendSystemNoticesInput,
+  type SendSystemNoticesResult,
+  type SystemNoticeSendRecord,
   type CleanupNotificationsInput,
   type CountNotificationsInput,
   type CreateNotificationPendingRow,
@@ -19,6 +23,9 @@ export type NotificationsClientConfig = {
   /** Shared secret for the internal-only ingress (WEBHOOK_TOKEN-style). Falls back to
    * `process.env.NOTIFICATIONS_TOKEN`. */
   token?: string;
+  /** Secret for the system notices routes (`sendSystemNotices`, `getSystemNoticeSend`), separate from
+   * `token`. Falls back to `process.env.NOTIFICATIONS_NOTICES_TOKEN`. */
+  noticesToken?: string;
   /** Override fetch (tests / non-global-fetch runtimes). */
   fetch?: typeof fetch;
   /** Per-ATTEMPT timeout in ms. Defaults to 10s. Note: with retries the worst-case total is
@@ -76,7 +83,8 @@ function resolveConfig(config: NotificationsClientConfig) {
     );
   }
   const fetchImpl = config.fetch ?? globalThis.fetch;
-  if (!fetchImpl) throw new NotificationsClientError('No fetch implementation available (pass `fetch`).');
+  if (!fetchImpl)
+    throw new NotificationsClientError('No fetch implementation available (pass `fetch`).');
   return {
     endpoint: endpoint.replace(/\/$/, ''),
     token: config.token ?? process.env.NOTIFICATIONS_TOKEN ?? '',
@@ -129,16 +137,34 @@ async function postAttempt(
 
 // Reports to `onFailure` exactly once per FINAL failure (config error / non-retryable / retries
 // exhausted) — the single choke point every request flows through.
-async function post(path: string, body: unknown, config: NotificationsClientConfig): Promise<unknown> {
+async function post(
+  path: string,
+  body: unknown,
+  config: NotificationsClientConfig
+): Promise<unknown> {
   let resolved: ReturnType<typeof resolveConfig>;
   try {
     resolved = resolveConfig(config);
   } catch (err) {
     const e = err as NotificationsClientError;
-    safeReport(config.onFailure, { path, status: e.status, retryable: false, attempts: 0, message: e.message });
+    safeReport(config.onFailure, {
+      path,
+      status: e.status,
+      retryable: false,
+      attempts: 0,
+      message: e.message,
+    });
     throw e;
   }
-  const { endpoint, token, fetch: fetchImpl, timeoutMs, retries, retryBaseMs, onFailure } = resolved;
+  const {
+    endpoint,
+    token,
+    fetch: fetchImpl,
+    timeoutMs,
+    retries,
+    retryBaseMs,
+    onFailure,
+  } = resolved;
   const url = `${endpoint}${path}`;
   for (let attempt = 0; ; attempt++) {
     try {
@@ -159,6 +185,17 @@ async function post(path: string, body: unknown, config: NotificationsClientConf
       await new Promise((resolve) => setTimeout(resolve, backoff));
     }
   }
+}
+
+// A 50,000-recipient send writes in paced chunks, so it far outlasts the default per-attempt timeout.
+// No retries: a re-run is the caller's call, and idempotency per sendId makes it safe.
+function noticesConfig(config: NotificationsClientConfig): NotificationsClientConfig {
+  return {
+    timeoutMs: 10 * 60_000,
+    ...config,
+    retries: 0,
+    token: config.noticesToken ?? process.env.NOTIFICATIONS_NOTICES_TOKEN ?? '',
+  };
 }
 
 // Bounds each bulk POST so a large producer run (tens of thousands of rows, each with a potentially large
@@ -192,11 +229,17 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
     },
 
     // pg returns COUNT(*) as a string; coerce.
-    countNotifications: async (input: CountNotificationsInput): Promise<NotificationCategoryCount[]> => {
+    countNotifications: async (
+      input: CountNotificationsInput
+    ): Promise<NotificationCategoryCount[]> => {
       const res = (await post('/notifications/count', input, config)) as Array<
         Omit<NotificationCategoryCount, 'count'> & { count: number | string }
       >;
-      return res.map((c) => ({ category: c.category, count: Number(c.count) }));
+      return res.map((c) => ({
+        category: c.category,
+        count: Number(c.count),
+        ...(c.floor ? { floor: true } : {}),
+      }));
     },
 
     markNotificationsRead: async (input: MarkReadInput): Promise<void> => {
@@ -204,13 +247,43 @@ export function createNotificationsClient(config: NotificationsClientConfig = {}
     },
 
     notificationExists: async (input: NotificationExistsInput): Promise<boolean> => {
-      const res = (await post('/notifications/exists', input, config)) as { exists?: boolean } | undefined;
+      const res = (await post('/notifications/exists', input, config)) as
+        | { exists?: boolean }
+        | undefined;
       return res?.exists === true;
     },
 
-    cleanupNotifications: async (input: CleanupNotificationsInput): Promise<{ deleted: number }> => {
-      const res = (await post('/notifications/cleanup', input, config)) as { deleted?: number } | undefined;
+    cleanupNotifications: async (
+      input: CleanupNotificationsInput
+    ): Promise<{ deleted: number }> => {
+      const res = (await post('/notifications/cleanup', input, config)) as
+        | { deleted?: number }
+        | undefined;
       return { deleted: res?.deleted ?? 0 };
+    },
+
+    /** Dry run (the default) or send of a system notice. Throws on any non-2xx, including 409
+     * (sendId reused with different content, or a call already in progress) and 429 (daily ceiling). */
+    sendSystemNotices: async (input: SendSystemNoticesInput): Promise<SendSystemNoticesResult> => {
+      const body = sendSystemNoticesInput.parse(input);
+      return (await post(
+        '/notifications/notices',
+        body,
+        noticesConfig(config)
+      )) as SendSystemNoticesResult;
+    },
+
+    getSystemNoticeSend: async (sendId: string): Promise<SystemNoticeSendRecord | null> => {
+      try {
+        return (await post(
+          '/notifications/notices/get',
+          { sendId },
+          noticesConfig(config)
+        )) as SystemNoticeSendRecord;
+      } catch (err) {
+        if (err instanceof NotificationsClientError && err.status === 404) return null;
+        throw err;
+      }
     },
   };
 }

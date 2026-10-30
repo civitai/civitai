@@ -6,11 +6,52 @@
   "types": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",
+    "./media-key": "./src/media-key.ts",
     "./basemodel.constants": "./src/basemodel.constants.ts",
+    "./feedback.constants": "./src/feedback.constants.ts",
+    "./generation-eligibility": "./src/generation-eligibility.ts",
+    "./clickhouse-ip-filters": "./src/clickhouse-ip-filters.ts",
+    "./clickup-url": "./src/clickup-url.ts",
     "./lazy": "./src/lazy.ts",
-    "./type-guards": "./src/type-guards.ts"
+    "./type-guards": "./src/type-guards.ts",
+    "./moderator-paths": "./src/moderator-paths.ts",
+    "./missing-media": "./src/missing-media.ts",
+    "./image-ingestion": "./src/image-ingestion.ts",
+    "./training-audio": "./src/training-audio.ts",
+    "./training-custom-model": "./src/training-custom-model.ts",
+    "./job-queue": "./src/job-queue.ts",
+    "./rated-entity-sql": "./src/rated-entity-sql.ts",
+    "./rating-review": "./src/rating-review.ts",
+    "./crucible": "./src/crucible.ts",
+    "./box-odds": "./src/box-odds.ts",
+    "./box-builder": "./src/box-builder.ts",
+    "./box-odds-snapshot": "./src/box-odds-snapshot.ts",
+    "./creator-box-rules": "./src/creator-box-rules.ts",
+    "./item-holder-lock": "./src/item-holder-lock.ts",
+    "./mystery-box": "./src/mystery-box.ts",
+    "./json-ld": "./src/json-ld.ts",
+    "./resolution-reasons": "./src/resolution-reasons.ts",
+    "./site-appeal": "./src/site-appeal.ts",
+    "./post-scheduling": "./src/post-scheduling.ts",
+    "./platform-feedback-version": "./src/platform-feedback-version.ts",
+    "./reaction-privacy": "./src/reaction-privacy.ts",
+    "./merge-permission": "./src/merge-permission.ts",
+    "./service-offering-takedown": "./src/service-offering-takedown.ts",
+    "./held-media": "./src/held-media.ts",
+    "./report-reward": "./src/report-reward.ts",
+    "./sensitive-block-scopes": "./src/sensitive-block-scopes.ts"
+  },
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
-    "@civitai/db-schema": "workspace:*"
+    "@civitai/db-schema": "workspace:*",
+    "semver": "^7.6.0",
+    "zod": "^4.0.17"
+  },
+  "devDependencies": {
+    "@types/semver": "^7.7.1",
+    "vitest": "^4.1.11"
   }
 }

@@ -2,6 +2,7 @@ import { json, type RequestHandler } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
 import { maybeCreateSessionSigner } from '@civitai/auth';
 import { tokenScopeLabels } from '@civitai/auth/token-scope';
+import { SUPPORTED_SCOPE_NAMES } from '$lib/server/oauth/scope';
 
 // GET /.well-known/openid-configuration — OIDC discovery. Ported from the main app's
 // src/pages/api/.well-known/openid-configuration.ts. Authoritative now that the provider lives in the hub.
@@ -21,6 +22,7 @@ export const GET: RequestHandler = ({ url }) => {
       token_endpoint: `${issuer}/api/auth/oauth/token`,
       userinfo_endpoint: `${issuer}/api/auth/oauth/userinfo`,
       revocation_endpoint: `${issuer}/api/auth/oauth/revoke`,
+      introspection_endpoint: `${issuer}/api/auth/oauth/introspect`,
       device_authorization_endpoint: `${issuer}/api/auth/oauth/device`,
       ...(oidcSigningEnabled
         ? {
@@ -37,8 +39,12 @@ export const GET: RequestHandler = ({ url }) => {
         'urn:ietf:params:oauth:grant-type:device_code',
       ],
       code_challenge_methods_supported: ['S256'],
-      token_endpoint_auth_methods_supported: ['client_secret_post', 'none'],
-      scopes_supported: Object.keys(tokenScopeLabels),
+      // The library authenticates a Basic header at /token.
+      token_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post', 'none'],
+      introspection_endpoint_auth_methods_supported: ['client_secret_basic', 'client_secret_post'],
+      // Scope names (and OIDC's openid/profile/email/offline_access), then the decimal bitmask values this
+      // listed before, unchanged so nothing reading them sees a value disappear.
+      scopes_supported: [...SUPPORTED_SCOPE_NAMES, ...Object.keys(tokenScopeLabels)],
       subject_types_supported: ['public'],
       claims_supported: ['sub', 'name', 'preferred_username', 'picture', 'email', 'email_verified'],
     },

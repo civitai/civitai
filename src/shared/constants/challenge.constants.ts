@@ -63,6 +63,16 @@ export const CHALLENGE_TIER_ACTIVE_LIMITS: Record<string, number> = {
 
 export const CHALLENGE_DEFAULT_ACTIVE_LIMIT = 1;
 
+export function describeActiveLimitsByTier() {
+  const byLimit = new Map<number, string[]>();
+  for (const [tier, limit] of Object.entries(CHALLENGE_TIER_ACTIVE_LIMITS))
+    byLimit.set(limit, [...(byLimit.get(limit) ?? []), tier[0].toUpperCase() + tier.slice(1)]);
+  return [...byLimit]
+    .sort(([a], [b]) => a - b)
+    .map(([limit, tiers]) => `${tiers.join(' and ')} ${limit}`)
+    .join(', ');
+}
+
 export function getChallengeActiveLimit(tier?: string | null): number {
   if (!tier) return CHALLENGE_DEFAULT_ACTIVE_LIMIT;
   return CHALLENGE_TIER_ACTIVE_LIMITS[tier] ?? CHALLENGE_DEFAULT_ACTIVE_LIMIT;
@@ -178,6 +188,13 @@ export const JUDGE_USER_SELECTABLE_FIELD = {
   label: 'Selectable by users',
   description: 'Show this judge in the user challenge-create form',
 } as const;
+
+/**
+ * Ceiling on `Challenge.metadata.resourceConcept`, applied BOTH where it is generated and where it
+ * is parsed back. The parse-time cap matters because the column is hand-editable: an oversized
+ * value would ride into the review prompt and every pairwise comparison for the whole challenge.
+ */
+export const RESOURCE_CONCEPT_MAX_LENGTH = 200;
 
 /** Max challenges processed concurrently inside a single job run. Bounded by DB load + OpenRouter rate limits. */
 export const CHALLENGE_JOB_CONCURRENCY = 5;

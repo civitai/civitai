@@ -1,6 +1,23 @@
+import '~/server/services/text-scan/profiles/index';
 import { articleModerationAdapter } from '~/server/services/article-moderation.adapter';
+import { bountyModerationAdapter } from '~/server/services/bounty-moderation.adapter';
 import { challengeModerationAdapter } from '~/server/services/challenge-moderation.adapter';
+import { crucibleModerationAdapter } from '~/server/services/crucible-moderation.adapter';
 import type { ModerationAdapter } from '~/server/services/entity-moderation.service';
+import { modelModerationAdapter } from '~/server/services/model-moderation.adapter';
+import {
+  textScanShadowAdapters,
+  textScanWebSearchAdapters,
+} from '~/server/services/text-scan/adapter';
+import {
+  bountyEntryTextScanAdapter,
+  collectionTextScanAdapter,
+  imageCaptionTextScanAdapter,
+  postTextScanAdapter,
+  retiredModelRulesAdapter,
+  storylineTextScanAdapter,
+} from '~/server/services/text-scan/adapters';
+import { scamModerationAdapters } from '~/server/services/text-scan/scam.adapter';
 import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-category-audit.service';
 
 // Central registry of `ModerationAdapter`s keyed by entityType. Adding a new
@@ -14,7 +31,20 @@ import { wildcardCategoryModerationAdapter } from '~/server/services/wildcard-ca
 const moderationAdapters: Record<string, ModerationAdapter> = {
   Article: articleModerationAdapter,
   Challenge: challengeModerationAdapter,
+  Crucible: crucibleModerationAdapter,
+  Model: modelModerationAdapter,
   WildcardSetCategory: wildcardCategoryModerationAdapter,
+  Bounty: bountyModerationAdapter,
+  BountyEntry: bountyEntryTextScanAdapter,
+  Collection: collectionTextScanAdapter,
+  Post: postTextScanAdapter,
+  Storyline: storylineTextScanAdapter,
+  ImageCaption: imageCaptionTextScanAdapter,
+  ...textScanShadowAdapters(),
+  ...textScanWebSearchAdapters(),
+  ...scamModerationAdapters,
+  ModelRules: retiredModelRulesAdapter,
+  'ModelRules:shadow': retiredModelRulesAdapter,
 };
 
 export function getModerationAdapter(entityType: string): ModerationAdapter | undefined {

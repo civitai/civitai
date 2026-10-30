@@ -6,6 +6,7 @@ import {
   Card,
   CloseButton,
   Group,
+  Menu,
   RingProgress,
   ScrollArea,
   Text,
@@ -33,8 +34,20 @@ import {
   IconShare3,
 } from '@tabler/icons-react';
 import { useMemo, useRef } from 'react';
+import {
+  StorylineStageOverlay,
+  StorylineToolbarChip,
+} from '~/components/Storyline/StorylineDetail';
+import { StorylineChapterRail } from '~/components/Storyline/StorylineChapterRail';
+import { useStorylineMode } from '~/components/Storyline/StorylineModeProvider';
+import {
+  getStorylineStep,
+  withStorylineNavigation,
+} from '~/components/Storyline/storyline-mode.utils';
+import { useRouter } from 'next/router';
 import clsx from 'clsx';
-import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { STICKER_REVEAL_PARAM, stickerRevealRequested } from '~/components/Placement/queue-routes';
+import { useStickerRevealParam } from '~/store/sticker-reveal.store';
 import { env } from '~/env/client';
 import { AdhesiveAd } from '~/components/Ads/AdhesiveAd';
 import { AdUnitSide_2, AdUnitSide_3 } from '~/components/Ads/AdUnit';
@@ -47,32 +60,41 @@ import { contestCollectionReactionsHidden } from '~/components/Collections/colle
 import { ContentClamp } from '~/components/ContentClamp/ContentClamp';
 import { SmartCreatorCard } from '~/components/CreatorCard/CreatorCard';
 import { DaysFromNow } from '~/components/Dates/DaysFromNow';
-import { AppealDialog } from '~/components/Dialog/Common/AppealDialog';
+import { OwnerBlockedImageNotice } from '~/components/Image/DetailV2/OwnerBlockedImageNotice';
+import { isAppealableImage } from '~/shared/utils/appeal';
 import { openAddToCollectionModal } from '~/components/Dialog/triggers/add-to-collection';
 import { openReportModal } from '~/components/Dialog/triggers/report';
-import { dialogStore } from '~/components/Dialog/dialogStore';
 import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ReportChapterMenuItem } from '~/components/Storyline/ReportChapterMenuItem';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
+import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
 import { CollapsibleCard } from '~/components/Image/DetailV2/CollapsibleCard';
 import { ImageContestCollectionDetails } from '~/components/Image/DetailV2/ImageContestCollectionDetails';
 import { ImageDetailCarousel } from '~/components/Image/DetailV2/ImageDetailCarousel';
+import { isImageDetailPoiHidden } from '~/components/Image/DetailV2/image-detail-main-media';
 import { ImageExternalMeta } from '~/components/Image/DetailV2/ImageExternalMeta';
 import { ImageGenerationData } from '~/components/Image/DetailV2/ImageGenerationData';
+import { ImagePublishedWithApp } from '~/components/Image/DetailV2/ImagePublishedWithApp';
 import { RemixGalleryCard } from '~/components/RemixGallery/RemixGalleryCard';
 import { ImageProcess } from '~/components/Image/DetailV2/ImageProcess';
+import { ImageRemixOfDetails } from '~/components/Image/DetailV2/ImageRemixOfDetails';
 import { DownloadImage } from '~/components/Image/DownloadImage';
 import { useImageContestCollectionDetails } from '~/components/Image/image.utils';
 import { ImageGuard2 } from '~/components/ImageGuard/ImageGuard2';
 import { StickerPlacementBar } from '~/components/Sticker/StickerPlacementBar';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { Gated } from '~/components/Gated/Gated';
+import { buildBreadcrumbSchema } from '~/components/Meta/site-schema';
+import { buildImageMediaSchema } from '~/components/Image/DetailV2/image-media-schema';
+import { imageDetailGateLevel } from '~/components/Image/DetailV2/image-detail-gate';
 import { NextLink } from '~/components/NextLink/NextLink';
 import { Metrics } from '~/components/Metrics';
 import { Reactions } from '~/components/Reaction/Reactions';
+import { ImageReactorsPreview } from '~/components/Reaction/ImageReactorsPreview';
 import { ReactionSettingsProvider } from '~/components/Reaction/ReactionSettingsProvider';
 import { RenderHtml } from '~/components/RenderHtml/RenderHtml';
 import { ShareButton } from '~/components/ShareButton/ShareButton';
@@ -80,6 +102,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -140,21 +163,45 @@ export function ImageDetail2() {
     defaultValue: true,
   });
 
+  // Here rather than in the overlay: the overlay is behind the `safe` gate in
+  // the carousel, so on a blurred image it never mounts and the link would
+  // silently do nothing on exactly the images where the reveal matters most.
+  //
+  // 🔴 `next/router`, NOT the browser router, and deliberately. Every writer of
+  // this param — the queue's `target="_blank"` link and the notification — is a
+  // real page load, which is the only case `router.query` sees. Reading the
+  // browser router instead would also cover a routed dialog opened over a feed,
+  // and would flip `forced` on every carousel settle, which re-renders every
+  // subscriber of the reveal store and writes localStorage each time (persist
+  // does not diff). If a routed-dialog writer ever appears, that is the cost to
+  // solve, and the answer is a second non-persisted store rather than a guard
+  // inside the effect.
+  useStickerRevealParam(stickerRevealRequested(useRouter().query[STICKER_REVEAL_PARAM]));
+
   const videoRef = useRef<EdgeVideoRef | null>(null);
   const adContainerRef = useRef<HTMLDivElement | null>(null);
 
   const carouselNavigation = useCarouselNavigation({ items: images, initialIndex: index });
 
-  // Deferred to the carousel settling rather than run per slide change: the URL
-  // replace pushes a global store update that re-renders every useBrowserRouter
-  // consumer, which is too much to do inside an animating frame.
-  const lastSettledIdRef = useRef(images[index]?.id);
+  const storyline = useStorylineMode();
+  // The header's `@max-md`, for the ⋯ menu, which is portaled out of the container.
+  const narrowStage = useIsMobile({ breakpoint: 'md' });
+  const isLastImage = getStorylineStep(carouselNavigation.index, images.length, 'next') === 'end';
+  const navigation = withStorylineNavigation(
+    carouselNavigation,
+    images.length,
+    storyline.active ? () => storyline.setEndOpen(true) : undefined,
+    storyline.active && storyline.endOpen ? () => storyline.setEndOpen(false) : undefined
+  );
+
+  const settle = useCarouselUrlSync({
+    images,
+    index,
+    navigate,
+    carouselNavigate: carouselNavigation.navigate,
+  });
   const handleSettle = (settledIndex: number) => {
-    const settled = images[settledIndex];
-    // a drag that springs back settles on the slide it started from
-    if (!settled || lastSettledIdRef.current === settled.id) return;
-    lastSettledIdRef.current = settled.id;
-    navigate(settled.id);
+    if (!settle(settledIndex)) return;
     // keep a runway ahead of the viewer so arrow/swipe navigation doesn't
     // dead-end (and loop back) at the edge of the loaded page
     if (hasMore && settledIndex >= images.length - PREFETCH_THRESHOLD) loadMore();
@@ -177,9 +224,7 @@ export function ImageDetail2() {
 
   if (!image) return <NotFound />;
   // Avoid showing POI images to non-mods non owners.
-  if (image.poi && image.user.id !== currentUser?.id && !currentUser?.isModerator) {
-    return <NotFound />;
-  }
+  if (isImageDetailPoiHidden(image, currentUser)) return <NotFound />;
 
   const actualCollection = collection || collectionItems[0]?.collection;
   const forcedBrowsingLevel = actualCollection?.metadata?.forcedBrowsingLevel;
@@ -206,7 +251,7 @@ export function ImageDetail2() {
     ? IconLayoutSidebarRightExpand
     : IconLayoutSidebarRightCollapse;
 
-  const LeftImageControls = (
+  const renderLeftImageControls = (withStoryline: boolean) => (
     <>
       {canRemix && (
         <RemixMenu image={image} source="remix:image">
@@ -224,6 +269,13 @@ export function ImageDetail2() {
           Save
         </Text>
       </Button>
+      {withStoryline && (
+        <StorylineToolbarChip
+          imageId={image.id}
+          postId={image.postId ?? null}
+          placement="toolbar"
+        />
+      )}
       {image.postId && (
         <NextLink
           href={`/posts/${image.postId}`}
@@ -265,70 +317,11 @@ export function ImageDetail2() {
     image.user.username ? `by ${image.user.username}` : 'to civitai'
   }`;
 
-  const creator =
-    image.user.username && !image.user.deletedAt
-      ? {
-          '@type': 'Person',
-          name: image.user.username,
-          url: env.NEXT_PUBLIC_BASE_URL
-            ? `${env.NEXT_PUBLIC_BASE_URL}/user/${image.user.username}`
-            : undefined,
-        }
-      : undefined;
-  const creditText = image.user.username && !image.user.deletedAt ? image.user.username : undefined;
-  const copyrightNotice =
-    image.user.username && !image.user.deletedAt ? `© ${image.user.username}` : undefined;
-
-  // Poster/thumbnail params mirror EdgeVideo's poster generation (anim=false,
-  // transcode=true) so Google fetches the same static frame we render.
-  const mediaSchema = isVideo
-    ? {
-        '@context': 'https://schema.org',
-        '@type': 'VideoObject',
-        name: title,
-        description: title,
-        contentUrl: getEdgeUrl(image.url, {
-          type: 'video',
-          width: 450,
-          transcode: true,
-          optimized: true,
-          anim: true,
-        }),
-        thumbnailUrl: getEdgeUrl(image.url, {
-          width: 450,
-          anim: false,
-          transcode: true,
-          optimized: true,
-          original: false,
-        }),
-        width: image.width ?? undefined,
-        height: image.height ?? undefined,
-        creator,
-        creditText,
-        copyrightNotice,
-        uploadDate: image.createdAt,
-      }
-    : {
-        '@context': 'https://schema.org',
-        '@type': 'ImageObject',
-        contentUrl: getEdgeUrl(image.url),
-        thumbnailUrl: getEdgeUrl(image.url, { width: 450 }),
-        caption: image.user.username ? `Image by ${image.user.username}` : 'Image on Civitai',
-        width: image.width ?? undefined,
-        height: image.height ?? undefined,
-        creator,
-        creditText,
-        copyrightNotice,
-        acquireLicensePage: env.NEXT_PUBLIC_BASE_URL
-          ? `${env.NEXT_PUBLIC_BASE_URL}/images/${image.id}`
-          : undefined,
-        uploadDate: image.createdAt,
-        datePublished: image.createdAt,
-      };
+  const mediaSchema = buildImageMediaSchema({ image, title, baseUrl: env.NEXT_PUBLIC_BASE_URL });
 
   return (
     <Gated
-      contentNsfwLevel={forcedBrowsingLevel || image.nsfwLevel}
+      contentNsfwLevel={imageDetailGateLevel(image, forcedBrowsingLevel)}
       bypassRating={isOwner || !!currentUser?.isModerator}
       meta={{
         title,
@@ -336,13 +329,15 @@ export function ImageDetail2() {
         ogEndpoint: `/api/og?type=image&id=${image.id}`,
         canonical: `/images/${image.id}`,
         schema: mediaSchema,
-        // Per-image HTML pages are thin/duplicative and drive negligible search
-        // traffic, so plain images stay deindexed (Google Images still surfaces
-        // them via the ImageObject schema). Videos are the exception: a single-
-        // video page is a legitimate "watch page", so we index safe-rated videos
-        // and back them with VideoObject schema. NSFW videos stay deindexed to
-        // avoid the content/meta mismatch on the green domain (see docs/seo-audit.md).
-        deIndex: !isVideo || nsfw,
+        breadcrumb: buildBreadcrumbSchema(env.NEXT_PUBLIC_BASE_URL ?? '', [
+          { name: isVideo ? 'Videos' : 'Images', path: isVideo ? '/videos' : '/images' },
+          { name: title },
+        ]),
+        // Deindexed on every domain, videos included. The only per-page text is the prompt, which
+        // stays out of search snippets, and indexed safe videos earned effectively no search
+        // traffic over 2.5 months (GSC, Sep 2026). Video results come from the model, post and
+        // article pages that embed the media — don't re-enable this without new evidence.
+        deIndex: true,
       }}
     >
       <TrackView entityId={image.id} entityType="Image" type="ImageView" nsfw={nsfw} />
@@ -350,26 +345,32 @@ export function ImageDetail2() {
         <BrowsingSettingsAddonsProvider>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
             <div className="relative flex flex-1 overflow-hidden">
-              <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
+              <div className="relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[60px]">
                 <ImageGuard2 image={image} explain={false}>
                   {() => (
                     <>
                       {/* HEADER */}
-                      <div className="flex justify-between gap-8 p-3">
+                      <div className="flex justify-between gap-3 p-3 @md:gap-8">
                         <CloseButton
                           onClick={close}
                           variant="filled"
                           className="size-9 rounded-full"
                         />
-                        <div className="flex flex-1 flex-wrap justify-between gap-1">
-                          {/* Placeholder */}
-                          <div className="@md:hidden" />
+                        {/* One line on a phone: a wrapped row shrinks the image under it. */}
+                        <div className="flex flex-1 flex-wrap justify-between gap-1 @max-md:min-w-0 @max-md:flex-nowrap">
+                          <div className="flex min-w-0 items-center @md:hidden">
+                            <StorylineToolbarChip
+                              imageId={image.id}
+                              postId={image.postId ?? null}
+                              placement="mobile"
+                            />
+                          </div>
                           <div className="flex items-center gap-1 @max-md:hidden">
                             <ImageGuard2.BlurToggle {...sharedBadgeProps} />
-                            {LeftImageControls}
+                            {renderLeftImageControls(true)}
                           </div>
 
-                          <div className="flex items-center gap-1">
+                          <div className="flex shrink-0 items-center gap-1">
                             <ImageGuard2.BlurToggle
                               {...sharedBadgeProps}
                               className={clsx('@md:hidden', sharedBadgeProps.className)}
@@ -381,46 +382,84 @@ export function ImageDetail2() {
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge> */}
+                            {/* Wraps the ⋯ menu so a download outlives the menu closing. On a phone, Download is in
+                                the menu, and so is Report image. */}
                             <DownloadImage src={image.url} type={image.type} name={image.name}>
-                              {({ onClick, isLoading, progress }) => (
-                                <LegacyActionIcon
-                                  {...sharedActionIconProps}
-                                  onClick={onClick}
-                                  loading={isLoading && progress === 0}
-                                >
-                                  {isLoading && progress > 0 && (
-                                    <RingProgress
-                                      size={36}
-                                      sections={[{ value: progress, color: 'blue' }]}
-                                      thickness={4}
-                                    />
-                                  )}
-                                  {!isLoading && <IconDownload {...sharedIconProps} />}
-                                </LegacyActionIcon>
+                              {({ onClick: download, isLoading: downloading, progress }) => (
+                                <>
+                                  <LegacyActionIcon
+                                    {...sharedActionIconProps}
+                                    className={clsx(
+                                      sharedActionIconProps.className,
+                                      '@max-md:hidden'
+                                    )}
+                                    onClick={download}
+                                    loading={downloading && progress === 0}
+                                  >
+                                    {downloading && progress > 0 && (
+                                      <RingProgress
+                                        size={36}
+                                        sections={[{ value: progress, color: 'blue' }]}
+                                        thickness={4}
+                                      />
+                                    )}
+                                    {!downloading && <IconDownload {...sharedIconProps} />}
+                                  </LegacyActionIcon>
+                                  <ShareButton
+                                    url={imageShareUrl}
+                                    title={title}
+                                    collect={{ type: CollectionType.Image, imageId: image.id }}
+                                  >
+                                    <LegacyActionIcon {...sharedActionIconProps}>
+                                      <IconShare3 {...sharedIconProps} />
+                                    </LegacyActionIcon>
+                                  </ShareButton>
+                                  <LoginRedirect reason={'report-content'}>
+                                    <LegacyActionIcon
+                                      {...sharedActionIconProps}
+                                      className={clsx(
+                                        sharedActionIconProps.className,
+                                        '@max-md:hidden'
+                                      )}
+                                      onClick={handleReportClick}
+                                    >
+                                      <IconFlag {...sharedIconProps} />
+                                    </LegacyActionIcon>
+                                  </LoginRedirect>
+                                  <ImageContextMenu
+                                    image={image}
+                                    additionalMenuItems={
+                                      <>
+                                        {narrowStage && (
+                                          <Menu.Item
+                                            leftSection={<IconDownload size={14} stroke={1.5} />}
+                                            onClick={download}
+                                            disabled={downloading}
+                                            closeMenuOnClick={false}
+                                          >
+                                            {!downloading
+                                              ? 'Download'
+                                              : Number.isFinite(progress) && progress > 0
+                                              ? `Downloading ${Math.round(progress)}%`
+                                              : 'Downloading…'}
+                                          </Menu.Item>
+                                        )}
+                                        {storyline.active &&
+                                          !isOwner &&
+                                          !!image.postId &&
+                                          storyline.chapterIdOfImage(image.id) !== undefined && (
+                                            <ReportChapterMenuItem postId={image.postId} />
+                                          )}
+                                      </>
+                                    }
+                                  >
+                                    <LegacyActionIcon {...sharedActionIconProps}>
+                                      <IconDotsVertical {...sharedIconProps} />
+                                    </LegacyActionIcon>
+                                  </ImageContextMenu>
+                                </>
                               )}
                             </DownloadImage>
-                            <ShareButton
-                              url={imageShareUrl}
-                              title={title}
-                              collect={{ type: CollectionType.Image, imageId: image.id }}
-                            >
-                              <LegacyActionIcon {...sharedActionIconProps}>
-                                <IconShare3 {...sharedIconProps} />
-                              </LegacyActionIcon>
-                            </ShareButton>
-                            <LoginRedirect reason={'report-content'}>
-                              <LegacyActionIcon
-                                {...sharedActionIconProps}
-                                onClick={handleReportClick}
-                              >
-                                <IconFlag {...sharedIconProps} />
-                              </LegacyActionIcon>
-                            </LoginRedirect>
-                            <ImageContextMenu image={image}>
-                              <LegacyActionIcon {...sharedActionIconProps}>
-                                <IconDotsVertical {...sharedIconProps} />
-                              </LegacyActionIcon>
-                            </ImageContextMenu>
                           </div>
                         </div>
                         <div className={`@max-md:hidden ${sidebarOpen ? '-mr-3 ml-3' : ''}`}>
@@ -434,13 +473,17 @@ export function ImageDetail2() {
                       </div>
 
                       {/* IMAGE CAROUSEL */}
-                      <ImageDetailCarousel
-                        images={images}
-                        videoRef={videoRef}
-                        connect={connect}
-                        onSettle={handleSettle}
-                        {...carouselNavigation}
-                      />
+                      <div className="relative flex min-h-0 flex-1 flex-col">
+                        <ImageDetailCarousel
+                          images={images}
+                          videoRef={videoRef}
+                          connect={connect}
+                          onSettle={handleSettle}
+                          loop={!storyline.active}
+                          {...navigation}
+                        />
+                        <StorylineStageOverlay isLastImage={isLastImage} imageId={image?.id} />
+                      </div>
                       {/* FOOTER */}
                       <div className="flex flex-col gap-3 p-3">
                         <div className="flex justify-center">
@@ -472,10 +515,23 @@ export function ImageDetail2() {
                             <ImageDetailReactions image={image} />
                             {/* Inside the provider, not beside it: the bar reads
                                 the same `buttonStyling` the reactions do. */}
-                            <StickerPlacementBar imageId={image.id} className="ml-2" />
+                            <StickerPlacementBar
+                              imageId={image.id}
+                              imageNsfwLevel={image.nsfwLevel}
+                              className="ml-2"
+                            />
                           </ReactionSettingsProvider>
                         </div>
-                        <CarouselIndicators {...carouselNavigation} />
+                        {storyline.active ? (
+                          <StorylineChapterRail
+                            storyline={storyline}
+                            images={images}
+                            index={carouselNavigation.index}
+                            navigate={carouselNavigation.navigate}
+                          />
+                        ) : (
+                          <CarouselIndicators {...carouselNavigation} />
+                        )}
                         {/* {viewportHeight >= 1050 && (
                       <AdUnitImageDetailBanner />
                     )} */}
@@ -486,14 +542,36 @@ export function ImageDetail2() {
               </div>
               <div
                 className={`@max-md:absolute @max-md:inset-0 ${
-                  !active ? '@max-md:translate-y-[calc(100%-60px)]' : '@max-md:transition-transform'
+                  !active
+                    ? // COLLAPSED, and on `/images/[imageId]` this 60px strip is the
+                      // bottom of the layout viewport whenever `hideAds` suppresses
+                      // the ad bar below it — the route passes `footer: null`, so
+                      // nothing else is down there. The strip has to grow by the
+                      // inset or its controls sit 12px above the physical bottom,
+                      // i.e. inside the home indicator. Same expression as the
+                      // header row's padding just below, so the strip stays exactly
+                      // that row and no scroll content peeks under the indicator.
+                      //
+                      // `…-unpaid` and not the raw inset: when the ad bar DOES
+                      // render it is the viewport bottom and pays for itself, and
+                      // this panel is back to being an ordinary box above it.
+                      '@max-md:translate-y-[calc(100%-60px-var(--safe-area-inset-bottom-unpaid))]'
+                    : '@max-md:transition-transform'
                 } @md:w-[450px] @md:min-w-[450px] ${
                   !sidebarOpen ? '@md:hidden' : ''
                 } z-10 flex flex-col bg-gray-2 dark:bg-dark-9`}
                 style={{ wordBreak: 'break-word' }}
               >
-                <div className="@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden">
-                  <div className="flex gap-1">{LeftImageControls}</div>
+                {/* The padding is on the `!active` branch only. Expanded, this row
+                    is at the TOP of the panel and the inset below it would be a
+                    spurious 34px gap — over-payment, which is a defect here in
+                    exactly the way under-payment is. */}
+                <div
+                  className={`@max-md:shadow-topper flex items-center justify-between rounded-md p-3 @md:hidden ${
+                    !active ? '@max-md:pb-[calc(0.75rem+var(--safe-area-inset-bottom-unpaid))]' : ''
+                  }`}
+                >
+                  <div className="flex gap-1">{renderLeftImageControls(false)}</div>
                   <LegacyActionIcon {...sharedActionIconProps} onClick={toggleInfo}>
                     <IconChevron {...sharedIconProps} />
                   </LegacyActionIcon>
@@ -518,6 +596,10 @@ export function ImageDetail2() {
                       className="rounded-xl"
                       tipsEnabled={!image.poi}
                     />
+                    {/* Beside, not inside, the creator card: the card's subText sits
+                        inside the profile link on the cosmetic-shop card, and an
+                        anchor cannot nest in an anchor. */}
+                    <ImagePublishedWithApp imageId={image.id} />
                     {image.postId && (
                       <EntityCollaboratorList
                         entityId={image.postId}
@@ -537,10 +619,8 @@ export function ImageDetail2() {
                       // the prop and never fires the ambient
                       // `model3d.getByPostId` query. A Meili-sourced feed item
                       // with no link resolves to `null` (chip hidden, no
-                      // fallback). The only residual fallback is BitDex-sourced
-                      // items (model3dId not indexed → `undefined`), which
-                      // self-heal as the index gains the field — the #2682
-                      // model3dFeed flag-gate is otherwise redundant now.
+                      // fallback), so the #2682 model3dFeed flag-gate is
+                      // redundant now.
                       <PostingToModel3DCard
                         model3dId={(image as { model3dId?: number | null }).model3dId}
                         postId={image.postId}
@@ -578,32 +658,9 @@ export function ImageDetail2() {
                         &ndash; such as the prompt, tools, and resources used.
                       </AlertWithIcon>
                     )}
-                    {['Moderated', 'moderated'].includes(image.blockedFor ?? '') &&
-                      !image.needsReview &&
-                      isOwner && (
-                        <AlertWithIcon
-                          icon={<IconAlertTriangle />}
-                          color="yellow"
-                          iconColor="yellow"
-                          title="Blocked by moderators"
-                          radius={0}
-                          px="md"
-                        >
-                          This image has been blocked by our moderators. We can make mistakes, if
-                          you believe this was done in error,{' '}
-                          <Anchor
-                            type="button"
-                            onClick={() =>
-                              dialogStore.trigger({
-                                component: AppealDialog,
-                                props: { entityId: image.id, entityType: EntityType.Image },
-                              })
-                            }
-                          >
-                            appeal this removal
-                          </Anchor>
-                        </AlertWithIcon>
-                      )}
+                    {isAppealableImage(image) && isOwner && (
+                      <OwnerBlockedImageNotice imageId={image.id} />
+                    )}
                     {image.poi && (
                       <AlertWithIcon icon={<IconInfoCircle />} color="blue" iconColor="blue">
                         <Text>
@@ -639,10 +696,10 @@ export function ImageDetail2() {
                       </Card>
                     )}
                     <ImageProcess imageId={image.id} />
+                    <ImageRemixOfDetails imageId={image.id} />
                     <RemixGalleryCard imageId={image.id} />
                     <ImageGenerationData imageId={image.id} collapsible />
-                    {/* <ImageRemixOfDetails imageId={image.id} />
-                    <ImageRemixesDetails imageId={image.id} /> */}
+                    {/* <ImageRemixesDetails imageId={image.id} /> */}
                     {/* {!hideAds && <AdUnitSide_3 />} */}
                     <CollapsibleCard
                       title="Discussion"
@@ -690,14 +747,17 @@ function ImageDetailReactions({
       }}
     >
       {(metrics) => (
-        <Reactions
-          entityId={image.id}
-          entityType="image"
-          reactions={image.reactions}
-          metrics={metrics}
-          targetUserId={image.user.id}
-          disableBuzzTip={image.poi}
-        />
+        <ImageReactorsPreview imageId={image.id} ownerId={image.user.id}>
+          <Reactions
+            entityId={image.id}
+            entityType="image"
+            reactions={image.reactions}
+            metrics={metrics}
+            metricsUnknown={image.stats?.statsUnknown}
+            targetUserId={image.user.id}
+            disableBuzzTip={image.poi}
+          />
+        </ImageReactorsPreview>
       )}
     </Metrics>
   );

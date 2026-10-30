@@ -2,7 +2,7 @@ name: Schema drift gate
 
 # Fails a pull request that makes the gap between `schema.full.prisma` and the production
 # database WORSE, and only that. Pre-existing drift is warned about, never failed on — the
-# database carries 63 accepted findings today, and a gate red on every run is a gate everyone
+# database carries a baseline of accepted findings, and a gate red on every run is a gate everyone
 # learns to click through.
 #
 # "Fails", not "blocks": `main` has branch protection but no `required_status_checks`, so a red
@@ -31,9 +31,30 @@ name: Schema drift gate
 # Its own workflow file rather than a job in lint.yml, so the drift gate's verdict is a
 # separate, individually-readable check.
 
+# Runs only when something the gate reads or runs changes: the package that holds the schema,
+# migrations, gate code, catalog snapshot and baseline (packages/civitai-db-schema/**), the
+# install it depends on (root package.json, lockfile, workspace file) and the postinstall
+# generators that run during that install. A PR touching none of these cannot change the verdict.
+# `main` and `release` have no required_status_checks, so a skipped run blocks nothing; if this
+# check is ever made required, drop the filter or a skipping PR waits forever.
+#
+# Skips draft PRs, like lint.yml's heavy jobs (see its header): the job takes 65-87s (n=15,
+# 2026-10-29), over the one-minute line below which a cheap gate keeps running on drafts.
+# `ready_for_review` is in `types` so marking the PR ready starts it. It has no dispatch, so on a
+# draft it does not run at all.
 on:
   pull_request:
     branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
+    paths:
+      - '.github/workflows/schema-drift.yml'
+      - 'packages/civitai-db-schema/**'
+      - 'scripts/generate-slim-schema.js'
+      - 'scripts/prisma-enum-generator.mjs'
+      - 'package.json'
+      - 'pnpm-lock.yaml'
+      - 'pnpm-workspace.yaml'
+      - '.nvmrc'
 
 permissions:
   contents: read
@@ -46,6 +67,7 @@ jobs:
   gate:
     name: Schema drift gate
     runs-on: ubuntu-latest
+    if: ${{ !github.event.pull_request.draft }}
     timeout-minutes: 15
     steps:
       # No `submodules: true`. The gate reads the Prisma schema and a JSON snapshot; nothing

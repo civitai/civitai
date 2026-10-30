@@ -1,0 +1,36 @@
+-- The resolved-placement notification processors read this table once a minute,
+-- and nothing serves them. `Placement_resolvedAt_idx` looks like it should: it is
+-- keyed on "resolvedAt" and its predicate includes both `targetType = 'image'`
+-- and the status, but it is ALSO predicated on `metricCountedAt IS NULL`, which
+-- the notification query does not supply and must not — the metric sweep stamps
+-- that column on its own schedule, so adding it here would silently drop the
+-- notification for every placement the sweep reached first.
+--
+-- Without this, each run falls back to a scan over every approved placement ever
+-- made, which grows monotonically and is read 1,440 times a day.
+--
+-- CONCURRENTLY, so it cannot lock out placement writes while it builds. Two
+-- consequences when running it by hand: it must NOT be wrapped in a transaction,
+-- and a cancelled build leaves an INVALID index behind that will not be used and
+-- must be dropped before retrying —
+--   SELECT indexrelid::regclass FROM pg_index WHERE NOT indisvalid;
+--
+-- IF NOT EXISTS matches on the NAME, so if that invalid index is still there this
+-- statement reports success and creates nothing. Drop it first (DROP INDEX
+-- CONCURRENTLY); a clean re-run is the only way this file is idempotent. The
+-- planner ignores an invalid index while every write still maintains it, so the
+-- state costs writes and buys nothing.
+--
+-- Measured on this table 2026-08-14: a concurrent build takes ~33s, and the
+-- postgres-query skill defaults to a 30s timeout. So applying this through that
+-- skill without an explicit --timeout is cancelled BY ARITHMETIC, not by bad luck,
+-- and lands in exactly the state above on the first attempt. Pass a timeout well
+-- above 33s.
+--
+-- Verify against the PRIMARY, not a replica, and by the flag rather than by the
+-- exit code -- a sibling migration having been applied is not evidence this one
+-- was:
+--   SELECT indisvalid FROM pg_index WHERE indexrelid = '"Placement_resolvedAt_approved_idx"'::regclass;
+CREATE INDEX CONCURRENTLY IF NOT EXISTS "Placement_resolvedAt_approved_idx"
+  ON "Placement" ("resolvedAt")
+  WHERE "targetType" = 'image' AND status = 'approved';

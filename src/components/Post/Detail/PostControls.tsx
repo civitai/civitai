@@ -1,25 +1,40 @@
 import { Menu, useMantineTheme } from '@mantine/core';
-import { IconEdit, IconFlag, IconTrash, IconInfoCircle, IconShieldHalf } from '@tabler/icons-react';
+import {
+  IconEdit,
+  IconFlag,
+  IconTrash,
+  IconShieldHalf,
+  IconSpeakerphone,
+} from '@tabler/icons-react';
 import { useRouter } from 'next/router';
 import React from 'react';
+import { dialogStore } from '~/components/Dialog/dialogStore';
 import { openReportModal } from '~/components/Dialog/triggers/report';
 
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import { DeletePostButton } from '~/components/Post/DeletePostButton';
-import { env } from '~/env/client';
+import { GalleryPromotionModal } from '~/components/Promotion/GalleryPromotionModal';
+import type { StorylineSourcePost } from '~/components/Storyline/storyline.utils';
+import { StartStorylineMenuItem } from '~/components/Storyline/StartStorylineMenuItem';
+import { isPublished } from '~/components/Storyline/storyline.utils';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
+import { moderatorBulkImageManagerPath } from '~/shared/constants/moderator-app';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { showSuccessNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
+import { ModeratorLookupMenuItem } from '~/components/Moderation/ModeratorLookupMenuItem';
 
 export function PostControls({
   postId,
   userId,
+  storylinePost,
   children,
 }: {
   postId: number;
   userId: number;
   isModelVersionPost?: number | null;
+  storylinePost?: StorylineSourcePost;
   children: React.ReactElement;
 }) {
   const router = useRouter();
@@ -28,6 +43,7 @@ export function PostControls({
   const isOwner = userId === currentUser?.id;
   const isModerator = currentUser?.isModerator ?? false;
   const isOwnerOrModerator = isOwner || isModerator;
+  const features = useFeatureFlags();
   const enqueuNsfwLevelUpdateMutation = trpc.post.enqueueNsfwLevelUpdate.useMutation({
     onSuccess: () => showSuccessNotification({ message: 'Nsfw level update queued' }),
   });
@@ -74,6 +90,19 @@ export function PostControls({
             </Menu.Item>
           </>
         )}
+        {isOwner && features.creatorPromotions && (
+          <Menu.Item
+            leftSection={<IconSpeakerphone size={14} stroke={1.5} />}
+            onClick={() =>
+              dialogStore.trigger({ component: GalleryPromotionModal, props: { postId } })
+            }
+          >
+            Promote in a gallery
+          </Menu.Item>
+        )}
+        {isOwner && features.storylines && storylinePost && isPublished(storylinePost) && (
+          <StartStorylineMenuItem post={storylinePost} />
+        )}
         {(!isOwner || !currentUser) && (
           <LoginRedirect reason="report-content">
             <Menu.Item
@@ -87,16 +116,9 @@ export function PostControls({
         {isModerator && (
           <>
             <Menu.Label>Moderator</Menu.Label>
-            {env.NEXT_PUBLIC_POST_LOOKUP_URL && (
-              <Menu.Item
-                component="a"
-                target="_blank"
-                leftSection={<IconInfoCircle size={14} stroke={1.5} />}
-                href={`${env.NEXT_PUBLIC_POST_LOOKUP_URL}${postId}`}
-              >
-                Lookup Post
-              </Menu.Item>
-            )}
+            <ModeratorLookupMenuItem path={moderatorBulkImageManagerPath('post', postId)}>
+              Lookup Post
+            </ModeratorLookupMenuItem>
           </>
         )}
       </Menu.Dropdown>

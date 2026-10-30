@@ -4,20 +4,18 @@ import {
   IconExternalLink,
   IconPlugConnected,
   IconSettings,
-  IconStarFilled,
 } from '@tabler/icons-react';
 import type { Icon } from '@tabler/icons-react';
 import Link from 'next/link';
 import { useState } from 'react';
+import { STANDALONE_KIND_LABEL } from '~/components/Apps/listingKindLabels';
 import { AppDetailsModal } from '~/components/Apps/AppDetailsModal';
-import {
-  CATEGORY_ICONS,
-  FALLBACK_CATEGORY_ICON,
-} from '~/components/Apps/marketplaceCategoryIcons';
+import { appListingDescriptionToPlainText } from '~/components/Apps/appListingDescriptionText';
+import { CATEGORY_ICONS, FALLBACK_CATEGORY_ICON } from '~/components/Apps/marketplaceCategoryIcons';
 import { LoginRedirect } from '~/components/LoginRedirect/LoginRedirect';
 import {
   isMarketplaceCategory,
-  MARKETPLACE_CATEGORY_LABELS,
+  marketplaceCategoryLabel,
 } from '~/server/services/blocks/marketplace-categories.constants';
 import { hasInstallSlot } from '~/shared/constants/slot-registry';
 import type { AvailableBlock } from '~/server/schema/blocks/subscription.schema';
@@ -61,15 +59,6 @@ export interface AppBlockCardProps {
    * track recents are unaffected.
    */
   onRecentOpen?: (block: AvailableBlock) => void;
-}
-
-/**
- * Maps a stored category value to its display label. Falls back to the raw
- * value for an unrecognised category (soft contract — adding a category is a
- * one-line const edit, and an older client won't crash on a newer category).
- */
-function categoryLabel(category: string): string {
-  return isMarketplaceCategory(category) ? MARKETPLACE_CATEGORY_LABELS[category] : category;
 }
 
 /**
@@ -157,7 +146,7 @@ export function AppBlockCard({
   // the card renders an "Open ↗" link to the off-site URL (new tab) and HIDES
   // the Install button + (already-card-hidden) scopes, since an external app has
   // no install / scopes / token. The off-site nature is flagged with a small
-  // "Off-site" badge. Everything else (View details) is unchanged.
+  // "Standalone" badge. Everything else (View details) is unchanged.
   const isExternal = Boolean(block.externalUrl);
   // Show Install ONLY for an app that installs into a model/in-context slot.
   // A page app (target slot `app.page`) is STATELESS — installModel `'none'` in
@@ -224,7 +213,7 @@ export function AppBlockCard({
                 size="sm"
                 leftSection={<IconExternalLink size={12} />}
               >
-                Off-site
+                {STANDALONE_KIND_LABEL}
               </Badge>
             )}
             {/* Mod-assigned marketplace category (+ its icon). NULL until a mod
@@ -240,7 +229,7 @@ export function AppBlockCard({
                     size="sm"
                     leftSection={<CategoryIcon size={12} />}
                   >
-                    {categoryLabel(block.category)}
+                    {marketplaceCategoryLabel(block.category)}
                   </Badge>
                 );
               })()}
@@ -260,8 +249,14 @@ export function AppBlockCard({
             // M1: the description link is a detail-page open too — record it.
             onClick={() => onRecentOpen?.(block)}
           >
+            {/* 🔴 The card shows the PLAIN-TEXT PROJECTION, not the markdown source.
+                This is the second half of the one rule (`appListingDescriptionText.ts`):
+                a 3-line clamp in a grid cannot render markdown block elements, so
+                it renders markdown's text instead. Passing the raw source here
+                would print literal backticks and `**` in the grid — the same
+                unpredictability the rule exists to remove, just relocated. */}
             <Text size="sm" c="dimmed" className="line-clamp-3">
-              {manifest.description}
+              {appListingDescriptionToPlainText(manifest.description)}
             </Text>
           </Anchor>
         )}
@@ -273,17 +268,6 @@ export function AppBlockCard({
             {/* Install count is HIDDEN until there's a real user base — every
                 app currently shows 0, which reads as "unused". Re-introduce when
                 installs are meaningful. */}
-            {/* Review indicator: shown ONLY when the app has ≥1 review. A
-                0-review app shows nothing (no "No reviews" affordance) so an
-                un-reviewed app doesn't look bad. */}
-            {block.reviewCount > 0 && block.avgRating != null && (
-              <Group gap={4}>
-                <IconStarFilled size={13} className="text-yellow-500" />
-                <Text size="xs" c="dimmed">
-                  {block.avgRating.toFixed(1)} ({block.reviewCount.toLocaleString()})
-                </Text>
-              </Group>
-            )}
           </Group>
           {/*
             Anon-conversion CTA (F-E E1): for a session-less viewer, clicking
@@ -363,8 +347,8 @@ export function AppBlockCard({
         </Group>
       </Stack>
       {/* Details modal — controlled by this card's local state. GATED so the
-          whole subtree (its tRPC query hooks + the <AppBlockReviews> subtree)
-          only EXISTS while open: with N cards in the marketplace grid, an
+          whole subtree (its tRPC query hooks) only EXISTS while open: with N
+          cards in the marketplace grid, an
           always-mounted modal per card meant N idle modal instances. The "View
           details" BUTTON above stays unconditional (the never-empty-card
           invariant) — only this subtree is gated. */}

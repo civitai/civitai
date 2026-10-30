@@ -48,7 +48,7 @@ export default function ComicSearch() {
 const RenderFilters = () => {
   return (
     <>
-      <BrowsingLevelFilter attributeName="nsfwLevel" />
+      <BrowsingLevelFilter indexKey="comics" />
       <SortBy
         title="Sort comics by"
         items={[

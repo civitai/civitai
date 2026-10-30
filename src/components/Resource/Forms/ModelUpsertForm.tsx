@@ -21,7 +21,7 @@ import {
 import { IconClockCheck, IconExclamationMark, IconGlobe } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/router';
-import React, { useEffect, useMemo } from 'react';
+import React, { useEffect, useMemo, useRef } from 'react';
 import * as z from 'zod';
 import { AlertWithIcon } from '~/components/AlertWithIcon/AlertWithIcon';
 import { ContainerGrid2 } from '~/components/ContainerGrid/ContainerGrid';
@@ -31,6 +31,13 @@ import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
 import { SubscriptionRequiredBlock } from '~/components/Subscriptions/SubscriptionRequiredBlock';
 import { useCreatorProgramRequirements } from '~/components/Buzz/CreatorProgramV2/CreatorProgram.util';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useCurrentUserSettings } from '~/components/UserSettings/hooks';
+import {
+  inheritedMetricPrivacy,
+  metricPrivacyAccessFor,
+} from '~/components/Resource/Forms/metric-privacy-hints';
+import { MetricPrivacyControls } from '~/components/Resource/Forms/MetricPrivacyControls';
+import { getMetricVisibilityChoices } from '~/server/utils/model-metric-privacy';
 import {
   Form,
   InputCheckbox,
@@ -40,25 +47,28 @@ import {
   InputRTE,
   InputSegmentedControl,
   InputSelect,
-  InputSwitch,
   InputTags,
   InputText,
   useForm,
 } from '~/libs/form';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
 import { TagSort } from '~/server/common/enums';
-import type { ModelUpsertInput } from '~/server/schema/model.schema';
+import type { ModelMeta, ModelUpsertInput } from '~/server/schema/model.schema';
 import { modelUpsertSchema } from '~/server/schema/model.schema';
 import { getSanitizedStringSchema } from '~/server/schema/utils.schema';
+import type { ModelType } from '~/shared/utils/prisma/enums';
 import {
   Availability,
   CheckpointType,
   CommercialUse,
   ModelStatus,
-  ModelType,
   ModelUploadType,
   TagTarget,
 } from '~/shared/utils/prisma/enums';
+import {
+  getModelTypeSelectData,
+  resolveModelTypeDefaults,
+} from '~/shared/constants/model-type.constants';
 import type { ModelById } from '~/types/router';
 import { showErrorNotification } from '~/utils/notifications';
 import { parseNumericString } from '~/utils/query-string-helpers';
@@ -67,11 +77,18 @@ import { trpc } from '~/utils/trpc';
 import { isDefined } from '~/utils/type-guards';
 import styles from './ModelUpsertForm.module.scss';
 import { InputCollectionSelect } from '~/libs/form/components/CollectionSelectInput';
+import { ModelListingTabs } from '~/components/Resource/Forms/ModelListingTabs';
 
 const schema = modelUpsertSchema
   .extend({
     category: z.coerce.number().gt(0, 'Required'),
-    description: getSanitizedStringSchema().refine((data) => {
+    // `allowBlurbs` must mirror `modelUpsertSchema`'s own description field. This override exists
+    // only to add the empty check, but re-declaring the field also re-declares the sanitize — and
+    // without the flag this strips `data-type`/`data-id` off a blurb CLIENT-SIDE, before the
+    // request is sent. The server schema never sees the reference, no BlurbReference row is
+    // written, and the words are left frozen as ordinary text: the control renders, the chip
+    // inserts, and the feature silently does nothing on this surface alone.
+    description: getSanitizedStringSchema({ allowBlurbs: true }).refine((data) => {
       return data && data.length > 0 && data !== '<p></p>';
     }, 'Cannot be empty'),
     poi: z.string().refine((data) => !!data.length, 'Required'),
@@ -95,6 +112,10 @@ const schema = modelUpsertSchema
   .refine((data) => !(data.availability === Availability.Private && !data.sfwOnly), {
     error: 'Private models must be set to SFW only.',
     path: ['sfwOnly'],
+  })
+  .refine((data) => data.sfwName == null || data.sfwName.trim().length > 0, {
+    error: 'Cannot be empty',
+    path: ['sfwName'],
   });
 
 type ModelUpsertSchema = z.infer<typeof schema>;
@@ -109,12 +130,27 @@ const commercialUseOptions: Array<{ value: CommercialUse; label: string }> = [
   { value: CommercialUse.Image, label: 'Sell generated images' },
   { value: CommercialUse.RentCivit, label: 'Use on Civitai generation service' },
   { value: CommercialUse.Rent, label: 'Use on other generation services' },
-  { value: CommercialUse.Sell, label: 'Sell this model or merges' },
+  { value: CommercialUse.Sell, label: 'Sell this model' },
+  { value: CommercialUse.SellMerge, label: 'Sell merges using this model' },
 ];
 
 // 'tags' is deliberately absent: the field is named `tagsOnModels`, so the watch effect below
 // could never auto-apply it, the input has no locked state, and nothing enforces it server-side.
 const lockableProperties = ['nsfw', 'poi', 'minor', 'sfwOnly', 'category'];
+// In the form's own shapes: `poi` is held as a radio string.
+const restrictiveValues: Record<string, unknown> = {
+  nsfw: true,
+  poi: 'true',
+  minor: true,
+  sfwOnly: true,
+};
+// What the server's flag actions lock (MINOR_LOCKED_PROPERTIES, POI_LOCKED_PROPERTIES,
+// SFW_ONLY_LOCKED_PROPERTIES): with one of these flags on, nsfw=false is the restrictive value.
+const flagLockSets: Record<string, string[]> = {
+  minor: ['minor', 'nsfw', 'sfwOnly'],
+  poi: ['poi', 'nsfw', 'sfwOnly'],
+  sfwOnly: ['nsfw', 'sfwOnly'],
+};
 
 const availabilityDetails = {
   [Availability.Public]: {
@@ -139,13 +175,23 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const colorScheme = useComputedColorScheme('dark');
 
   const defaultCategory = result.success ? result.data.category ?? 0 : 0;
+  // One snapshot feeds both: `initialType` reaches the form once through defaultValues, so a
+  // `grandfatheredType` that kept recomputing could drift from it if a caller ever mounted this
+  // form before `model` arrived.
+  const initialModel = useRef(model).current;
+  const { grandfatheredType, initialType, replacedType } = resolveModelTypeDefaults(initialModel);
+  const initialMeta = model?.meta as ModelMeta | null | undefined;
   const defaultValues: ModelUpsertSchema = {
     ...model,
     name: model?.name ?? '',
     description: model?.description ?? '',
+    sfwName: model?.sfwName ?? null,
+    sfwDescription: model?.sfwDescription ?? null,
+    coverImageId: model?.coverImageId ?? null,
+    sfwCoverImageId: model?.sfwCoverImageId ?? null,
     tagsOnModels: model?.tagsOnModels?.filter((tag) => !tag.isCategory) ?? [],
     status: model?.status ?? 'Draft',
-    type: model?.type ?? 'Checkpoint',
+    type: initialType,
     checkpointType: model?.checkpointType,
     uploadType: model?.uploadType ?? 'Created',
     poi: model?.poi == null ? '' : model?.poi ? 'true' : 'false',
@@ -155,6 +201,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
       CommercialUse.RentCivit,
       CommercialUse.Rent,
       CommercialUse.Sell,
+      CommercialUse.SellMerge,
     ],
     allowDerivatives: model?.allowDerivatives ?? true,
     allowNoCredit: model?.allowNoCredit ?? true,
@@ -162,6 +209,15 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     category: model?.tagsOnModels?.find((tag) => !!tag.isCategory)?.id ?? defaultCategory,
     attestation: !!model?.id,
     availability: model?.availability ?? Availability.Public,
+    // A model whose `meta` is null predates the metric-privacy feature. Left null, RHF's `get`
+    // returns null (not the default) for every `meta.*` path, so the choices are always seeded.
+    meta: {
+      ...(initialMeta ?? {}),
+      // The form holds the schema INPUT (choices, including inherit); defaultValues is typed as its output.
+      metricVisibility: getMetricVisibilityChoices(
+        initialMeta
+      ) as unknown as ModelMeta['metricVisibility'],
+    },
   };
 
   const form = useForm({ schema, mode: 'onChange', defaultValues, shouldUnregister: false });
@@ -179,6 +235,13 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const features = useFeatureFlags();
   const { requirements } = useCreatorProgramRequirements();
   const isActiveCreatorMember = !!requirements?.validMembership;
+  const userSettings = useCurrentUserSettings();
+  const inheritedMetrics = inheritedMetricPrivacy({
+    level: 'model',
+    userSettings,
+    isOwner: !model?.user || model.user.id === currentUser?.id,
+    ownerDefaults: model?.ownerMetricPrivacyDefaults,
+  });
 
   const chipProps: Partial<ChipProps> = {
     size: 'sm',
@@ -296,16 +359,83 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
     } else onSubmit(defaultValues);
   };
 
+  // The box is hidden while merges are off; clear it so re-allowing merges does not bring back a
+  // stale tick the creator cannot see.
   useEffect(() => {
+    if (!allowDerivatives) form.setValue('allowDifferentLicense', false);
+  }, [allowDerivatives]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Set while one control's onChange writes another field, so the lock watcher can tell that write
+  // from the moderator using the field itself. RHF's watch `type` cannot: once any field has had a
+  // change event, `type: 'change'` stays in its form state and rides on every later setValue.
+  const settingDerivedValue = useRef(false);
+  const setDerivedValue: typeof form.setValue = (...args) => {
+    settingDerivedValue.current = true;
+    try {
+      form.setValue(...args);
+    } finally {
+      settingDerivedValue.current = false;
+    }
+  };
+
+  useEffect(() => {
+    // Locks this form took on its own; released again once nothing calls for them.
+    const autoLocked = new Set<string>();
+    const touched = new Set<string>();
+    // Never auto-locked again until the moderator adds them back.
+    const removedByModerator = new Set<string>();
+    let lastLocks = (defaultValues.lockedProperties ?? []).filter(isDefined);
+    let writingLocks = false;
     const subscription = form.watch((value, { name }) => {
-      if (
-        currentUser?.isModerator &&
-        name &&
-        lockableProperties.includes(name) &&
-        !value.lockedProperties?.includes(name)
-      ) {
-        const locked = (value.lockedProperties ?? []).filter(isDefined);
-        form.setValue('lockedProperties', [...locked, name]);
+      if (!currentUser?.isModerator || !name) return;
+      const stored = (value.lockedProperties ?? []).filter(isDefined);
+      if (name === 'lockedProperties') {
+        if (!writingLocks) {
+          for (const field of lastLocks)
+            if (!stored.includes(field)) {
+              removedByModerator.add(field);
+              autoLocked.delete(field);
+            }
+          for (const field of stored) removedByModerator.delete(field);
+        }
+        lastLocks = stored;
+        return;
+      }
+      if (!lockableProperties.includes(name)) return;
+
+      const valueOf = (field: string) => value[field as keyof typeof value];
+      // Restrictive, and either moved there in this edit or set there by the moderator's own hand.
+      const isOn = (field: string) =>
+        valueOf(field) === restrictiveValues[field] &&
+        (touched.has(field) ||
+          valueOf(field) !== defaultValues[field as keyof typeof defaultValues]);
+      const flagsOn = Object.keys(flagLockSets).filter(isOn);
+      const calledFor = (field: string) =>
+        !removedByModerator.has(field) &&
+        (isOn(field) || flagsOn.some((flag) => flagLockSets[flag].includes(field)));
+
+      const locked = new Set(stored);
+      if (!settingDerivedValue.current) {
+        touched.add(name);
+        autoLocked.delete(name);
+        removedByModerator.delete(name);
+        locked.add(name);
+      }
+      for (const field of lockableProperties) {
+        if (calledFor(field) && !locked.has(field)) {
+          autoLocked.add(field);
+          locked.add(field);
+        } else if (!calledFor(field) && autoLocked.delete(field)) {
+          locked.delete(field);
+        }
+      }
+      if (locked.size !== stored.length || stored.some((field) => !locked.has(field))) {
+        writingLocks = true;
+        try {
+          form.setValue('lockedProperties', [...locked]);
+        } finally {
+          writingLocks = false;
+        }
       }
     });
     return () => {
@@ -326,24 +456,68 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
   const isTrained = model?.uploadType === ModelUploadType.Trained;
   const isDraft = model?.status === ModelStatus.Draft;
 
+  const nameInput = <InputText name="name" label="Name" placeholder="Name" withAsterisk />;
+  const descriptionInput = (
+    <InputRTE
+      name="description"
+      label="Description"
+      description="Tell us what your model does"
+      includeControls={[
+        'heading',
+        'formatting',
+        'list',
+        'link',
+        'media',
+        'mentions',
+        'colors',
+        'blurb',
+      ]}
+      editorSize="xl"
+      placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
+      withAsterisk
+    />
+  );
+
   return (
     <Form id={id} form={form} onSubmit={handleSubmit}>
       <ContainerGrid2 gutter="xl">
         <ContainerGrid2.Col span={12}>
           <Stack>
-            <InputText name="name" label="Name" placeholder="Name" withAsterisk />
+            {features.modelComFace ? (
+              <ModelListingTabs
+                modelId={model?.id}
+                redFields={
+                  <>
+                    {nameInput}
+                    {descriptionInput}
+                  </>
+                }
+              />
+            ) : (
+              nameInput
+            )}
             <Stack gap={5}>
+              {replacedType && (
+                <AlertWithIcon
+                  color="yellow"
+                  iconColor="yellow"
+                  icon={<IconExclamationMark />}
+                  size="sm"
+                >
+                  {`This template is ${getDisplayName(
+                    replacedType
+                  )}, which new models can no longer be. The type has been set to Other. Pick the one that fits before you publish.`}
+                </AlertWithIcon>
+              )}
               <Group gap="sm" grow>
                 <InputSelect
                   name="type"
                   label="Type"
                   placeholder="Type"
-                  data={Object.values(ModelType).map((type) => ({
-                    label: getDisplayName(type),
-                    value: type,
-                  }))}
+                  data={getModelTypeSelectData(grandfatheredType)}
                   onChange={handleModelTypeChange}
                   disabled={isTrained}
+                  allowDeselect={false}
                   withAsterisk
                 />
                 {type === 'Checkpoint' && (
@@ -427,23 +601,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                 </Text>
               </AlertWithIcon>
             )}
-            <InputRTE
-              name="description"
-              label="Description"
-              description="Tell us what your model does"
-              includeControls={[
-                'heading',
-                'formatting',
-                'list',
-                'link',
-                'media',
-                'mentions',
-                'colors',
-              ]}
-              editorSize="xl"
-              placeholder="What does your model do? What's it for? What is your model good at? What should it be used for? What is your resource bad at? How should it not be used?"
-              withAsterisk
-            />
+            {!features.modelComFace && descriptionInput}
             {modelUser && (
               <InputCollectionSelect
                 name="meta.showcaseCollectionId"
@@ -454,34 +612,16 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
             )}
             <Paper radius="md" p="md" withBorder>
               <Stack gap="xs">
-                <div>
-                  <Text size="sm" fw={600}>
-                    Creator Controls: metric privacy
-                  </Text>
-                  <Text size="xs" c="dimmed">
-                    Hide these public stats on this model&apos;s page and cards.{' '}
-                    {isActiveCreatorMember
-                      ? 'You and moderators always see your real stats.'
-                      : 'Requires an active Creator Program membership — these only apply while your membership is active.'}
-                  </Text>
-                </div>
-                <InputSwitch
-                  name="meta.hideBuzz"
-                  label="Hide tipped / earned Buzz"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-                <InputSwitch
-                  name="meta.hideDownloads"
-                  label="Hide download count"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
-                />
-                <InputSwitch
-                  name="meta.hideGenerations"
-                  label="Hide generation count"
-                  disabled={!isActiveCreatorMember}
-                  styles={{ track: { flex: '0 0 1em' } }}
+                <Text size="sm" fw={600}>
+                  Creator Controls: metric privacy
+                </Text>
+                <MetricPrivacyControls
+                  level="model"
+                  inherited={inheritedMetrics}
+                  access={metricPrivacyAccessFor({
+                    isOwner: !model?.user || model.user.id === currentUser?.id,
+                    ownerHasMembership: isActiveCreatorMember,
+                  })}
                 />
               </Stack>
             </Paper>
@@ -598,8 +738,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                     'This model was trained on real imagery of a living, or deceased, person, or depicts a character portrayed by a real-life actor or actress. E.g. Tom Cruise or Tom Cruise as Maverick.'
                   )}
                   onChange={(value) => {
-                    form.setValue('nsfw', value === 'true' ? false : undefined);
-                    form.setValue('sfwOnly', minor ? true : value === 'true');
+                    setDerivedValue('nsfw', value === 'true' ? false : undefined);
+                    setDerivedValue('sfwOnly', minor ? true : value === 'true');
                   }}
                 >
                   <Group mt="xs">
@@ -623,8 +763,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   description={isLockedDescription('nsfw')}
                   onChange={(event) => {
                     if (event.target.checked) {
-                      form.setValue('poi', 'false');
-                      form.setValue('sfwOnly', false);
+                      setDerivedValue('poi', 'false');
+                      setDerivedValue('sfwOnly', false);
                     }
                   }}
                   className="mt-2"
@@ -636,8 +776,8 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   description={isLockedDescription('minor')}
                   onChange={(event) => {
                     if (event.target.checked) {
-                      form.setValue('nsfw', false);
-                      form.setValue('sfwOnly', true);
+                      setDerivedValue('nsfw', false);
+                      setDerivedValue('sfwOnly', true);
                     }
                   }}
                 />
@@ -711,7 +851,7 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
                   const value = selected as Availability;
                   const isPrivate = value === Availability.Private;
                   // Set sfwOnly if private
-                  form.setValue('sfwOnly', isPrivate);
+                  setDerivedValue('sfwOnly', isPrivate);
 
                   if (isPrivate) {
                     // Open automatic configurator modal:
@@ -748,7 +888,16 @@ export function ModelUpsertForm({ id, model, children, onSubmit, modelVersionId 
 
                     dialogStore.trigger({
                       component: PrivateModelAutomaticSetup,
-                      props: { ...schema.parse(form.getValues()), modelVersionId },
+                      props: {
+                        ...schema.parse(form.getValues()),
+                        modelVersionId,
+                        // Nothing is stored until the dialog completes, so a dismissed one puts
+                        // the chip back on what the model actually is.
+                        onCancel: () => {
+                          form.setValue('availability', model?.availability ?? Availability.Public);
+                          setDerivedValue('sfwOnly', model?.sfwOnly ?? false);
+                        },
+                      },
                     });
 
                     return;
@@ -802,11 +951,16 @@ type Props = {
 
 export const PrivateModelAutomaticSetup = ({
   modelVersionId,
+  onCancel,
   ...form
-}: ModelUpsertSchema & { modelVersionId?: number }) => {
+}: ModelUpsertSchema & { modelVersionId?: number; onCancel?: () => void }) => {
   const dialog = useDialogContext();
   const utils = trpc.useUtils();
   const handleClose = dialog.onClose;
+  const handleDismiss = () => {
+    onCancel?.();
+    handleClose();
+  };
   const router = useRouter();
   const privateModelFromTrainingMutation = trpc.model.privateModelFromTraining.useMutation();
 
@@ -843,7 +997,7 @@ export const PrivateModelAutomaticSetup = ({
   };
 
   return (
-    <Modal {...dialog} size="lg" withCloseButton={false} radius="md">
+    <Modal {...dialog} onClose={handleDismiss} size="lg" withCloseButton={false} radius="md">
       <Group justify="space-between" mb="md">
         <Text size="lg" fw="bold">
           You are about to create a private model
@@ -859,7 +1013,7 @@ export const PrivateModelAutomaticSetup = ({
         <Text fw="bold">Only PG (or SFW) content can be generated with private models.</Text>
         <Group ml="auto">
           <Button
-            onClick={handleClose}
+            onClick={handleDismiss}
             color="gray"
             disabled={privateModelFromTrainingMutation.isPending}
           >

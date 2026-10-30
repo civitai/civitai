@@ -1,4 +1,4 @@
-import { createEventHandler, createReactionHandler } from './base'
+import { createReactionHandler } from './base'
 
 /**
 ## Metrics driven by imageReaction table:

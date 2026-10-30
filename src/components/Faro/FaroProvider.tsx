@@ -10,13 +10,13 @@ import {
   ViewInstrumentation,
   WebVitalsInstrumentation,
 } from '@grafana/faro-web-sdk';
+import { useShellReady } from '~/components/Shell/shell-bootstrap-context';
 import { env } from '~/env/client';
 import { useFeatureFlags } from '~/providers/FeatureFlagsProvider';
-import {
-  type ClassifiableException,
-  classifyException,
-} from '~/utils/faro/classifyException';
+import { type ClassifiableException, classifyException } from '~/utils/faro/classifyException';
+import { buildRumGeoAttributes } from '~/utils/faro/geoAttributes';
 import { buildRumExperimentAttributes } from '~/utils/faro/experimentFlags';
+import { buildRumPageAttributes } from '~/utils/faro/pageAttributes';
 import { deepRedact } from '~/utils/faro/redact';
 import { resolveFaroSampling } from '~/utils/faro/traceSampler';
 import { buildResourceTimingInstrumentations } from './ResourceTimingInstrumentation';
@@ -55,7 +55,12 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  *     ramped. Never flip it 100%-at-once; bump the Flipt % rollout and watch the faro-rum stream
  *     bytes stay under the 10 MB/s per-stream ceiling.
  * The cohort boolean is read once at first-init (threaded in via `initFaro`, same model as the
- * `features.faro` gate on the whole SDK) — a flag change applies on the next page load.
+ * `features.faro` gate on the whole SDK) — a flag change applies on the next page load. The one
+ * exception is a static shell boot, whose flags are user-less until its page data arrives: there
+ * the cohort is undecided until then, and the instrumentation is attached late if the viewer is in
+ * it (`useShellReady`, `attachResourceTiming`). The `exp_*` session attributes
+ * (`experimentAttributes`) are built once at init, so on a shell boot they use the user-less boot
+ * flags for the session.
  * See ResourceTimingInstrumentation.
  *
  * SAMPLING (two decoupled layers):
@@ -72,17 +77,21 @@ import { SampledTracingInstrumentation } from './SampledTracingInstrumentation';
  * classified (`~/utils/faro/classifyException`): a conservative allowlist of known-benign noise
  * (request aborts, ad-blocker/3p script blocks, autoplay, opaque `Script error.`,
  * extension-injected, bare transient network) is DROPPED, and the rest is tagged
- * `context.error_category` (bizlogic|chunkload|meili|real → Loki `context_error_category`) so the
- * dashboard/alerts can isolate the real-app-bug stream from ~75% non-actionable noise.
+ * `context.error_category` (bizlogic|chunkload|meili|extension|ad_initiated|real → Loki
+ * `context_error_category`) so the dashboard/alerts can isolate the real-app-bug stream from
+ * ~75% non-actionable noise.
  *
  * Must live inside `FeatureFlagsProvider` (for the flag) which is inside
- * `IsClientProvider` (client-only, high in the tree).
+ * `IsClientProvider` (client-only, high in the tree), and on a shell boot inside
+ * `ShellBootstrapProvider` (for `useShellReady`).
  */
 
 // Module + window guards make init idempotent across React StrictMode double-mount
 // and Next.js Fast-Refresh (HMR), where the module state can reset but the global
 // Faro instance persists.
 let faroInitStarted = false;
+/** `ResourceTimingInstrumentation` is on this module's Faro, from init or `attachResourceTiming`. */
+let resourceTimingAttached = false;
 const WINDOW_GUARD_KEY = '__civitaiFaroInitialized__';
 
 /**
@@ -131,8 +140,9 @@ function scrubBeacon(item: TransportItem): TransportItem | null {
  * `beforeSend` for a single beacon: redact (fail-closed), and for EXCEPTION beacons additionally
  * classify — DROP a conservative allowlist of known-benign noise (aborts, ad-blocker/3p script
  * blocks, autoplay, opaque `Script error.`, extension-injected, bare transient network) and TAG
- * the rest with `context.error_category` (= bizlogic|chunkload|meili|real). Anything unmatched →
- * `real`, kept. See `~/utils/faro/classifyException`.
+ * the rest with `context.error_category`
+ * (= bizlogic|chunkload|meili|extension|ad_initiated|real), and
+ * anything unmatched → `real`, kept. See `~/utils/faro/classifyException`.
  *
  * WHY THE TAG REACHES LOKI (verified against the Alloy faro.receiver source): the tag is written
  * to the exception payload's `context` map (`ExceptionContext`, `Record<string,string>`). Alloy's
@@ -185,9 +195,26 @@ interface InitFaroOptions {
    * Values are boolean-coerced strings (`"true"`/`"false"`); no PII. See experimentFlags.ts.
    */
   experimentAttributes: Record<string, string>;
+  /**
+   * Geo session attributes (`region` + `timezone`, from `buildRumGeoAttributes`) built in the
+   * component from the SSR-derived country code threaded in from _app, so module-scope init
+   * never touches server utilities. Merged into the SAME `sessionTracking.session.attributes`
+   * map as `experimentAttributes` — they ride on `meta.session.attributes` of EVERY beacon
+   * (→ Loki `session_attr_region` / `session_attr_timezone`) from session creation onward.
+   * Values are coarse, non-PII strings; both keys are ALWAYS set (`unknown` when absent) so
+   * no session falls out of a Loki logfmt grouping. See geoAttributes.ts.
+   */
+  geoAttributes: Record<string, string>;
+  /** Per-document `render_mode` / `viewer` page attributes; see pageAttributes.ts. */
+  pageAttributes: Record<string, string>;
 }
 
-function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOptions) {
+function initFaro({
+  resourceTimingCohort,
+  experimentAttributes,
+  geoAttributes,
+  pageAttributes,
+}: InitFaroOptions) {
   if (faroInitStarted) return;
   if (typeof window === 'undefined') return;
   if ((window as unknown as Record<string, unknown>)[WINDOW_GUARD_KEY]) return;
@@ -214,6 +241,25 @@ function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOption
   const gitHash = env.NEXT_PUBLIC_GIT_HASH ? env.NEXT_PUBLIC_GIT_HASH.slice(0, 7) : undefined;
   const version = process.env.version ?? gitHash ?? 'unknown';
 
+  // ONE session-attributes map (Faro's `session.attributes` is a single map). The two sources
+  // are namespace-disjoint by construction — `exp_*` from experimentFlags.ts vs
+  // `region`/`timezone` from geoAttributes.ts, both pinned by their unit tests — but the merge
+  // is DEFENSIVE anyway: on a hypothetical key collision the FIRST writer wins and it is
+  // logged, so neither side can be silently overwritten. Both maps are non-PII by contract.
+  const sessionAttributes: Record<string, string> = {};
+  for (const map of [experimentAttributes, geoAttributes]) {
+    for (const [key, value] of Object.entries(map)) {
+      if (key in sessionAttributes) {
+        console.warn(`[faro] duplicate session attribute "${key}" — keeping the first value`);
+        continue;
+      }
+      sessionAttributes[key] = value;
+    }
+  }
+
+  const resourceTimingInstrumentations = resourceTimingFor(resourceTimingCohort);
+  resourceTimingAttached = resourceTimingInstrumentations.length > 0;
+
   initializeFaro({
     url: collectorUrl,
     app: {
@@ -227,18 +273,22 @@ function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOption
     // events + sessions stay at 100%. Browser traces are sub-sampled SEPARATELY by the OTel
     // sampler on SampledTracingInstrumentation below — this rate does NOT gate them.
     //
-    // `session.attributes` seeds the curated RUM-experiment flags (`exp_*`) onto the session
-    // meta at session CREATION — the Faro session manager merges them with the generated
-    // session id, so they ride on `meta.session.attributes` of every beacon (→ Loki
-    // `session_attr_exp_*`) from the first signal onward. Only set when non-empty. See
-    // experimentFlags.ts for the mechanism, the exact Loki field, the timing guarantee, and
-    // the PII rationale (boolean values only).
+    // `session.attributes` seeds the curated RUM-experiment flags (`exp_*`) AND the geo
+    // attributes (`region`/`timezone`) onto the session meta at session CREATION — the Faro
+    // session manager merges them with the generated session id, so they ride on
+    // `meta.session.attributes` of every beacon (→ Loki `session_attr_exp_*`,
+    // `session_attr_region`, `session_attr_timezone`) from the first signal onward. Only set
+    // when non-empty. See experimentFlags.ts for the mechanism, the exact Loki field, the
+    // timing guarantee, and the PII rationale (boolean values only); geoAttributes.ts for the
+    // always-set geo rule and its privacy rationale (coarse country + IANA timezone only).
     sessionTracking: {
       samplingRate: sessionSamplingRate,
-      ...(Object.keys(experimentAttributes).length
-        ? { session: { attributes: experimentAttributes } }
+      ...(Object.keys(sessionAttributes).length
+        ? { session: { attributes: sessionAttributes } }
         : {}),
     },
+    // Per-document page attributes (→ Loki `page_attr_*`); see pageAttributes.ts.
+    pageTracking: { page: { attributes: pageAttributes } },
     // Error-storm guard: drop known browser noise so a broken deploy can't turn every
     // session into a flood.
     ignoreErrors: [
@@ -280,12 +330,7 @@ function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOption
       // ramped. The volume knobs (sample rate + per-client cap) are env-tunable, resolved here
       // with a safe fallback to the defaults (sample rate 0.05 keeps the shared faro-rum Loki
       // stream under its 10 MB/s ceiling at 100k concurrent). See ResourceTimingInstrumentation.
-      ...buildResourceTimingInstrumentations({
-        buildArgEnabled: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
-        cohortEnabled: resourceTimingCohort,
-        sampleRateEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
-        maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
-      }),
+      ...resourceTimingInstrumentations,
     ],
     // Defensive outer wrapper: processBeacon (redact + exception classify/tag) already fails
     // closed, but guarantee that any unexpected throw still drops the beacon (null) rather than
@@ -300,16 +345,56 @@ function initFaro({ resourceTimingCohort, experimentAttributes }: InitFaroOption
   });
 }
 
-export function FaroProvider() {
+/** The resource-timing instrumentations under the build-arg and env knobs, for this cohort. */
+function resourceTimingFor(cohortEnabled: boolean) {
+  return buildResourceTimingInstrumentations({
+    buildArgEnabled: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_ENABLED,
+    cohortEnabled,
+    sampleRateEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_SAMPLE_RATE,
+    maxPerWindowEnv: env.NEXT_PUBLIC_FARO_RESOURCE_TIMING_MAX_PER_WINDOW,
+  });
+}
+
+/**
+ * Adds `ResourceTimingInstrumentation` to an already-initialised Faro, for a viewer whose cohort
+ * only became known after init (a shell boot; see `FaroProvider`). A no-op when Faro is not ours
+ * to extend or the instrumentation is already on. Faro's `add` initialises it, and its
+ * `buffered: true` observer then drains the `/api` entries recorded before it, the page-data
+ * request included.
+ */
+function attachResourceTiming() {
+  if (!faroInitStarted || resourceTimingAttached) return;
+  const instrumentations = resourceTimingFor(true);
+  if (!instrumentations.length || !faro?.instrumentations) return;
+  resourceTimingAttached = true;
+  faro.instrumentations.add(...instrumentations);
+}
+
+export function FaroProvider({
+  region,
+  shell,
+  signedIn,
+}: {
+  region?: string | null;
+  /** The hard load's render mode and viewer, frozen by `_app`; see pageAttributes.ts. */
+  shell: boolean;
+  signedIn: boolean;
+}) {
   const features = useFeatureFlags();
+  const viewerFlagsReady = useShellReady();
   const enabled = env.NEXT_PUBLIC_FARO_ENABLED && !!features.faro;
+  // Per-user Flipt cohort: user-less shell boot flags can't decide it; stays false until ready,
+  // then attached late.
+  const resourceTimingCohort = viewerFlagsReady && !!features.faroResourceTiming;
 
   useEffect(() => {
     try {
       if (enabled) {
         initFaro({
-          resourceTimingCohort: !!features.faroResourceTiming,
+          resourceTimingCohort,
           experimentAttributes: buildRumExperimentAttributes(features),
+          geoAttributes: buildRumGeoAttributes(region),
+          pageAttributes: buildRumPageAttributes({ shell, signedIn }),
         });
         // If a prior transition paused an already-initialised instance, resume it.
         if (faroInitStarted) faro?.unpause?.();
@@ -324,6 +409,15 @@ export function FaroProvider() {
       // Never let RUM bootstrap / teardown break the app.
     }
   }, [enabled]);
+
+  useEffect(() => {
+    if (!enabled || !resourceTimingCohort) return;
+    try {
+      attachResourceTiming();
+    } catch {
+      // Never let RUM bootstrap break the app.
+    }
+  }, [enabled, resourceTimingCohort]);
 
   return null;
 }

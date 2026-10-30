@@ -1,4 +1,5 @@
-import type { VideoEnhancementStepTemplate } from '@civitai/client';
+import { DEFAULT_UPSCALER_AIR } from '~/shared/constants/basemodel.constants';
+import type { VideoEnhancementStepTemplate } from '@civitai/orchestration-client';
 import type { VideoEnhancementSchema } from '~/server/orchestrator/video-enhancement/video-enhancement.schema';
 
 export async function createVideoEnhancementStep({
@@ -13,7 +14,7 @@ export async function createVideoEnhancementStep({
     input: {
       sourceUrl,
       upscaler: {
-        model: 'urn:air:other:upscaler:civitai:147759@164821',
+        model: DEFAULT_UPSCALER_AIR,
         width,
         height,
       },

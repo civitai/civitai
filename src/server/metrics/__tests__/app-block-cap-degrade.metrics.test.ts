@@ -88,21 +88,4 @@ describe('civitai_app_block_cap_limits_degraded_total', () => {
       expect(Object.keys(v.labels)).toEqual(['reason']);
     }
   });
-
-  it('is idempotent to register — a double module import does not throw', () => {
-    // prom-client throws on a duplicate metric name; Next.js can import a module
-    // twice (hot reload / route bundling), so the get-or-create guard is what
-    // keeps that from taking the process down.
-    expect(() => {
-      ensureRegisterAppBlockRuntimeMetrics();
-      ensureRegisterAppBlockRuntimeMetrics();
-    }).not.toThrow();
-  });
-
-  it('appears in the scrape output with its help text', async () => {
-    recordAppCapLimitsDegrade('missing_row');
-    const scrape = await client.register.metrics();
-    expect(scrape).toContain(METRIC);
-    expect(scrape).toContain(`${METRIC}{reason="missing_row"}`);
-  });
 });

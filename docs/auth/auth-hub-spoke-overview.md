@@ -34,7 +34,12 @@ only the target architecture.
 ## 4. Core flows
 
 - **Login** — happens at the hub. A spoke redirects to the hub's `/login` (with a `returnUrl`); the hub
-  authenticates, mints a `civ-token`, sets the cookie, and redirects back.
+  authenticates, mints a `civ-token`, sets the cookie, and redirects back. **One exception:** when the login
+  is an account *switch* (a different user's session is already on the hub cookie) and the `returnUrl` is a
+  first-party spoke's `/api/auth/authorize` on a **different registrable domain**, the hub does **not** set
+  its own cookie — that cookie is civitai.com's session too, and re-pointing it is the cross-domain switch
+  bug. The identity travels instead as a single-use, path-scoped `civ-pending` record consumed once at
+  `/api/auth/oauth/authorize`. See §7.
 - **Logout** — the spoke clears its cookies and asks the hub to **revoke** the token (best-effort; a hub blip
   must never block logout).
 - **Rolling refresh** — the thin token is a fixed window from issue. When it ages past the update age (~24h of
@@ -80,6 +85,13 @@ spoke **redeems** it server-side at the hub (`POST /api/auth/oauth/session`) for
 its own cookie). `localhost` developing against the prod hub is just another such cross-domain spoke. Cookie
 secure-ness must follow the **spoke's own** serving protocol (http localhost ⇒ non-secure cookie), not the
 issuer's. *(Same mechanism for `.red` and localhost.)*
+
+**The hub cookie is civitai.com's session cookie.** It is not a separate hub-only slot: the hub sets
+`Domain=.civitai.com` (`apps/auth/src/lib/server/auth/cookie.ts`) and the main app sets the same name over
+`Domain=civitai.com` (`src/server/auth/civ-cookie.ts`) — RFC 6265 treats those as one slot. So a login
+performed *in order to reach `civitai.red`* used to silently re-point civitai.com to the new account, while
+switching back on `.red` used the device switch, which never touches the hub cookie — leaving `.com` on the
+wrong account. The `civ-pending` hand-off exists solely to break that coupling.
 
 ## 8. Security invariants (must always hold)
 

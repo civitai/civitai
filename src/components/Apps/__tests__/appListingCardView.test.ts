@@ -1,14 +1,19 @@
+import fs from 'fs';
+import path from 'path';
 import { describe, expect, it } from 'vitest';
+import * as cardView from '~/components/Apps/appListingCardView';
 import {
   canOwnerEditListing,
   getListingBadge,
   getListingCta,
   getListingDetailHref,
   getOwnerEditHref,
+  getPlayCountLabel,
   getRecommendLabel,
   isEditableListingStatus,
   safeExternalHref,
 } from '~/components/Apps/appListingCardView';
+import * as geometry from '~/components/Apps/appListingCardGeometry';
 import type {
   ListingCard,
   ListingRecommendRollup,
@@ -16,9 +21,8 @@ import type {
 
 /**
  * App Store Listings (W13) — P2b card view-model unit tests (node `unit`
- * project → the BLOCKING correctness gate; the browser component suites are
- * report-only). Pin the kind matrix, the recommend label (incl. null pct), the
- * https guard, and the CTA target policy so a regression in the kind-aware
+ * project → the node-tier correctness gate). Pin the kind matrix, the recommend label (incl. null
+ * pct), the https guard, and the CTA target policy so a regression in the kind-aware
  * routing/badging FAILS here.
  */
 
@@ -28,7 +32,9 @@ const roll = (
   recommendPct: number | null
 ): ListingRecommendRollup => ({ recommendedCount, notRecommendedCount, recommendPct });
 
-function onsiteCard(over: Partial<ListingCard> & { hasPage: boolean; appBlockId?: string | null }): ListingCard {
+function onsiteCard(
+  over: Partial<ListingCard> & { hasPage: boolean; appBlockId?: string | null }
+): ListingCard {
   const { hasPage, appBlockId = 'blk-1', ...rest } = over;
   return {
     id: 'l1',
@@ -48,10 +54,13 @@ function onsiteCard(over: Partial<ListingCard> & { hasPage: boolean; appBlockId?
   };
 }
 
-function offsiteCard(
-  subKind: 'connect' | 'external-link',
-  externalUrl: string | null
-): ListingCard {
+/**
+ * 🔴 The `subKind` parameter is GONE. Off-site listings used to fork for display
+ * into `connect` / `external-link`, derived from `connectClientId`; the card DTO
+ * no longer carries either the sub-kind or the client id, so a card cannot
+ * express the distinction at all. `externalUrl` is the only off-site input left.
+ */
+function offsiteCard(externalUrl: string | null): ListingCard {
   return {
     id: 'l2',
     slug: 'ext-app',
@@ -65,25 +74,46 @@ function offsiteCard(
     creator: null,
     recommend: roll(0, 0, null),
     reviewCount: 0,
-    kindData: { kind: 'offsite', subKind, externalUrl },
+    kindData: { kind: 'offsite', externalUrl },
   };
 }
 
 describe('getListingBadge', () => {
-  it('on-site → "App"', () => {
-    expect(getListingBadge(onsiteCard({ hasPage: true }))).toEqual({ label: 'App', kind: 'onsite' });
-  });
-  it('off-site connect → "Connect app"', () => {
-    expect(getListingBadge(offsiteCard('connect', null))).toEqual({
-      label: 'Connect app',
-      kind: 'connect',
+  // 🔴 PINNED LITERALLY, not derived from the constant it renders — writing
+  // `toBe(EMBEDDED_KIND_LABEL)` would pass for every possible value of that constant.
+  // The word a human reads, typed out. (Was `'App'` before the kind rename: not a
+  // retired wording, just a word that was not the kind's name at all.)
+  it('on-site → "Embedded"', () => {
+    expect(getListingBadge(onsiteCard({ hasPage: true }))).toEqual({
+      label: 'Embedded',
+      kind: 'onsite',
     });
   });
-  it('off-site external-link → "Off-site"', () => {
-    expect(getListingBadge(offsiteCard('external-link', 'https://x.com'))).toEqual({
-      label: 'Off-site',
-      kind: 'external-link',
-    });
+  /**
+   * 🔴 NEW BEHAVIOUR (not regression coverage): off-site used to badge as
+   * "Connect app" when a client was linked and "Off-site" when not. There is one
+   * badge now, and PR #4187 renamed its word to "Standalone". This pins the
+   * collapsed pair — the "Connect app" case above is what a revert would put
+   * back, and it is what this assertion refuses.
+   */
+  it('🔴 off-site → "Standalone", with or without a usable destination', () => {
+    for (const externalUrl of [null, 'https://x.com', 'http://insecure.example']) {
+      expect(getListingBadge(offsiteCard(externalUrl)), String(externalUrl)).toEqual({
+        label: 'Standalone',
+        kind: 'offsite',
+      });
+    }
+  });
+  /**
+   * The word is load-bearing: it must be the SAME word the store's kind filter
+   * puts on the whole category (`KindFilterButtons`' "Standalone"). Under the fork
+   * the parent label was true of only one child while the submit flow minted
+   * nothing but the other one. Pinned as a literal so a reword has to be
+   * deliberate — PR #4187 renamed it Off-site → Standalone, and this assertion
+   * moved with it.
+   */
+  it('🔴 the off-site badge label is exactly the store kind-filter word', () => {
+    expect(getListingBadge(offsiteCard('https://x.com')).label).toBe('Standalone');
   });
 });
 
@@ -98,6 +128,94 @@ describe('getRecommendLabel', () => {
   });
   it('formats large counts with locale separators', () => {
     expect(getRecommendLabel(roll(1200, 300, 0.8), 1500)).toBe('80% recommend (1,500)');
+  });
+});
+
+/**
+ * 🔴 THE PLAY COUNT'S ABSENCE RULE — AND THIS IS THE TIER THAT OWNS IT.
+ *
+ * The rule is an OPERATOR OVERRIDE (2026-09-06), not a formatting derivation. TWO
+ * DIFFERENT INPUTS RENDER NOTHING, FOR TWO DIFFERENT REASONS:
+ *   · `null` — STRUCTURALLY UNMEASURABLE. An off-site listing's CTA is a
+ *     third-party `target="_blank"` anchor, so nothing on-platform observes the
+ *     click. There is no number and there never will be one.
+ *   · `0` — MEASURED AND EMPTY. An on-site app nobody has opened yet. The number
+ *     exists and is trustworthy.
+ * The operator chose the SAME rendering for both: "dont show 0 plays (just show
+ * nothing)". Each has its own named case below precisely because they are not the
+ * same fact — a single "falsy → null" test would let a future reader conclude the
+ * zero case is an accident of truthiness.
+ *
+ * ⚠️ THE ZERO CASE IS A REVERSAL, AND THE OLD ASSERTION IS RECORDED RATHER THAN
+ * DELETED. Round 1 of this PR asserted `getPlayCountLabel(0) === '0 plays'` under
+ * the heading "a genuine ZERO is a measurement, not an absence", with the reasoning
+ * that only `null` may be over-nulled. That reasoning is still correct about the
+ * DTO — `cardOpenCount`'s "do not over-null" rule is untouched and must stay — and
+ * was only ever a claim about the DATA, not about what a browsing grid should
+ * print. The inverted assertion below is what the operator asked for.
+ *
+ * 🔴 IT IS TESTED HERE AS WELL AS IN THE BROWSER TIER. `AppListingCard.browser.test.tsx`
+ * renders the real card and asserts the omission end-to-end (`Component tests` in CI);
+ * the node `unit` project checks the rule without a browser. Expressing the rule as a
+ * pure function is what makes it visible to this tier at all — as JSX
+ * (`card.openCount ? … : null`) it would be invisible here. (Neither tier blocks a
+ * merge: `unit` is `continue-on-error` on a pull request, and `Component tests` goes red
+ * but `main` requires no checks. Canonical statement: `appListingCardGeometry.ts`'s
+ * header.)
+ *
+ * 🔴 THE FIXTURES ARE PAIRWISE DISTINCT AND SHARE NOTHING WITH THE STRINGS
+ * ASSERTED. 4821 → "4.8k" and 1_234_567 → "1.2m" are values whose rendered form
+ * contains none of their own digits in order, so a mutant that dropped
+ * `abbreviateNumber` and printed the raw number cannot produce them; and the two
+ * counts differ in magnitude BAND, so a mutant that hardcoded one suffix survives
+ * neither.
+ */
+describe('getPlayCountLabel', () => {
+  it('🔴 null (UNMEASURABLE — off-site) → null, so the caller prints nothing', () => {
+    expect(getPlayCountLabel(null)).toBeNull();
+  });
+
+  it('🔴 0 (MEASURED AND EMPTY — on-site, never opened) → null: no "0 plays" chip', () => {
+    // ⚠️ THE INVERTED ASSERTION. Round 1 required `'0 plays'` here. Operator
+    // override 2026-09-06: "dont show 0 plays (just show nothing)". The mutant this
+    // refuses is a restoration of that — `if (openCount == null) return null` alone,
+    // which puts the chip back on every on-site app with no plays yet.
+    expect(getPlayCountLabel(0)).toBeNull();
+  });
+
+  /**
+   * ⚠️ THE OFF-BY-ONE PLURALISER IS NO LONGER OBSERVABLE, AND THAT IS RECORDED HERE
+   * SO IT IS NOT RE-DERIVED AS A COVERAGE HOLE. Round 1 of this PR killed the mutant
+   * `openCount > 1 ? 'plays' : 'play'` — via `getPlayCountLabel(0) === '0 plays'`,
+   * since `=== 1` and `> 1`-inverted differ ONLY below 1. With the zero case now
+   * returning `null` before the plural is reached, that mutant is EQUIVALENT on the
+   * reachable domain (`openCount >= 1`) and survives a green suite. Re-measured after
+   * the reversal, not assumed.
+   *
+   * No fixture can fix that — an equivalent mutant has no killing input — so the
+   * honest statement is that the `=== 1` spelling is now a readability choice on this
+   * line rather than a behaviour the suite pins. What IS pinned, and what actually
+   * matters, is the BOUNDARY above: 1 renders and 0 does not.
+   */
+  it('singular at exactly 1, plural above it', () => {
+    expect(getPlayCountLabel(1)).toBe('1 play');
+    expect(getPlayCountLabel(2)).toBe('2 plays');
+  });
+
+  it('abbreviates a large count rather than printing separators', () => {
+    expect(getPlayCountLabel(4821)).toBe('4.8k plays');
+    expect(getPlayCountLabel(1_234_567)).toBe('1.2m plays');
+  });
+
+  /**
+   * 🔴 THE PLURAL READS THE RAW VALUE, NOT THE ABBREVIATED STRING. 1000
+   * abbreviates to "1k", so a pluraliser written against the rendered text
+   * (`label.startsWith('1') ? 'play' : 'plays'`, or anything derived from the
+   * abbreviation) says "1k play". The distinction is unobservable at every count
+   * below 1000, which is why it needs its own fixture.
+   */
+  it('🔴 1000 is "1k plays" — the plural is not derived from the abbreviation', () => {
+    expect(getPlayCountLabel(1000)).toBe('1k plays');
   });
 });
 
@@ -126,7 +244,9 @@ describe('getListingDetailHref', () => {
 
 describe('getListingCta — on-site (P2c: View details → unified detail)', () => {
   it('hasPage + canOpenPage → Open → /apps/run/<slug> (direct primary)', () => {
-    expect(getListingCta(onsiteCard({ hasPage: true, slug: 'gen-matrix' }), { canOpenPage: true })).toEqual({
+    expect(
+      getListingCta(onsiteCard({ hasPage: true, slug: 'gen-matrix' }), { canOpenPage: true })
+    ).toEqual({
       label: 'Open',
       action: 'open',
       href: '/apps/run/gen-matrix',
@@ -134,7 +254,9 @@ describe('getListingCta — on-site (P2c: View details → unified detail)', () 
     });
   });
   it('hasPage but NOT canOpenPage → View details → unified detail (no dead run link)', () => {
-    expect(getListingCta(onsiteCard({ hasPage: true, slug: 'my-app' }), { canOpenPage: false })).toEqual({
+    expect(
+      getListingCta(onsiteCard({ hasPage: true, slug: 'my-app' }), { canOpenPage: false })
+    ).toEqual({
       label: 'View details',
       action: 'detail',
       href: '/apps/store-preview/my-app',
@@ -142,7 +264,9 @@ describe('getListingCta — on-site (P2c: View details → unified detail)', () 
     });
   });
   it('!hasPage → View details → unified detail', () => {
-    expect(getListingCta(onsiteCard({ hasPage: false, slug: 'my-app' }), { canOpenPage: true })).toEqual({
+    expect(
+      getListingCta(onsiteCard({ hasPage: false, slug: 'my-app' }), { canOpenPage: true })
+    ).toEqual({
       label: 'View details',
       action: 'detail',
       href: '/apps/store-preview/my-app',
@@ -150,7 +274,11 @@ describe('getListingCta — on-site (P2c: View details → unified detail)', () 
     });
   });
   it('!hasPage + no appBlockId → still reaches the unified detail (never actionless)', () => {
-    expect(getListingCta(onsiteCard({ hasPage: false, appBlockId: null, slug: 'my-app' }), { canOpenPage: true })).toEqual({
+    expect(
+      getListingCta(onsiteCard({ hasPage: false, appBlockId: null, slug: 'my-app' }), {
+        canOpenPage: true,
+      })
+    ).toEqual({
       label: 'View details',
       action: 'detail',
       href: '/apps/store-preview/my-app',
@@ -165,59 +293,34 @@ describe('getListingCta — on-site (P2c: View details → unified detail)', () 
 });
 
 describe('getListingCta — off-site (P2c: View details → unified detail)', () => {
-  it('external-link https → Visit ↗ (direct external primary)', () => {
-    expect(getListingCta(offsiteCard('external-link', 'https://foo.app'), { canOpenPage: true })).toEqual({
+  it('https externalUrl → Visit ↗ (direct external primary)', () => {
+    expect(getListingCta(offsiteCard('https://foo.app'), { canOpenPage: true })).toEqual({
       label: 'Visit',
       action: 'visit',
       href: 'https://foo.app',
       external: true,
     });
   });
-  it('external-link non-https → View details → unified detail (guard drops the href)', () => {
-    expect(getListingCta(offsiteCard('external-link', 'http://foo.app'), { canOpenPage: true })).toEqual({
+  it('non-https → View details → unified detail (guard drops the href)', () => {
+    expect(getListingCta(offsiteCard('http://foo.app'), { canOpenPage: true })).toEqual({
       label: 'View details',
       action: 'detail',
       href: '/apps/store-preview/ext-app',
       external: false,
     });
   });
-  it('external-link null url → View details → unified detail', () => {
-    expect(getListingCta(offsiteCard('external-link', null), { canOpenPage: true })).toEqual({
+  it('null url → View details → unified detail', () => {
+    expect(getListingCta(offsiteCard(null), { canOpenPage: true })).toEqual({
       label: 'View details',
       action: 'detail',
       href: '/apps/store-preview/ext-app',
       external: false,
     });
   });
-  /**
-   * 🔴 INTENT CHANGED alongside the detail view-model. Connect used to route to
-   * "View details" unconditionally, on the premise that the Connect affordance
-   * lived on the detail page — but that affordance was a dead stub, so the card
-   * sent the viewer to a page with no way to open the app. The detail now
-   * renders a real `Visit ↗` whenever an off-site listing carries an https
-   * `externalUrl`; the card matches, so the two cannot disagree about whether an
-   * app is reachable.
-   */
-  it('🔴 connect + https externalUrl → Visit ↗ (matches the detail, was View details)', () => {
-    expect(
-      getListingCta(offsiteCard('connect', 'https://connect.app'), { canOpenPage: true })
-    ).toEqual({
-      label: 'Visit',
-      action: 'visit',
-      href: 'https://connect.app',
-      external: true,
-    });
-  });
-  it('🔴 connect and external-link with the SAME url produce the SAME CTA', () => {
-    const url = 'https://same-target.app';
-    expect(getListingCta(offsiteCard('connect', url), { canOpenPage: true })).toEqual(
-      getListingCta(offsiteCard('external-link', url), { canOpenPage: true })
-    );
-  });
-  it('connect with no usable target → View details → unified detail (fails safe)', () => {
+  it('no usable target → View details → unified detail (fails safe)', () => {
     for (const externalUrl of [null, '', 'http://insecure.app', 'javascript:alert(1)']) {
       expect(
-        getListingCta(offsiteCard('connect', externalUrl), { canOpenPage: true }),
+        getListingCta(offsiteCard(externalUrl), { canOpenPage: true }),
         String(externalUrl)
       ).toEqual({
         label: 'View details',
@@ -231,7 +334,9 @@ describe('getListingCta — off-site (P2c: View details → unified detail)', ()
 
 describe('getOwnerEditHref (owner Edit deep-link)', () => {
   it('on-site → the UNIFIED /edit editor keyed on appBlockId (Item 2)', () => {
-    expect(getOwnerEditHref({ kind: 'onsite', appBlockId: 'blk-1' }, 'l1')).toBe('/apps/blk-1/edit');
+    expect(getOwnerEditHref({ kind: 'onsite', appBlockId: 'blk-1' }, 'l1')).toBe(
+      '/apps/blk-1/edit'
+    );
   });
   it('on-site with no backing appBlockId → null (no editable target → hide)', () => {
     expect(getOwnerEditHref({ kind: 'onsite', appBlockId: null }, 'l1')).toBeNull();
@@ -240,9 +345,9 @@ describe('getOwnerEditHref (owner Edit deep-link)', () => {
     expect(getOwnerEditHref({ kind: 'offsite' }, 'l2')).toBe('/apps/submit?edit=l2');
   });
   it('accepts the full card kindData (extra fields are ignored)', () => {
-    expect(getOwnerEditHref(onsiteCard({ hasPage: true, appBlockId: 'blk-9' }).kindData, 'l1')).toBe(
-      '/apps/blk-9/edit'
-    );
+    expect(
+      getOwnerEditHref(onsiteCard({ hasPage: true, appBlockId: 'blk-9' }).kindData, 'l1')
+    ).toBe('/apps/blk-9/edit');
     expect(getOwnerEditHref(offsiteCard('connect', null).kindData, 'l2')).toBe(
       '/apps/submit?edit=l2'
     );
@@ -282,5 +387,283 @@ describe('isEditableListingStatus / canOwnerEditListing (owner Edit gating)', ()
   it('owner but mod-removed / rejected → hide', () => {
     expect(canOwnerEditListing({ isOwner: true, status: 'removed' })).toBe(false);
     expect(canOwnerEditListing({ isOwner: true, status: 'rejected' })).toBe(false);
+  });
+});
+
+/**
+ * ── CARD GEOMETRY: ONE MODULE, READ NOT COPIED ──────────────────────────────
+ *
+ * 🔴 WHAT THIS TIER CAN AND CANNOT CLAIM. It cannot measure anything — that a
+ * 36px control plus 10px of padding really renders a 46px row is a claim about a
+ * browser and a stylesheet, and it lives in `AppListingCard.browser.test.tsx`,
+ * which runs as `Component tests`. What this file CAN catch — on the next `main` push,
+ * NOT on the PR; see the canonical tier note in `appListingCardGeometry.ts` — is
+ * (a) the arithmetic between the constants and (b) whether the component still
+ * READS them instead of re-spelling the numbers. Both are checked below.
+ *
+ * 🔴 THE RELATIONSHIP BEING PROTECTED IS CARD ⇄ SKELETON. `AppListingCardSkeleton`
+ * (a later PR) must reserve exactly the geometry the real card occupies or the
+ * grid reflows when the query resolves. A skeleton importing this module is
+ * enough — provided the CARD imports it too. The moment a literal creeps back
+ * into the component, the skeleton is pinned to a number the card no longer uses
+ * and nothing here or there goes red. That is what the source assertions are for.
+ */
+describe('the card geometry module', () => {
+  const CARD_MODULE = path.resolve(__dirname, '../AppListingCard.tsx');
+  const cardSource = () => fs.readFileSync(CARD_MODULE, 'utf8');
+  /**
+   * 🔴 EVERY ASSERTION BELOW IS A CLAIM ABOUT CODE, AND PROSE IS NOT CODE. This
+   * component's comments deliberately quote the constructs they explain — the
+   * note recording that `@[264px]` was deleted contains the literal `@[264px]` —
+   * so a raw `not.toContain` reads a correct file as an offence. Measured: that
+   * exact false positive is why this stripper exists (it long predates this
+   * change, and every retirement below re-earns it).
+   */
+  const cardCode = () =>
+    cardSource()
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+
+  /**
+   * 🔴 THE COMPONENT READS THE MODULE — the assertion the card⇄skeleton
+   * relationship actually rests on, and the one a values-only test cannot make.
+   *
+   * 🔴 THE LIST IS THE MODULE'S OWN EXPORTS, NOT A LIST SOMEONE MAINTAINS. It used
+   * to be nine names typed out here, and it contained eight — the title said "every
+   * geometry constant" while `LISTING_ACTION_ROW_HEIGHT_PX` was silently omitted,
+   * and that constant had NO production consumer at all. The description was wider
+   * than the body, which is the shape that reads as coverage while providing none.
+   * Deriving the list from `Object.keys` makes the omission impossible to repeat AND
+   * makes the guard cover constants nobody has written yet: add one to the module
+   * without reading it in the card and this fails, NAMING it.
+   *
+   * 🔴 "NAMING IT" IS TRUE ONLY BECAUSE THE COUNT CHECK RUNS LAST, and it did not
+   * at first. `expect(exported).toHaveLength(9)` sat ABOVE the loop, so the first
+   * failure a reader saw was `expected [ …(10) ] to have a length of 9 but got 10`
+   * — the guard fired, but the constant was not named until someone bumped 9 to 10
+   * and re-ran. That is the description-wider-than-its-body class this very file
+   * exists to close, reintroduced inside the commit that closed it. The loop now
+   * runs FIRST, so an unread export is named on the first failure and the count is
+   * the backstop for the case where someone adds an export AND reads it.
+   */
+  it('AppListingCard reads every geometry constant the module exports', () => {
+    const code = cardCode();
+    // Positive control on the stripper: it did not simply eat the file.
+    expect(code).toContain('export function AppListingCard');
+    expect(code).toContain("from '~/components/Apps/appListingCardGeometry'");
+
+    const exported = Object.keys(geometry);
+    // Positive control on the enumeration BEFORE the loop, so a module that
+    // exported nothing cannot make the loop vacuously green. Deliberately a
+    // non-zero LOWER BOUND rather than the exact count — the exact count is the
+    // backstop below, and putting it here is what buried the named failure.
+    expect(exported.length, 'appListingCardGeometry exports nothing').toBeGreaterThan(0);
+    expect(exported).toContain('LISTING_CARD_FOOTER_HEIGHT_PX');
+
+    for (const name of exported) {
+      // Twice: once in the import list, once at the use site. A constant that is
+      // imported and never read is exactly the state a re-literalised value
+      // leaves behind, and it is invisible to a bare `toContain`.
+      const uses = [...code.matchAll(new RegExp(name, 'g'))].length;
+      expect(
+        uses,
+        `${name} is exported by appListingCardGeometry but never read in AppListingCard.tsx ` +
+          `(found ${uses} occurrence(s); an import with no use site counts as 1)`
+      ).toBeGreaterThanOrEqual(2);
+    }
+
+    // 🔴 THE BACKSTOP, RUN LAST ON PURPOSE. It catches the one case the loop
+    // cannot — an export ADDED and dutifully read, which should still be a
+    // deliberate act — and it is here rather than above so that the common failure
+    // (an export nobody reads) is reported by NAME first. 9 is typed out.
+    expect(
+      exported,
+      'appListingCardGeometry gained or lost an export. If you added one, the loop ' +
+        'above already proved the card reads it — bump this count deliberately, and ' +
+        'make sure AppListingCardSkeleton reads it too.'
+    ).toHaveLength(10);
+  });
+
+  /**
+   * 🔴 THE MIRROR IMAGE, AND THE HALF THAT ACTUALLY CATCHES A REGRESSION. "It
+   * imports the module" stays true when someone adds a literal BESIDE the
+   * constant — which is how a card and a skeleton drift while every import
+   * assertion is green. These are the exact literals the constants replaced.
+   */
+  it('AppListingCard spells none of those numbers itself', () => {
+    const code = cardCode();
+    for (const [literal, why] of [
+      ["aspectRatio: '16 / 9'", 'cover ratio'],
+      ['size={40}', 'app-icon avatar'],
+      ['triggerSize={36}', 'menu trigger / row-height contract'],
+      ['pt="xs"', 'action-row padding'],
+      ['line-clamp-2', 'reserved title lines'],
+      ['lh={1.2}', 'title line-height'],
+    ] as const) {
+      expect(code, `${why}: re-literalised as \`${literal}\``).not.toContain(literal);
+    }
+    // Positive control: the stripper leaves OTHER literals alone, so the six
+    // absences above are about these constructs and not about an empty read.
+    expect(code).toContain('line-clamp-3'); // the tagline's clamp, deliberately not geometry
+  });
+
+  /**
+   * 🔴 THE STATS LINE IS BELOW THE ACTION ROW, IN SOURCE ORDER — the node tier's
+   * half of the operator's ask ("move reviews + plays below the CTA").
+   *
+   * ⚠️ STRUCTURAL, AND SAY SO. This reads the SOURCE, so it proves the elements are
+   * written in that order, not that they RENDER in it — a `position: absolute` or an
+   * `order:` property would defeat it, and neither is used here. The RENDERED claim
+   * (the rollup's `top` is at or below the row's `bottom`, measured against the real
+   * cascade) lives in `AppListingCard.browser.test.tsx`. This exists because "the rollup went back
+   * into the meta block" is precisely the regression a source-order check CAN see.
+   *
+   * 🔴 THE ANCHOR IS `mt="auto"`, THE SAME DISCRIMINATOR the prop-ledger test above
+   * and the browser suite's `actionRow()` use — the only bottom-pinned element on
+   * the card. A positional index would have to be re-derived on every insertion.
+   */
+  it('🔴 the stats line (rollup + play count) is written BELOW the action row', () => {
+    const code = cardCode();
+    const row = code.indexOf('mt="auto"');
+    const stats = code.indexOf('data-testid="apps-listing-card-stats"');
+    const rollup = code.indexOf('data-testid="apps-listing-recommend-rollup"');
+    const play = code.indexOf('data-testid="apps-listing-play-count"');
+
+    // Positive controls FIRST — each element must actually be in the (stripped)
+    // source, or every ordering comparison below is between −1 and a real index and
+    // would read as a confident pass or a confusing fail.
+    expect(row, 'no bottom-pinned action row in AppListingCard.tsx').toBeGreaterThan(-1);
+    expect(stats, 'the card renders no stats line').toBeGreaterThan(-1);
+    expect(rollup, 'the card renders no recommend rollup').toBeGreaterThan(-1);
+    expect(play, 'the card renders no play count').toBeGreaterThan(-1);
+
+    expect(
+      stats,
+      'the stats line is written ABOVE the action row. The operator asked for reviews + ' +
+        'plays BELOW the CTA; above it is where the rollup used to live (in the meta block).'
+    ).toBeGreaterThan(row);
+    // …and both stats are INSIDE that line, not scattered.
+    expect(rollup, 'the recommend rollup is outside the stats line').toBeGreaterThan(stats);
+    expect(play, 'the play count is outside the stats line').toBeGreaterThan(stats);
+    // Reviews before plays — the order the operator named.
+    expect(rollup, 'the play count is written before the recommend rollup').toBeLessThan(play);
+
+    // 🔴 THE STATS LINE MUST NOT WRAP. Two stats on one `nowrap` line is what keeps
+    // an off-site card (which omits the play count) the same HEIGHT as an on-site
+    // one, which is the whole licence for `AppListingCardSkeleton` reserving a
+    // single line without knowing the listing's kind.
+    //
+    // 🔴 READ OFF THAT ELEMENT'S **OWN** OPENING TAG, delimited exactly the way the
+    // prop-ledger test above delimits the action row's — and the first version of
+    // this assertion was a 400-character WINDOW around the testid instead, which
+    // is why the delimiting is spelled out here. Measured: flipping this Group to
+    // `wrap="wrap"` left the window green, because the ROLLUP's own nested
+    // `wrap="nowrap"` sits ~60 characters later and satisfied a `toContain`. A
+    // guard that can be satisfied by a NEIGHBOUR's identical prop is reading the
+    // wrong element, not making a weak claim.
+    const open = code.lastIndexOf('<', stats);
+    const close = code.indexOf('>', stats);
+    expect(open, 'no opening tag found for the stats line').toBeGreaterThan(-1);
+    expect(close, 'unterminated opening tag on the stats line').toBeGreaterThan(stats);
+    const tag = code.slice(open, close + 1);
+    // The slice really is the stats line's own tag, not an enclosing element the
+    // index walk landed on — otherwise the assertion below is about something else.
+    expect(tag.startsWith('<Group')).toBe(true);
+    expect(tag).toContain('data-testid="apps-listing-card-stats"');
+    expect(
+      tag,
+      'the stats line is not `wrap="nowrap"`. A wrapped stats line is a SECOND line, ' +
+        'i.e. every card taller than its skeleton inside an h-full grid row.'
+    ).toContain('wrap="nowrap"');
+  });
+
+  /**
+   * 🔴 THE CARD RENDERS THE CREATOR INLINE IN ITS FOOTER, linking to their profile.
+   * `CreatorChip` is the detail page's component and must not be imported here.
+   *
+   * 🔴 READ OFF THE **STRIPPED** SOURCE, and the distinction is load-bearing here
+   * more than anywhere else in this file: `AppListingCard.tsx` deliberately keeps a
+   * docblock NAMING the retired `CreatorChip` and explaining where attribution went.
+   * An unstripped scan would read that prose and report the component present.
+   */
+  it('🔴 the card shows its creator in the footer, linking to their profile', () => {
+    const code = cardCode();
+    expect(code, 'the stripper ate the component itself').toContain(
+      'export function AppListingCard'
+    );
+    // The byline is right-aligned in the footer.
+    expect(code).toContain('apps-listing-card-creator');
+    expect(code).toContain('/user/');
+    expect(code).toContain('card.creator');
+    // The footer renders the creator inline, not through the detail page's chip.
+    expect(code).not.toContain('CreatorChip');
+  });
+});
+
+/**
+ * ── THE RETIRED ACTION-ROW GEOMETRY ─────────────────────────────────────────
+ *
+ * 🔴 WHAT USED TO BE HERE, AND WHY ITS GUARD IS GONE RATHER THAN RELAXED.
+ *
+ * `appListingCardView` exported `LISTING_ROLLUP_MIN_WIDTH_PX` (70),
+ * `LISTING_ACTIONS_WIDEST_PX` (184), `listingRollupHideThreshold()` and
+ * `LISTING_ROLLUP_HIDE_BELOW_PX` (264 = 184 + 10 + 70), and this file asserted
+ * that `AppListingCard.tsx`'s `@[264px]:flex` Tailwind class spelled the same
+ * number — a Tailwind arbitrary variant cannot read a JS constant, so the
+ * duplication was unavoidable and the DRIFT was what got gated.
+ *
+ * All of it existed for ONE reason: the recommend rollup shared the action row
+ * with the CTA, so it needed an enforced floor, a breakpoint below which it was
+ * hidden rather than crushed, and a derived threshold to place that breakpoint.
+ * The rollup now lives in the card's meta block. There is no shared row, no
+ * floor, no container query and no threshold — so the drift guard is not
+ * weakened, it has no subject.
+ *
+ * 🔴 LEAVING IT ASSERTING THE OLD COUPLING WOULD HAVE BEEN THE WORST OUTCOME: a
+ * green test claiming a relationship that no longer exists reads as coverage and
+ * stops anyone looking. Deleting it silently is the second worst. So the deletion
+ * is asserted instead — the exports must be GONE, not merely unused, because a
+ * surviving constant with no consumer is the shape that gets wired back in later.
+ */
+describe('the retired rollup-floor constants (four deleted)', () => {
+  it('the four DELETED ones are gone from the card view-model', () => {
+    // Runtime keys, not a source grep: the module's tombstone comment names all
+    // four, so a text search would report them present in a correct file.
+    const exported = Object.keys(cardView);
+    // Positive control — the module still exports the things it is FOR, so an
+    // empty `exported` cannot satisfy the absences below.
+    expect(exported).toContain('getRecommendLabel');
+    expect(exported).toContain('getListingCta');
+    for (const gone of [
+      'LISTING_ROLLUP_MIN_WIDTH_PX',
+      'LISTING_ROLLUP_HIDE_BELOW_PX',
+      'LISTING_ACTIONS_WIDEST_PX',
+      'listingRollupHideThreshold',
+    ]) {
+      expect(exported, `${gone} came back to appListingCardView`).not.toContain(gone);
+    }
+  });
+
+  it('and the container query they placed is gone from the component', () => {
+    const CARD_MODULE = path.resolve(__dirname, '../AppListingCard.tsx');
+    const source = fs.readFileSync(CARD_MODULE, 'utf8');
+    const code = source
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, ' ')
+      .replace(/\/\*[\s\S]*?\*\//g, ' ')
+      .replace(/(^|[^:])\/\/.*$/gm, '$1');
+    // Positive control on the stripper: the comments that NAME the retired
+    // breakpoints are still in the file, so a green result here is about code.
+    // 🔴 NO arbitrary container variant survives — enumerated rather than named,
+    // so a NEW one cannot slip in under a check that only forbids the old two.
+    expect([...code.matchAll(/@\[(\d+)px\]:/g)].map((m) => m[1])).toEqual([]);
+    // …and the card no longer declares itself a query container at all, because
+    // nothing on it is size-queried any more.
+    expect(code).not.toContain('@container');
+    // Positive control: the OTHER classes on that same element are untouched, so
+    // the two absences are about the container query and not about a card whose
+    // className was emptied.
+    expect(code).toContain('rounded-md');
+    expect(code).toContain('h-full');
   });
 });
