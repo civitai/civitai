@@ -2584,12 +2584,11 @@ export async function recomputeArticleIngestionInTx(
     (s) => s === ImageIngestionStatus.Error || s === ImageIngestionStatus.NotFound
   ).length;
 
-  // A held content url counts as an image: refused as blocked, deferred as not yet scanned.
+  // A refused content url counts as a blocked image; a deferred one is applied below.
   const imageBlocked = blockedImages > 0 || !!hold?.refused.length;
   const imageError = errorImages > 0;
   const imageDone =
-    !hold?.deferred.length &&
-    (totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages);
+    totalImages === 0 || scannedImages + blockedImages + errorImages === totalImages;
 
   // --- Text moderation side ---
   const textModeration = await tx.entityModeration.findUnique({
@@ -2627,7 +2626,8 @@ export async function recomputeArticleIngestionInTx(
     textDone,
     hasModeratorOverride,
   });
-  // A moderator's rating covers the images it was given, not a url still waiting to be proved.
+  // A deferred url keeps the article off public, a moderator's rating included: it covers the
+  // images it was given, not a url still waiting to be proved.
   const next =
     hold?.deferred.length && derived === ArticleIngestionStatus.Scanned
       ? ArticleIngestionStatus.Pending
