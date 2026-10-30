@@ -2456,10 +2456,12 @@ describe('AppAssistantWorkspace preview on the server runner', () => {
     m.chat!.onToolResult!({ name, input: {}, output, isError });
   const pane = () => page.getByTestId('app-assistant-preview-pane');
 
-  test('does not hand the chat the page-only generate_app_cover tool', async () => {
+  // The runner offers generate_app_cover itself now (the same `createCoverArt`); the page's copy shows its calls.
+  test('hands the chat the tools the runner offers, generate_app_cover included', async () => {
     await mountRunner();
     expect(Object.keys(m.chat!.tools).sort()).toEqual([
       'create_app',
+      'generate_app_cover',
       'report_ready',
       'set_checklist',
       'start_preview',
