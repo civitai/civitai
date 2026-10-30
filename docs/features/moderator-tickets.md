@@ -79,7 +79,8 @@ is its own page grant. Acting on a ticket is a separate permission:
     Allow publishing posts the intended state and is refused if the model is someone else's or already in that
     state. Runs of deleted models are not listed. Buzz charges are not shown.
   - **Billing or Membership** (read-only): the user's current subscription (`/retool/user-lookup`): plan, provider,
-    status, cancel-at-period-end, period end and price. No membership codes, payment method or provider ids.
+    status, cancel-at-period-end, period end and price (none on a Buzz-bought or referral grant). No membership codes, payment method or
+    provider ids.
   - **Cosmetic Shop** (read-only): the user's newest 10 shop purchases (`/retool/user-lookup`): item, Buzz paid, date
     and whether it was refunded.
   - **Buzz (Receiving)** (read-only): the user's newest 10 payout and withdrawal requests (`/retool/user-lookup`):

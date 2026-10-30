@@ -3,7 +3,7 @@
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime } from '$lib/format';
-  import { subscriptionBadge } from '$lib/tickets/labels';
+  import { formatMinorUnits, intervalLabel, subscriptionBadge } from '$lib/tickets/labels';
   import type { TicketMembership } from '$lib/server/tickets/membership';
 
   let { membership }: { membership: TicketMembership } = $props();
@@ -34,13 +34,13 @@
           {:else if s.buzzType === 'referral'}
             <Badge variant="outline">Referral grant</Badge>
           {/if}
-          {#if s.interval}<Badge variant="outline">{s.interval}ly</Badge>{/if}
+          {#if s.interval}<Badge variant="outline">{intervalLabel(s.interval)}</Badge>{/if}
           <Badge variant={subscriptionBadge(s.status)}>{s.status}</Badge>
           {#if s.provider}<span class="text-dark-2">via {s.provider}</span>{/if}
         </div>
         <div class="text-dark-2">
           {#if s.unitAmount != null}
-            Price: {(s.unitAmount / 100).toFixed(2)} {(s.currency ?? '').toUpperCase()}{#if s.interval} / {s.interval}{/if}
+            Price: {formatMinorUnits(s.unitAmount, s.currency)}{#if s.interval} / {s.interval}{/if}
             ·
           {/if}
           Renews / ends: {dateTime(s.currentPeriodEnd)}

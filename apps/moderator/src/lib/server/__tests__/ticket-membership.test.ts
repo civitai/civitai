@@ -46,6 +46,20 @@ describe('membershipSectionFor', () => {
     });
   });
 
+  it('carries no card price on a perks-only row, whatever list price it joins to', async () => {
+    for (const buzzType of ['buzzPurchase', 'referral']) {
+      subscription.mockResolvedValue(row({ buzzType }));
+      const res = await membershipSectionFor({ userId: 7 }, reads);
+      expect(res).toMatchObject({
+        subscription: { buzzType, interval: null, unitAmount: null, currency: null },
+      });
+    }
+    subscription.mockResolvedValue(row({ buzzType: 'yellow' }));
+    expect(await membershipSectionFor({ userId: 7 }, reads)).toMatchObject({
+      subscription: { interval: 'month', unitAmount: 1000, currency: 'usd' },
+    });
+  });
+
   it('says there is no subscription rather than failing', async () => {
     subscription.mockResolvedValue(null);
     expect(await membershipSectionFor({ userId: 7 }, reads)).toEqual({

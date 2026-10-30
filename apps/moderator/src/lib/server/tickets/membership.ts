@@ -12,12 +12,15 @@ export type TicketSubscription = {
   buzzType: string | null;
   cancelAtPeriodEnd: boolean;
   currentPeriodEnd: string | null;
-  /** `month` / `year`. */
+  /** `day` / `week` / `month` / `year`; null on a perks-only row, which no card pays. */
   interval: string | null;
-  /** Minor units of `currency`. */
+  /** Minor units of `currency`; null on a perks-only row. */
   unitAmount: number | null;
   currency: string | null;
 };
+
+/** A `buzzPurchase` / `referral` row is a grant, not a card payment: any price it joins to is the product's list price. */
+const PERKS_ONLY = new Set(['buzzPurchase', 'referral']);
 
 export type TicketMembership =
   | { status: 'unlinked' }
@@ -41,6 +44,7 @@ export async function membershipSectionFor(
   const { userId } = ticket;
   try {
     const s = await reads.subscription(userId);
+    const paidByCard = !!s && !PERKS_ONLY.has(s.buzzType ?? '');
     return {
       status: 'ok',
       userId,
@@ -51,9 +55,9 @@ export async function membershipSectionFor(
         buzzType: s.buzzType,
         cancelAtPeriodEnd: s.cancelAtPeriodEnd === true,
         currentPeriodEnd: s.currentPeriodEnd?.toISOString() ?? null,
-        interval: s.interval,
-        unitAmount: s.unitAmount,
-        currency: s.currency,
+        interval: paidByCard ? s.interval : null,
+        unitAmount: paidByCard ? s.unitAmount : null,
+        currency: paidByCard ? s.currency : null,
       },
     };
   } catch (e) {

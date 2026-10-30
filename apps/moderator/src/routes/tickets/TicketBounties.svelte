@@ -3,6 +3,7 @@
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num, relativeTime } from '$lib/format';
+  import { bountyTypeLabel } from '$lib/tickets/labels';
   import type { Snippet } from 'svelte';
   import type { BountyEntryRow, BountyRow, TicketBounties } from '$lib/server/tickets/bounties';
   import type { HistorySection } from '$lib/server/tickets/history';
@@ -31,7 +32,7 @@
 {#snippet funded(b: BountyRow)}
   <span class="text-white">{b.name}</span>
   <Badge variant={b.complete ? 'secondary' : 'outline'}>{b.complete ? 'Complete' : 'Open'}</Badge>
-  · {b.type} · {num(b.pledged)} Buzz
+  · {bountyTypeLabel(b.type)} · {num(b.pledged)} Buzz
   · <span class="text-dark-2" title={dateTime(b.createdAt)}>{relativeTime(b.createdAt)}</span>
   <span class="text-dark-2"> · ends {dateTime(b.expiresAt)}</span>
 {/snippet}

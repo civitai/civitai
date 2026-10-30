@@ -1,7 +1,6 @@
-import { sql } from '@civitai/db/kysely';
 import { dbWrite } from '../db';
 import { canAccess } from '../access';
-import { toggleCannotPublish } from '../training-moderation.service';
+import { setCannotPublish } from '../training-moderation.service';
 import { loraPanelFor } from '$lib/tickets/lora-panel';
 import { linkedUserFor } from './account-actions';
 import { createTicketLoraActions } from './lora-write';
@@ -11,10 +10,7 @@ import { ticketNote } from './ticket-note';
 const modelOf = async (modelId: number) =>
   (await dbWrite
     .selectFrom('Model')
-    .select([
-      'userId',
-      sql<boolean>`COALESCE(meta->'cannotPublish' = 'true'::jsonb, false)`.as('cannotPublish'),
-    ])
+    .select('userId')
     .where('id', '=', modelId)
     .where('deletedAt', 'is', null)
     .executeTakeFirst()) ?? null;
@@ -27,6 +23,6 @@ export const ticketLoraActions = createTicketLoraActions({
   ),
   canAct: (user, path) => canAccess(user, path),
   modelOf,
-  toggleCannotPublish,
+  setCannotPublish,
   note: ticketNote,
 });

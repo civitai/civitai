@@ -2,6 +2,7 @@
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
+  import { restrictionStatusLabel } from '$lib/tickets/labels';
   import { GENERATOR_RESTRICTIONS_PATH, RESTRICTION_TYPE_LABELS } from '$lib/restriction-types';
   import type { TicketGenerator } from '$lib/server/tickets/generator-restrictions';
   import TicketRestrictionRuling from './TicketRestrictionRuling.svelte';
@@ -50,7 +51,7 @@
                 <li class="flex min-w-0 flex-col gap-1 break-words">
                   <div>
                     <span class="text-white">{typeLabel(r.type)} #{r.id}</span>
-                    · <span class={r.status === 'Pending' ? 'text-amber-300' : ''}>{r.status}</span>
+                    · <span class={r.status === 'Pending' ? 'text-amber-300' : ''}>{restrictionStatusLabel(r.status)}</span>
                     · {r.triggerCount} trigger{r.triggerCount === 1 ? '' : 's'}
                     · <span class="text-dark-2" title={dateTime(r.createdAt)}>{relativeTime(r.createdAt)}</span>
                     {#if r.resolvedAt}

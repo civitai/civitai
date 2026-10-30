@@ -2,6 +2,7 @@
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { userLookupUrl, userReportUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
+  import { reportStatusLabel } from '$lib/tickets/labels';
   import type { Snippet } from 'svelte';
   import type { TicketContentIssue, ContentReport } from '$lib/server/tickets/content-reports';
   import type { HistoryRemoval, HistorySection } from '$lib/server/tickets/history';
@@ -51,7 +52,7 @@
     <div class="flex flex-col gap-3">
       {#snippet report(r: ContentReport)}
         <span class="text-white">{spaced(r.reason)}</span>
-        · {r.status}
+        · {reportStatusLabel(r.status)}
         · <span class="text-dark-2" title={dateTime(r.createdAt)}>{relativeTime(r.createdAt)}</span>
         {#if r.reporter}<span class="text-dark-2"> by {r.reporter}</span>{/if}
       {/snippet}

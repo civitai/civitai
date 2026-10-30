@@ -3,6 +3,7 @@
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, relativeTime } from '$lib/format';
+  import { trainingStatusLabel } from '$lib/tickets/labels';
   import type { TicketLora } from '$lib/server/tickets/lora-runs';
   import { TRAINING_MODELS_PATH } from '$lib/tickets/lora-panel';
   import TicketPublishBlock from './TicketPublishBlock.svelte';
@@ -59,7 +60,7 @@
               <div>
                 <span class="text-white">{r.modelName ?? `Model #${r.modelId}`}</span>
                 {#if r.name}<span class="text-dark-2"> · {r.name}</span>{/if}
-                · {r.status ?? 'No status'}
+                · {r.status ? trainingStatusLabel(r.status) : 'No status'}
                 {#if r.createdAt}
                   · <span class="text-dark-2" title={dateTime(r.createdAt)}>{relativeTime(r.createdAt)}</span>
                 {/if}

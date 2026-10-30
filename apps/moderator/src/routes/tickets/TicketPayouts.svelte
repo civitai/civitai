@@ -3,6 +3,7 @@
   import TriageCard from '$lib/components/triage/TriageCard.svelte';
   import { userLookupUrl } from '$lib/entity-url';
   import { LINK_CLASS, dateTime, num, relativeTime } from '$lib/format';
+  import { payoutStatusLabel } from '$lib/tickets/labels';
   import type { PayoutRow, TicketPayouts } from '$lib/server/tickets/payouts';
 
   let { payouts: payoutsData }: { payouts: TicketPayouts } = $props();
@@ -33,7 +34,7 @@
         <ul class="m-0 flex list-none flex-col gap-1 p-0">
           {#each payouts as p (p.id)}
             <li class="min-w-0 break-words">
-              <Badge variant="outline">{p.status}</Badge>
+              <Badge variant="outline">{payoutStatusLabel(p.status)}</Badge>
               <span class="text-white">{amount(p, p.requested)}</span> requested
               {#if p.transferred !== null}· {amount(p, p.transferred)} transferred{/if}
               {#if p.provider}<span class="text-dark-2"> via {p.provider}</span>{/if}
