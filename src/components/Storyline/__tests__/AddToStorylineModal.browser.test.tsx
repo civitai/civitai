@@ -16,9 +16,7 @@ import { NsfwLevel } from '~/server/common/enums';
 const mocks = vi.hoisted(() => ({
   feedInput: null as unknown,
   storylines: [] as Record<string, unknown>[],
-  mainPath: [] as { chapterId: number }[],
-  addChapter: vi.fn(),
-  setFirstChapter: vi.fn(),
+  addAtEnd: vi.fn(),
   onClose: vi.fn(),
 }));
 
@@ -42,15 +40,11 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             };
           },
         },
-        'storyline.addChapter': mutation(mocks.addChapter),
-        'storyline.setFirstChapter': mutation(mocks.setFirstChapter),
+        'storyline.addChapterAtEnd': mutation(mocks.addAtEnd),
       },
       {
         useUtils: () => ({
-          storyline: {
-            invalidate: async () => undefined,
-            getById: { fetch: async () => ({ mainPath: mocks.mainPath }) },
-          },
+          storyline: { invalidate: async () => undefined },
         }),
       }
     ),
@@ -80,9 +74,7 @@ const add = () => page.getByRole('button', { name: 'Add chapter' });
 
 beforeEach(() => {
   mocks.storylines = [];
-  mocks.mainPath = [];
-  mocks.addChapter.mockReset();
-  mocks.setFirstChapter.mockReset();
+  mocks.addAtEnd.mockReset();
   mocks.onClose.mockReset();
   vi.mocked(useRouter().push).mockClear();
 });
@@ -96,30 +88,23 @@ describe('AddToStorylineModal', () => {
     expect(mocks.feedInput).toMatchObject({ filter: 'mine' });
   });
 
-  test('adds the post after the end of the main path, then opens the storyline', async () => {
+  // The server finds the end of the main path; the client's own read could be capped or stale.
+  test('asks the server to add the post at the end, then opens the storyline', async () => {
     mocks.storylines = [storyline(1)];
-    mocks.mainPath = [{ chapterId: 10 }, { chapterId: 11 }, { chapterId: 12 }];
     renderWithProviders(<AddToStorylineModal post={post} />);
 
     await option(1).click();
     await add().click();
-    await expect
-      .poll(() => mocks.addChapter.mock.calls)
-      .toEqual([[{ parentChapterId: 12, postId: 41 }]]);
-    expect(mocks.setFirstChapter).not.toHaveBeenCalled();
+    await expect.poll(() => mocks.addAtEnd.mock.calls).toEqual([[{ storylineId: 1, postId: 41 }]]);
     await expect.poll(() => vi.mocked(useRouter().push).mock.calls).toEqual([['/storylines/1']]);
   });
 
-  test('makes the post chapter 1 of an empty storyline, whatever its rating', async () => {
+  test('offers an empty storyline whatever its rating: chapter 1 raises it to fit', async () => {
     mocks.storylines = [storyline(2, { chapterCount: 0, maxNsfwLevel: NsfwLevel.PG })];
     renderWithProviders(<AddToStorylineModal post={post} />);
 
-    await option(2).click();
-    await add().click();
-    await expect
-      .poll(() => mocks.setFirstChapter.mock.calls)
-      .toEqual([[{ storylineId: 2, postId: 41 }]]);
-    expect(mocks.addChapter).not.toHaveBeenCalled();
+    await expect.element(option(2)).toBeEnabled();
+    await expect.element(option(2)).toHaveTextContent('this post becomes chapter 1');
   });
 
   test('a storyline the post is rated above, or a complete one, cannot be picked', async () => {
@@ -137,8 +122,7 @@ describe('AddToStorylineModal', () => {
 
   test("shows the server's refusal and stays open", async () => {
     mocks.storylines = [storyline(1)];
-    mocks.mainPath = [{ chapterId: 10 }];
-    mocks.addChapter.mockRejectedValue(new Error('This post is already in a storyline'));
+    mocks.addAtEnd.mockRejectedValue(new Error('This post is already in a storyline'));
     renderWithProviders(<AddToStorylineModal post={post} />);
 
     await option(1).click();

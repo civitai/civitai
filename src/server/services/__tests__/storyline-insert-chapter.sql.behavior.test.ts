@@ -31,6 +31,7 @@ vi.mock('~/server/utils/cache-helpers', async (importOriginal) => ({
 
 const {
   addOwnerChapter,
+  addOwnerChapterAtEnd,
   canonRouteWalk,
   getStorylinePath,
   insertStorylineChapter,
@@ -595,6 +596,45 @@ describe('a chapter add whose parent changes after its first read', () => {
     await expect(adding).rejects.toMatchObject({
       code: 'BAD_REQUEST',
       message: 'A removed chapter cannot be continued',
+    });
+  });
+
+  // "Add to a storyline" from a post's menu. The client once picked the end from its own read,
+  // capped and possibly stale, and a wrong guess quietly made a side branch.
+  describe('at the end of the main path', () => {
+    const edgeOf = async (chapterId: number) =>
+      (
+        await rows<{ parentChapterId: number; canon: boolean }>(
+          `SELECT "parentChapterId", canon FROM "StorylineChapterEdge" WHERE "chapterId" = $1`,
+          [chapterId]
+        )
+      )[0];
+
+    it("adds the post as the canon child of the main path's last chapter", async () => {
+      const { chapterId } = await addOwnerChapterAtEnd({
+        storylineId: STORY,
+        postId: await post(),
+        userId: OWNER,
+      });
+
+      // The trunk ends at 60, a contributor's canon chapter after 6.
+      expect(await edgeOf(chapterId)).toEqual({ parentChapterId: 60, canon: true });
+      expect(await depthOf(chapterId)).toBe(7);
+    });
+
+    it('refuses rather than branch when the end moves while it adds', async () => {
+      const [addedPost, otherPost] = [await post(), await post()];
+      const { pausedAt, release } = holdAddAtItsPost(addedPost);
+
+      const adding = addOwnerChapterAtEnd({ storylineId: STORY, postId: addedPost, userId: OWNER });
+      await pausedAt;
+      await addOwnerChapter({ parentChapterId: 60, postId: otherPost, userId: OWNER });
+      release();
+
+      await expect(adding).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: 'The storyline changed while adding. Try again',
+      });
     });
   });
 });

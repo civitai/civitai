@@ -35,8 +35,7 @@ export function AddToStorylineModal({ post }: { post: StorylineSourcePost }) {
       { getNextPageParam: (last) => last.nextCursor }
     );
   const storylines = useMemo(() => data?.pages.flatMap((page) => page.items) ?? [], [data]);
-  const addChapter = trpc.storyline.addChapter.useMutation();
-  const setFirstChapter = trpc.storyline.setFirstChapter.useMutation();
+  const addAtEnd = trpc.storyline.addChapterAtEnd.useMutation();
 
   // Chapter 1 raises an empty storyline's maximum to fit it, so only a later chapter is held to it.
   const refusal = (storyline: (typeof storylines)[number]) =>
@@ -53,14 +52,7 @@ export function AddToStorylineModal({ post }: { post: StorylineSourcePost }) {
     setError(null);
     setAdding(true);
     try {
-      if (picked.chapterCount === 0) {
-        await setFirstChapter.mutateAsync({ storylineId: picked.id, postId: post.id });
-      } else {
-        const { mainPath } = await utils.storyline.getById.fetch({ id: picked.id });
-        const end = mainPath.at(-1);
-        if (!end) throw new Error("Couldn't find the end of this storyline's main path");
-        await addChapter.mutateAsync({ parentChapterId: end.chapterId, postId: post.id });
-      }
+      await addAtEnd.mutateAsync({ storylineId: picked.id, postId: post.id });
       await utils.storyline.invalidate();
       showSuccessNotification({ message: `Added to ${picked.title}.` });
       dialog.onClose();
@@ -121,7 +113,7 @@ export function AddToStorylineModal({ post }: { post: StorylineSourcePost }) {
                     <Text size="xs" c="dimmed">
                       {refused ??
                         (storyline.chapterCount === 0
-                          ? 'Empty: this post becomes chapter 1'
+                          ? 'No chapters yet: this post becomes chapter 1'
                           : `${storyline.chapterCount} ${
                               storyline.chapterCount === 1 ? 'chapter' : 'chapters'
                             }`)}
