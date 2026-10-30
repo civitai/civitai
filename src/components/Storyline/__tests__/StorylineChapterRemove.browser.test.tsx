@@ -111,11 +111,13 @@ describe('removing a chapter from the storyline page', () => {
     expect(mocks.remove).toHaveBeenCalledWith(101);
   });
 
-  test('a reader who is neither is offered nothing', async () => {
+  test('a reader who is neither is not offered removal', async () => {
     mocks.currentUser = { id: 77 };
     renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
-    await expect.element(page.getByTestId('storyline-lanes')).toBeVisible();
-    expect(hasOptions(2)).toBe(false);
+    // The menu is there for reporting the chapter.
+    await optionsOf(2).click();
+    await expect.element(page.getByRole('menuitem', { name: 'Report chapter' })).toBeVisible();
+    expect(document.body.textContent).not.toContain('Remove from storyline');
   });
 
   test('a chapter others continue from says why it cannot be removed', async () => {
