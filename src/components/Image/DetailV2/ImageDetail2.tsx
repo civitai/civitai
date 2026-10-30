@@ -6,6 +6,7 @@ import {
   Card,
   CloseButton,
   Group,
+  Menu,
   RingProgress,
   ScrollArea,
   Text,
@@ -101,6 +102,7 @@ import { TrackView } from '~/components/TrackView/TrackView';
 import { VotableTags } from '~/components/VotableTags/VotableTags';
 import { useCarouselNavigation } from '~/hooks/useCarouselNavigation';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
+import { useIsMobile } from '~/hooks/useIsMobile';
 import { BrowsingSettingsAddonsProvider } from '~/providers/BrowsingSettingsAddonsProvider';
 import { ReportEntity } from '~/shared/utils/report-helpers';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -182,6 +184,8 @@ export function ImageDetail2() {
   const carouselNavigation = useCarouselNavigation({ items: images, initialIndex: index });
 
   const storyline = useStorylineMode();
+  // The header's `@max-md`, for the ⋯ menu, which is portaled out of the container.
+  const narrowStage = useIsMobile({ breakpoint: 'md' });
   const isLastImage = getStorylineStep(carouselNavigation.index, images.length, 'next') === 'end';
   const navigation = withStorylineNavigation(
     carouselNavigation,
@@ -341,19 +345,20 @@ export function ImageDetail2() {
         <BrowsingSettingsAddonsProvider>
           <div className="flex size-full max-h-full max-w-full flex-col overflow-hidden bg-gray-2 dark:bg-dark-9">
             <div className="relative flex flex-1 overflow-hidden">
-              <div className="relative flex flex-1 flex-col @max-md:pb-[60px]">
+              <div className="relative flex flex-1 flex-col @max-md:min-w-0 @max-md:pb-[60px]">
                 <ImageGuard2 image={image} explain={false}>
                   {() => (
                     <>
                       {/* HEADER */}
-                      <div className="flex justify-between gap-8 p-3">
+                      <div className="flex justify-between gap-3 p-3 @md:gap-8">
                         <CloseButton
                           onClick={close}
                           variant="filled"
                           className="size-9 rounded-full"
                         />
-                        <div className="flex flex-1 flex-wrap justify-between gap-1">
-                          <div className="flex items-center @md:hidden">
+                        {/* One line on a phone: a wrapped row shrinks the image under it. */}
+                        <div className="flex flex-1 flex-wrap justify-between gap-1 @max-md:min-w-0 @max-md:flex-nowrap">
+                          <div className="flex min-w-0 items-center @md:hidden">
                             <StorylineToolbarChip
                               imageId={image.id}
                               postId={image.postId ?? null}
@@ -365,7 +370,7 @@ export function ImageDetail2() {
                             {renderLeftImageControls(true)}
                           </div>
 
-                          <div className="flex items-center gap-1">
+                          <div className="flex shrink-0 items-center gap-1">
                             <ImageGuard2.BlurToggle
                               {...sharedBadgeProps}
                               className={clsx('@md:hidden', sharedBadgeProps.className)}
@@ -377,56 +382,84 @@ export function ImageDetail2() {
                           {abbreviateNumber(image.stats?.viewCountAllTime ?? 0)}
                         </Text>
                       </Badge> */}
+                            {/* Wraps the ⋯ menu so a download outlives the menu closing. On a phone, Download is in
+                                the menu, and so is Report image. */}
                             <DownloadImage src={image.url} type={image.type} name={image.name}>
-                              {({ onClick, isLoading, progress }) => (
-                                <LegacyActionIcon
-                                  {...sharedActionIconProps}
-                                  onClick={onClick}
-                                  loading={isLoading && progress === 0}
-                                >
-                                  {isLoading && progress > 0 && (
-                                    <RingProgress
-                                      size={36}
-                                      sections={[{ value: progress, color: 'blue' }]}
-                                      thickness={4}
-                                    />
-                                  )}
-                                  {!isLoading && <IconDownload {...sharedIconProps} />}
-                                </LegacyActionIcon>
+                              {({ onClick: download, isLoading: downloading, progress }) => (
+                                <>
+                                  <LegacyActionIcon
+                                    {...sharedActionIconProps}
+                                    className={clsx(
+                                      sharedActionIconProps.className,
+                                      '@max-md:hidden'
+                                    )}
+                                    onClick={download}
+                                    loading={downloading && progress === 0}
+                                  >
+                                    {downloading && progress > 0 && (
+                                      <RingProgress
+                                        size={36}
+                                        sections={[{ value: progress, color: 'blue' }]}
+                                        thickness={4}
+                                      />
+                                    )}
+                                    {!downloading && <IconDownload {...sharedIconProps} />}
+                                  </LegacyActionIcon>
+                                  <ShareButton
+                                    url={imageShareUrl}
+                                    title={title}
+                                    collect={{ type: CollectionType.Image, imageId: image.id }}
+                                  >
+                                    <LegacyActionIcon {...sharedActionIconProps}>
+                                      <IconShare3 {...sharedIconProps} />
+                                    </LegacyActionIcon>
+                                  </ShareButton>
+                                  <LoginRedirect reason={'report-content'}>
+                                    <LegacyActionIcon
+                                      {...sharedActionIconProps}
+                                      className={clsx(
+                                        sharedActionIconProps.className,
+                                        '@max-md:hidden'
+                                      )}
+                                      onClick={handleReportClick}
+                                    >
+                                      <IconFlag {...sharedIconProps} />
+                                    </LegacyActionIcon>
+                                  </LoginRedirect>
+                                  <ImageContextMenu
+                                    image={image}
+                                    additionalMenuItems={
+                                      <>
+                                        {narrowStage && (
+                                          <Menu.Item
+                                            leftSection={<IconDownload size={14} stroke={1.5} />}
+                                            onClick={download}
+                                            disabled={downloading}
+                                            closeMenuOnClick={false}
+                                          >
+                                            {!downloading
+                                              ? 'Download'
+                                              : Number.isFinite(progress) && progress > 0
+                                              ? `Downloading ${Math.round(progress)}%`
+                                              : 'Downloading…'}
+                                          </Menu.Item>
+                                        )}
+                                        {storyline.active &&
+                                          !isOwner &&
+                                          !!image.postId &&
+                                          storyline.chapterIdOfImage(image.id) !== undefined && (
+                                            <ReportChapterMenuItem postId={image.postId} />
+                                          )}
+                                      </>
+                                    }
+                                  >
+                                    <LegacyActionIcon {...sharedActionIconProps}>
+                                      <IconDotsVertical {...sharedIconProps} />
+                                    </LegacyActionIcon>
+                                  </ImageContextMenu>
+                                </>
                               )}
                             </DownloadImage>
-                            <ShareButton
-                              url={imageShareUrl}
-                              title={title}
-                              collect={{ type: CollectionType.Image, imageId: image.id }}
-                            >
-                              <LegacyActionIcon {...sharedActionIconProps}>
-                                <IconShare3 {...sharedIconProps} />
-                              </LegacyActionIcon>
-                            </ShareButton>
-                            <LoginRedirect reason={'report-content'}>
-                              <LegacyActionIcon
-                                {...sharedActionIconProps}
-                                onClick={handleReportClick}
-                              >
-                                <IconFlag {...sharedIconProps} />
-                              </LegacyActionIcon>
-                            </LoginRedirect>
-                            <ImageContextMenu
-                              image={image}
-                              additionalMenuItems={
-                                storyline.active &&
-                                !isOwner &&
-                                image.postId &&
-                                storyline.chapterIdOfImage(image.id) !== undefined ? (
-                                  <ReportChapterMenuItem postId={image.postId} />
-                                ) : undefined
-                              }
-                            >
-                              <LegacyActionIcon {...sharedActionIconProps}>
-                                <IconDotsVertical {...sharedIconProps} />
-                              </LegacyActionIcon>
-                            </ImageContextMenu>
                           </div>
                         </div>
                         <div className={`@max-md:hidden ${sidebarOpen ? '-mr-3 ml-3' : ''}`}>

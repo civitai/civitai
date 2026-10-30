@@ -222,6 +222,22 @@ describe('StorylineEntryChip', () => {
     act(() => chip?.click());
     expect(onEnter).toHaveBeenCalledTimes(1);
   });
+
+  // Deliberate: at 390px the phone header leaves the chip ~200px, and the label would take half
+  // of it from the title. Keep the label off there; the accessible name still says it.
+  it('drops the Read label in a phone header, keeping the title and the spoken invitation', () => {
+    const c = render(
+      createElement(StorylineEntryChip, {
+        title: 'The Patch',
+        depth: 3,
+        onEnter: vi.fn(),
+        compact: true,
+      })
+    );
+    const chip = c.querySelector<HTMLElement>('[data-testid="storyline-enter"]');
+    expect(text(chip)).toBe('The Patch · Ch 4');
+    expect(chip?.getAttribute('aria-label')).toBe('Read the storyline The Patch from chapter 4');
+  });
 });
 
 describe('the map on desktop: a sheet that drops from the chip', () => {
