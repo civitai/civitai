@@ -263,7 +263,7 @@ async function toInquisitor(trx: Executor, itemId: number, now: Date) {
     .execute();
 }
 
-async function lockItemVoters(trx: Executor, itemId: number) {
+export async function lockItemVoters(trx: Executor, itemId: number) {
   await trx
     .selectFrom('NewOrderPlayer')
     .select('userId')
@@ -709,7 +709,7 @@ const monthStart = (year: number, month: number) => {
 
 type Month = { year: number; month: number };
 
-async function ensureMonthPartition(db: Kysely<DB>, { year, month }: Month): Promise<void> {
+export async function ensureMonthPartition(db: Kysely<DB>, { year, month }: Month): Promise<void> {
   const name = `KnightsVote_${year}_${pad(month)}`;
   const existing = await sql<{ found: boolean }>`
     SELECT to_regclass(${`"${name}"`}) IS NOT NULL AS found
