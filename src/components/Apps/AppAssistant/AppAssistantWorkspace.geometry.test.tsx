@@ -29,8 +29,7 @@ vi.mock('~/components/Apps/AppAssistant/AppAssistantChat', () => ({
   }) => {
     m.tools = props.tools;
     m.beforeToolCall = props.beforeToolCall;
-    // A chat that takes no message, with something typed in its box: a Build it it cannot send comes back
-    // as a "not sent" notice.
+    // A chat that takes no message, with something typed in its box.
     props.chatRef.current = {
       send: vi.fn(),
       compose: vi.fn(),

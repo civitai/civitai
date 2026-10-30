@@ -20,6 +20,7 @@ import {
   type StorylineClosedReason,
 } from '~/components/Storyline/storyline-ui';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 export type StorylineSubmitOutcome = 'pending' | 'approved' | 'awaitingScan' | 'added';
 
@@ -116,7 +117,12 @@ export function StorylineContinueForm({
       <StorylineSubmitted outcome={outcome} price={price} inserting={inserting} onLeave={onLeave} />
     );
 
-  if (!verdict.allowed && verdict.reason !== 'aboveRating' && verdict.reason !== 'notRated')
+  if (
+    !verdict.allowed &&
+    verdict.reason !== 'aboveRating' &&
+    verdict.reason !== 'notRated' &&
+    verdict.reason !== 'cannotSubmit'
+  )
     return (
       <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
         <Text size="sm">{refusalCopy[verdict.reason]}</Text>
@@ -185,6 +191,12 @@ export function StorylineContinueForm({
       {post && !verdict.allowed && verdict.reason === 'notRated' && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />}>
           <Text size="sm">This post has not been rated yet. Try again once it has been.</Text>
+        </Alert>
+      )}
+
+      {post && !verdict.allowed && verdict.reason === 'cannotSubmit' && (
+        <Alert color="red" icon={<IconAlertTriangle size={18} />}>
+          <Text size="sm">{STORYLINE_REFUSALS.cannotSubmit}.</Text>
         </Alert>
       )}
 

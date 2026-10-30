@@ -45,6 +45,17 @@ describe('storylinePublishMessage', () => {
     ).toMatch(/can't be added/);
   });
 
+  test('a chapter above the ceiling names both ratings', () => {
+    expect(
+      storylinePublishMessage({
+        ...base,
+        status: 'waiting',
+        reason: 'aboveRating',
+        rating: { postLevel: NsfwLevel.R, maxNsfwLevel: NsfwLevel.PG13 },
+      }).message
+    ).toContain('Your storyline allows up to PG-13; this post is R.');
+  });
+
   test("a dropped link shows the server's reason, as a problem", () => {
     expect(
       storylinePublishMessage({

@@ -260,6 +260,7 @@ describe('production catalog snapshot (2026-10-20)', () => {
     //   `ModActivity.host`: `20261205120000_mod_activity_host`
     //   `OauthClient.skipConsent` / `OauthClient.tokenRateLimit`: `20261026173940_oauth_client_trusted_settings`
     //   `Comment.removedByAuthor`: `20261210120000_comment_removed_by_author`
+    //   the four `Crucible` takedown columns: `20261203120000_crucible_takedown`
     const inFlightColumns = new Set([
       'CsamReport.sendClaimId',
       'CsamReport.sendClaimedAt',
@@ -282,6 +283,10 @@ describe('production catalog snapshot (2026-10-20)', () => {
       'OauthClient.skipConsent',
       'OauthClient.tokenRateLimit',
       'Comment.removedByAuthor',
+      'Crucible.takenDownAt',
+      'Crucible.takenDownById',
+      'Crucible.takedownReason',
+      'Crucible.takedownRefundsCreator',
     ]);
     expect(currentFound('missing-column').filter((c) => !inFlightColumns.has(c))).toEqual([]);
     // Control that the kind still fires against a catalog that is behind the schema.

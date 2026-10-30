@@ -1,6 +1,9 @@
 import { STORYLINE_QUEUE_SENT_URL } from '~/components/Placement/queue-routes';
 import type { StorylinePublishOutcome } from '~/server/services/storyline-publish.service';
-import { browsingLevelLabels } from '~/shared/constants/browsingLevel.constants';
+import {
+  browsingLevelLabels,
+  getBrowsingLevelLabel,
+} from '~/shared/constants/browsingLevel.constants';
 
 export type StorylinePublishMessage = {
   title?: string;
@@ -29,7 +32,7 @@ export function storylinePublishMessage(
       };
     }
     case 'waiting':
-      return { color: 'yellow', message: waitingMessage(outcome.reason, chapter) };
+      return { color: 'yellow', message: waitingMessage(outcome, chapter) };
     case 'submitted':
       return {
         color: 'teal',
@@ -43,7 +46,7 @@ export function storylinePublishMessage(
 }
 
 function waitingMessage(
-  reason: Extract<StorylinePublishOutcome, { status: 'waiting' }>['reason'],
+  { reason, rating }: Extract<StorylinePublishOutcome, { status: 'waiting' }>,
   chapter: string
 ) {
   switch (reason) {
@@ -52,7 +55,13 @@ function waitingMessage(
     case 'restricted':
       return `${chapter} will be added when your account is able to.`;
     case 'aboveRating':
-      return `${chapter} is rated above your storyline's maximum rating, so it hasn't been added. Raise the rating from Manage on the storyline's page.`;
+      return `${chapter} is rated above your storyline's maximum rating, so it hasn't been added.${
+        rating
+          ? ` Your storyline allows up to ${getBrowsingLevelLabel(
+              rating.maxNsfwLevel
+            )}; this post is ${getBrowsingLevelLabel(rating.postLevel)}.`
+          : ''
+      } Raise the rating from Manage on the storyline's page.`;
     case 'cannotSubmit':
       return `${chapter} can't be added with this post's images.`;
   }

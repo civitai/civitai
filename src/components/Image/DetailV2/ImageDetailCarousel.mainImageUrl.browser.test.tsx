@@ -7,8 +7,9 @@ import { renderWithProviders } from '../../../../test/component-setup';
 
 /**
  * The shell of `/images/[imageId]` preloads its main image by the URL `imageDetailMainImageUrl`
- * computes (the page data's `mainImageUrl`). A preload saves anything only if the `<img>` the
- * carousel then renders asks for the very same URL; a different one is a second download. So this
+ * computes (the page data's `X-Civ-Main-Image` header). A preload saves anything only if the
+ * `<img>` the carousel then renders asks for the very same URL; a different one is a second
+ * download. So this
  * renders the REAL carousel, `EdgeMedia` and `EdgeImage`, and compares the `src` the element got
  * with the helper's answer, and with the URL written out.
  *

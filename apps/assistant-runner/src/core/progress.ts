@@ -1,7 +1,16 @@
 import type { StoredConversationMetadata } from '@civitai/components-chat/core';
 import type { ModelMessage, ToolSet } from 'ai';
 
-import { hasEnded, ownedBy, savedTurn, withEnd, withProgress, type EndedReply } from './head';
+import {
+  chargeOf,
+  hasEnded,
+  ownedBy,
+  savedTurn,
+  withCharge,
+  withEnd,
+  withProgress,
+  type EndedReply,
+} from './head';
 import type { ConversationStore, Logger } from './interfaces';
 
 /** The waits between attempts at saving how a reply ended, after the first fails. */
@@ -19,6 +28,10 @@ export class ProgressWriter {
   #running: Promise<void> | undefined;
   readonly #savedCalls = new Set<string>();
   readonly #waiting = new Map<string, (() => void)[]>();
+  /** What this writer's model calls were charged in all; `undefined` until one reported a charge. */
+  #charged: number | undefined;
+  /** What the turn's reply was charged before this writer, read by its first save. */
+  #carried: number | undefined;
 
   constructor(
     private readonly store: ConversationStore,
@@ -29,6 +42,11 @@ export class ProgressWriter {
     /** The run saving: once a retry of the same turn took the turn over, this run saves nothing more to it. */
     private readonly runId?: string
   ) {}
+
+  /** A model call of the reply was charged `buzz`: it goes into the head with the next save. */
+  charged(buzz: number): void {
+    this.#charged = (this.#charged ?? 0) + buzz;
+  }
 
   save(messages: ModelMessage[]): void {
     this.#pending = messages;
@@ -111,7 +129,13 @@ export class ProgressWriter {
         if (!current || hasEnded(turn)) return null;
         if (this.runId !== undefined && turn && !ownedBy(turn, this.runId)) return null;
         written = true;
-        return change(current);
+        // Read before this writer's first save lands, so a save that landed and then failed is
+        // never counted into what came before.
+        this.#carried ??= chargeOf(turn?.assistant) ?? 0;
+        const next = change(current);
+        return this.#charged === undefined
+          ? next
+          : withCharge(next, this.seq, this.#carried + this.#charged);
       });
       return written ? 'written' : 'skipped';
     } catch (error) {

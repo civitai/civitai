@@ -314,7 +314,8 @@ export const useMutateCreatorShop = () => {
       await queryUtils.creatorShop.getSettings.invalidate();
       await queryUtils.creatorShop.getCommunityCosmetics.invalidate();
       await queryUtils.creatorShop.getPublicShopItems.invalidate();
-      const failed = result.failures.length;
+      const failed = result.failures.filter((f) => f.stage !== 'cdn').length;
+      const artworkFailed = result.failures.length - failed;
       showSuccessNotification({
         title: 'Cosmetic taken down',
         message: `Refunded ${result.refunded} of ${result.purchases} sale${
@@ -334,6 +335,12 @@ export const useMutateCreatorShop = () => {
         }${
           failed
             ? ` ${failed} refund or box step${failed === 1 ? '' : 's'} failed — finish by hand.`
+            : ''
+        }${
+          artworkFailed
+            ? ' Recording its artwork for removal failed — take it down again to retry.'
+            : result.artworkLeftServing
+            ? ' Its artwork was not removed from the CDN and needs a manual check.'
             : ''
         }`,
       });
