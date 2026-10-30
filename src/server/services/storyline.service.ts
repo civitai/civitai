@@ -1074,7 +1074,7 @@ export const STORYLINE_CHAPTER_REMOVE_REFUSALS = {
  * Takes a chapter out of its storyline for the storyline's owner, the chapter's author or a
  * moderator. The post is not touched. Only a chapter nothing continues from can go, so no other
  * chapter loses its way in. The owner's or author's removal deletes the row, with its edges and
- * reader choices, unless it is kept for records; a moderator's tombstones it, as a placement takedown does, so the row keeps
+ * reader choices; a moderator's tombstones it, as a placement takedown does, so the row keeps
  * holding its post and it cannot be submitted again. The placement that added it, if any, is
  * marked removed; no Buzz moves, as with a moderator's takedown.
  */
@@ -1202,18 +1202,48 @@ export async function removeStorylineChapter({
     const parents = await tx.$queryRaw<{ parentChapterId: number }[]>`
       SELECT "parentChapterId" FROM "StorylineChapterEdge" WHERE "chapterId" = ${chapterId}
     `;
-    const tombstone = () =>
-      tx.$executeRaw`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = ${chapterId}`;
-    if (role === 'moderator') await tombstone();
+    if (role === 'moderator')
+      await tx.$executeRaw`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = ${chapterId}`;
     else {
-      // Kept for records, as a moderator's removal is, when its owner or author must keep it. The
-      // condition is in the DELETE itself; the row is locked, so nothing deleted means kept.
+      // Every owner's or author's removal is the same hard delete. When either must be kept for
+      // records, this same statement copies the chapter and the rows its delete cascades to, so the
+      // decision is made at the write. The row is locked, so no child row can join it meanwhile.
       const kept = Prisma.sql`(${ownerHeldSql(Prisma.sql`${ownerId}::int`)} OR ${ownerHeldSql(
         Prisma.sql`${chapter.userId}::int`
       )})`;
-      const deleted =
-        await tx.$executeRaw`DELETE FROM "StorylineChapter" WHERE id = ${chapterId} AND NOT ${kept}`;
-      if (!deleted) await tombstone();
+      const ids = Prisma.sql`${ownerId}::int, ${chapter.userId}::int`;
+      await tx.$executeRaw`
+        WITH kept AS (SELECT ${kept} AS kept),
+        chapter AS (
+          INSERT INTO "HeldStorylineChapter" (id, "storylineId", "postId", "userId", depth,
+            "placementId", "createdAt", "removedAt", "ownerId", "authorId")
+          SELECT id, "storylineId", "postId", "userId", depth, "placementId", "createdAt",
+            "removedAt", ${ids}
+          FROM "StorylineChapter" WHERE id = ${chapterId} AND (SELECT kept FROM kept)
+        ),
+        edges AS (
+          INSERT INTO "HeldStorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId",
+            canon, "createdAt", "ownerId", "authorId")
+          SELECT "storylineId", "chapterId", "parentChapterId", canon, "createdAt", ${ids}
+          FROM "StorylineChapterEdge"
+          WHERE "chapterId" = ${chapterId} AND (SELECT kept FROM kept)
+        ),
+        choices AS (
+          INSERT INTO "HeldStorylineBranchChoice" ("userId", "parentChapterId", "chapterId",
+            "createdAt", "updatedAt", "ownerId", "authorId")
+          SELECT "userId", "parentChapterId", "chapterId", "createdAt", "updatedAt", ${ids}
+          FROM "StorylineBranchChoice"
+          WHERE (${chapterId} IN ("chapterId", "parentChapterId")) AND (SELECT kept FROM kept)
+        ),
+        clicks AS (
+          INSERT INTO "HeldStorylineCreateClick" ("userId", "parentChapterId", "createdAt",
+            "ownerId", "authorId")
+          SELECT "userId", "parentChapterId", "createdAt", ${ids}
+          FROM "StorylineCreateClick"
+          WHERE "parentChapterId" = ${chapterId} AND (SELECT kept FROM kept)
+        )
+        DELETE FROM "StorylineChapter" WHERE id = ${chapterId}
+      `;
     }
     if (openReportIds.length)
       await tx.$executeRaw`
@@ -2067,10 +2097,10 @@ export async function moveStorylineChapter({
     if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
 
     const chapters = await tx.$queryRaw<
-      { id: number; depth: number; userId: number; placementId: number | null }[]
+      { id: number; depth: number; userId: number; placementId: number | null; removed: boolean }[]
     >`
-      SELECT id, depth, "userId", "placementId" FROM "StorylineChapter"
-      WHERE "storylineId" = ${storylineId}
+      SELECT id, depth, "userId", "placementId", "removedAt" IS NOT NULL AS removed
+      FROM "StorylineChapter" WHERE "storylineId" = ${storylineId}
     `;
     const edgeRows = await tx.$queryRaw<{ chapterId: number; parentChapterId: number }[]>`
       SELECT "chapterId", "parentChapterId" FROM "StorylineChapterEdge"
@@ -2094,7 +2124,8 @@ export async function moveStorylineChapter({
     const children = (id: number) => childrenOf.get(id) ?? [];
     const isOwners = (id: number) => {
       const c = byId.get(id);
-      return !!c && c.userId === ownerId && c.placementId == null;
+      // A removed chapter is neither moved nor moved past.
+      return !!c && c.userId === ownerId && c.placementId == null && !c.removed;
     };
     // `next` is in the same run as `id`: the only way on from it, reached by no other way in.
     const linked = (id: number, next: number) =>
