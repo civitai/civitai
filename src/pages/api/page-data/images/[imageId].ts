@@ -39,19 +39,10 @@ import {
  * It is what the static (viewer-independent) shell of the page reads instead of being rendered
  * per viewer.
  *
- * EARLY HEADERS. The main image is decided from two reads (the image row and its contest rating),
- * which start, with the page's other prefetches, in parallel with the bootstrap seeds. As soon as
- * those two are in, the response's headers — main-image URL, route cookie, `private, no-store` —
- * are FLUSHED (`res.flushHeaders()`), so the shell's head script can start the image download
- * while the rest of the body is still being computed. The body follows once everything is done.
- * Before the flush every outcome can still be any status (404, 500); after it the status is a
- * 200 that can no longer change, so:
- *   - a 404 (flag off, non-numeric id) is decided before the flush, and never flushes;
- *   - a failure after the flush ENDS the response with no body: the shell's client reads a 200
- *     whose body is not page data (`readShellResponse`) as unusable and falls back to a full
- *     render;
- *   - no header can be written after the flush, so the body goes out with `res.end`, not
- *     `res.json` (which sets headers).
+ * Headers (main-image URL, route cookie, `private, no-store`) are flushed once the main image is
+ * decided, so the shell can start the image before the body is done. After the flush the status
+ * is a fixed 200: a later failure ends the response with no body, which `readShellResponse`
+ * treats as unusable; the body goes out with `res.end` because no header can be set.
  *
  * Built from the same pieces as the render: the page's resolver (`~/server/page-data/image-detail`),
  * the SSG helpers and dehydrate of `createServerSideProps`, and the bootstrap's request builder and
@@ -119,8 +110,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return send(404, { error: 'Not found' });
     }
 
-    // Every prefetch of the page, started now (in `trpcState`'s order) — before the bootstrap
-    // seeds, which nothing here needs to have been read first.
     const ssg = await getServerProxySSGHelpers({ req, res }, session, { ...flags });
     const pageData = startImageDetailPageData({
       ctx: { params: { imageId: req.query.imageId } },

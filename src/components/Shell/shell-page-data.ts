@@ -40,8 +40,6 @@ export type ShellPageData = {
  * A header rather than a body member so the head script has it as soon as the response's headers
  * arrive: a body member is only readable once the whole body (the page's `trpcState` included)
  * has downloaded and been parsed, and the app renders its `<img>` at about that moment anyway.
- * A failure after the endpoint's early flush ends the 200 with no body, which `readShellResponse`
- * does not adopt.
  */
 export const SHELL_MAIN_IMAGE_HEADER = 'X-Civ-Main-Image';
 

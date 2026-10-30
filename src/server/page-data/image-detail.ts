@@ -24,12 +24,8 @@ function imageDetailId(params: ParsedUrlQuery | undefined) {
 }
 
 /*
- * The two reads the page's main image is decided from, made exactly as the page makes them —
- * through the page's own procedures, with their access rules (`image.get`: visibility, blocks,
- * media visibility), into the same SSG cache.
- *
- * `fetch(...).catch` leaves the cache exactly as `prefetch` would (prefetch is fetch with the
- * error swallowed); it is a `fetch` only to read the answer back. Neither ever rejects.
+ * `fetch(...).catch` leaves the SSG cache exactly as `prefetch` would (prefetch is fetch with the
+ * error swallowed); `fetch` is used only to read the answer back.
  */
 
 /** The image row the page shows as its main media, or `null` when the viewer gets none. */
@@ -69,8 +65,8 @@ export type ImageDetailMainImage = {
  * read — where the page is a 404; once it is not, the page is a 200 whatever the reads answer
  * (an image the viewer cannot get is a page without one, not a 404).
  *
- * All four prefetches start here, synchronously and in this order: it is the order of the queries
- * in `trpcState`, so the page data's `trpcState` is the page's whichever of them is awaited first.
+ * Start all four prefetches synchronously, in the page's `trpcState` order: the dehydrated query
+ * order must match the page's.
  */
 export function startImageDetailPageData({ ctx, ssg, session }: ImageDetailResolverArgs):
   | { notFound: true }
@@ -103,8 +99,9 @@ export function startImageDetailPageData({ ctx, ssg, session }: ImageDetailResol
 
 /**
  * The server data for `/images/[imageId]`: what it prefetches into `trpcState`, and the content
- * rating that decides `adsGated`. Shared by the page and the page-data endpoint
- * (`startImageDetailPageData`) so they cannot prefetch different queries for the same viewer.
+ * rating that decides `adsGated`. The page calls this; the page-data endpoint calls
+ * `startImageDetailPageData`, which this wraps, so they cannot prefetch different queries for the
+ * same viewer.
  *
  * Every prefetch is viewer-dependent (`image.get` checks owner/moderator, blocks and media
  * visibility; `getGenerationData` reads the viewer), so the result is never shareable between
