@@ -17,7 +17,7 @@ dbMock.dbWrite.$queryRaw.mockImplementation(((
 ) => pgliteRaw(holder.db).queryRaw(...a)) as never);
 
 const { assertGenerationInputUrlsUsable } = await import('~/server/services/generation-input-urls');
-const { recordUploadKeyOwner, UNRECORDED_KEYS_ACCEPTED_UNTIL } = await import(
+const { MAX_KEYS, recordUploadKeyOwner, UNRECORDED_KEYS_ACCEPTED_UNTIL } = await import(
   '~/server/services/image-url-ownership'
 );
 
@@ -120,40 +120,32 @@ describe('assertGenerationInputUrlsUsable', () => {
     expect(await outcome()).toBe('accepted');
   });
 
-  // Each would be accepted as the caller's own or as another user's public image without its mark.
-  describe.each([
+  // Accepted as the caller's own, or as another user's public image, without the block.
+  it.each([
     ['the caller', CALLER],
     ['another user', OTHER],
-  ])('refuses an image of %s', (_, owner) => {
-    it('that is blocked', async () => {
-      await givenImage({ userId: owner, blockedFor: 'moderated' });
-      expect(await outcome()).toBe('refused');
-    });
-
-    it('that a hold kept', async () => {
-      await givenImage({ userId: owner });
-      await holder.db.exec(
-        `INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (100, ${owner})`
-      );
-      expect(await outcome()).toBe('refused');
-    });
-
-    it('whose owner is under a hold marker', async () => {
-      await givenImage({ userId: owner });
-      await holder.db.exec(`INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${owner})`);
-      expect(await outcome()).toBe('refused');
-    });
-
-    it('that is in a report', async () => {
-      await givenImage({ userId: owner });
-      await holder.db.exec(`INSERT INTO "CsamReport" (id, images) VALUES (1, '[100]')`);
-      expect(await outcome()).toBe('refused');
-    });
+  ])('refuses a blocked image of %s', async (_, owner) => {
+    await givenImage({ userId: owner, blockedFor: 'moderated' });
+    expect(await outcome()).toBe('refused');
   });
 
-  it('refuses when any one of several images on the key is blocked', async () => {
+  // The outcome depends only on what users can see of the image, the same for every owner.
+  it.each([
+    ['the caller', CALLER],
+    ['another user', OTHER],
+  ])('decides on the image alone, not on records about %s', async (_, owner) => {
+    await givenImage({ userId: owner });
+    await holder.db.exec(`
+      INSERT INTO "EvidenceHoldImage" ("imageId", "userId") VALUES (100, ${owner});
+      INSERT INTO "EvidenceHeldUser" ("userId") VALUES (${owner});
+      INSERT INTO "CsamReport" (id, "userId", images) VALUES (1, ${owner}, '[100]');
+    `);
+    expect(await outcome()).toBe('accepted');
+  });
+
+  it("refuses a blocked image of the caller's on a key another user's public image shares", async () => {
     await givenImage();
-    await givenImage({ id: 101, blockedFor: 'moderated', postId: null });
+    await givenImage({ id: 101, userId: CALLER, blockedFor: 'moderated' });
     expect(await outcome()).toBe('refused');
   });
 
@@ -163,11 +155,41 @@ describe('assertGenerationInputUrlsUsable', () => {
     expect(await outcome()).toBe('refused');
   });
 
-  it("refuses another user's image named by a full url, in any case", async () => {
+  it('accepts a key the caller has an image on, whatever other images share it', async () => {
     await givenImage({ postId: null });
+    await givenImage({ id: 101, userId: CALLER, postId: null });
+    expect(await outcome()).toBe('accepted');
+  });
+
+  it("matches another user's image however the url carries its key", async () => {
+    await givenImage();
+    expect(await outcome([`https://cdn.example/x/${KEY.toUpperCase()}/original=true`])).toBe(
+      'accepted'
+    );
+    await holder.db.exec(`UPDATE "Post" SET "publishedAt" = NULL`);
     expect(await outcome([`https://cdn.example/x/${KEY.toUpperCase()}/original=true`])).toBe(
       'refused'
     );
+  });
+
+  it('matches an image stored under the full url it is sent as', async () => {
+    const url = `https://cdn.example/x/${KEY}/original=true`;
+    await givenImage({ url });
+    expect(await outcome([url])).toBe('accepted');
+    await holder.db.exec(`UPDATE "Post" SET "publishedAt" = NULL`);
+    expect(await outcome([url])).toBe('refused');
+  });
+
+  it('refuses more upload keys than one check takes', async () => {
+    const many = Array.from(
+      { length: MAX_KEYS + 1 },
+      (_, i) => `${String(i).padStart(8, '0')}-ef56-4a7b-8c9d-0e1f2a3b4c5d`
+    );
+    // The caller's own images, so no key reaches the issue-record check and its own limit.
+    for (const [i, key] of many.entries())
+      await givenImage({ id: 200 + i, url: key, userId: CALLER });
+    expect(await outcome(many.slice(0, MAX_KEYS))).toBe('accepted');
+    expect(await outcome(many)).toBe('refused');
   });
 
   describe('a key with no image', () => {
@@ -192,11 +214,12 @@ describe('assertGenerationInputUrlsUsable', () => {
     expect(await outcome()).toBe('accepted');
   });
 
-  it('checks every url, and accepts urls with no upload key', async () => {
+  it('checks every url, and refuses a url with no upload key', async () => {
     await givenImage();
     const blocked = 'cd34ab12-ef56-4a7b-8c9d-0e1f2a3b4c5d';
     await givenImage({ id: 101, url: blocked, blockedFor: 'moderated' });
-    expect(await outcome([undefined, 'https://example.com/a.png', KEY])).toBe('accepted');
+    expect(await outcome([undefined, KEY])).toBe('accepted');
     expect(await outcome([KEY, blocked])).toBe('refused');
+    expect(await outcome([KEY, 'https://example.com/a.png'])).toBe('refused');
   });
 });

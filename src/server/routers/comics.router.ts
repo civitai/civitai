@@ -468,7 +468,11 @@ const createPanelSchema = z.object({
   prompt: z.string().min(1).max(2000),
   useContext: z.boolean().default(true),
   referencePanelId: z.number().int().optional(),
-  layoutImagePath: z.string().optional(),
+  // Appended to the site origin, so only a bundled layout image may be named.
+  layoutImagePath: z
+    .string()
+    .regex(/^\/images\/comics\/layouts\/[a-z0-9-]+\.png$/)
+    .optional(),
   position: z.number().int().min(0).optional(),
   aspectRatio: z.string().default('3:4'),
   baseModel: comicModelEnum.nullish(),

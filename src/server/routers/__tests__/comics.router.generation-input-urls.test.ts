@@ -63,8 +63,13 @@ const expectNothingStarted = () => {
   expect(dbMock.dbWrite.comicPanel.create).not.toHaveBeenCalled();
 };
 
+/** The urls of each check, each made for the signed-in user. */
 const checkedUrls = () =>
-  mocks.assertUsable.mock.calls.map((c) => (c[0] as { urls: unknown }).urls);
+  mocks.assertUsable.mock.calls.map((c) => {
+    const { urls, userId } = c[0] as { urls: unknown; userId: number };
+    expect(userId).toBe(USER_ID);
+    return urls;
+  });
 
 describe('comics generation inputs', () => {
   it('iterateGenerate checks its source and reference urls', async () => {
@@ -80,7 +85,6 @@ describe('comics generation inputs', () => {
       })
     ).rejects.toBe(refused);
     expect(checkedUrls()).toEqual([[SOURCE, REF]]);
-    expect(mocks.assertUsable).toHaveBeenCalledWith(expect.objectContaining({ userId: USER_ID }));
     expectNothingStarted();
   });
 
@@ -113,7 +117,10 @@ describe('comics generation inputs', () => {
     expectNothingStarted();
   });
 
-  it('enhancePanel leaves a source saved without a prompt to the save checks', async () => {
+  it.each([
+    ['no prompt', {}],
+    ['a blank prompt', { prompt: '   ' }],
+  ])('enhancePanel leaves a source saved with %s to the save checks', async (_, over) => {
     dbMock.dbWrite.comicPanel.findFirst.mockResolvedValue(null);
     await caller()
       .enhancePanel({
@@ -122,9 +129,27 @@ describe('comics generation inputs', () => {
         sourceImageUrl: SOURCE,
         sourceImageWidth: 512,
         sourceImageHeight: 512,
+        ...over,
       })
       .catch(() => undefined);
+    // Reached the save path, so the route did not stop before the check for another reason.
+    expect(dbMock.dbWrite.comicPanel.findFirst).toHaveBeenCalled();
     expect(mocks.assertUsable).not.toHaveBeenCalled();
+  });
+
+  it('createPanel takes only a bundled layout image path', async () => {
+    const input = { projectId: 11, chapterPosition: 0, prompt: 'p' };
+    for (const layoutImagePath of ['@evil.example/x.png', '/../x.png', '//evil.example/x.png'])
+      await expect(caller().createPanel({ ...input, layoutImagePath })).rejects.toMatchObject({
+        code: 'BAD_REQUEST',
+        message: expect.stringContaining('layoutImagePath'),
+      });
+    await expect(
+      caller().createPanel({
+        ...input,
+        layoutImagePath: '/images/comics/layouts/3-panel-layout.png',
+      })
+    ).rejects.not.toMatchObject({ message: expect.stringContaining('layoutImagePath') });
   });
 
   it('bulkCreatePanels checks the source url of every panel it generates, and only those', async () => {
@@ -135,6 +160,7 @@ describe('comics generation inputs', () => {
         panels: [
           { prompt: 'p', sourceImageUrl: SOURCE, sourceImageWidth: 512, sourceImageHeight: 512 },
           { sourceImageUrl: REF, sourceImageWidth: 512, sourceImageHeight: 512 },
+          { prompt: '  ', sourceImageUrl: REF, sourceImageWidth: 512, sourceImageHeight: 512 },
           { prompt: 'text only' },
         ],
       })
