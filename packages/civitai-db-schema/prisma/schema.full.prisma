@@ -10602,6 +10602,7 @@ model StorylineBranchChoice {
 
   @@id([userId, parentChapterId])
   @@index([parentChapterId, chapterId])
+  @@index([chapterId])
 }
 
 /// A signed-in reader asking for the "Create next section" tool at the end of a chapter. One row

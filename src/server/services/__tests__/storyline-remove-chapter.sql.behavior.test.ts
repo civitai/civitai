@@ -414,7 +414,7 @@ describe('removeStorylineChapter', () => {
       expect(await copies()).toEqual(noCopies);
     });
 
-    // Decided at the write itself, so a change between the removal's reads and its DELETE counts.
+    // Decided after the removal's reads, so a change made while it runs still counts.
     it('copies it when that changes after the removal has read the chapter', async () => {
       await seedReaders();
       try {
@@ -439,23 +439,42 @@ describe('removeStorylineChapter', () => {
     });
 
     // Ruling: the copy is written by the DELETE statement itself, never a statement before it, so
-    // no change between the two can leave a deleted chapter uncopied. Don't split it out.
+    // no change between the two can delete a chapter without keeping its copy. Don't split it out.
     it('writes the copies in the DELETE statement itself', async () => {
       await seedReaders();
       await keep(CONTRIBUTOR);
       w.$executeRaw.mockClear();
       await remove(CONTRIBUTOR);
-      const statements = w.$executeRaw.mock.calls.map((c) => (c[0] as string[]).join('?'));
-      const copying = statements.filter((sql) => sql.includes('"HeldStorylineChapter"'));
-      expect(copying).toHaveLength(1);
+      // A tagged template or a Prisma.sql object, whichever the call was made with.
+      const statements = w.$executeRaw.mock.calls.map(([first]) =>
+        Array.isArray(first) ? first.join('?') : (first as { sql: string }).sql
+      );
+      const touchingCopies = statements.filter((sql) => /"Held/.test(sql));
+      expect(touchingCopies).toHaveLength(1);
       for (const part of [
         'INSERT INTO "HeldStorylineChapter"',
         'INSERT INTO "HeldStorylineChapterEdge"',
         'INSERT INTO "HeldStorylineBranchChoice"',
         'INSERT INTO "HeldStorylineCreateClick"',
-        'DELETE FROM "StorylineChapter"',
       ])
-        expect(copying[0]).toContain(part);
+        expect(touchingCopies[0]).toContain(part);
+      expect(touchingCopies[0]).toMatch(/\)\s*DELETE FROM "StorylineChapter" WHERE id = \?\s*$/);
+    });
+
+    it("leaves a moderator's removal a tombstone, with no copies", async () => {
+      await seedReaders();
+      await keep(CONTRIBUTOR);
+      await keep(OWNER);
+      await remove(MODERATOR, true);
+      expect(
+        await rows(
+          `SELECT id, "removedAt" IS NOT NULL AS removed FROM "StorylineChapter" ORDER BY id`
+        )
+      ).toEqual([
+        { id: 10, removed: false },
+        { id: 11, removed: true },
+      ]);
+      expect(await copies()).toEqual(noCopies);
     });
 
     it('records the removal for moderators while a report is open, as it would otherwise', async () => {

@@ -63,3 +63,6 @@ CREATE INDEX IF NOT EXISTS "HeldStorylineBranchChoice_ownerId_idx" ON "HeldStory
 CREATE INDEX IF NOT EXISTS "HeldStorylineBranchChoice_authorId_idx" ON "HeldStorylineBranchChoice" ("authorId");
 CREATE INDEX IF NOT EXISTS "HeldStorylineCreateClick_ownerId_idx" ON "HeldStorylineCreateClick" ("ownerId");
 CREATE INDEX IF NOT EXISTS "HeldStorylineCreateClick_authorId_idx" ON "HeldStorylineCreateClick" ("authorId");
+
+-- A chapter's delete, and its copy, find the reader choices into it by this.
+CREATE INDEX IF NOT EXISTS "StorylineBranchChoice_chapterId_idx" ON "StorylineBranchChoice" ("chapterId");

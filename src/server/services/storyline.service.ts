@@ -1219,28 +1219,28 @@ export async function removeStorylineChapter({
             "placementId", "createdAt", "removedAt", "ownerId", "authorId")
           SELECT id, "storylineId", "postId", "userId", depth, "placementId", "createdAt",
             "removedAt", ${ids}
-          FROM "StorylineChapter" WHERE id = ${chapterId} AND (SELECT kept FROM kept)
+          FROM "StorylineChapter" WHERE id = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
         ),
         edges AS (
           INSERT INTO "HeldStorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId",
             canon, "createdAt", "ownerId", "authorId")
           SELECT "storylineId", "chapterId", "parentChapterId", canon, "createdAt", ${ids}
           FROM "StorylineChapterEdge"
-          WHERE "chapterId" = ${chapterId} AND (SELECT kept FROM kept)
+          WHERE "chapterId" = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
         ),
         choices AS (
           INSERT INTO "HeldStorylineBranchChoice" ("userId", "parentChapterId", "chapterId",
             "createdAt", "updatedAt", "ownerId", "authorId")
           SELECT "userId", "parentChapterId", "chapterId", "createdAt", "updatedAt", ${ids}
           FROM "StorylineBranchChoice"
-          WHERE (${chapterId} IN ("chapterId", "parentChapterId")) AND (SELECT kept FROM kept)
+          WHERE ("chapterId" = ${chapterId} OR "parentChapterId" = ${chapterId}) AND (SELECT kept FROM kept) IS NOT FALSE
         ),
         clicks AS (
           INSERT INTO "HeldStorylineCreateClick" ("userId", "parentChapterId", "createdAt",
             "ownerId", "authorId")
           SELECT "userId", "parentChapterId", "createdAt", ${ids}
           FROM "StorylineCreateClick"
-          WHERE "parentChapterId" = ${chapterId} AND (SELECT kept FROM kept)
+          WHERE "parentChapterId" = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
         )
         DELETE FROM "StorylineChapter" WHERE id = ${chapterId}
       `;
