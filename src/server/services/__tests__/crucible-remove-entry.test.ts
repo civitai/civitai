@@ -258,9 +258,11 @@ describe('removeCrucibleEntryAsOwner', () => {
     const result = await removeAsOwner();
 
     const { sql, values } = sqlOf(reserve.mock.calls[0]);
-    expect(sql).toContain('"ownerRemovalCount" = "ownerRemovalCount" + 1');
-    expect(sql).toContain('"ownerRemovalCount" < ?');
-    expect(values).toContain(CRUCIBLE_OWNER_REMOVAL_CAP);
+    // A mock can't prove the `<` vs `<=` boundary; this pins the predicate's shape.
+    expect(sql).toBe(
+      'UPDATE "Crucible" SET "ownerRemovalCount" = "ownerRemovalCount" + 1 WHERE id = ? AND status = ?::"CrucibleStatus" AND ("endAt" IS NULL OR "endAt" > statement_timestamp()) AND "ownerRemovalCount" < ?'
+    );
+    expect(values).toEqual([7, 'Active', CRUCIBLE_OWNER_REMOVAL_CAP]);
     expect(reserve.mock.invocationCallOrder[0]).toBeLessThan(
       refundMultiAccountTransaction.mock.invocationCallOrder[0]
     );
@@ -278,10 +280,9 @@ describe('removeCrucibleEntryAsOwner', () => {
     expect(result).toEqual({ entryId: 5, crucibleId: 7, refundedAmount: 50 });
   });
 
-  it('still allows the last removal under the cap', async () => {
-    findEntry.mockResolvedValue(entry({}, { ownerRemovalCount: CRUCIBLE_OWNER_REMOVAL_CAP - 1 }));
+  it('keeps the slot after a successful removal', async () => {
+    await removeAsOwner();
 
-    await expect(removeAsOwner()).resolves.toMatchObject({ entryId: 5 });
     expect(reserve).toHaveBeenCalledTimes(1);
   });
 
@@ -376,6 +377,7 @@ describe('removeCrucibleEntryAsOwner', () => {
 
     await expect(removeAsOwner()).rejects.toThrow('Entry not found');
     expect(reserve).toHaveBeenCalledTimes(2);
+    expect(sqlOf(reserve.mock.calls[1]).sql).toContain('GREATEST("ownerRemovalCount" - 1, 0)');
   });
 
   it('logs a slot it could not give back instead of hiding the original error', async () => {
