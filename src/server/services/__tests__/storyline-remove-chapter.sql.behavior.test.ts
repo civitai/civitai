@@ -291,43 +291,76 @@ describe('removeStorylineChapter', () => {
     expect((await placement900()).status).toBe('approved');
   });
 
-  describe('under a legal hold', () => {
-    const hold = (userId: number) =>
+  describe('kept for records', () => {
+    const keep = (userId: number) =>
       db.pg.exec(`INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${userId}, NULL)`);
-
-    it('keeps a held owner from removing a chapter, in the words of any other refusal', async () => {
-      await db.pg.exec(`UPDATE "Placement" SET amount = 0 WHERE id = 900`);
-      await hold(OWNER);
-      await expect(remove(OWNER)).rejects.toThrow(REFUSED.moderatorOnly);
-      expect(await chapterIds()).toEqual([10, 11]);
-      expect((await placement900()).status).toBe('approved');
-    });
-
-    it("keeps a held author's chapter from its author and from the owner", async () => {
-      await db.pg.exec(`UPDATE "Placement" SET amount = 0 WHERE id = 900`);
-      await hold(CONTRIBUTOR);
-      await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.moderatorOnly);
-      await expect(remove(OWNER)).rejects.toThrow(REFUSED.moderatorOnly);
-      expect(await chapterIds()).toEqual([10, 11]);
-      expect((await placement900()).status).toBe('approved');
-    });
-
-    it('still lets a moderator tombstone it: the row stays', async () => {
-      await hold(CONTRIBUTOR);
-      await remove(MODERATOR, true);
-      expect(
-        await rows(
+    const chapter11 = async () =>
+      (
+        await rows<{ removed: boolean }>(
           `SELECT "removedAt" IS NOT NULL AS removed FROM "StorylineChapter" WHERE id = 11`
         )
-      ).toEqual([{ removed: true }]);
-    });
+      )[0];
 
-    it('lets them remove it once the hold is released', async () => {
+    for (const [whose, keptUser, remover] of [
+      ['its owner', OWNER, OWNER],
+      ['its author', CONTRIBUTOR, CONTRIBUTOR],
+      ['its author, removed by the owner', CONTRIBUTOR, OWNER],
+      ['its owner, removed by the author', OWNER, CONTRIBUTOR],
+    ] as const)
+      it(`keeps the chapter as a removed placeholder for ${whose}, answering as any removal`, async () => {
+        await db.pg.exec(`UPDATE "Placement" SET amount = 0 WHERE id = 900`);
+        await keep(keptUser);
+        bustFetchThroughCache.mockClear();
+        expect(await remove(remover)).toEqual({ storylineId: 1, chapterId: CHAPTER_2 });
+        expect(await chapter11()).toEqual({ removed: true });
+        expect(
+          await rows(`SELECT "chapterId" FROM "StorylineChapterEdge" WHERE "chapterId" = 11`)
+        ).toEqual([{ chapterId: 11 }]);
+        expect(bustFetchThroughCache).toHaveBeenCalledTimes(1);
+        expect(trackModActivity).not.toHaveBeenCalled();
+      });
+
+    it('deletes it outright when nobody needs it kept', async () => {
       await db.pg.exec(
         `INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${CONTRIBUTOR}, now())`
       );
       await remove(CONTRIBUTOR);
       expect(await chapterIds()).toEqual([10]);
+    });
+
+    // Decided at the write itself, so a change between the removal's reads and its DELETE counts.
+    it('keeps it when that changes after the removal has read the chapter', async () => {
+      await db.pg.exec(`
+        CREATE FUNCTION keep_contributor() RETURNS trigger AS $$
+        BEGIN
+          INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${CONTRIBUTOR}, NULL);
+          RETURN NEW;
+        END $$ LANGUAGE plpgsql;
+        CREATE TRIGGER keep_contributor BEFORE UPDATE ON "Placement"
+          FOR EACH ROW EXECUTE FUNCTION keep_contributor();
+      `);
+      try {
+        await remove(CONTRIBUTOR);
+      } finally {
+        await db.pg.exec(`
+          DROP TRIGGER keep_contributor ON "Placement";
+          DROP FUNCTION keep_contributor();
+        `);
+      }
+      expect(await chapter11()).toEqual({ removed: true });
+    });
+
+    it('records the removal for moderators while a report is open, as it would otherwise', async () => {
+      await keep(CONTRIBUTOR);
+      await db.pg.exec(`
+        INSERT INTO "Report" (id, status) VALUES (76, 'Pending');
+        INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 76);
+      `);
+      await remove(CONTRIBUTOR);
+      expect(await chapter11()).toEqual({ removed: true });
+      expect(
+        await rows(`SELECT "removedByRole", "reportIds" FROM "StorylineChapterRemovalHold"`)
+      ).toEqual([{ removedByRole: 'author', reportIds: [76] }]);
     });
   });
 
