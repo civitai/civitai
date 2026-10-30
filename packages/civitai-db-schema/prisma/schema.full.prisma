@@ -1138,6 +1138,8 @@ model Model {
 
   @@index([name])
   @@index([status, nsfw])
+  @@index([createdAt])
+  @@index([updatedAt, id])
 }
 
 /// A model's licensing permissions as they stood from `effectiveAt` until its next row, so a merge can
