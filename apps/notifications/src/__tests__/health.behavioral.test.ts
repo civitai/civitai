@@ -111,6 +111,16 @@ describe('GET /health on a worker pod', () => {
     expect(stalled.status).toBe(503);
     expect(stalled.body.reasons).toEqual(['worker: no progress for 600s']);
   });
+
+  it('names the bulk lane when it is the one that stalls', async () => {
+    ctx.health.markWorkerStarted('bulk');
+    at(10 * 60_000);
+    ctx.health.markWorkerProgress();
+
+    const stalled = await getHealth();
+    expect(stalled.status).toBe(503);
+    expect(stalled.body.reasons).toEqual(['worker (bulk): no progress for 600s']);
+  });
 });
 
 describe('GET /health on an API-only pod (worker not started)', () => {

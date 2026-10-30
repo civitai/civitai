@@ -89,8 +89,8 @@ type Lane = 'normal' | 'bulk';
 // rows → both workers fan the batch out (double signals + debounce rows resurrected via the ON CONFLICT
 // DO UPDATE ... viewed=FALSE path). The worker Deployment is replicas:1 + strategy:Recreate today, so no
 // two workers run concurrently in normal operation; SKIP LOCKED makes the claim correct regardless of
-// replica count (an accidental scale-up or a future HA change can't cause double fan-out). With a single
-// worker there is zero contention, so this clause is a no-op on the happy path.
+// replica count (an accidental scale-up or a future HA change can't cause double fan-out). The two lanes in
+// one worker claim disjoint rows (split on cardinality), so they never contend either.
 const claimQuery = (lane: Lane) => `
   WITH
     return_data AS (
@@ -290,8 +290,8 @@ export const create = async (row: PendingReturnRow): Promise<RetData[] | undefin
   }
 };
 
-// Exported for behavioral unit tests. Export-for-test only — logic unchanged.
-export const run = async (lane: Lane = 'normal') => {
+/** One poll pass for a lane. Resolves to the number of rows it claimed. */
+export const run = async (lane: Lane = 'normal'): Promise<number> => {
   const rows = await getPending(lane);
   let counterFailures = 0;
   for (const row of rows) {
@@ -300,6 +300,7 @@ export const run = async (lane: Lane = 'normal') => {
     health.markWorkerProgress(lane);
     if (!affectedUsers) {
       workerPendingProcessedTotal.inc({ outcome: 'errored' });
+      if (lane === 'bulk') logBulkRow(row, start, null);
       continue;
     }
     workerPendingProcessedTotal.inc({ outcome: 'fanned' });
@@ -340,19 +341,24 @@ export const run = async (lane: Lane = 'normal') => {
       if (i < affectBatches.length - 1) await sleep(signalDelay);
     }
 
-    if (lane === 'bulk')
-      logToAxiom({
-        type: 'info',
-        name: 'Bulk fan-out',
-        details: {
-          key: row.key,
-          type: row.type,
-          recipients: affectedUsers.length,
-          ms: Date.now() - start,
-        },
-      }).catch(() => {});
+    if (lane === 'bulk') logBulkRow(row, start, affectedUsers.length);
   }
+  return rows.length;
 };
+
+function logBulkRow(row: PendingReturnRow, start: number, delivered: number | null) {
+  logToAxiom({
+    type: delivered === null ? 'error' : 'info',
+    message: 'Bulk fan-out',
+    data: {
+      key: row.key,
+      type: row.type,
+      recipients: row.users.length,
+      delivered,
+      ms: Date.now() - start,
+    },
+  }).catch(() => {});
+}
 
 /**
  * Start the self-rescheduling poll loop, one per lane. Each tick fully awaits run() before scheduling the
@@ -370,13 +376,14 @@ function startLane(lane: Lane): { stop: () => void } {
   let stopped = false;
   health.markWorkerStarted(lane);
 
-  const scheduleTick = () => {
+  const scheduleTick = (delay: number) => {
     if (stopped) return;
     setTimeout(async () => {
       if (stopped) return;
       const end = workerTickSeconds.startTimer();
+      let claimed = 0;
       try {
-        await run(lane);
+        claimed = await run(lane);
       } catch (e) {
         logAxiomError(e as Error);
       } finally {
@@ -385,11 +392,12 @@ function startLane(lane: Lane): { stop: () => void } {
         const w = notifDbWrite();
         writePoolActive.set(w.totalCount - w.idleCount);
       }
-      scheduleTick();
-    }, appRunDelay);
+      // The bulk lane claims one row per pass, so it goes straight on to the next while rows are left.
+      scheduleTick(lane === 'bulk' && claimed > 0 ? 0 : appRunDelay);
+    }, delay);
   };
 
-  scheduleTick();
+  scheduleTick(appRunDelay);
   return {
     stop: () => {
       stopped = true;

@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 // The batch-claim query is exported so its structure can be asserted directly (no DB/mock needed), the
 // same "assert the SQL string" approach as operations.test.ts. The single load-bearing invariant here is
 // `FOR UPDATE SKIP LOCKED`: dropping it silently reintroduces the two-worker double-claim race (see the
-// comment on PENDING_CLAIM_QUERY). This test is the regression guard against that edit.
+// comment on claimQuery). This test is the regression guard against that edit.
 import { BULK_CLAIM_QUERY, PENDING_CLAIM_QUERY } from './poll-loop';
 
 // Collapse all runs of whitespace so assertions are insensitive to indentation/line-wrapping.

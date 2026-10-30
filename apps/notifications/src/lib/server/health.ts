@@ -4,7 +4,8 @@
 // Two ways the fan-out worker can be alive but useless, both of which a static 200 hid:
 //   - redis: every cache command has failed for a sustained window, with no success in between (a
 //     stuck client that only a restart clears). One failed command, or a burst that recovers, is not it.
-//   - the poll loop: no row and no tick has finished for the stall window, so nothing is being delivered.
+//   - a poll-loop lane: no row and no tick has finished for the stall window, so nothing is being
+//     delivered in that lane. Tracked per lane so a busy lane cannot hide a stalled one.
 // Both checks apply only once the worker has started in this process: an API-only pod keeps its
 // dependency-free 200, because pulling it from service would stop notification creates too.
 
@@ -23,7 +24,6 @@ export function createHealthTracker({
 }) {
   let redisFailingSince: number | null = null;
   let lastRedisFailureAt: number | null = null;
-  // Per worker lane, so a lane that keeps ticking cannot hide one that has stalled.
   const lastWorkerProgressAt = new Map<string, number>();
 
   return {

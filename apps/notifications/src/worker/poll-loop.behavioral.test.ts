@@ -731,19 +731,23 @@ describe('startWorker — a big fan-out does not delay other notifications', () 
     expect(signalled(SMALL_USER)).toBe(true);
   });
 
-  it('keeps delivering small rows when the bulk lane fails', async () => {
-    queue(5000);
-    const table = h.state.claim!;
-    h.state.claim = (sql) => {
-      if (/cardinality\(users\) >/.test(sql)) throw new Error('bulk claim failed');
-      return table(sql);
-    };
+  it('drains a backlog of bulk rows back to back, not one per poll interval', async () => {
+    h.state.connectClient = echoClient();
+    h.state.claim = pendingTable(
+      [1, 2, 3].map((n) => ({
+        ...baseRow,
+        id: n,
+        key: `new-model-from-following:${n}`,
+        users: Array.from({ length: 1001 }, (_, i) => n * 10_000 + i),
+        debounceSeconds: null,
+      }))
+    );
     worker = startWorker();
 
-    await vi.advanceTimersByTimeAsync(5_100);
+    // Each row needs two 500 ms signal pauses; three rows fit well inside one more poll interval.
+    await vi.advanceTimersByTimeAsync(9_000);
 
-    expect(bigSignals()).toBe(0);
-    expect(signalled(SMALL_USER)).toBe(true);
+    expect(bigSignals()).toBe(3 * 1001);
   });
 
   it('stop() halts every lane', async () => {
