@@ -60,4 +60,11 @@ describe('self-service usernames and the reserved moderation username', () => {
       expect(await isUsernamePermitted(username)).toBe(true);
     expect(await available('ada')).toBe(true);
   });
+
+  it('lets an ordinary name past the gate in rename and onboarding', async () => {
+    // Each fails at its next step, which the gate lets it reach: no user row is mocked.
+    await expect(rename('ada')).rejects.toThrow(`No user with id ${USER_ID}`);
+    await onboard('ada').catch(() => undefined);
+    expect(dbMock.dbWrite.user.findUnique).toHaveBeenCalled();
+  });
 });
