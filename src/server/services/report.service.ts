@@ -475,7 +475,7 @@ export const createReport = async ({
   const reportsStorylineChapter =
     type === ReportEntity.Post &&
     data.reason === ReportReason.NSFW &&
-    !!(await dbRead.storylineChapter.findUnique({ where: { postId: id }, select: { id: true } }));
+    !!(await dbWrite.storylineChapter.findUnique({ where: { postId: id }, select: { id: true } }));
   const awaitsModerator =
     reportsStorylineChapter ||
     type === ReportEntity.Crucible ||
@@ -496,7 +496,8 @@ export const createReport = async ({
           entityReportId: id,
           reason: data.reason,
           details,
-          pendingOnly: castsNoTagVotes,
+          // Post NSFW reports were filed Actioned: folding into one would never reach the queue.
+          pendingOnly: castsNoTagVotes || reportsStorylineChapter,
           tx: callerTx,
         })
       : null;
