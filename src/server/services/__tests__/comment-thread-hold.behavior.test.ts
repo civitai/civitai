@@ -70,6 +70,7 @@ import { deleteImageById, deleteImages } from '~/server/services/image.service';
 import { deletePost } from '~/server/services/post.service';
 import { deleteBountyById } from '~/server/services/bounty.service';
 import { purgeReleasedHeldCopies } from '~/server/services/held-review.service';
+import { SearchIndexUpdate } from '~/server/search-index/SearchIndexUpdate';
 import { deleteBountyEntry } from '~/server/services/bountyEntry.service';
 import { deleteArticleById } from '~/server/services/article.service';
 import { toggleReview } from '~/server/services/user.service';
@@ -695,19 +696,52 @@ describe("a held author's rows under a deleted parent", () => {
     } as never);
   }
 
+  const keptBounty = () =>
+    rows(`SELECT id, "userId", availability, meta->>'removedWithOwner' AS removed,
+      meta->>'availabilityBeforeRemoval' AS before, (meta->>'userIdBeforeRemoval')::int AS owner
+      FROM "Bounty"`);
+  const searchDeletes = () =>
+    vi.mocked(SearchIndexUpdate.queueUpdate).mock.calls.flatMap(([{ items }]) => items);
+
+  beforeEach(() => {
+    vi.spyOn(SearchIndexUpdate, 'queueUpdate').mockResolvedValue(undefined as never);
+  });
+
+  // Detached from its owner, so their lists and its page show it gone, as after any delete.
   it.each([
     ['named on a report', HELD],
     ['held by the marker', MARKED],
-  ])('keeps, hidden, a deleted bounty an author %s entered, with the entry', async (_, entrant) => {
-    await seedEnteredBounty(entrant);
+  ])(
+    'keeps, hidden and out of search, a deleted bounty an author %s entered, with the entry',
+    async (_, entrant) => {
+      await seedEnteredBounty(entrant);
+
+      await deleteBountyById({ id: 60, isModerator: true });
+
+      expect(await keptBounty()).toEqual([
+        {
+          id: 60,
+          userId: null,
+          availability: 'Private',
+          removed: 'true',
+          before: 'Public',
+          owner: OWNER,
+        },
+      ]);
+      expect(await rows(`SELECT id FROM "BountyEntry"`)).toEqual([{ id: 61 }]);
+      expect(searchDeletes()).toEqual([{ id: 60, action: 'Delete' }]);
+    }
+  );
+
+  it('keeps the first removal record when a kept bounty is deleted again', async () => {
+    await seedEnteredBounty(HELD);
 
     await deleteBountyById({ id: 60, isModerator: true });
+    await deleteBountyById({ id: 60, isModerator: true });
 
-    expect(
-      await rows(`SELECT id, availability, meta->>'removedWithOwner' AS removed,
-        meta->>'availabilityBeforeRemoval' AS before FROM "Bounty"`)
-    ).toEqual([{ id: 60, availability: 'Private', removed: 'true', before: 'Public' }]);
-    expect(await rows(`SELECT id FROM "BountyEntry"`)).toEqual([{ id: 61 }]);
+    expect(await keptBounty()).toEqual([
+      expect.objectContaining({ userId: null, before: 'Public', owner: OWNER }),
+    ]);
   });
 
   it('drops the copies of an author whose hold ended, and keeps those still held', async () => {
@@ -741,6 +775,11 @@ describe("a held author's rows under a deleted parent", () => {
 
     expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([]);
     expect(await rows(`SELECT id FROM "BountyEntry"`)).toEqual([]);
+    expect(searchDeletes()).toEqual([]);
+  });
+
+  it('reports a question that is not there as not found', async () => {
+    await expect(deleteQuestion({ id: 404 })).rejects.toMatchObject({ code: 'NOT_FOUND' });
   });
 });
 

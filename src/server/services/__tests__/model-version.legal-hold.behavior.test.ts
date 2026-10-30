@@ -482,6 +482,20 @@ describe("a held author's comment on a review the version takes with it", () => 
 });
 
 describe("a held author's review the version takes with it", () => {
+  // The merge's re-point onto the target, run on the stand-in.
+  beforeEach(() => {
+    vi.mocked(dbMock.dbWrite.resourceReview.updateMany).mockImplementation((async (args: {
+      where: { modelVersionId: { in: number[] } };
+      data: { modelVersionId: number };
+    }) => ({
+      count: (
+        await db.query(
+          `UPDATE "ResourceReview" SET "modelVersionId" = $1 WHERE "modelVersionId" = ANY($2::int[])`,
+          [args.data.modelVersionId, args.where.modelVersionId.in]
+        )
+      ).affectedRows,
+    })) as never);
+  });
   const review = (id: number, reviewer: number, versionId: number) =>
     db.query(
       `INSERT INTO "ResourceReview" (id, "userId", "modelVersionId", "modelId") VALUES ($1, $2, $3, $4)`,
@@ -521,21 +535,28 @@ describe("a held author's review the version takes with it", () => {
 
       await merge(CLEAN);
 
-      expect(await reviewIds()).not.toContain(1);
-      expect(await reviewIds()).not.toContain(3);
-      // Review 2 on a later source is copied too, by the source delete below.
-      const copied = await copies();
-      expect(copied).toContainEqual({ id: 1, userId: reviewer, holdReasons });
-      expect(copied.map((c) => c.userId)).not.toContain(FORMER_CLEAN);
+      expect(await reviewIds()).toEqual([2, 4]);
+      expect(await copies()).toEqual([{ id: 1, userId: reviewer, holdReasons }]);
     }
   );
 
-  // The re-point onto the target is a Prisma call this fixture leaves undone, so the review is
-  // still on its source version when that version is deleted.
-  it('copies a held reviewer’s review still on a source version when the merge deletes it', async () => {
-    const { sourceVersionIds } = stubModel(CLEAN);
+  it('moves the reviews on its sources to the target, and copies none', async () => {
+    const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
     await review(1, REPORTED, sourceVersionIds[0]);
-    await review(2, FORMER_CLEAN, sourceVersionIds[0]);
+
+    await merge(CLEAN);
+
+    const moved = await db.query(`SELECT "modelVersionId" FROM "ResourceReview" WHERE id = 1`);
+    expect(moved.rows).toEqual([{ modelVersionId: targetVersionId }]);
+    expect(await copies()).toEqual([]);
+  });
+
+  it('copies a held reviewer’s review written on a source version after the re-point', async () => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    routeToDb(db, async (sql) => {
+      if (sql.includes('DELETE FROM "ModelVersion"'))
+        await review(1, REPORTED, sourceVersionIds[0]).catch(() => undefined);
+    });
 
     await merge(CLEAN);
 

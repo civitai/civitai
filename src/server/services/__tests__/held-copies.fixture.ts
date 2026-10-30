@@ -7,9 +7,9 @@ const HELD_COPIES_MIGRATION = path.resolve(
 );
 
 /**
- * The held-copy tables, and the columns their copies read on a fixture's own "ResourceReview" and
- * "Answer": a parent DELETE copies a held author's rows in the same statement, so a fixture that
- * deletes a model, version or question needs both, whether or not it seeds any reviews.
+ * The held-copy tables, and the columns their copies read on a fixture's own "ResourceReview",
+ * "Answer" and "ModelVersion": a parent DELETE copies a held author's rows in the same statement, so
+ * a fixture that deletes a model, version or question needs them, whether or not it seeds any.
  */
 export const heldCopiesSchemaSql = () => `
   CREATE TABLE IF NOT EXISTS "ResourceReview" (id serial PRIMARY KEY);
@@ -26,6 +26,8 @@ export const heldCopiesSchemaSql = () => `
     ADD COLUMN IF NOT EXISTS metadata jsonb,
     ADD COLUMN IF NOT EXISTS "createdAt" timestamp(3) NOT NULL DEFAULT now(),
     ADD COLUMN IF NOT EXISTS "updatedAt" timestamp(3) NOT NULL DEFAULT now();
+  CREATE TABLE IF NOT EXISTS "ModelVersion" (id serial PRIMARY KEY);
+  ALTER TABLE "ModelVersion" ADD COLUMN IF NOT EXISTS "modelId" int;
   CREATE TABLE IF NOT EXISTS "Answer" (id serial PRIMARY KEY);
   ALTER TABLE "Answer"
     ADD COLUMN IF NOT EXISTS "userId" int,

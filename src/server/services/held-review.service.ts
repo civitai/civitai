@@ -9,7 +9,7 @@ import {
 /**
  * A `WITH` entry, ahead of a DELETE that cascades "ResourceReview", that copies each review a held
  * author wrote among `reviews` (a query selecting review ids) into "HeldResourceReview". In the
- * DELETE's own statement, so it copies exactly what the DELETE takes.
+ * DELETE's own statement, so a hold landing between two statements cannot skip the copy.
  */
 export function keepHeldReviewsCte(reviews: Prisma.Sql, markerView: boolean): Prisma.Sql {
   const author = Prisma.raw('r."userId"');
@@ -56,9 +56,11 @@ export const heldEntryOnBountySql = (bountyId: Prisma.Sql, markerView: boolean) 
 export const answersToQuestionsSql = (questions: Prisma.Sql) =>
   Prisma.sql`SELECT aa.id FROM "Answer" aa WHERE aa."questionId" IN (${questions})`;
 
-/** The reviews on the models `models` selects. */
+/** The reviews on the models `models` selects, or on their versions: the two can disagree. */
 export const reviewsOnModelsSql = (models: Prisma.Sql) =>
-  Prisma.sql`SELECT rr.id FROM "ResourceReview" rr WHERE rr."modelId" IN (${models})`;
+  Prisma.sql`SELECT rr.id FROM "ResourceReview" rr
+    WHERE rr."modelId" IN (${models})
+      OR rr."modelVersionId" IN (SELECT mv.id FROM "ModelVersion" mv WHERE mv."modelId" IN (${models}))`;
 
 /** The reviews on the versions `versions` selects. */
 export const reviewsOnVersionsSql = (versions: Prisma.Sql) =>

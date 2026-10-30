@@ -688,7 +688,51 @@ describe('removeAllContent', () => {
       expect(await rows(`SELECT "userId" FROM "BountyEntry" WHERE "bountyId" IS NOT NULL`)).toEqual(
         [{ userId: HELD }]
       );
-      expect(dropped().bounties).toEqual(expect.arrayContaining([BOUNTY, bystanders]));
+    });
+
+    it('copies a held author’s review of one of its versions that names another model', async () => {
+      const [{ id: other }] = (await rows(
+        `SELECT id FROM "Model" WHERE "userId" = ${BYSTANDER}`
+      )) as { id: number }[];
+      await holder.db.exec(`
+        INSERT INTO "ModelVersion" (id, "modelId") VALUES (${MODEL_VERSION(MODEL)}, ${MODEL});
+        INSERT INTO "ResourceReview" ("userId", "modelId", "modelVersionId", details) VALUES
+          (${HELD}, ${other}, ${MODEL_VERSION(MODEL)}, 'by version');
+      `);
+
+      await removeAllContent({ id: CLEAN });
+
+      expect(await rows(`SELECT "userId", details FROM "HeldResourceReview"`)).toEqual([
+        { userId: HELD, details: 'by version' },
+      ]);
+    });
+
+    it('drops a bounty kept for a held entry from search when a hold stops the wipe after it', async () => {
+      await holder.db.exec(
+        `INSERT INTO "BountyEntry" ("userId", "bountyId") VALUES (${HELD}, ${BOUNTY})`
+      );
+      landsBefore = 'Answer';
+      beforeEvidence = () =>
+        holder.db.exec(`INSERT INTO "CsamReport" ("userId") VALUES (${CLEAN})`);
+
+      await expect(removeAllContent({ id: CLEAN })).rejects.toBeInstanceOf(LegalHoldStoppedError);
+
+      expect(await rows(`SELECT availability FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([
+        { availability: 'Private' },
+      ]);
+      expect(dropped().bounties).toContain(BOUNTY);
+    });
+
+    it('leaves a kept bounty whose supporters are not refunded yet', async () => {
+      await holder.db.exec(`
+        UPDATE "Bounty" SET availability = 'Private', meta = '{"removedWithOwner": true}'
+          WHERE id = ${BOUNTY};
+        INSERT INTO "BountyBenefactor" ("bountyId") VALUES (${BOUNTY});
+      `);
+      await createMarkerView();
+
+      expect(await deleteSettledKeptBounties()).toBe(0);
+      expect(await rows(`SELECT id FROM "Bounty" WHERE id = ${BOUNTY}`)).toEqual([{ id: BOUNTY }]);
     });
 
     it('deletes the kept bounty once the entrant’s hold ends, and not before', async () => {

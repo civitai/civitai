@@ -848,8 +848,8 @@ export const deleteBountyById = async ({
     if (!(await lockBountyForPayout(tx, id))) return null;
     const stored = await tx.bounty.findUnique({ where: { id } });
     if (!stored) return null;
-    // A held author's entry keeps the bounty, hidden with the removal record; to its owner it is
-    // deleted, and `bounty-payout-retry` deletes it once no held entry is left.
+    // A held author's entry keeps the bounty, hidden with the removal record and detached from its
+    // owner, so to them it is deleted; `bounty-payout-retry` deletes it once no held entry is left.
     const heldEntry = heldEntryOnBountySql(Prisma.raw('b.id'), markerView);
     const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b WHERE b.id = ${id} AND NOT ${heldEntry}`;
     const [{ gone }] = await tx.$queryRaw<{ gone: boolean }[]>`
@@ -861,9 +861,11 @@ export const deleteBountyById = async ({
       hidden AS (
         UPDATE "Bounty" b
         SET availability = 'Private'::"Availability",
+            "userId" = NULL,
             meta = ${asJsonbObjectSql('b.meta')} || jsonb_build_object(
               'removedWithOwner', true,
-              'availabilityBeforeRemoval', b.availability
+              'availabilityBeforeRemoval', b.availability,
+              'userIdBeforeRemoval', b."userId"
             )
         WHERE b.id = ${id} AND ${heldEntry} AND ${notRemovedWithOwnerSql('b.meta')}
       )
@@ -1487,16 +1489,17 @@ export async function retryUnsettledBountyPayouts({ now = new Date() } = {}) {
 }
 
 /**
- * Only one with no payout recorded, or complete and settled after its last recorded payout: an open
- * one with an award recorded, or one whose award was recorded again after an earlier one settled,
- * still owes supporters. One whose owner or an entrant is held is picked up on the first run after
- * the hold ends.
+ * Only one with no payout recorded and no supporters, or complete and settled after its last
+ * recorded payout: one with supporters and no payout recorded, an open one with an award recorded,
+ * or one whose award was recorded again after an earlier one settled, still owes supporters. One
+ * whose owner or an entrant is held is picked up on the first run after the hold ends.
  */
 export async function deleteSettledKeptBounties() {
   const markerView = await holdMarkerViewExists();
   const doomed = Prisma.sql`SELECT b.id FROM "Bounty" b
     WHERE b.meta ->> 'removedWithOwner' = 'true'
-      AND (b."payoutRecordedAt" IS NULL
+      AND ((b."payoutRecordedAt" IS NULL
+          AND NOT EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."bountyId" = b.id))
         OR (b.complete AND b."payoutSettledAt" >= b."payoutRecordedAt"))
       AND NOT ${ownerHeldSql(Prisma.raw('b."userId"'))}
       AND NOT ${heldEntryOnBountySql(Prisma.raw('b.id'), markerView)}`;

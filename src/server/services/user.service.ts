@@ -1779,19 +1779,23 @@ export const removeAllContent = async ({
     const doomedBounties = Prisma.sql`SELECT b.id FROM "Bounty" b
       WHERE b."userId" = ${id} AND b.id <> ALL(${keptBountyIds}::int[]) AND ${unlessHeld}
         AND NOT ${heldEntry}`;
+    // One statement, so a bounty the delete spares for a held entry is the one the update hides. Keep
+    // the first record: a second wipe must not overwrite availabilityBeforeRemoval with Private.
     await dbWrite.$executeRaw`
-      WITH ${detach(bountyThreadParents(doomedBounties))}
-      DELETE FROM "Bounty" WHERE id IN (${doomedBounties})`;
-    // Keep the first record: a second wipe must not overwrite availabilityBeforeRemoval with Private.
-    await dbWrite.$executeRaw`
-      UPDATE "Bounty" b
-      SET availability = 'Private'::"Availability",
-          meta = ${asJsonbObjectSql('b.meta')} || jsonb_build_object(
-            'removedWithOwner', true,
-            'availabilityBeforeRemoval', b.availability
-          )
-      WHERE b."userId" = ${id} AND (b.id = ANY(${keptBountyIds}::int[]) OR ${heldEntry})
-        AND ${notRemovedWithOwnerSql('b.meta')} AND ${unlessHeld}`;
+      WITH ${detach(bountyThreadParents(doomedBounties))},
+      gone AS (DELETE FROM "Bounty" WHERE id IN (${doomedBounties}) RETURNING id),
+      hidden AS (
+        UPDATE "Bounty" b
+        SET availability = 'Private'::"Availability",
+            meta = ${asJsonbObjectSql('b.meta')} || jsonb_build_object(
+              'removedWithOwner', true,
+              'availabilityBeforeRemoval', b.availability
+            )
+        WHERE b."userId" = ${id} AND (b.id = ANY(${keptBountyIds}::int[]) OR ${heldEntry})
+          AND b.id NOT IN (SELECT id FROM gone)
+          AND ${notRemovedWithOwnerSql('b.meta')} AND ${unlessHeld}
+      )
+      SELECT 1`;
     const owned = (table: string) =>
       Prisma.sql`SELECT o.id FROM ${Prisma.raw(
         `"${table}"`
