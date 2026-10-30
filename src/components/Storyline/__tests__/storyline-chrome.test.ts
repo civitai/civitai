@@ -504,13 +504,31 @@ describe('the map', () => {
     expect(mocks.dialog.onClose).not.toHaveBeenCalled();
   });
 
-  it('leaves the storyline from the foot of the sheet', () => {
-    const storyline = renderMap();
-    act(() => q('storyline-leave')?.click());
-    expect([calls(storyline.leave).length, text(q('storyline-leave'))]).toEqual([
-      1,
+  // Readers expected the post, and staying on the image only dropped the chip.
+  it("leaves the storyline from the foot of the sheet to the current chapter's post", () => {
+    renderMap({ chapterIds: [1, 2], current: 2 });
+    expect([q('storyline-leave')?.getAttribute('href'), text(q('storyline-leave'))]).toEqual([
+      '/posts/20',
       "Leave the storyline · browse this post's images",
     ]);
+  });
+
+  it('closes the reader instead when it is a dialog over that post', () => {
+    mocks.asPath = '/posts/10';
+    renderMap();
+    const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+    act(() => void q('storyline-leave')?.dispatchEvent(event));
+    expect([event.defaultPrevented, calls(mocks.dialog.onClose).length]).toEqual([true, 1]);
+  });
+
+  it('leaves in place when the current chapter has no post to open', () => {
+    const storyline = renderMap({ chapters: [chapter(1, 0, null)] });
+    act(() => q('storyline-leave')?.click());
+    expect([
+      q('storyline-leave')?.getAttribute('href'),
+      calls(storyline.leave).length,
+      text(q('storyline-leave')),
+    ]).toEqual([null, 1, 'Leave the storyline']);
   });
 
   it('shows the share of each way off the end from the first choice', () => {
