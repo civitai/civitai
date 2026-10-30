@@ -143,7 +143,12 @@ describe('reordering chapters on the map', () => {
     test('tells the owner when reordering opens up while nothing is movable', async () => {
       mocks.graph = graphOf([121]);
       renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
-      await expect.element(hint()).toHaveTextContent('three or more of your own run in a row');
+      // Read as "no main path under three chapters" before; it is only about reordering.
+      await expect
+        .element(hint())
+        .toHaveTextContent(
+          'The main path can be any length. Its chapters can be put in a new order once three or more'
+        );
     });
 
     // Three in a row with someone else's chapter after them: the last cannot move, and the

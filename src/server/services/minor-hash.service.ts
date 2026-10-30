@@ -30,6 +30,7 @@ import {
 import { SYSTEM_NSFW_LOCK_META_KEY } from '@civitai/shared/rating-review';
 import { AppealStatus, EntityType } from '~/shared/utils/prisma/enums';
 import { asJsonbObjectSql } from '~/server/utils/jsonb-object';
+import { bustModelGallerySettings } from '~/server/services/creator-gallery-hidden-users.service';
 
 export type MinorHashMatch = { modelId: number; userId: number };
 
@@ -1124,6 +1125,8 @@ export async function rollbackMinorHashAutoFlags({
                  )
         WHERE id = ${row.modelId}
       `;
+      // The restore above moves sfwOnly and the gallery level after setModelMinor's own bust.
+      await bustModelGallerySettings([row.modelId]);
       // Before the image re-mark: the reassert's side effects rewrite every image's minor flag.
       await reassertModelPoiRestrictions(row.modelId);
 

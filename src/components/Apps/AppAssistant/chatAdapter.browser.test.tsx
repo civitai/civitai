@@ -3,16 +3,8 @@ import { page } from 'vitest/browser';
 import type { CivitaiChat } from '@civitai/components-chat/civitai-chat';
 import '@civitai/components-chat/civitai-chat/define';
 import type { QueuedMessage } from '@civitai/components-chat/civitai-chat';
-import {
-  isDictating,
-  listenBeforeSend,
-  listenReplyResume,
-  messageBoxText,
-} from '~/components/Apps/AppAssistant/chatAdapter';
-import {
-  retryWhenReady,
-  sendNotJoined,
-} from '~/components/Apps/AppAssistant/AppAssistantWorkspace';
+import { listenBeforeSend, listenReplyResume } from '~/components/Apps/AppAssistant/chatAdapter';
+import { retryWhenReady } from '~/components/Apps/AppAssistant/AppAssistantWorkspace';
 
 afterEach(() => {
   document.querySelectorAll('civitai-chat').forEach((el) => el.remove());
@@ -20,54 +12,6 @@ afterEach(() => {
   vi.restoreAllMocks();
   Reflect.deleteProperty(navigator, 'mediaDevices');
 });
-
-/** The real element, signed out: it draws its message box without an app. */
-async function realChat() {
-  const chat = document.createElement('civitai-chat') as CivitaiChat;
-  chat.signIn = async () => {
-    throw new Error('no sign-in in this test');
-  };
-  document.body.append(chat);
-  const box = page.getByRole('textbox', { name: 'Message' });
-  await expect.element(box).toBeVisible();
-  return { chat, box };
-}
-
-/**
- * A microphone whose recorder finishes only when the test says so, as a real one finishes a moment
- * after it is told to stop: that moment is the one between the recording bar and the transcribing bar.
- */
-function fakeMicrophone() {
-  const finishes: (() => void)[] = [];
-  class FakeRecorder extends EventTarget {
-    static isTypeSupported = (type: string) => type.startsWith('audio/webm');
-    state = 'inactive';
-    mimeType = 'audio/webm;codecs=opus';
-    start() {
-      this.state = 'recording';
-    }
-    stop() {
-      this.state = 'inactive';
-      finishes.push(() => {
-        this.dispatchEvent(
-          Object.assign(new Event('dataavailable'), {
-            data: new Blob(['said'], { type: this.mimeType }),
-          })
-        );
-        this.dispatchEvent(new Event('stop'));
-      });
-    }
-  }
-  vi.stubGlobal('MediaRecorder', FakeRecorder);
-  vi.stubGlobal('AudioContext', undefined);
-  vi.stubGlobal('AudioWorkletNode', undefined);
-  Object.defineProperty(navigator, 'mediaDevices', {
-    configurable: true,
-    value: { getUserMedia: vi.fn(async () => ({ getTracks: () => [{ stop: () => undefined }] })) },
-  });
-  /** Lets every recorder told to stop so far finish. */
-  return () => finishes.splice(0).forEach((finish) => finish());
-}
 
 /**
  * The real element, signed in to a fake app, so it offers the microphone. Every request answers 503,
@@ -100,70 +44,6 @@ async function realSignedInChat({ grants = true } = {}) {
   await expect.element(box).toBeVisible();
   return { chat, box, holdRequests: () => (hold = true) };
 }
-
-/**
- * Presses one of the chat's buttons with a DOM click, as the chat's own tests do. A Playwright click
- * on the microphone button took about five seconds here, enough to time the test out under load.
- */
-async function press(name: string) {
-  const button = page.getByRole('button', { name });
-  await expect.element(button).toBeVisible();
-  (button.element() as HTMLElement).click();
-}
-
-test('reads what the user typed in the real chat’s message box, and what the page put there', async () => {
-  const { chat, box } = await realChat();
-  expect(messageBoxText(chat)).toBe('');
-  await box.fill('Add a dark mode');
-  expect(messageBoxText(chat)).toBe('Add a dark mode');
-  expect(messageBoxText(chat)).toBe(chat.draft);
-  await chat.compose('Make it blue');
-  expect(messageBoxText(chat)).toBe('Make it blue');
-  expect(isDictating(chat)).toBe(false);
-});
-
-test('NEGATIVE CONTROL: no chat, or a chat not drawn yet, has an empty box and no dictation', () => {
-  expect(messageBoxText(null)).toBe('');
-  expect(messageBoxText(document.createElement('civitai-chat') as CivitaiChat)).toBe('');
-  expect(isDictating(null)).toBe(false);
-  expect(isDictating(document.createElement('civitai-chat') as CivitaiChat)).toBe(false);
-});
-
-test('tracks the real chat’s dictation: while recording, in the moment after the user stops, and while transcribing', async () => {
-  const finishRecording = fakeMicrophone();
-  const { chat, box, holdRequests } = await realSignedInChat();
-  await box.fill('draw');
-  expect(isDictating(chat)).toBe(false);
-
-  await press('Talk instead of typing');
-  await expect.element(page.getByRole('group', { name: 'Recording your voice' })).toBeVisible();
-  await expect.element(box).not.toBeInTheDocument();
-  expect(isDictating(chat)).toBe(true);
-  expect(isDictating(chat)).toBe(chat.dictating);
-  // The box is hidden; it still holds what it held.
-  expect(messageBoxText(chat)).toBe('draw');
-
-  // Stopped, the recorder is still handing over the last words: neither the recording nor the
-  // transcribing bar is up, and the user is still dictating.
-  await press('Stop and edit the text');
-  await expect
-    .element(page.getByRole('group', { name: 'Recording your voice' }))
-    .not.toBeInTheDocument();
-  expect(page.getByText('Turning what you said into text…').query()).toBeNull();
-  expect(isDictating(chat)).toBe(true);
-  expect(messageBoxText(chat)).toBe('draw');
-
-  holdRequests();
-  finishRecording();
-  await expect.element(page.getByText('Turning what you said into text…')).toBeVisible();
-  expect(isDictating(chat)).toBe(true);
-  expect(messageBoxText(chat)).toBe('draw');
-
-  await press('Stop transcribing');
-  await expect.element(box).toBeVisible();
-  expect(isDictating(chat)).toBe(false);
-  expect(messageBoxText(chat)).toBe('draw');
-});
 
 test('a message the page keeps back through listenBeforeSend shows in the real chat at once, sends nothing, and goes once released', async () => {
   const { chat } = await realSignedInChat();
@@ -319,32 +199,4 @@ test('the real chat gives a message the page could not send back into an empty b
     .element(page.getByText('This message was not sent: “Looks good — build it.”'))
     .toBeVisible();
   await expect.element(box).toHaveValue('Also add a timer');
-});
-
-test('a message refused for its grant while the user dictates never lands in their box (Build it)', async () => {
-  fakeMicrophone();
-  const { chat } = await realSignedInChat({ grants: false });
-  await press('Talk instead of typing');
-  await expect.element(page.getByRole('group', { name: 'Recording your voice' })).toBeVisible();
-  expect(isDictating(chat)).toBe(true);
-  // Nothing holds the chat: the refusal comes only once the message is sent.
-  expect(chat.canSend).toBe(true);
-  const fired = vi.fn();
-  chat.addEventListener('before-send', fired);
-  const compose = vi.spyOn(chat, 'compose');
-  await sendNotJoined(
-    chat,
-    'Looks good — build it.',
-    () => messageBoxText(chat),
-    () => isDictating(chat),
-    () => false
-  );
-  // The refused grant stopped it before before-send. Since components-chat 0.30.0 the chat no longer
-  // keeps such a message in an empty box while the user dictates, so there is no copy for the page
-  // to take out (`sendNotJoined`'s compose('') is not needed) and the page gives it back instead of
-  // the user's words being joined to it.
-  expect(fired).not.toHaveBeenCalled();
-  expect(compose.mock.calls).toEqual([]);
-  expect(messageBoxText(chat)).toBe('');
-  expect(isDictating(chat)).toBe(true);
 });

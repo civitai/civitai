@@ -1070,6 +1070,18 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   const { env } = await import('~/env/server');
   stampCanonicalIframeSrc(manifest, slug, env.APPS_DOMAIN);
 
+  // 🔴 Before the pending-conflict check, so a non-owner learns nothing about pending state. One
+  // read: the row gated here is the row the request links to below (`appBlockId`).
+  const existingApp = await dbRead.appBlock.findFirst({
+    where: { blockId: slug },
+    select: { id: true, appId: true },
+  });
+  if (existingApp && !submitterIsModerator) {
+    const { mayShipAppVersion } = await import('./app-access.service');
+    if (!(await mayShipAppVersion(existingApp.id, submittedByUserId)))
+      throw new Error(appOwnedByAnotherUser(slug));
+  }
+
   // Block double-submit on the same slug — only one pending request per
   // slug at a time. The /apps/submit UI calls getMyPendingForSlug on
   // preview to surface a "withdraw and resubmit" affordance before the
@@ -1081,27 +1093,6 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
   // other-user collision wording avoids leaking the request id (which is
   // useless to a non-owner — only the original submitter or a mod can
   // act on it).
-  // 🔴 OWNER GATE for a version of an app that already exists (`mayShipAppVersion`, in
-  // app-access.service with the other access predicates). Its owner is `AppBlock.app.userId` (the
-  // OauthClient's), the same authority `resolveAppAccess` and the version-commit path use; an
-  // ACCEPTED editor of it may ship a version too, as on that path. Anyone else (a moderator aside)
-  // would otherwise queue a version of someone else's app and block its owner's own submission via
-  // one-pending-per-slug. Checked BEFORE the pending-conflict check, so a non-owner learns nothing
-  // about pending state, and the refusal names no one.
-  //
-  // 🔴 ONE READ: the row gated here is the row the request links to below (`appBlockId`), so the
-  // gate and the linkage cannot disagree (an app approved between two reads would otherwise be
-  // linked without having been gated).
-  const existingApp = await dbRead.appBlock.findFirst({
-    where: { blockId: slug },
-    select: { id: true, appId: true },
-  });
-  if (existingApp && !submitterIsModerator) {
-    const { mayShipAppVersion } = await import('./app-access.service');
-    if (!(await mayShipAppVersion(existingApp.id, submittedByUserId)))
-      throw new Error(appOwnedByAnotherUser(slug));
-  }
-
   const conflicting = await dbRead.appBlockPublishRequest.findFirst({
     where: { slug, status: 'pending' },
     select: { id: true, submittedByUserId: true },

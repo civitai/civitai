@@ -12,6 +12,7 @@ import {
   type StorylineContinuePost,
 } from '~/components/Storyline/continue/StorylinePostPicker';
 import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
+import type { StorylinePostPaging } from '~/components/Storyline/storyline.data';
 import { STORYLINE_QUEUE_SENT_URL } from '~/components/Placement/queue-routes';
 import {
   STORYLINE_CONTINUATION_EXPIRY_DAYS,
@@ -20,6 +21,7 @@ import {
   type StorylineClosedReason,
 } from '~/components/Storyline/storyline-ui';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
+import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
 
 export type StorylineSubmitOutcome = 'pending' | 'approved' | 'awaitingScan' | 'added';
 
@@ -42,7 +44,7 @@ export function StorylineContinueForm({
   postsLoading,
   postsError,
   alreadyChapters = 0,
-  morePosts,
+  paging,
   postId,
   onPostChange,
   onSubmit,
@@ -73,8 +75,7 @@ export function StorylineContinueForm({
   postsError?: boolean;
   /** The viewer's posts left out because they are already chapters. */
   alreadyChapters?: number;
-  /** Only the most recent posts are offered. */
-  morePosts?: boolean;
+  paging?: StorylinePostPaging;
   postId: number | null;
   onPostChange: (postId: number | null) => void;
   onSubmit: () => void;
@@ -116,7 +117,12 @@ export function StorylineContinueForm({
       <StorylineSubmitted outcome={outcome} price={price} inserting={inserting} onLeave={onLeave} />
     );
 
-  if (!verdict.allowed && verdict.reason !== 'aboveRating' && verdict.reason !== 'notRated')
+  if (
+    !verdict.allowed &&
+    verdict.reason !== 'aboveRating' &&
+    verdict.reason !== 'notRated' &&
+    verdict.reason !== 'cannotSubmit'
+  )
     return (
       <Alert color="gray" icon={<IconAlertTriangle size={18} />}>
         <Text size="sm">{refusalCopy[verdict.reason]}</Text>
@@ -175,7 +181,7 @@ export function StorylineContinueForm({
         postsError={postsError}
         alreadyChapters={alreadyChapters}
         allChaptersText="All your recent posts are already chapters. Make a new post to continue the story."
-        morePosts={morePosts}
+        paging={paging}
         postId={postId}
         onPostChange={onPostChange}
         ceiling={ceiling}
@@ -185,6 +191,12 @@ export function StorylineContinueForm({
       {post && !verdict.allowed && verdict.reason === 'notRated' && (
         <Alert color="red" icon={<IconAlertTriangle size={18} />}>
           <Text size="sm">This post has not been rated yet. Try again once it has been.</Text>
+        </Alert>
+      )}
+
+      {post && !verdict.allowed && verdict.reason === 'cannotSubmit' && (
+        <Alert color="red" icon={<IconAlertTriangle size={18} />}>
+          <Text size="sm">{STORYLINE_REFUSALS.cannotSubmit}.</Text>
         </Alert>
       )}
 

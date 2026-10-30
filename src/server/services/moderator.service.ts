@@ -164,6 +164,11 @@ export type StorylineModActivity = {
     | 'delete';
 };
 
+type CrucibleModActivity = {
+  entityType: 'crucible';
+  activity: 'takeDown';
+};
+
 type SiteAlertModActivity = {
   entityType: 'siteAlert';
   activity: 'post' | 'edit' | 'extend' | 'end';
@@ -181,6 +186,7 @@ type ModActivity = {
   | ImpersonateModActivity
   | UserModActivity
   | ComicProjectModActivity
+  | CrucibleModActivity
   | PlacementModActivity
   | FeedbackModActivity
   | BountyEntryModActivity

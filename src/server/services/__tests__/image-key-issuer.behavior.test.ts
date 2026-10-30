@@ -40,6 +40,7 @@ dbMock.dbWrite.$queryRaw.mockImplementation(((
 
 const {
   assertClientKeysIssuedToCaller,
+  keyIssueRecords,
   keyIssuers,
   recordUploadKeyOwner,
   UNRECORDED_KEYS_ACCEPTED_UNTIL,
@@ -57,11 +58,12 @@ beforeAll(async () => {
   holder.db = new PGlite();
   await holder.db.exec(`
     CREATE TABLE "Image" ("id" serial PRIMARY KEY, "userId" integer NOT NULL, "url" text NOT NULL);
+    CREATE TABLE "ShopArtworkKeyOwner" (key text PRIMARY KEY, "userId" integer NOT NULL);
   `);
 });
 
 beforeEach(async () => {
-  await holder.db.exec(`TRUNCATE "Image"`);
+  await holder.db.exec(`TRUNCATE "Image", "ShopArtworkKeyOwner"`);
   holder.issued = [];
   holder.logDown = false;
   holder.logHangs = false;
@@ -293,6 +295,38 @@ describe('keyIssuers', () => {
       recordReadFailed: false,
       requestLogReadFailed: false,
     });
+  });
+});
+
+describe('keyIssueRecords', () => {
+  it('names the owner from the record, or the upload request log', async () => {
+    const LOGGED = 'ab12cd34-ef56-4a7b-8c9d-0e1f2a3b4c5e';
+    await recordUploadKeyOwner(KEY, OTHER);
+    // The log disagrees about KEY: the record wins.
+    holder.issued = [
+      { key: LOGGED, userId: CALLER },
+      { key: KEY, userId: CALLER },
+    ];
+    expect(await keyIssueRecords([KEY, LOGGED])).toEqual({
+      owners: new Map([
+        [KEY, OTHER],
+        [LOGGED, CALLER],
+      ]),
+      failed: false,
+    });
+  });
+
+  it('takes no row as a record', async () => {
+    await holder.db.query(`INSERT INTO "Image" ("userId", url) VALUES ($1, $2)`, [CALLER, KEY]);
+    expect(await keyIssueRecords([KEY])).toEqual({ owners: new Map(), failed: false });
+  });
+
+  it('says when either read failed', async () => {
+    holder.logDown = true;
+    expect((await keyIssueRecords([KEY])).failed).toBe(true);
+    holder.logDown = false;
+    redisMock.sysRedis.mGet.mockRejectedValueOnce(new Error('down'));
+    expect((await keyIssueRecords([KEY])).failed).toBe(true);
   });
 });
 

@@ -461,6 +461,36 @@ describe('the bundle a press sends', () => {
     );
   });
 
+  test('refuses a sensitive scope with no justification before the button is offered', async () => {
+    const withScopes = (extra: Record<string, unknown>) =>
+      exportOf({ ...APP_FILES, 'block.manifest.json': JSON.stringify({ ...MANIFEST, ...extra }) });
+    await expect(
+      submitBundleFromExport(await withScopes({ scopes: ['ai:write:budgeted'] }), APP)
+    ).rejects.toThrow(
+      'Your app asks for ai:write:budgeted without saying why it needs it. Ask App Assistant to add a reason for it to block.manifest.json, then submit again.'
+    );
+    await expect(
+      submitBundleFromExport(
+        await withScopes({
+          scopes: ['ai:write:budgeted', 'buzz:read:self'],
+          scopeJustifications: { 'ai:write:budgeted': '  ' },
+        }),
+        APP
+      )
+    ).rejects.toThrow(
+      'Your app asks for ai:write:budgeted, buzz:read:self without saying why it needs them. Ask App Assistant to add a reason for each to block.manifest.json, then submit again.'
+    );
+    // Control: justified, it is packaged.
+    const { manifest } = await submitBundleFromExport(
+      await withScopes({
+        scopes: ['ai:write:budgeted'],
+        scopeJustifications: { 'ai:write:budgeted': 'Generates the portrait you ask for.' },
+      }),
+      APP
+    );
+    expect(manifest).toEqual(MANIFEST);
+  });
+
   test('refuses an app with no manifest', async () => {
     const { 'block.manifest.json': _, ...rest } = APP_FILES;
     await expect(submitBundleFromExport(await exportOf(rest), APP)).rejects.toThrow(

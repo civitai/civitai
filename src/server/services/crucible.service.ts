@@ -47,6 +47,7 @@ import type {
   GetJudgingSuggestionsSchema,
   SubmitVoteSchema,
   CancelCrucibleSchema,
+  TakeDownCrucibleSchema,
   RemoveCrucibleEntrySchema,
   WithdrawCrucibleEntrySchema,
   SetCrucibleEventTagsSchema,
@@ -60,6 +61,7 @@ import {
   CRUCIBLE_ENTRY_WARNING_PERCENT,
   CRUCIBLE_JUDGING_SUGGESTION_CANDIDATES,
   CRUCIBLE_MAX_VOTES_PER_JUDGE_PER_ENTRY,
+  CRUCIBLE_TAKEDOWN_CREATOR_FUNDS,
   crucibleRankingsAreFinal,
   crucibleSupportsVideoSettings,
   hasCrucibleStarted,
@@ -106,7 +108,12 @@ import {
   isImageHiddenFromGreenViewer,
 } from '~/server/games/daily-challenge/challenge-visibility';
 import { checkCrucibleSettings } from '~/server/schema/crucible.schema';
-import { createPost, afterPostPublish, afterPostsPublish } from '~/server/services/post.service';
+import {
+  createPost,
+  afterPostPublish,
+  afterPostsPublish,
+  afterPostsUnpublish,
+} from '~/server/services/post.service';
 import { NotificationCategory } from '~/server/common/enums';
 import { imageResourcesCache } from '~/server/redis/caches';
 import {
@@ -148,6 +155,7 @@ import { settleSkippedCrucibleScan } from '~/server/services/text-scan/actions/c
 import { submitTextModerationOrScan } from '~/server/services/text-scan/route';
 import { CHALLENGE_MODERATION_LABELS } from '~/server/games/daily-challenge/challenge-text-scan';
 import { logToAxiom } from '~/server/logging/client';
+import { trackModActivity } from '~/server/services/moderator.service';
 import { createPrizes, voidPrizes } from '~/server/services/prize.service';
 import {
   CONTEST_BANNED_MESSAGE,
@@ -582,6 +590,12 @@ export const isCrucibleHiddenByScan = (
   (crucible.ingestion !== CrucibleIngestionStatus.Scanned ||
     crucible.image?.ingestion !== ImageIngestionStatus.Scanned);
 
+/** A moderator's takedown hides the crucible from everyone else, its owner included. */
+export const isCrucibleTakenDownForViewer = (
+  crucible: { takenDownAt: Date | null },
+  { isModerator }: Pick<CrucibleViewer, 'isModerator'>
+) => !!crucible.takenDownAt && !isModerator;
+
 /**
  * A block hides the crucible whichever side made it: `blockedCreatorIds` holds the creators who
  * blocked the viewer and those the viewer blocked.
@@ -605,11 +619,13 @@ export const assertCrucibleVisible = async (crucibleId: number, viewer: Crucible
       nsfwLevel: true,
       textNsfw: true,
       ingestion: true,
+      takenDownAt: true,
       image: { select: { ingestion: true } },
     },
   });
   if (
     !crucible ||
+    isCrucibleTakenDownForViewer(crucible, viewer) ||
     isCrucibleHiddenByScan(crucible, viewer) ||
     isCrucibleOffSite(crucible, viewer) ||
     isCrucibleBlockedForViewer(crucible, viewer)
@@ -1330,6 +1346,7 @@ export const getCrucibleEntries = async ({
       textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
+      takenDownAt: true,
       prizePositions: true,
       image: { select: { ingestion: true } },
     },
@@ -1337,6 +1354,7 @@ export const getCrucibleEntries = async ({
   const viewer = { viewerId: userId, isModerator, isGreen, blockedCreatorIds };
   if (
     !crucible ||
+    isCrucibleTakenDownForViewer(crucible, viewer) ||
     isCrucibleHiddenByScan(crucible, viewer) ||
     isCrucibleOffSite(crucible, viewer) ||
     isCrucibleBlockedForViewer(crucible, viewer)
@@ -1612,6 +1630,8 @@ export const getCrucibles = async <TSelect extends Prisma.CrucibleSelect>({
     : [CrucibleStatus.Active, CrucibleStatus.Pending];
   const statuses = isModerator ? picked : picked.filter((s) => s !== CrucibleStatus.Cancelled);
   if (!statuses.length) return { items: [], nextCursor: undefined };
+  // A taken-down crucible that had already completed keeps its Completed status.
+  if (!isModerator) where.takenDownAt = null;
   if (contentType) where.contentType = contentType;
 
   if (excludedUserIds.length > 0) {
@@ -1757,6 +1777,7 @@ export const createCrucibleEntryPost = async ({
       userId: true,
       nsfwLevel: true,
       ingestion: true,
+      takenDownAt: true,
       textNsfw: true,
       image: { select: { ingestion: true } },
     },
@@ -1764,6 +1785,7 @@ export const createCrucibleEntryPost = async ({
   const viewer = { viewerId: userId, isGreen, isModerator, blockedCreatorIds };
   if (
     !crucible ||
+    isCrucibleTakenDownForViewer(crucible, viewer) ||
     isCrucibleHiddenByScan(crucible, viewer) ||
     isCrucibleOffSite(crucible, viewer) ||
     isCrucibleBlockedForViewer(crucible, viewer)
@@ -1895,9 +1917,14 @@ export const checkCrucibleEntryEligibility = async ({
       createdAt: true,
       allowedResources: true,
       allowedBaseModels: true,
+      takenDownAt: true,
     },
   });
-  if (!crucible || isCrucibleBlockedForViewer(crucible, { isModerator, blockedCreatorIds }))
+  if (
+    !crucible ||
+    isCrucibleTakenDownForViewer(crucible, { isModerator }) ||
+    isCrucibleBlockedForViewer(crucible, { isModerator, blockedCreatorIds })
+  )
     throw throwNotFoundError('Crucible not found');
 
   const images = await dbRead.image.findMany({
@@ -2018,6 +2045,7 @@ export const submitEntry = async ({
         createdAt: true,
         endAt: true,
         ingestion: true,
+        takenDownAt: true,
         textNsfw: true,
         image: { select: { ingestion: true } },
         _count: {
@@ -2029,6 +2057,7 @@ export const submitEntry = async ({
     const viewer = { viewerId: userId, isGreen, isModerator, blockedCreatorIds };
     if (
       !crucible ||
+      isCrucibleTakenDownForViewer(crucible, viewer) ||
       isCrucibleHiddenByScan(crucible, viewer) ||
       isCrucibleOffSite(crucible, viewer) ||
       isCrucibleBlockedForViewer(crucible, viewer)
@@ -2913,12 +2942,14 @@ export const getJudgingProgress = async ({
       textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
+      takenDownAt: true,
       image: { select: { ingestion: true } },
     },
   });
   const viewer = { viewerId: userId, isModerator, isGreen, blockedCreatorIds };
   if (
     !crucible ||
+    isCrucibleTakenDownForViewer(crucible, viewer) ||
     isCrucibleHiddenByScan(crucible, viewer) ||
     isCrucibleOffSite(crucible, viewer) ||
     isCrucibleBlockedForViewer(crucible, viewer)
@@ -3080,6 +3111,7 @@ export const getJudgingPair = async ({
       textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
+      takenDownAt: true,
       minViewSeconds: true,
       image: { select: { ingestion: true } },
     },
@@ -3088,6 +3120,7 @@ export const getJudgingPair = async ({
 
   if (
     !crucible ||
+    isCrucibleTakenDownForViewer(crucible, viewer) ||
     isCrucibleHiddenByScan(crucible, viewer) ||
     isCrucibleOffSite(crucible, viewer) ||
     isCrucibleBlockedForViewer(crucible, viewer)
@@ -3497,12 +3530,14 @@ export const getCrucibleRequiredModels = async ({
       nsfwLevel: true,
       textNsfw: true,
       ingestion: true,
+      takenDownAt: true,
       allowedResources: true,
       image: { select: { ingestion: true } },
     },
   });
   if (
     !crucible ||
+    isCrucibleTakenDownForViewer(crucible, viewer) ||
     isCrucibleHiddenByScan(crucible, viewer) ||
     isCrucibleOffSite(crucible, viewer) ||
     isCrucibleBlockedForViewer(crucible, viewer)
@@ -3536,6 +3571,7 @@ export const getCrucibleMinVotesToPlace = async ({
       textNsfw: true,
       nsfwLevel: true,
       ingestion: true,
+      takenDownAt: true,
       startAt: true,
       endAt: true,
       timeAdjustedPlacement: true,
@@ -3544,6 +3580,7 @@ export const getCrucibleMinVotesToPlace = async ({
   });
   if (
     !crucible ||
+    isCrucibleTakenDownForViewer(crucible, viewer) ||
     isCrucibleHiddenByScan(crucible, viewer) ||
     isCrucibleOffSite(crucible, viewer) ||
     isCrucibleBlockedForViewer(crucible, viewer)
@@ -3585,9 +3622,13 @@ export const getCrucibleJudgesCount = async ({
 }) => {
   const crucible = await dbRead.crucible.findUnique({
     where: { id: crucibleId },
-    select: { userId: true },
+    select: { userId: true, takenDownAt: true },
   });
-  if (!crucible || isCrucibleBlockedForViewer(crucible, viewer))
+  if (
+    !crucible ||
+    isCrucibleTakenDownForViewer(crucible, viewer) ||
+    isCrucibleBlockedForViewer(crucible, viewer)
+  )
     throw throwNotFoundError('Crucible not found');
 
   return getJudgesCount(crucibleId);
@@ -4211,7 +4252,7 @@ export const voidUnscannedCrucibles = async (now = new Date()): Promise<number[]
     const lastChange = Math.max(startAt?.getTime() ?? 0, updatedAt.getTime());
     if (!blocked && now.getTime() - lastChange <= UNSCANNED_VOID_GRACE_MS) continue;
     try {
-      const { failedRefunds } = await cancelCrucible({
+      const { failedRefunds, takenDown } = await cancelCrucible({
         id,
         userId: constants.system.user.id,
         isModerator: true,
@@ -4226,6 +4267,7 @@ export const voidUnscannedCrucibles = async (now = new Date()): Promise<number[]
           failedRefunds,
         });
       }
+      if (takenDown) continue; // the takedown told the creator
       const refundNote = failedRefunds.length
         ? 'Your refund is being processed.'
         : 'Your Buzz has been refunded.';
@@ -4295,6 +4337,8 @@ export type CancelCrucibleResult = {
    * seed). A duplicate the ledger rejected is NOT a failure — that money is already back.
    */
   failedRefunds: Array<{ entryId: number | null; userId: number; error: string }>;
+  /** A moderator took it down, before or during this cancel: its notices are the takedown's. */
+  takenDown?: boolean;
 };
 
 /** Safe to re-run: legs an earlier attempt reversed are reported as already settled. */
@@ -4341,7 +4385,11 @@ const NOT_RUNNING = 'Entries can only be removed while the crucible is running';
 async function revealCrucibleEntryPosts(entries: { crucibleId: number } | { imageId: number }) {
   const imageFilter =
     'crucibleId' in entries
-      ? Prisma.sql`i.id IN (SELECT ce."imageId" FROM "CrucibleEntry" ce WHERE ce."crucibleId" = ${entries.crucibleId})`
+      ? Prisma.sql`i.id IN (
+          SELECT ce."imageId" FROM "CrucibleEntry" ce
+          JOIN "Crucible" c ON c.id = ce."crucibleId"
+          WHERE ce."crucibleId" = ${entries.crucibleId} AND c."takenDownAt" IS NULL
+        )`
       : Prisma.sql`i.id = ${entries.imageId}`;
   try {
     const posts = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
@@ -4598,66 +4646,39 @@ export const claimCrucibleCancellation = async (
   return count > 0;
 };
 
-/**
- * Cancel a crucible and return every payment it took. Safe to re-run, and re-running is the
- * supported way to finish a cancel whose refunds did not all land: the status claim happens first,
- * and each refund is keyed so the ledger rejects a duplicate rather than paying twice.
- */
-export const cancelCrucible = async ({
-  id,
-  userId,
-  isModerator,
-}: CancelCrucibleSchema & {
-  userId: number;
-  isModerator: boolean;
-}): Promise<CancelCrucibleResult> => {
-  // Claimed before any money moves. An interrupted cancel then leaves a stopped crucible with
-  // refunds owed (listed in `failedRefunds`, fixed by calling again) rather than an Active one still
-  // taking entries from people who were just refunded.
-  const claimed = await claimCrucibleCancellation(id, isModerator ? {} : { ownerId: userId });
-
-  // The primary, after the claim: the entries to refund include any that landed just before it.
-  const crucible = await dbWrite.crucible.findUnique({
-    where: { id },
+const cancelledCrucibleSelect = {
+  id: true,
+  name: true,
+  ingestion: true,
+  textNsfw: true,
+  userId: true, // Creator: receives the setup-fee and seed refunds
+  status: true,
+  entryFee: true,
+  buzzTransactionId: true, // Creator setup fee transaction
+  seededPrizePool: true,
+  seedTransactionId: true,
+  takenDownAt: true,
+  takedownReason: true,
+  takedownRefundsCreator: true,
+  entries: {
     select: {
       id: true,
-      name: true,
-      ingestion: true,
-      textNsfw: true,
-      userId: true, // Creator: receives the setup-fee and seed refunds
-      status: true,
-      entryFee: true,
-      buzzTransactionId: true, // Creator setup fee transaction
-      seededPrizePool: true,
-      seedTransactionId: true,
-      entries: {
-        select: {
-          id: true,
-          userId: true,
-          buzzTransactionId: true,
-        },
-      },
+      userId: true,
+      buzzTransactionId: true,
     },
-  });
+  },
+} satisfies Prisma.CrucibleSelect;
+type CancelledCrucible = Prisma.CrucibleGetPayload<{ select: typeof cancelledCrucibleSelect }>;
 
-  if (!crucible) {
-    throw throwNotFoundError('Crucible not found');
-  }
-
-  // A moderator may re-run an already Cancelled one: the refunds below are idempotent, and that
-  // is how a partly refunded cancel gets finished.
-  if (!claimed) {
-    // Before start nobody can have entered, so an owner's cancel only returns their own Buzz.
-    if (!isModerator)
-      throw throwAuthorizationError('Only moderators can cancel a crucible once it has started');
-    if (crucible.status === CrucibleStatus.Completed)
-      throw throwBadRequestError('Cannot cancel a completed crucible');
-    if (crucible.status !== CrucibleStatus.Cancelled)
-      throw throwBadRequestError(
-        'This crucible has ended and its results are being finalized, so it can no longer be cancelled'
-      );
-  }
-
+/**
+ * Returns the payments a cancelled crucible took. Each refund is keyed, so the ledger rejects a
+ * duplicate rather than paying twice, and a re-run finishes only what failed.
+ */
+async function refundCancelledCrucible(
+  crucible: CancelledCrucible,
+  { refundCreator, cause }: { refundCreator: boolean; cause: 'cancelled' | 'removed' }
+) {
+  const { id } = crucible;
   let refundedEntries = 0;
   let totalRefunded = 0;
   let alreadySettled = 0;
@@ -4675,7 +4696,7 @@ export const cancelCrucible = async ({
             const settled = await refundCrucibleTransactionOnce({
               externalTransactionIdPrefix: entry.buzzTransactionId!,
               description: getCrucibleTransactionDescription(
-                'Crucible entry fee refund - crucible cancelled',
+                `Crucible entry fee refund - crucible ${cause}`,
                 crucible
               ),
               crucibleId: crucible.id,
@@ -4719,54 +4740,49 @@ export const cancelCrucible = async ({
   }
 
   let creatorSetupFeeRefunded = false;
-  if (crucible.buzzTransactionId) {
-    try {
-      const settled = await refundCrucibleTransactionOnce({
-        externalTransactionIdPrefix: crucible.buzzTransactionId,
-        description: 'Crucible creator setup fee refund - crucible cancelled',
-        crucibleId: crucible.id,
-        label: `creator setup fee for crucible ${id}`,
-      });
-      creatorSetupFeeRefunded = true;
-      if (settled === 'already-settled') alreadySettled++;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      log(`Failed to refund creator setup fee for crucible ${id}: ${errorMessage}`);
-      failedRefunds.push({ entryId: null, userId: crucible.userId, error: errorMessage });
-    }
-  } else {
-    log(`No creator setup fee to refund for crucible ${id} (free crucible or legacy)`);
-  }
-
-  // Return the creator's seeded prize pool. Guarded on the stored prefix rather than the amount:
-  // a prefix matching no transaction makes the refund 404, and an unseeded crucible has no prefix.
   let refundedSeed = 0;
-  if (crucible.seedTransactionId) {
-    try {
-      const settled = await refundCrucibleTransactionOnce({
-        externalTransactionIdPrefix: crucible.seedTransactionId,
-        description: 'Crucible seeded prize pool refund - crucible cancelled',
-        crucibleId: crucible.id,
-        label: `seeded prize pool for crucible ${id}`,
-      });
-      refundedSeed = crucible.seededPrizePool;
-      if (settled === 'already-settled') alreadySettled++;
-    } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      log(`Failed to refund seeded prize pool for crucible ${id}: ${errorMessage}`);
-      failedRefunds.push({ entryId: null, userId: crucible.userId, error: errorMessage });
+  if (refundCreator) {
+    if (crucible.buzzTransactionId) {
+      try {
+        const settled = await refundCrucibleTransactionOnce({
+          externalTransactionIdPrefix: crucible.buzzTransactionId,
+          description: `Crucible creator setup fee refund - crucible ${cause}`,
+          crucibleId: crucible.id,
+          label: `creator setup fee for crucible ${id}`,
+        });
+        creatorSetupFeeRefunded = true;
+        if (settled === 'already-settled') alreadySettled++;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        log(`Failed to refund creator setup fee for crucible ${id}: ${errorMessage}`);
+        failedRefunds.push({ entryId: null, userId: crucible.userId, error: errorMessage });
+      }
+    } else {
+      log(`No creator setup fee to refund for crucible ${id} (free crucible or legacy)`);
+    }
+
+    // Return the creator's seeded prize pool. Guarded on the stored prefix rather than the amount:
+    // a prefix matching no transaction makes the refund 404, and an unseeded crucible has no prefix.
+    if (crucible.seedTransactionId) {
+      try {
+        const settled = await refundCrucibleTransactionOnce({
+          externalTransactionIdPrefix: crucible.seedTransactionId,
+          description: `Crucible seeded prize pool refund - crucible ${cause}`,
+          crucibleId: crucible.id,
+          label: `seeded prize pool for crucible ${id}`,
+        });
+        refundedSeed = crucible.seededPrizePool;
+        if (settled === 'already-settled') alreadySettled++;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        log(`Failed to refund seeded prize pool for crucible ${id}: ${errorMessage}`);
+        failedRefunds.push({ entryId: null, userId: crucible.userId, error: errorMessage });
+      }
     }
   }
 
   // Clean up Redis ELO data (set short TTL for eventual cleanup)
   await crucibleEloRedis.setTTL(id, 24 * 60 * 60); // 24 hours
-
-  notifyEntrantsOfCancellation(crucible, failedRefunds);
-  await revealCrucibleEntryPosts({ crucibleId: id });
-
-  log(
-    `Cancelled crucible ${id}: ${refundedEntries} entries refunded, ${totalRefunded} Buzz total, ${failedRefunds.length} failed, setup fee refunded: ${creatorSetupFeeRefunded}`
-  );
 
   return {
     crucibleId: id,
@@ -4775,7 +4791,296 @@ export const cancelCrucible = async ({
     refundedSeed,
     alreadySettled,
     failedRefunds,
+    creatorSetupFeeRefunded,
   };
+}
+
+/**
+ * Cancel a crucible and return every payment it took. Safe to re-run, and re-running is the
+ * supported way to finish a cancel whose refunds did not all land: the status claim happens first,
+ * and each refund is keyed so the ledger rejects a duplicate rather than paying twice.
+ */
+export const cancelCrucible = async ({
+  id,
+  userId,
+  isModerator,
+}: CancelCrucibleSchema & {
+  userId: number;
+  isModerator: boolean;
+}): Promise<CancelCrucibleResult> => {
+  // Claimed before any money moves. An interrupted cancel then leaves a stopped crucible with
+  // refunds owed (listed in `failedRefunds`, fixed by calling again) rather than an Active one still
+  // taking entries from people who were just refunded.
+  const claimed = await claimCrucibleCancellation(id, isModerator ? {} : { ownerId: userId });
+
+  // The primary, after the claim: the entries to refund include any that landed just before it.
+  const crucible = await dbWrite.crucible.findUnique({
+    where: { id },
+    select: cancelledCrucibleSelect,
+  });
+
+  if (!crucible) {
+    throw throwNotFoundError('Crucible not found');
+  }
+
+  // A moderator may re-run an already Cancelled one: the refunds below are idempotent, and that
+  // is how a partly refunded cancel gets finished.
+  if (!claimed) {
+    // Before start nobody can have entered, so an owner's cancel only returns their own Buzz.
+    if (!isModerator)
+      throw throwAuthorizationError('Only moderators can cancel a crucible once it has started');
+    if (crucible.status === CrucibleStatus.Completed)
+      throw throwBadRequestError('Cannot cancel a completed crucible');
+    if (crucible.status !== CrucibleStatus.Cancelled)
+      throw throwBadRequestError(
+        'This crucible has ended and its results are being finalized, so it can no longer be cancelled'
+      );
+  }
+
+  // Taken down: finish its refunds on the takedown's terms, and leave its posts and notices to it.
+  const takenDownFirst = !!crucible.takenDownAt;
+  const { creatorSetupFeeRefunded, ...refunds } = await refundCancelledCrucible(crucible, {
+    refundCreator: takenDownFirst ? crucible.takedownRefundsCreator : true,
+    cause: takenDownFirst ? 'removed' : 'cancelled',
+  });
+
+  // Read again: a takedown can land while the refunds run. The reveal checks it in its own SQL.
+  const takenDown =
+    takenDownFirst ||
+    !!(await dbWrite.crucible.findUnique({ where: { id }, select: { takenDownAt: true } }))
+      ?.takenDownAt;
+  if (!takenDown) notifyEntrantsOfCancellation(crucible, refunds.failedRefunds);
+  if (!takenDownFirst) await revealCrucibleEntryPosts({ crucibleId: id });
+  const result = { ...refunds, takenDown };
+
+  log(
+    `Cancelled crucible ${id}: ${result.refundedEntries} entries refunded, ${result.totalRefunded} Buzz total, ${result.failedRefunds.length} failed, setup fee refunded: ${creatorSetupFeeRefunded}`
+  );
+
+  return result;
+};
+
+export type TakeDownCrucibleResult = CancelCrucibleResult & {
+  creatorFunds: 'refunded' | 'pending' | 'forfeited' | 'held' | 'none';
+};
+
+const TAKE_DOWN_FINALIZING =
+  'This crucible has ended and its results are being finalized; take it down once they are';
+
+/**
+ * A moderator removes a crucible: it stops like a cancel, its page is gone for everyone but
+ * moderators, and the owner is told the reason. Nothing is deleted. Safe to re-run to finish
+ * refunds; a re-run keeps the first reason. A Completed crucible is hidden only: its prizes are
+ * paid and nothing is clawed back.
+ */
+export const takeDownCrucible = async ({
+  id,
+  reason,
+  releaseCreatorFunds = false,
+  moderatorId,
+}: TakeDownCrucibleSchema & { moderatorId: number }): Promise<TakeDownCrucibleResult> => {
+  if (releaseCreatorFunds && CRUCIBLE_TAKEDOWN_CREATOR_FUNDS !== 'hold')
+    throw throwBadRequestError('There are no held creator funds to release');
+
+  // Claimed before any money moves, as in cancel. An Active crucible past its end belongs to
+  // finalize even with no entries: finalize returns an unawarded seed whatever the policy says.
+  const [claim] = await dbWrite.$queryRaw<{ previousStatus: CrucibleStatus }[]>`
+    WITH previous AS (
+      SELECT id, status FROM "Crucible" WHERE id = ${id} FOR UPDATE
+    )
+    UPDATE "Crucible" c
+    SET "takenDownAt" = now(),
+        "takenDownById" = ${moderatorId},
+        "takedownReason" = ${reason},
+        -- A cancel before the takedown already committed to refunding the creator.
+        "takedownRefundsCreator" = previous.status = ${CrucibleStatus.Cancelled}::"CrucibleStatus"
+          OR ${CRUCIBLE_TAKEDOWN_CREATOR_FUNDS === 'refund'},
+        status = CASE WHEN c.status = ${CrucibleStatus.Completed}::"CrucibleStatus" THEN c.status
+                      ELSE ${CrucibleStatus.Cancelled}::"CrucibleStatus" END
+    FROM previous
+    WHERE c.id = previous.id
+      AND c."takenDownAt" IS NULL
+      AND (
+        c.status <> ${CrucibleStatus.Active}::"CrucibleStatus"
+        OR c."endAt" IS NULL
+        OR c."endAt" > statement_timestamp()
+      )
+    RETURNING previous.status AS "previousStatus"
+  `;
+  const claimed = !!claim;
+  if (releaseCreatorFunds)
+    await dbWrite.$executeRaw`
+      UPDATE "Crucible" SET "takedownRefundsCreator" = true
+      WHERE id = ${id} AND "takenDownAt" IS NOT NULL
+    `;
+
+  const crucible = await dbWrite.crucible.findUnique({
+    where: { id },
+    select: cancelledCrucibleSelect,
+  });
+  if (!crucible) throw throwNotFoundError('Crucible not found');
+  if (!crucible.takenDownAt) throw throwBadRequestError(TAKE_DOWN_FINALIZING);
+
+  const completed = crucible.status === CrucibleStatus.Completed;
+  const refundCreator = !completed && crucible.takedownRefundsCreator;
+  const hasCreatorFunds = !!(crucible.buzzTransactionId || crucible.seedTransactionId);
+
+  const { creatorSetupFeeRefunded, ...result } = completed
+    ? {
+        crucibleId: id,
+        refundedEntries: 0,
+        totalRefunded: 0,
+        refundedSeed: 0,
+        alreadySettled: 0,
+        failedRefunds: [],
+        creatorSetupFeeRefunded: false,
+      }
+    : await refundCancelledCrucible(crucible, { refundCreator, cause: 'removed' });
+
+  const creatorFunds: TakeDownCrucibleResult['creatorFunds'] =
+    completed || !hasCreatorFunds
+      ? 'none'
+      : refundCreator
+      ? result.failedRefunds.some((f) => f.entryId === null)
+        ? 'pending'
+        : 'refunded'
+      : CRUCIBLE_TAKEDOWN_CREATOR_FUNDS === 'hold'
+      ? 'held'
+      : 'forfeited';
+
+  await trackModActivity(moderatorId, {
+    entityType: 'crucible',
+    activity: 'takeDown',
+    entityId: id,
+  });
+
+  if (!completed) await hideCrucibleEntryPosts(id);
+  // A release whose refund failed sends nothing, so the retry that lands can still say so.
+  if (!releaseCreatorFunds || creatorFunds === 'refunded')
+    notifyOfTakedown(crucible, {
+      creatorFunds,
+      released: releaseCreatorFunds,
+      entrantRefunds: completed ? 'none' : 'refunded',
+      failedRefunds: result.failedRefunds,
+    });
+
+  logToAxiom({
+    type: 'info',
+    name: 'crucible-taken-down',
+    crucibleId: id,
+    moderatorId,
+    rerun: !claimed,
+    creatorFunds,
+    refundedEntries: result.refundedEntries,
+    totalRefunded: result.totalRefunded,
+    refundedSeed: result.refundedSeed,
+    creatorSetupFeeRefunded,
+    failedRefunds: result.failedRefunds.length,
+  });
+
+  return { ...result, creatorFunds };
+};
+
+/**
+ * Entry-modal posts `submitEntry` scheduled for the crucible's end go back to drafts instead of
+ * publishing on their own when that end comes. Posts already public are left alone.
+ */
+async function hideCrucibleEntryPosts(crucibleId: number) {
+  let posts: { id: number; userId: number }[];
+  try {
+    posts = await dbWrite.$queryRaw<{ id: number; userId: number }[]>`
+      UPDATE "Post" p SET "publishedAt" = NULL
+      FROM "Image" i
+      JOIN "CrucibleEntry" ce ON ce."imageId" = i.id
+      WHERE p.id = i."postId"
+        AND ce."crucibleId" = ${crucibleId}
+        AND p."publishedAt" > now()
+        AND (p.metadata->>${CRUCIBLE_ENTRY_DRAFT_METADATA_KEY})::boolean IS TRUE
+      RETURNING p.id, p."userId"
+    `;
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-entry-posts-hide-failed',
+      message: `Entry posts of taken-down crucible ${crucibleId} will publish at its old end: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      crucibleId,
+    });
+    return;
+  }
+  if (!posts.length) return;
+
+  // Indexed at submit as published from the old end, so the feeds would show them from then on. A
+  // re-run finds these posts already drafted, so a failure here is only fixed by a reindex.
+  const postIds = posts.map((post) => post.id);
+  try {
+    await afterPostsUnpublish(posts.map((post) => ({ postId: post.id, userId: post.userId })));
+  } catch (error) {
+    logToAxiom({
+      type: 'error',
+      name: 'crucible-entry-posts-unindex-failed',
+      message: `Entry posts of taken-down crucible ${crucibleId} are drafts but their images may still be in search; reindex them: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      crucibleId,
+      postIds,
+    });
+  }
+}
+
+/** Keyed per crucible, so a re-run reaches only those not yet told. Entrants never get the reason. */
+const notifyOfTakedown = (
+  crucible: CancelledCrucible,
+  {
+    creatorFunds,
+    released,
+    entrantRefunds,
+    failedRefunds,
+  }: {
+    creatorFunds: TakeDownCrucibleResult['creatorFunds'];
+    released: boolean;
+    entrantRefunds: 'refunded' | 'none';
+    failedRefunds: CancelCrucibleResult['failedRefunds'];
+  }
+) => {
+  const crucibleName = getCruciblePublishableName(crucible);
+  sendCrucibleNotification({
+    userId: crucible.userId,
+    type: 'crucible-taken-down',
+    category: NotificationCategory.System,
+    key: `crucible-taken-down${released ? '-released' : ''}:${crucible.id}`,
+    details: {
+      crucibleId: crucible.id,
+      crucibleName,
+      reason: crucible.takedownReason,
+      creatorFunds,
+    },
+  });
+
+  const pending = new Set(failedRefunds.filter((f) => f.entryId !== null).map((f) => f.userId));
+  const entrants = [...new Set(crucible.entries.map((e) => e.userId))].filter(
+    (userId) => userId !== crucible.userId
+  );
+  const details = { crucibleId: crucible.id, crucibleName };
+  const settled = entrants.filter((userId) => !pending.has(userId));
+  const owed = entrants.filter((userId) => pending.has(userId));
+  if (settled.length)
+    sendCrucibleNotification({
+      userIds: settled,
+      type: 'crucible-removed',
+      category: NotificationCategory.System,
+      key: `crucible-removed:${crucible.id}`,
+      details: { ...details, refundPending: false, refunded: entrantRefunds === 'refunded' },
+    });
+  if (owed.length)
+    sendCrucibleNotification({
+      userIds: owed,
+      type: 'crucible-removed',
+      category: NotificationCategory.System,
+      key: `crucible-removed-pending:${crucible.id}`,
+      details: { ...details, refundPending: true, refunded: true },
+    });
 };
 
 // ============================================================================

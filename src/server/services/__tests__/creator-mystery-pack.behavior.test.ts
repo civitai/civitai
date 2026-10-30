@@ -169,6 +169,7 @@ beforeAll(async () => {
     CREATE TABLE "User" (id int PRIMARY KEY, muted boolean NOT NULL DEFAULT false, "bannedAt" timestamp, "deletedAt" timestamp);
     CREATE TABLE "Image" (id serial PRIMARY KEY, "userId" int NOT NULL, url text NOT NULL);
     CREATE TABLE "ShopArtworkKeyOwner" (key text PRIMARY KEY, "userId" int NOT NULL, "recordedAt" timestamp NOT NULL DEFAULT now());
+    CREATE TABLE "ImageCdnShopTakedown" (url text, "shopItemId" int, PRIMARY KEY (url, "shopItemId"));
     CREATE TABLE "Cosmetic" (
       id int PRIMARY KEY, name text NOT NULL, type "CosmeticType" NOT NULL, data jsonb, "createdById" int
     );

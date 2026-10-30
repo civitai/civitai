@@ -29,6 +29,7 @@ import {
   CRUCIBLE_NAME_MAX_LENGTH,
   CRUCIBLE_PRIZE_CUSTOMIZATION_COST,
   CRUCIBLE_RESOURCE_REQUIREMENTS_COST,
+  CRUCIBLE_TAKEDOWN_REASON_LENGTH,
   getMaxCrucibleStartAt,
   getPrizeDistributionTotal,
 } from '~/shared/constants/crucible.constants';
@@ -417,6 +418,17 @@ export const updateCrucibleSchema = z.object({
 export type CancelCrucibleSchema = z.infer<typeof cancelCrucibleSchema>;
 export const cancelCrucibleSchema = z.object({
   id: z.number(),
+});
+
+export type TakeDownCrucibleSchema = z.infer<typeof takeDownCrucibleSchema>;
+export const takeDownCrucibleSchema = z.object({
+  id: z.number(),
+  reason: z
+    .string()
+    .trim()
+    .min(CRUCIBLE_TAKEDOWN_REASON_LENGTH.min)
+    .max(CRUCIBLE_TAKEDOWN_REASON_LENGTH.max),
+  releaseCreatorFunds: z.boolean().optional(),
 });
 
 export type RemoveCrucibleEntrySchema = z.infer<typeof removeCrucibleEntrySchema>;

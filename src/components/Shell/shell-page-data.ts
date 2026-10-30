@@ -30,16 +30,23 @@ export type ShellPageData = {
   region: RegionInfo;
   adsGated: boolean;
   trpcState: unknown;
-  /** See `SHELL_MAIN_IMAGE_URL_KEY`. Read by the inline head script only. */
-  mainImageUrl?: string;
 };
 
 /**
- * The page-data member holding the URL of the page's main `<img>` for this viewer
- * (`imageDetailPreloadUrl`), absent when the page will request none. The endpoint writes it under
- * this name and the inline head script reads it under this name.
+ * The page-data RESPONSE HEADER holding the URL of the page's main `<img>` for this viewer
+ * (`imageDetailPreloadUrl`), `encodeURIComponent`-encoded; absent when the page will request none.
+ * The endpoint writes it under this name and the inline head script reads it under this name.
+ *
+ * A header rather than a body member so the head script has it as soon as the response's headers
+ * arrive: a body member is only readable once the whole body (the page's `trpcState` included)
+ * has downloaded and been parsed, and the app renders its `<img>` at about that moment anyway.
  */
-export const SHELL_MAIN_IMAGE_URL_KEY = 'mainImageUrl' satisfies keyof ShellPageData;
+export const SHELL_MAIN_IMAGE_HEADER = 'X-Civ-Main-Image';
+
+/** The `SHELL_MAIN_IMAGE_HEADER` value for `url`: header-safe whatever the URL holds. */
+export function encodeShellMainImageHeader(url: string) {
+  return encodeURIComponent(url);
+}
 
 /**
  * Without any of these the body is not adopted and the page falls back to a full render. `region`
@@ -96,27 +103,28 @@ const PAGE_DATA_INIT: RequestInit = {
  * `catch` only keeps a network failure from being reported as unhandled before the app attaches;
  * the app still reads the rejection.
  *
- * When a 200 arrives carrying `SHELL_MAIN_IMAGE_URL_KEY`, it also adds ONE
+ * When a 200 arrives carrying `SHELL_MAIN_IMAGE_HEADER`, it also adds ONE
  * `<link rel="preload" as="image" fetchpriority="high">` for that URL to `<head>`, so the main
  * image downloads from then on rather than from when the page renders its `<img>`, after the
- * bundles, the hydration and the adoption. It reads a `clone()` of the response, made before any
- * other reader can have started on the body, so the app's own read is untouched. Anything else —
- * another status, a network error, a body that is not JSON, no URL or a non-string one — adds
- * nothing. Only the URL the private page data names is used; the shell HTML carries none.
+ * bundles, the hydration and the adoption. It reads the header only, the moment the response's
+ * headers are in: never the body, which the app reads, and which is not complete until well after.
+ * Anything else — another status, a network error, no header, an empty one or one that does not
+ * decode — adds nothing. Only the URL the private page data names is used; the shell HTML carries
+ * none.
  */
 export function shellPageDataPrefetchScript(): string {
   const prefix = JSON.stringify(shellPageDataUrl('', ''));
-  const key = JSON.stringify(SHELL_MAIN_IMAGE_URL_KEY);
+  const header = JSON.stringify(SHELL_MAIN_IMAGE_HEADER);
   return (
     `try{var p=fetch(${prefix}+location.pathname+location.search,${JSON.stringify(
       PAGE_DATA_INIT
     )});` +
     `p.catch(function(){});window.__civShell=p;` +
-    `p.then(function(r){if(r.status!==200)return;return r.clone().json().then(function(b){` +
-    `var u=b&&b[${key}];if(typeof u!=="string"||!u)return;` +
+    `p.then(function(r){if(r.status!==200)return;var h=r.headers.get(${header});if(!h)return;` +
+    `var u=decodeURIComponent(h);if(!u)return;` +
     `var l=document.createElement("link");l.setAttribute("rel","preload");` +
     `l.setAttribute("as","image");l.setAttribute("fetchpriority","high");` +
-    `l.setAttribute("href",u);document.head.appendChild(l)})})` +
+    `l.setAttribute("href",u);document.head.appendChild(l)})` +
     `.catch(function(){})}catch(e){}`
   );
 }
