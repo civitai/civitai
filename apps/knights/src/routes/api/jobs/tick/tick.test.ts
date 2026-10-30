@@ -221,10 +221,10 @@ describe('POST /api/jobs/tick', () => {
     applyPendingResolutions.mockResolvedValue({ applied: 0 });
     closeStrandedYesNo.mockResolvedValue({ unplayable: 2, stale: 1, failed: 0 });
     const ok = await run();
-    expect(closeStrandedYesNo).toHaveBeenCalledWith(expect.anything(), {
-      now: expect.any(Date),
-      maxAgeDays: 14,
-    });
+    expect(closeStrandedYesNo).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ now: expect.any(Date), maxAgeDays: 14 })
+    );
     expect(await ok.json()).toMatchObject({ yesNoClosed: 3 });
 
     closeStrandedYesNo.mockResolvedValue({ unplayable: 0, stale: 0, failed: 1 });

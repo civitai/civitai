@@ -4,14 +4,7 @@ import { servableImage } from '@civitai/db/knights';
 
 export const JUDGMENTS_PAGE_SIZE = 20;
 
-/** `matched` and `unmatched` are a yes/no answer against the majority, which is not a truth to be right or wrong about. */
-export type JudgmentStatus =
-  | 'pending'
-  | 'correct'
-  | 'wrong'
-  | 'inconclusive'
-  | 'matched'
-  | 'unmatched';
+export type JudgmentStatus = 'pending' | 'correct' | 'wrong' | 'inconclusive';
 
 export type Judgment = {
   itemId: number;
@@ -32,10 +25,6 @@ export const statusOf = (verdict: string): JudgmentStatus =>
     ? 'wrong'
     : verdict === 'inconclusive'
     ? 'inconclusive'
-    : verdict === 'matched'
-    ? 'matched'
-    : verdict === 'unmatched'
-    ? 'unmatched'
     : 'pending';
 
 export async function listJudgments(

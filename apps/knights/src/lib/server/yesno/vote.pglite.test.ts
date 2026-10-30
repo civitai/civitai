@@ -5,7 +5,7 @@ import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
-import { ledgerOf } from '../progression/progression';
+import { ledgerOf, settleAndMirror, settleFinalItems } from '../progression/progression';
 import { ensureVotePartitions, lockPlayerVoting } from '../queue/queue.service';
 import { judgesNeeded } from './items';
 import { importYesNo, type YesNoRow } from './import';
@@ -161,7 +161,7 @@ describe('an answer', () => {
 });
 
 describe('consensus', () => {
-  it('closes the question at the consensus size and pays gold only to those who matched the majority', async () => {
+  it('closes the question at the consensus size and grades the answers like a rating: the majority right, the rest wrong', async () => {
     const ids = await seed([row('a')]);
     await knights(5);
     for (const [user, answer] of [
@@ -181,16 +181,20 @@ describe('consensus', () => {
       voteCount: 5,
     });
     expect(await votes(ids.a)).toMatchObject([
-      { playerId: 1, verdict: 'matched', gold: GOLD },
-      { playerId: 2, verdict: 'matched', gold: GOLD },
-      { playerId: 3, verdict: 'unmatched', gold: 0 },
-      { playerId: 4, verdict: 'matched', gold: GOLD },
-      { playerId: 5, verdict: 'unmatched', gold: 0 },
+      { playerId: 1, verdict: 'correct', gold: GOLD },
+      { playerId: 2, verdict: 'correct', gold: GOLD },
+      { playerId: 3, verdict: 'failed', gold: 0 },
+      { playerId: 4, verdict: 'correct', gold: GOLD },
+      { playerId: 5, verdict: 'failed', gold: 0 },
     ]);
     for (const v of await votes(ids.a)) expect(v.settledAt).not.toBeNull();
 
-    // XP stays the flat per-answer amount; only a matched answer moves its gold from pending to earned.
-    expect(await player(1)).toEqual({ exp: PROGRESSION.voteXp, goldPending: 0, goldEarned: GOLD });
+    // Right: the vote XP plus the bulk XP, and the gold moves from pending to earned. Wrong: the vote XP only, the gold dropped.
+    expect(await player(1)).toEqual({
+      exp: PROGRESSION.voteXp + PROGRESSION.correctXp,
+      goldPending: 0,
+      goldEarned: GOLD,
+    });
     expect(await player(3)).toEqual({ exp: PROGRESSION.voteXp, goldPending: 0, goldEarned: 0 });
   });
 
@@ -202,20 +206,25 @@ describe('consensus', () => {
     expect(await votes(ids.a)).toHaveLength(5);
   });
 
-  it('is not graded against a truth: no accuracy, no bulk XP, no rank movement', async () => {
+  it('counts in the accuracy ledger, and issues no smites', async () => {
     const ids = await seed([row('a')]);
     await knights(5);
     for (let user = 1; user <= 5; user++) await vote(user, ids.a, user <= 3 ? 'yes' : 'no');
 
-    expect(await ledgerOf(db, 1)).toEqual({ correct: 0, graded: 0 });
-    expect(await ledgerOf(db, 5)).toEqual({ correct: 0, graded: 0 });
-    const players = await pg.query<{ rankType: string; fervor: number; exp: number }>(
-      `SELECT "rankType", fervor, exp FROM "NewOrderPlayer"`
-    );
-    for (const p of players.rows) {
-      expect(p).toMatchObject({ rankType: 'Knight', fervor: 0, exp: PROGRESSION.voteXp });
-    }
+    expect(await ledgerOf(db, 1)).toEqual({ correct: 1, graded: 1 });
+    expect(await ledgerOf(db, 5)).toEqual({ correct: 0, graded: 1 });
     expect((await pg.query(`SELECT 1 FROM "NewOrderSmite"`)).rows).toHaveLength(0);
+  });
+
+  it('settles once: a second settlement and the tick sweep pay nothing more', async () => {
+    const ids = await seed([row('a')]);
+    await knights(5);
+    for (let user = 1; user <= 5; user++) await vote(user, ids.a, 'yes');
+    const before = await player(1);
+
+    expect(await settleFinalItems(db, { now: NOW })).toMatchObject({ votes: 0, failed: 0 });
+    expect((await settleAndMirror(db, ids.a, NOW)).votes).toBe(0);
+    expect(await player(1)).toEqual(before);
   });
 
   it('keeps asking through a tie, and at the cap gives the question up and pays no gold', async () => {
@@ -323,10 +332,14 @@ describe('a career reset between the answer and the close', () => {
 
     expect(await item(ids.a)).toMatchObject({ status: 'Consensus' });
     const old = (await votes(ids.a)).find((v) => v.playerId === 1);
-    expect(old).toMatchObject({ verdict: 'matched', gold: 0 });
+    expect(old).toMatchObject({ verdict: 'correct', gold: 0 });
     expect(old?.settledAt).not.toBeNull();
     // The new career's own pending answer is untouched, and nothing was earned from the old one.
-    expect(await player(1)).toMatchObject({ goldPending: GOLD, goldEarned: 0 });
+    expect(await player(1)).toMatchObject({
+      goldPending: GOLD,
+      goldEarned: 0,
+      exp: 2 * PROGRESSION.voteXp,
+    });
     expect(await player(2)).toMatchObject({ goldPending: 0, goldEarned: GOLD });
   });
 });

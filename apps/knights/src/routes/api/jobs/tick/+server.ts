@@ -45,7 +45,11 @@ export const POST: RequestHandler = async ({ request }) => {
     })
   );
   const yesNo = await settle('yes/no sweep', () =>
-    closeStrandedYesNo(db, { now: new Date(), maxAgeDays: yesNoConfig().maxAgeDays })
+    closeStrandedYesNo(db, {
+      now: new Date(),
+      maxAgeDays: yesNoConfig().maxAgeDays,
+      mirror: queueDeps.mirrorXp,
+    })
   );
   // Resets first: a smite that lapses must not drop a player out of a reset that is already due.
   const resets = await settle('career resets', () => resetPendingPlayers(db, resetDeps));

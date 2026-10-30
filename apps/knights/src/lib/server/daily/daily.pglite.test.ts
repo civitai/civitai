@@ -514,25 +514,6 @@ describe('the recap', () => {
     });
   });
 
-  it('counts the gold of yes/no answers that matched the majority, and leaves them out of the accuracy', async () => {
-    await seedPlayer(pg, 1);
-    await ledger(1, D1, { correct: 2 });
-    await pg.query(
-      `INSERT INTO "KnightsVote" ("itemId","playerId","createdAt","questionKey","imageId","stage","answer","weight","verdict","settledAt","xp","gold")
-       VALUES (1,1,$1::timestamp,'knights.yesno.violence',0,'Knight','yes',1,'matched',$1::timestamp,0,100),
-              (2,1,$1::timestamp,'knights.yesno.violence',0,'Knight','no',1,'unmatched',$1::timestamp,0,0)`,
-      [`${D1} 09:00:00`]
-    );
-
-    expect(await getRecap(db, { playerId: 1, now: NOON(D2) })).toMatchObject({
-      cast: 4,
-      confirmed: 2,
-      graded: 2,
-      goldEarned: 300,
-      pending: 0,
-    });
-  });
-
   it('names the date when the last play day was not yesterday', async () => {
     await seedPlayer(pg, 1);
     await ledger(1, D1, { correct: 2 });

@@ -119,7 +119,7 @@ describe('listJudgments', () => {
       return item.rows[0].id;
     }
 
-    it('shows the words of the question, waits for the consensus, then says whether the answer matched the majority', async () => {
+    it('shows the words of the question, waits for the consensus, then shows it as right or wrong like a rating', async () => {
       const id = await answered('q-secret', 'Is a hat worn?');
 
       const pending = (await listJudgments(db, 1, { page: 1 })).judgments[0];
@@ -131,13 +131,13 @@ describe('listJudgments', () => {
       });
 
       await pg.exec(
-        `UPDATE "KnightsVote" SET verdict='matched', "settledAt"=now() WHERE "itemId"=${id}`
+        `UPDATE "KnightsVote" SET verdict='correct', "settledAt"=now() WHERE "itemId"=${id}`
       );
-      expect((await listJudgments(db, 1, { page: 1 })).judgments[0].status).toBe('matched');
+      expect((await listJudgments(db, 1, { page: 1 })).judgments[0].status).toBe('correct');
 
-      await pg.exec(`UPDATE "KnightsVote" SET verdict='unmatched', gold=0 WHERE "itemId"=${id}`);
+      await pg.exec(`UPDATE "KnightsVote" SET verdict='failed', gold=0 WHERE "itemId"=${id}`);
       expect((await listJudgments(db, 1, { page: 1 })).judgments[0]).toMatchObject({
-        status: 'unmatched',
+        status: 'wrong',
         gold: 0,
       });
     });
