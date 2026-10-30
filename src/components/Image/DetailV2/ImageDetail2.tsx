@@ -67,6 +67,7 @@ import type { EdgeVideoRef } from '~/components/EdgeMedia/EdgeVideo';
 import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCollaboratorList';
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
+import { ReportChapterMenuItem } from '~/components/Storyline/ReportChapterMenuItem';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
@@ -411,7 +412,17 @@ export function ImageDetail2() {
                                 <IconFlag {...sharedIconProps} />
                               </LegacyActionIcon>
                             </LoginRedirect>
-                            <ImageContextMenu image={image}>
+                            <ImageContextMenu
+                              image={image}
+                              additionalMenuItems={
+                                storyline.active &&
+                                !isOwner &&
+                                image.postId &&
+                                storyline.chapterIdOfImage(image.id) !== undefined ? (
+                                  <ReportChapterMenuItem postId={image.postId} />
+                                ) : undefined
+                              }
+                            >
                               <LegacyActionIcon {...sharedActionIconProps}>
                                 <IconDotsVertical {...sharedIconProps} />
                               </LegacyActionIcon>

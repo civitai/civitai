@@ -532,10 +532,14 @@ describe('owner saves enforce locks against the row they lock', () => {
       name: 'Renamed Model',
       tracker: { entityChanges } as never,
     });
-    const rows = entityChanges.mock.calls[0][0] as { field: string; oldValue: string }[];
-    const lockRows = rows.filter((r) => r.field.startsWith('lockedProperties'));
-    expect(lockRows.length).toBeGreaterThan(0);
-    for (const row of lockRows) expect(row.oldValue).not.toBe('[]');
+    const rows = entityChanges.mock.calls[0][0] as { field: string }[];
+    expect(rows.filter((r) => r.field === 'lockedProperties')).toEqual([
+      expect.objectContaining({
+        oldValue: JSON.stringify(['poi']),
+        newValue: JSON.stringify(['nsfw', 'poi']),
+        reason: 'profanity-filter',
+      }),
+    ]);
   });
 
   it('lets a moderator write under a lock set after the first read', async () => {
