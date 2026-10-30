@@ -42,11 +42,11 @@ type Decision =
 
 const LEDGER: Record<string, { lockWrites: number; decision: Decision }> = {
   'src/server/services/model.service.ts': {
-    lockWrites: 12,
+    lockWrites: 17,
     decision: {
       kind: 'clears',
       except:
-        'setModelMinor / setModelSfwOnly / setModelPoi: each logs an activity the dispute reader treats as a moderator ruling',
+        'setModelMinor / setModelSfwOnly / setModelPoi: each logs an activity the dispute reader treats as a moderator ruling; a lift that restores a recorded nsfw ruling puts back its lock with the marker as the row holds it; a dispute after any moderator nsfw activity is refused regardless',
     },
   },
   'src/server/services/auto-nsfw.ts': { lockWrites: 2, decision: { kind: 'sets' } },

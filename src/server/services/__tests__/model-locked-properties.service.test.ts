@@ -936,6 +936,7 @@ describe('upsertModel — content flags the row ends up with', () => {
           prevNsfw: true,
           prevSfwOnly: false,
           prevLockedProperties: ['nsfw'],
+          prevGalleryLevel: 1,
         },
       })
     );
@@ -957,6 +958,31 @@ describe('upsertModel — content flags the row ends up with', () => {
     expect(updateData().meta).toEqual(
       expect.objectContaining({ ownerFlagOverride: expect.objectContaining({ flags: ['poi'] }) })
     );
+  });
+
+  // An automated revert of the later flag must know the owner declared it too.
+  it('adds a flag the owner declares later to the override already on the row', async () => {
+    const ownerFlagOverride = {
+      at: '2026-01-01T00:00:00.000Z',
+      flags: ['poi'],
+      prevNsfw: true,
+      prevSfwOnly: false,
+      prevLockedProperties: ['nsfw'],
+      prevGalleryLevel: 31,
+    };
+    mockStored({
+      poi: true,
+      sfwOnly: true,
+      lockedProperties: ['nsfw', 'poi', 'sfwOnly'],
+      meta: { ownerFlagOverride },
+    });
+
+    await upsert({ id: MODEL_ID, userId: OWNER_ID, minor: true });
+
+    expect(updateData().meta.ownerFlagOverride).toEqual({
+      ...ownerFlagOverride,
+      flags: ['poi', 'minor'],
+    });
   });
 
   it('takes both lock sets when an owner marks minor and poi over a locked nsfw', async () => {
@@ -987,6 +1013,91 @@ describe('upsertModel — content flags the row ends up with', () => {
       privateFromTraining({ user: { id: MODERATOR_ID, isModerator: true }, sfwOnly: undefined })
     ).rejects.toThrow('Mature content on a model marked as SFW is not permitted.');
     expect(mockDbWrite.model.updateMany).not.toHaveBeenCalled();
+  });
+
+  // Otherwise a later flag's lift would restore a ruling this save already replaced.
+  it("drops the owner-flag override when a moderator's save leaves neither flag", async () => {
+    const ownerFlagOverride = {
+      at: '2026-01-01T00:00:00.000Z',
+      flags: ['minor'],
+      prevNsfw: true,
+      prevSfwOnly: false,
+      prevLockedProperties: ['nsfw'],
+    };
+    mockStored({
+      minor: true,
+      sfwOnly: true,
+      lockedProperties: ['nsfw', 'minor', 'sfwOnly'],
+      meta: { ownerFlagOverride, cannotPromote: true },
+    });
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, minor: false });
+
+    expect(updateData().meta).not.toHaveProperty('ownerFlagOverride');
+    expect(updateData().meta).toHaveProperty('cannotPromote', true);
+  });
+
+  it("drops the owner-flag override when a moderator's save rules on the rating", async () => {
+    mockStored({
+      minor: true,
+      sfwOnly: true,
+      lockedProperties: ['nsfw', 'minor', 'sfwOnly'],
+      meta: {
+        ownerFlagOverride: {
+          at: '2026-01-01T00:00:00.000Z',
+          flags: ['minor'],
+          prevNsfw: true,
+          prevSfwOnly: false,
+          prevLockedProperties: ['nsfw'],
+        },
+      },
+    });
+
+    await upsert({
+      id: MODEL_ID,
+      userId: MODERATOR_ID,
+      isModerator: true,
+      lockedProperties: ['minor', 'sfwOnly'],
+    });
+
+    expect(updateData().meta).not.toHaveProperty('ownerFlagOverride');
+  });
+
+  it('marks the minor flag snapshot as superseded when a save turns minor off', async () => {
+    mockStored({
+      minor: true,
+      sfwOnly: true,
+      lockedProperties: [],
+      meta: { minorFlagSnapshot: { at: '2026-01-01T00:00:00.000Z', source: 'manual' } },
+    });
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, minor: false });
+
+    expect(updateData().meta.minorFlagSnapshot).toEqual({
+      at: '2026-01-01T00:00:00.000Z',
+      source: 'manual',
+      supersededAt: expect.any(String),
+    });
+  });
+
+  it('keeps the owner-flag override while a save leaves a flag on', async () => {
+    const ownerFlagOverride = {
+      at: '2026-01-01T00:00:00.000Z',
+      flags: ['minor'],
+      prevNsfw: true,
+      prevSfwOnly: false,
+      prevLockedProperties: ['nsfw'],
+    };
+    mockStored({
+      minor: true,
+      sfwOnly: true,
+      lockedProperties: ['nsfw', 'minor', 'sfwOnly'],
+      meta: { ownerFlagOverride },
+    });
+
+    await upsert({ id: MODEL_ID, userId: MODERATOR_ID, isModerator: true, name: 'Renamed Model' });
+
+    expect(updateData().meta).toHaveProperty('ownerFlagOverride', ownerFlagOverride);
   });
 
   it('never takes an owner-flag override record from the client', async () => {
