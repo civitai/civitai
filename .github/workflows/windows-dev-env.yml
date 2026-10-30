@@ -100,9 +100,14 @@ name: Windows dev-env smoke
 # Nothing hangs when this skips: `main` and `release` have no
 # required_status_checks. If this check ever becomes required, the filter has
 # to go, or a PR that skips it waits forever.
+#
+# Draft PRs skip the smoke run, like lint.yml's heavy jobs (see its header);
+# `ready_for_review` is in `types` so marking the PR ready starts it. On a
+# draft, dispatch it: `gh workflow run windows-dev-env.yml -R civitai/civitai --ref <branch>`.
 on:
   pull_request:
     branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '.github/workflows/windows-dev-env.yml'
       - 'package.json'
@@ -160,6 +165,7 @@ jobs:
   smoke:
     name: Windows dev-env (${{ matrix.shell }})
     runs-on: windows-latest
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     # REPORT-ONLY ON PULL REQUESTS, REAL VERDICT ON `main`. The header's
     # non-blocking rationale is explicitly about not stopping UNRELATED PRs over
     # a canary that might be red on day one. On a push the merge has already

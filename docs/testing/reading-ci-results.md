@@ -20,17 +20,31 @@ gh api repos/<owner>/<repo>/commits/$sha/check-runs -q '.total_count'
 gh run list --branch <branch> --json headSha,name,conclusion
 ```
 
-**A healthy internal PR here has 6 `Lint` check-runs at head and a `success` combined status**
-carrying `tekton / typecheck` and `tekton / fixture-bootstrap`. Two of the six are `skipped` by
+**A healthy internal PR here has 5 `Lint` check-runs at head and a `success` combined status**
+carrying `tekton / typecheck` and `tekton / fixture-bootstrap`. Two of the five are `skipped` by
 design: `Typecheck` (Tekton's covers an internal PR) and `Unit tests` (runs on `main` and on
-dispatch only; it is one skipped check, not four shards). Expect `pr-review` on top, plus a check
-per job of any other workflow the PR's paths trigger. A count of
+dispatch only; it is one skipped check, not four shards). A PR that touches `apps/`, `packages/` or
+the root files the app suites read also gets 1 `App suites` check-run (`App unit tests + typecheck`);
+any other PR gets none, and that is by design, not a missing run (the list is the `paths:` filter in
+`.github/workflows/apps.yml`). Expect `pr-review` on top, plus a check per job of any other workflow
+the PR's paths trigger. A count of
 0 is obvious; a count of 4 would not have been, which is why the number is worth knowing.
 
 The two systems are separate and you need both. For an internal PR targeting `main`,
 `tekton / typecheck` is the **authoritative** typecheck — the GitHub Actions typecheck job
 deliberately skips that case (see the header of `.github/workflows/lint.yml`). So a check set that
 contains Actions results but no Tekton status does not cover the thing that gates.
+
+**On a draft PR, Lint runs ESLint only.** The same 5 `Lint` check-runs appear, but every one except
+`ESLint + Prettier (changed files)` is `skipped`, and the `App suites`, Windows dev-env, tRPC parity and
+schema drift jobs skip too. That is the draft gate, not a broken run: the jobs start when the PR is
+marked ready (`gh pr ready <pr>`). To get a verdict while it is still a draft, dispatch one on the
+branch, which runs against the branch head rather than the merge with `main`:
+
+```bash
+gh workflow run lint.yml -R civitai/civitai --ref <branch> -f only=<job>   # typecheck, unit, packages, component, ...
+gh workflow run apps.yml -R civitai/civitai --ref <branch>                 # app suites + app typecheck
+```
 
 ## 2. `gh pr view --json headRefOid` can hand you the previous SHA
 
@@ -76,7 +90,7 @@ what should have been there.
 
 ### What to do
 
-- **Count, don't skim.** A healthy internal PR here carries **6 `Lint` check-runs plus 2 Tekton statuses**
+- **Count, don't skim.** A healthy internal PR here carries **5 `Lint` check-runs plus 2 Tekton statuses**
   at head, and more checks from other workflows (see above). `Passed: 2` is not a pass.
 - **Check both mechanisms by SHA**, because one can be present while the other is absent:
 
