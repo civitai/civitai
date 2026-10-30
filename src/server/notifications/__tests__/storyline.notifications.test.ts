@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { notBlockedBetween } from '~/server/notifications/base.notifications';
 import {
+  storylineInviteNotifications,
   storylineNotifications,
   storylineOwnerNotifications,
 } from '~/server/notifications/storyline.notifications';
@@ -171,5 +172,39 @@ describe('storyline continuation notifications', () => {
       [c.usernameKey]: 'tehalex86',
     });
     expect(text).not.toMatch(/buzz|refund|\bfee\b/i);
+  });
+});
+
+describe('the collaborator invitation notification', () => {
+  const def = storylineInviteNotifications['storyline-collaborator-invited'];
+  const sql = () =>
+    def.prepareQuery!({
+      lastSent: LAST_SENT,
+      lastSentDate: new Date(0),
+      clickhouse: undefined,
+    }) as Promise<string>;
+
+  it('goes to the invitee, naming the owner, from the storyline page', async () => {
+    expect(notificationProcessors['storyline-collaborator-invited']).toBe(def);
+    const query = await sql();
+    expect(query).toContain('sc."userId",');
+    expect(query).toContain('JOIN "User" u ON u.id = s."userId"');
+    expect(
+      def.prepareMessage({
+        type: 'storyline-collaborator-invited',
+        details: { storylineId: 7, storylineTitle: 'The Patch', ownerUsername: 'tehalex86' },
+      } as Parameters<typeof def.prepareMessage>[0])
+    ).toEqual({
+      message: 'tehalex86 invited you to collaborate on "The Patch"',
+      url: '/storylines/7',
+    });
+  });
+
+  it('is sent once for an open invitation, never for an accepted one', async () => {
+    const query = await sql();
+    expect(query).toContain('sc."acceptedAt" IS NULL');
+    expect(query).toContain(`sc."createdAt" > '${LAST_SENT}'`);
+    expect(query).toContain(`NOT s."tosViolation"`);
+    expect(query).toContain(notBlockedBetween('sc."userId"', 's."userId"'));
   });
 });

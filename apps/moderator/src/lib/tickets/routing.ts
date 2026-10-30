@@ -5,6 +5,15 @@ export type TicketView = 'moderation' | 'support';
 export const isTicketView = (v: unknown): v is TicketView => v === 'moderation' || v === 'support';
 
 export const ACCOUNT_RESTRICTION_FEATURE = 'Account Restriction or Banned Account';
+export const CONTENT_RELATED_FEATURE = 'Content Related Issue';
+export const IMAGE_GENERATOR_FEATURE = 'Image Generator';
+export const LORA_TRAINER_FEATURE = 'LoRA Trainer';
+export const BILLING_MEMBERSHIP_FEATURE = 'Billing or Membership';
+export const COSMETIC_SHOP_FEATURE = 'Cosmetic Shop';
+export const BUZZ_RECEIVING_FEATURE = 'Buzz (Receiving)';
+export const BOUNTY_SYSTEM_FEATURE = 'Bounty System';
+export const ACCOUNT_LOGIN_FEATURE = 'Account Login';
+export const EMAIL_CHANGE_FEATURE = 'Email Change';
 
 /**
  * Which tickets belong to the moderation view. Everything else is support's. Edit this constant to move

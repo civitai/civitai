@@ -3,6 +3,7 @@ import { dbRead } from '../db';
 import { getTimedMute } from '../user-actions.service';
 import { getIdentity } from '../user-lookup.service';
 import { accountPanelFor } from '$lib/tickets/account-panel';
+import { supportAccountPanelFor } from '$lib/tickets/support-account-panel';
 import { unwiredRulingReason } from '$lib/restriction-types';
 import type { TicketView } from '$lib/tickets/routing';
 
@@ -31,6 +32,9 @@ export type TicketAccount =
       restrictions: TicketRestriction[];
       /** The user's latest pending Account site appeal; present only for a viewer who may open `/appeals/account`. */
       pendingAppeal?: TicketAccountAppeal | null;
+      /** Read-only (support) card only: how the user signs in and whether the address was ever verified. */
+      email?: string | null;
+      emailVerified?: string | null;
     };
 
 export type TicketAccountAppeal = { id: number; createdAt: string; message: string };
@@ -92,7 +96,8 @@ const iso = (d: Date | string | null | undefined) => (d ? new Date(d).toISOStrin
 /**
  * The account section of a ticket payload. `undefined` leaves the key out: the viewer may not open
  * User Lookup (the page whose data this is), or the ticket is not an account ticket. A failed read is
- * `unavailable` and never fails the ticket. The address is never copied out of the identity read.
+ * `unavailable` and never fails the ticket. `readOnly` is the support card: its own visibility rule, no
+ * appeal and no rulable restriction, and the only place the address (behind the PII grant) and its verified date are copied out.
  */
 export async function accountSectionFor(
   ticket: {
@@ -103,11 +108,15 @@ export async function accountSectionFor(
     canView: boolean;
     /** The viewer may open `/appeals/account`, so a pending Account appeal is read and ruled here. */
     canAppeal?: boolean;
+    readOnly?: boolean;
+    /** The viewer holds `decisions.support.pii`; without it the read-only card carries no address. */
+    canSeeEmail?: boolean;
   },
   reads: AccountReads = liveReads
 ): Promise<TicketAccount | undefined> {
   if (!ticket.canView) return undefined;
-  const panel = accountPanelFor(ticket);
+  const { readOnly = false, canSeeEmail = false } = ticket;
+  const panel = readOnly ? supportAccountPanelFor(ticket) : accountPanelFor(ticket);
   if (panel === 'hidden') return undefined;
   if (panel === 'unlinked' || ticket.civitaiUserId === null) return { status: 'unlinked' };
 
@@ -117,7 +126,7 @@ export async function accountSectionFor(
       reads.identity(userId),
       reads.timedMute(userId),
       reads.restrictions(userId),
-      ticket.canAppeal ? pendingAppealOf(reads, userId) : undefined,
+      ticket.canAppeal && !readOnly ? pendingAppealOf(reads, userId) : undefined,
     ]);
     if (!identity) return { status: 'unavailable', userId };
     return {
@@ -136,9 +145,15 @@ export async function accountSectionFor(
         type: r.type,
         status: r.status,
         createdAt: iso(r.createdAt)!,
-        rulable: r.status === 'Pending' && unwiredRulingReason(r.type) === null,
+        rulable: !readOnly && r.status === 'Pending' && unwiredRulingReason(r.type) === null,
       })),
       ...(appeal === undefined ? {} : { pendingAppeal: appeal }),
+      ...(readOnly
+        ? {
+            ...(canSeeEmail ? { email: identity.email ?? null } : {}),
+            emailVerified: iso(identity.emailVerified),
+          }
+        : {}),
     };
   } catch (e) {
     console.error('[tickets] account status failed', e);

@@ -27,6 +27,7 @@ import {
 } from '~/server/schema/storyline.schema';
 import {
   addOwnerChapter,
+  addOwnerChapterAtEnd,
   addStorylineCollaborator,
   createStoryline,
   deleteStoryline,
@@ -53,6 +54,7 @@ import {
   recordStorylineCreateClick,
   removePendingChapter,
   removeStorylineCollaborator,
+  acceptStorylineInvite,
   setCanonChapter,
   setFirstChapter,
   setStorylineTakedown,
@@ -254,6 +256,10 @@ export const storylineRouter = router({
     .input(addOwnerChapterSchema)
     .mutation(({ input, ctx }) => addOwnerChapter({ ...input, userId: ctx.user.id })),
 
+  addChapterAtEnd: storylineWriteProcedure
+    .input(setFirstChapterSchema)
+    .mutation(({ input, ctx }) => addOwnerChapterAtEnd({ ...input, userId: ctx.user.id })),
+
   setCanon: storylineWriteProcedure.input(setCanonChapterSchema).mutation(({ input, ctx }) =>
     setCanonChapter({
       chapterId: input.chapterId,
@@ -319,6 +325,13 @@ export const storylineRouter = router({
         userId: ctx.user.id,
         isModerator: ctx.user.isModerator,
       })
+    ),
+
+  // Declining is `leave`, which a muted invitee can still reach.
+  acceptInvite: storylineWriteProcedure
+    .input(leaveStorylineSchema)
+    .mutation(({ input, ctx }) =>
+      acceptStorylineInvite({ storylineId: input.storylineId, userId: ctx.user.id })
     ),
 
   leave: storylineMemberProcedure.input(leaveStorylineSchema).mutation(({ input, ctx }) =>

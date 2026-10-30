@@ -76,6 +76,7 @@ beforeAll(async () => {
     '20261024160000_storyline_minor_by_scan',
     '20261106120000_storyline_rejoin',
     '20261122120000_storyline_pending_chapter',
+    '20261215120000_storyline_collaborator_accepted',
   ])
     await db.pg.exec(migration(name));
   // Re-runnable, as its header says.
@@ -143,10 +144,13 @@ describe('the pending-chapter migration', () => {
 });
 
 describe('the storylines feed', () => {
-  const feedIds = async (viewer?: { id: number; isModerator?: boolean }) =>
+  const feedIds = async (
+    viewer?: { id: number; isModerator?: boolean },
+    filter: 'all' | 'mine' = 'all'
+  ) =>
     (
       await getStorylinesInfinite({
-        filter: 'all',
+        filter,
         sort: 'newest',
         limit: 20,
         viewer,
@@ -163,6 +167,13 @@ describe('the storylines feed', () => {
       EMPTY,
       WITH_CHAPTER,
     ]);
+  });
+
+  it("lists only the viewer's own storylines under My storylines, empty ones included", async () => {
+    await expect(feedIds({ id: OWNER }, 'mine')).resolves.toEqual([3, EMPTY, WITH_CHAPTER]);
+    await expect(feedIds({ id: STRANGER }, 'mine')).resolves.toEqual([]);
+    await expect(feedIds({ id: MODERATOR, isModerator: true }, 'mine')).resolves.toEqual([]);
+    await expect(feedIds(undefined, 'mine')).resolves.toEqual([]);
   });
 
   // Out of the feed for everyone; its owner and moderators still open it by its URL.

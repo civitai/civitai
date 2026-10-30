@@ -1,4 +1,4 @@
-import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text } from '@mantine/core';
+import { Alert, Anchor, Badge, Button, Card, Group, Stack, Text, Tooltip } from '@mantine/core';
 import { IconBolt, IconCheck, IconStar, IconX } from '@tabler/icons-react';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import {
@@ -199,17 +199,24 @@ export function StorylineQueueList({
                 >
                   Accept
                 </Button>
-                <Button
-                  size="compact-sm"
-                  fullWidth
-                  variant="light"
-                  leftSection={<IconStar size={14} />}
-                  loading={isBusy('endorse')}
-                  disabled={!!busy || held || overCeiling || unusable || !row.placer}
-                  onClick={() => onAct(row, 'endorse')}
+                <Tooltip
+                  label="Approves this chapter and invites its author as a collaborator; they show once they accept"
+                  multiline
+                  w={260}
+                  withinPortal
                 >
-                  Endorse
-                </Button>
+                  <Button
+                    size="compact-sm"
+                    fullWidth
+                    variant="light"
+                    leftSection={<IconStar size={14} />}
+                    loading={isBusy('endorse')}
+                    disabled={!!busy || held || overCeiling || unusable || !row.placer}
+                    onClick={() => onAct(row, 'endorse')}
+                  >
+                    Approve + invite
+                  </Button>
+                </Tooltip>
                 <Button
                   size="compact-sm"
                   fullWidth

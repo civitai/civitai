@@ -25,7 +25,9 @@ on:
   pull_request:
     branches: [main]
     # `labeled`: adding the `preview` label is what makes a PR get an image, so it re-runs this.
-    types: [opened, synchronize, reopened, labeled]
+    # `ready_for_review`: the job skips draft PRs (see lint.yml's header), so marking the PR
+    # ready has to start it.
+    types: [opened, synchronize, reopened, labeled, ready_for_review]
     paths:
       - 'scripts/trpc-server/**'
       - 'scripts/ci/assert-standalone-boot-graph.mjs'
@@ -67,6 +69,8 @@ jobs:
   parity:
     name: Next vs standalone tRPC server
     runs-on: ubuntu-latest
+    # Draft PRs run ESLint only (lint.yml's header). Dispatch is unaffected.
+    if: github.event_name != 'pull_request' || !github.event.pull_request.draft
     timeout-minutes: 75
     services:
       # Throwaway stores, empty. DB-backed procedures therefore fail — on both servers alike,

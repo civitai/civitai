@@ -18,10 +18,17 @@
   import { splitTags } from '$lib/tickets/tags';
   import TicketAccount from './TicketAccount.svelte';
   import TicketAppeals from './TicketAppeals.svelte';
+  import TicketBounties from './TicketBounties.svelte';
+  import TicketContentReports from './TicketContentReports.svelte';
   import TicketEscalate from './TicketEscalate.svelte';
+  import TicketGeneratorRestrictions from './TicketGeneratorRestrictions.svelte';
   import TicketHistory from './TicketHistory.svelte';
+  import TicketLoraRuns from './TicketLoraRuns.svelte';
+  import TicketMembership from './TicketMembership.svelte';
+  import TicketPayouts from './TicketPayouts.svelte';
   import TicketRatingDisputes from './TicketRatingDisputes.svelte';
   import TicketReply from './TicketReply.svelte';
+  import TicketShopPurchases from './TicketShopPurchases.svelte';
   import TicketStatusMenu from './TicketStatusMenu.svelte';
 
   let {
@@ -285,6 +292,14 @@
   {#if panels.account}
     <TicketAccount ticketId={row.id} account={panels.account} canAct={canAccountAct} {canUnban} ondone={accountDone} />
   {/if}
+  {#if panels.supportAccount}
+    <TicketAccount
+      ticketId={row.id}
+      account={panels.supportAccount}
+      readOnly
+      ondone={accountDone}
+    />
+  {/if}
   {#if panels.appeals}
     <TicketAppeals
       ticketId={row.id}
@@ -298,6 +313,27 @@
   {/if}
   {#if panels.history}
     <TicketHistory history={panels.history} />
+  {/if}
+  {#if panels.contentIssue}
+    <TicketContentReports content={panels.contentIssue} />
+  {/if}
+  {#if panels.generator}
+    <TicketGeneratorRestrictions ticketId={row.id} generator={panels.generator} ondone={accountDone} />
+  {/if}
+  {#if panels.lora}
+    <TicketLoraRuns ticketId={row.id} lora={panels.lora} ondone={accountDone} />
+  {/if}
+  {#if panels.membership}
+    <TicketMembership membership={panels.membership} />
+  {/if}
+  {#if panels.shop}
+    <TicketShopPurchases shop={panels.shop} />
+  {/if}
+  {#if panels.payouts}
+    <TicketPayouts payouts={panels.payouts} />
+  {/if}
+  {#if panels.bounties}
+    <TicketBounties bounties={panels.bounties} />
   {/if}
 {/snippet}
 
