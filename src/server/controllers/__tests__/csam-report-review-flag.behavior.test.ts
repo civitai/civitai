@@ -219,7 +219,14 @@ describe('fileCsamReport', () => {
   it('files a supplemental report without removing the account again, and hands its image to the hold', async () => {
     // The earlier report removed the account.
     await pg.query(`UPDATE "Image" SET ingestion = 'Blocked' WHERE "userId" = $1`, [OWNER]);
-    dbMock.dbWrite.user.findUnique.mockResolvedValueOnce({ bannedAt: new Date() } as never);
+    dbMock.dbWrite.user.findUnique.mockImplementationOnce((async ({
+      where,
+    }: {
+      where: { id: number };
+    }) =>
+      where.id === OWNER
+        ? { bannedAt: new Date(), meta: { banDetails: { reasonCode: 'SexualMinor' } } }
+        : null) as never);
 
     await fileCsamReport({
       userId: OWNER,
@@ -235,19 +242,28 @@ describe('fileCsamReport', () => {
     expect(await flag(OWNED)).toBeNull();
   });
 
-  it('removes an account restored since its earlier report when a supplemental report is filed', async () => {
-    dbMock.dbWrite.user.findUnique.mockResolvedValueOnce({ bannedAt: null } as never);
+  it.each([
+    ['restored since', { bannedAt: null, meta: {} }],
+    [
+      'since banned for something else',
+      { bannedAt: new Date(), meta: { banDetails: { reasonCode: 'Other' } } },
+    ],
+  ])(
+    'removes an account %s its earlier report when a supplemental report is filed',
+    async (_, user) => {
+      dbMock.dbWrite.user.findUnique.mockResolvedValueOnce(user as never);
 
-    await fileCsamReport({
-      userId: OWNER,
-      imageIds: [OWNED],
-      type: 'Image',
-      reportedById: 2,
-      supplementalOf: 1,
-    });
+      await fileCsamReport({
+        userId: OWNER,
+        imageIds: [OWNED],
+        type: 'Image',
+        reportedById: 2,
+        supplementalOf: 1,
+      });
 
-    expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: 2 });
-  });
+      expect(softDeleteUser).toHaveBeenCalledWith({ id: OWNER, userId: 2 });
+    }
+  );
 
   it('fails loudly with the flag still on when removing the account fails', async () => {
     softDeleteUser.mockRejectedValueOnce(new Error('connection lost'));

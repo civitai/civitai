@@ -1,5 +1,6 @@
 import { handleDenyTrainingData } from '~/server/controllers/training.controller';
 import type { ProtectedContext } from '~/server/createContext';
+import { BanReasonCode } from '~/server/common/enums';
 import { dbWrite } from '~/server/db/client';
 import { logToAxiom } from '~/server/logging/client';
 import { reviewConsumerStrikes } from '~/server/http/orchestrator/flagged-consumers';
@@ -104,11 +105,9 @@ export async function fileCsamReport(input: CreateCsamReportSchema & { reportedB
     await reviewConsumerStrikes({ consumerId: `civitai-${userId}`, moderatorId: reportedById });
   }
 
-  // A supplemental report follows one that removed the account; one restored since is removed again.
-  const removed =
-    !!supplementalOf &&
-    !!(await dbWrite.user.findUnique({ where: { id: userId }, select: { bannedAt: true } }))
-      ?.bannedAt;
+  // A supplemental report follows one that removed the account for this; one restored or banned for
+  // something else since is removed again.
+  const removed = !!supplementalOf && (await removedForCsam(userId));
   if (userId !== -1 && !removed) {
     await softDeleteUser({ id: userId, userId: reportedById });
   }
@@ -131,4 +130,14 @@ export async function createExternalCsamReportHandler({
   // banned, and there is no on-Civitai content to remove. The report row is
   // picked up and sent to NCMEC by the hourly send-csam-reports job.
   await createExternalCsamReport({ ...input, reportedById: ctx.user.id });
+}
+
+async function removedForCsam(userId: number) {
+  const user = await dbWrite.user.findUnique({
+    where: { id: userId },
+    select: { bannedAt: true, meta: true },
+  });
+  const reasonCode = (user?.meta as { banDetails?: { reasonCode?: string } } | null)?.banDetails
+    ?.reasonCode;
+  return !!user?.bannedAt && reasonCode === BanReasonCode.SexualMinor;
 }

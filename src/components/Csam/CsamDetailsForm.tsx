@@ -75,7 +75,7 @@ export function CsamDetailsForm({
     },
     onError: (error) => {
       closeModal('csam-confirm');
-      showErrorNotification({ error, title: 'The report was not filed', autoClose: false });
+      showErrorNotification({ error, title: 'Filing the report failed', autoClose: false });
       // Views recorded at submit can change what a supplemental report may attach.
       if (supplementalOf) supplemental.refetch();
     },
@@ -118,6 +118,7 @@ export function CsamDetailsForm({
                   isLoading={supplemental.isLoading}
                   error={supplemental.error}
                   onRetry={() => supplemental.refetch()}
+                  isRefetching={supplemental.isFetching}
                 />
               )}
               <InputRadioGroup name="minorDepiction" label="Minor depiction">
@@ -260,11 +261,13 @@ function SupplementalPreview({
   isLoading,
   error,
   onRetry,
+  isRefetching,
 }: {
   data?: RouterOutput['csam']['getSupplementalPreview'];
   isLoading: boolean;
   error?: { message: string } | null;
   onRetry: () => void;
+  isRefetching: boolean;
 }) {
   if (isLoading)
     return (
@@ -277,7 +280,7 @@ function SupplementalPreview({
       <Alert color="red" title="This supplemental report cannot be filed">
         <Stack gap="xs" align="flex-start">
           <Text size="sm">{error?.message}</Text>
-          <Button size="xs" variant="default" onClick={onRetry}>
+          <Button size="xs" variant="default" onClick={onRetry} loading={isRefetching}>
             Check again
           </Button>
         </Stack>
