@@ -1090,6 +1090,7 @@ export const upsertArticle = async ({
         } catch (e) {
           // Non-blocking: continue even if image linking fails, but log the error
           const error = e as Error;
+          await keepOffPublicAfterLinkFailure(result.id, ArticleIngestionStatus.Pending);
           logToAxiom({
             type: 'error',
             name: 'article-image-linking',
@@ -1536,6 +1537,7 @@ export async function applyArticleContentChange({
       } catch (e) {
         // Non-blocking: continue even if image linking fails, but log the error
         const error = e as Error;
+        if (scanContent) await keepOffPublicAfterLinkFailure(id, ArticleIngestionStatus.Rescan);
         logToAxiom({
           type: 'error',
           name: 'article-image-linking',
@@ -1931,6 +1933,16 @@ export async function unpublishArticleById({
 
 // --- Article Image Scanning Functions ---
 
+/**
+ * Content whose images failed to link is shown with none of them scanned, so the article leaves
+ * public until a later link or rescan settles it. Raw SQL: this is not an edit.
+ */
+async function keepOffPublicAfterLinkFailure(articleId: number, ingestion: ArticleIngestionStatus) {
+  await dbWrite.$executeRaw`
+    UPDATE "Article" SET ingestion = ${ingestion}::"ArticleIngestionStatus" WHERE id = ${articleId}
+  `.catch((error) => handleLogError(error, 'article-image-linking-hold', { articleId }));
+}
+
 /** The content image urls of `content` with no `Image` row. */
 async function contentUrlsWithoutRows(content: string) {
   const urls = [...new Set(getContentMedia(content).map((media) => media.url))];
@@ -1962,17 +1974,16 @@ export async function assertArticleContentUrlsUsable({
   const missing = await contentUrlsWithoutRows(content);
   const stored = new Set(storedContent ? getContentMedia(storedContent).map((m) => m.url) : []);
   try {
+    // Linking may hold any of these rather than link it, so the hold must be readable first.
+    if (missing.length) await assertContentLinkHoldWritable();
     for (const urls of urlChunks(missing.filter((url) => !stored.has(url)))) {
       await assertClientImageUrlsUsable({ urls, userId: ownerId });
       await assertClientKeysIssuedToCaller({ urls, userId: ownerId, alsoIssuedTo: userId });
     }
     for (const urls of urlChunks(missing.filter((url) => stored.has(url)))) {
       await assertClientImageUrlsUsable({ urls, userId: ownerId, shopArtwork: false });
-      const issuers = await keyIssuers({ urls, userId: ownerId, alsoIssuedTo: userId });
-      if (issuers.issuedToOthers.length) throw imageUrlUnavailableError();
-      // Linking will hold these urls rather than link them, so the hold must be writable.
-      const lookupFailed = issuers.recordReadFailed || issuers.requestLogReadFailed;
-      if (lookupFailed && issuers.unrecorded.length) await assertContentLinkHoldWritable();
+      const { issuedToOthers } = await keyIssuers({ urls, userId: ownerId, alsoIssuedTo: userId });
+      if (issuedToOthers.length) throw imageUrlUnavailableError();
     }
   } catch (error) {
     if (error instanceof TRPCError && error.message === COVER_IMAGE_UNAVAILABLE_MESSAGE)
@@ -2057,6 +2068,7 @@ export async function linkArticleContentImages({
   coverId,
   cleanupOnly,
   now = new Date(),
+  relinks = 0,
 }: {
   articleId: number;
   content: string;
@@ -2065,6 +2077,8 @@ export async function linkArticleContentImages({
   coverId?: number | null;
   cleanupOnly?: boolean;
   now?: Date;
+  /** How many times this call has re-run over content a later save wrote. */
+  relinks?: number;
 }): Promise<{ orphanedImageIds: number[] }> {
   const contentImages = getContentMedia(content);
 
@@ -2079,6 +2093,8 @@ export async function linkArticleContentImages({
         urls: unlinked,
         ownerId,
         editorId: userId,
+        wasDeferred: new Set(previousHold?.deferred),
+        now,
       });
       hold = nextContentLinkHold(previousHold, { ...classified, editorId: userId }, now);
     }
@@ -2216,6 +2232,25 @@ export async function linkArticleContentImages({
       return { orphanedImageIds: trulyOrphanedIds, imagesToIngest, holdWritten };
     }
   );
+
+  // The article's content changed under this run, so its hold was not stored: link what it holds now,
+  // whoever wrote it, or a url in it could be left with neither a row nor a hold.
+  if (holdChanged && !holdWritten && relinks < 2) {
+    const current = await dbWrite.article.findUnique({
+      where: { id: articleId },
+      select: { content: true },
+    });
+    if (current && (current.content ?? '') !== content)
+      return linkArticleContentImages({
+        articleId,
+        content: current.content ?? '',
+        userId,
+        ownerId,
+        coverId,
+        now,
+        relinks: relinks + 1,
+      });
+  }
 
   if (holdWritten) {
     if (hold?.deferred.length) contentLinkHoldCounter.inc({ outcome: 'deferred' });

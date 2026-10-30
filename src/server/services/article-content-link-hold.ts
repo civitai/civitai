@@ -5,6 +5,7 @@ import {
   imageUrlUnavailableError,
   keyIssuers,
   keysIn,
+  UNRECORDED_KEYS_ACCEPTED_UNTIL,
 } from '~/server/services/image-url-ownership';
 
 /**
@@ -67,11 +68,17 @@ export async function classifyUnlinkedContentUrls({
   urls,
   ownerId,
   editorId,
+  wasDeferred = new Set(),
+  now,
 }: {
   urls: string[];
   ownerId: number;
   editorId: number;
+  /** Urls deferred before: once unrecorded keys are refused on save, one still unrecorded is too. */
+  wasDeferred?: Set<string>;
+  now: Date;
 }) {
+  const refuseUnrecorded = now >= UNRECORDED_KEYS_ACCEPTED_UNTIL;
   const refused: string[] = [];
   const deferred: string[] = [];
   for (let i = 0; i < urls.length; i += URLS_PER_LOOKUP) {
@@ -84,11 +91,13 @@ export async function classifyUnlinkedContentUrls({
     const others = new Set(issuers.issuedToOthers);
     // Some keys are recorded only in the issue record, so either store failing leaves them unproved.
     const lookupFailed = issuers.requestLogReadFailed || issuers.recordReadFailed;
-    const unresolved = new Set(lookupFailed ? issuers.unrecorded : []);
+    const unrecorded = new Set(issuers.unrecorded);
     for (const url of chunk) {
       const keys = keysIn(url);
+      const anyUnrecorded = keys.some((key) => unrecorded.has(key));
       if (keys.some((key) => others.has(key))) refused.push(url);
-      else if (keys.some((key) => unresolved.has(key))) deferred.push(url);
+      else if (anyUnrecorded && lookupFailed) deferred.push(url);
+      else if (anyUnrecorded && refuseUnrecorded && wasDeferred.has(url)) refused.push(url);
     }
   }
   return { refused, deferred };

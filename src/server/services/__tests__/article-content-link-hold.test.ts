@@ -45,7 +45,9 @@ const { assertArticleContentUrlsUsable, linkArticleContentImages, recomputeArtic
 const { recordUploadKeyOwner, ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE } = await import(
   '~/server/services/image-url-ownership'
 );
-const { writeContentLinkHold } = await import('~/server/services/article-content-link-hold');
+const { nextContentLinkHold, writeContentLinkHold } = await import(
+  '~/server/services/article-content-link-hold'
+);
 const { settleContentLinkHolds, CONTENT_LINK_DEFERRAL_BACKSTOP_MS } = await import(
   '~/server/jobs/article-content-link-hold'
 );
@@ -87,8 +89,19 @@ const holdDelegate = {
       ])
     )[0] ?? null,
   findFirst: async () => (await q(`SELECT "articleId" FROM "ArticleContentLinkHold" LIMIT 1`))[0],
-  findMany: async ({ take }: { take: number }) =>
-    q(`SELECT "articleId" FROM "ArticleContentLinkHold" ORDER BY "checkedAt" LIMIT $1`, [take]),
+  findMany: async ({
+    take,
+    orderBy,
+  }: {
+    take: number;
+    orderBy?: Record<string, 'asc' | 'desc'>;
+  }) => {
+    const [column, direction] = Object.entries(orderBy ?? { articleId: 'asc' })[0];
+    return q(
+      `SELECT "articleId" FROM "ArticleContentLinkHold" ORDER BY "${column}" ${direction}, "articleId" LIMIT $1`,
+      [take]
+    );
+  },
   updateMany: async ({
     where,
     data,
@@ -166,6 +179,8 @@ const tx = {
 beforeAll(async () => {
   db = new PGlite();
   raw = pgliteRaw(db);
+  // A zone away from UTC, so the hold's own UTC handling, not the machine's, keeps its times.
+  await db.exec(`SET TIME ZONE 'America/Denver'`);
   await db.exec(`
     CREATE TYPE "ArticleIngestionStatus" AS ENUM ('Pending', 'Scanned', 'Blocked', 'Error', 'Rescan');
     CREATE TYPE "ArticleStatus" AS ENUM ('Draft', 'Published', 'Unpublished', 'Processing', 'UnpublishedViolation');
@@ -346,7 +361,7 @@ describe('saving content whose stored url cannot be proved', () => {
     try {
       expect(await save()).toBe('refused');
       lookupsUp();
-      expect(await save()).toBe('accepted');
+      expect(await save()).toBe('refused');
     } finally {
       holdDelegate.findFirst = findFirst;
     }
@@ -461,5 +476,110 @@ describe('a deferral that does not settle', () => {
     await q(`UPDATE "Article" SET status = 'Draft'`);
     await settleContentLinkHolds(at(CONTENT_LINK_DEFERRAL_BACKSTOP_MS + MINUTE));
     expect(createReport).not.toHaveBeenCalled();
+  });
+});
+
+describe('the settle job', () => {
+  it('goes on to the next article when one fails, and moves the failed one to the back', async () => {
+    lookupsDown();
+    await link();
+    const OTHER_ARTICLE = 23;
+    await q(`INSERT INTO "Article" (id, "userId", content) VALUES ($1, $2, $3)`, [
+      OTHER_ARTICLE,
+      AUTHOR,
+      CONTENT,
+    ]);
+    await q(
+      `INSERT INTO "ArticleContentLinkHold" ("articleId", deferred, "editorId", "checkedAt") VALUES ($1, $2, $3, '2000-01-01')`,
+      [OTHER_ARTICLE, [KEY], AUTHOR]
+    );
+    const findUnique = dbMock.dbWrite.article.findUnique.getMockImplementation()!;
+    dbMock.dbWrite.article.findUnique.mockImplementation((async (args: {
+      where: { id: number };
+    }) => {
+      if (args.where.id === OTHER_ARTICLE) throw new Error('unreadable');
+      return findUnique(args as never);
+    }) as never);
+    lookupsUp();
+    await recordUploadKeyOwner(KEY, AUTHOR);
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await hold()).toBeNull();
+    const [failed] = await q<{ checkedAt: Date }>(
+      `SELECT "checkedAt" AT TIME ZONE 'UTC' AS "checkedAt" FROM "ArticleContentLinkHold" WHERE "articleId" = $1`,
+      [OTHER_ARTICLE]
+    );
+    expect(failed.checkedAt.getTime()).toBe(at(10 * MINUTE).getTime());
+  });
+});
+
+describe('classifying many urls', () => {
+  it('checks every url of an article longer than one lookup takes', async () => {
+    const keys = Array.from(
+      { length: 17 },
+      (_, i) => `0a0b0c0d-0000-4000-8000-${String(i).padStart(12, '0')}`
+    );
+    for (const key of keys) await recordUploadKeyOwner(key, OTHER);
+    const content = `<p>${keys.map(img).join('')}</p>`;
+    await givenArticle({ content });
+    await link({ content });
+    expect((await hold())?.refused.sort()).toEqual([...keys].sort());
+  });
+});
+
+describe('the hold write', () => {
+  it('clears no hold for content the article no longer holds', async () => {
+    lookupsDown();
+    await link();
+    const cleared = await writeContentLinkHold(tx as never, {
+      articleId: ARTICLE_ID,
+      content: '<p>older content</p>',
+      hold: null,
+    });
+    expect(cleared).toBe(false);
+    expect((await hold())?.deferred).toEqual([KEY]);
+  });
+
+  it('holds the content a later save wrote when it lost the race to it', async () => {
+    const later = `<p>a later save</p>${CONTENT}`;
+    await givenArticle({ content: later });
+    lookupsDown();
+    await link({ content: CONTENT });
+    expect((await hold())?.deferred).toEqual([KEY]);
+    expect(await ingestion()).toBe('Pending');
+  });
+
+  it('keeps a report time only while the same deferral lasts', () => {
+    const previous = {
+      deferred: [KEY],
+      refused: [],
+      editorId: AUTHOR,
+      deferredSince: T0,
+      reportedAt: at(MINUTE),
+    };
+    const next = (p: typeof previous | null, deferred: string[]) =>
+      nextContentLinkHold(p, { deferred, refused: [KEY2], editorId: AUTHOR }, at(2 * MINUTE));
+    expect(next(previous, [KEY])?.reportedAt).toEqual(at(MINUTE));
+    expect(next(previous, [])?.reportedAt).toBeNull();
+    expect(next({ ...previous, deferred: [] }, [KEY])?.reportedAt).toBeNull();
+  });
+});
+
+describe('a deferred url still unrecorded once the lookups are back', () => {
+  beforeEach(async () => {
+    lookupsDown();
+    await link();
+    lookupsUp();
+  });
+
+  it('is refused once unrecorded keys are refused on save', async () => {
+    await settleContentLinkHolds(at(10 * MINUTE));
+    expect(await rows()).toEqual([]);
+    expect((await hold())?.refused).toEqual([KEY]);
+  });
+
+  it('links before that', async () => {
+    await settleContentLinkHolds(new Date('2026-11-01T00:00:00Z'));
+    expect(await rows()).toEqual([KEY]);
+    expect(await hold()).toBeNull();
   });
 });
