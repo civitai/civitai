@@ -329,7 +329,7 @@ describe('labels', () => {
     expect(await labelled(1)).toEqual([true]);
   });
 
-  it('gives the rating question a rule once, and leaves yes/no questions alone', async () => {
+  it('gives the rating question a rule once, and leaves a bool question that has no producer id alone', async () => {
     await pg.exec(
       `INSERT INTO "KnightsQuestion" ("key","kind","prompt","options","version") VALUES ('knights.image.flag','bool','Flag?','[]'::jsonb,1)
        ON CONFLICT DO NOTHING`
@@ -418,7 +418,7 @@ describe('labels', () => {
     });
   });
 
-  it('does not label yes/no votes', async () => {
+  it('does not label a vote on a bool question that has no producer id', async () => {
     await pg.exec(
       `INSERT INTO "KnightsQuestion" ("key","kind","prompt","options") VALUES ('knights.image.flag','bool','Flag?','[]'::jsonb) ON CONFLICT DO NOTHING`
     );

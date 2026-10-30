@@ -1,6 +1,7 @@
 import { sql, type Kysely } from 'kysely';
 import type { DB } from '@civitai/db-schema/kysely';
 import { utc } from '@civitai/db/kysely';
+import { YESNO_KEY_PREFIX } from '../yesno/keys';
 import { heldSql } from './held';
 
 /** A vote the store has refused this many times is given up on (its reason stays in `record_failure`), so it is not retried forever. */
@@ -16,7 +17,10 @@ export type LabelBatch = {
   cursor: LabelCursor | null;
 };
 
-/** Gives every choice question a label-store `rule` row (`minHuman` = votes to resolve, not unanimous). Idempotent. */
+/**
+ * Gives every choice question a label-store `rule` row (`minHuman` = votes to resolve, not unanimous), and every yes/no question that has
+ * been answered one under its own label question (the producer's id), so the store can compute its majority. Idempotent.
+ */
 export async function ensureQuestionRules(db: Kysely<DB>): Promise<void> {
   await sql`
     INSERT INTO label_store.rule ("question", "questionVersion", "minHuman", "requireUnanimous")
@@ -25,7 +29,21 @@ export async function ensureQuestionRules(db: Kysely<DB>): Promise<void> {
     WHERE q."kind" = 'choice'
     ON CONFLICT DO NOTHING
   `.execute(db);
+  await sql`
+    INSERT INTO label_store.rule ("question", "questionVersion", "minHuman", "requireUnanimous")
+    SELECT ${YESNO_KEY_PREFIX}::text || i."externalId", q."version", i."votesNeeded", false
+    FROM "KnightsQueueItem" i
+    JOIN "KnightsQuestion" q ON q."key" = i."questionKey"
+    WHERE i."audience" IS NOT NULL AND i."externalId" IS NOT NULL AND i."voteCount" > 0
+    ON CONFLICT DO NOTHING
+  `.execute(db);
 }
+
+/**
+ * Rating votes are written once graded (`settledAt`); yes/no answers are not graded, so they are written as given (`createdAt`).
+ * Either way only after a detection run, and the batch's cursor `settledAt` is that time.
+ */
+export type LabelKind = 'rating' | 'yesno';
 
 type BatchArgs = {
   settledBefore: Date;
@@ -33,38 +51,68 @@ type BatchArgs = {
   limit: number;
   /** Restricts the batch to one vote (the row-by-row fallback). */
   only?: { itemId: number; playerId: number };
+  kind?: LabelKind;
 };
 
 type Row = { itemId: number; playerId: number; settledAt: Date; written: boolean; done: boolean };
 
+/** The SQL that differs between the two kinds of vote. */
+function shapeOf(kind: LabelKind) {
+  if (kind === 'yesno') {
+    return {
+      when: sql`v."createdAt"`,
+      join: sql`JOIN "KnightsQueueItem" it ON it."id" = v."itemId" AND it."audience" IS NOT NULL AND it."externalId" IS NOT NULL`,
+      eligible: sql`v."itemId" > 0`,
+      externalId: sql`it."externalId"`,
+      ref: (hash: ReturnType<typeof sql>) =>
+        sql`'KnightsYesNoVote:' || b."externalId" || ':' || ${hash}`,
+      question: sql`${YESNO_KEY_PREFIX}::text || b."externalId"`,
+    };
+  }
+  return {
+    when: sql`v."settledAt"`,
+    join: sql``,
+    eligible: sql`v."settledAt" IS NOT NULL
+        AND EXISTS (SELECT 1 FROM "KnightsQuestion" kq WHERE kq."key" = v."questionKey" AND kq."kind" = 'choice')`,
+    externalId: sql`NULL::text`,
+    ref: (hash: ReturnType<typeof sql>) => sql`'KnightsVote:' || b."itemId" || ':' || ${hash}`,
+    question: sql`b."questionKey"`,
+  };
+}
+
 async function runBatch(
   db: Kysely<DB>,
-  { settledBefore, after, limit, only }: BatchArgs
+  { settledBefore, after, limit, only, kind = 'rating' }: BatchArgs
 ): Promise<Row[]> {
+  const shape = shapeOf(kind);
   const onlyClause = only
     ? sql`AND v."itemId" = ${only.itemId} AND v."playerId" = ${only.playerId}`
     : sql``;
   const afterClause = after
-    ? sql`AND (v."settledAt", v."itemId", v."playerId") > (${utc(after.settledAt)}, ${
+    ? sql`AND (${shape.when}, v."itemId", v."playerId") > (${utc(after.settledAt)}, ${
         after.itemId
       }, ${after.playerId})`
     : sql``;
   const { rows } = await sql<Row>`
     WITH batch AS (
-      SELECT v."itemId", v."playerId", v."createdAt", v."settledAt", v."questionKey", v."imageId", v."answer"
+      SELECT v."itemId", v."playerId", v."createdAt", ${
+        shape.when
+      } AS "settledAt", v."questionKey", v."imageId", v."answer",
+        ${shape.externalId} AS "externalId"
       FROM "KnightsVote" v
-      WHERE v."settledAt" IS NOT NULL AND NOT v."labelled"
-        AND v."settledAt" <= ${utc(settledBefore)}
+      ${shape.join}
+      WHERE NOT v."labelled"
+        AND ${shape.eligible}
+        AND ${shape.when} <= ${utc(settledBefore)}
         ${afterClause}
         ${onlyClause}
-        AND EXISTS (SELECT 1 FROM "KnightsQuestion" kq WHERE kq."key" = v."questionKey" AND kq."kind" = 'choice')
         AND NOT ${heldSql('v.playerId')}
-      ORDER BY v."settledAt", v."itemId", v."playerId"
+      ORDER BY ${shape.when}, v."itemId", v."playerId"
       LIMIT ${limit}
     ), base AS (
       SELECT b.*, i."url", i."pHash", q."version",
         i."id" IS NOT NULL AND q."key" IS NOT NULL AS "hasSubject",
-        'KnightsVote:' || b."itemId" || ':' || label_store.person_hash('labeller', b."playerId") AS "ref"
+        ${shape.ref(sql`label_store.person_hash('labeller', b."playerId")`)} AS "ref"
       FROM batch b
       LEFT JOIN "Image" i ON i."id" = b."imageId"
       LEFT JOIN "KnightsQuestion" q ON q."key" = b."questionKey"
@@ -77,7 +125,7 @@ async function runBatch(
             p_subject_id => b."imageId"::text,
             p_content_hash => label_store.text_hash(b."url"),
             p_family => 'knights',
-            p_question => b."questionKey",
+            p_question => ${shape.question},
             p_value => b."answer",
             p_labeller_kind => 'knight',
             p_source_ref => b."ref",
@@ -135,20 +183,20 @@ const raisedRef = (itemId: number, playerId: number) =>
  * the one that raises is recorded as a failure, counts toward `MAX_REFUSALS`, and the others are written.
  */
 async function writeRowByRow(db: Kysely<DB>, args: BatchArgs): Promise<LabelBatch> {
+  const shape = shapeOf(args.kind ?? 'rating');
   const { rows: keys } = await sql<{ itemId: number; playerId: number; settledAt: Date }>`
-    SELECT v."itemId", v."playerId", v."settledAt" FROM "KnightsVote" v
-    WHERE v."settledAt" IS NOT NULL AND NOT v."labelled" AND v."settledAt" <= ${utc(
-      args.settledBefore
-    )}
+    SELECT v."itemId", v."playerId", ${shape.when} AS "settledAt" FROM "KnightsVote" v
+    ${shape.join}
+    WHERE NOT v."labelled" AND ${shape.eligible} AND ${shape.when} <= ${utc(args.settledBefore)}
       ${
         args.after
-          ? sql`AND (v."settledAt", v."itemId", v."playerId") > (${utc(args.after.settledAt)}, ${
+          ? sql`AND (${shape.when}, v."itemId", v."playerId") > (${utc(args.after.settledAt)}, ${
               args.after.itemId
             }, ${args.after.playerId})`
           : sql``
       }
       AND NOT ${heldSql('v.playerId')}
-    ORDER BY v."settledAt", v."itemId", v."playerId"
+    ORDER BY ${shape.when}, v."itemId", v."playerId"
     LIMIT ${args.limit}
   `.execute(db);
   const rows: Row[] = [];
