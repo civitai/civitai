@@ -1,7 +1,10 @@
 import type { ChatToolCall, ChatToolResult } from '@civitai/components-chat/civitai-chat';
 import { submitOfferOf } from '@civitai/app-assistant';
 import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
-import { unjustifiedSensitiveScopes } from '~/shared/constants/block-scope.constants';
+import {
+  unjustifiedSensitiveScopes,
+  type SensitiveScopeManifestInput,
+} from '~/shared/constants/block-scope.constants';
 import { getBase64 } from '~/utils/file-utils';
 
 /**
@@ -80,9 +83,9 @@ export async function submitBundleFromExport(exported: Blob, app: string): Promi
       `Your app has no ${MANIFEST_FILE}, so it cannot be submitted. Ask App Assistant to add it.`,
       0
     );
-  let manifest: Partial<SubmitManifest>;
+  let manifest: Partial<SubmitManifest> & SensitiveScopeManifestInput;
   try {
-    manifest = JSON.parse(manifestText) as Partial<SubmitManifest>;
+    manifest = JSON.parse(manifestText) as Partial<SubmitManifest> & SensitiveScopeManifestInput;
   } catch {
     throw new SubmitError(
       `Your app's ${MANIFEST_FILE} is not valid JSON. Ask App Assistant to fix it.`,

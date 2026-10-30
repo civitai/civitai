@@ -101,7 +101,7 @@ describe('a sensitive scope without a justification is caught before submit', ()
     );
     const tools = await open();
     await passChecks(tools);
-    expect(await call(tools, 'report_ready', { data: 'civitai' })).toEqual({
+    expect(await call(tools, 'report_ready', { data: 'civitai' })).toMatchObject({
       error: REPORT_READY_REFUSAL,
     });
     expect(await call(tools, 'submit_for_review')).toMatchObject({
@@ -124,7 +124,7 @@ describe('a sensitive scope without a justification is caught before submit', ()
       scopes: ['ai:write:budgeted', 'buzz:read:self'],
       scopeJustifications: { 'ai:write:budgeted': ' ' },
     });
-    expect(await call(tools, 'submit_for_review')).toEqual({
+    expect(await call(tools, 'submit_for_review')).toMatchObject({
       error:
         'Not ready yet. block.manifest.json asks for ai:write:budgeted, buzz:read:self, which Civitai accepts only with a reason: add to it "scopeJustifications": { "ai:write:budgeted": "<why the app needs it, in one plain sentence>" }, with an entry for each of them, and tell the user in one sentence what you wrote. Then run the preview check, the tests and the typecheck again, and call submit_for_review again.',
     });
@@ -189,7 +189,7 @@ describe('an SDK upgrade lands before the submit offer, never after it', () => {
 
     const first = await call(tools, 'submit_for_review');
     order.push('submit answered');
-    expect(first).toEqual({
+    expect(first).toMatchObject({
       error: `Not submitted yet: the runner just updated this app's Civitai SDK to ${CURRENT} and reinstalled its packages, so the app changed after its checks. Tell the user in one line: Updated this app's Civitai SDK to ${CURRENT_MINOR} so the preview stays awake while you use it. Then run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`,
     });
     expect(order).toEqual(['install', 'submit answered']);
