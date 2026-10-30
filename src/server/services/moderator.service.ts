@@ -160,6 +160,7 @@ export type StorylineModActivity = {
     | 'linkChapter'
     | 'setCanon'
     | 'removeCollaborator'
+    | 'removeChapter'
     | 'delete';
 };
 

@@ -83,6 +83,12 @@ section).
   paid continuation is pending or its Buzz has not settled. Only a moderator can delete one that
   has approved a paid continuation, is under an open report, or was taken down (and not while the
   creator's appeal is open).
+- **Removing a chapter.** The creator, the chapter's author or a moderator removes a chapter from the
+  storyline, from its menu on the storyline page or in the image menu while reading; its post stays
+  published. Only a chapter nothing continues from can go, and never chapter 1. It is refused while a
+  continuation of it waits for review or its own payment has not settled. The creator cannot remove
+  a chapter someone paid to add; its author can, and their Buzz is not returned. A taken-down
+  storyline's chapters are left to moderators.
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or
   declined. A post above the storyline's content level cannot be submitted at all. A post submitted
   while still a draft or still being scanned reaches the queue once it is published and rated, or is

@@ -110,6 +110,10 @@ export const moveStorylineChapterSchema = z.object({
   afterChapterId: z.number().int().positive(),
 });
 
+export const removeStorylineChapterSchema = z.object({
+  chapterId: z.number().int().positive(),
+});
+
 export const linkStorylineChapterSchema = z.object({
   parentChapterId: z.number().int().positive(),
   chapterId: z.number().int().positive(),

@@ -68,6 +68,7 @@ import { EntityCollaboratorList } from '~/components/EntityCollaborator/EntityCo
 import { PostingToModel3DCard } from '~/components/Model3D/Posting/PostingToModel3DCard';
 import { ImageContextMenu } from '~/components/Image/ContextMenu/ImageContextMenu';
 import { ReportChapterMenuItem } from '~/components/Storyline/ReportChapterMenuItem';
+import { StorylineChapterRemoveItem } from '~/components/Storyline/StorylineChapterRemoveItem';
 import { ImageDetailComments } from '~/components/Image/Detail/ImageDetailComments';
 import { useImageDetailContext } from '~/components/Image/Detail/ImageDetailProvider';
 import { useCarouselUrlSync } from '~/components/Image/DetailV2/useCarouselUrlSync';
@@ -415,12 +416,15 @@ export function ImageDetail2() {
                             <ImageContextMenu
                               image={image}
                               additionalMenuItems={
-                                storyline.active &&
-                                !isOwner &&
-                                image.postId &&
-                                storyline.chapterIdOfImage(image.id) !== undefined ? (
-                                  <ReportChapterMenuItem postId={image.postId} />
-                                ) : undefined
+                                <>
+                                  {storyline.active &&
+                                    !isOwner &&
+                                    image.postId &&
+                                    storyline.chapterIdOfImage(image.id) !== undefined && (
+                                      <ReportChapterMenuItem postId={image.postId} />
+                                    )}
+                                  <StorylineChapterRemoveItem imageId={image.id} />
+                                </>
                               }
                             >
                               <LegacyActionIcon {...sharedActionIconProps}>

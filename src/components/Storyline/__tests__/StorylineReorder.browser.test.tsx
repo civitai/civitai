@@ -19,6 +19,7 @@ vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
 }));
 vi.mock('~/components/Storyline/storyline.data', () => ({
   useMoveStorylineChapter: () => ({ isPending: false, error: mocks.error, mutate: mocks.move }),
+  useRemoveStorylineChapter: () => ({ isPending: false, mutate: vi.fn() }),
 }));
 vi.mock('~/components/Storyline/StorylineThumb', () => ({ StorylineThumb: () => <div /> }));
 vi.mock('~/components/UserAvatar/UserAvatar', () => ({

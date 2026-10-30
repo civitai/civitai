@@ -187,6 +187,29 @@ export function useMoveStorylineChapter(): {
   };
 }
 
+/** The server has the last word (a continuation waiting, a payment settling) and its refusal is shown as is. */
+export function useRemoveStorylineChapter({ onSuccess }: { onSuccess?: () => void } = {}): {
+  isPending: boolean;
+  mutate: (chapterId: number) => void;
+} {
+  const utils = trpc.useUtils();
+  const mutation = trpc.storyline.removeChapter.useMutation({
+    onSuccess: async () => {
+      onSuccess?.();
+      await utils.storyline.invalidate();
+    },
+    onError: (error) =>
+      showErrorNotification({
+        title: "Couldn't remove the chapter",
+        error: new Error(error.message),
+      }),
+  });
+  return {
+    isPending: mutation.isPending,
+    mutate: (chapterId) => mutation.mutate({ chapterId }),
+  };
+}
+
 export function useLinkStorylineChapter({ onSuccess }: { onSuccess: () => void }): {
   isPending: boolean;
   error: string | null;
