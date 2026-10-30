@@ -255,6 +255,25 @@ describe('deletePost orphan de-indexing', () => {
     );
   });
 
+  // The report links cascade with the rows: a lookup that fails must not let the delete go ahead.
+  it('deletes nothing when the report lookup fails', async () => {
+    primeQueries([OWNER_IMAGE]);
+    const prime = dbMock.dbWrite.$queryRaw.getMockImplementation();
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (
+      strings: TemplateStringsArray,
+      ...v: unknown[]
+    ) => {
+      if (sqlTextOf(strings).includes('"ImageReport"')) throw new Error('lookup failed');
+      return prime?.(strings, ...v);
+    }) as never);
+
+    await expect(deletePost({ id: POST_ID, deletedById: POSTER_ID })).rejects.toThrow(
+      'lookup failed'
+    );
+    expect(callContaining('DELETE FROM "Image"')).toBeUndefined();
+    expect(mockDeleteImageFromS3).not.toHaveBeenCalled();
+  });
+
   it('does not ask to keep shop artwork for an image under an open report', async () => {
     primeQueries([OWNER_IMAGE], [], [OWNER_IMAGE.id]);
 

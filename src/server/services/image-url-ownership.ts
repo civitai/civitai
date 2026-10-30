@@ -68,7 +68,7 @@ export function keysIn(url: string | null | undefined): string[] {
  * columns hold whatever the client sent. 🔴 Must match the expression indexes in migration
  * `20261211120000_shop_artwork_key_indexes` exactly, or every image create scans these tables.
  */
-const keyIn = (column: string) =>
+export const keyIn = (column: string) =>
   Prisma.raw(
     `substring(replace(translate(lower(${column}), E'\\t\\r\\n', ''), '%2d', '-') from '[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}')`
   );
@@ -145,6 +145,8 @@ export async function assertClientImageUrlsUsable({
     UNION ALL
     SELECT 1 FROM "ItemDefinition" WHERE ${keyIn(`"imageUrl"`)} = ANY(${keys}::text[])
       AND id IS DISTINCT FROM ${shopRow?.itemDefinitionId ?? null}::int
+    UNION ALL
+    SELECT 1 FROM "ImageCdnShopTakedown" WHERE url = ANY(${keys}::text[])
     LIMIT 1
   `;
   if (owned.length) throw imageUrlUnavailableError();
@@ -160,6 +162,8 @@ export async function shopArtworkUrls(urls: string[], db: Db = dbWrite): Promise
     WHERE EXISTS (SELECT 1 FROM "Cosmetic" WHERE ${keyIn(`"data"->>'url'`)} = k AND ${soldInShop})
       OR EXISTS (SELECT 1 FROM "CosmeticShopItem" WHERE ${keyIn(`"meta"->>'coverUrl'`)} = k)
       OR EXISTS (SELECT 1 FROM "ItemDefinition" WHERE ${keyIn(`"imageUrl"`)} = k)
+      -- A taken-down listing's art, after the listing is gone: a label still points at it.
+      OR EXISTS (SELECT 1 FROM "ImageCdnShopTakedown" WHERE url = k)
   `;
   const usedKeys = new Set(used.map((row) => row.key));
   return new Set(urls.filter((url) => keysByUrl.get(url)?.some((key) => usedKeys.has(key))));
