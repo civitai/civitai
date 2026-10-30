@@ -3168,8 +3168,7 @@ const REDIS_KEYS_UNPREFIXED = {
     IN_FLIGHT: 'trpc:in-flight',
   },
   MODEL: {
-    // v2: the served level is held for minor and SFW-only models; earlier entries were not.
-    GALLERY_SETTINGS: 'model:gallery-settings:v2',
+    GALLERY_SETTINGS: 'model:gallery-settings',
   },
   LAG_HELPER: 'lag-helper',
   HOLIDAY: {

@@ -5383,10 +5383,20 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
   const cacheKey = `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
 
   const cachedSettings = await redis.get(cacheKey);
-  if (cachedSettings)
-    return fromJson<
-      Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & { creatorHiddenUserIds?: number[] }
+  if (cachedSettings) {
+    const cached = fromJson<
+      | (Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & {
+          creatorHiddenUserIds?: number[];
+          sfwHeld?: boolean;
+        })
+      | { none: true }
+      | null
     >(cachedSettings);
+    // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
+    // unflagged model with no settings from a flagged one.
+    if (cached && 'none' in cached) return null;
+    if (cached?.sfwHeld !== undefined) return cached;
+  }
 
   const model = await getModel({
     id: id,
@@ -5406,17 +5416,16 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
     ]);
     settings = { ...preferences, creatorHiddenUserIds, sfwHeld };
   }
-  await redis.set(cacheKey, toJson(settings), { EX: CacheTTL.week });
+  await redis.set(cacheKey, toJson(settings ?? { none: true, sfwHeld }), { EX: CacheTTL.week });
 
   return settings;
 };
 
 /**
  * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
- * SFW. A setting that allows no SFW level, or none at all, serves SFW; a stored 0 stays 0.
+ * SFW. A setting that allows no SFW level, or none at all, serves SFW: the gallery reads 0 as no cap.
  */
 export function heldGalleryLevel(stored: number | undefined) {
-  if (stored === 0) return 0;
   return Flags.intersection(stored ?? 0, sfwBrowsingLevelsFlag) || sfwBrowsingLevelsFlag;
 }
 
@@ -6447,6 +6456,8 @@ export const privateModelFromTraining = async ({
       result.modelVersions.map((x) => x.id),
       result.id
     );
+    // The model is now SFW-only, which holds the gallery level it serves.
+    await bustModelGallerySettings([id]);
 
     return withoutMinorHashMeta(result);
   } catch (error) {

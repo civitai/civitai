@@ -1212,7 +1212,7 @@ describe('rollbackMinorHashAutoFlags', () => {
         .join('?')
         .includes('SET nsfw')
     );
-    expect(redisMock.redis.del).toHaveBeenCalledWith(['model:gallery-settings:v2:200']);
+    expect(redisMock.redis.del).toHaveBeenCalledWith(['model:gallery-settings:200']);
     expect(redisMock.redis.del.mock.invocationCallOrder[0]).toBeGreaterThan(
       mockDbWrite.$executeRaw.mock.invocationCallOrder[restoreAt]
     );

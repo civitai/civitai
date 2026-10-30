@@ -109,6 +109,7 @@ import {
 import type { ModelUpsertInput } from '~/server/schema/model.schema';
 import { Availability, ModelStatus, ModelType, ModelUploadType } from '~/shared/utils/prisma/enums';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { getTextScanMode } from '~/server/services/text-scan/mode';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -252,6 +253,19 @@ const STORED_MODERATION_META = {
 function writtenMeta() {
   return updateData().meta as Record<string, unknown>;
 }
+
+// A private model is SFW-only, which holds the level its gallery serves.
+describe('privateModelFromTraining — gallery settings cache', () => {
+  it("drops the model's cached gallery settings once it is published private", async () => {
+    mockStored({});
+    redisMock.redis.del.mockClear();
+
+    await privateFromTraining({ user: owner });
+
+    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    expect(redisMock.redis.del).toHaveBeenCalledWith([`model:gallery-settings:${MODEL_ID}`]);
+  });
+});
 
 describe('privateModelFromTraining — moderation-owned meta', () => {
   it('keeps every stored moderation-owned and flow key when a non-moderator sends none', async () => {

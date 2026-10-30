@@ -323,7 +323,7 @@ describe('applyModelFlagSideEffects — gallery browsing-level cache bust', () =
       after: { ...baseAfter, gallerySettings: { level: 4 } },
     });
 
-    expect(mockRedisDel).toHaveBeenCalledWith(['model:gallery-settings:v2:42']);
+    expect(mockRedisDel).toHaveBeenCalledWith(['model:gallery-settings:42']);
   });
 
   it('does not touch the gallery cache when the browsing level is unchanged', async () => {
@@ -343,6 +343,6 @@ describe('applyModelFlagSideEffects — gallery browsing-level cache bust', () =
       after: { ...baseAfter },
     });
 
-    expect(mockRedisDel).toHaveBeenCalledWith(['model:gallery-settings:v2:42']);
+    expect(mockRedisDel).toHaveBeenCalledWith(['model:gallery-settings:42']);
   });
 });
