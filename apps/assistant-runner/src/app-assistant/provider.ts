@@ -331,7 +331,7 @@ export class AppAssistantTools implements ToolProvider {
             previewHost: null,
             runner: 'remote',
           }),
-          ...(sdkUpgrade ? [sdkUpgrade] : []),
+          ...(sdkUpgrade.kind === 'upgraded' ? [sdkUpgrade.instructions] : []),
         ].join('\n\n'),
         hostTools: Object.keys(page),
       };

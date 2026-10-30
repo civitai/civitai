@@ -30,7 +30,7 @@ export interface EndedReply {
 }
 
 /** The charge a saved reply carries (`EndedReply.buzz`), when it has one. */
-const chargeOf = (assistant: HeadTurn['assistant']): number | undefined => {
+export const chargeOf = (assistant: HeadTurn['assistant']): number | undefined => {
   const buzz = (assistant as { buzz?: unknown } | undefined)?.buzz;
   return typeof buzz === 'number' && Number.isFinite(buzz) ? buzz : undefined;
 };
@@ -129,18 +129,13 @@ export function withEnd(head: Head, seq: number, reply: EndedReply, now: Date): 
 }
 
 /**
- * The head with `buzz` more charged to turn `seq`'s reply, once it has one saved; the head as it is
- * otherwise.
+ * The head with turn `seq`'s reply charged `buzz` in all, once it has one saved; the head as it is
+ * otherwise. A total, not an increment, so writing it twice counts it once.
  */
 export function withCharge(head: Head, seq: number, buzz: number): Head {
   const turn = savedTurn(head, seq);
   if (!turn?.assistant) return head;
-  return replaceReply(
-    head,
-    seq,
-    { ...turn.assistant, ...charged((chargeOf(turn.assistant) ?? 0) + buzz) },
-    head.updatedAt
-  );
+  return replaceReply(head, seq, { ...turn.assistant, ...charged(buzz) }, head.updatedAt);
 }
 
 export function withPatch(head: Head, patch: ConversationPatchRequest, now: Date): Head {

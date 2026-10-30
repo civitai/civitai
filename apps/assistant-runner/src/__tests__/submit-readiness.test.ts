@@ -147,53 +147,71 @@ describe('a sensitive scope without a justification is caught before submit', ()
   });
 });
 
+/**
+ * An app the reply has not scaffolded yet as it opens (no package.json for the runner to read):
+ * `scaffold()` writes what `civitai app create` pins. Every install answers `installExit`; one that
+ * exits 0 installs the range package.json declares. `steps` records each install and each answer.
+ */
+async function scaffoldedDuringReply({ installExit = 0 }: { installExit?: number } = {}) {
+  fake.add('my-app');
+  const app = {
+    pkg: null as string | null,
+    installed: null as string | null,
+    steps: [] as string[],
+  };
+  files((path) => {
+    if (path === 'my-app/block.manifest.json') return manifest();
+    if (path === 'my-app/package.json') return app.pkg;
+    if (path === 'my-app/node_modules/@civitai/sdk/package.json')
+      return app.installed === null
+        ? null
+        : JSON.stringify({ name: '@civitai/sdk', version: app.installed });
+    return null;
+  });
+  fake.tools.set('write_file', (args) => {
+    if (args.path === 'my-app/package.json') app.pkg = String(args.content);
+    return JSON.stringify({ path: args.path });
+  });
+  fake.tools.set('run_command', (args) => {
+    const command = String(args.command);
+    if (command === INSTALL) {
+      app.steps.push('install');
+      if (installExit === 0) {
+        const declared = /"@civitai\/sdk": "([^"]+)"/.exec(app.pkg ?? '')?.[1] ?? '';
+        app.installed = declared.replace(/^[\^~]/, '');
+      }
+      return `exit_code: ${installExit}\ntimed_out: false\n---\n`;
+    }
+    // No lockfile in this app: the upgrade keeps that it had none.
+    const output = command.includes('[ -e package-lock.json ]') ? 'absent\n' : '';
+    return `exit_code: 0\ntimed_out: false\n---\n${output}`;
+  });
+  fake.tools.set('dev_server_status', () => JSON.stringify({ running: false }));
+  const tools = await open();
+  const scaffold = () => {
+    app.pkg = `{\n  "name": "my-app",\n  "dependencies": {\n    "@civitai/sdk": "${SCAFFOLD_PIN}"\n  }\n}\n`;
+    app.installed = SCAFFOLD_PIN.slice(1);
+  };
+  return { tools, app, scaffold };
+}
+
 describe('an SDK upgrade lands before the submit offer, never after it', () => {
   it('an app scaffolded during the reply is upgraded at submit_for_review, which then waits for the checks again', async () => {
-    fake.add('my-app');
-    // As the reply opens the app is not scaffolded yet: the runner has no package.json to read.
-    let pkg: string | null = null;
-    let installed: string | null = null;
-    files((path) => {
-      if (path === 'my-app/block.manifest.json') return manifest();
-      if (path === 'my-app/package.json') return pkg;
-      if (path === 'my-app/node_modules/@civitai/sdk/package.json')
-        return installed === null
-          ? null
-          : JSON.stringify({ name: '@civitai/sdk', version: installed });
-      return null;
-    });
-    const order: string[] = [];
-    fake.tools.set('write_file', (args) => {
-      if (args.path === 'my-app/package.json') pkg = String(args.content);
-      return JSON.stringify({ path: args.path });
-    });
-    fake.tools.set('run_command', (args) => {
-      const command = String(args.command);
-      if (command === INSTALL) {
-        order.push('install');
-        installed = CURRENT.slice(1);
-      }
-      // No lockfile in this app: the upgrade keeps that it had none.
-      const output = command.includes('[ -e package-lock.json ]') ? 'absent\n' : '';
-      return `exit_code: 0\ntimed_out: false\n---\n${output}`;
-    });
-    fake.tools.set('dev_server_status', () => JSON.stringify({ running: false }));
-    const tools = await open();
-    expect(order).toEqual([]);
+    const { tools, app, scaffold } = await scaffoldedDuringReply();
+    expect(app.steps).toEqual([]);
 
     // The reply scaffolds the app (the template pins an older SDK) and checks it.
-    pkg = `{\n  "name": "my-app",\n  "dependencies": {\n    "@civitai/sdk": "${SCAFFOLD_PIN}"\n  }\n}\n`;
-    installed = SCAFFOLD_PIN.slice(1);
+    scaffold();
     await passChecks(tools);
     expect(await call(tools, 'report_ready', { data: 'civitai' })).toMatchObject({ ready: true });
 
     const first = await call(tools, 'submit_for_review');
-    order.push('submit answered');
+    app.steps.push('submit answered');
     expect(first).toMatchObject({
       error: `Not submitted yet: the runner just updated this app's Civitai SDK to ${CURRENT} and reinstalled its packages, so the app changed after its checks. Tell the user in one line: Updated this app's Civitai SDK to ${CURRENT_MINOR} so the preview stays awake while you use it. Then run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`,
     });
-    expect(order).toEqual(['install', 'submit answered']);
-    expect(pkg).toContain(`"@civitai/sdk": "${CURRENT}"`);
+    expect(app.steps).toEqual(['install', 'submit answered']);
+    expect(app.pkg).toContain(`"@civitai/sdk": "${CURRENT}"`);
 
     // The install changed the app: it is checked again before it is offered, and not upgraded again.
     expect(await call(tools, 'submit_for_review')).toMatchObject({
@@ -202,6 +220,28 @@ describe('an SDK upgrade lands before the submit offer, never after it', () => {
     await passChecks(tools);
     expect(await call(tools, 'report_ready', { data: 'civitai' })).toMatchObject({ ready: true });
     expect(await call(tools, 'submit_for_review')).toMatchObject({ awaitsUser: true });
-    expect(order.filter((step) => step === 'install')).toHaveLength(1);
+    expect(app.steps.filter((step) => step === 'install')).toHaveLength(1);
+  });
+
+  it('an upgrade that fails after changing the app withholds the offer too: the rolled-back app is checked again', async () => {
+    const { tools, app, scaffold } = await scaffoldedDuringReply({ installExit: 1 });
+    scaffold();
+    const scaffolded = app.pkg;
+    await passChecks(tools);
+    expect(await call(tools, 'report_ready', { data: 'civitai' })).toMatchObject({ ready: true });
+
+    const first = await call(tools, 'submit_for_review');
+    app.steps.push('submit answered');
+    expect(first).toMatchObject({
+      error: `Not submitted yet: the runner tried to update this app's Civitai SDK to ${CURRENT} and it failed, so it put the app's packages back; the app changed after its checks all the same. Do not tell the user about the SDK. Run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`,
+    });
+    expect(first).not.toHaveProperty('awaitsUser');
+    // It installed (the upgrade's, then the rollback's) before it answered, and put package.json back.
+    expect(app.steps).toEqual(['install', 'install', 'submit answered']);
+    expect(app.pkg).toBe(scaffolded);
+    // Those installs reached the gate: the next submit waits for the checks.
+    expect(await call(tools, 'submit_for_review')).toMatchObject({
+      error: expect.stringMatching(/sandbox__preview_check: it has not run/),
+    });
   });
 });

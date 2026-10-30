@@ -118,6 +118,30 @@ describe('a reply’s charges are saved with it', () => {
     expect(await buzzOf(store)).toBe(42);
   });
 
+  it('a save that landed and then failed is not counted twice by the next one', async () => {
+    const store = await seeded();
+    let failNext = true;
+    const flaky = {
+      load: (userId: string, conversationId: string) => store.load(userId, conversationId),
+      update: async (...args: Parameters<MemoryConversationStore['update']>) => {
+        const result = await store.update(...args);
+        if (failNext) {
+          failNext = false;
+          throw new Error('the write landed, but its answer was lost');
+        }
+        return result;
+      },
+    };
+    const writer = new ProgressWriter(flaky, 'u1', 'c1', 1, log);
+    writer.charged(13);
+    writer.save(step('one'));
+    await writer.idle();
+    expect(await buzzOf(store)).toBe(13);
+    writer.charged(4);
+    await writer.end({ messages: step('two'), status: 'done' });
+    expect(await buzzOf(store)).toBe(17);
+  });
+
   it('a free reply is saved as charged 0, not as unknown', async () => {
     const store = await seeded();
     const writer = new ProgressWriter(store, 'u1', 'c1', 1, log);
