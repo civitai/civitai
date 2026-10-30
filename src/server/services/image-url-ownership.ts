@@ -56,7 +56,7 @@ function storedUrlsFor(url: string | null | undefined): string[] {
   return keys.length ? [url as string, ...keys] : [];
 }
 
-function keysIn(url: string | null | undefined): string[] {
+export function keysIn(url: string | null | undefined): string[] {
   if (!url) return [];
   return decodedForms(url).flatMap((value) =>
     [...value.matchAll(UUIDS)].map(([, key]) => key.toLowerCase())

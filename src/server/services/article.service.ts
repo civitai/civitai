@@ -104,6 +104,7 @@ import {
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
   imageUrlUnavailableError,
   keyIssuers,
+  keysIn,
 } from '~/server/services/image-url-ownership';
 import { createNotification } from '~/server/services/notification.service';
 import { updateArticleNsfwLevels } from '~/server/services/nsfwLevels.service';
@@ -2004,6 +2005,25 @@ export async function checkSavedArticleContentUrls({
   return result;
 }
 
+/** The content urls with no `Image` row whose upload key was issued to someone else. */
+async function contentUrlsIssuedToOthers({
+  content,
+  userId,
+  ownerId,
+}: {
+  content: string;
+  userId: number;
+  ownerId: number;
+}) {
+  const refused = new Set<string>();
+  for (const urls of urlChunks(await contentUrlsWithoutRows(content))) {
+    const { issuedToOthers } = await keyIssuers({ urls, userId: ownerId, alsoIssuedTo: userId });
+    const others = new Set(issuedToOthers);
+    for (const url of urls) if (keysIn(url).some((key) => others.has(key))) refused.add(url);
+  }
+  return refused;
+}
+
 /**
  * Content images become `Image` rows, and deleting one removes its object, so an article may not
  * embed a key that shop artwork uses. Checked before the write: linking runs after it, and must
@@ -2052,6 +2072,9 @@ export async function linkArticleContentImages({
   cleanupOnly?: boolean;
 }): Promise<{ orphanedImageIds: number[] }> {
   const contentImages = getContentMedia(content);
+  const issuedToOthers = cleanupOnly
+    ? new Set<string>()
+    : await contentUrlsIssuedToOthers({ content, userId, ownerId });
 
   const { orphanedImageIds, imagesToIngest } = await dbWrite.$transaction(async (tx) => {
     const imageUrls = contentImages.map((img) => img.url);
@@ -2070,7 +2093,10 @@ export async function linkArticleContentImages({
       const existingUrlMap = new Map(existingImages.map((img) => [img.url, img]));
 
       // Batch create: Missing images (upsert with unique constraint handles races)
-      const missingMedia = contentImages.filter((media) => !existingUrlMap.has(media.url));
+      // A key issued to another user gets no row here, so a deleted row of theirs is not re-created.
+      const missingMedia = contentImages.filter(
+        (media) => !existingUrlMap.has(media.url) && !issuedToOthers.has(media.url)
+      );
       const newlyCreatedImages: { id: number; url: string }[] = [];
 
       if (missingMedia.length > 0) {
