@@ -184,6 +184,7 @@ describe('prepare-bounties auto-award', () => {
     ]);
     expect(mockSettle).not.toHaveBeenCalled();
     expect(bountyAutomaticallyAwardedEmail.send).not.toHaveBeenCalled();
+    expect(mockQueueUpdate).toHaveBeenCalledWith([{ id: BOUNTY_ID, action: 'Update' }]);
   });
 
   it('leaves a bounty whose award is still being paid to a later run', async () => {

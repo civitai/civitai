@@ -316,6 +316,7 @@ async function settleExpiredBounty({
   }
   if (claim.kind === 'complete') {
     log(` Bounty ${id} was fully awarded; marked complete`);
+    await bountiesSearchIndex.queueUpdate([{ id, action: SearchIndexUpdateQueueAction.Update }]);
     return;
   }
   if (claim.kind === 'awardPending') {

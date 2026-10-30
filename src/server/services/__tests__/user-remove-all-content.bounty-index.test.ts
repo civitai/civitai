@@ -190,6 +190,21 @@ describe('removeAllContent and the bounty index', () => {
     expect(queued(bountiesIndex)).toEqual(del(702, 701));
   });
 
+  it('settles a pending payout before the bounty delete', async () => {
+    unsettled = [701];
+    bountyService.settleBountyPayout.mockImplementation(async () => true);
+
+    await removeAllContent({ id: USER });
+
+    const deleteCall = vi
+      .mocked(dbMock.dbWrite.$executeRaw)
+      .mock.calls.findIndex((call) => flatten(call).text.includes('DELETE FROM "Bounty"'));
+    expect(deleteCall).toBeGreaterThanOrEqual(0);
+    expect(bountyService.settleBountyPayout.mock.invocationCallOrder[0]).toBeLessThan(
+      vi.mocked(dbMock.dbWrite.$executeRaw).mock.invocationCallOrder[deleteCall]
+    );
+  });
+
   it('refunds an open bounty before deleting it, and keeps one whose refund fails', async () => {
     open = [701, 702];
     bountyService.settleBountyPayout.mockImplementation(async (id: number) => id === 701);

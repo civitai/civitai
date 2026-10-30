@@ -1200,8 +1200,9 @@ async function bountyAwardAmounts(benefactors: AwardedFunds[]) {
 }
 
 /**
- * Returns the Buzz of a supporter whose award can no longer be paid, in the colours it was charged
- * in. Safe to repeat: charges refund by transaction id, and a legacy charge pays under a fixed key.
+ * Refunds a supporter whose award can no longer be paid, in the colours it was charged in. Returns
+ * false if any refund fails. Safe to repeat: charges refund by transaction id, and a legacy charge
+ * pays under a fixed key.
  */
 async function refundAwardingSupporter(bountyId: number, supporter: AwardedFunds) {
   const { userId, unitAmount, buzzTransactionId } = supporter;

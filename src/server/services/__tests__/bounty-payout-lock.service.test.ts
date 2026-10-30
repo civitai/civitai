@@ -126,8 +126,11 @@ const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 const find = (userId: number) => benefactors.find((b) => b.userId === userId);
 
 type AwardedAtFilter = { not: null } | { gt: Date };
-const matchesAwardedAt = (b: Benefactor, filter: AwardedAtFilter) =>
-  b.awardedAt != null && (!('gt' in filter) || b.awardedAt > filter.gt);
+const matchesAwardedAt = (b: Benefactor, filter: AwardedAtFilter) => {
+  const keys = Object.keys(filter);
+  if (keys.some((k) => k !== 'not' && k !== 'gt')) throw new Error(`unmodelled filter ${keys}`);
+  return b.awardedAt != null && (!('gt' in filter) || b.awardedAt > filter.gt);
+};
 
 function transactionClient(held: (() => void)[]) {
   return {
@@ -1014,6 +1017,19 @@ describe('a moderator going past an award no retry can pay', () => {
     // Only supporter 6's unpaid award is refunded; supporter 5 was paid.
     expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     expect(bounty).toBeNull();
+  });
+
+  it('refuses a winner-held award whose only marks an earlier settlement paid', async () => {
+    recordAward({ payoutRecordedAt: new Date(3000) });
+    Object.assign(benefactors[0], { awardedToId: null, awardedAt: new Date(2000) });
+    bounty!.payoutSettledAt = new Date(2000);
+    buzz.createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
+
+    // Nothing awarded since the settlement: the award is unpayable, so it becomes a refund.
+    await deleteBountyById({ id: 4, isModerator: true });
+    expect(bounty).toBeNull();
+    // Supporter 5's paid award keeps its marks and is not refunded.
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
   });
 
   it('gives an owner no override', async () => {
