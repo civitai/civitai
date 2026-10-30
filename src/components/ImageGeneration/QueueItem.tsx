@@ -376,7 +376,7 @@ export function QueueItem({
             </div>
             <div className="flex gap-1">
               <SubmitBlockedImagesForReviewButton request={request} hideDetails={hideDetails} />
-              {/* The workflow ID and its dashboard link stay off the phone card. */}
+              {/* The dashboard link stays off the phone card. */}
               {currentUser?.isModerator && !compact && (
                 <ButtonTooltip {...tooltipProps} label="Go to Workflow">
                   <LegacyActionIcon
@@ -392,13 +392,17 @@ export function QueueItem({
                   </LegacyActionIcon>
                 </ButtonTooltip>
               )}
-              {!compact && (
-                <ButtonTooltip {...tooltipProps} label="Copy Workflow ID">
-                  <LegacyActionIcon size="md" p={4} radius={0} onClick={handleCopy}>
-                    {copied ? <IconCheck /> : <IconInfoHexagon />}
-                  </LegacyActionIcon>
-                </ButtonTooltip>
-              )}
+              <ButtonTooltip {...tooltipProps} label="Copy Workflow ID">
+                <LegacyActionIcon
+                  size="md"
+                  p={4}
+                  radius={0}
+                  onClick={handleCopy}
+                  aria-label="Copy Workflow ID"
+                >
+                  {copied ? <IconCheck /> : <IconInfoHexagon />}
+                </LegacyActionIcon>
+              </ButtonTooltip>
               {canRemix && (
                 <ButtonTooltip {...tooltipProps} label="Remix">
                   <LegacyActionIcon size="md" p={4} radius={0} onClick={handleGenerate}>

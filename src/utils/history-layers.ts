@@ -140,3 +140,22 @@ export function resetHistoryLayers() {
   ownPops = 0;
   lastPop = undefined;
 }
+
+/**
+ * How many steps Back takes to leave a run of entries `isPage` claims (layers included): a routed
+ * dialog or a repeated push can leave several, so one step would land on the page again. 0 when no
+ * earlier entry is outside the run; null when the browser can't list its entries (no Navigation API).
+ */
+export function historyStepsBackPast(isPage: (url: URL) => boolean): number | null {
+  const nav = typeof window !== 'undefined' ? window.navigation : undefined;
+  const current = nav?.currentEntry;
+  if (!nav || !current) return null;
+  const entries = nav.entries();
+  let index = current.index;
+  while (index > 0) {
+    const url = entries[index - 1]?.url;
+    if (!url || !isPage(new URL(url))) break;
+    index--;
+  }
+  return index > 0 ? current.index - index + 1 : 0;
+}

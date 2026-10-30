@@ -60,6 +60,7 @@ import { versionCanGenerate } from '~/shared/generation/coverage-fields';
 import { getResourceCompatibility } from '~/components/generation_v2/inputs/ResourceItemContent';
 import {
   pickInitialVersionIndex,
+  pickVersionCover,
   resolveSelectedIndex,
 } from '~/components/ImageGeneration/GenerationForm/resource-select.types';
 import {
@@ -109,7 +110,6 @@ export function ResourceSelectCard({
   const currentUser = useCurrentUser();
   const [loading, setLoading] = useState(false);
 
-  const image = data.images[0];
   const theme = useMantineTheme();
   const colorScheme = useComputedColorScheme('dark');
   const showSfwFace = useShowsSfwFace();
@@ -140,6 +140,11 @@ export function ResourceSelectCard({
   });
   const setSelectedIndex = (index: number) => setOverride({ key: filterKey, index });
   const selectedVersion = versions[_selectedIndex];
+  const image = pickVersionCover(
+    data.images,
+    versions,
+    selectedVersion
+  ) as (typeof data.images)[number];
   const [flipped, setFlipped] = useState(false);
 
   /**

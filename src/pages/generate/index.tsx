@@ -27,7 +27,7 @@ import { useHasClientHistory } from '~/store/ClientHistoryStore';
 import { createServerSideProps } from '~/server/utils/server-side-helpers';
 import { generationGraphPanel } from '~/store/generation-graph.store';
 import { useMobileGenerator } from '~/hooks/useMobileGenerator';
-import { historyLayerDepth } from '~/utils/history-layers';
+import { historyLayerDepth, historyStepsBackPast } from '~/utils/history-layers';
 import type { GenerationResultsView } from '~/store/generation-panel.store';
 import { useGenerationPanelStore } from '~/store/generation-panel.store';
 
@@ -42,8 +42,12 @@ function useLeaveGenerate({ closeGenerator }: { closeGenerator: boolean }) {
   return () => {
     // Full-screen, the panel left open would cover the page the user is going back to.
     if (closeGenerator) generationGraphPanel.close();
-    // Go back past the layers open over the page (the form sheet, a picker) too.
-    if (hasHistory) history.go(-(1 + historyLayerDepth()));
+    // Back past every /generate entry (the layers open over it, a routed dialog's leftovers), to the
+    // page that opened it; without the Navigation API, past the layers only.
+    const steps =
+      historyStepsBackPast((url) => url.pathname.startsWith('/generate')) ??
+      (hasHistory ? 1 + historyLayerDepth() : 0);
+    if (steps > 0) history.go(-steps);
     else router.push('/');
   };
 }

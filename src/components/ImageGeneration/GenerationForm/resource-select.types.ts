@@ -167,6 +167,23 @@ export function pickInitialVersionIndex<T>(
 }
 
 /**
+ * The image a picker card shows for its selected version. The search doc carries a cover for the
+ * newest version of each base model, but `images[0]` is the model's primary cover: keep it while it
+ * belongs to the selected version's base model (the creator's pick), else show that version's own.
+ */
+export function pickVersionCover<I extends { modelVersionId?: number | null }>(
+  images: I[],
+  versions: { id: number; baseModel: string }[],
+  selected: { id: number; baseModel: string } | undefined
+): I | undefined {
+  const primary = images[0];
+  if (!primary || !selected) return primary;
+  const primaryBaseModel = versions.find((v) => v.id === primary.modelVersionId)?.baseModel;
+  if (primaryBaseModel === selected.baseModel) return primary;
+  return images.find((image) => image.modelVersionId === selected.id) ?? primary;
+}
+
+/**
  * A mounted card outlives a filter change, so a once-seeded `useState` would keep showing the version
  * the viewer just asked to hide. Keyed rather than reset by an effect.
  */

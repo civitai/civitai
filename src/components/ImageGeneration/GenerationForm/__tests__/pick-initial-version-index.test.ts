@@ -2,6 +2,7 @@ import { ModelVersionPricingSignal as S } from '@civitai/buzz';
 import { describe, expect, it } from 'vitest';
 import {
   pickInitialVersionIndex,
+  pickVersionCover,
   resolveSelectedIndex,
   showsPricingFilter,
   toResourceSelectFilterInput,
@@ -177,5 +178,29 @@ describe('toResourceSelectFilterInput', () => {
     expect(
       toResourceSelectFilterInput({ types: [], baseModels: [], loadedOnly: false }).hidePaid
     ).toBeUndefined();
+  });
+});
+
+describe('pickVersionCover', () => {
+  const versions = [
+    { id: 1, baseModel: 'Illustrious' },
+    { id: 2, baseModel: 'Anima' },
+    { id: 3, baseModel: 'Illustrious' },
+  ];
+  const images = [
+    { id: 10, modelVersionId: 1 },
+    { id: 20, modelVersionId: 2 },
+  ];
+
+  it("shows the selected version's cover when the primary one is another ecosystem's", () => {
+    expect(pickVersionCover(images, versions, versions[1])?.id).toBe(20);
+  });
+
+  it("keeps the primary cover (the creator's pick) within its own ecosystem", () => {
+    expect(pickVersionCover(images, versions, versions[2])?.id).toBe(10);
+  });
+
+  it('falls back to the primary cover when the selected version has none', () => {
+    expect(pickVersionCover([images[0]], versions, versions[1])?.id).toBe(10);
   });
 });

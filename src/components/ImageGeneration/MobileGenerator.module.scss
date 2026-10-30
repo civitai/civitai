@@ -103,6 +103,13 @@
     transition: none;
   }
 
+  // Closed, the top edge glows, so the bar reads as something to pull up.
+  &:not([data-expanded]) {
+    border-top-color: var(--mantine-color-blue-filled);
+    box-shadow: 0 -2px 14px color-mix(in srgb, var(--mantine-color-blue-filled) 55%, transparent),
+      0 -10px 30px rgb(0 0 0 / 0.35);
+  }
+
   &:not([data-expanded]) .head {
     padding-bottom: var(--safe-area-inset-bottom, 0px);
   }

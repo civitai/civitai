@@ -378,8 +378,8 @@ Built:
   menus open as bottom sheets (`useMenuSheet`), so a long menu never runs off the screen, as does the
   picker card's ⋮. `useMenuSheet` portals the sheet: the theme keeps popovers inline, and a
   transformed ancestor (a virtualized row) would hold its `position: fixed`.
-- Queue cards on a phone drop the workflow ID copy, the moderator dashboard link and the duration
-  badge. The cost badge's breakdown (a sheet on a phone) ends with what paid for the run, so the
+- Queue cards on a phone drop the moderator dashboard link and the duration badge, and keep the
+  workflow ID copy (moderators asked for it). The cost badge's breakdown (a sheet on a phone) ends with what paid for the run, so the
   separate transactions icon shows only for a run with no cost; the cost and workflow badges wrap
   together.
 - The mobile generator reopens as it was left (form open or closed, Batches or Grid), restored once
