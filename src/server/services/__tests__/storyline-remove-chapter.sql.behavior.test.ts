@@ -255,6 +255,19 @@ describe('removeStorylineChapter', () => {
     );
   });
 
+  it('leaves a placement that is no longer approved as it is', async () => {
+    await db.pg.exec(
+      `UPDATE "Placement" SET status = 'removed', "removedBy" = 'moderator', "takenDownById" = ${MODERATOR} WHERE id = 900`
+    );
+    await remove(CONTRIBUTOR);
+    expect(await chapterIds()).toEqual([10]);
+    expect(await placement900()).toEqual({
+      status: 'removed',
+      removedBy: 'moderator',
+      takenDownById: MODERATOR,
+    });
+  });
+
   it('its owner removes an unpaid chapter', async () => {
     await db.pg.exec(`UPDATE "Placement" SET amount = 0 WHERE id = 900`);
     await remove(OWNER);
@@ -497,6 +510,21 @@ describe('removeStorylineChapter', () => {
       `);
       await remove(CONTRIBUTOR);
       expect(await holds()).toEqual([]);
+    });
+
+    // Ruled by the moderation lead (2026-10-30): a moderator removing a chapter of their own
+    // storyline acts as its owner. Do not switch this to the moderator path without that ruling.
+    it('a moderator who owns the storyline removes as its owner, recorded like any owner', async () => {
+      await db.pg.exec(`
+        UPDATE "Placement" SET amount = 0 WHERE id = 900;
+        UPDATE "Storyline" SET "userId" = ${MODERATOR} WHERE id = 1;
+      `);
+      await openPostReport();
+      await remove(MODERATOR, true);
+      expect(await chapterIds()).toEqual([10]);
+      expect((await placement900()).removedBy).toBe('owner');
+      expect(trackModActivity).not.toHaveBeenCalled();
+      expect(await holds()).toMatchObject([{ removedById: MODERATOR, removedByRole: 'owner' }]);
     });
 
     it("leaves a moderator's removal unrecorded, a tombstone as always", async () => {

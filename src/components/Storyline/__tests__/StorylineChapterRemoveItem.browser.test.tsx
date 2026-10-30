@@ -25,12 +25,13 @@ vi.mock('@mantine/modals', async (importOriginal) => ({
 
 const OWNER = 10;
 const AUTHOR = 20;
-// The reader is on image 1 of chapter 100 (chapter 1) or image 2 of chapter 101 (chapter 2).
+// The reader is on image 1 of chapter 100 (chapter 1), or image 2 or 3 of its two continuations,
+// chapters 101 and 102.
 vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
   useStorylineMode: () => ({
     active: true,
     leave: mocks.leave,
-    chapterIdOfImage: (imageId: number) => (imageId === 1 ? 100 : 101),
+    chapterIdOfImage: (imageId: number) => 99 + imageId,
     path: {
       storyline: { id: 2, userId: OWNER },
       chapters: [
@@ -40,6 +41,12 @@ vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
           depth: 1,
           childCount: 0,
           post: { id: 501, title: 'Two', userId: AUTHOR },
+        },
+        {
+          chapterId: 102,
+          depth: 1,
+          childCount: 0,
+          post: { id: 502, title: 'Two, the other way', userId: AUTHOR },
         },
       ],
     },
@@ -82,14 +89,16 @@ describe('Remove from storyline in the reader', () => {
       expect(mocks.leave).toHaveBeenCalledTimes(1);
     });
 
-  test('removes the chapter of the image being read, and no other', async () => {
-    mocks.currentUser = { id: AUTHOR };
-    renderItem(2);
-    await page.getByRole('menuitem', { name: /Remove from storyline/ }).click();
-    expect(mocks.remove).toHaveBeenCalledTimes(1);
-    expect(mocks.remove).toHaveBeenCalledWith(101);
-    expect(mocks.remove).not.toHaveBeenCalledWith(100);
-  });
+  for (const [imageId, chapterId] of [
+    [2, 101],
+    [3, 102],
+  ] as const)
+    test(`removes the chapter of the image being read (image ${imageId}), and no other`, async () => {
+      mocks.currentUser = { id: AUTHOR };
+      renderItem(imageId);
+      await page.getByRole('menuitem', { name: /Remove from storyline/ }).click();
+      expect(mocks.remove.mock.calls).toEqual([[chapterId]]);
+    });
 
   test('is not offered to any other reader', async () => {
     mocks.currentUser = { id: 77 };

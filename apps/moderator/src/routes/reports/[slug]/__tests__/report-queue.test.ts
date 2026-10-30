@@ -148,6 +148,19 @@ describe('the storyline queue', () => {
     expect(getStorylineReportHolds).toHaveBeenCalledWith([80, 81]);
     expect(data.storylineHolds).toBe(holds);
   });
+
+  it('is the only queue that reads them', async () => {
+    getReports.mockResolvedValueOnce({
+      items: [{ id: 80, entityId: 2 }],
+      totalItems: 1,
+      page: 1,
+      limit: 20,
+    });
+    const data = (await run('game')) as { storylineHolds: unknown };
+
+    expect(getStorylineReportHolds).not.toHaveBeenCalled();
+    expect(data.storylineHolds).toEqual([]);
+  });
 });
 
 describe('the default reason set', () => {
