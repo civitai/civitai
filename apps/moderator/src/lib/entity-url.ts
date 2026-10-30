@@ -66,6 +66,18 @@ export function userUrl(civitaiUrl: string, username: string, section?: string |
 export const csamReportUrl = (civitaiUrl: string, userId: number) =>
   `${civitaiUrl}/moderator/csam/${userId}`;
 
+/** The same page filing a report that supplements `priorReportId`, with `imageIds` preselected. */
+export function csamSupplementalReportUrl(
+  civitaiUrl: string,
+  userId: number,
+  priorReportId: number,
+  imageIds: number[] = []
+): string {
+  const params = new URLSearchParams({ supplementalOf: String(priorReportId) });
+  if (imageIds.length) params.set('imageIds', imageIds.join(','));
+  return `${csamReportUrl(civitaiUrl, userId)}?${params}`;
+}
+
 /** A workflow-only training run's review page. */
 export const trainingWorkflowReviewUrl = (workflowId: string) =>
   `/audit/training-data/workflow/${encodeURIComponent(workflowId)}`;
