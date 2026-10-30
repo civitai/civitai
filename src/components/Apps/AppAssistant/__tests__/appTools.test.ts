@@ -346,7 +346,7 @@ describe('what the user can read when create_app fails', () => {
     [
       'the kept-apps limit',
       new SandboxApiError('sandbox limit (3) reached; delete one first', 409, 'limit'),
-      'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.',
+      'You already have as many apps as you can keep. Choose one to delete in the card under the chat; your request then continues automatically.',
     ],
     [
       'the running limit',

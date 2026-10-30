@@ -45,6 +45,7 @@ import {
 import { StorylineRoleChip, StorylineShareChip } from '~/components/Storyline/StorylineChips';
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
+import { ReportChapterMenuItem } from '~/components/Storyline/ReportChapterMenuItem';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -439,56 +440,66 @@ function CanonStop({
   const link = node.href ? { href: node.href, read: node.read } : null;
   const share = useForkShare(forkId, node.chapterId);
   const drag = useDraggable({ id: node.chapterId, disabled: !reorder });
+  const currentUser = useCurrentUser();
+  const reportPostId = post && post.userId !== currentUser?.id ? post.id : null;
+  const hasMenu = !!reorder || reportPostId !== null;
   return (
     <li
       ref={drag.setNodeRef}
       className={clsx(
         'absolute inset-x-0 flex gap-3.5 pl-9',
-        reorder && 'pr-14',
+        reorder ? 'pr-14' : hasMenu && 'pr-8',
         drag.isDragging && 'z-20 opacity-70'
       )}
       style={{ top, height: size.row, transform: CSS.Translate.toString(drag.transform) }}
       data-testid="storyline-chapter"
     >
-      {reorder && (
+      {hasMenu && (
         <div className="absolute right-0 top-0 flex">
           <Menu position="bottom-end" withinPortal>
             <Menu.Target>
               <ActionIcon
                 variant="subtle"
                 color="gray"
-                aria-label={`Reorder chapter ${node.number}`}
+                aria-label={`Chapter ${node.number} options`}
               >
                 <IconDotsVertical size={18} />
               </ActionIcon>
             </Menu.Target>
             <Menu.Dropdown>
-              <Menu.Item
-                disabled={reorder.up === null}
-                onClick={() => reorder.up !== null && onMove(node.chapterId, reorder.up)}
-              >
-                Move up
-              </Menu.Item>
-              <Menu.Item
-                disabled={reorder.down === null}
-                onClick={() => reorder.down !== null && onMove(node.chapterId, reorder.down)}
-              >
-                Move down
-              </Menu.Item>
+              {reorder && (
+                <>
+                  <Menu.Item
+                    disabled={reorder.up === null}
+                    onClick={() => reorder.up !== null && onMove(node.chapterId, reorder.up)}
+                  >
+                    Move up
+                  </Menu.Item>
+                  <Menu.Item
+                    disabled={reorder.down === null}
+                    onClick={() => reorder.down !== null && onMove(node.chapterId, reorder.down)}
+                  >
+                    Move down
+                  </Menu.Item>
+                </>
+              )}
+              {reportPostId !== null && <ReportChapterMenuItem postId={reportPostId} />}
             </Menu.Dropdown>
           </Menu>
-          <ActionIcon
-            variant="subtle"
-            color="gray"
-            aria-label={`Drag chapter ${node.number} to reorder`}
-            ref={drag.setActivatorNodeRef}
-            {...drag.listeners}
-            {...drag.attributes}
-            tabIndex={-1}
-            style={{ touchAction: 'none', cursor: 'grab' }}
-          >
-            <IconGripVertical size={18} />
-          </ActionIcon>
+          {reorder && (
+            <ActionIcon
+              variant="subtle"
+              color="gray"
+              aria-label={`Drag chapter ${node.number} to reorder`}
+              ref={drag.setActivatorNodeRef}
+              {...drag.listeners}
+              {...drag.attributes}
+              tabIndex={-1}
+              style={{ touchAction: 'none', cursor: 'grab' }}
+            >
+              <IconGripVertical size={18} />
+            </ActionIcon>
+          )}
         </div>
       )}
       <span

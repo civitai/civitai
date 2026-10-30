@@ -145,7 +145,8 @@ new flag never inherits an old flag's source and pre-state:
 | `prevLockedProperties` | Full pre-flag array |
 | `prevMinorImageIds` | Images already `minor` before the flag |
 
-Snapshot capture is best-effort: losing it must block a later rollback, not the flag itself.
+Snapshot capture is best-effort: losing it must block a later rollback, not the flag itself. It runs
+on the flag's own transaction, and a failed capture rolls back to a savepoint so the flag still lands.
 
 `rollbackMinorHashAutoFlags` has two modes:
 

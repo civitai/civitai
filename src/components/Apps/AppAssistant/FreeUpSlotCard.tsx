@@ -14,8 +14,8 @@ function usedLine(sandbox: Sandbox): string {
 
 /**
  * After the last message once the assistant could not make an app because the user keeps as many as they
- * may: pick one to delete (the one used longest ago, not the open one, is chosen), and the message
- * that hit the limit is sent again.
+ * may: pick one to delete (the one used longest ago, not the open one, is chosen), and the request
+ * that hit the limit continues by itself.
  */
 export function FreeUpSlotCard({
   apps,
@@ -58,7 +58,8 @@ export function FreeUpSlotCard({
             Free up a slot
           </Text>
           <Text size="sm">
-            You have as many apps as you can keep. Delete one and your message is sent again.
+            You have as many apps as you can keep. Delete one and your request continues
+            automatically.
           </Text>
         </div>
         <Radio.Group value={picked} onChange={setPicked} aria-label="App to delete">

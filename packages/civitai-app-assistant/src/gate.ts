@@ -1,5 +1,5 @@
 import { CREATE_APP, USE_OPEN_APP } from './app-tools';
-import type { AssistantTool, ToolGate, ToolResult } from './tool';
+import { letStepCallsReachGate, type AssistantTool, type ToolGate, type ToolResult } from './tool';
 import { SUBMIT_FOR_REVIEW, createSubmitTool } from './submit';
 
 /** The sandbox MCP server's id; the chat offers each of its tools as `sandbox__<tool>`. */
@@ -73,6 +73,20 @@ export function changesApp(name: string, input: unknown): boolean {
  */
 export const openAppNotChosen = (app: string) =>
   `Nothing in ${app} was changed: this chat has not been asked to change it. If the user asked for a different app, call create_app to make a new one and leave ${app} as it is. If they clearly asked to change ${app} itself, call use_open_app with app ${app}, then make the change. If it is not clear which, ask them "Make a new app, or replace ${app}?" and wait for their answer.`;
+
+/**
+ * What report_ready and submit_for_review are refused with while the app's `block.manifest.json`
+ * declares sensitive scopes (`scopes`) with no `scopeJustifications` entry: civitai refuses such a
+ * submission.
+ */
+export const unjustifiedScopesRefusal = (scopes: readonly string[], tool: string) =>
+  `Not ready yet. block.manifest.json asks for ${scopes.join(
+    ', '
+  )}, which Civitai accepts only with a reason: add to it "scopeJustifications": { "${
+    scopes[0]
+  }": "<why the app needs it, in one plain sentence>" }${
+    scopes.length > 1 ? ', with an entry for each of them' : ''
+  }, and tell the user in one sentence what you wrote. Then run the preview check, the tests and the typecheck again, and call ${tool} again.`;
 
 /** What `submit_for_review` is refused with before any report_ready passed in this chat. */
 export const SUBMIT_NEEDS_READY =
@@ -211,6 +225,12 @@ export const BUILD_IT_MESSAGE = 'Looks good — build it.';
 export interface AwaitingChecklist {
   id: string;
   app: string | null;
+  /**
+   * The key of the app a server runner made the checklist for (its result's `app` tag). The page may
+   * still show the app it had open when the runner reports the checklist, and opens the new one only
+   * once its list has it: this, not `app`, says which app the checklist belongs to.
+   */
+  appKey?: string;
 }
 
 export interface GateCoreOptions {
@@ -234,6 +254,12 @@ export interface GateCoreOptions {
    * `use_open_app`. Both the page and the server runner set it.
    */
   openApp?: () => string | null;
+  /**
+   * The sensitive scopes the open app's `block.manifest.json` declares without a justification
+   * (empty when none, or when it cannot be read). Set, report_ready and submit_for_review are
+   * refused (`unjustifiedScopesRefusal`) while it names any.
+   */
+  unjustifiedScopes?: () => Promise<readonly string[]>;
 }
 
 /** What a gate starts from: what this conversation already did (a server run picking a reply up). */
@@ -291,6 +317,7 @@ export function createGateCore({
   checklistPrefix = Math.random().toString(36).slice(2, 10),
   checklistApp,
   openApp,
+  unjustifiedScopes,
 }: GateCoreOptions = {}): GateCore {
   let conversationId: string | null = null;
   // Keyed by conversation: the page's one gate serves every chat. Not cleared by reset: the page resets
@@ -392,6 +419,10 @@ export function createGateCore({
       ? `Call ${tool} on its own, once your other tool calls have returned: they can still change the app.`
       : null;
   let submitOffers = 0;
+  const manifestRefusal = async (tool: string): Promise<string | null> => {
+    const scopes = (await unjustifiedScopes?.()) ?? [];
+    return scopes.length ? unjustifiedScopesRefusal(scopes, tool) : null;
+  };
 
   const beforeToolCall: ToolGate = (name, input, context) => {
     if (context.conversationId !== conversationId) {
@@ -466,7 +497,13 @@ export function createGateCore({
         checklistAwaitsBuild(items) ||
         (result.input as { data?: unknown } | null)?.data === 'sample')
     )
-      awaiting = { id: shown.checklist, app: currentApp?.() ?? null };
+      awaiting = {
+        id: shown.checklist,
+        app: currentApp?.() ?? null,
+        ...(typeof (shown as { app?: unknown }).app === 'string'
+          ? { appKey: (shown as { app: string }).app }
+          : {}),
+      };
   };
 
   /** A report_ready that passed: what it declared is what submit_for_review is judged on. */
@@ -562,9 +599,11 @@ export function createGateCore({
       required: ['data'],
     },
     async execute(input) {
-      // Let the rest of this step's calls reach the gate first.
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      const refusal = runningRefusal(REPORT_READY) ?? notReady(input.data);
+      await letStepCallsReachGate();
+      const refusal =
+        runningRefusal(REPORT_READY) ??
+        notReady(input.data) ??
+        (await manifestRefusal(REPORT_READY));
       if (refusal) throw new Error(refusal);
       const data = dataSourceOf(input.data);
       return {
@@ -579,7 +618,10 @@ export function createGateCore({
   };
 
   const submit_for_review = createSubmitTool({
-    refusal: () => runningRefusal(SUBMIT_FOR_REVIEW) ?? submitRefusal(),
+    refusal: async () =>
+      runningRefusal(SUBMIT_FOR_REVIEW) ??
+      submitRefusal() ??
+      (await manifestRefusal(SUBMIT_FOR_REVIEW)),
     nextId: () => `${checklistPrefix}-submit-${++submitOffers}`,
   });
 

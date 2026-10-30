@@ -1,9 +1,10 @@
-import { ActionIcon, Anchor, Menu, Text, ThemeIcon } from '@mantine/core';
-import { IconBooks, IconDots, IconUnlink } from '@tabler/icons-react';
+import { ActionIcon, Anchor, Badge, Menu, Text, ThemeIcon } from '@mantine/core';
+import { IconBooks, IconDots, IconShieldHalf, IconUnlink } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { storylineCardClass } from '~/components/Storyline/StorylineChips';
 import { storylineUrl } from '~/components/Storyline/storyline-routes';
+import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 
 type BannerStoryline = { id: number; title: string };
 type DraftRemoval = {
@@ -16,7 +17,11 @@ export type StorylineEditorBannerProps =
   | ({ variant: 'start'; storyline: BannerStoryline } & DraftRemoval)
   | { variant: 'chapter'; storyline: BannerStoryline; chapterNumber: number }
   /** A draft that continues a chapter of the storyline. */
-  | ({ variant: 'continue'; storyline: BannerStoryline; chapterNumber: number } & DraftRemoval);
+  | ({
+      variant: 'continue';
+      storyline: BannerStoryline & { maxNsfwLevel: number };
+      chapterNumber: number;
+    } & DraftRemoval);
 
 /** What the post editor says about the storyline its post belongs to. */
 export function StorylineEditorBanner(props: StorylineEditorBannerProps) {
@@ -32,9 +37,22 @@ export function StorylineEditorBanner(props: StorylineEditorBannerProps) {
       <div className="min-w-0 flex-1">
         {props.variant !== 'chapter' ? (
           <>
-            <Text size="xs" fw={700} c="violet">
-              Chapter {props.variant === 'start' ? 1 : props.chapterNumber}
-            </Text>
+            <div className="flex items-center gap-2">
+              <Text size="xs" fw={700} c="violet">
+                Chapter {props.variant === 'start' ? 1 : props.chapterNumber}
+              </Text>
+              {props.variant === 'continue' && (
+                <Badge
+                  variant="light"
+                  color="gray"
+                  size="xs"
+                  radius="xl"
+                  leftSection={<IconShieldHalf size={10} />}
+                >
+                  Up to {getBrowsingLevelLabel(props.storyline.maxNsfwLevel)}
+                </Badge>
+              )}
+            </div>
             <Anchor
               component={Link}
               href={storylineUrl(storyline.id)}

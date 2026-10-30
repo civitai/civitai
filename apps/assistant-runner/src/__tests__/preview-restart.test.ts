@@ -545,6 +545,7 @@ async function serve(previews?: PreviewRestarts): Promise<string> {
     service: noRuns,
     authenticator: viewerAuthenticator(verifier),
     grants: verifier,
+    acceptsModel: () => true,
     ...(previews ? { previews } : {}),
     basePath: '/api/assistant-runner',
   });

@@ -287,6 +287,8 @@ describePg('assistant-runner on DBOS + Postgres', () => {
       service: runner,
       authenticator: bearerAuthenticator,
       grants: createTokenVerifier(keys.publicPem),
+      // The scripted models are named by what they do, not App Assistant's ids.
+      acceptsModel: () => true,
     });
     await app.listen({ port: 0, host: '127.0.0.1' });
     const address = app.server.address();

@@ -26,7 +26,11 @@ import {
   storylineCeiling,
   storylineLevelAllowed,
 } from '~/shared/utils/storyline';
-import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import {
+  STORYLINE_REFUSALS,
+  storylineRatingGap,
+  type StorylineRatingGap,
+} from '~/shared/utils/storyline-placement';
 
 /**
  * A post drafted from the storyline flow (`StorylinePendingChapter`) becomes a chapter when it is
@@ -50,7 +54,7 @@ export type StorylinePublishContext = {
 export type StorylinePublishOutcome = { storylineId: number } & (
   | { status: 'chapterWritten'; chapterId: number; ceilingRaisedTo?: number }
   /** The owner's chapter, written once the post is live and rated. */
-  | { status: 'waiting'; reason: PendingChapterWait }
+  | { status: 'waiting'; reason: PendingChapterWait; rating?: StorylineRatingGap }
   | { status: 'submitted'; placementId: number }
   /** Published as a post of its own; the draft is no longer linked to the storyline. */
   | { status: 'dropped'; reason: string }
@@ -163,7 +167,7 @@ export async function finishStorylinePublish(
         };
       }
       if (result.status === 'waiting')
-        return { storylineId, status: 'waiting', reason: result.reason };
+        return { storylineId, status: 'waiting', reason: result.reason, rating: result.rating };
       const written = await dbWrite.storylineChapter.findUnique({
         where: { postId },
         select: { id: true },
@@ -217,9 +221,16 @@ type PendingChapterPromotion =
       ceilingRaisedTo?: number;
     }
   /** The link stays: the post is not live and rated yet, a scan refused it, or it is rated too high. */
-  | { status: 'waiting'; reason: PendingChapterWait }
+  | { status: 'waiting'; reason: PendingChapterWait; rating?: StorylineRatingGap }
   /** No link: another writer promoted it first. */
   | { status: 'gone' };
+
+const aboveRatingWait = (gap: StorylineRatingGap): PendingChapterPromotion => {
+  const rating = storylineRatingGap(gap);
+  return rating
+    ? { status: 'waiting', reason: 'aboveRating', rating }
+    : { status: 'waiting', reason: 'cannotSubmit' };
+};
 
 /**
  * Writes the storyline owner's drafted post as its chapter, once the post is live (published, not
@@ -278,7 +289,11 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
       if (link.parentChapterId == null) {
         if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
         const maxNsfwLevel = firstChapterMaxNsfwLevel(storyline, post);
-        if (maxNsfwLevel === null) return { status: 'waiting', reason: 'aboveRating' };
+        if (maxNsfwLevel === null)
+          return aboveRatingWait({
+            postLevel: post.nsfwLevel,
+            maxNsfwLevel: storylineCeiling(storyline),
+          });
         if (maxNsfwLevel !== storyline.maxNsfwLevel) {
           ceilingRaisedTo = maxNsfwLevel;
           await tx.storyline.update({ where: { id: link.storylineId }, data: { maxNsfwLevel } });
@@ -304,13 +319,9 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
           { parentPostId: parentChapter.postId, placerId: link.userId },
           tx
         );
-        if (
-          !storylineLevelAllowed({
-            postLevel: post.nsfwLevel,
-            maxNsfwLevel: storylineCeiling(parent.storyline),
-          })
-        )
-          return { status: 'waiting', reason: 'aboveRating' };
+        const maxNsfwLevel = storylineCeiling(parent.storyline);
+        if (!storylineLevelAllowed({ postLevel: post.nsfwLevel, maxNsfwLevel }))
+          return aboveRatingWait({ postLevel: post.nsfwLevel, maxNsfwLevel });
         ({ chapterId } = await writeOwnerChapter(tx, {
           parentChapterId: link.parentChapterId,
           postId,

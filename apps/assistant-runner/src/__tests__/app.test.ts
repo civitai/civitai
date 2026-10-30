@@ -3,6 +3,11 @@ import { Writable } from 'node:stream';
 import type { FastifyInstance } from 'fastify';
 import type { RunEvent, StartRunRequest } from '@civitai/components-chat/runner-protocol';
 import { afterEach, describe, expect, it } from 'vitest';
+import {
+  APP_ASSISTANT_DEFAULT_MODEL,
+  APP_ASSISTANT_MODELS,
+  isAppAssistantModel,
+} from '@civitai/app-assistant';
 
 import { buildApp, lastEventId, loggerOptions } from '../app';
 import type { JournalEntry, RunService, StartOutcome } from '../core/service';
@@ -17,7 +22,7 @@ const startRequest: StartRunRequest = {
   idempotencyKey: 'key-1',
   conversationId: 'c1',
   turn: { seq: 1, user: { content: 'hi', attachments: [] } },
-  model: 'm',
+  model: APP_ASSISTANT_DEFAULT_MODEL,
   settings: {
     maxOutputTokens: 100,
     tier: 'auto',
@@ -92,8 +97,12 @@ afterEach(async () => {
   app = undefined;
 });
 
-async function serve(options: Parameters<typeof buildApp>[0]): Promise<string> {
-  app = buildApp(options);
+async function serve(
+  options: Omit<Parameters<typeof buildApp>[0], 'acceptsModel'> &
+    Partial<Pick<Parameters<typeof buildApp>[0], 'acceptsModel'>>
+): Promise<string> {
+  // App Assistant's models, as the deployment (`server.ts`) passes them.
+  app = buildApp({ acceptsModel: isAppAssistantModel, ...options });
   await app.listen({ port: 0, host: '127.0.0.1' });
   const address = app.server.address();
   return `http://127.0.0.1:${typeof address === 'object' && address ? address.port : 0}`;
@@ -539,6 +548,77 @@ describe('the run API', () => {
     expect(lines.length).toBeGreaterThan(0);
     expect(lines.join('')).toContain('/runs?conversationId=c1');
     expect(lines.join('')).not.toContain(secret);
+  });
+});
+
+describe('the models a start may name', () => {
+  const start = async (base: string, model: unknown) =>
+    fetch(`${base}/runs`, {
+      method: 'POST',
+      headers: await startHeaders(),
+      body: JSON.stringify({ ...startRequest, model }),
+    });
+  const patch = (base: string, model: unknown) =>
+    fetch(`${base}/conversations/c1/patch`, {
+      method: 'POST',
+      headers: { ...user1, 'content-type': 'application/json' },
+      body: JSON.stringify({ v: 1, model }),
+    });
+
+  it('refuses a model App Assistant does not offer with a clear 400, and starts nothing', async () => {
+    const { service, seen } = fakeService();
+    const base = await serve({ service, authenticator: bearerAuthenticator, grants });
+    for (const model of [
+      'someone/expensive-model',
+      'openai/gpt-6-luna:extended',
+      'OPENAI/GPT-6-LUNA',
+    ]) {
+      const response = await start(base, model);
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({
+        v: 1,
+        error: 'bad-request',
+        message: 'This runner does not offer that model. Pick one of the listed models.',
+      });
+    }
+    expect(seen.filter((call) => call.method === 'start')).toEqual([]);
+  });
+
+  it('starts with each model App Assistant offers, the default included, as named', async () => {
+    const { service, seen } = fakeService();
+    const base = await serve({ service, authenticator: bearerAuthenticator, grants });
+    expect(APP_ASSISTANT_MODELS.map((model) => model.id)).toContain(APP_ASSISTANT_DEFAULT_MODEL);
+    for (const { id } of APP_ASSISTANT_MODELS) expect((await start(base, id)).status).toBe(201);
+    expect(
+      seen
+        .filter((call) => call.method === 'start')
+        .map((call) => (call.args[0] as { model: string }).model)
+    ).toEqual(APP_ASSISTANT_MODELS.map((model) => model.id));
+  });
+
+  it('refuses a patch setting a model it does not offer; one offered, or back to the default, is written', async () => {
+    const { service, seen } = fakeService();
+    const base = await serve({ service, authenticator: bearerAuthenticator, grants });
+    const refused = await patch(base, 'someone/expensive-model');
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: 'bad-request' });
+    expect((await patch(base, APP_ASSISTANT_MODELS[1]!.id)).status).toBe(204);
+    expect((await patch(base, null)).status).toBe(204);
+    expect(seen.filter((call) => call.method === 'patch').map((call) => call.args[1])).toEqual([
+      { v: 1, model: APP_ASSISTANT_MODELS[1]!.id },
+      { v: 1, model: null },
+    ]);
+  });
+
+  it('NEGATIVE CONTROL: a deployment that accepts any model (the scripted-model tests) starts with any', async () => {
+    const { service } = fakeService();
+    const base = await serve({
+      service,
+      authenticator: bearerAuthenticator,
+      grants,
+      acceptsModel: () => true,
+    });
+    expect((await start(base, 'someone/expensive-model')).status).toBe(201);
   });
 });
 

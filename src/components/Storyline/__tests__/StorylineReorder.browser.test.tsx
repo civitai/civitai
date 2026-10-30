@@ -71,9 +71,8 @@ const graphOf = (viaPlacement: number[] = []) => ({
   truncated: false,
 });
 
-const menuOf = (n: number) => page.getByRole('button', { name: `Reorder chapter ${n}` });
-const reorderButtons = () =>
-  document.querySelectorAll('button[aria-label^="Reorder chapter"]').length;
+const menuOf = (n: number) => page.getByRole('button', { name: `Chapter ${n} options` });
+const reorderButtons = () => document.querySelectorAll('button[aria-label^="Drag chapter"]').length;
 
 beforeEach(() => {
   mocks.move.mockReset();
@@ -124,7 +123,9 @@ describe('reordering chapters on the map', () => {
   test("a moderator has the owner's controls", async () => {
     mocks.currentUser = { id: 99, isModerator: true };
     renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
-    await expect.element(page.getByRole('button', { name: 'Reorder chapter 2' })).toBeVisible();
+    await expect
+      .element(page.getByRole('button', { name: 'Drag chapter 2 to reorder' }))
+      .toBeVisible();
   });
 
   test("a contributor's chapter in the middle ends the run, so nothing is movable", async () => {
@@ -180,6 +181,8 @@ describe('reordering chapters on the map', () => {
       .toHaveTextContent('This chapter has a continuation waiting for review; answer it first');
   });
 
+  // Keep this test last: dnd-kit's document click blocker outlives it by 50ms and eats the next
+  // test's first click.
   test('dragging a chapter shows the drop targets and drops it after the nearest target', async () => {
     renderWithProviders(<StorylineChapterLanes storyline={storyline('owner')} />);
     const handle = page.getByRole('button', { name: 'Drag chapter 2 to reorder' });
