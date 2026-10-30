@@ -65,6 +65,21 @@ is its own page grant. Acting on a ticket is a separate permission:
   newest 10, pending first; a pending one is ruled from the card by picking a level and confirming, through the
   queue's `resolveRatingReviewAction`. The action re-checks that the dispute is the linked user's and
   still pending, decides with the row's id, and adds a private note naming the moderator.
+- A support ticket that links to a Civitai user shows one card for its Feature. Each section reads under its
+  source page's grant and is hidden without it:
+
+  - **Content Related Issue** (read-only): open reports on the user (`/reports`) and image removals
+    (`/retool/user-lookup`, CSAM reasons dropped).
+  - **Image Generator**: the user's `generation` restrictions (`/audit/generator-restrictions`), where a pending
+    one is upheld or overturned through the shared restriction ruling. Also blocked prompts (`/retool/user-lookup`).
+    No generated media is shown.
+  - **LoRA Trainer**: recent training runs with their publish block (`/audit/training-models`), where Block /
+    Allow publishing posts the intended state and is refused if the model is someone else's or already in that
+    state. Buzz charges are not shown.
+
+  Support actions are registered only on the support page. Every panel action re-reads the ticket and is refused
+  when its panel would be hidden in the ticket's current view.
+
 - Both views read one shared Redis snapshot of every live ticket (subject, status, Feature, tags, dates,
   requester name; never a body or an email address), not Freshdesk, so a page load costs no Freshdesk calls. The snapshot
   is rebuilt in full from the status searches when missing or six hours old (Freshdesk search returns at most
