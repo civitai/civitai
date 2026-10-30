@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { logToAxiom } from '$lib/server/axiom';
 import { retryPendingConversions } from '$lib/server/conversion/convert';
-import { runPostDetectionPass } from '$lib/server/conversion/pass';
+import { runLabelPass } from '$lib/server/conversion/label-pass';
 import { TICK_CONVERSION_RETRY } from '$lib/server/conversion/config';
 import { buzzConfigured, conversionEnabled, getBuzzPort } from '$lib/server/conversion/runtime';
 import { db } from '$lib/server/db';
@@ -70,8 +70,8 @@ export const POST: RequestHandler = async ({ request }) => {
       ...TICK_CONVERSION_RETRY,
     });
   });
-  const postDetection = await settle('post-detection pass', () =>
-    runPostDetectionPass(db, { now: new Date(), log: logToAxiom })
+  const labels = await settle('label write-back', () =>
+    runLabelPass(db, { now: new Date(), log: logToAxiom })
   );
   if (
     !expired.ok ||
@@ -85,7 +85,7 @@ export const POST: RequestHandler = async ({ request }) => {
     !resets.ok ||
     resets.value.failed > 0 ||
     !conversions.ok ||
-    !postDetection.ok
+    !labels.ok
   ) {
     return json({ error: 'job failed' }, { status: 500 });
   }
@@ -98,6 +98,6 @@ export const POST: RequestHandler = async ({ request }) => {
     expiredSmites: smites.value,
     resets: resets.value.due,
     conversionsRetried: conversions.value.retried,
-    postDetection: postDetection.value,
+    labels: labels.value,
   });
 };

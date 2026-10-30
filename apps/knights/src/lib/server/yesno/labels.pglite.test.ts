@@ -2,7 +2,7 @@ import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
-import { runPostDetectionPass } from '../conversion/pass';
+import { runLabelPass } from '../conversion/label-pass';
 import { bootLabelStore, createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { ensureVotePartitions } from '../queue/queue.service';
@@ -42,11 +42,7 @@ const answer = async (playerId: number, externalId: string, value: string) => {
   );
   expect(result).toEqual({ status: 'recorded' });
 };
-const run = (completedAt: string) =>
-  pg.query(`INSERT INTO "KnightsDetectionRun" ("completedAt") VALUES ($1::timestamp)`, [
-    completedAt,
-  ]);
-const pass = () => runPostDetectionPass(db, { now: new Date('2026-12-30T00:00:00Z') });
+const pass = () => runLabelPass(db, { now: new Date('2026-12-30T00:00:00Z') });
 const labels = async () =>
   (
     await pg.query<{
@@ -75,7 +71,7 @@ afterAll(() => pg.close());
 beforeEach(async () => {
   clock = NOW;
   await pg.exec(
-    `TRUNCATE "KnightsDetectionRun","KnightsVote","KnightsQueueItem","KnightsPlayerDay","NewOrderPlayer","Image","Post","User" RESTART IDENTITY CASCADE;
+    `TRUNCATE "KnightsVote","KnightsQueueItem","KnightsPlayerDay","NewOrderPlayer","Image","Post","User" RESTART IDENTITY CASCADE;
      DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%';
      TRUNCATE label_store.subject, label_store.erased_subject, label_store.record_failure CASCADE;
      DELETE FROM label_store.rule WHERE "question" LIKE 'knights.yesno.%'`
@@ -85,14 +81,12 @@ beforeEach(async () => {
 });
 
 describe('labels for yes/no answers', () => {
-  it('writes one knight label per answer under the producer question id, once a detection run has passed, and never again', async () => {
+  it('writes one knight label per answer under the producer question id, on the tick, and never again', async () => {
     await importYesNo(db, [row(ID, 10)]);
     for (const p of [1, 2]) await seedPlayer(pg, p);
     await answer(1, ID, 'yes');
     await answer(2, ID, 'no');
 
-    expect(await pass()).toEqual({ ran: false });
-    await run('2026-12-22 00:00:00');
     expect(await pass()).toMatchObject({ done: true, labelsWritten: 2, labelFailures: 0 });
 
     const written = await labels();
@@ -110,24 +104,19 @@ describe('labels for yes/no answers', () => {
     }
     expect(await labelledFlags()).toEqual([true, true]);
 
-    await run('2026-12-23 00:00:00');
     expect(await pass()).toMatchObject({ labelsWritten: 0 });
     expect(await labels()).toHaveLength(2);
   });
 
-  it('writes the label before the question has a consensus, and waits for the next run for an answer given after this one', async () => {
+  it('writes the label before the question has a consensus', async () => {
     await importYesNo(db, [row(ID, 10)]);
     for (const p of [1, 2]) await seedPlayer(pg, p);
     await answer(1, ID, 'yes');
-    clock = new Date('2026-12-22 08:00:00Z');
-    await answer(2, ID, 'yes');
 
-    await run('2026-12-22 00:00:00');
     await pass();
     expect((await labels()).map((l) => l.value)).toEqual(['yes']);
-    expect(await labelledFlags()).toEqual([true, false]);
 
-    await run('2026-12-23 00:00:00');
+    await answer(2, ID, 'yes');
     await pass();
     expect(await labels()).toHaveLength(2);
   });
@@ -145,7 +134,6 @@ describe('labels for yes/no answers', () => {
       await answer(p, ID, a);
     }
 
-    await run('2026-12-22 00:00:00');
     await pass();
 
     const consensus = await pg.query(
@@ -169,7 +157,6 @@ describe('labels for yes/no answers', () => {
     await answer(1, 'q-a', 'yes');
     await answer(2, 'q-b', 'no');
 
-    await run('2026-12-22 00:00:00');
     await pass();
 
     expect((await labels()).map((l) => [l.question, l.value])).toEqual([
@@ -192,12 +179,10 @@ describe('labels for yes/no answers', () => {
     await answer(2, ID, 'no');
     await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt"='2026-12-21' WHERE "userId"=1`);
 
-    await run('2026-12-22 00:00:00');
     await pass();
     expect((await labels()).map((l) => l.value)).toEqual(['no']);
 
     await pg.exec(`UPDATE "NewOrderPlayer" SET "payoutBlockedAt"=NULL WHERE "userId"=1`);
-    await run('2026-12-23 00:00:00');
     await pass();
     expect((await labels()).map((l) => l.value).sort()).toEqual(['no', 'yes']);
   });
@@ -206,7 +191,6 @@ describe('labels for yes/no answers', () => {
     await importYesNo(db, [row(ID, 10), row('q-unanswered', 11)]);
     await seedPlayer(pg, 1);
     await answer(1, ID, 'yes');
-    await run('2026-12-22 00:00:00');
     await pass();
 
     const rules = await pg.query<{ question: string; minHuman: number; requireUnanimous: boolean }>(
@@ -232,7 +216,6 @@ describe('labels for yes/no answers', () => {
     for (const p of [1, 2, 3]) await answer(p, ID, 'yes');
     await pg.exec(personHash(`IF p_user_id = 2 THEN RAISE EXCEPTION 'boom'; END IF;`));
     try {
-      await run('2026-12-22 00:00:00');
       expect(await pass()).toMatchObject({ done: true, labelsWritten: 2, labelFailures: 1 });
       expect(await labelledFlags()).toEqual([true, false, true]);
     } finally {

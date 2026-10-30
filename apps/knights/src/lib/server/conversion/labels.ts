@@ -41,12 +41,11 @@ export async function ensureQuestionRules(db: Kysely<DB>): Promise<void> {
 
 /**
  * Rating votes are written once graded (`settledAt`); yes/no answers are not graded, so they are written as given (`createdAt`).
- * Either way only after a detection run, and the batch's cursor `settledAt` is that time.
+ * The batch's cursor `settledAt` is that time.
  */
 export type LabelKind = 'rating' | 'yesno';
 
 type BatchArgs = {
-  settledBefore: Date;
   after: LabelCursor | null;
   limit: number;
   /** Restricts the batch to one vote (the row-by-row fallback). */
@@ -82,7 +81,7 @@ function shapeOf(kind: LabelKind) {
 
 async function runBatch(
   db: Kysely<DB>,
-  { settledBefore, after, limit, only, kind = 'rating' }: BatchArgs
+  { after, limit, only, kind = 'rating' }: BatchArgs
 ): Promise<Row[]> {
   const shape = shapeOf(kind);
   const onlyClause = only
@@ -103,7 +102,6 @@ async function runBatch(
       ${shape.join}
       WHERE NOT v."labelled"
         AND ${shape.eligible}
-        AND ${shape.when} <= ${utc(settledBefore)}
         ${afterClause}
         ${onlyClause}
         AND NOT ${heldSql('v.playerId')}
@@ -187,7 +185,7 @@ async function writeRowByRow(db: Kysely<DB>, args: BatchArgs): Promise<LabelBatc
   const { rows: keys } = await sql<{ itemId: number; playerId: number; settledAt: Date }>`
     SELECT v."itemId", v."playerId", ${shape.when} AS "settledAt" FROM "KnightsVote" v
     ${shape.join}
-    WHERE NOT v."labelled" AND ${shape.eligible} AND ${shape.when} <= ${utc(args.settledBefore)}
+    WHERE NOT v."labelled" AND ${shape.eligible}
       ${
         args.after
           ? sql`AND (${shape.when}, v."itemId", v."playerId") > (${utc(args.after.settledAt)}, ${
@@ -235,7 +233,7 @@ async function writeRowByRow(db: Kysely<DB>, args: BatchArgs): Promise<LabelBatc
 }
 
 /**
- * One `knight` label per settled vote at or before `settledBefore`, for players not held. The store never retracts a label, so a held player's votes stay unwritten and unmarked until released.
+ * One `knight` label per settled vote, for players not held. The store never retracts a label, so a held player's votes stay unwritten and unmarked until released.
  * The player appears in the source ref only as the store's own hash, never as a user id. A vote whose image is gone is only marked.
  */
 export async function writeLabelBatch(

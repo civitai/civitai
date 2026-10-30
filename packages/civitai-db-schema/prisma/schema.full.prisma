@@ -8001,8 +8001,7 @@ model NewOrderPlayer {
   /// Gold from votes not yet graded / already earned.
   goldPending Int @default(0)
   goldEarned  Int @default(0)
-  /// Earned gold a detection run has cleared (a running total), and gold already converted to Buzz. Convertible = cleared - converted.
-  goldCleared   Int @default(0)
+  /// Gold already converted to Buzz, reservations included. Convertible = earned - converted.
   goldConverted Int @default(0)
 }
 
@@ -8145,25 +8144,7 @@ model KnightsNotificationSend {
   @@index([playerId, kind, sentAt])
 }
 
-/// One finished link-detection run. The main app writes a row when a run completes; Knights runs its post-detection pass (clearing gold, writing labels) once per row, `passedAt` marking it done.
-model KnightsDetectionRun {
-  id          Int       @id @default(autoincrement())
-  completedAt DateTime  @default(now())
-  passedAt    DateTime?
-}
-
-/// Which detection run cleared how much of a player's earned gold, and when.
-model KnightsGoldClearing {
-  id        Int      @id @default(autoincrement())
-  playerId  Int
-  runId     Int
-  gold      Int
-  clearedAt DateTime @default(now())
-
-  @@unique([playerId, runId])
-}
-
-/// One conversion of cleared gold to Yellow Buzz. The row is written `pending` with the gold reserved in `NewOrderPlayer.goldConverted`; `paid` once Buzz confirms, `failed` when Buzz refuses it for good (the reservation is released). `externalTransactionId` is the idempotency key sent to Buzz.
+/// One conversion of earned gold to Yellow Buzz. The row is written `pending` with the gold reserved in `NewOrderPlayer.goldConverted`; `paid` once Buzz confirms, `failed` when Buzz refuses it for good (the reservation is released). `externalTransactionId` is the idempotency key sent to Buzz.
 model KnightsGoldConversion {
   id                    Int       @id @default(autoincrement())
   playerId              Int

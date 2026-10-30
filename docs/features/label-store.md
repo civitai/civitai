@@ -84,7 +84,7 @@ in the snapshot; filter them out by ref prefix. A deleted listing is excluded as
 not excluded. No `rule` rows yet.
 
 Also wired from site code: Knights of New Order rating votes (`apps/knights/src/lib/server/conversion/labels.ts`), written
-by the post-detection pass, never before and never for a held player. One `knight` label per vote: subject `image`
+by the tick once graded, never for a held player. One `knight` label per vote: subject `image`
 (`contentHash` = hash of the image url), family `knights`, the Knights question key and version (`knights.image.nsfwLevel`),
 the chosen option as the value, ref `KnightsVote:<itemId>:<labeller hash>`. Each choice question gets a `rule` row
 (`minHuman` = its `votesToResolve`, not unanimous). Yes/no answers are written by the same pass, as given rather than when

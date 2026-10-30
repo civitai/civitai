@@ -52,11 +52,11 @@ export async function seedGradedVotes(
 export async function setGold(
   pg: PGlite,
   userId: number,
-  gold: { pending?: number; earned?: number; cleared?: number; converted?: number }
+  gold: { pending?: number; earned?: number; converted?: number }
 ) {
   await pg.query(
-    `UPDATE "NewOrderPlayer" SET "goldPending"=$2, "goldEarned"=$3, "goldCleared"=$4, "goldConverted"=$5 WHERE "userId"=$1`,
-    [userId, gold.pending ?? 0, gold.earned ?? 0, gold.cleared ?? 0, gold.converted ?? 0]
+    `UPDATE "NewOrderPlayer" SET "goldPending"=$2, "goldEarned"=$3, "goldConverted"=$4 WHERE "userId"=$1`,
+    [userId, gold.pending ?? 0, gold.earned ?? 0, gold.converted ?? 0]
   );
 }
 

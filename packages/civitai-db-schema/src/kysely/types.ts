@@ -3680,18 +3680,6 @@ export type KeyValue = {
   key: string;
   value: unknown;
 };
-export type KnightsDetectionRun = {
-  id: Generated<number>;
-  completedAt: Generated<Timestamp>;
-  passedAt: Timestamp | null;
-};
-export type KnightsGoldClearing = {
-  id: Generated<number>;
-  playerId: number;
-  runId: number;
-  gold: number;
-  clearedAt: Generated<Timestamp>;
-};
 export type KnightsGoldConversion = {
   id: Generated<number>;
   playerId: number;
@@ -4431,9 +4419,8 @@ export type NewOrderPlayer = {
   goldPending: Generated<number>;
   goldEarned: Generated<number>;
   /**
-   * Earned gold a detection run has cleared (a running total), and gold already converted to Buzz. Convertible = cleared - converted.
+   * Gold already converted to Buzz, reservations included. Convertible = earned - converted.
    */
-  goldCleared: Generated<number>;
   goldConverted: Generated<number>;
 };
 export type NewOrderRank = {
@@ -6670,8 +6657,6 @@ export type DB = {
   ItemDefinition: ItemDefinition;
   JobQueue: JobQueue;
   KeyValue: KeyValue;
-  KnightsDetectionRun: KnightsDetectionRun;
-  KnightsGoldClearing: KnightsGoldClearing;
   KnightsGoldConversion: KnightsGoldConversion;
   KnightsHarvestCursor: KnightsHarvestCursor;
   KnightsNotificationSend: KnightsNotificationSend;
