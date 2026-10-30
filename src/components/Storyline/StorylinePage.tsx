@@ -33,7 +33,10 @@ import {
 import { storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
 import { StorylineHero } from '~/components/Storyline/StorylineCover';
-import { StorylineInviteAlert } from '~/components/Storyline/StorylineInviteAlert';
+import {
+  StorylineInviteAlert,
+  StorylineLeaveCollaboration,
+} from '~/components/Storyline/StorylineInviteAlert';
 import { StorylineChapterLanes } from '~/components/Storyline/StorylineLaneMap';
 import { storylineChapterLink } from '~/components/Storyline/storyline-mode.utils';
 import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read-link';
@@ -92,6 +95,9 @@ export function StorylinePage({ id }: { id: number }) {
           lastPostId={lastPost?.id ?? null}
           terms={shownTerms}
         />
+        {storyline.viewerRole === 'collaborator' && (
+          <StorylineLeaveCollaboration storylineId={storyline.id} />
+        )}
         {storyline.viewerInvited && (
           <StorylineInviteAlert
             storylineId={storyline.id}

@@ -1,4 +1,5 @@
 import { Alert, Button, Group, Text } from '@mantine/core';
+import { openConfirmModal } from '@mantine/modals';
 import { IconRosetteDiscountCheck } from '@tabler/icons-react';
 import { showErrorNotification } from '~/utils/notifications';
 import { trpc } from '~/utils/trpc';
@@ -12,15 +13,18 @@ export function StorylineInviteAlert({
   ownerUsername: string | null;
 }) {
   const utils = trpc.useUtils();
-  const respond = trpc.storyline.respondToInvite.useMutation({
+  const handlers = {
     onSuccess: () => utils.storyline.invalidate(),
-    onError: (error) =>
+    onError: (error: { message: string }) =>
       showErrorNotification({
         title: "Couldn't answer the invitation",
         error: new Error(error.message),
       }),
-  });
-  const answering = respond.isPending ? respond.variables?.accept : undefined;
+  };
+  const accept = trpc.storyline.acceptInvite.useMutation(handlers);
+  // Declining is leaving, which a muted account can still do.
+  const decline = trpc.storyline.leave.useMutation(handlers);
+  const busy = accept.isPending || decline.isPending;
 
   return (
     <Alert
@@ -36,22 +40,58 @@ export function StorylineInviteAlert({
         <Button
           size="xs"
           color="teal"
-          loading={answering === true}
-          disabled={respond.isPending}
-          onClick={() => respond.mutate({ storylineId, accept: true })}
+          loading={accept.isPending}
+          disabled={busy}
+          onClick={() => accept.mutate({ storylineId })}
         >
           Accept
         </Button>
         <Button
           size="xs"
           variant="default"
-          loading={answering === false}
-          disabled={respond.isPending}
-          onClick={() => respond.mutate({ storylineId, accept: false })}
+          loading={decline.isPending}
+          disabled={busy}
+          onClick={() => decline.mutate({ storylineId })}
         >
           Decline
         </Button>
       </Group>
     </Alert>
+  );
+}
+
+/** An endorsed collaborator stepping down. Their chapters stay in the story. */
+export function StorylineLeaveCollaboration({ storylineId }: { storylineId: number }) {
+  const utils = trpc.useUtils();
+  const leave = trpc.storyline.leave.useMutation({
+    onSuccess: () => utils.storyline.invalidate(),
+    onError: (error) =>
+      showErrorNotification({ title: "Couldn't leave", error: new Error(error.message) }),
+  });
+  return (
+    <Group gap="xs" justify="space-between" wrap="nowrap">
+      <Text size="sm" c="dimmed">
+        You are an endorsed collaborator on this storyline.
+      </Text>
+      <Button
+        size="xs"
+        variant="default"
+        loading={leave.isPending}
+        onClick={() =>
+          openConfirmModal({
+            title: 'Leave as collaborator',
+            children: (
+              <Text size="sm">
+                Your chapters stay in the story; new continuations go to the creator&apos;s review.
+              </Text>
+            ),
+            labels: { confirm: 'Leave', cancel: 'Cancel' },
+            onConfirm: () => leave.mutate({ storylineId }),
+          })
+        }
+      >
+        Leave
+      </Button>
+    </Group>
   );
 }

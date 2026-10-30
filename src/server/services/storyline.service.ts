@@ -2121,7 +2121,7 @@ export async function getStorylineLinkTargets({
 /**
  * The owner only, never a moderator: an endorsed collaborator's priced continuations are approved
  * without review, so endorsing is approving them in advance. It invites them: nothing changes for
- * them, and nobody sees them on the storyline, until they accept (`respondToStorylineInvite`).
+ * them, and nobody sees them on the storyline, until they accept (`acceptStorylineInvite`).
  */
 export async function addStorylineCollaborator({
   storylineId,
@@ -2157,21 +2157,35 @@ export async function addStorylineCollaborator({
   });
 }
 
-/** The invitee accepts or declines. Declining removes the invitation; the owner may invite again. */
-export async function respondToStorylineInvite({
+const INVITE_CLOSED = 'That invitation is no longer open';
+
+/**
+ * The invitee accepts. Declining is `leave` (`removeStorylineCollaborator`), which a muted account
+ * can still reach. A block between the two since the invitation, or a takedown, closes it.
+ */
+export async function acceptStorylineInvite({
   storylineId,
   userId,
-  accept,
 }: {
   storylineId: number;
   userId: number;
-  accept: boolean;
 }) {
-  const where = { storylineId, userId, acceptedAt: null };
-  const { count } = accept
-    ? await dbWrite.storylineCollaborator.updateMany({ where, data: { acceptedAt: new Date() } })
-    : await dbWrite.storylineCollaborator.deleteMany({ where });
-  if (!count) throw throwNotFoundError('That invitation is no longer open');
+  const storyline = await dbWrite.storyline.findUnique({
+    where: { id: storylineId },
+    select: { userId: true, tosViolation: true },
+  });
+  if (!storyline || storyline.tosViolation) throw throwNotFoundError(INVITE_CLOSED);
+  if (await isBlockedPair(dbWrite, storyline.userId, userId)) {
+    await dbWrite.storylineCollaborator.deleteMany({
+      where: { storylineId, userId, acceptedAt: null },
+    });
+    throw throwNotFoundError(INVITE_CLOSED);
+  }
+  const { count } = await dbWrite.storylineCollaborator.updateMany({
+    where: { storylineId, userId, acceptedAt: null },
+    data: { acceptedAt: new Date() },
+  });
+  if (!count) throw throwNotFoundError(INVITE_CLOSED);
 }
 
 export async function removeStorylineCollaborator({

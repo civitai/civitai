@@ -164,6 +164,21 @@ describe('the open feed of a collaborators-only storyline', () => {
     expect(await openFeed(STRANGER)).toEqual([]);
   });
 
+  it('does not offer continuing to someone only invited, wherever the storyline is listed', async () => {
+    const item = async (viewerId: number) =>
+      (
+        await getStorylinesInfinite({
+          filter: 'all',
+          sort: 'newest',
+          limit: 20,
+          viewer: { id: viewerId },
+          browsingLevel: NsfwLevel.PG,
+        })
+      ).items.find((i) => i.id === COLLAB_ONLY);
+    expect(await item(INVITEE)).toMatchObject({ open: false });
+    expect(await item(VETERAN)).toMatchObject({ open: true });
+  });
+
   it('opens once the invitation is accepted', async () => {
     await db.pg.exec(
       `UPDATE "StorylineCollaborator" SET "acceptedAt" = now() WHERE "userId" = ${INVITEE}`

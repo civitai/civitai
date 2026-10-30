@@ -2,17 +2,19 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { page } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import { StorylineCollaboratorsPanel } from '~/components/Storyline/manage/StorylineCollaboratorsPanel';
-import { StorylineInviteAlert } from '~/components/Storyline/StorylineInviteAlert';
+import {
+  StorylineInviteAlert,
+  StorylineLeaveCollaboration,
+} from '~/components/Storyline/StorylineInviteAlert';
 import { STORYLINE_MAX_COLLABORATORS } from '~/shared/utils/storyline';
 import type * as TrpcMod from '~/utils/trpc';
 
-const mocks = vi.hoisted(() => ({ respond: vi.fn() }));
+const mocks = vi.hoisted(() => ({ accept: vi.fn(), decline: vi.fn() }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof TrpcMod>()),
   trpc: (await import('../../../../test/trpcProxyStub')).makeTrpcProxy({
-    'storyline.respondToInvite': {
-      useMutation: () => ({ isPending: false, variables: undefined, mutate: mocks.respond }),
-    },
+    'storyline.acceptInvite': { useMutation: () => ({ isPending: false, mutate: mocks.accept }) },
+    'storyline.leave': { useMutation: () => ({ isPending: false, mutate: mocks.decline }) },
   }),
 }));
 vi.mock('~/components/Search/QuickSearchDropdown', () => ({
@@ -24,7 +26,10 @@ vi.mock('~/components/UserAvatar/UserAvatar', () => ({
   ),
 }));
 
-beforeEach(() => mocks.respond.mockReset());
+beforeEach(() => {
+  mocks.accept.mockReset();
+  mocks.decline.mockReset();
+});
 
 describe("the invitee's answer", () => {
   test('Accept and Decline answer the invitation for this storyline', async () => {
@@ -32,10 +37,26 @@ describe("the invitee's answer", () => {
     await expect.element(page.getByText('owner invited you to collaborate')).toBeVisible();
 
     await page.getByRole('button', { name: 'Accept' }).click();
-    expect(mocks.respond).toHaveBeenLastCalledWith({ storylineId: 4, accept: true });
+    expect(mocks.accept).toHaveBeenCalledWith({ storylineId: 4 });
+    expect(mocks.decline).not.toHaveBeenCalled();
+    // Declining is leaving, which stays open to a muted account.
     await page.getByRole('button', { name: 'Decline' }).click();
-    expect(mocks.respond).toHaveBeenLastCalledWith({ storylineId: 4, accept: false });
-    expect(mocks.respond).toHaveBeenCalledTimes(2);
+    expect(mocks.decline).toHaveBeenCalledWith({ storylineId: 4 });
+    expect(mocks.accept).toHaveBeenCalledTimes(1);
+  });
+});
+
+// Confirms at once.
+vi.mock('@mantine/modals', async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  openConfirmModal: ({ onConfirm }: { onConfirm: () => void }) => onConfirm(),
+}));
+
+describe('a collaborator leaving', () => {
+  test('leaves this storyline after confirming', async () => {
+    renderWithProviders(<StorylineLeaveCollaboration storylineId={4} />);
+    await page.getByRole('button', { name: 'Leave' }).click();
+    expect(mocks.decline).toHaveBeenCalledWith({ storylineId: 4 });
   });
 });
 

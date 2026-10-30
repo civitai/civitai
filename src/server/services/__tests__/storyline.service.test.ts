@@ -78,6 +78,7 @@ import {
   addStorylineCollaborator,
   createStoryline,
   getStoryline,
+  assertCanContinueStoryline,
   getStorylineCanonAhead,
   getStorylineChapterLevels,
   getStorylineChildren,
@@ -96,7 +97,7 @@ import {
   recordStorylineCreateClick,
   removePendingChapter,
   removeStorylineCollaborator,
-  respondToStorylineInvite,
+  acceptStorylineInvite,
   setCanonChapter,
   updateStoryline,
   writeChapterEdgeForPlacement,
@@ -344,6 +345,19 @@ describe('writeChapterEdgeForPlacement', () => {
     expect((error as { code?: string }).code).toMatch(/^(BAD_REQUEST|UNAUTHORIZED|NOT_FOUND)$/);
     expect(w.storylineChapter.create).not.toHaveBeenCalled();
     expect(w.storylineChapterEdge.create).not.toHaveBeenCalled();
+  });
+
+  // Whether a continuation skips the owner's review follows `isCollaborator`.
+  it('does not count an invitee who has not accepted as a collaborator', async () => {
+    w.storylineChapter.findUnique.mockResolvedValue({ ...parentChapter, removedAt: null } as never);
+    w.storylineCollaborator.findUnique.mockResolvedValue({ acceptedAt: null } as never);
+    await expect(
+      assertCanContinueStoryline({ parentPostId: 500, placerId: STRANGER })
+    ).resolves.toMatchObject({ isCollaborator: false });
+    w.storylineCollaborator.findUnique.mockResolvedValue({ acceptedAt: new Date() } as never);
+    await expect(
+      assertCanContinueStoryline({ parentPostId: 500, placerId: STRANGER })
+    ).resolves.toMatchObject({ isCollaborator: true });
   });
 
   describe('when only collaborators may continue', () => {
@@ -871,26 +885,45 @@ describe('authorization', () => {
       });
     });
 
-    it('lets the invitee accept or decline only their own open invitation', async () => {
+    describe('accepting an invitation', () => {
       const open = { storylineId: 10, userId: COLLABORATOR, acceptedAt: null };
-      w.storylineCollaborator.updateMany.mockResolvedValue({ count: 1 } as never);
-      await respondToStorylineInvite({ storylineId: 10, userId: COLLABORATOR, accept: true });
-      expect(w.storylineCollaborator.updateMany.mock.calls[0][0]).toEqual({
-        where: open,
-        data: { acceptedAt: expect.any(Date) },
+      beforeEach(() =>
+        w.storyline.findUnique.mockResolvedValue({ userId: OWNER, tosViolation: false } as never)
+      );
+
+      it("accepts only the caller's own open invitation", async () => {
+        w.storylineCollaborator.updateMany.mockResolvedValue({ count: 1 } as never);
+        await acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR });
+        expect(w.storylineCollaborator.updateMany.mock.calls[0][0]).toEqual({
+          where: open,
+          data: { acceptedAt: expect.any(Date) },
+        });
       });
-      expect(w.storylineCollaborator.deleteMany).not.toHaveBeenCalled();
 
-      w.storylineCollaborator.deleteMany.mockResolvedValue({ count: 1 } as never);
-      await respondToStorylineInvite({ storylineId: 10, userId: COLLABORATOR, accept: false });
-      expect(w.storylineCollaborator.deleteMany.mock.calls[0][0]).toEqual({ where: open });
-    });
+      it('answers not found when there is no open invitation', async () => {
+        w.storylineCollaborator.updateMany.mockResolvedValue({ count: 0 } as never);
+        await expect(
+          acceptStorylineInvite({ storylineId: 10, userId: STRANGER })
+        ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      });
 
-    it('answers not found when there is no open invitation to answer', async () => {
-      w.storylineCollaborator.updateMany.mockResolvedValue({ count: 0 } as never);
-      await expect(
-        respondToStorylineInvite({ storylineId: 10, userId: STRANGER, accept: true })
-      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+      // Otherwise a blocked user could join, listed to everyone but the owner who blocked them.
+      it('closes the invitation instead when the two have blocked each other since', async () => {
+        blockedPairs = [[OWNER, COLLABORATOR]];
+        await expect(
+          acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR })
+        ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        expect(w.storylineCollaborator.updateMany).not.toHaveBeenCalled();
+        expect(w.storylineCollaborator.deleteMany).toHaveBeenCalledWith({ where: open });
+      });
+
+      it('is closed on a taken-down storyline', async () => {
+        w.storyline.findUnique.mockResolvedValue({ userId: OWNER, tosViolation: true } as never);
+        await expect(
+          acceptStorylineInvite({ storylineId: 10, userId: COLLABORATOR })
+        ).rejects.toMatchObject({ code: 'NOT_FOUND' });
+        expect(w.storylineCollaborator.updateMany).not.toHaveBeenCalled();
+      });
     });
 
     // Decided with the Storylines lead: an endorsed collaborator's priced continuations skip the
@@ -1358,6 +1391,37 @@ describe('reading', () => {
       ]);
       // Counts order the list but are not handed to the client.
       expect(children[0]).not.toHaveProperty('readers');
+    });
+
+    it("ranks a pending invitee's continuation with the community, not the endorsed", async () => {
+      const all = [edge(13, COLLABORATOR, false, 3), edge(14, OWNER, true, 4)];
+      r.storylineCollaborator.findMany.mockImplementation((({
+        where,
+      }: {
+        where: { acceptedAt?: unknown };
+      }) => Promise.resolve(where.acceptedAt ? [] : [{ userId: COLLABORATOR }])) as never);
+      r.storylineChapterEdge.findFirst.mockResolvedValue(all[1] as never);
+      r.storylineChapterEdge.findMany.mockImplementation((({
+        where,
+      }: {
+        where: { chapter?: { userId?: { in: number[] } } };
+      }) =>
+        Promise.resolve(
+          where.chapter
+            ? all.filter((e) => where.chapter?.userId?.in.includes(e.chapter.userId))
+            : all
+        )) as never);
+
+      const children = await getStorylineChildren({
+        chapterId: 1,
+        viewer: { id: 99 },
+        browsingLevel: NsfwLevel.PG,
+        readersByChapterId: new Map(),
+      });
+      expect(children.map((c) => [c.chapterId, c.rank])).toEqual([
+        [14, 'canon'],
+        [13, 'community'],
+      ]);
     });
 
     it('orders community children by stored reader counts when none are passed in', async () => {
@@ -2986,6 +3050,19 @@ describe('covers and cast', () => {
         expect(w.storyline.update).not.toHaveBeenCalled();
       }
     );
+
+    // The mock answers like the table: COLLABORATOR's row is still a pending invitation.
+    it('refuses an image from an invitee who has not accepted', async () => {
+      w.storylineCollaborator.findMany.mockImplementation((({
+        where,
+      }: {
+        where: { acceptedAt?: unknown };
+      }) => Promise.resolve(where.acceptedAt ? [] : [{ userId: COLLABORATOR }])) as never);
+      await expect(
+        updateStoryline({ id: 10, userId: OWNER, coverImageId: 2 })
+      ).rejects.toMatchObject({ code: 'BAD_REQUEST' });
+      expect(w.storyline.update).not.toHaveBeenCalled();
+    });
 
     it('judges the pick against the ceiling being set in the same edit', async () => {
       await expect(
