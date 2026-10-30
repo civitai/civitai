@@ -26,8 +26,8 @@ const RESERVED = [
   'civitaimoderation',
   'Civ1taiModeration',
   'Civitai_Moderation',
-  'CivitaiModeratіon',
-  'Civitai​Moderation',
+  'CivitaiModerat\u0456on',
+  'Civitai\u200bModeration',
 ];
 
 const available = (username: string) =>
