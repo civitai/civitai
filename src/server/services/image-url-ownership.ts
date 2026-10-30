@@ -21,14 +21,15 @@ export const imageUrlUnavailableError = (message = COVER_IMAGE_UNAVAILABLE_MESSA
 export const UNFINISHED_UPLOAD_MESSAGE =
   "An image didn't finish uploading. Remove it and add it again.";
 
-const SCHEME = /^([a-z][a-z0-9+.-]*):/i;
+// After the leading control characters and spaces a url parser drops.
+const SCHEME = /^[\x00-\x20]*([a-z][a-z0-9+.-]*):/i;
 
 /**
  * A url with a scheme other than http(s), such as the `blob:` url a browser shows for a file
  * before its upload finishes. It names no stored object, so it holds no upload key.
  */
 export function isUnfinishedUploadUrl(url: string | null | undefined) {
-  const scheme = url ? SCHEME.exec(compacted(url).trim())?.[1].toLowerCase() : undefined;
+  const scheme = url ? SCHEME.exec(compacted(url))?.[1].toLowerCase() : undefined;
   return !!scheme && scheme !== 'http' && scheme !== 'https';
 }
 

@@ -310,7 +310,12 @@ describe('an image url that names no stored object', () => {
   });
 
   it('is refused in any scheme but http(s), however it is spelled', async () => {
-    for (const url of [`data:image/png;base64,${KEY}`, ` BLOB:${KEY}`, `bl\tob:${KEY}`])
+    for (const url of [
+      `data:image/png;base64,${KEY}`,
+      ` BLOB:${KEY}`,
+      `bl\tob:${KEY}`,
+      `${String.fromCharCode(1)}blob:${KEY}`,
+    ])
       expect(await message(assertClientImageUrlsUsable({ urls: [url], userId: CALLER })), url).toBe(
         UNFINISHED_UPLOAD_MESSAGE
       );
