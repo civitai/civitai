@@ -6,6 +6,7 @@ import {
   liveStreak,
   newPlayerState,
   shieldCoversToday,
+  streakAfterReset,
   voidStreak,
   type StreakState,
 } from './streak';
@@ -148,5 +149,37 @@ describe('voidStreak', () => {
     expect(voidStreak(state({ streak: 7, lastWatchDay: '2026-12-15', shields: 1 }))).toEqual(
       state({ streak: 0, lastWatchDay: null, shields: 1 })
     );
+  });
+});
+
+describe('streakAfterReset', () => {
+  const live = state({ streak: 4, lastWatchDay: '2026-12-16', shields: 1 });
+
+  it('keeps a streak whose last Watch came after the reset day', () => {
+    expect(streakAfterReset(live, new Date('2026-12-15T10:00:00Z'), null)).toEqual(live);
+  });
+
+  it('voids a streak whose last Watch came before the reset day, keeping shields', () => {
+    expect(streakAfterReset(live, new Date('2026-12-17T01:00:00Z'), null)).toEqual({
+      ...live,
+      streak: 0,
+      lastWatchDay: null,
+    });
+  });
+
+  it('on the reset day itself, judges by when that Watch was completed', () => {
+    const reset = new Date('2026-12-16T12:00:00Z');
+
+    expect(streakAfterReset(live, reset, new Date('2026-12-16T09:00:00Z'))).toMatchObject({
+      streak: 0,
+      lastWatchDay: null,
+    });
+    expect(streakAfterReset(live, reset, new Date('2026-12-16T13:00:00Z'))).toEqual(live);
+  });
+
+  it('leaves a player who has never finished a Watch alone', () => {
+    const fresh = state();
+
+    expect(streakAfterReset(fresh, new Date('2026-12-17T00:00:00Z'), null)).toEqual(fresh);
   });
 });

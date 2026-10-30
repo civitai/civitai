@@ -5,6 +5,7 @@ export const JOB_PATHS: ReadonlySet<string> = new Set([
   '/api/jobs/tick',
   '/api/jobs/partitions',
   '/api/jobs/harvest',
+  '/api/jobs/notify',
 ]);
 
 export function isJobRequest(request: Request): boolean {

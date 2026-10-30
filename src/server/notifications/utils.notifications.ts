@@ -125,22 +125,25 @@ export function getNotificationMessage(notification: Omit<BareNotification, 'id'
 function getNotificationTypes() {
   const notificationTypes: string[] = [];
   const optInNotificationTypes: string[] = [];
-  const notificationCategoryTypes: Record<
-    string,
-    { displayName: string; type: string; optIn: boolean }[]
-  > = {};
-  for (const [type, { displayName, toggleable, category, optIn, showCategory }] of Object.entries(
-    notificationProcessors
-  )) {
+  type SettingRow = { displayName: string; type: string; optIn: boolean };
+  const notificationCategoryTypes: Record<string, SettingRow[]> = {};
+  const notificationSectionTypes: Record<string, SettingRow[]> = {};
+  for (const [
+    type,
+    { displayName, toggleable, category, section, optIn, showCategory },
+  ] of Object.entries(notificationProcessors)) {
     if (toggleable === false && !showCategory) continue;
-    notificationCategoryTypes[category] ??= [];
-    notificationCategoryTypes[category]!.push({ type, displayName, optIn: optIn ?? false });
+    const groups = section ? notificationSectionTypes : notificationCategoryTypes;
+    const group = section ?? category;
+    groups[group] ??= [];
+    groups[group]!.push({ type, displayName, optIn: optIn ?? false });
     if (optIn) optInNotificationTypes.push(type);
     else notificationTypes.push(type);
   }
 
   return {
     notificationCategoryTypes,
+    notificationSectionTypes,
     notificationTypes,
     optInNotificationTypes,
   };
@@ -150,8 +153,21 @@ function getNotificationTypes() {
  * send, and for an opt-in type "off" writes the row that subscribes you. Those types are still
  * present in `notificationCategoryTypes` so they render their own checkbox.
  */
-export const { notificationCategoryTypes, notificationTypes, optInNotificationTypes } =
-  getNotificationTypes();
+export const {
+  notificationCategoryTypes,
+  notificationSectionTypes,
+  notificationTypes,
+  optInNotificationTypes,
+} = getNotificationTypes();
+
+/**
+ * What the settings pages list, each under its own heading: the categories, then the sections (types
+ * that name a `section` are grouped there instead of under their category).
+ */
+export const notificationSettingGroups = {
+  ...notificationCategoryTypes,
+  ...notificationSectionTypes,
+};
 
 export const isOptInNotification = (type: string) => optInNotificationTypes.includes(type);
 
@@ -170,3 +186,12 @@ export const emailNotificationTypeList = Object.entries(notificationProcessors)
   .map(([type]) => type);
 
 export const isEmailNotificationType = (type: string) => emailNotificationTypeList.includes(type);
+
+/**
+ * The opt-out types whose settings rows say whether a user turned everything off: every type the
+ * "all notifications" switch writes a row for, less the ones another app sends. The Knights job reads
+ * this over HTTP (`/api/mod/knights/notification-types`) to leave out users who silenced them all.
+ */
+export const silenceCheckTypes = notificationTypes.filter(
+  (type) => !notificationProcessors[type]?.externalProducer
+);

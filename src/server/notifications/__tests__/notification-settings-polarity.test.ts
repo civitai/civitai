@@ -38,7 +38,9 @@ describe('notification settings polarity', () => {
     for (const [type, def] of Object.entries(notificationProcessors)) {
       const query = await queryFor(type);
 
-      if (def.optIn) {
+      if (def.externalProducer) {
+        expect(query, `${type} is externalProducer, so it must not have a query`).toBeUndefined();
+      } else if (def.optIn) {
         // An opt-in type MUST have a query that derives recipients from the table. Without one, the
         // row still means opted-out server-side (or, on the event path, gets the subscriber dropped
         // by create.ts) while the UI renders it as subscribed — a perfect inversion. Asserted

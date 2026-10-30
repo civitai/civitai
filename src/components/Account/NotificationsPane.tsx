@@ -32,7 +32,7 @@ import {
 import { SkeletonSwitch } from '~/components/SkeletonSwitch/SkeletonSwitch';
 import { NotificationCategory } from '~/server/common/enums';
 import {
-  notificationCategoryTypes,
+  notificationSettingGroups,
   notificationTypes,
   optInNotificationTypes,
 } from '~/server/notifications/utils.notifications';
@@ -53,7 +53,7 @@ const categoryIcons: Record<string, Icon> = {
  * `Other` is the catch-all bucket, so it belongs under the named categories however processor
  * registration happens to order them. Stable sort, so everything else keeps its order.
  */
-const categoryEntries = Object.entries(notificationCategoryTypes).sort(
+const categoryEntries = Object.entries(notificationSettingGroups).sort(
   ([a], [b]) => Number(a === NotificationCategory.Other) - Number(b === NotificationCategory.Other)
 );
 
@@ -73,7 +73,7 @@ export function NotificationsPane() {
     updateNotificationSettingMutation.mutate({ toggle, type });
   };
   const toggleCategory = (category: string, toggle: boolean) => {
-    const categoryTypes = notificationCategoryTypes[category]
+    const categoryTypes = notificationSettingGroups[category]
       ?.filter((x) => toggle === false || !x.optIn)
       .map((x) => x.type);
     if (!categoryTypes?.length) return;

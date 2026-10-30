@@ -5133,6 +5133,14 @@ export interface KnightsPlayerDay {
   bonusGold: number;
 }
 
+export interface KnightsNotificationSend {
+  playerId: number;
+  day: Date;
+  kind: string;
+  sentAt: Date;
+  confirmedAt: Date | null;
+}
+
 export interface KnightsDetectionRun {
   id: number;
   completedAt: Date;
