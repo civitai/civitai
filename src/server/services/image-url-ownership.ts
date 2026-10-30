@@ -20,7 +20,7 @@ export const imageUrlUnavailableError = (message = COVER_IMAGE_UNAVAILABLE_MESSA
 
 type Db = Prisma.TransactionClient | typeof dbWrite;
 
-const MAX_KEYS = 64;
+export const MAX_KEYS = 64;
 // Overlapping matches too: one key's characters can begin another.
 const UUIDS = /(?=([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))/gi;
 
@@ -56,7 +56,7 @@ function storedUrlsFor(url: string | null | undefined): string[] {
   return keys.length ? [url as string, ...keys] : [];
 }
 
-function keysIn(url: string | null | undefined): string[] {
+export function keysIn(url: string | null | undefined): string[] {
   if (!url) return [];
   return decodedForms(url).flatMap((value) =>
     [...value.matchAll(UUIDS)].map(([, key]) => key.toLowerCase())

@@ -129,6 +129,7 @@ import {
   assertClientKeysIssuedToCaller,
   recordUploadKeyOwner,
 } from '~/server/services/image-url-ownership';
+import { assertGenerationInputUrlsUsable } from '~/server/services/generation-input-urls';
 import { env } from '~/env/server';
 import { randomUUID } from 'crypto';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
@@ -4375,6 +4376,10 @@ export const comicsRouter = router({
       if (!project || project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      await assertGenerationInputUrlsUsable({
+        urls: [input.sourceImageUrl, ...(input.userReferenceImages ?? []).map((ref) => ref.url)],
+        userId: ctx.user!.id,
+      });
 
       const modelConfig = getComicModelConfig(input.baseModel ?? project.baseModel);
       const effectiveVersionId =
@@ -4509,6 +4514,10 @@ export const comicsRouter = router({
       })
     )
     .mutation(async ({ ctx, input }) => {
+      await assertGenerationInputUrlsUsable({
+        urls: (input.userReferenceImages ?? []).map((ref) => ref.url),
+        userId: ctx.user!.id,
+      });
       const token = await getOrchestratorToken(ctx.user!.id, ctx).catch((error) => {
         throw throwBadRequestError(getOrchestratorErrorMessage(error));
       });
@@ -5508,6 +5517,12 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      // Without a prompt the image is saved as the panel, and createImage checks it.
+      if (input.prompt?.trim() || input.forceGenerate)
+        await assertGenerationInputUrlsUsable({
+          urls: [input.sourceImageUrl],
+          userId: ctx.user!.id,
+        });
 
       // Get next position
       let nextPosition: number;
@@ -5784,6 +5799,11 @@ export const comicsRouter = router({
       if (!chapter || chapter.project.userId !== ctx.user!.id) {
         throw throwAuthorizationError();
       }
+      // A panel without a prompt saves its source image, and createImage checks it.
+      await assertGenerationInputUrlsUsable({
+        urls: input.panels.filter((p) => p.prompt?.trim()).map((p) => p.sourceImageUrl),
+        userId: ctx.user!.id,
+      });
 
       const bulkModelConfig = getComicModelConfig(input.baseModel ?? chapter.project.baseModel);
 
