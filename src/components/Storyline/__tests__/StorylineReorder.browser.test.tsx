@@ -145,7 +145,7 @@ describe('reordering chapters on the map', () => {
       await expect
         .element(hint())
         .toHaveTextContent(
-          'Your main path can be any length. Moving its chapters into a new order needs three or more'
+          'The main path can be any length. Its chapters can be put in a new order once three or more'
         );
     });
 

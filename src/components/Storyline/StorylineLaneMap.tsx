@@ -209,9 +209,9 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
         !graph?.truncated &&
         !rows.some((row) => row.canon && reorderOf(row.canon.chapterId)) && (
           <Text size="xs" c="dimmed" mb="xs" data-testid="storyline-reorder-hint">
-            Your main path can be any length. Moving its chapters into a new order needs three or
-            more of your own in a row at its end, or four or more anywhere else on it, with no
-            branches or other people&apos;s chapters between them.
+            The main path can be any length. Its chapters can be put in a new order once three or
+            more by the storyline&apos;s creator run in a row at its end, or four or more anywhere
+            else on it, with no branches or other people&apos;s chapters between them.
           </Text>
         )}
       <div className="flex">
