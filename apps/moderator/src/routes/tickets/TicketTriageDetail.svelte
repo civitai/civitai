@@ -18,6 +18,7 @@
   import { splitTags } from '$lib/tickets/tags';
   import TicketAccount from './TicketAccount.svelte';
   import TicketAppeals from './TicketAppeals.svelte';
+  import TicketBounties from './TicketBounties.svelte';
   import TicketContentReports from './TicketContentReports.svelte';
   import TicketEscalate from './TicketEscalate.svelte';
   import TicketGeneratorRestrictions from './TicketGeneratorRestrictions.svelte';
@@ -332,6 +333,9 @@
   {/if}
   {#if panels.payouts}
     <TicketPayouts payouts={panels.payouts} />
+  {/if}
+  {#if panels.bounties}
+    <TicketBounties bounties={panels.bounties} />
   {/if}
 {/snippet}
 

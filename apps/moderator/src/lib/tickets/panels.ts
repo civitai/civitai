@@ -10,6 +10,7 @@ import type { TicketView } from './routing';
 import { supportAccountPanelFor } from './support-account-panel';
 import {
   USER_LOOKUP_PATH,
+  bountyPanelFor,
   membershipPanelFor,
   payoutsPanelFor,
   shopPanelFor,
@@ -84,6 +85,10 @@ export const PANELS = {
   payouts: {
     readGrants: [USER_LOOKUP_PATH],
     visibility: payoutsPanelFor,
+  },
+  bounties: {
+    readGrants: [USER_LOOKUP_PATH],
+    visibility: bountyPanelFor,
   },
 } satisfies Record<string, PanelSpec>;
 

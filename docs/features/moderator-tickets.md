@@ -85,6 +85,8 @@ is its own page grant. Acting on a ticket is a separate permission:
   - **Buzz (Receiving)** (read-only): the user's newest 10 payout and withdrawal requests (`/retool/user-lookup`):
     date, status, requested against transferred, and the provider's name. Bank or account details, provider
     account ids, contacts and request notes are never carried.
+  - **Bounty System** (read-only): the bounties the user funded and the entries they submitted, newest 10 each
+    (`/retool/user-lookup`): name, type, status, pledged Buzz and dates. Descriptions are not shown.
 
   Support actions are registered only on the support page. Every panel action re-reads the ticket and is refused
   when its panel would be hidden in the ticket's current view.

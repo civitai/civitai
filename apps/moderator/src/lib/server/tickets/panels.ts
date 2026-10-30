@@ -2,6 +2,7 @@ import { ACCOUNT_APPEALS_PATH } from '$lib/tickets/appeals';
 import { PANELS, type PanelContext, type PanelKey } from '$lib/tickets/panels';
 import { accountSectionFor, type TicketAccount } from './account';
 import { appealsSectionFor, type TicketAppeals } from './appeals';
+import { bountiesSectionFor, type TicketBounties } from './bounties';
 import { contentIssueSectionFor, type TicketContentIssue } from './content-reports';
 import { generatorSectionFor, type TicketGenerator } from './generator-restrictions';
 import { historySectionFor, type TicketHistory } from './history';
@@ -23,6 +24,7 @@ export type PanelSections = {
   membership: TicketMembership;
   shop: TicketShop;
   payouts: TicketPayouts;
+  bounties: TicketBounties;
 };
 
 export type CanRead = (path: string) => boolean;
@@ -67,6 +69,7 @@ export const liveLoaders: Loaders = {
   membership: ({ civitaiUserId }) => membershipSectionFor({ userId: civitaiUserId }),
   shop: ({ civitaiUserId }) => shopSectionFor({ userId: civitaiUserId }),
   payouts: ({ civitaiUserId }) => payoutsSectionFor({ userId: civitaiUserId }),
+  bounties: ({ civitaiUserId }) => bountiesSectionFor({ userId: civitaiUserId }),
 };
 
 /**

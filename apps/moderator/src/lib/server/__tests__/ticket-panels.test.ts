@@ -17,6 +17,7 @@ const supportAccount = vi.fn();
 const membership = vi.fn();
 const shop = vi.fn();
 const payouts = vi.fn();
+const bounties = vi.fn();
 const loaders = {
   account: (...a: unknown[]) => account(...a),
   appeals: (...a: unknown[]) => appeals(...a),
@@ -29,6 +30,7 @@ const loaders = {
   membership: (...a: unknown[]) => membership(...a),
   shop: (...a: unknown[]) => shop(...a),
   payouts: (...a: unknown[]) => payouts(...a),
+  bounties: (...a: unknown[]) => bounties(...a),
 } as never;
 const all = () => true;
 
@@ -51,6 +53,7 @@ beforeEach(() => {
   lora.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
   supportAccount.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
   membership.mockReset().mockResolvedValue({ status: 'ok', userId: 7, subscription: null });
+  bounties.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
   payouts.mockReset().mockResolvedValue({ status: 'ok', userId: 7, payouts: [], truncated: false });
   shop.mockReset().mockResolvedValue({ status: 'ok', userId: 7, purchases: [], truncated: false });
 });
@@ -193,6 +196,19 @@ describe('loadPanels', () => {
     });
     expect(await loadPanels(t, (p) => p !== '/retool/user-lookup', loaders)).toEqual({});
     expect(payouts).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows only the bounties panel on a support Bounty System ticket, under the User Lookup grant', async () => {
+    const t = { ...ticket, view: 'support' as const, cfFeature: 'Bounty System' };
+    const res = await loadPanels(t, all, loaders);
+    expect(Object.keys(res)).toEqual(['bounties']);
+    expect(bounties).toHaveBeenCalledWith({ ...t, civitaiUserId: 7 }, all);
+    expect(await loadPanels({ ...t, view: 'moderation' }, all, loaders)).toEqual({});
+    expect(await loadPanels({ ...t, civitaiUserId: null }, all, loaders)).toEqual({
+      bounties: { status: 'unlinked' },
+    });
+    expect(await loadPanels(t, (p) => p !== '/retool/user-lookup', loaders)).toEqual({});
+    expect(bounties).toHaveBeenCalledTimes(1);
   });
 
   it('says only that no user is linked, without loading', async () => {

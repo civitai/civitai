@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { membershipPanelFor, payoutsPanelFor, shopPanelFor } from '../support-panels';
+import {
+  bountyPanelFor,
+  membershipPanelFor,
+  payoutsPanelFor,
+  shopPanelFor,
+} from '../support-panels';
 
 const base = {
   view: 'support' as const,
@@ -61,5 +66,24 @@ describe('payoutsPanelFor', () => {
     expect(payoutsPanelFor({ ...payouts, cfFeature: 'Buzz (Purchase)' })).toBe('hidden');
     expect(payoutsPanelFor(base)).toBe('hidden');
     expect(payoutsPanelFor({ ...payouts, cfFeature: null })).toBe('hidden');
+  });
+});
+
+describe('bountyPanelFor', () => {
+  const bounty = { ...base, cfFeature: 'Bounty System' as string | null };
+
+  it('shows on a linked support Bounty System ticket, ignoring padding', () => {
+    expect(bountyPanelFor(bounty)).toBe('panel');
+    expect(bountyPanelFor({ ...bounty, cfFeature: ' Bounty System ' })).toBe('panel');
+  });
+
+  it('says only that no user is linked when there is none', () => {
+    expect(bountyPanelFor({ ...bounty, civitaiUserId: null })).toBe('unlinked');
+  });
+
+  it('is hidden in the moderation view and on other features', () => {
+    expect(bountyPanelFor({ ...bounty, view: 'moderation' })).toBe('hidden');
+    expect(bountyPanelFor(base)).toBe('hidden');
+    expect(bountyPanelFor({ ...bounty, cfFeature: null })).toBe('hidden');
   });
 });
