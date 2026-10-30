@@ -134,4 +134,16 @@ describe('recordMintedUploadKey', () => {
       )
     );
   });
+
+  it('never throws when the tracker throws as it is called', async () => {
+    const tracker = {
+      imageUploadRequest: () => {
+        throw new Error('no tracker');
+      },
+    };
+
+    await expect(
+      recordMintedUploadKey('server-key', OWNER, tracker as never)
+    ).resolves.toBeUndefined();
+  });
 });
