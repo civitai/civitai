@@ -3319,6 +3319,35 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
 }
 type LockedModelRow = Awaited<ReturnType<typeof lockModelRow>>;
 
+type ContentFlags = { nsfw: boolean; minor: boolean; poi: boolean; sfwOnly: boolean };
+
+/**
+ * The content flags the row holds after this save: what it writes, over the locked row. A save
+ * that changes none of them is let through, so a row already in a refused combination stays
+ * editable.
+ */
+function assertAllowedContentFlags(
+  stored: ContentFlags,
+  data: { nsfw?: boolean; minor?: boolean; poi?: boolean; sfwOnly?: boolean }
+): ContentFlags {
+  const merged: ContentFlags = {
+    nsfw: data.nsfw ?? stored.nsfw,
+    minor: data.minor ?? stored.minor,
+    poi: data.poi ?? stored.poi,
+    sfwOnly: data.sfwOnly ?? stored.sfwOnly,
+  };
+  const changed = (Object.keys(merged) as (keyof ContentFlags)[]).some(
+    (flag) => merged[flag] !== stored[flag]
+  );
+  if (!changed || !merged.nsfw) return merged;
+  if (merged.poi)
+    throw throwBadRequestError('Mature content depicting actual people is not permitted.');
+  if (merged.minor) throw throwBadRequestError('Mature content depicting minors is not permitted.');
+  if (merged.sfwOnly)
+    throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
+  return merged;
+}
+
 /**
  * Whether a moderator's save rules on the nsfw rating: adds or removes the nsfw lock, or changes
  * nsfw itself. Such a save makes the rating the moderator's, so it drops the `systemNsfwLock`
@@ -3705,6 +3734,7 @@ export const upsertModel = async (
           data.availability !== locked.availability
         )
           throw throwBadRequestError('A model’s availability changes only through its own flows.');
+        const flags = locked ? assertAllowedContentFlags(locked, data) : undefined;
         let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
         if ((locked?.availability ?? beforeUpdate.availability) === Availability.Private) {
           // `meta` only carries `cannotPromote` for a moderator. While private it is forced on, so the
@@ -3765,7 +3795,9 @@ export const upsertModel = async (
             gallerySettings: {
               ...lockedGallerySettings,
               level:
-                input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : lockedGallerySettings?.level,
+                (flags ?? input).minor || (flags ?? input).sfwOnly
+                  ? sfwBrowsingLevelsFlag
+                  : lockedGallerySettings?.level,
             },
             tagsOnModels: tagsOnModels
               ? {
