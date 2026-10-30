@@ -178,4 +178,29 @@ describe('closing stranded questions', () => {
       await pg.exec(`DROP TRIGGER refuse_close ON "KnightsQueueItem"`);
     }
   });
+
+  it('counts each close once, mirrors the XP a close pays (none for a no-outcome close), and stops when its time budget is spent', async () => {
+    const ids = await seed([row('a', 10), row('b', 11)]);
+    await answer(1, ids.a);
+    await answer(2, ids.b);
+    await pg.exec(`UPDATE "Image" SET "blockedFor" = 'x'`);
+    const mirror = vi.fn(async () => undefined);
+
+    expect(await closeStrandedYesNo(db, { now: NOW, maxAgeDays: 14, budgetMs: 0, mirror })).toEqual(
+      {
+        unplayable: 0,
+        stale: 0,
+        failed: 0,
+      }
+    );
+    expect((await item(ids.a)).status).toBe('Open');
+
+    expect(await closeStrandedYesNo(db, { now: NOW, maxAgeDays: 14, mirror })).toEqual({
+      unplayable: 2,
+      stale: 0,
+      failed: 0,
+    });
+    // A close with no outcome pays no bulk XP; the vote XP was mirrored when each answer was given.
+    expect(mirror).not.toHaveBeenCalled();
+  });
 });

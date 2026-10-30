@@ -154,6 +154,8 @@ describe('play load vote pacing', () => {
     expect(page.lockoutSeconds).toBe(30);
     expect(page.item).toBeNull();
     expect(getFeed).not.toHaveBeenCalled();
+    expect(pickHiddenCheck).not.toHaveBeenCalled();
+    expect(pickYesNo).not.toHaveBeenCalled();
     expect(voteLockUntil).toHaveBeenCalledWith(expect.anything(), 7, NOW, limits);
   });
 

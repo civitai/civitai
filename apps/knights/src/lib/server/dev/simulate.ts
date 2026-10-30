@@ -126,7 +126,7 @@ export async function simulateOtherVoters(
 
   const after = await db
     .selectFrom('KnightsQueueItem')
-    .select(['status', 'appliedAt'])
+    .select(['status', 'appliedAt', 'audience'])
     .where('id', '=', input.itemId)
     .executeTakeFirst();
   return {
