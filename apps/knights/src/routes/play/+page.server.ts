@@ -18,6 +18,10 @@ import { queueDeps } from '$lib/server/queue/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { trialDeps } from '$lib/server/trials/runtime';
+import { pickYesNo } from '$lib/server/yesno/feed';
+import { YESNO_ANSWERS } from '$lib/server/yesno/keys';
+import { yesNoConfig } from '$lib/server/yesno/runtime';
+import { castYesNoVote } from '$lib/server/yesno/vote';
 import { answerTrial, getTrial } from '$lib/server/trials/trials.service';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -95,6 +99,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     : null;
   const page = {
     mode: 'queue' as const,
+    banner: null as { heading: string } | null,
     ...common,
     daily,
     recap,
@@ -102,29 +107,66 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     conversionOpen,
     lockoutSeconds,
   };
-  if (!feed || resetPending) return { ...page, question: null, item: null };
+  if (resetPending || lockedUntil) return { ...page, question: null, item: null };
 
-  const secret = feedSecret();
-  const hidden = await pickHiddenCheck(db, {
-    userId: locals.user.id,
-    rank: status.rank,
-    secret,
-    questionKey: feed.question.key,
-    rate: hiddenSettings().rate,
-  });
-  if (hidden) {
+  // A hidden check comes first, so its rate holds whatever the yes/no share is; it only ever rides on a rating question.
+  if (feed) {
+    const secret = feedSecret();
+    const hidden = await pickHiddenCheck(db, {
+      userId: locals.user.id,
+      rank: status.rank,
+      secret,
+      questionKey: feed.question.key,
+      rate: hiddenSettings().rate,
+    });
+    if (hidden) {
+      return {
+        ...page,
+        question: hidden.question,
+        item: {
+          id: sealItem(secret, locals.user.id, { kind: 'hidden', id: hidden.referenceId }),
+          src: imageUrl(hidden.imageKey),
+          width: hidden.width,
+          height: hidden.height,
+        },
+      };
+    }
+  }
+
+  // A yes/no question is rolled for next; with no rating to show, one is shown whenever there is one. A share of 0 switches them off.
+  const yesNo = yesNoConfig();
+  const offer =
+    yesNo.share <= 0
+      ? null
+      : await pickYesNo(db, {
+          userId: locals.user.id,
+          rank: status.rank,
+          secret: feedSecret(),
+          share: yesNo.share,
+          stretch: yesNo.stretch,
+          force: !feed,
+        });
+  if (offer) {
     return {
       ...page,
-      question: hidden.question,
+      banner: offer.banner,
+      question: {
+        key: 'yesno',
+        kind: 'bool',
+        prompt: offer.prompt,
+        options: YESNO_ANSWERS.map((answer) => ({ ...answer })),
+      },
       item: {
-        id: sealItem(secret, locals.user.id, { kind: 'hidden', id: hidden.referenceId }),
-        src: imageUrl(hidden.imageKey),
-        width: hidden.width,
-        height: hidden.height,
+        id: sealItem(feedSecret(), locals.user.id, { kind: 'yesno', id: offer.itemId }),
+        src: imageUrl(offer.imageKey),
+        width: offer.width,
+        height: offer.height,
       },
     };
   }
+  if (!feed) return { ...page, question: null, item: null };
 
+  const secret = feedSecret();
   const [item] = feed.items;
   return {
     ...page,
@@ -167,6 +209,12 @@ export const actions: Actions = {
                 answer,
                 isModerator: locals.user.isModerator,
               },
+              queueDeps
+            )
+          : ref.kind === 'yesno'
+          ? await castYesNoVote(
+              db,
+              { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
               queueDeps
             )
           : await castVote(

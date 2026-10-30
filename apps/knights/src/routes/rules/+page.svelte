@@ -41,6 +41,11 @@
     carry more weight in a vote.
   </li>
   <li>
+    Some questions are plain yes or no questions about one image, asked in runs on one subject
+    (press Y or N). They are judged like any other: once at least {facts.yesNo.judgesNeeded} judges have
+    answered, an answer with the majority is correct and any other is wrong, with the same XP, gold and accuracy as a rating.
+  </li>
+  <li>
     Judging is paced. Go too fast and you will be asked to rest for a short while before the next
     image. Moderators are not paced.
   </li>

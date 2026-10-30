@@ -3769,6 +3769,31 @@ export type KnightsQueueItem = {
   nextAttemptAt: Timestamp | null;
   reason: string | null;
   prediction: unknown | null;
+  /**
+   * Yes/no items only (question kind `bool`): the producer's id for the question, unique across items.
+   */
+  externalId: string | null;
+  /**
+   * Yes/no items only: the question as asked about this image. Rating items use their question's prompt.
+   */
+  prompt: string | null;
+  /**
+   * Yes/no items only: who answers it, `players` | `moderators`. Null for rating items.
+   */
+  audience: string | null;
+  /**
+   * Yes/no items only: what the producing model would rate the image if the answer were yes / no. Never served.
+   */
+  yesEffect: string | null;
+  noEffect: string | null;
+  /**
+   * Yes/no items only: where the question came from (provenance, not served).
+   */
+  meta: unknown | null;
+  /**
+   * Yes/no items only: answers so far; serving finishes questions that are under way first.
+   */
+  voteCount: Generated<number>;
   createdAt: Generated<Timestamp>;
   updatedAt: Timestamp;
 };

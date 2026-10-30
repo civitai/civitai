@@ -15,7 +15,7 @@ const RATING_GUIDE_LEVELS = [
 ] as const;
 
 /** Numbers the rules page quotes, read from the game's config. */
-export function rulesFacts() {
+export function rulesFacts(yesNoJudges: number) {
   return {
     trials: {
       length: TRIALS.runLength,
@@ -39,6 +39,7 @@ export function rulesFacts() {
       streakCap: DAILY.streakCap,
       maxShields: DAILY.maxShields,
     },
+    yesNo: { judgesNeeded: yesNoJudges },
     hearts: SMITES.max,
     ratingGuide: RATING_GUIDE_LEVELS.map((level) => ({
       level,

@@ -8,6 +8,7 @@ const settleHiddenChecks = vi.hoisted(() => vi.fn());
 const resetPendingPlayers = vi.hoisted(() => vi.fn());
 const retryPendingConversions = vi.hoisted(() => vi.fn());
 const runPostDetectionPass = vi.hoisted(() => vi.fn());
+const closeStrandedYesNo = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const logToAxiom = vi.hoisted(() => vi.fn());
 const buzzConfigured = vi.hoisted(() => vi.fn());
@@ -20,6 +21,8 @@ vi.mock('$lib/server/conversion/runtime', () => ({
 }));
 vi.mock('$lib/server/conversion/convert', () => ({ retryPendingConversions }));
 vi.mock('$lib/server/conversion/pass', () => ({ runPostDetectionPass }));
+vi.mock('$lib/server/yesno/sweep', () => ({ closeStrandedYesNo }));
+vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 14 }) }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
 vi.mock('$lib/server/queue/runtime', () => ({ queueDeps: { mirrorXp: undefined } }));
 vi.mock('$lib/server/progression/progression', () => ({ settleFinalItems }));
@@ -54,6 +57,8 @@ beforeEach(() => {
   conversionEnabled.mockReturnValue(true);
   retryPendingConversions.mockReset();
   retryPendingConversions.mockResolvedValue({ retried: 0, paid: 0, failed: 0 });
+  closeStrandedYesNo.mockReset();
+  closeStrandedYesNo.mockResolvedValue({ unplayable: 0, stale: 0, failed: 0 });
   runPostDetectionPass.mockReset();
   runPostDetectionPass.mockResolvedValue({ ran: false });
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
@@ -72,6 +77,7 @@ describe('POST /api/jobs/tick', () => {
       applied: 1,
       settledVotes: 0,
       hiddenChecksGraded: 0,
+      yesNoClosed: 0,
       expiredSmites: 0,
       resets: 0,
       conversionsRetried: 0,
@@ -208,5 +214,20 @@ describe('POST /api/jobs/tick', () => {
     expect(resetPendingPlayers.mock.invocationCallOrder[0]).toBeLessThan(
       expireSmites.mock.invocationCallOrder[0]
     );
+  });
+
+  it('sweeps stranded yes/no questions with the configured age, reports them, and fails the tick when one cannot be closed', async () => {
+    escalateExpired.mockResolvedValue({ escalated: 0 });
+    applyPendingResolutions.mockResolvedValue({ applied: 0 });
+    closeStrandedYesNo.mockResolvedValue({ unplayable: 2, stale: 1, failed: 0 });
+    const ok = await run();
+    expect(closeStrandedYesNo).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ now: expect.any(Date), maxAgeDays: 14 })
+    );
+    expect(await ok.json()).toMatchObject({ yesNoClosed: 3 });
+
+    closeStrandedYesNo.mockResolvedValue({ unplayable: 0, stale: 0, failed: 1 });
+    expect((await run()).status).toBe(500);
   });
 });

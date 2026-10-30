@@ -5091,6 +5091,13 @@ export interface KnightsQueueItem {
   nextAttemptAt: Date | null;
   reason: string | null;
   prediction: JsonValue | null;
+  externalId: string | null;
+  prompt: string | null;
+  audience: string | null;
+  yesEffect: string | null;
+  noEffect: string | null;
+  meta: JsonValue | null;
+  voteCount: number;
   createdAt: Date;
   updatedAt: Date;
 }

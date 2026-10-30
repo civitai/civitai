@@ -1,9 +1,9 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from 'node:crypto';
 
-export type ItemKind = 'queue' | 'hidden';
+export type ItemKind = 'queue' | 'hidden' | 'yesno';
 export type ItemRef = { kind: ItemKind; id: number };
 
-const KIND_BYTE: Record<ItemKind, string> = { queue: 'q', hidden: 'h' };
+const KIND_BYTE: Record<ItemKind, string> = { queue: 'q', hidden: 'h', yesno: 'y' };
 const PLAINTEXT_LENGTH = 40;
 const keyOf = (secret: string) => createHash('sha256').update(`knights-feed:${secret}`).digest();
 

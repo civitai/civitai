@@ -78,15 +78,19 @@ const addHours = (date: Date, hours: number) => new Date(date.getTime() + hours 
 const addMinutes = (date: Date, minutes: number) => new Date(date.getTime() + minutes * 60_000);
 
 export function servableItems(db: Executor) {
-  return db
-    .selectFrom('KnightsQueueItem as i')
-    .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')
-    .innerJoin('Image as img', 'img.id', 'i.imageId')
-    .innerJoin('Post as p', 'p.id', 'img.postId')
-    .where('i.status', '=', 'Open')
-    .where('i.isHiddenCheck', '=', false)
-    .where('q.active', '=', true)
-    .where(servableImage);
+  return (
+    db
+      .selectFrom('KnightsQueueItem as i')
+      .innerJoin('KnightsQuestion as q', 'q.key', 'i.questionKey')
+      .innerJoin('Image as img', 'img.id', 'i.imageId')
+      .innerJoin('Post as p', 'p.id', 'img.postId')
+      .where('i.status', '=', 'Open')
+      .where('i.isHiddenCheck', '=', false)
+      // Yes/no questions are served and answered by the yesno module, never as ratings.
+      .where('i.audience', 'is', null)
+      .where('q.active', '=', true)
+      .where(servableImage)
+  );
 }
 
 export async function getFeed(
@@ -259,7 +263,7 @@ async function toInquisitor(trx: Executor, itemId: number, now: Date) {
     .execute();
 }
 
-async function lockItemVoters(trx: Executor, itemId: number) {
+export async function lockItemVoters(trx: Executor, itemId: number) {
   await trx
     .selectFrom('NewOrderPlayer')
     .select('userId')
@@ -279,6 +283,11 @@ const rankOrder = sql`CASE "i"."minRank" ${sql.join(
 /** First key of the per-player advisory lock that serialises a player's paced votes. */
 const VOTE_PACING_LOCK_NAMESPACE = 7_301;
 
+/** Held to the end of the transaction; taking it again in the same transaction is free. */
+export async function lockPlayerVoting(trx: Transaction<DB>, userId: number): Promise<void> {
+  await sql`SELECT pg_advisory_xact_lock(${VOTE_PACING_LOCK_NAMESPACE}, ${userId})`.execute(trx);
+}
+
 /**
  * When a paced player may answer again, or null. Pacing must hold across parallel requests, so one player's answers queue on an
  * advisory lock before they count the ledger. Take it ahead of every row lock; nothing else waits on it while holding a lock of
@@ -291,9 +300,7 @@ export async function pacingGate(
   deps: Pick<QueueDeps, 'voteLimits'>
 ): Promise<Date | null> {
   if (!deps.voteLimits || input.isModerator) return null;
-  await sql`SELECT pg_advisory_xact_lock(${VOTE_PACING_LOCK_NAMESPACE}, ${input.userId})`.execute(
-    trx
-  );
+  await lockPlayerVoting(trx, input.userId);
   return voteLockUntil(trx, input.userId, now, deps.voteLimits);
 }
 
@@ -705,7 +712,7 @@ const monthStart = (year: number, month: number) => {
 
 type Month = { year: number; month: number };
 
-async function ensureMonthPartition(db: Kysely<DB>, { year, month }: Month): Promise<void> {
+export async function ensureMonthPartition(db: Kysely<DB>, { year, month }: Month): Promise<void> {
   const name = `KnightsVote_${year}_${pad(month)}`;
   const existing = await sql<{ found: boolean }>`
     SELECT to_regclass(${`"${name}"`}) IS NOT NULL AS found

@@ -15,9 +15,12 @@ describe('feed tokens', () => {
     expect(openItem('s', 7, 'nonsense')).toBeNull();
   });
 
-  it('gives a check and a queue item the same shape', () => {
+  it('gives a check, a queue item and a yes/no question the same shape', () => {
     const a = sealItem('s', 7, { kind: 'hidden', id: 5 });
     const b = sealItem('s', 7, { kind: 'queue', id: 12345 });
+    const c = sealItem('s', 7, { kind: 'yesno', id: 12345 });
+    expect(openItem('s', 7, c)).toEqual({ kind: 'yesno', id: 12345 });
+    expect(a).toHaveLength(c.length);
     expect(a).toHaveLength(b.length);
     expect(a).toMatch(/^[A-Za-z0-9_-]+$/);
   });

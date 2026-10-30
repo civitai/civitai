@@ -35,6 +35,7 @@ export async function listJudgments(
   const rows = await db
     .selectFrom('KnightsVote as v')
     .innerJoin('KnightsQuestion as q', 'q.key', 'v.questionKey')
+    .leftJoin('KnightsQueueItem as it', 'it.id', 'v.itemId')
     .leftJoin('Image as img', 'img.id', 'v.imageId')
     .leftJoin('Post as p', 'p.id', 'img.postId')
     .select([
@@ -46,6 +47,7 @@ export async function listJudgments(
       'v.gold',
       'v.createdAt',
       'q.prompt',
+      'it.prompt as itemPrompt',
       'q.options',
       'img.url as imageKey',
     ])
@@ -64,7 +66,8 @@ export async function listJudgments(
       return {
         itemId: r.itemId,
         imageKey: r.servable && r.imageKey ? r.imageKey : null,
-        prompt: r.prompt,
+        // A yes/no question carries its own words; the question row only holds the generic ones.
+        prompt: r.itemPrompt ?? r.prompt,
         answerLabel: options.find((o) => o.value === r.answer)?.label ?? r.answer,
         status: r.settledAt ? statusOf(r.verdict) : 'pending',
         xp: r.xp,

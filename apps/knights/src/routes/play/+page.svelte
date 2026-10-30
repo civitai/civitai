@@ -13,6 +13,17 @@
   let submitting = $state(false);
   let dismissed = $state.raw<unknown>(null);
   let showReveal = $derived(form?.reveal !== undefined && form !== dismissed);
+  let answers = $state<HTMLFormElement>();
+  let yesNo = $derived(data.mode === 'queue' && data.question?.kind === 'bool');
+
+  // Y and N answer a yes/no question; typing in a field or holding a modifier is left alone.
+  function onkeydown(event: KeyboardEvent) {
+    if (!yesNo || submitting || event.ctrlKey || event.metaKey || event.altKey) return;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest('input, textarea, select, [contenteditable]')) return;
+    const value = { y: 'yes', n: 'no' }[event.key.toLowerCase()];
+    if (value) answers?.querySelector<HTMLButtonElement>(`button[value="${value}"]`)?.click();
+  }
 
   const submit: SubmitFunction = () => {
     submitting = true;
@@ -27,6 +38,8 @@
     };
   };
 </script>
+
+<svelte:window {onkeydown} />
 
 <h1>Knights of New Order</h1>
 
@@ -156,6 +169,9 @@
     <p class="muted">Judging resumes by itself.</p>
   </section>
 {:else if data.item && data.question}
+  {#if data.banner}
+    <p class="banner" role="status">New questions: {data.banner.heading}</p>
+  {/if}
   <p class="prompt">{data.question.prompt}</p>
   {#key data.item.id}
     <img
@@ -166,12 +182,13 @@
     />
   {/key}
 
-  <form method="POST" action="?/vote" use:enhance={submit}>
+  <form method="POST" action="?/vote" use:enhance={submit} bind:this={answers}>
     <input type="hidden" name="item" value={data.item.id} />
     <div class="options">
       {#each data.question.options as option (option.value)}
         <button type="submit" name="answer" value={option.value} disabled={submitting}>
-          {option.label}
+          {option.label}{#if yesNo}
+            <kbd>{option.label[0]}</kbd>{/if}
         </button>
       {/each}
     </div>
@@ -207,6 +224,17 @@
   }
   .prompt {
     font-size: 1.15rem;
+  }
+  .banner {
+    margin: 0 0 0.5rem;
+    padding: 0.25rem 0.75rem;
+    border-left: 3px solid var(--gold);
+    color: var(--gold);
+  }
+  kbd {
+    margin-left: 0.4rem;
+    opacity: 0.7;
+    font-size: 0.8em;
   }
   img {
     display: block;

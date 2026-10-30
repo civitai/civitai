@@ -70,7 +70,23 @@ export async function runPostDetectionPass(
     labelsDone = batch.scanned < batchSize;
   }
 
-  const done = goldDone && labelsDone;
+  // Yes/no answers are labelled as given, not when graded; the cursor is their own.
+  let yesNoCursor: LabelCursor | null = null;
+  let yesNoDone = false;
+  while (goldDone && labelsDone && !yesNoDone && !outOfTime()) {
+    const batch = await writeLabelBatch(db, {
+      settledBefore: run.completedAt,
+      after: yesNoCursor,
+      limit: batchSize,
+      kind: 'yesno',
+    });
+    totals.labelsWritten += batch.written;
+    totals.labelFailures += batch.failed;
+    yesNoCursor = batch.cursor;
+    yesNoDone = batch.scanned < batchSize;
+  }
+
+  const done = goldDone && labelsDone && yesNoDone;
   if (done) {
     await db
       .updateTable('KnightsDetectionRun')
