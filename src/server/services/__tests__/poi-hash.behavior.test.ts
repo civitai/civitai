@@ -1,6 +1,7 @@
 import { PGlite } from '@electric-sql/pglite';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { pgliteRaw } from '~/server/events/__tests__/pglite-prisma';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 import type * as PgDb from '~/server/db/pgDb';
@@ -434,6 +435,20 @@ describe('revertPoiHashAutoFlag — the system nsfw lock marker', () => {
     const m = await meta(REVERTED);
     expect(m).not.toHaveProperty('systemNsfwLock');
     expect(m).toHaveProperty('cannotPromote', true);
+  });
+
+  // The restore moves sfwOnly and the gallery level after setModelPoi, which saw neither change.
+  it("drops the model's cached gallery settings after the restore", async () => {
+    await addModel(
+      REVERTED,
+      6,
+      `poi = true, "sfwOnly" = true, "lockedProperties" = ${LOCKED}, meta = '${snapshotMeta({})}'`
+    );
+    redisMock.redis.del.mockClear();
+
+    await revertPoiHashAutoFlag({ modelId: REVERTED, userId: 99 });
+
+    expect(redisMock.redis.del).toHaveBeenCalledWith([`model:gallery-settings:${REVERTED}`]);
   });
 
   it('drops the marker on a model that keeps its minor restrictions', async () => {

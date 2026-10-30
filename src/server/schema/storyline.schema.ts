@@ -128,8 +128,10 @@ export const getStorylineSchema = z.object({
   browsingLevel: z.number().int().min(0).optional(),
 });
 
+export const STORYLINE_FOR_POSTS_MAX = 100;
+
 export const getStorylinesForPostsSchema = z.object({
-  postIds: z.array(z.number().int().positive()).max(100),
+  postIds: z.array(z.number().int().positive()).max(STORYLINE_FOR_POSTS_MAX),
   browsingLevel: z.number().int().min(0).optional(),
 });
 
