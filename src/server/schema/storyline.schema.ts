@@ -61,6 +61,11 @@ export const setStorylineImageCaptionSchema = z.object({
 
 export const storylinePostImageCaptionsSchema = z.object({ postId: z.number().int().positive() });
 
+export const respondToStorylineInviteSchema = z.object({
+  storylineId: z.number().int().positive(),
+  accept: z.boolean(),
+});
+
 export const storylineCollaboratorSchema = z.object({
   storylineId: z.number().int().positive(),
   userId: z.number().int().positive(),

@@ -96,6 +96,7 @@ import {
   recordStorylineCreateClick,
   removePendingChapter,
   removeStorylineCollaborator,
+  respondToStorylineInvite,
   setCanonChapter,
   updateStoryline,
   writeChapterEdgeForPlacement,
@@ -370,6 +371,14 @@ describe('writeChapterEdgeForPlacement', () => {
       ).resolves.toMatchObject({ created: true });
     });
 
+    it('refuses an invitee who has not accepted', async () => {
+      w.storylineCollaborator.findUnique.mockResolvedValue({ acceptedAt: null } as never);
+      await expect(writeChapterEdgeForPlacement(args, tx)).rejects.toMatchObject({
+        message: 'storyline: only collaborators on this storyline can continue it',
+      });
+      expect(w.storylineChapter.create).not.toHaveBeenCalled();
+    });
+
     it('lets an endorsed collaborator continue', async () => {
       w.storylineCollaborator.findUnique.mockImplementation((({
         where,
@@ -379,7 +388,7 @@ describe('writeChapterEdgeForPlacement', () => {
         Promise.resolve(
           where.storylineId_userId.storylineId === 10 &&
             where.storylineId_userId.userId === STRANGER
-            ? { userId: STRANGER }
+            ? { acceptedAt: new Date() }
             : null
         )) as never);
       await expect(writeChapterEdgeForPlacement(args, tx)).resolves.toMatchObject({
@@ -856,8 +865,32 @@ describe('authorization', () => {
         userId: OWNER,
       });
       expect(w.storylineCollaborator.upsert.mock.calls[0][0]).toMatchObject({
-        create: { storylineId: 10, userId: COLLABORATOR },
+        create: { storylineId: 10, userId: COLLABORATOR, acceptedAt: null },
+        // Inviting someone again never resets an acceptance.
+        update: {},
       });
+    });
+
+    it('lets the invitee accept or decline only their own open invitation', async () => {
+      const open = { storylineId: 10, userId: COLLABORATOR, acceptedAt: null };
+      w.storylineCollaborator.updateMany.mockResolvedValue({ count: 1 } as never);
+      await respondToStorylineInvite({ storylineId: 10, userId: COLLABORATOR, accept: true });
+      expect(w.storylineCollaborator.updateMany.mock.calls[0][0]).toEqual({
+        where: open,
+        data: { acceptedAt: expect.any(Date) },
+      });
+      expect(w.storylineCollaborator.deleteMany).not.toHaveBeenCalled();
+
+      w.storylineCollaborator.deleteMany.mockResolvedValue({ count: 1 } as never);
+      await respondToStorylineInvite({ storylineId: 10, userId: COLLABORATOR, accept: false });
+      expect(w.storylineCollaborator.deleteMany.mock.calls[0][0]).toEqual({ where: open });
+    });
+
+    it('answers not found when there is no open invitation to answer', async () => {
+      w.storylineCollaborator.updateMany.mockResolvedValue({ count: 0 } as never);
+      await expect(
+        respondToStorylineInvite({ storylineId: 10, userId: STRANGER, accept: true })
+      ).rejects.toMatchObject({ code: 'NOT_FOUND' });
     });
 
     // Decided with the Storylines lead: an endorsed collaborator's priced continuations skip the
@@ -947,9 +980,12 @@ describe('getStoryline', () => {
   const row = (overrides: Record<string, unknown> = {}, rootLevel: number = PG) => ({
     ...storylineRow(overrides),
     collaborators: [
-      { user: { id: COLLABORATOR, username: 'c', ...notBanned } },
-      { user: { id: BLOCKED, username: 'b', ...notBanned } },
-      { user: { id: 6, username: 'gone', bannedAt: new Date(), deletedAt: null } },
+      { acceptedAt: new Date(), user: { id: COLLABORATOR, username: 'c', ...notBanned } },
+      { acceptedAt: new Date(), user: { id: BLOCKED, username: 'b', ...notBanned } },
+      {
+        acceptedAt: new Date(),
+        user: { id: 6, username: 'gone', bannedAt: new Date(), deletedAt: null },
+      },
     ],
     chapters: [{ id: 20, postId: 500, post: { nsfwLevel: rootLevel } }],
   });
@@ -966,6 +1002,43 @@ describe('getStoryline', () => {
     await expect(
       getStoryline({ id: 10, viewer: undefined, browsingLevel: PG })
     ).resolves.toMatchObject({ id: 10 });
+  });
+
+  describe('an invitation not yet accepted', () => {
+    const INVITEE = 7;
+    beforeEach(() =>
+      r.storyline.findUnique.mockResolvedValue({
+        ...row(),
+        collaborators: [
+          { acceptedAt: new Date(), user: { id: COLLABORATOR, username: 'c', ...notBanned } },
+          { acceptedAt: null, user: { id: INVITEE, username: 'invitee', ...notBanned } },
+        ],
+      } as never)
+    );
+
+    it('is not shown to readers and gives the invitee no collaborator role', async () => {
+      for (const viewer of [{ id: STRANGER }, { id: INVITEE }, undefined]) {
+        const storyline = await getStoryline({ id: 10, viewer, browsingLevel: PG });
+        expect(storyline.collaborators).toEqual([{ id: COLLABORATOR, username: 'c' }]);
+        expect(storyline.contributors.map((c) => c.user.id)).not.toContain(INVITEE);
+        expect(storyline.pendingCollaborators).toEqual([]);
+        expect(storyline.viewerRole).toBeNull();
+      }
+    });
+
+    it('is asked of the invitee alone', async () => {
+      const invitee = await getStoryline({ id: 10, viewer: { id: INVITEE }, browsingLevel: PG });
+      expect(invitee.viewerInvited).toBe(true);
+      const stranger = await getStoryline({ id: 10, viewer: { id: STRANGER }, browsingLevel: PG });
+      expect(stranger.viewerInvited).toBe(false);
+    });
+
+    it('is listed for the owner and moderators to manage', async () => {
+      for (const viewer of [{ id: OWNER }, { id: MODERATOR, isModerator: true }]) {
+        const storyline = await getStoryline({ id: 10, viewer, browsingLevel: PG });
+        expect(storyline.pendingCollaborators).toEqual([{ id: INVITEE, username: 'invitee' }]);
+      }
+    });
   });
 
   it('asks for the fields it hides on', async () => {
@@ -1538,7 +1611,7 @@ describe('getStoryline: page fields', () => {
   beforeEach(() => {
     r.storyline.findUnique.mockResolvedValue({
       ...storylineRow(),
-      collaborators: [{ user: user(COLLABORATOR) }],
+      collaborators: [{ acceptedAt: new Date(), user: user(COLLABORATOR) }],
     } as never);
     r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
       const sql = sqlOfRaw(strings, values);
@@ -3484,7 +3557,9 @@ describe('covers and cast', () => {
         coverImageId: null,
         heroImageId: null,
         heroImagePosition: 50,
-        collaborators: [{ user: { id: COLLABORATOR, username: 'c', ...notBanned } }],
+        collaborators: [
+          { acceptedAt: new Date(), user: { id: COLLABORATOR, username: 'c', ...notBanned } },
+        ],
       } as never);
       r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
         const { text } = composed([strings, ...values]);
@@ -3558,7 +3633,7 @@ describe('covers and cast', () => {
         coverImageId: null,
         heroImageId: null,
         heroImagePosition: 50,
-        collaborators: [{ user: cast(COLLABORATOR) }],
+        collaborators: [{ acceptedAt: new Date(), user: cast(COLLABORATOR) }],
       } as never);
       r.$queryRaw.mockImplementation(((strings: TemplateStringsArray, ...values: unknown[]) => {
         const sql = sqlOfRaw(strings, values);

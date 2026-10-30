@@ -10515,13 +10515,16 @@ model ImageCaption {
 }
 
 /// Collaborators the storyline owner has endorsed. Their continuations skip review and
-/// are listed before everyone else's.
+/// are listed before everyone else's. A row is an invitation until the user accepts it: until
+/// then they are not shown on the storyline and have no collaborator rights.
 model StorylineCollaborator {
   storylineId Int
   storyline   Storyline @relation(fields: [storylineId], references: [id], onDelete: Cascade)
   userId      Int
   user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   createdAt   DateTime  @default(now())
+  /// When the user accepted the invitation; null while it is pending. Declining deletes the row.
+  acceptedAt  DateTime?
 
   @@id([storylineId, userId])
   @@index([userId])

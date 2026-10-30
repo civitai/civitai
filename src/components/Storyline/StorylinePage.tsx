@@ -33,6 +33,7 @@ import {
 import { storylineWriteChapterUrl } from '~/components/Storyline/storyline-routes';
 import { StorylineContextMenu } from '~/components/Storyline/StorylineContextMenu';
 import { StorylineHero } from '~/components/Storyline/StorylineCover';
+import { StorylineInviteAlert } from '~/components/Storyline/StorylineInviteAlert';
 import { StorylineChapterLanes } from '~/components/Storyline/StorylineLaneMap';
 import { storylineChapterLink } from '~/components/Storyline/storyline-mode.utils';
 import { storylineChapterLinkProps } from '~/components/Storyline/storyline-read-link';
@@ -91,6 +92,12 @@ export function StorylinePage({ id }: { id: number }) {
           lastPostId={lastPost?.id ?? null}
           terms={shownTerms}
         />
+        {storyline.viewerInvited && (
+          <StorylineInviteAlert
+            storylineId={storyline.id}
+            ownerUsername={storyline.user.username}
+          />
+        )}
         {storyline.titleAppealable && (
           <FlagAppealAlert
             entityType={EntityType.Storyline}

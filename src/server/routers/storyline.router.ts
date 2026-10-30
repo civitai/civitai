@@ -19,6 +19,7 @@ import {
   storylinePostImageCaptionsSchema,
   storylineChapterReadSchema,
   storylineCollaboratorSchema,
+  respondToStorylineInviteSchema,
   storylineIdSchema,
   storylineLinkTargetsSchema,
   storylinePathSchema,
@@ -51,6 +52,7 @@ import {
   recordStorylineCreateClick,
   removePendingChapter,
   removeStorylineCollaborator,
+  respondToStorylineInvite,
   setCanonChapter,
   setFirstChapter,
   setStorylineTakedown,
@@ -312,6 +314,11 @@ export const storylineRouter = router({
         isModerator: ctx.user.isModerator,
       })
     ),
+
+  // A muted invitee can still decline, through `leave`.
+  respondToInvite: storylineWriteProcedure
+    .input(respondToStorylineInviteSchema)
+    .mutation(({ input, ctx }) => respondToStorylineInvite({ ...input, userId: ctx.user.id })),
 
   leave: storylineMemberProcedure.input(leaveStorylineSchema).mutation(({ input, ctx }) =>
     removeStorylineCollaborator({
