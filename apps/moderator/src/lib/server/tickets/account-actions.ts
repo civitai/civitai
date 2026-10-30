@@ -13,7 +13,9 @@ import { ticketNote } from './ticket-note';
 
 /**
  * The user a ticket links to, read live right before a write. The ticket must still be one the panel
- * the action belongs to shows for (`visibility`, the same rule that decides whether the page shows it).
+ * the action belongs to shows for (`visibility`, the same rule that decides whether the page shows it),
+ * judged in the view the ticket routes to now: a ticket that moved views, or a moderation panel's action
+ * posted for a support ticket, is hidden by that predicate and refused.
  */
 export function linkedUserFor(
   visibility: (ticket: PanelContext) => PanelVisibility,
@@ -42,15 +44,9 @@ async function readLinkedUser(
       message: `Could not check the ticket (${res.reason}) — nothing was changed.`,
     };
   const { routesTo, routed } = await resolveTicketView(ticketId, res.ticket);
-  if (routesTo !== 'moderation')
-    return {
-      status: 'refused',
-      code: 409,
-      message: `This ticket now belongs to the ${routesTo} view — nothing was changed.`,
-    };
   const userId = await linkedCivitaiUserId(res.ticket, routed);
   const panel = visibility({
-    view: 'moderation',
+    view: routesTo,
     cfFeature: res.ticket.cfFeature,
     routerTopic: routed?.topic ?? null,
     civitaiUserId: userId,
@@ -59,6 +55,14 @@ async function readLinkedUser(
   return { status: 'ok', userId };
 }
 
+/** The restriction a ruling names, read live: its owner, type and status decide whether it may be ruled on. */
+export const restrictionOf = async (id: number) =>
+  (await dbRead
+    .selectFrom('UserRestriction')
+    .select(['userId', 'type', 'status'])
+    .where('id', '=', id)
+    .executeTakeFirst()) ?? null;
+
 /** Lifting bans and mutes and ruling on restrictions only; banning, new restrictions and strikes are not offered from a ticket. */
 export const ticketAccountActions = createTicketAccountActions({
   linkedUser,
@@ -66,11 +70,6 @@ export const ticketAccountActions = createTicketAccountActions({
   canAct: (user) => canAccess(user, '/users'),
   revokeTimedMute,
   resolveRestriction,
-  restrictionOf: async (id) =>
-    (await dbRead
-      .selectFrom('UserRestriction')
-      .select(['userId', 'type', 'status'])
-      .where('id', '=', id)
-      .executeTakeFirst()) ?? null,
+  restrictionOf,
   note: ticketNote,
 });

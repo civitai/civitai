@@ -6,8 +6,13 @@ import type { FlagAppealDecision, FlagAppealRuling } from '../minor-flag-appeal-
 import { APPEAL_SPLITS, isAppealSplit } from '$lib/minor-flags/appeal-split';
 import { MODEL_FLAGS_APPEALS_PATH } from '$lib/minor-flags/paths';
 import { classifyAppeal } from '$lib/tickets/appeals';
-import { NOT_PERMITTED, loadOwnedAppeal, type AppealWriteRow } from './appeal-write';
-import { addTicketNote, checkTicketTarget, type TicketActionDeps } from './panel-write';
+import { loadOwnedAppeal, type AppealWriteRow } from './appeal-write';
+import {
+  NOT_PERMITTED,
+  addTicketNote,
+  checkTicketTarget,
+  type TicketActionDeps,
+} from './panel-write';
 
 export type FlagAppealWriteDeps = TicketActionDeps & {
   /** The viewer's grant on the model flag appeals page. */

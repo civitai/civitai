@@ -3,8 +3,13 @@ import { z } from 'zod';
 import { int4Id, parseForm } from '../query';
 import { ReportStatus } from '$lib/rating-review';
 import { RATINGS_PATH } from '$lib/tickets/rating-disputes';
-import { DECIDED, NOT_PERMITTED } from './appeal-write';
-import { addTicketNote, checkTicketTarget, type TicketActionDeps } from './panel-write';
+import { DECIDED } from './appeal-write';
+import {
+  NOT_PERMITTED,
+  addTicketNote,
+  checkTicketTarget,
+  type TicketActionDeps,
+} from './panel-write';
 
 export type RatingWriteDeps = TicketActionDeps & {
   /** The viewer's grant on the rating disputes page. */
