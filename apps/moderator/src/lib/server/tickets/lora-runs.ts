@@ -1,3 +1,4 @@
+import { sql } from '@civitai/db/kysely';
 import type { getTrainingRuns } from '../user-account.service';
 import { LORA_ROWS } from '$lib/tickets/lora-panel';
 
@@ -46,10 +47,7 @@ const liveReads: LoraReads = {
   runs: async (userId, limit) =>
     (await import('../user-account.service')).getTrainingRuns(userId, limit, { charges: false }),
   models: async (userId, modelIds) => {
-    const [{ dbRead }, { sql }] = await Promise.all([
-      import('../db'),
-      import('@civitai/db/kysely'),
-    ]);
+    const { dbRead } = await import('../db');
     const [rows, owner] = await Promise.all([
       dbRead
         .selectFrom('Model as m')
