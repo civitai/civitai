@@ -841,6 +841,48 @@ describe('authorization', () => {
       await expect(setCanonChapter({ chapterId: 31, userId })).rejects.toMatchObject(forbidden);
       expect(w.storylineChapterEdge.updateMany).not.toHaveBeenCalled();
     });
+
+    // A moderator reads these chapters untombstoned and is offered the button on them; readers
+    // would find a removed chapter at the head of the main path.
+    const author = { bannedAt: null, deletedAt: null };
+    it.each([
+      ['removed', { removedAt: new Date(), post: { tosViolation: false, user: author } }],
+      ['taken down', { removedAt: null, post: { tosViolation: true, user: author } }],
+      [
+        'by a banned author',
+        {
+          removedAt: null,
+          post: { tosViolation: false, user: { ...author, bannedAt: new Date() } },
+        },
+      ],
+      [
+        'by a deleted account',
+        {
+          removedAt: null,
+          post: { tosViolation: false, user: { ...author, deletedAt: new Date() } },
+        },
+      ],
+    ])('refuses a chapter that is %s, even for a moderator', async (_name, chapter) => {
+      w.storylineChapterEdge.findMany.mockResolvedValue([
+        { parentChapterId: 20, storylineId: 10, chapter },
+      ] as never);
+      await expect(
+        setCanonChapter({ chapterId: 31, userId: MODERATOR, isModerator: true })
+      ).rejects.toThrow('A removed chapter cannot be the main route');
+      expect(w.storylineChapterEdge.updateMany).not.toHaveBeenCalled();
+    });
+
+    it('accepts the same chapter once nothing about it is removed', async () => {
+      w.storylineChapterEdge.findMany.mockResolvedValue([
+        {
+          parentChapterId: 20,
+          storylineId: 10,
+          chapter: { removedAt: null, post: { tosViolation: false, user: author } },
+        },
+      ] as never);
+      await setCanonChapter({ chapterId: 31, userId: MODERATOR, isModerator: true });
+      expect(w.storylineChapterEdge.updateMany).toHaveBeenCalledTimes(2);
+    });
   });
 
   describe('collaborators', () => {
