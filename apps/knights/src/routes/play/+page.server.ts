@@ -18,6 +18,10 @@ import { queueDeps } from '$lib/server/queue/runtime';
 import { feedSecret } from '$lib/server/smites/runtime';
 import { dismissResetNotice, hasUnseenReset } from '$lib/server/smites/smites.service';
 import { trialDeps } from '$lib/server/trials/runtime';
+import { pickYesNo } from '$lib/server/yesno/feed';
+import { YESNO_ANSWERS } from '$lib/server/yesno/keys';
+import { yesNoConfig } from '$lib/server/yesno/runtime';
+import { castYesNoVote } from '$lib/server/yesno/vote';
 import { answerTrial, getTrial } from '$lib/server/trials/trials.service';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -95,6 +99,7 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     : null;
   const page = {
     mode: 'queue' as const,
+    banner: null as { heading: string } | null,
     ...common,
     daily,
     recap,
@@ -102,6 +107,37 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     conversionOpen,
     lockoutSeconds,
   };
+  const yesNo = yesNoConfig();
+  // A yes/no question is rolled for ahead of the rating; with no rating to show, one is shown whenever there is one. A share of 0 switches them off.
+  const offer =
+    resetPending || lockedUntil || yesNo.share <= 0
+      ? null
+      : await pickYesNo(db, {
+          userId: locals.user.id,
+          rank: status.rank,
+          secret: feedSecret(),
+          share: yesNo.share,
+          stretch: yesNo.stretch,
+          force: !feed,
+        });
+  if (offer) {
+    return {
+      ...page,
+      banner: offer.banner,
+      question: {
+        key: 'yesno',
+        kind: 'bool',
+        prompt: offer.prompt,
+        options: YESNO_ANSWERS.map((answer) => ({ ...answer })),
+      },
+      item: {
+        id: sealItem(feedSecret(), locals.user.id, { kind: 'yesno', id: offer.itemId }),
+        src: imageUrl(offer.imageKey),
+        width: offer.width,
+        height: offer.height,
+      },
+    };
+  }
   if (!feed || resetPending) return { ...page, question: null, item: null };
 
   const secret = feedSecret();
@@ -167,6 +203,12 @@ export const actions: Actions = {
                 answer,
                 isModerator: locals.user.isModerator,
               },
+              queueDeps
+            )
+          : ref.kind === 'yesno'
+          ? await castYesNoVote(
+              db,
+              { userId: locals.user.id, itemId, answer, isModerator: locals.user.isModerator },
               queueDeps
             )
           : await castVote(

@@ -7,7 +7,6 @@ import {
   ensureMonthPartition,
   lockItemVoters,
   pacingGate,
-  type CastVoteResult,
   type QueueDeps,
   type RejectReason,
 } from '../queue/queue.service';
@@ -19,7 +18,8 @@ import { settleYesNoVotes } from './settle';
 
 export type YesNoVoteResult =
   | { status: 'rejected'; reason: RejectReason }
-  | Extract<CastVoteResult, { status: 'limited' | 'recorded' }>;
+  | { status: 'limited'; until: Date }
+  | { status: 'recorded' };
 
 /**
  * Takes a yes/no answer as an ordinary vote: the same pacing, join gate, reset refusal, weight, XP, pending gold and daily tally as a

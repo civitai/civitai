@@ -37,14 +37,14 @@ export type HiddenCheckResult = Exclude<
 export const hiddenItemId = (referenceId: number) => -referenceId;
 
 /** Fixed per player until they answer something. */
-async function slotOf(db: Executor, userId: number): Promise<number> {
+export async function slotOf(db: Executor, userId: number): Promise<number> {
   const { rows } = await sql<{ slot: Date | null }>`
     SELECT max("createdAt") AS slot FROM "KnightsVote" WHERE "playerId" = ${userId}`.execute(db);
   const slot = rows[0]?.slot;
   return slot ? new Date(slot).getTime() : 0;
 }
 
-const unit = (digest: Buffer, at: number) => digest.readUInt32BE(at) / 2 ** 32;
+export const unit = (digest: Buffer, at: number) => digest.readUInt32BE(at) / 2 ** 32;
 
 function eligibleReferences(db: Executor, userId: number, questionKey: string) {
   return servableReferences(db, REFERENCE_POOL.hiddenCheck)

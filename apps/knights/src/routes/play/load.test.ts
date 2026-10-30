@@ -10,6 +10,8 @@ const pickHiddenCheck = vi.hoisted(() => vi.fn());
 const hasUnseenReset = vi.hoisted(() => vi.fn());
 const readHiddenNotices = vi.hoisted(() => vi.fn());
 const voteLockUntil = vi.hoisted(() => vi.fn());
+const pickYesNo = vi.hoisted(() => vi.fn());
+const yesNoSettings = vi.hoisted(() => ({ share: 0.7, stretch: 8 }));
 const queueDeps = vi.hoisted(() => ({
   now: () => new Date('2026-12-15T12:00:00Z'),
   voteLimits: undefined as unknown,
@@ -33,6 +35,9 @@ vi.mock('$lib/server/hidden/hidden.service', () => ({
   readHiddenNotices,
 }));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote: vi.fn(), getFeed }));
+vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo }));
+vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote: vi.fn() }));
+vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => yesNoSettings }));
 vi.mock('$lib/server/trials/runtime', () => ({ trialDeps: {} }));
 vi.mock('$lib/server/trials/trials.service', () => ({ answerTrial: vi.fn(), getTrial }));
 
@@ -60,6 +65,9 @@ beforeEach(() => {
   readHiddenNotices.mockReset();
   readHiddenNotices.mockResolvedValue([]);
   voteLockUntil.mockReset();
+  pickYesNo.mockReset();
+  pickYesNo.mockResolvedValue(null);
+  yesNoSettings.share = 0.7;
   queueDeps.voteLimits = undefined;
 });
 
@@ -236,6 +244,83 @@ describe('play load feed', () => {
       expect.anything(),
       expect.objectContaining({ questionKey: 'q', rate: 0.5 })
     );
+  });
+});
+
+describe('play load yes/no questions', () => {
+  const offer = {
+    itemId: 90417,
+    prompt: 'Is a hat worn?',
+    imageKey: 'key-41',
+    width: 2,
+    height: 3,
+    banner: { heading: 'Violence' },
+  };
+  beforeEach(() => {
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 0, maxSmites: 3 });
+    getFeed.mockResolvedValue({
+      question: { key: 'q', kind: 'choice', prompt: 'Rate', options: [] },
+      items: [{ id: 3, imageKey: 'key-3', width: 1, height: 1 }],
+    });
+  });
+
+  it('serves a question in the shape of any other item, sealed, with only its words, image and banner', async () => {
+    pickYesNo.mockResolvedValue(offer);
+    const rated = await (async () => {
+      pickYesNo.mockResolvedValueOnce(null);
+      return run();
+    })();
+    const page = await run();
+
+    expect(Object.keys(page.item).sort()).toEqual(Object.keys(rated.item).sort());
+    expect(page.item).toMatchObject({ src: 'key-41', width: 2, height: 3 });
+    expect(typeof page.item.id).toBe('string');
+    expect(page.question).toEqual({
+      key: 'yesno',
+      kind: 'bool',
+      prompt: 'Is a hat worn?',
+      options: [
+        { value: 'yes', label: 'Yes' },
+        { value: 'no', label: 'No' },
+      ],
+    });
+    expect(page.banner).toEqual({ heading: 'Violence' });
+    expect(JSON.stringify(page)).not.toContain('90417');
+  });
+
+  it('falls back to the rating, with no banner, when no question is offered', async () => {
+    const page = await run();
+    expect(page.question.key).toBe('q');
+    expect(page.banner).toBeNull();
+    expect(pickYesNo).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ userId: 7, rank: 'Knight', share: 0.7, stretch: 8, force: false })
+    );
+  });
+
+  it('serves questions when there is no rating to show, and none while paced, reset or switched off', async () => {
+    getFeed.mockResolvedValue(null);
+    pickYesNo.mockResolvedValue(offer);
+    expect((await run()).item).toMatchObject({ src: 'key-41' });
+    expect(pickYesNo).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ force: true })
+    );
+
+    pickYesNo.mockClear();
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 3, maxSmites: 3 });
+    expect((await run()).item).toBeNull();
+    getPlayerStatus.mockResolvedValue({ rank: 'Knight', level: 2, smites: 0, maxSmites: 3 });
+    queueDeps.voteLimits = [{ windowSeconds: 60, max: 3 }];
+    voteLockUntil.mockResolvedValue(new Date('2026-12-15T12:00:30Z'));
+    expect((await run()).item).toBeNull();
+    expect(pickYesNo).not.toHaveBeenCalled();
+
+    queueDeps.voteLimits = undefined;
+    yesNoSettings.share = 0;
+    getFeed.mockResolvedValue(null);
+    expect((await run()).item).toBeNull();
+    expect(pickYesNo).not.toHaveBeenCalled();
   });
 });
 

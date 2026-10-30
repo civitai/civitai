@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const castVote = vi.hoisted(() => vi.fn());
 const feedSecretMock = vi.hoisted(() => vi.fn(() => 'secret'));
 const answerHiddenCheck = vi.hoisted(() => vi.fn());
+const castYesNoVote = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 vi.mock('$lib/server/image-url', () => ({ imageUrl: (key: string) => key }));
 vi.mock('$lib/server/queue/runtime', () => ({
@@ -19,6 +20,9 @@ vi.mock('$lib/server/hidden/hidden.service', () => ({
   dismissHiddenNotices: vi.fn(),
 }));
 vi.mock('$lib/server/queue/queue.service', () => ({ castVote, getFeed: vi.fn() }));
+vi.mock('$lib/server/yesno/vote', () => ({ castYesNoVote }));
+vi.mock('$lib/server/yesno/feed', () => ({ pickYesNo: vi.fn() }));
+vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ share: 0, stretch: 8 }) }));
 
 const { sealItem } = await import('$lib/server/feed-token');
 const { actions } = await import('./+page.server');
@@ -38,6 +42,41 @@ const submit = (fields: Record<string, string>, user: Record<string, unknown> = 
 beforeEach(() => {
   castVote.mockReset();
   answerHiddenCheck.mockReset();
+  castYesNoVote.mockReset();
+});
+
+describe('vote action on a yes/no question', () => {
+  const yesNoItem = (id: number) => sealItem('secret', 7, { kind: 'yesno', id });
+
+  it('routes a sealed question to the yes/no vote and nothing else', async () => {
+    castYesNoVote.mockResolvedValue({ status: 'recorded' });
+
+    expect(await submit({ item: yesNoItem(41), answer: 'yes' })).toEqual({ success: true });
+
+    expect(castYesNoVote).toHaveBeenCalledWith(
+      expect.anything(),
+      { userId: 7, itemId: 41, answer: 'yes', isModerator: undefined },
+      expect.anything()
+    );
+    expect(castVote).not.toHaveBeenCalled();
+    expect(answerHiddenCheck).not.toHaveBeenCalled();
+  });
+
+  it('keeps a rating token away from the yes/no vote', async () => {
+    castVote.mockResolvedValue({ status: 'recorded' });
+    await submit({ item: queueItem(41), answer: 'yes' });
+    expect(castYesNoVote).not.toHaveBeenCalled();
+  });
+
+  it('answers a refusal and a pace limit as any vote does', async () => {
+    castYesNoVote.mockResolvedValue({ status: 'rejected', reason: 'already-voted' });
+    expect(await submit({ item: yesNoItem(41), answer: 'yes' })).toMatchObject({ status: 409 });
+    castYesNoVote.mockResolvedValue({ status: 'limited', until: new Date('2026-12-15T12:00:30Z') });
+    expect(await submit({ item: yesNoItem(41), answer: 'yes' })).toMatchObject({
+      status: 429,
+      data: { lockoutSeconds: 30 },
+    });
+  });
 });
 
 describe('vote action', () => {
