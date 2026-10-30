@@ -95,7 +95,6 @@ describe('getPostsInfinite user scope', () => {
     expect(issued[0]).toContain(`p."publishedAt" IS NULL`);
   });
 
-  // The storyline chapter picker searches the author's own posts; the title filter once skipped them.
   it("searches the owner's own posts by title", async () => {
     findFirst.mockResolvedValue({ id: viewer.id });
 

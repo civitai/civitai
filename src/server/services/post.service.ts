@@ -364,7 +364,7 @@ export const getPostsInfinite = async ({
       WHERE top."postId" = p.id AND top."tagId" IN (${Prisma.join(tags)})
     )`);
 
-  // For the owner too: a storyline's chapter picker searches the author's own posts by title.
+  // Applies to owner requests too, unlike the tag filter.
   if (query) AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
 
   if (period !== 'AllTime') {

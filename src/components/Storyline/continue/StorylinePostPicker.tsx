@@ -58,8 +58,8 @@ export function StorylinePostPicker({
       {paging && (
         <TextInput
           size="sm"
-          placeholder="Search your posts by title"
-          aria-label="Search your posts by title"
+          placeholder="Search by the start of a title"
+          aria-label="Search by the start of a title"
           leftSection={<IconSearch size={16} />}
           value={paging.search}
           onChange={(event) => paging.onSearchChange(event.currentTarget.value)}

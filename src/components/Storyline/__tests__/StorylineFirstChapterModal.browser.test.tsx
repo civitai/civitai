@@ -25,6 +25,7 @@ const mocks = vi.hoisted(() => ({
   chapterLookups: [] as number[][],
   ownerMaxNsfwLevel: 0,
   chapters: {} as Record<number, unknown>,
+  chaptersError: false,
   mutate: vi.fn(),
   error: null as { message: string } | null,
   options: {} as {
@@ -81,7 +82,9 @@ vi.mock('~/utils/trpc', async (importOriginal) => {
             storyline: {
               getForPosts: (input: { postIds: number[] }) => {
                 mocks.chapterLookups.push(input.postIds);
-                return { data: mocks.chapters, isLoading: false };
+                return mocks.chaptersError
+                  ? { data: undefined, isLoading: false, isError: true }
+                  : { data: mocks.chapters, isLoading: false, isError: false };
               },
             },
           }),
@@ -126,6 +129,7 @@ beforeEach(() => {
   mocks.chapterLookups = [];
   mocks.ownerMaxNsfwLevel = NsfwLevel.PG13;
   mocks.chapters = {};
+  mocks.chaptersError = false;
   mocks.error = null;
   mocks.mutate.mockReset();
   mocks.onClose.mockReset();
@@ -197,7 +201,6 @@ describe('StorylineFirstChapterModal', () => {
     await expect.element(submit()).toBeDisabled();
   });
 
-  // Only the newest 50 were offered, so an older post could never be picked.
   test('shows older posts a page at a time, and lists them once loaded', async () => {
     mocks.items = [postItem(10)];
     mocks.hasNextPage = true;
@@ -213,7 +216,20 @@ describe('StorylineFirstChapterModal', () => {
     expect(page.getByRole('button', { name: 'Show older posts' }).elements()).toHaveLength(0);
   });
 
-  // The lookup takes at most 100 ids; past that it refused, and chapters came back as pickable.
+  // Without the chapter answer, a post that is already a chapter would look pickable.
+  test('offers no post when it cannot tell which are already chapters', async () => {
+    mocks.items = [postItem(10)];
+    mocks.chaptersError = true;
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    const failed = () => page.getByText("Couldn't load your posts.");
+    // Settle on either outcome, so a regression fails on the tile, not on a timeout.
+    await expect.poll(() => failed().elements().length + tile(10).elements().length).toBe(1);
+    expect(tile(10).elements()).toHaveLength(0);
+    expect(failed().elements()).toHaveLength(1);
+  });
+
+  // getForPosts refuses more than STORYLINE_FOR_POSTS_MAX ids.
   test('asks which posts are chapters at most 100 at a time', async () => {
     mocks.items = Array.from({ length: 150 }, (_, i) => postItem(1000 + i));
     renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
@@ -227,14 +243,14 @@ describe('StorylineFirstChapterModal', () => {
     mocks.items = [postItem(10)];
     renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
 
-    await page.getByRole('textbox', { name: 'Search your posts by title' }).fill('  Cat ');
+    await page.getByRole('textbox', { name: 'Search by the start of a title' }).fill('  Cat ');
     await expect.poll(() => mocks.queries.at(-1)).toBe('Cat');
   });
 
   test('says when no title matches the search', async () => {
     renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
 
-    await page.getByRole('textbox', { name: 'Search your posts by title' }).fill('Zebra');
+    await page.getByRole('textbox', { name: 'Search by the start of a title' }).fill('Zebra');
     await expect
       .element(page.getByText('None of your posts has a title starting with “Zebra”.'))
       .toBeVisible();
