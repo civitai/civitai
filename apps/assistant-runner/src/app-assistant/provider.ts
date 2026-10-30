@@ -38,7 +38,8 @@ import { DevTunnelError, type DevTunnels } from './dev-tunnel';
 import { toolResultsOf } from './history';
 import { RunnerPreview, type AutoPreview } from './preview';
 import { AppSandbox } from './sandbox';
-import { SdkUpgrades } from './sdk-pin';
+import { unjustifiedManifestScopes } from './scope-justifications';
+import { SdkUpgrades, upgradeBeforeSubmit } from './sdk-pin';
 
 /**
  * What App Assistant's page says about itself as a reply starts (`remoteRunner.pageState`): the key
@@ -219,6 +220,8 @@ export class AppAssistantTools implements ToolProvider {
         checklistApp: () => sandbox.active?.app ?? null,
         // A chat changes only the app it made or chose: a new chat never builds over the open one.
         openApp: () => sandbox.active?.app ?? null,
+        // civitai refuses a submission whose sensitive scopes have no justification.
+        unjustifiedScopes: () => unjustifiedManifestScopes(sandbox, signal),
       });
       core.restore({
         conversationId,
@@ -245,24 +248,27 @@ export class AppAssistantTools implements ToolProvider {
       // An app on an older @civitai/sdk than the host's is upgraded by the runner itself, before the
       // assistant's first step, so none of its calls runs meanwhile (never throws; rolls back on failure).
       const livePreview = preview;
-      const sdkUpgrade = await this.#sdkUpgrades.upgrade({
-        sandbox,
-        // Not listed: its MCP server is not answering (no tools at all), or has no such tool.
-        hasTool: (name) => `sandbox__${name}` in sandboxTools,
-        startDevServer: () => livePreview.startDevServer(),
-        // The install changed files: both gates hear of it as of any command, so checks run again.
-        report: (result) => {
-          core.onToolResult(result);
-          context.report?.(reportOf(result));
-        },
-        conversationId,
-        runId,
-        log,
-        signal,
-      });
+      const upgradeSdk = () =>
+        this.#sdkUpgrades.upgrade({
+          sandbox,
+          // Not listed: its MCP server is not answering (no tools at all), or has no such tool.
+          hasTool: (name) => `sandbox__${name}` in sandboxTools,
+          startDevServer: () => livePreview.startDevServer(),
+          // The install changed files: both gates hear of it as of any command, so checks run again.
+          report: (result) => {
+            core.onToolResult(result);
+            context.report?.(reportOf(result));
+          },
+          conversationId,
+          runId,
+          log,
+          signal,
+        });
+      const sdkUpgrade = await upgradeSdk();
       const pageTools: Record<string, ChatTool> = {
         ...appTools.tools,
         ...core.tools,
+        [SUBMIT_FOR_REVIEW]: upgradeBeforeSubmit(core.tools[SUBMIT_FOR_REVIEW], upgradeSdk),
         ...preview.tools(),
       };
       // As `<civitai-chat>` offers a page's own tools (the chat's `hostToolSet`): the same

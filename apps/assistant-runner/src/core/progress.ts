@@ -1,7 +1,15 @@
 import type { StoredConversationMetadata } from '@civitai/components-chat/core';
 import type { ModelMessage, ToolSet } from 'ai';
 
-import { hasEnded, ownedBy, savedTurn, withEnd, withProgress, type EndedReply } from './head';
+import {
+  hasEnded,
+  ownedBy,
+  savedTurn,
+  withCharge,
+  withEnd,
+  withProgress,
+  type EndedReply,
+} from './head';
 import type { ConversationStore, Logger } from './interfaces';
 
 /** The waits between attempts at saving how a reply ended, after the first fails. */
@@ -19,6 +27,8 @@ export class ProgressWriter {
   #running: Promise<void> | undefined;
   readonly #savedCalls = new Set<string>();
   readonly #waiting = new Map<string, (() => void)[]>();
+  /** Buzz the reply's model calls were charged that no save has written yet. */
+  #unsaved: number | undefined;
 
   constructor(
     private readonly store: ConversationStore,
@@ -29,6 +39,11 @@ export class ProgressWriter {
     /** The run saving: once a retry of the same turn took the turn over, this run saves nothing more to it. */
     private readonly runId?: string
   ) {}
+
+  /** A model call of the reply was charged `buzz`: it goes into the head with the next save. */
+  charged(buzz: number): void {
+    this.#unsaved = (this.#unsaved ?? 0) + buzz;
+  }
 
   save(messages: ModelMessage[]): void {
     this.#pending = messages;
@@ -103,6 +118,7 @@ export class ProgressWriter {
     change: (head: StoredConversationMetadata) => StoredConversationMetadata
   ): Promise<'written' | 'skipped' | 'failed'> {
     let written = false;
+    let charge: number | undefined;
     try {
       await this.store.update(this.userId, this.conversationId, (current) => {
         // Once the reply's end is in the head (this pass's, or a cancel's), nothing replaces it; and a
@@ -111,8 +127,15 @@ export class ProgressWriter {
         if (!current || hasEnded(turn)) return null;
         if (this.runId !== undefined && turn && !ownedBy(turn, this.runId)) return null;
         written = true;
-        return change(current);
+        charge = this.#unsaved;
+        const next = change(current);
+        return charge === undefined ? next : withCharge(next, this.seq, charge);
       });
+      // A charge that came in while this save was on its way stays for the next one.
+      if (written && charge !== undefined) {
+        const left = (this.#unsaved ?? 0) - charge;
+        this.#unsaved = left === 0 ? undefined : left;
+      }
       return written ? 'written' : 'skipped';
     } catch (error) {
       this.log.error(

@@ -4,6 +4,7 @@ import {
   CIVITAI_SDK_FLOOR,
   checkSdkPin,
   installedSdkBelowFloor,
+  type AssistantTool,
   type Sandbox,
 } from '@civitai/app-assistant';
 import type { ChatToolResult } from '@civitai/components-chat/runner-protocol';
@@ -45,6 +46,29 @@ const TARGET_RANGE = `^${CIVITAI_SDK_FLOOR}`;
 const FLOOR_MINOR = CIVITAI_SDK_FLOOR.split('.').slice(0, 2).join('.');
 /** The one line a reply starts with after the runner upgraded its app. */
 export const SDK_UPGRADED_LINE = `Updated this app's Civitai SDK to ${FLOOR_MINOR} so the preview stays awake while you use it.`;
+
+/** What `submit_for_review` answers when the runner upgraded the app's SDK as it was offered. */
+export const SDK_UPGRADED_BEFORE_SUBMIT = `Not submitted yet: the runner just updated this app's Civitai SDK to ${TARGET_RANGE} and reinstalled its packages, so the app changed after its checks. Tell the user in one line: ${SDK_UPGRADED_LINE} Then run the preview check, the tests and the typecheck again, call report_ready, and call submit_for_review again.`;
+
+/**
+ * `submit_for_review` that first upgrades a stale `@civitai/sdk` (`upgrade`, `SdkUpgrades`): the
+ * upgrade as a reply opens cannot see an app scaffolded later in that reply (the scaffold pins an
+ * older SDK), and the page packages the app as the sandbox holds it when the offer reaches it. An
+ * upgrade made here withholds the offer, so the app is checked again with the new SDK.
+ */
+export function upgradeBeforeSubmit(
+  tool: AssistantTool,
+  upgrade: () => Promise<string | null>
+): AssistantTool {
+  return {
+    ...tool,
+    async execute(input) {
+      const offer = await tool.execute(input);
+      if ((await upgrade()) !== null) throw new Error(SDK_UPGRADED_BEFORE_SUBMIT);
+      return offer;
+    },
+  };
+}
 
 export interface SdkPinSandbox {
   readonly active: Pick<Sandbox, 'name' | 'app' | 'state'> | null;

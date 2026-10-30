@@ -74,6 +74,8 @@ export interface ModelContext {
    * ended in error or was interrupted): a request that run had in flight may be answered for it.
    */
   carriesOn?: boolean;
+  /** Told what each of the reply's model calls was charged, in Buzz, as the provider learns it. */
+  onCharge?: (buzz: number) => void;
 }
 
 /** The model a reply asks with. Called once per pass of a reply; a real one mints its token per request. */
