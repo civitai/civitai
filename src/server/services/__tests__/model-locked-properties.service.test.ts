@@ -707,10 +707,9 @@ describe('system nsfw lock marker on a moderator save', () => {
   });
 
   it('drops the marker and logs the unlock when a moderator unlocks nsfw in the private flow', async () => {
-    mockStored(locked);
+    mockStored({ ...locked, sfwOnly: true });
     await privateFromTraining({
       user: { id: MODERATOR_ID, isModerator: true },
-      nsfw: false,
       lockedProperties: [],
     });
     expect(updateData().meta).not.toHaveProperty('systemNsfwLock');
@@ -784,18 +783,35 @@ describe('upsertModel — content flags the row ends up with', () => {
     expect(updateData().nsfw).toBe(false);
   });
 
-  it('lets a moderator mark nsfw in the same save that clears minor', async () => {
-    mockStored({ minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] });
+  it.each(['minor', 'poi', 'sfwOnly'] as const)(
+    'lets a moderator mark nsfw in the same save that clears %s',
+    async (flag) => {
+      mockStored({ [flag]: true, lockedProperties: [flag] });
+
+      await upsert({
+        id: MODEL_ID,
+        userId: MODERATOR_ID,
+        isModerator: true,
+        nsfw: true,
+        [flag]: false,
+      });
+
+      expect(updateData()).toEqual(expect.objectContaining({ nsfw: true, [flag]: false }));
+    }
+  );
+
+  it('lets a moderator mark minor in the same save that clears nsfw', async () => {
+    mockStored({ nsfw: true });
 
     await upsert({
       id: MODEL_ID,
       userId: MODERATOR_ID,
       isModerator: true,
-      nsfw: true,
-      minor: false,
+      nsfw: false,
+      minor: true,
     });
 
-    expect(updateData()).toEqual(expect.objectContaining({ nsfw: true, minor: false }));
+    expect(updateData()).toEqual(expect.objectContaining({ nsfw: false, minor: true }));
   });
 
   it('refuses a moderator marking minor on an nsfw model', async () => {
@@ -844,6 +860,9 @@ describe('upsertModel — content flags the row ends up with', () => {
       })
     ).rejects.toThrow('Mature content on a model marked as SFW is not permitted.');
     expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    // A refusal is not a failed publish: the live model is not rolled back to Draft.
+    expect(mockDbWrite.model.updateMany).not.toHaveBeenCalled();
+    expect(mockDbWrite.modelVersion.updateMany).not.toHaveBeenCalled();
   });
 
   it('refuses a moderator marking nsfw on a minor model', async () => {

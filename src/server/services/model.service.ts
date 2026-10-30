@@ -6361,17 +6361,17 @@ export const privateModelFromTraining = async ({
         try {
           if (!locked) throw throwNotFoundError(`No model with id ${id}`);
           assertPrivateFlowPublishable({ ...locked, isModerator: user.isModerator });
+          // Against this locked row as well as the read above: a lock set since then wins.
+          enforceLockedProperties({
+            data,
+            storedLockedProperties: locked.lockedProperties,
+            isModerator: user.isModerator,
+          });
+          assertAllowedContentFlags(locked, { ...data, sfwOnly: true });
         } catch (error) {
           takenDown = true;
           throw error;
         }
-        // Against this locked row as well as the read above: a lock set since then wins.
-        enforceLockedProperties({
-          data,
-          storedLockedProperties: locked.lockedProperties,
-          isModerator: user.isModerator,
-        });
-        assertAllowedContentFlags(locked, { ...data, sfwOnly: true });
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
         // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
