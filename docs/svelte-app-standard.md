@@ -239,8 +239,8 @@ unnoticed because the loop that would have caught them is the one we tell you no
 
 Each app owns a `vitest.config.ts` declaring `name: 'app:<slug>'`, and the root config globs those
 **config files** — so an app without one is silently not selected. Run one app with
-`pnpm --filter @civitai/<app> test`, or every app with `pnpm run test:apps:run` (CI's `App unit tests`
-job). The `app:` prefix is load-bearing: every app is also published as `@civitai/*`, so dropping the
+`pnpm --filter @civitai/<app> test`, or every app with `pnpm run test:apps:run` (CI's `App suites`
+workflow). The `app:` prefix is load-bearing: every app is also published as `@civitai/*`, so dropping the
 `name` moves the suite into the packages job instead.
 
 These are **node-env tests over plain modules** — no SvelteKit pipeline, so `$lib` and the `$env`
