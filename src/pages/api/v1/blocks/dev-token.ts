@@ -19,6 +19,7 @@ import {
 } from '~/server/services/blocks/dev-scoped-mint.service';
 import { TokenScope } from '~/shared/constants/token-scope.constants';
 import { Flags } from '~/shared/utils/flags';
+import { APPS_RESTRICTED_MESSAGE } from '~/shared/constants/app-submit.constants';
 
 type AxiomAPIRequest = NextApiRequest & { log: Logger };
 
@@ -422,11 +423,11 @@ export default withAxiom(async (req: AxiomAPIRequest, res: NextApiResponse) => {
   // rejected. The runtime spend belt re-checks the author capability against the
   // token SUBJECT; we keep the MINT author-gated too (scope doc §4 / §6 R2).
   if (user.bannedAt) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
   if (!(await isAppBlocksAuthorEnabled({ user }))) {
-    res.status(403).json({ message: 'Apps are restricted to the Civitai team' });
+    res.status(403).json({ message: APPS_RESTRICTED_MESSAGE });
     return;
   }
 

@@ -713,39 +713,51 @@ export async function getCommentThreadBounty(
   return entryId ? { entryId } : null;
 }
 
-export async function getCommentThreadCrucibleId(threadId: number): Promise<number | null> {
-  const thread = await dbRead.thread.findUnique({
-    where: { id: threadId },
-    select: { crucibleId: true, rootThread: { select: { crucibleId: true } } },
-  });
-  return thread?.crucibleId ?? thread?.rootThread?.crucibleId ?? null;
-}
-
 /**
- * The storyline above a thread, as one query. Matches on the stored `commentId -> threadId` chain
- * or on any chain thread's `rootThreadId`: some reply threads have no `rootThreadId`, and a deleted
- * comment breaks the chain, so either alone can miss a storyline and let a reply skip its gate.
+ * The storyline or crucible above a thread, as one query. Matches on the stored
+ * `commentId -> threadId` chain or on any chain thread's `rootThreadId`: some reply threads have no
+ * `rootThreadId`, and a deleted comment breaks the chain, so either alone can miss the entity and
+ * let a reply skip its gate.
+ *
+ * Each chain thread's column is read by a correlated primary-key probe so the chain drives the
+ * lookup: as a join, the planner starts from the column's unique index instead, reading every
+ * crucible's (or storyline's) thread on every call.
  */
-const storylineAboveSql = (seed: string) => Prisma.sql`
+const entityAboveSql = (column: 'storylineId' | 'crucibleId', seed: string) => Prisma.sql`
   ${Prisma.raw(threadAncestorsCte(seed))}
-  SELECT th."storylineId"
+  SELECT chain."entityId" ${Prisma.raw(`"${column}"`)}
   FROM (
-    SELECT mt."id" FROM thread_ancestors mt
-    UNION ALL
-    SELECT t."rootThreadId" FROM thread_ancestors mt JOIN "Thread" t ON t.id = mt."id"
+    SELECT (SELECT th.${Prisma.raw(
+      `"${column}"`
+    )} FROM "Thread" th WHERE th.id = link."id") "entityId"
+    FROM (
+      SELECT mt."id" FROM thread_ancestors mt
+      UNION ALL
+      SELECT t."rootThreadId" FROM thread_ancestors mt JOIN "Thread" t ON t.id = mt."id"
+    ) link
   ) chain
-  JOIN "Thread" th ON th.id = chain."id"
-  WHERE th."storylineId" IS NOT NULL
+  WHERE chain."entityId" IS NOT NULL
   LIMIT 1`;
 
+const commentThreadSeed = (commentId: number) =>
+  `(SELECT c."threadId" FROM "CommentV2" c WHERE c.id = ${Number(commentId)})`;
+
 export const storylineOfThreadSql = (threadId: number) =>
-  storylineAboveSql(String(Number(threadId)));
+  entityAboveSql('storylineId', String(Number(threadId)));
 
 export const storylineOfCommentSql = (commentId: number) =>
-  storylineAboveSql(`(SELECT c."threadId" FROM "CommentV2" c WHERE c.id = ${Number(commentId)})`);
+  entityAboveSql('storylineId', commentThreadSeed(commentId));
 
 const firstStorylineId = async (sql: Prisma.Sql) =>
   (await dbRead.$queryRaw<{ storylineId: number }[]>(sql))[0]?.storylineId ?? null;
+
+export const crucibleOfCommentSql = (commentId: number) =>
+  entityAboveSql('crucibleId', commentThreadSeed(commentId));
+
+/** The crucible a reply's thread belongs to, for the replies of a crucible discussion. */
+export const getCommentCrucibleId = async (commentId: number) =>
+  (await dbRead.$queryRaw<{ crucibleId: number }[]>(crucibleOfCommentSql(commentId)))[0]
+    ?.crucibleId ?? null;
 
 const isDetached = async (sql: Prisma.Sql) =>
   (await dbRead.$queryRaw<{ detached: boolean }[]>(sql))[0]?.detached === true;

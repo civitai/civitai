@@ -6,6 +6,7 @@ import { NextLink as Link } from '~/components/NextLink/NextLink';
 import { StorylineThumb, type StorylineThumbImage } from '~/components/Storyline/StorylineThumb';
 import { STORYLINE_CONTINUE_POST_LIMIT } from '~/components/Storyline/storyline-ui';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
+import { isStorylineVerdictLevel } from '~/shared/utils/storyline-placement';
 import { formatDate } from '~/utils/date-helpers';
 
 export type StorylineContinuePost = {
@@ -120,7 +121,12 @@ function StorylinePostTile({
   onSelect: () => void;
 }) {
   const name = post.title || (post.publishedAt ? formatDate(post.publishedAt) : `Post ${post.id}`);
-  const rating = post.nsfwLevel ? getBrowsingLevelLabel(post.nsfwLevel) : 'Not rated yet';
+  const unusable = isStorylineVerdictLevel(post.nsfwLevel);
+  const rating = !post.nsfwLevel
+    ? 'Not rated yet'
+    : unusable
+    ? "Can't be used"
+    : getBrowsingLevelLabel(post.nsfwLevel);
 
   return (
     <button
@@ -130,7 +136,9 @@ function StorylinePostTile({
       aria-label={
         aboveCeiling
           ? `${name}, above this storyline's ${ceiling} limit`
-          : `${name}, ${post.nsfwLevel ? `rated ${rating}` : 'not rated yet'}`
+          : `${name}, ${
+              !post.nsfwLevel ? 'not rated yet' : unusable ? "can't be used" : `rated ${rating}`
+            }`
       }
       onClick={onSelect}
       className={clsx(

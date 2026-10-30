@@ -79,7 +79,11 @@ import {
 } from '~/shared/utils/storyline';
 import type { StorylineStatus, StorylineWhoCanContinue } from '~/shared/utils/prisma/enums';
 import { AppealStatus, EntityType, ReportStatus } from '~/shared/utils/prisma/enums';
-import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import {
+  isAnswerableParentChapter,
+  STORYLINE_REFUSALS,
+  storylineAboveRatingRefusal,
+} from '~/shared/utils/storyline-placement';
 import { createStorylineLinkJudge, STORYLINE_LINK_REFUSALS } from '~/shared/utils/storyline-graph';
 import {
   allBrowsingLevelsFlag,
@@ -369,14 +373,16 @@ export async function assertPostCanBeChapter(
   });
   if (!post) throw throwNotFoundError('Post not found');
   if (post.userId !== authorId) throw throwAuthorizationError('You can only add your own posts');
-  if (post.tosViolation) throw throwBadRequestError('This post cannot be added to a storyline');
+  if (post.tosViolation) throw throwBadRequestError(STORYLINE_REFUSALS.cannotSubmit);
   if (!post.publishedAt || post.publishedAt > new Date())
     throw throwBadRequestError('Publish the post before adding it to a storyline');
   if (post.storylineChapter) throw throwBadRequestError('This post is already in a storyline');
   if (!post.nsfwLevel)
     throw throwBadRequestError('This post has not been rated yet. Try again once it has been');
   if (!storylineLevelAllowed({ postLevel: post.nsfwLevel, maxNsfwLevel }))
-    throw throwBadRequestError("This post is rated above the storyline's maximum rating");
+    throw throwBadRequestError(
+      storylineAboveRatingRefusal({ postLevel: post.nsfwLevel, maxNsfwLevel })
+    );
 }
 
 /**
@@ -1292,8 +1298,7 @@ export async function setFirstChapter({
       });
       // Its rating may still change while an image is scanning or in review.
       const readiness = post ? continuationReadiness(post) : 'doomed';
-      if (readiness === 'doomed')
-        throw throwBadRequestError('This post cannot be added to a storyline');
+      if (readiness === 'doomed') throw throwBadRequestError(STORYLINE_REFUSALS.cannotSubmit);
       if (readiness !== 'ready')
         throw throwBadRequestError(
           "This post's images are still being checked. Try again once they are"

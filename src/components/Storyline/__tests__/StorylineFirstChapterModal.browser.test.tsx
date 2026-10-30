@@ -159,6 +159,18 @@ describe('StorylineFirstChapterModal', () => {
     await expect.element(submit()).toBeDisabled();
   });
 
+  // Blocked is a moderation verdict: never shown as the post's rating, nor promised a raise.
+  test('a post with a Blocked image is refused as unusable, without naming Blocked', async () => {
+    mocks.items = [postItem(10, { nsfwLevel: NsfwLevel.R | NsfwLevel.Blocked })];
+    renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);
+
+    await tile(10).click();
+    await expect.element(page.getByText(/can't be used in a storyline/)).toBeVisible();
+    expect(page.getByText(/Blocked/).elements()).toHaveLength(0);
+    expect(page.getByText(/raises the maximum/).elements()).toHaveLength(0);
+    await expect.element(submit()).toBeDisabled();
+  });
+
   test('an unrated post cannot be picked yet', async () => {
     mocks.items = [postItem(10, { nsfwLevel: 0 })];
     renderWithProviders(<StorylineFirstChapterModal storylineId={3} />);

@@ -34,7 +34,11 @@ export function StorylineEditorHeader({ post }: { post: EditorPost }) {
     return (
       <StorylineEditorBanner
         variant="continue"
-        storyline={{ id: pending.storyline.id, title: pending.storyline.title }}
+        storyline={{
+          id: pending.storyline.id,
+          title: pending.storyline.title,
+          maxNsfwLevel: pending.storyline.maxNsfwLevel,
+        }}
         chapterNumber={pending.parentChapter.depth + 2}
         {...removal}
       />
