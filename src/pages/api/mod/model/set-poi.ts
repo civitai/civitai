@@ -10,7 +10,7 @@ export default defineModeratorEndpoint('model.setPoi', {
   returns: '{ modelId, poi }',
   notes: [
     'Setting it also makes the model SFW-only and not NSFW, and locks those fields against the creator.',
-    "Lifting it leaves SFW-only as it is, records the moderator's ruling for the text scan, and closes the owner's flag appeal.",
+    "Lifting it leaves SFW-only as it is, unless the model is left with no minor flag and a locked rating was recorded from before the flag: then that rating, SFW-only setting and their locks come back. It also records the moderator's ruling for the text scan and closes the owner's flag appeal.",
   ],
   rateLimit: { max: 30, windowSeconds: 60 },
   input: z.object({

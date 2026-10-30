@@ -364,6 +364,8 @@ export type MinorFlagSnapshot = {
   prevGalleryLevel?: number | null;
   prevLockedProperties?: string[];
   prevMinorImageIds?: number[];
+  /** When a lift ended this flag or a moderator ruled on the rating: a later lift restores nothing from it. */
+  supersededAt?: string;
 };
 
 /** Written when the hash match applies the real-person flag, so a revert can restore what it changed. */
@@ -436,6 +438,8 @@ export type ModelMeta = Partial<{
     prevNsfw: boolean;
     prevSfwOnly: boolean;
     prevLockedProperties: string[];
+    /** Absent on records written before it was kept. */
+    prevGalleryLevel?: number | null;
   };
   minorHashDismissed: { at: string; by: number };
   minorHashCleared: { at: string };
