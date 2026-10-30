@@ -1090,3 +1090,216 @@ describe('PageBlockHost dev-tunnel ready window — 30 s, wait in place, dev-ser
     }
   );
 });
+
+/**
+ * DEV-TUNNEL RETRY → A FRESH ENTRY URL (`onRefreshEntryUrl`).
+ *
+ * The dev tunnel's `iframeSrc` carries a short-lived entry token, and the edge
+ * refuses an entry document whose token has expired. A Retry that only re-keyed
+ * the <iframe> reloaded the SAME src, so any Retry made after the token expired
+ * loaded a refusal page, never acked, and landed on the same fallback again — the
+ * Retry button could never recover the preview.
+ *
+ * Now a dev-tunnel Retry (manual AND automatic) first asks the parent for a fresh
+ * entry URL and remounts the frame on it, IN PLACE: the host is not remounted, so
+ * the bounded automatic budget still carries across attempts.
+ *
+ * 🔴 The fresh URLs are distinct literals on the test page's own origin (the
+ * pinned transport needs a same-origin frame — see `SAME_ORIGIN_SRC`), so an
+ * assertion on the rendered `src` can only pass if the fetched value reached it.
+ */
+describe('PageBlockHost dev-tunnel Retry — loads a FRESH entry URL', () => {
+  const freshSrc = (n: number) => `${window.location.origin}/?dev=fresh-${n}`;
+
+  /** A refresh whose result the test releases by hand. */
+  function deferredRefresh() {
+    const pending: Array<(src: string) => void> = [];
+    const fn = vi.fn(
+      () =>
+        new Promise<string>((resolve) => {
+          pending.push(resolve);
+        })
+    );
+    return { fn, resolveNext: (src: string) => pending.shift()?.(src) };
+  }
+
+  async function driveToDevTimeout() {
+    await awaitIframeMount();
+    await advance(DEV_TUNNEL_WINDOW_MS + 200);
+    expect(
+      await reaches(() => fallbackEl() !== null),
+      'dev-tunnel must time out at the 30 s limit'
+    ).toBe(true);
+  }
+
+  test('dev-tunnel: a manual Retry after a timeout fetches a fresh entry URL and loads IT', async () => {
+    useVirtualClock();
+    let n = 0;
+    const onRefreshEntryUrl = vi.fn(async () => freshSrc(++n));
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="dev-tunnel"
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+        onRefreshEntryUrl={onRefreshEntryUrl}
+      />
+    );
+    await driveToDevTimeout();
+    const stale = iframeEl();
+    expect(stale?.getAttribute('src')).toBe(SAME_ORIGIN_SRC);
+    expect(onRefreshEntryUrl).not.toHaveBeenCalled();
+
+    retryButton()?.click();
+    await pollFor('retry loading surface', () => loadingEl() !== null);
+
+    expect(onRefreshEntryUrl).toHaveBeenCalledTimes(1);
+    // A NEW frame element, on the FRESH url — never the expired one.
+    expect(iframeEl()).not.toBe(stale);
+    expect(iframeEl()?.getAttribute('src')).toBe(freshSrc(1));
+
+    // …and the fresh frame is a working one: the handshake completes on it.
+    await driveToReady();
+    expect(fallbackEl()).toBeNull();
+  });
+
+  test('dev-tunnel: the AUTOMATIC retry loads a fresh URL too, and the budget carries across it', async () => {
+    useVirtualClock();
+    let n = 0;
+    const onRefreshEntryUrl = vi.fn(async () => freshSrc(++n));
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="dev-tunnel"
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+        onRefreshEntryUrl={onRefreshEntryUrl}
+      />
+    );
+    await driveToFatal();
+    expect(autoRetryLine()?.textContent).toContain(`attempt 1 of ${MAX_AUTO_RETRIES}`);
+
+    await advance(FIRST_BACKOFF_MS + 100);
+    await pollFor('retry loading surface', () => loadingEl() !== null);
+    expect(onRefreshEntryUrl).toHaveBeenCalledTimes(1);
+    expect(iframeEl()?.getAttribute('src')).toBe(freshSrc(1));
+
+    // The host was NOT remounted: failing again shows the SECOND attempt, not a
+    // refilled budget (a parent remount per retry would loop forever).
+    await driveToReady();
+    postFromBlock('BLOCK_ERROR', { fatal: true });
+    await pollFor('terminal fallback', () => fallbackEl() !== null);
+    await advance(0);
+    expect(autoRetryLine()?.textContent).toContain(`attempt 2 of ${MAX_AUTO_RETRIES}`);
+  });
+
+  test('dev-tunnel: a double-click while the URL is being fetched starts ONE fetch, and the fallback stays up until it lands', async () => {
+    useVirtualClock();
+    const refresh = deferredRefresh();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="dev-tunnel"
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+        onRefreshEntryUrl={refresh.fn}
+      />
+    );
+    await driveToDevTimeout();
+    const stale = iframeEl();
+
+    retryButton()?.click();
+    retryButton()?.click();
+    await advance(0);
+    expect(refresh.fn).toHaveBeenCalledTimes(1);
+    // Nothing remounted on the expired URL while the fresh one is on its way.
+    expect(iframeEl()).toBe(stale);
+    expect(fallbackEl()).not.toBeNull();
+
+    refresh.resolveNext(freshSrc(7));
+    await pollFor('retry loading surface', () => loadingEl() !== null);
+    expect(iframeEl()?.getAttribute('src')).toBe(freshSrc(7));
+  });
+
+  test('dev-tunnel: a manual Retry whose fetch outlasts the pending auto-retry does not spend the automatic budget', async () => {
+    useVirtualClock();
+    const refresh = deferredRefresh();
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="dev-tunnel"
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+        onRefreshEntryUrl={refresh.fn}
+      />
+    );
+    await driveToFatal();
+    retryButton()?.click();
+    await advance(0);
+    expect(refresh.fn).toHaveBeenCalledTimes(1);
+
+    // The automatic backoff elapses while the user's fetch is still in flight.
+    await advance(FIRST_BACKOFF_MS + 100);
+    expect(refresh.fn).toHaveBeenCalledTimes(1);
+
+    refresh.resolveNext(freshSrc(1));
+    await pollFor('retry loading surface', () => loadingEl() !== null);
+    await driveToReady();
+    postFromBlock('BLOCK_ERROR', { fatal: true });
+    await pollFor('terminal fallback', () => fallbackEl() !== null);
+    await advance(0);
+    expect(autoRetryLine()?.textContent).toContain(`attempt 1 of ${MAX_AUTO_RETRIES}`);
+  });
+
+  test('dev-tunnel: a failed fetch still re-arms the Retry, on the URL it had', async () => {
+    useVirtualClock();
+    const onRefreshEntryUrl = vi.fn(() => Promise.reject(new Error('preview gone')));
+    renderWithProviders(
+      <PageBlockHost
+        {...baseProps}
+        surface="dev-tunnel"
+        onConsentGranted={vi.fn()}
+        onRetryToken={vi.fn()}
+        onRefreshEntryUrl={onRefreshEntryUrl}
+      />
+    );
+    await driveToDevTimeout();
+    const stale = iframeEl();
+
+    retryButton()?.click();
+    await pollFor('retry loading surface', () => loadingEl() !== null);
+    expect(onRefreshEntryUrl).toHaveBeenCalledTimes(1);
+    expect(iframeEl()).not.toBe(stale);
+    expect(iframeEl()?.getAttribute('src')).toBe(SAME_ORIGIN_SRC);
+  });
+
+  /**
+   * INVARIANT GUARD (passes before and after the fix): every other surface's
+   * `iframeSrc` does not expire, so its Retry stays a remount on the same src and
+   * never consults `onRefreshEntryUrl`, even when one is passed.
+   */
+  test.each(['page-run', 'private-run'] as const)(
+    '%s: Retry still just remounts the same src and never asks for a fresh URL',
+    async (surface) => {
+      useVirtualClock();
+      const onRefreshEntryUrl = vi.fn(async () => freshSrc(1));
+      renderWithProviders(
+        <PageBlockHost
+          {...baseProps}
+          surface={surface}
+          onConsentGranted={vi.fn()}
+          onRetryToken={vi.fn()}
+          onRefreshEntryUrl={onRefreshEntryUrl}
+        />
+      );
+      await driveToFatal();
+      const before = iframeEl();
+
+      retryButton()?.click();
+      await pollFor('retry loading surface', () => loadingEl() !== null);
+      expect(iframeEl()).not.toBe(before);
+      expect(iframeEl()?.getAttribute('src')).toBe(SAME_ORIGIN_SRC);
+      expect(onRefreshEntryUrl).not.toHaveBeenCalled();
+    }
+  );
+});
