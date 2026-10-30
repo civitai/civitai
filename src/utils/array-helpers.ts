@@ -139,3 +139,6 @@ export function findLastIndex<T>(arr: T[], predicate: (item: T) => boolean): num
   }
   return -1;
 }
+
+// TS 7 trial positive control: a deliberate type error. Do not merge.
+export const __ts7TrialControl: number = 'a';
