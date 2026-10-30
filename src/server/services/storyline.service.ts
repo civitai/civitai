@@ -1496,6 +1496,51 @@ export async function addOwnerChapter(input: {
   return dbWrite.$transaction((tx) => writeOwnerChapter(tx, input));
 }
 
+/**
+ * The owner adds a post at the end of the main path: chapter 1 of an empty storyline, else the
+ * canon child of the main path's last chapter. Found here, under the storyline's lock and with no
+ * path cap, not by the client: a stale or capped read would add it as a side branch instead.
+ */
+export async function addOwnerChapterAtEnd({
+  storylineId,
+  postId,
+  userId,
+}: {
+  storylineId: number;
+  postId: number;
+  userId: number;
+}) {
+  const [root] = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "StorylineChapter" WHERE "storylineId" = ${storylineId} AND depth = 0
+  `;
+  if (!root) return setFirstChapter({ storylineId, postId, userId });
+
+  return dbWrite.$transaction(async (tx) => {
+    await lockStorylineForAdd(tx, storylineId);
+    // One canon child per parent; the step cap only guards against a cycle.
+    const [end] = await tx.$queryRaw<{ id: number }[]>`
+      WITH RECURSIVE main AS (
+        SELECT ${root.id}::int AS id, 1 AS step
+        UNION ALL
+        SELECT e."chapterId", main.step + 1 FROM main
+        JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
+        WHERE main.step < 100000
+      )
+      SELECT id FROM main ORDER BY step DESC LIMIT 1
+    `;
+    const { chapterId } = await writeOwnerChapter(tx, {
+      parentChapterId: end.id,
+      postId,
+      userId,
+    });
+    const [canon] = await tx.$queryRaw<{ canon: boolean }[]>`
+      SELECT canon FROM "StorylineChapterEdge" WHERE "chapterId" = ${chapterId}
+    `;
+    if (!canon?.canon) throw throwBadRequestError('The storyline changed while adding. Try again');
+    return { storylineId, chapterId };
+  });
+}
+
 /** `addOwnerChapter` inside the caller's transaction. */
 export async function writeOwnerChapter(
   tx: Prisma.TransactionClient,
@@ -3465,7 +3510,7 @@ async function getChosenStorylineImages(
 /** Deepest offset the most-chapters order pages to. */
 const STORYLINE_FEED_MAX_OFFSET = 1000;
 
-export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open';
+export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open' | 'mine';
 export type StorylineFeedSort = 'newest' | 'mostChapters';
 
 /**
@@ -3508,6 +3553,7 @@ export async function getStorylinesInfinite({
   if (excluded.length) where.push(Prisma.sql`st."userId" <> ALL(${excluded}::int[])`);
   if (filter === 'ongoing') where.push(Prisma.sql`st.status = 'Ongoing'`);
   if (filter === 'complete') where.push(Prisma.sql`st.status = 'Complete'`);
+  if (filter === 'mine') where.push(Prisma.sql`st."userId" = ${viewerId}`);
   if (filter === 'open') {
     // A Complete storyline takes no continuations, whatever its space says.
     where.push(Prisma.sql`st.status <> 'Complete'`);

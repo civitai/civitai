@@ -68,8 +68,12 @@ section).
   Until then the storyline is empty and only its creator sees it.
 - **Starting from a published post.** An empty storyline's creator can pick a post they have already
   published as its chapter 1 ("Use a post you've published"). A published post's menu also offers
-  "Make this chapter 1 of a storyline", which starts a new storyline from it. A chapter 1 rated above
-  an empty storyline's maximum content level raises the maximum to fit it.
+  "Make this chapter 1 of a storyline", which starts a new storyline from it, and "Add to a
+  storyline", which adds it to one of the creator's own: as chapter 1 of an empty one, else after
+  the end of its main path. A chapter 1 rated above an empty storyline's maximum content level
+  raises the maximum to fit it.
+- **Finding your own.** The "My storylines" filter on /storylines lists the storylines you started,
+  empty ones included.
 - **Settings.** Status (ongoing or complete), who may continue it, the maximum content level, and the
   price, if any, to submit a continuation.
 - **Collaborators.** The creator can endorse collaborators. Their continuations are added without
