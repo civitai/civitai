@@ -117,7 +117,7 @@ jobs:
     # The name earlier comments across the repo cite. Renaming is safe: neither `main` nor
     # `release` has any required_status_checks (re-verified 2026-10-29), so no merge gate keys
     # on it.
-    name: ${{ github.event.action == 'labeled' && github.event.label.name != 'full-ci' && 'Label added (no CI run)' || 'App unit tests + typecheck' }}
+    name: App unit tests + typecheck
     runs-on: ubuntu-latest
     if: (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (github.event.action != 'labeled' || github.event.label.name == 'full-ci')
     # The `apps/*` suites had never once run in CI before this job existed (369 tests across

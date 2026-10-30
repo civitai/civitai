@@ -255,7 +255,7 @@ concurrency:
 
 jobs:
   eslint:
-    name: ${{ github.event.action == 'labeled' && github.event.label.name != 'full-ci' && 'Label added (no CI run)' || 'ESLint + Prettier (changed files)' }}
+    name: ESLint + Prettier (changed files)
     runs-on: ubuntu-latest
     # PULL REQUESTS ONLY, and not as a matter of taste. Every step in this job
     # is defined against `FETCH_HEAD...HEAD` where FETCH_HEAD is
@@ -428,7 +428,7 @@ jobs:
         run: node "$RUNNER_TEMP/lint/lint-new-findings.mjs" compare "$RUNNER_TEMP/lint"
 
   typecheck:
-    name: ${{ github.event.action == 'labeled' && github.event.label.name != 'full-ci' && 'Label added (no CI run)' || 'Typecheck (main pushes / fork PRs / non-main base)' }}
+    name: Typecheck (main pushes / fork PRs / non-main base)
     runs-on: ubuntu-latest
     # 🔴 NARROWED, not retired (talos-infra #855, stage 1). The in-cluster Tekton
     # `pr-check` pipeline runs `tsc --noEmit` on every PR and posts the result as
@@ -525,7 +525,7 @@ jobs:
         run: pnpm run typecheck
 
   unit:
-    name: ${{ github.event.action == 'labeled' && github.event.label.name != 'full-ci' && 'Label added (no CI run)' || 'Unit tests' }}
+    name: Unit tests
     runs-on: ubuntu-latest
     # ~8,000 tests that until now only ran on whoever remembered to run them.
     # Node env, no browser — component tests (`*.browser.test.tsx`) are not here
@@ -827,7 +827,7 @@ jobs:
           key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
 
   packages:
-    name: ${{ github.event.action == 'labeled' && github.event.label.name != 'full-ci' && 'Label added (no CI run)' || 'Package unit tests' }}
+    name: Package unit tests
     runs-on: ubuntu-latest
     # Skips draft PRs unless they carry the `full-ci` label, and labeled events for any other
     # label (see the header). The app typecheck that rode here moved to apps.yml with
@@ -954,7 +954,7 @@ jobs:
         run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
 
   component:
-    name: ${{ github.event.action == 'labeled' && github.event.label.name != 'full-ci' && 'Label added (no CI run)' || 'Component + geometry tests' }}
+    name: Component + geometry tests
     runs-on: ubuntu-latest
     # The second clause skips draft PRs unless they carry the `full-ci` label; the third skips
     # labeled events for any other label (see the header).
