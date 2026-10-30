@@ -322,6 +322,19 @@ describe('removeStorylineChapter', () => {
     expect(trackModActivity).toHaveBeenCalled();
   });
 
+  // The settlement refusal must not depend on a report, or retrying would reveal one opening.
+  it('gives the same unsettled-payment refusal whether or not a report is open', async () => {
+    await db.pg.exec(
+      `UPDATE "PlacementTransaction" SET "transactionId" = NULL WHERE kind = 'toOwner'`
+    );
+    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.paidContinuation);
+    await db.pg.exec(`
+      INSERT INTO "Report" (id, status) VALUES (73, 'Pending');
+      INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 73);
+    `);
+    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.paidContinuation);
+  });
+
   it('refuses chapter 1', async () => {
     await expect(removeStorylineChapter({ chapterId: 10, userId: OWNER })).rejects.toThrow(
       REFUSED.firstChapter

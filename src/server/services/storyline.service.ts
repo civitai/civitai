@@ -1159,6 +1159,10 @@ export async function removeStorylineChapter({
     `;
     if (hasChildren) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.hasChildren);
     if (waiting) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.waiting);
+    // Before the report check, as in `deleteStoryline`: a retryable refusal that came back only
+    // when no report is open would tell the caller when one is.
+    if (placement?.inFlight)
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.paidContinuation);
     // As `deleteStoryline`: what is under report stays for the moderator to see.
     if (role !== 'moderator') {
       const open = Prisma.sql`r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")`;
@@ -1178,8 +1182,6 @@ export async function removeStorylineChapter({
     }
 
     if (chapter.placementId != null) {
-      if (placement?.inFlight)
-        throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.paidContinuation);
       // The contributor paid the owner to add it; the owner cannot take it back out for free.
       if (placement?.paid && role === 'owner')
         throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
