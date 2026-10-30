@@ -200,4 +200,24 @@ describe('importYesNo', () => {
       await pg.exec(`DROP INDEX IF EXISTS "KnightsQueueItem_open_question_image_key"`);
     }
   });
+
+  it('imports a file of the real size in default batches, and a second run changes nothing', async () => {
+    const many = Array.from({ length: 2500 }, (_, i) => ({
+      externalId: `q-${i}`,
+      imageId: 1000 + (i % 700),
+      axis: i % 2 ? 'language' : 'violence',
+      audience: 'players',
+      prompt: `Question ${i}?`,
+      yesEffect: 'R4',
+      noEffect: 'R3',
+      meta: {},
+    }));
+    expect(await importYesNo(db, many)).toEqual({
+      inserted: 2500,
+      updated: 0,
+      unchanged: 0,
+      axes: 2,
+    });
+    expect(await importYesNo(db, many)).toMatchObject({ inserted: 0, updated: 0, unchanged: 2500 });
+  });
 });
