@@ -25,6 +25,9 @@ vi.mock('~/server/services/orchestrator/queue-limits', () => ({
 vi.mock('~/server/services/orchestrator/preset-image-gen.service', async (importOriginal) => ({
   ...(await importOriginal<object>()),
   submitPresetImageGen: mocks.submit,
+  whatIfPresetImageGen: async () => {
+    throw new Error('stop');
+  },
 }));
 vi.mock('~/server/services/generation-input-urls', async (importOriginal) => ({
   ...(await importOriginal<object>()),
@@ -238,5 +241,16 @@ describe('comics generation inputs the server loads', () => {
     expect(mocks.submit).toHaveBeenCalledOnce();
     const sent = (mocks.submit.mock.calls[0][0] as { images: { url: string }[] }).images;
     expect(sent.map((i) => i.url)).toEqual([expect.stringContaining(SOURCE)]);
+  });
+
+  it("getGenerationCostEstimate reads only the caller's own references", async () => {
+    dbMock.dbRead.comicReference.findMany.mockResolvedValue([]);
+    await caller()
+      .getGenerationCostEstimate({ referenceIds: [5] })
+      .catch(() => undefined);
+    expect(dbMock.dbRead.comicReference.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: { in: [5] }, userId: USER_ID } })
+    );
+    expect(dbMock.dbRead.comicReference.findUnique).not.toHaveBeenCalled();
   });
 });

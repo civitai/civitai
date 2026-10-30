@@ -1,3 +1,4 @@
+import { randomUUID } from 'crypto';
 import { PGlite } from '@electric-sql/pglite';
 import { TRPCError } from '@trpc/server';
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -199,6 +200,12 @@ describe('assertGenerationInputUrlsUsable', () => {
       await givenImage({ id: 200 + i, url: key, userId: CALLER });
     expect(await outcome(many.slice(0, MAX_KEYS))).toBe('accepted');
     expect(await outcome(many)).toBe('refused');
+  });
+
+  it('accepts a key as the upload routes mint it', async () => {
+    const minted = randomUUID();
+    await recordUploadKeyOwner(minted, CALLER);
+    expect(await outcome([minted])).toBe('accepted');
   });
 
   describe('a key with no image', () => {

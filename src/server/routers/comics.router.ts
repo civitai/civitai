@@ -2158,7 +2158,11 @@ export const comicsRouter = router({
             width: number;
             height: number;
           }[] = [];
-          for (const refId of input.referenceIds) {
+          const ownRefs = await dbRead.comicReference.findMany({
+            where: { id: { in: input.referenceIds }, userId: ctx.user.id },
+            select: { id: true },
+          });
+          for (const { id: refId } of ownRefs) {
             const { refImages: imgs } = await getReferenceImages(refId);
             characterRefImages.push(...imgs);
           }
