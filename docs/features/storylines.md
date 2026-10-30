@@ -3,9 +3,9 @@
 A storyline is a branching visual story told in posts. Each chapter is an ordinary post. The person
 who starts the storyline writes chapter 1; other creators can continue it from the end of any
 chapter, so a story grows into a tree of alternatives that readers walk through and choose between.
-The first chapter added after a chapter (the creator's own, a collaborator's, or a continuation the
-creator approved) is the main way on from it; later ones are other paths until the creator makes
-one the main way.
+A chapter added or joined after one that has no main way on yet (the creator's own, a
+collaborator's, or a continuation the creator approved) becomes its main way on; the rest are other
+paths until the creator makes one the main way.
 
 **Status:** behind the `storylines` feature flag. Flipt decides who sees it; if Flipt is unreachable or
 the flag is missing there, it falls back to moderators and users granted the `storylines` permission.
