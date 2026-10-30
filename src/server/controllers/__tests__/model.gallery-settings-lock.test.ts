@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { rowChangesBeforeLock } from '~/server/services/__tests__/model-row-lock.fake';
 import { sfwBrowsingLevelsFlag } from '~/shared/constants/browsingLevel.constants';
@@ -101,5 +102,34 @@ describe('updateGallerySettingsHandler — decides from the row it locks', () =>
     await save();
 
     expect(mockBustGallerySettings).toHaveBeenCalledWith([MODEL]);
+  });
+});
+
+describe('updateGallerySettingsHandler — clearing the gallery settings', () => {
+  const clear = (userId = OWNER, isModerator = false) =>
+    updateGallerySettingsHandler({
+      input: { id: MODEL, gallerySettings: null },
+      ctx: { user: { id: userId, isModerator } } as never,
+    } as never);
+
+  it.each([['minor', { minor: true }] as const, ['SFW-only', { sfwOnly: true }] as const])(
+    "keeps the owner's gallery at SFW when clearing it on a %s model",
+    async (_flag, flag) => {
+      rowChanges(flag);
+      await clear();
+      expect(fake.written().gallerySettings).toEqual({ level: sfwBrowsingLevelsFlag });
+    }
+  );
+
+  it('clears an unflagged model', async () => {
+    rowChanges({});
+    await clear();
+    expect(fake.written().gallerySettings).toBe(Prisma.JsonNull);
+  });
+
+  it("clears a flagged model's gallery for a moderator", async () => {
+    rowChanges({ minor: true });
+    await clear(OWNER + 1, true);
+    expect(fake.written().gallerySettings).toBe(Prisma.JsonNull);
   });
 });

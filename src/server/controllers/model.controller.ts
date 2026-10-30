@@ -2354,6 +2354,8 @@ export const updateGallerySettingsHandler = async ({
               level: sfwLocked ? sfwBrowsingLevelsFlag : gallerySettings.level,
               pinnedPosts: gallerySettings.pinnedPosts,
             }
+          : sfwLocked
+          ? { level: sfwBrowsingLevelsFlag }
           : null;
         return { gallerySettings: updatedSettings !== null ? updatedSettings : Prisma.JsonNull };
       },

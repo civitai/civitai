@@ -26,6 +26,7 @@ import {
 } from '~/server/schema/storyline.schema';
 import {
   addOwnerChapter,
+  addOwnerChapterAtEnd,
   addStorylineCollaborator,
   createStoryline,
   deleteStoryline,
@@ -252,6 +253,10 @@ export const storylineRouter = router({
   addChapter: storylineWriteProcedure
     .input(addOwnerChapterSchema)
     .mutation(({ input, ctx }) => addOwnerChapter({ ...input, userId: ctx.user.id })),
+
+  addChapterAtEnd: storylineWriteProcedure
+    .input(setFirstChapterSchema)
+    .mutation(({ input, ctx }) => addOwnerChapterAtEnd({ ...input, userId: ctx.user.id })),
 
   setCanon: storylineWriteProcedure.input(setCanonChapterSchema).mutation(({ input, ctx }) =>
     setCanonChapter({

@@ -15,6 +15,7 @@ import {
   recordCurrentModelOwnersSql,
   recordModelOwnershipSql,
 } from '~/server/services/legal-hold.service';
+import { payoutPendingSql } from '~/server/services/bounty-payout-lock';
 import {
   bountyThreadParents,
   detachHeldThreadsCte,
@@ -1691,20 +1692,45 @@ export const removeAllContent = async ({
   await dbWrite.articleReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentReaction.deleteMany({ where: { userId: id } });
   await dbWrite.commentV2Reaction.deleteMany({ where: { userId: id } });
-  // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from.
-  const unsettled = await dbWrite.bounty.findMany({
-    // `isPayoutPending` as a query; keep the two in step.
-    where: { userId: id, payoutRecordedAt: { not: null }, payoutSettledAt: null },
-    select: { id: true },
-  });
+  // Deleting a bounty cascades the supporter rows an unsettled award or refund is paid from, so an
+  // unsettled payout is settled first and an open bounty's supporters are refunded.
+  const owing = await dbWrite.$queryRaw<{ id: number; pending: boolean; open: boolean }[]>`
+    SELECT b.id, ${payoutPendingSql} AS pending,
+      (NOT b.complete AND NOT b.refunded) AS open
+    FROM "Bounty" b
+    WHERE b."userId" = ${id}
+      AND (${payoutPendingSql} OR (NOT b.complete AND NOT b.refunded
+        AND EXISTS (SELECT 1 FROM "BountyBenefactor" bb WHERE bb."bountyId" = b.id)))`;
   const keptBountyIds: number[] = [];
-  if (unsettled.length) {
-    const { settleBountyPayout, refundUnpayableBountyAward } = await import(
-      '~/server/services/bounty.service'
-    );
-    for (const { id: bountyId } of unsettled)
-      if (!(await settleBountyPayout(bountyId)) && !(await refundUnpayableBountyAward(bountyId)))
-        keptBountyIds.push(bountyId);
+  if (owing.length) {
+    const { claimBountyRefundForDelete, settleBountyPayout, refundUnpayableBountyAward } =
+      await import('~/server/services/bounty.service');
+    const settle = async (bountyId: number, firstAttempt = false) =>
+      (await settleBountyPayout(bountyId, {
+        firstAttempt,
+        refundDescription: 'Refund reason: owner content removed',
+      })) || (await refundUnpayableBountyAward(bountyId));
+    for (const { id: bountyId, pending, open } of owing) {
+      let settled = false;
+      try {
+        // A pending award is paid before the claim turns the bounty into a refund.
+        settled = !pending || (await settle(bountyId));
+        if (settled && open) {
+          const claim = await claimBountyRefundForDelete(bountyId);
+          if (claim?.owed) settled = await settle(bountyId, claim.firstAttempt);
+        }
+      } catch (e) {
+        settled = false;
+        logToAxiom({
+          name: 'remove-all-content',
+          type: 'error',
+          message: `Bounty payout failed - ${(e as Error).message}`,
+          userId: id,
+          bountyId,
+        }).catch(() => undefined);
+      }
+      if (!settled) keptBountyIds.push(bountyId);
+    }
     if (keptBountyIds.length)
       logToAxiom({
         name: 'remove-all-content',
