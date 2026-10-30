@@ -129,4 +129,33 @@ describe('controlState', () => {
   it('is split when only part of the control is grouped', () => {
     expect(controlState(groups, [A, B, 9001])).toBe('split');
   });
+
+  it('is split when the control lands in two groups', () => {
+    const noBridge = { ...flows, buzz: flows.buzz.filter((e) => !(e.from === A && e.to === B)) };
+    const both = findLinkedGroups(noBridge, signIns, { ...T, share: 0.6 }).groups;
+    expect(both).toHaveLength(2);
+    expect(controlState(both, [A, B, C, D])).toBe('split');
+  });
+});
+
+describe('threshold boundaries', () => {
+  const pair = (ipAccounts: number) => [
+    ...['b1', 'b2', 'b3'].flatMap((ip) => [signIn(A, ip, ipAccounts), signIn(C, ip, ipAccounts)]),
+  ];
+  const flowsAt = (amount: number, senderTotal: number) => ({
+    stickers: [],
+    buzz: [buzz(A, C, amount, senderTotal)],
+  });
+
+  it('counts an IP used by exactly the cap', () => {
+    expect(findLinkedGroups(flowsAt(1_000, 1_000), pair(T.ipAccountCap), T).groups).toHaveLength(1);
+    expect(findLinkedGroups(flowsAt(1_000, 1_000), pair(T.ipAccountCap + 1), T).groups).toEqual([]);
+  });
+
+  it('triggers at exactly the share and exactly the floor', () => {
+    const total = T.buzzFloor;
+    expect(findLinkedGroups(flowsAt(total * T.share, total), pair(2), T).groups).toHaveLength(1);
+    expect(findLinkedGroups(flowsAt(total * T.share - 1, total), pair(2), T).groups).toEqual([]);
+    expect(findLinkedGroups(flowsAt(total - 1, total - 1), pair(2), T).groups).toEqual([]);
+  });
 });

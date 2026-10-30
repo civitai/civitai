@@ -1,4 +1,9 @@
-import { abuseReportInput, type AbuseReportInput } from '@civitai/moderation';
+import {
+  abuseReportInput,
+  MAX_FINDINGS_PER_REPORT,
+  MAX_REASON_LENGTH,
+  type AbuseReportInput,
+} from '@civitai/moderation';
 import { describe, expect, it } from 'vitest';
 import type { LinkedAccountReviewConfig } from '../config';
 import type { FlowEdge, SignIn } from '../groups';
@@ -80,13 +85,14 @@ async function run({
   config = CONFIG as Partial<LinkedAccountReviewConfig> | null,
   read = reader(),
   filed = memoryFiled(),
+  send = undefined as ((r: AbuseReportInput) => Promise<void>) | undefined,
 } = {}) {
   const reports: AbuseReportInput[] = [];
   const result = await runLinkedAccountReview({
     readConfig: async () => (config === null ? null : JSON.stringify({ ...CONFIG, ...config })),
     reader: read,
     filed,
-    sendReport: async (r) => void reports.push(r),
+    sendReport: send ?? (async (r) => void reports.push(r)),
     now: () => NOW,
     log: () => undefined,
   });
@@ -100,6 +106,7 @@ describe('runLinkedAccountReview', () => {
     const [report] = reports;
     expect(() => abuseReportInput.parse(report)).not.toThrow();
     expect(report.requireGroupKey).toBe(true);
+    expect(report.findings[0].reason).toContain(`${CONFIG.flowDays}-day`);
     expect(report.findings.every((f) => f.actioned === false && f.action == null)).toBe(true);
 
     const byGroup = new Map<string, number[]>();
@@ -170,5 +177,45 @@ describe('runLinkedAccountReview', () => {
     const { result, reports } = await run({ config: { controlUserIds: [9001, 9002] } });
     expect(result).toMatchObject({ control: 'missing' });
     expect(reports[0].counters).toMatchObject({ control_grouped: 0, control_missing: 1 });
+  });
+
+  it('remembers nothing when the report is refused', async () => {
+    const filed = memoryFiled();
+    const send = async () => {
+      throw new Error('refused');
+    };
+    await expect(run({ filed, send })).rejects.toThrow('refused');
+    expect(filed.data.size).toBe(0);
+  });
+
+  it('files the groups that fit when one group can never fit in a report', async () => {
+    const star = (hub: number, size: number) => {
+      const spokes = Array.from({ length: size - 1 }, (_, i) => hub + 1 + i);
+      return {
+        buzz: spokes.map((s) => edge(hub, s, 10, 10 * spokes.length)),
+        signIns: spokes.flatMap((s) => shares(hub, s, [`${s}-1`, `${s}-2`, `${s}-3`])),
+      };
+    };
+    const huge = star(100_000, MAX_FINDINGS_PER_REPORT + 1);
+    const big = star(200_000, 400);
+    const read: LinkedAccountReader = {
+      ...reader(),
+      flows: async () => ({
+        stickers: [],
+        buzz: [...huge.buzz, ...big.buzz, edge(E, F, 2_000, 2_000)],
+      }),
+      signIns: async () => [...huge.signIns, ...big.signIns, ...shares(E, F, ['d1', 'd2', 'd3'])],
+    };
+
+    const { reports } = await run({ read });
+    const [report] = reports;
+    expect(() => abuseReportInput.parse(report)).not.toThrow();
+    expect(report.counters).toMatchObject({
+      groups_too_large: 1,
+      skipped_over_cap: 1,
+      groups_due: 2,
+    });
+    expect(report.findings).toHaveLength(400 + 2);
+    expect(Math.max(...report.findings.map((f) => f.reason.length))).toBe(MAX_REASON_LENGTH);
   });
 });

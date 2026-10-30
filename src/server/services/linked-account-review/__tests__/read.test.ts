@@ -29,4 +29,19 @@ describe('ClickHouse readers', () => {
     );
     expect(rows).toEqual([{ userId: 11, ip: 'x', ipAccounts: 9 }]);
   });
+
+  it('reads every user when the list spans several queries', async () => {
+    const asked: number[] = [];
+    const counting: ClickhousePort = {
+      $query: async <T extends object>(sql: string) => {
+        const ids = /userId IN \(([\d,]+)\)/.exec(sql)![1].split(',').map(Number);
+        asked.push(...ids);
+        return ids.map((id) => ({ userId: String(id), ip: 'x', ipAccounts: '2' })) as T[];
+      },
+    };
+    const users = Array.from({ length: 9_001 }, (_, i) => i + 1);
+    const rows = await signIns(counting, users, new Date());
+    expect(asked).toEqual(users);
+    expect(rows).toHaveLength(users.length);
+  });
 });

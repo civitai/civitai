@@ -62,7 +62,8 @@ function reason(
   member: GroupMember,
   group: LinkedGroup,
   standings: Standing[],
-  excluded: Set<number>
+  excluded: Set<number>,
+  flowDays: number
 ) {
   const links = member.links.map((l) => `#${l.userId} (${l.sharedIps})`).join(', ');
   const others = group.members
@@ -77,10 +78,10 @@ function reason(
     `Role: ${member.role}${member.triggers ? ', meets the review rule' : ''}.`,
     `Group of ${group.members.length}: ${others}.`,
     `Shared sign-in IPs with: ${links}.`,
-    `30-day stickers to group: ${fmt(member.stickers.toGroup)} of ${fmt(
+    `${flowDays}-day stickers to group:${fmt(member.stickers.toGroup)} of ${fmt(
       member.stickers.total
     )} (${pct(member.stickers)}%), from group: ${fmt(member.stickers.fromGroup)}.`,
-    `30-day Buzz to group: ${fmt(member.buzz.toGroup)} of ${fmt(member.buzz.total)} (${pct(
+    `${flowDays}-day Buzz to group:${fmt(member.buzz.toGroup)} of ${fmt(member.buzz.total)} (${pct(
       member.buzz
     )}%), from group: ${fmt(member.buzz.fromGroup)}.`,
     `Current standing: ${standing}.`,
@@ -139,18 +140,21 @@ export async function runLinkedAccountReview(
 
   const toFile: LinkedGroup[] = [];
   let findingCount = 0;
+  let tooLarge = 0;
   for (const g of due) {
-    if (findingCount + g.members.length > MAX_FINDINGS_PER_REPORT) break;
+    if (g.members.length > MAX_FINDINGS_PER_REPORT) tooLarge++;
+    if (findingCount + g.members.length > MAX_FINDINGS_PER_REPORT) continue;
     toFile.push(g);
     findingCount += g.members.length;
   }
+  if (tooLarge) deps.log('error', 'linked-account-review-group-too-large', { groups: tooLarge });
 
   const findings = toFile.flatMap((g, i) => {
     const hasStanding = g.members.some((m) => withStanding.has(m.userId));
     return g.members.map((m) => ({
       userId: m.userId,
       confidence: confidence(m, hasStanding),
-      reason: reason(m, g, standings, excluded),
+      reason: reason(m, g, standings, excluded, config.flowDays),
       actioned: false as const,
       action: null,
       groupKey: String(i + 1),
@@ -170,6 +174,7 @@ export async function runLinkedAccountReview(
     skipped_all_excluded: groups.length - notAllExcluded.length,
     skipped_recently_filed: notAllExcluded.length - due.length,
     skipped_over_cap: due.length - toFile.length,
+    groups_too_large: tooLarge,
     groups_due: toFile.length,
     findings_due: findings.length,
     control_grouped: control === 'grouped' ? 1 : 0,

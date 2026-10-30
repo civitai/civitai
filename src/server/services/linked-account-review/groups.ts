@@ -71,14 +71,14 @@ export function findLinkedGroups(
 
   const parent = new Map<number, number>();
   const find = (x: number): number => {
-    const p = parent.get(x);
-    if (p === undefined) {
-      parent.set(x, x);
-      return x;
+    if (!parent.has(x)) parent.set(x, x);
+    let root = x;
+    while (parent.get(root) !== root) root = parent.get(root)!;
+    for (let node = x; node !== root; ) {
+      const next = parent.get(node)!;
+      parent.set(node, root);
+      node = next;
     }
-    if (p === x) return x;
-    const root = find(p);
-    parent.set(x, root);
     return root;
   };
   for (const [key] of linked) {
