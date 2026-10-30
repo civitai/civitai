@@ -480,3 +480,66 @@ describe("a held author's comment on a review the version takes with it", () => 
     expect((await commentsLeft(db)).map((c) => c.id)).not.toContain(1);
   });
 });
+
+describe("a held author's review the version takes with it", () => {
+  const review = (id: number, reviewer: number, versionId: number) =>
+    db.query(
+      `INSERT INTO "ResourceReview" (id, "userId", "modelVersionId", "modelId") VALUES ($1, $2, $3, $4)`,
+      [id, reviewer, versionId, modelOf(CLEAN)]
+    );
+  const copies = async () =>
+    (await db.query(`SELECT id, "userId", "holdReasons" FROM "HeldResourceReview" ORDER BY id`))
+      .rows;
+  const reviewIds = async () =>
+    (await db.query<{ id: number }>(`SELECT id FROM "ResourceReview" ORDER BY id`)).rows.map(
+      (r) => r.id
+    );
+
+  it('copies a held reviewer’s review of a deleted version, and not an unheld one’s', async () => {
+    const id = stubVersion(CLEAN);
+    await review(1, REPORTED, id);
+    await review(2, FORMER_CLEAN, id);
+
+    await deleteVersionById({ id, isModerator: false });
+
+    expect(await reviewIds()).toEqual([]);
+    expect(await copies()).toEqual([{ id: 1, userId: REPORTED, holdReasons: ['report'] }]);
+  });
+
+  it.each([
+    ['the target', 0, REPORTED, ['report']],
+    ['a later source', 2, MARKED, ['hold-marker']],
+  ])(
+    'copies a held reviewer’s review a merge drops as superseded by one on %s, and not an unheld one’s',
+    async (_, n, reviewer, holdReasons) => {
+      const { sourceVersionIds, targetVersionId } = stubModel(CLEAN);
+      const keeper = n === 0 ? targetVersionId : sourceVersionIds[1];
+      await review(1, reviewer, sourceVersionIds[0]);
+      await review(2, reviewer, keeper);
+      await review(3, FORMER_CLEAN, sourceVersionIds[0]);
+      await review(4, FORMER_CLEAN, keeper);
+
+      await merge(CLEAN);
+
+      expect(await reviewIds()).not.toContain(1);
+      expect(await reviewIds()).not.toContain(3);
+      // Review 2 on a later source is copied too, by the source delete below.
+      const copied = await copies();
+      expect(copied).toContainEqual({ id: 1, userId: reviewer, holdReasons });
+      expect(copied.map((c) => c.userId)).not.toContain(FORMER_CLEAN);
+    }
+  );
+
+  // The re-point onto the target is a Prisma call this fixture leaves undone, so the review is
+  // still on its source version when that version is deleted.
+  it('copies a held reviewer’s review still on a source version when the merge deletes it', async () => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    await review(1, REPORTED, sourceVersionIds[0]);
+    await review(2, FORMER_CLEAN, sourceVersionIds[0]);
+
+    await merge(CLEAN);
+
+    expect(await reviewIds()).toEqual([]);
+    expect(await copies()).toEqual([{ id: 1, userId: REPORTED, holdReasons: ['report'] }]);
+  });
+});

@@ -69,6 +69,7 @@ import {
 import { deleteImageById, deleteImages } from '~/server/services/image.service';
 import { deletePost } from '~/server/services/post.service';
 import { deleteBountyById } from '~/server/services/bounty.service';
+import { purgeReleasedHeldCopies } from '~/server/services/held-review.service';
 import { deleteBountyEntry } from '~/server/services/bountyEntry.service';
 import { deleteArticleById } from '~/server/services/article.service';
 import { toggleReview } from '~/server/services/user.service';
@@ -180,7 +181,8 @@ beforeEach(async () => {
   vi.clearAllMocks();
   await db.exec(`
     TRUNCATE "CommentV2", "Thread", "Answer", "Question", "ResourceReview", "Model", "Post",
-      "Image", "CsamReport", "EvidenceHold", "BountyEntry", "Bounty", "Article";
+      "Image", "CsamReport", "EvidenceHold", "BountyEntry", "Bounty", "Article",
+      "HeldResourceReview", "HeldAnswer";
     INSERT INTO "CsamReport" ("userId") VALUES (${HELD});
     INSERT INTO "EvidenceHold" VALUES (${MARKED});
   `);
@@ -653,6 +655,92 @@ describe('the production delete paths keep held threads', () => {
     expect(
       (await db.query(`SELECT "imageId", metadata FROM "Thread" WHERE id = 100`)).rows
     ).toEqual([{ imageId: 50, metadata: {} }]);
+  });
+});
+
+describe("a held author's rows under a deleted parent", () => {
+  const rows = async (sql: string) => (await db.query(sql)).rows;
+
+  it("copies the held authors' answers to a deleted question, and no one else's", async () => {
+    await db.exec(`
+      INSERT INTO "Question" (id, "userId") VALUES (40, ${OWNER});
+      INSERT INTO "Answer" (id, "userId", "questionId", content) VALUES
+        (41, ${HELD}, 40, 'held'), (42, ${OTHER}, 40, 'other'), (43, ${MARKED}, 40, 'marked');
+    `);
+
+    await deleteQuestion({ id: 40 });
+
+    expect(await rows(`SELECT id FROM "Answer"`)).toEqual([]);
+    expect(
+      await rows(`SELECT id, "userId", content, "holdReasons" FROM "HeldAnswer" ORDER BY id`)
+    ).toEqual([
+      { id: 41, userId: HELD, content: 'held', holdReasons: ['report'] },
+      { id: 43, userId: MARKED, content: 'marked', holdReasons: ['hold-marker'] },
+    ]);
+  });
+
+  async function seedEnteredBounty(entrant: number) {
+    await db.exec(`
+      INSERT INTO "Bounty" (id, "userId") VALUES (60, ${OWNER});
+      INSERT INTO "BountyEntry" VALUES (61, ${entrant}, 60);`);
+    vi.mocked(dbMock.dbRead.bounty.findUnique).mockResolvedValue({
+      userId: OWNER,
+      expiresAt: new Date(),
+    } as never);
+    vi.mocked(dbMock.dbWrite.bounty.findUnique).mockResolvedValue({
+      id: 60,
+      userId: OWNER,
+      payoutRecordedAt: null,
+      payoutSettledAt: null,
+    } as never);
+  }
+
+  it.each([
+    ['named on a report', HELD],
+    ['held by the marker', MARKED],
+  ])('keeps, hidden, a deleted bounty an author %s entered, with the entry', async (_, entrant) => {
+    await seedEnteredBounty(entrant);
+
+    await deleteBountyById({ id: 60, isModerator: true });
+
+    expect(
+      await rows(`SELECT id, availability, meta->>'removedWithOwner' AS removed,
+        meta->>'availabilityBeforeRemoval' AS before FROM "Bounty"`)
+    ).toEqual([{ id: 60, availability: 'Private', removed: 'true', before: 'Public' }]);
+    expect(await rows(`SELECT id FROM "BountyEntry"`)).toEqual([{ id: 61 }]);
+  });
+
+  it('drops the copies of an author whose hold ended, and keeps those still held', async () => {
+    await db.exec(`
+      INSERT INTO "HeldResourceReview" (id, "modelId", "modelVersionId", "userId", rating,
+        recommended, exclude, nsfw, "tosViolation", "createdAt", "updatedAt")
+        SELECT u, 1, 1, u, 5, true, false, false, false, now(), now()
+        FROM unnest(ARRAY[${HELD}, ${MARKED}, ${OTHER}]) u;
+      INSERT INTO "HeldAnswer" (id, "questionId", "userId", content, "createdAt", "updatedAt")
+        SELECT u, 1, u, '', now(), now() FROM unnest(ARRAY[${HELD}, ${MARKED}, ${OTHER}]) u;
+    `);
+    const left = async () => ({
+      reviews: (await rows(`SELECT "userId" FROM "HeldResourceReview" ORDER BY 1`)).map(
+        (r) => r.userId
+      ),
+      answers: (await rows(`SELECT "userId" FROM "HeldAnswer" ORDER BY 1`)).map((r) => r.userId),
+    });
+
+    expect(await purgeReleasedHeldCopies()).toEqual({ reviews: 1, answers: 1 });
+    expect(await left()).toEqual({ reviews: [HELD, MARKED], answers: [HELD, MARKED] });
+
+    await db.exec(`DELETE FROM "CsamReport"; DELETE FROM "EvidenceHold";`);
+    expect(await purgeReleasedHeldCopies()).toEqual({ reviews: 2, answers: 2 });
+    expect(await left()).toEqual({ reviews: [], answers: [] });
+  });
+
+  it('deletes a bounty only an unheld user entered, with the entry (control)', async () => {
+    await seedEnteredBounty(OTHER);
+
+    await deleteBountyById({ id: 60, isModerator: true });
+
+    expect(await rows(`SELECT id FROM "Bounty"`)).toEqual([]);
+    expect(await rows(`SELECT id FROM "BountyEntry"`)).toEqual([]);
   });
 });
 

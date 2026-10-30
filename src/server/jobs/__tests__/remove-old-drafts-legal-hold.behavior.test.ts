@@ -84,7 +84,9 @@ beforeAll(async () => {
       id serial PRIMARY KEY, "userId" int NOT NULL,
       "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE, "parentId" int
     );
-    CREATE TABLE "ResourceReview" (id serial PRIMARY KEY, "modelId" int);
+    CREATE TABLE "ResourceReview" (
+      id serial PRIMARY KEY, "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE
+    );
     CREATE TABLE "ModelVersion" (
       id int PRIMARY KEY, "modelId" int NOT NULL REFERENCES "Model"(id) ON DELETE CASCADE,
       "createdAt" timestamp(3) NOT NULL, "updatedAt" timestamp(3) NOT NULL
@@ -203,5 +205,43 @@ describe("remove-old-drafts and a held author's comments on a free owner's model
       `SELECT "modelId", metadata -> 'detachedFrom' AS "detachedFrom" FROM "Thread" WHERE id = 700`
     );
     expect(thread.rows).toEqual([{ modelId: null, detachedFrom: { modelId: THREAD_MODEL } }]);
+  });
+});
+
+describe("remove-old-drafts and a held author's review of a free owner's model", () => {
+  const REVIEWED_MODEL = 190;
+
+  beforeEach(async () => {
+    await db.exec(`
+      TRUNCATE "HeldResourceReview";
+      INSERT INTO "Model" (id, "userId") VALUES (${REVIEWED_MODEL}, ${FREE_OWNER});
+      INSERT INTO "ModelVersion" (id, "modelId", "createdAt", "updatedAt") VALUES
+        (${REVIEWED_MODEL}0, ${REVIEWED_MODEL}, now() - interval '200 days', now() - interval '200 days');
+      INSERT INTO "ResourceReview" ("userId", "modelId", "modelVersionId", details) VALUES
+        (${MARKED_OWNER}, ${REVIEWED_MODEL}, ${REVIEWED_MODEL}0, 'held'),
+        (${FREE_OWNER}, ${REVIEWED_MODEL}, ${REVIEWED_MODEL}0, 'free');
+    `);
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ id: REVIEWED_MODEL, userId: FREE_OWNER }]);
+  });
+
+  it('deletes the model and its reviews, keeping a copy of the held author’s only', async () => {
+    await (removeOldDrafts as unknown as () => Promise<void>)();
+
+    expect(await remainingModels()).not.toContain(REVIEWED_MODEL);
+    const reviews = await db.query(
+      `SELECT id FROM "ResourceReview" WHERE "modelId" = ${REVIEWED_MODEL}`
+    );
+    expect(reviews.rows).toEqual([]);
+    const copies = await db.query(
+      `SELECT "userId", "modelId", details, "holdReasons" FROM "HeldResourceReview"`
+    );
+    expect(copies.rows).toEqual([
+      {
+        userId: MARKED_OWNER,
+        modelId: REVIEWED_MODEL,
+        details: 'held',
+        holdReasons: ['hold-marker'],
+      },
+    ]);
   });
 });

@@ -125,7 +125,7 @@ export async function seedModelHoldDb(db: PGlite) {
     -- The hold tables refuse TRUNCATE, so the reset runs with triggers off.
     SET session_replication_role = replica;
     TRUNCATE "CsamReport", "Image", "Model", "EntityAccess", "PaidAccess", "EvidenceHold",
-      "EvidenceHoldImage", "EvidenceHoldPost", "Thread", "ModelOwnership" CASCADE;
+      "EvidenceHoldImage", "EvidenceHoldPost", "Thread", "ModelOwnership", "HeldResourceReview" CASCADE;
     SET session_replication_role = DEFAULT;
     INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED}, 'manual', 'review');
     INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED});

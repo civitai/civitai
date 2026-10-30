@@ -3882,7 +3882,8 @@ export const mergeVersions = async ({
             WHERE "modelVersionId" = ${targetVersionId}
           )`;
       await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${detachHeldThreadsCte({ reviewId: supersededByTarget }, true)}
+        WITH ${detachHeldThreadsCte({ reviewId: supersededByTarget }, true)},
+        ${keepHeldReviewsCte(supersededByTarget, true)}
         DELETE FROM "ResourceReview" WHERE id IN (${supersededByTarget})
       `);
       const supersededBySource = Prisma.sql`SELECT a.id FROM "ResourceReview" a
@@ -3890,7 +3891,8 @@ export const mergeVersions = async ({
         WHERE a."modelVersionId" IN (${Prisma.join(sourceVersionIds)})
           AND b."modelVersionId" IN (${Prisma.join(sourceVersionIds)})`;
       await refuseOnHoldAbort(tx.$executeRaw`
-        WITH ${detachHeldThreadsCte({ reviewId: supersededBySource }, true)}
+        WITH ${detachHeldThreadsCte({ reviewId: supersededBySource }, true)},
+        ${keepHeldReviewsCte(supersededBySource, true)}
         DELETE FROM "ResourceReview" WHERE id IN (${supersededBySource})
       `);
       await tx.resourceReview.updateMany({

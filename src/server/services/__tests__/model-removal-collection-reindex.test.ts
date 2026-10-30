@@ -489,7 +489,9 @@ describe('permaDeleteModelById — legal hold', () => {
         "threadId" int NOT NULL REFERENCES "Thread"(id) ON DELETE CASCADE
       );
       CREATE TABLE "Comment" (id serial PRIMARY KEY, "userId" int NOT NULL, "modelId" int, "parentId" int);
-      CREATE TABLE "ResourceReview" (id serial PRIMARY KEY, "modelId" int);
+      CREATE TABLE "ResourceReview" (
+        id serial PRIMARY KEY, "modelId" int REFERENCES "Model"(id) ON DELETE CASCADE
+      );
       CREATE TABLE "CsamReport" (
         id serial PRIMARY KEY, "userId" int, "reportSentAt" timestamp(3), "archivedAt" timestamp(3),
         images jsonb NOT NULL DEFAULT '[]', details jsonb NOT NULL DEFAULT '{}'
@@ -515,6 +517,7 @@ describe('permaDeleteModelById — legal hold', () => {
       detachFails = false as boolean | 'post',
       heldCommenter = null as number | null,
       threadCommenter = null as number | null,
+      reviewers = [] as number[],
     } = {}
   ) {
     // The post and image deletes run for real, each with its thread detach in the same statement.
@@ -530,7 +533,9 @@ describe('permaDeleteModelById — legal hold', () => {
       return (await db.query(sql.text, sql.values as unknown[])).affectedRows ?? 0;
     }) as never);
     executed = [];
-    await db.exec(`DELETE FROM "Thread"; DELETE FROM "Model"; DELETE FROM "Comment";`);
+    await db.exec(
+      `DELETE FROM "Thread"; DELETE FROM "Model"; DELETE FROM "Comment"; DELETE FROM "HeldResourceReview";`
+    );
     if (heldCommenter)
       await db.exec(
         `INSERT INTO "Comment" ("userId", "modelId") VALUES (${heldCommenter}, ${MODEL_ID})`
@@ -540,6 +545,11 @@ describe('permaDeleteModelById — legal hold', () => {
       await db.exec(`
         INSERT INTO "Thread" (id, "modelId") VALUES (700, ${MODEL_ID});
         INSERT INTO "CommentV2" (id, "userId", "threadId") VALUES (7001, ${threadCommenter}, 700);`);
+    for (const reviewer of reviewers)
+      await db.query(
+        `INSERT INTO "ResourceReview" ("userId", "modelId", "modelVersionId") VALUES ($1, $2, $3)`,
+        [reviewer, MODEL_ID, VERSION_ID]
+      );
     mockDbWrite.modelFile.findMany.mockResolvedValue([{ url: 'models/held.safetensors' }]);
     mockDbWrite.post.findMany.mockResolvedValue([{ id: POST_ID }]);
     mockDbWrite.image.findMany.mockResolvedValue([{ id: IMAGE_ID }]);
@@ -774,5 +784,20 @@ describe('permaDeleteModelById — legal hold', () => {
       left: 1,
       rolledBack: true,
     });
+  });
+
+  it("deletes its reviews, keeping a copy of the held authors' only", async () => {
+    expect(
+      await permaDeleteOwnedBy(OWNER_ID, { reviewers: [REPORTED_OWNER, MARKED_OWNER, OWNER_ID] })
+    ).toMatchObject({ result: 'deleted', left: 0 });
+
+    expect((await db.query(`SELECT id FROM "ResourceReview"`)).rows).toEqual([]);
+    const copies = await db.query(
+      `SELECT "userId", "modelId", "holdReasons" FROM "HeldResourceReview" ORDER BY "userId"`
+    );
+    expect(copies.rows).toEqual([
+      { userId: MARKED_OWNER, modelId: MODEL_ID, holdReasons: ['hold-marker'] },
+      { userId: REPORTED_OWNER, modelId: MODEL_ID, holdReasons: ['report'] },
+    ]);
   });
 });
