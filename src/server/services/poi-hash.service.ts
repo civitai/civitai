@@ -463,6 +463,7 @@ export async function revertPoiHashAutoFlag({
   });
   if (!lifted) return { reverted: 0 };
 
+  // The lift has released the lock: a model flagged again since keeps its restrictions.
   const lockedProperties = uniq([
     ...(snapshot.prevLockedProperties ?? []),
     ...(snapshot.minor ? MINOR_LOCKED_PROPERTIES : []),
@@ -472,7 +473,7 @@ export async function revertPoiHashAutoFlag({
       UPDATE "Model"
       SET "lockedProperties" = ${lockedProperties}::text[],
           meta = ${withoutSystemNsfwLockSql('meta')}
-      WHERE id = ${modelId}
+      WHERE id = ${modelId} AND NOT poi
     `;
   else
     await dbWrite.$executeRaw`
@@ -487,7 +488,7 @@ export async function revertPoiHashAutoFlag({
           END,
           "lockedProperties" = ${lockedProperties}::text[],
           meta = ${withoutSystemNsfwLockSql('meta')}
-      WHERE id = ${modelId}
+      WHERE id = ${modelId} AND NOT poi
     `;
   await updateModelNsfwLevels([modelId]);
   await bustPublicModelResponseCache(modelId);

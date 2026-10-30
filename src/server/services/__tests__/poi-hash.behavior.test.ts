@@ -487,6 +487,9 @@ describe('the moderator queue rules only a flag still as the hash match applied 
     expect(await confirmPoiHashAutoFlag({ modelId: MODEL, userId: 99 })).toEqual({
       confirmed: 1,
     });
+    expect(await meta(MODEL)).toMatchObject({
+      poiFlagSnapshot: { source: 'manual', confirmedFrom: 'auto' },
+    });
 
     await pg.exec(`DELETE FROM "Model" WHERE id = ${MODEL}`);
     await flagged({ source: 'auto' });
@@ -543,6 +546,42 @@ describe('the moderator queue rules only a flag still as the hash match applied 
       )
     ).rows;
     expect(row).toEqual({ poi: true, nsfw: false });
+  });
+
+  // A revert that lands first lifts the flag and drops the snapshot, in two writes.
+  it.each([
+    ['lifted the flag', `poi = false`, false],
+    ['dropped the snapshot, under an appeal', `meta = '{}'`, true],
+  ])('a revert that already %s stops this one', async (_, sql, fromAppeal) => {
+    await flagged({ source: 'auto' });
+    const lift = setModelPoi.getMockImplementation()!;
+    setModelPoi.mockImplementationOnce(async (input) => {
+      await pg.exec(`UPDATE "Model" SET ${sql} WHERE id = ${MODEL}`);
+      return lift(input);
+    });
+    expect(await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99, fromAppeal })).toEqual({
+      reverted: 0,
+    });
+  });
+
+  // Without the guard the restore would hand a re-flagged model its pre-flag nsfw rating and drop
+  // its real-person locks.
+  it('a model flagged again after the lift keeps its restrictions', async () => {
+    await flagged({ source: 'auto' });
+    const lift = setModelPoi.getMockImplementation()!;
+    setModelPoi.mockImplementationOnce(async (input) => {
+      const lifted = await lift(input);
+      await pg.query(`UPDATE "Model" SET poi = true WHERE id = $1`, [MODEL]);
+      return lifted;
+    });
+    await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99 });
+    const [row] = (
+      await pg.query<{ nsfw: boolean; lockedProperties: string[] }>(
+        `SELECT nsfw, "lockedProperties" FROM "Model" WHERE id = $1`,
+        [MODEL]
+      )
+    ).rows;
+    expect(row).toEqual({ nsfw: false, lockedProperties: ['poi', 'nsfw', 'sfwOnly'] });
   });
 
   // An appeal against a confirmed hash flag must still roll it back: resolveMinorFlagAppeal passes
