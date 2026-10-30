@@ -36,7 +36,7 @@ describe('App Assistant models, page and server runner', () => {
       'openai/gpt-6-luna',
       'z-ai/glm-5.3-flash',
       'anthropic/claude-haiku-5.5',
-      'deepseek/deepseek-v4.1-flash-1017',
+      'deepseek/deepseek-v4.1-flash',
     ]);
     expect(APP_ASSISTANT_CHAT_CONFIG.modelsOnly).toBe(true);
     expect(isAppAssistantModel('someone/unlisted-model')).toBe(false);

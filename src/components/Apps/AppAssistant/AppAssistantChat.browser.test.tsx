@@ -155,9 +155,9 @@ describe('AppAssistantChat', () => {
           note: 'About the same cost',
         },
         {
-          id: 'deepseek/deepseek-v4.1-flash-1017',
+          id: 'deepseek/deepseek-v4.1-flash',
           label: 'DeepSeek V4.1 Flash',
-          note: 'About 2× the cost',
+          note: 'About the same cost',
         },
       ],
       modelsOnly: true,
