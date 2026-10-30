@@ -529,10 +529,15 @@ describe('approveRequest (3b-sync) — SUBSEQUENT approve re-syncs manifest-gove
 describe('approveRequest (3b-transition) — draft-at-submit transitions the pending draft → approved', () => {
   // Return the pre-approval draft for the slug-scoped resolve, null for the
   // (3b-reset) appBlockId+pending probe (so the unrelated reset branch stays inert).
-  function draftFor(id: string) {
+  // `media` defaults to an icon AND a cover — the publish floor every go-live needs; the
+  // floor tests below pass a draft missing one.
+  function draftFor(
+    id: string,
+    media: { iconId: number | null; coverId: number | null } = { iconId: 11, coverId: 22 }
+  ) {
     return async (args: { where?: Record<string, unknown> }) => {
       const w = args?.where ?? {};
-      if (w.status === 'draft' && w.appBlockId === null) return { id };
+      if (w.status === 'draft' && w.appBlockId === null) return { id, ...media };
       return null;
     };
   }
@@ -573,10 +578,10 @@ describe('approveRequest (3b-transition) — draft-at-submit transitions the pen
     expect(arg.data).not.toHaveProperty('coverId');
   });
 
-  it('FLOOR STAYS ADVISORY: approve is NOT blocked when the draft has no icon/cover (transition still runs)', async () => {
-    // No `assertListingMeetsFloor` on the onsite approve path — a media-less draft still
-    // transitions to approved (the floor gates PUBLISH visibility, not approve — D2).
-    db.write.appListing.findFirst.mockImplementation(draftFor('apl_draft'));
+  it('the floor ALLOWS an approve whose draft has an icon AND a cover (transition runs)', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      draftFor('apl_draft', { iconId: 11, coverId: 22 })
+    );
     db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
 
     await expect(
@@ -697,5 +702,94 @@ describe('approveRequest — its re-rate lookups are the shared where-builders',
     db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
     await approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 });
     expect(whereArgs()).toContainEqual(resetRestoreWhere('apb_1'));
+  });
+});
+
+/**
+ * 🔴 PUBLISH FLOOR ON THE ON-SITE APPROVE (operator ruling 2026-10-30, "enforce + warn at
+ * submit"). Every store listing needs an icon AND a cover before it goes live — on-site apps
+ * too. Before this, `approveRequest` checked only that the listing's images had passed
+ * scanning, so a media-less draft transitioned to `approved` and went live with placeholder
+ * art. The refusal must land BEFORE anything is written or committed: the listing writes are
+ * log-and-continue, so a refusal there would deploy the app and leave a log line.
+ *
+ * Fixture ids are pairwise distinct and distinct from every constant asserted.
+ */
+describe('approveRequest — on-site publish floor (icon + cover)', () => {
+  /** A findFirst that answers ONE of approve's two go-live lookups with `row`. */
+  function answer(which: 'draft' | 'reset', row: Record<string, unknown>) {
+    return async (args: { where?: Record<string, unknown> }) => {
+      const w = args?.where ?? {};
+      if (which === 'draft' && w.status === 'draft' && w.appBlockId === null) return row;
+      if (which === 'reset' && w.status === 'pending' && w.appBlockId === 'apb_1') return row;
+      return null;
+    };
+  }
+
+  async function expectRefusedBeforeAnyWrite(missing: string) {
+    const forgejo = await import('~/server/services/blocks/forgejo.service');
+    await expect(approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })).rejects.toThrow(
+      `Cannot approve yet: the store listing this approve publishes has no ${missing}. Every listing needs an icon and a cover before it goes live — the developer adds them on the listing's Media tab, then you can approve.`
+    );
+    // Nothing written, committed or built.
+    expect(db.write.appBlock.update).not.toHaveBeenCalled();
+    expect(db.write.appBlock.create).not.toHaveBeenCalled();
+    expect(db.write.oauthClient.update).not.toHaveBeenCalled();
+    expect(db.write.appListing.updateMany).not.toHaveBeenCalled();
+    expect(db.write.appBlockPublishRequest.update).not.toHaveBeenCalled();
+    expect(forgejo.commitFiles).not.toHaveBeenCalled();
+  }
+
+  it('🔴 REFUSES a first approve whose draft has NO icon and NO cover', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      answer('draft', { id: 'apl_draft_bare', iconId: null, coverId: null })
+    );
+    await expectRefusedBeforeAnyWrite('icon or cover');
+  });
+
+  it('🔴 REFUSES when the draft has an icon but no cover', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      answer('draft', { id: 'apl_draft_icon', iconId: 31, coverId: null })
+    );
+    await expectRefusedBeforeAnyWrite('cover');
+  });
+
+  it('🔴 REFUSES when the draft has a cover but no icon', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      answer('draft', { id: 'apl_draft_cover', iconId: null, coverId: 47 })
+    );
+    await expectRefusedBeforeAnyWrite('icon');
+  });
+
+  it('🔴 REFUSES a reset re-approve (pending → approved restore) whose listing lost its cover', async () => {
+    // The restore is a PUBLISH too: a mod-reset listing is owner-editable while pending.
+    db.write.appListing.findFirst.mockImplementation(
+      answer('reset', { id: 'apl_reset_bare', iconId: 53, coverId: null })
+    );
+    await expectRefusedBeforeAnyWrite('cover');
+  });
+
+  it('ALLOWS the reset restore when the listing has both', async () => {
+    db.write.appListing.findFirst.mockImplementation(
+      answer('reset', { id: 'apl_reset_ok', iconId: 53, coverId: 59, contentRating: 'pg' })
+    );
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1', appBlockId: 'apb_1' });
+  });
+
+  it('an UPDATE to an app whose listing is already live is NOT gated (no listing goes live), even art-less', async () => {
+    // Neither go-live lookup matches: the listing is `approved` and keyed by appBlockId, so
+    // the version approve only re-syncs its manifest copy. Refusing it would stall the app's
+    // code fixes without taking anything off the store.
+    db.write.appListing.findFirst.mockResolvedValue(null);
+    db.read.appListing.findUnique.mockResolvedValue({ id: 'apl_live_bare', kind: 'onsite' });
+    db.write.appListing.updateMany.mockResolvedValue({ count: 1 });
+
+    await expect(
+      approveRequest({ publishRequestId: 'req_1', reviewerUserId: 9 })
+    ).resolves.toMatchObject({ publishRequestId: 'req_1', appBlockId: 'apb_1' });
+    expect(scalarSyncCalls()).toHaveLength(1);
   });
 });

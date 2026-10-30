@@ -300,6 +300,65 @@ describe('getReviewRequestById — full hydrated single-request fetch', () => {
     it('nothing the writer would re-rate: null', async () => {
       expect(await approveRatingFor({})).toBeNull();
     });
+
+    /**
+     * 🔴 `approveFloorMissing` — what the review UI disables Approve on. It must name the SAME
+     * listing `approveRequest` refuses on (the draft, else the reset listing) and the same
+     * predicate's missing set, so Approve is never offered and then refused.
+     */
+    const floorMissingFor = async (found: { drafts?: unknown[]; resets?: unknown[] }) => {
+      await approveRatingFor(found);
+      const res = await getReviewRequestById('pubreq_0123456789ABCDEFGHJKMNPQRS');
+      return (res!.request as unknown as { approveFloorMissing: unknown }).approveFloorMissing;
+    };
+
+    it('🔴 a first-version draft with neither icon nor cover: Approve waits on both', async () => {
+      expect(
+        await floorMissingFor({
+          drafts: [
+            { id: 'apl_draft', slug: 'my-app', userId: SUBMITTER, iconId: null, coverId: null },
+          ],
+        })
+      ).toEqual(['icon', 'cover']);
+    });
+
+    it('🔴 a reset listing with an icon but no cover: Approve waits on the cover', async () => {
+      expect(
+        await floorMissingFor({
+          resets: [
+            {
+              id: 'apl_reset',
+              appBlockId: 'appblk_1',
+              contentRating: 'r',
+              iconId: 61,
+              coverId: null,
+            },
+          ],
+        })
+      ).toEqual(['cover']);
+    });
+
+    it('a draft with both: nothing missing', async () => {
+      expect(
+        await floorMissingFor({
+          drafts: [{ id: 'apl_draft', slug: 'my-app', userId: SUBMITTER, iconId: 61, coverId: 67 }],
+        })
+      ).toEqual([]);
+    });
+
+    it('an approve that publishes no listing (an update to a live one) is not gated', async () => {
+      expect(await floorMissingFor({})).toEqual([]);
+    });
+
+    it('the floor reads iconId/coverId on both go-live lookups', async () => {
+      await approveRatingFor({});
+      const selects = mockDbRead.appListing.findMany.mock.calls
+        .map((c) => (c[0] ?? {}) as { where?: Where; select?: Record<string, unknown> })
+        .filter((a) => isDraftQuery(a.where ?? {}) || isResetQuery(a.where ?? {}))
+        .map((a) => a.select);
+      expect(selects).toHaveLength(2);
+      for (const select of selects) expect(select).toMatchObject({ iconId: true, coverId: true });
+    });
   });
 
   it('another app’s slug-matched listing lends this submission no listing id either', async () => {

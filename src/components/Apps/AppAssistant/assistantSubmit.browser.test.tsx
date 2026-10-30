@@ -217,6 +217,114 @@ describe('Submit for review', () => {
     }
   });
 
+  /**
+   * 🔴 WARN AT SUBMIT. The submit still goes through (the developer can add art while it
+   * waits), but when the route says a moderator cannot approve it until the listing has an
+   * icon and a cover, the sent card says so in plain words — and lists what else is
+   * recommended, without repeating the icon/cover items the next step already names.
+   */
+  test('🔴 a submit whose listing has no icon or cover goes through, and the card says what approval waits on', async () => {
+    const nextStep =
+      "Add an icon and a cover on your listing's Media tab before a moderator can approve it.";
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            publishRequestId: 'pubreq_1',
+            slug: APP,
+            version: '0.1.0',
+            status: 'pending',
+            listing: {
+              approvalBlocked: true,
+              missing: ['icon', 'cover'],
+              nextStep,
+              problems: [
+                {
+                  code: 'missing-icon',
+                  label: 'Missing icon (required before publishing)',
+                  severity: 'blocking',
+                },
+                {
+                  code: 'missing-cover',
+                  label: 'Missing cover image (required before publishing)',
+                  severity: 'blocking',
+                },
+                {
+                  code: 'no-screenshots',
+                  label: 'No screenshots (recommended, optional)',
+                  severity: 'advisory',
+                },
+              ],
+            },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+    );
+    const { gate } = setup({
+      send: vi.fn((prepared: PreparedSubmit) => sendForReview(prepared, fetchImpl)),
+    });
+    await passChecks(gate);
+    const { output } = await offer(gate);
+    const card = render(gate, output)!;
+    document.body.append(card);
+    try {
+      await expect.poll(() => submitButton(card)).not.toBeNull();
+      submitButton(card)!.click();
+      await expect
+        .poll(() => card.querySelector('[role="status"]')?.textContent)
+        .toBe(
+          'Submitted Prompt Randomizer 0.1.0 for review. A moderator reviews it before it goes live in the App Store.'
+        );
+      const next = card.querySelector('[data-testid="app-assistant-submit-listing-next-step"]');
+      expect(next?.textContent).toBe(nextStep);
+      expect(next?.getAttribute('role')).toBe('alert');
+      const recommended = card.querySelector(
+        '[data-testid="app-assistant-submit-listing-recommended"]'
+      );
+      expect(recommended?.textContent).toContain('No screenshots (recommended, optional)');
+      // The icon/cover items are what the next step already says; not repeated.
+      expect(card.textContent).not.toContain('Missing icon (required before publishing)');
+      expect(submitButton(card)).toBeNull();
+    } finally {
+      card.remove();
+    }
+  });
+
+  test('a listing ready for approval adds nothing to the sent card', async () => {
+    const fetchImpl = vi.fn<typeof fetch>(
+      async () =>
+        new Response(
+          JSON.stringify({
+            publishRequestId: 'pubreq_1',
+            slug: APP,
+            version: '0.1.0',
+            listing: { approvalBlocked: false, missing: [], nextStep: null, problems: [] },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } }
+        )
+    );
+    const { gate } = setup({
+      send: vi.fn((prepared: PreparedSubmit) => sendForReview(prepared, fetchImpl)),
+    });
+    await passChecks(gate);
+    const { output } = await offer(gate);
+    const card = render(gate, output)!;
+    document.body.append(card);
+    try {
+      await expect.poll(() => submitButton(card)).not.toBeNull();
+      submitButton(card)!.click();
+      await expect.poll(() => card.querySelector('[role="status"]')).not.toBeNull();
+      expect(
+        card.querySelector('[data-testid="app-assistant-submit-listing-next-step"]')
+      ).toBeNull();
+      expect(
+        card.querySelector('[data-testid="app-assistant-submit-listing-recommended"]')
+      ).toBeNull();
+    } finally {
+      card.remove();
+    }
+  });
+
   test('a card the chat shows before the page hears of the call gets its button once it does', async () => {
     const { gate } = setup();
     await passChecks(gate);

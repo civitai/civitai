@@ -868,6 +868,146 @@ describe('submitVersion', () => {
       })
     ).rejects.toThrow(/connection reset/);
   });
+
+  // -------------------------------------------------------------------------
+  // 🔴 WARN AT SUBMIT (operator ruling 2026-10-30). The submit still succeeds — the
+  // developer can add art while it waits — but its result carries the store listing's
+  // readiness, so the App Assistant card and the CLI can say what a moderator will refuse on.
+  // -------------------------------------------------------------------------
+  describe('listing readiness in the submit result', () => {
+    /** One listing row, answering only the lookup `which` names. */
+    const listingRow = (over: Record<string, unknown> = {}) => ({
+      id: 'apl_ready_1',
+      kind: 'onsite',
+      status: 'draft',
+      iconId: null,
+      coverId: null,
+      description: 'Rolls prompts.',
+      tagline: 'Random prompts',
+      category: 'utility',
+      contentRating: 'g',
+      _count: { screenshots: 0 },
+      ...over,
+    });
+    const answer = (which: 'draft' | 'live', row: Record<string, unknown>) =>
+      mockDbWrite.appListing.findFirst.mockImplementation(
+        async (args: { where?: Record<string, unknown> }) => {
+          const w = args?.where ?? {};
+          if (which === 'draft' && w.status === 'draft' && w.appBlockId === null) return row;
+          if (which === 'live' && w.appBlockId === 'apb_existing' && w.status === undefined)
+            return row;
+          return null;
+        }
+      );
+
+    it('🔴 a FIRST version whose draft has no icon or cover: approval blocked, next step in plain words, every problem listed', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      answer('draft', listingRow());
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle(),
+        submittedByUserId: 42,
+      });
+
+      // The submit itself went through.
+      expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+      expect(result.listing).toEqual({
+        approvalBlocked: true,
+        missing: ['icon', 'cover'],
+        nextStep:
+          "Add an icon and a cover on your listing's Media tab before a moderator can approve it.",
+        problems: [
+          {
+            code: 'missing-icon',
+            label: 'Missing icon (required before publishing)',
+            severity: 'blocking',
+          },
+          {
+            code: 'missing-cover',
+            label: 'Missing cover image (required before publishing)',
+            severity: 'blocking',
+          },
+          {
+            code: 'no-screenshots',
+            label: 'No screenshots (recommended, optional)',
+            severity: 'advisory',
+          },
+        ],
+      });
+    });
+
+    it('🔴 names only what is missing: a draft with an icon but no cover', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      answer('draft', listingRow({ iconId: 71, _count: { screenshots: 2 } }));
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle(),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toMatchObject({
+        approvalBlocked: true,
+        missing: ['cover'],
+        nextStep: "Add a cover on your listing's Media tab before a moderator can approve it.",
+      });
+      expect(result.listing!.problems.map((p) => p.code)).toEqual(['missing-cover']);
+    });
+
+    it('a draft with both: not blocked, no next step', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      answer('draft', listingRow({ iconId: 71, coverId: 73, _count: { screenshots: 1 } }));
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle(),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toEqual({
+        approvalBlocked: false,
+        missing: [],
+        nextStep: null,
+        problems: [],
+      });
+    });
+
+    it('an UPDATE to an app with a live listing that has both: not blocked (the normal update path)', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(42);
+      answer('live', listingRow({ status: 'approved', iconId: 81, coverId: 83 }));
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle({ version: '0.2.0' }),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toMatchObject({ approvalBlocked: false, missing: [], nextStep: null });
+    });
+
+    it('an UPDATE to a live listing that went live art-less is reported, but NOT as blocking approval (the version approve does not publish it)', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      existingAppOwnedBy(42);
+      answer('live', listingRow({ status: 'approved', coverId: 83 }));
+      const result = await submitVersion({
+        bundleBuffer: await makeValidBundle({ version: '0.2.0' }),
+        submittedByUserId: 42,
+      });
+      expect(result.listing).toMatchObject({
+        approvalBlocked: false,
+        missing: ['icon'],
+        nextStep: null,
+      });
+      expect(result.listing!.problems.map((p) => p.code)).toContain('missing-icon');
+    });
+
+    it('a failing readiness read never fails the submit (listing: null)', async () => {
+      const { submitVersion } = await import('../publish-request.service');
+      mockDbWrite.appListing.findFirst.mockRejectedValue(new Error('replica went away'));
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const result = await submitVersion({
+          bundleBuffer: await makeValidBundle(),
+          submittedByUserId: 42,
+        });
+        expect(mockDbWrite.appBlockPublishRequest.create).toHaveBeenCalledOnce();
+        expect(result.listing).toBeNull();
+      } finally {
+        warn.mockRestore();
+      }
+    });
+  });
 });
 
 // ---- withdrawRequest -------------------------------------------------------
@@ -1824,7 +1964,8 @@ describe('approveRequest', () => {
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // The reset listing exists + is pending (found by id), but its icon is still
     // scanning (the shared wrapper re-reads icon/cover by id, then the scan gate).
-    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset' });
+    // icon + cover set: the publish floor every go-live checks up front.
+    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset', iconId: 1, coverId: 2 });
     mockDbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
     mockDbWrite.image.findMany.mockImplementation(
       async (args: { where?: { id?: { in?: number[] } } }) =>
@@ -1871,7 +2012,8 @@ describe('approveRequest', () => {
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
     // The reset listing exists (found by id) with all-Scanned icon+cover → gate passes.
-    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset' });
+    // icon + cover set: the publish floor every go-live checks up front.
+    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset', iconId: 1, coverId: 2 });
     mockDbWrite.appListing.findUnique.mockResolvedValue({ iconId: 1, coverId: 2 });
     // Re-stage the clean image impl (clearAllMocks doesn't reset a prior test's impl).
     mockDbWrite.image.findMany.mockImplementation(
@@ -1921,7 +2063,7 @@ describe('approveRequest', () => {
   // fails the control rather than passing it.
   // -------------------------------------------------------------------------
   const wireResetListingLookup = (opts: { openListingReview: boolean }) => {
-    const row = { id: 'apl_reset', contentRating: 'g' };
+    const row = { id: 'apl_reset', contentRating: 'g', iconId: 1, coverId: 2 };
     // What sits on `AppListing.publishRequests` for the fake row.
     const requests: Record<string, unknown>[] = opts.openListingReview
       ? [{ status: 'pending', kind: 'onsite' }]
@@ -2057,7 +2199,9 @@ describe('approveRequest', () => {
     // would run that branch too, and its hand-off to the history would stand in for this one.
     mockDbWrite.appListing.findFirst.mockImplementation(
       async (args: { where?: { status?: string } }) =>
-        args?.where?.status === 'pending' ? { id: 'apl_reset', contentRating: 'g' } : null
+        args?.where?.status === 'pending'
+          ? { id: 'apl_reset', contentRating: 'g', iconId: 1, coverId: 2 }
+          : null
     );
     mockDbWrite.appListing.findUnique.mockResolvedValue({
       iconId: 1,
@@ -2108,7 +2252,12 @@ describe('approveRequest', () => {
       app: { allowedScopes: 33554431, allowedOrigins: ['https://hello.civit.ai'] },
     });
     mockBundleBuffer.current = await makeValidBundle({ version: '0.2.0' });
-    mockDbWrite.appListing.findFirst.mockResolvedValue({ id: 'apl_reset', contentRating: 'r' });
+    mockDbWrite.appListing.findFirst.mockResolvedValue({
+      id: 'apl_reset',
+      contentRating: 'r',
+      iconId: 1,
+      coverId: 2,
+    });
     mockDbWrite.appListing.findUnique.mockResolvedValue({
       iconId: 1,
       coverId: 2,

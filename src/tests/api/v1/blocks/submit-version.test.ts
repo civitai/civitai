@@ -427,6 +427,51 @@ describe('POST /api/v1/blocks/submit-version (token auth)', () => {
       slug: 'my-block',
       version: '1.2.3',
       status: 'pending',
+      listing: null,
+    });
+  });
+
+  it('🔴 the CLI contract carries the listing readiness, so `civitai app submit` can say what approval waits on', async () => {
+    const listing = {
+      approvalBlocked: true,
+      missing: ['icon', 'cover'],
+      nextStep:
+        "Add an icon and a cover on your listing's Media tab before a moderator can approve it.",
+      problems: [
+        {
+          code: 'missing-icon',
+          label: 'Missing icon (required before publishing)',
+          severity: 'blocking',
+        },
+        {
+          code: 'no-screenshots',
+          label: 'No screenshots (recommended, optional)',
+          severity: 'advisory',
+        },
+      ],
+    };
+    mockGetSession.mockResolvedValueOnce(MOD_SESSION);
+    mockSubmitVersion.mockResolvedValueOnce({
+      publishRequestId: 'pubreq_abc',
+      slug: 'my-block',
+      version: '1.2.3',
+      bundleSha256: 'deadbeef',
+      fileSummary: {},
+      manifestDiffSummary: {},
+      listing,
+    });
+    const { req, res } = createMocks({
+      headers: { authorization: 'Bearer good-key' },
+      body: goodBody,
+    });
+    await handler(req as never, res as never);
+    expect(res._getStatusCode()).toBe(200);
+    expect(res._getJSONData()).toEqual({
+      publishRequestId: 'pubreq_abc',
+      slug: 'my-block',
+      version: '1.2.3',
+      status: 'pending',
+      listing,
     });
   });
 
