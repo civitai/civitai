@@ -296,7 +296,7 @@ describe('setModelPoi — the real-person hash match', () => {
 });
 
 it('refuses an unknown model', async () => {
-  mockDbRead.model.findUnique.mockResolvedValue(null);
+  mockDbWrite.model.findUnique.mockResolvedValue(null);
   await expect(setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID })).rejects.toThrow();
   expect(mockDbWrite.model.update).not.toHaveBeenCalled();
 });
@@ -305,7 +305,7 @@ it('refuses an unknown model', async () => {
 // the setter locks, and the write is built from that row.
 describe('setModelPoi — decides from the row it locks', () => {
   it('keeps the minor locks when a minor flag landed since an earlier read', async () => {
-    rowChangesBeforeLock(
+    const { written } = rowChangesBeforeLock(
       { ...baseModelRow, poi: true, lockedProperties: ['poi', 'nsfw', 'sfwOnly'] },
       {
         ...baseModelRow,
@@ -317,20 +317,34 @@ describe('setModelPoi — decides from the row it locks', () => {
 
     await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
 
-    expect([...written().lockedProperties].sort()).toEqual([...MINOR_LOCKED_PROPERTIES].sort());
+    expect([...(written().lockedProperties as string[])].sort()).toEqual(
+      [...MINOR_LOCKED_PROPERTIES].sort()
+    );
   });
 
   it('keeps a lock set since an earlier read when flagging', async () => {
-    rowChangesBeforeLock(baseModelRow, { ...baseModelRow, lockedProperties: ['minor'] });
+    const { written } = rowChangesBeforeLock(baseModelRow, {
+      ...baseModelRow,
+      lockedProperties: ['minor'],
+    });
 
     await setModelPoi({ id: MODEL_ID, poi: true, userId: MODERATOR_ID });
 
-    expect([...written().lockedProperties].sort()).toEqual(['minor', 'nsfw', 'poi', 'sfwOnly']);
+    expect([...(written().lockedProperties as string[])].sort()).toEqual([
+      'minor',
+      'nsfw',
+      'poi',
+      'sfwOnly',
+    ]);
   });
 
   // The flag landed after the read that decides whether to record the ruling ahead of the write.
-  it('still records the ruling and closes the appeal when lifting a flag set since that read', async () => {
-    rowChangesBeforeLock(baseModelRow, { ...baseModelRow, poi: true, lockedProperties: ['poi'] });
+  it('still records the ruling, after the write, when lifting a flag set since that read', async () => {
+    const { tx } = rowChangesBeforeLock(baseModelRow, {
+      ...baseModelRow,
+      poi: true,
+      lockedProperties: ['poi'],
+    });
 
     await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
 
@@ -338,27 +352,48 @@ describe('setModelPoi — decides from the row it locks', () => {
     expect(mockStampRuling).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: MODEL_ID, label: 'poi' })
     );
+    expect(mockStampRuling.mock.invocationCallOrder[0]).toBeGreaterThan(
+      tx.model.update.mock.invocationCallOrder[0]
+    );
     expect(mockSettleAppeals).toHaveBeenCalledWith(
       expect.objectContaining({ modelId: MODEL_ID, liftedLabels: ['poi'] })
     );
   });
 
+  // The lift has committed by then, so its follow-up must still run.
+  it('finishes the lift when that late ruling fails', async () => {
+    rowChangesBeforeLock(baseModelRow, { ...baseModelRow, poi: true, lockedProperties: ['poi'] });
+    mockStampRuling.mockRejectedValueOnce(new Error('db exploded'));
+
+    await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
+
+    expect(mockTrackModActivity).toHaveBeenCalledWith(
+      MODERATOR_ID,
+      expect.objectContaining({ activity: 'unsetPoi' })
+    );
+    expect(mockModelsQueueUpdate).toHaveBeenCalled();
+    expect(mockSettleAppeals).toHaveBeenCalled();
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'text-scan', modelId: MODEL_ID })
+    );
+  });
+
   it('records the ruling once, ahead of the write, when nothing changed since the read', async () => {
     const row = { ...baseModelRow, poi: true, lockedProperties: ['poi'] };
-    rowChangesBeforeLock(row, row);
+    const { tx } = rowChangesBeforeLock(row, row);
 
     await setModelPoi({ id: MODEL_ID, poi: false, userId: MODERATOR_ID });
 
     expect(mockStampRuling).toHaveBeenCalledTimes(1);
     expect(mockStampRuling.mock.invocationCallOrder[0]).toBeLessThan(
-      mockDbWrite.model.update.mock.invocationCallOrder[0]
+      tx.model.update.mock.invocationCallOrder[0]
     );
   });
 
   // On its own connection the snapshot would wait on the row lock the flag's transaction holds, and an
   // automated flag is not applied without its snapshot.
   it('takes the automated flag snapshot on the transaction that holds the row lock', async () => {
-    const { tx } = rowChangesBeforeLock(baseModelRow, baseModelRow);
+    const { tx, written } = rowChangesBeforeLock(baseModelRow, baseModelRow);
 
     await setModelPoi({ id: MODEL_ID, poi: true, userId: 1, activity: 'setPoiAutoHash' });
 

@@ -2090,7 +2090,7 @@ export const updateModelById = async ({
               ? { ...fields, meta: meta(row?.meta ?? null, row) as Prisma.JsonObject }
               : fields,
           });
-        })
+        }, lockedWriteOptions)
       : await dbWrite.model.update({ where: { id }, data });
 
   await userModelCountCache.refresh(model.userId);
@@ -2773,22 +2773,13 @@ async function captureMinorFlagSnapshot(
   }
 }
 
+// Waiting on the row lock counts against the transaction's timeout, and a save or publish can hold
+// that lock for as long as its own 30s.
+const lockedWriteOptions = { maxWait: 10000, timeout: 30000 };
+
 /** The model row a flag setter decides from, re-read under a lock held for its write. */
 async function lockFlagRow(tx: Prisma.TransactionClient, id: number) {
-  await tx.$queryRaw`SELECT id FROM "Model" WHERE id = ${id} FOR NO KEY UPDATE`;
-  const row = await tx.model.findUnique({
-    where: { id },
-    select: {
-      userId: true,
-      poi: true,
-      minor: true,
-      sfwOnly: true,
-      nsfw: true,
-      availability: true,
-      gallerySettings: true,
-      lockedProperties: true,
-    },
-  });
+  const row = await lockModelRow(tx, id);
   if (!row) throw throwNotFoundError(`No model with id ${id}`);
   return row;
 }
@@ -2916,7 +2907,7 @@ export async function setModelMinor({
 
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
     return { before, data, result, snapshotError };
-  });
+  }, lockedWriteOptions);
   if (snapshotError)
     logToAxiom({
       type: 'error',
@@ -3027,7 +3018,7 @@ export async function setModelSfwOnly({
 
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
     return { before, data, result };
-  });
+  }, lockedWriteOptions);
 
   await preventReplicationLag('model', id);
   const modActivity = sfwOnly ? 'setSfwOnly' : 'unsetSfwOnly';
@@ -3161,7 +3152,7 @@ export async function setModelPoi({
       }).catch(() => null);
   };
   // The ruling is written on its own connection, so it cannot go inside the locked write below.
-  const flagged = await dbRead.model.findUnique({ where: { id }, select: { poi: true } });
+  const flagged = await dbWrite.model.findUnique({ where: { id }, select: { poi: true } });
   if (!flagged) throw throwNotFoundError(`No model with id ${id}`);
   const stampedAhead = !poi && flagged.poi && !fromAppeal;
   if (stampedAhead) await stampLift();
@@ -3197,10 +3188,21 @@ export async function setModelPoi({
 
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
     return { before, data, result };
-  });
+  }, lockedWriteOptions);
   const lifting = !poi && before.poi;
   // The flag landed after the read above: the lift still records the ruling, just after the write.
-  if (lifting && !fromAppeal && !stampedAhead) await stampLift();
+  // The lift has committed, so a failed stamp must not cost it the follow-up below.
+  if (lifting && !fromAppeal && !stampedAhead)
+    await stampLift().catch((error) =>
+      logToAxiom({
+        type: 'error',
+        name: 'text-scan',
+        message: `moderator poi ruling not recorded: ${
+          error instanceof Error ? error.message : error
+        }`,
+        modelId: id,
+      }).catch(() => null)
+    );
 
   if (poi)
     await dropPoiHashLead(id, { staleSnapshot: !before.poi && activity !== 'setPoiAutoHash' });
@@ -3308,6 +3310,7 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
       nsfw: true,
       minor: true,
       sfwOnly: true,
+      poi: true,
       gallerySettings: true,
     },
   });

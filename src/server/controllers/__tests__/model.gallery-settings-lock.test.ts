@@ -22,10 +22,9 @@ const OWNER = 5;
 const MATURE_LEVEL = 31;
 const row = { id: MODEL, userId: OWNER, minor: false, sfwOnly: false, meta: null };
 
-function rowChanges(locked: Partial<typeof row>) {
-  rowChangesBeforeLock(row, { ...row, ...locked });
-  // The read the handler took before its lock, as it was.
-  for (const db of [dbMock.dbRead, dbMock.dbWrite]) db.model.findFirst.mockResolvedValue(row);
+let fake: ReturnType<typeof rowChangesBeforeLock>;
+function rowChanges(locked: Partial<typeof row> | null) {
+  fake = rowChangesBeforeLock(row, locked && { ...row, ...locked });
 }
 
 const save = (userId = OWNER, isModerator = false) =>
@@ -43,12 +42,11 @@ const save = (userId = OWNER, isModerator = false) =>
     ctx: { user: { id: userId, isModerator } } as never,
   } as never);
 
-const writtenLevel = () =>
-  (dbMock.dbWrite.model.update.mock.calls[0][0] as { data: { gallerySettings: { level: number } } })
-    .data.gallerySettings.level;
+const writtenLevel = () => (fake.written().gallerySettings as { level: number }).level;
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockBustGallerySettings.mockResolvedValue(undefined);
   dbMock.dbWrite.model.update.mockImplementation((async ({ data }: { data: object }) => ({
     ...row,
     ...data,
@@ -68,7 +66,13 @@ describe('updateGallerySettingsHandler — decides from the row it locks', () =>
   it('refuses the save when the model moved to another owner since an earlier read', async () => {
     rowChanges({ userId: OWNER + 1 });
     await expect(save()).rejects.toThrow(/No model with id/);
-    expect(dbMock.dbWrite.model.update).not.toHaveBeenCalled();
+    expect(fake.tx.model.update).not.toHaveBeenCalled();
+  });
+
+  it('refuses the save when the model was deleted since an earlier read', async () => {
+    rowChanges(null);
+    await expect(save()).rejects.toThrow(/No model with id/);
+    expect(fake.tx.model.update).not.toHaveBeenCalled();
   });
 
   it("keeps the owner's level on an unflagged model", async () => {

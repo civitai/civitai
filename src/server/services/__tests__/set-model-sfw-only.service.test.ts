@@ -435,7 +435,7 @@ describe('setModelSfwOnly — change history', () => {
 // the setter locks, and both the refusal and the write are decided from that row.
 describe('setModelSfwOnly — decides from the row it locks', () => {
   it('refuses to clear SFW-only on a model flagged minor since an earlier read', async () => {
-    rowChangesBeforeLock(
+    const { tx } = rowChangesBeforeLock(
       { ...baseModelRow, sfwOnly: true, nsfw: false },
       { ...baseModelRow, sfwOnly: true, nsfw: false, minor: true }
     );
@@ -443,11 +443,11 @@ describe('setModelSfwOnly — decides from the row it locks', () => {
     await expect(
       setModelSfwOnly({ id: MODEL_ID, sfwOnly: false, userId: MODERATOR_ID })
     ).rejects.toThrow(/Unset as Minor first/);
-    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(tx.model.update).not.toHaveBeenCalled();
   });
 
   it('refuses to clear SFW-only on a model made private since an earlier read', async () => {
-    rowChangesBeforeLock(
+    const { tx } = rowChangesBeforeLock(
       { ...baseModelRow, sfwOnly: true, nsfw: false },
       { ...baseModelRow, sfwOnly: true, nsfw: false, availability: Availability.Private }
     );
@@ -455,24 +455,30 @@ describe('setModelSfwOnly — decides from the row it locks', () => {
     await expect(
       setModelSfwOnly({ id: MODEL_ID, sfwOnly: false, userId: MODERATOR_ID })
     ).rejects.toThrow(/Private models must be SFW only/);
-    expect(mockDbWrite.model.update).not.toHaveBeenCalled();
+    expect(tx.model.update).not.toHaveBeenCalled();
   });
 
   it('keeps a lock set since an earlier read', async () => {
-    rowChangesBeforeLock(baseModelRow, { ...baseModelRow, lockedProperties: ['minor'] });
+    const { written } = rowChangesBeforeLock(baseModelRow, {
+      ...baseModelRow,
+      lockedProperties: ['minor'],
+    });
 
     await setModelSfwOnly({ id: MODEL_ID, sfwOnly: true, userId: MODERATOR_ID });
 
-    const { data } = mockDbWrite.model.update.mock.calls[0][0];
-    expect([...data.lockedProperties].sort()).toEqual(['minor', 'nsfw', 'sfwOnly']);
+    expect([...(written().lockedProperties as string[])].sort()).toEqual([
+      'minor',
+      'nsfw',
+      'sfwOnly',
+    ]);
   });
 
   it('clears SFW-only when nothing changed since the read', async () => {
     const row = { ...baseModelRow, sfwOnly: true, nsfw: false };
-    rowChangesBeforeLock(row, row);
+    const { written } = rowChangesBeforeLock(row, row);
 
     await setModelSfwOnly({ id: MODEL_ID, sfwOnly: false, userId: MODERATOR_ID });
 
-    expect(mockDbWrite.model.update.mock.calls[0][0].data).toMatchObject({ sfwOnly: false });
+    expect(written()).toMatchObject({ sfwOnly: false });
   });
 });

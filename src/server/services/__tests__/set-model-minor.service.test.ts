@@ -871,10 +871,8 @@ describe('setModelMinor — reapplying side effects', () => {
 // A flag or lock another moderator or a job sets after an earlier read of the model is in the row
 // the setter locks, and the write is built from that row.
 describe('setModelMinor — decides from the row it locks', () => {
-  const written = () => mockDbWrite.model.update.mock.calls[0][0].data;
-
   it('keeps a poi lock set since an earlier read when the minor flag is lifted', async () => {
-    rowChangesBeforeLock(
+    const { written } = rowChangesBeforeLock(
       { ...baseModelRow, minor: true, lockedProperties: [...MINOR_LOCKED_PROPERTIES] },
       {
         ...baseModelRow,
@@ -890,7 +888,7 @@ describe('setModelMinor — decides from the row it locks', () => {
   });
 
   it('keeps the locks and gallery settings written since an earlier read when flagging', async () => {
-    rowChangesBeforeLock(baseModelRow, {
+    const { written } = rowChangesBeforeLock(baseModelRow, {
       ...baseModelRow,
       gallerySettings: { level: 1, users: [9], tags: [] },
       lockedProperties: ['poi'],
@@ -917,21 +915,44 @@ describe('setModelMinor — decides from the row it locks', () => {
       tracker: tracker as unknown as Tracker,
     });
 
-    expect(changeRowsFrom(tracker).map(({ field }) => field)).not.toContain('sfwOnly');
+    const fields = changeRowsFrom(tracker).map(({ field }) => field);
+    expect(fields).toContain('minor');
+    expect(fields).not.toContain('sfwOnly');
   });
 
   // On its own connection the snapshot would wait on the row lock the flag's transaction holds.
   it('takes the snapshot on the transaction that holds the row lock', async () => {
-    const { tx } = rowChangesBeforeLock(baseModelRow, baseModelRow);
+    const { tx, written } = rowChangesBeforeLock(baseModelRow, baseModelRow);
 
     await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
 
-    const snapshots = tx.$executeRaw.mock.calls.filter(([strings]) =>
-      sqlText(strings).includes('UPDATE "Model"')
-    );
-    expect(snapshots).toHaveLength(1);
+    // The savepoint brackets the snapshot, so a failed capture can be undone alone.
+    expect(
+      tx.$executeRaw.mock.calls.map(([strings]) => sqlText(strings).trim().split(/\s+/)[0])
+    ).toEqual(['SAVEPOINT', 'UPDATE', 'RELEASE']);
     expect(mockLogToAxiom).not.toHaveBeenCalled();
-    expect(mockDbWrite.model.update).toHaveBeenCalled();
+    expect(written()).toMatchObject({ minor: true });
+  });
+
+  it('still flags, and logs after commit, when the snapshot fails inside the transaction', async () => {
+    const { tx, written } = rowChangesBeforeLock(baseModelRow, baseModelRow);
+    tx.$executeRaw.mockImplementation(async (strings) => {
+      if (sqlText(strings).includes('UPDATE "Model"')) throw new Error('db exploded');
+      return 0;
+    });
+
+    await setModelMinor({ id: MODEL_ID, minor: true, userId: MODERATOR_ID });
+
+    expect(
+      tx.$executeRaw.mock.calls.map(([strings]) => sqlText(strings).trim().split(/\s+/)[0])
+    ).toEqual(['SAVEPOINT', 'UPDATE', 'ROLLBACK']);
+    expect(written()).toMatchObject({ minor: true });
+    expect(mockLogToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'minor-flag-snapshot', modelId: MODEL_ID })
+    );
+    expect(mockLogToAxiom.mock.invocationCallOrder[0]).toBeGreaterThan(
+      tx.model.update.mock.invocationCallOrder[0]
+    );
   });
 
   it('does all of its follow-up work after the write commits', async () => {
