@@ -1,6 +1,7 @@
 import { ModelStatus } from '~/shared/utils/prisma/enums';
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { isGeneratorReady } from '~/shared/generation/generator-readiness';
+import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
 import type { NextApiRequest, NextApiResponse } from 'next';
 import * as z from 'zod';
 import { dbRead, dbWrite } from '~/server/db/client';
@@ -101,12 +102,7 @@ const updateGenerationCoverage = (idOffset: number) =>
                 usageControl,
               }),
               hashes: hashes.map((hash) => hash.hash),
-              canGenerate: eligible(x, generationCoverage?.covered, generationCoverage?.covered),
-              canGenerateNext: eligible(
-                x,
-                generationCoverage?.coveredNext,
-                generationCoverage?.covered
-              ),
+              ...indexedVersionEligibility({ ...x, generationCoverage }, type),
             })
           ),
           canGenerate,

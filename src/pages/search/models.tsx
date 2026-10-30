@@ -9,7 +9,7 @@ import {
   SearchableMultiSelectRefinementList,
   SortBy,
 } from '~/components/Search/CustomSearchComponents';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { ModelCard } from '~/components/Cards/ModelCard';
 import { useSearchEventDecorations } from '~/components/Decorations/useSearchEventDecorations';
 import { ModelCardContextProvider, useModelSaleBadges } from '~/components/Cards/ModelCardContext';
@@ -36,6 +36,8 @@ import { buildMinorExclusionFilter } from '~/components/Search/search-filters';
 import { nsfwRestrictedBaseModels } from '~/server/common/constants';
 import { renderBaseModelOption } from '~/components/SfwOnlyBadge/SfwOnlyBadge';
 import { nsfwBrowsingLevelsArray } from '~/shared/constants/browsingLevel.constants';
+import { searchHitCanGenerate } from '~/shared/generation/coverage-fields';
+import { trpc } from '~/utils/trpc';
 
 export default function ModelsSearch() {
   return (
@@ -165,7 +167,22 @@ export function ModelsHitList() {
   const itemIds = (items as { id: number }[]).map((x) => x.id);
   const salesByModelId = useModelSaleBadges(itemIds);
   useEngagedModelsPrefetch(itemIds);
-  const decorated = useSearchEventDecorations(hits, items as { id: number }[], { entity: 'Model' });
+  const decorated = useSearchEventDecorations(hits, items as typeof hits, { entity: 'Model' });
+  // The live rule until the audience loads: the next rule would offer free viewers cold checkpoints.
+  const { data: audience } = trpc.generation.getCoverageAudience.useQuery(undefined, {
+    staleTime: 5 * 60_000,
+  });
+  const withCreate = useMemo(
+    () =>
+      decorated.map((hit) => ({
+        ...hit,
+        canGenerate: searchHitCanGenerate(hit, {
+          coverageNext: audience?.next ?? false,
+          member: audience?.member ?? true,
+        }),
+      })),
+    [decorated, audience]
+  );
 
   if (hits.length === 0) {
     const NotFound = (
@@ -232,7 +249,7 @@ export function ModelsHitList() {
         salesByModelId={salesByModelId}
       >
         <MasonryGrid
-          data={decorated as any}
+          data={withCreate as any}
           render={ModelCard}
           itemId={(x) => x.id}
           empty={<NoContent />}

@@ -1,5 +1,6 @@
 import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { isGeneratorReady } from '~/shared/generation/generator-readiness';
+import { indexedVersionEligibility } from '~/shared/generation/coverage-fields';
 import { Prisma } from '@prisma/client';
 import { chunk, isEqual } from 'lodash-es';
 import type { TypoTolerance } from 'meilisearch';
@@ -529,20 +530,7 @@ const transformData = async ({ models, tags, cosmetics, images }: PullDataResult
             metrics: maskHiddenVersionMetrics(vMetrics[0], hidden),
             hashes: hashes.map((hash) => hash.hash),
             hashData: hashes.map((hash) => ({ hash: hash.hash, type: hash.hashType })),
-            canGenerate: isGenerationEligible({
-              covered: generationCoverage?.covered,
-              coveredLive: generationCoverage?.covered,
-              baseModel: x.baseModel,
-              modelType: model.type,
-              flags: x.flags,
-            }),
-            canGenerateNext: isGenerationEligible({
-              covered: generationCoverage?.coveredNext,
-              coveredLive: generationCoverage?.covered,
-              baseModel: x.baseModel,
-              modelType: model.type,
-              flags: x.flags,
-            }),
+            ...indexedVersionEligibility({ ...x, generationCoverage }, model.type),
             settings: settings as RecommendedSettingsSchema,
             baseModel: x.baseModel as BaseModel,
           })
