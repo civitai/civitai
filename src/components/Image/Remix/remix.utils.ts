@@ -1,4 +1,5 @@
 import { getEdgeUrl } from '~/client-utils/cf-images-utils';
+import { recordGallerySourceRating } from '~/components/form-graph/generation/useFlux3MatureSource';
 import type { RemixEngine, RemixKind, RemixTier } from '~/shared/constants/remix.constants';
 import { REMIX_ENGINES } from '~/shared/constants/remix.constants';
 import { getIsSafeBrowsingLevel } from '~/shared/constants/browsingLevel.constants';
@@ -223,6 +224,9 @@ export async function startRemix({ kind, image }: { kind: RemixKind; image: Remi
   // `setData` for the same reason the panel opens before the awaits: the form
   // can start resolving the moment the data lands.
   if (provenance) remixProvenanceStore.setToken(sourceUrl, provenance);
+  // The form can switch to an engine that gates on the source's rating, and an on-site url has
+  // no other way to be rated there.
+  recordGallerySourceRating(sourceUrl, image.nsfwLevel);
 
   generationGraphStore.setData({
     params: {

@@ -166,14 +166,13 @@ beforeEach(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe('Flux 3 Video with a source image rated above PG-13', () => {
-  test('a generated R output blocks Generate with no lookup, and the switch clears it', async () => {
+  test('a generated R output blocks Generate, and the switch clears it', async () => {
     recordSourceRating(FIRST.url, 'r');
     const store = flux3Store('img2vid');
     await renderFooter(store);
 
     await vi.waitFor(() => expect(showsMessage()).toBe(true));
     expect(generateButton().disabled).toBe(true);
-    expect(ratingLookups).toEqual([]);
 
     switchButton()?.click();
     await vi.waitFor(() => expect(showsMessage()).toBe(false));
@@ -188,6 +187,25 @@ describe('Flux 3 Video with a source image rated above PG-13', () => {
     await vi.waitFor(() => expect(showsMessage()).toBe(true));
     expect(generateButton().disabled).toBe(true);
     expect(ratingLookups[0]).toEqual(['FIRSTFRAME.jpeg']);
+  });
+
+  test('a seed below the scan does not hide a mature scan', async () => {
+    recordSourceRating(FIRST.url, 'pg13');
+    lookupLevel = 'x';
+    await renderFooter(flux3Store('img2vid'));
+
+    await vi.waitFor(() => expect(showsMessage()).toBe(true));
+    expect(generateButton().disabled).toBe(true);
+  });
+
+  test('a scan below the seed does not clear a mature seed', async () => {
+    recordSourceRating(FIRST.url, 'r');
+    lookupLevel = 'pg';
+    await renderFooter(flux3Store('img2vid'));
+
+    await vi.waitFor(() => expect(ratingLookups.length).toBeGreaterThan(0));
+    expect(showsMessage()).toBe(true);
+    expect(generateButton().disabled).toBe(true);
   });
 
   test('keyframes mode shows the message without a switch that would drop the keyframes', async () => {
