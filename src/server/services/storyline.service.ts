@@ -1060,13 +1060,16 @@ export const STORYLINE_CHAPTER_REMOVE_REFUSALS = {
   paidContinuation: "This chapter's payment hasn't settled yet. Try again once it has",
   paidByContributor: 'Someone paid to add this chapter, so only they or a moderator can remove it',
   takenDown: 'This storyline was taken down',
+  removed: 'This chapter was already removed',
 } as const;
 
 /**
  * Takes a chapter out of its storyline for the storyline's owner, the chapter's author or a
  * moderator. The post is not touched. Only a chapter nothing continues from can go, so no other
- * chapter loses its way in; the row is deleted, with its edges and reader choices. The placement
- * that added it, if any, is marked removed; no Buzz moves, as with a moderator's takedown.
+ * chapter loses its way in. The owner's or author's removal deletes the row, with its edges and
+ * reader choices; a moderator's tombstones it, as a placement takedown does, so the row keeps
+ * holding its post and it cannot be submitted again. The placement that added it, if any, is
+ * marked removed; no Buzz moves, as with a moderator's takedown.
  */
 export async function removeStorylineChapter({
   chapterId,
@@ -1091,10 +1094,29 @@ export async function removeStorylineChapter({
       SELECT "tosViolation" FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
     `;
     if (!storyline) throw throwNotFoundError('Chapter not found');
+    // The placement before the chapter, the order a placement takedown (`takeDownApproved`) locks
+    // them in. `placementId` never changes once written.
+    const [unlocked] = await tx.$queryRaw<{ placementId: number | null }[]>`
+      SELECT "placementId" FROM "StorylineChapter" WHERE id = ${chapterId}
+    `;
+    const [placement] =
+      unlocked?.placementId != null
+        ? await tx.$queryRaw<{ status: string; paid: boolean; inFlight: boolean }[]>`
+            SELECT p.status, (NOT p.free AND p.amount > 0) AS paid,
+              ${placementMoneyInFlightSql(Prisma.raw('p'))} AS "inFlight"
+            FROM "Placement" p WHERE p.id = ${unlocked.placementId} FOR UPDATE
+          `
+        : [];
     const [chapter] = await tx.$queryRaw<
-      { userId: number; depth: number; postId: number | null; placementId: number | null }[]
+      {
+        userId: number;
+        depth: number;
+        postId: number | null;
+        placementId: number | null;
+        removedAt: Date | null;
+      }[]
     >`
-      SELECT "userId", depth, "postId", "placementId" FROM "StorylineChapter"
+      SELECT "userId", depth, "postId", "placementId", "removedAt" FROM "StorylineChapter"
       WHERE id = ${chapterId} AND "storylineId" = ${storylineId} FOR UPDATE
     `;
     if (!chapter) throw throwNotFoundError('Chapter not found');
@@ -1112,6 +1134,8 @@ export async function removeStorylineChapter({
       throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.takenDown);
     if (chapter.depth === 0)
       throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.firstChapter);
+    // Deleting a tombstone would free its post to be submitted again.
+    if (chapter.removedAt) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.removed);
 
     const [{ hasChildren, waiting }] = await tx.$queryRaw<
       { hasChildren: boolean; waiting: boolean }[]
@@ -1132,13 +1156,6 @@ export async function removeStorylineChapter({
     if (waiting) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.waiting);
 
     if (chapter.placementId != null) {
-      const [placement] = await tx.$queryRaw<
-        { status: string; paid: boolean; inFlight: boolean }[]
-      >`
-        SELECT p.status, (NOT p.free AND p.amount > 0) AS paid,
-          ${placementMoneyInFlightSql(Prisma.raw('p'))} AS "inFlight"
-        FROM "Placement" p WHERE p.id = ${chapter.placementId} FOR UPDATE
-      `;
       if (placement?.inFlight)
         throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.paidContinuation);
       // The contributor paid the owner to add it; the owner cannot take it back out for free.
@@ -1156,7 +1173,9 @@ export async function removeStorylineChapter({
     const parents = await tx.$queryRaw<{ parentChapterId: number }[]>`
       SELECT "parentChapterId" FROM "StorylineChapterEdge" WHERE "chapterId" = ${chapterId}
     `;
-    await tx.$executeRaw`DELETE FROM "StorylineChapter" WHERE id = ${chapterId}`;
+    if (role === 'moderator')
+      await tx.$executeRaw`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = ${chapterId}`;
+    else await tx.$executeRaw`DELETE FROM "StorylineChapter" WHERE id = ${chapterId}`;
     if (role === 'moderator')
       await trackModActivity(
         userId,

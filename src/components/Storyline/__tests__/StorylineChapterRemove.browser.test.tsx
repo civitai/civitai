@@ -102,6 +102,15 @@ describe('removing a chapter from the storyline page', () => {
     expect(mocks.confirmBody).toContain('not returned');
   });
 
+  test("a moderator removes anyone's chapter", async () => {
+    mocks.currentUser = { id: 99, isModerator: true };
+    renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);
+
+    await optionsOf(2).click();
+    await removeItem().click();
+    expect(mocks.remove).toHaveBeenCalledWith(101);
+  });
+
   test('a reader who is neither is offered nothing', async () => {
     mocks.currentUser = { id: 77 };
     renderWithProviders(<StorylineChapterLanes storyline={storyline(null)} />);

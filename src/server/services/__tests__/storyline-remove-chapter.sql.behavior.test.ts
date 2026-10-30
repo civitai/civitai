@@ -91,6 +91,9 @@ beforeAll(async () => {
     '20261024160000_storyline_minor_by_scan',
     '20261106120000_storyline_rejoin',
     '20261122120000_storyline_pending_chapter',
+    // The constraint as production has it, so the widening below replaces it.
+    '20260809040000_placement_removed_by_cosmetic_takedown',
+    '20260809041000_validate_placement_removed_by_check',
     '20261214120000_placement_removed_by_placer',
     '20261214121000_validate_placement_removed_by_placer',
   ])
@@ -204,9 +207,17 @@ describe('removeStorylineChapter', () => {
     expect(trackModActivity).not.toHaveBeenCalled();
   });
 
-  it('a moderator removes it, logged as a moderator action', async () => {
+  // A tombstone, as a placement takedown leaves: the row keeps holding its post.
+  it('a moderator removes it as a tombstone, logged as a moderator action', async () => {
     await remove(MODERATOR, true);
-    expect(await chapterIds()).toEqual([10]);
+    expect(
+      await rows(
+        `SELECT id, "postId", "removedAt" IS NOT NULL AS removed FROM "StorylineChapter" ORDER BY id`
+      )
+    ).toEqual([
+      { id: 10, postId: 501, removed: false },
+      { id: 11, postId: 502, removed: true },
+    ]);
     expect((await placement900()).removedBy).toBe('moderator');
     expect(trackModActivity).toHaveBeenCalledWith(
       MODERATOR,
@@ -216,7 +227,7 @@ describe('removeStorylineChapter', () => {
   });
 
   it('its owner removes an unpaid chapter', async () => {
-    await db.pg.exec(`UPDATE "Placement" SET amount = 0, free = true WHERE id = 900`);
+    await db.pg.exec(`UPDATE "Placement" SET amount = 0 WHERE id = 900`);
     await remove(OWNER);
     expect(await chapterIds()).toEqual([10]);
     expect((await placement900()).removedBy).toBe('owner');
@@ -260,6 +271,17 @@ describe('removeStorylineChapter', () => {
     expect(await chapterIds()).toEqual([10, 11]);
   });
 
+  it('refuses while a draft continuing it is linked, and keeps the draft', async () => {
+    await db.pg.exec(`
+      INSERT INTO "Post" (id, "userId") VALUES (503, ${CONTRIBUTOR});
+      INSERT INTO "StorylinePendingChapter" ("postId", "storylineId", "parentChapterId", "userId")
+        VALUES (503, 1, 11, ${CONTRIBUTOR});
+    `);
+    await expect(remove(OWNER, true)).rejects.toThrow(REFUSED.waiting);
+    expect(await chapterIds()).toEqual([10, 11]);
+    expect(await rows(`SELECT "postId" FROM "StorylinePendingChapter"`)).toEqual([{ postId: 503 }]);
+  });
+
   it("refuses while its own payment's payout has not been paid", async () => {
     await db.pg.exec(
       `UPDATE "PlacementTransaction" SET "transactionId" = NULL WHERE kind = 'toOwner'`
@@ -279,6 +301,14 @@ describe('removeStorylineChapter', () => {
     await db.pg.exec(`UPDATE "Storyline" SET "tosViolation" = true WHERE id = 1`);
     await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.takenDown);
     await remove(MODERATOR, true);
-    expect(await chapterIds()).toEqual([10]);
+    expect(
+      await rows(`SELECT "removedAt" IS NOT NULL AS removed FROM "StorylineChapter" WHERE id = 11`)
+    ).toEqual([{ removed: true }]);
+  });
+
+  it("refuses a chapter a moderator already took down, so its post can't come back", async () => {
+    await db.pg.exec(`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = 11`);
+    await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.removed);
+    expect(await chapterIds()).toEqual([10, 11]);
   });
 });

@@ -88,7 +88,8 @@ section).
   published. Only a chapter nothing continues from can go, and never chapter 1. It is refused while a
   continuation of it waits for review or its own payment has not settled. The creator cannot remove
   a chapter someone paid to add; its author can, and their Buzz is not returned. A taken-down
-  storyline's chapters are left to moderators.
+  storyline's chapters are left to moderators. A moderator's removal leaves a removed placeholder,
+  as a takedown does, so the post cannot be submitted again; a removed chapter cannot be removed.
 - **Review.** Continuations from anyone else wait in the creator's review queue to be approved or
   declined. A post above the storyline's content level cannot be submitted at all. A post submitted
   while still a draft or still being scanned reaches the queue once it is published and rated, or is

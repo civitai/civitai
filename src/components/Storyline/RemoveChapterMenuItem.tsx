@@ -3,6 +3,22 @@ import { openConfirmModal } from '@mantine/modals';
 import { IconTrash } from '@tabler/icons-react';
 import { useRemoveStorylineChapter } from '~/components/Storyline/storyline.data';
 
+/** Who is offered the removal; the server decides (a paid chapter, a pending continuation). */
+export const canRemoveStorylineChapter = ({
+  depth,
+  authorId,
+  ownerId,
+  viewer,
+}: {
+  depth: number;
+  authorId: number;
+  ownerId: number;
+  viewer: { id: number; isModerator?: boolean } | null | undefined;
+}) =>
+  !!viewer &&
+  depth > 0 &&
+  (viewer.id === authorId || viewer.id === ownerId || !!viewer.isModerator);
+
 /**
  * Takes a chapter out of its storyline; its post stays published. Only a chapter nothing continues
  * from can go, so for one that has continuations the item says why instead.
