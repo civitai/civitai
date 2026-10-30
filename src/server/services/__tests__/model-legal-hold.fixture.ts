@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -111,6 +112,7 @@ export async function createModelHoldDb() {
   await db.exec(BASE_SCHEMA);
   await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
   await db.exec(readFileSync(OWNERSHIP_MIGRATION, 'utf8'));
+  await db.exec(heldCopiesSchemaSql());
   return db;
 }
 

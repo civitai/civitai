@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -100,6 +101,7 @@ beforeAll(async () => {
   `);
   await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
   await db.exec(readFileSync(OWNERSHIP_MIGRATION, 'utf8'));
+  await db.exec(heldCopiesSchemaSql());
   await db.exec(`
     INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES
       (60, ${MARKED_OWNER}, 'create'), (60, ${GIVEN_BY_MARKED_OWNER}, 'transfer'),

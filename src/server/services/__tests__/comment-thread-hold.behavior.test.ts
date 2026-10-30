@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -168,6 +169,7 @@ beforeAll(async () => {
     CREATE TRIGGER keep_marked_image BEFORE DELETE ON "Image"
       FOR EACH ROW EXECUTE FUNCTION keep_marked_image();
   `);
+  await db.exec(heldCopiesSchemaSql());
 });
 afterAll(() => db.close());
 

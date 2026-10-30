@@ -1,4 +1,5 @@
 import { readFileSync } from 'node:fs';
+import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import path from 'node:path';
 import { PGlite } from '@electric-sql/pglite';
 import { Prisma } from '@prisma/client';
@@ -279,6 +280,7 @@ beforeAll(async () => {
       'utf8'
     )
   );
+  await holder.db.exec(heldCopiesSchemaSql());
   // Append-only, so set once: two models CLEAN was given, one by a held owner.
   await holder.db.exec(`
     INSERT INTO "ModelOwnership" ("modelId", "userId", reason) VALUES

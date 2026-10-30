@@ -1,4 +1,5 @@
 import { PGlite } from '@electric-sql/pglite';
+import { heldCopiesSchemaSql } from '~/server/services/__tests__/held-copies.fixture';
 import { Prisma } from '@prisma/client';
 import { readFileSync } from 'fs';
 import path from 'path';
@@ -496,6 +497,7 @@ describe('permaDeleteModelById — legal hold', () => {
     `);
     await db.exec(readFileSync(HOLD_MIGRATION, 'utf8'));
     await db.exec(readFileSync(OWNERSHIP_MIGRATION, 'utf8'));
+    await db.exec(heldCopiesSchemaSql());
     await db.exec(`
       INSERT INTO "EvidenceHold" ("userId", role, reason) VALUES (${MARKED_OWNER}, 'manual', 'review');
       INSERT INTO "CsamReport" ("userId") VALUES (${REPORTED_OWNER});
