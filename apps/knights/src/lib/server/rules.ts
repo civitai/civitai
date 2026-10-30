@@ -4,7 +4,6 @@ import { goldForRank, PROGRESSION, RATING } from './progression/config';
 import { rankTable } from './progression/rating';
 import { SMITES } from './smites/config';
 import { TRIALS } from './trials/config';
-import { YESNO_CONSENSUS_VOTES } from './yesno/keys';
 
 const RATING_GUIDE_LEVELS = [
   NsfwLevel.PG,
@@ -16,7 +15,7 @@ const RATING_GUIDE_LEVELS = [
 ] as const;
 
 /** Numbers the rules page quotes, read from the game's config. */
-export function rulesFacts() {
+export function rulesFacts(yesNoJudges: number) {
   return {
     trials: {
       length: TRIALS.runLength,
@@ -40,7 +39,7 @@ export function rulesFacts() {
       streakCap: DAILY.streakCap,
       maxShields: DAILY.maxShields,
     },
-    yesNo: { judgesNeeded: YESNO_CONSENSUS_VOTES },
+    yesNo: { judgesNeeded: yesNoJudges },
     hearts: SMITES.max,
     ratingGuide: RATING_GUIDE_LEVELS.map((level) => ({
       level,

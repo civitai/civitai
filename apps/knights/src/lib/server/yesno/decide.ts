@@ -18,3 +18,21 @@ export function decideYesNo(
     return { kind: 'consensus', value: yes > no ? 'yes' : 'no' };
   return total >= rule.max ? { kind: 'exhausted' } : { kind: 'pending' };
 }
+
+/**
+ * The consensus size and the cap, read live from the axis question so tuning its row takes effect. A cap below the consensus size
+ * could never be reached before a consensus is possible, so it is treated as the consensus size.
+ */
+export function consensusRule(
+  question: { votesToResolve: number; maxVotes: number },
+  warn: (message: string) => void = (message) => console.warn(message)
+): { needed: number; max: number } {
+  const needed = Math.max(1, question.votesToResolve);
+  if (question.maxVotes < needed) {
+    warn(
+      `knights: a yes/no question allows ${question.maxVotes} answers but needs ${needed}; using ${needed}`
+    );
+    return { needed, max: needed };
+  }
+  return { needed, max: question.maxVotes };
+}

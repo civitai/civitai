@@ -195,4 +195,37 @@ describe('stretches', () => {
     expect(seen.map((s) => s.banner)).toEqual([true, false, true, false, false]);
     expect(await pick(1, { stretch: 2 })).toBeNull();
   });
+
+  it('moves on, with a banner, when the latest axis was switched off or has nothing left for the player', async () => {
+    await seed([
+      row('v1', 10, { axis: 'violence' }),
+      row('v2', 11, { axis: 'violence' }),
+      row('l1', 12, { axis: 'language' }),
+    ]);
+    await seedPlayer(pg, 1);
+    const v1 = (await pick(1, { stretch: 3 }))!;
+    expect(v1.prompt).toBe('Question l1?');
+    await answer(1, v1.itemId); // language, with nothing left in it
+
+    // Mid-stretch but the axis is empty for this player: the next axis, with a banner.
+    const next = (await pick(1, { stretch: 3 }))!;
+    expect(next.prompt).toBe('Question v1?');
+    expect(next.banner).not.toBeNull();
+    await answer(1, next.itemId);
+
+    // The axis they were on is switched off: the stretch cannot continue there.
+    await pg.exec(
+      `UPDATE "KnightsQuestion" SET active = false WHERE key = 'knights.yesno.violence'`
+    );
+    expect(await pick(1, { stretch: 3 })).toBeNull();
+    await pg.exec(
+      `UPDATE "KnightsQuestion" SET active = true WHERE key = 'knights.yesno.violence'`
+    );
+    await pg.exec(
+      `UPDATE "KnightsQuestion" SET active = false WHERE key = 'knights.yesno.language'`
+    );
+    const last = (await pick(1, { stretch: 3 }))!;
+    expect(last.prompt).toBe('Question v2?');
+    expect(last.banner).toBeNull();
+  });
 });

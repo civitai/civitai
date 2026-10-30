@@ -1,4 +1,5 @@
 import { sql, type Kysely, type SqlBool } from 'kysely';
+import { closeOpenYesNoItem } from './close';
 import type { DB } from '@civitai/db-schema/kysely';
 import {
   axisKey,
@@ -54,7 +55,10 @@ const clip = (value: string | undefined, max: number) => (value ?? '').trim().sl
 export function toYesNoRows(records: Record<string, string>[]): {
   rows: YesNoRow[];
   skipped: Skipped;
+  /** Ids of rows the producer no longer marks active; an open question with one of these is retired by the import. */
+  retire: string[];
 } {
+  const retire: string[] = [];
   const skipped: Skipped = {};
   const skip = (reason: keyof Skipped) => {
     skipped[reason] = (skipped[reason] ?? 0) + 1;
@@ -64,6 +68,8 @@ export function toYesNoRows(records: Record<string, string>[]): {
 
   for (const r of records) {
     if ((r.active_candidate ?? '').trim().toLowerCase() !== 'true') {
+      const id = clip(r.question_id, MAX_ID);
+      if (id) retire.push(id);
       skip('inactive');
       continue;
     }
@@ -110,7 +116,7 @@ export function toYesNoRows(records: Record<string, string>[]): {
       ),
     });
   }
-  return { rows, skipped };
+  return { rows, skipped, retire };
 }
 
 export type ImportResult = {
@@ -118,6 +124,10 @@ export type ImportResult = {
   /** Rows that already existed, had no answers yet, and differed. */
   updated: number;
   unchanged: number;
+  /** Differ from what is stored but already have answers, so were left as they are. */
+  refused: number;
+  /** Open questions the producer withdrew, closed with no outcome. */
+  retired: number;
   axes: number;
 };
 
@@ -128,7 +138,11 @@ export type ImportResult = {
 export async function importYesNo(
   db: Kysely<DB>,
   rows: YesNoRow[],
-  { batchSize = 1000 }: { batchSize?: number } = {}
+  {
+    batchSize = 1000,
+    retire = [],
+    now = new Date(),
+  }: { batchSize?: number; retire?: string[]; now?: Date } = {}
 ): Promise<ImportResult> {
   const axes = [...new Set(rows.map((r) => r.axis))];
   for (const axis of axes) {
@@ -148,7 +162,14 @@ export async function importYesNo(
       .execute();
   }
 
-  const result: ImportResult = { inserted: 0, updated: 0, unchanged: 0, axes: axes.length };
+  const result: ImportResult = {
+    inserted: 0,
+    updated: 0,
+    unchanged: 0,
+    refused: 0,
+    retired: 0,
+    axes: axes.length,
+  };
   for (let at = 0; at < rows.length; at += batchSize) {
     const batch = rows.slice(at, at + batchSize);
     const written = await db
@@ -200,7 +221,76 @@ export async function importYesNo(
     const inserted = written.filter((w) => w.inserted).length;
     result.inserted += inserted;
     result.updated += written.length - inserted;
-    result.unchanged += batch.length - written.length;
+    const skipped = batch.length - written.length;
+    const refused = skipped > 0 ? await countRefused(db, batch) : 0;
+    result.refused += refused;
+    result.unchanged += skipped - refused;
   }
+  await retireWithdrawn(db, retire, result, now, batchSize);
   return result;
+}
+
+const sameMeta = (a: unknown, b: Record<string, string>) =>
+  JSON.stringify(Object.entries((a ?? {}) as Record<string, string>).sort()) ===
+  JSON.stringify(Object.entries(b).sort());
+
+/** Rows the upsert left alone because they have answers: those that still differ from the file are refused, the rest unchanged. */
+async function countRefused(db: Kysely<DB>, batch: YesNoRow[]): Promise<number> {
+  const stored = await db
+    .selectFrom('KnightsQueueItem')
+    .select([
+      'externalId',
+      'questionKey',
+      'imageId',
+      'audience',
+      'prompt',
+      'yesEffect',
+      'noEffect',
+      'meta',
+    ])
+    .where('voteCount', '>', 0)
+    .where(
+      'externalId',
+      'in',
+      batch.map((r) => r.externalId)
+    )
+    .execute();
+  const byId = new Map(stored.map((s) => [s.externalId, s]));
+  return batch.filter((r) => {
+    const s = byId.get(r.externalId);
+    return (
+      s &&
+      !(
+        s.questionKey === axisKey(r.axis) &&
+        s.imageId === r.imageId &&
+        s.audience === r.audience &&
+        s.prompt === r.prompt &&
+        s.yesEffect === r.yesEffect &&
+        s.noEffect === r.noEffect &&
+        sameMeta(s.meta, r.meta)
+      )
+    );
+  }).length;
+}
+
+/** Closes open questions the producer withdrew. Unanswered ones just close; answered ones drop their answers' gold like any no-outcome close. */
+async function retireWithdrawn(
+  db: Kysely<DB>,
+  ids: string[],
+  result: ImportResult,
+  now: Date,
+  batchSize: number
+) {
+  for (let at = 0; at < ids.length; at += batchSize) {
+    const open = await db
+      .selectFrom('KnightsQueueItem')
+      .select('id')
+      .where('status', '=', 'Open')
+      .where('audience', 'is not', null)
+      .where('externalId', 'in', ids.slice(at, at + batchSize))
+      .execute();
+    for (const { id } of open) {
+      if (await closeOpenYesNoItem(db, id, 'retired', now)) result.retired++;
+    }
+  }
 }

@@ -19,7 +19,7 @@ async function main() {
   if (!file) throw new Error('Pass the path of the CSV file.');
 
   const records = parseCsv(readFileSync(file, 'utf8'));
-  const { rows, skipped } = toYesNoRows(records);
+  const { rows, skipped, retire } = toYesNoRows(records);
   const players = rows.filter((r) => r.audience === 'players').length;
   console.log(
     `${records.length} rows read: ${rows.length} to import (${players} for players, ${
@@ -39,9 +39,9 @@ async function main() {
     max: 1,
   });
   try {
-    const result = await importYesNo(db, rows);
+    const result = await importYesNo(db, rows, { retire });
     console.log(
-      `${result.axes} axes; ${result.inserted} inserted, ${result.updated} updated, ${result.unchanged} unchanged.`
+      `${result.axes} axes; ${result.inserted} inserted, ${result.updated} updated, ${result.unchanged} unchanged, ${result.refused} refused (changed but already answered), ${result.retired} retired.`
     );
   } finally {
     await db.destroy();

@@ -2,8 +2,8 @@
 
 Plain yes or no questions about one image, answered by Knights and above beside the rating votes. They exist to collect human
 answers for a decision model, so they are not graded against a truth: no resolution, no early win, no accuracy, no smites.
-Code is in `apps/knights/src/lib/server/yesno`; migration `20261221120000_knights_v2_yesno` (applied by hand, before the app
-build and before the import).
+Code is in `apps/knights/src/lib/server/yesno`; migration `20261221120000_knights_v2_yesno` (applied by hand, after
+`20261211120000_knights_v2_sources` because it rebuilds that migration's open-item index, and before the app build and the import).
 
 ## Storage
 
@@ -20,8 +20,10 @@ shared with ratings. What marks one is `audience` (`players` or `moderators`); a
 | `voteCount` | Answers so far; serving finishes questions that are under way first. |
 
 The item's question (`questionKey`) is one `KnightsQuestion` per axis, `knights.yesno.<axis>`, kind `bool`, options yes and no;
-`votesToResolve` is the number of answers a consensus needs (default 5) and `maxVotes` the most it is ever asked (default 10).
-Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`). A yes/no item is never `Resolved`, so write-back, escalation and the
+`votesToResolve` is the number of answers a consensus needs (default 5) and `maxVotes` the most it is ever asked (default 10); both are
+read from the row on every answer, so tuning it takes effect at once (`/rules` quotes the fewest across axes). A `maxVotes` below
+`votesToResolve` is treated as `votesToResolve`. The item's own `votesNeeded` is unused for yes/no.
+Statuses: `Open`, `Consensus`, `Closed` (reason `no-consensus`, `unplayable`, `stale` or `retired`). A yes/no item is never `Resolved`, so write-back, escalation and the
 settle sweeps never touch it. Rating `getFeed` and `castVote` exclude items with an `audience`. The partial unique index that allows one
 open rating item per question and image exempts yes/no items, which share an axis and an image.
 
@@ -30,7 +32,8 @@ open rating item per question and image exempts yes/no items, which share an axi
 `cd apps/knights && pnpm run import:yesno <file.csv> [--dry-run]` reads `DATABASE_URL` from `.env` and refuses any host other than
 localhost, 127.0.0.1 or ::1 (for a dev database, forward the port first). It keeps rows marked active, maps `observable` to `players`
 and `policy_preference` to `moderators`, creates the axis questions once, and upserts items by `externalId` in batches. It never
-rewrites an item that has answers. It prints counts only. Data files are never committed.
+rewrites an item that has answers (a changed one is reported as `refused`), and closes an open item the file marks inactive
+(`retired`, no outcome). It prints counts only. Data files are never committed.
 
 ## Serving (`feed.ts`)
 
@@ -57,6 +60,14 @@ label store counts). A tie keeps it open until `maxVotes`, when it is closed wit
 - Votes get the verdict `matched` or `unmatched` (`inconclusive` when closed with no outcome). These are not `correct` or `failed`, so
   accuracy, fervor and rank never see them.
 - A matched answer moves its gold from pending to earned; any other drops it. XP stays the flat amount paid at vote time.
+
+## Closing without an answer
+
+The tick (`sweep.ts`) closes, with no outcome, answered players' questions that cannot finish on their own: their image is no longer
+shown or their axis is switched off (`unplayable`), or nobody has answered for `KNIGHTS_YESNO_MAX_AGE_DAYS` (default 14, `stale`).
+Votes become `inconclusive`, their gold is dropped, XP stays, labels already written stay. Questions with no answers hold nothing
+and are left open. Moderators' questions are not swept. Locks are taken in the vote's order: the item row, then the voters' player rows.
+A career reset between an answer and the close is handled as for ratings: such an answer pays nothing into the new career.
 
 ## Labels
 

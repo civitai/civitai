@@ -31,7 +31,7 @@ export async function ensureQuestionRules(db: Kysely<DB>): Promise<void> {
   `.execute(db);
   await sql`
     INSERT INTO label_store.rule ("question", "questionVersion", "minHuman", "requireUnanimous")
-    SELECT ${YESNO_KEY_PREFIX}::text || i."externalId", q."version", i."votesNeeded", false
+    SELECT ${YESNO_KEY_PREFIX}::text || i."externalId", q."version", q."votesToResolve", false
     FROM "KnightsQueueItem" i
     JOIN "KnightsQuestion" q ON q."key" = i."questionKey"
     WHERE i."audience" IS NOT NULL AND i."externalId" IS NOT NULL AND i."voteCount" > 0

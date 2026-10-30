@@ -6,7 +6,8 @@ import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
 import { PROGRESSION } from '../progression/config';
 import { ledgerOf } from '../progression/progression';
-import { ensureVotePartitions } from '../queue/queue.service';
+import { ensureVotePartitions, lockPlayerVoting } from '../queue/queue.service';
+import { judgesNeeded } from './items';
 import { importYesNo, type YesNoRow } from './import';
 import { castYesNoVote } from './vote';
 
@@ -219,7 +220,9 @@ describe('consensus', () => {
 
   it('keeps asking through a tie, and at the cap gives the question up and pays no gold', async () => {
     const ids = await seed([row('a'), row('b', { axis: 'language', imageId: 11 })], [10, 11]);
-    await pg.query(`UPDATE "KnightsQueueItem" SET "votesNeeded" = 4`);
+    await pg.query(
+      `UPDATE "KnightsQuestion" SET "votesToResolve" = 4 WHERE key LIKE 'knights.yesno.%'`
+    );
     await pg.query(
       `UPDATE "KnightsQuestion" SET "maxVotes" = 4 WHERE key = 'knights.yesno.language'`
     );
@@ -245,5 +248,104 @@ describe('consensus', () => {
     expect(await item(ids.a)).toMatchObject({ status: 'Open', voteCount: 4 });
     await vote(5, ids.a, 'yes');
     expect(await item(ids.a)).toMatchObject({ status: 'Consensus', resolvedValue: 'yes' });
+  });
+});
+
+describe('the consensus size', () => {
+  it('is read live from the axis question, so tuning its row takes effect', async () => {
+    const ids = await seed([row('a')]);
+    await pg.query(
+      `UPDATE "KnightsQuestion" SET "votesToResolve" = 3 WHERE key = 'knights.yesno.violence'`
+    );
+    await knights(3);
+    for (let user = 1; user <= 3; user++) await vote(user, ids.a, 'yes');
+    expect(await item(ids.a)).toMatchObject({ status: 'Consensus', resolvedValue: 'yes' });
+    expect(await judgesNeeded(db)).toBe(3);
+  });
+
+  it('is the fewest of the axes when they differ, and the default with none', async () => {
+    expect(await judgesNeeded(db)).toBe(5);
+    await seed([row('a'), row('b', { axis: 'language' })]);
+    await pg.query(
+      `UPDATE "KnightsQuestion" SET "votesToResolve" = 7 WHERE key = 'knights.yesno.violence'`
+    );
+    await pg.query(
+      `UPDATE "KnightsQuestion" SET "votesToResolve" = 4 WHERE key = 'knights.yesno.language'`
+    );
+    expect(await judgesNeeded(db)).toBe(4);
+  });
+
+  it('does not let a cap below it close the question before a consensus is possible', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const ids = await seed([row('a')]);
+    await pg.query(
+      `UPDATE "KnightsQuestion" SET "votesToResolve" = 4, "maxVotes" = 2 WHERE key = 'knights.yesno.violence'`
+    );
+    await knights(4);
+    await vote(1, ids.a, 'yes');
+    await vote(2, ids.a, 'no');
+    expect(await item(ids.a)).toMatchObject({ status: 'Open' });
+    await vote(3, ids.a, 'yes');
+    await vote(4, ids.a, 'no');
+    expect(await item(ids.a)).toMatchObject({ status: 'Closed', reason: 'no-consensus' });
+  });
+});
+
+describe('a career reset between the answer and the close', () => {
+  it('pays nothing into the new career for answers given before it, and leaves its pending gold alone', async () => {
+    const ids = await seed([row('a'), row('b', { imageId: 11 })], [10, 11]);
+    await knights(5);
+    await vote(1, ids.a, 'yes');
+
+    // What a reset does: moves startAt past the old answer and forfeits the old career's pending gold.
+    await pg.query(
+      `UPDATE "NewOrderPlayer" SET "startAt" = $1::timestamp, "goldPending" = 0 WHERE "userId" = 1`,
+      ['2026-12-21 12:00:30']
+    );
+    expect(
+      await castYesNoVote(
+        db,
+        { userId: 1, itemId: ids.b, answer: 'yes' },
+        { now: () => new Date('2026-12-21T12:01:00Z') }
+      )
+    ).toEqual({
+      status: 'recorded',
+    });
+    expect((await player(1)).goldPending).toBe(GOLD);
+
+    for (let user = 2; user <= 5; user++) {
+      await castYesNoVote(
+        db,
+        { userId: user, itemId: ids.a, answer: 'yes' },
+        { now: () => new Date('2026-12-21T12:02:00Z') }
+      );
+    }
+
+    expect(await item(ids.a)).toMatchObject({ status: 'Consensus' });
+    const old = (await votes(ids.a)).find((v) => v.playerId === 1);
+    expect(old).toMatchObject({ verdict: 'matched', gold: 0 });
+    expect(old?.settledAt).not.toBeNull();
+    // The new career's own pending answer is untouched, and nothing was earned from the old one.
+    expect(await player(1)).toMatchObject({ goldPending: GOLD, goldEarned: 0 });
+    expect(await player(2)).toMatchObject({ goldPending: 0, goldEarned: GOLD });
+  });
+});
+
+describe('one player at a time', () => {
+  it('takes the per-player vote lock for every answer, paced or not', async () => {
+    await knights(1);
+    const held = await db.transaction().execute(async (trx) => {
+      await lockPlayerVoting(trx, 1);
+      const { rows } = await trx.executeQuery<{ n: string }>(
+        (
+          await import('kysely')
+        )
+          .sql`SELECT count(*)::text AS n FROM pg_locks WHERE locktype = 'advisory' AND classid = 7301 AND objid = 1`.compile(
+          trx
+        )
+      );
+      return Number(rows[0].n);
+    });
+    expect(held).toBe(1);
   });
 });

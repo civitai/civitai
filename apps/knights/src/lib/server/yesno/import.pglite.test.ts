@@ -5,6 +5,9 @@ import type { Kysely } from 'kysely';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
+import { seedImage, seedPlayer } from '../../../test/seed';
+import { ensureVotePartitions } from '../queue/queue.service';
+import { castYesNoVote } from './vote';
 import { parseCsv } from './csv';
 import { importYesNo, toYesNoRows } from './import';
 
@@ -100,7 +103,14 @@ describe('importYesNo', () => {
       db,
       load(line({ id: 'a' }), line({ id: 'b', axis: 'language' }), line({ id: 'c', image: '10' }))
     );
-    expect(result).toEqual({ inserted: 3, updated: 0, unchanged: 0, axes: 2 });
+    expect(result).toEqual({
+      inserted: 3,
+      updated: 0,
+      unchanged: 0,
+      refused: 0,
+      retired: 0,
+      axes: 2,
+    });
 
     const questions = (
       await pg.query<{ key: string; kind: string }>(
@@ -152,8 +162,13 @@ describe('importYesNo', () => {
     await importYesNo(db, load(line({ id: 'a' })));
     await pg.exec(`UPDATE "KnightsQueueItem" SET "voteCount" = 1`);
     const result = await importYesNo(db, load(line({ id: 'a', question: 'Something else?' })), {});
-    expect(result).toMatchObject({ updated: 0, unchanged: 1 });
+    expect(result).toMatchObject({ updated: 0, unchanged: 0, refused: 1 });
     expect((await items())[0]).toMatchObject({ prompt: 'Is a hat worn?' });
+    // The same file again is not a change.
+    expect(await importYesNo(db, load(line({ id: 'a' })))).toMatchObject({
+      refused: 0,
+      unchanged: 1,
+    });
   });
 
   it('leaves a tuned axis question alone, writes in batches, and marks policy questions for moderators', async () => {
@@ -216,8 +231,45 @@ describe('importYesNo', () => {
       inserted: 2500,
       updated: 0,
       unchanged: 0,
+      refused: 0,
+      retired: 0,
       axes: 2,
     });
     expect(await importYesNo(db, many)).toMatchObject({ inserted: 0, updated: 0, unchanged: 2500 });
+  });
+
+  it('retires an open question the file no longer marks active, dropping the gold of its answers, and never serves it again', async () => {
+    await importYesNo(db, load(line({ id: 'a' }), line({ id: 'b' }), line({ id: 'c' })));
+    await seedImage(pg, 10);
+    await seedPlayer(pg, 1);
+    await ensureVotePartitions(db, { now: new Date(), monthsAhead: 1 });
+    const a = (await items())[0].id as number;
+    await castYesNoVote(db, { userId: 1, itemId: a, answer: 'yes' }, { now: () => new Date() });
+
+    const { rows, retire } = toYesNoRows(
+      records(
+        line({ id: 'a', active: 'false' }),
+        line({ id: 'b', active: 'false' }),
+        line({ id: 'c' })
+      )
+    );
+    expect(retire).toEqual(['a', 'b']);
+    const result = await importYesNo(db, rows, { retire });
+
+    expect(result).toMatchObject({ retired: 2, unchanged: 1, inserted: 0 });
+    expect((await items()).map((i) => [i.externalId, i.status, i.reason])).toEqual([
+      ['a', 'Closed', 'retired'],
+      ['b', 'Closed', 'retired'],
+      ['c', 'Open', null],
+    ]);
+    const vote = await pg.query(
+      `SELECT verdict, gold, "settledAt" IS NOT NULL AS settled FROM "KnightsVote"`
+    );
+    expect(vote.rows).toEqual([{ verdict: 'inconclusive', gold: 0, settled: true }]);
+    expect(
+      (await pg.query(`SELECT "goldPending" FROM "NewOrderPlayer" WHERE "userId"=1`)).rows[0]
+    ).toEqual({ goldPending: 0 });
+    // A repeat finds nothing open to retire.
+    expect(await importYesNo(db, rows, { retire })).toMatchObject({ retired: 0 });
   });
 });

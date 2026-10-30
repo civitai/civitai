@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { decideYesNo } from './decide';
+import { consensusRule, decideYesNo } from './decide';
 
 const votes = (yes: number, no: number) => [
   ...Array.from({ length: yes }, () => ({ answer: 'yes' })),
@@ -33,5 +33,20 @@ describe('decideYesNo', () => {
     expect(decideYesNo([{ answer: '4' }, ...votes(2, 2)], { needed: 5, max: 9 })).toEqual({
       kind: 'pending',
     });
+  });
+});
+
+describe('consensusRule', () => {
+  it('takes the consensus size and the cap as the axis question says', () => {
+    expect(consensusRule({ votesToResolve: 3, maxVotes: 9 })).toEqual({ needed: 3, max: 9 });
+  });
+
+  it('treats a cap below the consensus size as the consensus size, and says so', () => {
+    const warn: string[] = [];
+    expect(consensusRule({ votesToResolve: 5, maxVotes: 2 }, (m) => warn.push(m))).toEqual({
+      needed: 5,
+      max: 5,
+    });
+    expect(warn).toHaveLength(1);
   });
 });

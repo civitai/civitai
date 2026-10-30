@@ -13,6 +13,8 @@ import { settleFinalItems } from '$lib/server/progression/progression';
 import { queueDeps } from '$lib/server/queue/runtime';
 import { resetDeps } from '$lib/server/smites/runtime';
 import { expireSmites, resetPendingPlayers } from '$lib/server/smites/smites.service';
+import { yesNoConfig } from '$lib/server/yesno/runtime';
+import { closeStrandedYesNo } from '$lib/server/yesno/sweep';
 import type { RequestHandler } from './$types';
 
 async function settle<T>(step: string, run: () => Promise<T>) {
@@ -42,6 +44,9 @@ export const POST: RequestHandler = async ({ request }) => {
       ...resetDeps,
     })
   );
+  const yesNo = await settle('yes/no sweep', () =>
+    closeStrandedYesNo(db, { now: new Date(), maxAgeDays: yesNoConfig().maxAgeDays })
+  );
   // Resets first: a smite that lapses must not drop a player out of a reset that is already due.
   const resets = await settle('career resets', () => resetPendingPlayers(db, resetDeps));
   const smites = await settle('smite expiry', () => expireSmites(db, new Date()));
@@ -70,6 +75,8 @@ export const POST: RequestHandler = async ({ request }) => {
     !progression.ok ||
     progression.value.failed > 0 ||
     !hidden.ok ||
+    !yesNo.ok ||
+    (yesNo.ok && yesNo.value.failed > 0) ||
     !smites.ok ||
     !resets.ok ||
     resets.value.failed > 0 ||
@@ -83,6 +90,7 @@ export const POST: RequestHandler = async ({ request }) => {
     ...writeBacks.value,
     settledVotes: progression.value.votes,
     hiddenChecksGraded: hidden.value.graded,
+    yesNoClosed: yesNo.value.unplayable + yesNo.value.stale,
     expiredSmites: smites.value,
     resets: resets.value.due,
     conversionsRetried: conversions.value.retried,

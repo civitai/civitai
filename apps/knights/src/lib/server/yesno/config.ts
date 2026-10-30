@@ -3,9 +3,11 @@ export type YesNoSettings = {
   share: number;
   /** Questions of one axis in a row before the next axis starts. */
   stretch: number;
+  /** An answered question nobody has answered for this many days is closed with no outcome. */
+  maxAgeDays: number;
 };
 
-export const DEFAULT_YESNO: YesNoSettings = { share: 0.7, stretch: 8 };
+export const DEFAULT_YESNO: YesNoSettings = { share: 0.7, stretch: 8, maxAgeDays: 14 };
 
 const read = (raw: string | undefined, fallback: number, valid: (n: number) => boolean) => {
   const value = raw === undefined || raw.trim() === '' ? NaN : Number(raw);
@@ -21,5 +23,6 @@ export function yesNoSettings(env: Record<string, string | undefined>): YesNoSet
       DEFAULT_YESNO.stretch,
       (n) => Number.isInteger(n) && n > 0
     ),
+    maxAgeDays: read(env.KNIGHTS_YESNO_MAX_AGE_DAYS, DEFAULT_YESNO.maxAgeDays, (n) => n > 0),
   };
 }

@@ -31,3 +31,8 @@ END $$;
 CREATE INDEX IF NOT EXISTS "KnightsQueueItem_yesno_serve_idx"
   ON "KnightsQueueItem" ("questionKey", "voteCount" DESC, "priority", "id")
   WHERE "status" = 'Open' AND "audience" = 'players';
+
+-- The sweep's pick: questions that have answers and are still open.
+CREATE INDEX IF NOT EXISTS "KnightsQueueItem_yesno_answered_idx"
+  ON "KnightsQueueItem" ("id")
+  WHERE "status" = 'Open' AND "audience" IS NOT NULL AND "voteCount" > 0;

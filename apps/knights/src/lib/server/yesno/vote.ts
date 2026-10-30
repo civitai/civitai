@@ -6,15 +6,16 @@ import { mirrorXp } from '../progression/legacy-exp';
 import {
   ensureMonthPartition,
   lockItemVoters,
+  lockPlayerVoting,
   pacingGate,
   type QueueDeps,
   type RejectReason,
 } from '../queue/queue.service';
 import { creditVote, insertVote } from '../queue/vote-record';
-import { decideYesNo } from './decide';
+import { consensusRule, decideYesNo } from './decide';
 import { playableItems } from './items';
 import { YESNO_ANSWERS } from './keys';
-import { settleYesNoVotes } from './settle';
+import { closeYesNoItem } from './close';
 
 export type YesNoVoteResult =
   | { status: 'rejected'; reason: RejectReason }
@@ -37,6 +38,8 @@ export async function castYesNoVote(
   const result = await db.transaction().execute(async (trx): Promise<YesNoVoteResult> => {
     const rejected = (reason: RejectReason) => ({ status: 'rejected' as const, reason });
 
+    // Serialises one player's answers even when pacing is skipped, so the same-words check below cannot be raced.
+    await lockPlayerVoting(trx, input.userId);
     const until = await pacingGate(trx, input, now, deps);
     if (until) return { status: 'limited', until };
 
@@ -55,7 +58,7 @@ export async function castYesNoVote(
         'i.questionKey',
         'i.imageId',
         'i.minRank',
-        'i.votesNeeded',
+        'q.votesToResolve',
         'i.prompt',
         'q.maxVotes',
       ])
@@ -96,7 +99,7 @@ export async function castYesNoVote(
       .select('answer')
       .where('itemId', '=', item.id)
       .execute();
-    const decision = decideYesNo(answers, { needed: item.votesNeeded, max: item.maxVotes });
+    const decision = decideYesNo(answers, consensusRule(item));
 
     // Closing settles every voter's player row; taking the locks first, in id order, keeps all transactions in one order.
     if (decision.kind !== 'pending') await lockItemVoters(trx, item.id);
@@ -109,38 +112,14 @@ export async function castYesNoVote(
     });
     if (decision.kind === 'pending') return { status: 'recorded' };
 
-    await trx
-      .updateTable('KnightsQueueItem')
-      .set(
-        decision.kind === 'consensus'
-          ? {
-              status: 'Consensus',
-              resolvedValue: decision.value,
-              resolvedAt: utc(now),
-              resolvedBy: input.userId,
-            }
-          : { status: 'Closed', reason: 'no-consensus', resolvedAt: utc(now) }
-      )
-      .where('id', '=', item.id)
-      .execute();
-    await trx
-      .updateTable('KnightsVote')
-      .set(
-        decision.kind === 'consensus'
-          ? {
-              verdict: (eb) =>
-                eb
-                  .case()
-                  .when('answer', '=', decision.value)
-                  .then('matched')
-                  .else('unmatched')
-                  .end(),
-            }
-          : { verdict: 'inconclusive' }
-      )
-      .where('itemId', '=', item.id)
-      .execute();
-    await settleYesNoVotes(trx, item.id, now);
+    await closeYesNoItem(
+      trx,
+      item.id,
+      decision.kind === 'consensus'
+        ? { kind: 'consensus', value: decision.value, by: input.userId }
+        : { kind: 'none', reason: 'no-consensus' },
+      now
+    );
     return { status: 'recorded' };
   });
 
