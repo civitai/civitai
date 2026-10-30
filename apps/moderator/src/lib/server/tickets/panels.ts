@@ -8,6 +8,7 @@ import { historySectionFor, type TicketHistory } from './history';
 import { loraSectionFor, type TicketLora } from './lora-runs';
 import { membershipSectionFor, type TicketMembership } from './membership';
 import { ratingDisputesSectionFor, type TicketRatingDisputes } from './rating-disputes';
+import { shopSectionFor, type TicketShop } from './shop-purchases';
 
 export type PanelSections = {
   account: TicketAccount;
@@ -19,6 +20,7 @@ export type PanelSections = {
   lora: TicketLora;
   supportAccount: TicketAccount;
   membership: TicketMembership;
+  shop: TicketShop;
 };
 
 export type CanRead = (path: string) => boolean;
@@ -61,6 +63,7 @@ export const liveLoaders: Loaders = {
       readOnly: true,
     }),
   membership: ({ civitaiUserId }) => membershipSectionFor({ userId: civitaiUserId }),
+  shop: ({ civitaiUserId }) => shopSectionFor({ userId: civitaiUserId }),
 };
 
 /**

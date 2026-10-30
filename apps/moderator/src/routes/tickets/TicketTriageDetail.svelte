@@ -26,6 +26,7 @@
   import TicketMembership from './TicketMembership.svelte';
   import TicketRatingDisputes from './TicketRatingDisputes.svelte';
   import TicketReply from './TicketReply.svelte';
+  import TicketShopPurchases from './TicketShopPurchases.svelte';
   import TicketStatusMenu from './TicketStatusMenu.svelte';
 
   let {
@@ -324,6 +325,9 @@
   {/if}
   {#if panels.membership}
     <TicketMembership membership={panels.membership} />
+  {/if}
+  {#if panels.shop}
+    <TicketShopPurchases shop={panels.shop} />
   {/if}
 {/snippet}
 

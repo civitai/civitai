@@ -8,7 +8,7 @@ import { TRAINING_MODELS_PATH, loraPanelFor } from './lora-panel';
 import { RATINGS_PATH } from './rating-disputes';
 import type { TicketView } from './routing';
 import { supportAccountPanelFor } from './support-account-panel';
-import { USER_LOOKUP_PATH, membershipPanelFor } from './support-panels';
+import { USER_LOOKUP_PATH, membershipPanelFor, shopPanelFor } from './support-panels';
 
 /** What decides whether a panel applies to a ticket. */
 export type PanelContext = {
@@ -71,6 +71,10 @@ export const PANELS = {
   membership: {
     readGrants: [USER_LOOKUP_PATH],
     visibility: membershipPanelFor,
+  },
+  shop: {
+    readGrants: [USER_LOOKUP_PATH],
+    visibility: shopPanelFor,
   },
 } satisfies Record<string, PanelSpec>;
 

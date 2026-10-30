@@ -80,6 +80,8 @@ is its own page grant. Acting on a ticket is a separate permission:
     state. Buzz charges are not shown.
   - **Billing or Membership** (read-only): the user's current subscription (`/retool/user-lookup`): plan, provider,
     status, cancel-at-period-end, period end and price. No membership codes, payment method or provider ids.
+  - **Cosmetic Shop** (read-only): the user's newest 10 shop purchases (`/retool/user-lookup`): item, Buzz paid, date
+    and whether it was refunded.
 
   Support actions are registered only on the support page. Every panel action re-reads the ticket and is refused
   when its panel would be hidden in the ticket's current view.
