@@ -61,9 +61,12 @@ const storyline = {
 
 afterEach(() => cleanup());
 
-async function measure(viewport: { readonly width: number; readonly height: number }) {
+async function measure(
+  viewport: { readonly width: number; readonly height: number },
+  column = Math.min(viewport.width, 1000)
+) {
   await renderAtViewport(
-    <div style={{ width: Math.min(viewport.width, 1000) }}>
+    <div style={{ width: column }} data-testid="lanes-column">
       <StorylineChapterLanes storyline={storyline} />
     </div>,
     viewport
@@ -73,7 +76,12 @@ async function measure(viewport: { readonly width: number; readonly height: numb
     if (!el) throw new Error('no lanes yet');
     return el;
   });
-  return { visible: scroller.clientWidth, content: scroller.scrollWidth };
+  const row = document.querySelector<HTMLElement>('[data-testid="lanes-column"]')!;
+  return {
+    visible: scroller.clientWidth,
+    content: scroller.scrollWidth,
+    overflow: row.scrollWidth - column,
+  };
 }
 
 describe('the branch lanes', () => {
@@ -81,6 +89,13 @@ describe('the branch lanes', () => {
     const { visible, content } = await measure(LAPTOP_VIEWPORT);
     expect(content).toBeGreaterThan(2 * 124);
     expect(visible).toBe(content);
+  });
+
+  // With the generation sidebar open a laptop's page column can be under 500px.
+  test('fit a narrow page column on a laptop, scrolling the lanes rather than overflowing', async () => {
+    const { visible, content, overflow } = await measure(LAPTOP_VIEWPORT, 468);
+    expect([overflow, visible]).toEqual([0, 2 * 124]);
+    expect(content).toBe(4 * 124);
   });
 
   // A phone's width belongs to the main path; its titles wrap if the lanes take more.

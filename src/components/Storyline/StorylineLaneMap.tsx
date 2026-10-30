@@ -234,7 +234,7 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
           </Text>
         )}
       <div className="flex">
-        <div className="relative min-w-0 flex-1" style={{ height, minWidth: size.minPath }}>
+        <div className="relative min-w-0 flex-1" style={{ height, flex: `1 1 ${size.minPath}px` }}>
           {canonRows.length > 1 && (
             <span
               aria-hidden
@@ -299,7 +299,8 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
             className="overflow-x-auto"
             data-testid="storyline-lanes-scroller"
             style={{
-              flex: `0 1 ${Math.min(branchLanes, size.maxLanes) * size.laneWidth}px`,
+              // Gives way first, to its minimum, before the main path shrinks.
+              flex: `0 1000 ${Math.min(branchLanes, size.maxLanes) * size.laneWidth}px`,
               minWidth: Math.min(branchLanes, size.minLanes) * size.laneWidth,
             }}
           >
