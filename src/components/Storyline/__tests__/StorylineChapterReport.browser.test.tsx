@@ -84,6 +84,7 @@ describe('reporting a chapter from the storyline page', () => {
 
     await optionsOf(2).click();
     await page.getByRole('menuitem', { name: 'Report chapter' }).click();
+    expect(mocks.report).toHaveBeenCalledTimes(1);
     expect(mocks.report).toHaveBeenCalledWith({ entityType: 'post', entityId: 501 });
   });
 

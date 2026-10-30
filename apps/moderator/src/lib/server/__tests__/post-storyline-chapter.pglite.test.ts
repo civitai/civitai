@@ -37,7 +37,9 @@ CREATE TABLE "StorylineChapter" (
   "depth" INTEGER NOT NULL,
   "removedAt" TIMESTAMP
 );
-INSERT INTO "Storyline" ("id", "title", "minorByScan") VALUES (1, 'First story', false), (2, 'Second story', true);
+INSERT INTO "Storyline" ("id", "title", "minorByScan", "tosViolation") VALUES
+  (1, 'First story', false, true),
+  (2, 'Second story', true, false);
 INSERT INTO "StorylineChapter" VALUES
   (11, 1, 500, 0, NULL),
   (12, 2, 600, 0, NULL),
@@ -71,6 +73,7 @@ describe('the storyline around a reported post', () => {
       storylineId: 1,
       number: 1,
       removed: false,
+      tosViolation: true,
       minorByScan: false,
     });
   });

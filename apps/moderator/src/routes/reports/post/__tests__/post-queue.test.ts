@@ -112,6 +112,21 @@ describe('the post pages', () => {
     expect(data.item).toMatchObject({ postId: 40, tab: 'images' });
   });
 
+  it('carries the storyline a chapter post belongs to', async () => {
+    const chapter = {
+      storylineId: 3,
+      title: 'A story',
+      number: 2,
+      removed: false,
+      tosViolation: false,
+      minorByScan: true,
+    };
+    getPostStorylineChapter.mockResolvedValueOnce(chapter);
+    const { item } = await runPost({ postId: '40' });
+    expect(getPostStorylineChapter).toHaveBeenCalledWith(40);
+    expect((item as { storylineChapter?: unknown }).storylineChapter).toEqual(chapter);
+  });
+
   it("loads the post's own open reports, by the post", async () => {
     await runPost({ postId: '40' });
     expect(getReports).toHaveBeenCalledWith(
