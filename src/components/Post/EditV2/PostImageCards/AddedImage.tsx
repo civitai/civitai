@@ -163,9 +163,12 @@ export const getAllowedResources = (resources: ResourceHelper[], advancedMode: b
       if (isDefined(baseModel)) {
         const options =
           (getGenerationBaseModelResourceOptions(baseModel) as AllowedResource[]) ?? [];
-        // Advanced Mode allows unrestricted mixing of base models; keep Checkpoint available so a
-        // second one can be added.
-        return advancedMode ? options : options.filter((t) => t.type !== 'Checkpoint');
+        const withoutCheckpoint = options.filter((t) => t.type !== ModelType.Checkpoint);
+        // Advanced Mode allows unrestricted mixing of base models: an empty baseModels list is the
+        // picker's "any base model", so a second checkpoint can come from another family.
+        return advancedMode
+          ? [...withoutCheckpoint, { type: ModelType.Checkpoint, baseModels: [] }]
+          : withoutCheckpoint;
       }
     } else {
       if (isDefined(resource.modelType) && isDefined(resource.modelVersionBaseModel)) {

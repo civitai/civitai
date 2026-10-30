@@ -3,6 +3,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../../../../test/trpcProxyStub';
 import type * as HiddenPreferences from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 const state = vi.hoisted(() => ({
@@ -18,6 +19,8 @@ const state = vi.hoisted(() => ({
   hiddenTags: new Map<number, boolean>(),
   hiddenModels: new Map<number, boolean>(),
   hiddenImages: new Map<number, boolean>(),
+  resources: [{ type: 'Checkpoint', baseModels: [] as string[] }],
+  selectSource: 'generation',
 }));
 
 vi.mock('~/components/BrowsingLevel/BrowsingLevelProvider', () => ({
@@ -72,8 +75,8 @@ vi.mock(
 vi.mock('~/components/ImageGeneration/GenerationForm/ResourceSelectProvider', () => ({
   useResourceSelectContext: () => ({
     canGenerate: undefined,
-    resources: [{ type: 'Checkpoint', baseModels: [] }],
-    selectSource: 'generation',
+    resources: state.resources,
+    selectSource: state.selectSource,
     excludedIds: [],
     tab: 'featured',
     filters: { loadedOnly: false },
@@ -81,7 +84,9 @@ vi.mock('~/components/ImageGeneration/GenerationForm/ResourceSelectProvider', ()
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
-  trpc: { model: { getFeaturedModels: { useQuery: () => ({ data: state.featured }) } } },
+  trpc: makeTrpcProxy({
+    'model.getFeaturedModels': { useQuery: () => ({ data: state.featured }) },
+  }),
 }));
 vi.mock(
   '~/components/ImageGeneration/GenerationForm/ResourceSelectModal/ResourceSelectCard',
@@ -113,16 +118,22 @@ const model = (id: number, images: Img[], over: Record<string, unknown> = {}) =>
   user: { id: 900 + id },
   tags: [],
   images,
-  ...over,
   versions: [{ id: id * 10, baseModel: 'SDXL 1.0', canGenerate: true }],
+  ...over,
 });
 const WINNER = 1;
 const GRID_MODEL = model(2, [{ id: 20, nsfwLevel: PG }]);
 
-function renderPodium(winnerImages: Img[], over: Record<string, unknown> = {}) {
+function renderPodium(
+  winnerImages: Img[],
+  over: Record<string, unknown> = {},
+  winnerBaseModel = 'SDXL 1.0'
+) {
   state.items = [model(WINNER, winnerImages, over), GRID_MODEL];
   state.gridItems = [GRID_MODEL];
-  state.featured = [{ modelId: WINNER, type: 'Checkpoint', baseModel: 'SDXL 1.0', position: 1 }];
+  state.featured = [
+    { modelId: WINNER, type: 'Checkpoint', baseModel: winnerBaseModel, position: 1 },
+  ];
   const container = document.createElement('div');
   const root = createRoot(container);
   act(() => root.render(createElement(ResourceHitList, { query: '' })));
@@ -132,6 +143,8 @@ function renderPodium(winnerImages: Img[], over: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+  state.resources = [{ type: 'Checkpoint', baseModels: [] }];
+  state.selectSource = 'generation';
   state.browsingLevel = PG;
   state.canViewNsfw = true;
   state.disablePoi = false;
@@ -205,5 +218,27 @@ describe('ResourceHitList featured podium', () => {
     state.hiddenUsers = new Map([[900 + WINNER, true]]);
     state.blockRelations = new Map([[900 + WINNER, true]]);
     expect(renderPodium([{ id: 12, nsfwLevel: PG }])).toBeNull();
+  });
+
+  // The post editor's Advanced Mode picker: a second checkpoint from any family, LoRAs on the
+  // first checkpoint's family.
+  it('shows an other-family checkpoint winner when Checkpoint allows any base model', () => {
+    state.selectSource = 'addResource';
+    state.resources = [
+      { type: 'Checkpoint', baseModels: [] },
+      { type: 'LORA', baseModels: ['SDXL 1.0'] },
+    ];
+    const versions = [{ id: WINNER * 10, baseModel: 'Nano Banana', canGenerate: true }];
+    const card = renderPodium([{ id: 11, nsfwLevel: PG }], { versions }, 'Nano Banana');
+    expect(card).not.toBeNull();
+  });
+
+  it('still drops a checkpoint winner outside the base models Checkpoint is limited to', () => {
+    state.resources = [
+      { type: 'Checkpoint', baseModels: ['SDXL 1.0'] },
+      { type: 'LORA', baseModels: ['Nano Banana'] },
+    ];
+    const versions = [{ id: WINNER * 10, baseModel: 'Nano Banana', canGenerate: true }];
+    expect(renderPodium([{ id: 11, nsfwLevel: PG }], { versions }, 'Nano Banana')).toBeNull();
   });
 });
