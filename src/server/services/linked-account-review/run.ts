@@ -6,6 +6,7 @@ import {
   controlState,
   findLinkedGroups,
   groupSignature,
+  type ControlState,
   type Flow,
   type GroupMember,
   type LinkedGroup,
@@ -33,14 +34,17 @@ export type LinkedAccountReviewDeps = {
 export type LinkedAccountReviewResult =
   | { status: 'not-configured'; error: string }
   | { status: 'no-reader' }
+  | { status: 'control-failed'; control: ControlState; counters: Record<string, number> }
   | {
       status: 'dry-run' | 'filed';
-      control: ReturnType<typeof controlState>;
+      control: ControlState;
       counters: Record<string, number>;
       findings: number;
     };
 
 const pct = (f: Flow) => (f.total > 0 ? Math.round((f.toGroup / f.total) * 100) : 0);
+const hasGroupFlow = (m: GroupMember) =>
+  m.stickers.toGroup + m.stickers.fromGroup + m.buzz.toGroup + m.buzz.fromGroup > 0;
 const fmt = (n: number) => n.toLocaleString('en-US');
 
 const LISTED = 25;
@@ -128,7 +132,7 @@ export async function runLinkedAccountReview(
   const withStanding = new Set(standings.map((s) => s.userId));
 
   const notAllExcluded = groups.filter((g) =>
-    g.members.some((m) => m.triggers && !excluded.has(m.userId))
+    g.members.some((m) => hasGroupFlow(m) && !excluded.has(m.userId))
   );
   const lastFiled = await deps.filed.get(notAllExcluded.map(groupSignature));
   const refileBefore = startedAt.getTime() - config.refileDays * DAY_MS;
@@ -183,6 +187,11 @@ export async function runLinkedAccountReview(
     control_unset: control === 'unset' ? 1 : 0,
   };
 
+  if (!dryRun && control !== 'grouped') {
+    deps.log('error', 'linked-account-review-control-failed', { control, ...counters });
+    return { status: 'control-failed', control, counters };
+  }
+
   const summary = dryRun
     ? `Dry run: ${toFile.length} groups (${findings.length} accounts) would be filed. Control: ${control}.`
     : `${toFile.length} linked-account groups (${findings.length} accounts) for review. Control: ${control}.`;
@@ -204,4 +213,12 @@ export async function runLinkedAccountReview(
 
   deps.log('info', 'linked-account-review-run', { control, ...counters });
   return { status: dryRun ? 'dry-run' : 'filed', control, counters, findings: findings.length };
+}
+
+export function failUnlessRan(result: LinkedAccountReviewResult) {
+  if (result.status === 'control-failed')
+    throw new Error(`linked-account-review filed nothing: control ${result.control}`);
+  if (result.status === 'not-configured' || result.status === 'no-reader')
+    throw new Error(`linked-account-review did not run: ${result.status}`);
+  return result;
 }

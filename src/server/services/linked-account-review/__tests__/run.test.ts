@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { LinkedAccountReviewConfig } from '../config';
 import type { FlowEdge, SignIn } from '../groups';
 import type { LinkedAccountReader, Standing } from '../read';
-import { runLinkedAccountReview, type FiledStore } from '../run';
+import { failUnlessRan, runLinkedAccountReview, type FiledStore } from '../run';
 
 // Synthetic values throughout; none are the production configuration.
 const CONFIG: LinkedAccountReviewConfig = {
@@ -128,10 +128,10 @@ describe('runLinkedAccountReview', () => {
     expect(reports[0].findings.map((f) => f.userId).sort()).toEqual([E, F]);
   });
 
-  it('skips a group once its triggering members are excluded, whoever else is not', async () => {
+  it('keeps a group whose senders are excluded while its receivers are not', async () => {
     const { reports } = await run({ read: reader({ excluded: [A, B] }) });
-    expect(reports[0].counters).toMatchObject({ skipped_all_excluded: 1 });
-    expect(reports[0].findings.map((f) => f.userId).sort()).toEqual([E, F]);
+    expect(reports[0].counters).toMatchObject({ skipped_all_excluded: 0 });
+    expect(reports[0].findings.map((f) => f.userId).sort()).toEqual([A, B, C, D, E, F]);
   });
 
   it('treats a repeated control id as one account', async () => {
@@ -184,9 +184,33 @@ describe('runLinkedAccountReview', () => {
     }
   });
 
-  it('reports a missing control rather than staying quiet', async () => {
-    const { result, reports } = await run({ config: { controlUserIds: [9001, 9002] } });
-    expect(result).toMatchObject({ control: 'missing' });
+  it.each([
+    ['split', [A, B, C, D, E]],
+    ['missing', [9001, 9002]],
+    ['unset', []],
+    ['unset', undefined],
+  ])('files nothing in file mode when the control is %s', async (state, controlUserIds) => {
+    const filed = memoryFiled();
+    const { result, reports } = await run({ config: { controlUserIds }, filed });
+    expect(result).toMatchObject({ status: 'control-failed', control: state });
+    expect(reports).toEqual([]);
+    expect(filed.data.size).toBe(0);
+  });
+
+  it('fails the job when it filed nothing or could not run', async () => {
+    const failed = await run({ config: { controlUserIds: [] } });
+    expect(() => failUnlessRan(failed.result)).toThrow('control unset');
+    const unconfigured = await run({ config: null });
+    expect(() => failUnlessRan(unconfigured.result)).toThrow('not-configured');
+    const dry = await run({ config: { mode: 'dry-run', controlUserIds: [] } });
+    expect(failUnlessRan(dry.result)).toMatchObject({ status: 'dry-run' });
+  });
+
+  it('still reports the control state on a dry run', async () => {
+    const { result, reports } = await run({
+      config: { mode: 'dry-run', controlUserIds: [9001, 9002] },
+    });
+    expect(result).toMatchObject({ status: 'dry-run', control: 'missing' });
     expect(reports[0].counters).toMatchObject({ control_grouped: 0, control_missing: 1 });
   });
 
@@ -219,7 +243,7 @@ describe('runLinkedAccountReview', () => {
     };
 
     const filed = memoryFiled();
-    const { reports } = await run({ read, filed });
+    const { reports } = await run({ read, filed, config: { controlUserIds: [E, F] } });
     const [report] = reports;
     expect(() => abuseReportInput.parse(report)).not.toThrow();
     expect(report.counters).toMatchObject({

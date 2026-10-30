@@ -2,7 +2,7 @@ import { logToAxiom } from '~/server/logging/client';
 import { decodeRedisString } from '~/server/redis/buffer-decode';
 import { REDIS_SYS_KEYS, sysRedis } from '~/server/redis/client';
 import { createLinkedAccountReader } from '~/server/services/linked-account-review/read';
-import { runLinkedAccountReview } from '~/server/services/linked-account-review/run';
+import { failUnlessRan, runLinkedAccountReview } from '~/server/services/linked-account-review/run';
 import { moderatorApp } from '~/server/services/moderator-app.service';
 import { createJob } from './job';
 
@@ -35,9 +35,7 @@ export const linkedAccountReview = createJob(
       log: (type, name, data) =>
         void logToAxiom({ type, name, ...data }, 'moderation').catch(() => undefined),
     });
-    if (result.status === 'not-configured' || result.status === 'no-reader')
-      throw new Error(`linked-account-review did not run: ${result.status}`);
-    return result;
+    return failUnlessRan(result);
   },
   { lockExpiration: 30 * 60 }
 );
