@@ -15,17 +15,17 @@ export const modelPageTour: StepWithData[] = [
     },
   },
   {
-    target: '[data-tour="model:create"]',
-    title: 'Create with this Resource',
-    content: 'Click here to generate content using this resource!',
-    disableBeacon: true,
-  },
-  {
     target: '[data-tour="model:like"]',
     disableBeacon: true,
     title: 'Like this resource',
     content:
       'Click this button to review the resource positively and add it to your collection of liked models.',
+  },
+  {
+    target: '[data-tour="model:create"]',
+    title: 'Create with this Resource',
+    content: 'Click here to generate content using this resource!',
+    disableBeacon: true,
   },
   {
     target: '[data-tour="model:download"]',

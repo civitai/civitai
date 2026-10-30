@@ -1,16 +1,13 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { imageDetailPreloadUrl } from '~/components/Image/DetailV2/image-detail-main-media';
-import {
-  hasImageDetailQueryFilters,
-  parseImageQueryParams,
-} from '~/components/Image/image-query-params';
 import {
   encodeShellMainImageHeader,
   SHELL_MAIN_IMAGE_HEADER,
 } from '~/components/Shell/shell-page-data';
-import { STORYLINE_CHAPTER_PARAM } from '~/components/Storyline/storyline-mode.utils';
 import { logToAxiom } from '~/server/logging/client';
-import { resolveImageDetailPageData } from '~/server/page-data/image-detail';
+import {
+  imageDetailMainImageUrlFor,
+  startImageDetailPageData,
+} from '~/server/page-data/image-detail';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import type { UserSettingsChat } from '~/server/schema/chat.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -42,6 +39,11 @@ import {
  * It is what the static (viewer-independent) shell of the page reads instead of being rendered
  * per viewer.
  *
+ * Headers (main-image URL, route cookie, `private, no-store`) are flushed once the main image is
+ * decided, so the shell can start the image before the body is done. After the flush the status
+ * is a fixed 200: a later failure ends the response with no body, which `readShellResponse`
+ * treats as unusable; the body goes out with `res.end` because no header can be set.
+ *
  * Built from the same pieces as the render: the page's resolver (`~/server/page-data/image-detail`),
  * the SSG helpers and dehydrate of `createServerSideProps`, and the bootstrap's request builder and
  * seeds (`settingsBootstrapRequest`, `resolveSettingsBootstrapSeeds`). Not shared, and pinned by tests
@@ -50,11 +52,13 @@ import {
  * hand.
  *
  * 🔴 The body is the viewer's own, so every answer — errors included — is `private, no-store`, set
- * first and again just before the body goes out, so a header a procedure wrote on the way cannot
- * survive. Deliberately NOT `PublicEndpoint`, which stamps `public, s-maxage=300`.
+ * first and again just before the headers go out (the flush, or a non-200's `send`), so a header a
+ * procedure wrote on the way cannot survive. Deliberately NOT `PublicEndpoint`, which stamps
+ * `public, s-maxage=300`.
  *
- * The session lookup gets the REAL response: it may roll the session cookie on it, which is the
- * point — a viewer of a shell page has no other request that would.
+ * The session lookup gets the REAL response, and runs before anything else: it may roll the
+ * session cookie on it, which is the point — a viewer of a shell page has no other request that
+ * would — and that cookie is then set before the flush.
  *
  * Gated by the `shell-images` flag: 404 for anyone it is off for. Only the session lookup runs
  * first (the flag is per user); no bootstrap seed and no page data is read for them. It keeps the
@@ -63,18 +67,7 @@ import {
  */
 
 const CACHE_CONTROL = 'private, no-store';
-
-/**
- * Whether the page shows its main image from `image.get` — the row `imageDetailPreloadUrl` builds
- * the URL from. Not when the page's query carries feed filters (`ImageDetailProvider` then shows
- * the `image.getInfinite` row, whose index path has no `name`, so its URL differs), by the page's
- * own rule; nor in storyline mode, whose images come from the storyline's list.
- */
-function mainImageFromImageGet(query: NextApiRequest['query']) {
-  if (query[STORYLINE_CHAPTER_PARAM] !== undefined) return false;
-  const filters = parseImageQueryParams(query);
-  return !hasImageDetailQueryFilters(filters, filters.postId);
-}
+const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
 
 const jsonRoundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
@@ -117,11 +110,46 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       return send(404, { error: 'Not found' });
     }
 
+    const ssg = await getServerProxySSGHelpers({ req, res }, session, { ...flags });
+    const pageData = startImageDetailPageData({
+      ctx: { params: { imageId: req.query.imageId } },
+      ssg,
+      session,
+    });
+    if ('notFound' in pageData) return send(404, { error: 'Not found' });
+
     // The seeds, from the exact request a server render's bootstrap reads (the internal bootstrap
     // host), so the host-derived ones — ToS, announcements — are the page's.
-    const bootstrap = jsonRoundTrip(
-      await resolveSettingsBootstrapSeeds(settingsBootstrapRequest(req), session)
-    );
+    let bootstrapFailed = false;
+    const bootstrapSeeds = resolveSettingsBootstrapSeeds(settingsBootstrapRequest(req), session);
+    bootstrapSeeds.catch(() => {
+      bootstrapFailed = true;
+    });
+    // Not awaited on the early-exit paths below (a 500 before the flush); never let it go unhandled.
+    pageData.result.catch(() => undefined);
+
+    const mainImage = await pageData.mainImage;
+    if (bootstrapFailed) await bootstrapSeeds; // throws: still a 500, nothing flushed yet
+
+    // Per viewer, so a response header and never part of the cached shell HTML.
+    const mainImageUrl = imageDetailMainImageUrlFor({
+      query: req.query,
+      mainImage,
+      viewer: session?.user,
+      canViewNsfw: !!flags.canViewNsfw,
+    });
+    if (mainImageUrl) {
+      res.setHeader(SHELL_MAIN_IMAGE_HEADER, encodeShellMainImageHeader(mainImageUrl));
+    }
+    syncShellRouteCookie(req, res, 'images', !!session?.user, { refresh: true });
+    res.setHeader('Content-Type', JSON_CONTENT_TYPE);
+    // Again, last: a procedure may have written its own on the way here; after the flush nothing
+    // can replace this one.
+    res.setHeader('Cache-Control', CACHE_CONTROL);
+    res.statusCode = 200;
+    res.flushHeaders();
+
+    const bootstrap = jsonRoundTrip(await bootstrapSeeds);
     const { settings } = bootstrap;
 
     let userFeatureFlags: FeatureAccess | undefined;
@@ -135,59 +163,39 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
       chatSettings = resolveChatSettings(settings.chat);
     }
 
-    const ssg = await getServerProxySSGHelpers({ req, res }, session, { ...flags });
-    const result = await resolveImageDetailPageData({
-      ctx: { params: { imageId: req.query.imageId } },
-      ssg,
-      session,
-    });
-    if ('notFound' in result) return send(404, { error: 'Not found' });
-
-    syncShellRouteCookie(req, res, 'images', !!session?.user, { refresh: true });
-
-    // The exact URL the page's main `<img>` will request for THIS viewer, or no header when it
-    // will request none (video, gated, blur-dependent, hidden). The shell's inline head script
-    // preloads it as soon as this response's headers arrive (`shellPageDataPrefetchScript`),
-    // without waiting for the body below. Here and never in the cached shell HTML, which is the
-    // same for every viewer; the response is `private, no-store` like the body.
-    const mainImageUrl = mainImageFromImageGet(req.query)
-      ? imageDetailPreloadUrl({
-          image: result.image,
-          viewer: session?.user,
-          forcedBrowsingLevel: result.forcedBrowsingLevel,
-          canViewNsfw: !!flags.canViewNsfw,
-        })
-      : undefined;
-    if (mainImageUrl) {
-      res.setHeader(SHELL_MAIN_IMAGE_HEADER, encodeShellMainImageHeader(mainImageUrl));
-    }
+    const result = await pageData.result;
 
     // Named one by one, under the `pageProps` names `_app` gives them, so a field the bootstrap
-    // gains later is not published here unreviewed.
-    return send(200, {
-      session,
-      settings,
-      tosMeta: bootstrap.tosMeta,
-      announcements: bootstrap.announcements,
-      following: bootstrap.following,
-      browsingSettingsAddons: bootstrap.browsingSettingsAddons,
-      liveNow: bootstrap.liveNow,
-      navBanners: bootstrap.navBanners,
-      siteAlerts: bootstrap.siteAlerts,
-      flags,
-      userFeatureFlags,
-      chatSettings,
-      region: getRegion(req),
-      adsGated: resolveAdsGated(result, flags),
-      trpcState: dehydrateSsgState(ssg, req.url),
-    });
+    // gains later is not published here unreviewed. ONE write: the body is whole or absent.
+    res.end(
+      JSON.stringify({
+        session,
+        settings,
+        tosMeta: bootstrap.tosMeta,
+        announcements: bootstrap.announcements,
+        following: bootstrap.following,
+        browsingSettingsAddons: bootstrap.browsingSettingsAddons,
+        liveNow: bootstrap.liveNow,
+        navBanners: bootstrap.navBanners,
+        siteAlerts: bootstrap.siteAlerts,
+        flags,
+        userFeatureFlags,
+        chatSettings,
+        region: getRegion(req),
+        adsGated: resolveAdsGated(result, flags),
+        trpcState: dehydrateSsgState(ssg, req.url),
+      })
+    );
   } catch (e) {
     logToAxiom({
       type: 'error',
       name: 'page-data failed',
       route: '/images/[imageId]',
+      // After the flush the client sees a 200 with no body; this is the only place that says so.
+      afterFlush: res.headersSent,
       message: e instanceof Error ? e.message : String(e),
     }).catch(() => undefined);
     if (!res.headersSent) send(500, { error: 'Page data unavailable' });
+    else if (!res.writableEnded) res.end();
   }
 }

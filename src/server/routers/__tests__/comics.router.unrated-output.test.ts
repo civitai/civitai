@@ -84,13 +84,16 @@ function fakeCtx() {
     req: undefined,
     res: { setHeader: () => undefined } as never,
     cache: { edgeTTL: 0 },
-    track: {} as never,
+    track: track as never,
     ip: '127.0.0.1',
     fingerprint: 'test' as never,
   };
 }
 
 const caller = () => comicsRouter.createCaller(fakeCtx() as never);
+
+// The request's tracker: a stored output key is logged through it, so the row keeps the caller's IP.
+const track = { imageUploadRequest: vi.fn(async (_key: string, _userId?: number) => true) };
 
 const output = (id: string, over: Record<string, unknown> = {}) => ({
   type: 'image',
@@ -320,7 +323,9 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
     vi
       .mocked(redisMock.sysRedis.set)
       .mock.calls.filter((c) => String(c[0]).startsWith('system:upload-key-owner:'));
-  const expectEachStoredKeyRecorded = (count: number) => {
+  beforeEach(() => track.imageUploadRequest.mockClear());
+
+  const expectEachStoredKeyRecorded = async (count: number) => {
     expect(storedKeys()).toHaveLength(count);
     expect(recordedOwners()).toEqual(
       storedKeys().map((key) => [
@@ -328,6 +333,9 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
         String(USER_ID),
         { EX: 30 * 24 * 60 * 60 },
       ])
+    );
+    await vi.waitFor(() =>
+      expect(track.imageUploadRequest.mock.calls).toEqual(storedKeys().map((key) => [key, USER_ID]))
     );
   };
 
@@ -337,7 +345,7 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
 
     await caller().pollPanelStatus({ panelId: PANEL_ID });
 
-    expectEachStoredKeyRecorded(1);
+    await expectEachStoredKeyRecorded(1);
   });
 
   it('by the poll of a multi-image panel', async () => {
@@ -346,7 +354,7 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
 
     await caller().pollPanelStatus({ panelId: PANEL_ID });
 
-    expectEachStoredKeyRecorded(2);
+    await expectEachStoredKeyRecorded(2);
   });
 
   it('by the unlock of a single-image panel', async () => {
@@ -355,7 +363,7 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
 
     await caller().unlockPanelGeneration({ panelId: PANEL_ID });
 
-    expectEachStoredKeyRecorded(1);
+    await expectEachStoredKeyRecorded(1);
   });
 
   it('by the unlock of a multi-image panel', async () => {
@@ -373,6 +381,6 @@ describe('comics - a stored output key is recorded as issued to the user', () =>
 
     await caller().unlockPanelGeneration({ panelId: PANEL_ID });
 
-    expectEachStoredKeyRecorded(2);
+    await expectEachStoredKeyRecorded(2);
   });
 });

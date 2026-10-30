@@ -259,6 +259,7 @@ export type ModEndpoint =
   | 'model/unpublish'
   | 'poi-flag/confirm'
   | 'poi-flag/dismiss'
+  | 'poi-flag/flag-match'
   | 'poi-flag/revert'
   | 'restriction/resolve'
   | 'review/delete'

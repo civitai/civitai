@@ -459,7 +459,7 @@ describe('StorylineContinuationQueue', () => {
     queueRows.value = [row(1, 50)];
     const el = render(React.createElement(StorylineContinuationQueue));
 
-    await clickAndSettle(button(el, 'Endorse'));
+    await clickAndSettle(button(el, 'Approve + invite'));
 
     expect(calls).toEqual(['approve:1', 'endorse:7:50', 'success:Accepted and endorsed']);
   });
@@ -469,7 +469,7 @@ describe('StorylineContinuationQueue', () => {
     addCollaborator.fail = true;
     const el = render(React.createElement(StorylineContinuationQueue));
 
-    await clickAndSettle(button(el, 'Endorse'));
+    await clickAndSettle(button(el, 'Approve + invite'));
 
     expect(calls).toEqual(['approve:1', 'endorse:7:50', 'error:Accepted, but not endorsed']);
   });
@@ -563,7 +563,7 @@ describe('StorylineQueueList rows', () => {
       withheld.querySelector('[data-testid="storyline-chapter-image-hidden-label"]')?.textContent
     ).toBe('Preview not available on this site');
     expect(button(withheld, 'Accept').disabled).toBe(false);
-    expect(button(withheld, 'Endorse').disabled).toBe(false);
+    expect(button(withheld, 'Approve + invite').disabled).toBe(false);
   });
 
   it('marks a row in a taken-down storyline and offers no answer to it', () => {
@@ -575,17 +575,13 @@ describe('StorylineQueueList rows', () => {
     expect(held.querySelector('[data-testid="storyline-queue-held-8"]')?.textContent).toContain(
       'once the takedown is lifted'
     );
-    expect(['Accept', 'Endorse', 'Decline'].map((name) => button(held, name).disabled)).toEqual([
-      true,
-      true,
-      true,
-    ]);
+    expect(
+      ['Accept', 'Approve + invite', 'Decline'].map((name) => button(held, name).disabled)
+    ).toEqual([true, true, true]);
     expect(open.querySelector('[data-testid="storyline-queue-held-7"]')).toBeNull();
-    expect(['Accept', 'Endorse', 'Decline'].map((name) => button(open, name).disabled)).toEqual([
-      false,
-      false,
-      false,
-    ]);
+    expect(
+      ['Accept', 'Approve + invite', 'Decline'].map((name) => button(open, name).disabled)
+    ).toEqual([false, false, false]);
   });
 
   it('puts no control inside the cover and does not wrap it in a link', () => {
@@ -603,7 +599,7 @@ describe('StorylineQueueList rows', () => {
     // Nothing from the guard's explainer.
     expect([...card.querySelectorAll('button')].map((node) => node.textContent)).toEqual([
       'Accept',
-      'Endorse',
+      'Approve + invite',
       'Decline',
     ]);
     // The title and the parent chapter; the cover is not a third link.
@@ -640,14 +636,14 @@ describe('StorylineQueueList rows', () => {
   it('will not endorse a row above the ceiling', () => {
     const el = list([{ ...row(3), post: { id: 103, title: 'Too far', nsfwLevel: NsfwLevel.R } }]);
 
-    expect(button(el, 'Endorse').disabled).toBe(true);
+    expect(button(el, 'Approve + invite').disabled).toBe(true);
   });
 
   it('cannot endorse a continuation whose author is gone', () => {
     const el = list([{ ...row(4), placer: null }]);
 
     expect(visibleText(el)).toContain('by Someone');
-    expect(button(el, 'Endorse').disabled).toBe(true);
+    expect(button(el, 'Approve + invite').disabled).toBe(true);
     expect(button(el, 'Accept').disabled).toBe(false);
   });
 
@@ -673,10 +669,10 @@ describe('StorylineContinuationQueue refusals', () => {
     approve.fail = true;
     const el = render(React.createElement(StorylineContinuationQueue));
 
-    await clickAndSettle(button(el, 'Endorse'));
+    await clickAndSettle(button(el, 'Approve + invite'));
 
     expect(calls).toEqual(['approve:1', "error:Couldn't do that"]);
-    expect(button(el, 'Endorse').disabled).toBe(false);
+    expect(button(el, 'Approve + invite').disabled).toBe(false);
   });
 });
 
@@ -817,6 +813,7 @@ describe('StorylineCollaboratorsPanel', () => {
       React.createElement(StorylineCollaboratorsPanel, {
         ownerId: owner,
         collaborators: [{ id: 50, username: 'tehalex' }],
+        pending: [],
         canEndorse: true,
         onAdd: () => undefined,
         onRemove: (userId) => calls.push(`remove:${userId}`),
@@ -843,23 +840,23 @@ describe('StorylineCollaboratorsPanel', () => {
     act(() => button(el, 'Pick user 60').click());
 
     expect(visibleText(el)).toContain(
-      `A storyline can have up to ${STORYLINE_MAX_COLLABORATORS} endorsed collaborators.`
+      `A storyline can have up to ${STORYLINE_MAX_COLLABORATORS} endorsed collaborators, invitations included.`
     );
-    expect(button(el, 'Endorse').disabled).toBe(true);
+    expect(button(el, 'Invite').disabled).toBe(true);
   });
 
   it('endorses the picked user below the cap, then clears the pick', () => {
     const added: number[] = [];
     const el = panel({ onAdd: (user) => added.push(user.id) });
-    expect(button(el, 'Endorse').disabled).toBe(true);
+    expect(button(el, 'Invite').disabled).toBe(true);
 
     act(() => button(el, 'Pick user 60').click());
-    const endorse = button(el, 'Endorse');
+    const endorse = button(el, 'Invite');
     expect(endorse.disabled).toBe(false);
     act(() => endorse.click());
 
     expect(added).toEqual([60]);
-    expect(button(el, 'Endorse').disabled).toBe(true);
+    expect(button(el, 'Invite').disabled).toBe(true);
     expect(el.querySelector('[aria-label="user search"]')).not.toBeNull();
   });
 

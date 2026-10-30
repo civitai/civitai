@@ -206,7 +206,11 @@ import {
   getProfilePicturesForUsers,
   patchUserSettings,
 } from '~/server/services/user.service';
-import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import {
+  bustFetchThroughCache,
+  createCachedObject,
+  fetchThroughCache,
+} from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   anyMetricHidden,
@@ -3132,6 +3136,7 @@ export async function setModelPoi({
   isModerator,
   activity,
   fromAppeal,
+  onlyIf,
 }: SetModelPoiInput & {
   userId: number;
   tracker?: Tracker;
@@ -3139,6 +3144,8 @@ export async function setModelPoi({
   activity?: ModelPoiActivity;
   /** The appeal resolver stamps its own grant and closes the appeal itself afterwards. */
   fromAppeal?: boolean;
+  /** Checked on the locked row: when false nothing is written and this returns null. */
+  onlyIf?: (row: NonNullable<LockedModelRow>) => boolean;
 }) {
   const loadAppealTextHash = () => import('~/server/services/text-scan/actions/appeal-text-hash');
   const stampLift = async () => {
@@ -3155,11 +3162,15 @@ export async function setModelPoi({
   // The ruling is written on its own connection, so it cannot go inside the locked write below.
   const flagged = await dbWrite.model.findUnique({ where: { id }, select: { poi: true } });
   if (!flagged) throw throwNotFoundError(`No model with id ${id}`);
-  const stampedAhead = !poi && flagged.poi && !fromAppeal;
+  // A guarded lift (the queue's revert) may be refused under the lock, so its ruling waits for the
+  // write. Deliberate: the gap only lets a text scan re-flag, which a moderator then sees; stamping
+  // ahead would leave a false ruling on a refused revert.
+  const stampedAhead = !poi && flagged.poi && !fromAppeal && !onlyIf;
   if (stampedAhead) await stampLift();
 
-  const { before, data, result } = await dbWrite.$transaction(async (tx) => {
+  const written = await dbWrite.$transaction(async (tx) => {
     const before = await lockFlagRow(tx, id);
+    if (onlyIf && !onlyIf(before)) return null;
 
     const prevLockedProperties = before.lockedProperties ?? [];
     // A lift keeps whatever a minor flag still locks: the two share nsfw/sfwOnly.
@@ -3190,6 +3201,8 @@ export async function setModelPoi({
     const result = await tx.model.update({ where: { id }, data, select: flagResultSelect });
     return { before, data, result };
   }, lockedWriteOptions);
+  if (!written) return null;
+  const { before, data, result } = written;
   const lifting = !poi && before.poi;
   // The flag landed after the read above: the lift still records the ruling, just after the write.
   // The lift has committed, so a failed stamp must not cost it the follow-up below.
@@ -3318,6 +3331,81 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
   return row && { ...row, meta: row.meta as ModelMeta | null };
 }
 type LockedModelRow = Awaited<ReturnType<typeof lockModelRow>>;
+
+type ContentFlags = { nsfw: boolean; minor: boolean; poi: boolean; sfwOnly: boolean };
+
+/**
+ * The content flags the row holds after this save: what it writes, over the locked row. A save
+ * that changes none of them is let through, so a row already in a refused combination stays
+ * editable.
+ */
+type ContentFlagWrite = { nsfw?: boolean; minor?: boolean; poi?: boolean; sfwOnly?: boolean };
+
+function assertAllowedContentFlags(stored: ContentFlags, data: ContentFlagWrite): ContentFlags {
+  const merged: ContentFlags = {
+    nsfw: data.nsfw ?? stored.nsfw,
+    minor: data.minor ?? stored.minor,
+    poi: data.poi ?? stored.poi,
+    sfwOnly: data.sfwOnly ?? stored.sfwOnly,
+  };
+  const changed = (Object.keys(merged) as (keyof ContentFlags)[]).some(
+    (flag) => merged[flag] !== stored[flag]
+  );
+  if (!changed || !merged.nsfw) return merged;
+  if (merged.poi)
+    throw throwBadRequestError('Mature content depicting actual people is not permitted.');
+  if (merged.minor) throw throwBadRequestError('Mature content depicting minors is not permitted.');
+  if (merged.sfwOnly)
+    throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
+  return merged;
+}
+
+const NO_CONTENT_FLAGS: ContentFlags = { nsfw: false, minor: false, poi: false, sfwOnly: false };
+
+/** The minor and POI flags a save turns on. */
+function raisedRestrictions(stored: ContentFlags, data: { minor?: boolean; poi?: boolean }) {
+  return (['minor', 'poi'] as const).filter((flag) => data[flag] === true && !stored[flag]);
+}
+
+/** Whether the row is minor, POI or SFW-only after this save: the profanity rating stays off it. */
+function holdsRestriction(stored: ContentFlags, data: ContentFlagWrite) {
+  return !!(
+    (data.minor ?? stored.minor) ||
+    (data.poi ?? stored.poi) ||
+    (data.sfwOnly ?? stored.sfwOnly)
+  );
+}
+
+/**
+ * An owner's save that turns minor or POI on takes what those flags carry, as `setModelMinor` and
+ * `setModelPoi` write it, even over a stored nsfw or SFW-only lock. Clearing a locked nsfw this way
+ * also takes the locks those setters add, so undoing it takes a moderator, and returns what it
+ * replaced for the row's meta.
+ */
+function applyRaisedRestrictions(
+  stored: ContentFlags & { lockedProperties?: string[] },
+  data: ContentFlagWrite & { lockedProperties?: string[] }
+): ModelMeta['ownerFlagOverride'] | undefined {
+  const raised = raisedRestrictions(stored, data);
+  if (!raised.length) return;
+  data.nsfw = false;
+  data.sfwOnly = true;
+  const storedLocks = stored.lockedProperties ?? [];
+  if (!stored.nsfw || !storedLocks.includes('nsfw')) return;
+  data.lockedProperties = uniq([
+    ...storedLocks,
+    ...raised.flatMap((flag) =>
+      flag === 'minor' ? MINOR_LOCKED_PROPERTIES : POI_LOCKED_PROPERTIES
+    ),
+  ]);
+  return {
+    at: new Date().toISOString(),
+    flags: raised,
+    prevNsfw: stored.nsfw,
+    prevSfwOnly: stored.sfwOnly,
+    prevLockedProperties: storedLocks,
+  };
+}
 
 /**
  * Whether a moderator's save rules on the nsfw rating: adds or removes the nsfw lock, or changes
@@ -3487,6 +3575,8 @@ export const upsertModel = async (
   }
 
   let profanityAutoNsfw = false;
+  // The save's own nsfw, put back if the transaction finds the profanity nsfw must not apply.
+  let nsfwBeforeProfanity: boolean | undefined;
   if (!isModerator && (await legacyProfanityAutoNsfwApplies('Model', id))) {
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
@@ -3502,9 +3592,13 @@ export const upsertModel = async (
           metrics: evaluation.metrics,
         },
       };
-      // A stored nsfw lock is a moderator's call (minor-flagging sets it false): keep the
-      // detection for review, but never let the filter overturn it.
-      if (!storedLockedProperties.includes('nsfw')) {
+      // A stored nsfw lock is a moderator's call (minor-flagging sets it false), and a minor, POI
+      // or SFW-only model stays SFW: keep the detection for review, but never mark nsfw over them.
+      if (
+        !storedLockedProperties.includes('nsfw') &&
+        !holdsRestriction(beforeUpdate ?? NO_CONTENT_FLAGS, data)
+      ) {
+        nsfwBeforeProfanity = data.nsfw;
         data.nsfw = true;
         data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
         meta = { ...meta, systemNsfwLock: systemNsfwLockMarker('profanity-filter') };
@@ -3532,6 +3626,12 @@ export const upsertModel = async (
   if (!id || templateId) {
     if (!isModerator && data.availability === Availability.Private)
       throw throwBadRequestError('Private models are created from the private model flow.');
+    if (!isModerator) applyRaisedRestrictions(NO_CONTENT_FLAGS, data);
+    assertAllowedContentFlags(NO_CONTENT_FLAGS, data);
+    const createGallerySettings =
+      data.minor || data.sfwOnly
+        ? { ...gallerySettings, level: sfwBrowsingLevelsFlag }
+        : gallerySettings;
 
     const result = await dbWrite.$transaction(
       async (tx) => {
@@ -3541,7 +3641,7 @@ export const upsertModel = async (
             ...data,
             // Publishing goes through model.publish, which enforces what a create would skip.
             status: isModerator ? status : ModelStatus.Draft,
-            gallerySettings,
+            gallerySettings: createGallerySettings,
             meta:
               bountyId || meta
                 ? {
@@ -3690,13 +3790,20 @@ export const upsertModel = async (
           prevGallerySettings;
         if (!isModerator && locked) {
           enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
-          if (profanityAutoNsfw && locked.lockedProperties.includes('nsfw')) {
+          if (
+            profanityAutoNsfw &&
+            (locked.lockedProperties.includes('nsfw') || holdsRestriction(locked, data))
+          ) {
             profanityAutoNsfw = false;
             meta = withoutSystemNsfwLock(meta ?? {});
+            // A locked nsfw was already stripped from the save above.
+            if (!locked.lockedProperties.includes('nsfw')) data.nsfw = nsfwBeforeProfanity;
           } else if (profanityAutoNsfw) {
             data.nsfw = true;
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
+          const ownerFlagOverride = applyRaisedRestrictions(locked, data);
+          if (ownerFlagOverride) meta = { ...(meta ?? {}), ownerFlagOverride };
         }
         if (
           !isModerator &&
@@ -3705,6 +3812,7 @@ export const upsertModel = async (
           data.availability !== locked.availability
         )
           throw throwBadRequestError('A model’s availability changes only through its own flows.');
+        const flags = locked ? assertAllowedContentFlags(locked, data) : undefined;
         let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
         if ((locked?.availability ?? beforeUpdate.availability) === Availability.Private) {
           // `meta` only carries `cannotPromote` for a moderator. While private it is forced on, so the
@@ -3765,7 +3873,9 @@ export const upsertModel = async (
             gallerySettings: {
               ...lockedGallerySettings,
               level:
-                input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : lockedGallerySettings?.level,
+                (flags ?? input).minor || (flags ?? input).sfwOnly
+                  ? sfwBrowsingLevelsFlag
+                  : lockedGallerySettings?.level,
             },
             tagsOnModels: tagsOnModels
               ? {
@@ -5423,6 +5533,136 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
   return settings;
 };
 
+function createVersionModelCache() {
+  return createCachedObject<{ id: number; modelId: number }>({
+    key: `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:version-model`,
+    idKey: 'id',
+    ttl: CacheTTL.week,
+    // A version id not yet created, or not yet on the replica, would otherwise be cached as
+    // modelless and leave the version uncapped once it exists.
+    cacheNotFound: false,
+    // A bust takes effect at once rather than after a stale window: it follows a version moving model.
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => {
+      const versions = await dbRead.modelVersion.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, modelId: true },
+      });
+      return Object.fromEntries(versions.map((version) => [version.id, version]));
+    },
+  });
+}
+let versionModelCacheInstance: ReturnType<typeof createVersionModelCache> | undefined;
+const versionModelCache = () => (versionModelCacheInstance ??= createVersionModelCache());
+
+function createPostVersionCache() {
+  return createCachedObject<{ id: number; modelVersionId: number | null }>({
+    key: `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:post-version`,
+    idKey: 'id',
+    // Short: merging versions re-points their posts.
+    ttl: CacheTTL.hour,
+    // As for versions: a post not yet on the replica must not be remembered as missing.
+    cacheNotFound: false,
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => {
+      const posts = await dbRead.post.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, modelVersionId: true },
+      });
+      return Object.fromEntries(posts.map((post) => [post.id, post]));
+    },
+  });
+}
+let postVersionCacheInstance: ReturnType<typeof createPostVersionCache> | undefined;
+const postVersionCache = () => (postVersionCacheInstance ??= createPostVersionCache());
+/**
+ * Busts again after a delay: a lookup on a lagging replica between the write and the first bust
+ * would otherwise cache the old mapping for the whole TTL.
+ */
+async function bustTwice(bust: () => Promise<void>) {
+  await bust();
+  setTimeout(() => bust().catch(() => null), 5_000).unref?.();
+}
+
+/** For posts re-pointed to another version. */
+export async function bustPostVersionCache(postIds: number[]) {
+  if (postIds.length) await bustTwice(() => postVersionCache().bust(postIds));
+}
+
+/**
+ * The level a request's images may be served at when it selects them by a minor or SFW-only
+ * model: the intersection of each such model's held gallery level, or undefined when none is held.
+ * The model comes from the version and the review as well as `modelId`, because those pick the
+ * images ahead of `modelId`.
+ */
+export async function getHeldGalleryLevel({
+  modelId,
+  modelIds: namedModelIds = [],
+  modelVersionId,
+  modelVersionIds = [],
+  reviewId,
+  postId,
+  postIds = [],
+}: {
+  modelId?: number | null;
+  modelIds?: number[];
+  modelVersionId?: number | null;
+  modelVersionIds?: number[];
+  reviewId?: number | null;
+  postId?: number | null;
+  postIds?: number[] | null;
+}) {
+  // The version, review or post a single selector names must resolve, or nothing is served: one not
+  // yet on the replica can still be found by the image query. Lists (a hub's versions, a page of
+  // posts) are not held to that, so one deleted entry does not empty them; what is gone serves no
+  // images anyway.
+  const requiredVersionIds = new Set<number>();
+  if (modelVersionId) requiredVersionIds.add(modelVersionId);
+  if (reviewId) {
+    const review = await dbRead.resourceReview.findUnique({
+      where: { id: reviewId },
+      select: { modelVersionId: true },
+    });
+    if (!review) return 0;
+    requiredVersionIds.add(review.modelVersionId);
+  }
+  const listedVersionIds = new Set(modelVersionIds);
+  if (postId || postIds?.length) {
+    const ids = new Set(postIds);
+    if (postId) ids.add(postId);
+    const posts = await postVersionCache().fetch([...ids]);
+    if (postId && !posts[postId]) return 0;
+    // A post's version is not required: the replica gets the version before its posts, so a version
+    // missing behind a post it has is one deleted since, which leaves the post on no model.
+    for (const id of ids) {
+      const versionId = posts[id]?.modelVersionId;
+      if (versionId) listedVersionIds.add(versionId);
+    }
+  }
+  const versionIds = new Set([...listedVersionIds, ...requiredVersionIds]);
+
+  const modelIds = new Set(namedModelIds);
+  if (modelId) modelIds.add(modelId);
+  if (versionIds.size) {
+    const versions = await versionModelCache().fetch([...versionIds]);
+    for (const id of requiredVersionIds) if (!versions[id]) return 0;
+    for (const version of Object.values(versions)) modelIds.add(version.modelId);
+  }
+
+  // Bounded: a hub can name dozens of models, and each settings miss rebuilds from the database.
+  const galleries: Awaited<ReturnType<typeof getGallerySettingsByModelId>>[] = [];
+  await limitConcurrency(
+    [...modelIds].map((id) => async () => {
+      galleries.push(await getGallerySettingsByModelId({ id }));
+    }),
+    5
+  );
+  let held: number | undefined;
+  for (const gallery of galleries)
+    if (gallery?.sfwHeld) held = Flags.intersection(held ?? allBrowsingLevelsFlag, gallery.level);
+  return held;
+}
+
 /**
  * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
  * SFW. A setting that allows no SFW level, or none at all, serves SFW: the gallery reads 0 as no cap.
@@ -5969,6 +6209,8 @@ export async function migrateResourceToCollection({
       filteredVersions.map((v) => v.id),
       modelIds
     ),
+    // The versions now belong to new models.
+    bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
   ]);
 
   modelMetrics
@@ -6328,16 +6570,17 @@ export const privateModelFromTraining = async ({
         try {
           if (!locked) throw throwNotFoundError(`No model with id ${id}`);
           assertPrivateFlowPublishable({ ...locked, isModerator: user.isModerator });
+          // Against this locked row as well as the read above: a lock set since then wins.
+          enforceLockedProperties({
+            data,
+            storedLockedProperties: locked.lockedProperties,
+            isModerator: user.isModerator,
+          });
+          assertAllowedContentFlags(locked, { ...data, sfwOnly: true });
         } catch (error) {
           takenDown = true;
           throw error;
         }
-        // Against this locked row as well as the read above: a lock set since then wins.
-        enforceLockedProperties({
-          data,
-          storedLockedProperties: locked.lockedProperties,
-          isModerator: user.isModerator,
-        });
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
         // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.

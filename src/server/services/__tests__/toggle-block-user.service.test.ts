@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { toggleHiddenSchema } from '~/server/schema/user-preferences.schema';
 import { userFollowsCache } from '~/server/redis/caches';
+import { userMetrics } from '~/server/metrics/user.metrics';
 import type * as DbHelpers from '~/server/db/db-helpers';
 
 const { declinePlacementsOnBlock } = vi.hoisted(() => ({
@@ -39,6 +40,12 @@ const userId = 42;
 const targetUserId = 99;
 const engagement = dbMock.dbWrite.userEngagement;
 const where = { userId_targetUserId: { userId, targetUserId } };
+// A block also clears the REVERSE pair's Follow, so "nothing deleted" is asked of the
+// blocker's own pair only.
+const ownPairDeletes = () =>
+  engagement.deleteMany.mock.calls.filter(
+    ([args]) => args?.where?.userId === userId && args?.where?.targetUserId === targetUserId
+  );
 
 const block = (hidden?: boolean) =>
   toggleHidden({ kind: 'blockedUser', data: [{ id: targetUserId }], hidden, userId });
@@ -72,7 +79,7 @@ describe('toggleHidden kind=blockedUser — honours the caller intent', () => {
 
     await block(true);
 
-    expect(engagement.deleteMany).not.toHaveBeenCalled();
+    expect(ownPairDeletes()).toEqual([]);
     expect(engagement.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ where, update: { type: 'Block' } })
     );
@@ -251,6 +258,82 @@ describe('toggleHidden kind=blockedUser — cache invalidation', () => {
   });
 });
 
+describe("toggleHidden kind=blockedUser — removes the blocked user's follow of the blocker", () => {
+  const reverseFollow = { where: { userId: targetUserId, targetUserId: userId, type: 'Follow' } };
+  const spies = () => {
+    vi.spyOn(BlockedUsers, 'refreshCache').mockResolvedValue(undefined);
+    vi.spyOn(BlockedByUsers, 'refreshCache').mockResolvedValue(undefined);
+    return {
+      update: vi.spyOn(userFollowsCache, 'update').mockResolvedValue(true),
+      queue: vi.spyOn(userMetrics, 'queueUpdate').mockResolvedValue(undefined),
+    };
+  };
+
+  it("clears only a reverse Follow and drops the blocker from the blocked user's follow set", async () => {
+    engagement.deleteMany.mockResolvedValue({ count: 1 });
+    const { update, queue } = spies();
+
+    await block(true);
+
+    // Exactly this shape: a delete not scoped to Follow would also take a reverse
+    // Block, which is the blocked user's own safety control.
+    expect(engagement.deleteMany).toHaveBeenCalledWith(reverseFollow);
+    const reverse = update.mock.calls.find(([id]) => id === targetUserId);
+    expect(reverse?.[1]({ userId: targetUserId, follows: [userId, 7] })).toEqual({
+      userId: targetUserId,
+      follows: [7],
+    });
+    expect(queue).toHaveBeenCalledWith([userId, targetUserId]);
+  });
+
+  it('leaves the follow cache and metrics alone when there was no reverse Follow', async () => {
+    const { update, queue } = spies();
+
+    await block(true);
+
+    expect(engagement.deleteMany).toHaveBeenCalledWith(reverseFollow);
+    expect(update.mock.calls.map(([id]) => id)).not.toContain(targetUserId);
+    expect(queue).not.toHaveBeenCalled();
+  });
+
+  it('does not clear it when the Block did not land', async () => {
+    const { Prisma } = await import('@prisma/client');
+    engagement.upsert.mockRejectedValue(
+      new Prisma.PrismaClientKnownRequestError('Unique constraint failed', {
+        code: 'P2002',
+        clientVersion: 'test',
+      })
+    );
+    spies();
+    vi.spyOn(userFollowsCache, 'refresh').mockResolvedValue(undefined);
+
+    await block(true);
+
+    expect(engagement.deleteMany).not.toHaveBeenCalledWith(reverseFollow);
+  });
+
+  it('a failing reverse cleanup still completes the block and refreshes both block caches', async () => {
+    engagement.deleteMany.mockRejectedValue(new Error('connection reset'));
+    vi.spyOn(userFollowsCache, 'update').mockResolvedValue(true);
+    const blocked = vi.spyOn(BlockedUsers, 'refreshCache').mockResolvedValue(undefined);
+    const blockedBy = vi.spyOn(BlockedByUsers, 'refreshCache').mockResolvedValue(undefined);
+
+    await expect(block(true)).resolves.toBeDefined();
+
+    expect(blocked).toHaveBeenCalledWith({ userId });
+    expect(blockedBy).toHaveBeenCalledWith({ userId: targetUserId });
+  });
+
+  it('unblocking does not touch the reverse pair', async () => {
+    engagement.findUnique.mockResolvedValue({ type: 'Block' });
+    spies();
+
+    await block(false);
+
+    expect(engagement.deleteMany).not.toHaveBeenCalledWith(reverseFollow);
+  });
+});
+
 describe('toggleHidden kind=blockedUser — placement cascade', () => {
   it('runs in both directions when the block is established', async () => {
     await block(true);
@@ -386,7 +469,7 @@ describe('toggleHidden kind=blockedUser — hideComments', () => {
     expect(engagement.upsert).toHaveBeenCalledWith(
       expect.objectContaining({ where, create: { userId, targetUserId, type: 'Block' } })
     );
-    expect(engagement.deleteMany).not.toHaveBeenCalled();
+    expect(ownPairDeletes()).toEqual([]);
   });
 
   it('hides only once the block is written', async () => {

@@ -162,6 +162,13 @@ const storylineReadSelect = {
   },
 } satisfies Prisma.StorylineSelect;
 
+/** An invited collaborator has no say until they accept. */
+const acceptedCollaboratorWhere = {
+  acceptedAt: { not: null },
+} satisfies Prisma.StorylineCollaboratorWhereInput;
+const acceptedCollaboratorSql = (alias: string) =>
+  Prisma.sql`${Prisma.raw(alias)}."acceptedAt" IS NOT NULL`;
+
 /**
  * Either user has blocked the other. The placement layer's primary-read check, run on `db` so a
  * caller inside a transaction reads through it.
@@ -564,14 +571,14 @@ export async function assertCanContinueStoryline(
     isBlockedPair(db, parent.userId, placerId),
     db.storylineCollaborator.findUnique({
       where: { storylineId_userId: { storylineId: parent.storylineId, userId: placerId } },
-      select: { userId: true },
+      select: { acceptedAt: true },
     }),
   ]);
   if (ownerBlocked || authorBlocked)
     throw throwBadRequestError('Continuations are not available on this chapter');
 
   const isOwner = placerId === ownerId;
-  const isCollaborator = !isOwner && !!collaborator;
+  const isCollaborator = !isOwner && !!collaborator?.acceptedAt;
   if (parent.storyline.whoCanContinue === 'Collaborators' && !isOwner && !isCollaborator)
     throw throwBadRequestError(STORYLINE_REFUSALS.collaboratorsOnly);
 
@@ -1059,6 +1066,219 @@ export async function deleteStoryline({
   return { id };
 }
 
+export const STORYLINE_CHAPTER_REMOVE_REFUSALS = {
+  firstChapter: "Chapter 1 can't be removed. Delete the storyline instead",
+  hasChildren: 'Other chapters continue from this one, so it cannot be removed',
+  waiting: 'This chapter has a continuation waiting for review; answer it first',
+  paidContinuation: "This chapter's payment hasn't settled yet. Try again once it has",
+  /** A taken-down storyline, and (for its owner) a chapter someone paid to add. */
+  moderatorOnly:
+    "You can't remove this chapter yourself. A moderator can remove it for you; contact support",
+  removed: 'This chapter was already removed',
+} as const;
+
+/**
+ * Takes a chapter out of its storyline for the storyline's owner, the chapter's author or a
+ * moderator. The post is not touched. Only a chapter nothing continues from can go, so no other
+ * chapter loses its way in. The owner's or author's removal deletes the row, with its edges and
+ * reader choices; a moderator's tombstones it, as a placement takedown does, so the row keeps
+ * holding its post and it cannot be submitted again. The placement that added it, if any, is
+ * marked removed; no Buzz moves, as with a moderator's takedown.
+ */
+export async function removeStorylineChapter({
+  chapterId,
+  userId,
+  isModerator,
+}: {
+  chapterId: number;
+  userId: number;
+  isModerator?: boolean;
+}) {
+  const result = await dbWrite.$transaction(async (tx) => {
+    const [found] = await tx.$queryRaw<
+      { storylineId: number; ownerId: number; authorId: number }[]
+    >`
+      SELECT c."storylineId", s."userId" AS "ownerId", c."userId" AS "authorId"
+      FROM "StorylineChapter" c JOIN "Storyline" s ON s.id = c."storylineId"
+      WHERE c.id = ${chapterId}
+    `;
+    if (!found) throw throwNotFoundError('Chapter not found');
+    const { storylineId, ownerId } = found;
+    // Before any lock, so a stranger cannot hold up the storyline; checked again under the locks.
+    if (userId !== ownerId && userId !== found.authorId && !isModerator)
+      throw throwAuthorizationError();
+    // Exclusive against adds, submits, links and moves (`moveStorylineChapter`'s lock). A submit
+    // blocked here still lands on a moderator's tombstone, as on a takedown's, and is refunded by
+    // the orphaned-continuation job.
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean; title: string }[]>`
+      SELECT "tosViolation", title FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
+    `;
+    if (!storyline) throw throwNotFoundError('Chapter not found');
+    // The placement before the chapter, the order a placement takedown (`takeDownApproved`) locks
+    // them in. `placementId` never changes once written.
+    const [unlocked] = await tx.$queryRaw<{ placementId: number | null }[]>`
+      SELECT "placementId" FROM "StorylineChapter" WHERE id = ${chapterId}
+    `;
+    const [placement] =
+      unlocked?.placementId != null
+        ? await tx.$queryRaw<{ status: string; paid: boolean; inFlight: boolean }[]>`
+            SELECT p.status, (NOT p.free AND p.amount > 0) AS paid,
+              ${placementMoneyInFlightSql(Prisma.raw('p'))} AS "inFlight"
+            FROM "Placement" p WHERE p.id = ${unlocked.placementId} FOR UPDATE
+          `
+        : [];
+    const [chapter] = await tx.$queryRaw<
+      {
+        userId: number;
+        depth: number;
+        postId: number | null;
+        placementId: number | null;
+        removedAt: Date | null;
+        createdAt: Date;
+      }[]
+    >`
+      SELECT "userId", depth, "postId", "placementId", "removedAt", "createdAt" FROM "StorylineChapter"
+      WHERE id = ${chapterId} AND "storylineId" = ${storylineId} FOR UPDATE
+    `;
+    if (!chapter) throw throwNotFoundError('Chapter not found');
+
+    const role =
+      userId === ownerId
+        ? 'owner'
+        : userId === chapter.userId
+        ? 'author'
+        : isModerator
+        ? 'moderator'
+        : null;
+    if (!role) throw throwAuthorizationError();
+    if (storyline.tosViolation && role !== 'moderator')
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
+    if (chapter.depth === 0)
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.firstChapter);
+    // Deleting a tombstone would free its post to be submitted again.
+    if (chapter.removedAt) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.removed);
+
+    const [{ hasChildren, waiting }] = await tx.$queryRaw<
+      { hasChildren: boolean; waiting: boolean }[]
+    >`
+      SELECT
+        EXISTS (SELECT 1 FROM "StorylineChapterEdge" WHERE "parentChapterId" = ${chapterId})
+          AS "hasChildren",
+        (
+          EXISTS (
+            SELECT 1 FROM "Placement" pl
+            WHERE pl.surface = 'storyline' AND pl."targetType" = 'post'
+              AND pl."targetId" = ${chapter.postId} AND pl.status = 'pending'
+          )
+          OR EXISTS (SELECT 1 FROM "StorylinePendingChapter" WHERE "parentChapterId" = ${chapterId})
+        ) AS waiting
+    `;
+    if (hasChildren) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.hasChildren);
+    if (waiting) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.waiting);
+    if (placement?.inFlight)
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.paidContinuation);
+    // An owner's or author's removal during an open report is recorded for moderators.
+    const openReportIds =
+      role === 'moderator'
+        ? []
+        : (
+            await tx.$queryRaw<{ id: number }[]>`
+              SELECT r.id FROM "PostReport" pr JOIN "Report" r ON r.id = pr."reportId"
+              WHERE pr."postId" = ${chapter.postId}
+                AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+              UNION
+              SELECT r.id FROM "StorylineReport" sr JOIN "Report" r ON r.id = sr."reportId"
+              WHERE sr."storylineId" = ${storylineId}
+                AND r.status IN (${ReportStatus.Pending}::"ReportStatus", ${ReportStatus.Processing}::"ReportStatus")
+            `
+          ).map((r) => r.id);
+
+    if (chapter.placementId != null) {
+      // The contributor paid the owner to add it; the owner cannot take it back out for free.
+      if (placement?.paid && role === 'owner')
+        throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
+      if (placement?.status === 'approved')
+        await tx.$executeRaw`
+          UPDATE "Placement"
+          SET status = 'removed', "removedBy" = ${role === 'author' ? 'placer' : role},
+            "takenDownAt" = now(), "takenDownById" = ${userId}
+          WHERE id = ${chapter.placementId} AND status = 'approved'
+        `;
+    }
+
+    const parents = await tx.$queryRaw<{ parentChapterId: number }[]>`
+      SELECT "parentChapterId" FROM "StorylineChapterEdge" WHERE "chapterId" = ${chapterId}
+    `;
+    if (role === 'moderator')
+      await tx.$executeRaw`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = ${chapterId}`;
+    else {
+      // Every owner's or author's removal is the same hard delete. When either must be kept for
+      // records, this same statement copies the chapter and the rows its delete cascades to, so the
+      // decision is made at the write. The row is locked, so no child row can join it meanwhile.
+      const kept = Prisma.sql`(${ownerHeldSql(Prisma.sql`${ownerId}::int`)} OR ${ownerHeldSql(
+        Prisma.sql`${chapter.userId}::int`
+      )})`;
+      const ids = Prisma.sql`${ownerId}::int, ${chapter.userId}::int`;
+      await tx.$executeRaw`
+        WITH kept AS (SELECT ${kept} AS kept),
+        chapter AS (
+          INSERT INTO "HeldStorylineChapter" (id, "storylineId", "postId", "userId", depth,
+            "placementId", "createdAt", "removedAt", "ownerId", "authorId")
+          SELECT id, "storylineId", "postId", "userId", depth, "placementId", "createdAt",
+            "removedAt", ${ids}
+          FROM "StorylineChapter" WHERE id = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
+        ),
+        edges AS (
+          INSERT INTO "HeldStorylineChapterEdge" ("storylineId", "chapterId", "parentChapterId",
+            canon, "createdAt", "ownerId", "authorId")
+          SELECT "storylineId", "chapterId", "parentChapterId", canon, "createdAt", ${ids}
+          FROM "StorylineChapterEdge"
+          WHERE "chapterId" = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
+        ),
+        choices AS (
+          INSERT INTO "HeldStorylineBranchChoice" ("userId", "parentChapterId", "chapterId",
+            "createdAt", "updatedAt", "ownerId", "authorId")
+          SELECT "userId", "parentChapterId", "chapterId", "createdAt", "updatedAt", ${ids}
+          FROM "StorylineBranchChoice"
+          WHERE ("chapterId" = ${chapterId} OR "parentChapterId" = ${chapterId}) AND (SELECT kept FROM kept) IS NOT FALSE
+        ),
+        clicks AS (
+          INSERT INTO "HeldStorylineCreateClick" ("userId", "parentChapterId", "createdAt",
+            "ownerId", "authorId")
+          SELECT "userId", "parentChapterId", "createdAt", ${ids}
+          FROM "StorylineCreateClick"
+          WHERE "parentChapterId" = ${chapterId} AND (SELECT kept FROM kept) IS NOT FALSE
+        )
+        DELETE FROM "StorylineChapter" WHERE id = ${chapterId}
+      `;
+    }
+    if (openReportIds.length)
+      await tx.$executeRaw`
+        INSERT INTO "StorylineChapterRemovalHold" ("storylineId", "storylineTitle", "chapterId",
+          "postId", "chapterUserId", depth, "placementId", "parentChapterIds", "chapterCreatedAt",
+          "removedById", "removedByRole", "reportIds")
+        VALUES (${storylineId}, ${storyline.title}, ${chapterId}, ${chapter.postId}, ${
+        chapter.userId
+      }, ${chapter.depth},
+          ${chapter.placementId}, ${parents.map((p) => p.parentChapterId)}::int[],
+          ${chapter.createdAt}, ${userId}, ${role}, ${openReportIds}::int[])
+      `;
+    if (role === 'moderator')
+      await trackModActivity(
+        userId,
+        { entityType: 'storyline', entityId: storylineId, activity: 'removeChapter' },
+        tx
+      );
+    return { storylineId, parentIds: parents.map((p) => p.parentChapterId) };
+  });
+
+  // Committed; stale counts until the entries expire beat reporting the removal as failed.
+  await Promise.all(
+    result.parentIds.map((id) => bustFetchThroughCache(forkCountsKey(id)).catch(() => undefined))
+  );
+  return { storylineId: result.storylineId, chapterId };
+}
+
 /**
  * Makes a post its owner has already published chapter 1 of their empty storyline. The post is
  * held to `createStoryline`'s rules and, like a chapter-1 draft going live (`promotePendingChapter`),
@@ -1395,7 +1615,10 @@ async function assertStorylinePicks(
         },
       },
     }),
-    db.storylineCollaborator.findMany({ where: { storylineId }, select: { userId: true } }),
+    db.storylineCollaborator.findMany({
+      where: { storylineId, ...acceptedCollaboratorWhere },
+      select: { userId: true },
+    }),
   ]);
   const allowedAuthors = new Set([ownerId, ...collaborators.map((c) => c.userId)]);
   const byId = new Map(images.map((image) => [image.id, image]));
@@ -1494,6 +1717,51 @@ export async function addOwnerChapter(input: {
   userId: number;
 }) {
   return dbWrite.$transaction((tx) => writeOwnerChapter(tx, input));
+}
+
+/**
+ * The owner adds a post at the end of the main path: chapter 1 of an empty storyline, else the
+ * canon child of the main path's last chapter. Found here, under the storyline's lock and with no
+ * path cap, not by the client: a stale or capped read would add it as a side branch instead.
+ */
+export async function addOwnerChapterAtEnd({
+  storylineId,
+  postId,
+  userId,
+}: {
+  storylineId: number;
+  postId: number;
+  userId: number;
+}) {
+  const [root] = await dbWrite.$queryRaw<{ id: number }[]>`
+    SELECT id FROM "StorylineChapter" WHERE "storylineId" = ${storylineId} AND depth = 0
+  `;
+  if (!root) return setFirstChapter({ storylineId, postId, userId });
+
+  return dbWrite.$transaction(async (tx) => {
+    await lockStorylineForAdd(tx, storylineId);
+    // One canon child per parent; the step cap only guards against a cycle.
+    const [end] = await tx.$queryRaw<{ id: number }[]>`
+      WITH RECURSIVE main AS (
+        SELECT ${root.id}::int AS id, 1 AS step
+        UNION ALL
+        SELECT e."chapterId", main.step + 1 FROM main
+        JOIN "StorylineChapterEdge" e ON e."parentChapterId" = main.id AND e.canon
+        WHERE main.step < 100000
+      )
+      SELECT id FROM main ORDER BY step DESC LIMIT 1
+    `;
+    const { chapterId } = await writeOwnerChapter(tx, {
+      parentChapterId: end.id,
+      postId,
+      userId,
+    });
+    const [canon] = await tx.$queryRaw<{ canon: boolean }[]>`
+      SELECT canon FROM "StorylineChapterEdge" WHERE "chapterId" = ${chapterId}
+    `;
+    if (!canon?.canon) throw throwBadRequestError('The storyline changed while adding. Try again');
+    return { storylineId, chapterId };
+  });
 }
 
 /** `addOwnerChapter` inside the caller's transaction. */
@@ -1886,17 +2154,17 @@ export async function moveStorylineChapter({
   const result = await dbWrite.$transaction(async (tx) => {
     // Exclusive against links, inserts and other moves, and against adds (`lockStorylineForAdd`):
     // nothing else changes which chapter follows which until the commit.
-    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean }[]>`
-      SELECT "tosViolation" FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
+    const [storyline] = await tx.$queryRaw<{ tosViolation: boolean; title: string }[]>`
+      SELECT "tosViolation", title FROM "Storyline" WHERE id = ${storylineId} FOR NO KEY UPDATE
     `;
     if (!storyline) throw throwNotFoundError('Storyline not found');
     if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
 
     const chapters = await tx.$queryRaw<
-      { id: number; depth: number; userId: number; placementId: number | null }[]
+      { id: number; depth: number; userId: number; placementId: number | null; removed: boolean }[]
     >`
-      SELECT id, depth, "userId", "placementId" FROM "StorylineChapter"
-      WHERE "storylineId" = ${storylineId}
+      SELECT id, depth, "userId", "placementId", "removedAt" IS NOT NULL AS removed
+      FROM "StorylineChapter" WHERE "storylineId" = ${storylineId}
     `;
     const edgeRows = await tx.$queryRaw<{ chapterId: number; parentChapterId: number }[]>`
       SELECT "chapterId", "parentChapterId" FROM "StorylineChapterEdge"
@@ -1920,7 +2188,8 @@ export async function moveStorylineChapter({
     const children = (id: number) => childrenOf.get(id) ?? [];
     const isOwners = (id: number) => {
       const c = byId.get(id);
-      return !!c && c.userId === ownerId && c.placementId == null;
+      // A removed chapter is neither moved nor moved past.
+      return !!c && c.userId === ownerId && c.placementId == null && !c.removed;
     };
     // `next` is in the same run as `id`: the only way on from it, reached by no other way in.
     const linked = (id: number, next: number) =>
@@ -2131,7 +2400,8 @@ export async function getStorylineLinkTargets({
 
 /**
  * The owner only, never a moderator: an endorsed collaborator's priced continuations are approved
- * without review, so endorsing is approving them in advance.
+ * without review, so endorsing is approving them in advance. It invites them: nothing changes for
+ * them, and nobody sees them on the storyline, until they accept (`acceptStorylineInvite`).
  */
 export async function addStorylineCollaborator({
   storylineId,
@@ -2162,9 +2432,40 @@ export async function addStorylineCollaborator({
 
   await dbWrite.storylineCollaborator.upsert({
     where: { storylineId_userId: { storylineId, userId: targetUserId } },
-    create: { storylineId, userId: targetUserId },
+    create: { storylineId, userId: targetUserId, acceptedAt: null },
     update: {},
   });
+}
+
+const INVITE_CLOSED = 'That invitation is no longer open';
+
+/**
+ * The invitee accepts. Declining is `leave` (`removeStorylineCollaborator`), which a muted account
+ * can still reach. A block between the two since the invitation, or a takedown, closes it.
+ */
+export async function acceptStorylineInvite({
+  storylineId,
+  userId,
+}: {
+  storylineId: number;
+  userId: number;
+}) {
+  const storyline = await dbWrite.storyline.findUnique({
+    where: { id: storylineId },
+    select: { userId: true, tosViolation: true },
+  });
+  if (!storyline || storyline.tosViolation) throw throwNotFoundError(INVITE_CLOSED);
+  if (await isBlockedPair(dbWrite, storyline.userId, userId)) {
+    await dbWrite.storylineCollaborator.deleteMany({
+      where: { storylineId, userId, acceptedAt: null },
+    });
+    throw throwNotFoundError(INVITE_CLOSED);
+  }
+  const { count } = await dbWrite.storylineCollaborator.updateMany({
+    where: { storylineId, userId, acceptedAt: null },
+    data: { acceptedAt: new Date() },
+  });
+  if (!count) throw throwNotFoundError(INVITE_CLOSED);
 }
 
 export async function removeStorylineCollaborator({
@@ -2216,7 +2517,7 @@ export async function getStoryline({
       tosViolationByModerator: true,
       user: { select: castUserSelect },
       collaborators: {
-        select: { user: { select: castUserSelect } },
+        select: { acceptedAt: true, user: { select: castUserSelect } },
         orderBy: { createdAt: 'asc' },
       },
     },
@@ -2232,11 +2533,15 @@ export async function getStoryline({
   const root = storyline.chapters[0];
   const shownUser = (u: { id: number; bannedAt: Date | null; deletedAt: Date | null }) =>
     !u.bannedAt && !u.deletedAt && !blockedUserIds.has(u.id);
-  const collaborators = storyline.collaborators
+  const accepted = storyline.collaborators.filter((c) => c.acceptedAt);
+  const collaborators = accepted
     .map((c) => c.user)
     .filter(shownUser)
     .map(toCastUser);
-  const collaboratorIds = new Set(storyline.collaborators.map((c) => c.user.id));
+  const collaboratorIds = new Set(accepted.map((c) => c.user.id));
+  const invitedIds = new Set(
+    storyline.collaborators.filter((c) => !c.acceptedAt).map((c) => c.user.id)
+  );
   const gate = getStorylineImageGate(viewer, browsingLevel, blockedUserIds);
 
   // A contributor is credited only through a chapter this reader would be shown: published,
@@ -2358,6 +2663,15 @@ export async function getStoryline({
       ? ('collaborator' as const)
       : null,
     collaborators,
+    // Invitations not yet accepted: the owner's to see, and the invitee's to answer.
+    pendingCollaborators: isOwnerView
+      ? storyline.collaborators
+          .filter((c) => !c.acceptedAt)
+          .map((c) => c.user)
+          .filter(shownUser)
+          .map(toCastUser)
+      : [],
+    viewerInvited: !!viewer && invitedIds.has(viewer.id),
     contributors: [
       { user: ownerUser, role: 'creator' as const, chapterCount: chaptersBy(ownerUser.id) },
       ...collaborators.map((u) => ({
@@ -3007,7 +3321,7 @@ export async function getStorylineChildren({
 
   const [collaborators, readers] = await Promise.all([
     dbRead.storylineCollaborator.findMany({
-      where: { storylineId: storyline.id },
+      where: { storylineId: storyline.id, ...acceptedCollaboratorWhere },
       select: { userId: true },
     }),
     readersByChapterId ?? getStorylineReaderCounts(chapterId),
@@ -3474,7 +3788,7 @@ async function getChosenStorylineImages(
 /** Deepest offset the most-chapters order pages to. */
 const STORYLINE_FEED_MAX_OFFSET = 1000;
 
-export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open';
+export type StorylineFeedFilter = 'all' | 'ongoing' | 'complete' | 'open' | 'mine';
 export type StorylineFeedSort = 'newest' | 'mostChapters';
 
 /**
@@ -3517,6 +3831,7 @@ export async function getStorylinesInfinite({
   if (excluded.length) where.push(Prisma.sql`st."userId" <> ALL(${excluded}::int[])`);
   if (filter === 'ongoing') where.push(Prisma.sql`st.status = 'Ongoing'`);
   if (filter === 'complete') where.push(Prisma.sql`st.status = 'Complete'`);
+  if (filter === 'mine') where.push(Prisma.sql`st."userId" = ${viewerId}`);
   if (filter === 'open') {
     // A Complete storyline takes no continuations, whatever its space says.
     where.push(Prisma.sql`st.status <> 'Complete'`);
@@ -3524,7 +3839,9 @@ export async function getStorylinesInfinite({
     // Open to this reader: collaborators-only storylines are open only to their collaborators.
     where.push(Prisma.sql`(st."whoCanContinue" = 'Anyone' OR st."userId" = ${viewerId} OR EXISTS (
       SELECT 1 FROM "StorylineCollaborator" sc
-      WHERE sc."storylineId" = st.id AND sc."userId" = ${viewerId}
+      WHERE sc."storylineId" = st.id AND sc."userId" = ${viewerId} AND ${acceptedCollaboratorSql(
+      'sc'
+    )}
     ))`);
   }
   // Newest pages by id (stable while storylines are added); most-chapters by offset, capped,
@@ -3566,7 +3883,9 @@ export async function getStorylinesInfinite({
       st."maxNsfwLevel", st."minorByScan", st."whoCanContinue",
       EXISTS (
         SELECT 1 FROM "StorylineCollaborator" vc
-        WHERE vc."storylineId" = st.id AND vc."userId" = ${viewerId}
+        WHERE vc."storylineId" = st.id AND vc."userId" = ${viewerId} AND ${acceptedCollaboratorSql(
+    'vc'
+  )}
       ) AS "isCollaborator",
       rc."postId" AS "rootPostId", rp."nsfwLevel" AS "rootNsfwLevel",
       rp."publishedAt" AS "rootPublishedAt", rp."tosViolation" AS "rootTosViolation",

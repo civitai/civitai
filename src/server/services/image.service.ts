@@ -1954,6 +1954,8 @@ type GetAllImagesInput = GetInfiniteImagesOutput & {
   // Server-only: the caller takes a post's images in the requested sort (the gallery's post
   // completion), so the feed service may serve `postIds` for the website too.
   postIdsInRequestedSort?: boolean;
+  // Server-only: a hub's held models do not hold this viewer (a moderator on a full credential).
+  holdExempt?: boolean;
   headers?: Record<string, string>; // TODO needed?
   dbTarget?: 'read' | 'write' | 'datapacket';
   signal?: AbortSignal;
@@ -3896,6 +3898,7 @@ type ImageSearchInput = GetInfiniteImagesOutput & {
   newCreatorsMaxFollowers?: number;
   currentUserId?: number;
   isModerator?: boolean;
+  holdExempt?: boolean;
   offset?: number;
   entry?: number;
   blockedFor?: string[];
@@ -4272,6 +4275,7 @@ async function resolvedHubSources(input: ImageSearchInput) {
     hubId: input.hubId,
     userId: input.currentUserId,
     isModerator: input.isModerator,
+    holdExempt: input.holdExempt,
     excludedSources: input.hubExcludedSources,
   });
 }

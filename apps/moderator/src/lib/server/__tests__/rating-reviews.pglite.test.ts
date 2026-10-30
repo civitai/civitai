@@ -90,6 +90,8 @@ const jobs = () =>
 
 const scanned = (textHash: string) => ({ version: 1, labels: {}, textHash });
 
+const KEPT = 'The current rating is right';
+
 describe('resolveRatingReview', () => {
   it('writes the override pair on a post, stamps the scanned text hash, queues the cascade, leaves updatedAt alone', async () => {
     const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 8 });
@@ -145,10 +147,62 @@ describe('resolveRatingReview', () => {
       await seedEntity(db, 'Bounty', { userId: owner, nsfwLevel: 4 })
     );
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment: KEPT, moderatorId: mod })
     ).resolves.toMatchObject({
       status: 'Unactioned',
     });
+  });
+
+  it('refuses to keep a rating as it is without a reason, and writes nothing', async () => {
+    const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4 });
+    const id = await fileReview('Post', postId, 4, 2);
+
+    for (const modComment of [undefined, '', '   '])
+      await expect(
+        service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment, moderatorId: mod })
+      ).rejects.toThrow('Add a reason when keeping the rating as it is');
+    expect((await review(id)).status).toBe('Pending');
+    expect(await countRows(db, 'JobQueue')).toBe(0);
+
+    await expect(
+      service.resolveRatingReview({
+        reviewId: id,
+        appliedLevel: 4,
+        modComment: 'Several images are R',
+        moderatorId: mod,
+      })
+    ).resolves.toMatchObject({ status: 'Unactioned' });
+  });
+
+  it('judges "kept" by what the owner sees: two NSFW levels on a model, or a crucible already at that level', async () => {
+    const modelId = await seedEntity(db, 'Model', { userId: owner, nsfw: true, nsfwLevel: 28 });
+    const model = await fileReview('Model', modelId, 8, 1);
+    await expect(
+      service.resolveRatingReview({ reviewId: model, appliedLevel: 4, moderatorId: mod })
+    ).rejects.toThrow(/Add a reason/);
+
+    // Filed at R, widened to XXX since: applying XXX changes nothing the owner sees.
+    const crucibleId = await seedEntity(db, 'Crucible', {
+      userId: owner,
+      nsfwLevel: 1 | 2 | 4 | 8 | 16,
+    });
+    const crucible = await fileReview('Crucible', crucibleId, 4, 1);
+    await expect(
+      service.resolveRatingReview({ reviewId: crucible, appliedLevel: 16, moderatorId: mod })
+    ).rejects.toThrow(/Add a reason/);
+  });
+
+  it('needs no reason to change the rating, or to close a dispute whose content is gone', async () => {
+    const postId = await seedEntity(db, 'Post', { userId: owner, nsfwLevel: 4 });
+    const raised = await fileReview('Post', postId, 4, 2);
+    await expect(
+      service.resolveRatingReview({ reviewId: raised, appliedLevel: 8, moderatorId: mod })
+    ).resolves.toMatchObject({ status: 'Unactioned' });
+
+    const gone = await fileReview('Post', 999, 4, 2);
+    await expect(
+      service.resolveRatingReview({ reviewId: gone, appliedLevel: 4, moderatorId: mod })
+    ).resolves.toMatchObject({ entityMissing: true });
   });
 
   it('writes resolvedAt as a database-side now(), not a JS Date serialised in the host zone', async () => {
@@ -163,7 +217,7 @@ describe('resolveRatingReview', () => {
       if (e.level === 'query' && /update "RatingReview"/i.test(e.query.sql))
         bound.push(...e.query.parameters);
     });
-    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod });
+    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment: KEPT, moderatorId: mod });
     expect(bound.length).toBeGreaterThan(0);
     expect(bound.some((p) => p instanceof Date)).toBe(false);
   });
@@ -257,7 +311,7 @@ describe('resolveRatingReview', () => {
     });
     const id = await fileReview('Model', modelId, 4, 1);
 
-    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod });
+    await service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment: KEPT, moderatorId: mod });
 
     const [m] = await rows<{ meta: Record<string, unknown>; lockedProperties: string[] }>(
       db,
@@ -531,7 +585,7 @@ describe('resolveRatingReview', () => {
     const id = await fileReview('Crucible', crucibleId, 4, 1);
 
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment: KEPT, moderatorId: mod })
     ).resolves.toMatchObject({ status: 'Unactioned' });
     expect((await crucible(crucibleId)).nsfwLevel).toBe(1 | 4);
   });
@@ -550,7 +604,7 @@ describe('resolveRatingReview', () => {
     const items = await listPending();
     expect(items.find((i) => i.id === id)?.levelOptions).toEqual([1, 2, 4, 8, 16]);
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 16, moderatorId: mod })
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 16, modComment: KEPT, moderatorId: mod })
     ).resolves.toMatchObject({ status: 'Unactioned' });
     expect((await crucible(crucibleId)).nsfwLevel).toBe(all);
   });
@@ -573,7 +627,7 @@ describe('resolveRatingReview', () => {
       service.resolveRatingReview({ reviewId: id, appliedLevel: 1, moderatorId: mod })
     ).rejects.toThrow(/has started/);
     await expect(
-      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, moderatorId: mod })
+      service.resolveRatingReview({ reviewId: id, appliedLevel: 4, modComment: KEPT, moderatorId: mod })
     ).resolves.toMatchObject({ status: 'Unactioned' });
     expect((await crucible(crucibleId)).nsfwLevel).toBe(1 | 4 | 32);
   });

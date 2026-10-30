@@ -190,7 +190,11 @@ beforeEach(() => {
   publishedPost(STRANGER_POST, STRANGER, PG);
   publishedPost(COLLABORATOR_POST, COLLABORATOR, PG);
   publishedPost(STRANGER_X_POST, STRANGER, X);
-  db.insert('storylineCollaborator', { storylineId: STORYLINE, userId: COLLABORATOR });
+  db.insert('storylineCollaborator', {
+    storylineId: STORYLINE,
+    userId: COLLABORATOR,
+    acceptedAt: new Date(),
+  });
 });
 
 describe('the storyline continuation loop', () => {

@@ -23,6 +23,7 @@ import { placementNotifications } from '~/server/notifications/placement.notific
 import {
   storylineNotifications,
   storylineOwnerNotifications,
+  storylineInviteNotifications,
 } from '~/server/notifications/storyline.notifications';
 import { creatorsProgramNotifications } from '~/server/notifications/creators-program.notifications';
 import { featuredNotifications } from '~/server/notifications/featured.notifications';
@@ -75,6 +76,7 @@ export const notificationProcessors = {
   ...placementNotifications,
   ...storylineNotifications,
   ...storylineOwnerNotifications,
+  ...storylineInviteNotifications,
   ...buzzNotifications,
   ...collectionNotifications,
   ...imageNotifications,

@@ -7,8 +7,13 @@ import type { SiteAppealResolution } from '../site-appeals.service';
 import { REMOVED_APPEALS_PATH, appealQueuePath, classifyAppeal } from '$lib/tickets/appeals';
 import { SITE_APPEAL_QUEUES } from '$lib/site-appeals';
 import type { SiteAppealCategory } from '@civitai/shared/site-appeal';
-import { DECIDED, NOT_PERMITTED, loadOwnedAppeal, type AppealWriteRow } from './appeal-write';
-import { addTicketNote, checkTicketTarget, type TicketActionDeps } from './panel-write';
+import { DECIDED, loadOwnedAppeal, type AppealWriteRow } from './appeal-write';
+import {
+  NOT_PERMITTED,
+  addTicketNote,
+  checkTicketTarget,
+  type TicketActionDeps,
+} from './panel-write';
 
 export type QueueAppealWriteDeps = TicketActionDeps & {
   /** Reads the ticket as an account ticket: the Account card is where an Account appeal is decided. */

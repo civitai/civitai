@@ -68,6 +68,7 @@ const PACKAGE_EXPORTS = {
   './tag': './src/tag.db.ts',
   './image-removal-confirmation': './src/image-removal-confirmation.db.ts',
   './evidence-hold': './src/evidence-hold.db.ts',
+  './csam-queue': './src/csam-queue.db.ts',
   './test-harness': './src/test/compile-harness.ts',
 };
 

@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   user: null as { id: number; isModerator?: boolean } | null,
   storylines: true,
   openStart: vi.fn(),
+  openAdd: vi.fn(),
 }));
 
 vi.mock('~/utils/trpc', async (importOriginal) => {
@@ -40,10 +41,14 @@ vi.mock('~/providers/FeatureFlagsProvider', async (importOriginal) => ({
 vi.mock('~/components/Storyline/StartStorylineModal', () => ({
   openStartStorylineModal: mocks.openStart,
 }));
+vi.mock('~/components/Storyline/AddToStorylineModal', () => ({
+  openAddToStorylineModal: mocks.openAdd,
+}));
 
 const OWNER = 7;
 const post = { id: 41, title: 'Cat patch', nsfwLevel: 1, publishedAt: new Date('2026-01-01') };
 const START = 'Make this chapter 1 of a storyline';
+const ADD = 'Add to a storyline';
 
 const inOpenMenu = (ui: React.ReactElement) => (
   <Menu opened>
@@ -60,6 +65,7 @@ beforeEach(() => {
   mocks.user = { id: OWNER };
   mocks.storylines = true;
   mocks.openStart.mockReset();
+  mocks.openAdd.mockReset();
   vi.mocked(useRouter().push).mockClear();
 });
 
@@ -72,6 +78,15 @@ describe('post menu entry', () => {
     // The router is the shared component-setup stub.
     expect(useRouter().push).toHaveBeenCalledWith('/storylines/2');
     expect(page.getByRole('menuitem', { name: START }).elements()).toHaveLength(0);
+    expect(page.getByRole('menuitem', { name: ADD }).elements()).toHaveLength(0);
+  });
+
+  // Only "start one" was offered: a post could not be added to a storyline that already existed.
+  test('a post that is not a chapter can be added to one of your storylines', async () => {
+    renderWithProviders(inOpenMenu(<StartStorylineMenuItem post={post} />));
+
+    await page.getByRole('menuitem', { name: ADD }).click();
+    expect(mocks.openAdd).toHaveBeenCalledWith(post);
   });
 
   test('a post that is not a chapter starts a storyline from it', async () => {

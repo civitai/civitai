@@ -23,12 +23,16 @@ export const confirmMinorFlag = (modelId: number): Promise<ActionResult> =>
 export const dismissMinorHashMatch = (modelId: number): Promise<ActionResult> =>
   toResult(callModEndpoint('minor-flag/dismiss', { modelId }, 'Dismiss match'));
 
-/** The real-person half: set-poi applies the flag with every restriction it carries (and takes the
- *  model off the match queue); the hash flag's own endpoints sign it off, roll it back and drop a lead.
- *  Those three answer 200 with a 0 count when there was nothing to act on, which is reported as a
- *  failure rather than as done. */
+/** The real-person half: flag-match applies the flag to a model still waiting on a match (and takes
+ *  it off the queue); the hash flag's own endpoints sign it off, roll it back and drop a lead. All four
+ *  answer 200 with a 0 count when there was nothing to act on, which is reported as a failure rather
+ *  than as done. */
 export const setModelPoiFlag = (modelId: number): Promise<ActionResult> =>
-  toResult(callModEndpoint('model/set-poi', { modelId, poi: true }, 'Flag as real person'));
+  toCountedResult(
+    callModEndpoint('poi-flag/flag-match', { modelId }, 'Flag as real person'),
+    'flagged',
+    'Nothing was flagged: this model is no longer waiting on a real-person match. Reload the queue.'
+  );
 
 export const confirmPoiFlag = (modelId: number): Promise<ActionResult> =>
   toCountedResult(

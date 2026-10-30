@@ -7,6 +7,7 @@
  * Client-safe on purpose: the server resolves the flag, and passes the answer down as a boolean.
  */
 
+import { isGenerationEligible } from '@civitai/shared/generation-eligibility';
 import { and, eq, ne, or } from '~/shared/utils/meili-filter';
 
 export type CoverageIndexField = 'canGenerate' | 'canGenerateNext';
@@ -31,6 +32,46 @@ export function versionGeneratableFor(
   return (
     versionCanGenerate(version, false) || (!!version.canGenerateNext && !!version.generatorLoaded)
   );
+}
+
+/** The per-version eligibility both models-index writers store, read back by `versionGeneratableFor`. */
+export function indexedVersionEligibility(
+  version: {
+    generationCoverage?: { covered?: boolean | null; coveredNext?: boolean | null } | null;
+    baseModel: string;
+    flags: number;
+  },
+  modelType: Parameters<typeof isGenerationEligible>[0]['modelType']
+) {
+  const { generationCoverage: coverage, baseModel, flags } = version;
+  const eligible = (covered: boolean | null | undefined) =>
+    isGenerationEligible({ covered, coveredLive: coverage?.covered, baseModel, modelType, flags });
+  return {
+    canGenerate: eligible(coverage?.covered),
+    canGenerateNext: eligible(coverage?.coveredNext),
+  };
+}
+
+/**
+ * A search hit's Create, judged on `hit.version` because that is the version the card's button
+ * opens. The model-level `canGenerate` is any version, on the live rule only.
+ */
+export function searchHitCanGenerate(
+  hit: {
+    type: string;
+    version: { id: number };
+    versions?: {
+      id: number;
+      canGenerate?: boolean;
+      canGenerateNext?: boolean;
+      generatorLoaded?: boolean;
+    }[];
+  },
+  audience: { coverageNext?: boolean; member: boolean }
+) {
+  const version = hit.versions?.find((v) => v.id === hit.version.id);
+  if (!version) return false;
+  return versionGeneratableFor(version, { ...audience, isCheckpoint: hit.type === 'Checkpoint' });
 }
 
 /**

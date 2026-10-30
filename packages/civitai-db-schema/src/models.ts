@@ -6701,6 +6701,23 @@ export interface StorylineChapterEdge {
   createdAt: Date;
 }
 
+export interface StorylineChapterRemovalHold {
+  id: number;
+  storylineId: number;
+  storylineTitle: string;
+  chapterId: number;
+  postId: number | null;
+  chapterUserId: number;
+  depth: number;
+  placementId: number | null;
+  parentChapterIds: number[];
+  chapterCreatedAt: Date;
+  removedById: number;
+  removedByRole: string;
+  reportIds: number[];
+  createdAt: Date;
+}
+
 export interface ImageCaption {
   imageId: number;
   image?: Image;
@@ -6718,6 +6735,7 @@ export interface StorylineCollaborator {
   userId: number;
   user?: User;
   createdAt: Date;
+  acceptedAt: Date | null;
 }
 
 export interface StorylineBranchChoice {
@@ -7012,6 +7030,7 @@ export interface Crucible {
   seededPrizePool: number;
   prizePool: number;
   entryLimit: number;
+  ownerRemovalCount: number;
   freeEntriesPerUser: number;
   maxTotalEntries: number | null;
   entryWarningPercent: number;

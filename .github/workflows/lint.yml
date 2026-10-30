@@ -132,9 +132,45 @@ name: Lint
 # required_status_checks, so no PR waits on a check that never starts. If one
 # of these jobs ever becomes a required check, a docs-only PR would hang on it
 # and this filter must go (or the check must be made path-aware).
+#
+# ── DRAFT PRs RUN ESLINT ONLY ────────────────────────────────────────────────
+#
+# Every job but `eslint` carries `github.event_name != 'pull_request' ||
+# !github.event.pull_request.draft || <the PR has the full-ci label>` in its `if`
+# (`unit` has a stricter gate that implies it), so on a draft they skip and start
+# when the PR is marked ready, or when it gets the `full-ci` label (below). Measured over 24h (2026-10): 92 of 308 PR
+# Lint runs (30%), about 31% of PR job-minutes, ran while the PR was a draft,
+# mostly agents iterating, on the same concurrent-job limit as everything else.
+# Push and dispatch runs are unaffected.
+#
+# `types` must list `ready_for_review`: the default list (opened, synchronize,
+# reopened) omits it, so without it marking a PR ready would start nothing and
+# the heavy jobs would wait for the next push.
+#
+# WANT A VERDICT ON A DRAFT? Dispatch the job on your branch:
+#   gh workflow run lint.yml -R civitai/civitai --ref <branch> -f only=<job>
+# (`only` choices below; `all` runs everything but ESLint). The app suites live
+# in apps.yml: `gh workflow run apps.yml -R civitai/civitai --ref <branch>`.
+#
+# ── THE `full-ci` LABEL RUNS THE FULL SUITE ON A PR ─────────────────────────
+#
+# With the `full-ci` label on a PR (draft or not), every PR run here includes the
+# four `Unit tests` shards and the draft ESLint-only gate is lifted: the `if`s read
+# `github.event.pull_request.labels`, the PR's CURRENT label set, on every
+# opened/synchronize/reopened/ready_for_review run until the label is removed.
+# apps.yml honours the same label, behind its own `paths:` filter. To get it on
+# every PR:
+#   gh pr create ... --label full-ci     or     gh pr edit <n> --add-label full-ci
+#
+# ADDING the label does not fire this workflow: `types` deliberately omits
+# `labeled`. full-ci.yml listens for it and DISPATCHES this workflow (`only: all`)
+# and apps.yml on the PR branch, so the full suite starts at once; read its header
+# for why (a run started by any other label overlays the PR's real check results).
+# scripts/__tests__/full-ci-label.test.ts pins this shape.
 on:
   pull_request:
     branches: [main, release]
+    types: [opened, synchronize, reopened, ready_for_review]
     paths:
       - '**'
       - '!docs/**'
@@ -149,20 +185,21 @@ on:
       - 'docs/dev/convention-guards.md'
   # `only` runs one suite (or one unit shard) instead of the whole fan-out, for
   # dispatches that care about a single suite. Every job's `if` reads it, and so
-  # does every suite step in a job that hosts several (`packages` hosts
-  # apps-typecheck; `component` hosts geometry and the quarantine run). On
-  # pull_request and push `inputs.only` is empty, so it narrows nothing: what runs
-  # there is decided by each job's or step's own event gate (`unit` and the
-  # quarantine step skip pull requests; ESLint is PR-only; typecheck runs where
-  # Tekton does not).
+  # does every suite step in a job that hosts several (`component` hosts geometry
+  # and the quarantine run). On pull_request and push `inputs.only` is empty, so
+  # it narrows nothing: what runs there is decided by each job's or step's own
+  # event gate (`unit` skips pull requests without the `full-ci` label and the
+  # quarantine step skips all of them; ESLint is PR-only; typecheck runs where
+  # Tekton does not; drafts run ESLint only unless labeled `full-ci`).
   # The ESLint job is PR-only and never runs on a dispatch, so it is not listed.
+  # The app suites moved to apps.yml, which has its own dispatch.
   workflow_dispatch:
     inputs:
       only:
         description: >-
           Run only this suite. all = every suite (default). typecheck, unit (all 4
-          shards), unit-1 .. unit-4 (one shard), packages, apps, apps-typecheck,
-          geometry, component (includes the quarantine run).
+          shards), unit-1 .. unit-4 (one shard), packages, geometry, component
+          (includes the quarantine run). App suites: dispatch apps.yml.
         type: choice
         default: all
         options:
@@ -174,8 +211,6 @@ on:
           - unit-3
           - unit-4
           - packages
-          - apps
-          - apps-typecheck
           - geometry
           - component
 
@@ -195,6 +230,10 @@ permissions:
 # verdict; what is given up is a per-commit verdict for intermediate commits,
 # which show as `cancelled`. To pin a break to one of them, push a branch at
 # that commit and dispatch this workflow on it (`only` narrows it to one suite).
+#
+# A `ready_for_review` run shares the PR's `refs/pull/N/merge` group, so it
+# cancels a still-running draft ESLint run. That is fine: the ready run runs
+# ESLint again along with everything else.
 #
 # A workflow_dispatch run groups by ref AND by the `only` input, so a new
 # dispatch of the same suite on the same branch cancels the stale one, while
@@ -229,13 +268,18 @@ jobs:
     # it rather than letting a config PR time out with no verdict.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
-      - uses: pnpm/action-setup@v4
+      # pnpm/action-setup installs the version `packageManager` in package.json pins.
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      # `cache: pnpm` (the pnpm store, keyed on the lockfile) is the ONLY dependency cache in
+      # every workflow here. setup-node's automatic caching (`package-manager-cache`, v5+)
+      # applies only when `packageManager` names npm, and pnpm/action-setup's own `cache` input
+      # defaults to false, so neither adds a second one.
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -423,13 +467,19 @@ jobs:
     # 2026-08-07 via the branch-protection API, re-verified 2026-08-21), so no
     # merge gate keys on the old name.
     #
-    # The trailing `only` clause is the workflow_dispatch selector (see `on:`);
-    # it is true on every other event, so the three disjuncts above are unchanged.
+    # The `only` clause is the workflow_dispatch selector (see `on:`); it is true
+    # on every other event, so the three disjuncts above are unchanged. The next
+    # clause skips draft PRs unless they carry the `full-ci` label (see the header);
+    # it is true on push and dispatch. It does not widen the three disjuncts:
+    # `full-ci` does not make an internal PR into `main` run this job on the PR
+    # run. (The full-ci.yml DISPATCH does run it: on workflow_dispatch the PR
+    # disjuncts compare null, which is true, as the note below explains.)
     if: >-
       (github.event_name == 'push'
       || github.event.pull_request.head.repo.full_name != github.repository
       || github.event.pull_request.base.ref != 'main')
       && (!inputs.only || inputs.only == 'all' || inputs.only == 'typecheck')
+      && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci'))
     # event-engine-common is public and fetched over HTTPS, so this needs no
     # secret — which is why the ssh-agent step is gone rather than merely unused.
     # Leaving it in would have kept the fork case broken AND masked the HTTPS
@@ -439,13 +489,13 @@ jobs:
     # the new HTTPS URL back over SSH.
     timeout-minutes: 25
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -477,11 +527,13 @@ jobs:
     # calls itself the canonical fix; 98-102 is a separate hookTimeout fix.
     # Don't cite a cold-cache flake as a reason to keep this job Chromium-free.
     #
-    # ── NOT RUN ON PULL REQUESTS; REAL VERDICT ON `main` AND ON DISPATCH ──────
+    # ── NOT RUN ON PULL REQUESTS UNLESS ASKED; REAL VERDICT ON `main` AND ON DISPATCH ──
     #
-    # The `if` below skips this job on `pull_request`. It runs on every push to
-    # `main` (blocking in the sense every other job is: it renders red; `main` has
-    # no required checks) and on `workflow_dispatch`, where `only` still selects it.
+    # The `if` below skips this job on `pull_request` unless the PR carries the
+    # `full-ci` label (draft or not; every push while the label is on runs it — see
+    # the header). It runs on every push to `main` (blocking in the sense every other
+    # job is: it renders red; `main` has no required checks) and on
+    # `workflow_dispatch`, where `only` still selects it.
     #
     # Why, measured over 24h (448 Lint runs, 2026-10): these four shards were 59% of
     # all Lint job-minutes, ~12,400 of ~21,000, ~10,000 of it on PRs. The plan's
@@ -497,8 +549,9 @@ jobs:
     # (`src/server/services/__tests__/no-*.test.ts`) run inside this suite, so they
     # move to `main` with it.
     #
-    # WANT A VERDICT BEFORE MERGING? Dispatch this workflow on your branch with
-    # `only: unit` (all four shards) or `only: unit-<n>` (one):
+    # WANT A VERDICT BEFORE MERGING? Add the `full-ci` label to the PR
+    # (`gh pr edit <n> --add-label full-ci`), or dispatch this workflow on your
+    # branch with `only: unit` (all four shards) or `only: unit-<n>` (one):
     #   gh workflow run lint.yml --ref <branch> -f only=unit
     # Or run `pnpm run test:unit:run` locally, which the root CLAUDE.md already asks for.
     #
@@ -516,8 +569,9 @@ jobs:
     # disbelieved; scripts/__tests__/main-branch-ci-coverage.test.ts forbids an
     # unconditionally report-only job on the push path). With no PR runs that
     # expression is always false, and a dead PR clause only suggests PRs are still
-    # covered. If PR runs come back, deciding whether they block is part of that
-    # change, not something to inherit from here.
+    # covered. The `full-ci` label brought PR runs back on request, and they are
+    # NOT report-only either: someone asked for a verdict, so a red suite renders
+    # red on the PR (it still blocks no merge; no required checks).
     #
     # Reading a run: with no `continue-on-error`, the job and run conclusions now
     # carry the suite's verdict. Before 2026-10 a PR run read `success` while the
@@ -527,7 +581,10 @@ jobs:
     # `only: unit` runs all four shards; `only: unit-<n>` runs that shard alone
     # (the matrix below narrows to it). The job-level `if` cannot read `matrix`,
     # which is why the shard pick lives in the matrix expression instead.
-    if: ${{ github.event_name != 'pull_request' && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
+    #
+    # The first clause is the PR gate (no draft clause: a labeled PR runs it as a
+    # draft too).
+    if: ${{ (github.event_name != 'pull_request' || contains(github.event.pull_request.labels.*.name, 'full-ci')) && (!inputs.only || inputs.only == 'all' || inputs.only == 'unit' || startsWith(inputs.only, 'unit-')) }}
     # ── SHARDED ACROSS 4 RUNNERS ────────────────────────────────────────────
     #
     # Measured before the change, n=12 runs of this job, from the Actions API:
@@ -543,12 +600,13 @@ jobs:
     # So T(N) = 66.5 + 555.5/N:  1 -> 10.4m, 2 -> 5.7m, 3 -> 4.2m, 4 -> 3.4m,
     # 6 -> 2.7m, 8 -> 2.3m. Runner-minutes go 10.4 -> 13.7 at N=4 (+32%).
     #
-    # 🔴 WHY 4 AND NOT MORE. The apps job was 2.9m (2026-08-25). At N=4 this
-    # job lands at ~3.4m and at N=5 it reaches parity, so past N=5 sharding
-    # optimises something that is NO LONGER THE BOTTLENECK — the run's critical
-    # path floors at ~2.9m however far you go. Raising this number without
-    # first making the other jobs faster buys wall-clock nothing and costs
-    # runner-minutes linearly.
+    # 🔴 WHY 4 AND NOT MORE. The curve is already flat at 4: the fifth shard saves
+    # ~0.5m of wall clock (3.4m -> 3.0m) and the sixth ~0.3m, while EVERY shard adds
+    # the 66.5s fixed overhead to runner-minutes (13.7m at N=4, 14.8m at N=5) and
+    # takes one more slot of the plan's org-wide concurrent-job limit, which this
+    # workflow already saturates — so each extra shard queues someone else's job
+    # for longer than it saves this one. Shrink the fixed overhead or the suite
+    # before raising this number.
     #
     # BALANCE: ASSUMED BEFOREHAND, NOW MEASURED. `--shard` is not cost-aware and
     # this suite's cost is bimodal (p50 66 modules per file, p75 1088 — see
@@ -625,13 +683,13 @@ jobs:
       # Likewise for the kysely-hot-reads-6 suite (its own `hot_reads_6_parity` schema).
       KYSELY_HOT_READS_6_PARITY_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -660,10 +718,12 @@ jobs:
       # optimize pass happens within a run; it does not carry anything between
       # runs.)
       #
-      # 🔴 RESTORE ALWAYS, SAVE ONLY ON A PUSH TO `main`. This job no longer runs
-      # on pull requests (see the job comment), so the readers are the next push
-      # to `main` and a `workflow_dispatch` on any branch, which can read the
-      # default branch's scope. A dispatch must not save: an entry saved on a
+      # 🔴 RESTORE ALWAYS, SAVE ONLY ON A PUSH TO `main`. This job runs on a pull
+      # request only when it carries the `full-ci` label (see the job comment), so
+      # the readers are the next push to `main`, a `workflow_dispatch` on any
+      # branch (full-ci.yml dispatches one) and a labeled PR, all of which can read
+      # the default branch's scope.
+      # A dispatch or a PR must not save: an entry saved on a
       # feature branch is scoped to that ref, readable by nothing else, and counts
       # against the same 10 GB repo budget as everything useful — the leak a
       # sibling change once cleaned up (20 orphans, 9.65 GB, 95.3% of the budget).
@@ -680,7 +740,7 @@ jobs:
       # first push to `main` with that lockfile saves the new key.
       - name: Restore Vite pre-bundle cache
         id: vite-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@v6
         with:
           path: node_modules/.vite
           key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -713,7 +773,7 @@ jobs:
       # this bug the four `Unit tests` steps took 7m30s-9m54s each, which is the
       # tell. The assert step below is what caught it, on its first live run.
       #
-      # The sibling `packages` / `apps` jobs have always used this separator-less
+      # The `packages` job (and the app suites in apps.yml) have always used this separator-less
       # form; copy them, not the shell habit.
       - name: Unit tests
         run: pnpm run test:unit:run --shard=${{ matrix.shard }}/4 --reporter=default --reporter=json --outputFile=unit-report.json
@@ -749,7 +809,7 @@ jobs:
       - name: Save Vite pre-bundle cache
         if: ${{ !cancelled() && github.event_name == 'push' && steps.vite-cache.outputs.cache-hit != 'true' }}
         continue-on-error: true
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@v6
         with:
           path: node_modules/.vite
           key: vite-unit-${{ runner.os }}-${{ runner.arch }}-${{ matrix.shard }}-${{ hashFiles('pnpm-lock.yaml') }}
@@ -757,12 +817,9 @@ jobs:
   packages:
     name: Package unit tests
     runs-on: ubuntu-latest
-    # Two suites in one job: the package suites (`only: packages`) and the app typecheck
-    # (`only: apps-typecheck`, the `Typecheck apps` step at the end). Every step below carries
-    # the selector for its own suite, so a dispatch of one skips the other's steps. The job
-    # keeps the `Package unit tests` name other docs cite; a red typecheck is attributed by its
-    # step name, `Typecheck apps`.
-    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'packages' || inputs.only == 'apps-typecheck' }}
+    # Skips draft PRs unless they carry the `full-ci` label (see the header). The app typecheck that rode here moved to apps.yml with
+    # the app suites, so this job is the package suites plus the install-time asserts below.
+    if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'packages') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # The `packages/*` suites — 616 tests when this job was added, which until then NO CI job ran.
     # The `unit` job above runs `vitest run --project unit`, whose `include` is root-relative
     # (`src/**`, `scripts/**`), so nothing in this repo ever invoked a workspace package's
@@ -791,33 +848,19 @@ jobs:
     # (kysely-prisma-parity and image-generation-data.kysely-parity), which self-skip without
     # KYSELY_PARITY_DATABASE_URL.
     #
-    # ── THE APP TYPECHECK RIDES HERE, AND WHY IT IS NOT ITS OWN JOB ANY MORE ──────────────
-    #
-    # It was the `apps-typecheck` job: a short `tsc` behind a full checkout + install, and the
-    # plan's org-wide concurrent-job limit is what this workflow saturates, so every job a run
-    # starts queues someone else's. Both suites are blocking and small, so they share one
-    # install. Its step is `!cancelled()` and the package ledger is `always()`, so a red in
-    # either still lets the other report.
-    #
-    # 🔴 THE TIMEOUT IS SHARED NOW, WHICH IS EXACTLY WHAT ONCE CANCELLED THIS TYPECHECK. It
-    # left the `apps` job because that job's tests grew into the shared timeout and killed a
-    # short typecheck. This job is the opposite shape (both halves are short), and 20m leaves
-    # several times the combined runtime as headroom. Re-read the step durations if either half
-    # grows toward it, and split them again rather than raising the limit blind.
+    # 20m is several times the runtime (package suites ~30s, install ~40s, 2026-10-29). If it
+    # ever approaches that, re-read the step durations rather than raising it blind.
     timeout-minutes: 20
-    # Per-suite selectors, evaluated once so each step's `if` reads a name rather than
-    # repeating the `only` expression. They render as the strings 'true' / 'false'.
-    env:
-      SUITE_PACKAGES: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'packages' }}
-      SUITE_APPS_TYPECHECK: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'apps-typecheck' }}
     steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
+      # No `submodules: true`: nothing this job runs reads event-engine-common. No file
+      # under `packages/` imports it, the submodule is not a pnpm workspace member, and the
+      # import closure of the tag-index decode worker the step below bundles does not reach
+      # it. The `typecheck`, `unit` and `component` jobs do read it and keep the checkout.
+      - uses: actions/checkout@v7
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -830,7 +873,6 @@ jobs:
       # `pnpm install` and a job that FAILS the build, and this is the cheapest one that is
       # both. Adding a fourth job would buy a tidier name for the price of a fourth full
       # install; the step name is what GitHub shows on a failure, so blame stays readable.
-      # Like every packages-suite step, it skips on an `only: apps-typecheck` dispatch.
       #
       # What it guards: `/api/og` returned 500 on every request for two days because Next
       # 16.3.0 leaves the libvips SVG loader blocked and `next/og` rasterizes through it. We
@@ -840,13 +882,11 @@ jobs:
       # half of it, against the INSTALLED node_modules rather than the patch file, so a patch
       # that exists but did not apply is caught. ~50ms, no test runner.
       - name: Next SVG loader patch applied
-        if: env.SUITE_PACKAGES == 'true'
         run: node scripts/ci/assert-next-svg-patch-applied.mjs
 
       # Parked here for the same reasons as the step above. Guards the @prisma/client patch that
       # memoises the per-model field map (see the script header); reads the INSTALLED runtime.
       - name: Prisma field-map patch applied
-        if: env.SUITE_PACKAGES == 'true'
         run: node scripts/ci/assert-prisma-field-map-patch-applied.mjs
 
       # Parked here for the same two reasons as the step above: it needs a completed
@@ -875,7 +915,6 @@ jobs:
       # to be committed too. Measured both ways: uncommitted edit -> exit 0 (proves nothing),
       # same edit committed -> exit 1 with 62 changed alias lines (= 2 x 31 aliases).
       - name: Generated DB schema files match their generator
-        if: env.SUITE_PACKAGES == 'true'
         run: |
           test -f packages/civitai-db-schema/src/enums.ts
           pnpm run db:check-generated
@@ -887,11 +926,9 @@ jobs:
       # counts as out of date (exit 1), not as a pass. Like every check here it shows red but does
       # not block a merge (`main` has no required_status_checks).
       - name: Generated tag-index decode worker matches its generator
-        if: env.SUITE_PACKAGES == 'true'
         run: node scripts/build-tag-index-decode-worker.mjs --check
 
       - name: Package unit tests
-        if: env.SUITE_PACKAGES == 'true'
         run: pnpm run test:packages:run --reporter=default --reporter=json --outputFile=packages-report.json
 
       # A green vitest run is a claim, not evidence: `--project` matching nothing exits 0,
@@ -900,108 +937,14 @@ jobs:
       # results — so the job fails when the executed set shrinks, which is the regression the
       # totals cannot see.
       - name: Assert every package suite actually ran
-        if: always() && env.SUITE_PACKAGES == 'true'
-        run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
-
-      # The only typecheck `apps/*` gets. The root `pnpm run typecheck` is bounded by
-      # the root tsconfig `include` — `src`, `packages/*/src`, `scripts/local-dev/*.ts`,
-      # `tests`, `test`, `.next/types/**/*.ts` — with no `apps/*` entry, and BOTH tiers
-      # (this workflow's `typecheck` job and the `tekton / typecheck` status) run that
-      # same script.
-      #
-      # `!cancelled()` so a red package step does not hide this verdict; gated on the install
-      # rather than on the steps above, because a typecheck without `node_modules` would only
-      # restate the install failure.
-      #
-      # Deliberately ONE step driving a script, not one `pnpm --filter` step per
-      # app. Per-app steps abort at the first red app, so a shared type change
-      # that breaks several of them reports one; and `pnpm --filter <name>` EXITS
-      # 0 WHEN THE NAME MATCHES NOTHING (measured, pnpm 10.28.1 — it prints "No
-      # projects matched the filters" and succeeds), so a hardcoded list of
-      # package names is one chance per app for a rename to turn this gate into a
-      # green no-op. The script derives the app set from disk, proves each filter
-      # selected a real package, and collects every failure. See its header.
-      - name: Typecheck apps
-        if: ${{ !cancelled() && steps.install.outcome == 'success' && env.SUITE_APPS_TYPECHECK == 'true' }}
-        run: node scripts/ci/typecheck-apps.mjs
-
-  apps:
-    # The app typecheck used to run as the last steps of this job, as "App unit tests +
-    # typecheck"; it then became its own `apps-typecheck` job, and is now the `Typecheck apps`
-    # step of `packages` above. Renaming is safe: neither `main`
-    # nor `release` has any required_status_checks (re-verified 2026-08-20 via the
-    # branch-protection API), so no merge gate keys on either string.
-    name: App unit tests
-    runs-on: ubuntu-latest
-    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'apps' }}
-    # The `apps/*` suites — the same gap as `packages` above, in the sibling directory, and
-    # missed when that one was closed: the root config registered `packages/*/vitest.config.*`
-    # as projects and nothing for `apps/*`, so 369 tests across five apps had never once run
-    # in CI. They only ever ran for whoever remembered `pnpm --filter <app> test` by hand.
-    #
-    # A SEPARATE job rather than folding the apps into `packages`, because the two selectors
-    # have to stay disjoint anyway (see the `apps/*` note in vitest.config.mts) and separate
-    # jobs keep the blame attributable: a red app suite should not make the package suites
-    # look broken. Costs one more `pnpm install`; these suites run in seconds.
-    #
-    # Not `continue-on-error`, for the same reason as `packages`: no browser and no Next module
-    # graph (its only database is the throwaway Postgres service below). As there, RED here does not block a merge — `main` has
-    # no required_status_checks — it is a signal someone has to look at and dismiss.
-    #
-    # Selection is by vitest config, so an app without one is silently not covered here. Every app
-    # under `apps/` has one today; scripts/ci/assert-workspace-suites-ran.mjs is what notices if that
-    # stops being true.
-    #
-    # 30, not 15: measured over 114 green runs (2026-10-19/20) this job took p50 12.9m, p95
-    # 13.7m, max 14.4m with the typecheck still in it, and 16 of 162 runs were cancelled at the
-    # 15m limit. The test step alone is p50 9.8m, up from 3.0m on 2026-10-06; nearly all of it
-    # is the moderator app's pglite suites. Speed those up or shard this run before raising
-    # this again.
-    timeout-minutes: 30
-    # A real Postgres for apps/assistant-runner, whose runs are DBOS workflows. Its *.pg.test.ts
-    # files fail in CI without the URL (they skip only outside CI). The suites create and drop their
-    # own databases on this throwaway server.
-    services:
-      postgres:
-        image: postgres:18
-        env:
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres" --health-interval 2s --health-timeout 2s --health-retries 15
-    env:
-      ASSISTANT_RUNNER_TEST_DATABASE_URL: postgres://postgres:postgres@localhost:5432/postgres
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - uses: pnpm/action-setup@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .nvmrc
-          cache: pnpm
-
-      - name: Install
-        run: pnpm install --frozen-lockfile
-
-      - name: App unit tests
-        run: pnpm run test:apps:run --reporter=default --reporter=json --outputFile=apps-report.json
-
-      # Same positive control as the packages job, and it earns its keep harder here: these
-      # projects are named by hand (`app:auth`, ...), so an app that loses its `test.name`
-      # stops being selected while the other four keep the run green and exit 0. Measured,
-      # not assumed — see the script header.
-      - name: Assert every app suite actually ran
         if: always()
-        run: node scripts/ci/assert-workspace-suites-ran.mjs apps-report.json apps
+        run: node scripts/ci/assert-workspace-suites-ran.mjs packages-report.json packages
 
   component:
     name: Component + geometry tests
     runs-on: ubuntu-latest
-    if: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry' }}
+    # The second clause skips draft PRs unless they carry the `full-ci` label (see the header).
+    if: ${{ (!inputs.only || inputs.only == 'all' || inputs.only == 'component' || inputs.only == 'geometry') && (github.event_name != 'pull_request' || !github.event.pull_request.draft || contains(github.event.pull_request.labels.*.name, 'full-ci')) }}
     # The three browser-mode suites, in one job so ONE checkout, install and Chromium install
     # serves all of them: `component` (blocking), `geometry` (report-only on PRs) and the
     # `component-quarantine` run (push to `main` and dispatch only). Each was its own job until
@@ -1038,13 +981,13 @@ jobs:
       SUITE_COMPONENT: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'component' }}
       SUITE_GEOMETRY: ${{ !inputs.only || inputs.only == 'all' || inputs.only == 'geometry' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           submodules: true
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@v6
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version-file: .nvmrc
           cache: pnpm
@@ -1071,9 +1014,70 @@ jobs:
       # this repo. The escape hatch is `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH`,
       # honoured by vitest.config.mts. Do NOT move the repo's playwright pin to
       # match a laptop — see docs/dev/worktrees.md, "Browser/component tests on NixOS".
+      #
+      # ── BROWSER CACHE: RESTORE ALWAYS, SAVE ONLY ON A PUSH TO `main` ──────
+      #
+      # `~/.cache/ms-playwright` is cached so a run does not download Chromium
+      # again. The key is the version of the INSTALLED `playwright` package, read
+      # from node_modules: that is exactly the package `pnpm exec playwright`
+      # runs, and its version fixes the Chromium revision it wants. Not the
+      # lockfile hash, which changes on every dependency bump and would miss for
+      # reasons unrelated to the browser.
+      #
+      # Save is main-push only, for the reason the `unit` job's Vite cache gives:
+      # an entry saved on a PR or a dispatch is scoped to that ref, readable by
+      # nothing else, and spends the repo's 10 GB cache budget. One entry per
+      # Playwright version, refreshed when the version moves. So a PR or a
+      # dispatch restores `main`'s entry, and MISSES until a push to `main` with
+      # that Playwright version has saved one.
+      #
+      # The cache holds browser files only, not the system libraries. On a hit,
+      # `install-deps` puts those back, and `install chromium` then finds the
+      # cached revision complete and downloads nothing (it fetches whatever is
+      # missing, so a partial entry still ends with a usable browser). On a miss
+      # the command is the one this step always ran. Either way the step id stays
+      # `chromium`, and `steps.chromium.outcome == 'success'` still means
+      # "Chromium and its system libraries are installed" to the steps that gate on it.
+      - name: Resolve Playwright version
+        id: playwright
+        # An assignment, not `echo "version=$(...)"`: a failing command substitution inside
+        # an echo argument does not fail the step, and an empty version would key every run
+        # to the same wrong entry.
+        run: |
+          set -euo pipefail
+          version=$(node -p "require('playwright/package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Playwright browsers
+        id: playwright-cache
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
+
       - name: Install Chromium for Playwright
         id: chromium
-        run: pnpm exec playwright install --with-deps chromium
+        env:
+          CACHE_HIT: ${{ steps.playwright-cache.outputs.cache-hit }}
+        run: |
+          set -euo pipefail
+          if [ "$CACHE_HIT" = true ]; then
+            echo "browser cache hit: installing system dependencies only"
+            pnpm exec playwright install-deps chromium
+            pnpm exec playwright install chromium
+          else
+            pnpm exec playwright install --with-deps chromium
+          fi
+
+      # Right after the install, so a red suite later still leaves the entry saved.
+      # `continue-on-error`: best-effort infrastructure, like the Vite cache save.
+      - name: Save Playwright browsers
+        if: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.playwright-cache.outputs.cache-hit != 'true' }}
+        continue-on-error: true
+        uses: actions/cache/save@v6
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-chromium-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright.outputs.version }}
 
       # Not sharded, and `pnpm run test:component` takes NO arguments, on purpose:
       # its wrapper hands the JSON report to scripts/ci/assert-component-suite-ran.mjs,
@@ -1091,8 +1095,8 @@ jobs:
       # phone viewport. See `test/geometry-setup.tsx` for what it loads and why it is a separate
       # project from `component`.
       #
-      # `continue-on-error` is `${{ github.event_name == 'pull_request' }}` (the split
-      # windows-dev-env.yml also makes), and NOT a literal `true`. Both halves matter:
+      # `continue-on-error` is `${{ github.event_name == 'pull_request' }}`, and NOT a
+      # literal `true`. Both halves matter:
       #
       #   PR side: blocking on a brand-new tier from day one would red unrelated PRs and the
       #   step would be switched off within a week. `main` has NO required_status_checks, so
@@ -1232,15 +1236,16 @@ jobs:
       # read from runs on `main`. Count the green
       # streak from this STEP's conclusion in push runs on `main` (jobs endpoint): here it is a
       # real verdict, so a red quarantine run turns the `main` run red, attributed by step name.
-      # The `continue-on-error` expression is inert while the step skips PRs; it is kept so
-      # re-enabling PR runs cannot silently make the quarantine blocking there.
+      # No `continue-on-error`: it was `${{ github.event_name == 'pull_request' }}`, which is
+      # always false on a step that never runs on a PR. If PR runs come back, decide then
+      # whether they block (a literal `true` is rejected by main-branch-ci-coverage.test.ts,
+      # since it would also apply on push).
       #
       # A `--project` that matches nothing exits 0, so the run's JSON report goes through the
       # same gate as the blocking suite (`--narrowed`: a floor and file ledger make no sense for
       # one file). The gate only ever adds a failure; it never turns vitest's red into green.
       - name: Quarantined component tests
         if: ${{ !cancelled() && steps.chromium.outcome == 'success' && github.event_name != 'pull_request' && env.SUITE_COMPONENT == 'true' }}
-        continue-on-error: ${{ github.event_name == 'pull_request' }}
         run: |
           rc=0
           pnpm exec vitest run --project component-quarantine \

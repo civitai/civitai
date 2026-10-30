@@ -127,8 +127,8 @@ import { registerMediaLocation } from '~/server/services/storage-resolver';
 import {
   assertClientImageUrlsUsable,
   assertClientKeysIssuedToCaller,
-  recordUploadKeyOwner,
 } from '~/server/services/image-url-ownership';
+import { recordMintedUploadKey } from '~/server/services/image-upload-action.service';
 import {
   assertGenerationInputUrlsUsable,
   assertStoredImageUrlsUnblocked,
@@ -3687,7 +3687,7 @@ export const comicsRouter = router({
                 })
               );
               registerMediaLocation(s3Key, multiBackend, buf.length);
-              await recordUploadKeyOwner(s3Key, ctx.user!.id);
+              await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
               newCandidates.push({
                 key: s3Key,
                 ...(nsfwLevel != null ? { nsfwLevel } : {}),
@@ -3846,7 +3846,7 @@ export const comicsRouter = router({
               })
             );
             registerMediaLocation(s3ImageKey, singleBackend, imageBuffer.length);
-            await recordUploadKeyOwner(s3ImageKey, ctx.user!.id);
+            await recordMintedUploadKey(s3ImageKey, ctx.user!.id, ctx.track);
           } catch (e) {
             console.error(`Failed to upload panel ${panel.id} image to S3:`, e);
             await dbWrite.comicPanel.update({
@@ -4115,7 +4115,7 @@ export const comicsRouter = router({
             })
           );
           registerMediaLocation(s3Key, backend, buf.length);
-          await recordUploadKeyOwner(s3Key, ctx.user!.id);
+          await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
         } catch (e) {
           console.error(`Failed to download unlocked panel ${panel.id}:`, e);
           throw throwBadRequestError('Unlock succeeded but image download failed. Please retry.');
@@ -4237,7 +4237,7 @@ export const comicsRouter = router({
             })
           );
           registerMediaLocation(s3Key, multiBackend, buf.length);
-          await recordUploadKeyOwner(s3Key, ctx.user!.id);
+          await recordMintedUploadKey(s3Key, ctx.user!.id, ctx.track);
           newCandidates.push({
             key: s3Key,
             ...(slotNsfwLevel != null ? { nsfwLevel: slotNsfwLevel } : {}),

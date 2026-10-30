@@ -110,6 +110,10 @@ export const moveStorylineChapterSchema = z.object({
   afterChapterId: z.number().int().positive(),
 });
 
+export const removeStorylineChapterSchema = z.object({
+  chapterId: z.number().int().positive(),
+});
+
 export const linkStorylineChapterSchema = z.object({
   parentChapterId: z.number().int().positive(),
   chapterId: z.number().int().positive(),
@@ -146,7 +150,7 @@ export const joinStorylineEarlyAccessSchema = z
   .default({});
 
 export const getStorylinesInfiniteSchema = z.object({
-  filter: z.enum(['all', 'ongoing', 'complete', 'open']).default('all'),
+  filter: z.enum(['all', 'ongoing', 'complete', 'open', 'mine']).default('all'),
   sort: z.enum(['newest', 'mostChapters']).default('newest'),
   cursor: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(50).default(20),
