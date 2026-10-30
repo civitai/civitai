@@ -24,6 +24,7 @@ const MIGRATIONS = [
   '20261218120000_knights_v2_conversion',
   '20261219120000_knights_v2_smites',
   '20261221120000_knights_v2_yesno',
+  '20261223120000_knights_v2_drop_gold_clearing',
 ].map((name) =>
   fileURLToPath(
     new URL(

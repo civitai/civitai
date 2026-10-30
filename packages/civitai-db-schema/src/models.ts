@@ -5037,7 +5037,6 @@ export interface NewOrderPlayer {
   payoutReleaseFrom: Date | null;
   goldPending: number;
   goldEarned: number;
-  goldCleared: number;
   goldConverted: number;
 }
 
@@ -5146,20 +5145,6 @@ export interface KnightsNotificationSend {
   kind: string;
   sentAt: Date;
   confirmedAt: Date | null;
-}
-
-export interface KnightsDetectionRun {
-  id: number;
-  completedAt: Date;
-  passedAt: Date | null;
-}
-
-export interface KnightsGoldClearing {
-  id: number;
-  playerId: number;
-  runId: number;
-  gold: number;
-  clearedAt: Date;
 }
 
 export interface KnightsGoldConversion {

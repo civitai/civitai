@@ -29,7 +29,7 @@ export async function convertGold(
   const reserved: Reserved = await db.transaction().execute(async (trx): Promise<Reserved> => {
     const player = await trx
       .selectFrom('NewOrderPlayer as p')
-      .select(['p.goldCleared', 'p.goldConverted', heldSql('p.userId').as('held')])
+      .select(['p.goldEarned', 'p.goldConverted', heldSql('p.userId').as('held')])
       .where('p.userId', '=', playerId)
       .forUpdate()
       .executeTakeFirst();
@@ -46,7 +46,7 @@ export async function convertGold(
     if (open) return { conversion: open };
 
     const buzzAmount = Math.floor(
-      Math.max(0, player.goldCleared - player.goldConverted) / CONVERSION.goldPerBuzz
+      Math.max(0, player.goldEarned - player.goldConverted) / CONVERSION.goldPerBuzz
     );
     if (buzzAmount < CONVERSION.minBuzz) return { refused: 'below-minimum' };
     const gold = buzzAmount * CONVERSION.goldPerBuzz;
@@ -117,12 +117,7 @@ async function failConversion(db: Kysely<DB>, conversion: Conversion): Promise<b
       .updateTable('NewOrderPlayer')
       .set({
         goldConverted: sql<number>`GREATEST(0, "goldConverted" - ${gold})`,
-        ...(forfeited
-          ? {
-              goldEarned: sql<number>`GREATEST(0, "goldEarned" - ${gold})`,
-              goldCleared: sql<number>`GREATEST(0, "goldCleared" - ${gold})`,
-            }
-          : {}),
+        ...(forfeited ? { goldEarned: sql<number>`GREATEST(0, "goldEarned" - ${gold})` } : {}),
       })
       .where('userId', '=', conversion.playerId)
       .execute();

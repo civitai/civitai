@@ -19,12 +19,7 @@
     <tr>
       <th scope="row">Convertible</th>
       <td>{gold(balance.convertible)}</td>
-      <td class="muted">earned and cleared by the Order's checks; yours to convert</td>
-    </tr>
-    <tr>
-      <th scope="row">Awaiting the next check</th>
-      <td>{gold(balance.awaitingDetection)}</td>
-      <td class="muted">earned, and becomes convertible after the next check</td>
+      <td class="muted">earned; yours to convert</td>
     </tr>
     <tr>
       <th scope="row">Pending</th>

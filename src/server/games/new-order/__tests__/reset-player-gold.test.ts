@@ -114,7 +114,6 @@ describe('resetPlayer and Knights gold', () => {
     expect(sql).toContain('"startAt" = clock_timestamp()');
     expect(sql).toContain('"goldPending" = 0');
     expect(sql).toContain('"goldEarned" = "goldConverted"');
-    expect(sql).toContain('"goldCleared" = "goldConverted"');
     expect(values).toEqual([7]);
   });
 });

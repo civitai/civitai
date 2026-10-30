@@ -1408,7 +1408,7 @@ export async function resetPlayer({
     // startAt must be set here (database clock, under the row lock), not by the Prisma data: Knights' conversion ordering depends on it.
     dbWrite.$executeRaw`
       UPDATE "NewOrderPlayer"
-      SET "startAt" = clock_timestamp(), "goldPending" = 0, "goldEarned" = "goldConverted", "goldCleared" = "goldConverted"
+      SET "startAt" = clock_timestamp(), "goldPending" = 0, "goldEarned" = "goldConverted"
       WHERE "userId" = ${playerId}
     `,
     // Cleanse all smites

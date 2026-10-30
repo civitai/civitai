@@ -7,7 +7,7 @@ const expireSmites = vi.hoisted(() => vi.fn());
 const settleHiddenChecks = vi.hoisted(() => vi.fn());
 const resetPendingPlayers = vi.hoisted(() => vi.fn());
 const retryPendingConversions = vi.hoisted(() => vi.fn());
-const runPostDetectionPass = vi.hoisted(() => vi.fn());
+const runLabelPass = vi.hoisted(() => vi.fn());
 const closeStrandedYesNo = vi.hoisted(() => vi.fn());
 vi.mock('$lib/server/db', () => ({ db: {} }));
 const logToAxiom = vi.hoisted(() => vi.fn());
@@ -20,7 +20,7 @@ vi.mock('$lib/server/conversion/runtime', () => ({
   conversionEnabled,
 }));
 vi.mock('$lib/server/conversion/convert', () => ({ retryPendingConversions }));
-vi.mock('$lib/server/conversion/pass', () => ({ runPostDetectionPass }));
+vi.mock('$lib/server/conversion/label-pass', () => ({ runLabelPass }));
 vi.mock('$lib/server/yesno/sweep', () => ({ closeStrandedYesNo }));
 vi.mock('$lib/server/yesno/runtime', () => ({ yesNoConfig: () => ({ maxAgeDays: 14 }) }));
 vi.mock('$lib/server/jobs-auth', () => ({ isJobRequest: () => true }));
@@ -59,8 +59,8 @@ beforeEach(() => {
   retryPendingConversions.mockResolvedValue({ retried: 0, paid: 0, failed: 0 });
   closeStrandedYesNo.mockReset();
   closeStrandedYesNo.mockResolvedValue({ unplayable: 0, stale: 0, failed: 0 });
-  runPostDetectionPass.mockReset();
-  runPostDetectionPass.mockResolvedValue({ ran: false });
+  runLabelPass.mockReset();
+  runLabelPass.mockResolvedValue({ done: true, labelsWritten: 0, labelFailures: 0 });
   vi.spyOn(console, 'error').mockImplementation(() => undefined);
 });
 
@@ -81,18 +81,18 @@ describe('POST /api/jobs/tick', () => {
       expiredSmites: 0,
       resets: 0,
       conversionsRetried: 0,
-      postDetection: { ran: false },
+      labels: { done: true, labelsWritten: 0, labelFailures: 0 },
     });
   });
 
-  it('runs the post-detection pass and retries unconfirmed conversions even when an earlier step failed', async () => {
+  it('writes labels and retries unconfirmed conversions even when an earlier step failed', async () => {
     escalateExpired.mockRejectedValue(new Error('db down'));
     applyPendingResolutions.mockResolvedValue({ applied: 0 });
 
     const response = await run();
 
     expect(retryPendingConversions).toHaveBeenCalled();
-    expect(runPostDetectionPass).toHaveBeenCalled();
+    expect(runLabelPass).toHaveBeenCalled();
     expect(response.status).toBe(500);
   });
 
@@ -109,7 +109,7 @@ describe('POST /api/jobs/tick', () => {
     );
   });
 
-  it('skips the conversion retries without a warning while conversion is switched off, and still clears gold', async () => {
+  it('skips the conversion retries without a warning while conversion is switched off, and still writes labels', async () => {
     conversionEnabled.mockReturnValue(false);
     escalateExpired.mockResolvedValue({ escalated: 0 });
     applyPendingResolutions.mockResolvedValue({ applied: 0 });
@@ -119,7 +119,7 @@ describe('POST /api/jobs/tick', () => {
     expect(response.status).toBe(200);
     expect(retryPendingConversions).not.toHaveBeenCalled();
     expect(logToAxiom).not.toHaveBeenCalled();
-    expect(runPostDetectionPass).toHaveBeenCalled();
+    expect(runLabelPass).toHaveBeenCalled();
   });
 
   it('skips the conversion retries with a warning when Buzz is not configured, and still answers 200', async () => {
@@ -131,16 +131,16 @@ describe('POST /api/jobs/tick', () => {
 
     expect(response.status).toBe(200);
     expect(retryPendingConversions).not.toHaveBeenCalled();
-    expect(runPostDetectionPass).toHaveBeenCalled();
+    expect(runLabelPass).toHaveBeenCalled();
     expect(logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'warning', name: 'knights-conversion-retries-skipped' })
     );
   });
 
-  it('answers 500 when the post-detection pass fails', async () => {
+  it('answers 500 when the label pass fails', async () => {
     escalateExpired.mockResolvedValue({ escalated: 0 });
     applyPendingResolutions.mockResolvedValue({ applied: 0 });
-    runPostDetectionPass.mockRejectedValue(new Error('label store down'));
+    runLabelPass.mockRejectedValue(new Error('label store down'));
 
     expect((await run()).status).toBe(500);
   });
