@@ -104,7 +104,7 @@ export const submitNotChosen = (app: string) =>
  * `create_app` that made a new app chooses it: one that found an app the user already had
  * (`existed`: the open one, a paused one it started, one made elsewhere) chooses nothing.
  */
-function chosenAppOf({ name, output, isError, refused, stopped, subagent }: ToolResult) {
+export function chosenAppOf({ name, output, isError, refused, stopped, subagent }: ToolResult) {
   if (name !== CREATE_APP && name !== USE_OPEN_APP) return null;
   if (isError || refused !== undefined || stopped || subagent !== undefined) return null;
   const result = output as { app?: unknown; existed?: unknown } | null | undefined;

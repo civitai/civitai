@@ -902,6 +902,7 @@ export class Runner implements RunService {
                 .flatMap((saved) => turnFrom(saved).assistant.messages),
               current: sofar?.messages ?? from?.messages ?? [],
             },
+            ...(sofar ? { rebuild: true } : {}),
             subagents: input.subagents === true,
             model: () => this.#model(input, stop, carriesOn, (buzz) => progress.charged(buzz)),
             maxOutputTokens: outputTokenCap(input.settings.maxOutputTokens),

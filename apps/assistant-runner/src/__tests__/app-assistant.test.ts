@@ -18,7 +18,7 @@ import type { ModelMessage, ToolSet } from 'ai';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { toolResultsOf } from '../app-assistant/history';
-import { AppAssistantTools, readPageState } from '../app-assistant/provider';
+import { AppAssistantTools, appChosenIn, readPageState } from '../app-assistant/provider';
 import { PAUSED_BY_OTHER_APP, PAUSED_IDLE, SANDBOX_GONE } from '../app-assistant/sandbox';
 import type { OpenTools, ToolContext } from '../core/interfaces';
 import type { TokenPurpose } from '../minter';
@@ -682,7 +682,7 @@ describe('building a new app in the reply that made it (reopenTools)', () => {
         { app: 'tip-calculator', state: 'running', note: 'made', reopenTools: true },
       ],
     ]);
-    const { tools } = await open({ history: { earlier: [], current } });
+    const { tools } = await open({ history: { earlier: [], current }, rebuild: true });
     expect(tools.instructions).toMatch(/for the app "tip-calculator"/);
     // The reply made it, so its changes to it run (no "this chat has not been asked" refusal).
     expect(
@@ -695,6 +695,70 @@ describe('building a new app in the reply that made it (reopenTools)', () => {
     fake.add('tip-calculator');
     const { tools } = await open();
     expect(tools.instructions).toMatch(/for the app "my-app"/);
+  });
+
+  it('Continue or Retry of a reply that made another app opens the app open in the page, not that one', async () => {
+    fake.add('my-app');
+    fake.add('tip-calculator');
+    // A reply carried on from its saved steps (not a rebuild): the user has my-app open now.
+    const current = messagesOf([
+      [
+        'create_app',
+        { name: 'Tip calculator' },
+        { app: 'tip-calculator', state: 'running', note: 'made', reopenTools: true },
+      ],
+    ]);
+    const { tools } = await open({ history: { earlier: [], current } });
+    expect(tools.instructions).toMatch(/for the app "my-app"/);
+  });
+
+  it('a new app whose sandbox lists no tools is not ready: the reply ends instead of carrying on', async () => {
+    fake.add('my-app');
+    // Runs, but its sandbox lists no tools: nothing a rebuilt reply could build with.
+    for (const tool of [
+      'read_file',
+      'list_dir',
+      'write_file',
+      'edit_file',
+      'delete_path',
+      'run_command',
+      'preview_check',
+      'dev_server_start',
+      'dev_server_restart',
+      'dev_server_stop',
+      'dev_server_status',
+      'dev_server_logs',
+      'tunnel_key',
+      'tunnel_connect',
+      'tunnel_status',
+      'tunnel_disconnect',
+    ])
+      fake.hiddenTools.add(tool);
+    const { tools } = await open();
+    const made = await call(tools.tools, 'create_app', { name: 'Tip calculator' });
+    expect(made).toMatchObject({ app: 'tip-calculator', awaitsUser: true });
+    expect(made).not.toHaveProperty('reopenTools');
+  });
+});
+
+describe('appChosenIn: the app a reply chose, by the gate’s own rule (chosenAppOf)', () => {
+  const result = (name: string, output: unknown, extra: Record<string, unknown> = {}) => ({
+    name,
+    input: {},
+    output,
+    isError: false,
+    ...extra,
+  });
+  it('is the last app made or chosen', () => {
+    expect(
+      appChosenIn([result('create_app', { app: 'a' }), result('use_open_app', { app: 'b' })])
+    ).toBe('b');
+  });
+  it('is never an app create_app only found (existed), nor a subagent’s, nor a refused or failed call', () => {
+    expect(appChosenIn([result('create_app', { app: 'a', existed: true })])).toBeNull();
+    expect(appChosenIn([result('create_app', { app: 'a' }, { subagent: 'call-1' })])).toBeNull();
+    expect(appChosenIn([result('create_app', { app: 'a' }, { refused: 'no' })])).toBeNull();
+    expect(appChosenIn([result('create_app', { app: 'a' }, { isError: true })])).toBeNull();
   });
 });
 
