@@ -20,6 +20,7 @@ import {
 } from '~/components/Shell/shell-page-data';
 import { imageDetailMainImageUrl } from '~/components/Image/DetailV2/image-detail-main-media';
 import { env } from '~/env/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * `GET /api/page-data/images/[imageId]` is what a static shell of `/images/[imageId]` will fetch
@@ -41,12 +42,6 @@ const h = vi.hoisted(() => ({
   bootstrapFails: { current: false },
   flagOn: { current: true },
   seeds: vi.fn(),
-  log: vi.fn(async (_entry: Record<string, unknown>) => undefined),
-}));
-
-vi.mock('~/server/logging/client', async (importOriginal) => ({
-  ...(await importOriginal<Record<string, unknown>>()),
-  logToAxiom: h.log,
 }));
 
 vi.mock('~/server/auth/bearer-token', () => ({
@@ -110,7 +105,7 @@ afterAll(() => {
 });
 beforeEach(() => {
   procedureCalls.length = 0;
-  h.log.mockClear();
+  loggingMock.logToAxiom.mockClear();
   h.flagOn.current = true;
   h.bootstrapFails.current = false;
   h.seeds.mockReset();
@@ -119,13 +114,15 @@ beforeEach(() => {
     const user = session?.user;
     return {
       settings: user ? SETTINGS : undefined,
-      tosMeta: undefined,
-      announcements: undefined,
+      // `null`, not `undefined`: the body is JSON on the wire, where an undefined member is
+      // dropped, and the keys test below checks the endpoint names every seed.
+      tosMeta: null,
+      announcements: null,
       following: user ? [1, 2] : undefined,
-      browsingSettingsAddons: undefined,
+      browsingSettingsAddons: null,
       liveNow: false,
-      navBanners: undefined,
-      siteAlerts: undefined,
+      navBanners: null,
+      siteAlerts: null,
       session,
     };
   });
@@ -550,8 +547,15 @@ describe('page-data flushes its headers before the body', () => {
   const flushedHeader = (res: ReturnType<typeof fakeResponse>, name: string) =>
     res.flushed?.headers[name.toLowerCase()];
 
+  /**
+   * Waits on REAL timers (only `Date` is faked here). Not `vi.waitFor`: under fake timers it
+   * advances them, which moves the faked clock and so every `dataUpdatedAt` in `trpcState`.
+   */
   async function untilFlushed(res: ReturnType<typeof fakeResponse>) {
-    await vi.waitFor(() => expect(res.events).toContain('flush'));
+    for (let i = 0; i < 200 && !res.events.includes('flush'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(res.events).toContain('flush');
   }
 
   it('flushes the main image URL, private no-store and the route cookie while the seeds are still pending', async () => {
@@ -642,12 +646,17 @@ describe('page-data flushes its headers before the body', () => {
     expect(res.flushed?.statusCode).toBe(200);
     expect(res.events).toEqual(['flush', 'end']);
     expect(res.wire).toBeUndefined();
-    expect(h.log).toHaveBeenCalledWith(
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
       expect.objectContaining({ type: 'error', message: 'bootstrap seeds failed late' })
     );
 
+    // Control, fetched before `window` is stubbed (server code reads `window` to tell where it
+    // runs): a 200 the endpoint completed.
+    const whole = await fetchPageData({ user: USERS.viewer, imageId: 106, host: 'civitai.com' });
+    expect(whole.res.wire).toBeDefined();
+
     // The client's verdict on exactly that answer: not adopted (so the page falls back to a full
-    // render)…
+    // render), while the same client adopts the completed one.
     const adopt = (response: Response) => {
       vi.stubGlobal('window', { __civShell: Promise.resolve(response) });
       return adoptShellPageData();
@@ -657,8 +666,6 @@ describe('page-data flushes its headers before the body', () => {
         new Response(res.wire ?? null, { status: res.flushed?.statusCode })
       );
       expect(failed.ok).toBe(false);
-      // …while control: the same client adopts a 200 the endpoint completed.
-      const whole = await fetchPageData({ user: USERS.viewer, imageId: 106, host: 'civitai.com' });
       const adopted = await adopt(new Response(whole.res.wire ?? null, { status: 200 }));
       expect(adopted.ok).toBe(true);
     } finally {
