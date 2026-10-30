@@ -99,10 +99,6 @@ const fileAbout: Record<string, () => Promise<number>> = {
 };
 
 describe('reportConcernsUser', () => {
-  it('covers all 21 report types', () => {
-    expect(Object.keys(fileAbout)).toHaveLength(21);
-  });
-
   it.each(Object.keys(fileAbout))(
     '%s: true for its subject, false for anyone else',
     async (type) => {

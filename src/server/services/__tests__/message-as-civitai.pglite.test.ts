@@ -226,7 +226,11 @@ describe('sendAsCivitai', () => {
     const { rows } = await db.query(`SELECT "entityType", "entityId" FROM "ModActivity"`);
     expect(rows).toEqual([{ entityType: 'chatMessage', entityId: messageId }]);
     expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
-      expect.objectContaining({ name: 'message-as-civitai-report-link-dropped', reportId: 77 })
+      expect.objectContaining({
+        name: 'message-as-civitai-report-link-dropped',
+        reason: 'not-about-recipient',
+        reportId: 77,
+      })
     );
   });
 
@@ -240,6 +244,9 @@ describe('sendAsCivitai', () => {
     });
     const { rows } = await db.query(`SELECT "entityType", "entityId" FROM "ModActivity"`);
     expect(rows).toEqual([{ entityType: 'chatMessage', entityId: messageId }]);
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ reason: 'check-failed', error: 'db down' })
+    );
   });
 
   it('reuses the one thread per user', async () => {

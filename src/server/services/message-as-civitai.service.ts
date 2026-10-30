@@ -216,12 +216,14 @@ async function sendLocked({
   await audit('chatMessage', sent.id);
   if (context?.reportId) {
     const reportId = context.reportId;
-    if (await reportConcernsUser(reportId, userId).catch(() => false))
-      await audit('report', reportId);
+    const concerns = await reportConcernsUser(reportId, userId).catch((e: Error) => e);
+    if (concerns === true) await audit('report', reportId);
     else
       await logToAxiom({
         type: 'warning',
         name: 'message-as-civitai-report-link-dropped',
+        reason: concerns === false ? 'not-about-recipient' : 'check-failed',
+        error: concerns instanceof Error ? concerns.message : undefined,
         actorId,
         userId,
         reportId,
