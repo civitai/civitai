@@ -5384,14 +5384,14 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
 
   const cachedSettings = await redis.get(cacheKey);
   if (cachedSettings) {
-    const cached = fromJson<
+    type Cached =
       | (Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & {
           creatorHiddenUserIds?: number[];
           sfwHeld?: boolean;
         })
-      | { none: true }
-      | null
-    >(cachedSettings);
+      | { none: true };
+    // A build before the hold cached a bare null.
+    const cached = fromJson<Cached>(cachedSettings) as Cached | null;
     // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
     // unflagged model with no settings from a flagged one.
     if (cached && 'none' in cached) return null;
