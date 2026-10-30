@@ -405,7 +405,8 @@ function StorylineMap({
           onClick={(e: MouseEvent<HTMLElement>) => {
             // Opened over that post's own page: close the reader rather than stack the page.
             if (isModifiedClick(e)) return;
-            if (Router.asPath.split('?')[0] !== postHref) return;
+            const at = Router.asPath.split('?')[0];
+            if (at !== postHref && !at.startsWith(`${postHref}/`)) return;
             e.preventDefault();
             dialog.onClose();
           }}

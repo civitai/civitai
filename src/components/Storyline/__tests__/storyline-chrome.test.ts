@@ -513,12 +513,23 @@ describe('the map', () => {
     ]);
   });
 
-  it('closes the reader instead when it is a dialog over that post', () => {
-    mocks.asPath = '/posts/10';
+  it.each(['/posts/10', '/posts/10/a-title'])(
+    'closes the reader instead when it is a dialog over that post (%s)',
+    (asPath) => {
+      mocks.asPath = asPath;
+      renderMap();
+      const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
+      act(() => void q('storyline-leave')?.dispatchEvent(event));
+      expect([event.defaultPrevented, calls(mocks.dialog.onClose).length]).toEqual([true, 1]);
+    }
+  );
+
+  it('is a plain link over another post whose id starts the same', () => {
+    mocks.asPath = '/posts/100';
     renderMap();
     const event = new MouseEvent('click', { bubbles: true, cancelable: true, button: 0 });
     act(() => void q('storyline-leave')?.dispatchEvent(event));
-    expect([event.defaultPrevented, calls(mocks.dialog.onClose).length]).toEqual([true, 1]);
+    expect([event.defaultPrevented, calls(mocks.dialog.onClose).length]).toEqual([false, 0]);
   });
 
   it('leaves in place when the current chapter has no post to open', () => {
