@@ -7,7 +7,7 @@ export type SignIn = { userId: number; ip: string; ipAccounts: number };
 export type FlowInput = { stickers: FlowEdge[]; buzz: FlowEdge[] };
 
 export type Flow = { toGroup: number; total: number; fromGroup: number };
-export type Role = 'sends' | 'receives' | 'both' | 'linked-only';
+export type Role = 'sends' | 'receives' | 'both';
 
 export type GroupMember = {
   userId: number;
@@ -126,7 +126,7 @@ export function findLinkedGroups(
     const receives = f.stickers.fromGroup > 0 || f.buzz.fromGroup > 0;
     const member: GroupMember = {
       userId,
-      role: sends && receives ? 'both' : sends ? 'sends' : receives ? 'receives' : 'linked-only',
+      role: sends && receives ? 'both' : sends ? 'sends' : 'receives',
       triggers: concentrated(f.stickers, t.stickerFloor) || concentrated(f.buzz, t.buzzFloor),
       stickers: f.stickers,
       buzz: f.buzz,

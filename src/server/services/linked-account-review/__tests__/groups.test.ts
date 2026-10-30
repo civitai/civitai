@@ -152,6 +152,15 @@ describe('threshold boundaries', () => {
     expect(findLinkedGroups(flowsAt(1_000, 1_000), pair(T.ipAccountCap + 1), T).groups).toEqual([]);
   });
 
+  it('triggers on stickers at exactly the floor', () => {
+    const stickersAt = (amount: number) => ({
+      stickers: [{ from: A, to: C, amount, senderTotal: amount }],
+      buzz: [],
+    });
+    expect(findLinkedGroups(stickersAt(T.stickerFloor), pair(2), T).groups).toHaveLength(1);
+    expect(findLinkedGroups(stickersAt(T.stickerFloor - 1), pair(2), T).groups).toEqual([]);
+  });
+
   it('triggers at exactly the share and exactly the floor', () => {
     const total = T.buzzFloor;
     expect(findLinkedGroups(flowsAt(total * T.share, total), pair(2), T).groups).toHaveLength(1);

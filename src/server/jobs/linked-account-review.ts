@@ -11,8 +11,8 @@ const { CONFIG, FILED } = REDIS_SYS_KEYS.LINKED_ACCOUNT_REVIEW;
 export const linkedAccountReview = createJob(
   'linked-account-review',
   '0 13 * * 1',
-  async () =>
-    runLinkedAccountReview({
+  async () => {
+    const result = await runLinkedAccountReview({
       readConfig: async () => decodeRedisString(await sysRedis.get(CONFIG)),
       reader: createLinkedAccountReader(),
       filed: {
@@ -34,6 +34,10 @@ export const linkedAccountReview = createJob(
       now: () => new Date(),
       log: (type, name, data) =>
         void logToAxiom({ type, name, ...data }, 'moderation').catch(() => undefined),
-    }),
+    });
+    if (result.status === 'not-configured' || result.status === 'no-reader')
+      throw new Error(`linked-account-review did not run: ${result.status}`);
+    return result;
+  },
   { lockExpiration: 30 * 60 }
 );

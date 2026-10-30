@@ -17,7 +17,10 @@ export const linkedAccountReviewConfig = z.object({
   stickerFloor: positive,
   buzzFloor: positive,
   refileDays: positive,
-  controlUserIds: z.array(z.number().int().positive()).default([]),
+  controlUserIds: z
+    .array(z.number().int().positive())
+    .default([])
+    .transform((ids) => [...new Set(ids)]),
 });
 export type LinkedAccountReviewConfig = z.infer<typeof linkedAccountReviewConfig>;
 

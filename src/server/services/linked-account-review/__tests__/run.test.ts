@@ -128,6 +128,17 @@ describe('runLinkedAccountReview', () => {
     expect(reports[0].findings.map((f) => f.userId).sort()).toEqual([E, F]);
   });
 
+  it('skips a group once its triggering members are excluded, whoever else is not', async () => {
+    const { reports } = await run({ read: reader({ excluded: [A, B] }) });
+    expect(reports[0].counters).toMatchObject({ skipped_all_excluded: 1 });
+    expect(reports[0].findings.map((f) => f.userId).sort()).toEqual([E, F]);
+  });
+
+  it('treats a repeated control id as one account', async () => {
+    const { result } = await run({ config: { controlUserIds: [A, A, B, C, D] } });
+    expect(result).toMatchObject({ control: 'grouped' });
+  });
+
   it('dry run sends counters only and remembers nothing', async () => {
     const { reports, filed } = await run({ config: { mode: 'dry-run' } });
     expect(reports[0].findings).toEqual([]);
@@ -207,7 +218,8 @@ describe('runLinkedAccountReview', () => {
       signIns: async () => [...huge.signIns, ...big.signIns, ...shares(E, F, ['d1', 'd2', 'd3'])],
     };
 
-    const { reports } = await run({ read });
+    const filed = memoryFiled();
+    const { reports } = await run({ read, filed });
     const [report] = reports;
     expect(() => abuseReportInput.parse(report)).not.toThrow();
     expect(report.counters).toMatchObject({
@@ -216,6 +228,12 @@ describe('runLinkedAccountReview', () => {
       groups_due: 2,
     });
     expect(report.findings).toHaveLength(400 + 2);
-    expect(Math.max(...report.findings.map((f) => f.reason.length))).toBe(MAX_REASON_LENGTH);
+    expect(Math.max(...report.findings.map((f) => f.reason.length))).toBeLessThanOrEqual(
+      MAX_REASON_LENGTH
+    );
+    expect([...filed.data.keys()].map((sig) => sig.split(',').length).sort()).toEqual([2, 400]);
+    const hub = report.findings.find((f) => f.userId === 200_000)!;
+    expect(hub.reason).toContain('-day Buzz to group: 3,990 of 3,990');
+    expect(hub.reason).toContain('+374 more');
   });
 });

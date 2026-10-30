@@ -43,14 +43,14 @@ export type LinkedAccountReviewResult =
 const pct = (f: Flow) => (f.total > 0 ? Math.round((f.toGroup / f.total) * 100) : 0);
 const fmt = (n: number) => n.toLocaleString('en-US');
 
+const LISTED = 25;
+const listed = (items: string[]) =>
+  items.length > LISTED
+    ? `${items.slice(0, LISTED).join(', ')} +${items.length - LISTED} more`
+    : items.join(', ');
+
 function confidence(member: GroupMember, groupHasStanding: boolean) {
-  const band = member.triggers
-    ? groupHasStanding
-      ? 0.9
-      : 0.6
-    : member.role === 'linked-only'
-    ? 0.3
-    : 0.45;
+  const band = member.triggers ? (groupHasStanding ? 0.9 : 0.6) : 0.45;
   const strongest = Math.max(
     member.stickers.total ? member.stickers.toGroup / member.stickers.total : 0,
     member.buzz.total ? member.buzz.toGroup / member.buzz.total : 0
@@ -65,27 +65,26 @@ function reason(
   excluded: Set<number>,
   flowDays: number
 ) {
-  const links = member.links.map((l) => `#${l.userId} (${l.sharedIps})`).join(', ');
-  const others = group.members
-    .filter((m) => m.userId !== member.userId)
-    .map((m) => `#${m.userId}`)
-    .join(', ');
+  const links = listed(member.links.map((l) => `#${l.userId} (${l.sharedIps})`));
+  const others = listed(
+    group.members.filter((m) => m.userId !== member.userId).map((m) => `#${m.userId}`)
+  );
   const own = standings.filter((s) => s.userId === member.userId);
   const standing = own.length
     ? own.map((s) => `#${s.position} on ${s.leaderboardId}`).join(', ')
     : 'none';
   const parts = [
     `Role: ${member.role}${member.triggers ? ', meets the review rule' : ''}.`,
-    `Group of ${group.members.length}: ${others}.`,
-    `Shared sign-in IPs with: ${links}.`,
-    `${flowDays}-day stickers to group:${fmt(member.stickers.toGroup)} of ${fmt(
+    `${flowDays}-day stickers to group: ${fmt(member.stickers.toGroup)} of ${fmt(
       member.stickers.total
     )} (${pct(member.stickers)}%), from group: ${fmt(member.stickers.fromGroup)}.`,
-    `${flowDays}-day Buzz to group:${fmt(member.buzz.toGroup)} of ${fmt(member.buzz.total)} (${pct(
+    `${flowDays}-day Buzz to group: ${fmt(member.buzz.toGroup)} of ${fmt(member.buzz.total)} (${pct(
       member.buzz
     )}%), from group: ${fmt(member.buzz.fromGroup)}.`,
-    `Current standing: ${standing}.`,
+    `Current leaderboard standing: ${standing}.`,
     `Already excluded from leaderboards: ${excluded.has(member.userId) ? 'yes' : 'no'}.`,
+    `Group of ${group.members.length}: ${others}.`,
+    `Shared sign-in IPs with: ${links}.`,
   ];
   const text = parts.join(' ');
   return text.length > MAX_REASON_LENGTH ? `${text.slice(0, MAX_REASON_LENGTH - 1)}…` : text;
@@ -169,8 +168,9 @@ export async function runLinkedAccountReview(
     groups: groups.length,
     group_accounts: members.length,
     triggering_accounts: groups.flatMap((g) => g.members).filter((m) => m.triggers).length,
-    groups_with_standing: groups.filter((g) => g.members.some((m) => withStanding.has(m.userId)))
-      .length,
+    groups_with_leaderboard_standing: groups.filter((g) =>
+      g.members.some((m) => withStanding.has(m.userId))
+    ).length,
     skipped_all_excluded: groups.length - notAllExcluded.length,
     skipped_recently_filed: notAllExcluded.length - due.length,
     skipped_over_cap: due.length - toFile.length,
