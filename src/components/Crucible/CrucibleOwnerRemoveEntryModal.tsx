@@ -70,6 +70,7 @@ function OwnerRemoveEntryForm({
         value={reason}
         onChange={(value) => setReason(value as CrucibleOwnerRemovalReason | null)}
         allowDeselect={false}
+        comboboxProps={{ withinPortal: true, zIndex: 500 }}
         disabled={removalsLeft === 0}
         withAsterisk
       />
