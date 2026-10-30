@@ -26,7 +26,11 @@ import {
   storylineCeiling,
   storylineLevelAllowed,
 } from '~/shared/utils/storyline';
-import { STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import {
+  STORYLINE_REFUSALS,
+  storylineRatingGap,
+  type StorylineRatingGap,
+} from '~/shared/utils/storyline-placement';
 
 /**
  * A post drafted from the storyline flow (`StorylinePendingChapter`) becomes a chapter when it is
@@ -58,9 +62,6 @@ export type StorylinePublishOutcome = { storylineId: number } & (
 
 /** `restricted`: the owner is muted or has to verify their email, which `storyline.addChapter` refuses. */
 type PendingChapterWait = 'notReady' | 'cannotSubmit' | 'aboveRating' | 'restricted';
-
-/** With `aboveRating`, the two ratings the author is told. */
-type StorylineRatingGap = { postLevel: number; maxNsfwLevel: number };
 
 export type PreparedStorylinePublish = { postId: number; storylineId: number; userId: number } & (
   | { kind: 'closed'; reason: string }
@@ -281,7 +282,15 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
       if (link.parentChapterId == null) {
         if (storyline.tosViolation) throw throwBadRequestError('This storyline was taken down');
         const maxNsfwLevel = firstChapterMaxNsfwLevel(storyline, post);
-        if (maxNsfwLevel === null) return { status: 'waiting', reason: 'aboveRating' };
+        if (maxNsfwLevel === null)
+          return {
+            status: 'waiting',
+            reason: 'aboveRating',
+            rating: storylineRatingGap({
+              postLevel: post.nsfwLevel,
+              maxNsfwLevel: storylineCeiling(storyline),
+            }),
+          };
         if (maxNsfwLevel !== storyline.maxNsfwLevel) {
           ceilingRaisedTo = maxNsfwLevel;
           await tx.storyline.update({ where: { id: link.storylineId }, data: { maxNsfwLevel } });
@@ -312,7 +321,7 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
           return {
             status: 'waiting',
             reason: 'aboveRating',
-            rating: { postLevel: post.nsfwLevel, maxNsfwLevel },
+            rating: storylineRatingGap({ postLevel: post.nsfwLevel, maxNsfwLevel }),
           };
         ({ chapterId } = await writeOwnerChapter(tx, {
           parentChapterId: link.parentChapterId,

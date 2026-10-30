@@ -1,3 +1,4 @@
+import { NsfwLevel } from '~/server/common/enums';
 import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
 
 /**
@@ -141,13 +142,15 @@ export const STORYLINE_REFUSALS = {
   priceChanged: 'storyline: the price changed while you were deciding',
 } as const;
 
-export const storylineAboveRatingRefusal = ({
-  postLevel,
-  maxNsfwLevel,
-}: {
-  postLevel: number;
-  maxNsfwLevel: number;
-}) =>
-  `${STORYLINE_REFUSALS.aboveRating}. This storyline allows up to ${getBrowsingLevelLabel(
-    maxNsfwLevel
-  )}; this post is ${getBrowsingLevelLabel(postLevel)}`;
+export type StorylineRatingGap = { postLevel: number; maxNsfwLevel: number };
+
+/** Undefined for a post at the Blocked level: a verdict, so its rating is never named. */
+export const storylineRatingGap = (gap: StorylineRatingGap) =>
+  gap.postLevel & NsfwLevel.Blocked ? undefined : gap;
+
+export function storylineAboveRatingRefusal(gap: StorylineRatingGap) {
+  if (!storylineRatingGap(gap)) return STORYLINE_REFUSALS.cannotSubmit;
+  return `${STORYLINE_REFUSALS.aboveRating}. This storyline allows up to ${getBrowsingLevelLabel(
+    gap.maxNsfwLevel
+  )}; this post is ${getBrowsingLevelLabel(gap.postLevel)}`;
+}

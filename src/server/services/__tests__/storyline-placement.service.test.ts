@@ -650,6 +650,14 @@ describe('createStorylinePlacement — the continuation post', () => {
     expect(rows).toHaveLength(0);
   });
 
+  // Blocked is a moderation verdict, not a rating: it is refused like the other verdicts.
+  it('refuses a post at the Blocked level without naming it', async () => {
+    givenAccess({ maxNsfwLevel: 1 });
+    givenPost({ nsfwLevel: 4 | 32 });
+    await expect(submit()).rejects.toThrow(new RegExp(`^${STORYLINE_REFUSALS.cannotSubmit}$`));
+    expect(rows).toHaveLength(0);
+  });
+
   // The control for the refusal above: the same post under a higher ceiling lands.
   it('takes the same post under a ceiling it fits', async () => {
     givenAccess({ maxNsfwLevel: 4 });

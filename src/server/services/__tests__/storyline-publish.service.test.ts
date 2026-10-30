@@ -269,6 +269,7 @@ describe("the owner's chapter 1", () => {
     await expect(publish(OWNER)).resolves.toMatchObject({
       status: 'waiting',
       reason: 'aboveRating',
+      rating: { postLevel: R, maxNsfwLevel: PG },
     });
     expect(db.row('storyline', { id: EMPTY_STORY })).toMatchObject({ maxNsfwLevel: PG });
     expect(chapterOf(DRAFT)).toBeUndefined();
@@ -388,6 +389,15 @@ describe('the owner continuing their own story', () => {
     });
     expect(db.row('storyline', { id: STORY })).toMatchObject({ maxNsfwLevel: PG });
     expect(chapterOf(DRAFT)).toBeUndefined();
+  });
+
+  // Blocked is a moderation verdict, not a rating: naming it would tell the author the verdict.
+  it('never names a Blocked level as the rating a continuation is above', async () => {
+    draft(OWNER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER }, { nsfwLevel: R | 32 });
+
+    const outcome = await publish(OWNER);
+    expect(outcome).toMatchObject({ status: 'waiting', reason: 'aboveRating' });
+    expect(outcome).not.toHaveProperty('rating', expect.anything());
   });
 
   it.each([
