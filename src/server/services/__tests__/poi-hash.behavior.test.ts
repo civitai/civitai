@@ -584,6 +584,41 @@ describe('the moderator queue rules only a flag still as the hash match applied 
     expect(row).toEqual({ nsfw: false, lockedProperties: ['poi', 'nsfw', 'sfwOnly'] });
   });
 
+  const afterLift = (sql: string) => {
+    const lift = setModelPoi.getMockImplementation()!;
+    setModelPoi.mockImplementationOnce(async (input) => {
+      const lifted = await lift(input);
+      await pg.exec(`UPDATE "Model" SET ${sql} WHERE id = ${MODEL}`);
+      return lifted;
+    });
+  };
+  const restrictions = async () =>
+    (
+      await pg.query<{ nsfw: boolean; sfwOnly: boolean; lockedProperties: string[] }>(
+        `SELECT nsfw, "sfwOnly", "lockedProperties" FROM "Model" WHERE id = $1`,
+        [MODEL]
+      )
+    ).rows[0];
+
+  // The restore branch was picked from a read taken before the lock: the pre-flag nsfw rating and
+  // locks would land on a model a minor flag had just restricted.
+  it('a model flagged minor after the lift keeps what minor needs', async () => {
+    await flagged({ source: 'auto' });
+    afterLift(`minor = true, nsfw = false, "sfwOnly" = true, "lockedProperties" = ${LOCKED}`);
+    await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99 });
+    const row = await restrictions();
+    expect(row).toMatchObject({ nsfw: false, sfwOnly: true });
+    expect(row.lockedProperties).toEqual(expect.arrayContaining(['minor', 'nsfw', 'sfwOnly']));
+  });
+
+  it('a minor model flagged again after the lift keeps its real-person lock', async () => {
+    await flagged({ source: 'auto' });
+    await pg.exec(`UPDATE "Model" SET minor = true WHERE id = ${MODEL}`);
+    afterLift(`poi = true`);
+    await revertPoiHashAutoFlag({ modelId: MODEL, userId: 99 });
+    expect((await restrictions()).lockedProperties).toContain('poi');
+  });
+
   // An appeal against a confirmed hash flag must still roll it back: resolveMinorFlagAppeal passes
   // fromAppeal. Without it the queue's rule would leave a granted appeal's flag in place.
   it('an appeal still reverts a confirmed hash flag', async () => {

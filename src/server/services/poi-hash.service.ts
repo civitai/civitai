@@ -414,7 +414,6 @@ export async function confirmPoiHashAutoFlag({
 }
 
 type PoiSnapshotRow = {
-  minor: boolean;
   prevNsfw: boolean | null;
   prevSfwOnly: boolean | null;
   prevGalleryLevel: number | null;
@@ -435,8 +434,7 @@ export async function revertPoiHashAutoFlag({
   fromAppeal?: boolean;
 }) {
   const [snapshot] = await dbWrite.$queryRaw<PoiSnapshotRow[]>`
-    SELECT m.minor,
-           (m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
+    SELECT (m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'prevNsfw')::boolean AS "prevNsfw",
            (m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'prevSfwOnly')::boolean AS "prevSfwOnly",
            (m.meta->${POI_FLAG_SNAPSHOT_KEY}->>'prevGalleryLevel')::int AS "prevGalleryLevel",
            ARRAY(
@@ -463,33 +461,29 @@ export async function revertPoiHashAutoFlag({
   });
   if (!lifted) return { reverted: 0 };
 
-  // The lift has released the lock: a model flagged again since keeps its restrictions.
-  const lockedProperties = uniq([
-    ...(snapshot.prevLockedProperties ?? []),
-    ...(snapshot.minor ? MINOR_LOCKED_PROPERTIES : []),
-  ]);
-  if (snapshot.minor)
-    await dbWrite.$executeRaw`
-      UPDATE "Model"
-      SET "lockedProperties" = ${lockedProperties}::text[],
-          meta = ${withoutSystemNsfwLockSql('meta')}
-      WHERE id = ${modelId} AND NOT poi
-    `;
-  else
-    await dbWrite.$executeRaw`
-      UPDATE "Model"
-      SET nsfw = COALESCE(${snapshot.prevNsfw}::boolean, nsfw),
-          "sfwOnly" = COALESCE(${snapshot.prevSfwOnly}::boolean, "sfwOnly"),
-          "gallerySettings" = CASE
-            WHEN ${snapshot.prevGalleryLevel}::int IS NULL
-              THEN COALESCE("gallerySettings", '{}'::jsonb) - 'level'
-            ELSE COALESCE("gallerySettings", '{}'::jsonb)
-              || jsonb_build_object('level', ${snapshot.prevGalleryLevel}::int)
-          END,
-          "lockedProperties" = ${lockedProperties}::text[],
-          meta = ${withoutSystemNsfwLockSql('meta')}
-      WHERE id = ${modelId} AND NOT poi
-    `;
+  // The lift has released the lock, so each restore reads the flags as they are now: a model flagged
+  // again since keeps its restrictions, and one flagged minor since keeps what minor needs.
+  const prevLockedProperties = snapshot.prevLockedProperties ?? [];
+  await dbWrite.$executeRaw`
+    UPDATE "Model"
+    SET "lockedProperties" = ${uniq([...prevLockedProperties, ...MINOR_LOCKED_PROPERTIES])}::text[],
+        meta = ${withoutSystemNsfwLockSql('meta')}
+    WHERE id = ${modelId} AND NOT poi AND minor
+  `;
+  await dbWrite.$executeRaw`
+    UPDATE "Model"
+    SET nsfw = COALESCE(${snapshot.prevNsfw}::boolean, nsfw),
+        "sfwOnly" = COALESCE(${snapshot.prevSfwOnly}::boolean, "sfwOnly"),
+        "gallerySettings" = CASE
+          WHEN ${snapshot.prevGalleryLevel}::int IS NULL
+            THEN COALESCE("gallerySettings", '{}'::jsonb) - 'level'
+          ELSE COALESCE("gallerySettings", '{}'::jsonb)
+            || jsonb_build_object('level', ${snapshot.prevGalleryLevel}::int)
+        END,
+        "lockedProperties" = ${prevLockedProperties}::text[],
+        meta = ${withoutSystemNsfwLockSql('meta')}
+    WHERE id = ${modelId} AND NOT poi AND NOT minor
+  `;
   await updateModelNsfwLevels([modelId]);
   await bustPublicModelResponseCache(modelId);
   // The restore moves sfwOnly and the gallery level after setModelPoi's own cache bust.
