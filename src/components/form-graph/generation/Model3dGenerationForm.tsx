@@ -16,8 +16,8 @@ import type { GenerationStore } from './store';
 
 /**
  * The MODEL3D generation form — one `<Controller graph={model3dHub}>` per
- * field. The graph decides visibility (PolyGen v6/v7 vs Tripo vs the comfy
- * pipelines), so this holds the superset of 3D fields.
+ * field. The graph decides visibility (PolyGen v6/v7/v7.1 vs Tripo v2.5/H3.1
+ * vs the comfy pipelines), so this holds the superset of 3D fields.
  */
 
 function OptionButtons({
@@ -58,7 +58,7 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
           return (
             <OptionButtons
               label="Meshy version"
-              info="v7 produces higher-fidelity geometry and accepts up to four views of the same object, but has no text-to-3D mode. v6 is the only version with a text prompt."
+              info="v7 and v7.1 produce higher-fidelity geometry and accept up to four views of the same object. v7 has no text-to-3D mode; v7.1 adds smart topology and up to 4K geometry."
               value={value}
               options={options}
               onChange={(v) => {
@@ -69,6 +69,23 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
                 }
                 onChange(v as typeof value);
               }}
+            />
+          );
+        }}
+      />
+      <Controller
+        graph={model3dHub}
+        name="tripoVersion"
+        render={({ value, meta, onChange }) => {
+          const options = meta?.options ?? [];
+          if (options.length < 2) return null;
+          return (
+            <OptionButtons
+              label="Tripo version"
+              info="H3.1 produces more detailed geometry and accepts 2-4 views of the same object, ordered front, left, back, right."
+              value={value}
+              options={options}
+              onChange={(v) => onChange(v as typeof value)}
             />
           );
         }}
@@ -209,7 +226,20 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
         render={({ value, meta, onChange }) => (
           <OptionButtons
             label="Model type"
-            info="Low poly produces a stylized, game-ready mesh and ignores the polycount, topology and remesh controls."
+            info="Low poly produces a stylized, game-ready mesh and ignores the polycount, topology and remesh controls. Smart topology produces a clean, lower-poly mesh suited to editing and animation."
+            value={value}
+            options={meta?.options}
+            onChange={(v) => onChange(v as typeof value)}
+          />
+        )}
+      />
+      <Controller
+        graph={model3dHub}
+        name="geometryResolution"
+        render={({ value, meta, onChange }) => (
+          <OptionButtons
+            label="Geometry resolution"
+            info="Higher resolutions capture finer surface detail but take longer to generate."
             value={value}
             options={meta?.options}
             onChange={(v) => onChange(v as typeof value)}
@@ -235,6 +265,19 @@ export function Model3dGenerationForm({ store }: { store: GenerationStore }) {
           <OptionButtons
             label="Texture"
             info="Texture quality. Standard is balanced; HD produces higher-resolution textures; None skips texturing for a bare mesh."
+            value={value}
+            options={meta?.options}
+            onChange={(v) => onChange(v as typeof value)}
+          />
+        )}
+      />
+      <Controller
+        graph={model3dHub}
+        name="geometryQuality"
+        render={({ value, meta, onChange }) => (
+          <OptionButtons
+            label="Geometry quality"
+            info="Detailed produces finer geometry but takes longer to generate."
             value={value}
             options={meta?.options}
             onChange={(v) => onChange(v as typeof value)}

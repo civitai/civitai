@@ -156,6 +156,8 @@ const GRAPH_SITE_EXEMPT: Record<string, string> = {
   'model3d/polygen.graph.ts polygenVersion':
     'its output is `z.enum(...).transform(clamp)` — clamp maps anything unrunnable to v6, so ' +
     'the schema normalises instead of refusing and there is nothing for a hook to heal',
+  'model3d/tripo.graph.ts tripoVersion':
+    'same shape as polygenVersion — its output clamps anything not offered to v2.5',
 
   'workflows/video-enhance.graph.ts scaleFactor':
     'deliberately scope-not-correct, stated at the site: the field is scoped per source ' +

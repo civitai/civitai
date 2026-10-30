@@ -1,10 +1,11 @@
 /**
  * The 3D families' handlers for the form-graph lane. Each converts parsed
- * data into a `PolyGenStepTemplate` via the same shared schema builders the
- * the 3D handlers share, then chains the `model3DPreview` step. PolyGen branches on
- * `polygenVersion` (v6 text/image vs v7 image/multi-image); Hunyuan3D maps
- * its `hunyuan*`-prefixed fields back to schema names; the trellis-pipeline
- * pair (Pixal3D / Trellis.2) and Tripo map `images[0]` → `sourceImage`.
+ * data into a `PolyGenStepTemplate` via the shared schema builders, then
+ * chains the `model3DPreview` step. PolyGen branches on `polygenVersion`
+ * (v6 text/image, v7 image/multi-image, v7.1 all three) and Tripo on
+ * `tripoVersion` (v2.5 image, H3.1 image/multiview); Hunyuan3D maps its
+ * `hunyuan*`-prefixed fields back to schema names; the trellis-pipeline pair
+ * (Pixal3D / Trellis.2) and Tripo v2.5 map `images[0]` → `sourceImage`.
  */
 
 import type {
@@ -26,8 +27,15 @@ import {
   type PolyGenV7GenerationSchema,
 } from '~/server/orchestrator/polygen/polygen-v7.schema';
 import {
+  toMeshyV71PolyGenInput,
+  type MeshyV71PolyGenInput,
+  type PolyGenV71GenerationData,
+} from '~/server/orchestrator/polygen/polygen-v71.schema';
+import {
+  toTripoH31PolyGenInput,
   toTripoPolyGenInput,
   type TripoGenerationSchema,
+  type TripoH31GenerationData,
 } from '~/server/orchestrator/tripo/tripo.schema';
 import {
   toHunyuan3dPolyGenInput,
@@ -56,20 +64,28 @@ export const createPolyGenInput = defineHandler<EcosystemData<'PolyGen'>, StepIn
   (data, ctx) => {
     const { polygenMode, ...rest } = data;
     const images = data.images ?? [];
+    const process = data.workflow?.startsWith('txt') ? 'textTo3D' : 'imageTo3D';
 
     let input:
       | MeshyTextTo3dFalPolyGenInput
       | MeshyImageTo3dFalPolyGenInput
       | MeshyV7ImageTo3dFalPolyGenInput
-      | MeshyV7MultiImageTo3dFalPolyGenInput;
+      | MeshyV7MultiImageTo3dFalPolyGenInput
+      | MeshyV71PolyGenInput;
 
-    if (data.polygenVersion === 'v7') {
+    if (data.polygenVersion === 'v7.1') {
+      input = toMeshyV71PolyGenInput({
+        ...rest,
+        process,
+        ...(polygenMode !== undefined ? { mode: polygenMode } : {}),
+        sourceImages: process === 'imageTo3D' ? images : [],
+      } as unknown as PolyGenV71GenerationData);
+    } else if (data.polygenVersion === 'v7') {
       input = toMeshyV7PolyGenInput({
         ...rest,
         sourceImages: images,
       } as unknown as PolyGenV7GenerationSchema);
     } else {
-      const process = data.workflow?.startsWith('txt') ? 'textTo3D' : 'imageTo3D';
       const sourceImage = process === 'imageTo3D' ? images[0] : undefined;
       input = toMeshyPolyGenInput({
         ...rest,
@@ -84,14 +100,20 @@ export const createPolyGenInput = defineHandler<EcosystemData<'PolyGen'>, StepIn
 );
 
 export const createTripoInput = defineHandler<EcosystemData<'Tripo'>, StepInput[]>((data, ctx) => {
-  const sourceImage = data.images?.[0];
-  const input = toTripoPolyGenInput({
-    ...data,
-    ...(sourceImage ? { sourceImage } : {}),
-  } as unknown as TripoGenerationSchema) as TripoFalPolyGenInput;
+  const input =
+    data.tripoVersion === 'h3.1'
+      ? toTripoH31PolyGenInput({
+          ...data,
+          sourceImages: data.images ?? [],
+        } as unknown as TripoH31GenerationData)
+      : (toTripoPolyGenInput({
+          ...data,
+          ...(data.images?.[0] ? { sourceImage: data.images[0] } : {}),
+        } as unknown as TripoGenerationSchema) as TripoFalPolyGenInput);
+  const step: PolyGenStepTemplate = { $type: 'polyGen', input };
   // Quad topology is FBX-only: there is no GLB for the preview renderer to load.
-  if (input.quad) return [{ $type: 'polyGen', input }] as unknown as StepInput[];
-  return withPreview({ $type: 'polyGen', input }, ctx.baseStepIndex);
+  if (input.quad) return [step] as unknown as StepInput[];
+  return withPreview(step, ctx.baseStepIndex);
 });
 
 export const createHunyuan3dInput = defineHandler<EcosystemData<'Hunyuan3D'>, StepInput[]>(
