@@ -46,7 +46,11 @@ import type {
   StorylineSpace,
   StorylineSpaceMode,
 } from '~/shared/utils/storyline-placement';
-import { isAnswerableParentChapter, STORYLINE_REFUSALS } from '~/shared/utils/storyline-placement';
+import {
+  isAnswerableParentChapter,
+  STORYLINE_REFUSALS,
+  storylineAboveRatingRefusal,
+} from '~/shared/utils/storyline-placement';
 
 const SURFACE = 'storyline' as const;
 const TARGET_TYPE = 'post' as const;
@@ -146,14 +150,14 @@ export async function createStorylinePlacement({
   // deferred: a review can take days, longer than the window to answer.
   if (readiness === 'inReview') throw throwBadRequestError(STORYLINE_REFUSALS.inReview);
   // An unrated post has nothing to compare; the readiness pass compares it.
+  const ceiling = storylineCeiling(parent.storyline);
   if (
     readiness === 'ready' &&
-    !storylineLevelAllowed({
-      postLevel: continuation.nsfwLevel,
-      maxNsfwLevel: storylineCeiling(parent.storyline),
-    })
+    !storylineLevelAllowed({ postLevel: continuation.nsfwLevel, maxNsfwLevel: ceiling })
   )
-    throw throwBadRequestError(STORYLINE_REFUSALS.aboveRating);
+    throw throwBadRequestError(
+      storylineAboveRatingRefusal({ postLevel: continuation.nsfwLevel, maxNsfwLevel: ceiling })
+    );
   const awaitingReadiness = readiness === 'pending';
 
   // Outside the transaction: I/O, and read from the primary.

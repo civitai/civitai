@@ -107,6 +107,18 @@ describe('storylineSubmitVerdict', () => {
     });
   });
 
+  // Blocked is a moderation verdict: refused as unusable, so the picker never calls it a rating.
+  test('a post with a Blocked level is refused as unusable, owner or contributor', () => {
+    const postLevel = NsfwLevel.R | NsfwLevel.Blocked;
+    expect([
+      verdict({ postLevel, storyline: story({ maxNsfwLevel: NsfwLevel.XXX }) }),
+      verdict({ postLevel, viewerId: owner, asOwner: true }),
+    ]).toEqual([
+      { allowed: false, reason: 'cannotSubmit' },
+      { allowed: false, reason: 'cannotSubmit' },
+    ]);
+  });
+
   test('an open storyline still holds everyone to the ceiling', () => {
     expect(verdict({ postLevel: NsfwLevel.XXX })).toEqual({
       allowed: false,
