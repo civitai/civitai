@@ -190,7 +190,8 @@ export type RunnerDevTunnelRefusal =
 
 /**
  * The user behind a run grant, for the server runner's dev-tunnel endpoints
- * (`/api/internal/app-assistant/dev-tunnel/*`), re-judged on every call:
+ * (`/api/internal/app-assistant/dev-tunnel/*`) and app-feedback reads
+ * (`/api/internal/app-assistant/app-feedback/*`), re-judged on every call:
  * - every gate the runner's token mint checks (`getAppAssistantRefusalForUserId` with
  *   `remoteRunner`: ban, onboarding, mute, email verification, `appBlocks` + `appAssistant`, and
  *   `appAssistantRemoteRunner`), answered `refused`, or `unavailable` when they cannot be judged;

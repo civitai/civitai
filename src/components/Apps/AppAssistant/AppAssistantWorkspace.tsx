@@ -41,6 +41,8 @@ import {
   sendForReview,
   submitBundleFromExport,
 } from '~/components/Apps/AppAssistant/assistantSubmit';
+import { setFeedbackStatusVia } from '~/components/Apps/AppAssistant/assistantFeedback';
+import { createAppFeedbackSource } from '@civitai/app-assistant';
 import { isAppBlockId } from '~/components/Apps/AppAssistant/appKey';
 import { mostRecentApp } from '~/components/Apps/AppAssistant/appLifecycle';
 import {
@@ -404,6 +406,19 @@ export function AppAssistantWorkspace({
         },
         // A chat changes only the app it made or chose: a new chat never builds over the open one.
         openApp: () => live.current.active?.app ?? null,
+        // The open app's review and user feedback, through My apps' own reads as the user; a status
+        // changes only when the user presses its card. (On the server runner the runner reads it.)
+        feedback: {
+          source: createAppFeedbackSource({
+            listMine: () => trpcVanilla.appListings.listMine.query(),
+            listingHistory: (appListingId) =>
+              trpcVanilla.appListings.listingHistory.query({ appListingId }),
+            listFeedback: (input) => trpcVanilla.appFeedback.listForListing.query(input),
+          }),
+          setStatus: setFeedbackStatusVia((input) =>
+            trpcVanilla.appFeedback.setOwnerStatus.mutate(input)
+          ),
+        },
       }),
     [appTools]
   );

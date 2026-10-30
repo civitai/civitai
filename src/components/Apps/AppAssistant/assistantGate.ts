@@ -7,17 +7,22 @@ import type {
 import {
   CREATE_APP,
   REPORT_READY,
+  SET_FEEDBACK_STATUS,
   SET_CHECKLIST,
   SUBMIT_FOR_REVIEW,
   USE_OPEN_APP,
+  createFeedbackTools,
   createGateCore,
   normalizeChecklist,
+  type AppFeedbackSource,
 } from '@civitai/app-assistant';
+import type { SetFeedbackStatus } from '~/components/Apps/AppAssistant/assistantFeedback';
+import { createFeedbackStatusCards } from '~/components/Apps/AppAssistant/assistantFeedback';
 import type { SubmitCardsDeps } from '~/components/Apps/AppAssistant/assistantSubmit';
 import { createSubmitCards } from '~/components/Apps/AppAssistant/assistantSubmit';
 
 // The gate's rules live in `@civitai/app-assistant`, so the server runner applies the same ones; the
-// page adds what only it can do: the checklist, ready and Submit for review cards.
+// page adds what only it can do: the checklist, ready, Submit for review and feedback status cards.
 export {
   APP_ASSISTANT_TURN_TOOL_CALL_LIMIT,
   REPORT_READY,
@@ -64,6 +69,7 @@ export function createAssistantGate({
   currentApp,
   submit,
   openApp,
+  feedback,
 }: {
   /** The page's own refusal for a call, if any; counted against the per-reply limit like any call. */
   refuse?: (name: string) => string | null;
@@ -75,8 +81,23 @@ export function createAssistantGate({
   submit?: SubmitCardsDeps;
   /** The open app's key: a chat may change it only once it made or chose it (`createGateCore`). */
   openApp?: () => string | null;
+  /**
+   * The open app's feedback: where it is read (the page's own author reads, as the user), and what
+   * a press on a status card does. Without it, no feedback tools.
+   */
+  feedback?: { source: AppFeedbackSource; setStatus: SetFeedbackStatus };
 } = {}): AssistantGate {
   const submitCards = submit ? createSubmitCards(submit) : null;
+  const feedbackCards = feedback ? createFeedbackStatusCards(feedback) : null;
+  let feedbackOffers = 0;
+  const feedbackPrefix = Math.random().toString(36).slice(2, 10);
+  const feedbackTools: Record<string, ChatTool> = feedback
+    ? createFeedbackTools({
+        current: () => openApp?.() ?? null,
+        source: feedback.source,
+        nextId: () => `${feedbackPrefix}-feedback-${++feedbackOffers}`,
+      }).tools
+    : {};
   const core = createGateCore({
     refuse,
     onReply: () => {
@@ -102,11 +123,21 @@ export function createAssistantGate({
     onToolResult: (result) => {
       core.onToolResult(result);
       submitCards?.onToolResult(result, currentApp?.() ?? null);
+      feedbackCards?.onToolResult(result);
     },
     tools: {
       [SET_CHECKLIST]: set_checklist,
       [REPORT_READY]: report_ready,
       [SUBMIT_FOR_REVIEW]: submit_for_review,
+      ...feedbackTools,
+      ...(feedbackCards
+        ? {
+            [SET_FEEDBACK_STATUS]: {
+              ...feedbackTools[SET_FEEDBACK_STATUS]!,
+              render: feedbackCards.render,
+            },
+          }
+        : {}),
     },
     restoringChoices: (tools, chatId) => {
       const out = { ...tools };

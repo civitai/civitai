@@ -2,6 +2,7 @@ import { isAppAssistantModel } from '@civitai/app-assistant';
 import { configureChat } from '@civitai/components-chat/core';
 
 import { buildApp, loggerOptions } from './app';
+import { CivitaiAppFeedback } from './app-assistant/app-feedback';
 import { CivitaiDevTunnels } from './app-assistant/dev-tunnel';
 import { PreviewRestarter } from './app-assistant/preview-restart';
 import { AppAssistantTools } from './app-assistant/provider';
@@ -97,12 +98,20 @@ if (civitai) {
     secret: civitai.secret,
     log,
   });
+  // The open app's review and user feedback, which civitai reads as a run's user: each call reads
+  // the run's grant inside its own fetch, as the dev tunnel's do.
+  const appFeedback = new CivitaiAppFeedback({
+    civitaiUrl: civitai.civitaiUrl,
+    secret: civitai.secret,
+    log,
+  });
   // App Assistant's tools and gate. Without the sandbox service every start is refused (below).
   tools = civitai.sandboxUrl
     ? new AppAssistantTools({
         sandboxUrl: civitai.sandboxUrl,
         tokens: (runId) => credentials.forRun(runId),
         devTunnels: (runId) => devTunnels.forRun(() => grants.forRun(runId)),
+        appFeedback: (runId, signal) => appFeedback.forRun(() => grants.forRun(runId), signal),
         log,
       })
     : noTools;
