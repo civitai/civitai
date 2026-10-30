@@ -1,10 +1,6 @@
 import type { getReportsOnUser } from '../user-reports.service';
 import type { getImageRemovals } from '../user-account.service';
-import {
-  CONTENT_ROWS,
-  IMAGE_REMOVALS_PATH,
-  USER_REPORTS_PATH,
-} from '$lib/tickets/content-panel';
+import { CONTENT_ROWS, IMAGE_REMOVALS_PATH, USER_REPORTS_PATH } from '$lib/tickets/content-panel';
 import { isCsamReason, type HistoryRemoval, type HistorySection } from './history';
 
 export type ContentReport = {

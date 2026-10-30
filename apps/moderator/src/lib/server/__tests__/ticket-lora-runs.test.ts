@@ -82,7 +82,11 @@ describe('loraSectionFor', () => {
     });
     models.mockResolvedValue({ username: 'alice', blocked: new Set([10]) });
     const res = await loraSectionFor({ userId: 7 }, reads);
-    expect(res.status === 'ok' && res.runs.map((r) => r.cannotPublish)).toEqual([true, true, false]);
+    expect(res.status === 'ok' && res.runs.map((r) => r.cannotPublish)).toEqual([
+      true,
+      true,
+      false,
+    ]);
   });
 
   it('passes the cut on', async () => {

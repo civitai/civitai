@@ -44,7 +44,9 @@ export function createTicketLoraActions(deps: LoraWriteDeps) {
         });
       if (model.cannotPublish === want)
         return fail(409, {
-          error: `Publishing is already ${want ? 'blocked' : 'allowed'} for that model — nothing was changed.`,
+          error: `Publishing is already ${
+            want ? 'blocked' : 'allowed'
+          } for that model — nothing was changed.`,
         });
 
       const result = await deps.toggleCannotPublish(parsed.modelId);

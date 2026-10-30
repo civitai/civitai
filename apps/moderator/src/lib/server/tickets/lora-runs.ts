@@ -43,7 +43,10 @@ const liveReads: LoraReads = {
   runs: async (userId, limit) =>
     (await import('../user-account.service')).getTrainingRuns(userId, limit),
   models: async (userId, modelIds) => {
-    const [{ dbRead }, { sql }] = await Promise.all([import('../db'), import('@civitai/db/kysely')]);
+    const [{ dbRead }, { sql }] = await Promise.all([
+      import('../db'),
+      import('@civitai/db/kysely'),
+    ]);
     const rows = await dbRead
       .selectFrom('Model as m')
       .innerJoin('User as u', 'u.id', 'm.userId')
