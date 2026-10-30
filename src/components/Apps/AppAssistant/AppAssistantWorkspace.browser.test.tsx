@@ -9,6 +9,8 @@ import type * as TrpcMod from '~/utils/trpc';
 import type * as TokenMod from '~/components/Apps/AppAssistant/assistantToken';
 import type * as NotificationsMod from '~/utils/notifications';
 import type { Sandbox } from '~/components/Apps/AppAssistant/sandboxClient';
+import { fakeSandboxFiles } from '~/components/Apps/AppAssistant/__tests__/fakeSandboxFiles';
+import type * as SandboxAppBuiltMod from '~/components/Apps/AppAssistant/sandboxAppBuilt';
 import { SandboxApiError } from '~/components/Apps/AppAssistant/sandboxClient';
 import type * as RemoteRunnerMod from '~/components/Apps/AppAssistant/remoteRunner';
 // `test/` lives outside `src`, so the `~` alias doesn't reach it — relative import.
@@ -341,7 +343,14 @@ const r = vi.hoisted(() => ({
   probe: vi.fn<(blockId: string) => Promise<unknown>>(),
   restart: vi.fn<(app: string, options: unknown) => Promise<unknown>>(),
   /** `fetchSandboxAppBuilt`: whether the app's sandbox has its project's manifest (built). */
-  built: vi.fn<(app: string) => Promise<boolean | null>>(),
+  built:
+    vi.fn<
+      (
+        app: string,
+        mcpUrl: string,
+        getToken: (opts?: { refresh?: boolean }) => Promise<string>
+      ) => Promise<boolean | null>
+    >(),
   pane: undefined as undefined | { onRestart: () => void; pending: boolean; error: string | null },
 }));
 vi.mock('~/components/Apps/AppAssistant/AppAssistantPreview', () => ({
@@ -361,7 +370,11 @@ vi.mock('~/components/Apps/AppAssistant/previewFrame', () => ({
   fetchPreviewFrame: (blockId: string) => r.probe(blockId),
 }));
 vi.mock('~/components/Apps/AppAssistant/sandboxAppBuilt', () => ({
-  fetchSandboxAppBuilt: (_mcpUrl: string, _getToken: unknown, app: string) => r.built(app),
+  fetchSandboxAppBuilt: (
+    mcpUrl: string,
+    getToken: (opts?: { refresh?: boolean }) => Promise<string>,
+    app: string
+  ) => r.built(app, mcpUrl, getToken),
 }));
 vi.mock('~/components/Apps/AppAssistant/remoteRunner', async (importOriginal) => ({
   ...(await importOriginal<typeof RemoteRunnerMod>()),
@@ -2372,7 +2385,7 @@ describe('AppAssistantWorkspace preview after a reload on the server runner', ()
     r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
     r.built.mockResolvedValue(false);
     await reload();
-    await vi.waitFor(() => expect(r.built.mock.calls).toEqual([['app-aaaa']]));
+    await vi.waitFor(() => expect(r.built.mock.calls.map(([app]) => app)).toEqual(['app-aaaa']));
     await settle();
     expect(pane().query()).toBeNull();
     expect(r.restart).not.toHaveBeenCalled();
@@ -2397,6 +2410,25 @@ describe('AppAssistantWorkspace preview after a reload on the server runner', ()
       expect(r.pane).toEqual({ onRestart: expect.any(Function), pending: false, error: null })
     );
     expect(m.previewSession).toBeNull();
+  });
+
+  test('an app whose project lives outside its key’s directory gets the pane with Restart preview after a reload', async () => {
+    // The real check against a sandbox whose only project is `quiz-v2/`, not `app-aaaa/`: the
+    // runner's Restart preview finds it there (the only top-level manifest), so it is offered.
+    const { fetchSandboxAppBuilt } = await vi.importActual<typeof SandboxAppBuiltMod>(
+      '~/components/Apps/AppAssistant/sandboxAppBuilt'
+    );
+    const sandbox = fakeSandboxFiles(['quiz-v2/block.manifest.json', 'quiz-v2/src/main.ts']);
+    r.built.mockImplementation((app, mcpUrl, getToken) =>
+      fetchSandboxAppBuilt(mcpUrl, getToken, app, sandbox.fetch)
+    );
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    await reload();
+    await expect.element(pane()).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(r.pane).toEqual({ onRestart: expect.any(Function), pending: false, error: null })
+    );
+    expect(sandbox.fetch).toHaveBeenCalled();
   });
 
   test('no clear answer from the sandbox still offers Restart preview, as before', async () => {
