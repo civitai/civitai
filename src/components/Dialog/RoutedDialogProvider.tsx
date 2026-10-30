@@ -12,6 +12,7 @@ import {
 import { useCurrentUser } from '~/hooks/useCurrentUser';
 import { getHasClientHistory } from '~/store/ClientHistoryStore';
 import { getRoutedDialogState } from '~/components/Dialog/routedDialogState';
+import { handleHistoryPop } from '~/utils/history-layers';
 
 export function RoutedDialogProvider() {
   const router = useRouter();
@@ -22,6 +23,8 @@ export function RoutedDialogProvider() {
   // handle next router popstate
   useEffect(() => {
     router.beforePopState((state) => {
+      // Back closed a layer (a sheet or a dialog over the mobile generator): the page stays.
+      if (handleHistoryPop(state)) return false;
       const previous = prevState.current;
       setUsingNextRouter(true);
 

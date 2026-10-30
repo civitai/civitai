@@ -97,7 +97,6 @@ export function BuzzTypeSelector({
   error,
   unavailable,
   onRetry,
-  tourTarget,
 }: {
   cost: number;
   loading: boolean;
@@ -109,8 +108,6 @@ export function BuzzTypeSelector({
    */
   unavailable?: boolean;
   onRetry?: () => void;
-  /** `data-tour` for the cost button. Only the generator's tour spotlights it. */
-  tourTarget?: string;
 }) {
   const { availableTypes, selectedType, setBuzzType } = useSelectedBuzzType();
   const buzzConfig = useBuzzCurrencyConfig(selectedType);
@@ -146,7 +143,6 @@ export function BuzzTypeSelector({
     return (
       <Tooltip label="Failed to estimate cost. Click to retry.">
         <Button
-          data-tour={tourTarget}
           variant="default"
           size="compact-sm"
           className="h-full gap-1 px-2"
@@ -164,7 +160,6 @@ export function BuzzTypeSelector({
     <Menu position="top" withinPortal onChange={handleMenuOpen}>
       <Menu.Target>
         <Button
-          data-tour={tourTarget}
           variant="default"
           size="compact-sm"
           className={clsx('h-full gap-1 px-2', showGlow && 'animate-buzz-glow')}

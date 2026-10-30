@@ -1,0 +1,129 @@
+// The mobile generator's layout of SliderInput. A module rather than Tailwind: these rules set whole
+// borders (the theme layer resets `button` borders), and their colours read once via light-dark().
+
+.column {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.label {
+  min-width: 0;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+// The touch band reaches 22px above the track; tuck it under the label so the track sits close to
+// it. The thumb needs only 14px of that.
+.underLabel {
+  margin-top: -6px;
+}
+
+.track {
+  min-width: 0;
+}
+
+.grow {
+  flex: 1;
+}
+
+.value {
+  flex: none;
+  min-width: 52px;
+  min-height: 44px;
+  padding: 0 8px;
+  border-radius: var(--mantine-radius-md);
+  font-size: 18px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  color: light-dark(var(--mantine-color-gray-9), var(--mantine-color-white));
+
+  &:active {
+    background: light-dark(var(--mantine-color-gray-1), var(--mantine-color-dark-5));
+  }
+}
+
+.valueInput {
+  flex: none;
+  width: 80px;
+}
+
+.stepper {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  border-radius: var(--mantine-radius-md);
+  background: light-dark(var(--mantine-color-gray-0), var(--mantine-color-dark-6));
+  color: light-dark(var(--mantine-color-gray-9), var(--mantine-color-white));
+  user-select: none;
+  -webkit-user-select: none;
+  touch-action: manipulation;
+
+  &:active {
+    background: light-dark(var(--mantine-color-gray-2), var(--mantine-color-dark-5));
+  }
+
+  &:disabled {
+    opacity: 0.5;
+  }
+}
+
+.recommendation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 12px;
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-dark-1));
+}
+
+// Matches the band painted on the track.
+.recommendationDot {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+  background: var(--mantine-color-green-6);
+}
+
+.presets {
+  display: flex;
+  gap: 8px;
+}
+
+.preset {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 44px;
+  border: 1px solid light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+  border-radius: var(--mantine-radius-md);
+  color: light-dark(var(--mantine-color-gray-7), var(--mantine-color-gray-4));
+  font-size: 14px;
+  line-height: 1.2;
+
+  &[aria-pressed='true'] {
+    border-color: var(--mantine-color-blue-6);
+    background: var(--mantine-color-blue-light);
+    color: light-dark(var(--mantine-color-gray-9), var(--mantine-color-white));
+  }
+}
+
+.presetLabel {
+  font-weight: 600;
+}
+
+.presetValue {
+  font-size: 12px;
+  opacity: 0.7;
+}

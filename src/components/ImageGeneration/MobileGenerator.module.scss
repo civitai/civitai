@@ -1,0 +1,234 @@
+// The generator on a phone. Its bottom edge rises with the on-screen keyboard (set by
+// MobileGenerator), so the open form's footer sits above it instead of under it.
+.root {
+  // The closed sheet shows its title row: 48px tall, plus its top border.
+  --sheet-peek: calc(49px + var(--safe-area-inset-bottom, 0px));
+
+  position: fixed;
+  inset: 0;
+  bottom: var(--generator-keyboard, 0px);
+  // Fixed, so it pays its own inset: the header stays clear of the status bar.
+  padding-top: var(--safe-area-inset-top, 0px);
+  z-index: 210;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--mantine-color-body);
+}
+
+// Header and results are their own stacking contexts, so nothing in them (Mantine's Indicator
+// sits at z-index 200) shows through the sheet.
+// It folds away while the results scroll down: its one row collapses to nothing.
+.header {
+  position: relative;
+  z-index: 0;
+  flex: none;
+  display: grid;
+  grid-template-rows: 1fr;
+  overflow: hidden;
+  border-bottom: 1px solid var(--mantine-color-default-border);
+  transition: grid-template-rows 0.2s ease;
+
+  &[data-hidden] {
+    grid-template-rows: 0fr;
+    border-bottom-width: 0;
+  }
+}
+
+// What folds: no padding of its own, since a fold can shrink content to 0 but never padding.
+.headerFold {
+  min-height: 0;
+  overflow: hidden;
+}
+
+.headerRow {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 56px;
+  padding-inline: 8px;
+}
+
+// The closed sheet covers the bottom of the results, so they end above it.
+.results {
+  isolation: isolate;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  padding-bottom: var(--sheet-peek);
+}
+
+// Dims the results behind the open sheet; visible through the status-bar inset and when the sheet is
+// dragged down.
+.scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 15;
+  background: rgb(0 0 0 / 0.5);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.28s;
+
+  &[data-visible] {
+    opacity: 1;
+  }
+}
+
+.sheet {
+  position: absolute;
+  inset-inline: 0;
+  // Open, it fills the screen below the status bar.
+  top: var(--safe-area-inset-top, 0px);
+  bottom: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  border-radius: 18px 18px 0 0;
+  border-top: 1px solid var(--mantine-color-default-border);
+  background: var(--mantine-color-body);
+  box-shadow: 0 -10px 30px rgb(0 0 0 / 0.35);
+  transform: translateY(calc(100% - var(--sheet-peek) + var(--sheet-drag, 0px)));
+  transition: transform 0.28s cubic-bezier(0.2, 0.8, 0.2, 1);
+  will-change: transform;
+
+  &[data-expanded] {
+    transform: translateY(var(--sheet-drag, 0px));
+    // Full screen when open, so square corners.
+    border-radius: 0;
+  }
+
+  &[data-dragging] {
+    transition: none;
+  }
+
+  // Closed, the top edge glows, so the bar reads as something to pull up.
+  &:not([data-expanded]) {
+    border-top-color: var(--mantine-color-blue-filled);
+    box-shadow: 0 -2px 14px color-mix(in srgb, var(--mantine-color-blue-filled) 55%, transparent),
+      0 -10px 30px rgb(0 0 0 / 0.35);
+  }
+
+  &:not([data-expanded]) .head {
+    padding-bottom: var(--safe-area-inset-bottom, 0px);
+  }
+}
+
+// Only the head drags the sheet (touch-action: none); the form body scrolls.
+.head {
+  flex: none;
+  touch-action: none;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+// The generator footer (GenerationLayout) hides while a field is being typed in. Its Tailwind `flex`
+// is unlayered and outranks this module, hence the !important.
+.sheet[data-typing] :global([data-generator-footer]) {
+  display: none !important;
+}
+
+.body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.coach {
+  position: absolute;
+  inset-inline: 0;
+  bottom: 100%;
+  height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  padding-bottom: 24px;
+  color: var(--mantine-color-white);
+  background: rgb(0 0 0 / 0.7);
+  touch-action: none;
+}
+
+.coachCue {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  height: 120px;
+}
+
+.coachArrow {
+  animation: coach-arrow 1.6s ease-in-out infinite;
+}
+
+.coachFinger {
+  animation: coach-swipe 1.6s ease-in-out infinite;
+}
+
+.coachText {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 600;
+}
+
+@keyframes coach-swipe {
+  0% {
+    transform: translateY(40px);
+    opacity: 0;
+  }
+  15% {
+    transform: translateY(40px);
+    opacity: 1;
+  }
+  70% {
+    transform: translateY(-8px);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-8px);
+    opacity: 0;
+  }
+}
+
+@keyframes coach-arrow {
+  0%,
+  30% {
+    opacity: 0.3;
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0.3;
+  }
+}
+
+.nudge {
+  animation: nudge 0.9s ease-in-out 0.4s;
+}
+
+@keyframes nudge {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  40% {
+    transform: translateY(-6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .scrim,
+  .sheet {
+    transition: none;
+  }
+
+  .nudge,
+  .coachArrow,
+  .coachFinger {
+    animation: none;
+  }
+}

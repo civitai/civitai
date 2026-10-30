@@ -2,6 +2,7 @@
 import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
+import type * as UseIsMobile from '~/hooks/useIsMobile';
 
 // ClickUp 868kv6mzm. The generation resource picker carried its own copy of the
 // Newest-sort rule — `!(!features.canViewNsfw && x.label === 'Newest')` — which had
@@ -30,6 +31,12 @@ vi.mock('~/components/Filters/useSortAvailability', () => ({
 // delete this because it looks unused — it is what makes the control legible.
 vi.mock('~/providers/FeatureFlagsProvider', () => ({
   useFeatureFlags: () => ({ canViewNsfw: availabilityMock().canViewNsfw }),
+}));
+
+// A container query, which needs a provider this render doesn't have.
+vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
+  ...(await importOriginal<typeof UseIsMobile>()),
+  useIsMobile: () => false,
 }));
 
 vi.mock('~/components/ImageGeneration/GenerationForm/ResourceSelectProvider', () => ({

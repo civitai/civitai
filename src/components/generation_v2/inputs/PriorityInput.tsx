@@ -10,6 +10,10 @@ import { IconBolt, IconDiamond, IconRocket } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { RequireMembership } from '~/components/RequireMembership/RequireMembership';
 import { SupportButtonPolymorphic } from '~/components/SupportButton/SupportButton';
+import { cloneElement, useState } from 'react';
+import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
+import { SheetOption } from '~/components/Drawer/SheetOption';
+import { useMobileGenerator } from '~/hooks/useMobileGenerator';
 
 // =============================================================================
 // Types
@@ -87,60 +91,96 @@ export function PriorityInput({
   const selected = value ? options.find((x) => x.value === value) : undefined;
   // Filter out disabled options from the dropdown
   const visibleOptions = options.filter((opt) => !opt.disabled);
+  const mobileGenerator = useMobileGenerator();
+  const [opened, setOpened] = useState(false);
+
+  const trigger = (
+    <UnstyledButton
+      aria-label={`Request Priority: ${selected?.label ?? 'Standard'}`}
+      data-tap-target
+      className={clsx(
+        'flex items-center gap-1.5 rounded-md px-2 py-1 text-sm',
+        'bg-gray-1 hover:bg-gray-2',
+        'dark:bg-dark-5 dark:hover:bg-dark-4'
+      )}
+    >
+      <IconRocket size={16} className="text-gray-6 dark:text-dark-2" />
+      <span className="font-medium">{selected?.label ?? 'Standard'}</span>
+      {selected && selected.offset > 0 && (
+        <span
+          className={clsx('flex items-center', selected?.lineThrough && 'line-through opacity-50')}
+        >
+          <span className="text-xs">+</span>
+          <IconBolt className="fill-yellow-7 stroke-yellow-7" size={14} />
+          <span className="text-xs">
+            {selected.offset}
+            {modifier === 'multiplier' ? '%' : ''}
+          </span>
+        </span>
+      )}
+    </UnstyledButton>
+  );
+
+  const membersOnly = (option: (typeof visibleOptions)[number]) => (
+    <div key={option.value} className="px-1 pt-1">
+      <RequireMembership>
+        <SupportButtonPolymorphic
+          icon={IconDiamond}
+          position="right"
+          className="w-full !px-3 !py-2"
+        >
+          <PriorityLabel label={option.label} offset={option.offset} modifier={modifier} />
+        </SupportButtonPolymorphic>
+      </RequireMembership>
+    </div>
+  );
+  const label = (option: (typeof visibleOptions)[number]) => (
+    <PriorityLabel
+      label={option.label}
+      offset={option.offset}
+      modifier={modifier}
+      isFreeForMember={option.lineThrough}
+    />
+  );
+
+  if (mobileGenerator)
+    return (
+      <PopoverOrSheet
+        opened={opened}
+        onClose={() => setOpened(false)}
+        title="Request Priority"
+        target={cloneElement(trigger, { onClick: () => setOpened(true) })}
+      >
+        <div role="menu" aria-label="Request Priority">
+          {visibleOptions.map((option) =>
+            option.memberOnly && !isMember ? (
+              membersOnly(option)
+            ) : (
+              <SheetOption
+                key={option.value}
+                role="menuitemradio"
+                selected={value === option.value}
+                onClick={() => {
+                  onChange?.(option.value);
+                  setOpened(false);
+                }}
+              >
+                {label(option)}
+              </SheetOption>
+            )
+          )}
+        </div>
+      </PopoverOrSheet>
+    );
 
   return (
     <Menu position="bottom-start" withinPortal>
       <Tooltip label="Request Priority" position="top" withArrow>
-        <Menu.Target>
-          <UnstyledButton
-            className={clsx(
-              'flex items-center gap-1.5 rounded-md px-2 py-1 text-sm',
-              'bg-gray-1 hover:bg-gray-2',
-              'dark:bg-dark-5 dark:hover:bg-dark-4'
-            )}
-          >
-            <IconRocket size={16} className="text-gray-6 dark:text-dark-2" />
-            <span className="font-medium">{selected?.label ?? 'Standard'}</span>
-            {selected && selected.offset > 0 && (
-              <span
-                className={clsx(
-                  'flex items-center',
-                  selected?.lineThrough && 'line-through opacity-50'
-                )}
-              >
-                <span className="text-xs">+</span>
-                <IconBolt className="fill-yellow-7 stroke-yellow-7" size={14} />
-                <span className="text-xs">
-                  {selected.offset}
-                  {modifier === 'multiplier' ? '%' : ''}
-                </span>
-              </span>
-            )}
-          </UnstyledButton>
-        </Menu.Target>
+        <Menu.Target>{trigger}</Menu.Target>
       </Tooltip>
       <Menu.Dropdown>
         {visibleOptions.map((option) => {
-          const disabled = option.memberOnly && !isMember;
-
-          if (disabled)
-            return (
-              <div key={option.value} className="px-1 pt-1">
-                <RequireMembership>
-                  <SupportButtonPolymorphic
-                    icon={IconDiamond}
-                    position="right"
-                    className="w-full !px-3 !py-2"
-                  >
-                    <PriorityLabel
-                      label={option.label}
-                      offset={option.offset}
-                      modifier={modifier}
-                    />
-                  </SupportButtonPolymorphic>
-                </RequireMembership>
-              </div>
-            );
+          if (option.memberOnly && !isMember) return membersOnly(option);
 
           return (
             <Menu.Item
@@ -148,12 +188,7 @@ export function PriorityInput({
               onClick={() => onChange?.(option.value)}
               className={clsx(value === option.value && 'bg-blue-5/10 dark:bg-blue-8/20')}
             >
-              <PriorityLabel
-                label={option.label}
-                offset={option.offset}
-                modifier={modifier}
-                isFreeForMember={option.lineThrough}
-              />
+              {label(option)}
             </Menu.Item>
           );
         })}

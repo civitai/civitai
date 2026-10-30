@@ -1,10 +1,11 @@
-import { Menu, Text, UnstyledButton, useMantineTheme } from '@mantine/core';
+import { Menu, Text, useMantineTheme } from '@mantine/core';
 import { IconCheck, IconChevronDown, IconSortDescending } from '@tabler/icons-react';
 import clsx from 'clsx';
 import { useState } from 'react';
 import type { FilterButtonProps } from '~/components/Buttons/FilterButton';
 import { FilterButton } from '~/components/Buttons/FilterButton';
 import { MobileMenuDrawer } from '~/components/Drawer/MobileMenuDrawer';
+import { SheetOption } from '~/components/Drawer/SheetOption';
 import { useIsMobile } from '~/hooks/useIsMobile';
 
 type SelectMenu<T extends string | number> = {
@@ -109,35 +110,19 @@ export function SelectMenuV2<T extends string | number>({
           closeButtonProps={{ 'aria-label': 'Close sort menu' }}
         >
           <div className="flex flex-col gap-2">
-            {options.map((option) => {
-              const active = option.value === value;
-
-              return (
-                <UnstyledButton
-                  key={option.value.toString()}
-                  className={clsx('rounded-md px-2.5 py-3', {
-                    ['bg-gray-0 dark:bg-dark-4']: active,
-                  })}
-                  onClick={() => {
-                    onClick(option.value);
-                    setOpened(false);
-                  }}
-                >
-                  <div className="flex justify-between">
-                    {/* `span`, because `label` is a ReactNode and callers pass rich
-                        ones: Text's default `p` then nests a p inside a p. */}
-                    <Text component="span" inline>
-                      {option.label}
-                    </Text>
-                    {active && (
-                      <Text c={theme.primaryColor} inline>
-                        <IconCheck size={16} color="currentColor" />
-                      </Text>
-                    )}
-                  </div>
-                </UnstyledButton>
-              );
-            })}
+            {options.map((option) => (
+              <SheetOption
+                key={option.value.toString()}
+                role="menuitemradio"
+                selected={option.value === value}
+                onClick={() => {
+                  onClick(option.value);
+                  setOpened(false);
+                }}
+              >
+                {option.label}
+              </SheetOption>
+            ))}
             {/* Rendered in BOTH branches: a caller's footer action disappearing on
                 touch is the half nobody tests. */}
             {children}

@@ -16,7 +16,7 @@ import { IconBolt } from '@tabler/icons-react';
 import { useRef } from 'react';
 
 import { useGenerationConfig } from '~/components/ImageGeneration/GenerationForm/generation.utils';
-import { useIsMobile } from '~/hooks/useIsMobile';
+import { useGeneratorLayout } from '~/hooks/useMobileGenerator';
 import { useAppContext } from '~/providers/AppProvider';
 import { isWorkflowOrVariant } from '~/shared/generation/config/workflows';
 import { formatBytes, numberWithCommas } from '~/utils/number-helpers';
@@ -235,7 +235,7 @@ export function DownloadReadyAlert({ whatIf }: { whatIf: DownloadAlertWhatIf }) 
   const { data, download, isLoading, isSuccess, canEstimateCost, preBoost, setPreBoost } = whatIf;
   // Too tall for a phone. Mobile gets the same offer as a confirm on Generate instead
   // (`resolveBoostSubmitFields`).
-  const isMobile = useIsMobile({ type: 'media' });
+  const isMobile = useGeneratorLayout() !== 'desktop';
 
   // Rendering from the last settled response keeps the alert on screen while a changed form re-prices.
   const settledRef = useRef<{ ready?: boolean; download: typeof download } | null>(null);

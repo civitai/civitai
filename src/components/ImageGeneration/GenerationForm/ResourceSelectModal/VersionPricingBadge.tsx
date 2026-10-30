@@ -7,7 +7,14 @@ import { versionIsPaidToGenerate } from '~/shared/search/model-pricing-filter';
  * Download pricing is deliberately absent: a version can gate its download while leaving generation
  * open, and in the generator that is a free resource.
  */
-export function VersionPricingBadge({ pricing }: { pricing?: ModelVersionPricingSignal[] }) {
+export function VersionPricingBadge({
+  pricing,
+  size,
+}: {
+  pricing?: ModelVersionPricingSignal[];
+  /** `sm` for the compact row's badge line; the default sits over the card image. */
+  size?: 'sm';
+}) {
   if (!versionIsPaidToGenerate(pricing)) return null;
 
   return (
@@ -23,11 +30,15 @@ export function VersionPricingBadge({ pricing }: { pricing?: ModelVersionPricing
     >
       <Badge
         color="yellow"
-        variant="filled"
-        h={30}
-        px={8}
-        className="flex items-center gap-1"
-        leftSection={<IconBolt size={14} />}
+        {...(size === 'sm'
+          ? { variant: 'light', size: 'sm', leftSection: <IconBolt size={12} /> }
+          : {
+              variant: 'filled',
+              h: 30,
+              px: 8,
+              className: 'flex items-center gap-1',
+              leftSection: <IconBolt size={14} />,
+            })}
       >
         Paid
       </Badge>

@@ -35,6 +35,10 @@ import {
   isResourceDisabled,
 } from './ResourceItemContent';
 import { ExperimentalFlask } from '~/components/generation_v2/Experimental';
+import { SheetSelect } from '~/components/generation_v2/inputs/SheetSelect';
+
+/** Past this many versions the buttons get too narrow to read on a phone, so they become a select. */
+const MAX_VERSION_BUTTONS = 3;
 import {
   needsHydration,
   resolveResourceOptions,
@@ -325,24 +329,47 @@ export function ResourceSelectInput({
       {/* Version selector for models with multiple versions */}
       {showVersionSelector && versions && (
         <div className="mt-1">
-          <ButtonGroupInput
-            value={value?.id?.toString() ?? ''}
-            onChange={handleVersionChange}
-            data={versions.map(({ label, value: versionValue }) => ({
-              // Marked per option, so which version is experimental is legible
-              // before switching to it — not only once it's selected.
-              label: (
+          {versions.length > MAX_VERSION_BUTTONS ? (
+            <SheetSelect
+              aria-label="Version"
+              sheetTitle="Version"
+              value={value?.id?.toString() ?? null}
+              onChange={(next) => next && handleVersionChange(next)}
+              allowDeselect={false}
+              data={versions.map(({ label, value: versionValue }) => ({
+                label,
+                value: versionValue.toString(),
+              }))}
+              renderOption={({ option }) => (
                 <span className="inline-flex items-center gap-1">
-                  {label}
+                  {option.label}
                   <ExperimentalFlask
-                    target={{ kind: 'modelVersion', key: versionValue }}
+                    target={{ kind: 'modelVersion', key: Number(option.value) }}
                     size={14}
                   />
                 </span>
-              ),
-              value: versionValue.toString(),
-            }))}
-          />
+              )}
+            />
+          ) : (
+            <ButtonGroupInput
+              value={value?.id?.toString() ?? ''}
+              onChange={handleVersionChange}
+              data={versions.map(({ label, value: versionValue }) => ({
+                // Marked per option, so which version is experimental is legible
+                // before switching to it — not only once it's selected.
+                label: (
+                  <span className="inline-flex items-center gap-1">
+                    {label}
+                    <ExperimentalFlask
+                      target={{ kind: 'modelVersion', key: versionValue }}
+                      size={14}
+                    />
+                  </span>
+                ),
+                value: versionValue.toString(),
+              }))}
+            />
+          )}
         </div>
       )}
     </Input.Wrapper>

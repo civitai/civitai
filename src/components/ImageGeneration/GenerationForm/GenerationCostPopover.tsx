@@ -1,11 +1,12 @@
 import type { TransactionInfo, WorkflowCost } from '@civitai/orchestration-client';
 import type { PopoverProps } from '@mantine/core';
-import { Anchor, Group, Loader, NumberInput, Popover, Text } from '@mantine/core';
+import { Anchor, Group, Loader, NumberInput, Text, UnstyledButton } from '@mantine/core';
 import { openModal } from '@mantine/modals';
 import { IconInfoCircle } from '@tabler/icons-react';
 import React, { useEffect, useState } from 'react';
 import { CurrencyBadge } from '~/components/Currency/CurrencyBadge';
 import { CurrencyIcon } from '~/components/Currency/CurrencyIcon';
+import { PopoverOrSheet } from '~/components/generation_v2/PopoverOrSheet';
 import { Currency } from '~/shared/utils/prisma/enums';
 import { useTipStore } from '~/store/tip.store';
 import classes from './GenerationCostPopover.module.scss';
@@ -17,7 +18,7 @@ import { useGenerationFormStore } from '~/store/generation-form.store';
 import { startCase } from 'lodash-es';
 import { formatToLeastDecimals } from '~/utils/number-helpers';
 import { parseAIRSafe } from '~/shared/utils/air';
-import { getModelUrl } from '~/utils/string-helpers';
+import { capitalize, getModelUrl } from '~/utils/string-helpers';
 import { trpc } from '~/utils/trpc';
 
 const getEmojiByValue = (value: number) => {
@@ -38,6 +39,7 @@ export function GenerationCostPopover({
   transactions,
   ...popoverProps
 }: Omit<PopoverProps, 'children'> & Props) {
+  const [opened, setOpened] = useState(false);
   const totalCost = workflowCost.total ?? 0;
   const disabled = totalCost > 0 ? popoverProps.disabled : true;
 
@@ -56,38 +58,45 @@ export function GenerationCostPopover({
       : selectedType;
 
   return (
-    <Popover shadow="md" {...popoverProps} withinPortal>
-      <Popover.Target>
-        {variant === 'info-circle' ? (
-          <div className="flex cursor-pointer items-center gap-1">
-            <Text span c="yellow.7" size="sm">
-              Breakdown
-            </Text>
-            <Text span c="yellow.7" size="sm">
-              <IconInfoCircle size="16" stroke={2.5} />
-            </Text>
-          </div>
-        ) : (
-          <CurrencyBadge
-            unitAmount={totalCost}
-            currency={Currency.BUZZ}
-            size="xs"
-            className="cursor-pointer"
-            type={mainBuzzAccountType as BuzzSpendType}
-          />
-        )}
-      </Popover.Target>
-      <Popover.Dropdown p={0}>
-        <GenerationCostPopoverDetail
-          workflowCost={workflowCost}
-          readOnly={readOnly}
-          disabled={disabled}
-          hideCreatorTip={hideCreatorTip}
-          hideCivitaiTip={hideCivitaiTip}
-          buzzAccountType={mainBuzzAccountType as BuzzSpendType}
-        />
-      </Popover.Dropdown>
-    </Popover>
+    <PopoverOrSheet
+      opened={opened}
+      onClose={() => setOpened(false)}
+      title="Cost"
+      popoverProps={{ shadow: 'md', ...popoverProps }}
+      dropdownProps={{ p: 0 }}
+      target={
+        <UnstyledButton onClick={() => setOpened((o) => !o)} disabled={disabled}>
+          {variant === 'info-circle' ? (
+            <div className="flex cursor-pointer items-center gap-1">
+              <Text span c="yellow.7" size="sm">
+                Breakdown
+              </Text>
+              <Text span c="yellow.7" size="sm">
+                <IconInfoCircle size="16" stroke={2.5} />
+              </Text>
+            </div>
+          ) : (
+            <CurrencyBadge
+              unitAmount={totalCost}
+              currency={Currency.BUZZ}
+              size="xs"
+              className="cursor-pointer"
+              type={mainBuzzAccountType as BuzzSpendType}
+            />
+          )}
+        </UnstyledButton>
+      }
+    >
+      <GenerationCostPopoverDetail
+        workflowCost={workflowCost}
+        readOnly={readOnly}
+        disabled={disabled}
+        hideCreatorTip={hideCreatorTip}
+        hideCivitaiTip={hideCivitaiTip}
+        buzzAccountType={mainBuzzAccountType as BuzzSpendType}
+        transactions={transactions}
+      />
+    </PopoverOrSheet>
   );
 }
 
@@ -202,13 +211,15 @@ function BuzzValue({ amount, type }: { amount: number | string; type?: BuzzSpend
   );
 }
 
-function GenerationCostPopoverDetail({
+export function GenerationCostPopoverDetail({
   workflowCost,
   readOnly,
   hideCreatorTip,
   hideCivitaiTip,
   buzzAccountType,
-}: Props) {
+  transactions,
+  withTotal = true,
+}: Props & { withTotal?: boolean }) {
   const { creatorTip, civitaiTip } = useTipStore((state) => ({
     creatorTip: state.creatorTip * 100,
     civitaiTip: state.civitaiTip * 100,
@@ -367,13 +378,41 @@ function GenerationCostPopoverDetail({
         </>
       )}
 
-      <CostRow
-        variant="total"
-        label="Total"
-        value={<BuzzValue amount={grandTotal} type={buzzAccountType} />}
-      />
+      {withTotal && (
+        <CostRow
+          variant="total"
+          label="Total"
+          value={<BuzzValue amount={grandTotal} type={buzzAccountType} />}
+        />
+      )}
+
+      {!!transactions?.length && (
+        <>
+          <SectionHeader>Paid With</SectionHeader>
+          {transactions.map((transaction, i) => {
+            const type = transactionBuzzType(transaction.accountType);
+            const refund = transaction.type !== 'debit';
+            return (
+              <CostRow
+                key={transaction.id ?? i}
+                label={`${capitalize(type)} Buzz${refund ? ' (refunded)' : ''}`}
+                value={
+                  <span className={refund ? 'text-green-6' : undefined}>
+                    <BuzzValue amount={transaction.amount} type={type} />
+                  </span>
+                }
+              />
+            );
+          })}
+        </>
+      )}
     </div>
   );
+}
+
+/** The Buzz a transaction moved, as the badges name it: anything not yellow or green is blue. */
+function transactionBuzzType(accountType: string): BuzzSpendType {
+  return accountType === 'yellow' || accountType === 'green' ? accountType : 'blue';
 }
 
 function BreakdownExplanation() {

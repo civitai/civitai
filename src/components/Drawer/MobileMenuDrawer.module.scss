@@ -1,0 +1,30 @@
+// A drilled-in panel slides in from the right; the sheet's own content slides back from the left.
+// An animation restarts whenever its element goes from display: none to shown.
+.panel {
+  animation: drill-in 150ms ease-out;
+}
+
+.root > * {
+  animation: drill-back 150ms ease-out;
+}
+
+@keyframes drill-in {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+
+@keyframes drill-back {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .panel,
+  .root > * {
+    animation: none;
+  }
+}

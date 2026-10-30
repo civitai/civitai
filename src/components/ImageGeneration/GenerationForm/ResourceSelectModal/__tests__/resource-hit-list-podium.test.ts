@@ -3,6 +3,7 @@ import { act, createElement } from 'react';
 import { createRoot } from 'react-dom/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Trpc from '~/utils/trpc';
+import { makeTrpcProxy } from '../../../../../../test/trpcProxyStub';
 import type * as HiddenPreferences from '~/components/HiddenPreferences/useApplyHiddenPreferences';
 
 const state = vi.hoisted(() => ({
@@ -10,6 +11,7 @@ const state = vi.hoisted(() => ({
   items: [] as unknown[],
   gridItems: [] as unknown[],
   featured: [] as unknown[],
+  resources: [{ type: 'Checkpoint', baseModels: [] as string[] }],
   canViewNsfw: true,
   disablePoi: false,
   systemHiddenTags: new Map<number, boolean>(),
@@ -72,7 +74,7 @@ vi.mock(
 vi.mock('~/components/ImageGeneration/GenerationForm/ResourceSelectProvider', () => ({
   useResourceSelectContext: () => ({
     canGenerate: undefined,
-    resources: [{ type: 'Checkpoint', baseModels: [] }],
+    resources: state.resources,
     selectSource: 'generation',
     excludedIds: [],
     tab: 'featured',
@@ -81,17 +83,37 @@ vi.mock('~/components/ImageGeneration/GenerationForm/ResourceSelectProvider', ()
 }));
 vi.mock('~/utils/trpc', async (importOriginal) => ({
   ...(await importOriginal<typeof Trpc>()),
-  trpc: { model: { getFeaturedModels: { useQuery: () => ({ data: state.featured }) } } },
+  trpc: makeTrpcProxy({
+    'model.getFeaturedModels': { useQuery: () => ({ data: state.featured }) },
+  }),
 }));
 vi.mock(
   '~/components/ImageGeneration/GenerationForm/ResourceSelectModal/ResourceSelectCard',
   () => ({
-    ResourceSelectCard: ({ data }: { data: { id: number; images: { id: number }[] } }) =>
-      createElement('div', { 'data-card': data.id, 'data-image': data.images[0]?.id }),
+    ResourceSelectCard: ({
+      data,
+      featuredVersionId,
+    }: {
+      data: { id: number; images: { id: number }[] };
+      featuredVersionId?: number;
+    }) =>
+      createElement('div', {
+        'data-card': data.id,
+        'data-image': data.images[0]?.id,
+        'data-featured-version': featuredVersionId,
+      }),
   })
 );
+// Renders each grid item through the list's own render callback, so grid cards are visible too.
 vi.mock('~/components/MasonryColumns/MasonryColumnsVirtual', () => ({
-  MasonryColumnsVirtual: () => null,
+  MasonryColumnsVirtual: ({
+    data,
+    render,
+  }: {
+    data: { id: number }[];
+    render: (props: { data: unknown; height: number }) => unknown;
+  }) =>
+    data.map((item) => createElement('div', { key: item.id }, render({ data: item, height: 1 }))),
 }));
 vi.mock('~/components/MasonryColumns/MasonryProvider', () => ({
   MasonryProvider: ({ children }: { children: unknown }) => children,
@@ -119,16 +141,33 @@ const model = (id: number, images: Img[], over: Record<string, unknown> = {}) =>
 const WINNER = 1;
 const GRID_MODEL = model(2, [{ id: 20, nsfwLevel: PG }]);
 
-function renderPodium(winnerImages: Img[], over: Record<string, unknown> = {}) {
+const featuredRow = (modelId: number, modelVersionId: number, baseModel: string, position = 1) => ({
+  modelId,
+  modelVersionId,
+  type: 'Checkpoint',
+  baseModel,
+  position,
+});
+
+function renderList(
+  featured: unknown[],
+  cardId: number,
+  winnerImages: Img[] = [{ id: 12, nsfwLevel: PG }],
+  over: Record<string, unknown> = {}
+) {
   state.items = [model(WINNER, winnerImages, over), GRID_MODEL];
   state.gridItems = [GRID_MODEL];
-  state.featured = [{ modelId: WINNER, type: 'Checkpoint', baseModel: 'SDXL 1.0', position: 1 }];
+  state.featured = featured;
   const container = document.createElement('div');
   const root = createRoot(container);
   act(() => root.render(createElement(ResourceHitList, { query: '' })));
-  const card = container.querySelector(`[data-card="${WINNER}"]`);
+  const card = container.querySelector(`[data-card="${cardId}"]`);
   act(() => root.unmount());
   return card;
+}
+
+function renderPodium(winnerImages: Img[], over: Record<string, unknown> = {}) {
+  return renderList([featuredRow(WINNER, 15, 'SDXL 1.0')], WINNER, winnerImages, over);
 }
 
 beforeEach(() => {
@@ -141,9 +180,33 @@ beforeEach(() => {
   state.hiddenTags = new Map();
   state.hiddenModels = new Map();
   state.hiddenImages = new Map();
+  state.resources = [{ type: 'Checkpoint', baseModels: [] }];
 });
 
 describe('ResourceHitList featured podium', () => {
+  it("opens a winner's card on the version that was featured", () => {
+    const card = renderPodium([{ id: 12, nsfwLevel: PG }]);
+    expect(card?.getAttribute('data-featured-version')).toBe('15');
+  });
+
+  it('opens a featured grid card (below the podium) on its featured version', () => {
+    const featured = [
+      featuredRow(WINNER, 15, 'SDXL 1.0'),
+      featuredRow(GRID_MODEL.id, 25, 'SDXL 1.0', 4),
+    ];
+    expect(renderList(featured, GRID_MODEL.id)?.getAttribute('data-featured-version')).toBe('25');
+  });
+
+  it("prefers this ecosystem's featured version, and the first of several", () => {
+    state.resources = [{ type: 'Checkpoint', baseModels: ['SDXL 1.0'] }];
+    const featured = [
+      featuredRow(WINNER, 14, 'Pony'),
+      featuredRow(WINNER, 15, 'SDXL 1.0'),
+      featuredRow(WINNER, 16, 'SDXL 1.0'),
+    ];
+    expect(renderList(featured, WINNER)?.getAttribute('data-featured-version')).toBe('15');
+  });
+
   it('skips a winner image above the viewer browsing level', () => {
     const card = renderPodium([
       { id: 11, nsfwLevel: X },

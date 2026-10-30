@@ -1,0 +1,94 @@
+/* Desktop sizes; the mobile generator's root sets --touch-slider-band and --touch-slider-thumb. */
+.root {
+  --thumb: var(--touch-slider-thumb, 16px);
+  position: relative;
+  height: var(--touch-slider-band, 24px);
+  touch-action: pan-y;
+  cursor: pointer;
+  outline: none;
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.track {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--thumb) / 2);
+  right: calc(var(--thumb) / 2);
+  height: 6px;
+  margin-top: -3px;
+  border-radius: 3px;
+  overflow: hidden;
+  background: light-dark(var(--mantine-color-gray-3), var(--mantine-color-dark-4));
+}
+
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: calc(var(--p) * 100%);
+  background: var(--mantine-color-blue-6);
+}
+
+/* With a recommended range the track is a map, not an amount: yellow outside, green inside. */
+.zoned .track {
+  background: var(--mantine-color-yellow-6);
+  opacity: 0.85;
+}
+
+.zone {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: var(--mantine-color-green-6);
+}
+
+.thumb {
+  position: absolute;
+  top: 50%;
+  left: calc(var(--thumb) / 2 + (100% - var(--thumb)) * var(--p));
+  width: var(--thumb);
+  height: var(--thumb);
+  margin: calc(var(--thumb) / -2) 0 0 calc(var(--thumb) / -2);
+  border-radius: 50%;
+  background: var(--mantine-color-white);
+  border: 3px solid var(--mantine-color-blue-6);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+  transition: transform 0.12s;
+}
+
+.dragging .thumb {
+  transform: scale(1.1);
+}
+
+.root:focus-visible .thumb {
+  outline: 2px solid var(--mantine-color-blue-4);
+  outline-offset: 2px;
+}
+
+.bubble {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 2px 8px;
+  border-radius: 6px;
+  background: var(--mantine-color-dark-8);
+  color: var(--mantine-color-white);
+  font-size: 13px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .thumb {
+    transition: none;
+  }
+}

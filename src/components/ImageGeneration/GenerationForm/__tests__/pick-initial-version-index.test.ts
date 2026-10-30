@@ -2,6 +2,7 @@ import { ModelVersionPricingSignal as S } from '@civitai/buzz';
 import { describe, expect, it } from 'vitest';
 import {
   pickInitialVersionIndex,
+  pickVersionCover,
   resolveSelectedIndex,
   showsPricingFilter,
   toResourceSelectFilterInput,
@@ -76,6 +77,40 @@ describe('pickInitialVersionIndex', () => {
   it('an empty version list yields 0, not -1', () => {
     expect(pick([], { hidePaid: true }, ALL)).toBe(0);
   });
+
+  describe('with a preferred version (the featured one)', () => {
+    const pickPreferred = (versions: V[], filter: ModelPricingFilter, name: string) =>
+      pickInitialVersionIndex(versions, {
+        filter,
+        satisfiesFilter: (x) => versionSatisfiesPricingFilter(x.pricing, filter),
+        isCompatible: () => true,
+        preferred: (x) => x.name === name,
+      });
+    const versions = [v('latest', 'SDXL', free), v('featured', 'Illustrious', free)];
+
+    it('opens on it rather than the latest version', () => {
+      expect(pickPreferred(versions, {}, 'featured')).toBe(1);
+    });
+
+    it('yields to a pricing filter it does not satisfy', () => {
+      const priced = [v('latest', 'SDXL', free), v('featured', 'Illustrious', paid)];
+      expect(pickPreferred(priced, { hidePaid: true }, 'featured')).toBe(0);
+    });
+
+    it('is passed over when this ecosystem cannot use it', () => {
+      const index = pickInitialVersionIndex(versions, {
+        filter: {},
+        satisfiesFilter: () => true,
+        isCompatible: (x) => x.baseModel === 'SDXL',
+        preferred: (x) => x.name === 'featured',
+      });
+      expect(index).toBe(0);
+    });
+
+    it('falls back as usual when it is not among the versions', () => {
+      expect(pickPreferred(versions, {}, 'gone')).toBe(0);
+    });
+  });
 });
 
 describe('resolveSelectedIndex', () => {
@@ -143,5 +178,29 @@ describe('toResourceSelectFilterInput', () => {
     expect(
       toResourceSelectFilterInput({ types: [], baseModels: [], loadedOnly: false }).hidePaid
     ).toBeUndefined();
+  });
+});
+
+describe('pickVersionCover', () => {
+  const versions = [
+    { id: 1, baseModel: 'Illustrious' },
+    { id: 2, baseModel: 'Anima' },
+    { id: 3, baseModel: 'Illustrious' },
+  ];
+  const images = [
+    { id: 10, modelVersionId: 1 },
+    { id: 20, modelVersionId: 2 },
+  ];
+
+  it("shows the selected version's cover when the primary one is another ecosystem's", () => {
+    expect(pickVersionCover(images, versions, versions[1])?.id).toBe(20);
+  });
+
+  it("keeps the primary cover (the creator's pick) within its own ecosystem", () => {
+    expect(pickVersionCover(images, versions, versions[2])?.id).toBe(10);
+  });
+
+  it('falls back to the primary cover when the selected version has none', () => {
+    expect(pickVersionCover([images[0]], versions, versions[1])?.id).toBe(10);
   });
 });

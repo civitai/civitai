@@ -5,16 +5,8 @@
  * node via `meta.options`.
  */
 
-import {
-  Button,
-  Group,
-  Input,
-  RangeSlider,
-  SegmentedControl,
-  Select,
-  Stack,
-  Text,
-} from '@mantine/core';
+import { Button, Group, Input, RangeSlider, SegmentedControl, Stack, Text } from '@mantine/core';
+import { SheetSelect } from './SheetSelect';
 import { IconVideo, IconX } from '@tabler/icons-react';
 import React, { useEffect, useMemo, useState } from 'react';
 import { InfoPopover } from '~/components/InfoPopover/InfoPopover';
@@ -174,7 +166,7 @@ export function ControlVideoInput({ value, onChange, meta, error }: ControlVideo
         />
 
         <Group grow align="flex-start">
-          <Select
+          <SheetSelect
             label="Type"
             value={activeCategory}
             data={categoryOptions}
@@ -186,7 +178,7 @@ export function ControlVideoInput({ value, onChange, meta, error }: ControlVideo
             }}
             comboboxProps={{ withinPortal: true }}
           />
-          <Select
+          <SheetSelect
             label="Preprocessor"
             description={
               entry.mode === 'preprocessed'

@@ -6093,8 +6093,6 @@ export async function getFeaturedModels() {
       // was trying to subtract 2 minutes
       const now = dayjs();
 
-      // TODO we're featuring modelVersions, but showing models due to how collections and meili works
-
       let retries = 0;
       while (retries < 3) {
         const nowDate = now.subtract(retries, 'day').toDate();
@@ -6107,6 +6105,7 @@ export async function getFeaturedModels() {
             position: true,
             modelVersion: {
               select: {
+                id: true,
                 modelId: true,
                 baseModel: true,
                 model: { select: { type: true } },
@@ -6120,6 +6119,7 @@ export async function getFeaturedModels() {
         } else {
           return data.map((row) => ({
             modelId: row.modelVersion.modelId,
+            modelVersionId: row.modelVersion.id,
             position: row.position,
             baseModel: row.modelVersion.baseModel as BaseModel,
             type: row.modelVersion.model.type,
@@ -6128,9 +6128,12 @@ export async function getFeaturedModels() {
       }
 
       // if nothing found, get from the collection
-      const query = await dbWrite.$queryRaw<{ modelId: number; baseModel: string; type: string }[]>`
+      const query = await dbWrite.$queryRaw<
+        { modelId: number; modelVersionId: number; baseModel: string; type: string }[]
+      >`
         SELECT
           ci."modelId",
+          mv.id AS "modelVersionId",
           mv."baseModel",
           m."type"
         FROM "CollectionItem" ci
@@ -6144,6 +6147,7 @@ export async function getFeaturedModels() {
       `;
       return query.map((row) => ({
         modelId: row.modelId,
+        modelVersionId: row.modelVersionId,
         position: 0,
         baseModel: row.baseModel as BaseModel,
         type: row.type as ModelType,
