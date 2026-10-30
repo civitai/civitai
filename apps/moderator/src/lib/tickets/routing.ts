@@ -8,6 +8,8 @@ export const ACCOUNT_RESTRICTION_FEATURE = 'Account Restriction or Banned Accoun
 export const CONTENT_RELATED_FEATURE = 'Content Related Issue';
 export const IMAGE_GENERATOR_FEATURE = 'Image Generator';
 export const LORA_TRAINER_FEATURE = 'LoRA Trainer';
+export const ACCOUNT_LOGIN_FEATURE = 'Account Login';
+export const EMAIL_CHANGE_FEATURE = 'Email Change';
 
 /**
  * Which tickets belong to the moderation view. Everything else is support's. Edit this constant to move

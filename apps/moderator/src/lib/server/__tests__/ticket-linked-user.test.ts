@@ -143,3 +143,11 @@ describe('linkedUserFor a support panel', () => {
     expect(await forGenerator('5')).toEqual({ status: 'ok', userId: null });
   });
 });
+
+describe('the account write path for a support Account Login / Email Change ticket', () => {
+  it.each(['Account Login', 'Email Change'])('refuses a support %s ticket', async (cfFeature) => {
+    getTicketDetail.mockResolvedValue({ status: 'found', ticket: { cfFeature } });
+    resolveTicketView.mockResolvedValue({ routesTo: 'support', routed: null });
+    expect(await linkedUser('5')).toMatchObject({ status: 'refused', code: 409 });
+  });
+});

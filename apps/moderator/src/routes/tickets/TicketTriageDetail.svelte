@@ -288,6 +288,16 @@
   {#if panels.account}
     <TicketAccount ticketId={row.id} account={panels.account} canAct={canAccountAct} {canUnban} ondone={accountDone} />
   {/if}
+  {#if panels.supportAccount}
+    <TicketAccount
+      ticketId={row.id}
+      account={panels.supportAccount}
+      canAct={false}
+      canUnban={false}
+      readOnly
+      ondone={accountDone}
+    />
+  {/if}
   {#if panels.appeals}
     <TicketAppeals
       ticketId={row.id}

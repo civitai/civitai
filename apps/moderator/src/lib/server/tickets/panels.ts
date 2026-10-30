@@ -16,6 +16,7 @@ export type PanelSections = {
   contentIssue: TicketContentIssue;
   generator: TicketGenerator;
   lora: TicketLora;
+  supportAccount: TicketAccount;
 };
 
 export type CanRead = (path: string) => boolean;
@@ -48,6 +49,15 @@ export const liveLoaders: Loaders = {
   generator: ({ civitaiUserId }, canRead) =>
     generatorSectionFor({ userId: civitaiUserId, canRead }),
   lora: ({ civitaiUserId }) => loraSectionFor({ userId: civitaiUserId }),
+  supportAccount: ({ view, cfFeature, routerTopic, civitaiUserId }) =>
+    accountSectionFor({
+      view,
+      cfFeature: cfFeature ?? null,
+      routerTopic: routerTopic ?? null,
+      civitaiUserId,
+      canView: true,
+      readOnly: true,
+    }),
 };
 
 /**

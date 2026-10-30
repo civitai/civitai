@@ -7,6 +7,7 @@ import { BLOCKED_PROMPTS_PATH, generatorPanelFor } from './generator-panel';
 import { TRAINING_MODELS_PATH, loraPanelFor } from './lora-panel';
 import { RATINGS_PATH } from './rating-disputes';
 import type { TicketView } from './routing';
+import { supportAccountPanelFor } from './support-account-panel';
 
 /** What decides whether a panel applies to a ticket. */
 export type PanelContext = {
@@ -59,6 +60,11 @@ export const PANELS = {
   lora: {
     readGrants: [TRAINING_MODELS_PATH],
     visibility: loraPanelFor,
+  },
+  // The Account card without its actions, for Account Login and Email Change tickets.
+  supportAccount: {
+    readGrants: ['/retool/user-lookup'],
+    visibility: supportAccountPanelFor,
   },
 } satisfies Record<string, PanelSpec>;
 

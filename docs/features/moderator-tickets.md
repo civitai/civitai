@@ -73,6 +73,8 @@ is its own page grant. Acting on a ticket is a separate permission:
   - **Image Generator**: the user's `generation` restrictions (`/audit/generator-restrictions`), where a pending
     one is upheld or overturned through the shared restriction ruling. Also blocked prompts (`/retool/user-lookup`).
     No generated media is shown.
+  - **Account Login** and **Email Change**: the Account card, read-only (`/retool/user-lookup`), with the
+    account's email and when it was verified. No ban, mute or ruling actions: those stay moderation-only.
   - **LoRA Trainer**: recent training runs with their publish block (`/audit/training-models`), where Block /
     Allow publishing posts the intended state and is refused if the model is someone else's or already in that
     state. Buzz charges are not shown.

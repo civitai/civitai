@@ -13,6 +13,7 @@ const ratingDisputes = vi.fn();
 const contentIssue = vi.fn();
 const generator = vi.fn();
 const lora = vi.fn();
+const supportAccount = vi.fn();
 const loaders = {
   account: (...a: unknown[]) => account(...a),
   appeals: (...a: unknown[]) => appeals(...a),
@@ -21,6 +22,7 @@ const loaders = {
   contentIssue: (...a: unknown[]) => contentIssue(...a),
   generator: (...a: unknown[]) => generator(...a),
   lora: (...a: unknown[]) => lora(...a),
+  supportAccount: (...a: unknown[]) => supportAccount(...a),
 } as never;
 const all = () => true;
 
@@ -41,6 +43,7 @@ beforeEach(() => {
   contentIssue.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
   generator.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
   lora.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
+  supportAccount.mockReset().mockResolvedValue({ status: 'ok', userId: 7 });
 });
 
 describe('loadPanels', () => {
@@ -127,6 +130,22 @@ describe('loadPanels', () => {
     expect(await loadPanels(lt, (p) => p !== '/audit/training-models', loaders)).toEqual({});
     expect(lora).toHaveBeenCalledTimes(1);
   });
+
+  it.each(['Account Login', 'Email Change'])(
+    'shows only the read-only account panel on a support %s ticket, under the User Lookup grant',
+    async (cfFeature) => {
+      const t = { ...ticket, view: 'support' as const, cfFeature };
+      const res = await loadPanels(t, all, loaders);
+      expect(Object.keys(res)).toEqual(['supportAccount']);
+      expect(supportAccount).toHaveBeenCalledWith({ ...t, civitaiUserId: 7 }, all);
+      expect(account).not.toHaveBeenCalled();
+      expect(await loadPanels({ ...t, view: 'moderation' }, all, loaders)).toEqual({});
+      expect(await loadPanels({ ...t, civitaiUserId: null }, all, loaders)).toEqual({
+        supportAccount: { status: 'unlinked' },
+      });
+      expect(await loadPanels(t, (p) => p !== '/retool/user-lookup', loaders)).toEqual({});
+    }
+  );
 
   it('says only that no user is linked, without loading', async () => {
     expect(await loadPanels({ ...ticket, civitaiUserId: null }, all, loaders)).toEqual({

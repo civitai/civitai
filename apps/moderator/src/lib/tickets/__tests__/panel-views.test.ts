@@ -5,6 +5,7 @@ import {
   CONTENT_RELATED_FEATURE,
   IMAGE_GENERATOR_FEATURE,
   LORA_TRAINER_FEATURE,
+  ACCOUNT_LOGIN_FEATURE,
   type TicketView,
 } from '../routing';
 
@@ -16,6 +17,7 @@ const SHOWN_IN: Record<PanelKey, TicketView> = {
   contentIssue: 'support',
   generator: 'support',
   lora: 'support',
+  supportAccount: 'support',
 };
 
 // A ticket every panel would show on, in the view it belongs to: features and topics of both views.
@@ -24,6 +26,7 @@ const triggers = [
   { cfFeature: IMAGE_GENERATOR_FEATURE, routerTopic: null },
   { cfFeature: CONTENT_RELATED_FEATURE, routerTopic: null },
   { cfFeature: LORA_TRAINER_FEATURE, routerTopic: null },
+  { cfFeature: ACCOUNT_LOGIN_FEATURE, routerTopic: null },
 ];
 
 describe('PANELS', () => {
