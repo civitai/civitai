@@ -1,5 +1,5 @@
 import { Menu, Text, ThemeIcon } from '@mantine/core';
-import { useEffect, useRef } from 'react';
+import { cloneElement, isValidElement, useEffect, useRef } from 'react';
 import { IconBrush, IconMovie, IconWand } from '@tabler/icons-react';
 import type { RemixKind } from '~/shared/constants/remix.constants';
 import { useTrackEvent } from '~/components/TrackView/track.utils';
@@ -7,9 +7,11 @@ import {
   canReusePrompt,
   getEngineRefusal,
   getRemixKinds,
-  isReuseRefused,
+  getRemixOptions,
+  getSoleRemixOption,
   startPromptReuse,
   startRemix,
+  type RemixOptionKey,
   type RemixSourceImage,
 } from '~/components/Image/Remix/remix.utils';
 import { useTourContext } from '~/components/Tours/ToursProvider';
@@ -99,10 +101,13 @@ export function RemixMenu({
   zIndex?: number;
 }) {
   const { trackAction } = useTrackEvent();
-  const { setBlockedTarget } = useTourContext();
-  const kinds = getRemixKinds(image);
+  const { setBlockedTarget, running: tourRunning } = useTourContext();
+  const options = getRemixOptions(image);
   const engineRefusal = getEngineRefusal(image);
-  const showReuse = canReusePrompt(image) && !isReuseRefused(image);
+  // Exactly one thing to offer: skip the menu and run it. A tour spotlighting
+  // this menu teaches the menu, so while one is running it opens as usual rather
+  // than skipping the step that describes it.
+  const soleOption = tourTarget && tourRunning ? undefined : getSoleRemixOption(image);
 
   const track = (remixKind: 'edit' | 'video' | 'reuse') =>
     trackAction({
@@ -128,6 +133,9 @@ export function RemixMenu({
     onAction?.();
   };
 
+  const runOption = (option: RemixOptionKey) =>
+    option === 'reuse' ? handleReuse() : handleKind(option);
+
   // Latched: Mantine fires this on every open, while a tour advances a step at
   // a time, so reopening the menu must not move it on again.
   //
@@ -135,7 +143,7 @@ export function RemixMenu({
   // holding nothing but a disabled refusal has no item to click, so there an
   // `onAction` that only fires from an item would strand a tour step whose sole
   // exit is clicking through this button.
-  const hasActionableItem = (!engineRefusal && kinds.length > 0) || showReuse;
+  const hasActionableItem = options.length > 0;
   const announcedOpen = useRef(false);
 
   // The menu step hides its footer, so a menu holding nothing but a disabled refusal
@@ -171,6 +179,18 @@ export function RemixMenu({
       .then(() => onOpen());
   };
 
+  // No Menu at all, not a disabled one: Menu.Target still toggles its own open
+  // state, which would fire `onOpen` (a second tour advance) and leave the
+  // button announcing a popup it never opens.
+  if (soleOption && isValidElement<{ onClick?: (e: React.MouseEvent) => void }>(children)) {
+    return cloneElement(children, {
+      onClick: (e) => {
+        children.props.onClick?.(e);
+        runOption(soleOption);
+      },
+    });
+  }
+
   return (
     <Menu
       withinPortal
@@ -195,32 +215,19 @@ export function RemixMenu({
             <Text size="xs">{engineRefusal}</Text>
           </Menu.Item>
         )}
-        {!engineRefusal && (
-          <>
-            {kinds.map((kind) => {
-              const option = kindLabels[kind];
-              return (
-                <Menu.Item
-                  key={kind}
-                  className="rounded-md px-2 py-2.5"
-                  leftSection={<OptionIcon option={option} />}
-                  onClick={() => handleKind(kind)}
-                >
-                  <OptionLabel option={option} />
-                </Menu.Item>
-              );
-            })}
-          </>
-        )}
-        {showReuse && (
-          <Menu.Item
-            className="rounded-md px-2 py-2.5"
-            leftSection={<OptionIcon option={reuseOption} />}
-            onClick={handleReuse}
-          >
-            <OptionLabel option={reuseOption} />
-          </Menu.Item>
-        )}
+        {options.map((key) => {
+          const option = key === 'reuse' ? reuseOption : kindLabels[key];
+          return (
+            <Menu.Item
+              key={key}
+              className="rounded-md px-2 py-2.5"
+              leftSection={<OptionIcon option={option} />}
+              onClick={() => runOption(key)}
+            >
+              <OptionLabel option={option} />
+            </Menu.Item>
+          );
+        })}
       </Menu.Dropdown>
     </Menu>
   );

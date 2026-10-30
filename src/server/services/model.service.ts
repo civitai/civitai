@@ -2675,7 +2675,8 @@ export async function applyModelFlagSideEffects({
   const newGallerySettings = after.gallerySettings as ModelGallerySettingsSchema;
   const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
 
-  if (galleryBrowsingLevelChanged) await bustModelGallerySettings([id]);
+  // The served level is held by the flags too (see heldGalleryLevel), not only by the stored one.
+  if (galleryBrowsingLevelChanged || minorChanged) await bustModelGallerySettings([id]);
 
   if (minorChanged || poiChanged) {
     const modelVersions = await dbWrite.modelVersion.findMany({
@@ -3318,6 +3319,81 @@ async function lockModelRow(tx: Prisma.TransactionClient, id: number) {
 }
 type LockedModelRow = Awaited<ReturnType<typeof lockModelRow>>;
 
+type ContentFlags = { nsfw: boolean; minor: boolean; poi: boolean; sfwOnly: boolean };
+
+/**
+ * The content flags the row holds after this save: what it writes, over the locked row. A save
+ * that changes none of them is let through, so a row already in a refused combination stays
+ * editable.
+ */
+type ContentFlagWrite = { nsfw?: boolean; minor?: boolean; poi?: boolean; sfwOnly?: boolean };
+
+function assertAllowedContentFlags(stored: ContentFlags, data: ContentFlagWrite): ContentFlags {
+  const merged: ContentFlags = {
+    nsfw: data.nsfw ?? stored.nsfw,
+    minor: data.minor ?? stored.minor,
+    poi: data.poi ?? stored.poi,
+    sfwOnly: data.sfwOnly ?? stored.sfwOnly,
+  };
+  const changed = (Object.keys(merged) as (keyof ContentFlags)[]).some(
+    (flag) => merged[flag] !== stored[flag]
+  );
+  if (!changed || !merged.nsfw) return merged;
+  if (merged.poi)
+    throw throwBadRequestError('Mature content depicting actual people is not permitted.');
+  if (merged.minor) throw throwBadRequestError('Mature content depicting minors is not permitted.');
+  if (merged.sfwOnly)
+    throw throwBadRequestError('Mature content on a model marked as SFW is not permitted.');
+  return merged;
+}
+
+const NO_CONTENT_FLAGS: ContentFlags = { nsfw: false, minor: false, poi: false, sfwOnly: false };
+
+/** The minor and POI flags a save turns on. */
+function raisedRestrictions(stored: ContentFlags, data: { minor?: boolean; poi?: boolean }) {
+  return (['minor', 'poi'] as const).filter((flag) => data[flag] === true && !stored[flag]);
+}
+
+/** Whether the row is minor, POI or SFW-only after this save: the profanity rating stays off it. */
+function holdsRestriction(stored: ContentFlags, data: ContentFlagWrite) {
+  return !!(
+    (data.minor ?? stored.minor) ||
+    (data.poi ?? stored.poi) ||
+    (data.sfwOnly ?? stored.sfwOnly)
+  );
+}
+
+/**
+ * An owner's save that turns minor or POI on takes what those flags carry, as `setModelMinor` and
+ * `setModelPoi` write it, even over a stored nsfw or SFW-only lock. Clearing a locked nsfw this way
+ * also takes the locks those setters add, so undoing it takes a moderator, and returns what it
+ * replaced for the row's meta.
+ */
+function applyRaisedRestrictions(
+  stored: ContentFlags & { lockedProperties?: string[] },
+  data: ContentFlagWrite & { lockedProperties?: string[] }
+): ModelMeta['ownerFlagOverride'] | undefined {
+  const raised = raisedRestrictions(stored, data);
+  if (!raised.length) return;
+  data.nsfw = false;
+  data.sfwOnly = true;
+  const storedLocks = stored.lockedProperties ?? [];
+  if (!stored.nsfw || !storedLocks.includes('nsfw')) return;
+  data.lockedProperties = uniq([
+    ...storedLocks,
+    ...raised.flatMap((flag) =>
+      flag === 'minor' ? MINOR_LOCKED_PROPERTIES : POI_LOCKED_PROPERTIES
+    ),
+  ]);
+  return {
+    at: new Date().toISOString(),
+    flags: raised,
+    prevNsfw: stored.nsfw,
+    prevSfwOnly: stored.sfwOnly,
+    prevLockedProperties: storedLocks,
+  };
+}
+
 /**
  * Whether a moderator's save rules on the nsfw rating: adds or removes the nsfw lock, or changes
  * nsfw itself. Such a save makes the rating the moderator's, so it drops the `systemNsfwLock`
@@ -3486,6 +3562,8 @@ export const upsertModel = async (
   }
 
   let profanityAutoNsfw = false;
+  // The save's own nsfw, put back if the transaction finds the profanity nsfw must not apply.
+  let nsfwBeforeProfanity: boolean | undefined;
   if (!isModerator && (await legacyProfanityAutoNsfwApplies('Model', id))) {
     // Check model name and description for profanity using threshold-based evaluation
     const profanityFilter = createProfanityFilter();
@@ -3501,9 +3579,13 @@ export const upsertModel = async (
           metrics: evaluation.metrics,
         },
       };
-      // A stored nsfw lock is a moderator's call (minor-flagging sets it false): keep the
-      // detection for review, but never let the filter overturn it.
-      if (!storedLockedProperties.includes('nsfw')) {
+      // A stored nsfw lock is a moderator's call (minor-flagging sets it false), and a minor, POI
+      // or SFW-only model stays SFW: keep the detection for review, but never mark nsfw over them.
+      if (
+        !storedLockedProperties.includes('nsfw') &&
+        !holdsRestriction(beforeUpdate ?? NO_CONTENT_FLAGS, data)
+      ) {
+        nsfwBeforeProfanity = data.nsfw;
         data.nsfw = true;
         data.lockedProperties = uniq([...storedLockedProperties, 'nsfw']);
         meta = { ...meta, systemNsfwLock: systemNsfwLockMarker('profanity-filter') };
@@ -3531,6 +3613,12 @@ export const upsertModel = async (
   if (!id || templateId) {
     if (!isModerator && data.availability === Availability.Private)
       throw throwBadRequestError('Private models are created from the private model flow.');
+    if (!isModerator) applyRaisedRestrictions(NO_CONTENT_FLAGS, data);
+    assertAllowedContentFlags(NO_CONTENT_FLAGS, data);
+    const createGallerySettings =
+      data.minor || data.sfwOnly
+        ? { ...gallerySettings, level: sfwBrowsingLevelsFlag }
+        : gallerySettings;
 
     const result = await dbWrite.$transaction(
       async (tx) => {
@@ -3540,7 +3628,7 @@ export const upsertModel = async (
             ...data,
             // Publishing goes through model.publish, which enforces what a create would skip.
             status: isModerator ? status : ModelStatus.Draft,
-            gallerySettings,
+            gallerySettings: createGallerySettings,
             meta:
               bountyId || meta
                 ? {
@@ -3689,13 +3777,20 @@ export const upsertModel = async (
           prevGallerySettings;
         if (!isModerator && locked) {
           enforceLockedProperties({ data, storedLockedProperties: locked.lockedProperties });
-          if (profanityAutoNsfw && locked.lockedProperties.includes('nsfw')) {
+          if (
+            profanityAutoNsfw &&
+            (locked.lockedProperties.includes('nsfw') || holdsRestriction(locked, data))
+          ) {
             profanityAutoNsfw = false;
             meta = withoutSystemNsfwLock(meta ?? {});
+            // A locked nsfw was already stripped from the save above.
+            if (!locked.lockedProperties.includes('nsfw')) data.nsfw = nsfwBeforeProfanity;
           } else if (profanityAutoNsfw) {
             data.nsfw = true;
             data.lockedProperties = uniq([...locked.lockedProperties, 'nsfw']);
           }
+          const ownerFlagOverride = applyRaisedRestrictions(locked, data);
+          if (ownerFlagOverride) meta = { ...(meta ?? {}), ownerFlagOverride };
         }
         if (
           !isModerator &&
@@ -3704,6 +3799,7 @@ export const upsertModel = async (
           data.availability !== locked.availability
         )
           throw throwBadRequestError('A model’s availability changes only through its own flows.');
+        const flags = locked ? assertAllowedContentFlags(locked, data) : undefined;
         let mergedMeta: ModelMeta = { ...prevMeta, ...meta };
         if ((locked?.availability ?? beforeUpdate.availability) === Availability.Private) {
           // `meta` only carries `cannotPromote` for a moderator. While private it is forced on, so the
@@ -3764,7 +3860,9 @@ export const upsertModel = async (
             gallerySettings: {
               ...lockedGallerySettings,
               level:
-                input.minor || input.sfwOnly ? sfwBrowsingLevelsFlag : lockedGallerySettings?.level,
+                (flags ?? input).minor || (flags ?? input).sfwOnly
+                  ? sfwBrowsingLevelsFlag
+                  : lockedGallerySettings?.level,
             },
             tagsOnModels: tagsOnModels
               ? {
@@ -5382,31 +5480,53 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
   const cacheKey = `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:${id}` as const;
 
   const cachedSettings = await redis.get(cacheKey);
-  if (cachedSettings)
-    return fromJson<
-      Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & { creatorHiddenUserIds?: number[] }
-    >(cachedSettings);
+  if (cachedSettings) {
+    type Cached =
+      | (Awaited<ReturnType<typeof getGalleryHiddenPreferences>> & {
+          creatorHiddenUserIds?: number[];
+          sfwHeld?: boolean;
+        })
+      | { none: true };
+    // A build before the hold cached a bare null.
+    const cached = fromJson<Cached>(cachedSettings) as Cached | null;
+    // Rebuilt when built before the SFW hold: those lack `sfwHeld`, and their null cannot tell an
+    // unflagged model with no settings from a flagged one.
+    if (cached && 'none' in cached) return null;
+    if (cached?.sfwHeld !== undefined) return cached;
+  }
 
   const model = await getModel({
     id: id,
-    select: { id: true, userId: true, gallerySettings: true },
+    select: { id: true, userId: true, gallerySettings: true, minor: true, sfwOnly: true },
   });
   if (!model) return null;
 
+  const sfwHeld = model.minor || model.sfwOnly;
   let settings = null;
-  if (model.gallerySettings) {
+  if (model.gallerySettings || sfwHeld) {
+    const stored = (model.gallerySettings ?? {}) as ModelGallerySettingsSchema;
     const [preferences, creatorHiddenUserIds] = await Promise.all([
       getGalleryHiddenPreferences({
-        settings: model.gallerySettings as ModelGallerySettingsSchema,
+        settings: sfwHeld ? { ...stored, level: heldGalleryLevel(stored.level) } : stored,
       }),
       getCreatorGalleryHiddenUserIds(model.userId, { fresh: true }),
     ]);
-    settings = { ...preferences, creatorHiddenUserIds };
+    settings = { ...preferences, creatorHiddenUserIds, sfwHeld };
   }
-  await redis.set(cacheKey, toJson(settings), { EX: CacheTTL.week });
+  // A build without the hold serves this marker as settings, so it carries their empty lists.
+  const none = { none: true, hiddenTags: [], hiddenUsers: [], hiddenImages: {}, pinnedPosts: {} };
+  await redis.set(cacheKey, toJson(settings ?? none), { EX: CacheTTL.week });
 
   return settings;
 };
+
+/**
+ * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
+ * SFW. A setting that allows no SFW level, or none at all, serves SFW: the gallery reads 0 as no cap.
+ */
+export function heldGalleryLevel(stored: number | undefined) {
+  return Flags.intersection(stored ?? 0, sfwBrowsingLevelsFlag) || sfwBrowsingLevelsFlag;
+}
 
 export const getGalleryHiddenPreferences = async ({
   settings,
@@ -5767,7 +5887,7 @@ export async function copyGallerySettingsToAllModelsByUser({
     // "copy to all my models" re-opens every model the user has ever had flagged.
     await tx.$executeRaw`
       UPDATE "Model"
-      SET "gallerySettings" = "gallerySettings" || jsonb_build_object(
+      SET "gallerySettings" = ${asJsonbObjectSql('"gallerySettings"')} || jsonb_build_object(
         'level', CASE WHEN minor OR "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${
       settings.level
     } END,
@@ -6305,16 +6425,17 @@ export const privateModelFromTraining = async ({
         try {
           if (!locked) throw throwNotFoundError(`No model with id ${id}`);
           assertPrivateFlowPublishable({ ...locked, isModerator: user.isModerator });
+          // Against this locked row as well as the read above: a lock set since then wins.
+          enforceLockedProperties({
+            data,
+            storedLockedProperties: locked.lockedProperties,
+            isModerator: user.isModerator,
+          });
+          assertAllowedContentFlags(locked, { ...data, sfwOnly: true });
         } catch (error) {
           takenDown = true;
           throw error;
         }
-        // Against this locked row as well as the read above: a lock set since then wins.
-        enforceLockedProperties({
-          data,
-          storedLockedProperties: locked.lockedProperties,
-          isModerator: user.isModerator,
-        });
         const storedMeta = locked.meta;
         const moderatorChangesNsfwLock = user.isModerator && rulesOnNsfw(locked, data);
         // A private model already had its cannotPromote forced on, so only a first entry can record a moderator's ban.
@@ -6435,6 +6556,8 @@ export const privateModelFromTraining = async ({
       result.modelVersions.map((x) => x.id),
       result.id
     );
+    // The model is now SFW-only, which holds the gallery level it serves.
+    await bustModelGallerySettings([id]);
 
     return withoutMinorHashMeta(result);
   } catch (error) {

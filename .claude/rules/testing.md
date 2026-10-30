@@ -34,7 +34,7 @@ To measure a cleanup, run the full suite before and after on the same `origin/ma
 
 ## Running and reading suites
 
-- **CI coverage differs per suite.** See the job comments in `.github/workflows/lint.yml`. The unit suite runs on pushes to `main` and on `workflow_dispatch` (`only: unit`), not on pull requests. `main` has no required status checks, so no suite blocks a merge, and a `continue-on-error` job doesn't even render red.
+- **CI coverage differs per suite.** See the job comments in `.github/workflows/lint.yml`; the `apps/*` suites are in `apps.yml`, which runs only when a PR touches what they read. **A draft PR runs ESLint only**: the other jobs start when it is marked ready, or dispatch one (`gh workflow run lint.yml --ref <branch> -f only=<job>`). The unit suite runs on pushes to `main` and on `workflow_dispatch` (`only: unit`), not on pull requests. `main` has no required status checks, so no suite blocks a merge, and a `continue-on-error` job doesn't even render red.
 - **Example covering run:** `pnpm exec vitest run --project 'unit*' src/server/services/__tests__/strike.service.test.ts`
 - **Why the final full run matters, and why not between edits:** a change in a widely imported service (`src/server/services/`) can surface failures anywhere; but the suite is ~41,600 tests serialised through the dev-server queue, so running it between edits blocks everyone else's runs.
 - **A green full run can still hide a failure you caused.** Read the failing-file list, not the count. If tests fail, re-run those same files on `main` (in a separate worktree; don't `git stash` here) to see whether they already failed.

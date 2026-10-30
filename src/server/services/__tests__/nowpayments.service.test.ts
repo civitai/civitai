@@ -1056,6 +1056,30 @@ describe('status-built events carry payin_hash into the manual-credit guard', ()
   });
 });
 
+describe('reconcileUserDeposits', () => {
+  beforeEach(resetDepositMocks);
+
+  it('bounds concurrent child lookups', async () => {
+    const childIds = Array.from({ length: 20 }, (_, i) => 1000 + i);
+    mockDbRead.cryptoWallet.findMany.mockResolvedValueOnce([{ smartAccount: '999' }]);
+    let inFlight = 0;
+    let peak = 0;
+    mockNowpaymentsCaller.getPaymentStatus.mockImplementation(async (id: number) => {
+      if (id === 999) return makePayment({ payment_id: 999, payment_extra_ids: childIds });
+      peak = Math.max(peak, ++inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight--;
+      return makePayment({ payment_id: id, payment_status: 'waiting' });
+    });
+
+    await reconcileUserDeposits(42);
+
+    expect(mockNowpaymentsCaller.getPaymentStatus).toHaveBeenCalledTimes(childIds.length + 1);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(3);
+  });
+});
+
 // ─── Open deposits ───────────────────────────────────────────────────────────
 
 /** clearAllMocks keeps unconsumed one-shot replies, so reset every mock these tests queue. */

@@ -17,6 +17,7 @@ import {
   type CursorDiscardReason,
 } from '~/server/meilisearch/cleanup-cursor';
 import { assessPassCoverage } from '~/server/meilisearch/cleanup-coverage';
+import { modelSearchIndexEligibilitySql } from '~/server/search-index/model-index-eligibility';
 import { userSearchIndexEligibilitySql } from '~/server/search-index/user-index-eligibility';
 import type { JobContext } from '~/server/jobs/job';
 import {
@@ -24,7 +25,6 @@ import {
   ArticleStatus,
   Availability,
   CollectionReadConfiguration,
-  ModelStatus,
 } from '~/shared/utils/prisma/enums';
 
 /**
@@ -93,10 +93,10 @@ export const CLEANUP_INDEXES: IndexConfig[] = [
     indexName: MODELS_SEARCH_INDEX,
     tableName: 'Model',
     alias: 'm',
+    // Shares its predicate with the write side (`models.search-index.ts`), as `users` does below.
     where: (ids) => Prisma.sql`
       m.id IN (${Prisma.join(ids)})
-      AND m.status = ${ModelStatus.Published}::"ModelStatus"
-      AND m.availability != ${Availability.Unsearchable}::"Availability"
+      AND ${modelSearchIndexEligibilitySql()}
     `,
   },
   {

@@ -70,8 +70,9 @@ copy-env:
 # is the first to walk the path in a while.
 #
 # `.github/workflows/windows-dev-env.yml` now runs `pnpm install` on windows-latest
-# under BOTH pwsh and Git Bash to find out. It is non-blocking. When it has been
-# green for a while, delete this note; if it goes red under bash, this is the lead.
+# under BOTH pwsh and Git Bash to find out, on pushes to `main` that touch the
+# install path and on dispatch (not on PRs). When it has been green for a while,
+# delete this note; if it goes red under bash, this is the lead.
 .PHONY: install
 install:
 	pnpm install

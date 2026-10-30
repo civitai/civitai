@@ -353,22 +353,19 @@ export const getPostsInfinite = async ({
     else AND.push(Prisma.sql`p."publishedAt" <= NOW() AND p."publishedAt" IS NOT NULL`);
   }
 
-  // Still keyed on `isOwnerRequest`, NOT on `canSeeUnpublished`. These are
-  // discovery filters, not publication ones — an owner browsing their own
-  // profile has never had them applied, and folding them into the publication
-  // gate above would have silently dropped tag and title filtering for
-  // moderators, who do get them today.
-  if (!isOwnerRequest) {
-    if (!!tags?.length)
-      AND.push(Prisma.sql`EXISTS (
-        SELECT 1 FROM "TagsOnPost" top
-        WHERE top."postId" = p.id AND top."tagId" IN (${Prisma.join(tags)})
-      )`);
+  // Still keyed on `isOwnerRequest`, NOT on `canSeeUnpublished`. This is a
+  // discovery filter, not a publication one — an owner browsing their own
+  // profile has never had it applied, and folding it into the publication
+  // gate above would have silently dropped tag filtering for moderators, who
+  // do get it today.
+  if (!isOwnerRequest && !!tags?.length)
+    AND.push(Prisma.sql`EXISTS (
+      SELECT 1 FROM "TagsOnPost" top
+      WHERE top."postId" = p.id AND top."tagId" IN (${Prisma.join(tags)})
+    )`);
 
-    if (query) {
-      AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
-    }
-  }
+  // Applies to owner requests too, unlike the tag filter.
+  if (query) AND.push(Prisma.sql`p.title ILIKE ${query + '%'}`);
 
   if (period !== 'AllTime') {
     const interval = period.toLowerCase();

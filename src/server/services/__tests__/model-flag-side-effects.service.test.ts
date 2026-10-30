@@ -331,4 +331,18 @@ describe('applyModelFlagSideEffects — gallery browsing-level cache bust', () =
 
     expect(mockRedisDel).not.toHaveBeenCalled();
   });
+
+  // The served level is held while a model is minor or SFW-only, so lifting either flag must
+  // drop the cached held level even when the stored one did not move.
+  it.each([
+    ['minor', { minor: true }],
+    ['SFW-only', { sfwOnly: true }],
+  ])('deletes the gallery settings cache key when %s is lifted', async (_flag, flag) => {
+    await applyModelFlagSideEffects({
+      before: { ...baseBefore, ...flag },
+      after: { ...baseAfter },
+    });
+
+    expect(mockRedisDel).toHaveBeenCalledWith(['model:gallery-settings:42']);
+  });
 });

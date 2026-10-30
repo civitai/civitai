@@ -128,8 +128,10 @@ export const getStorylineSchema = z.object({
   browsingLevel: z.number().int().min(0).optional(),
 });
 
+export const STORYLINE_FOR_POSTS_MAX = 100;
+
 export const getStorylinesForPostsSchema = z.object({
-  postIds: z.array(z.number().int().positive()).max(100),
+  postIds: z.array(z.number().int().positive()).max(STORYLINE_FOR_POSTS_MAX),
   browsingLevel: z.number().int().min(0).optional(),
 });
 
@@ -144,7 +146,7 @@ export const joinStorylineEarlyAccessSchema = z
   .default({});
 
 export const getStorylinesInfiniteSchema = z.object({
-  filter: z.enum(['all', 'ongoing', 'complete', 'open']).default('all'),
+  filter: z.enum(['all', 'ongoing', 'complete', 'open', 'mine']).default('all'),
   sort: z.enum(['newest', 'mostChapters']).default('newest'),
   cursor: z.number().int().min(0).optional(),
   limit: z.number().int().min(1).max(50).default(20),

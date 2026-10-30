@@ -1,7 +1,7 @@
 # SvelteKit app standard
 
 The shared conventions for **every** SvelteKit app in this repo — `apps/moderator`, `apps/auth`,
-`apps/creator-studio`. Each app's own `CLAUDE.md` points here and records only what genuinely differs.
+`apps/creator-studio`, `apps/training-studio`. Each app's own `CLAUDE.md` points here and records only what genuinely differs.
 
 The root [`CLAUDE.md`](../CLAUDE.md) describes the **main Next.js app** (Mantine, tRPC, Prisma). None of
 that applies here: these are SvelteKit 5 + Kysely + shadcn-svelte + Tailwind v4.
@@ -239,8 +239,8 @@ unnoticed because the loop that would have caught them is the one we tell you no
 
 Each app owns a `vitest.config.ts` declaring `name: 'app:<slug>'`, and the root config globs those
 **config files** — so an app without one is silently not selected. Run one app with
-`pnpm --filter @civitai/<app> test`, or every app with `pnpm run test:apps:run` (CI's `App unit tests`
-job). The `app:` prefix is load-bearing: every app is also published as `@civitai/*`, so dropping the
+`pnpm --filter @civitai/<app> test`, or every app with `pnpm run test:apps:run` (CI's `App suites`
+workflow). The `app:` prefix is load-bearing: every app is also published as `@civitai/*`, so dropping the
 `name` moves the suite into the packages job instead.
 
 These are **node-env tests over plain modules** — no SvelteKit pipeline, so `$lib` and the `$env`
@@ -278,7 +278,7 @@ Each takes the app directory as its scope and reads that app's `CLAUDE.md` for l
 
 **After fixing a non-trivial bug, and after extracting or changing a shared component, run
 `svelte-recurrence-sweep`.** It takes one known defect and finds every other place that shape exists,
-across all three apps. The three reviews above are each scoped to the segment in front of them, so a
+across every SvelteKit app. The three reviews above are each scoped to the segment in front of them, so a
 bug fixed in one page stays live in its sibling until somebody happens to remember — which is exactly
 how two `$effect` bugs survived in `apps/moderator` for days after being fixed next door.
 

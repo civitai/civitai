@@ -27,7 +27,11 @@ import { userBountyEntryCountCache } from '~/server/redis/caches';
 import { throwOnBlockedUserContent } from '~/server/services/blocklist.service';
 import { logToAxiom } from '~/server/logging/client';
 import type { IngestImageInput } from '~/server/schema/image.schema';
-import { isPayoutPending, lockBountyForPayout } from '~/server/services/bounty-payout-lock';
+import {
+  isPayoutPending,
+  lockBountyForPayout,
+  nextPayoutRecordedAt,
+} from '~/server/services/bounty-payout-lock';
 import { settleBountyPayout, refundUnpayableBountyAward } from '~/server/services/bounty.service';
 import { isTextScanPoiHidden } from '~/server/services/text-scan/flag-snapshot';
 import { scanEntityInBackground } from '~/server/services/text-scan/submit';
@@ -255,27 +259,30 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       const benefactor = await tx.bountyBenefactor.findUniqueOrThrow({
         where: { bountyId_userId: { userId, bountyId: entry.bountyId } },
       });
-      if (benefactor.awardedToId) {
+      // `awardedAt` outlives the awarded entry: an award stands after its entry is deleted.
+      if (benefactor.awardedToId || benefactor.awardedAt) {
         log('error', 'Benefactor already awarded an entry', {
           previouslyAwardedEntryId: benefactor.awardedToId,
         });
         throw throwBadRequestError('Supporters have already awarded an entry.');
       }
 
+      // One stamp for both, after the last settlement: settlement tells awards it already paid by it.
+      const recordedAt = nextPayoutRecordedAt(bounty);
       const updatedBenefactor = await tx.bountyBenefactor.update({
         where: { bountyId_userId: { userId, bountyId: entry.bountyId } },
-        data: { awardedToId: entry.id, awardedAt: new Date() },
+        data: { awardedToId: entry.id, awardedAt: recordedAt },
       });
 
       const unawardedBountyBenefactors = await tx.bountyBenefactor.findFirst({
         select: { userId: true },
-        where: { awardedToId: null, bountyId: entry.bountyId },
+        where: { awardedToId: null, awardedAt: null, bountyId: entry.bountyId },
       });
       // Settlement pays from these marks; see the invariant on `refundUnpayableBountyAward`.
       await tx.bounty.update({
         where: { id: entry.bountyId },
         data: {
-          payoutRecordedAt: new Date(),
+          payoutRecordedAt: recordedAt,
           payoutWinnerUserId: entry.userId,
           ...(unawardedBountyBenefactors ? {} : { complete: true }),
         },

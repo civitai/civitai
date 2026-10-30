@@ -1,18 +1,37 @@
+import { TRPCError } from '@trpc/server';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import type { ProtectedContext } from '~/server/createContext';
 import type { ReactionEntityType } from '~/server/schema/reaction.schema';
+import type * as FeatureFlagsService from '~/server/services/feature-flags.service';
+import type * as StorylineService from '~/server/services/storyline.service';
+import type * as StorylineReaderLevel from '~/server/utils/storyline-reader-level';
 import type { ReviewReactions } from '~/shared/utils/prisma/enums';
 
 const REACTOR_ID = 5;
 
-const { mockToggleReaction, mockEncouragement, mockGoodContent } = vi.hoisted(() => ({
-  mockToggleReaction: vi.fn(),
-  mockEncouragement: vi.fn<(event: unknown) => Promise<void>>(async () => undefined),
-  mockGoodContent: vi.fn<(event: unknown) => Promise<void>>(async () => undefined),
-}));
+const { mockToggleReaction, mockEncouragement, mockGoodContent, storylineGate } = vi.hoisted(
+  () => ({
+    mockToggleReaction: vi.fn(),
+    storylineGate: vi.fn(),
+    mockEncouragement: vi.fn<(event: unknown) => Promise<void>>(async () => undefined),
+    mockGoodContent: vi.fn<(event: unknown) => Promise<void>>(async () => undefined),
+  })
+);
 
 vi.mock('~/server/services/reaction.service', () => ({ toggleReaction: mockToggleReaction }));
+vi.mock('~/server/services/feature-flags.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof FeatureFlagsService>()),
+  getFeatureFlags: () => ({ storylines: true }),
+}));
+vi.mock('~/server/utils/storyline-reader-level', async (importOriginal) => ({
+  ...(await importOriginal<typeof StorylineReaderLevel>()),
+  storylineReaderLevel: () => 1,
+}));
+vi.mock('~/server/services/storyline.service', async (importOriginal) => ({
+  ...(await importOriginal<typeof StorylineService>()),
+  assertStorylineVisible: storylineGate,
+}));
 vi.mock('~/server/utils/metric-helpers', () => ({
   updateEntityMetric: vi.fn(async () => undefined),
 }));
@@ -305,6 +324,36 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
 
     await react('comment', 55);
 
+    expect(mockToggleReaction).toHaveBeenCalled();
+  });
+});
+
+describe('toggleReactionHandler — a comment on a storyline', () => {
+  beforeEach(() => {
+    // Serves both lookups on the comment: not detached, and in storyline 17's thread.
+    dbMock.dbRead.$queryRaw.mockResolvedValue([{ detached: false, storylineId: 17 }] as never);
+  });
+
+  it('is refused once the storyline is taken down', async () => {
+    storylineGate.mockResolvedValue({ userId: REACTOR_ID, tosViolation: true });
+
+    await expect(react('comment', 55)).rejects.toMatchObject({ code: 'UNAUTHORIZED' });
+    expect(mockToggleReaction).not.toHaveBeenCalled();
+  });
+
+  it('is refused where the reactor cannot open the storyline', async () => {
+    storylineGate.mockRejectedValue(new TRPCError({ code: 'NOT_FOUND' }));
+
+    await expect(react('comment', 55)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockToggleReaction).not.toHaveBeenCalled();
+  });
+
+  it('goes through on a storyline the reactor can open (control)', async () => {
+    storylineGate.mockResolvedValue({ userId: 4, tosViolation: false });
+
+    await react('comment', 55);
+
+    expect(storylineGate).toHaveBeenCalledWith(17, expect.anything(), expect.any(Number));
     expect(mockToggleReaction).toHaveBeenCalled();
   });
 });

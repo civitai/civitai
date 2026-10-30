@@ -22,8 +22,10 @@ const writers = vi.hoisted(() => ({
   deleteStoryline: vi.fn(async () => ({ id: 1 })),
   setFirstChapter: vi.fn(async () => ({ storylineId: 10, chapterId: 1 })),
   addOwnerChapter: vi.fn(async () => ({ id: 1 })),
+  addOwnerChapterAtEnd: vi.fn(async () => ({ id: 1 })),
   insertStorylineChapter: vi.fn(async () => ({ chapterId: 1 })),
   moveStorylineChapter: vi.fn(async () => ({ chapterIds: [1] })),
+  acceptStorylineInvite: vi.fn(async () => ({})),
   setCanonChapter: vi.fn(async () => ({ id: 1 })),
   linkStorylineChapter: vi.fn(async () => ({ id: 1 })),
   addStorylineCollaborator: vi.fn(async () => ({ id: 1 })),
@@ -65,6 +67,11 @@ const WRITE_CALLS = [
     input: { parentChapterId: 3, postId: 12 },
   },
   {
+    name: 'addChapterAtEnd',
+    writer: writers.addOwnerChapterAtEnd,
+    input: { storylineId: 10, postId: 12 },
+  },
+  {
     name: 'insertChapter',
     writer: writers.insertStorylineChapter,
     input: { storylineId: 10, parentChapterId: 3, childChapterId: 4, postId: 12 },
@@ -85,6 +92,7 @@ const WRITE_CALLS = [
     writer: writers.addStorylineCollaborator,
     input: { storylineId: 10, userId: 77 },
   },
+  { name: 'acceptInvite', writer: writers.acceptStorylineInvite, input: { storylineId: 10 } },
   {
     name: 'removeCollaborator',
     writer: writers.removeStorylineCollaborator,
