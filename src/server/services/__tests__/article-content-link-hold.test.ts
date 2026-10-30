@@ -628,6 +628,30 @@ describe('a failed link', () => {
     await recomputeArticleIngestion(ARTICLE_ID);
     expect(await ingestion()).toBe('Pending');
   });
+
+  const fail = (now: Date) =>
+    keepOffPublicAfterLinkFailure({
+      articleId: ARTICLE_ID,
+      content: CONTENT,
+      editorId: AUTHOR,
+      ingestion: 'Rescan' as never,
+      now,
+    });
+
+  it('reports at the backstop from the first failure, however often it fails again', async () => {
+    lookupsDown();
+    await fail(T0);
+    await fail(at(23 * 60 * MINUTE));
+    await settleContentLinkHolds(at(CONTENT_LINK_DEFERRAL_BACKSTOP_MS + MINUTE));
+    expect(createReport).toHaveBeenCalledOnce();
+  });
+
+  it('keeps a refused url refused', async () => {
+    await recordUploadKeyOwner(KEY, OTHER);
+    await link();
+    await fail(at(MINUTE));
+    expect(await hold()).toMatchObject({ refused: [KEY], deferred: [] });
+  });
 });
 
 describe('a refused url still unrecorded', () => {

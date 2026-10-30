@@ -1964,12 +1964,18 @@ export async function keepOffPublicAfterLinkFailure({
 }) {
   try {
     const unlinked = await contentUrlsWithoutRows(content);
-    if (unlinked.length)
+    if (unlinked.length) {
+      // Repeated failures keep what is refused and when the deferral started, so the backstop fires.
+      const previous = await getContentLinkHold(dbWrite, articleId);
+      const wasRefused = new Set(previous?.refused ?? []);
+      const refused = unlinked.filter((url) => wasRefused.has(url));
+      const deferred = unlinked.filter((url) => !wasRefused.has(url));
       await writeContentLinkHold(dbWrite, {
         articleId,
         content,
-        hold: { deferred: unlinked, refused: [], editorId, deferredSince: now, reportedAt: null },
+        hold: nextContentLinkHold(previous, { deferred, refused, editorId }, now),
       });
+    }
   } catch (error) {
     handleLogError(error as Error, 'article-image-linking-hold', { articleId });
   }
