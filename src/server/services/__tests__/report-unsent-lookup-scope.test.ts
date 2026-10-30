@@ -175,6 +175,22 @@ describe('unsent-report lookup', () => {
     expect(rows).toHaveLength(3);
   });
 
+  it('an account’s report is filed on its own beside an unsent supplemental report', async () => {
+    const supplemental = seed({
+      userId: 101,
+      images: [{ id: 3 }],
+      details: {
+        supplemental: { priorCsamReportId: 1, priorReportNumbers: [900], unreviewedImageIds: [] },
+      },
+    });
+
+    await createCsamReport({ userId: 101, reportedById: MOD, type: 'Image', imageIds: [4] });
+
+    expect(rows.find((r) => r.id === supplemental.id)).toEqual(supplemental);
+    expect(rows).toHaveLength(2);
+    expect(rows[1]).toMatchObject({ userId: 101, images: [{ id: 4 }] });
+  });
+
   it('locks the report it found, only while it is unsent', async () => {
     const unsent = seed({ userId: 101, images: [{ id: 3 }] });
 

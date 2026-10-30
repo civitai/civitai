@@ -207,7 +207,11 @@ import {
   getProfilePicturesForUsers,
   patchUserSettings,
 } from '~/server/services/user.service';
-import { bustFetchThroughCache, fetchThroughCache } from '~/server/utils/cache-helpers';
+import {
+  bustFetchThroughCache,
+  createCachedObject,
+  fetchThroughCache,
+} from '~/server/utils/cache-helpers';
 import { limitConcurrency } from '~/server/utils/concurrency-helpers';
 import {
   anyMetricHidden,
@@ -5522,6 +5526,136 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
   return settings;
 };
 
+function createVersionModelCache() {
+  return createCachedObject<{ id: number; modelId: number }>({
+    key: `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:version-model`,
+    idKey: 'id',
+    ttl: CacheTTL.week,
+    // A version id not yet created, or not yet on the replica, would otherwise be cached as
+    // modelless and leave the version uncapped once it exists.
+    cacheNotFound: false,
+    // A bust takes effect at once rather than after a stale window: it follows a version moving model.
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => {
+      const versions = await dbRead.modelVersion.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, modelId: true },
+      });
+      return Object.fromEntries(versions.map((version) => [version.id, version]));
+    },
+  });
+}
+let versionModelCacheInstance: ReturnType<typeof createVersionModelCache> | undefined;
+const versionModelCache = () => (versionModelCacheInstance ??= createVersionModelCache());
+
+function createPostVersionCache() {
+  return createCachedObject<{ id: number; modelVersionId: number | null }>({
+    key: `${REDIS_KEYS.MODEL.GALLERY_SETTINGS}:post-version`,
+    idKey: 'id',
+    // Short: merging versions re-points their posts.
+    ttl: CacheTTL.hour,
+    // As for versions: a post not yet on the replica must not be remembered as missing.
+    cacheNotFound: false,
+    staleWhileRevalidate: false,
+    lookupFn: async (ids) => {
+      const posts = await dbRead.post.findMany({
+        where: { id: { in: ids } },
+        select: { id: true, modelVersionId: true },
+      });
+      return Object.fromEntries(posts.map((post) => [post.id, post]));
+    },
+  });
+}
+let postVersionCacheInstance: ReturnType<typeof createPostVersionCache> | undefined;
+const postVersionCache = () => (postVersionCacheInstance ??= createPostVersionCache());
+/**
+ * Busts again after a delay: a lookup on a lagging replica between the write and the first bust
+ * would otherwise cache the old mapping for the whole TTL.
+ */
+async function bustTwice(bust: () => Promise<void>) {
+  await bust();
+  setTimeout(() => bust().catch(() => null), 5_000).unref?.();
+}
+
+/** For posts re-pointed to another version. */
+export async function bustPostVersionCache(postIds: number[]) {
+  if (postIds.length) await bustTwice(() => postVersionCache().bust(postIds));
+}
+
+/**
+ * The level a request's images may be served at when it selects them by a minor or SFW-only
+ * model: the intersection of each such model's held gallery level, or undefined when none is held.
+ * The model comes from the version and the review as well as `modelId`, because those pick the
+ * images ahead of `modelId`.
+ */
+export async function getHeldGalleryLevel({
+  modelId,
+  modelIds: namedModelIds = [],
+  modelVersionId,
+  modelVersionIds = [],
+  reviewId,
+  postId,
+  postIds = [],
+}: {
+  modelId?: number | null;
+  modelIds?: number[];
+  modelVersionId?: number | null;
+  modelVersionIds?: number[];
+  reviewId?: number | null;
+  postId?: number | null;
+  postIds?: number[] | null;
+}) {
+  // The version, review or post a single selector names must resolve, or nothing is served: one not
+  // yet on the replica can still be found by the image query. Lists (a hub's versions, a page of
+  // posts) are not held to that, so one deleted entry does not empty them; what is gone serves no
+  // images anyway.
+  const requiredVersionIds = new Set<number>();
+  if (modelVersionId) requiredVersionIds.add(modelVersionId);
+  if (reviewId) {
+    const review = await dbRead.resourceReview.findUnique({
+      where: { id: reviewId },
+      select: { modelVersionId: true },
+    });
+    if (!review) return 0;
+    requiredVersionIds.add(review.modelVersionId);
+  }
+  const listedVersionIds = new Set(modelVersionIds);
+  if (postId || postIds?.length) {
+    const ids = new Set(postIds);
+    if (postId) ids.add(postId);
+    const posts = await postVersionCache().fetch([...ids]);
+    if (postId && !posts[postId]) return 0;
+    // A post's version is not required: the replica gets the version before its posts, so a version
+    // missing behind a post it has is one deleted since, which leaves the post on no model.
+    for (const id of ids) {
+      const versionId = posts[id]?.modelVersionId;
+      if (versionId) listedVersionIds.add(versionId);
+    }
+  }
+  const versionIds = new Set([...listedVersionIds, ...requiredVersionIds]);
+
+  const modelIds = new Set(namedModelIds);
+  if (modelId) modelIds.add(modelId);
+  if (versionIds.size) {
+    const versions = await versionModelCache().fetch([...versionIds]);
+    for (const id of requiredVersionIds) if (!versions[id]) return 0;
+    for (const version of Object.values(versions)) modelIds.add(version.modelId);
+  }
+
+  // Bounded: a hub can name dozens of models, and each settings miss rebuilds from the database.
+  const galleries: Awaited<ReturnType<typeof getGallerySettingsByModelId>>[] = [];
+  await limitConcurrency(
+    [...modelIds].map((id) => async () => {
+      galleries.push(await getGallerySettingsByModelId({ id }));
+    }),
+    5
+  );
+  let held: number | undefined;
+  for (const gallery of galleries)
+    if (gallery?.sfwHeld) held = Flags.intersection(held ?? allBrowsingLevelsFlag, gallery.level);
+  return held;
+}
+
 /**
  * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
  * SFW. A setting that allows no SFW level, or none at all, serves SFW: the gallery reads 0 as no cap.
@@ -6068,6 +6202,8 @@ export async function migrateResourceToCollection({
       filteredVersions.map((v) => v.id),
       modelIds
     ),
+    // The versions now belong to new models.
+    bustTwice(() => versionModelCache().bust(filteredVersions.map((v) => v.id))),
   ]);
 
   modelMetrics

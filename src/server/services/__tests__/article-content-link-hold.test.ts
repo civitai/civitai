@@ -50,6 +50,7 @@ const {
   recordUploadKeyOwner,
   ARTICLE_CONTENT_IMAGE_UNAVAILABLE_MESSAGE,
   MAX_KEYS,
+  UNFINISHED_UPLOAD_MESSAGE,
   UNRECORDED_KEYS_ACCEPTED_UNTIL,
 } = await import('~/server/services/image-url-ownership');
 const { nextContentLinkHold, writeContentLinkHold } = await import(
@@ -524,6 +525,33 @@ describe('the settle job', () => {
       [OTHER_ARTICLE]
     );
     expect(failed.checkedAt.getTime()).toBe(at(10 * MINUTE).getTime());
+  });
+});
+
+describe('an image whose upload did not finish', () => {
+  // The editor's url for a file still in the browser; its id is not an upload key.
+  const BLOB = `blob:https://civitai.red/${KEY}`;
+  const content = `<p><edge-media url="${BLOB}" type="image"></edge-media>${img(KEY2)}</p>`;
+
+  it('refuses the save with a message to add it again, new or already stored', async () => {
+    await recordUploadKeyOwner(KEY, AUTHOR);
+    for (const storedContent of [CONTENT, content]) {
+      const save = assertArticleContentUrlsUsable({
+        content,
+        storedContent,
+        userId: AUTHOR,
+        ownerId: AUTHOR,
+      });
+      await expect(save).rejects.toThrow(UNFINISHED_UPLOAD_MESSAGE);
+    }
+  });
+
+  it('gets no image row when stored content is linked, and holds nothing', async () => {
+    await recordUploadKeyOwner(KEY2, AUTHOR);
+    await givenArticle({ content });
+    await link({ content });
+    expect(await rows()).toEqual([KEY2]);
+    expect(await hold()).toBeNull();
   });
 });
 

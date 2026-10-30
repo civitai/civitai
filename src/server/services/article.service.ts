@@ -113,6 +113,7 @@ import {
   assertClientKeysIssuedToCaller,
   COVER_IMAGE_UNAVAILABLE_MESSAGE,
   imageUrlUnavailableError,
+  isUnfinishedUploadUrl,
   keyIssuers,
 } from '~/server/services/image-url-ownership';
 import { createNotification } from '~/server/services/notification.service';
@@ -2162,7 +2163,10 @@ export async function linkArticleContentImages({
 
         // Batch create: Missing images (upsert with unique constraint handles races)
         const missingMedia = contentImages.filter(
-          (media) => !existingUrlMap.has(media.url) && !held.has(media.url)
+          (media) =>
+            !existingUrlMap.has(media.url) &&
+            !held.has(media.url) &&
+            !isUnfinishedUploadUrl(media.url)
         );
         const newlyCreatedImages: { id: number; url: string }[] = [];
 

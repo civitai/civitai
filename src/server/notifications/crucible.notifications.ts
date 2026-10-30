@@ -40,15 +40,17 @@ export const crucibleNotifications = createNotificationProcessor({
       };
     },
   },
-  // Sent to the entrant when a moderator removes their entry
+  // Sent to the entrant when a moderator, or the crucible's owner (with a reason), removes their entry
   'crucible-entry-removed': {
     displayName: 'Crucible Entry Removed',
     category: NotificationCategory.System,
     toggleable: false,
     prepareMessage: ({ details }) => ({
-      message: `A moderator removed your entry from the crucible${quotedName(
-        details.crucibleName
-      )}.${
+      message: `${
+        details.removedBy === 'owner' ? "The crucible's owner" : 'A moderator'
+      } removed your entry from the crucible${quotedName(details.crucibleName)}.${
+        details.reason ? ` Reason: ${details.reason}.` : ''
+      }${
         details.refundedAmount
           ? ` Your ${numberWithCommas(details.refundedAmount)} Buzz entry fee was refunded.`
           : ''

@@ -66,10 +66,12 @@ vi.mock('~/server/services/image.service', () => ({
 vi.mock('~/server/services/notification.service', () => ({ createNotification: vi.fn() }));
 vi.mock('~/server/services/orchestrator/models', () => ({ bustOrchestratorModelCache: vi.fn() }));
 vi.mock('~/server/services/post.service', () => ({ addPostImage: vi.fn(), createPost: vi.fn() }));
+const { mockBustPostVersionCache } = vi.hoisted(() => ({ mockBustPostVersionCache: vi.fn() }));
 vi.mock('~/server/services/model.service', () => ({
   updateModelLastVersionAt: vi.fn(),
   dataForModelsCache: { bust: vi.fn(), refresh: vi.fn() },
   bustMvCache: vi.fn(),
+  bustPostVersionCache: mockBustPostVersionCache,
 }));
 vi.mock('~/server/services/paid-access.service', () => ({
   getPaidAccess: vi.fn(async () => ({})),
@@ -275,6 +277,22 @@ describe('mergeVersions', () => {
     expect(left).toContain(targetVersionId);
     for (const id of sourceVersionIds) expect(left).not.toContain(id);
     expect(mockDeleteModelFileObjects).toHaveBeenCalledWith([STRAGGLER]);
+  });
+
+  it('forgets which version its re-pointed posts were on', async () => {
+    const { sourceVersionIds } = stubModel(CLEAN);
+    dbMock.dbWrite.post.findMany.mockResolvedValueOnce([{ id: 77 }] as never);
+
+    await merge(CLEAN);
+
+    expect(dbMock.dbWrite.post.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { modelVersionId: { in: sourceVersionIds } } })
+    );
+    expect(mockBustPostVersionCache).toHaveBeenCalledWith([77]);
+    // Read while the posts are still on the merged-away versions, before they are re-pointed.
+    const [read] = dbMock.dbWrite.post.findMany.mock.invocationCallOrder;
+    const [moved] = dbMock.dbWrite.post.updateMany.mock.invocationCallOrder;
+    expect(read).toBeLessThan(moved);
   });
 
   it.each([

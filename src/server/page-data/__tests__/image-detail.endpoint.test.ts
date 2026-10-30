@@ -14,11 +14,13 @@ import {
   type Fixture,
 } from '~/server/page-data/__tests__/image-detail.fixtures';
 import {
+  adoptShellPageData,
   SHELL_MAIN_IMAGE_HEADER,
   SHELL_PAGE_DATA_REQUIRED_KEYS,
 } from '~/components/Shell/shell-page-data';
 import { imageDetailMainImageUrl } from '~/components/Image/DetailV2/image-detail-main-media';
 import { env } from '~/env/client';
+import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
 /**
  * `GET /api/page-data/images/[imageId]` is what a static shell of `/images/[imageId]` will fetch
@@ -103,6 +105,7 @@ afterAll(() => {
 });
 beforeEach(() => {
   procedureCalls.length = 0;
+  loggingMock.logToAxiom.mockClear();
   h.flagOn.current = true;
   h.bootstrapFails.current = false;
   h.seeds.mockReset();
@@ -111,13 +114,15 @@ beforeEach(() => {
     const user = session?.user;
     return {
       settings: user ? SETTINGS : undefined,
-      tosMeta: undefined,
-      announcements: undefined,
+      // `null`, not `undefined`: the body is JSON on the wire, where an undefined member is
+      // dropped, and the keys test below checks the endpoint names every seed.
+      tosMeta: null,
+      announcements: null,
       following: user ? [1, 2] : undefined,
-      browsingSettingsAddons: undefined,
+      browsingSettingsAddons: null,
       liveNow: false,
-      navBanners: undefined,
-      siteAlerts: undefined,
+      navBanners: null,
+      siteAlerts: null,
       session,
     };
   });
@@ -139,7 +144,7 @@ function renderPage({ user, imageId, host }: Fixture) {
   } as unknown as GetServerSidePropsContext);
 }
 
-async function fetchPageData(
+function startPageData(
   { user, imageId, host }: Fixture,
   {
     method = 'GET',
@@ -158,7 +163,13 @@ async function fetchPageData(
     query: { imageId: String(imageId), ...query },
   };
   const res = fakeResponse();
-  await handler(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
+  const done = handler(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
+  return { req, res, done };
+}
+
+async function fetchPageData(...args: Parameters<typeof startPageData>) {
+  const { req, res, done } = startPageData(...args);
+  await done;
   return { req, res, body: res.body as Record<string, unknown> | undefined };
 }
 
@@ -496,5 +507,184 @@ describe('page-data main image preload URL and the page query', () => {
   ])('a URL for %s, as the page shows the image.get row', async (_, query) => {
     const { res } = await fetchPageData(viewer106, { query });
     expect(mainImageUrlOf(res)).toBe(URL_106);
+  });
+});
+
+/**
+ * EARLY HEADERS: the main-image URL is in headers the endpoint FLUSHES as soon as the main image
+ * is decided — before the rest of the work (here: the bootstrap seeds, held open) is done — so
+ * the shell's head script can start the image while the body is still being computed. These hold
+ * the seeds back and look at the response at the moment its headers went out.
+ */
+describe('page-data flushes its headers before the body', () => {
+  const URL_106 = [
+    env.NEXT_PUBLIC_IMAGE_LOCATION,
+    'media-106',
+    'original=true',
+    'Sunset Over Hills.jpeg',
+  ]
+    .filter(Boolean)
+    .join('/');
+
+  /** The bootstrap seeds answer only once `release`d (or fail on `fail`). */
+  function holdSeeds() {
+    let release!: () => void;
+    let fail!: (e: Error) => void;
+    const gate = new Promise<void>((resolve, reject) => {
+      release = resolve;
+      fail = reject;
+    });
+    const answer = h.seeds.getMockImplementation();
+    if (!answer) throw new Error('no seeds implementation to hold');
+    h.seeds.mockImplementationOnce(async (...args: unknown[]) => {
+      await gate;
+      return answer(...args);
+    });
+    return { release, fail };
+  }
+
+  const flushedHeader = (res: ReturnType<typeof fakeResponse>, name: string) =>
+    res.flushed?.headers[name.toLowerCase()];
+
+  /**
+   * Waits on REAL timers (only `Date` is faked here). Not `vi.waitFor`: under fake timers it
+   * advances them, which moves the faked clock and so every `dataUpdatedAt` in `trpcState`.
+   */
+  async function untilFlushed(res: ReturnType<typeof fakeResponse>) {
+    for (let i = 0; i < 200 && !res.events.includes('flush'); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(res.events).toContain('flush');
+  }
+
+  it('flushes the main image URL, private no-store and the route cookie while the seeds are still pending', async () => {
+    const seeds = holdSeeds();
+    const fixture = { user: USERS.viewer, imageId: 106, host: 'civitai.com' } as const;
+    const { res, done } = startPageData(fixture, { cookies: { 'civ-shell-images': '1' } });
+    await untilFlushed(res);
+
+    // The seeds were asked for and have not answered: the flush did not wait for them.
+    expect(h.seeds).toHaveBeenCalledTimes(1);
+    expect(res.writableEnded).toBe(false);
+    expect(res.flushed?.statusCode).toBe(200);
+    expect(decodeURIComponent(String(flushedHeader(res, SHELL_MAIN_IMAGE_HEADER)))).toBe(URL_106);
+    expect(flushedHeader(res, 'cache-control')).toBe(NO_STORE);
+    expect(String(flushedHeader(res, 'content-type'))).toMatch(/^application\/json/);
+    expect(([] as unknown[]).concat(flushedHeader(res, 'set-cookie') ?? []).map(String)).toContain(
+      'civ-shell-images=1; Path=/; Max-Age=604800; Secure; SameSite=Lax'
+    );
+
+    seeds.release();
+    await done;
+    expect(res.events).toEqual(['flush', 'end']);
+    const ssr = await renderPage(fixture);
+    expect(jsonRoundTrip((res.body as Record<string, unknown>)?.trpcState)).toEqual(
+      jsonRoundTrip(ssr.props?.trpcState)
+    );
+    expect(SHELL_PAGE_DATA_REQUIRED_KEYS.filter((key) => !(key in (res.body as object)))).toEqual(
+      []
+    );
+  });
+
+  it('a shared-cache header a procedure wrote before the flush does not go out with it', async () => {
+    const seeds = holdSeeds();
+    const { res, done } = startPageData({ ...ownerFixture, imageId: CDN_HEADER_IMAGE_ID });
+    await untilFlushed(res);
+    // Positive control: the procedure ran before the flush and wrote it onto this response.
+    expect(res.headerWrites).toContainEqual(['cache-control', 'public, s-maxage=300']);
+    expect(flushedHeader(res, 'cache-control')).toBe(NO_STORE);
+    seeds.release();
+    await done;
+  });
+
+  it.each([
+    ['a feed filter (?postId=5)', { postId: '5' }],
+    ['storyline mode (?storylineChapter=3)', { storylineChapter: '3' }],
+  ])('flushes no main image URL for %s', async (_, query) => {
+    const seeds = holdSeeds();
+    const { res, done } = startPageData(
+      { user: USERS.viewer, imageId: 106, host: 'civitai.com' },
+      { query }
+    );
+    await untilFlushed(res);
+    expect(res.flushed?.statusCode).toBe(200);
+    expect(flushedHeader(res, 'cache-control')).toBe(NO_STORE);
+    expect(flushedHeader(res, SHELL_MAIN_IMAGE_HEADER)).toBeUndefined();
+    seeds.release();
+    await done;
+  });
+
+  it('a non-numeric id is a 404 with nothing flushed, no main image header and no seeds read', async () => {
+    const { res } = await fetchPageData({ ...ownerFixture, imageId: 'abc' as unknown as number });
+    expect(res.statusCode).toBe(404);
+    expect(res.events).toEqual(['end']);
+    expect(res.flushed).toBeUndefined();
+    expect(res.getHeader(SHELL_MAIN_IMAGE_HEADER)).toBeUndefined();
+    expect(h.seeds).not.toHaveBeenCalled();
+    expectPrivateNoStore(res);
+  });
+
+  it('the flag off is a 404 with nothing flushed and nothing read', async () => {
+    h.flagOn.current = false;
+    const { res } = await fetchPageData({ user: USERS.viewer, imageId: 106, host: 'civitai.com' });
+    expect(res.statusCode).toBe(404);
+    expect(res.events).toEqual(['end']);
+    expect(res.flushed).toBeUndefined();
+    expect(res.getHeader(SHELL_MAIN_IMAGE_HEADER)).toBeUndefined();
+    expect(procedureCalls).toEqual([]);
+  });
+
+  it('a failure after the flush ends the 200 with no body, which the shell client does not adopt', async () => {
+    const seeds = holdSeeds();
+    const { res, done } = startPageData({ user: USERS.viewer, imageId: 106, host: 'civitai.com' });
+    await untilFlushed(res);
+    seeds.fail(new Error('bootstrap seeds failed late'));
+    await done;
+
+    expect(res.flushed?.statusCode).toBe(200);
+    expect(res.events).toEqual(['flush', 'end']);
+    expect(res.wire).toBeUndefined();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'error',
+        message: 'bootstrap seeds failed late',
+        afterFlush: true,
+      })
+    );
+
+    // Control, fetched before `window` is stubbed (server code reads `window` to tell where it
+    // runs): a 200 the endpoint completed.
+    const whole = await fetchPageData({ user: USERS.viewer, imageId: 106, host: 'civitai.com' });
+    expect(whole.res.wire).toBeDefined();
+
+    // The client's verdict on exactly that answer: not adopted (so the page falls back to a full
+    // render), while the same client adopts the completed one.
+    const adopt = (response: Response) => {
+      vi.stubGlobal('window', { __civShell: Promise.resolve(response) });
+      return adoptShellPageData();
+    };
+    try {
+      const failed = await adopt(
+        new Response(res.wire ?? null, { status: res.flushed?.statusCode })
+      );
+      expect(failed).toEqual({ ok: false, status: 500 });
+      const adopted = await adopt(new Response(whole.res.wire ?? null, { status: 200 }));
+      expect(adopted.ok).toBe(true);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('a failure before the flush is still a 500 with nothing flushed', async () => {
+    h.bootstrapFails.current = true;
+    const { res, body } = await fetchPageData({
+      user: USERS.viewer,
+      imageId: 106,
+      host: 'civitai.com',
+    });
+    expect(res.statusCode).toBe(500);
+    expect(res.flushed).toBeUndefined();
+    expect(body).toEqual({ error: 'Page data unavailable' });
+    expectPrivateNoStore(res);
   });
 });
