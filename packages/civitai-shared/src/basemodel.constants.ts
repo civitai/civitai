@@ -234,6 +234,7 @@ export const ECO = {
   Flux3Klein: 94,
   Flux3Klein_base: 95,
   MossImage: 96,
+  Fibo2: 97,
 
   // Root ecosystems - Audio models
   AceAudio: 68,
@@ -946,6 +947,15 @@ export const ecosystems: EcosystemRecord[] = [
     sortOrder: 272,
   },
 
+  // Bria AI
+  {
+    id: ECO.Fibo2,
+    key: 'Fibo2',
+    displayName: 'Fibo 2.0',
+    familyId: 30,
+    sortOrder: 273,
+  },
+
   // Audio ecosystems
   {
     id: ECO.AceAudio,
@@ -1323,6 +1333,9 @@ export const ecosystemSupport: EcosystemSupport[] = [
 
   // Boogu - LORA training (AI Toolkit only)
   { ecosystemId: ECO.Boogu, supportType: 'training', modelTypes: loraOnly },
+
+  // Fibo 2.0 - LORA training (AI Toolkit only)
+  { ecosystemId: ECO.Fibo2, supportType: 'training', modelTypes: loraOnly },
 
   // Mage-Flow - LORA training (AI Toolkit only)
   { ecosystemId: ECO.MageFlow, supportType: 'training', modelTypes: loraOnly },
@@ -2436,6 +2449,7 @@ export const BM = {
   Flux3Klein: 115,
   Flux3Klein_base: 116,
   MossImage: 117,
+  Fibo2: 118,
 } as const;
 
 // Guard against duplicate ids — `baseModelById` is keyed by id, so collisions
@@ -2942,6 +2956,11 @@ export const ecosystemFamilies: BaseModelFamilyRecord[] = [
     name: 'OpenMOSS',
     description: "OpenMOSS's image generation models",
   },
+  {
+    id: 30,
+    name: 'Bria AI',
+    description: "Bria AI's image generation and editing models",
+  },
 ];
 
 export const ecosystemFamilyById = new Map(ecosystemFamilies.map((f) => [f.id, f]));
@@ -3107,6 +3126,14 @@ export const baseModelRecords: BaseModelRecord[] = [
     type: 'image',
     ecosystemId: ECO.MossImage,
     licenseId: 13,
+  },
+  {
+    id: BM.Fibo2,
+    name: 'Fibo 2.0',
+    description: "Bria AI's Fibo 2.0 Dev text-to-image model",
+    type: 'image',
+    ecosystemId: ECO.Fibo2,
+    licenseId: 44,
   },
   {
     id: BM.Flux3Video,

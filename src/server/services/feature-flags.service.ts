@@ -331,6 +331,7 @@ const featureFlags = createFeatureFlags({
   ernieTraining: { availability: ['mod'], fliptKey: 'ernie-training' },
   hidreamO1Training: { availability: ['mod'], fliptKey: 'hidream-o1-training' },
   qwen21Training: { availability: ['mod'], fliptKey: 'qwen21-training' },
+  fibo2Training: { availability: ['mod'], fliptKey: 'fibo2-training' },
   mingTraining: { availability: ['mod'], fliptKey: 'ming-training' },
   yue2Training: { availability: ['mod'], fliptKey: 'yue2-training' },
   animaTraining: { availability: ['mod'], fliptKey: 'anima-training' },
