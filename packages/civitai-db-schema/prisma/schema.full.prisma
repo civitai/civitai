@@ -1145,6 +1145,8 @@ model Model {
 
   @@index([name])
   @@index([status, nsfw])
+  @@index([createdAt])
+  @@index([updatedAt, id])
 }
 
 /// Every owner a model has had, including its first. Read by the legal hold so a transfer cannot
