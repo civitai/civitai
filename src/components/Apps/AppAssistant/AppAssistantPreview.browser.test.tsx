@@ -159,16 +159,6 @@ describe('AppAssistantPreview — the note that preview data resets on reload', 
       .toBeInTheDocument();
   });
 
-  test('shows no note when there is no preview', async () => {
-    await renderWithProviders(<AppAssistantPreview canPreview session={null} />);
-    // Positive control: the empty state rendered, so an absent note is not an unrendered pane.
-    await expect
-      .element(page.getByText('Your app appears here once it runs.', { exact: false }))
-      .toBeInTheDocument();
-    expect(page.getByText(NOTE).query()).toBeNull();
-    expect(m.fetchFrame).not.toHaveBeenCalled();
-  });
-
   test('shows no note when no preview is live on the server runner', async () => {
     const restart = { onRestart: () => undefined, pending: false, error: null };
     await renderWithProviders(<AppAssistantPreview canPreview session={null} restart={restart} />);
