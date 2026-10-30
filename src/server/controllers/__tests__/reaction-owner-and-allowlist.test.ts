@@ -292,6 +292,14 @@ describe('toggleReactionHandler — a comment on a crucible', () => {
     expect(mockToggleReaction).toHaveBeenCalled();
   });
 
+  it('is refused on a comment hidden for ToS', async () => {
+    dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucible(null) as never);
+    dbMock.dbWrite.commentV2.findUnique.mockResolvedValue({ tosViolation: true } as never);
+
+    await expect(react('comment', 55)).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    expect(mockToggleReaction).not.toHaveBeenCalled();
+  });
+
   it('goes through on a crucible the reactor can open (control)', async () => {
     dbMock.dbRead.crucible.findUnique.mockResolvedValue(crucible(null) as never);
 

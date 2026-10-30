@@ -1,6 +1,6 @@
 import { PGlite } from '@electric-sql/pglite';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import type { Prisma } from '@prisma/client';
+import { Prisma } from '@prisma/client';
 import { dbMock } from '~/__tests__/mocks';
 import {
   getCommentCrucibleId,
@@ -107,5 +107,58 @@ describe('crucibleOfCommentSql', () => {
 
     expect(await getCommentCrucibleId(301)).toBe(7);
     expect(await getCommentCrucibleId(201)).toBeNull();
+  });
+});
+
+describe('entity above a comment, at production shape', () => {
+  // Many threads, a few dozen crucibles and storylines, the unique keys prod has, and a reply four
+  // threads deep. Joined, the planner started from the unique key and read every crucible's thread.
+  let big: PGlite;
+  const plan = async (sql: Prisma.Sql) =>
+    (await big.query<{ 'QUERY PLAN': string }>(`EXPLAIN ${sql.text}`, sql.values)).rows
+      .map((r) => r['QUERY PLAN'])
+      .join('\n');
+
+  beforeAll(async () => {
+    big = new PGlite();
+    await big.exec(`
+      CREATE TABLE "Thread"(id int PRIMARY KEY, "storylineId" int UNIQUE, "imageId" int,
+        "commentId" int UNIQUE, "rootThreadId" int, "crucibleId" int UNIQUE);
+      CREATE TABLE "CommentV2"(id int PRIMARY KEY, "threadId" int);
+      INSERT INTO "Thread"(id, "imageId") SELECT g, g FROM generate_series(1, 20000) g;
+      INSERT INTO "CommentV2" SELECT g, g FROM generate_series(1, 20000) g;
+      INSERT INTO "Thread"(id, "crucibleId") SELECT 30000 + g, g FROM generate_series(1, 80) g;
+      INSERT INTO "Thread"(id, "storylineId") SELECT 40000 + g, g FROM generate_series(1, 80) g;
+      INSERT INTO "CommentV2" VALUES (30001, 30001);
+      INSERT INTO "Thread"(id, "commentId", "rootThreadId")
+        VALUES (50001, 1, 1), (50002, 50001, 1), (50003, 50002, 1), (50004, 30001, 30001);
+      INSERT INTO "CommentV2" VALUES (50001, 50001), (50002, 50002), (50003, 50003), (50004, 50004);
+      ANALYZE;
+    `);
+  });
+
+  afterAll(async () => {
+    await big.close();
+  });
+
+  it('can see the unique keys the lookup must not start from', async () => {
+    expect(
+      await plan(Prisma.sql`SELECT id FROM "Thread" WHERE "crucibleId" IS NOT NULL`)
+    ).toContain('Thread_crucibleId_key');
+  });
+
+  it('probes the chain by primary key, never scanning every crucible or storyline thread', async () => {
+    for (const sql of [crucibleOfCommentSql(50003), storylineOfCommentSql(50003)]) {
+      const text = await plan(sql);
+      expect(text).toContain('Thread_pkey');
+      expect(text).not.toMatch(/Thread_(crucibleId|storylineId)_key/);
+    }
+  });
+
+  it('still answers through the chain at that shape', async () => {
+    const sql = crucibleOfCommentSql(50004);
+    expect((await big.query<{ crucibleId: number }>(sql.text, sql.values)).rows).toEqual([
+      { crucibleId: 1 },
+    ]);
   });
 });
