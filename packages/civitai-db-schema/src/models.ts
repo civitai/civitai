@@ -6747,6 +6747,7 @@ export interface StorylineCollaborator {
   userId: number;
   user?: User;
   createdAt: Date;
+  acceptedAt: Date | null;
 }
 
 export interface StorylineBranchChoice {

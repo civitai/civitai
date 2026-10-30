@@ -223,12 +223,13 @@ export function PlanCard({ product, subscription }: PlanCardProps) {
                       withCheckIcon={false}
                       rightSection={<IconChevronDown size={14} />}
                       rightSectionWidth={20}
-                      comboboxProps={{ width: 80, position: 'bottom' }}
+                      // The card's sections are overflow-hidden and would clip the dropdown.
+                      comboboxProps={{ width: 80, position: 'bottom', withinPortal: true }}
                       classNames={{
                         root: 'mt-[2px] border-b-2 border-b-current',
                         input: 'h-[20px] min-h-[20px] text-start uppercase',
                         option:
-                          'px-[4px] text-center uppercase data-[checked]:bg-dark-5 data-[checked]:font-bold',
+                          'justify-center whitespace-nowrap px-[4px] text-center uppercase data-[checked]:bg-dark-5 data-[checked]:font-bold',
                         section: 'mr-0',
                       }}
                     />

@@ -621,6 +621,11 @@ export const eventFromPayment = (
 const RECONCILE_FETCH_CONCURRENCY = 5;
 /** Max concurrent deposit processing (buzz grants, DB writes, notifications) */
 const RECONCILE_PROCESS_CONCURRENCY = 3;
+/**
+ * Max concurrent NP lookups per self-service reconcile click. Below the job's bound because many
+ * users can click at once (the rate limit is per user), so outbound load is clicks × this.
+ */
+const USER_RECONCILE_FETCH_CONCURRENCY = 3;
 
 type ReconcileDetail = {
   paymentId: string | number;
@@ -1261,7 +1266,9 @@ export const reconcileUserDeposits = async (userId: number) => {
     // `payment_extra_ids`. Walk those to find every deposit made against this wallet.
     const childIds = parentPayment.payment_extra_ids ?? [];
     const childPayments = (
-      await Promise.all(childIds.map((id) => nowpaymentsCaller.getPaymentStatus(id)))
+      await mapWithConcurrency(childIds, USER_RECONCILE_FETCH_CONCURRENCY, (id) =>
+        nowpaymentsCaller.getPaymentStatus(id)
+      )
     ).filter((p): p is NOWPayments.CreatePaymentResponse => p != null);
     const payments = [parentPayment, ...childPayments];
 

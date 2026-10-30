@@ -1,7 +1,7 @@
 # SvelteKit app standard
 
 The shared conventions for **every** SvelteKit app in this repo — `apps/moderator`, `apps/auth`,
-`apps/creator-studio`. Each app's own `CLAUDE.md` points here and records only what genuinely differs.
+`apps/creator-studio`, `apps/training-studio`. Each app's own `CLAUDE.md` points here and records only what genuinely differs.
 
 The root [`CLAUDE.md`](../CLAUDE.md) describes the **main Next.js app** (Mantine, tRPC, Prisma). None of
 that applies here: these are SvelteKit 5 + Kysely + shadcn-svelte + Tailwind v4.
@@ -278,7 +278,7 @@ Each takes the app directory as its scope and reads that app's `CLAUDE.md` for l
 
 **After fixing a non-trivial bug, and after extracting or changing a shared component, run
 `svelte-recurrence-sweep`.** It takes one known defect and finds every other place that shape exists,
-across all three apps. The three reviews above are each scoped to the segment in front of them, so a
+across every SvelteKit app. The three reviews above are each scoped to the segment in front of them, so a
 bug fixed in one page stays live in its sibling until somebody happens to remember — which is exactly
 how two `$effect` bugs survived in `apps/moderator` for days after being fixed next door.
 

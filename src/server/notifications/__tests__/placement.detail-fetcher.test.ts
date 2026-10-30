@@ -1,10 +1,17 @@
 import { describe, expect, it, vi } from 'vitest';
 import { placementDetailFetcher } from '~/server/notifications/detail-fetchers/placement.detail-fetcher';
 import { placementNotifications } from '~/server/notifications/placement.notifications';
-import { storylineNotifications } from '~/server/notifications/storyline.notifications';
+import {
+  storylineInviteNotifications,
+  storylineNotifications,
+} from '~/server/notifications/storyline.notifications';
 
 /** Storyline continuations are placements, named the same way. */
-const fetchedProcessors = { ...placementNotifications, ...storylineNotifications };
+const fetchedProcessors = {
+  ...placementNotifications,
+  ...storylineNotifications,
+  ...storylineInviteNotifications,
+};
 
 const fakeDb = (users: { id: number; username: string }[]) => {
   const findMany = vi.fn(async ({ where }: { where: { id: { in: number[] } } }) =>

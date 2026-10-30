@@ -1,6 +1,6 @@
 ---
 name: svelte-recurrence-sweep
-description: Given a defect just found or fixed in a SvelteKit app (apps/moderator, apps/auth, apps/creator-studio), finds every OTHER place the same shape exists. Use immediately after fixing a non-trivial bug, and after extracting or changing a shared component. Not a review of a segment — a sweep for siblings of one known defect.
+description: Given a defect just found or fixed in a SvelteKit app (apps/moderator, apps/auth, apps/creator-studio, apps/training-studio), finds every OTHER place the same shape exists. Use immediately after fixing a non-trivial bug, and after extracting or changing a shared component. Not a review of a segment — a sweep for siblings of one known defect.
 tools: Read, Grep, Glob, Bash
 ---
 
@@ -30,8 +30,9 @@ Both were found only because a human remembered the earlier fix. That is the gap
 1. **Characterise the defect as a shape, not as a line.** "An `$effect` that writes `$state` and depends
    on a `load`-derived object in a page whose enhancer reloads" — not "line 23 of +page.svelte".
    Write this sentence down first; it is what you search for.
-2. **Search all three apps**, not just the one the defect was in: `apps/moderator`, `apps/auth`,
-   `apps/creator-studio`. Also `packages/civitai-ui` when the defect is in a component.
+2. **Search every SvelteKit app**, not just the one the defect was in: `apps/moderator`, `apps/auth`,
+   `apps/creator-studio`, `apps/training-studio`. Also `packages/civitai-ui` when the defect is in a
+   component.
 3. **Search for the shape several ways.** A grep for the exact expression finds the copy-paste; it does
    not find the same mistake spelled differently. Search for the *symptom* too — the prop, the rune, the
    lifecycle call, the endpoint, the column.
