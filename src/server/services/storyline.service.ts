@@ -1820,7 +1820,14 @@ export async function setCanonChapter({
     select: {
       parentChapterId: true,
       storylineId: true,
-      chapter: { select: { removedAt: true } },
+      chapter: {
+        select: {
+          removedAt: true,
+          post: {
+            select: { tosViolation: true, user: { select: { bannedAt: true, deletedAt: true } } },
+          },
+        },
+      },
     },
     take: 2,
   });
@@ -1838,7 +1845,9 @@ export async function setCanonChapter({
     userId,
     isModerator,
   });
-  if (edge.chapter.removedAt)
+  // Every chapter the reading path tombstones as removed or deleted, moderators' view included.
+  const { removedAt, post } = edge.chapter;
+  if (removedAt || !post || post.tosViolation || post.user.bannedAt || post.user.deletedAt)
     throw throwBadRequestError('A removed chapter cannot be the main route');
 
   await dbWrite.$transaction(async (tx) => {

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { page } from 'vitest/browser';
+import { page, userEvent } from 'vitest/browser';
 import { renderWithProviders } from '../../../../test/component-setup';
 import type * as DialogStoreModule from '~/components/Dialog/dialogStore';
+import type * as DataModule from '~/components/Storyline/storyline.data';
 import type * as QueriesModule from '~/components/Storyline/storyline.queries';
 import type * as IsMobileModule from '~/hooks/useIsMobile';
 
@@ -12,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   children: [] as unknown[],
   narrow: false,
   touch: false,
+  user: null as { id: number; isModerator?: boolean } | null,
+  setMainPath: vi.fn(),
 }));
 // The harness mounts no layout container, which is what picks the narrow stage.
 vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
@@ -19,7 +22,11 @@ vi.mock('~/hooks/useIsMobile', async (importOriginal) => ({
   useIsMobile: () => mocks.narrow,
   useHasCoarsePointer: () => mocks.touch,
 }));
-vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => null }));
+vi.mock('~/hooks/useCurrentUser', () => ({ useCurrentUser: () => mocks.user }));
+vi.mock('~/components/Storyline/storyline.data', async (importOriginal) => ({
+  ...(await importOriginal<typeof DataModule>()),
+  useSetStorylineMainPath: () => ({ isPending: false, mutate: mocks.setMainPath }),
+}));
 vi.mock('~/components/Storyline/storyline.queries', async (importOriginal) => ({
   ...(await importOriginal<typeof QueriesModule>()),
   useStorylineChildren: () => ({ data: mocks.children, isLoading: false }),
@@ -34,6 +41,7 @@ vi.mock('~/components/Dialog/dialogStore', async (importOriginal) => ({
 vi.mock('~/components/Storyline/continue/openStorylineContinueModal', () => ({
   openStorylineContinueModal: mocks.openContinue,
 }));
+import { ModalsProvider } from '@mantine/modals';
 import { StorylineEndOfChapter } from '~/components/Storyline/StorylineEndOfChapter';
 
 /**
@@ -162,5 +170,86 @@ describe('→ at the end of a chapter', () => {
     await expect.element(page.getByTestId('storyline-end-of-chapter')).toBeVisible();
     press('ArrowRight');
     expect(onContinue).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The owner and moderators promote a side path to the main one from the fork itself. The server
+ * already had `setCanon`; before this no screen called it, so an owner could not find it at all.
+ */
+describe('making a path the main one', () => {
+  beforeEach(() => {
+    mocks.user = null;
+    mocks.setMainPath.mockClear();
+    mocks.children = [
+      child(41),
+      child(42, { post: { id: 420, title: 'The cave', username: 'someone' } }),
+      child(43, { tombstone: 'removed', post: null }),
+      child(45, { tombstone: 'deleted', post: null }),
+    ];
+  });
+  const renderFork = ({ isOwner = false } = {}) => {
+    const onContinue = vi.fn();
+    renderWithProviders(
+      <ModalsProvider>
+        <StorylineEndOfChapter
+          chapterId={4}
+          storylineId={9}
+          chapterDepth={3}
+          parentPostId={15}
+          isOwner={isOwner}
+          onContinue={onContinue}
+        />
+      </ModalsProvider>
+    );
+    return onContinue;
+  };
+  const offeredOn = () =>
+    [...document.querySelectorAll('[data-testid="storyline-make-main"]')].map((button) =>
+      Number(button.closest('[data-testid="storyline-fork"]')?.getAttribute('data-chapter-id'))
+    );
+
+  test('the owner is offered it on each way that is not already main, and confirms first', async () => {
+    mocks.user = { id: 1 };
+    const onContinue = renderFork({ isOwner: true });
+    await expect.element(page.getByTestId('storyline-end-of-chapter')).toBeVisible();
+    // Not on the canon way, a removed chapter the server would refuse, or a deleted one.
+    expect(offeredOn()).toEqual([42]);
+
+    await userEvent.click(page.getByTestId('storyline-make-main'));
+    expect(mocks.setMainPath).not.toHaveBeenCalled();
+    await expect.element(page.getByText('The cave', { exact: true }).last()).toBeVisible();
+    await userEvent.click(page.getByRole('button', { name: 'Make main path', exact: true }).last());
+    // The fork's own chapter names the route, for a chapter that continues several.
+    expect(mocks.setMainPath).toHaveBeenCalledExactlyOnceWith({
+      chapterId: 42,
+      parentChapterId: 4,
+    });
+    expect(onContinue).not.toHaveBeenCalled();
+  });
+
+  test("a moderator is offered it on someone else's storyline", async () => {
+    mocks.user = { id: 2, isModerator: true };
+    // A moderator is never sent a 'removed' tombstone.
+    mocks.children = [child(41), child(42)];
+    renderFork();
+    await expect.element(page.getByTestId('storyline-end-of-chapter')).toBeVisible();
+    expect(offeredOn()).toEqual([42]);
+  });
+
+  test('a reader is not', async () => {
+    mocks.user = { id: 3 };
+    renderFork();
+    await expect.element(page.getByTestId('storyline-end-of-chapter')).toBeVisible();
+    expect(document.querySelectorAll('[data-testid="storyline-fork"]')).toHaveLength(4);
+    expect(offeredOn()).toEqual([]);
+  });
+
+  test('the lead way is offered it when no way is main yet', async () => {
+    mocks.user = { id: 1 };
+    mocks.children = [child(42), child(44)];
+    renderFork({ isOwner: true });
+    await expect.element(page.getByTestId('storyline-end-of-chapter')).toBeVisible();
+    expect(offeredOn()).toEqual([42, 44]);
   });
 });
