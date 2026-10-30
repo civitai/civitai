@@ -68,7 +68,7 @@ describe('isKeepLimitResult (the one place the page tells a kept-apps refusal)',
     const results = await resultsOf(KEEP_CAP, 2);
     expect(results).toHaveLength(2);
     expect(results[1].refused).toBe(
-      'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.'
+      'You already have as many apps as you can keep. Choose one to delete in the card under the chat; your request then continues automatically.'
     );
     expect(results.map(isKeepLimitResult)).toEqual([true, true]);
   });
@@ -99,8 +99,12 @@ describe('isKeepLimitResult (the one place the page tells a kept-apps refusal)',
       'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.',
     ],
     [
-      'this page’s own create_app (assistant-runner after v0.0.9)',
+      'assistant-runner v0.0.10 to v0.0.15',
       'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.',
+    ],
+    [
+      'this page’s own create_app (assistant-runner after v0.0.15)',
+      'You already have as many apps as you can keep. Choose one to delete in the card under the chat; your request then continues automatically.',
     ],
   ];
   it.each(RELEASED_KEEP_LIMITS)(
