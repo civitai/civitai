@@ -1,4 +1,5 @@
 import { BuzzApiError } from '@civitai/buzz';
+import { Prisma } from '@prisma/client';
 import type * as LegalHoldService from '~/server/services/legal-hold.service';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { dbMock } from '~/__tests__/mocks/db.mock';
@@ -885,13 +886,21 @@ describe('refundBountyBenefactorFunds', () => {
 });
 
 describe('retryUnsettledBountyPayouts paging', () => {
-  it('walks past a full batch by id', async () => {
-    dbMock.dbWrite.$queryRaw
-      .mockResolvedValueOnce(Array.from({ length: 100 }, (_, i) => ({ id: i + 1 })))
-      .mockResolvedValueOnce([{ id: 500 }]);
-    await retryUnsettledBountyPayouts({ now: new Date() });
-    expect(dbMock.dbWrite.$queryRaw).toHaveBeenCalledTimes(2);
-    expect(dbMock.dbWrite.$queryRaw.mock.calls[1]).toContain(100);
+  it('walks past a full batch by id, each bounty once', async () => {
+    const ids = Array.from({ length: 137 }, (_, i) => i + 1);
+    bounty = null; // each settle then has nothing left to move
+    const cursors: unknown[] = [];
+    dbMock.dbWrite.$queryRaw.mockImplementation((async (...args: unknown[]) => {
+      const { values } = Prisma.sql(args[0] as TemplateStringsArray, ...(args.slice(1) as never[]));
+      const [cursor, , limit] = values as [number, Date, number];
+      cursors.push(cursor);
+      return ids
+        .filter((id) => id > cursor)
+        .slice(0, limit)
+        .map((id) => ({ id }));
+    }) as never);
+    expect(await retryUnsettledBountyPayouts({ now: new Date() })).toEqual({ settled: 137 });
+    expect(cursors).toEqual([0, 100]);
   });
 });
 
@@ -963,10 +972,13 @@ describe('a moderator going past an award no retry can pay', () => {
 describe('several awards on one bounty', () => {
   // A ledger that, like the Buzz service, makes a key once and answers a repeat as a conflict.
   let ledger: Map<string, { toAccountId: number; amount: number; type: string }>;
+  // Every key asked for, repeats included: a repeat is a conflict on the ledger, invisible above.
+  let attempts: string[];
   const ledgerRows = () => [...ledger].map(([key, t]) => [key, t.toAccountId, t.amount]);
 
   beforeEach(() => {
     ledger = new Map();
+    attempts = [];
     buzz.createBuzzTransactionMany.mockImplementation(
       async (
         transactions: {
@@ -976,6 +988,7 @@ describe('several awards on one bounty', () => {
           type: string;
         }[]
       ) => {
+        attempts.push(...transactions.map((t) => t.externalTransactionId));
         const made = transactions.filter((t) => !ledger.has(t.externalTransactionId));
         made.forEach((t) => ledger.set(t.externalTransactionId, t));
         return {
@@ -998,6 +1011,7 @@ describe('several awards on one bounty', () => {
       ['bounty-award-b4-u5-yellow', 8, 100],
       ['bounty-award-b4-u6-yellow', 9, 50],
     ]);
+    expect(attempts).toEqual(['bounty-award-b4-u5-yellow', 'bounty-award-b4-u6-yellow']);
     expect(isPayoutPending(bounty!)).toBe(false);
   });
 
@@ -1010,7 +1024,25 @@ describe('several awards on one bounty', () => {
     expect(buzz.createBuzzTransactionMany).toHaveBeenCalledTimes(1);
   });
 
-  it('settles an award recorded after an earlier settlement', async () => {
+  // An award a settlement already paid, under the old bounty-wide key or this one, is not paid again.
+  it('pays a later award without repaying one an earlier settlement covered', async () => {
+    ledger.set('bounty-award-b4-yellow', { toAccountId: 8, amount: 100, type: 'Bounty' });
+    Object.assign(benefactors[0], { awardedToId: 10, awardedAt: new Date(1000) });
+    Object.assign(bounty!, {
+      payoutRecordedAt: new Date(1000),
+      payoutSettledAt: new Date(2000),
+      payoutWinnerUserId: 8,
+    });
+    await awardBountyEntry({ id: 11, userId: 6 });
+    expect(attempts).toEqual(['bounty-award-b4-u6-yellow']);
+    expect(ledgerRows()).toEqual([
+      ['bounty-award-b4-yellow', 8, 100],
+      ['bounty-award-b4-u6-yellow', 9, 50],
+    ]);
+    expect(isPayoutPending(bounty!)).toBe(false);
+  });
+
+  it('settles a kept bounty whose award was recorded after an earlier settlement', async () => {
     Object.assign(benefactors[0], { awardedToId: 10, awardedAt: new Date(1000) });
     Object.assign(benefactors[1], { awardedToId: 11, awardedAt: new Date(3000) });
     Object.assign(bounty!, {
@@ -1020,11 +1052,16 @@ describe('several awards on one bounty', () => {
       payoutWinnerUserId: 9,
     });
     expect(await settleBountyPayout(4)).toBe(true);
-    expect(ledgerRows()).toEqual([
-      ['bounty-award-b4-u5-yellow', 8, 100],
-      ['bounty-award-b4-u6-yellow', 9, 50],
-    ]);
+    expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
     expect(isPayoutPending(bounty!)).toBe(false);
+  });
+
+  it('records an award after the last record even when that record is ahead of this clock', async () => {
+    const ahead = new Date(Date.now() + 60_000);
+    bounty!.payoutRecordedAt = ahead;
+    await awardBountyEntry({ id: 10, userId: 5 });
+    expect(bounty!.payoutRecordedAt!.getTime()).toBeGreaterThan(ahead.getTime());
+    expect(find(5)?.awardedAt).toEqual(bounty!.payoutRecordedAt);
   });
 
   it('records an award after the last settlement even when this clock is behind it', async () => {
@@ -1071,6 +1108,14 @@ describe('several awards on one bounty', () => {
         payoutRecordedAt: new Date(3000),
         payoutWinnerUserId: 9,
       });
+    });
+
+    it('does not refund an award an earlier settlement paid before its entry was deleted', async () => {
+      bounty!.payoutSettledAt = new Date(2000);
+      expect(await settleBountyPayout(4)).toBe(true);
+      expect(buzz.refundMultiAccountTransaction).not.toHaveBeenCalled();
+      expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
+      expect(dbMock.dbWrite.modActivity.create).not.toHaveBeenCalled();
     });
 
     it('refunds that supporter in kind, pays the latest, and records the refund', async () => {
@@ -1124,5 +1169,49 @@ describe('several awards on one bounty', () => {
       expect(ledgerRows()).toEqual([['bounty-award-b4-u6-yellow', 9, 50]]);
       expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
     });
+  });
+});
+
+describe('claims recorded behind a settlement stamped by a clock ahead of this one', () => {
+  beforeEach(() => {
+    bounty!.payoutSettledAt = new Date(Date.now() + 60_000);
+  });
+
+  it('refundBounty still refunds', async () => {
+    await refundBounty({ id: 4, isModerator: true });
+    expect(moved('refund')).toBe(2);
+    expect(isPayoutPending(bounty!)).toBe(false);
+  });
+
+  it('deleteBountyById still refunds before deleting', async () => {
+    await deleteBountyById({ id: 4, isModerator: true });
+    expect(moved('refund')).toBe(2);
+    expect(bounty).toBeNull();
+  });
+});
+
+describe('deleting an open bounty with an award not yet paid', () => {
+  beforeEach(() => {
+    Object.assign(benefactors[0], { awardedToId: 10, awardedAt: new Date(1000) });
+    Object.assign(bounty!, { payoutRecordedAt: new Date(1000), payoutWinnerUserId: 8 });
+  });
+
+  it('pays the award, then refunds the supporters who did not award', async () => {
+    await deleteBountyById({ id: 4, isModerator: true });
+    expect(buzz.createBuzzTransactionMany).toHaveBeenCalledWith([
+      expect.objectContaining({
+        toAccountId: 8,
+        externalTransactionId: 'bounty-award-b4-u5-yellow',
+      }),
+    ]);
+    expect(buzz.refundMultiAccountTransaction).toHaveBeenCalledTimes(1);
+    expect(bounty).toBeNull();
+  });
+
+  it('keeps the bounty when that award cannot be paid', async () => {
+    buzz.createBuzzTransactionMany.mockRejectedValue(new Error('buzz down'));
+    await expect(deleteBountyById({ id: 4, isModerator: true })).rejects.toThrow();
+    expect(bounty).not.toBeNull();
+    expect(bounty?.refunded).toBe(false);
   });
 });

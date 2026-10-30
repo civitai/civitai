@@ -266,9 +266,11 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
         throw throwBadRequestError('Supporters have already awarded an entry.');
       }
 
+      // One stamp for both, after the last settlement: settlement tells awards it already paid by it.
+      const recordedAt = nextPayoutRecordedAt(bounty);
       const updatedBenefactor = await tx.bountyBenefactor.update({
         where: { bountyId_userId: { userId, bountyId: entry.bountyId } },
-        data: { awardedToId: entry.id, awardedAt: new Date() },
+        data: { awardedToId: entry.id, awardedAt: recordedAt },
       });
 
       const unawardedBountyBenefactors = await tx.bountyBenefactor.findFirst({
@@ -279,7 +281,7 @@ export const awardBountyEntry = async ({ id, userId }: { id: number; userId: num
       await tx.bounty.update({
         where: { id: entry.bountyId },
         data: {
-          payoutRecordedAt: nextPayoutRecordedAt(bounty),
+          payoutRecordedAt: recordedAt,
           payoutWinnerUserId: entry.userId,
           ...(unawardedBountyBenefactors ? {} : { complete: true }),
         },

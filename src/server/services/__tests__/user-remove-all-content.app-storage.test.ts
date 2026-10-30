@@ -451,31 +451,3 @@ describe('removeAllContent → App Blocks per-user storage', () => {
     }
   });
 });
-
-describe('removeAllContent — bounties with a payout in flight', () => {
-  it('settles them first, and keeps any whose payout still failed', async () => {
-    vi.mocked(dbMock.dbWrite.$queryRaw).mockImplementation((async (...args: unknown[]) =>
-      flatten(args).text.includes('AS pending')
-        ? [3, 4, 5].map((id) => ({ id, pending: true, open: false }))
-        : [{ held: false }]) as never);
-    settleBountyPayout
-      .mockResolvedValueOnce(true)
-      .mockResolvedValueOnce(false)
-      .mockResolvedValueOnce(false);
-    // Bounty 5's award has no winner to pay, so the wipe goes past it.
-    refundUnpayableBountyAward.mockImplementation(async (bountyId: number) => bountyId === 5);
-
-    await removeAllContent({ id: TARGET, actorUserId: MOD });
-
-    expect(settleBountyPayout.mock.calls.map(([id]) => id)).toEqual([3, 4, 5]);
-    const statements = dbMock.dbWrite.$executeRaw.mock.calls.map(flatten);
-    const bountyDelete = statements.findIndex((sql) => sql.text.includes('DELETE FROM "Bounty"'));
-    expect(bountyDelete).toBeGreaterThanOrEqual(0);
-    const { text, values } = statements[bountyDelete];
-    const match = /b\."userId" = \$(\d+) AND b\.id <> ALL\(\$(\d+)::int\[\]\)/.exec(text);
-    expect([match![1], match![2]].map((n) => values[Number(n) - 1])).toEqual([TARGET, [4]]);
-    expect(settleBountyPayout.mock.invocationCallOrder[1]).toBeLessThan(
-      dbMock.dbWrite.$executeRaw.mock.invocationCallOrder[bountyDelete]
-    );
-  });
-});

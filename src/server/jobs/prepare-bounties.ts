@@ -288,7 +288,7 @@ async function settleExpiredBounty({
 
     // Settlement pays from these marks; see the invariant on `refundUnpayableBountyAward`.
     await tx.$executeRawUnsafe(`
-        UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntry.id}, "awardedAt" = NOW() WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
+        UPDATE "BountyBenefactor" bf SET "awardedToId" = ${winnerEntry.id}, "awardedAt" = (SELECT ${NEXT_PAYOUT_RECORDED_AT_SQL} FROM "Bounty" b WHERE b.id = ${id}) WHERE bf."bountyId" = ${id} AND bf."awardedToId" IS NULL;
       `);
     await tx.$executeRawUnsafe(`
         UPDATE "Bounty" b SET "complete" = true, "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL}, "payoutWinnerUserId" = ${winnerEntry.userId} WHERE b.id = ${id};

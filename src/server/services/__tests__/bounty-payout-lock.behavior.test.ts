@@ -106,4 +106,18 @@ describe('the payout-pending query on real rows', () => {
     const [{ pending }] = (await holder.db.query<{ pending: boolean }>(sql.text, sql.values)).rows;
     expect(pending).toBe(true);
   });
+
+  it('records a new payout after an earlier record stamped ahead of this clock', async () => {
+    await holder.db.exec(`
+      UPDATE "Bounty" b SET "payoutSettledAt" = NULL,
+        "payoutRecordedAt" = now() + interval '1 minute' WHERE id = 1;
+    `);
+    const before = Prisma.sql`SELECT "payoutRecordedAt" AS at FROM "Bounty" WHERE id = 1`;
+    const [{ at }] = (await holder.db.query<{ at: Date }>(before.text)).rows;
+    await holder.db.exec(
+      `UPDATE "Bounty" b SET "payoutRecordedAt" = ${NEXT_PAYOUT_RECORDED_AT_SQL} WHERE id = 1`
+    );
+    const [{ at: after }] = (await holder.db.query<{ at: Date }>(before.text)).rows;
+    expect(after.getTime()).toBeGreaterThan(at.getTime());
+  });
 });

@@ -49,6 +49,9 @@ vi.mock('~/server/email/templates', () => ({
 }));
 
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
+import { NEXT_PAYOUT_RECORDED_AT_SQL } from '~/server/services/bounty-payout-lock';
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 
@@ -120,9 +123,11 @@ describe('prepare-bounties — a bounty hidden by a text-scan poi flag', () => {
     ).toBe(false);
     expect(
       executedStatements.some((sql) =>
-        /"complete" = true, "refunded" = true, "payoutRecordedAt" = GREATEST\(NOW\(\), b\."payoutSettledAt" \+ interval '1 millisecond'\) WHERE b.id = 7/.test(
-          sql
-        )
+        new RegExp(
+          `"complete" = true, "refunded" = true, "payoutRecordedAt" = ${escapeRegExp(
+            NEXT_PAYOUT_RECORDED_AT_SQL
+          )} WHERE b.id = 7`
+        ).test(sql)
       ),
       `expected the refunded claim for bounty 7; executed:\n${executedStatements.join('\n')}`
     ).toBe(true);

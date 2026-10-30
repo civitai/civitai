@@ -1859,6 +1859,14 @@ describe('a bounty a content wipe kept for its unsettled payout', () => {
       expect(await bounty()).toBeUndefined();
     });
 
+    it('leaves a payout recorded in the last ten minutes to the attempt still making it', async () => {
+      await holder.db.exec(`UPDATE "Bounty" SET complete = true, refunded = true,
+        "payoutSettledAt" = NULL, "payoutRecordedAt" = now() - interval '1 minute'
+        WHERE id = ${BOUNTY}`);
+
+      expect(await retryUnsettledBountyPayouts()).toEqual({ settled: 0 });
+    });
+
     it('retries nothing settled at or after its last record (control)', async () => {
       await holder.db.exec(`UPDATE "Bounty" SET complete = true,
         "payoutRecordedAt" = now() - interval '1 hour', "payoutSettledAt" = now() - interval '1 hour'

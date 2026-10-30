@@ -62,6 +62,9 @@ vi.mock('~/server/email/templates', () => {
 });
 
 import { bountyJobs } from '~/server/jobs/prepare-bounties';
+import { NEXT_PAYOUT_RECORDED_AT_SQL } from '~/server/services/bounty-payout-lock';
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 import { dbMock } from '~/__tests__/mocks/db.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbWrite = dbMock.dbWrite;
@@ -129,7 +132,7 @@ describe('prepare-bounties auto-award', () => {
     expect(benefactorUpdate).toContain(`"awardedToId" = ${WINNER_ENTRY_ID}`);
     // notifications/bounty.notifications.ts filters on `bb."awardedAt" > lastSent`, so an
     // award that leaves awardedAt NULL is never announced to the winning entrant.
-    expect(benefactorUpdate).toMatch(/"awardedAt"\s*=\s*NOW\(\)/i);
+    expect(benefactorUpdate).toContain(`"awardedAt" = (SELECT ${NEXT_PAYOUT_RECORDED_AT_SQL}`);
   });
 
   it('records the award on the bounty and settles its payout', async () => {
@@ -137,9 +140,11 @@ describe('prepare-bounties auto-award', () => {
 
     expect(
       executedStatements.some((sql) =>
-        /"complete" = true, "payoutRecordedAt" = GREATEST\(NOW\(\), b\."payoutSettledAt" \+ interval '1 millisecond'\), "payoutWinnerUserId" = 7\s+WHERE b.id = 4321/.test(
-          sql
-        )
+        new RegExp(
+          `"complete" = true, "payoutRecordedAt" = ${escapeRegExp(
+            NEXT_PAYOUT_RECORDED_AT_SQL
+          )}, "payoutWinnerUserId" = 7\\s+WHERE b.id = 4321`
+        ).test(sql)
       )
     ).toBe(true);
     expect(mockSettle).toHaveBeenCalledExactlyOnceWith(BOUNTY_ID, { firstAttempt: true });

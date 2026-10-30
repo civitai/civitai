@@ -25,15 +25,25 @@ export function isPayoutPending(state: {
 }
 
 /**
- * The `payoutRecordedAt` for a claim made under the lock: later than the last settlement even when
- * clocks disagree, so the claim reads as pending.
+ * The `payoutRecordedAt` (and an award's `awardedAt`) for a claim made under the lock: later than
+ * the last settlement and the last record even when clocks disagree, so the claim reads as pending
+ * and a settlement covers exactly the awards dated at or before it.
  */
-export function nextPayoutRecordedAt(locked: { payoutSettledAt: Date | null }) {
-  return new Date(Math.max(Date.now(), (locked.payoutSettledAt?.getTime() ?? 0) + 1));
+export function nextPayoutRecordedAt(locked: {
+  payoutSettledAt: Date | null;
+  payoutRecordedAt: Date | null;
+}) {
+  return new Date(
+    Math.max(
+      Date.now(),
+      (locked.payoutSettledAt?.getTime() ?? 0) + 1,
+      (locked.payoutRecordedAt?.getTime() ?? 0) + 1
+    )
+  );
 }
 
 /** `nextPayoutRecordedAt` in SQL, on the alias `b`. */
-export const NEXT_PAYOUT_RECORDED_AT_SQL = `GREATEST(NOW(), b."payoutSettledAt" + interval '1 millisecond')`;
+export const NEXT_PAYOUT_RECORDED_AT_SQL = `GREATEST(NOW(), b."payoutSettledAt" + interval '1 millisecond', b."payoutRecordedAt" + interval '1 millisecond')`;
 
 /** `isPayoutPending` as a query, on the alias `b`. */
 export const payoutPendingSql = Prisma.sql`(b."payoutRecordedAt" IS NOT NULL
