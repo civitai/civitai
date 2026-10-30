@@ -147,18 +147,10 @@ describe('AppAssistantChat', () => {
       name: 'App Assistant',
       model: 'openai/gpt-6-luna',
       models: [
-        { id: 'openai/gpt-6-luna', label: 'GPT-6 Luna', note: 'Standard cost' },
-        { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', note: 'Lower cost' },
-        {
-          id: 'anthropic/claude-haiku-5.5',
-          label: 'Claude Haiku 5.5',
-          note: 'About the same cost',
-        },
-        {
-          id: 'deepseek/deepseek-v4.1-flash',
-          label: 'DeepSeek V4.1 Flash',
-          note: 'About the same cost',
-        },
+        { id: 'openai/gpt-6-luna', label: 'GPT-6 Luna' },
+        { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash' },
+        { id: 'anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5' },
+        { id: 'deepseek/deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
       ],
       modelsOnly: true,
       maxSteps: 1000,

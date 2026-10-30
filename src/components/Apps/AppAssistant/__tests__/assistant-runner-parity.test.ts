@@ -39,6 +39,8 @@ describe('App Assistant models, page and server runner', () => {
       'deepseek/deepseek-v4.1-flash',
     ]);
     expect(APP_ASSISTANT_CHAT_CONFIG.modelsOnly).toBe(true);
+    // Names only: the button shows no per-model cost hint (`note`).
+    expect(APP_ASSISTANT_CHAT_CONFIG.models.filter((model) => 'note' in model)).toEqual([]);
     expect(isAppAssistantModel('someone/unlisted-model')).toBe(false);
   });
 });

@@ -2368,34 +2368,35 @@ describe('AppAssistantWorkspace preview after a reload on the server runner', ()
     expect(r.restart).not.toHaveBeenCalled();
   });
 
-  test('a brand-new app with nothing built: the pane says where the app appears, with no Restart preview', async () => {
+  test('a brand-new app with nothing built shows no preview pane: the chat takes the full width', async () => {
     r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
     r.built.mockResolvedValue(false);
     await reload();
-    await expect.element(pane()).toBeInTheDocument();
     await vi.waitFor(() => expect(r.built.mock.calls).toEqual([['app-aaaa']]));
     await settle();
-    // No `restart`: AppAssistantPreview shows its placeholder, never "isn’t running".
-    expect(r.pane).toBeUndefined();
-    expect(m.previewSession).toBeNull();
+    expect(pane().query()).toBeNull();
     expect(r.restart).not.toHaveBeenCalled();
-  });
-
-  test('a brand-new app offers Restart preview once a preview of it was shown', async () => {
-    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
-    r.built.mockResolvedValue(false);
-    await reload();
-    await vi.waitFor(() => expect(r.built).toHaveBeenCalled());
-    await settle();
-    expect(r.pane).toBeUndefined();
+    // Once the assistant shows its first preview, the pane comes up.
     m.chat!.onToolResult!({
       name: 'start_preview',
       input: {},
       output: { shown: true, blockId: 'app-aaaa', host: HOST },
       isError: false,
     });
-    await vi.waitFor(() => expect(m.previewSession).toMatchObject({ blockId: 'app-aaaa' }));
-    expect(r.pane).toEqual({ onRestart: expect.any(Function), pending: false, error: null });
+    await expect.element(pane()).toBeInTheDocument();
+    expect(m.previewSession).toMatchObject({ blockId: 'app-aaaa' });
+  });
+
+  test('an app that was previewed before and has stopped shows the pane with Restart preview', async () => {
+    // Built (its sandbox has the manifest the preview was opened from), no preview live on this visit.
+    r.probe.mockRejectedValue(new Error('No live preview is running for this app'));
+    r.built.mockResolvedValue(true);
+    await reload();
+    await expect.element(pane()).toBeInTheDocument();
+    await vi.waitFor(() =>
+      expect(r.pane).toEqual({ onRestart: expect.any(Function), pending: false, error: null })
+    );
+    expect(m.previewSession).toBeNull();
   });
 
   test('no clear answer from the sandbox still offers Restart preview, as before', async () => {

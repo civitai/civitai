@@ -839,8 +839,9 @@ export function AppAssistantWorkspace({
     [remoteRunner, canPreview, previewable, restartPreview, restart]
   );
   // Beside the chat on a wide screen; a phone's Chat/Preview switch still waits for a preview. With
-  // no live preview it offers Restart preview, or, for an app never built, says where the app appears.
-  const paneShown = !!session || (!!remoteRunner && canPreview && noLivePreview);
+  // no live preview it shows only to offer Restart preview, for an app that had one: an app never
+  // built has no pane, and the chat takes the full width.
+  const paneShown = !!session || (!!previewRestart && noLivePreview);
   // A visit opens the app worked on last, once, without starting it: starting pauses the running one.
   // Not on a visit for a fork: the fork opens its own app, and this effect, running in the same
   // commit with the pre-fork `activeName`, would otherwise open the recent app over it.

@@ -7,21 +7,17 @@ export interface AppAssistantModel {
   id: string;
   /** What the model button calls it. */
   label: string;
-  /** A short cost hint the model button shows beside it. */
-  note: string;
 }
 
 /** Replies use this one unless the viewer picks another for the chat. */
 export const APP_ASSISTANT_DEFAULT_MODEL = 'openai/gpt-6-luna';
 
-// Each id is in OpenRouter's public model list with tool calling. Cost hints compare its list price
-// per million output tokens with the default's when it was added (GPT-6 Luna $0.50, GLM 5.3 Flash
-// $0.07, Claude Haiku 5.5 $0.50, DeepSeek V4.1 Flash $0.50); the charge follows the actual price.
+// Each id is in OpenRouter's public model list with tool calling.
 export const APP_ASSISTANT_MODELS: readonly AppAssistantModel[] = [
-  { id: APP_ASSISTANT_DEFAULT_MODEL, label: 'GPT-6 Luna', note: 'Standard cost' },
-  { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash', note: 'Lower cost' },
-  { id: 'anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5', note: 'About the same cost' },
-  { id: 'deepseek/deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash', note: 'About the same cost' },
+  { id: APP_ASSISTANT_DEFAULT_MODEL, label: 'GPT-6 Luna' },
+  { id: 'z-ai/glm-5.3-flash', label: 'GLM 5.3 Flash' },
+  { id: 'anthropic/claude-haiku-5.5', label: 'Claude Haiku 5.5' },
+  { id: 'deepseek/deepseek-v4.1-flash', label: 'DeepSeek V4.1 Flash' },
 ];
 
 const IDS: ReadonlySet<string> = new Set(APP_ASSISTANT_MODELS.map((model) => model.id));

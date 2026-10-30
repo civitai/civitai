@@ -25,7 +25,7 @@ export const APP_ASSISTANT_EXCLUDED_TOOLS = [
 
 /**
  * The models App Assistant's replies may use, from `@civitai/app-assistant` (the server runner refuses
- * any other). The chat's model button offers only these (`modelsOnly`), each with its cost hint, and
+ * any other). The chat's model button offers only these (`modelsOnly`), by name, and
  * keeps the pick with the chat; a chat saved with any other model replies with the default. OpenRouter
  * ids: the orchestrator routes any id that is not an AIR to OpenRouter, where no free allowance
  * applies, so every step is paid. `configureChat` is page-wide and never reset, so a chat opened
@@ -34,7 +34,7 @@ export const APP_ASSISTANT_EXCLUDED_TOOLS = [
 export const APP_ASSISTANT_CHAT_CONFIG = {
   name: 'App Assistant',
   model: APP_ASSISTANT_DEFAULT_MODEL,
-  models: APP_ASSISTANT_MODELS.map(({ id, label, note }) => ({ id, label, note })),
+  models: APP_ASSISTANT_MODELS.map(({ id, label }) => ({ id, label })),
   modelsOnly: true,
   maxSteps: APP_ASSISTANT_MAX_STEPS,
   contextBudgetTokens: APP_ASSISTANT_CONTEXT_BUDGET_TOKENS,
