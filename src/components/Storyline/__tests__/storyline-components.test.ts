@@ -831,18 +831,27 @@ describe('StorylineCollaboratorsPanel', () => {
     expect(calls).toEqual(['remove:50']);
   });
 
-  it('stops endorsing at the cap', () => {
-    const full = Array.from({ length: STORYLINE_MAX_COLLABORATORS }, (_, i) => ({
-      id: 100 + i,
-      username: `u${i}`,
-    }));
-    const el = panel({ collaborators: full });
+  const users = (count: number, from = 100) =>
+    Array.from({ length: count }, (_, i) => ({ id: from + i, username: `u${from + i}` }));
+  const capMessage = `A storyline can have up to ${STORYLINE_MAX_COLLABORATORS} endorsed collaborators, invitations included.`;
+
+  it.each([
+    ['collaborators', users(STORYLINE_MAX_COLLABORATORS), []],
+    ['collaborators and an open invitation', users(STORYLINE_MAX_COLLABORATORS - 1), users(1, 900)],
+  ])('stops endorsing at the cap, counting %s', (_name, collaborators, pending) => {
+    const el = panel({ collaborators, pending });
     act(() => button(el, 'Pick user 60').click());
 
-    expect(visibleText(el)).toContain(
-      `A storyline can have up to ${STORYLINE_MAX_COLLABORATORS} endorsed collaborators, invitations included.`
-    );
+    expect(visibleText(el)).toContain(capMessage);
     expect(button(el, 'Invite').disabled).toBe(true);
+  });
+
+  it('still endorses one below the cap', () => {
+    const el = panel({ collaborators: users(STORYLINE_MAX_COLLABORATORS - 1) });
+    act(() => button(el, 'Pick user 60').click());
+
+    expect(visibleText(el)).not.toContain(capMessage);
+    expect(button(el, 'Invite').disabled).toBe(false);
   });
 
   it('endorses the picked user below the cap, then clears the pick', () => {
