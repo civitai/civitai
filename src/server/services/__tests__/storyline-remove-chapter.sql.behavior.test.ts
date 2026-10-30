@@ -512,8 +512,9 @@ describe('removeStorylineChapter', () => {
       expect(await holds()).toEqual([]);
     });
 
-    // Ruled by the moderation lead (2026-10-30): a moderator removing a chapter of their own
-    // storyline acts as its owner. Do not switch this to the moderator path without that ruling.
+    // Deliberate: a moderator's own storyline or chapter is theirs as a user, so they get the owner
+    // or author path. The moderator path (tombstone, mod log) is for other people's content. See
+    // the PR that added chapter removal before changing it.
     it('a moderator who owns the storyline removes as its owner, recorded like any owner', async () => {
       await db.pg.exec(`
         UPDATE "Placement" SET amount = 0 WHERE id = 900;
@@ -525,6 +526,12 @@ describe('removeStorylineChapter', () => {
       expect((await placement900()).removedBy).toBe('owner');
       expect(trackModActivity).not.toHaveBeenCalled();
       expect(await holds()).toMatchObject([{ removedById: MODERATOR, removedByRole: 'owner' }]);
+    });
+
+    it('keeps a paid chapter from a moderator who owns the storyline, as from any owner', async () => {
+      await db.pg.exec(`UPDATE "Storyline" SET "userId" = ${MODERATOR} WHERE id = 1`);
+      await expect(remove(MODERATOR, true)).rejects.toThrow(REFUSED.moderatorOnly);
+      expect(await chapterIds()).toEqual([10, 11]);
     });
 
     it("leaves a moderator's removal unrecorded, a tombstone as always", async () => {

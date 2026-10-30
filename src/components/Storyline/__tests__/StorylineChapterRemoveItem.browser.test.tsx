@@ -35,7 +35,7 @@ vi.mock('~/components/Storyline/StorylineModeProvider', () => ({
     path: {
       storyline: { id: 2, userId: OWNER },
       chapters: [
-        { chapterId: 100, depth: 0, childCount: 1, post: { id: 500, title: 'One', userId: OWNER } },
+        { chapterId: 100, depth: 0, childCount: 2, post: { id: 500, title: 'One', userId: OWNER } },
         {
           chapterId: 101,
           depth: 1,
