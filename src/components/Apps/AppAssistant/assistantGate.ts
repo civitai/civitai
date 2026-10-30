@@ -64,6 +64,7 @@ export function createAssistantGate({
   onReply,
   onBuild,
   currentApp,
+  appKeyOf,
   submit,
   openApp,
 }: {
@@ -75,6 +76,11 @@ export function createAssistantGate({
   onBuild?: () => void;
   /** The app open now; a checklist belongs to the app it was shown for. */
   currentApp?: () => string | null;
+  /**
+   * The key of an app, by sandbox name. A checklist a server runner reported says the key of the app
+   * it was made for; the page compares with that, since it opens a new app only after the report.
+   */
+  appKeyOf?: (sandbox: string | null) => string | null;
   /** What the Submit for review button does; without it, a submit_for_review call shows no button. */
   submit?: SubmitCardsDeps;
   /** The open app's key: a chat may change it only once it made or chose it (`createGateCore`). */
@@ -135,7 +141,11 @@ export function createAssistantGate({
     answered,
     appChanged: (app) => {
       const awaiting = core.awaiting();
-      if (awaiting && app !== awaiting.app) answered();
+      const other =
+        awaiting?.appKey !== undefined && appKeyOf
+          ? appKeyOf(app) !== awaiting.appKey
+          : app !== awaiting?.app;
+      if (awaiting && other) answered();
       submitCards?.appChanged(app);
     },
     beforeToolCall: core.beforeToolCall,

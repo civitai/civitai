@@ -12,7 +12,7 @@ export const NO_APP_REFUSAL =
   'There is no app yet to plan features for. Start the app the user described first, then list its features.';
 export const APPS_LOADING = 'Your apps are still loading. Try again in a moment.';
 export const KEEP_LIMIT =
-  'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.';
+  'You already have as many apps as you can keep. Choose one to delete in the card under the chat; your request then continues automatically.';
 /**
  * Every wording of KEEP_LIMIT a released server runner sends. The runner bundles this package when it
  * is released, and the page ships on its own schedule, so the page reads what a deployed runner says,
@@ -21,6 +21,8 @@ export const KEEP_LIMIT =
  */
 const KEEP_LIMIT_WORDINGS: ReadonlySet<string> = new Set([
   KEEP_LIMIT,
+  // assistant-runner v0.0.10 to v0.0.15.
+  'You already have as many apps as you can keep. Choose one to delete in the card under the chat, and your message is sent again.',
   // assistant-runner v0.0.2 to v0.0.9.
   'You already have as many apps as you can keep. Delete one you no longer need from the app switcher at the top of the page, then ask again.',
 ]);

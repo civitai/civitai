@@ -225,6 +225,12 @@ export const BUILD_IT_MESSAGE = 'Looks good — build it.';
 export interface AwaitingChecklist {
   id: string;
   app: string | null;
+  /**
+   * The key of the app a server runner made the checklist for (its result's `app` tag). The page may
+   * still show the app it had open when the runner reports the checklist, and opens the new one only
+   * once its list has it: this, not `app`, says which app the checklist belongs to.
+   */
+  appKey?: string;
 }
 
 export interface GateCoreOptions {
@@ -491,7 +497,13 @@ export function createGateCore({
         checklistAwaitsBuild(items) ||
         (result.input as { data?: unknown } | null)?.data === 'sample')
     )
-      awaiting = { id: shown.checklist, app: currentApp?.() ?? null };
+      awaiting = {
+        id: shown.checklist,
+        app: currentApp?.() ?? null,
+        ...(typeof (shown as { app?: unknown }).app === 'string'
+          ? { appKey: (shown as { app: string }).app }
+          : {}),
+      };
   };
 
   /** A report_ready that passed: what it declared is what submit_for_review is judged on. */
