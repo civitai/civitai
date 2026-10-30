@@ -127,32 +127,6 @@ describe('the post pages', () => {
     expect((item as { storylineChapter?: unknown }).storylineChapter).toEqual(chapter);
   });
 
-  it('shows a removal while reported only under the report it happened during', async () => {
-    const chapter = (reportIds: number[]) => ({
-      storylineId: 3,
-      title: 'A story',
-      number: 2,
-      removed: true,
-      tosViolation: false,
-      minorByScan: false,
-      heldRemoval: { by: 'author', at: new Date(), reportIds },
-    });
-    const held = async (reportIds: number[]) => {
-      getReports.mockResolvedValueOnce({
-        items: [{ id: 80, entityId: 40 }],
-        totalItems: 1,
-        page: 1,
-        limit: 100,
-      });
-      getPostStorylineChapter.mockResolvedValueOnce(chapter(reportIds));
-      const { item } = await runPost({ postId: '40' });
-      return (item as { storylineChapter?: { heldRemoval: unknown; removed: boolean } })
-        .storylineChapter!;
-    };
-    expect((await held([70, 80])).heldRemoval).toMatchObject({ by: 'author' });
-    expect(await held([70])).toMatchObject({ heldRemoval: null, removed: true });
-  });
-
   it("loads the post's own open reports, by the post", async () => {
     await runPost({ postId: '40' });
     expect(getReports).toHaveBeenCalledWith(

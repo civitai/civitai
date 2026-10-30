@@ -50,6 +50,9 @@ CREATE TABLE "StorylineChapter" (
   "removedAt" TIMESTAMP,
   "createdAt" TIMESTAMP NOT NULL DEFAULT now()
 );
+CREATE TYPE "ReportStatus" AS ENUM ('Pending', 'Processing', 'Actioned', 'Unactioned');
+CREATE TABLE "Report" ("id" INTEGER PRIMARY KEY, "status" "ReportStatus" NOT NULL);
+INSERT INTO "Report" VALUES (70, 'Pending'), (71, 'Actioned'), (80, 'Processing');
 INSERT INTO "Storyline" ("id", "title", "minorByScan", "tosViolation") VALUES
   (1, 'First story', false, true),
   (2, 'Second story', true, false);
@@ -111,8 +114,15 @@ describe('the storyline around a reported post', () => {
       removed: true,
       tosViolation: false,
       minorByScan: true,
-      heldRemoval: { by: 'author', at: expect.any(Date), reportIds: [70] },
+      heldRemoval: { by: 'author', at: expect.any(Date) },
     });
+  });
+
+  it('stops showing it once every report it was made during is settled', async () => {
+    await hold(602, '{71}');
+    expect(await getPostStorylineChapter(602)).toBeNull();
+    await hold(602, '{71,80}');
+    expect(await getPostStorylineChapter(602)).toMatchObject({ heldRemoval: { by: 'author' } });
   });
 
   it('still shows it once the storyline is deleted', async () => {

@@ -1,6 +1,7 @@
 import { sql } from 'kysely';
 import { dbRead, dbWrite } from './db';
 import { recordModActivity } from './mod-activity';
+import { ReportStatus } from '$lib/reports';
 
 export type ReportedStoryline = {
   id: number;
@@ -32,7 +33,7 @@ export type PostStorylineChapter = {
   tosViolation: boolean;
   minorByScan: boolean;
   /** Its owner or author removed it from the storyline while a report was open. */
-  heldRemoval: { by: string; at: Date; reportIds: number[] } | null;
+  heldRemoval: { by: string; at: Date } | null;
 };
 
 /**
@@ -68,9 +69,17 @@ export async function getPostStorylineChapter(
         'h.depth',
         'h.removedByRole',
         'h.createdAt',
-        'h.reportIds',
       ])
       .where('h.postId', '=', postId)
+      // While a report it was made during is still open; settled, it is history.
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom('Report as r')
+            .select('r.id')
+            .where('r.id', '=', sql<number>`any(h."reportIds")`)
+            .where('r.status', 'in', [ReportStatus.Pending, ReportStatus.Processing])
+        )
+      )
       .orderBy('h.id', 'desc')
       .executeTakeFirst(),
   ]);
@@ -94,7 +103,7 @@ export async function getPostStorylineChapter(
     removed: true,
     tosViolation: current.tosViolation ?? false,
     minorByScan: current.minorByScan ?? false,
-    heldRemoval: { by: current.removedByRole, at: current.createdAt, reportIds: current.reportIds },
+    heldRemoval: { by: current.removedByRole, at: current.createdAt },
   };
 }
 

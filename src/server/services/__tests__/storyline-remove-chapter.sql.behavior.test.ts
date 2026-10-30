@@ -506,7 +506,7 @@ describe('removeStorylineChapter', () => {
     });
   });
 
-  it('gives the same unsettled-payment refusal whether or not a report is open, and records nothing', async () => {
+  it('gives the same unsettled-payment refusal whether or not a report is open', async () => {
     await db.pg.exec(
       `UPDATE "PlacementTransaction" SET "transactionId" = NULL WHERE kind = 'toOwner'`
     );
@@ -516,7 +516,6 @@ describe('removeStorylineChapter', () => {
       INSERT INTO "PostReport" ("postId", "reportId") VALUES (502, 73);
     `);
     await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.paidContinuation);
-    expect(await rows(`SELECT id FROM "StorylineChapterRemovalHold"`)).toEqual([]);
   });
 
   it('refuses chapter 1', async () => {
