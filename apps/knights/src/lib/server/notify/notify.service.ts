@@ -13,6 +13,7 @@ import { NOTIFY, NOTIFY_KINDS, typeOf, type NotifyKind } from './config';
 
 const dateOf = (day: Day) => sql<Date>`${day}::date`;
 const CLAIM_CHUNK = 1000;
+const SILENCE_CHUNK = 20_000;
 
 export type NotificationBatch = { kind: NotifyKind; type: string; key: string; userIds: number[] };
 export type SendBatch = (batch: NotificationBatch) => Promise<void>;
@@ -46,20 +47,39 @@ export type NotifyResult = {
 };
 
 /**
- * Turning everything off writes a row only for each type that exists then, so judge a player against
- * the types that existed at their latest change (`disabledAt` is when a row was made): silenced means
- * a row for each of them, and at least one row. A type added later never counts against them.
+ * Of `ids`, the players who turned everything off. The settings page writes a row only for each type
+ * that exists then, so a player is judged against the types that existed at their latest change
+ * (`disabledAt` is when a row was made): silenced means a row for each of them, and at least one row.
+ * A type added later never counts against them. One grouped query over the (userId, type) index, for
+ * the candidates only, rather than a subquery per player in every candidate query.
  */
-const notSilenced = (silenceTypes: SilenceType[]) => {
+async function silencedAmong(
+  db: Kysely<DB>,
+  ids: number[],
+  silenceTypes: SilenceType[]
+): Promise<Set<number>> {
+  const silenced = new Set<number>();
+  if (ids.length === 0) return silenced;
   const types = sql.join(silenceTypes.map((t) => sql`${t.type}`));
   const known = sql.join(silenceTypes.map((t) => sql`(${t.type}, ${utc(t.firstSeen)}::timestamp)`));
-  const latest = sql`(select max(o."disabledAt") from "UserNotificationSettings" o where o."userId" = pl."userId" and o."type" in (${types}))`;
-  return sql<boolean>`not (${latest} is not null and not exists (
-    select 1 from (values ${known}) as known("type", "firstSeen")
-    where known."firstSeen" <= ${latest}
-      and not exists (select 1 from "UserNotificationSettings" r where r."userId" = pl."userId" and r."type" = known."type")
-  ))`;
-};
+  for (let at = 0; at < ids.length; at += SILENCE_CHUNK) {
+    const chunk = ids.slice(at, at + SILENCE_CHUNK);
+    const rows = await sql<{ userId: number }>`
+      select u."userId" from (
+        select s."userId", max(s."disabledAt") as latest, array_agg(s."type") as have
+        from "UserNotificationSettings" s
+        where s."userId" = any(${chunk}::int[]) and s."type" in (${types})
+        group by s."userId"
+      ) u
+      where not exists (
+        select 1 from (values ${known}) as known("type", "firstSeen")
+        where known."firstSeen" <= u.latest and not (known."type" = any(u.have))
+      )`.execute(db);
+    for (const row of rows.rows) silenced.add(row.userId);
+  }
+  return silenced;
+}
+
 
 /** A player with this many uncleansed smites has a career reset pending and cannot vote (`insertVote`). */
 const canPlay = sql<boolean>`(select count(*) from "NewOrderSmite" sm where sm."targetPlayerId" = pl."userId" and sm."cleansedAt" is null) < ${SMITES.max}`;
@@ -68,7 +88,7 @@ const canPlay = sql<boolean>`(select count(*) from "NewOrderSmite" sm where sm."
  * Players who joined the game (they have a `NewOrderPlayer` row), have not turned `kind` off (a settings
  * row means off) and have not been sent anything on `day`.
  */
-const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day, silenceTypes: SilenceType[]) =>
+const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day) =>
   db
     .selectFrom('NewOrderPlayer as pl')
     .where(
@@ -76,7 +96,6 @@ const recipients = (db: Kysely<DB>, kind: NotifyKind, day: Day, silenceTypes: Si
         kind
       )})`
     )
-    .where(notSilenced(silenceTypes))
     .where(
       sql<boolean>`not exists (select 1 from "KnightsNotificationSend" n where n."playerId" = pl."userId" and n."day" = ${dateOf(
         day
@@ -88,12 +107,11 @@ async function withNewVerdicts(
   db: Kysely<DB>,
   day: Day,
   now: Date,
-  silenceTypes: SilenceType[]
 ): Promise<number[]> {
   const day_ms = 86_400_000;
   const searchFrom = new Date(now.getTime() - NOTIFY.voteSearchDays * day_ms);
   const settledFrom = new Date(now.getTime() - NOTIFY.verdictLookbackDays * day_ms);
-  const rows = await recipients(db, 'verdicts', day, silenceTypes)
+  const rows = await recipients(db, 'verdicts', day)
     .innerJoin('KnightsVote as v', 'v.playerId', 'pl.userId')
     .select('pl.userId')
     .where('v.createdAt', '>=', utc(searchFrom))
@@ -117,9 +135,8 @@ async function withNewVerdicts(
 async function withStreakAtRisk(
   db: Kysely<DB>,
   day: Day,
-  silenceTypes: SilenceType[]
 ): Promise<number[]> {
-  const rows = await recipients(db, 'streak', day, silenceTypes)
+  const rows = await recipients(db, 'streak', day)
     .where(canPlay)
     .innerJoin('KnightsPlayer as k', 'k.playerId', 'pl.userId')
     .leftJoin('KnightsPlayerDay as d', (join) =>
@@ -158,7 +175,6 @@ async function withStreakAtRisk(
 async function withImagesWaiting(
   db: Kysely<DB>,
   day: Day,
-  silenceTypes: SilenceType[]
 ): Promise<number[]> {
   // A vote cannot predate its item, so no open item has votes before the oldest one; the constant
   // bound on the partition key lets Postgres skip older monthly partitions (a bound that references
@@ -175,7 +191,7 @@ async function withImagesWaiting(
     const stages = stagesWorkedBy(rank);
     // Same rule as `canVote`: these ranks work no stage. Spelled out so `rank` narrows to the column's type.
     if (rank === 'Acolyte' || rank === 'Inquisitor' || stages.length === 0) continue;
-    const rows = await recipients(db, 'new-images', day, silenceTypes)
+    const rows = await recipients(db, 'new-images', day)
       .where(canPlay)
       .select('pl.userId')
       .where('pl.rankType', '=', rank)
@@ -209,11 +225,20 @@ export async function planNotifications(
   const day = utcDay(now);
   const warningOpen =
     now >= new Date(dayStart(day).getTime() + NOTIFY.streakWarningHourUtc * 3_600_000);
-  const [verdicts, atRisk, waiting] = await Promise.all([
-    withNewVerdicts(db, day, now, silenceTypes),
-    withStreakAtRisk(db, day, silenceTypes),
-    withImagesWaiting(db, day, silenceTypes),
+  const [allVerdicts, allAtRisk, allWaiting] = await Promise.all([
+    withNewVerdicts(db, day, now),
+    withStreakAtRisk(db, day),
+    withImagesWaiting(db, day),
   ]);
+  const silenced = await silencedAmong(
+    db,
+    [...new Set([...allVerdicts, ...allAtRisk, ...allWaiting])],
+    silenceTypes
+  );
+  const live = (ids: number[]) => ids.filter((id) => !silenced.has(id));
+  const verdicts = live(allVerdicts);
+  const atRisk = live(allAtRisk);
+  const waiting = live(allWaiting);
 
   const plan: Record<NotifyKind, number[]> = { verdicts, streak: [], 'new-images': [] };
   const chosen = new Set(verdicts);
