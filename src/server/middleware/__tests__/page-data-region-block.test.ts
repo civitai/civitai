@@ -14,11 +14,21 @@ import { VERIFIED_BOT_HEADER } from '~/server/utils/bot-detection/header';
  */
 
 const PAGE_DATA = '/api/page-data/images/123';
+// The shell's parallel main-image lookup: as viewer-specific, so blocked alike.
+const MAIN_IMAGE = '/api/page-data/images/123/main-image';
 
 describe('region blocking on the page-data endpoint', () => {
   it('the proxy runs on page-data paths', () => {
     expect(unstable_doesMiddlewareMatch({ config, url: PAGE_DATA })).toBe(true);
     expect(unstable_doesMiddlewareMatch({ config, url: `${PAGE_DATA}?postId=5` })).toBe(true);
+  });
+
+  it('the proxy runs on the main-image path, and a blocked region gets 451 there', async () => {
+    expect(unstable_doesMiddlewareMatch({ config, url: MAIN_IMAGE })).toBe(true);
+    const response = await runMiddlewares(
+      new NextRequest(`http://localhost${MAIN_IMAGE}`, { headers: { 'cf-ipcountry': 'GB' } })
+    );
+    expect(response.status).toBe(451);
   });
 
   it('control: the proxy does not run on an /api path it does not list', () => {

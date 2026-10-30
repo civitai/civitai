@@ -147,8 +147,8 @@ const featureFlags = createFeatureFlags({
   // the server render and the hydrating render read the same serialised flags. gSSP does not read
   // the flag: its prefetches are the same in both states.
   modelPageDeferBelowFold: { availability: [], fliptKey: 'model-page-defer-below-fold' },
-  // Opens `GET /api/page-data/images/[imageId]` (404 while off). `[]`: dark and fails CLOSED — the
-  // moderator cohort is a Flipt rollout, never this static list.
+  // Opens `GET /api/page-data/images/[imageId]` and its `/main-image` (404 while off). `[]`: dark
+  // and fails CLOSED — the moderator cohort is a Flipt rollout, never this static list.
   shellImages: { availability: [], fliptKey: 'shell-images' },
   // Kill switch for every static shell render (`~/server/shell/shell-mode`): while off, no request
   // gets a shell whatever its cookie says. Read with no user (entity `anonymous`), so it is one

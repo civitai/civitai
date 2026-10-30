@@ -12,10 +12,11 @@ import type { MediaType } from '~/shared/utils/prisma/enums';
  * The image page's main media, outside React: the `EdgeMedia` props the detail carousel renders it
  * with, the URL its `<img>` requests, and whether the page shows that `<img>` to a viewer at all.
  *
- * It exists for the static shell of `/images/[imageId]`, whose page data
- * (`GET /api/page-data/images/[imageId]`) carries the URL, in a response header, so the shell's
- * inline head script can start the download before the app has loaded. A preload is only worth anything when it asks
- * for the exact bytes the `<img>` will — any other URL is a second download — so every piece here
+ * It exists for the static shell of `/images/[imageId]`, whose main-image lookup
+ * (`GET /api/page-data/images/[imageId]/main-image`) carries the URL, in a response header, so the
+ * shell's inline head script can start the download before the app has loaded. A preload is only
+ * worth anything when it asks for the exact bytes the `<img>` will — any other URL is a second
+ * download — so every piece here
  * is the one the page itself uses: the carousel spreads `imageDetailMediaProps`, `EdgeMedia` and
  * `EdgeImage` build their request with the `edge-url` functions called below, and the visibility
  * checks are the gate's (`decideGatedState`), the guard's (`isImageGuardNsfw`) and the POI rule

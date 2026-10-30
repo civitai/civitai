@@ -97,6 +97,8 @@ vi.mock('~/server/services/system-cache', async (importOriginal) => ({
 }));
 
 const handler = (await import('~/pages/api/page-data/images/[imageId]')).default;
+const mainImageHandler = (await import('~/pages/api/page-data/images/[imageId]/main-image'))
+  .default;
 const { resolveSettingsBootstrapForRender, resolveSettingsBootstrapSeeds } = await import(
   '~/server/services/settings-bootstrap.service'
 );
@@ -203,6 +205,59 @@ describe('the page-data endpoint’s settings bootstrap request', () => {
     const { res } = await fetchPageData();
     expect(res.statusCode).toBe(404);
     // Control: the session lookup did run, so the absences below are the gate's doing.
+    expect(h.hubSession).toHaveBeenCalled();
+    expect(h.settings).not.toHaveBeenCalled();
+    expect(h.tosMeta).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * The main-image request (`./[imageId]/main-image`) runs in parallel with the page data, for the
+ * same viewer. It reads the session from the same request the page data does — so a `?token=`
+ * never replaces the cookie viewer there either — but must not roll the session cookie: the page
+ * data does, and two concurrent rolls would mint two cookies for one viewer. Nor does it read any
+ * of the bootstrap's seeds.
+ */
+describe('the main-image request’s session', () => {
+  async function fetchMainImage(query = '') {
+    const req = {
+      method: 'GET',
+      url: `/api/page-data/images/101/main-image${query}`,
+      headers: { host: PUBLIC_HOST },
+      cookies: cookies(),
+      query: { imageId: '101', ...Object.fromEntries(new URLSearchParams(query)) },
+    };
+    const res = fakeResponse();
+    await mainImageHandler(req as unknown as NextApiRequest, res as unknown as NextApiResponse);
+    return { res };
+  }
+
+  it('ignores a ?token= on the URL: the viewer is the cookie’s', async () => {
+    const { res } = await fetchMainImage('?token=someone-elses-key');
+    expect(res.statusCode).toBe(204);
+    expect(h.bearer).not.toHaveBeenCalled();
+    // Control: the cookie session was read.
+    expect(h.hubSession).toHaveBeenCalled();
+  });
+
+  it('hands the session lookup a response it cannot write the cookie on', async () => {
+    const { res } = await fetchMainImage();
+    expect(res.statusCode).toBe(204);
+    // The lookup reached the roll (the token is old enough to roll, see the page-data case
+    // above)…
+    expect(h.roll).toHaveBeenCalledTimes(1);
+    const [token, , rollRes] = h.roll.mock.calls[0] as unknown as [string, unknown, unknown];
+    expect(token).toBe(OWNER_TOKEN);
+    // …with a response that is not the real one and has no `setHeader`, which is what makes the
+    // real `maybeRollHubCookie` return before minting anything.
+    expect(rollRes).not.toBe(res);
+    expect(typeof (rollRes as { setHeader?: unknown }).setHeader).not.toBe('function');
+    expect(res.getHeader('set-cookie')).toBeUndefined();
+  });
+
+  it('reads none of the bootstrap’s seeds', async () => {
+    const { res } = await fetchMainImage();
+    expect(res.statusCode).toBe(204);
     expect(h.hubSession).toHaveBeenCalled();
     expect(h.settings).not.toHaveBeenCalled();
     expect(h.tosMeta).not.toHaveBeenCalled();

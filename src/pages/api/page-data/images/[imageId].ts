@@ -1,16 +1,7 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
-import { imageDetailPreloadUrl } from '~/components/Image/DetailV2/image-detail-main-media';
-import {
-  hasImageDetailQueryFilters,
-  parseImageQueryParams,
-} from '~/components/Image/image-query-params';
-import {
-  encodeShellMainImageHeader,
-  SHELL_MAIN_IMAGE_HEADER,
-} from '~/components/Shell/shell-page-data';
-import { STORYLINE_CHAPTER_PARAM } from '~/components/Storyline/storyline-mode.utils';
 import { logToAxiom } from '~/server/logging/client';
 import { resolveImageDetailPageData } from '~/server/page-data/image-detail';
+import { resolvePageDataSession } from '~/server/page-data/page-data-session';
 import { resolveChatSettings } from '~/server/schema/chat.schema';
 import type { UserSettingsChat } from '~/server/schema/chat.schema';
 import type { FeatureAccess } from '~/server/services/feature-flags.service';
@@ -19,9 +10,7 @@ import {
   getFeatureFlagsAsync,
   getFliptGatedEligibility,
 } from '~/server/services/feature-flags.service';
-import { getServerAuthSession } from '~/server/auth/get-server-auth-session';
 import {
-  bootstrapSession,
   resolveSettingsBootstrapSeeds,
   settingsBootstrapRequest,
 } from '~/server/services/settings-bootstrap.service';
@@ -36,9 +25,10 @@ import {
 /**
  * `GET /api/page-data/images/[imageId]` — everything a server render of `/images/[imageId]`
  * computes for ITS viewer, in one response: the settings bootstrap and the session, the feature
- * flags and their per-user overlay, chat settings, region, `adsGated`, and the page's `trpcState` —
- * plus, in the `SHELL_MAIN_IMAGE_HEADER` response header, the URL of the page's main image for
- * this viewer, for the shell to preload.
+ * flags and their per-user overlay, chat settings, region, `adsGated`, and the page's `trpcState`.
+ * The URL of the page's main image, for the shell to preload, is NOT here: it is its own request
+ * (`./[imageId]/main-image`), which the shell starts in parallel with this one, because anything
+ * in this response arrives only once all of the work below is done.
  * It is what the static (viewer-independent) shell of the page reads instead of being rendered
  * per viewer.
  *
@@ -64,18 +54,6 @@ import {
 
 const CACHE_CONTROL = 'private, no-store';
 
-/**
- * Whether the page shows its main image from `image.get` — the row `imageDetailPreloadUrl` builds
- * the URL from. Not when the page's query carries feed filters (`ImageDetailProvider` then shows
- * the `image.getInfinite` row, whose index path has no `name`, so its URL differs), by the page's
- * own rule; nor in storyline mode, whose images come from the storyline's list.
- */
-function mainImageFromImageGet(query: NextApiRequest['query']) {
-  if (query[STORYLINE_CHAPTER_PARAM] !== undefined) return false;
-  const filters = parseImageQueryParams(query);
-  return !hasImageDetailQueryFilters(filters, filters.postId);
-}
-
 const jsonRoundTrip = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -91,21 +69,9 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
   }
 
   try {
-    // The session, from the request a server render's bootstrap reads (fixed path, so a `?token=`
-    // here never replaces the cookie viewer), with two differences: the REAL response, so the
-    // session cookie can roll, and the viewer's own host, which that cookie's Domain comes from.
-    // The credential the lookup records goes on THIS request's context, where the tRPC context
-    // below reads it.
-    const sessionRequest = settingsBootstrapRequest(req, {
-      host: req.headers.host,
-      context: ((req as { context?: Record<string, unknown> }).context ??= {}),
-    });
-    // JSON round-tripped exactly as a server render's bootstrap is
-    // (`resolveSettingsBootstrapForRender`), so the session the procedures below see is the one
-    // `_app` seeds a render's `req.session` with — dates as ISO strings, not `Date`s.
-    const session = jsonRoundTrip(
-      bootstrapSession(await getServerAuthSession({ req: sessionRequest, res }))
-    );
+    // The REAL response, so the session cookie can roll (the main-image request, which runs in
+    // parallel, reads the session without rolling it).
+    const session = await resolvePageDataSession(req, res);
 
     // The same evaluation as both `_app` (which passes the request's own host) and
     // `createServerSideProps`. Decided before the rest of the bootstrap is read.
@@ -144,23 +110,6 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     if ('notFound' in result) return send(404, { error: 'Not found' });
 
     syncShellRouteCookie(req, res, 'images', !!session?.user, { refresh: true });
-
-    // The exact URL the page's main `<img>` will request for THIS viewer, or no header when it
-    // will request none (video, gated, blur-dependent, hidden). The shell's inline head script
-    // preloads it as soon as this response's headers arrive (`shellPageDataPrefetchScript`),
-    // without waiting for the body below. Here and never in the cached shell HTML, which is the
-    // same for every viewer; the response is `private, no-store` like the body.
-    const mainImageUrl = mainImageFromImageGet(req.query)
-      ? imageDetailPreloadUrl({
-          image: result.image,
-          viewer: session?.user,
-          forcedBrowsingLevel: result.forcedBrowsingLevel,
-          canViewNsfw: !!flags.canViewNsfw,
-        })
-      : undefined;
-    if (mainImageUrl) {
-      res.setHeader(SHELL_MAIN_IMAGE_HEADER, encodeShellMainImageHeader(mainImageUrl));
-    }
 
     // Named one by one, under the `pageProps` names `_app` gives them, so a field the bootstrap
     // gains later is not published here unreviewed.
