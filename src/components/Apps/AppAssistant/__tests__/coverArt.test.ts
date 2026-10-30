@@ -92,7 +92,8 @@ describe('generate_app_cover: the one recipe it can run', () => {
     const { deps, call } = setup();
     const done = await call({ prompt: 'a calculator' });
     expect(done).toMatchObject({ attached: true });
-    expect(deps.attach).toHaveBeenCalledWith('apl_1', IMAGE_URL);
+    // The app goes too: the server runner's attach re-reads that app's listing to check ownership.
+    expect(deps.attach).toHaveBeenCalledWith('apl_1', IMAGE_URL, 'tip-calculator');
   });
 
   // `setCover` puts an approved listing's cover on its draft revision and a draft's in place:

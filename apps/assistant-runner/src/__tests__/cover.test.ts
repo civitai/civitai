@@ -11,6 +11,7 @@ import {
   coverNotAttached,
   createCoverArt,
   type CoverListing,
+  type CoverOrchestration,
 } from '@civitai/app-assistant';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -77,8 +78,9 @@ function setup({
 } = {}) {
   const tool = runnerCoverTools({
     currentApp: () => app,
-    listings: listing,
-    orchestration: client,
+    // Untyped mocks (so a test can swap any of them): their shapes are the tests' own.
+    listings: listing as unknown as CoverListings,
+    orchestration: client as unknown as CoverOrchestration,
     newId: () => 'n31',
     seed: () => 31,
   })[GENERATE_APP_COVER]!;
