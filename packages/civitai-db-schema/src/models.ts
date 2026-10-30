@@ -7013,6 +7013,7 @@ export interface Crucible {
   seededPrizePool: number;
   prizePool: number;
   entryLimit: number;
+  ownerRemovalCount: number;
   freeEntriesPerUser: number;
   maxTotalEntries: number | null;
   entryWarningPercent: number;

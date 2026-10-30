@@ -11127,6 +11127,8 @@ model Crucible {
   // derive from the entries instead (getCrucibleTotalPrizePool).
   prizePool         Int            @default(0)
   entryLimit        Int            @default(1)
+  // Entries the owner removed from their own crucible, capped (CRUCIBLE_OWNER_REMOVAL_CAP). Moderator removals don't count.
+  ownerRemovalCount Int            @default(0)
   // Each person's first N entries skip the fee and add nothing to the pool. Moderators only.
   freeEntriesPerUser Int           @default(0)
   maxTotalEntries   Int?

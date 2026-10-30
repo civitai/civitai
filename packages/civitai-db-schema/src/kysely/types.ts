@@ -2867,6 +2867,7 @@ export type Crucible = {
   seededPrizePool: Generated<number>;
   prizePool: Generated<number>;
   entryLimit: Generated<number>;
+  ownerRemovalCount: Generated<number>;
   freeEntriesPerUser: Generated<number>;
   maxTotalEntries: number | null;
   entryWarningPercent: Generated<number>;

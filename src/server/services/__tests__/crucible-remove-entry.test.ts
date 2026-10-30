@@ -32,14 +32,17 @@ vi.mock('~/server/services/notification.service', async (importOriginal) => ({
   createNotification,
 }));
 
-const { removeCrucibleEntry } = await import('~/server/services/crucible.service');
+const { removeCrucibleEntry, removeCrucibleEntryAsOwner } = await import(
+  '~/server/services/crucible.service'
+);
 
 const MODERATOR = 3;
+const OWNER = 9;
 const remove = () => removeCrucibleEntry({ entryId: 5, moderatorId: MODERATOR });
 
 const findEntry = dbMock.dbWrite.crucibleEntry.findUnique;
 // Its own client, so a statement that should run inside the transaction can't pass outside it.
-const tx = { $executeRaw: vi.fn(), crucibleEntry: { delete: vi.fn() } };
+const tx = { $executeRaw: vi.fn(), $queryRaw: vi.fn(), crucibleEntry: { delete: vi.fn() } };
 const executeRaw = tx.$executeRaw;
 const deleteEntry = tx.crucibleEntry.delete;
 
@@ -54,6 +57,8 @@ const entry = (
   crucible: {
     status: CrucibleStatus.Active,
     endAt: new Date(Date.now() + 60 * 60_000),
+    userId: OWNER,
+    ownerRemovalCount: 0,
     entryFee: 50,
     name: 'Neon',
     ingestion: CrucibleIngestionStatus.Scanned,
@@ -229,6 +234,104 @@ describe('removeCrucibleEntry', () => {
     expect(refundMultiAccountTransaction).toHaveBeenCalledWith(
       expect.objectContaining({ description: 'Crucible entry fee refund - entry removed' })
     );
+  });
+});
+
+describe('removeCrucibleEntryAsOwner', () => {
+  const removeAsOwner = (overrides: Record<string, unknown> = {}) =>
+    removeCrucibleEntryAsOwner({
+      entryId: 5,
+      ownerId: OWNER,
+      reason: 'off-topic',
+      ...overrides,
+    });
+
+  it('refunds, counts the removal against the cap in the same statement, and tells the entrant why', async () => {
+    const result = await removeAsOwner();
+
+    expect(refundMultiAccountTransaction).toHaveBeenCalled();
+    const { sql, values } = runningCheck();
+    expect(sql).toContain('"ownerRemovalCount" = "ownerRemovalCount" + 1');
+    expect(sql).toContain('"ownerRemovalCount" < ?');
+    expect(values).toContain(10);
+    expect(deleteEntry).toHaveBeenCalledWith({ where: { id: 5 } });
+    expect(notice()).toMatchObject({
+      userId: 42,
+      type: 'crucible-entry-removed',
+      details: {
+        refundedAmount: 50,
+        removedBy: 'owner',
+        reason: 'Off-topic for this crucible',
+      },
+    });
+    expect(result).toEqual({ entryId: 5, crucibleId: 7, refundedAmount: 50 });
+  });
+
+  it('gives the owner\'s own words to the entrant for "other"', async () => {
+    await removeAsOwner({ reason: 'other', note: 'Not a Neon-style piece' });
+
+    expect(notice().details.reason).toBe('Not a Neon-style piece');
+  });
+
+  it('requires a note for "other", and strips markup from it', async () => {
+    await expect(removeAsOwner({ reason: 'other' })).rejects.toThrow(/reason/i);
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+
+    await removeAsOwner({ reason: 'other', note: '<b>spam</b> <script>x()</script>' });
+    expect(notice().details.reason).not.toMatch(/</);
+  });
+
+  it('refuses anyone but the crucible owner, before any money moves', async () => {
+    await expect(removeAsOwner({ ownerId: 77 })).rejects.toThrow(/your own crucible/);
+
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(deleteEntry).not.toHaveBeenCalled();
+  });
+
+  it("refuses the owner's own entry", async () => {
+    findEntry.mockResolvedValue(entry({ userId: OWNER }));
+
+    await expect(removeAsOwner()).rejects.toThrow("You can't remove your own entry");
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+  });
+
+  it('rejects the removal past the cap before refunding anyone', async () => {
+    findEntry.mockResolvedValue(entry({}, { ownerRemovalCount: 10 }));
+
+    await expect(removeAsOwner()).rejects.toThrow(/10 entries/);
+
+    expect(refundMultiAccountTransaction).not.toHaveBeenCalled();
+    expect(executeRaw).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+  });
+
+  it('keeps the entry and logs the refund when a concurrent removal took the last slot', async () => {
+    executeRaw.mockResolvedValue(0);
+    tx.$queryRaw.mockResolvedValue([{ capped: true }]);
+
+    await expect(removeAsOwner()).rejects.toThrow(/10 entries/);
+
+    expect(deleteEntry).not.toHaveBeenCalled();
+    expect(createNotification).not.toHaveBeenCalled();
+    expect(loggingMock.logToAxiom).toHaveBeenCalledWith(
+      expect.objectContaining({ name: 'crucible-entry-removal-raced-cap', entryId: 5 })
+    );
+  });
+
+  it('reports an ended crucible, not the cap, when the end beat the removal', async () => {
+    executeRaw.mockResolvedValue(0);
+    tx.$queryRaw.mockResolvedValue([{ capped: false }]);
+
+    await expect(removeAsOwner()).rejects.toThrow(/only be removed while/);
+  });
+
+  it('leaves the owner cap alone for a moderator removal, even in their own crucible', async () => {
+    findEntry.mockResolvedValue(entry({}, { userId: MODERATOR, ownerRemovalCount: 10 }));
+
+    await remove();
+
+    expect(runningCheck().sql).not.toContain('ownerRemovalCount');
+    expect(notice().details).not.toHaveProperty('reason');
   });
 });
 

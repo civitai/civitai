@@ -7,6 +7,7 @@ import type {
   CancelCrucibleSchema,
   TakeDownCrucibleSchema,
   RemoveCrucibleEntrySchema,
+  OwnerRemoveCrucibleEntrySchema,
   WithdrawCrucibleEntrySchema,
   UpdateCrucibleSchema,
   GetFeaturedCrucibleSchema,
@@ -40,6 +41,7 @@ import {
   createCrucibleEntryPost,
   cancelCrucible,
   removeCrucibleEntry,
+  removeCrucibleEntryAsOwner,
   withdrawCrucibleEntry,
   updateCrucible,
   createCrucible,
@@ -376,6 +378,14 @@ export const removeCrucibleEntryHandler = ({
   input: RemoveCrucibleEntrySchema;
   ctx: ProtectedContext;
 }) => removeCrucibleEntry({ ...input, moderatorId: ctx.user.id });
+
+export const ownerRemoveCrucibleEntryHandler = ({
+  input,
+  ctx,
+}: {
+  input: OwnerRemoveCrucibleEntrySchema;
+  ctx: ProtectedContext;
+}) => removeCrucibleEntryAsOwner({ ...input, ownerId: ctx.user.id });
 
 export const withdrawCrucibleEntryHandler = ({
   input,
