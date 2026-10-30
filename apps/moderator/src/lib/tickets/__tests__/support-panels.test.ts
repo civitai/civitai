@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { membershipPanelFor, shopPanelFor } from '../support-panels';
+import { membershipPanelFor, payoutsPanelFor, shopPanelFor } from '../support-panels';
 
 const base = {
   view: 'support' as const,
@@ -41,5 +41,25 @@ describe('shopPanelFor', () => {
     expect(shopPanelFor({ ...shop, view: 'moderation' })).toBe('hidden');
     expect(shopPanelFor(base)).toBe('hidden');
     expect(shopPanelFor({ ...shop, cfFeature: null })).toBe('hidden');
+  });
+});
+
+describe('payoutsPanelFor', () => {
+  const payouts = { ...base, cfFeature: 'Buzz (Receiving)' as string | null };
+
+  it('shows on a linked support Buzz (Receiving) ticket, ignoring padding', () => {
+    expect(payoutsPanelFor(payouts)).toBe('panel');
+    expect(payoutsPanelFor({ ...payouts, cfFeature: ' Buzz (Receiving) ' })).toBe('panel');
+  });
+
+  it('says only that no user is linked when there is none', () => {
+    expect(payoutsPanelFor({ ...payouts, civitaiUserId: null })).toBe('unlinked');
+  });
+
+  it('is hidden in the moderation view and on other features, Buzz (Purchase) included', () => {
+    expect(payoutsPanelFor({ ...payouts, view: 'moderation' })).toBe('hidden');
+    expect(payoutsPanelFor({ ...payouts, cfFeature: 'Buzz (Purchase)' })).toBe('hidden');
+    expect(payoutsPanelFor(base)).toBe('hidden');
+    expect(payoutsPanelFor({ ...payouts, cfFeature: null })).toBe('hidden');
   });
 });

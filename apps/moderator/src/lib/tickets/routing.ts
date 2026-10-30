@@ -10,6 +10,7 @@ export const IMAGE_GENERATOR_FEATURE = 'Image Generator';
 export const LORA_TRAINER_FEATURE = 'LoRA Trainer';
 export const BILLING_MEMBERSHIP_FEATURE = 'Billing or Membership';
 export const COSMETIC_SHOP_FEATURE = 'Cosmetic Shop';
+export const BUZZ_RECEIVING_FEATURE = 'Buzz (Receiving)';
 export const ACCOUNT_LOGIN_FEATURE = 'Account Login';
 export const EMAIL_CHANGE_FEATURE = 'Email Change';
 

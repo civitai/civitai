@@ -7,6 +7,7 @@ import {
   LORA_TRAINER_FEATURE,
   ACCOUNT_LOGIN_FEATURE,
   BILLING_MEMBERSHIP_FEATURE,
+  BUZZ_RECEIVING_FEATURE,
   COSMETIC_SHOP_FEATURE,
   type TicketView,
 } from '../routing';
@@ -22,6 +23,7 @@ const SHOWN_IN: Record<PanelKey, TicketView> = {
   supportAccount: 'support',
   membership: 'support',
   shop: 'support',
+  payouts: 'support',
 };
 
 // A ticket every panel would show on, in the view it belongs to: features and topics of both views.
@@ -33,6 +35,7 @@ const triggers = [
   { cfFeature: ACCOUNT_LOGIN_FEATURE, routerTopic: null },
   { cfFeature: BILLING_MEMBERSHIP_FEATURE, routerTopic: null },
   { cfFeature: COSMETIC_SHOP_FEATURE, routerTopic: null },
+  { cfFeature: BUZZ_RECEIVING_FEATURE, routerTopic: null },
 ];
 
 describe('PANELS', () => {

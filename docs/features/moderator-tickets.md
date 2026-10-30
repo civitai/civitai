@@ -82,6 +82,9 @@ is its own page grant. Acting on a ticket is a separate permission:
     status, cancel-at-period-end, period end and price. No membership codes, payment method or provider ids.
   - **Cosmetic Shop** (read-only): the user's newest 10 shop purchases (`/retool/user-lookup`): item, Buzz paid, date
     and whether it was refunded.
+  - **Buzz (Receiving)** (read-only): the user's newest 10 payout and withdrawal requests (`/retool/user-lookup`):
+    date, status, requested against transferred, and the provider's name. Bank or account details, provider
+    account ids, contacts and request notes are never carried.
 
   Support actions are registered only on the support page. Every panel action re-reads the ticket and is refused
   when its panel would be hidden in the ticket's current view.

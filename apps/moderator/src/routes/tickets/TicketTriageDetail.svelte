@@ -24,6 +24,7 @@
   import TicketHistory from './TicketHistory.svelte';
   import TicketLoraRuns from './TicketLoraRuns.svelte';
   import TicketMembership from './TicketMembership.svelte';
+  import TicketPayouts from './TicketPayouts.svelte';
   import TicketRatingDisputes from './TicketRatingDisputes.svelte';
   import TicketReply from './TicketReply.svelte';
   import TicketShopPurchases from './TicketShopPurchases.svelte';
@@ -328,6 +329,9 @@
   {/if}
   {#if panels.shop}
     <TicketShopPurchases shop={panels.shop} />
+  {/if}
+  {#if panels.payouts}
+    <TicketPayouts payouts={panels.payouts} />
   {/if}
 {/snippet}
 

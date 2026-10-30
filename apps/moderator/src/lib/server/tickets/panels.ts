@@ -7,6 +7,7 @@ import { generatorSectionFor, type TicketGenerator } from './generator-restricti
 import { historySectionFor, type TicketHistory } from './history';
 import { loraSectionFor, type TicketLora } from './lora-runs';
 import { membershipSectionFor, type TicketMembership } from './membership';
+import { payoutsSectionFor, type TicketPayouts } from './payouts';
 import { ratingDisputesSectionFor, type TicketRatingDisputes } from './rating-disputes';
 import { shopSectionFor, type TicketShop } from './shop-purchases';
 
@@ -21,6 +22,7 @@ export type PanelSections = {
   supportAccount: TicketAccount;
   membership: TicketMembership;
   shop: TicketShop;
+  payouts: TicketPayouts;
 };
 
 export type CanRead = (path: string) => boolean;
@@ -64,6 +66,7 @@ export const liveLoaders: Loaders = {
     }),
   membership: ({ civitaiUserId }) => membershipSectionFor({ userId: civitaiUserId }),
   shop: ({ civitaiUserId }) => shopSectionFor({ userId: civitaiUserId }),
+  payouts: ({ civitaiUserId }) => payoutsSectionFor({ userId: civitaiUserId }),
 };
 
 /**

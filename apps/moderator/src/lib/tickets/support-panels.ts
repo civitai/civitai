@@ -1,6 +1,10 @@
 import type { PanelVisibility } from './account-panel';
 import type { PanelContext } from './panels';
-import { BILLING_MEMBERSHIP_FEATURE, COSMETIC_SHOP_FEATURE } from './routing';
+import {
+  BILLING_MEMBERSHIP_FEATURE,
+  BUZZ_RECEIVING_FEATURE,
+  COSMETIC_SHOP_FEATURE,
+} from './routing';
 
 /** The page grant of User Lookup, which serves the sources of these read-only support cards. */
 export const USER_LOOKUP_PATH = '/retool/user-lookup';
@@ -19,3 +23,4 @@ const supportFeaturePanel =
 
 export const membershipPanelFor = supportFeaturePanel(BILLING_MEMBERSHIP_FEATURE);
 export const shopPanelFor = supportFeaturePanel(COSMETIC_SHOP_FEATURE);
+export const payoutsPanelFor = supportFeaturePanel(BUZZ_RECEIVING_FEATURE);
