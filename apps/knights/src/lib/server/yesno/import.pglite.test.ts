@@ -45,7 +45,7 @@ afterAll(async () => {
 });
 beforeEach(async () => {
   await pg.exec(
-    `TRUNCATE "KnightsQueueItem" RESTART IDENTITY; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
+    `TRUNCATE "KnightsQueueItem","KnightsVote","Image","Post","NewOrderPlayer","NewOrderSmite","KnightsPlayerDay" RESTART IDENTITY CASCADE; DELETE FROM "KnightsQuestion" WHERE key LIKE 'knights.yesno.%'`
   );
 });
 
@@ -271,5 +271,24 @@ describe('importYesNo', () => {
     ).toEqual({ goldPending: 0 });
     // A repeat finds nothing open to retire.
     expect(await importYesNo(db, rows, { retire })).toMatchObject({ retired: 0 });
+  });
+
+  it('reopens a withdrawn question that is listed again and has no answers, and leaves an answered one closed', async () => {
+    await importYesNo(db, load(line({ id: 'a' }), line({ id: 'b' })));
+    await seedImage(pg, 10);
+    await seedPlayer(pg, 1);
+    await ensureVotePartitions(db, { now: new Date(), monthsAhead: 1 });
+    const b = (await items())[1].id as number;
+    await castYesNoVote(db, { userId: 1, itemId: b, answer: 'yes' }, { now: () => new Date() });
+    await importYesNo(db, [], { retire: ['a', 'b'] });
+    expect((await items()).map((i) => i.status)).toEqual(['Closed', 'Closed']);
+
+    const again = await importYesNo(db, load(line({ id: 'a' }), line({ id: 'b' })));
+
+    expect(again).toMatchObject({ updated: 1 });
+    expect((await items()).map((i) => [i.externalId, i.status, i.reason, i.resolvedAt])).toEqual([
+      ['a', 'Open', null, null],
+      ['b', 'Closed', 'retired', expect.anything()],
+    ]);
   });
 });

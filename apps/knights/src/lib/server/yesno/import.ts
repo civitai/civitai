@@ -49,6 +49,9 @@ const AUDIENCE_OF_KIND: Record<string, string> = {
 /** Written by the database so a script run on a laptop and one run on a server agree. tsx cannot import the `utc` helper from the workspace package. */
 const utcNow = sql<Date>`(now() AT TIME ZONE 'utc')`;
 
+/** An item the import closed as withdrawn. */
+const retired = sql<SqlBool>`("KnightsQueueItem"."status" = 'Closed' AND "KnightsQueueItem"."reason" = 'retired')`;
+
 const clip = (value: string | undefined, max: number) => (value ?? '').trim().slice(0, max);
 
 /** Keeps the active candidates and checks each one; a row that fails is counted by reason, never echoed. */
@@ -205,9 +208,15 @@ export async function importYesNo(
             noEffect: eb.ref('excluded.noEffect'),
             meta: eb.ref('excluded.meta'),
             updatedAt: eb.ref('excluded.updatedAt'),
+            // A question the file withdrew and now lists again, with no answers, is open again.
+            status: sql<string>`CASE WHEN ${retired} THEN 'Open' ELSE "KnightsQueueItem"."status" END`,
+            reason: sql<
+              string | null
+            >`CASE WHEN ${retired} THEN NULL ELSE "KnightsQueueItem"."reason" END`,
+            resolvedAt: sql<Date | null>`CASE WHEN ${retired} THEN NULL ELSE "KnightsQueueItem"."resolvedAt" END`,
           }))
           .where(
-            sql<SqlBool>`"KnightsQueueItem"."voteCount" = 0 AND (
+            sql<SqlBool>`"KnightsQueueItem"."voteCount" = 0 AND (${retired} OR
               ("KnightsQueueItem"."questionKey", "KnightsQueueItem"."imageId", "KnightsQueueItem"."audience", "KnightsQueueItem"."prompt",
                "KnightsQueueItem"."yesEffect", "KnightsQueueItem"."noEffect", "KnightsQueueItem"."meta")
               IS DISTINCT FROM

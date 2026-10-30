@@ -1,7 +1,8 @@
 # Knights v2: yes/no questions
 
 Plain yes or no questions about one image, answered by Knights and above beside the rating votes. They exist to collect human
-answers for a decision model, so they are not graded against a truth: no resolution, no early win, no accuracy, no smites.
+answers for a decision model. They are first-class votes: an answer is graded against the majority exactly as a rating vote is graded
+against its consensus. Nothing is written back to the image, and a yes/no answer never issues a smite (only hidden checks do).
 Code is in `apps/knights/src/lib/server/yesno`; migration `20261221120000_knights_v2_yesno` (applied by hand, after
 `20261211120000_knights_v2_sources` because it rebuilds that migration's open-item index, and before the app build and the import).
 
@@ -33,7 +34,7 @@ open rating item per question and image exempts yes/no items, which share an axi
 localhost, 127.0.0.1 or ::1 (for a dev database, forward the port first). It keeps rows marked active, maps `observable` to `players`
 and `policy_preference` to `moderators`, creates the axis questions once, and upserts items by `externalId` in batches. It never
 rewrites an item that has answers (a changed one is reported as `refused`), and closes an open item the file marks inactive
-(`retired`, no outcome). It prints counts only. Data files are never committed.
+(`retired`, no outcome); a question it withdrew earlier and lists again, with no answers, is reopened. It prints counts only. Data files are never committed.
 
 ## Serving (`feed.ts`)
 
@@ -51,23 +52,25 @@ rewrites an item that has answers (a changed one is reported as `refused`), and 
 ## Answering (`vote.ts`)
 
 `castYesNoVote` is the rating vote's path with a different decision: the same pacing gate, join gate, `reset-pending` and `no-weight`
-refusals, and `insertVote` / `creditVote`. The ledger row is under the item's own id, with `answer` `yes` or `no`, flat XP at once
+refusals, and `insertVote` / `creditVote`. The ledger row is under the item's own id, with `answer` `yes` or `no`, the vote XP at once
 and gold held as pending. The item row lock serialises its votes.
 
-A question has a consensus when `votesNeeded` players have answered and one answer has a strict majority (one vote per player, as the
+A question has a consensus when `votesToResolve` players have answered and one answer has a strict majority (one vote per player, as the
 label store counts). A tie keeps it open until `maxVotes`, when it is closed with no outcome. At the close, in the same transaction:
 
-- Votes get the verdict `matched` or `unmatched` (`inconclusive` when closed with no outcome). These are not `correct` or `failed`, so
-  accuracy, fervor and rank never see them.
-- A matched answer moves its gold from pending to earned; any other drops it. XP stays the flat amount paid at vote time.
+- The majority answer is graded `correct` and the others `failed`; a close with no outcome leaves every vote `inconclusive`, as for a
+  rating item. The item becomes `Consensus`, which counts as final, and the votes are paid by `settleItemVotes`, the rating path.
+- So a right answer earns the bulk XP and moves its gold from pending to earned, counts in accuracy, fervor and the rank bars, can
+  promote, and works an active smite off; a wrong one drops its gold. An answer given before a career reset pays nothing into the new
+  career. A vote settles once (`settledAt`), and the tick's settle sweep covers a close that crashed after committing.
 
 ## Closing without an answer
 
 The tick (`sweep.ts`) closes, with no outcome, answered players' questions that cannot finish on their own: their image is no longer
 shown or their axis is switched off (`unplayable`), or nobody has answered for `KNIGHTS_YESNO_MAX_AGE_DAYS` (default 14, `stale`).
-Votes become `inconclusive`, their gold is dropped, XP stays, labels already written stay. Questions with no answers hold nothing
+Votes become `inconclusive`, their gold is dropped, the vote XP stays, labels already written stay. The sweep walks every answered
+question in id order a page at a time within a time budget and steps over one it cannot close, so a few cannot hold back the rest. Questions with no answers hold nothing
 and are left open. Moderators' questions are not swept. Locks are taken in the vote's order: the item row, then the voters' player rows.
-A career reset between an answer and the close is handled as for ratings: such an answer pays nothing into the new career.
 
 ## Labels
 
@@ -77,5 +80,6 @@ question gets its own `rule` row, so the store computes the majority per questio
 
 ## Players see
 
-`/judgments` shows the question's words and the answer; it is pending until the question closes, then "with the majority" or "against
-the majority". `/rules` has a short paragraph. Hotkeys, banner and the status line are in `/play`.
+`/judgments` shows the question's words and the answer; it is pending until the question closes, then right, wrong or set aside like
+any rating. `/rules` has a short paragraph. Hotkeys, banner and the status line are in `/play`. A hidden check is offered before a question is rolled for, so its rate does
+not depend on the yes/no share.

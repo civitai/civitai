@@ -1,6 +1,6 @@
 import type { PGlite } from '@electric-sql/pglite';
 import type { Kysely } from 'kysely';
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { DB } from '@civitai/db-schema/kysely';
 import { createQueueDb } from '../../../test/pglite-kysely';
 import { seedImage, seedPlayer } from '../../../test/seed';
@@ -145,5 +145,37 @@ describe('closing stranded questions', () => {
     expect((await pg.query(`SELECT labelled FROM "KnightsVote"`)).rows).toEqual([
       { labelled: true },
     ]);
+  });
+
+  it('steps over a question it cannot close, so the others still are, across pages and within the cap', async () => {
+    vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const ids = await seed(
+      Array.from({ length: 6 }, (_, i) => row(`q${i}`, 10 + i)) // ids 1..6
+    );
+    for (const id of Object.values(ids)) await answer(1, id);
+    await pg.exec(`UPDATE "Image" SET "blockedFor" = 'x'`);
+    await pg.exec(`
+      CREATE OR REPLACE FUNCTION refuse_close() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'cannot close'; END $$;
+      CREATE TRIGGER refuse_close BEFORE UPDATE ON "KnightsQueueItem"
+        FOR EACH ROW WHEN (OLD.id IN (${ids.q0}, ${ids.q1}) AND NEW.status = 'Closed') EXECUTE FUNCTION refuse_close();`);
+    try {
+      const first = await closeStrandedYesNo(db, {
+        now: NOW,
+        maxAgeDays: 14,
+        pageSize: 2,
+        limit: 2,
+      });
+      expect(first).toEqual({ unplayable: 2, stale: 0, failed: 2 });
+      const open = await pg.query<{ externalId: string }>(
+        `SELECT "externalId" FROM "KnightsQueueItem" WHERE status = 'Open' ORDER BY id`
+      );
+      expect(open.rows.map((r) => r.externalId)).toEqual(['q0', 'q1', 'q4', 'q5']);
+
+      const second = await closeStrandedYesNo(db, { now: NOW, maxAgeDays: 14, pageSize: 2 });
+      expect(second).toEqual({ unplayable: 2, stale: 0, failed: 2 });
+    } finally {
+      await pg.exec(`DROP TRIGGER refuse_close ON "KnightsQueueItem"`);
+    }
   });
 });

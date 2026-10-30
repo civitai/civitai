@@ -107,10 +107,36 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
     conversionOpen,
     lockoutSeconds,
   };
+  if (resetPending || lockedUntil) return { ...page, question: null, item: null };
+
+  // A hidden check comes first, so its rate holds whatever the yes/no share is; it only ever rides on a rating question.
+  if (feed) {
+    const secret = feedSecret();
+    const hidden = await pickHiddenCheck(db, {
+      userId: locals.user.id,
+      rank: status.rank,
+      secret,
+      questionKey: feed.question.key,
+      rate: hiddenSettings().rate,
+    });
+    if (hidden) {
+      return {
+        ...page,
+        question: hidden.question,
+        item: {
+          id: sealItem(secret, locals.user.id, { kind: 'hidden', id: hidden.referenceId }),
+          src: imageUrl(hidden.imageKey),
+          width: hidden.width,
+          height: hidden.height,
+        },
+      };
+    }
+  }
+
+  // A yes/no question is rolled for next; with no rating to show, one is shown whenever there is one. A share of 0 switches them off.
   const yesNo = yesNoConfig();
-  // A yes/no question is rolled for ahead of the rating; with no rating to show, one is shown whenever there is one. A share of 0 switches them off.
   const offer =
-    resetPending || lockedUntil || yesNo.share <= 0
+    yesNo.share <= 0
       ? null
       : await pickYesNo(db, {
           userId: locals.user.id,
@@ -138,29 +164,9 @@ export const load: PageServerLoad = async ({ locals, depends }) => {
       },
     };
   }
-  if (!feed || resetPending) return { ...page, question: null, item: null };
+  if (!feed) return { ...page, question: null, item: null };
 
   const secret = feedSecret();
-  const hidden = await pickHiddenCheck(db, {
-    userId: locals.user.id,
-    rank: status.rank,
-    secret,
-    questionKey: feed.question.key,
-    rate: hiddenSettings().rate,
-  });
-  if (hidden) {
-    return {
-      ...page,
-      question: hidden.question,
-      item: {
-        id: sealItem(secret, locals.user.id, { kind: 'hidden', id: hidden.referenceId }),
-        src: imageUrl(hidden.imageKey),
-        width: hidden.width,
-        height: hidden.height,
-      },
-    };
-  }
-
   const [item] = feed.items;
   return {
     ...page,

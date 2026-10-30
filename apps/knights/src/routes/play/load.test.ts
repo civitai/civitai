@@ -288,6 +288,23 @@ describe('play load yes/no questions', () => {
     expect(JSON.stringify(page)).not.toContain('90417');
   });
 
+  it('offers a hidden check before rolling for a question, so its rate holds whatever the yes/no share', async () => {
+    pickHiddenCheck.mockResolvedValue({
+      referenceId: 5,
+      question: { key: 'q', kind: 'choice', prompt: 'Rate', options: [] },
+      imageKey: 'key-9',
+      width: 1,
+      height: 1,
+    });
+    pickYesNo.mockResolvedValue(offer);
+
+    const page = await run();
+
+    expect(page.item.src).toBe('key-9');
+    expect(page.banner).toBeNull();
+    expect(pickYesNo).not.toHaveBeenCalled();
+  });
+
   it('falls back to the rating, with no banner, when no question is offered', async () => {
     const page = await run();
     expect(page.question.key).toBe('q');
