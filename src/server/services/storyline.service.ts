@@ -1064,7 +1064,7 @@ export const STORYLINE_CHAPTER_REMOVE_REFUSALS = {
   hasChildren: 'Other chapters continue from this one, so it cannot be removed',
   waiting: 'This chapter has a continuation waiting for review; answer it first',
   paidContinuation: "This chapter's payment hasn't settled yet. Try again once it has",
-  /** A taken-down storyline, and (for its owner) a chapter someone paid to add. */
+  /** A taken-down storyline, a held owner or author, and (for its owner) a chapter someone paid to add. */
   moderatorOnly:
     "You can't remove this chapter yourself. A moderator can remove it for you; contact support",
   removed: 'This chapter was already removed',
@@ -1170,6 +1170,15 @@ export async function removeStorylineChapter({
     if (waiting) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.waiting);
     if (placement?.inFlight)
       throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.paidContinuation);
+    // Deleting takes the chapter's edges and reader choices with it, so a hold on the owner or the
+    // author keeps it, refused in the same words as any other reason (as `deleteStoryline`).
+    const held = Prisma.sql`(${ownerHeldSql(Prisma.sql`${ownerId}::int`)} OR ${ownerHeldSql(
+      Prisma.sql`${chapter.userId}::int`
+    )})`;
+    if (role !== 'moderator') {
+      const [{ isHeld }] = await tx.$queryRaw<{ isHeld: boolean }[]>`SELECT ${held} AS "isHeld"`;
+      if (isHeld) throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
+    }
     // An owner's or author's removal during an open report is recorded for moderators.
     const openReportIds =
       role === 'moderator'
@@ -1204,7 +1213,11 @@ export async function removeStorylineChapter({
     `;
     if (role === 'moderator')
       await tx.$executeRaw`UPDATE "StorylineChapter" SET "removedAt" = now() WHERE id = ${chapterId}`;
-    else await tx.$executeRaw`DELETE FROM "StorylineChapter" WHERE id = ${chapterId}`;
+    // The hold is in the DELETE itself too, so one placed after the check above still stops it.
+    else if (
+      !(await tx.$executeRaw`DELETE FROM "StorylineChapter" WHERE id = ${chapterId} AND NOT ${held}`)
+    )
+      throw throwBadRequestError(STORYLINE_CHAPTER_REMOVE_REFUSALS.moderatorOnly);
     if (openReportIds.length)
       await tx.$executeRaw`
         INSERT INTO "StorylineChapterRemovalHold" ("storylineId", "storylineTitle", "chapterId",

@@ -145,6 +145,7 @@ afterAll(async () => {
 const cleanTables = () =>
   db.pg.exec(`
     DELETE FROM "StorylineChapterRemovalHold";
+    DELETE FROM "EvidenceHold";
     DELETE FROM "Appeal";
     DELETE FROM "CommentV3";
     DELETE FROM "CommentTopic";
@@ -288,6 +289,46 @@ describe('removeStorylineChapter', () => {
     await expect(remove(OWNER)).rejects.toThrow(REFUSED.moderatorOnly);
     expect(await chapterIds()).toEqual([10, 11]);
     expect((await placement900()).status).toBe('approved');
+  });
+
+  describe('under a legal hold', () => {
+    const hold = (userId: number) =>
+      db.pg.exec(`INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${userId}, NULL)`);
+
+    it('keeps a held owner from removing a chapter, in the words of any other refusal', async () => {
+      await db.pg.exec(`UPDATE "Placement" SET amount = 0 WHERE id = 900`);
+      await hold(OWNER);
+      await expect(remove(OWNER)).rejects.toThrow(REFUSED.moderatorOnly);
+      expect(await chapterIds()).toEqual([10, 11]);
+      expect((await placement900()).status).toBe('approved');
+    });
+
+    it("keeps a held author's chapter from its author and from the owner", async () => {
+      await db.pg.exec(`UPDATE "Placement" SET amount = 0 WHERE id = 900`);
+      await hold(CONTRIBUTOR);
+      await expect(remove(CONTRIBUTOR)).rejects.toThrow(REFUSED.moderatorOnly);
+      await expect(remove(OWNER)).rejects.toThrow(REFUSED.moderatorOnly);
+      expect(await chapterIds()).toEqual([10, 11]);
+      expect((await placement900()).status).toBe('approved');
+    });
+
+    it('still lets a moderator tombstone it: the row stays', async () => {
+      await hold(CONTRIBUTOR);
+      await remove(MODERATOR, true);
+      expect(
+        await rows(
+          `SELECT "removedAt" IS NOT NULL AS removed FROM "StorylineChapter" WHERE id = 11`
+        )
+      ).toEqual([{ removed: true }]);
+    });
+
+    it('lets them remove it once the hold is released', async () => {
+      await db.pg.exec(
+        `INSERT INTO "EvidenceHold" ("userId", "releasedAt") VALUES (${CONTRIBUTOR}, now())`
+      );
+      await remove(CONTRIBUTOR);
+      expect(await chapterIds()).toEqual([10]);
+    });
   });
 
   it('refuses anyone else', async () => {

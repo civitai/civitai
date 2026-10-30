@@ -46,7 +46,10 @@ import { StorylineRoleChip, StorylineShareChip } from '~/components/Storyline/St
 import { StorylineChapterImage } from '~/components/Storyline/StorylineChapterImage';
 import { StorylineThumb } from '~/components/Storyline/StorylineThumb';
 import { ReportChapterMenuItem } from '~/components/Storyline/ReportChapterMenuItem';
-import { RemoveChapterMenuItem } from '~/components/Storyline/RemoveChapterMenuItem';
+import {
+  canRemoveStorylineChapter,
+  RemoveChapterMenuItem,
+} from '~/components/Storyline/RemoveChapterMenuItem';
 import { UserAvatar } from '~/components/UserAvatar/UserAvatar';
 import { useIsMobile } from '~/hooks/useIsMobile';
 import { useCurrentUser } from '~/hooks/useCurrentUser';
@@ -280,7 +283,7 @@ export function StorylineChapterLanes({ storyline }: { storyline: Storyline }) {
                     top={tops[i].top}
                     reorder={reorderOf(row.canon.chapterId)}
                     onMove={moveAfter}
-                    canManage={canManage}
+                    ownerId={storyline.userId}
                   />
                 ) : null
               )}
@@ -449,11 +452,10 @@ function CanonStop({
   top,
   reorder,
   onMove,
-  canManage,
+  ownerId,
 }: {
   node: LaneNode;
-  /** The owner or a moderator, who may remove any chapter but the first. */
-  canManage: boolean;
+  ownerId: number;
   /** Where the owner may move it by one place, set only inside a straight run of their own. */
   reorder?: { up: number | null; down: number | null };
   onMove: (chapterId: number, afterChapterId: number) => void;
@@ -471,7 +473,14 @@ function CanonStop({
   const drag = useDraggable({ id: node.chapterId, disabled: !reorder });
   const currentUser = useCurrentUser();
   const reportPostId = post && post.userId !== currentUser?.id ? post.id : null;
-  const canRemove = !!post && node.number > 1 && (canManage || post.userId === currentUser?.id);
+  const canRemove =
+    !!post &&
+    canRemoveStorylineChapter({
+      depth: node.chapter.depth,
+      authorId: post.userId,
+      ownerId,
+      viewer: currentUser,
+    });
   const hasMenu = !!reorder || reportPostId !== null || canRemove;
   return (
     <li
