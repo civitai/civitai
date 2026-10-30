@@ -13,7 +13,10 @@ import {
   USERS,
   type Fixture,
 } from '~/server/page-data/__tests__/image-detail.fixtures';
-import { SHELL_PAGE_DATA_REQUIRED_KEYS } from '~/components/Shell/shell-page-data';
+import {
+  SHELL_MAIN_IMAGE_HEADER,
+  SHELL_PAGE_DATA_REQUIRED_KEYS,
+} from '~/components/Shell/shell-page-data';
 import { imageDetailMainImageUrl } from '~/components/Image/DetailV2/image-detail-main-media';
 import { env } from '~/env/client';
 
@@ -193,7 +196,6 @@ describe('page-data parity with getServerSideProps', () => {
         'flags',
         'following',
         'liveNow',
-        'mainImageUrl',
         'navBanners',
         'region',
         'session',
@@ -345,19 +347,38 @@ describe('page-data keeps the shell route cookie in step with shell-images', () 
  * `EdgeImage` → `useEdgeUrl`) is what is under test. That the rendered `<img>` requests the same
  * URL is pinned by `ImageDetailCarousel.mainImageUrl.browser.test.tsx`.
  */
+/** The main image URL the response names, decoded as the head script decodes it. */
+function mainImageUrlOf(res: ReturnType<typeof fakeResponse>) {
+  const value = res.getHeader(SHELL_MAIN_IMAGE_HEADER.toLowerCase());
+  return value === undefined ? undefined : decodeURIComponent(String(value));
+}
+
 describe('page-data main image preload URL', () => {
-  const edge = (...segments: string[]) =>
-    [env.NEXT_PUBLIC_IMAGE_LOCATION, ...segments].filter(Boolean).join('/');
-  it('a PG image: the URL of its original, under its own name, as the `<img>` asks for it', async () => {
+  it('is a header, header-safe, and not in the body', async () => {
     const { res, body } = await fetchPageData({
       user: USERS.viewer,
       imageId: 106,
       host: 'civitai.com',
     });
+    const raw = String(res.getHeader(SHELL_MAIN_IMAGE_HEADER.toLowerCase()));
+    // The name has spaces; the raw value must still be a legal header value, whatever it holds.
+    expect(raw).toMatch(/^[\x21-\x7e]+$/);
+    expect(raw).toContain('Sunset%20Over%20Hills.jpeg');
+    expect(jsonRoundTrip(body)).not.toHaveProperty('mainImageUrl');
+  });
+
+  const edge = (...segments: string[]) =>
+    [env.NEXT_PUBLIC_IMAGE_LOCATION, ...segments].filter(Boolean).join('/');
+  it('a PG image: the URL of its original, under its own name, as the `<img>` asks for it', async () => {
+    const { res } = await fetchPageData({
+      user: USERS.viewer,
+      imageId: 106,
+      host: 'civitai.com',
+    });
     expect(res.statusCode).toBe(200);
-    expect(body?.mainImageUrl).toBe(edge('media-106', 'original=true', 'Sunset Over Hills.jpeg'));
+    expect(mainImageUrlOf(res)).toBe(edge('media-106', 'original=true', 'Sunset Over Hills.jpeg'));
     // And it is what the page's own builder gives that image (the fixture's `image.get` answer).
-    expect(body?.mainImageUrl).toBe(
+    expect(mainImageUrlOf(res)).toBe(
       imageDetailMainImageUrl({
         id: 106,
         url: 'media-106',
@@ -368,25 +389,25 @@ describe('page-data main image preload URL', () => {
   });
 
   it('a PG image with no name is named by its id', async () => {
-    const { body } = await fetchPageData({ user: USERS.viewer, imageId: 103, host: 'civitai.com' });
-    expect(body?.mainImageUrl).toBe(edge('media-103', 'original=true', '103.jpeg'));
+    const { res } = await fetchPageData({ user: USERS.viewer, imageId: 103, host: 'civitai.com' });
+    expect(mainImageUrlOf(res)).toBe(edge('media-103', 'original=true', '103.jpeg'));
   });
 
   it('a PG image for a signed-out viewer (the gate shows PG to everyone)', async () => {
-    const { body } = await fetchPageData({ user: null, imageId: 106, host: 'civitai.com' });
-    expect(body?.mainImageUrl).toBe(edge('media-106', 'original=true', 'Sunset Over Hills.jpeg'));
+    const { res } = await fetchPageData({ user: null, imageId: 106, host: 'civitai.com' });
+    expect(mainImageUrlOf(res)).toBe(edge('media-106', 'original=true', 'Sunset Over Hills.jpeg'));
   });
 
   it('a video: no URL, as the page renders a <video> and no <img>', async () => {
-    const { res, body } = await fetchPageData({
+    const { res } = await fetchPageData({
       user: USERS.viewer,
       imageId: 107,
       host: 'civitai.com',
     });
     expect(res.statusCode).toBe(200);
     // The same rating as 106, which has a URL: only the media type differs.
-    expect(body?.mainImageUrl).toBeUndefined();
-    expect(jsonRoundTrip(body)).not.toHaveProperty('mainImageUrl');
+    expect(mainImageUrlOf(res)).toBeUndefined();
+    expect(res.getHeader(SHELL_MAIN_IMAGE_HEADER.toLowerCase())).toBeUndefined();
   });
 
   it.each([
@@ -397,17 +418,17 @@ describe('page-data main image preload URL', () => {
     ['an image the viewer cannot get (blocked)', { user: USERS.blockedByOwner, imageId: 103 }],
     ['a PG image a contest forces to R, signed in', { user: USERS.viewer, imageId: 108 }],
   ] as const)('none for %s', async (_, fixture) => {
-    const { res, body } = await fetchPageData({ ...fixture, host: 'civitai.com' });
+    const { res } = await fetchPageData({ ...fixture, host: 'civitai.com' });
     expect(res.statusCode).toBe(200);
-    expect(body?.mainImageUrl).toBeUndefined();
+    expect(mainImageUrlOf(res)).toBeUndefined();
   });
 
   it('none for an R image on .red: the viewer’s blur settings decide, and they are not known', async () => {
-    const { body } = await fetchPageData({ user: USERS.viewer, imageId: 101, host: 'civitai.red' });
-    expect(body?.mainImageUrl).toBeUndefined();
+    const { res } = await fetchPageData({ user: USERS.viewer, imageId: 101, host: 'civitai.red' });
+    expect(mainImageUrlOf(res)).toBeUndefined();
     // Control: on .red a safe image does get one.
     const safe = await fetchPageData({ user: USERS.viewer, imageId: 106, host: 'civitai.red' });
-    expect(safe.body?.mainImageUrl).toBe(
+    expect(mainImageUrlOf(safe.res)).toBe(
       edge('media-106', 'original=true', 'Sunset Over Hills.jpeg')
     );
   });
@@ -430,8 +451,8 @@ describe('page-data main image preload URL', () => {
       'media-108',
     ],
   ] as const)('a URL for %s', async (_, fixture, name, key) => {
-    const { body } = await fetchPageData({ ...fixture, host: 'civitai.com' });
-    expect(body?.mainImageUrl).toBe(edge(key, 'original=true', name));
+    const { res } = await fetchPageData({ ...fixture, host: 'civitai.com' });
+    expect(mainImageUrlOf(res)).toBe(edge(key, 'original=true', name));
   });
 });
 
@@ -453,8 +474,8 @@ describe('page-data main image preload URL and the page query', () => {
     .join('/');
 
   it('control: no query, a URL', async () => {
-    const { body } = await fetchPageData(viewer106);
-    expect(body?.mainImageUrl).toBe(URL_106);
+    const { res } = await fetchPageData(viewer106);
+    expect(mainImageUrlOf(res)).toBe(URL_106);
   });
 
   it.each([
@@ -463,9 +484,9 @@ describe('page-data main image preload URL and the page query', () => {
     ['a sort (?sort=Newest)', { sort: 'Newest' }],
     ['storyline mode (?storylineChapter=3)', { storylineChapter: '3' }],
   ])('none for %s', async (_, query) => {
-    const { res, body } = await fetchPageData(viewer106, { query });
+    const { res } = await fetchPageData(viewer106, { query });
     expect(res.statusCode).toBe(200);
-    expect(body?.mainImageUrl).toBeUndefined();
+    expect(mainImageUrlOf(res)).toBeUndefined();
   });
 
   it.each([
@@ -473,7 +494,7 @@ describe('page-data main image preload URL and the page query', () => {
     ['a junk postId (?postId=null)', { postId: 'null' }],
     ['a param the feed does not read (?active=true)', { active: 'true' }],
   ])('a URL for %s, as the page shows the image.get row', async (_, query) => {
-    const { body } = await fetchPageData(viewer106, { query });
-    expect(body?.mainImageUrl).toBe(URL_106);
+    const { res } = await fetchPageData(viewer106, { query });
+    expect(mainImageUrlOf(res)).toBe(URL_106);
   });
 });
