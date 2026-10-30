@@ -34,6 +34,49 @@ export interface SubmitReceipt {
   publishRequestId: string;
   slug: string;
   version: string;
+  /** What the submit route said about the app's store listing; absent when it said nothing. */
+  listing?: SubmitListingNotice;
+}
+
+/**
+ * The store-listing half of a submit's answer (the route's `listing`), reduced to what the card
+ * says: the step a moderator's approval waits on, and what else the listing should have.
+ */
+export interface SubmitListingNotice {
+  /** True when a moderator cannot approve this submission until the listing has an icon and a cover. */
+  approvalBlocked: boolean;
+  /** The route's plain-words next step when approval is blocked. */
+  nextStep: string | null;
+  /** Labels of the other problems that keep the listing from going live (e.g. a blocked image). */
+  required: string[];
+  /** Labels of the recommended-but-optional problems. */
+  recommended: string[];
+}
+
+/** The floor problems `nextStep` already words; listed again they would say the same thing twice. */
+const FLOOR_PROBLEM_CODES = new Set(['missing-icon', 'missing-cover']);
+
+/** `value` (the route's `listing`) as a notice, or `undefined` when it is absent or malformed. */
+export function listingNoticeOf(value: unknown): SubmitListingNotice | undefined {
+  if (!value || typeof value !== 'object') return undefined;
+  const v = value as Record<string, unknown>;
+  const problems = Array.isArray(v.problems)
+    ? (v.problems as unknown[]).filter(
+        (p): p is { code: string; label: string; severity?: unknown } =>
+          !!p &&
+          typeof (p as { code?: unknown }).code === 'string' &&
+          typeof (p as { label?: unknown }).label === 'string'
+      )
+    : [];
+  const approvalBlocked = v.approvalBlocked === true;
+  return {
+    approvalBlocked,
+    nextStep: approvalBlocked && typeof v.nextStep === 'string' ? v.nextStep : null,
+    required: problems
+      .filter((p) => p.severity === 'blocking' && !FLOOR_PROBLEM_CODES.has(p.code))
+      .map((p) => p.label),
+    recommended: problems.filter((p) => p.severity !== 'blocking').map((p) => p.label),
+  };
 }
 
 /** A submit that did not go through: `status` is the route's (0 when it could not be reached). */
@@ -185,6 +228,7 @@ export async function sendForReview(
     publishRequestId: data.publishRequestId,
     slug: typeof data.slug === 'string' ? data.slug : prepared.manifest.blockId,
     version: typeof data.version === 'string' ? data.version : prepared.manifest.version,
+    listing: listingNoticeOf(data.listing),
   };
 }
 
@@ -199,6 +243,9 @@ export interface SubmitCardsDeps {
   prepare(sandbox: string): Promise<PreparedSubmit>;
   send(prepared: PreparedSubmit): Promise<SubmitReceipt>;
 }
+
+/** The heading over the recommended listing items on a sent card. */
+export const LISTING_RECOMMENDED_HEADING = 'Recommended for your store listing:';
 
 export interface SubmitCards {
   /** The card for a `submit_for_review` call; the default card for one that offered nothing. */
@@ -256,6 +303,36 @@ export function createSubmitCards({ prepare, send }: SubmitCardsDeps): SubmitCar
     show(card, line(OFFER_CLOSED));
   };
 
+  /**
+   * What a sent card says about the store listing: the step approval waits on (icon + cover),
+   * anything else that keeps it from going live, then what is recommended. The submit itself
+   * stands either way: the developer can add art while it waits for review.
+   */
+  const listingLines = (notice: SubmitListingNotice | undefined): HTMLElement[] => {
+    if (!notice) return [];
+    const out: HTMLElement[] = [];
+    if (notice.nextStep) {
+      const next = line(notice.nextStep, 'alert');
+      next.setAttribute('data-testid', 'app-assistant-submit-listing-next-step');
+      out.push(next);
+    }
+    for (const label of notice.required) out.push(line(label, 'alert'));
+    if (notice.recommended.length) {
+      const box = document.createElement('div');
+      box.setAttribute('data-testid', 'app-assistant-submit-listing-recommended');
+      const list = document.createElement('ul');
+      list.style.cssText = 'margin:4px 0 0;padding-left:20px';
+      for (const label of notice.recommended) {
+        const item = document.createElement('li');
+        item.textContent = label;
+        list.append(item);
+      }
+      box.append(line(LISTING_RECOMMENDED_HEADING), list);
+      out.push(box);
+    }
+    return out;
+  };
+
   const offerButton = (card: Card, prepared: PreparedSubmit, error?: string) => {
     const { name, version, blockId } = prepared.manifest;
     const what = line(`${name} ${version} (${blockId})`);
@@ -275,9 +352,13 @@ export function createSubmitCards({ prepare, send }: SubmitCardsDeps): SubmitCar
     button.disabled = true;
     button.textContent = 'Submitting…';
     try {
-      await send(prepared);
+      const receipt = await send(prepared);
       card.phase = 'sent';
-      show(card, line(submittedText(prepared.manifest), 'status'));
+      show(
+        card,
+        line(submittedText(prepared.manifest), 'status'),
+        ...listingLines(receipt?.listing)
+      );
     } catch (error) {
       const message = error instanceof SubmitError ? error.message : SUBMIT_UNREACHABLE;
       // Refused for who the user is or how the request came: pressing again changes nothing.

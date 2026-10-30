@@ -41,6 +41,13 @@ import { isMarketplaceCategory } from '~/server/services/blocks/marketplace-cate
 import type { SourceAppBlock } from '~/server/services/blocks/app-listing-mapper';
 import { recordListingRatingChangeAfterCommit } from '~/server/services/blocks/app-listing-rating';
 import type { ListingMediaSplitDecision } from '~/shared/utils/listing-media-split';
+import {
+  checkListingMeetsFloor,
+  listingFloorApproveRefusal,
+  listingFloorNextStep,
+  type FloorAsset,
+} from '~/shared/utils/listing-publish-floor';
+import type { ListingProblem } from '~/server/services/blocks/listing-problems';
 // Pure util (no env/Prisma) — folds a blockId to the appsDb schema slug. Used by
 // the (3c) storage-provision-on-approve block; matches the admin backfill's
 // derivation exactly. The provisioner VALUE is dynamically imported at use so
@@ -151,6 +158,31 @@ export type SubmitVersionResult = {
   bundleSha256: string;
   fileSummary: FileSummary;
   manifestDiffSummary: ManifestDiffSummary;
+  /**
+   * The store listing's readiness for THIS submission, so the submitter is told at submit
+   * time what a moderator will refuse on. `null` when it could not be read (best-effort: the
+   * submit never fails over it) or no listing exists for the submission.
+   */
+  listing: SubmitListingReadiness | null;
+};
+
+/**
+ * What a submit reports about the app's store listing. Part of the submit API's response
+ * (both routes), which the App Assistant card and the CLI show.
+ */
+export type SubmitListingReadiness = {
+  /**
+   * True when a moderator CANNOT approve this submission until the listing has an icon and a
+   * cover — the same predicate {@link approveRequest} refuses on. False for an update to an
+   * already-live listing: the version approve does not publish it (see `approveRequest`).
+   */
+  approvalBlocked: boolean;
+  /** The floor assets the listing lacks (icon before cover); empty when it meets the floor. */
+  missing: FloorAsset[];
+  /** Plain-words next step when `approvalBlocked`, else `null`. */
+  nextStep: string | null;
+  /** Every listing problem, `blocking` and `advisory` (`computeListingProblems`). */
+  problems: ListingProblem[];
 };
 
 const MANIFEST_PATH = 'block.manifest.json';
@@ -1377,6 +1409,13 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     }
   }
 
+  const listing = await submitListingReadiness({
+    slug,
+    submittedByUserId,
+    existingAppBlockId: existingApp?.id ?? null,
+    manifest,
+  });
+
   return {
     publishRequestId,
     slug,
@@ -1384,7 +1423,116 @@ export async function submitVersion(params: SubmitVersionParams): Promise<Submit
     bundleSha256,
     fileSummary,
     manifestDiffSummary,
+    listing,
   };
+}
+
+/**
+ * WARN AT SUBMIT (operator ruling 2026-10-30): the store listing's readiness for the
+ * submission just queued, so the developer learns NOW — not from a refused approve — that a
+ * moderator cannot approve it without an icon and a cover.
+ *
+ * The listing read is the one `approveRequest` will publish (its draft, else its mod-reset
+ * listing), falling back to the app's live listing for an update. `approvalBlocked` is set
+ * only for a listing the approve PUBLISHES — the exact case `approveRequest` refuses — so it
+ * never claims an update to a live listing is blocked.
+ *
+ * BEST-EFFORT: the submit has already been queued, so any failure here yields `null`
+ * rather than failing a submission that succeeded.
+ */
+async function submitListingReadiness(args: {
+  slug: string;
+  submittedByUserId: number;
+  existingAppBlockId: string | null;
+  manifest: Record<string, unknown>;
+}): Promise<SubmitListingReadiness | null> {
+  try {
+    const [{ dbWrite }, { computeListingProblems }, { declaredListingRating }] = await Promise.all([
+      import('~/server/db/client'),
+      import('./listing-problems'),
+      import('~/shared/utils/listing-rating-display'),
+    ]);
+    const select = {
+      id: true,
+      kind: true,
+      status: true,
+      iconId: true,
+      coverId: true,
+      description: true,
+      tagline: true,
+      category: true,
+      contentRating: true,
+      // Only screenshots whose Image is still live, as every other problems read counts them.
+      _count: { select: { screenshots: { where: { imageId: { not: null } } } } },
+    } as const;
+    type Row = {
+      id: string;
+      kind: string | null;
+      status: string;
+      iconId: number | null;
+      coverId: number | null;
+      description: string | null;
+      tagline: string | null;
+      category: string | null;
+      contentRating: string | null;
+      _count?: { screenshots?: number };
+    };
+    // Read on the PRIMARY: the draft may have been created a moment ago.
+    const published = ((await dbWrite.appListing.findFirst({
+      where: draftTransitionWhere({ slug: args.slug, submittedByUserId: args.submittedByUserId }),
+      select,
+    })) ??
+      (args.existingAppBlockId
+        ? await dbWrite.appListing.findFirst({
+            where: resetRestoreWhere(args.existingAppBlockId),
+            select,
+          })
+        : null)) as Row | null;
+    const row =
+      published ??
+      ((args.existingAppBlockId
+        ? await dbWrite.appListing.findFirst({
+            where: { appBlockId: args.existingAppBlockId, kind: 'onsite' },
+            select,
+          })
+        : null) as Row | null);
+    if (!row) return null;
+
+    const floor = checkListingMeetsFloor(row);
+    const missing = floor.ok ? [] : floor.missing;
+    const approvalBlocked = published != null && missing.length > 0;
+    const kind = row.kind === 'offsite' ? 'offsite' : 'onsite';
+    const { problems } = computeListingProblems({
+      kind,
+      iconId: row.iconId,
+      coverId: row.coverId,
+      screenshotCount: row._count?.screenshots ?? 0,
+      description: row.description,
+      tagline: row.tagline,
+      category: row.category,
+      status: row.status,
+      contentRating: row.contentRating,
+      declaredContentRating: declaredListingRating({
+        kind,
+        appRating:
+          typeof args.manifest.contentRating === 'string' ? args.manifest.contentRating : null,
+        listingRating: row.contentRating,
+      }),
+    });
+    return {
+      approvalBlocked,
+      missing,
+      nextStep: approvalBlocked ? listingFloorNextStep(missing) : null,
+      problems,
+    };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(
+      `[submitVersion] listing readiness read failed (slug=${args.slug}); submit STANDS, the ` +
+        `response carries no listing readiness: ${err instanceof Error ? err.message : String(err)}`
+    );
+    return null;
+  }
 }
 
 /**
@@ -2064,6 +2212,12 @@ type ListingJoinSubject = {
 type RequestListingFacts = ListingQueueFacts & {
   appListingId: string | null;
   approveRating: { listingId: string; declared: string | null } | null;
+  /**
+   * The publish-floor assets (icon / cover) the listing this approve PUBLISHES lacks — the
+   * exact set `approveRequest` refuses on, so the review UI disables Approve and says why.
+   * Empty when the approve publishes no listing or the listing meets the floor.
+   */
+  approveFloorMissing: FloorAsset[];
 };
 
 /** A slug-resolved listing, reduced to what {@link listingFactsForRequests} reads. */
@@ -2202,6 +2356,7 @@ async function listingFactsForRequests(
     ...NO_LISTING_QUEUE_FACTS,
     appListingId: null,
     approveRating: null,
+    approveFloorMissing: [],
   };
   const slugs = [...new Set(requests.map((r) => r.slug))];
   if (slugs.length === 0) return () => noListing;
@@ -2244,25 +2399,51 @@ async function listingFactsForRequests(
     draftWheres.length
       ? dbRead.appListing.findMany({
           where: { OR: draftWheres },
-          select: { id: true, slug: true, userId: true },
+          select: { id: true, slug: true, userId: true, iconId: true, coverId: true },
         })
       : [],
     resetWheres.length
       ? dbRead.appListing.findMany({
           where: { OR: resetWheres },
-          select: { id: true, appBlockId: true, contentRating: true },
+          select: {
+            id: true,
+            appBlockId: true,
+            contentRating: true,
+            iconId: true,
+            coverId: true,
+          },
         })
       : [],
   ]);
-  const approveRatingFor = (req: ListingJoinSubject): RequestListingFacts['approveRating'] => {
-    const draft = (drafts as { id: string; slug: string; userId: number }[]).find(
+  type FloorCols = { iconId?: number | null; coverId?: number | null };
+  // The listing approving `req` publishes: its draft, else its reset listing — the same
+  // precedence as `approveRequest`'s up-front `publishTarget` read.
+  const publishedBy = (req: ListingJoinSubject) => {
+    const draft = (drafts as ({ id: string; slug: string; userId: number } & FloorCols)[]).find(
       (d) => d.slug === req.slug && d.userId === req.submittedBy?.id
     );
-    if (draft) return { listingId: draft.id, declared: manifestRatingOrDefault(req.manifest) };
+    if (draft) return { listing: draft, declared: manifestRatingOrDefault(req.manifest) };
     const reset = (
-      resets as { id: string; appBlockId: string | null; contentRating: string | null }[]
+      resets as ({
+        id: string;
+        appBlockId: string | null;
+        contentRating: string | null;
+      } & FloorCols)[]
     ).find((l) => req.appBlockId != null && l.appBlockId === req.appBlockId);
-    return reset ? { listingId: reset.id, declared: reset.contentRating } : null;
+    return reset ? { listing: reset, declared: reset.contentRating } : null;
+  };
+  const approveRatingFor = (req: ListingJoinSubject): RequestListingFacts['approveRating'] => {
+    const target = publishedBy(req);
+    return target ? { listingId: target.listing.id, declared: target.declared } : null;
+  };
+  const approveFloorMissingFor = (req: ListingJoinSubject): FloorAsset[] => {
+    const target = publishedBy(req);
+    if (!target) return [];
+    const floor = checkListingMeetsFloor({
+      iconId: target.listing.iconId,
+      coverId: target.listing.coverId,
+    });
+    return floor.ok ? [] : floor.missing;
   };
 
   const bySlug = new Map(rows.map((r) => [r.slug, r]));
@@ -2274,6 +2455,7 @@ async function listingFactsForRequests(
       ...(belongs ? listingQueueFacts(listing, redById.get(listing.id)) : NO_LISTING_QUEUE_FACTS),
       appListingId: belongs ? listing.id : null,
       approveRating: approveRatingFor(req),
+      approveFloorMissing: approveFloorMissingFor(req),
     });
   }
   return (requestId: string) => out.get(requestId) ?? noListing;
@@ -2725,27 +2907,59 @@ export async function approveRequest(params: ApproveRequestParams): Promise<Appr
   // no decision when the write role can read the table and the listing is split. With no
   // decision and a table that role cannot read, nothing is refused and nothing is written to it:
   // the approve goes ahead as it did before the split existed.
-  // With the table absent and no split asked for there is nothing to write, so no listing read.
+  //
+  // 🔴 THE LISTING THIS APPROVE PUBLISHES — read once, up front, and shared by the publish
+  // floor below and the media-split check. It is the pre-approval DRAFT the (3b-transition)
+  // flips `draft → approved`, else the mod-RESET listing the (3b-reset) restores
+  // `pending → approved` — the same two `where` builders those writes use, so this gate and
+  // those writes cannot disagree about which row goes live. `null` when the approve makes
+  // no listing public: an update to an app whose listing is already live (or delisted), or
+  // a first version with no draft (see the floor note below).
+  const publishTarget =
+    (await dbWrite.appListing.findFirst({
+      where: draftTransitionWhere({
+        slug: request.slug,
+        submittedByUserId: request.submittedByUserId,
+      }),
+      select: { id: true, iconId: true, coverId: true },
+    })) ??
+    (existingAppBlock
+      ? await dbWrite.appListing.findFirst({
+          where: resetRestoreWhere(existingAppBlock.id),
+          select: { id: true, iconId: true, coverId: true },
+        })
+      : null);
+
+  // 🔴 PUBLISH FLOOR (operator ruling 2026-10-30, "enforce + warn at submit"): every store
+  // listing needs an icon AND a cover before it goes live — on-site apps too, through the
+  // SAME predicate the off-site approve paths use (`checkListingMeetsFloor`, which
+  // `assertListingMeetsFloor` wraps). Refused HERE, before anything is written, committed or
+  // built: the listing writes below are log-and-continue, so a refusal there would deploy
+  // the app and leave only a log line.
+  //
+  // WHAT IS NOT GATED, AND WHY:
+  //   · An UPDATE to an app whose listing is already live. The version approve never changes
+  //     that listing's visibility (3b-sync re-syncs manifest copy only), so refusing it would
+  //     stall the app's code fixes without taking anything off the store. A listing that went
+  //     live art-less before this rule is grandfathered; its owner still sees the blocking
+  //     `missing-icon` / `missing-cover` problems on My apps.
+  //   · A version whose approve publishes no listing row at all (`publishTarget` null: a first
+  //     version whose submit-time draft create failed, or a request from before
+  //     draft-at-submit). The legacy create below mints that listing media-less, and there is
+  //     no row the developer could have put art on while it waited.
+  if (publishTarget) {
+    const floor = checkListingMeetsFloor(publishTarget);
+    if (!floor.ok) throw new Error(listingFloorApproveRefusal(floor.missing));
+  }
+
+  // With the table absent and no split asked for there is nothing to write.
   {
     const { assertListingMediaSplitDecisionApplicable, probeListingMediaSplitTable } = await import(
       './listing-media-split.service'
     );
     const access = await probeListingMediaSplitTable(dbWrite);
     if (params.mediaSplit === 'split' || access.present) {
-      const target =
-        (await dbWrite.appListing.findFirst({
-          where: draftTransitionWhere({
-            slug: request.slug,
-            submittedByUserId: request.submittedByUserId,
-          }),
-          select: { id: true, iconId: true, coverId: true },
-        })) ??
-        (existingAppBlock
-          ? await dbWrite.appListing.findFirst({
-              where: resetRestoreWhere(existingAppBlock.id),
-              select: { id: true, iconId: true, coverId: true },
-            })
-          : null);
+      const target = publishTarget;
       if (!target && params.mediaSplit === 'split')
         throw new Error(
           'Cannot approve with a media split: this approve publishes no store listing.'

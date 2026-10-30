@@ -21,10 +21,14 @@ import {
  * rating raised above the declared one that hides an approved listing from the SFW store. `name` is always
  * filled from the manifest so it is intentionally NOT checked.
  *
- * This is a heads-up for the developer, NOT a hard gate — nothing here blocks
- * publish/approve; it only drives the warning icon + popover on the submissions
- * list. Both the on-site (`listMyPublishRequests`) and off-site
- * (`listMySubmissions`) procs project the needed fields and call this per row.
+ * This function only REPORTS; the gates are elsewhere. Its `blocking` problems mirror
+ * real server gates — missing icon / cover is the publish floor (`checkListingMeetsFloor`,
+ * refused by every approve that makes a listing live, on-site included), and a blocked
+ * image is the scan-clean go-live gate — while `advisory` ones never block. It drives the
+ * warning icon + popover on the submissions list (grouped by severity) and the listing
+ * readiness a submit answers with (`submitVersion`). The on-site
+ * (`listMyPublishRequests`) and off-site (`listMySubmissions`) procs project the needed
+ * fields and call this per row.
  *
  * 🔴 KIND-AWARE. `empty-description` / `empty-tagline` / `empty-category` name a
  * DIFFERENT remedy on an on-site listing than on an off-site one, because on-site
