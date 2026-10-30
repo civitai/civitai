@@ -2675,7 +2675,8 @@ export async function applyModelFlagSideEffects({
   const newGallerySettings = after.gallerySettings as ModelGallerySettingsSchema;
   const galleryBrowsingLevelChanged = prevGallerySettings?.level !== newGallerySettings?.level;
 
-  if (galleryBrowsingLevelChanged) await bustModelGallerySettings([id]);
+  // The served level is held by the flags too (see heldGalleryLevel), not only by the stored one.
+  if (galleryBrowsingLevelChanged || minorChanged) await bustModelGallerySettings([id]);
 
   if (minorChanged || poiChanged) {
     const modelVersions = await dbWrite.modelVersion.findMany({
@@ -5389,24 +5390,35 @@ export const getGallerySettingsByModelId = async ({ id }: GetByIdInput) => {
 
   const model = await getModel({
     id: id,
-    select: { id: true, userId: true, gallerySettings: true },
+    select: { id: true, userId: true, gallerySettings: true, minor: true, sfwOnly: true },
   });
   if (!model) return null;
 
+  const sfwHeld = model.minor || model.sfwOnly;
   let settings = null;
-  if (model.gallerySettings) {
+  if (model.gallerySettings || sfwHeld) {
+    const stored = (model.gallerySettings ?? {}) as ModelGallerySettingsSchema;
     const [preferences, creatorHiddenUserIds] = await Promise.all([
       getGalleryHiddenPreferences({
-        settings: model.gallerySettings as ModelGallerySettingsSchema,
+        settings: sfwHeld ? { ...stored, level: heldGalleryLevel(stored.level) } : stored,
       }),
       getCreatorGalleryHiddenUserIds(model.userId, { fresh: true }),
     ]);
-    settings = { ...preferences, creatorHiddenUserIds };
+    settings = { ...preferences, creatorHiddenUserIds, sfwHeld };
   }
   await redis.set(cacheKey, toJson(settings), { EX: CacheTTL.week });
 
   return settings;
 };
+
+/**
+ * The gallery level a minor or SFW-only model serves: the levels its stored setting allows, within
+ * SFW. A setting that allows no SFW level, or none at all, serves SFW; a stored 0 stays 0.
+ */
+export function heldGalleryLevel(stored: number | undefined) {
+  if (stored === 0) return 0;
+  return Flags.intersection(stored ?? 0, sfwBrowsingLevelsFlag) || sfwBrowsingLevelsFlag;
+}
 
 export const getGalleryHiddenPreferences = async ({
   settings,
@@ -5767,7 +5779,7 @@ export async function copyGallerySettingsToAllModelsByUser({
     // "copy to all my models" re-opens every model the user has ever had flagged.
     await tx.$executeRaw`
       UPDATE "Model"
-      SET "gallerySettings" = "gallerySettings" || jsonb_build_object(
+      SET "gallerySettings" = ${asJsonbObjectSql('"gallerySettings"')} || jsonb_build_object(
         'level', CASE WHEN minor OR "sfwOnly" THEN ${sfwBrowsingLevelsFlag} ELSE ${
       settings.level
     } END,

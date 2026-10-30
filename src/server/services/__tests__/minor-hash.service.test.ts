@@ -94,6 +94,7 @@ import {
   AUTO_FLAG_REVIEW_WINDOW_DAYS,
 } from '~/server/services/minor-hash.service';
 import { dbMock } from '~/__tests__/mocks/db.mock';
+import { redisMock } from '~/__tests__/mocks/redis.mock';
 import { loggingMock } from '~/__tests__/mocks/logging.mock';
 const mockDbRead = dbMock.dbRead;
 const mockDbWrite = dbMock.dbWrite;
@@ -1197,6 +1198,24 @@ describe('rollbackMinorHashAutoFlags', () => {
     expect(values).toContainEqual(['poi']); // prevLockedProperties
 
     expect(report).toMatchObject({ candidates: 1, rolledBack: 1, skipped: 0, failed: 0 });
+  });
+
+  // The restore moves sfwOnly and the gallery level after setModelMinor's own cache bust, and the
+  // gallery serves a held level while the model is SFW-only.
+  it('drops the cached gallery settings after the restore write', async () => {
+    mockDbRead.$queryRaw.mockResolvedValue([rollbackRow({ modelId: 200 })]);
+
+    await rollbackMinorHashAutoFlags({ dryRun: false, limit: 100 });
+
+    const restoreAt = mockDbWrite.$executeRaw.mock.calls.findIndex((call) =>
+      Array.from(call[0] as TemplateStringsArray)
+        .join('?')
+        .includes('SET nsfw')
+    );
+    expect(redisMock.redis.del).toHaveBeenCalledWith(['model:gallery-settings:v2:200']);
+    expect(redisMock.redis.del.mock.invocationCallOrder[0]).toBeGreaterThan(
+      mockDbWrite.$executeRaw.mock.invocationCallOrder[restoreAt]
+    );
   });
 
   it('drops the system nsfw lock marker in the restore write', async () => {
