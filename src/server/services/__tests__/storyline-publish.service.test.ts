@@ -382,7 +382,10 @@ describe('the owner continuing their own story', () => {
   it('leaves a continuation rated above the ceiling waiting, and raises nothing', async () => {
     draft(OWNER, { storylineId: STORY, parentChapterId: ROOT_CHAPTER }, { nsfwLevel: R });
 
-    await expect(publish(OWNER)).resolves.toMatchObject({ reason: 'aboveRating' });
+    await expect(publish(OWNER)).resolves.toMatchObject({
+      reason: 'aboveRating',
+      rating: { postLevel: R, maxNsfwLevel: PG },
+    });
     expect(db.row('storyline', { id: STORY })).toMatchObject({ maxNsfwLevel: PG });
     expect(chapterOf(DRAFT)).toBeUndefined();
   });

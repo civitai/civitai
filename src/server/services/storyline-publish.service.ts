@@ -50,7 +50,7 @@ export type StorylinePublishContext = {
 export type StorylinePublishOutcome = { storylineId: number } & (
   | { status: 'chapterWritten'; chapterId: number; ceilingRaisedTo?: number }
   /** The owner's chapter, written once the post is live and rated. */
-  | { status: 'waiting'; reason: PendingChapterWait }
+  | { status: 'waiting'; reason: PendingChapterWait; rating?: StorylineRatingGap }
   | { status: 'submitted'; placementId: number }
   /** Published as a post of its own; the draft is no longer linked to the storyline. */
   | { status: 'dropped'; reason: string }
@@ -58,6 +58,9 @@ export type StorylinePublishOutcome = { storylineId: number } & (
 
 /** `restricted`: the owner is muted or has to verify their email, which `storyline.addChapter` refuses. */
 type PendingChapterWait = 'notReady' | 'cannotSubmit' | 'aboveRating' | 'restricted';
+
+/** With `aboveRating`, the two ratings the author is told. */
+type StorylineRatingGap = { postLevel: number; maxNsfwLevel: number };
 
 export type PreparedStorylinePublish = { postId: number; storylineId: number; userId: number } & (
   | { kind: 'closed'; reason: string }
@@ -163,7 +166,7 @@ export async function finishStorylinePublish(
         };
       }
       if (result.status === 'waiting')
-        return { storylineId, status: 'waiting', reason: result.reason };
+        return { storylineId, status: 'waiting', reason: result.reason, rating: result.rating };
       const written = await dbWrite.storylineChapter.findUnique({
         where: { postId },
         select: { id: true },
@@ -217,7 +220,7 @@ type PendingChapterPromotion =
       ceilingRaisedTo?: number;
     }
   /** The link stays: the post is not live and rated yet, a scan refused it, or it is rated too high. */
-  | { status: 'waiting'; reason: PendingChapterWait }
+  | { status: 'waiting'; reason: PendingChapterWait; rating?: StorylineRatingGap }
   /** No link: another writer promoted it first. */
   | { status: 'gone' };
 
@@ -304,13 +307,13 @@ export async function promotePendingChapter(postId: number): Promise<PendingChap
           { parentPostId: parentChapter.postId, placerId: link.userId },
           tx
         );
-        if (
-          !storylineLevelAllowed({
-            postLevel: post.nsfwLevel,
-            maxNsfwLevel: storylineCeiling(parent.storyline),
-          })
-        )
-          return { status: 'waiting', reason: 'aboveRating' };
+        const maxNsfwLevel = storylineCeiling(parent.storyline);
+        if (!storylineLevelAllowed({ postLevel: post.nsfwLevel, maxNsfwLevel }))
+          return {
+            status: 'waiting',
+            reason: 'aboveRating',
+            rating: { postLevel: post.nsfwLevel, maxNsfwLevel },
+          };
         ({ chapterId } = await writeOwnerChapter(tx, {
           parentChapterId: link.parentChapterId,
           postId,

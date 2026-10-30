@@ -1,3 +1,5 @@
+import { getBrowsingLevelLabel } from '~/shared/constants/browsingLevel.constants';
+
 /**
  * A continuation is a placement on the `storyline` surface: someone offers a post of theirs as the
  * next chapter after a chapter post of someone's storyline, and the storyline's creator accepts or
@@ -118,7 +120,9 @@ export const STORYLINE_SUBMIT_RATE_LIMIT = {
  * `notAvailable` are the message of a 400; `notAvailable` is an authorization error.
  *
  * Match with `startsWith`: `priceChanged` is followed by the new price (`… deciding: now 100
- * Buzz`), so the contributor is told what it is.
+ * Buzz`), so the contributor is told what it is, and `aboveRating` by both ratings.
+ *
+ * `cannotSubmit` never says which image or why: naming the flag would let anyone probe it.
  */
 export const STORYLINE_REFUSALS = {
   notAvailable: 'storylines: this is not available yet',
@@ -129,10 +133,21 @@ export const STORYLINE_REFUSALS = {
   notYourPost: 'storyline: you can only submit your own posts',
   alreadySubmitted: 'storyline: that post is already a continuation here',
   alreadyAChapter: 'storyline: that post is already in a storyline',
-  cannotSubmit: 'storyline: that post cannot be submitted',
+  cannotSubmit: "This post or one of its images can't be used in a storyline",
   inReview: 'storyline: that post is still being reviewed',
   notReady: 'storyline: that post is not ready yet',
-  aboveRating: 'storyline: that post is rated above what this storyline allows',
+  aboveRating: "This post is rated above this storyline's maximum",
   pendingCap: 'storyline: you already have the maximum continuations waiting with this creator',
   priceChanged: 'storyline: the price changed while you were deciding',
 } as const;
+
+export const storylineAboveRatingRefusal = ({
+  postLevel,
+  maxNsfwLevel,
+}: {
+  postLevel: number;
+  maxNsfwLevel: number;
+}) =>
+  `${STORYLINE_REFUSALS.aboveRating}. This storyline allows up to ${getBrowsingLevelLabel(
+    maxNsfwLevel
+  )}; this post is ${getBrowsingLevelLabel(postLevel)}`;
