@@ -1720,9 +1720,9 @@ export async function addOwnerChapter(input: {
 }
 
 /**
- * The owner adds a post at the end of the main path: chapter 1 of an empty storyline, else the
- * canon child of the main path's last chapter. Found here, under the storyline's lock and with no
- * path cap, not by the client: a stale or capped read would add it as a side branch instead.
+ * The owner's post at the end of the main path: chapter 1 of an empty storyline, else the canon
+ * child of its last chapter. The end is found here, under the storyline's lock: the client's read
+ * is capped and can be stale, and a wrong end makes a side branch.
  */
 export async function addOwnerChapterAtEnd({
   storylineId,
@@ -1740,7 +1740,7 @@ export async function addOwnerChapterAtEnd({
 
   return dbWrite.$transaction(async (tx) => {
     await lockStorylineForAdd(tx, storylineId);
-    // One canon child per parent; the step cap only guards against a cycle.
+    // `canonRouteWalk` without its reading cap; the step cap only guards against a cycle.
     const [end] = await tx.$queryRaw<{ id: number }[]>`
       WITH RECURSIVE main AS (
         SELECT ${root.id}::int AS id, 1 AS step
