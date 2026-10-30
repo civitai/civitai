@@ -205,6 +205,23 @@ describe('settling a held article', () => {
     expect(ingestionWrites).toEqual(['Blocked']);
   });
 
+  it('settles a url saved by an editor against the editor, not only the author', async () => {
+    const EDITOR = 99;
+    lookupsDown();
+    metadata = {};
+    await linkArticleContentImages({
+      articleId: ARTICLE_ID,
+      content,
+      userId: EDITOR,
+      ownerId: AUTHOR,
+    });
+    lookupsUp();
+    await recordUploadKeyOwner(KEY, EDITOR);
+    await settleContentLinkHolds();
+    expect(created()).toEqual([KEY]);
+    expect(hold()).toBeUndefined();
+  });
+
   it('leaves the url queued while the lookups are still down', async () => {
     lookupsDown();
     await settleContentLinkHolds();
